@@ -1801,7 +1801,7 @@ impl Motor {
         // Com ajudante aberto, o relatório dele é que acorda o chat de novo.
         let ajudantes = !self.ajudantes_abertos(&chat.id).is_empty();
         let pendente = self.aguardando_resposta.contains(&chat.id) || self.na_fila(&chat.id) > 0 || ajudantes;
-        let do_dono = aberto_pelo_dono(self.ultima_entrada.get(&chat.id).map_or(&[][..], Vec::as_slice), &dono);
+        let do_dono = aberto_pelo_dono(self.ultima_entrada.get(&chat.id).map_or(&[][..], |(_, m)| m.as_slice()), &dono);
         match decidir_fim(t, pendente, do_dono) {
             FimDoPedido::Entregar { formal } => {
                 let relatorio = match t.entrega.as_ref().filter(|_| formal) {
@@ -2478,7 +2478,7 @@ impl Motor {
     /// `propor_divisao`: valida, confere se já não foi proposta (mesmo turno ou mesma assinatura em 2
     /// h), grava o cartão e, nos três casos da regra, começa direto.
     fn propor_divisao(&mut self, a: &Value, cx: &mut Context<Self>) -> Resposta {
-        let entradas = self.ultima_entrada.get(ID_MESTRE).cloned().unwrap_or_default();
+        let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
         let brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
         let perguntas: Vec<String> = lista_de_textos(&a["perguntas"]).into_iter().filter(|p| !p.trim().is_empty()).collect();
         let partes = {
@@ -2624,7 +2624,7 @@ impl Motor {
 
     /// `lembrar`: num turno só do usuário, grava; nos outros, o usuário confirma pelo cartão.
     fn lembrar(&mut self, texto: &str, cx: &mut Context<Self>) -> Resposta {
-        let entradas = self.ultima_entrada.get(ID_MESTRE).cloned().unwrap_or_default();
+        let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
         if turno_so_do_usuario(&entradas) {
             return match lembrar_em(&self.dados.memoria(), texto) {
                 Ok(nova) => match self.dados.gravar_memoria(&nova) {

@@ -366,8 +366,10 @@ pub struct Motor {
     processos: HashMap<String, Processo>,
     geracao: u64,
     geracao_atual: HashMap<String, u64>,
-    /// O que entrou no último turno de cada chat, para "Tentar de novo".
-    ultima_entrada: HashMap<String, Vec<Entrada>>,
+    /// O que entrou no último turno de cada chat, para "Tentar de novo", com o uuid do turno: a
+    /// repetição (tentar de novo, a troca de conta) é o mesmo turno, e a guarda das ações externas
+    /// não repete o que ele já fez.
+    ultima_entrada: HashMap<String, (String, Vec<Entrada>)>,
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
@@ -2268,7 +2270,7 @@ impl Motor {
         if self.processos.contains_key(chat) {
             return;
         }
-        if let Some(mensagens) = self.ultima_entrada.get(chat).cloned() {
+        if let Some((_, mensagens)) = self.ultima_entrada.get(chat).cloned() {
             self.avisar(chat, "Tentando de novo.", false);
             self.comecar_turno_com(chat, mensagens, false, cx);
         }
@@ -2389,7 +2391,7 @@ impl Motor {
     /// Ultracode, que rodaria um fluxo inteiro de novo sem o usuário pedir. Só o "Tentar de novo"
     /// o repete.
     fn entrada_para_repetir(&mut self, chat_id: &str) -> Option<Vec<Entrada>> {
-        let mut mensagens = self.ultima_entrada.get(chat_id).cloned()?;
+        let (_, mut mensagens) = self.ultima_entrada.get(chat_id).cloned()?;
         if mensagens.iter().any(|e| e.ultracode) {
             for entrada in &mut mensagens {
                 entrada.ultracode = false;
@@ -2645,8 +2647,8 @@ impl Motor {
             None => texto,
         };
         let ultrathink = mensagens.iter().any(|e| e.ultrathink);
-        self.ultima_entrada
-            .insert(chat_id.to_string(), mensagens.clone());
+        let turno = turno_do_lote(self.ultima_entrada.get(chat_id).map(|(t, _)| t.as_str()), &mensagens);
+        self.ultima_entrada.insert(chat_id.to_string(), (turno, mensagens.clone()));
         // Ponto de volta: foto dos arquivos antes de quem edita começar o turno. Na cópia, o grupo
         // vem do branch; na pasta própria, do número do chat. Sem git, não há foto.
         let novas = mensagens.iter().any(|e| !e.registrada);
@@ -2923,7 +2925,7 @@ impl Motor {
     /// O init mostrou que o Ultracode não ligou: as mensagens dele perdem o selo e o turno deixa
     /// de contar como Ultracode (o de outra conversa não espera por ele).
     fn ultracode_nao_ligou(&mut self, chat_id: &str) {
-        let Some(mensagens) = self.ultima_entrada.get_mut(chat_id) else {
+        let Some((_, mensagens)) = self.ultima_entrada.get_mut(chat_id) else {
             return;
         };
         let mut faltam = mensagens.iter().filter(|e| e.ultracode).count();
@@ -2957,7 +2959,7 @@ impl Motor {
     fn turno_com_ultracode(&self, chat: &str) -> bool {
         self.ultima_entrada
             .get(chat)
-            .is_some_and(|m| m.iter().any(|e| e.ultracode))
+            .is_some_and(|(_, m)| m.iter().any(|e| e.ultracode))
     }
 
     /// A conversa que roda um turno com Ultracode agora.
@@ -3100,7 +3102,7 @@ impl Motor {
         } else {
             return false;
         };
-        let Some(mensagens) = self.ultima_entrada.get(chat_id).cloned() else {
+        let Some((_, mensagens)) = self.ultima_entrada.get(chat_id).cloned() else {
             return false;
         };
         if chat.sessao_criada == existe || !self.repetidos_sessao.insert(chat_id.to_string()) {
@@ -6695,6 +6697,16 @@ fn itens_das_entradas(mensagens: Vec<Entrada>, mut ponto: Option<String>) -> Vec
         .collect()
 }
 
+/// O uuid do turno que vai abrir: o mesmo do anterior quando o lote é uma repetição dele (todas as
+/// entradas já estão na conversa: "Tentar de novo", a troca de conta, a nova tentativa depois de
+/// uma queda, mesmo que tenha esperado na fila); senão, um novo.
+fn turno_do_lote(anterior: Option<&str>, mensagens: &[Entrada]) -> String {
+    match anterior {
+        Some(turno) if !mensagens.is_empty() && mensagens.iter().all(|e| e.registrada) => turno.to_string(),
+        _ => uuid::Uuid::new_v4().to_string(),
+    }
+}
+
 /// A mensagem que o usuário escreveu, pronta para entrar no turno ou na fila.
 fn entrada_do_usuario(texto: String, anexos: Vec<PathBuf>, reforco: Reforco) -> Entrada {
     let comando = texto.starts_with('/');
@@ -7751,6 +7763,21 @@ mod testes {
         assert!(!adiar_o_fim(0, false, false));
         assert!(!adiar_o_fim(2, true, false), "erro termina o turno");
         assert!(!adiar_o_fim(2, false, true), "parado pelo usuário termina o turno");
+    }
+
+    #[test]
+    fn a_repeticao_do_turno_leva_o_mesmo_uuid() {
+        let nova = Entrada { texto: "abre o PR".into(), ..Default::default() };
+        let repetida = Entrada { registrada: true, ..nova.clone() };
+        let primeiro = turno_do_lote(None, std::slice::from_ref(&nova));
+        assert_eq!(primeiro.len(), 36);
+        // "Tentar de novo" e a troca de conta mandam o lote já registrado: o mesmo turno.
+        assert_eq!(turno_do_lote(Some(&primeiro), std::slice::from_ref(&repetida)), primeiro);
+        // Uma mensagem nova (mesmo com uma nota já registrada junto) é outro turno.
+        let nota = Entrada { nota: true, registrada: true, ..Default::default() };
+        assert_ne!(turno_do_lote(Some(&primeiro), &[nota, nova.clone()]), primeiro);
+        assert_ne!(turno_do_lote(Some(&primeiro), &[]), primeiro);
+        assert_ne!(turno_do_lote(None, &[repetida]), primeiro);
     }
 
     #[test]
