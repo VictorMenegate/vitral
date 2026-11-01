@@ -4,18 +4,25 @@ mod codex;
 mod contas;
 mod dados;
 mod git;
+mod github;
 mod importar;
 mod instancia;
+mod isolamento;
+mod issues;
+mod linear;
 mod mcp;
 mod migracao;
 mod modelo;
 mod motor;
 mod processos;
 mod prompts;
+mod remoto;
 mod revisor;
+mod segredos;
 mod sistema;
 mod tema;
 mod ui;
+mod vigia;
 
 use std::{
     path::{Path, PathBuf},

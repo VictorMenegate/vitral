@@ -6922,6 +6922,7 @@ dependencies = [
  "gpui-kit",
  "libc",
  "minisign-verify",
+ "oo7",
  "semver",
  "serde",
  "serde_json",
@@ -6931,6 +6932,7 @@ dependencies = [
  "tiny_http",
  "ureq",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
