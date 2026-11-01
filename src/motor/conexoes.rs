@@ -67,7 +67,7 @@ impl<T> Carregando<T> {
     }
 
     /// A busca começou: fica o valor que havia.
-    fn buscando(self) -> Self {
+    pub(super) fn buscando(self) -> Self {
         match self {
             Carregando::Pronto(v, _) | Carregando::Carregando(Some(v)) | Carregando::Erro(_, Some(v)) => Carregando::Carregando(Some(v)),
             _ => Carregando::Carregando(None),
@@ -75,14 +75,14 @@ impl<T> Carregando<T> {
     }
 
     /// O resultado de uma busca: o erro guarda o valor de antes.
-    fn com(self, resultado: Result<T, String>, agora: Instant) -> Self {
+    pub(super) fn com(self, resultado: Result<T, String>, agora: Instant) -> Self {
         match resultado {
             Ok(v) => Carregando::Pronto(v, agora),
             Err(e) => Carregando::Erro(e, self.tirar()),
         }
     }
 
-    fn tirar(self) -> Option<T> {
+    pub(super) fn tirar(self) -> Option<T> {
         match self {
             Carregando::Pronto(v, _) | Carregando::Carregando(Some(v)) | Carregando::Erro(_, Some(v)) => Some(v),
             _ => None,
@@ -581,7 +581,7 @@ impl Motor {
     }
 
     /// Por que a chave não está na memória, para a interface.
-    fn motivo_sem_chave(&self) -> String {
+    pub(super) fn motivo_sem_chave(&self) -> String {
         match &self.integracao.estado_chave {
             EstadoConexao::ChaveiroTrancado => "O chaveiro está trancado.".into(),
             EstadoConexao::ChaveiroIndisponivel(motivo) => format!("O chaveiro do sistema não respondeu ({motivo})."),
@@ -593,7 +593,7 @@ impl Motor {
 
     /// Lê a chave do chaveiro. `destravar` só por ação do usuário; `depois` roda com o estado novo.
     #[allow(clippy::type_complexity)]
-    fn ler_chave(&mut self, destravar: bool, depois: Option<Box<dyn FnOnce(&mut Motor, &mut Context<Motor>)>>, cx: &mut Context<Self>) {
+    pub(super) fn ler_chave(&mut self, destravar: bool, depois: Option<Box<dyn FnOnce(&mut Motor, &mut Context<Motor>)>>, cx: &mut Context<Self>) {
         if self.config.conexoes.linear.is_none() {
             self.integracao.estado_chave = EstadoConexao::Desconectada;
             if let Some(depois) = depois {
@@ -855,8 +855,29 @@ impl Motor {
         }
     }
 
+    /// A chave do Linear, se está na memória (nunca lê o chaveiro).
+    pub(super) fn chave_na_memoria(&self) -> Option<Arc<Chave>> {
+        self.integracao.chave_linear.clone()
+    }
+
+    /// Quem roda os programas de rede (o falso, nos testes).
+    pub(super) fn executor(&self) -> Arc<dyn Executor> {
+        self.integracao.executor.clone()
+    }
+
+    /// Um estado do Linear pelo id, nos times que já vieram (para a mudança otimista).
+    pub(super) fn estado_conhecido(&self, id: &str) -> Option<EstadoIssue> {
+        self.integracao
+            .do_time
+            .values()
+            .filter_map(|(_, c)| c.valor())
+            .flat_map(|d| d.estados.iter())
+            .find(|e| e.estado.id == id)
+            .map(|e| e.estado.clone())
+    }
+
     /// O estado da rede do provedor depois de uma chamada.
-    fn anotar_rede(&mut self, provedor: Provedor, erro: Option<&ErroRemoto>) {
+    pub(super) fn anotar_rede(&mut self, provedor: Provedor, erro: Option<&ErroRemoto>) {
         let rede = self.integracao.rede_mut(provedor);
         match erro {
             None => rede.deu_certo(),
@@ -867,7 +888,7 @@ impl Motor {
     /// Roda `trabalho` (que bloqueia: gh, curl, o chaveiro) fora da thread da interface, na vez
     /// do provedor, e entrega o resultado a `depois` no motor, com um redesenho. A permissão da
     /// fila é pega antes e vai para dentro da tarefa de fundo.
-    fn em_segundo_plano<T: Send + 'static>(
+    pub(super) fn em_segundo_plano<T: Send + 'static>(
         &mut self,
         provedor: Provedor,
         do_usuario: bool,

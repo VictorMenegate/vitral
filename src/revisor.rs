@@ -24,6 +24,7 @@ pub fn revisar(
     tarefa: &Tarefa,
     modelo: Option<&str>,
     pasta_conta: Option<PathBuf>,
+    isolado: Option<crate::isolamento::Modo>,
 ) -> Result<Revisao> {
     let esquema = json!({
         "type": "object",
@@ -60,8 +61,12 @@ se não houver problema de gravidade alta ou média. Escreva em português.",
         objetivo = tarefa.objetivo,
     );
     // Num escopo próprio: no limite de tempo ou com o Vitral fechando, os comandos que ele roda
-    // (cargo test, servidores) param junto.
-    let mut comando = processos::comando(binario_claude(), "revisor");
+    // (cargo test, servidores) param junto. Na cópia de um chat isolado, o revisor (que tem Bash e lê
+    // o que o agente escreveu) roda isolado como ele.
+    let mut comando = match isolado {
+        Some(modo) => crate::isolamento::comando(binario_claude(), "revisor", modo),
+        None => processos::comando(binario_claude(), "revisor"),
+    };
     comando
         .current_dir(pasta)
         .args(["-p", "--output-format", "json", "--strict-mcp-config"])
@@ -197,7 +202,7 @@ pub fn rodar_hook_verificacao() -> i32 {
         return 0;
     }
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let resultado = crate::git::verificar(&pasta, &verificacao);
+    let resultado = crate::git::verificar(&pasta, &verificacao, None);
     if resultado.passou {
         return 0;
     }

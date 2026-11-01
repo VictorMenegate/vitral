@@ -33,7 +33,7 @@ pub use conexoes::{
 pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 // Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
 #[allow(unused_imports)]
-pub use issues::{EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
+pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
 pub use mestre::ResumoVolta;
 #[allow(unused_imports)]
 pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
@@ -494,6 +494,8 @@ pub struct Motor {
     encerrado: Arc<AtomicBool>,
     /// GitHub e Linear: as conexões, a chave do Linear na memória e o que veio da rede.
     integracao: conexoes::Integracao,
+    /// As listas e os detalhes das issues (só na memória).
+    cache_issues: issues::Issues,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -754,6 +756,7 @@ impl Motor {
             visiveis: HashSet::new(),
             encerrado: Arc::default(),
             integracao: conexoes::Integracao::new(Arc::new(crate::remoto::Real)),
+            cache_issues: issues::Issues::default(),
             servidor,
             sinais,
             _recebedor,
@@ -779,6 +782,10 @@ impl Motor {
         motor.reler_uso(cx);
         // O bwrap, o login do gh e a chave do Linear (sem destravar o chaveiro).
         motor.iniciar_conexoes(cx);
+        // O pedido de uma issue que não chegou a sair antes de o Vitral fechar.
+        if motor.somente_leitura.is_none() {
+            motor.retomar_pedidos_de_issue(cx);
+        }
         motor
     }
 
@@ -1865,8 +1872,22 @@ impl Motor {
         reforco: Reforco,
         cx: &mut Context<Self>,
     ) {
+        self.enviar_do_usuario_com(chat, texto, anexos, reforco, &[], cx);
+    }
+
+    /// A mensagem do usuário, com as issues anexadas (`issues::enviar_com_issues`): o bloco de cada
+    /// uma vai só ao Claude, e a mensagem traz texto de terceiros.
+    fn enviar_do_usuario_com(
+        &mut self,
+        chat: &str,
+        texto: String,
+        anexos: Vec<PathBuf>,
+        reforco: Reforco,
+        issues: &[issues::AnexoIssue],
+        cx: &mut Context<Self>,
+    ) {
         let texto = texto.trim().to_string();
-        if texto.is_empty() && anexos.is_empty() {
+        if texto.is_empty() && anexos.is_empty() && issues.is_empty() {
             return;
         }
         // Comandos que o Vitral resolve sozinho.
@@ -1905,6 +1926,15 @@ impl Motor {
         if self.chat(chat).is_some_and(|c| c.papel == Papel::Mestre) {
             entrada.extra = self.extra_para_o_mestre(&entrada.texto);
         }
+        if !issues.is_empty() {
+            let blocos: Vec<&str> = issues.iter().map(|a| a.bloco.trim()).filter(|b| !b.is_empty()).collect();
+            if !blocos.is_empty() {
+                let antes = std::mem::take(&mut entrada.extra);
+                entrada.extra = std::iter::once(antes.as_str()).filter(|e| !e.is_empty()).chain(blocos).collect::<Vec<_>>().join("\n\n");
+            }
+            entrada.terceiros = true;
+            entrada.referencias = issues.iter().map(|a| a.issue.chave.clone()).collect();
+        }
         self.entregar_entrada(chat, entrada, cx);
     }
 
@@ -1921,12 +1951,15 @@ impl Motor {
             && !texto.starts_with('/')
             && let Some(t) = self.tarefa_mut(id)
             && t.estado == EstadoTarefa::EmRevisao
-            && t.dono() == Some(crate::modelo::ID_MESTRE)
+            && (t.dono() == Some(crate::modelo::ID_MESTRE) || (t.dono().is_none() && t.pedido_da_issue))
         {
             t.rodada += 1;
             t.estado = EstadoTarefa::Ajustando;
             (t.parada, t.entrega_pendente, t.entrega, t.progresso) = (None, None, None, None);
-            self.nota_ao_mestre(format!("O usuário falou direto com o chat {id}; o novo relatório chega quando ele entregar."), cx);
+            // O pedido de uma issue é do próprio usuário: a mensagem dele abre a rodada nova.
+            if t.dono().is_some() {
+                self.nota_ao_mestre(format!("O usuário falou direto com o chat {id}; o novo relatório chega quando ele entregar."), cx);
+            }
             return Ok(());
         }
         let Some(chat) = self.chat(chat_id).filter(|c| c.papel == Papel::Trabalhador) else {
@@ -2653,7 +2686,8 @@ impl Motor {
         let outro_ultracode = ultracode && self.ultracode_rodando().is_some_and(|c| c != chat_id);
         // Sem vaga, espera com as mensagens guardadas. O turno que o usuário pediu tem uma vaga a
         // mais e passa na frente da fila.
-        let do_usuario = mensagens.iter().any(Entrada::do_usuario);
+        // "Iniciar agente" numa issue (um só, não o lote) conta como turno do usuário para a vaga.
+        let do_usuario = mensagens.iter().any(Entrada::do_usuario) || self.cache_issues.vez_do_usuario.contains(chat_id);
         let ativos = self.trabalhadores_ativos();
         if chat.papel.conta_vaga()
             && (!pode_comecar(chat.papel, do_usuario, ativos, self.config.max_trabalhadores) || outro_ultracode)
@@ -2675,6 +2709,7 @@ impl Motor {
             cx.notify();
             return;
         }
+        self.cache_issues.vez_do_usuario.remove(chat_id);
         if sem_ultracode.is_some() {
             for entrada in &mut mensagens {
                 entrada.ultracode = false;
@@ -2704,6 +2739,14 @@ impl Motor {
             bloco_de_passagem(itens, tarefa, ja_na_conversa)
         });
 
+        // A marca de isolado é avaliada com o lote que vai entrar: o turno que traz texto de terceiros
+        // (issue anexada, aviso de PR) já roda isolado, e daí em diante o chat não sai mais.
+        if matches!(chat.papel, Papel::Projeto | Papel::Trabalhador) && !chat.isolado && issues::marca_isolado(&mensagens) {
+            chat.isolado = true;
+            if let Some(c) = self.chat_mut(chat_id) {
+                c.isolado = true;
+            }
+        }
         let (texto, imagens) = texto_do_turno(&mensagens);
         let texto = match passagem {
             Some(bloco) => format!("{bloco}\n\n---\n\n{texto}"),
@@ -2744,7 +2787,7 @@ impl Motor {
             return;
         };
         let conta = self.conta_para(&chat);
-        let mut opcoes = self.opcoes(&chat, servidor.url(chat.papel, &chat.id));
+        let mut opcoes = self.opcoes(&chat, servidor.url(chat.papel, &chat.id, self.roda_isolado(&chat)));
         opcoes.pasta_conta = conta.pasta();
         // No `-p` a palavra só injeta o lembrete; o esforço do turno sobe aqui, como no terminal.
         if ultrathink {
@@ -2820,11 +2863,19 @@ impl Motor {
         let notas = self.dados.notas(&chat.projeto);
         let tarefa = chat.tarefa.and_then(|t| self.tarefa(t));
         // A conversa do Vitral antigo não roda (a guarda do turno a recusa antes).
-        let (prompt_sistema, bloqueadas, pastas_extras, modelo_padrao) = match chat.papel {
+        let (mut prompt_sistema, mut bloqueadas, pastas_extras, modelo_padrao) = match chat.papel {
             Papel::Mestre => self.opcoes_do_mestre(),
             Papel::Trabalhador => self.opcoes_do_ajudante(chat, tarefa, &notas),
             Papel::Projeto | Papel::Coordenador => self.opcoes_de_projeto(chat, tarefa, &notas),
         };
+        // Chat isolado (seção 3.6): o claude no bwrap (ou só com o ambiente, sem ele) e, como
+        // reforço, os redutores (o `bash -c` passa por eles); o prompt diz por quê.
+        let isolado = self.modo_isolado(chat);
+        if isolado.is_some() {
+            bloqueadas.extend(crate::isolamento::BLOQUEADAS.map(String::from));
+            let motivo = self.motivo_do_isolamento(chat);
+            prompt_sistema.push_str(prompts::nota_de_isolamento(motivo, chat.papel == Papel::Trabalhador));
+        }
         if let Some(pasta) = pastas_extras.first() {
             let _ = std::fs::create_dir_all(pasta);
         }
@@ -2880,6 +2931,7 @@ impl Motor {
             pasta_conta: None,
             ambiente,
             configuracoes,
+            isolado,
         }
     }
 
@@ -3463,7 +3515,10 @@ impl Motor {
                 cx.show_system_notification(aviso);
                 return false;
             }
-            Sinal::Integracao => self.atender_pedidos(cx),
+            Sinal::Integracao => {
+                self.atender_pedidos(cx);
+                self.atender_pedidos_de_issues(cx);
+            }
         }
         true
     }
@@ -4036,6 +4091,8 @@ impl Motor {
             .filter_map(|t| Some((t.id, t.worktree.clone()?, t.base.clone()?)))
             .collect();
         let encerrado = self.encerrado.clone();
+        // Na cópia de um chat isolado, a verificação e o revisor rodam isolados como ele.
+        let isolado = self.modo_isolado_da_tarefa(&tarefa);
 
         cx.spawn(async move |motor, cx| {
             let tarefa_bg = tarefa.clone();
@@ -4048,7 +4105,7 @@ impl Motor {
                         .verificacao
                         .clone()
                         .filter(|_| !parou())
-                        .map(|c| git::verificar(&onde, &c));
+                        .map(|c| git::verificar(&onde, &c, isolado));
                     // Depois de um `git merge` pedido num conflito, a base certa é o que veio do projeto.
                     let base = match (&pasta_diff, &tarefa.base) {
                         (Some(_), Some(b)) if direta => Some(b.clone()),
@@ -4081,7 +4138,7 @@ impl Motor {
                     // seria jogado fora, e a entrega é refeita ao abrir a pasta de novo.
                     let revisao = match (&pasta_diff, &base) {
                         (Some(p), Some(b)) if revisar && !meus.is_empty() && !parou() => Some(
-                            crate::revisor::revisar(p, b, &tarefa, modelo_revisor.as_deref(), pasta_conta)
+                            crate::revisor::revisar(p, b, &tarefa, modelo_revisor.as_deref(), pasta_conta, isolado)
                                 .map_err(|e| format!("{e:#}")),
                         ),
                         _ => None,
@@ -4132,6 +4189,9 @@ impl Motor {
                         let texto = mestre::relatorio_ao_pai(t, &relatorio, estatistica.as_deref(), erro, falha_revisor.as_deref());
                         motor.entregar(dono, Some("Vitral".into()), texto, cx);
                     }
+                } else if vale && tarefa.pedido_da_issue {
+                    // O pedido de uma issue é do usuário: "Pronto para revisar ENG-123".
+                    motor.pronta_para_revisar(id);
                 }
                 motor.salvar();
                 cx.notify();
@@ -4250,6 +4310,7 @@ impl Motor {
             .or_else(|| Some(self.config.modelo_chats.clone()).filter(|m| !m.is_empty()));
         let pasta_conta = self.chat(&t.trabalhador).map(|c| self.conta_para(c)).and_then(|c| c.pasta());
         let encerrado = self.encerrado.clone();
+        let isolado = self.modo_isolado_da_tarefa(&t);
         if let Some(t) = self.tarefa_mut(id) {
             t.progresso = Some("o revisor está conferindo as mudanças".into());
         }
@@ -4257,13 +4318,13 @@ impl Motor {
             let (verificacao, revisao) = cx
                 .background_spawn(async move {
                     let base = if origem.is_dir() { git::base_efetiva(&origem, &pasta, &base) } else { base };
-                    let verificacao = conferida.verificacao.clone().map(|c| git::verificar(&pasta, &c));
+                    let verificacao = conferida.verificacao.clone().map(|c| git::verificar(&pasta, &c, isolado));
                     let revisao = if git::arquivos_mudados(&pasta, &base).is_empty() {
                         Err("nada mudou na cópia desde a última junção".to_string())
                     } else if encerrado.load(Ordering::SeqCst) {
                         Err("o Vitral fechou".to_string())
                     } else {
-                        crate::revisor::revisar(&pasta, &base, &conferida, modelo.as_deref(), pasta_conta)
+                        crate::revisor::revisar(&pasta, &base, &conferida, modelo.as_deref(), pasta_conta, isolado)
                             .map_err(|e| format!("{e:#}"))
                     };
                     (verificacao, revisao)
@@ -4326,11 +4387,19 @@ impl Motor {
             let _ = chamada.resposta.try_send(Resposta::erro("o papel deste chat mudou; encerre a vez"));
             return;
         }
-        if !mcp::pode(chat.papel, &chamada.ferramenta) {
+        if !mcp::pode(chat.papel, &chamada.ferramenta, self.roda_isolado(&chat)) {
             let erro = format!("Ferramenta \"{}\" não existe para este chat.", chamada.ferramenta);
             let _ = chamada.resposta.try_send(Resposta::erro(erro));
             return;
         }
+        let chamada = match self.ferramenta_de_issue(&chat, chamada, cx) {
+            Ok(()) => {
+                self.salvar();
+                cx.notify();
+                return;
+            }
+            Err(chamada) => chamada,
+        };
         let chamada = match self.ferramenta_nova(&chat, chamada, cx) {
             Ok(()) => {
                 self.salvar();
@@ -4529,8 +4598,9 @@ impl Motor {
         chat.pai = Some(pai.id.clone());
         chat.tarefa = Some(id);
         chat.modelo = modelo;
-        // Com a conta e a permissão do pai.
+        // Com a conta e a permissão do pai; o ajudante de um chat isolado nasce isolado.
         (chat.conta, chat.permissao) = (pai.conta.clone(), pai.permissao.clone());
+        chat.isolado = self.roda_isolado(pai);
         self.chats.push(chat);
         self.preparar_copia(id, Some(resposta), false, cx);
     }
@@ -4640,6 +4710,10 @@ impl Motor {
         let config_projeto = self.config_da_pasta(&tarefa.projeto, &pasta_ligada);
         // O ajudante parte do que a pasta do pai tem agora: antes da cópia, um ponto nela.
         let ponto = (!de_projeto).then(|| format!("Vitral: ponto antes do ajudante #{id}"));
+        // A preparação na cópia de um chat isolado roda isolada como ele.
+        let isolado = self.modo_isolado_da_tarefa(&tarefa);
+        // No modo PR a cópia parte de `<remoto>/<base>`: antes, o fetch (rede, fora da trava do projeto).
+        let executor = self.executor();
         let geracao = match self.tarefa_mut(id) {
             Some(t) => {
                 t.geracao_preparo += 1;
@@ -4659,22 +4733,24 @@ impl Motor {
         };
         cx.spawn(async move |motor, cx| {
             let projeto = caminho_projeto.clone();
-            let copia = cx
+            let (copia, avisos_de_rede) = cx
                 .background_spawn(async move {
                     if !projeto.is_dir() {
-                        return Some(Err(anyhow::anyhow!(
-                            "a pasta {} não foi encontrada (disco desmontado ou pasta movida)",
-                            projeto.display()
-                        )));
+                        let erro = anyhow::anyhow!("a pasta {} não foi encontrada (disco desmontado ou pasta movida)", projeto.display());
+                        return (Some(Err(erro)), Vec::new());
                     }
                     // O chat de projeto e o ajudante decidiram ter cópia com o git presente.
                     if !git::usa_git(&projeto) {
-                        return Some(Err(anyhow::anyhow!("{} não usa mais git (ou não tem commit)", projeto.display())));
+                        return (Some(Err(anyhow::anyhow!("{} não usa mais git (ou não tem commit)", projeto.display()))), Vec::new());
                     }
+                    let avisos = match &partir_de {
+                        Some(ponto) => buscar_ponto_de_partida(&*executor, &projeto, ponto).await,
+                        None => Vec::new(),
+                    };
                     let _ = std::fs::create_dir_all(&area);
                     // Na vez do repositório: uma junção no meio mudaria o HEAD e disputaria o índice.
                     // O ponto do pai e a cópia nova ficam na mesma vez.
-                    git::na_vez_do_projeto(&projeto, || {
+                    let copia = git::na_vez_do_projeto(&projeto, || {
                         if let Some((pasta, branch)) = antiga {
                             let _ = git::limpar_copia(&projeto, &pasta, &area, &branch, Some(&format!("t{id}")), &[], false);
                         }
@@ -4689,7 +4765,8 @@ impl Motor {
                         } else {
                             git::criar_worktree_de(&projeto, &destino, &branch, partir_de.as_deref()).map(|c| (c, None))
                         })
-                    })
+                    });
+                    (copia, avisos)
                 })
                 .await;
             // Gravada antes da preparação, que demora: se o Vitral fechar, ela é apagada ao refazer.
@@ -4725,7 +4802,7 @@ impl Motor {
                             git::copiar_arquivos_locais(&caminho_projeto, &pasta, &padroes);
                         let preparacao = Some(config_projeto.preparacao.trim().to_string())
                             .filter(|p| !p.is_empty())
-                            .map(|comando| git::verificar(&pasta, &comando));
+                            .map(|comando| git::verificar(&pasta, &comando, isolado));
                         (copiados, preparacao)
                     })
                     .await
@@ -4734,7 +4811,7 @@ impl Motor {
             };
             let _ = motor.update(cx, |motor, cx| {
                 if !motor.encerrado.load(Ordering::SeqCst) {
-                    motor.copia_pronta(id, geracao, copia, copiados, preparacao, cx)
+                    motor.copia_pronta(id, geracao, copia, copiados, preparacao, avisos_de_rede, cx)
                 }
             });
         })
@@ -4747,6 +4824,7 @@ impl Motor {
     /// Fim da preparação. Num chat de projeto, as mensagens que esperavam entram (ou, se falhou, ficam
     /// guardadas com o motivo, e o estado não muda). No ajudante, ele recebe o pedido (com o que chegou
     /// para ele enquanto isso) e o pai, a resposta de criar_tarefa.
+    #[allow(clippy::too_many_arguments)]
     fn copia_pronta(
         &mut self,
         id: u64,
@@ -4754,6 +4832,7 @@ impl Motor {
         copia: Option<anyhow::Result<(git::CopiaIsolada, Option<bool>)>>,
         copiados: Vec<String>,
         preparacao: Option<Verificacao>,
+        avisos_de_rede: Vec<String>,
         cx: &mut Context<Self>,
     ) {
         self.preparando.remove(&id);
@@ -4767,6 +4846,9 @@ impl Motor {
             return;
         }
         if self.de_projeto(&tarefa.trabalhador) {
+            for aviso in &avisos_de_rede {
+                self.avisar(&tarefa.trabalhador, aviso, false);
+            }
             self.copia_do_chat_pronta(&tarefa, copia, copiados, preparacao, cx);
             self.salvar();
             self.pesado_terminou(Pesado::Preparar(id), cx);
@@ -5917,6 +5999,7 @@ impl Motor {
         t.estado = EstadoTarefa::Conversa;
         t.rodada += 1;
         t.coordenador.clear();
+        t.pedido_da_issue = false;
         (t.revisao, t.entrega, t.mudancas, t.entrega_pendente) = (None, None, None, None);
         (t.parada, t.progresso, t.juntando_desde) = (None, None, 0);
         t.ressalva = ressalva;
@@ -6292,6 +6375,34 @@ impl Motor {
 }
 
 /// Lista de textos de um argumento MCP; aceita também um texto só, ou a lista escrita como JSON.
+/// O fetch de `<remoto>/<base>` antes da cópia do modo PR, na vez da rede do repositório (fora da
+/// trava do projeto). Os avisos vão para o chat: commits de `<base>` que só existem nesta máquina, ou
+/// sem rede (a cópia parte do que já estava baixado).
+async fn buscar_ponto_de_partida(e: &dyn crate::remoto::Executor, projeto: &Path, ponto: &str) -> Vec<String> {
+    let Some((remoto, base)) = ponto.split_once('/') else {
+        return Vec::new();
+    };
+    let resultado = {
+        let _vez = git::na_vez_da_rede(projeto).await;
+        git::buscar(e, projeto, remoto, &[base])
+    };
+    let mut avisos = Vec::new();
+    match resultado {
+        Ok(()) => {
+            let fora = git::commits_locais_fora(projeto, remoto, base);
+            if fora > 0 {
+                avisos.push(format!(
+                    "{} de {base} nesta máquina ainda não {} no GitHub; a cópia partiu do GitHub.",
+                    crate::ui::componentes::contagem(fora as usize, "commit", "commits"),
+                    if fora == 1 { "está" } else { "estão" }
+                ));
+            }
+        }
+        Err(_) => avisos.push(format!("Não consegui atualizar {base} do GitHub; parti do que já estava baixado.")),
+    }
+    avisos
+}
+
 fn lista_de_textos(valor: &Value) -> Vec<String> {
     match valor {
         Value::Array(lista) => lista.iter().filter_map(|v| v.as_str()).map(str::to_string).collect(),
@@ -6428,10 +6539,11 @@ fn marcar_interrompidas(
 fn precisa_preparar(tarefa: &Tarefa, trabalhador: &Chat, filas: &Filas) -> bool {
     let com_fila = filas.get(&trabalhador.id).is_some_and(|f| !f.is_empty());
     if trabalhador.papel == Papel::Projeto {
+        // O chat nascido de uma issue ("Só a cópia" também) prepara a cópia sem esperar mensagem.
         return tarefa.tem_copia()
             && !tarefa.preparada
             && !tarefa.estado.encerrada()
-            && (com_fila || tarefa.estado.ativa());
+            && (com_fila || tarefa.estado.ativa() || tarefa.efeitos_issue.is_some());
     }
     tarefa.estado.ativa()
         && (!tarefa.preparada

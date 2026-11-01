@@ -6,8 +6,9 @@
 use std::{cell::RefCell, time::SystemTime};
 
 use super::*;
-use crate::modelo::{
-    CriterioEntregue, Divisao, Entrega, EstadoCartao, ID_MESTRE, Parte, ParteCriada, SEM_PROJETO, SugestaoProjeto,
+use crate::{
+    issues::IssueLigada,
+    modelo::{CriterioEntregue, Divisao, Entrega, EstadoCartao, ID_MESTRE, Parte, ParteCriada, SEM_PROJETO, SugestaoProjeto},
 };
 
 /// No máximo tantas partes numa divisão.
@@ -761,7 +762,8 @@ pub fn pode_juntar_sozinho(t: &Tarefa, config: &Config) -> bool {
 /// O que fazer quando o turno de um chat com pedido aberto termina. `pendente`: perguntou ao dono ou
 /// tem mensagem na fila; `do_dono`: o turno foi aberto pelo dono (ou pelo lembrete).
 pub fn decidir_fim(t: &Tarefa, pendente: bool, do_dono: bool) -> FimDoPedido {
-    if !t.estado.ativa() || t.dono().is_none() {
+    // O pedido de uma issue ("Iniciar agente") é do usuário, sem dono.
+    if !t.estado.ativa() || (t.dono().is_none() && !t.pedido_da_issue) {
         return FimDoPedido::Nada;
     }
     if pendente {
@@ -779,13 +781,18 @@ pub fn decidir_fim(t: &Tarefa, pendente: bool, do_dono: bool) -> FimDoPedido {
     FimDoPedido::Nada
 }
 
-/// O turno foi aberto pelo dono do pedido ou pelo lembrete de entregar.
+/// O turno foi aberto pelo dono do pedido ou pelo lembrete de entregar. No pedido de uma issue
+/// (`dono` vazio: o usuário), pelo pedido da issue ou por uma mensagem dele.
 pub fn aberto_pelo_dono(entradas: &[Entrada], dono: &str) -> bool {
     entradas.iter().any(|e| {
-        e.remetente.as_deref() == Some(dono)
+        (!dono.is_empty() && e.remetente.as_deref() == Some(dono))
             || (e.de.as_deref() == Some("Vitral") && e.texto.starts_with(LEMBRETE_ENTREGA))
+            || (dono.is_empty() && (e.do_usuario() || (e.de.as_deref() == Some("Vitral") && e.texto.starts_with(PEDIDO_DA_ISSUE))))
     })
 }
+
+/// O começo do pedido de uma issue (`prompts::tarefa_da_issue`).
+pub const PEDIDO_DA_ISSUE: &str = "Pedido da issue ";
 
 /// A entrega formal como texto, para o relatório e para o revisor.
 pub fn texto_da_entrega(e: &Entrega, criterios: &[String]) -> String {
@@ -1624,13 +1631,19 @@ impl Motor {
             } else {
                 format!("pedido enviado ao chat {tarefa} \"{titulo_do_chat}\" ({projeto})")
             });
-            let entrada = Entrada {
+            let mut entrada = Entrada {
                 de: Some("Mestre".into()),
                 remetente: Some(ID_MESTRE.into()),
                 texto,
                 anexos: divisao.anexos.clone(),
                 ..Default::default()
             };
+            // A parte com issue leva o texto dela, delimitado (o chat roda isolado já neste turno).
+            if let Some(issue) = &p.issue {
+                entrada.extra = self.bloco_guardado(issue);
+                entrada.terceiros = true;
+                entrada.referencias = vec![issue.chave.clone()];
+            }
             self.filas.entry(chat.clone()).or_default().push(entrada);
             self.registrar("pedido", autor, chat, &p.projeto, Some(*tarefa), &format!("Pedido \"{}\"", p.titulo));
             chats.push(chat.clone());
@@ -1682,6 +1695,10 @@ impl Motor {
                 t.base = git::cabeca(&origem);
             }
         }
+        // A parte com issue nasce como o chat da issue: isolado, no ramo dela e com os efeitos.
+        if let Some(issue) = &p.issue {
+            self.tarefa_da_parte_com_issue(n, issue, cx);
+        }
         Ok((id, n))
     }
 
@@ -1692,6 +1709,10 @@ impl Motor {
         let t = self.tarefa_mut(n).ok_or("O chat não recebe pedidos.")?;
         t.rodada += 1;
         abrir_pedido(t, p, cartao);
+        // A issue da parte fica ligada ao chat que ainda não tem uma (o ramo continua o mesmo).
+        if t.issue.is_none() {
+            t.issue = p.issue.clone();
+        }
         if t.forma == Forma::DiretaGit {
             t.base = git::cabeca(&origem);
         }
@@ -1805,7 +1826,8 @@ impl Motor {
     /// conferência; sem ela, um lembrete por rodada e, depois dele, o turno aberto pelo dono (ou pelo
     /// lembrete) conta como entrega sem formulário.
     pub(super) fn fim_do_pedido(&mut self, chat: &Chat, t: &Tarefa, erro: bool, texto: &str, cx: &mut Context<Self>) {
-        let Some(dono) = t.dono().filter(|_| t.estado.ativa()).map(str::to_string) else {
+        // O pedido de uma issue é do usuário: o dono fica vazio.
+        let Some(dono) = t.dono().map(str::to_string).or_else(|| t.pedido_da_issue.then(String::new)).filter(|_| t.estado.ativa()) else {
             return;
         };
         if erro {
@@ -1829,13 +1851,15 @@ impl Motor {
                 if let Some(t) = self.tarefa_mut(t.id) {
                     t.lembrete_rodada = t.rodada;
                 }
-                let quem = if dono == ID_MESTRE {
-                    "Mestre".to_string()
+                let de_quem = if dono.is_empty() {
+                    format!("da issue {}", t.issue.as_ref().map_or("", |i| i.chave.as_str()))
+                } else if dono == ID_MESTRE {
+                    "do Mestre".to_string()
                 } else {
-                    self.chat(&dono).map_or_else(|| dono.clone(), |c| format!("chat \"{}\"", c.titulo))
+                    self.chat(&dono).map_or_else(|| format!("do {dono}"), |c| format!("do chat \"{}\"", c.titulo))
                 };
                 let lembrete = format!(
-                    "{LEMBRETE_ENTREGA} do {quem} (chat {}), verifique e chame entregar_tarefa; se não, continue.",
+                    "{LEMBRETE_ENTREGA} {de_quem} (chat {}), verifique e chame entregar_tarefa; se não, continue.",
                     t.id
                 );
                 self.entregar(&chat.id, Some("Vitral".into()), lembrete, cx);
@@ -1976,8 +2000,10 @@ impl Motor {
     /// A janela voltou depois de `minutos_para_resumo` fora (ou abriu, com uma saída gravada): monta o
     /// resumo do que aconteceu, só na memória.
     pub fn usuario_voltou(&mut self, cx: &mut Context<Self>) {
-        // O login do gh depois de "Entrar no GitHub" e a chave do Linear que ainda não foi lida.
+        // O login do gh depois de "Entrar no GitHub" e a chave do Linear que ainda não foi lida; as
+        // listas e detalhes de issue na tela contam como abertos de novo.
         self.conexoes_ao_voltar(cx);
+        self.issues_ao_voltar();
         let desde = self.visto_em;
         let ate = agora();
         if desde == 0 || ate.saturating_sub(desde) < self.config.minutos_para_resumo * 60 {
@@ -2069,7 +2095,27 @@ impl Motor {
             }
             "ver_chat" => self.texto_ver_chat(&texto("chat"), a["ultimas"].as_u64().unwrap_or(10)).map_or_else(Resposta::erro, Resposta::ok),
             "historico" => self.texto_historico(a["horas"].as_u64().unwrap_or(24), &texto("projeto")).map_or_else(Resposta::erro, Resposta::ok),
-            "propor_divisao" => self.propor_divisao(&a, cx),
+            "propor_divisao" => {
+                // A issue de cada parte é lida antes (o detalhe dela vai no pedido do chat); um
+                // erro volta ao Mestre com o número da parte.
+                let partes = lista_de(&a["partes"]).unwrap_or_default();
+                let argumentos = a.clone();
+                let resposta = chamada.resposta;
+                self.issues_das_partes(
+                    &partes,
+                    move |m, issues, cx| {
+                        let r = match issues {
+                            Ok(issues) => m.propor_divisao(&argumentos, issues, cx),
+                            Err(motivo) => Resposta::erro(motivo),
+                        };
+                        let _ = resposta.try_send(r);
+                        m.salvar();
+                        cx.notify();
+                    },
+                    cx,
+                );
+                return Ok(());
+            }
             "sugerir_projeto" => self.sugerir_projeto(&a, cx),
             "lembrar" => self.lembrar(&texto("texto"), cx),
             "esquecer" => match esquecer_em(&self.dados.memoria(), &texto("texto")) {
@@ -2494,9 +2540,13 @@ impl Motor {
 
     /// `propor_divisao`: valida, confere se já não foi proposta (mesmo turno ou mesma assinatura em 2
     /// h), grava o cartão e, nos três casos da regra, começa direto.
-    fn propor_divisao(&mut self, a: &Value, cx: &mut Context<Self>) -> Resposta {
+    /// `issues`: a issue resolvida de cada parte (`None` sem issue), na ordem de `partes`.
+    fn propor_divisao(&mut self, a: &Value, issues: Vec<Option<IssueLigada>>, cx: &mut Context<Self>) -> Resposta {
         let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
-        let brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
+        let mut brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
+        for (parte, issue) in brutas.iter_mut().zip(issues) {
+            parte.issue = issue;
+        }
         let perguntas: Vec<String> = lista_de_textos(&a["perguntas"]).into_iter().filter(|p| !p.trim().is_empty()).collect();
         let partes = {
             let ocupado = |id: &str| self.ocupado_para_pedido(id);
@@ -2751,8 +2801,9 @@ impl Motor {
             ));
         }
         t.entrega = Some(Entrega { resumo, como_verificou: texto("como_verificou"), criterios, pendencias: texto("pendencias"), rodada: t.rodada, em: agora() });
+        let para = if t.dono().is_none() && t.pedido_da_issue { "mostra ao usuário" } else { "manda ao Mestre" };
         Resposta::ok(format!(
-            "Entrega da rodada {} registrada. Encerre sua vez: o Vitral confere (verificação e revisor) e manda ao Mestre.",
+            "Entrega da rodada {} registrada. Encerre sua vez: o Vitral confere (verificação e revisor) e {para}.",
             t.rodada
         ))
     }
@@ -3104,6 +3155,24 @@ mod testes {
         assert!(aberto_pelo_dono(&do_dono, ID_MESTRE));
         let lembrete = vec![Entrada { de: Some("Vitral".into()), texto: format!("{LEMBRETE_ENTREGA} do Mestre (chat 12)"), ..Default::default() }];
         assert!(aberto_pelo_dono(&lembrete, ID_MESTRE));
+        assert!(!aberto_pelo_dono(&[Entrada { texto: "oi".into(), ..Default::default() }], ID_MESTRE));
+    }
+
+    #[test]
+    fn pedido_da_issue_e_do_usuario() {
+        // Sem dono, o pedido de "Iniciar agente" entrega como o do Mestre: lembra uma vez e entrega.
+        let issue = Tarefa { pedido_da_issue: true, rodada: 1, criterios: vec!["a".into()], ..tarefa_de(13, "c13", EstadoTarefa::Rodando) };
+        assert_eq!(decidir_fim(&issue, false, true), FimDoPedido::Lembrar);
+        assert_eq!(decidir_fim(&issue, true, true), FimDoPedido::Esperar);
+        let lembrado = Tarefa { lembrete_rodada: 1, ..issue.clone() };
+        assert_eq!(decidir_fim(&lembrado, false, true), FimDoPedido::Entregar { formal: false });
+        assert_eq!(decidir_fim(&Tarefa { pedido_da_issue: false, ..lembrado }, false, true), FimDoPedido::Nada, "conversa sem pedido");
+        // O turno é do pedido quando traz o pedido da issue ou uma mensagem do usuário.
+        let pedido = Entrada { de: Some("Vitral".into()), texto: format!("{PEDIDO_DA_ISSUE}ENG-5 · Tarefa #13 · Loja"), ..Default::default() };
+        assert!(aberto_pelo_dono(&[pedido], ""));
+        assert!(aberto_pelo_dono(&[Entrada { texto: "corrija o botão".into(), ..Default::default() }], ""));
+        assert!(!aberto_pelo_dono(&[Entrada { de: Some("Vitral".into()), texto: "aviso".into(), ..Default::default() }], ""));
+        // No pedido do Mestre, a mensagem do usuário não é do dono.
         assert!(!aberto_pelo_dono(&[Entrada { texto: "oi".into(), ..Default::default() }], ID_MESTRE));
     }
 
