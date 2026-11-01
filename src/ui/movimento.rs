@@ -470,11 +470,11 @@ struct Preferencia {
 
 impl Global for Preferencia {}
 
-/// Liga o movimento reduzido conforme a escolha guardada e o GNOME; uma vez, na abertura. Ligado
-/// aqui, o kit não desliga depois.
+/// Liga o movimento reduzido conforme a escolha guardada e o sistema; uma vez, na abertura (depois
+/// do `gpui_kit::init`). Ligado aqui, o kit não desliga depois.
 pub fn iniciar(cx: &mut App) {
     let escolha = Animacoes::do_json(super::zoom::interface().as_ref().and_then(|v| v.get("animacoes")));
-    let sistema = reduzido_no_sistema();
+    let sistema = reduzido_no_sistema(cx);
     cx.set_global(Preferencia { escolha, sistema });
     if escolha.reduz(sistema) {
         cx.set_reduce_motion(true);
@@ -503,11 +503,24 @@ pub fn escolher_animacoes(escolha: Animacoes, cx: &mut App) {
     .detach();
 }
 
-/// Movimento reduzido no sistema: o GNOME com as animações desligadas ou `VITRAL_SEM_ANIMACAO=1`
-/// (a bancada). Lê o `gsettings` uma vez, na abertura.
-fn reduzido_no_sistema() -> bool {
+/// A escolha "seguir o sistema" e o aviso dela nas Configurações.
+pub const SEGUIR_O_SISTEMA: &str = if cfg!(windows) { "Seguir o Windows" } else { "Seguir o GNOME" };
+pub const SISTEMA_SEM_ANIMACOES: &str = if cfg!(windows) {
+    "O Windows está sem os efeitos de animação: tudo aparece pronto."
+} else {
+    "O GNOME está sem animações: tudo aparece pronto."
+};
+
+/// Movimento reduzido no sistema: o GNOME com as animações desligadas, o Windows com os "Efeitos de
+/// animação" desligados ou `VITRAL_SEM_ANIMACAO=1` (a bancada). No Linux, lê o `gsettings` uma vez, na
+/// abertura (o kit lê o portal, que responde depois). No Windows, o que o kit leu no `init`
+/// (`SPI_GETCLIENTAREAANIMATION`), que já está no `reduce_motion`.
+fn reduzido_no_sistema(cx: &App) -> bool {
     if std::env::var("VITRAL_SEM_ANIMACAO").is_ok_and(|v| v == "1") {
         return true;
+    }
+    if cfg!(windows) {
+        return cx.reduce_motion();
     }
     crate::processos::novo_comando("gsettings")
         .args(["get", "org.gnome.desktop.interface", "enable-animations"])
