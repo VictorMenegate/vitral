@@ -4,10 +4,24 @@
 # e depois `gh run download <id> -n prints-windows`. O runner não tem GPU: o DirectX 11 do GPUI cai no
 # WARP (o renderizador por software), então a animação é lenta, mas o desenho é o mesmo. O roteiro
 # está em ferramentas/prints-windows.ps1.
+#
+# O job do instalador (só à mão) pega os pacotes do Windows de uma rodada do release.yml (a última
+# que deu certo neste ramo, ou a do campo), instala em silêncio, confere os arquivos, o atalho e o
+# AppUserModelID, abre pelo atalho, abre o zip portátil e desinstala, com prints
+# (ferramentas/instalador-windows.ps1); `gh run download <id> -n prints-instalador`.
 name: Prints do Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Rodada do release.yml com os pacotes do Windows (vazio: a última que deu certo neste ramo)."
+        required: false
+        default: ""
+      so_instalador:
+        description: "Só o instalador (sem os prints do app compilado aqui)."
+        type: boolean
+        default: false
   # Enquanto este arquivo não está no main, o GitHub só conhece o workflow (e aceita o "Run workflow")
   # depois de um push que o dispare: o do ramo windows que mexe no roteiro ou aqui.
   push:
@@ -27,6 +41,7 @@ env:
 jobs:
   prints:
     name: Prints (windows-x86_64)
+    if: ${{ !inputs.so_instalador }}
     runs-on: windows-2025
     timeout-minutes: 75
     steps:
@@ -60,4 +75,65 @@ jobs:
         with:
           name: prints-windows
           path: prints/
+          if-no-files-found: warn
+
+  instalador:
+    name: Instalador (windows-x86_64)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # baixar os pacotes de outra rodada
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Pacotes do Windows (de uma rodada do release.yml)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RODADA: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RODADA" ]; then
+            RODADA=$(gh run list -R "$GITHUB_REPOSITORY" --workflow release.yml --branch "$GITHUB_REF_NAME" \
+              --status success --limit 1 --json databaseId -q '.[0].databaseId')
+          fi
+          [ -n "$RODADA" ] || { echo "::error::nenhuma rodada do release.yml deu certo no ramo $GITHUB_REF_NAME"; exit 1; }
+          echo "pacotes da rodada $RODADA do release.yml"
+          gh run download "$RODADA" -R "$GITHUB_REPOSITORY" -n pacote-windows-x86_64 -D pacote
+          ls -l pacote
+
+      # O lançador sai igual em toda compilação (/Brepro no lancador/build.rs): compilado de novo
+      # aqui, tem a mesma soma do que veio no pacote. É o que deixa o atualizador trocar o lançador
+      # só quando ele muda. Informativo: diferente, o atualizador só o troca a cada versão.
+      - name: Rust (versão do rust-toolchain.toml)
+        shell: bash
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+
+      - name: O lançador compilado de novo
+        shell: pwsh
+        env:
+          VITRAL_CANAL: estavel
+        run: |
+          cargo build --locked --release -p vitral-lancador
+          Expand-Archive -Path (Get-ChildItem pacote -Filter *.zip).FullName -DestinationPath zip-do-pacote
+          $daqui = (Get-FileHash target\release\vitral-lancador.exe).Hash
+          $doPacote = (Get-FileHash zip-do-pacote\vitral-lancador.exe).Hash
+          "compilado aqui: $daqui"; "do pacote:      $doPacote"
+          if ($daqui -ne $doPacote) { "::warning::o lançador compilado de novo saiu diferente do pacote" } else { "iguais" }
+
+      - name: Instalar, conferir, abrir e desinstalar
+        shell: pwsh
+        run: ./ferramentas/instalador-windows.ps1 -Pacote pacote -Saida prints-instalador
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: prints-instalador
+          path: prints-instalador/
           if-no-files-found: warn
