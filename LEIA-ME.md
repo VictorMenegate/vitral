@@ -958,7 +958,7 @@ vitral                                  # abre o app (no último chat, ou no Mes
 vitral ~/Projetos/loja                  # o projeto dessa pasta, ou o Novo projeto com ela ligada
 vitral --nova loja "o que fazer"        # um chat novo no projeto loja, já com a mensagem
 vitral --nova mestre "como estão os projetos?"
-cargo test                              # testes (git, motor, revisor, processos, dados e migração, importação, atualização, interface, --instalar)
+cargo test                              # testes (git, motor, revisor, processos, dados e migração, importação, atualização, interface, --instalar, lançador do Windows)
 ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral [pasta]   # teste visual isolado
 ./target/debug/vitral --vitrine         # todos os componentes da linguagem visual, sem pasta e sem motor
 ./target/debug/vitral --versao [--json] # a versão (e canal, commit, formato dos dados), sem janela
@@ -1047,7 +1047,7 @@ Precisa do `claude` (Claude Code) no PATH ou em `~/.local/bin`, do `git`, e no F
 freetype-devel libxcb-devel` para compilar. Das dependências em Rust, o `chrono` entrou para a hora
 das Rotinas (o `TimeField` do kit); já vinha no `Cargo.lock` pelo vendor.
 
-**No Windows** (10 1809 ou mais novo, x64; ainda sem instalador): precisa do **Git para Windows**
+**No Windows** (10 1809 ou mais novo, x64): precisa do **Git para Windows**
 (as cópias, a verificação e o hook rodam no Git Bash dele, achado como o Claude Code acha) e do
 **Claude Code nativo** (`irm https://claude.ai/install.ps1 | iex`, o `claude.exe` em
 `%USERPROFILE%\.local\bin`); o que faltar aparece como aviso no Mestre, e uma pasta de projeto
@@ -1058,6 +1058,19 @@ arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Win
 notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
 entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
 árvore inteira. Ainda não: contas extras, "Instalar o Codex" e a atualização sozinho.
+
+Para instalar no Windows, o `vitral-<versão>-windows-x86_64-instalador.exe` do release: só para o
+usuário, sem administrador (sem certificado de assinatura, o SmartScreen avisa na primeira vez: Mais
+informações › Executar assim mesmo). Ele põe o Vitral em `%LOCALAPPDATA%\Programs\Vitral` e o atalho
+no Menu Iniciar, com o AppUserModelID do app (o pino da barra e as notificações vão para ele). O
+`Vitral.exe` da raiz é o **lançador** (`lancador/`, só a std): lê o `versoes.txt` (`atual=` e
+`anterior=`) e abre o `app-<versão>\vitral.exe` da atual, ou o da anterior, ou o da maior `app-*`
+que tiver um, com os mesmos argumentos e o `VITRAL_LANCADOR` no ambiente, e sai; sem nenhum,
+explica numa caixa de mensagem. Cada versão fica na pasta dela porque o `.exe` aberto não pode ser
+sobrescrito: é o layout em que o atualizador do Windows vai trocar de versão. Desinstalar (em
+Aplicativos instalados) tira só o programa e o que o atualizador deixar na pasta dele; os dados e a
+configuração ficam. O `.zip` é a versão portátil: abra o `vitral.exe` direto (o lançador que vem
+junto só serve dentro da instalação).
 
 ## Versões e releases
 
@@ -1082,8 +1095,17 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
   tamanho e o SHA-256 de cada pacote) e o `SHA256SUMS`. O job de publicar roda no environment
   `release` (com aprovação do dono): assina o manifesto e as somas com o minisign, confere com o
   `pacote/vitral.pub` e publica como rascunho antes de soltar, para o "latest" nunca ficar pela
-  metade. Versão com sufixo sai como pré-lançamento, que o `releases/latest` ignora. O Windows já tem
-  os passos no workflow e entra descomentando a linha da matriz.
+  metade. Versão com sufixo sai como pré-lançamento, que o `releases/latest` ignora. No
+  `windows-2025` saem o `vitral-<versão>-windows-x86_64.zip` (portátil: o `vitral.exe`, o
+  `vitral-lancador.exe` e os textos), o `.tar.gz` com o mesmo conteúdo (o que o atualizador do
+  Windows vai baixar; feito com o GNU tar e as opções do Linux) e o `-instalador.exe` (Inno Setup,
+  `pacote/windows/vitral.iss`, instalado pelo `choco` se a imagem não tiver), também no
+  `SHA256SUMS` e no manifesto (cada sistema lê só o pacote dele). Enquanto o `WINDOWS_OBRIGATORIO`
+  não liga, uma falha do Windows não segura o release: ele sai só com o Linux e um aviso. No ramo
+  `windows`, o Actions › Prints do Windows (job do instalador) instala o pacote de uma rodada do
+  release em silêncio, confere a pasta, o atalho, o AppUserModelID e a escolha do lançador, abre o
+  app pelo atalho e o zip direto, e desinstala conferindo o que sobrou
+  (`ferramentas/instalador-windows.ps1`).
 - **Assinatura**: minisign (Ed25519). A chave principal e a reserva, sem senha, ficam em
   `~/.config/vitral/chaves` (pasta 700, arquivos 600): a principal também vive no secret
   `MINISIGN_SECRET_KEY` do environment `release`; a reserva nunca vai ao GitHub. Guarde uma cópia
@@ -1198,9 +1220,10 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
 | `src/ui/` | Trilho (com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
-| `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`) e o `linux/instalar.sh` |
+| `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
+| `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
-| `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`) e `dependabot.yml` |
+| `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`, e o instalador de uma rodada do release, pelo `ferramentas/instalador-windows.ps1`) e `dependabot.yml` |
 | `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); fora dele, nada |
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
 | `tests/hook.rs` | `--hook-verificacao`: código 2 e o fim da saída no stderr quando a verificação falha, 0 na segunda parada seguida |
