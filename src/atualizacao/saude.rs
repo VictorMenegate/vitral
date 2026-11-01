@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::{
-    linux::{self, Abertura, EstadoApp, Raiz, Volta},
+    instalador::{self, Abertura, EstadoApp, Raiz, Volta},
     pacote,
 };
 
@@ -124,9 +124,12 @@ fn mais_nova(a: &str, b: &str) -> bool {
     matches!((semver::Version::parse(a), semver::Version::parse(b)), (Ok(a), Ok(b)) if a > b)
 }
 
-/// A sessão do PC: muda a cada boot (uma queda de energia é outra sessão). Sem ela, todas as
-/// aberturas contam como uma sessão só.
+/// A sessão do PC: muda a cada boot (uma queda de energia é outra sessão). Sem ela (fora do
+/// Linux, por enquanto), todas as aberturas contam como uma sessão só.
 pub fn sessao() -> String {
+    if !cfg!(target_os = "linux") {
+        return String::new();
+    }
     fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
 }
 
@@ -138,16 +141,16 @@ fn agora() -> u64 {
 pub fn ao_abrir(formato_disco: &dyn Fn() -> u32) -> AoAbrir {
     let Some(raiz) = Raiz::do_usuario() else { return AoAbrir::Seguir(None) };
     let app = raiz.app();
-    let Some(minha) = linux::versao_rodando(&app) else { return AoAbrir::Seguir(None) };
+    let Some(minha) = instalador::versao_rodando(&app) else { return AoAbrir::Seguir(None) };
     ao_abrir_em(&app, &minha, &sessao(), agora(), formato_disco)
 }
 
 fn ao_abrir_em(app: &Path, minha: &str, sessao: &str, agora: u64, formato_disco: &dyn Fn() -> u32) -> AoAbrir {
     // Outro Vitral instalando agora: esta abertura não conta.
-    let Ok(Some(_trava)) = linux::travar(app) else { return AoAbrir::Seguir(None) };
+    let Ok(Some(_trava)) = instalador::travar(app) else { return AoAbrir::Seguir(None) };
     let mut estado = EstadoApp::ler(app);
     let antes = estado.clone();
-    let atual = linux::versao_atual(app);
+    let atual = instalador::versao_atual(app);
     let anterior = anterior_que_abre(app, minha);
     let contexto = Contexto { minha, sessao, agora, atual: atual.as_deref(), anterior: anterior.as_deref() };
     let decisao = decidir(&mut estado, &contexto, formato_disco);
@@ -174,7 +177,7 @@ fn ao_abrir_em(app: &Path, minha: &str, sessao: &str, agora: u64, formato_disco:
 
 /// A anterior instalada (nunca esta), se o binário dela responde.
 fn anterior_que_abre(app: &Path, minha: &str) -> Option<String> {
-    let anterior = linux::versao_do_link(app, "anterior").filter(|a| a != minha)?;
+    let anterior = instalador::versao_do_link(app, "anterior").filter(|a| a != minha)?;
     let binario = app.join(&anterior).join("vitral");
     pacote::conferir_binario(&binario, &anterior, pacote::PRAZO_CONFERENCIA).ok()?;
     Some(anterior)
@@ -182,8 +185,8 @@ fn anterior_que_abre(app: &Path, minha: &str) -> Option<String> {
 
 /// `atual` passa para `para`; o `anterior` apontava para ela e sobra.
 fn apontar_para(app: &Path, para: &str) -> io::Result<()> {
-    linux::apontar(app, "atual", para)?;
-    if linux::versao_do_link(app, "anterior").as_deref() == Some(para) {
+    instalador::apontar(app, "atual", para)?;
+    if instalador::versao_do_link(app, "anterior").as_deref() == Some(para) {
         fs::remove_file(app.join("anterior"))?;
         fs::File::open(app)?.sync_all()?;
     }
@@ -193,7 +196,7 @@ fn apontar_para(app: &Path, para: &str) -> io::Result<()> {
 /// A versão abriu direito (10 s depois do primeiro quadro, ou ao fechar). Com outro Vitral
 /// instalando, deixa para depois: a instalação já troca o que falta confirmar.
 pub fn confirmar_esta(app: &Path, minha: &str) {
-    let Ok(Some(_trava)) = linux::travar(app) else { return };
+    let Ok(Some(_trava)) = instalador::travar(app) else { return };
     let mut estado = EstadoApp::ler(app);
     if confirmar(&mut estado, minha)
         && let Err(erro) = estado.gravar(app)
@@ -212,10 +215,10 @@ pub struct VoltaPossivel {
 /// A volta das Configurações, se há anterior (só a versão atual volta: a de antes de uma
 /// instalação já vai trocar no reinício).
 pub fn volta_possivel(app: &Path, minha: &str, formato_disco: u32) -> Option<VoltaPossivel> {
-    if linux::versao_atual(app).as_deref() != Some(minha) {
+    if instalador::versao_atual(app).as_deref() != Some(minha) {
         return None;
     }
-    let para = linux::versao_do_link(app, "anterior").filter(|a| a != minha && app.join(a).join("vitral").is_file())?;
+    let para = instalador::versao_do_link(app, "anterior").filter(|a| a != minha && app.join(a).join("vitral").is_file())?;
     let le_o_disco = pode_voltar(&EstadoApp::ler(app), &para, formato_disco);
     Some(VoltaPossivel { para, le_o_disco })
 }
@@ -223,9 +226,9 @@ pub fn volta_possivel(app: &Path, minha: &str, formato_disco: u32) -> Option<Vol
 /// Configurações › Voltar para a anterior: a de agora vai para as recusadas e `atual` aponta para
 /// a anterior. Quem chama reinicia. Devolve a versão para onde voltou.
 pub fn voltar(app: &Path, minha: &str, formato_disco: u32) -> Result<String, String> {
-    let trava = linux::travar(app).map_err(|e| e.to_string())?;
+    let trava = instalador::travar(app).map_err(|e| e.to_string())?;
     let Some(_trava) = trava else { return Err("Outro Vitral está instalando agora; tente de novo daqui a pouco.".into()) };
-    let Some(para) = linux::versao_do_link(app, "anterior").filter(|a| a != minha) else {
+    let Some(para) = instalador::versao_do_link(app, "anterior").filter(|a| a != minha) else {
         return Err("Não há versão anterior instalada.".into());
     };
     if pacote::conferir_binario(&app.join(&para).join("vitral"), &para, pacote::PRAZO_CONFERENCIA).is_err() {
@@ -242,11 +245,11 @@ pub fn voltar(app: &Path, minha: &str, formato_disco: u32) -> Result<String, Str
     Ok(para)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod testes {
     use super::*;
     use crate::atualizacao::{
-        linux::{Confirmar, Instalada, Origem, testes::layout_com, travar},
+        linux::{self, Confirmar, Instalada, Origem, testes::layout_com, travar},
         pacote::{gravar_atomico, testes::binario_falso},
     };
     use std::collections::BTreeMap;

@@ -79,7 +79,7 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
 /// repositório de cima ignora) também cai na varredura.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
     // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
-    let saida = std::process::Command::new("git")
+    let saida = crate::processos::novo_comando("git")
         .arg("-C")
         .arg(pasta)
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
@@ -129,13 +129,13 @@ pub(super) fn listar(pasta: &Path) -> Vec<String> {
 
 #[cfg(test)]
 mod testes {
-    use std::{path::Path, process::Command};
+    use std::path::Path;
 
     use super::{filtrar_arquivos, grupos_de_arquivos, icone_do_arquivo, listar};
-    use crate::tema::Lucide;
+    use crate::{processos::novo_comando, tema::Lucide};
 
     fn git(pasta: &Path, args: &[&str]) {
-        let saida = Command::new("git").arg("-C").arg(pasta).args(args).output().unwrap();
+        let saida = novo_comando("git").arg("-C").arg(pasta).args(args).output().unwrap();
         assert!(saida.status.success(), "{}", String::from_utf8_lossy(&saida.stderr));
     }
 

@@ -118,7 +118,7 @@ impl Motor {
     /// do arquivo quando o chat abre): só o marco de onde ela continua. Devolve o id e o nome do
     /// destino.
     fn criar_chat_importado(&mut self, s: &Sessao) -> (String, String) {
-        let canonica = s.cwd.canonicalize().unwrap_or_else(|_| s.cwd.clone());
+        let canonica = dunce::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone());
         let destino = importar::destino(&canonica, &self.projetos);
         let projeto = destino.map_or_else(String::new, |(p, _)| p.id.clone());
         let forma = importar::forma(&canonica, destino.map(|(_, l)| l));

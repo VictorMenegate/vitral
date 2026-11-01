@@ -10,9 +10,10 @@ anyhow = "1.0.104"
 # chrono: a hora das Rotinas no TimeField do kit (que já depende dele).
 chrono = "0.4.45"
 dirs = "7.0.0"
+# dunce: o canonicalize sem o `\\?\C:\…` do Windows (no Linux é o próprio fs::canonicalize).
+dunce = "1.0.5"
 # syntect: cor de sintaxe no chat, no painel de arquivo e no Revisar (o realce leve; o tree-sitter custa dezenas de MB).
 gpui-kit = { version = "0.8.1", features = ["syntect"] }
-libc = "0.2.191"
 # minisign-verify: confere a assinatura das versões novas (sem dependências, do autor do minisign).
 minisign-verify = "0.3.0"
 # Atualização automática: semver compara as versões, sha2 confere o pacote baixado, tar e flate2
@@ -27,6 +28,21 @@ serde_json = "1.0.154"
 smol = "2.0.2"
 tiny_http = "0.12.0"
 uuid = { version = "1.29.0", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+# libc: grupos de processos, sinais e o waitid (src/processos/unix.rs) e o renameat2 e o statvfs do
+# atualizador do Linux. Fora do Unix não compila: é o que garante que não sobrou nada dele lá.
+libc = "0.2.191"
+
+[target.'cfg(windows)'.dependencies]
+# windows-sys: Job Objects e threads (src/processos/windows.rs). Já vinha no Cargo.lock pelo GPUI.
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [profile.dev]
 debug = "line-tables-only"

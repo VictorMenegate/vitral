@@ -1,8 +1,12 @@
 # Compila e testa nos PRs e nos pushes. No main, deixa o cache do release aquecido para o tag.
 #
-# Windows: desligado até o Lote W1 (o código ainda usa std::os::unix e libc). Para ver como está,
-# a variável do repositório WINDOWS_CI=true (Settings › Secrets and variables › Actions ›
-# Variables) liga o job sem reprovar nada; WINDOWS_OBRIGATORIO=true faz ele reprovar.
+# Windows: compila e testa desde o Lote W1, ainda sem reprovar. A variável do repositório
+# WINDOWS_CI=true (Settings › Secrets and variables › Actions › Variables) liga o job sem reprovar
+# nada; WINDOWS_OBRIGATORIO=true faz ele reprovar.
+#
+# O cache do rust-cache só é salvo no main (um ramo lê o do main, mas não o de outro ramo). Enquanto
+# os lotes do Windows (W1 a W4) estão no ramo `windows`, ele também salva lá: sem isso, cada rodada
+# do ramo compila o GPUI do zero (uns 20 minutos no Windows).
 name: CI
 
 on:
@@ -48,7 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: dev-linux-x86_64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/windows' }}
 
       - name: Testes
         run: cargo test --locked
@@ -73,7 +77,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: dev-windows-x86_64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/windows' }}
+          # Enquanto não reprova, um teste falhando não joga fora a compilação.
+          cache-on-failure: ${{ vars.WINDOWS_OBRIGATORIO != 'true' }}
 
       - name: Testes
         shell: bash

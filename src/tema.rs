@@ -709,7 +709,7 @@ impl Cores {
 }
 
 #[cfg(test)]
-mod testes {
+pub(crate) mod testes {
     use super::{CORES_PROJETO, Cores, Icones, TEMA, raio};
     use gpui_kit::{Hsla, Rgba, rgb};
     use gpui_kit::component::{
@@ -911,7 +911,7 @@ mod testes {
         assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.08);
     }
 
-    fn arquivos_rs(pasta: &std::path::Path) -> Vec<std::path::PathBuf> {
+    pub(crate) fn arquivos_rs(pasta: &std::path::Path) -> Vec<std::path::PathBuf> {
         let mut pastas = vec![pasta.to_path_buf()];
         let mut arquivos = Vec::new();
         while let Some(pasta) = pastas.pop() {

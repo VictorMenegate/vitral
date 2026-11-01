@@ -135,7 +135,7 @@ impl Processo {
         mensagem: Mensagem,
         mut enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
-        let (mut comando, unidade) = processos::comando(binario_claude(), "claude");
+        let mut comando = processos::comando(binario_claude(), "claude");
         comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
         if let Some(pasta) = &opcoes.pasta_conta {
             comando.env("CLAUDE_CONFIG_DIR", pasta);
@@ -156,9 +156,8 @@ impl Processo {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut filho = comando.spawn().context("não abriu o claude")?;
+        let (mut filho, escopo) = processos::abrir(comando).context("não abriu o claude")?;
         let pid = filho.id();
-        let escopo = Escopo::novo(unidade, pid);
         let saida = filho.stdout.take().unwrap();
         let erros = filho.stderr.take().unwrap();
         let mut entrada = filho.stdin.take();
@@ -217,9 +216,14 @@ impl Processo {
 
     pub fn interromper(&mut self) {
         self.entrada = None;
+        // SAFETY: o processo ainda não foi colhido (é do `Child`), então o número é dele.
+        #[cfg(unix)]
         unsafe {
             libc::kill(self.filho.id() as i32, libc::SIGINT);
         }
+        // Sem console, no Windows não há Ctrl+C para mandar: por enquanto, para tudo.
+        #[cfg(windows)]
+        self.escopo.parar();
     }
 
     /// SIGTERM no claude e em tudo que ele abriu (com SIGKILL ele não limpa nada e os shells,
@@ -374,13 +378,13 @@ pub fn versao_de(texto: &str) -> Option<Versao> {
 /// `versions/<versão>`; sem ele, pergunta ao próprio `claude --version`.
 pub fn versao_instalada() -> Option<Versao> {
     let binario = binario_claude();
-    if let Some(versao) = std::fs::canonicalize(&binario)
+    if let Some(versao) = dunce::canonicalize(&binario)
         .ok()
         .and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
     {
         return Some(versao);
     }
-    let saida = std::process::Command::new(&binario)
+    let saida = processos::novo_comando(&binario)
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -544,19 +548,26 @@ fn conteudo_resultado(conteudo: &Value) -> String {
 
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
 pub fn binario_claude() -> PathBuf {
-    if let Some(caminho) = std::env::var_os("PATH").and_then(|path| {
+    binario_claude_em(std::env::var_os("PATH"), dirs::home_dir().unwrap_or_default())
+}
+
+/// No Windows, só o `claude.exe` do instalador nativo: o `claude.cmd` do npm precisa de um shell.
+const NOME_DO_CLAUDE: &str = if cfg!(windows) { "claude.exe" } else { "claude" };
+
+fn binario_claude_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
+    if let Some(caminho) = path.and_then(|path| {
         std::env::split_paths(&path)
-            .map(|p| p.join("claude"))
+            .map(|p| p.join(NOME_DO_CLAUDE))
             .find(|p| p.is_file())
     }) {
         return caminho;
     }
-    let home = dirs::home_dir().unwrap_or_default();
-    [".local/bin/claude", ".claude/local/claude"]
+    let locais: &[[&str; 2]] = if cfg!(windows) { &[[".local", "bin"]] } else { &[[".local", "bin"], [".claude", "local"]] };
+    locais
         .iter()
-        .map(|p| home.join(p))
+        .map(|[pasta, dentro]| home.join(pasta).join(dentro).join(NOME_DO_CLAUDE))
         .find(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("claude"))
+        .unwrap_or_else(|| PathBuf::from(NOME_DO_CLAUDE))
 }
 
 /// A versão a partir da qual o prompt vai por arquivo, sem a foto da sessão
@@ -570,7 +581,7 @@ pub fn sessao_expirou(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Pa
     let Some(config) = pasta_de_config(pasta_conta) else {
         return false;
     };
-    let projetos: Vec<PathBuf> = [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
+    let projetos: Vec<PathBuf> = [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()]
         .into_iter()
         .flatten()
         .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())))
@@ -591,7 +602,7 @@ pub fn sessao_existe(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Pat
     let Some(config) = pasta_de_config(pasta_conta) else {
         return false;
     };
-    [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
+    [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()]
         .into_iter()
         .flatten()
         .any(|pasta| {
@@ -755,6 +766,25 @@ mod testes {
     use super::*;
 
     #[test]
+    fn acha_o_claude_no_path_e_na_pasta_do_instalador() {
+        let base = std::env::temp_dir().join(format!("vitral-claude-{}", crate::modelo::novo_id()));
+        let (bin, casa) = (base.join("bin"), base.join("casa"));
+        let instalado = casa.join(".local").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&instalado).unwrap();
+        let path = || Some(std::env::join_paths([&bin]).unwrap());
+        // Em lugar nenhum: o nome solto, para o sistema procurar.
+        assert_eq!(binario_claude_em(path(), casa.clone()), PathBuf::from(NOME_DO_CLAUDE));
+        // O claude.cmd do npm (Windows) não serve: precisa de um shell.
+        std::fs::write(bin.join("claude.cmd"), "").unwrap();
+        std::fs::write(instalado.join(NOME_DO_CLAUDE), "").unwrap();
+        assert_eq!(binario_claude_em(path(), casa.clone()), instalado.join(NOME_DO_CLAUDE));
+        std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
+        assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn pasta_do_projeto_igual_a_do_claude_code() {
         assert_eq!(nome_do_projeto("/home/victor/Projetos/x.y_z"), "-home-victor-Projetos-x-y-z");
         // Conferido com a função do Claude Code 2.1.278 rodando no node.
@@ -896,7 +926,7 @@ mod testes {
         let conta = base.join("conta");
         // Sem a pasta do projeto: não dá para saber.
         assert!(!sessao_expirou(Some(&conta), &cwd, "s1"));
-        let projeto = conta.join("projects").join(nome_do_projeto(&cwd.canonicalize().unwrap().to_string_lossy()));
+        let projeto = conta.join("projects").join(nome_do_projeto(&dunce::canonicalize(&cwd).unwrap().to_string_lossy()));
         std::fs::create_dir_all(&projeto).unwrap();
         assert!(sessao_expirou(Some(&conta), &cwd, "s1"));
         std::fs::write(projeto.join("s1.jsonl"), "{}").unwrap();

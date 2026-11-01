@@ -102,6 +102,8 @@ impl Dados {
         let cache = dirs::cache_dir().ok_or_else(|| falta("cache"))?.join("vitral");
         let socket = match dirs::runtime_dir() {
             Some(execucao) => execucao.join("vitral").join("vitral.sock"),
+            // No Windows, o arquivo com a porta e a senha do canal (`instancia.rs`).
+            None if cfg!(windows) => cache.join("vitral.porta"),
             None => cache.join("vitral.sock"),
         };
         Ok(Self { pasta, config, cache, socket, gravador: Default::default(), notas: Default::default() })
@@ -690,9 +692,17 @@ fn ligar_anterior(caminho: &Path) {
 }
 
 pub fn sincronizar_pasta(pasta: &Path) -> Result<()> {
-    fs::File::open(pasta)
-        .and_then(|p| p.sync_all())
-        .with_context(|| format!("fsync de {}", pasta.display()))
+    fsync_da_pasta(pasta).with_context(|| format!("fsync de {}", pasta.display()))
+}
+
+/// O fsync da pasta, que grava no disco os renames de dentro dela. No Windows uma pasta não abre
+/// como arquivo e não há o que fazer: no NTFS o rename é atômico e entra no diário do sistema de
+/// arquivos.
+pub fn fsync_da_pasta(pasta: &Path) -> io::Result<()> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    fs::File::open(pasta)?.sync_all()
 }
 
 /// fsync de cada arquivo e pasta abaixo de `raiz` (sem seguir links), e dela por último.
@@ -703,10 +713,23 @@ fn sincronizar_arvore(raiz: &Path) -> Result<()> {
         if tipo.is_dir() {
             sincronizar_arvore(&entrada.path())?;
         } else if tipo.is_file() {
-            fs::File::open(entrada.path())?.sync_all()?;
+            fsync_do_arquivo(&entrada.path())?;
         }
     }
     sincronizar_pasta(raiz)
+}
+
+/// fsync de um arquivo já escrito. No Windows o FlushFileBuffers pede o arquivo aberto para escrita,
+/// e o que é só leitura (os objetos do git) fica como está.
+fn fsync_do_arquivo(caminho: &Path) -> io::Result<()> {
+    if cfg!(windows) {
+        return match fs::OpenOptions::new().write(true).open(caminho) {
+            Ok(arquivo) => arquivo.sync_all(),
+            Err(erro) if erro.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+            Err(erro) => Err(erro),
+        };
+    }
+    fs::File::open(caminho)?.sync_all()
 }
 
 fn ler_bytes(caminho: &Path) -> Result<Option<Vec<u8>>> {
@@ -832,7 +855,7 @@ pub fn escolher_origem<'a>(projeto: &'a Projeto, pasta: Option<&Path>) -> Result
     match pasta {
         None => Ok(&projeto.pastas[0]),
         Some(pasta) => {
-            let canonica = pasta.canonicalize().ok();
+            let canonica = dunce::canonicalize(pasta).ok();
             projeto
                 .pastas
                 .iter()
@@ -1415,7 +1438,7 @@ mod testes {
     }
 
     fn tem_commit(pasta: &Path) -> bool {
-        std::process::Command::new("git")
+        crate::processos::novo_comando("git")
             .arg("-C")
             .arg(pasta)
             .args(["rev-parse", "--verify", "-q", "HEAD"])
@@ -1556,6 +1579,8 @@ mod testes {
         let _ = fs::remove_dir_all(&raiz);
     }
 
+    // O link `atual` do atualizador é do Linux.
+    #[cfg(unix)]
     #[test]
     fn descartar_afasta_os_dados_e_deixa_o_app_instalado() {
         let raiz = pasta_de_teste("descartar");
@@ -1588,7 +1613,7 @@ mod testes {
     fn o_estado_do_atualizador_nao_e_o_dos_dados() {
         let raiz = pasta_de_teste("dois-estados");
         let dados = Dados::em(&raiz);
-        let app = crate::atualizacao::linux::Raiz { dados: raiz.clone(), bin: None }.app();
+        let app = crate::atualizacao::instalador::Raiz { dados: raiz.clone(), bin: None }.app();
         let dados_no_mesmo_lugar = Dados { pasta: raiz.join("vitral"), ..dados.clone() };
         assert_eq!(app, dados_no_mesmo_lugar.pasta.join(PASTA_DO_APP));
         assert_ne!(app.join("estado.json"), dados_no_mesmo_lugar.arquivo_estado());
@@ -1616,7 +1641,7 @@ mod testes {
         dados.marcar_formato();
         assert_eq!(dados.formato_no_disco(), FORMATO_DADOS);
         // A 0.2.0-rc.2 instalada (formato 1) não é destino de volta com os dados globais no disco.
-        use crate::atualizacao::{linux::EstadoApp, saude::pode_voltar};
+        use crate::atualizacao::{estado_app::EstadoApp, saude::pode_voltar};
         let app = EstadoApp { formatos: [("0.2.0-rc.2".to_string(), 1)].into(), ..Default::default() };
         assert!(!pode_voltar(&app, "0.2.0-rc.2", dados.formato_no_disco()));
         assert!(pode_voltar(&app, "0.2.0-rc.2", Dados::em(&raiz.join("vazia")).formato_no_disco()));

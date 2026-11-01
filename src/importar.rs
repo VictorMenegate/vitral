@@ -599,7 +599,7 @@ pub fn pastas_de_projects(raizes: &[PathBuf]) -> Vec<PathBuf> {
     let mut vistas = HashSet::new();
     raizes
         .iter()
-        .filter_map(|r| r.join("projects").canonicalize().ok())
+        .filter_map(|r| dunce::canonicalize(r.join("projects")).ok())
         .filter(|p| p.is_dir() && vistas.insert(p.clone()))
         .collect()
 }
@@ -608,7 +608,7 @@ pub fn pastas_de_projects(raizes: &[PathBuf]) -> Vec<PathBuf> {
 /// Vitral (os chats dele).
 pub fn pastas_de_fora(dados: &Path) -> Vec<PathBuf> {
     let mut pastas = vec![PathBuf::from("/tmp"), PathBuf::from("/var/tmp"), std::env::temp_dir(), dados.to_path_buf()];
-    let canonicas: Vec<PathBuf> = pastas.iter().filter_map(|p| p.canonicalize().ok()).collect();
+    let canonicas: Vec<PathBuf> = pastas.iter().filter_map(|p| dunce::canonicalize(p).ok()).collect();
     pastas.extend(canonicas);
     pastas.sort();
     pastas.dedup();
@@ -716,7 +716,7 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
                     l.vazias += 1;
                     continue;
                 };
-                let canonica = cwd.canonicalize().ok();
+                let canonica = dunce::canonicalize(&cwd).ok();
                 let de_fora = |c: &Path| filtro.de_fora.iter().any(|f| c.starts_with(f));
                 if lida.entrada.starts_with("sdk") || de_fora(&cwd) || canonica.as_deref().is_some_and(de_fora) {
                     l.de_teste += 1;
@@ -878,7 +878,7 @@ mod testes {
     fn pasta_de_teste(nome: &str) -> PathBuf {
         let pasta = std::env::temp_dir().join(format!("vitral-importar-{nome}-{}", novo_id()));
         fs::create_dir_all(&pasta).unwrap();
-        pasta.canonicalize().unwrap()
+        dunce::canonicalize(pasta).unwrap()
     }
 
     const S1: &str = "11111111-1111-4111-8111-111111111111";
@@ -886,6 +886,7 @@ mod testes {
     const S3: &str = "33333333-3333-4333-8333-333333333333";
     const S4: &str = "44444444-4444-4444-8444-444444444444";
     const S5: &str = "55555555-5555-4555-8555-555555555555";
+    #[cfg_attr(not(unix), allow(dead_code, reason = "só o teste do link da conta usa"))]
     const S6: &str = "66666666-6666-4666-8666-666666666666";
 
     fn usuario(cwd: &Path, quando: &str, conteudo: Value) -> String {
@@ -953,7 +954,7 @@ mod testes {
     }
 
     fn gravar(projects: &Path, cwd: &Path, id: &str, conteudo: &str) -> PathBuf {
-        let pasta = projects.join(cwd.to_string_lossy().replace(['/', '.'], "-"));
+        let pasta = projects.join(cwd.to_string_lossy().replace(['/', '\\', ':', '.'], "-"));
         fs::create_dir_all(&pasta).unwrap();
         let arquivo = pasta.join(format!("{id}.jsonl"));
         fs::write(&arquivo, conteudo).unwrap();
@@ -1042,6 +1043,8 @@ mod testes {
         assert_eq!(titulo_de("supercalifragilistico", 5), "super…");
     }
 
+    // O link simbólico da conta extra é do Unix (as contas extras ainda não existem no Windows).
+    #[cfg(unix)]
     #[test]
     fn listagem_filtra_e_nao_repete_pelo_link_da_conta() {
         let raiz = pasta_de_teste("listar");

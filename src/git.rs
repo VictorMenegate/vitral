@@ -4,7 +4,7 @@
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     modelo::Verificacao,
-    processos::{self, Escopo},
+    processos::{self, novo_comando},
 };
 
 /// Sem user.name/user.email no git, os commits do Vitral saem com uma identidade própria.
@@ -21,7 +21,7 @@ fn sem_identidade() -> bool {
     static SEM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SEM.get_or_init(|| {
         let valor = |chave: &str| {
-            Command::new("git")
+            novo_comando("git")
                 .args(["config", chave])
                 .output()
                 .map(|s| !String::from_utf8_lossy(&s.stdout).trim().is_empty())
@@ -32,7 +32,7 @@ fn sem_identidade() -> bool {
 }
 
 fn git(pasta: &Path, args: &[&str]) -> Result<String> {
-    let mut comando = Command::new("git");
+    let mut comando = novo_comando("git");
     // Sem isso, "ação.txt" sai como "a\303\247\303\243o.txt" (entre aspas) e nenhum caminho bate.
     comando.arg("-C").arg(pasta).args(["-c", "core.quotePath=false"]);
     if sem_identidade() {
@@ -75,7 +75,7 @@ pub fn usa_git(projeto: &Path) -> bool {
     let Ok(topo) = git(projeto, &["rev-parse", "--show-toplevel"]) else {
         return false;
     };
-    let mesmo = |a: &Path, b: &Path| a.canonicalize().ok() == b.canonicalize().ok();
+    let mesmo = |a: &Path, b: &Path| dunce::canonicalize(a).ok() == dunce::canonicalize(b).ok();
     mesmo(Path::new(&topo), projeto) && git(projeto, &["rev-parse", "HEAD"]).is_ok()
 }
 
@@ -105,7 +105,7 @@ impl Drop for Soltar {
 pub fn na_vez_do_projeto<T>(projeto: &Path, f: impl FnOnce() -> T) -> T {
     type Travas = std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>;
     static TRAVAS: std::sync::OnceLock<std::sync::Mutex<Travas>> = std::sync::OnceLock::new();
-    let chave = raiz_comum(projeto).unwrap_or_else(|| projeto.canonicalize().unwrap_or_else(|_| projeto.to_path_buf()));
+    let chave = raiz_comum(projeto).unwrap_or_else(|| dunce::canonicalize(projeto).unwrap_or_else(|_| projeto.to_path_buf()));
     let reentrou = SEGURADAS.with(|s| s.borrow().contains(&chave));
     assert!(!reentrou, "na_vez_do_projeto chamada dentro dela mesma ({})", chave.display());
     let trava = TRAVAS
@@ -183,7 +183,7 @@ pub fn recriar_worktree(origem: &Path, destino: &Path, branch: &str) -> Result<(
     let ramo = ramo_atual(origem);
     let existe = |b: &str| git(origem, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")]).is_ok();
     if destino.exists() {
-        let canonico = destino.canonicalize().unwrap_or_else(|_| destino.to_path_buf());
+        let canonico = dunce::canonicalize(destino).unwrap_or_else(|_| destino.to_path_buf());
         let registradas = git(origem, &["worktree", "list", "--porcelain"])?;
         let registrada = registradas
             .lines()
@@ -229,7 +229,7 @@ pub fn ramo_atual(pasta: &Path) -> Option<String> {
 /// que diz se uma cópia ainda pertence ao repositório da origem.
 pub fn raiz_comum(pasta: &Path) -> Option<PathBuf> {
     let comum = git(pasta, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
-    Path::new(&comum).canonicalize().ok()
+    dunce::canonicalize(Path::new(&comum)).ok()
 }
 
 /// A pasta tem o commit: é o mesmo repositório da cópia que nasceu dele (ou um clone).
@@ -254,7 +254,7 @@ pub fn reparar_copias(origem: &Path, copias: &[PathBuf]) -> Vec<PathBuf> {
 /// A raiz do repositório onde a pasta está (pode ser uma pasta acima dela).
 pub fn topo_do_repositorio(pasta: &Path) -> Option<PathBuf> {
     let topo = git(pasta, &["rev-parse", "--show-toplevel"]).ok()?;
-    Path::new(&topo).canonicalize().ok()
+    dunce::canonicalize(Path::new(&topo)).ok()
 }
 
 /// Onde a cópia está em relação à origem: commits que só ela tem, commits da origem que ela ainda
@@ -1056,10 +1056,23 @@ pub fn tamanho(bytes: u64) -> String {
     }
 }
 
+/// O que uma entrada ocupa no disco e, se é um arquivo com mais de um nome (hard link), quem ele é
+/// (disco e inode), para contar uma vez só.
+#[cfg(unix)]
+fn no_disco(dados: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+    use std::os::unix::fs::MetadataExt as _;
+    (dados.blocks() * 512, (!dados.is_dir() && dados.nlink() > 1).then(|| (dados.dev(), dados.ino())))
+}
+
+/// No Windows, o tamanho do arquivo: os hard links contam de novo (o total é aproximado).
+#[cfg(not(unix))]
+fn no_disco(dados: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+    (dados.len(), None)
+}
+
 /// Espaço que a pasta ocupa no disco, sem seguir links e contando uma vez só os arquivos com hard
 /// link (o node_modules do pnpm aponta para a loja dele).
 pub fn espaco_ocupado(pasta: &Path) -> u64 {
-    use std::os::unix::fs::MetadataExt as _;
     let mut vistos = std::collections::HashSet::new();
     let mut pendentes = vec![pasta.to_path_buf()];
     let mut total = 0;
@@ -1067,10 +1080,11 @@ pub fn espaco_ocupado(pasta: &Path) -> u64 {
         let Ok(dados) = std::fs::symlink_metadata(&caminho) else {
             continue;
         };
-        if !dados.is_dir() && dados.nlink() > 1 && !vistos.insert((dados.dev(), dados.ino())) {
+        let (ocupa, quem) = no_disco(&dados);
+        if quem.is_some_and(|quem| !vistos.insert(quem)) {
             continue;
         }
-        total += dados.blocks() * 512;
+        total += ocupa;
         if dados.is_dir()
             && let Ok(entradas) = std::fs::read_dir(&caminho)
         {
@@ -1083,7 +1097,6 @@ pub fn espaco_ocupado(pasta: &Path) -> u64 {
 /// Quantos arquivos a pasta tem e quanto ocupa (como `espaco_ocupado`), parando em `limite`
 /// entradas: o `node_modules` de um projeto pode ter centenas de milhares. Devolve se contou tudo.
 pub fn medir_pasta(pasta: &Path, limite: usize) -> (usize, u64, bool) {
-    use std::os::unix::fs::MetadataExt as _;
     let mut vistos = std::collections::HashSet::new();
     let mut pendentes = vec![pasta.to_path_buf()];
     let (mut arquivos, mut bytes, mut entradas) = (0, 0, 0);
@@ -1095,18 +1108,19 @@ pub fn medir_pasta(pasta: &Path, limite: usize) -> (usize, u64, bool) {
         let Ok(dados) = std::fs::symlink_metadata(&caminho) else {
             continue;
         };
+        let (ocupa, quem) = no_disco(&dados);
         if dados.is_dir() {
-            bytes += dados.blocks() * 512;
+            bytes += ocupa;
             if let Ok(lidas) = std::fs::read_dir(&caminho) {
                 pendentes.extend(lidas.flatten().map(|e| e.path()));
             }
             continue;
         }
         arquivos += 1;
-        if dados.nlink() > 1 && !vistos.insert((dados.dev(), dados.ino())) {
+        if quem.is_some_and(|quem| !vistos.insert(quem)) {
             continue;
         }
-        bytes += dados.blocks() * 512;
+        bytes += ocupa;
     }
     (arquivos, bytes, true)
 }
@@ -1294,7 +1308,7 @@ fn grupo_do_branch(branch: &str) -> Option<String> {
 
 fn git_com_entrada(pasta: &Path, args: &[&str], entrada: &str) -> Result<()> {
     use std::io::Write as _;
-    let mut filho = Command::new("git")
+    let mut filho = novo_comando("git")
         .arg("-C")
         .arg(pasta)
         .args(args)
@@ -1330,23 +1344,21 @@ fn rodar_com_limite(pasta: &Path, comando: &str, limite: Duration) -> (bool, Str
     let abrir = || -> std::io::Result<_> {
         // Um pipe só para stdout e stderr: a saída fica intercalada como no terminal.
         let (leitor, escritor) = std::io::pipe()?;
-        let (mut processo, unidade) = processos::comando("bash", "verificacao");
+        let mut processo = processos::comando("bash", "verificacao");
         processo
             .args(["-lc", comando])
             .current_dir(pasta)
             .stdin(Stdio::null())
             .stdout(escritor.try_clone()?)
             .stderr(escritor);
-        let filho = processo.spawn()?;
-        // O Command guarda a ponta de escrita: sem soltá-la, o pipe nunca fecha.
-        drop(processo);
-        Ok((leitor, unidade, filho))
+        // O Command guarda a ponta de escrita: o `abrir` solta, senão o pipe nunca fecha.
+        let (filho, escopo) = processos::abrir(processo)?;
+        Ok((leitor, filho, escopo))
     };
-    let (mut leitor, unidade, mut filho) = match abrir() {
+    let (mut leitor, mut filho, escopo) = match abrir() {
         Ok(aberto) => aberto,
         Err(erro) => return (false, format!("não rodou: {erro}")),
     };
-    let escopo = Escopo::novo(unidade, filho.id());
     let guardado = Arc::new(Mutex::new(Vec::new()));
     let leitura = std::thread::spawn({
         let guardado = guardado.clone();
@@ -1447,7 +1459,7 @@ fn foto_solta(pasta: &Path) -> Result<String> {
     let indice = std::env::temp_dir().join(format!("vitral-indice-{}", crate::modelo::novo_id()));
     let resultado = (|| {
         let com_indice = |args: &[&str]| -> Result<String> {
-            let saida = Command::new("git")
+            let saida = novo_comando("git")
                 .arg("-C")
                 .arg(pasta)
                 .args(args)
@@ -1491,7 +1503,7 @@ pub fn voltar_para(pasta: &Path, foto_antiga: &str) -> Result<usize> {
                 Err(erro) => erro.kind() == std::io::ErrorKind::NotFound,
             }
         } else {
-            Command::new("git")
+            novo_comando("git")
                 .arg("-C")
                 .arg(pasta)
                 .args(["show", &format!("{foto_antiga}:{arquivo}")])
@@ -1530,7 +1542,7 @@ fn volta_parcial(mexidos: usize, falharam: &[String]) -> String {
 /// O repositório de onde uma cópia (worktree) saiu: a pasta do `git-common-dir`, canônica.
 pub fn repositorio_da_copia(copia: &Path) -> Option<PathBuf> {
     let comum = git(copia, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
-    let comum = Path::new(&comum).canonicalize().ok()?;
+    let comum = dunce::canonicalize(Path::new(&comum)).ok()?;
     match comum.file_name() {
         Some(nome) if nome == ".git" => comum.parent().map(Path::to_path_buf),
         _ => Some(comum),
@@ -1562,6 +1574,8 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("vitral-teste-{}", crate::modelo::novo_id()));
         std::fs::create_dir_all(&pasta).unwrap();
         git(&pasta, &["init", "-q"]).unwrap();
+        // O Git para Windows vem com core.autocrlf=true, e os testes comparam o conteúdo byte a byte.
+        git(&pasta, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(pasta.join("a.txt"), "um\n").unwrap();
         git(&pasta, &["add", "-A"]).unwrap();
         git(&pasta, &["commit", "-q", "-m", "inicio"]).unwrap();
@@ -1614,9 +1628,13 @@ mod testes {
         let projeto = repositorio();
         let copia = criar_worktree(&projeto, &projeto.with_extension("copia"), "vitral/t1-nomes").unwrap();
         let (pasta, base) = (&copia.caminho, &copia.base);
-        let nomes = ["a.txt", "ação.txt", "com\"aspas.txt", "meu arquivo.txt", "pasta/configuração.md"];
+        // No Windows, aspas não valem em nome de arquivo.
+        let nomes: Vec<&str> = ["a.txt", "ação.txt", "com\"aspas.txt", "meu arquivo.txt", "pasta/configuração.md"]
+            .into_iter()
+            .filter(|nome| !(cfg!(windows) && nome.contains('"')))
+            .collect();
         std::fs::create_dir_all(pasta.join("pasta")).unwrap();
-        for nome in nomes {
+        for nome in &nomes {
             std::fs::write(pasta.join(nome), "mudou\n").unwrap();
         }
         let mut mudados = arquivos_mudados(pasta, base);
@@ -1833,6 +1851,8 @@ mod testes {
         let _ = std::fs::remove_dir_all(&projeto);
     }
 
+    // A verificação roda no bash: no Windows ela vai para o Git Bash (Lote W2).
+    #[cfg(unix)]
     #[test]
     fn verificacao_com_saida_grande_nao_trava_e_guarda_o_fim() {
         let pasta = std::env::temp_dir();
@@ -1849,6 +1869,7 @@ mod testes {
         assert!(v.saida.ends_with("a\nb"), "{}", v.saida);
     }
 
+    #[cfg(unix)]
     #[test]
     fn verificacao_derruba_o_que_ficou_em_segundo_plano() {
         let pasta = std::env::temp_dir().join(format!("vitral-verif-{}", crate::modelo::novo_id()));
@@ -1919,8 +1940,10 @@ mod testes {
         let do_projeto = projeto.join("src/main.rs").to_string_lossy().to_string();
         let main = diff_para_coordenador(pasta, &projeto, base, &[do_projeto], &[], 20_000).unwrap();
         assert!(main.contains("b/src/main.rs") && !main.contains("Cargo.lock"), "{main}");
-        let fora = diff_para_coordenador(pasta, &projeto, base, &["/etc/hosts".into()], &[], 20_000).unwrap();
-        assert!(fora.contains("/etc/hosts não fica dentro do projeto"), "{fora}");
+        // Um caminho absoluto fora do projeto (no Windows, "/etc/hosts" não é absoluto).
+        let de_fora = if cfg!(windows) { r"C:\Windows\win.ini" } else { "/etc/hosts" };
+        let fora = diff_para_coordenador(pasta, &projeto, base, &[de_fora.into()], &[], 20_000).unwrap();
+        assert!(fora.contains(&format!("{de_fora} não fica dentro do projeto")), "{fora}");
 
         // Grande demais: --stat, os arquivos que cabem inteiros (o apontado primeiro) e o que falta.
         for nome in ["a.txt", "b.txt", "c.txt", "d.txt"] {
@@ -1962,7 +1985,12 @@ mod testes {
         std::fs::write(pacote.join("index.js"), &bytes).unwrap();
         std::fs::hard_link(pacote.join("index.js"), pacote.join("mesmo.js")).unwrap();
         let ocupado = espaco_ocupado(&pacote);
-        assert!((10_000..20_000).contains(&ocupado), "o hard link conta uma vez só: {ocupado}");
+        if cfg!(unix) {
+            assert!((10_000..20_000).contains(&ocupado), "o hard link conta uma vez só: {ocupado}");
+        } else {
+            // No Windows, o tamanho de cada nome: o hard link conta de novo.
+            assert_eq!(ocupado, 20_000);
+        }
 
         std::fs::write(copia.caminho.join("a.txt"), "mudou\n").unwrap();
         let ponto = foto(&copia.caminho).unwrap();

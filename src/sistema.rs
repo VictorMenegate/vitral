@@ -2,10 +2,16 @@
 
 use std::{path::Path, process::Command};
 
+use crate::processos::novo_comando;
+
 fn soltar(comando: &mut Command) {
-    // Fora do grupo do Vitral: o programa continua aberto se o Vitral fechar.
-    use std::os::unix::process::CommandExt;
-    comando.process_group(0);
+    // Fora do grupo do Vitral: o programa continua aberto se o Vitral fechar. (No Windows ele já
+    // nasce fora: só os processos do `processos::abrir` entram num job.)
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        comando.process_group(0);
+    }
     for variavel in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] {
         comando.env_remove(variavel);
     }
@@ -19,12 +25,12 @@ pub fn abrir_no_editor(pasta: &Path) {
         .into_iter()
         .find(|e| !e.starts_with('/') || Path::new(e).exists())
         .unwrap_or("code");
-    soltar(Command::new(editor).arg(pasta));
+    soltar(novo_comando(editor).arg(pasta));
 }
 
 /// Abre um terminal na pasta; com `comando`, roda ele e deixa o shell aberto depois.
 pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
-    let mut terminal = Command::new("ptyxis");
+    let mut terminal = novo_comando("ptyxis");
     match comando {
         Some(comando) => {
             let pasta = pasta.display().to_string().replace('\'', "'\\''");
@@ -43,7 +49,7 @@ pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
 /// Manda o arquivo ou a pasta para a Lixeira do GNOME (`gio trash`, que dá para restaurar no
 /// Arquivos). Nunca apaga: se a lixeira não aceita, devolve o erro e tudo fica no lugar.
 pub fn para_a_lixeira(caminho: &Path) -> anyhow::Result<()> {
-    let saida = Command::new("gio")
+    let saida = novo_comando("gio")
         .arg("trash")
         .arg("--")
         .arg(caminho)
@@ -62,5 +68,5 @@ pub fn para_a_lixeira(caminho: &Path) -> anyhow::Result<()> {
 
 /// A Lixeira no Arquivos do GNOME.
 pub fn abrir_lixeira() {
-    soltar(Command::new("gio").args(["open", "trash:///"]));
+    soltar(novo_comando("gio").args(["open", "trash:///"]));
 }

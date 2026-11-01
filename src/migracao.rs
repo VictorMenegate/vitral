@@ -145,7 +145,7 @@ pub fn raizes_antigas(dados: &Dados, argumento: Option<&Path>) -> Vec<PathBuf> {
         .map(PathBuf::from);
     let mut raizes: Vec<PathBuf> = Vec::new();
     for raiz in argumento.map(Path::to_path_buf).into_iter().chain(recentes) {
-        let Ok(raiz) = raiz.canonicalize() else {
+        let Ok(raiz) = dunce::canonicalize(raiz) else {
             continue;
         };
         if tem_vitral_antigo(&raiz) && !raizes.contains(&raiz) {
@@ -228,7 +228,7 @@ fn ler_antigo(caminho: &Path) -> Result<Antigo> {
 /// Lê uma pasta antiga sem escrever nada nela (nem a cópia de um arquivo ilegível). Conteúdo
 /// estragado vira aviso; erro de leitura do disco faz a migração inteira falhar.
 pub fn ler_raiz(raiz: &Path) -> Result<RaizAntiga> {
-    let raiz = raiz.canonicalize().with_context(|| raiz.display().to_string())?;
+    let raiz = dunce::canonicalize(raiz).with_context(|| raiz.display().to_string())?;
     let pasta = raiz.join(".vitral");
     let mut lida = RaizAntiga { raiz: raiz.clone(), ..Default::default() };
     let arquivo = pasta.join("estado.json");
@@ -282,7 +282,7 @@ pub fn ler_raiz(raiz: &Path) -> Result<RaizAntiga> {
             Some((_, caminho)) => caminho.clone(),
             None if nome_de_arquivo(&nome) => {
                 let cru = raiz.join(&nome);
-                cru.canonicalize().unwrap_or(cru)
+                dunce::canonicalize(&cru).unwrap_or(cru)
             }
             None => continue,
         };
@@ -305,7 +305,7 @@ pub fn subpastas_antigas(raiz: &Path) -> io::Result<Vec<(String, PathBuf)>> {
         if nome.starts_with('.') {
             continue;
         }
-        let caminho = entrada.path().canonicalize().unwrap_or_else(|_| entrada.path());
+        let caminho = dunce::canonicalize(entrada.path()).unwrap_or_else(|_| entrada.path());
         pastas.push((nome, caminho));
     }
     pastas.sort_by(|a, b| ordem_alfabetica(&a.0, &b.0));
@@ -877,7 +877,7 @@ mod testes {
     fn pasta_de_teste(nome: &str) -> PathBuf {
         let pasta = std::env::temp_dir().join(format!("vitral-migracao-{nome}-{}", novo_id()));
         fs::create_dir_all(&pasta).unwrap();
-        pasta.canonicalize().unwrap()
+        dunce::canonicalize(pasta).unwrap()
     }
 
     /// Um `/proc` sem nenhum processo.
@@ -1415,6 +1415,8 @@ mod testes {
         let _ = fs::remove_dir_all(&base);
     }
 
+    // No Windows o link simbólico pede o Modo de Desenvolvedor.
+    #[cfg(unix)]
     #[test]
     fn link_simbolico_e_pasta_oculta_ficam_de_fora() {
         let base = pasta_de_teste("links");

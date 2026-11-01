@@ -881,13 +881,10 @@ fn atualizado(medido_em: Option<i64>, agora: i64) -> String {
 
 /// Dia (contado no fuso local desde 1970), dia da semana, hora e minuto de um instante Unix.
 pub(super) fn local(segundos: i64) -> (i64, usize, i32, i32) {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let instante = segundos as libc::time_t;
-    unsafe {
-        libc::localtime_r(&instante, &mut tm);
-    }
-    let dia = segundos.saturating_add(tm.tm_gmtoff).div_euclid(86_400);
-    (dia, tm.tm_wday as usize % 7, tm.tm_hour, tm.tm_min)
+    use chrono::{Datelike as _, Timelike as _};
+    let local = crate::modelo::no_fuso_local(segundos);
+    let dia = segundos.saturating_add(i64::from(local.offset().local_minus_utc())).div_euclid(86_400);
+    (dia, local.weekday().num_days_from_sunday() as usize % 7, local.hour() as i32, local.minute() as i32)
 }
 
 /// "às 12:59", "amanhã às 12:59" ou "dom. às 03:59", visto do dia `hoje`.

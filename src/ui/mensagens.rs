@@ -3764,7 +3764,7 @@ fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> 
 mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
-        Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, caminho_no_chat, com_maiuscula, comando_de_barra,
+        Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, com_maiuscula, comando_de_barra,
         detalhe_da_chamada, entrada_do_bloco, espaco_antes, finais_de_turno, frase_da_entrega, linhas_da_edicao, meta_curta,
         meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao, tamanho_curto,
         tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
@@ -4154,8 +4154,11 @@ mod testes {
         assert_eq!(trechos("echo \"ação\"; git reset --hard"), vec!["git reset --hard"]);
     }
 
+    // Caminhos do Unix; os do Windows (C:\…, e a regra //c/… do Claude Code) são do Lote W2.
+    #[cfg(unix)]
     #[test]
     fn caminho_relativo_a_pasta_do_chat() {
+        use super::caminho_no_chat;
         let pasta = Path::new("/home/v/projeto");
         assert_eq!(caminho_no_chat("/home/v/projeto/src/main.rs", pasta), ("src/main.rs".into(), false));
         assert_eq!(caminho_no_chat("src/main.rs", pasta), ("src/main.rs".into(), false));
@@ -4172,9 +4175,13 @@ mod testes {
     fn regras_de_permitir_sempre() {
         let pasta = Path::new("/home/v/projeto");
         let editar = |caminho: &str| regra_de_permissao("Edit", &json!({"file_path": caminho}), pasta);
-        assert_eq!(editar("/home/v/projeto/src/a.rs").as_deref(), Some("edicoes"));
-        assert_eq!(editar("/home/v/outro/a.rs"), None);
-        assert_eq!(editar("/home/v/projeto/../outro/a.rs"), None);
+        // Caminhos do Unix (no Windows, "/home/v/outro" nem é absoluto; os de lá são do Lote W2).
+        let unix = cfg!(unix);
+        if unix {
+            assert_eq!(editar("/home/v/projeto/src/a.rs").as_deref(), Some("edicoes"));
+            assert_eq!(editar("/home/v/outro/a.rs"), None);
+            assert_eq!(editar("/home/v/projeto/../outro/a.rs"), None);
+        }
         assert_eq!(
             regra_de_permissao("Bash", &json!({"command": " cargo test "}), pasta).as_deref(),
             Some("bash:cargo test")
@@ -4194,6 +4201,6 @@ mod testes {
         assert!(chat.permite("Bash", &json!({"command": "cargo test"})));
         assert!(!chat.permite("Bash", &json!({"command": "cargo test && rm -rf /"})));
         assert!(chat.permite("Write", &json!({"file_path": "/home/v/projeto/novo.txt"})));
-        assert!(!chat.permite("Write", &json!({"file_path": "/home/v/.bashrc"})));
+        assert!(!unix || !chat.permite("Write", &json!({"file_path": "/home/v/.bashrc"})));
     }
 }

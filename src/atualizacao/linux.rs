@@ -10,7 +10,6 @@
 //! ```
 
 use std::{
-    collections::BTreeMap,
     ffi::CString,
     fmt, fs, io,
     os::unix::{ffi::OsStrExt as _, fs::PermissionsExt as _},
@@ -20,9 +19,10 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use serde::{Deserialize, Serialize};
 
+pub use super::estado_app::{Abertura, Confirmar, EstadoApp, Volta};
 use super::pacote::{self, LIMITE_EXTRAIDO, PRAZO_CONFERENCIA, gravar_atomico};
+use crate::processos::novo_comando;
 
 /// Onde o Vitral gerenciado mora (`<dados>/vitral/app`) e onde ele se mostra ao sistema
 /// (`<dados>/applications`, `<dados>/icons` e o link em `<bin>`). Os testes passam uma pasta
@@ -370,55 +370,6 @@ pub fn limpar_restos(app: &Path, _trava: &Trava) {
     }
 }
 
-/// `app/estado.json`: a versão que ainda falta confirmar (`saude.rs`), as recusadas, o formato dos
-/// dados de cada versão instalada (a volta só vai para uma que lê o disco) e a volta que a
-/// anterior ainda vai contar ao abrir.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct EstadoApp {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confirmar: Option<Confirmar>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub recusadas: Vec<String>,
-    pub formatos: BTreeMap<String, u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub voltou: Option<Volta>,
-}
-
-/// Uma volta de versão: a recusada, a que ficou e se foi a saúde (ou a pessoa, nas Configurações).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Volta {
-    pub de: String,
-    pub para: String,
-    #[serde(default)]
-    pub automatica: bool,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Confirmar {
-    pub versao: String,
-    #[serde(default)]
-    pub aberturas: Vec<Abertura>,
-}
-
-/// Uma abertura que ainda não confirmou (sessão do PC e quando).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Abertura {
-    pub sessao: String,
-    pub quando: u64,
-}
-
-impl EstadoApp {
-    /// Sem arquivo (ou ilegível) = nada a confirmar.
-    pub fn ler(app: &Path) -> EstadoApp {
-        fs::read(app.join("estado.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-    }
-
-    pub fn gravar(&self, app: &Path) -> io::Result<()> {
-        let bytes = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
-        gravar_atomico(&app.join("estado.json"), &bytes, 0o644)
-    }
-}
 
 /// Espaço livre no disco de `pasta`, em bytes.
 pub fn espaco_livre(pasta: &Path) -> io::Result<u64> {
@@ -462,10 +413,10 @@ pub fn integrar(raiz: &Raiz, caches: bool) -> io::Result<bool> {
         ligar_no_bin(bin, &raiz.binario_atual())?;
     }
     if caches && mudou_desktop {
-        melhor_esforco(Command::new("update-desktop-database").arg(raiz.aplicativos()));
+        melhor_esforco(novo_comando("update-desktop-database").arg(raiz.aplicativos()));
     }
     if caches && mudou_icone {
-        melhor_esforco(Command::new("gtk-update-icon-cache").arg("-q").arg("-t").arg(raiz.hicolor()));
+        melhor_esforco(novo_comando("gtk-update-icon-cache").arg("-q").arg("-t").arg(raiz.hicolor()));
     }
     Ok(mudou_desktop || mudou_icone)
 }
@@ -553,6 +504,7 @@ fn instalar_executavel(raiz: &Raiz, executavel: &Path, versao: &str, caches: boo
 pub mod testes {
     use super::*;
     use crate::atualizacao::pacote::testes::{binario_falso, pacote_bom, pasta_de_teste};
+    use std::collections::BTreeMap;
 
     /// Um layout com `versao` já instalada (binário de mentira) e `atual` nela.
     pub fn layout_com(versao: &str) -> (PathBuf, PathBuf) {

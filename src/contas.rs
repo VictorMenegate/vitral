@@ -9,7 +9,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Stdio},
     sync::mpsc,
     time::Duration,
 };
@@ -18,7 +18,7 @@ use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{claude::binario_claude, motor::Uso};
+use crate::{claude::binario_claude, motor::Uso, processos::novo_comando};
 
 pub mod busca;
 
@@ -85,7 +85,7 @@ pub fn salvar(contas: &[Conta]) -> Result<()> {
 
 /// Email e plano de uma conta, pelo `claude auth status`.
 pub fn status(pasta: Option<&Path>) -> Result<(String, String)> {
-    let mut comando = Command::new(binario_claude());
+    let mut comando = novo_comando(binario_claude());
     comando.args(["auth", "status", "--json"]);
     if let Some(pasta) = pasta {
         comando.env("CLAUDE_CONFIG_DIR", pasta);
@@ -120,7 +120,7 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
         let fonte = original.join(item);
         let destino = pasta.join(item);
         if fonte.exists() && fs::symlink_metadata(&destino).is_err() {
-            std::os::unix::fs::symlink(&fonte, &destino)?;
+            ligar(&fonte, &destino)?;
         }
     }
     let config = pasta.join(".claude.json");
@@ -135,6 +135,18 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
         crate::dados::gravar_json_seguro(&config, &conteudo, false)?;
     }
     Ok(pasta)
+}
+
+#[cfg(unix)]
+fn ligar(fonte: &Path, destino: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(fonte, destino)
+}
+
+/// No Windows o link pede o Modo de Desenvolvedor (o certo lá é junction e hard link): as contas
+/// extras ficam para depois.
+#[cfg(windows)]
+fn ligar(_fonte: &Path, _destino: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "as contas extras ainda não funcionam no Windows"))
 }
 
 pub fn apagar_pasta(id: &str) {
@@ -158,7 +170,7 @@ impl Login {
     /// também tenta abrir o navegador).
     pub fn iniciar(id: &str) -> Result<(Self, String)> {
         let pasta = preparar_pasta(id)?;
-        let mut filho = Command::new(binario_claude())
+        let mut filho = novo_comando(binario_claude())
             .args(["auth", "login", "--claudeai"])
             .env("CLAUDE_CONFIG_DIR", &pasta)
             .stdin(Stdio::piped())
