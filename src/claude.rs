@@ -214,14 +214,28 @@ impl Processo {
         self.entrada = None;
     }
 
+    /// Para o turno: pede pela entrada o `interrupt` do protocolo do Agent SDK (o mesmo do botão de
+    /// parar da extensão; conferido no 2.1.278) e fecha ela. O Claude Code responde, fecha o turno
+    /// com um `result` de erro, grava a conversa e sai, com tempo de limpar o que abriu. É o mesmo
+    /// nos dois sistemas: no Windows, sem console, não há Ctrl+C para mandar. Sem a entrada (ou se a
+    /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
+    /// saiu (`Motor::conferir_parada`).
     pub fn interromper(&mut self) {
-        self.entrada = None;
+        if let Some(mut entrada) = self.entrada.take() {
+            let pedido = json!({
+                "type": "control_request",
+                "request_id": format!("vitral-parar-{}", uuid::Uuid::new_v4()),
+                "request": { "subtype": "interrupt" },
+            });
+            if writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok() {
+                return;
+            }
+        }
         // SAFETY: o processo ainda não foi colhido (é do `Child`), então o número é dele.
         #[cfg(unix)]
         unsafe {
             libc::kill(self.filho.id() as i32, libc::SIGINT);
         }
-        // Sem console, no Windows não há Ctrl+C para mandar: por enquanto, para tudo.
         #[cfg(windows)]
         self.escopo.parar();
     }

@@ -1948,6 +1948,7 @@ impl Motor {
                 processo.matar();
             } else {
                 processo.interromper();
+                self.conferir_parada(chat, cx);
             }
             self.interrompidos.push(chat.to_string());
         }
@@ -1961,6 +1962,26 @@ impl Motor {
             ));
         }
         cx.notify();
+    }
+
+    /// O Claude Code interrompido pela entrada sai em menos de um segundo. Se o mesmo processo ainda
+    /// roda 5 s depois (um Claude Code que não leu o pedido, ou travado), ele e o que abriu param.
+    fn conferir_parada(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(geracao) = self.geracao_atual.get(chat).copied() else {
+            return;
+        };
+        let id = chat.to_string();
+        cx.spawn(async move |motor, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+            let _ = motor.update(cx, |m, _| {
+                if m.geracao_atual.get(&id) == Some(&geracao)
+                    && let Some(processo) = m.processos.get_mut(&id)
+                {
+                    processo.matar();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Responde a um pedido de permissão. Negar com mensagem manda a mensagem ao Claude (é como
