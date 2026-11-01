@@ -560,6 +560,25 @@ fn conteudo_resultado(conteudo: &Value) -> String {
     }
 }
 
+/// O caminho absoluto como as regras de permissão do Claude Code o escrevem, com o `/` a mais que
+/// marca "caminho absoluto": `//home/v/loja`. O Claude Code passa os caminhos do Windows para a forma
+/// POSIX antes de comparar (`C:\Users\a` vira `/c/Users/a`), então lá a regra é `//c/Users/a/loja`.
+pub fn caminho_de_regra(caminho: &std::path::Path) -> String {
+    regra_do_texto(&caminho.to_string_lossy(), cfg!(windows))
+}
+
+fn regra_do_texto(texto: &str, windows: bool) -> String {
+    let unidade = texto.as_bytes().first().filter(|u| u.is_ascii_alphabetic() && texto[1..].starts_with(':'));
+    match unidade {
+        Some(&letra) if windows => {
+            let resto = texto[2..].replace('\\', "/");
+            format!("//{}/{}", (letra as char).to_ascii_lowercase(), resto.trim_start_matches('/'))
+        }
+        _ if windows => format!("/{}", texto.replace('\\', "/")),
+        _ => format!("/{texto}"),
+    }
+}
+
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
 pub fn binario_claude() -> PathBuf {
     binario_claude_em(std::env::var_os("PATH"), dirs::home_dir().unwrap_or_default())
@@ -796,6 +815,21 @@ mod testes {
         std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
         assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn regra_de_caminho_no_linux_e_no_windows() {
+        assert_eq!(regra_do_texto("/home/v/Projetos/loja", false), "//home/v/Projetos/loja");
+        assert_eq!(regra_do_texto(r"C:\Users\a\Projetos\loja", true), "//c/Users/a/Projetos/loja");
+        assert_eq!(regra_do_texto(r"d:\obra", true), "//d/obra");
+        assert_eq!(regra_do_texto("C:/Users/a", true), "//c/Users/a");
+        assert_eq!(regra_do_texto(r"C:\", true), "//c/");
+        // Um compartilhamento de rede (\\servidor\pasta) só troca as barras.
+        assert_eq!(regra_do_texto(r"\\servidor\pasta", true), "///servidor/pasta");
+        #[cfg(windows)]
+        assert_eq!(caminho_de_regra(std::path::Path::new(r"C:\Users\a")), "//c/Users/a");
+        #[cfg(unix)]
+        assert_eq!(caminho_de_regra(std::path::Path::new("/a")), "//a");
     }
 
     #[test]

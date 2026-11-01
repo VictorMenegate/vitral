@@ -6873,7 +6873,7 @@ pub fn regras_de_bloqueio(
     let mut regras = Vec::new();
     for pasta in bloquear.into_iter().filter(|p| !p.as_os_str().is_empty()) {
         for ferramenta in ["Edit", "Write", "NotebookEdit"] {
-            let regra = format!("{ferramenta}(/{}/**)", pasta.display());
+            let regra = format!("{ferramenta}({}/**)", claude::caminho_de_regra(pasta));
             if !regras.contains(&regra) {
                 regras.push(regra);
             }
