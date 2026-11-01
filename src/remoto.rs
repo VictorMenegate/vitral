@@ -855,12 +855,15 @@ mod testes {
             definir: vec![("VITRAL_TESTE".into(), "sim".into())],
             remover: vec![],
         };
-        let args: Vec<String> = ["-c", "cat; echo \"$VITRAL_TESTE ${HOME:-sem-home}\"; echo erro >&2; exit 3"]
+        // Uma variável que este processo tem (o `cargo test` põe) e que não passa adiante. O HOME não
+        // serve: no Windows, o sh do Git inventa um a partir da pasta do usuário.
+        assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+        let args: Vec<String> = ["-c", "cat; echo \"$VITRAL_TESTE ${CARGO_MANIFEST_DIR:-limpo}\"; echo erro >&2; exit 3"]
             .map(String::from)
             .to_vec();
         let saida = Real.rodar("sh", &args, &ambiente, &pasta, Some(b"entrada\n"), Duration::from_secs(10)).unwrap();
         assert_eq!(saida.codigo, Some(3));
-        assert_eq!(saida.texto(), "entrada\nsim sem-home\n");
+        assert_eq!(saida.texto(), "entrada\nsim limpo\n");
         assert_eq!(saida.erros(), "erro\n");
         // Saída maior que o pipe não trava.
         let grande: Vec<String> = ["-c", "head -c 300000 /dev/zero"].map(String::from).to_vec();

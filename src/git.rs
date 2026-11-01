@@ -2914,6 +2914,10 @@ mod pr_e_rede {
                 let (origem, projeto, site) = (raiz.join("origem.git"), raiz.join("projeto"), raiz.join("site"));
                 std::fs::create_dir_all(&projeto).unwrap();
                 git(&projeto, &["init", "-q", "-b", "main"]).unwrap();
+                // O Git para Windows vem com core.autocrlf=true: o checkout, o merge e o stash pop
+                // devolveriam "\r\n", e os testes comparam o conteúdo byte a byte. As cópias
+                // (worktrees) usam a configuração do projeto.
+                git(&projeto, &["config", "core.autocrlf", "false"]).unwrap();
                 std::fs::write(projeto.join("a.txt"), "um\n").unwrap();
                 git(&projeto, &["add", "-A"]).unwrap();
                 git(&projeto, &["commit", "-q", "-m", "inicio"]).unwrap();
@@ -2938,7 +2942,7 @@ mod pr_e_rede {
             fn commit_no_site(&self, ramo: &str, arquivo: &str, conteudo: &str) -> String {
                 let texto = |p: &Path| p.to_string_lossy().to_string();
                 if !self.site.exists() {
-                    git(&self.raiz, &["clone", "-q", &texto(&self.origem), &texto(&self.site)]).unwrap();
+                    git(&self.raiz, &["clone", "-q", "-c", "core.autocrlf=false", &texto(&self.origem), &texto(&self.site)]).unwrap();
                 }
                 git(&self.site, &["fetch", "-q", "origin"]).unwrap();
                 git(&self.site, &["checkout", "-q", "-B", ramo, &format!("origin/{ramo}")]).unwrap();
@@ -2953,7 +2957,7 @@ mod pr_e_rede {
             fn mesclar_por_squash(&self, numero: u64, ramo: &str) -> String {
                 let texto = |p: &Path| p.to_string_lossy().to_string();
                 if !self.site.exists() {
-                    git(&self.raiz, &["clone", "-q", &texto(&self.origem), &texto(&self.site)]).unwrap();
+                    git(&self.raiz, &["clone", "-q", "-c", "core.autocrlf=false", &texto(&self.origem), &texto(&self.site)]).unwrap();
                 }
                 git(&self.site, &["fetch", "-q", "origin"]).unwrap();
                 let head = git(&self.site, &["rev-parse", &format!("origin/{ramo}")]).unwrap();
