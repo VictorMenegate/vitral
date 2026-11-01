@@ -97,9 +97,17 @@ impl Dados {
             bail!("os dados globais ainda não estão ligados nesta versão: abra o Vitral pela bancada");
         }
         let falta = |qual: &str| anyhow!("sem a pasta de {qual} do usuário (HOME e XDG_* vazios)");
-        let pasta = dirs::data_dir().ok_or_else(|| falta("dados"))?.join("vitral");
+        // No Windows os dados vão para o %LOCALAPPDATA%\vitral, não para o %APPDATA% (o Roaming): as
+        // cópias das conversas têm node_modules, e o Roaming sincroniza entre PCs. A configuração fica
+        // no %APPDATA%. O cache de lá é a mesma pasta Local: ele vai numa subpasta dos dados. No Linux
+        // a pasta local dos dados é a mesma de sempre (~/.local/share).
+        let pasta = dirs::data_local_dir().ok_or_else(|| falta("dados"))?.join("vitral");
         let config = dirs::config_dir().ok_or_else(|| falta("configuração"))?.join("vitral");
-        let cache = dirs::cache_dir().ok_or_else(|| falta("cache"))?.join("vitral");
+        let cache = if cfg!(windows) {
+            pasta.join("cache")
+        } else {
+            dirs::cache_dir().ok_or_else(|| falta("cache"))?.join("vitral")
+        };
         let socket = match dirs::runtime_dir() {
             Some(execucao) => execucao.join("vitral").join("vitral.sock"),
             // No Windows, o arquivo com a porta e a senha do canal (`instancia.rs`).
