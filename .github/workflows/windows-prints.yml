@@ -9,21 +9,35 @@
 # que deu certo neste ramo, ou a do campo), instala em silêncio, confere os arquivos, o atalho e o
 # AppUserModelID, abre pelo atalho, abre o zip portátil e desinstala, com prints
 # (ferramentas/instalador-windows.ps1); `gh run download <id> -n prints-instalador`.
+#
+# O job do atualizador (só à mão) instala a versão publicada pelo instalador do release, compila
+# três versões do ramo no canal de teste (a do instalador, a que ela instala sozinha e a que cai ao
+# abrir) e serve as duas últimas num release falso assinado com uma chave de teste gerada ali:
+# procura, download, instalação com o app aberto, o Reiniciar pelo lançador e a volta automática
+# (ferramentas/atualizador-windows.ps1); `gh run download <id> -n prints-atualizador`.
 name: Prints do Windows
 
 on:
   workflow_dispatch:
     inputs:
+      so:
+        description: "Que parte rodar."
+        type: choice
+        options: [todos, prints, instalador, atualizador]
+        default: todos
       release:
-        description: "Rodada do release.yml com os pacotes do Windows (vazio: a última que deu certo neste ramo)."
+        description: "Instalador: a rodada do release.yml com os pacotes do Windows (vazio: a última que deu certo neste ramo)."
         required: false
         default: ""
-      so_instalador:
-        description: "Só o instalador (sem os prints do app compilado aqui)."
-        type: boolean
-        default: false
-  # Enquanto este arquivo não está no main, o GitHub só conhece o workflow (e aceita o "Run workflow")
-  # depois de um push que o dispare: o do ramo windows que mexe no roteiro ou aqui.
+      publicada:
+        description: "Atualizador: o tag publicado cujo instalador faz a primeira instalação."
+        required: false
+        default: "v0.3.0-rc.6"
+      versoes:
+        description: "Atualizador: as três versões de teste do ramo (a do instalador, a que ela instala, a que cai)."
+        required: false
+        default: "0.3.0-rc.7 0.3.0-rc.8 0.3.0-rc.9"
+  # Num push do ramo windows que mexe no roteiro dos prints (ou aqui), só os prints.
   push:
     branches: [windows]
     paths:
@@ -41,7 +55,7 @@ env:
 jobs:
   prints:
     name: Prints (windows-x86_64)
-    if: ${{ !inputs.so_instalador }}
+    if: github.event_name == 'push' || inputs.so == 'todos' || inputs.so == 'prints'
     runs-on: windows-2025
     timeout-minutes: 75
     steps:
@@ -79,7 +93,7 @@ jobs:
 
   instalador:
     name: Instalador (windows-x86_64)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && (inputs.so == 'todos' || inputs.so == 'instalador')
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -136,4 +150,101 @@ jobs:
         with:
           name: prints-instalador
           path: prints-instalador/
+          if-no-files-found: warn
+
+  atualizador:
+    name: Atualizador (windows-x86_64)
+    if: github.event_name == 'workflow_dispatch' && (inputs.so == 'todos' || inputs.so == 'atualizador')
+    runs-on: windows-2025
+    timeout-minutes: 75
+    env:
+      PUBLICADA: ${{ inputs.publicada }}
+      VERSOES: ${{ inputs.versoes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Rust (versão do rust-toolchain.toml)
+        shell: bash
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+
+      # O cache do release do Windows (o release.yml salva o do ramo windows); só lê.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-windows-x86_64
+          save-if: "false"
+
+      - name: O instalador publicado
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "$PUBLICADA" -R "$GITHUB_REPOSITORY" -p '*-windows-x86_64-instalador.exe' -D publicada
+          ls -l publicada
+
+      # As três em release, como o pacote de verdade, mas no canal de teste: instalam sozinhas na pasta
+      # do app e aceitam o VITRAL_ATUALIZACAO_BASE e a VITRAL_ATUALIZACAO_CHAVE. Entre uma e outra só
+      # muda a versão embutida (VITRAL_VERSAO), então só o vitral.exe compila de novo.
+      - name: Três versões do ramo no canal de teste
+        shell: bash
+        env:
+          VITRAL_CANAL: teste
+          VITRAL_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for v in $VERSOES; do
+            VITRAL_VERSAO="$v" cargo build --locked --release -p vitral -p vitral-lancador
+            nome="vitral-$v-windows-x86_64"
+            mkdir -p "pacotes/$nome"
+            cp target/release/vitral.exe target/release/vitral-lancador.exe LEIA-ME.md NOVIDADES.md LICENSE "pacotes/$nome/"
+            cp assets/fontes/OFL.txt "pacotes/$nome/OFL-fontes.txt"
+            resposta=$("pacotes/$nome/vitral.exe" --versao --json)
+            echo "$v: $resposta"
+            case "$resposta" in *"\"versao\":\"$v\""*"\"canal\":\"teste\""*) ;; *) echo "::error::$v respondeu $resposta"; exit 1 ;; esac
+            tar -C pacotes --sort=name --owner=0 --group=0 --numeric-owner \
+                --mtime="@$(git log -1 --format=%ct)" -czf "pacotes/$nome.tar.gz" "$nome"
+          done
+          ls -l pacotes
+
+      - name: O instalador da primeira (Inno Setup)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $primeira = ($env:VERSOES -split ' ')[0]
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          New-Item -ItemType Directory -Force instaladores | Out-Null
+          & $iscc /Qp "/DVersao=$primeira" "/DOrigem=$((Resolve-Path "pacotes\vitral-$primeira-windows-x86_64").Path)" "/O$((Resolve-Path instaladores).Path)" pacote\windows\vitral.iss
+          if ($LASTEXITCODE -ne 0) { throw "o Inno Setup falhou" }
+          Get-ChildItem instaladores
+
+      # A chave de teste nasce aqui (o openssl do Git para Windows) e assina os dois manifestos; o app
+      # do canal de teste a aceita pela VITRAL_ATUALIZACAO_CHAVE. Nunca a chave do release.
+      - name: O release falso
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/bin:$PATH"
+          openssl version
+          set -- $VERSOES
+          python -I ferramentas/release_falso.py publicar falso "pacotes/vitral-$2-windows-x86_64.tar.gz" falso/rB
+          python -I ferramentas/release_falso.py publicar falso "pacotes/vitral-$3-windows-x86_64.tar.gz" falso/rC
+          rm falso/chave.pem
+          ls -l falso falso/rB falso/rC
+
+      - name: Instalar a publicada, atualizar sozinho e voltar
+        shell: pwsh
+        run: |
+          ./ferramentas/atualizador-windows.ps1 -Publicado (Get-ChildItem publicada\*.exe).FullName `
+            -Instalador (Get-ChildItem instaladores\*.exe).FullName -Falso falso -Saida prints-atualizador
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: prints-atualizador
+          path: prints-atualizador/
           if-no-files-found: warn
