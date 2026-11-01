@@ -6919,6 +6919,7 @@ dependencies = [
  "chrono",
  "dirs 7.0.0",
  "dunce",
+ "embed-resource",
  "flate2",
  "gpui-kit",
  "libc",

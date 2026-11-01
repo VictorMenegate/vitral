@@ -28,8 +28,10 @@ mod windows;
 use windows as plataforma;
 
 pub use plataforma::{Escopo, abrir, codigo_de_saida, colher, comando, comando_leve, encerrar_todos, limpar_sobras};
+#[cfg(test)]
+pub use plataforma::morre_logo;
 #[cfg(all(test, unix))]
-pub use plataforma::{morre_logo, usa_systemd};
+pub use plataforma::usa_systemd;
 
 /// Um processo pronto para [`abrir`]: argumentos, pasta, ambiente e pipes vão no `Command` de
 /// dentro (pelo `DerefMut`), como num `Command` comum. Só o `abrir` põe para rodar.

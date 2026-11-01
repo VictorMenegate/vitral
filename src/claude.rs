@@ -214,14 +214,28 @@ impl Processo {
         self.entrada = None;
     }
 
+    /// Para o turno: pede pela entrada o `interrupt` do protocolo do Agent SDK (o mesmo do botão de
+    /// parar da extensão; conferido no 2.1.278) e fecha ela. O Claude Code responde, fecha o turno
+    /// com um `result` de erro, grava a conversa e sai, com tempo de limpar o que abriu. É o mesmo
+    /// nos dois sistemas: no Windows, sem console, não há Ctrl+C para mandar. Sem a entrada (ou se a
+    /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
+    /// saiu (`Motor::conferir_parada`).
     pub fn interromper(&mut self) {
-        self.entrada = None;
+        if let Some(mut entrada) = self.entrada.take() {
+            let pedido = json!({
+                "type": "control_request",
+                "request_id": format!("vitral-parar-{}", uuid::Uuid::new_v4()),
+                "request": { "subtype": "interrupt" },
+            });
+            if writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok() {
+                return;
+            }
+        }
         // SAFETY: o processo ainda não foi colhido (é do `Child`), então o número é dele.
         #[cfg(unix)]
         unsafe {
             libc::kill(self.filho.id() as i32, libc::SIGINT);
         }
-        // Sem console, no Windows não há Ctrl+C para mandar: por enquanto, para tudo.
         #[cfg(windows)]
         self.escopo.parar();
     }
@@ -546,6 +560,25 @@ fn conteudo_resultado(conteudo: &Value) -> String {
     }
 }
 
+/// O caminho absoluto como as regras de permissão do Claude Code o escrevem, com o `/` a mais que
+/// marca "caminho absoluto": `//home/v/loja`. O Claude Code passa os caminhos do Windows para a forma
+/// POSIX antes de comparar (`C:\Users\a` vira `/c/Users/a`), então lá a regra é `//c/Users/a/loja`.
+pub fn caminho_de_regra(caminho: &std::path::Path) -> String {
+    regra_do_texto(&caminho.to_string_lossy(), cfg!(windows))
+}
+
+fn regra_do_texto(texto: &str, windows: bool) -> String {
+    let unidade = texto.as_bytes().first().filter(|u| u.is_ascii_alphabetic() && texto[1..].starts_with(':'));
+    match unidade {
+        Some(&letra) if windows => {
+            let resto = texto[2..].replace('\\', "/");
+            format!("//{}/{}", (letra as char).to_ascii_lowercase(), resto.trim_start_matches('/'))
+        }
+        _ if windows => format!("/{}", texto.replace('\\', "/")),
+        _ => format!("/{texto}"),
+    }
+}
+
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
 pub fn binario_claude() -> PathBuf {
     binario_claude_em(std::env::var_os("PATH"), dirs::home_dir().unwrap_or_default())
@@ -782,6 +815,21 @@ mod testes {
         std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
         assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn regra_de_caminho_no_linux_e_no_windows() {
+        assert_eq!(regra_do_texto("/home/v/Projetos/loja", false), "//home/v/Projetos/loja");
+        assert_eq!(regra_do_texto(r"C:\Users\a\Projetos\loja", true), "//c/Users/a/Projetos/loja");
+        assert_eq!(regra_do_texto(r"d:\obra", true), "//d/obra");
+        assert_eq!(regra_do_texto("C:/Users/a", true), "//c/Users/a");
+        assert_eq!(regra_do_texto(r"C:\", true), "//c/");
+        // Um compartilhamento de rede (\\servidor\pasta) só troca as barras.
+        assert_eq!(regra_do_texto(r"\\servidor\pasta", true), "///servidor/pasta");
+        #[cfg(windows)]
+        assert_eq!(caminho_de_regra(std::path::Path::new(r"C:\Users\a")), "//c/Users/a");
+        #[cfg(unix)]
+        assert_eq!(caminho_de_regra(std::path::Path::new("/a")), "//a");
     }
 
     #[test]

@@ -515,7 +515,7 @@ impl Render for Configuracoes {
             ));
 
         let (animacoes, sistema_sem) = movimento::animacoes(cx);
-        let segmentos = ["Seguir o GNOME", "Desligadas"];
+        let segmentos = [movimento::SEGUIR_O_SISTEMA, "Desligadas"];
         let atual = usize::from(animacoes == Animacoes::Desligadas);
         let interface = GrupoDeOpcoes::new(Some("Interface".into())).linha(com(
             LinhaDeOpcao::new("cfg-animacoes", "Animações")
@@ -524,7 +524,7 @@ impl Render for Configuracoes {
                      aparecem direto no lugar, e o spinner fica parado.",
                 )
                 .descricao(if animacoes == Animacoes::SeguirGnome && sistema_sem {
-                    "O GNOME está sem animações: tudo aparece pronto."
+                    movimento::SISTEMA_SEM_ANIMACOES
                 } else {
                     "Vale para o app todo."
                 }),

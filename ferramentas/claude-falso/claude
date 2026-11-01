@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.request
 
@@ -73,6 +74,26 @@ except (ValueError, KeyError, TypeError):
 papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else ""
 
 linha = sys.stdin.readline()
+fim_da_entrada = threading.Event()
+
+
+def ouvir_entrada():
+    """O Parar do Vitral: o `interrupt` pela entrada (como no de verdade, 2.1.278) responde, fecha o
+    turno com erro e sai. A entrada fechada (o fim do turno) solta o fim lá embaixo."""
+    for pedido in sys.stdin:
+        try:
+            pedido = json.loads(pedido)
+        except ValueError:
+            continue
+        if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "interrupt":
+            anotar({"interrupt": pedido.get("request_id")})
+            emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"), "response": {}}})
+            emitir({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "", "total_cost_usd": 0.0})
+            os._exit(1)
+    fim_da_entrada.set()
+
+
+threading.Thread(target=ouvir_entrada, daemon=True).start()
 try:
     conteudo = json.loads(linha)["message"]["content"]
     texto = "\n".join(b.get("text", "") for b in conteudo if b.get("type") == "text")
@@ -220,6 +241,4 @@ emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": re
 emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0,
         "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
 # O Vitral fecha a entrada no fim do turno; sem isso, sai sozinho depois de um tempo.
-inicio = time.time()
-while time.time() - inicio < 30 and sys.stdin.readline():
-    pass
+fim_da_entrada.wait(30)

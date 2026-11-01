@@ -100,7 +100,7 @@ impl RenderOnce for Recuperacao {
             let t = TamanhoBotao::Controle;
             match botao {
                 Botao::AbrirPasta => botao_fantasma(("rec", i), Some(Lucide::FolderOpen.into()), "Abrir a pasta de dados", t, window, cx)
-                    .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", dados.pasta.display())))
+                    .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&dados.pasta, cx))
                     .into_any_element(),
                 Botao::ComecarDoZero => botao_perigo(("rec", i), None, "Começar do zero", t, window, cx)
                     .on_click(move |_, window, cx| comecar_do_zero(dados.clone(), window, cx))

@@ -234,7 +234,7 @@ fn copiar_binario(binario: &Path, novo: &Path) -> Result<()> {
     };
     copiar(binario, "vitral", 0o755)?;
     if let Some(pasta) = binario.parent() {
-        for nome in ["LEIA-ME.md", "NOVIDADES.md", "LICENSE"] {
+        for nome in ["LEIA-ME.md", "NOVIDADES.md", "LICENSE", "OFL-fontes.txt"] {
             let texto = pasta.join(nome);
             if texto.is_file() {
                 copiar(&texto, nome, 0o644)?;

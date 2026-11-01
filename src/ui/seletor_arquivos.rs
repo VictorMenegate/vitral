@@ -79,7 +79,7 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
 /// repositório de cima ignora) também cai na varredura.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
     // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
-    let saida = crate::processos::novo_comando("git")
+    let saida = crate::git::novo_git()
         .arg("-C")
         .arg(pasta)
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
@@ -116,7 +116,8 @@ pub(super) fn listar(pasta: &Path) -> Vec<String> {
                     pendentes.push(caminho);
                 }
             } else if let Ok(relativo) = caminho.strip_prefix(pasta) {
-                lista.push(relativo.to_string_lossy().to_string());
+                // Com `/`, como a lista do git (no Windows o caminho viria com `\`).
+                lista.push(crate::git::caminho_em_texto(relativo));
             }
             if lista.len() > 20_000 {
                 return lista;
@@ -132,10 +133,10 @@ mod testes {
     use std::path::Path;
 
     use super::{filtrar_arquivos, grupos_de_arquivos, icone_do_arquivo, listar};
-    use crate::{processos::novo_comando, tema::Lucide};
+    use crate::{git::novo_git, tema::Lucide};
 
     fn git(pasta: &Path, args: &[&str]) {
-        let saida = novo_comando("git").arg("-C").arg(pasta).args(args).output().unwrap();
+        let saida = novo_git().arg("-C").arg(pasta).args(args).output().unwrap();
         assert!(saida.status.success(), "{}", String::from_utf8_lossy(&saida.stderr));
     }
 

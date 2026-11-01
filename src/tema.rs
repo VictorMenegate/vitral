@@ -503,7 +503,30 @@ const TEMA: &str = r##"{
 /// Largura dos avisos a 100% (o zoom a multiplica, em `zoom.rs`).
 pub const LARGURA_AVISO: f32 = 380.;
 
+/// Inter e JetBrains Mono vão dentro do binário (OFL; a licença está em assets/fontes/OFL.txt e vai
+/// no pacote): o Windows não tem nenhuma das duas, e no Linux o Vitral não depende das fontes da
+/// distribuição. Só os pesos que o Vitral usa: 400, 500, 600 e 700 e o itálico do texto; no código, o
+/// normal, o itálico dos comentários e o negrito.
+const FONTES: [&[u8]; 8] = [
+    include_bytes!("../assets/fontes/Inter-Regular.ttf"),
+    include_bytes!("../assets/fontes/Inter-Medium.ttf"),
+    include_bytes!("../assets/fontes/Inter-SemiBold.ttf"),
+    include_bytes!("../assets/fontes/Inter-Bold.ttf"),
+    include_bytes!("../assets/fontes/Inter-Italic.ttf"),
+    include_bytes!("../assets/fontes/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../assets/fontes/JetBrainsMono-Italic.ttf"),
+    include_bytes!("../assets/fontes/JetBrainsMono-Bold.ttf"),
+];
+
+/// As fontes do símbolo e do emoji que faltam nas duas, do sistema. O Noto Color Emoji (COLRv1)
+/// sai em branco no Linux, então lá vai o monocromático; no Windows, as da Segoe.
+pub const FONTES_DE_RESERVA: [&str; 2] =
+    if cfg!(windows) { ["Segoe UI Emoji", "Segoe UI Symbol"] } else { ["Noto Emoji", "Noto Sans Symbols 2"] };
+
 pub fn aplicar(cx: &mut App) {
+    if let Err(erro) = cx.text_system().add_fonts(FONTES.iter().map(|f| Cow::Borrowed(*f)).collect()) {
+        eprintln!("vitral: as fontes embutidas não carregaram ({erro:#}); ficam as do sistema");
+    }
     let conjunto: ThemeSet = serde_json::from_str(TEMA).expect("tema do Vitral");
     let config = Rc::new(conjunto.themes.into_iter().next().unwrap());
     Theme::update(cx, |tema| {

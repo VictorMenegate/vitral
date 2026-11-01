@@ -94,10 +94,15 @@ enum Sinal {
     Mcp(Chamada),
     /// O clique numa notificação do sistema: abrir a conversa.
     Abrir(String),
+    /// Um aviso do Windows (toast) a mostrar: o GPUI só mostra pela thread da janela.
+    #[cfg(windows)]
+    Aviso(gpui_kit::SystemNotification),
 }
 
-/// A notificação de um chat que ainda está na tela: a próxima do mesmo chat a substitui.
+/// A notificação de um chat que ainda está na tela: a próxima do mesmo chat a substitui. (Só no
+/// Linux: no Windows quem guarda é o GPUI.)
 #[derive(Default)]
+#[cfg_attr(windows, allow(dead_code))]
 struct Aviso {
     /// O id que o servidor de notificações deu (`notify-send -p`).
     id: Option<u32>,
@@ -456,6 +461,7 @@ pub struct Motor {
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
     /// As notificações na tela, por chat.
+    #[cfg_attr(windows, allow(dead_code))]
     avisos: Arc<std::sync::Mutex<HashMap<String, Aviso>>>,
     /// Chats que algum painel aberto mostra (a Janela atualiza a cada quadro): o texto parcial
     /// dos outros não redesenha a janela.
@@ -523,6 +529,14 @@ impl Motor {
             }
         }
         let (sinais, recebe) = unbounded::<Sinal>();
+        // O clique num aviso do Windows abre a conversa dele (a marca do aviso é o id do chat).
+        #[cfg(windows)]
+        {
+            let envia = sinais.clone();
+            cx.on_system_notification_response(move |resposta, _| {
+                let _ = envia.try_send(Sinal::Abrir(resposta.tag.to_string()));
+            });
+        }
 
         let envia_mcp = sinais.clone();
         let servidor = match mcp::iniciar(move |chamada| {
@@ -726,6 +740,7 @@ impl Motor {
                 motor.avisar_no_mestre(BOAS_VINDAS);
             }
             motor.conferir_vitral_antigo();
+            motor.conferir_instalacao();
             if motor.chats_sujos.remove(crate::modelo::ID_MESTRE)
                 && let Some(c) = motor.chat(crate::modelo::ID_MESTRE)
             {
@@ -1947,6 +1962,7 @@ impl Motor {
                 processo.matar();
             } else {
                 processo.interromper();
+                self.conferir_parada(chat, cx);
             }
             self.interrompidos.push(chat.to_string());
         }
@@ -1960,6 +1976,26 @@ impl Motor {
             ));
         }
         cx.notify();
+    }
+
+    /// O Claude Code interrompido pela entrada sai em menos de um segundo. Se o mesmo processo ainda
+    /// roda 5 s depois (um Claude Code que não leu o pedido, ou travado), ele e o que abriu param.
+    fn conferir_parada(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(geracao) = self.geracao_atual.get(chat).copied() else {
+            return;
+        };
+        let id = chat.to_string();
+        cx.spawn(async move |motor, cx| {
+            cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+            let _ = motor.update(cx, |m, _| {
+                if m.geracao_atual.get(&id) == Some(&geracao)
+                    && let Some(processo) = m.processos.get_mut(&id)
+                {
+                    processo.matar();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Responde a um pedido de permissão. Negar com mensagem manda a mensagem ao Claude (é como
@@ -3391,6 +3427,11 @@ impl Motor {
                     return false;
                 }
                 self.pedido_de_abrir = Some(chat);
+            }
+            #[cfg(windows)]
+            Sinal::Aviso(aviso) => {
+                cx.show_system_notification(aviso);
+                return false;
             }
         }
         true
@@ -6046,7 +6087,21 @@ impl Motor {
             format!("{} · {}", self.nome_do_projeto(&chat.projeto), chat.titulo)
         };
         let corpo = texto.lines().find(|l| !l.trim().is_empty()).unwrap_or_default().to_string();
+        // No Windows, o aviso do sistema (toast) com o AppUserModelID do Vitral: o do mesmo chat
+        // substitui o anterior, e o clique volta como `Sinal::Abrir`.
+        #[cfg(windows)]
+        {
+            let aviso = gpui_kit::SystemNotification {
+                tag: chat.id.clone().into(),
+                title: titulo.into(),
+                body: corpo.into(),
+                actions: Vec::new(),
+            };
+            let _ = self.sinais.try_send(Sinal::Aviso(aviso));
+        }
+        #[cfg(not(windows))]
         let (avisos, sinais, id) = (self.avisos.clone(), self.sinais.clone(), chat.id.clone());
+        #[cfg(not(windows))]
         std::thread::spawn(move || {
             use std::io::BufRead as _;
             let travar = || avisos.lock().unwrap_or_else(|e| e.into_inner());
@@ -6851,7 +6906,7 @@ pub fn regras_de_bloqueio(
     let mut regras = Vec::new();
     for pasta in bloquear.into_iter().filter(|p| !p.as_os_str().is_empty()) {
         for ferramenta in ["Edit", "Write", "NotebookEdit"] {
-            let regra = format!("{ferramenta}(/{}/**)", pasta.display());
+            let regra = format!("{ferramenta}({}/**)", claude::caminho_de_regra(pasta));
             if !regras.contains(&regra) {
                 regras.push(regra);
             }
@@ -7208,6 +7263,7 @@ fn lista_de(valor: &Value) -> Option<Vec<Value>> {
 /// Notificação do sistema: "projeto · título" e uma linha só de corpo, com o ícone do Vitral.
 /// Os argumentos do `notify-send`: o clique (a ação padrão) abre a conversa, e a notificação
 /// anterior do mesmo chat é substituída em vez de empilhar.
+#[cfg_attr(windows, allow(dead_code))]
 fn argumentos_do_aviso(titulo: &str, corpo: &str, substitui: Option<u32>) -> Vec<String> {
     let mut args: Vec<String> = ["-a", "Vitral", "-i", "vitral", "-h", "string:desktop-entry:vitral"]
         .into_iter()

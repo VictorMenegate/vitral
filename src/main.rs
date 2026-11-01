@@ -1,3 +1,7 @@
+// No Windows, o release não abre uma janela de console junto (o de desenvolvimento abre, para ver o
+// que o Vitral escreve no stderr).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod atualizacao;
 mod claude;
 mod codex;
@@ -36,6 +40,10 @@ fn main() {
     // `vitral` abre o app; `vitral <pasta>` liga ou abre o projeto da pasta; `vitral --nova
     // <projeto> [mensagem]` já começa uma conversa. Com o Vitral aberto, o pedido vai para ele.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
+    // O hook Stop dos ajudantes no Windows (exec form, sem shell): responde e sai, sem tocar em nada.
+    if argumentos.first().is_some_and(|a| a == "--hook-verificacao") {
+        std::process::exit(revisor::rodar_hook_verificacao());
+    }
     // `vitral --versao [--json]` e `vitral --instalar` respondem sem janela (o release e o
     // atualizador conferem o binário), antes de tocar nos dados.
     if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
@@ -123,6 +131,10 @@ fn main() {
     gpui_kit::application()
         .with_assets(tema::Icones)
         .run(move |cx| {
+            // O AppUserModelID do Windows (os avisos do sistema saem com ele; o atalho do Menu
+            // Iniciar usa o mesmo). Não muda depois: o Windows guarda as preferências por ele.
+            #[cfg(windows)]
+            cx.set_app_identity("VictorMenegate.Vitral", "Vitral");
             gpui_kit::init(cx);
             // Textos dos componentes do Kit (diff, diálogos, menus de texto) em português.
             gpui_kit::component::set_locale("pt-BR");
@@ -134,7 +146,7 @@ fn main() {
             let opcoes = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(920.)), cx)),
                 window_min_size: Some(size(px(960.), px(600.))),
-                window_background: WindowBackgroundAppearance::Transparent,
+                window_background: fundo_da_janela(),
                 window_decorations: Some(WindowDecorations::Client),
                 app_id: Some("vitral".into()),
                 ..TitleBar::window_options()
@@ -168,6 +180,22 @@ fn main() {
             .expect("não abriu a janela");
             cx.activate(true);
         });
+}
+
+/// O fundo da janela. O vidro do GNOME vem do compositor (o Blur my Shell desfoca o que está atrás
+/// do fundo transparente). No Windows, o acrílico do sistema (`Blurred`); `VITRAL_FUNDO=mica`,
+/// `transparente` ou `opaco` troca, para comparar num Windows de verdade (no Windows 10 o acrílico
+/// pode pesar ao arrastar).
+fn fundo_da_janela() -> WindowBackgroundAppearance {
+    if cfg!(not(windows)) {
+        return WindowBackgroundAppearance::Transparent;
+    }
+    match std::env::var("VITRAL_FUNDO").as_deref() {
+        Ok("mica") => WindowBackgroundAppearance::MicaBackdrop,
+        Ok("transparente") => WindowBackgroundAppearance::Transparent,
+        Ok("opaco") => WindowBackgroundAppearance::Opaque,
+        _ => WindowBackgroundAppearance::Blurred,
+    }
 }
 
 #[cfg(test)]

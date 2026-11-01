@@ -936,7 +936,7 @@ fn menu_do_arquivo(
         PopupMenuItem::new("Mostrar na pasta")
             .icon(Lucide::FolderOpen)
             .external()
-            .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", onde.display()))),
+            .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&onde, cx)),
     )
 }
 
@@ -2435,7 +2435,7 @@ impl Janela {
                 window,
                 cx,
             )
-            .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", destino.display())));
+            .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&destino, cx));
             let vazio = EstadoVazio::new(Lucide::FolderOpen, "Nenhum arquivo nesta pasta")
                 .texto(pasta.display().to_string())
                 .acao(abrir);

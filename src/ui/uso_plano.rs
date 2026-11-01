@@ -419,14 +419,13 @@ fn detalhes_codex(
         if !motor.codex_lido {
             return corpo.cabecalho(cabecalho(None, "Lendo o uso neste computador…"));
         }
-        return corpo.cabecalho(cabecalho(None, "Não instalado neste computador")).child(
-            EstadoVazio::new(Lucide::Download, "Codex não instalado")
-                .texto(
-                    "Instale o Codex da OpenAI e entre com a conta do ChatGPT. O uso do plano \
-                     aparece aqui depois da primeira resposta.",
-                )
-                .acao(botao_instalar("Instalar e entrar", popover, window, cx)),
+        let vazio = EstadoVazio::new(Lucide::Download, "Codex não instalado").texto(
+            "Instale o Codex da OpenAI e entre com a conta do ChatGPT. O uso do plano \
+             aparece aqui depois da primeira resposta.",
         );
+        // O instalador oficial é um script do sh (Linux e Mac): no Windows não há o botão.
+        let vazio = if cfg!(windows) { vazio } else { vazio.acao(botao_instalar("Instalar e entrar", popover, window, cx)) };
+        return corpo.cabecalho(cabecalho(None, "Não instalado neste computador")).child(vazio);
     };
     let sem_dado = codex.uso.cinco_horas.is_none() && codex.uso.semana.is_none() && codex.outras.is_empty();
     let uso = codex.uso;
