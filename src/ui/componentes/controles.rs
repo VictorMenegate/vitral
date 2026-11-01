@@ -15,7 +15,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::base::{Simbolo, texto_arco_iris};
+use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
 use super::superficies::desenho_teclas;
 use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, sombra_recuo, tam};
@@ -489,6 +489,7 @@ pub enum VarianteRedonda {
 pub struct BotaoRedondo {
     id: ElementId,
     icone: Option<Icon>,
+    marca: Option<Marca>,
     dica: SharedString,
     variante: VarianteRedonda,
     diametro: f32,
@@ -509,6 +510,7 @@ impl BotaoRedondo {
         BotaoRedondo {
             id: id.into(),
             icone,
+            marca: None,
             dica: dica.into(),
             variante: VarianteRedonda::Neutro,
             diametro: 32.,
@@ -526,6 +528,12 @@ impl BotaoRedondo {
 
     pub fn variante(mut self, v: VarianteRedonda) -> Self {
         self.variante = v;
+        self
+    }
+
+    /// O disco colorido da marca no lugar do ícone (o botão do Linear no cabeçalho da conversa).
+    pub fn marca(mut self, m: Marca) -> Self {
+        self.marca = Some(m);
         self
     }
 
@@ -657,9 +665,10 @@ impl RenderOnce for BotaoRedondo {
             .text_color(cor)
             .border_1()
             .border_color(borda)
-            .map(|s| match self.icone {
-                Some(icone) => s.child(icone.with_size(tam(window, lado_icone))),
-                None => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
+            .map(|s| match (self.marca, self.icone) {
+                (Some(marca), _) => s.child(marca.disco(lado_icone)),
+                (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
+                (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
             .when(interativo, |s| {

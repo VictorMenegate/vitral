@@ -72,6 +72,8 @@ pub enum LarguraPopover {
     P320,
     P360,
     P400,
+    /// O das issues, que tem lista e detalhe (a largura P dos diálogos).
+    P440,
     P560,
 }
 
@@ -81,6 +83,7 @@ impl LarguraPopover {
             LarguraPopover::P320 => 320.,
             LarguraPopover::P360 => 360.,
             LarguraPopover::P400 => 400.,
+            LarguraPopover::P440 => 440.,
             LarguraPopover::P560 => 560.,
         }
     }
