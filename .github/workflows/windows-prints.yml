@@ -1,0 +1,63 @@
+# Prints do Vitral num Windows de verdade, para conferir fontes, botões, fundo e cortes sem ter um
+# Windows por perto. Só à mão: Actions › Prints do Windows › Run workflow, ou
+#   gh workflow run windows-prints.yml --ref windows
+# e depois `gh run download <id> -n prints-windows`. O runner não tem GPU: o DirectX 11 do GPUI cai no
+# WARP (o renderizador por software), então a animação é lenta, mas o desenho é o mesmo. O roteiro
+# está em ferramentas/prints-windows.ps1.
+name: Prints do Windows
+
+on:
+  workflow_dispatch:
+  # Enquanto este arquivo não está no main, o GitHub só conhece o workflow (e aceita o "Run workflow")
+  # depois de um push que o dispare: o do ramo windows que mexe no roteiro ou aqui.
+  push:
+    branches: [windows]
+    paths:
+      - .github/workflows/windows-prints.yml
+      - ferramentas/prints-windows.ps1
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  prints:
+    name: Prints (windows-x86_64)
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Rust (versão do rust-toolchain.toml)
+        shell: bash
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+          rustc --version
+
+      # O mesmo cache dos testes do Windows no CI (o binário de desenvolvimento sai quase pronto); só lê.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev-windows-x86_64
+          save-if: "false"
+
+      - name: Compilar
+        shell: bash
+        run: cargo build --locked
+
+      - name: Abrir o Vitral e tirar os prints
+        shell: pwsh
+        run: ./ferramentas/prints-windows.ps1 -Vitral target/debug/vitral.exe -Saida prints
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: prints-windows
+          path: prints/
+          if-no-files-found: warn
