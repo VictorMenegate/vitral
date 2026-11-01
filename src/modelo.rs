@@ -691,6 +691,11 @@ pub struct CriterioEntregue {
 }
 
 impl Tarefa {
+    /// O grupo dos pontos de volta da tarefa ("t12"): as fotos, a poda e a limpeza da cópia.
+    pub fn grupo(&self) -> String {
+        format!("t{}", self.id)
+    }
+
     /// Quem fez o pedido aberto: "mestre", o chat pai (ajudante); `None` é o usuário.
     pub fn dono(&self) -> Option<&str> {
         Some(self.coordenador.as_str()).filter(|d| !d.is_empty())

@@ -2649,15 +2649,16 @@ impl Motor {
         let ultrathink = mensagens.iter().any(|e| e.ultrathink);
         let turno = turno_do_lote(self.ultima_entrada.get(chat_id).map(|(t, _)| t.as_str()), &mensagens);
         self.ultima_entrada.insert(chat_id.to_string(), (turno, mensagens.clone()));
-        // Ponto de volta: foto dos arquivos antes de quem edita começar o turno. Na cópia, o grupo
-        // vem do branch; na pasta própria, do número do chat. Sem git, não há foto.
+        // Ponto de volta: foto dos arquivos antes de quem edita começar o turno, no grupo da tarefa
+        // (o ramo da cópia pode ter qualquer nome). Sem git, não há foto.
         let novas = mensagens.iter().any(|e| !e.registrada);
+        let grupo = tarefa.as_ref().map(Tarefa::grupo);
         let ponto = match (&tarefa, chat.papel) {
             _ if !novas => None,
-            (_, Papel::Trabalhador) if git::e_repositorio(&chat.cwd) => git::foto(&chat.cwd).ok(),
-            (Some(t), Papel::Projeto) if t.tem_copia() => git::foto(&chat.cwd).ok(),
+            (_, Papel::Trabalhador) if git::e_repositorio(&chat.cwd) => git::foto(&chat.cwd, grupo.as_deref()).ok(),
+            (Some(t), Papel::Projeto) if t.tem_copia() => git::foto(&chat.cwd, grupo.as_deref()).ok(),
             (Some(t), Papel::Projeto) if t.forma == Forma::DiretaGit && git::e_repositorio(&chat.cwd) => {
-                git::foto_no_grupo(&chat.cwd, &format!("t{}", t.id)).ok()
+                git::foto(&chat.cwd, grupo.as_deref()).ok()
             }
             _ => None,
         };
@@ -4542,7 +4543,10 @@ impl Motor {
         }
         let caminho_projeto = self.origem_da_tarefa(&tarefa);
         let area = self.dados.pasta_copias(&tarefa.projeto);
-        let novo_branch = format!("vitral/t{id}-{}", slug(&tarefa.titulo));
+        // O ramo e o ponto de partida escolhidos antes (o do Linear, o prefixo da pasta, o
+        // `<remoto>/<base>` do modo PR) valem sempre, também ao refazer: nunca são recalculados.
+        let novo_branch = tarefa.ramo_planejado.clone().unwrap_or_else(|| format!("vitral/t{id}-{}", slug(&tarefa.titulo)));
+        let partir_de = tarefa.partir_de.clone();
         // O chat de projeto tem a pasta gravada desde que nasceu, e a cópia que já rodou volta
         // nela (o `--resume` vale pela pasta), partindo do branch dela.
         let (destino, branch, recriar) = if de_projeto {
@@ -4603,7 +4607,7 @@ impl Motor {
                     // O ponto do pai e a cópia nova ficam na mesma vez.
                     git::na_vez_do_projeto(&projeto, || {
                         if let Some((pasta, branch)) = antiga {
-                            let _ = git::limpar_copia(&projeto, &pasta, &area, &branch, &[], false);
+                            let _ = git::limpar_copia(&projeto, &pasta, &area, &branch, Some(&format!("t{id}")), &[], false);
                         }
                         if let Some(mensagem) = &ponto
                             && let Err(erro) = git::checkpoint(&projeto, mensagem)
@@ -4611,9 +4615,10 @@ impl Motor {
                             return Some(Err(erro.context(format!("não deu para guardar num commit o que {} tem", projeto.display()))));
                         }
                         Some(if recriar {
-                            git::recriar_worktree(&projeto, &destino, &branch).map(|(c, existia)| (c, Some(existia)))
+                            git::recriar_worktree_de(&projeto, &destino, &branch, partir_de.as_deref())
+                                .map(|(c, existia)| (c, Some(existia)))
                         } else {
-                            git::criar_worktree(&projeto, &destino, &branch).map(|c| (c, None))
+                            git::criar_worktree_de(&projeto, &destino, &branch, partir_de.as_deref()).map(|c| (c, None))
                         })
                     })
                 })
@@ -5145,10 +5150,11 @@ impl Motor {
                                 projeto
                             };
                             let limpou = git::na_vez_do_projeto(&projeto, || {
+                                let grupo = format!("t{id}");
                                 if de_projeto {
-                                    limpar_copia_do_chat(&projeto, &pasta, &area, &branch, &pontos)
+                                    limpar_copia_do_chat(&projeto, &pasta, &area, &branch, &grupo, &pontos)
                                 } else {
-                                    git::limpar_copia(&projeto, &pasta, &area, &branch, &pontos, false).map(|_| false)
+                                    git::limpar_copia(&projeto, &pasta, &area, &branch, Some(&grupo), &pontos, false).map(|_| false)
                                 }
                             });
                             (id, limpou)
@@ -5591,6 +5597,7 @@ impl Motor {
         self.juntando.insert(id);
         cx.notify();
         let pontos = self.pontos_so_do_chat(&tarefa.trabalhador);
+        let grupo = tarefa.grupo();
         let (ajudante, pai) = (tarefa.trabalhador.clone(), tarefa.coordenador.clone());
         cx.spawn(async move |motor, cx| {
             let alvo = pasta_do_pai.clone();
@@ -5603,7 +5610,7 @@ impl Motor {
                             .map_err(|e| e.context(format!("não deu para guardar num commit o que {} tem", alvo.display())))?;
                         let juncao = git::aprovar(&alvo, &pasta, &branch, &base, &mensagem);
                         if matches!(juncao, Ok(git::Juncao::Juntou { .. } | git::Juncao::SemMudancas)) {
-                            let _ = git::limpar_copia(&alvo, &pasta, &area, &branch, &pontos, false);
+                            let _ = git::limpar_copia(&alvo, &pasta, &area, &branch, Some(&grupo), &pontos, false);
                         }
                         juncao
                     })
@@ -6955,7 +6962,7 @@ pub fn guarda_da_copia(t: &Tarefa, preparando: bool) -> GuardaCopia {
 /// O que a limpeza faz com a cópia de um chat de projeto, na vez do repositório: nada sem a origem,
 /// nada se a cópia é de outro repositório; com trabalho não juntado, um commit e o branch fica. Diz
 /// se guardou trabalho.
-fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, pontos: &[String]) -> anyhow::Result<bool> {
+fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, grupo: &str, pontos: &[String]) -> anyhow::Result<bool> {
     if !origem.is_dir() {
         anyhow::bail!("a pasta {} não foi encontrada; a cópia fica até ela voltar", origem.display());
     }
@@ -6967,7 +6974,7 @@ fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, 
     if guardar {
         git::commit_de_turno(copia, "Vitral: guardado antes de apagar a cópia")?;
     }
-    git::limpar_copia(origem, copia, area, branch, pontos, guardar)?;
+    git::limpar_copia(origem, copia, area, branch, Some(grupo), pontos, guardar)?;
     Ok(guardar)
 }
 
