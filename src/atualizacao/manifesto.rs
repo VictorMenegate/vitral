@@ -177,6 +177,23 @@ mod testes {
         assert!(ler(PONTA, "vitral 0.9.0 vitral-versao.json", "windows-x86_64").is_err());
     }
 
+    /// O manifesto com o pacote do Windows (desde o Lote W3): cada sistema lê só o dele, e o Linux lê
+    /// igual a antes (a 0.3.0-rc.5 instalada lê com este mesmo `ler`). Todos os pacotes precisam da
+    /// mesma forma: um campo faltando no de outro sistema recusa o manifesto inteiro.
+    #[test]
+    fn o_pacote_do_windows_nao_muda_o_que_o_linux_le() {
+        let windows = "windows-x86_64";
+        let com_windows = manifesto(|m| {
+            m["arquivos"][windows] =
+                serde_json::json!({"nome": "vitral-0.9.0-windows-x86_64.tar.gz", "tamanho": 25_000_000, "sha256": "ab".repeat(32)});
+        });
+        assert_eq!(ler_09(&com_windows).unwrap(), ler_09(PONTA).unwrap());
+        let Lido::Versao(publicada) = ler(&com_windows, "vitral 0.9.0 vitral-versao.json", windows).unwrap() else { panic!() };
+        assert_eq!(publicada.pacote, Arquivo { nome: "vitral-0.9.0-windows-x86_64.tar.gz".into(), tamanho: 25_000_000, sha256: "ab".repeat(32) });
+        let torto = manifesto(|m| m["arquivos"][windows] = serde_json::json!({"nome": "vitral-0.9.0-windows-x86_64.tar.gz"}));
+        assert!(ler_09(&torto).is_err());
+    }
+
     #[test]
     fn formato_novo_so_avisa() {
         let novo = manifesto(|m| {
