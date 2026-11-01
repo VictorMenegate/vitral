@@ -34,7 +34,8 @@ use crate::modelo::{
 /// de verdade, o `--instalar` e o `instalar-dev.sh` recusam, e um release estável não passa nos testes.
 pub const DADOS_GLOBAIS: bool = true;
 
-/// A pasta do app instalado dentro da pasta de dados (`atualizacao::linux::Raiz::app`).
+/// A pasta do app instalado dentro da pasta de dados no Linux (`atualizacao::linux::Raiz::app`;
+/// no Windows, o app mora em `%LOCALAPPDATA%\Programs\Vitral`, fora dela).
 pub const PASTA_DO_APP: &str = "app";
 
 /// Os dados globais nasceram no formato 2: um estado gravado sem o arquivo `formato` é dele.
@@ -1667,7 +1668,12 @@ mod testes {
         let dados = Dados::em(&raiz);
         let app = crate::atualizacao::instalador::Raiz { dados: raiz.clone(), bin: None }.app();
         let dados_no_mesmo_lugar = Dados { pasta: raiz.join("vitral"), ..dados.clone() };
-        assert_eq!(app, dados_no_mesmo_lugar.pasta.join(PASTA_DO_APP));
+        // No Linux o app mora dentro da pasta de dados; no Windows, ao lado (`Programs\Vitral`).
+        if cfg!(target_os = "linux") {
+            assert_eq!(app, dados_no_mesmo_lugar.pasta.join(PASTA_DO_APP));
+        } else {
+            assert!(!app.starts_with(&dados_no_mesmo_lugar.pasta), "{}", app.display());
+        }
         assert_ne!(app.join("estado.json"), dados_no_mesmo_lugar.arquivo_estado());
         let _ = fs::remove_dir_all(&raiz);
     }
