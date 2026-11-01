@@ -9,7 +9,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+// Os tipos da integração nascem nos módulos dela; o modelo os reexporta (o G3 e o G4 usam todos).
+#[allow(unused_imports)]
 pub use crate::github::{EstadoChecks, EstadoPr, ResumoChecks};
+#[allow(unused_imports)]
 pub use crate::issues::{FonteIssue, IssueLigada};
 
 /// O formato dos dados no disco. Sobe quando uma migração muda o formato; o atualizador só volta
@@ -240,6 +243,7 @@ pub struct Chat {
 }
 
 /// Até quantos registros de ação externa um chat guarda (os mais antigos saem).
+#[allow(dead_code)] // Provisório: a guarda das ações externas (G6) poda por este teto.
 pub const MAX_ACOES_EXTERNAS: usize = 50;
 
 /// Uma ação com efeito fora do Vitral (abrir, atualizar ou mesclar um PR) feita num turno.
@@ -585,6 +589,7 @@ pub struct Pr {
 
 impl Pr {
     /// Aberto ou rascunho: o estado em que a tarefa fica em `NoPr`.
+    #[allow(dead_code)] // Provisório: o vigia (G4).
     pub fn aberto(&self) -> bool {
         matches!(self.estado, EstadoPr::Aberto | EstadoPr::Rascunho)
     }
@@ -809,6 +814,7 @@ impl ConfigGithub {
     }
 
     /// O prefixo dos ramos, com o padrão.
+    #[allow(dead_code)] // Provisório: o ramo do chat de uma issue (G3a).
     pub fn prefixo(&self) -> &str {
         match self.prefixo_ramo.trim() {
             "" => crate::issues::PREFIXO_PADRAO,

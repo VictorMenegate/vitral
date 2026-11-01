@@ -54,6 +54,7 @@ impl<T> Carregando<T> {
         }
     }
 
+    #[allow(dead_code)] // Provisório: o popover das issues e a aba PR (G3b e G5).
     pub fn carregando(&self) -> bool {
         matches!(self, Carregando::Carregando(_))
     }
@@ -257,6 +258,7 @@ pub fn estado_do_login(resultado: Result<Option<LoginGh>, ErroRemoto>) -> Estado
 }
 
 /// Os métodos de mesclar que o repositório aceita, com o padrão da conta primeiro.
+#[allow(dead_code)] // Provisório: mesclar (G4) e o menu da aba PR (G5).
 pub fn metodos_permitidos(info: &InfoRepo) -> Vec<&'static str> {
     let mut metodos: Vec<&'static str> = [("squash", info.squash), ("merge", info.merge), ("rebase", info.rebase)]
         .into_iter()
@@ -643,6 +645,7 @@ impl Motor {
 
     /// O repositório do GitHub da pasta, pelo remote que vale na configuração dela. `Nada` também
     /// numa pasta sem GitHub (ver `remotos_github`).
+    #[allow(dead_code)] // API da seção 10.1; quem chama é o popover das issues (G3b).
     pub fn info_github(&self, pasta: &Path) -> Carregando<InfoRepo> {
         let Some(remotos) = self.remotos_github(pasta).tirar() else {
             return Carregando::Nada;
@@ -673,6 +676,7 @@ impl Motor {
     }
 
     /// O prefixo que os seus PRs anteriores no repositório da pasta sugerem ("feature/vitor-").
+    #[allow(dead_code)] // API da seção 10.1; quem chama é o ramo do chat de uma issue (G3a).
     pub fn prefixo_sugerido(&self, pasta: &Path) -> Option<String> {
         let remotos = self.remotos_github(pasta).tirar()?;
         let projeto = self.projeto_da_pasta(pasta).unwrap_or_default();
@@ -718,6 +722,7 @@ impl Motor {
     }
 
     /// O time do Linear do projeto, gravado na hora (o chip "Time" do popover das issues).
+    #[allow(dead_code)] // API da seção 10.1; quem chama é o chip "Time" do popover das issues (G3b).
     pub fn escolher_time(&mut self, projeto: &str, time: &Time, cx: &mut Context<Self>) {
         if self.somente_leitura.is_some() {
             return;
@@ -730,22 +735,9 @@ impl Motor {
         cx.notify();
     }
 
+    #[allow(dead_code)] // API da seção 10.1; quem chama é a faixa "sem conexão" (G3b e G5).
     pub fn estado_rede(&self, p: Provedor) -> EstadoRede {
         self.integracao.rede.get(&p).map_or(EstadoRede::Ok, |r| r.estado.clone())
-    }
-
-    /// Esquece o que veio do GitHub para a pasta e o repositório dela ("⟳"): a próxima leitura busca.
-    pub fn atualizar_github(&mut self, pasta: &Path, cx: &mut Context<Self>) {
-        if let Some((_, remotos)) = self.integracao.remotos.remove(pasta)
-            && let Some(lista) = remotos.valor()
-        {
-            for r in lista {
-                if !self.integracao.info_repos.get(&r.repositorio).is_some_and(|(_, c)| c.carregando()) {
-                    self.integracao.info_repos.remove(&r.repositorio);
-                }
-            }
-        }
-        cx.notify();
     }
 
     // ---------- buscas em segundo plano ----------

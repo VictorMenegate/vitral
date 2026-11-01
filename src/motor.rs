@@ -25,9 +25,12 @@ mod mestre;
 mod prs;
 
 pub use conexoes::{
-    Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, Provedor, RemotoGithub, RepoGithub, estados_padrao,
-    metodos_permitidos, modo_pr_disponivel, remoto_escolhido,
+    Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, RemotoGithub, estados_padrao, linear_com_time,
+    modo_pr_disponivel, remoto_escolhido,
 };
+// Provisório: o PR (G4 e G5) usa o estado da rede, o repositório inteiro e os métodos permitidos.
+#[allow(unused_imports)]
+pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 // Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
 #[allow(unused_imports)]
 pub use issues::{EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
@@ -333,6 +336,8 @@ pub struct NovoProjeto {
     pub permissao: Option<String>,
     pub modelo: Option<String>,
     pub conta: Option<String>,
+    /// O time do Linear escolhido no formulário.
+    pub linear: Option<crate::modelo::LinearDoProjeto>,
 }
 
 /// O que muda num projeto: só o que vem preenchido (é um patch: a ordem e o arquivamento mexidos com
@@ -1258,6 +1263,7 @@ impl Motor {
                         permissao: vazio(novo.permissao),
                         modelo: vazio(novo.modelo),
                         conta: vazio(novo.conta),
+                        linear: novo.linear,
                         ..Default::default()
                     });
                     if let Some(cartao) = cartao {

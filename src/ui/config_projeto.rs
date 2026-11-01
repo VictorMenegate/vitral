@@ -1,17 +1,18 @@
-//! A configuração de uma pasta ligada, no Avançado de Editar projeto: a preparação de cada cópia
-//! nova, os arquivos fora do git que vão junto para as cópias (como o .env) e o comando para rodar.
+//! A configuração de uma pasta ligada, em Editar projeto: no Avançado, a preparação de cada cópia
+//! nova, os arquivos fora do git que vão junto para as cópias (como o .env) e o comando para rodar;
+//! em "GitHub e Linear", como as mudanças chegam ao GitHub (o desenho fica em `projeto.rs`).
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 
 use super::componentes::{GrupoDeOpcoes, LinhaDeOpcao};
 use crate::{
-    modelo::{ConfigGithub, ConfigProjeto},
+    modelo::{ConfigGithub, ConfigProjeto, ModoEntrega},
     tema::FONTE_MONO,
 };
 
 /// Os três campos de uma pasta e como estavam ao abrir, mais o GitHub dela (a seção "GitHub e
-/// Linear" do editor mexe nele).
+/// Linear" do editor mexe nele; o prefixo dos ramos é um campo).
 pub(super) struct ConfigDaPasta {
     preparacao: Entity<InputState>,
     rodar: Entity<InputState>,
@@ -19,6 +20,25 @@ pub(super) struct ConfigDaPasta {
     inicial: [String; 3],
     pub(super) github: ConfigGithub,
     github_inicial: ConfigGithub,
+    pub(super) prefixo: Entity<InputState>,
+    /// "Mais opções" do GitHub aberto.
+    pub(super) mais_opcoes: bool,
+}
+
+/// O texto embaixo de "Ao aprovar", que muda com a escolha.
+pub(super) fn descricao_da_entrega(modo: ModoEntrega) -> &'static str {
+    match modo {
+        ModoEntrega::Juntar => "Juntar aqui leva as mudanças aprovadas do chat para esta pasta.",
+        ModoEntrega::Pr => {
+            "Abrir PR manda as mudanças para o GitHub e acompanha checks e revisão. Os chats desta pasta rodam isolados: \
+             sem gh, sem git push e sem o chaveiro; o Vitral faz o push."
+        }
+    }
+}
+
+/// O ramo de destino como aparece no menu: o padrão do repositório entre parênteses.
+pub(super) fn nome_do_ramo_padrao(padrao: &str) -> String {
+    if padrao.is_empty() { "Padrão do repositório".into() } else { format!("Padrão ({padrao})") }
 }
 
 /// Os três textos de uma configuração, na ordem dos campos.
@@ -52,7 +72,17 @@ impl ConfigDaPasta {
         let preparacao = campo(&inicial[0], "npm install");
         let rodar = campo(&inicial[1], "npm run dev -- --port $VITRAL_PORT");
         let copiar = campo(&inicial[2], ".env*, CLAUDE.local.md");
-        ConfigDaPasta { preparacao, rodar, copiar, inicial, github: config.github.clone(), github_inicial: config.github.clone() }
+        let prefixo = campo(config.github.prefixo_ramo.trim(), crate::issues::PREFIXO_PADRAO);
+        ConfigDaPasta {
+            preparacao,
+            rodar,
+            copiar,
+            inicial,
+            github: config.github.clone(),
+            github_inicial: config.github.clone(),
+            prefixo,
+            mais_opcoes: false,
+        }
     }
 
     /// A configuração como está nos campos.
@@ -61,12 +91,13 @@ impl ConfigDaPasta {
             preparacao: self.preparacao.read(cx).value().trim().to_string(),
             rodar: self.rodar.read(cx).value().trim().to_string(),
             copiar: lista_de_copiar(&self.copiar.read(cx).value()),
-            github: self.github.clone(),
+            github: ConfigGithub { prefixo_ramo: self.prefixo.read(cx).value().trim().to_string(), ..self.github.clone() },
         }
     }
 
     pub(super) fn mudou(&self, cx: &App) -> bool {
-        textos(&self.config(cx)) != self.inicial || self.github != self.github_inicial
+        let config = self.config(cx);
+        textos(&config) != self.inicial || config.github != self.github_inicial
     }
 
     /// As linhas da pasta num grupo do Avançado.
@@ -93,11 +124,19 @@ impl ConfigDaPasta {
 
 #[cfg(test)]
 mod testes {
-    use super::lista_de_copiar;
+    use super::{ModoEntrega, descricao_da_entrega, lista_de_copiar, nome_do_ramo_padrao};
 
     #[test]
     fn copiar_separa_por_virgula_e_tira_os_vazios() {
         assert_eq!(lista_de_copiar(".env*, CLAUDE.local.md,, "), vec![".env*", "CLAUDE.local.md"]);
         assert!(lista_de_copiar("  ").is_empty());
+    }
+
+    #[test]
+    fn textos_do_github_da_pasta() {
+        assert!(descricao_da_entrega(ModoEntrega::Pr).contains("rodam isolados"));
+        assert!(descricao_da_entrega(ModoEntrega::Juntar).starts_with("Juntar aqui"));
+        assert_eq!(nome_do_ramo_padrao("main"), "Padrão (main)");
+        assert_eq!(nome_do_ramo_padrao(""), "Padrão do repositório");
     }
 }

@@ -567,6 +567,7 @@ pub struct LinhaDeOpcao {
     titulo: SharedString,
     arco_iris: bool,
     simbolo: Option<(Lucide, Hsla)>,
+    marca: Option<Simbolo>,
     descricao: Option<AnyElement>,
     aviso: Option<SharedString>,
     info: Option<SharedString>,
@@ -582,6 +583,7 @@ impl LinhaDeOpcao {
             titulo: titulo.into(),
             arco_iris: false,
             simbolo: None,
+            marca: None,
             descricao: None,
             aviso: None,
             info: None,
@@ -633,6 +635,12 @@ impl LinhaDeOpcao {
         self
     }
 
+    /// O logo do serviço (16) antes do título, que fica na cor de sempre (GitHub, Linear).
+    pub fn marca(mut self, s: Simbolo) -> Self {
+        self.marca = Some(s);
+        self
+    }
+
     /// Uma linha em âmbar embaixo da descrição (custo, carga); some com a linha desabilitada.
     pub fn aviso(mut self, a: impl Into<SharedString>) -> Self {
         self.aviso = Some(a.into());
@@ -660,6 +668,7 @@ impl RenderOnce for LinhaDeOpcao {
             .font_weight(FontWeight::MEDIUM)
             .text_color(self.simbolo.map_or_else(Cores::texto, |(_, cor)| cor))
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
+            .when_some(self.marca, |d, marca| d.child(marca.desenhar(16., window)))
             .map(|d| {
                 if self.arco_iris {
                     d.child(texto_arco_iris(&self.titulo))

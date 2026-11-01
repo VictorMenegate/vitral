@@ -20,6 +20,7 @@ use super::{
         TamanhoChip, botao_perigo, icone_do_modo, item_descrito, largura,
     },
     atualizacao::{Vista, grupo as grupo_de_atualizacoes},
+    conexoes::PainelConexoes,
     dialogos::estreito,
     limpeza::{Pergunta, confirmar_limpeza},
     movimento::{self, Animacoes},
@@ -46,6 +47,8 @@ pub struct Configuracoes {
     _atualizacoes: Subscription,
     /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
     _acompanhando: Option<Acompanhando>,
+    /// GitHub, Linear e o isolamento dos chats.
+    conexoes: Entity<PainelConexoes>,
 }
 
 impl Configuracoes {
@@ -58,8 +61,10 @@ impl Configuracoes {
         });
         let _atualizacoes = cx.observe_global::<Atualizacoes>(|_, cx| cx.notify());
         let _acompanhando = atualizacao::acompanhar_progresso(cx);
+        let conexoes = cx.new(|cx| PainelConexoes::new(motor.clone(), cx));
         let mut este = Self {
             motor,
+            conexoes,
             espaco: None,
             copias: 0,
             _medicao: Task::ready(()),
@@ -548,6 +553,7 @@ impl Render for Configuracoes {
             .child(conversas)
             .child(trabalhadores)
             .child(revisao)
+            .child(self.conexoes.clone())
             .child(copias)
             .child(interface)
             .children(atualizacoes)

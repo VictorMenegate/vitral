@@ -1,8 +1,9 @@
 //! Novo projeto e Editar projeto, no mesmo formulário: nome, ícone e cor, descrição, as pastas
 //! ligadas (nenhuma, uma ou várias, com Localizar pasta…), as instruções para os chats, as decisões
-//! anotadas por eles e, no Avançado, a preparação, os arquivos e o rodar de cada pasta, e a
-//! permissão, o modelo e a conta do projeto. Grava uma vez, no Criar ou no Salvar, só o que o
-//! formulário mudou (a ordem e o arquivamento mexidos com ele aberto ficam como estão).
+//! anotadas por eles, o GitHub de cada pasta e o time do Linear e, no Avançado, a preparação, os
+//! arquivos e o rodar de cada pasta, e a permissão, o modelo e a conta do projeto. Grava uma vez,
+//! no Criar ou no Salvar, só o que o formulário mudou (a ordem e o arquivamento mexidos com ele
+//! aberto ficam como estão).
 
 use std::{
     collections::HashMap,
@@ -10,10 +11,11 @@ use std::{
 };
 
 use gpui_kit::component::{
-    Disableable as _, WindowExt as _,
+    Disableable as _, Size, Sizable as _, WindowExt as _,
     button::ButtonVariants as _,
     h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    spinner::Spinner,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -22,21 +24,25 @@ use gpui_kit::*;
 use super::{
     Janela, Vista,
     componentes::{
-        Alerta, CabecalhoDeSecao, Campo, Chip, Confirmacao, GatilhoChip, GrupoDeOpcoes, LinhaDeOpcao, QuadradoDeProjeto,
-        RodapeDialogo, Simbolo, TamanhoBotao, TamanhoChip, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma,
-        botao_icone, botao_primario, confirmar, contagem, largura, popover, variante_perigo_calma,
+        Alerta, CabecalhoDeSecao, Campo, Chip, Confirmacao, ControleSegmentado, GatilhoChip, GrupoDeOpcoes, LinhaDeOpcao,
+        Marca, QuadradoDeProjeto, RodapeDialogo, Segmento, Selo, Simbolo, TamanhoBotao, TamanhoChip, Tom, TomConfirmacao,
+        aviso, aviso_erro, botao_fantasma, botao_icone, botao_primario, confirmar, contagem, largura, popover,
+        variante_perigo_calma,
     },
     composer::{DESCRICOES_DE_MODELO, MODELOS, MODOS},
-    config_projeto::ConfigDaPasta,
+    config_projeto::{ConfigDaPasta, descricao_da_entrega, nome_do_ramo_padrao},
     configuracoes::{Opcao, menu_escolha},
     dialogos::{cabecalho, com_til, moldura, topo},
     icone_projeto::{self, CORES, EscolhaIconeCor, Icone, icone_por_id, ler_cor},
 };
 use crate::{
     dados,
-    modelo::{ConfigProjeto, PastaLigada, Projeto, SugestaoProjeto},
-    motor::{MAX_INSTRUCOES, Motor, MudancaProjeto, NovoProjeto},
-    tema::{Cores, Lucide, Tipo as _, esp},
+    modelo::{ConfigProjeto, LinearDoProjeto, ModoEntrega, Papel, PastaLigada, Projeto, SugestaoProjeto},
+    motor::{
+        Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, MAX_INSTRUCOES, Motor, MudancaProjeto, NovoProjeto,
+        RemotoGithub, estados_padrao, modo_pr_disponivel, remoto_escolhido,
+    },
+    tema::{Cores, Lucide, Tipo as _, esp, tam},
 };
 
 
@@ -169,6 +175,11 @@ pub struct EditorProjeto {
     git: HashMap<PathBuf, bool>,
     /// O cartão do Mestre que sugeriu este projeto: Criar responde a ele.
     sugestao: Option<u64>,
+    /// O time do Linear e os estados automáticos, como estão no formulário e como estavam.
+    linear: Option<LinearDoProjeto>,
+    linear_inicial: Option<LinearDoProjeto>,
+    /// "Mais opções" do Linear aberto.
+    mais_linear: bool,
     _assinaturas: Vec<Subscription>,
 }
 
@@ -270,7 +281,10 @@ impl EditorProjeto {
             })
         });
         assinaturas.push(cx.observe(&escolha, |_, _, cx| cx.notify()));
+        // O que chega do GitHub e do Linear (o repositório de cada pasta, os times) redesenha.
+        assinaturas.push(cx.observe(&motor, |_, _, cx| cx.notify()));
         let (permissao, modelo, conta) = (inicial.permissao.clone(), inicial.modelo.clone(), inicial.conta.clone());
+        let linear = projeto.as_ref().and_then(|p| p.linear.clone());
         let mut editor = EditorProjeto {
             motor,
             janela,
@@ -291,6 +305,9 @@ impl EditorProjeto {
             avancado,
             git: HashMap::new(),
             sugestao: sugestao.map(|(cartao, _)| cartao),
+            linear_inicial: linear.clone(),
+            linear,
+            mais_linear: false,
             _assinaturas: assinaturas,
         };
         editor.ler_git(cx);
@@ -357,6 +374,7 @@ impl EditorProjeto {
             || self.permissao != self.inicial.permissao
             || self.modelo != self.inicial.modelo
             || self.conta != self.inicial.conta
+            || self.linear != self.linear_inicial
     }
 
     /// "Adicionar pasta…": o seletor do sistema (várias de uma vez); a que já é de outro projeto,
@@ -515,6 +533,7 @@ impl EditorProjeto {
             permissao: Some(self.permissao.clone()),
             modelo: Some(self.modelo.clone()),
             conta: Some(self.conta.clone()),
+            linear: self.linear.clone(),
         };
         if let Some(cartao) = self.sugestao {
             // Da sugestão do Mestre: cria e responde ao cartão numa gravação só; o Mestre continua
@@ -563,11 +582,19 @@ impl EditorProjeto {
         };
         let texto = |e: &Entity<TextareaState>| e.read(cx).value().trim().to_string();
         let nome = self.nome.read(cx).value().trim().to_string();
-        // As pastas com a configuração de cada uma (a pasta própria continua própria).
+        // As pastas com a configuração de cada uma (a pasta própria continua própria), com o destino
+        // dos PRs que a detecção achou guardado em cache.
+        let motor = self.motor.read(cx);
         let pastas: Vec<PastaLigada> = self
             .pastas
             .iter()
-            .map(|p| PastaLigada { caminho: p.caminho.clone(), propria: p.propria, config: p.config.config(cx) })
+            .map(|p| {
+                let mut config = p.config.config(cx);
+                if let Some(destino) = motor.destino_do_pr(&p.caminho, &config.github) {
+                    config.github.repositorio = destino;
+                }
+                PastaLigada { caminho: p.caminho.clone(), propria: p.propria, config }
+            })
             .collect();
         let mudanca = MudancaProjeto {
             nome: (nome != self.inicial.nome).then(|| nome.clone()),
@@ -580,7 +607,7 @@ impl EditorProjeto {
             permissao: Some(Some(self.permissao.clone())),
             modelo: Some(Some(self.modelo.clone())),
             conta: Some(Some(self.conta.clone())),
-            linear: None,
+            linear: (self.linear != self.linear_inicial).then(|| self.linear.clone()),
         };
         let notas = self.notas.as_ref().map(|n| n.read(cx).value().to_string());
         let notas_iniciais = self.notas_iniciais.clone();
@@ -820,6 +847,369 @@ impl EditorProjeto {
     }
 }
 
+/// Os valores especiais dos menus de estado do Linear (os outros são ids de estado).
+const AUTOMATICO: &str = "automatico";
+const NAO_MUDAR: &str = "nao-mudar";
+/// Até quantos ramos o menu do ramo de destino mostra (o padrão e o escolhido sempre entram).
+const MAX_RAMOS_NO_MENU: usize = 40;
+
+/// O nome de uma pasta no editor ("Pasta própria" para a do projeto).
+fn nome_da_pasta(caminho: &Path, propria: bool) -> String {
+    if propria {
+        return "Pasta própria".to_string();
+    }
+    caminho.file_name().map_or_else(|| caminho.display().to_string(), |n| n.to_string_lossy().to_string())
+}
+
+/// O valor do menu de estado a partir do que está gravado, e o contrário.
+fn valor_do_estado(gravado: &Option<String>) -> String {
+    match gravado.as_deref() {
+        None => AUTOMATICO.into(),
+        Some("") => NAO_MUDAR.into(),
+        Some(id) => id.into(),
+    }
+}
+
+fn estado_do_valor(valor: &str) -> Option<String> {
+    match valor {
+        AUTOMATICO => None,
+        NAO_MUDAR => Some(String::new()),
+        id => Some(id.to_string()),
+    }
+}
+
+/// Spinner de 12 e o texto, como descrição de uma linha.
+fn carregando_texto(texto: &'static str, window: &Window) -> AnyElement {
+    h_flex()
+        .gap(esp::E6)
+        .child(Spinner::new().with_size(Size::Size(tam(window, 12.))).color(Cores::tenue()))
+        .child(texto)
+        .into_any_element()
+}
+
+/// "› Mais opções" dentro de um grupo: o texto alinhado com os títulos, o chevron antes dele.
+fn mais_opcoes(aberto: bool, alternar: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
+    div().px(esp::E4).pb(esp::E4).child(CabecalhoDeSecao::new("Mais opções").recolhivel(aberto, alternar).respiro(4.).recuo(20.))
+}
+
+impl EditorProjeto {
+    /// Muda o GitHub de uma pasta do formulário e redesenha.
+    fn mudar_github(eu: &WeakEntity<Self>, i: usize, cx: &mut App, f: impl FnOnce(&mut ConfigDaPasta)) {
+        let _ = eu.update(cx, |this, cx| {
+            if let Some(p) = this.pastas.get_mut(i) {
+                f(&mut p.config);
+            }
+            cx.notify();
+        });
+    }
+
+    /// "GitHub e Linear": um grupo por pasta (o repositório, "Ao aprovar" e as Mais opções) e o
+    /// time do Linear. Sem o gh e sem o Linear conectado, nada aparece.
+    fn secao_github_linear(&self, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let conexoes = self.motor.read(cx).conexoes();
+        let mut blocos: Vec<AnyElement> = Vec::new();
+        if conexoes.github != EstadoGithub::SemGh {
+            for i in 0..self.pastas.len() {
+                blocos.push(self.grupo_github(i, &conexoes, window, cx));
+            }
+        }
+        if conexoes.linear.is_some() {
+            blocos.push(self.grupo_linear(&conexoes, window, cx));
+        }
+        if blocos.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .gap(esp::E8)
+                .child(div().rotulo().text_color(Cores::texto()).child("GitHub e Linear"))
+                .child(v_flex().gap(esp::E16).children(blocos))
+                .into_any_element(),
+        )
+    }
+
+    fn grupo_github(&self, i: usize, conexoes: &EstadoConexoes, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let p = &self.pastas[i];
+        let motor = self.motor.read(cx);
+        let titulo: SharedString = format!("GitHub · {}", nome_da_pasta(&p.caminho, p.propria)).into();
+        let grupo = GrupoDeOpcoes::new(Some(titulo));
+        let remotos = motor.remotos_github(&p.caminho);
+        let lista: Vec<RemotoGithub> = match remotos.valor() {
+            Some(lista) => lista.clone(),
+            None => {
+                let descricao = match remotos.erro() {
+                    Some(erro) => div().text_color(Cores::vermelho()).child(erro.to_string()).into_any_element(),
+                    None => carregando_texto("Procurando o remote do GitHub…", window),
+                };
+                return grupo.linha(LinhaDeOpcao::new(("gh-procurando", i), "Repositório").descricao(descricao)).into_any_element();
+            }
+        };
+        let github = &p.config.github;
+        let Some(remoto) = remoto_escolhido(&lista, github).cloned() else {
+            return grupo
+                .linha(
+                    LinhaDeOpcao::new(("gh-sem-remote", i), "Sem GitHub")
+                        .descricao("Esta pasta não tem remote no GitHub. A entrega é Juntar aqui."),
+                )
+                .into_any_element();
+        };
+        let repo = motor.repo_github(&remoto.repositorio);
+        let info = repo.valor().map(|r| r.info.clone());
+        let original = info.as_ref().filter(|i| i.fork).and_then(|i| i.original.clone());
+        let do_fork = github.pr_no_original && original.is_some();
+        let destino = if do_fork { original.clone().unwrap_or_default() } else { remoto.repositorio.clone() };
+        let info_destino = if do_fork { motor.repo_github(&destino).valor().map(|r| r.info.clone()) } else { info.clone() };
+        let login = match &conexoes.github {
+            EstadoGithub::Conectado(l) => Some(l),
+            _ => None,
+        };
+        let disponivel = match &info_destino {
+            Some(info) => modo_pr_disponivel(info, login, do_fork),
+            None if login.is_none() => Err("Entre no GitHub em Configurações › Conexões".to_string()),
+            None => Err(repo.erro().map_or("Lendo o repositório no GitHub…".to_string(), str::to_string)),
+        };
+        let eu = cx.entity().downgrade();
+
+        // Repositório: o chip abre no GitHub, o selo diz o que sua conta pode nele.
+        let url = info.as_ref().map(|i| i.url.clone()).filter(|u| !u.is_empty()).unwrap_or_else(|| format!("https://github.com/{}", remoto.repositorio));
+        let chip = Chip::new(("gh-repo-chip", i), remoto.repositorio.clone())
+            .tamanho(TamanhoChip::Medio)
+            .simbolo(Simbolo::icone(Lucide::Github))
+            .dica("Abrir no GitHub")
+            .on_click(move |_, _, cx| cx.open_url(&url))
+            .construir(window, cx);
+        let selo = info.as_ref().map(|i| Selo::neutro(i.permissao.to_lowercase()));
+        let linha_repo = LinhaDeOpcao::new(("gh-repo", i), "Repositório").controle(h_flex().gap(esp::E8).child(chip).children(selo));
+        let linha_repo = match (&repo, &original) {
+            (Carregando::Carregando(None) | Carregando::Nada, _) => linha_repo.descricao(carregando_texto("Lendo o repositório…", window)),
+            (Carregando::Erro(erro, _), _) => linha_repo.aviso(erro.clone()),
+            (_, Some(original)) => linha_repo.descricao(format!("Fork de {original}")),
+            _ => linha_repo,
+        };
+
+        // Ao aprovar: Juntar aqui | Abrir PR, com o motivo quando não dá.
+        let pr = github.entrega == ModoEntrega::Pr;
+        let segmento_pr = match &disponivel {
+            Err(motivo) if !pr => Segmento::new("Abrir PR").desabilitado(motivo.clone()),
+            _ => Segmento::new("Abrir PR"),
+        };
+        let (e1, e2) = (eu.clone(), i);
+        let entrega = ControleSegmentado::new(("gh-entrega", i), [Segmento::new("Juntar aqui"), segmento_pr], usize::from(pr), move |novo, _, cx| {
+            Self::mudar_github(&e1, e2, cx, |c| c.github.entrega = if novo == 1 { ModoEntrega::Pr } else { ModoEntrega::Juntar })
+        })
+        .with_size(Size::Small);
+        let legado = motor.chats.iter().any(|c| c.papel == Papel::Coordenador && !c.arquivado && c.cwd == p.caminho);
+        let descricao = v_flex()
+            .child(descricao_da_entrega(github.entrega))
+            .when(!pr && disponivel.is_err(), |d| d.child(format!("Abrir PR: {}.", disponivel.as_ref().err().map_or("", String::as_str))))
+            .when(pr && legado, |d| d.child("Conversas antigas (coordenador) continuam juntando aqui."));
+        let mut linha_entrega = LinhaDeOpcao::new(("gh-entrega", i), "Ao aprovar").descricao(descricao).controle(entrega);
+        if pr {
+            // Provisório (G4): a publicação ainda não existe.
+            linha_entrega = linha_entrega.aviso(match &disponivel {
+                Err(motivo) => motivo.clone(),
+                Ok(()) => "A entrega por PR chega numa próxima versão do Vitral; até lá, aprovar junta aqui.".to_string(),
+            });
+        }
+
+        let alternar = {
+            let eu = eu.clone();
+            move |_: &mut Window, cx: &mut App| Self::mudar_github(&eu, i, cx, |c| c.mais_opcoes = !c.mais_opcoes)
+        };
+        let mut grupo = grupo.linha(linha_repo).linha(linha_entrega).linha(mais_opcoes(p.config.mais_opcoes, alternar));
+        if p.config.mais_opcoes {
+            for linha in self.mais_opcoes_github(i, &lista, &remoto, &destino, info_destino.as_ref().map(|i| i.ramo_padrao.as_str()), original.as_deref(), login.map(|l| l.login.as_str()), window, cx) {
+                grupo = grupo.linha(linha);
+            }
+        }
+        grupo.into_any_element()
+    }
+
+    /// O ramo de destino, o prefixo dos ramos, o rascunho, o PR no original (só num fork) e o
+    /// remote (só com mais de um do GitHub).
+    #[allow(clippy::too_many_arguments)]
+    fn mais_opcoes_github(
+        &self,
+        i: usize,
+        remotos: &[RemotoGithub],
+        remoto: &RemotoGithub,
+        destino: &str,
+        ramo_padrao: Option<&str>,
+        original: Option<&str>,
+        login: Option<&str>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Vec<AnyElement> {
+        let p = &self.pastas[i];
+        let github = &p.config.github;
+        let motor = self.motor.read(cx);
+        let eu = cx.entity().downgrade();
+        let mut linhas: Vec<AnyElement> = Vec::new();
+        let ancora = Anchor::TopRight;
+
+        // Ramo de destino: o padrão do repositório e os ramos dele.
+        let ramos = motor.ramos_do_repo(destino);
+        let padrao = ramo_padrao.unwrap_or_default();
+        let mut opcoes = vec![Opcao::new("", nome_do_ramo_padrao(padrao))];
+        let mut nomes: Vec<String> = ramos.valor().cloned().unwrap_or_default().into_iter().filter(|r| r != padrao).take(MAX_RAMOS_NO_MENU).collect();
+        if !github.base.is_empty() && !nomes.contains(&github.base) {
+            nomes.push(github.base.clone());
+        }
+        opcoes.extend(nomes.into_iter().map(|r| Opcao::new(r.clone(), r)));
+        let e = eu.clone();
+        let menu = menu_escolha(("gh-base", i), ancora, opcoes, &github.base, "", move |valor, _, cx| {
+            Self::mudar_github(&e, i, cx, |c| c.github.base = valor)
+        }, window, cx);
+        let linha = LinhaDeOpcao::new(("gh-base", i), "Ramo de destino").controle(menu);
+        let linha = match (&ramos, ramos.erro()) {
+            (Carregando::Carregando(None) | Carregando::Nada, _) => linha.descricao(carregando_texto("Lendo os ramos…", window)),
+            (_, Some(erro)) => linha.aviso(erro.to_string()),
+            _ => linha.descricao("Para onde vão os PRs desta pasta."),
+        };
+        linhas.push(linha.into_any_element());
+
+        // Prefixo dos ramos, com a sugestão dos seus PRs anteriores.
+        let sugerido = motor.repo_github(&remoto.repositorio).valor().and_then(|r| r.prefixo.clone());
+        let atual = p.config.prefixo.read(cx).value().trim().to_string();
+        let usar = sugerido.clone().filter(|s| *s != atual).map(|s| {
+            let campo = p.config.prefixo.clone();
+            botao_fantasma(("gh-prefixo-usar", i), None, "Usar", TamanhoBotao::Barra, window, cx)
+                .tooltip(format!("Prefixo dos seus PRs anteriores: {s}"))
+                .on_click(move |_, window, cx| campo.update(cx, |c, cx| c.set_value(s.clone(), window, cx)))
+        });
+        let descricao = match &sugerido {
+            Some(s) => format!("Sugerido pelos seus PRs: {s}"),
+            None => format!("Vazio: {}", crate::issues::PREFIXO_PADRAO),
+        };
+        let campo = div().w(tam(window, 180.)).child(Input::new(&p.config.prefixo).font_family(crate::tema::FONTE_MONO));
+        linhas.push(
+            LinhaDeOpcao::new(("gh-prefixo", i), "Prefixo dos ramos")
+                .descricao(descricao)
+                .controle(h_flex().gap(esp::E8).child(campo).children(usar))
+                .into_any_element(),
+        );
+
+        let e = eu.clone();
+        linhas.push(
+            LinhaDeOpcao::new(("gh-rascunho", i), "Abrir como rascunho")
+                .interruptor(github.rascunho, move |ligado, _, cx| Self::mudar_github(&e, i, cx, |c| c.github.rascunho = ligado))
+                .into_any_element(),
+        );
+
+        if let Some(original) = original {
+            let e = eu.clone();
+            let de_outro = login.is_none_or(|l| !original.starts_with(&format!("{l}/")));
+            let linha = LinhaDeOpcao::new(("gh-original", i), format!("Abrir os PRs em {original}"))
+                .descricao("Desligado, os PRs vão para o próprio fork.")
+                .interruptor(github.pr_no_original, move |ligado, _, cx| Self::mudar_github(&e, i, cx, |c| c.github.pr_no_original = ligado));
+            linhas.push(if de_outro { linha.aviso("Repositório de outra pessoa.") } else { linha }.into_any_element());
+        }
+
+        if remotos.len() > 1 {
+            let opcoes = remotos.iter().map(|r| Opcao::new(r.nome.clone(), format!("{} · {}", r.nome, r.repositorio))).collect();
+            let e = eu.clone();
+            let menu = menu_escolha(("gh-remoto", i), ancora, opcoes, &remoto.nome, "origin", move |valor, _, cx| {
+                Self::mudar_github(&e, i, cx, |c| c.github.remoto = valor)
+            }, window, cx);
+            linhas.push(LinhaDeOpcao::new(("gh-remoto", i), "Remote").controle(menu).into_any_element());
+        }
+        linhas
+    }
+
+    /// O time do Linear do projeto e, em Mais opções, para onde as issues vão ao iniciar um agente e
+    /// ao mesclar.
+    fn grupo_linear(&self, conexoes: &EstadoConexoes, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let motor = self.motor.read(cx);
+        let eu = cx.entity().downgrade();
+        let times = motor.times_linear();
+        let linear = self.linear.clone().unwrap_or_default();
+        let ancora = Anchor::TopRight;
+
+        let mut opcoes = vec![Opcao::new("", "Nenhum").descricao("As suas issues no workspace inteiro")];
+        match times.valor() {
+            Some(lista) => opcoes.extend(lista.iter().map(|t| Opcao::new(t.id.clone(), format!("{} · {}", t.chave, t.nome)))),
+            None if !linear.time_id.is_empty() => {
+                opcoes.push(Opcao::new(linear.time_id.clone(), format!("{} · {}", linear.time_chave, linear.time_nome)))
+            }
+            None => {}
+        }
+        let lista = times.valor().cloned().unwrap_or_default();
+        let e = eu.clone();
+        let menu = menu_escolha("linear-time", ancora, opcoes, &linear.time_id, "", move |valor, _, cx| {
+            let escolhido = lista.iter().find(|t| t.id == valor).cloned();
+            let _ = e.update(cx, |this, cx| {
+                this.linear = escolhido.map(|t| crate::motor::linear_com_time(this.linear.take(), &t));
+                cx.notify();
+            });
+        }, window, cx);
+        let destravar = matches!(conexoes.chave, EstadoConexao::ChaveiroTrancado).then(|| {
+            let motor = self.motor.clone();
+            botao_fantasma("linear-destravar", Some(Lucide::LockKeyholeOpen.into()), "Destravar", TamanhoBotao::Barra, window, cx)
+                .on_click(move |_, _, cx| {
+                    motor.update(cx, |m, cx| {
+                        let _ = m.destravar_chaveiro(cx);
+                    })
+                })
+        });
+        let linha = LinhaDeOpcao::new("linear-time", "Time").marca(Simbolo::Marca(Marca::Linear));
+        let linha = match (&times, &conexoes.chave) {
+            (_, EstadoConexao::ChaveiroTrancado) => linha.aviso("Linear: chaveiro trancado.").controle(h_flex().gap(esp::E8).children(destravar).child(menu)),
+            (Carregando::Carregando(None), _) => linha.descricao(carregando_texto("Lendo os times…", window)).controle(menu),
+            (Carregando::Erro(erro, _), _) => linha.aviso(erro.clone()).controle(menu),
+            _ if linear.time_id.is_empty() => linha.descricao("Sem time, as issues são as suas no workspace inteiro.").controle(menu),
+            _ => linha.descricao("As issues do popover e onde os chats delas nascem.").controle(menu),
+        };
+        let mut grupo = GrupoDeOpcoes::new(Some("Linear".into())).linha(linha);
+        if linear.time_id.is_empty() {
+            return grupo.into_any_element();
+        }
+        let alternar = {
+            let eu = eu.clone();
+            move |_: &mut Window, cx: &mut App| {
+                let _ = eu.update(cx, |this, cx| {
+                    this.mais_linear = !this.mais_linear;
+                    cx.notify();
+                });
+            }
+        };
+        grupo = grupo.linha(mais_opcoes(self.mais_linear, alternar));
+        if !self.mais_linear {
+            return grupo.into_any_element();
+        }
+        let dados = motor.dados_do_time(&linear.time_id);
+        let (iniciar, mesclar) = dados.valor().map_or((None, None), |d| {
+            let (a, b) = estados_padrao(d);
+            (a.cloned(), b.cloned())
+        });
+        let estados: Vec<(String, String)> =
+            dados.valor().map(|d| d.estados.iter().map(|e| (e.estado.id.clone(), e.estado.nome.clone())).collect()).unwrap_or_default();
+        let menu_de_estado = |id: &'static str, automatico: Option<String>, gravado: &Option<String>, aplicar: fn(&mut LinearDoProjeto, Option<String>)| {
+            let mut opcoes = vec![
+                Opcao::new(AUTOMATICO, format!("Automático ({})", automatico.unwrap_or_else(|| "o primeiro do tipo".into()))),
+                Opcao::new(NAO_MUDAR, "Não mudar"),
+            ];
+            opcoes.extend(estados.iter().map(|(id, nome)| Opcao::new(id.clone(), nome.clone())));
+            let e = eu.clone();
+            menu_escolha(id, ancora, opcoes, &valor_do_estado(gravado), AUTOMATICO, move |valor, _, cx| {
+                let _ = e.update(cx, |this, cx| {
+                    if let Some(l) = this.linear.as_mut() {
+                        aplicar(l, estado_do_valor(&valor));
+                    }
+                    cx.notify();
+                });
+            }, window, cx)
+        };
+        let ao_iniciar = menu_de_estado("linear-iniciar", iniciar.map(|e| e.nome), &linear.estado_iniciar, |l, v| l.estado_iniciar = v);
+        let ao_mesclar = menu_de_estado("linear-mesclar", mesclar.map(|e| e.nome), &linear.estado_mesclar, |l, v| l.estado_mesclar = v);
+        let lendo = matches!(dados, Carregando::Carregando(None) | Carregando::Nada);
+        let com_leitura = |linha: LinhaDeOpcao| if lendo { linha.descricao(carregando_texto("Lendo os estados do time…", window)) } else { linha };
+        grupo
+            .linha(com_leitura(LinhaDeOpcao::new("linear-iniciar", "Ao iniciar um agente")).controle(ao_iniciar))
+            .linha(LinhaDeOpcao::new("linear-mesclar", "Ao mesclar").controle(ao_mesclar))
+            .into_any_element()
+    }
+}
+
 impl Render for EditorProjeto {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // A prévia e o automático acompanham o nome e a primeira pasta.
@@ -875,6 +1265,7 @@ impl Render for EditorProjeto {
                         .ajuda(format!("As convenções que os chats guardam com anotar_decisao (notas/{id_notas}.md).")),
                 )
             })
+            .children(self.secao_github_linear(window, cx))
             .child(
                 v_flex()
                     .child(CabecalhoDeSecao::new("Avançado").recolhivel(self.avancado, alternar).primeira(true))

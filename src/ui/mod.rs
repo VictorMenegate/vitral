@@ -7,6 +7,7 @@ mod atualizacao;
 mod caixa_entrada;
 mod cartoes;
 mod composer;
+mod conexoes;
 mod config_projeto;
 mod configuracoes;
 mod conversa;
