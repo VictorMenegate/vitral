@@ -203,6 +203,11 @@ fn instalar_com(
 
     let mut estado = EstadoApp::ler(app);
     estado.formatos.insert(versao.to_string(), resposta.formato_dados);
+    // A que roda é este binário: o formato dela é o daqui. A que veio pelo instalador nunca passou
+    // pelo `--versao --json`, e sem isto a volta para ela pareceria não ler o disco.
+    if let Some(rodando) = rodando.filter(|r| *r != versao) {
+        estado.formatos.entry(rodando.to_string()).or_insert(crate::modelo::FORMATO_DADOS);
+    }
     estado.formatos.retain(|v, _| v == versao || Some(v) == anterior.as_ref());
     estado.confirmar = Some(Confirmar { versao: versao.to_string(), aberturas: Vec::new() });
     estado.recusadas.retain(|v| v != versao);
@@ -572,6 +577,17 @@ mod testes {
         assert_eq!(versoes(&app), "atual=1.0.0\r\nanterior=0.9.0\r\n");
         assert_eq!(nomes(&app), [".trava", "Vitral.exe", "app-0.9.0", "app-1.0.0", "estado.json", "versoes.txt"]);
         assert_eq!(nomes(&pasta_da_versao(&app, "1.0.0")), ["NOVIDADES.md", "vitral-lancador.exe", "vitral.exe"]);
+        fs::remove_dir_all(&pasta).unwrap();
+    }
+
+    #[test]
+    fn a_versao_do_instalador_ganha_o_formato_de_quem_roda() {
+        let (pasta, app) = layout_com("0.8.0");
+        // Como o instalador deixa: sem estado.json (o formato da 0.8.0 nunca foi visto).
+        fs::remove_file(app.join("estado.json")).unwrap();
+        instalar_pacote(&app, &pacote_em(&pasta, "0.9.0", LANCADOR_A), "0.9.0", Some("0.8.0"), None).unwrap();
+        let formatos = EstadoApp::ler(&app).formatos;
+        assert_eq!(formatos, BTreeMap::from([("0.8.0".into(), crate::modelo::FORMATO_DADOS), ("0.9.0".into(), 1)]));
         fs::remove_dir_all(&pasta).unwrap();
     }
 
