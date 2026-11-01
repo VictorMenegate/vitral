@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
 use crate::{
-    issues::{ComentarioIssue, EstadoIssue, Etiqueta, FonteIssue, IssueDetalhe, IssueResumo, Pessoa, TipoEstado},
+    issues::{ComentarioIssue, EstadoIssue, Etiqueta, FiltroIssues, FonteIssue, IssueDetalhe, IssueResumo, Pessoa, Recorte, TipoEstado},
+    modelo::LinearDoProjeto,
     remoto::{Ambiente, ErroRemoto, Executor, classificar_curl},
     segredos::Chave,
 };
@@ -200,6 +201,11 @@ const VER_ISSUE: &str = "query($id: String!) { issue(id: $id) { \
      project { id name } cycle { id number name } labels(first: 20) { nodes { name color } } \
      comments(first: 50) { nodes { id body createdAt url user { id name } botActor { name } } } } }";
 
+/// O que os efeitos de iniciar conferem antes de mexer (seção 5.6): o estado, o responsável e os
+/// estados do time da issue (o "Automático" é o `started` de menor posição do time dela).
+const AO_INICIAR: &str = "query($id: String!) { issue(id: $id) { id identifier state { id name type color } \
+     assignee { id } team { id key states(first: 50) { nodes { id name type color position } } } } }";
+
 const MUDAR_ESTADO: &str = "mutation($id: String!, $estado: String!) { \
      issueUpdate(id: $id, input: { stateId: $estado }) { success issue { id identifier state { id name type color } } } }";
 
@@ -216,7 +222,53 @@ const LIGAR_PR: &str = "mutation($issue: String!, $url: String!) { \
 const LIGAR_URL: &str = "mutation($issue: String!, $url: String!, $titulo: String) { \
      attachmentLinkURL(issueId: $issue, url: $url, title: $titulo) { success } }";
 
+// ---------- filtros ----------
+
+/// O filtro do GraphQL das issues do popover (pura). O time, se o projeto tem; "Minhas" sem time
+/// vale para o workspace inteiro. As fechadas são as dos últimos 30 dias.
+pub fn filtro_linear(f: &FiltroIssues, projeto: Option<&LinearDoProjeto>) -> Value {
+    let mut filtro = serde_json::Map::new();
+    if let Some(time) = projeto.map(|p| p.time_id.trim()).filter(|t| !t.is_empty()) {
+        filtro.insert("team".into(), json!({ "id": { "eq": time } }));
+    }
+    match f.recorte {
+        Recorte::Minhas => {
+            filtro.insert("assignee".into(), json!({ "isMe": { "eq": true } }));
+        }
+        Recorte::CicloAtual => {
+            filtro.insert("cycle".into(), json!({ "isActive": { "eq": true } }));
+        }
+        Recorte::DoTime | Recorte::Todas => {}
+    }
+    if f.fechadas {
+        filtro.insert("state".into(), json!({ "type": { "in": ["completed", "canceled"] } }));
+        filtro.insert("updatedAt".into(), json!({ "gt": "-P30D" }));
+    } else {
+        filtro.insert("state".into(), json!({ "type": { "nin": ["completed", "canceled", "duplicate"] } }));
+    }
+    Value::Object(filtro)
+}
+
 // ---------- tipos ----------
+
+/// Uma página da lista e quantos pedidos ainda cabem na hora.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pagina {
+    pub itens: Vec<IssueResumo>,
+    /// O cursor da próxima página, se houver.
+    pub proxima: Option<String>,
+    pub restantes: Option<u32>,
+}
+
+/// O que os efeitos de iniciar precisam saber da issue agora.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AoIniciar {
+    pub estado: EstadoIssue,
+    /// O id do responsável, se tem.
+    pub responsavel: Option<String>,
+    pub time_id: String,
+    pub estados: Vec<EstadoDoTime>,
+}
 
 /// Quem é o dono da chave e de que workspace.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -460,12 +512,40 @@ impl Linear<'_> {
 
     /// Uma página da lista (50), com o cursor da próxima se houver.
     pub fn listar_issues(&self, filtro: Value, depois: Option<&str>) -> Result<(Vec<IssueResumo>, Option<String>), ErroRemoto> {
+        self.pagina(filtro, depois).map(|p| (p.itens, p.proxima))
+    }
+
+    /// A página com quantos pedidos ainda cabem na hora (abaixo de 100, as listas só atualizam
+    /// com ⟳).
+    pub fn pagina(&self, filtro: Value, depois: Option<&str>) -> Result<Pagina, ErroRemoto> {
         let consulta = ISSUES.replace("CAMPOS", CAMPOS_DA_LISTA);
-        let dados = self.consultar(&consulta, json!({ "filtro": filtro, "depois": depois }))?;
+        let resposta = graphql_completo(self.t, self.chave, &consulta, json!({ "filtro": filtro, "depois": depois }))?;
+        let dados = resposta.dados;
         let issues: Nos<IssueLinear> = ler(&dados["issues"])?;
         let pagina = &dados["issues"]["pageInfo"];
         let proxima = (pagina["hasNextPage"] == true).then(|| pagina["endCursor"].as_str().map(String::from)).flatten();
-        Ok((issues.nodes.iter().map(IssueLinear::resumo).collect(), proxima))
+        Ok(Pagina { itens: issues.nodes.iter().map(IssueLinear::resumo).collect(), proxima, restantes: resposta.restantes })
+    }
+
+    /// O estado, o responsável e os estados do time da issue (o uuid ou a chave).
+    pub fn ao_iniciar(&self, id: &str) -> Result<AoIniciar, ErroRemoto> {
+        let dados = self.consultar(AO_INICIAR, json!({ "id": id }))?;
+        let issue = &dados["issue"];
+        if issue.is_null() {
+            return Err(ErroRemoto::NaoEncontrado(format!("a issue {id}")));
+        }
+        let estado: EstadoLinear = ler(&issue["state"])?;
+        let responsavel = issue["assignee"]["id"].as_str().filter(|r| !r.is_empty()).map(String::from);
+        let estados: Nos<EstadoLinear> = ler(&issue["team"]["states"])?;
+        let mut estados: Vec<EstadoDoTime> =
+            estados.nodes.iter().map(|e| EstadoDoTime { estado: e.estado(), posicao: e.position }).collect();
+        estados.sort_by(|a, b| a.posicao.total_cmp(&b.posicao));
+        Ok(AoIniciar {
+            estado: estado.estado(),
+            responsavel,
+            time_id: issue["team"]["id"].as_str().unwrap_or_default().to_string(),
+            estados,
+        })
     }
 
     /// A busca no servidor (com Enter e 3 ou mais caracteres).
@@ -707,5 +787,50 @@ mod testes {
         for chamada in e.chamadas() {
             assert!(!format!("{:?}", chamada.args).contains("lin_api_"));
         }
+    }
+
+    #[test]
+    fn filtro_linear_de_cada_recorte() {
+        let time = LinearDoProjeto { time_id: "t-eng".into(), time_chave: "ENG".into(), ..Default::default() };
+        let filtro = |recorte, fechadas, projeto: Option<&LinearDoProjeto>| {
+            filtro_linear(&FiltroIssues { recorte, fechadas, termo: None }, projeto)
+        };
+        let abertas = json!({ "type": { "nin": ["completed", "canceled", "duplicate"] } });
+        let do_time = json!({ "id": { "eq": "t-eng" } });
+        // Sem time, "Minhas" é do workspace inteiro.
+        assert_eq!(filtro(Recorte::Minhas, false, None), json!({ "assignee": { "isMe": { "eq": true } }, "state": abertas }));
+        assert_eq!(
+            filtro(Recorte::Minhas, false, Some(&time)),
+            json!({ "team": do_time, "assignee": { "isMe": { "eq": true } }, "state": abertas })
+        );
+        assert_eq!(filtro(Recorte::DoTime, false, Some(&time)), json!({ "team": do_time, "state": abertas }));
+        assert_eq!(
+            filtro(Recorte::CicloAtual, false, Some(&time)),
+            json!({ "team": do_time, "cycle": { "isActive": { "eq": true } }, "state": abertas })
+        );
+        assert_eq!(
+            filtro(Recorte::DoTime, true, Some(&time)),
+            json!({ "team": do_time, "state": { "type": { "in": ["completed", "canceled"] } }, "updatedAt": { "gt": "-P30D" } })
+        );
+        // O texto exato que vai ao Linear (a ordem é a da montagem).
+        assert_eq!(
+            filtro(Recorte::Minhas, false, Some(&time)).to_string(),
+            r#"{"team":{"id":{"eq":"t-eng"}},"assignee":{"isMe":{"eq":true}},"state":{"type":{"nin":["completed","canceled","duplicate"]}}}"#
+        );
+        // O time vazio (projeto sem time escolhido) não filtra.
+        assert!(filtro(Recorte::DoTime, false, Some(&LinearDoProjeto::default())).get("team").is_none());
+    }
+
+    #[test]
+    fn ao_iniciar_le_o_estado_o_responsavel_e_os_estados_do_time() {
+        let corpo = r##"{"data":{"issue":{"id":"i1","identifier":"ENG-5","state":{"id":"s1","name":"A fazer","type":"unstarted","color":"#ccc"},"assignee":null,"team":{"id":"t1","key":"ENG","states":{"nodes":[{"id":"s3","name":"Feito","type":"completed","color":null,"position":3},{"id":"s2","name":"Fazendo","type":"started","color":null,"position":2},{"id":"s1","name":"A fazer","type":"unstarted","color":null,"position":1}]}}}}}"##;
+        let e = Falso::com(vec![http(corpo), http(r#"{"data":{"issue":null}}"#)]);
+        let chave = chave();
+        let linear = Linear { t: &Curl(&e), chave: &chave };
+        let agora = linear.ao_iniciar("ENG-5").unwrap();
+        assert_eq!((agora.estado.tipo, agora.responsavel, agora.time_id.as_str()), (TipoEstado::AFazer, None, "t1"));
+        let ordem: Vec<&str> = agora.estados.iter().map(|e| e.estado.id.as_str()).collect();
+        assert_eq!(ordem, ["s1", "s2", "s3"]);
+        assert!(matches!(linear.ao_iniciar("ENG-404"), Err(ErroRemoto::NaoEncontrado(_))));
     }
 }

@@ -522,9 +522,26 @@ pub struct Tarefa {
     /// Uma rodada verificada espera o usuário apertar "Atualizar PR".
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pronto_para_atualizar: bool,
+    /// Os efeitos de iniciar a issue (atribuir, mover, o comentário do Linear): só no chat nascido
+    /// de "Iniciar agente" ou "Só a cópia" (no "Só a cópia", com a primeira mensagem).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efeitos_issue: Option<EfeitosDaIssue>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
+}
+
+/// O que o Vitral já fez na issue ao iniciar. Nada aqui se repete sozinho.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EfeitosDaIssue {
+    /// O id (UUID v4) do comentário "Em andamento no Vitral" no Linear: escolhido antes da primeira
+    /// tentativa e o mesmo em todas (o Linear não cria outro com o mesmo id).
+    pub id_comentario: String,
+    /// Já rodaram (com sucesso ou com o aviso da falha).
+    pub feitos: bool,
+    /// Não rodaram por falta da chave (o chaveiro trancado): o motivo, para "Destravar e tentar".
+    pub pendente: Option<String>,
 }
 
 /// O PR de uma tarefa, como o Vitral o viu por último. Nada aqui é segredo: `erro` já passou
@@ -661,6 +678,7 @@ impl Default for Tarefa {
             recomeco_pendente: false,
             pedido_da_issue: false,
             pronto_para_atualizar: false,
+            efeitos_issue: None,
             resto: Default::default(),
         }
     }
