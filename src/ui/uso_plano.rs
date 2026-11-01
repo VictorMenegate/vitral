@@ -333,6 +333,8 @@ fn detalhes(
     match marca {
         Marca::Claude => detalhes_claude(&motor, janela, popover, agora, window, cx).into_any_element(),
         Marca::Codex => detalhes_codex(&motor, janela, popover, agora, window, cx).into_any_element(),
+        // O Linear não tem plano de uso.
+        Marca::Linear => div().into_any_element(),
     }
 }
 
@@ -755,6 +757,7 @@ fn rodape(
                     motor.update(cx, |m, cx| match marca {
                         Marca::Claude => m.atualizar_uso(cx),
                         Marca::Codex => m.reler_uso(cx),
+                        Marca::Linear => {}
                     })
                 }),
         )

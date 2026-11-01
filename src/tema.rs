@@ -273,6 +273,8 @@ gpui_kit::assets::icon_assets!(
         ChartColumn,
         CheckCheck,
         CircleArrowUp,
+        CircleDashed,
+        CircleDot,
         CirclePause,
         CircleUserRound,
         Clock,
@@ -301,12 +303,17 @@ gpui_kit::assets::icon_assets!(
         FolderX,
         Gauge,
         GitBranch,
+        GitCommitHorizontal,
         GitFork,
         GitMerge,
+        GitPullRequest,
+        GitPullRequestClosed,
+        GitPullRequestDraft,
         Hand,
         Image,
         Keyboard,
         LayoutGrid,
+        LockKeyholeOpen,
         ListChecks,
         ListTree,
         MessageCircle,
@@ -337,6 +344,7 @@ gpui_kit::assets::icon_assets!(
         Sparkles,
         SquareCheck,
         SquareSlash,
+        Tag,
         Terminal,
         TextSearch,
         TextWrap,
@@ -619,6 +627,9 @@ impl Cores {
     }
     pub fn codex() -> Hsla {
         rgba(0x5b6cf9ff).into()
+    }
+    pub fn linear() -> Hsla {
+        rgba(0x5e6ad2ff).into()
     }
     /// Começo do gradiente da caixa de mensagem: o azul do vidro (o dono trocou o laranja pelo azul).
     pub fn caixa_quente() -> Hsla {
