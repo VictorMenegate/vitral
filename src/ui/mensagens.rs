@@ -401,13 +401,12 @@ impl Janela {
                 ponto,
                 ultrathink,
                 ultracode,
-                // Provisório (G3b): o chip das issues anexadas na bolha.
-                referencias: _,
+                referencias,
             } => {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
-                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, ponto, reforco, window, cx))
+                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
             }
             Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, cx)),
             Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
@@ -434,6 +433,7 @@ impl Janela {
         chave: &str,
         texto: &str,
         anexos: &[PathBuf],
+        referencias: &[String],
         ponto: Option<String>,
         reforco: Reforco,
         window: &Window,
@@ -452,7 +452,9 @@ impl Janela {
         let longo = linhas > 14;
         let chave_tudo = format!("{chave}:tudo");
         let tudo = self.expandidos.contains(&chave_tudo);
-        let corpo = match comando_de_barra(texto).filter(|_| anexos.is_empty()) {
+        // As issues anexadas: os chips na bolha (o texto delas foi só ao Claude).
+        let issues = super::popover_issues::chips_da_bolha(chave, referencias, window);
+        let corpo = match comando_de_barra(texto).filter(|_| anexos.is_empty() && referencias.is_empty()) {
             Some(comando) => div()
                 .h(r(28.))
                 .px(esp::E12)
@@ -483,13 +485,16 @@ impl Janela {
                     .border_1()
                     .border_color(Cores::linha())
                     .reflexo(raio::CARTAO)
-                    .child(
-                        div().corpo().text_color(Cores::texto()).child(
-                            markdown(SharedString::from(chave.to_string()), texto.to_string(), cx)
-                                .when(longo && !tudo, |t| t.max_lines(12)),
-                        ),
-                    )
+                    .when(!texto.trim().is_empty(), |s| {
+                        s.child(
+                            div().corpo().text_color(Cores::texto()).child(
+                                markdown(SharedString::from(chave.to_string()), texto.to_string(), cx)
+                                    .when(longo && !tudo, |t| t.max_lines(12)),
+                            ),
+                        )
+                    })
                     .when_some(mostrar, |s, b| s.child(h_flex().child(b)))
+                    .children(issues)
                     .when(!anexos.is_empty(), |s| {
                         s.child(
                             h_flex()

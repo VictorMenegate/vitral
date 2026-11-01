@@ -413,7 +413,9 @@ impl Janela {
             return;
         };
         let chat = self.selecionado.clone();
-        let anexos = |this: &Self| chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()));
+        let anexos = |this: &Self| {
+            chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()) || this.tem_issue_anexada(c))
+        };
         let tinha = !composer.read(cx).value().trim().is_empty() || anexos(self);
         self.enviar(window, cx);
         let foi = tinha && composer.read(cx).value().is_empty() && !anexos(self);

@@ -26,6 +26,7 @@ mod revisao;
 mod fechar;
 mod painel_arquivo;
 mod paineis;
+mod popover_issues;
 mod recuperacao;
 mod rotinas;
 mod seletor_arquivos;
@@ -72,6 +73,8 @@ pub struct IrParaProjeto(pub usize);
 pub fn atalhos(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("escape", composer::PararTurno, Some("Caixa")),
+        // Do detalhe das issues volta à lista; da lista, fecha (antes do Esc do popover do kit).
+        KeyBinding::new("escape", popover_issues::VoltarIssues, Some("PopoverIssues")),
         // Registrado depois do shift-tab do campo (recuar a linha), ganha dele dentro da caixa. Só
         // no campo da mensagem: a busca de um popover da caixa continua recuando.
         KeyBinding::new("shift-tab", composer::AlternarModo, Some("Composer > Input")),
@@ -514,6 +517,13 @@ pub struct Janela {
     /// de atualização mostrado ("pronta 0.3.0"): um por versão.
     atualizacao_pronta: Option<String>,
     atualizacao_avisada: Option<String>,
+    /// O popover das issues (um só, que abre de um gatilho do cabeçalho por vez) e qual está aberto.
+    issues: Option<Entity<popover_issues::PopoverIssues>>,
+    issues_aberto: Option<(u64, popover_issues::Gatilho)>,
+    /// As issues anexadas à próxima mensagem de cada conversa.
+    anexos_issue: HashMap<String, Vec<popover_issues::AnexoDeIssue>>,
+    /// Os chats em que o "Ligar a ENG-123 a este chat?" já foi perguntado (uma vez por chat).
+    ligacoes_perguntadas: HashSet<String>,
 }
 
 /// Redesenhos da janela desde a última conta (o `VITRAL_QUADROS`).
@@ -684,6 +694,10 @@ impl Janela {
             memoria_lida: Default::default(),
             atualizacao_pronta: None,
             atualizacao_avisada: None,
+            issues: None,
+            issues_aberto: None,
+            anexos_issue: HashMap::new(),
+            ligacoes_perguntadas: HashSet::new(),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -974,6 +988,8 @@ impl Janela {
         let aberturas = motor.update(cx, |m, _| std::mem::take(&mut m.aberturas));
         // Uma vez na abertura: com uma saída gravada, o resumo do que aconteceu com o Vitral fechado.
         motor.update(cx, |m, cx| m.usuario_voltou(cx));
+        let janela = cx.entity().downgrade();
+        self.issues = Some(cx.new(|cx| popover_issues::PopoverIssues::new(motor.clone(), janela, window, cx)));
         self.motor = Some(motor);
         if recente.is_some() {
             self.selecionar(recente, window, cx);
@@ -1017,10 +1033,19 @@ impl Janela {
             }
         }
         let texto = composer.read(cx).value().to_string();
-        let anexos = self.anexos.remove(&chat).unwrap_or_default();
-        if texto.trim().is_empty() && anexos.is_empty() {
+        // As issues anexadas só vão com o bloco lido; enquanto não, nada sai da caixa.
+        let issues = match self.issues_do_envio(&chat) {
+            Ok(issues) => issues,
+            Err(motivo) => {
+                window.push_notification(componentes::aviso(componentes::Tom::Atencao, motivo), cx);
+                return;
+            }
+        };
+        if texto.trim().is_empty() && issues.is_empty() && self.anexos.get(&chat).is_none_or(Vec::is_empty) {
             return;
         }
+        let anexos = self.anexos.remove(&chat).unwrap_or_default();
+        let anexos_issue = self.anexos_issue.remove(&chat).unwrap_or_default();
         // As chaves do Ultrathink e do Ultracode desligam ao enviar; um comando de barra não as gasta.
         // O Ultracode que deixou de valer (o modelo mudou, por exemplo) sai sem ir, como a caixa mostra.
         let vale_ultracode = {
@@ -1031,12 +1056,13 @@ impl Janela {
             ultrathink: composer::gastar_chave(&mut self.ultrathink, &chat, &texto),
             ultracode: composer::gastar_chave(&mut self.ultracode, &chat, &texto) && vale_ultracode,
         };
-        motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, texto, anexos, reforco, cx));
+        motor.update(cx, |m, cx| m.enviar_com_issues(&chat, texto, anexos, reforco, issues, cx));
         composer.update(cx, |c, cx| c.set_value("", window, cx));
         if let Some(painel) = self.paineis.get_mut(self.ativo) {
             painel.seguindo = true;
             painel.rolagem.scroll_to_bottom();
         }
+        self.perguntar_ligacao(&motor, &chat, &anexos_issue, window, cx);
         cx.notify();
     }
 
