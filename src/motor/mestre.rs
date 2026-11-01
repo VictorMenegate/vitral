@@ -1961,6 +1961,8 @@ impl Motor {
     /// A janela voltou depois de `minutos_para_resumo` fora (ou abriu, com uma saída gravada): monta o
     /// resumo do que aconteceu, só na memória.
     pub fn usuario_voltou(&mut self, cx: &mut Context<Self>) {
+        // O login do gh depois de "Entrar no GitHub" e a chave do Linear que ainda não foi lida.
+        self.conexoes_ao_voltar(cx);
         let desde = self.visto_em;
         let ate = agora();
         if desde == 0 || ate.saturating_sub(desde) < self.config.minutos_para_resumo * 60 {

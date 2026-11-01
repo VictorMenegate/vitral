@@ -580,6 +580,7 @@ impl EditorProjeto {
             permissao: Some(Some(self.permissao.clone())),
             modelo: Some(Some(self.modelo.clone())),
             conta: Some(Some(self.conta.clone())),
+            linear: None,
         };
         let notas = self.notas.as_ref().map(|n| n.read(cx).value().to_string());
         let notas_iniciais = self.notas_iniciais.clone();

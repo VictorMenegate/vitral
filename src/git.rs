@@ -2587,6 +2587,20 @@ mod pr_e_rede {
         }
     }
 
+    /// Os remotes da pasta e o endereço de cada um (`remote.<nome>.url`), sem rede. Sem git ou
+    /// sem remote, nenhum.
+    pub fn remotos(pasta: &Path) -> Vec<(String, String)> {
+        let lista = git(pasta, &["config", "--local", "--get-regexp", r"^remote\..*\.url$"]).unwrap_or_default();
+        lista
+            .lines()
+            .filter_map(|linha| {
+                let (chave, url) = linha.split_once(' ')?;
+                let nome = chave.strip_prefix("remote.")?.strip_suffix(".url")?;
+                Some((nome.to_string(), url.trim().to_string()))
+            })
+            .collect()
+    }
+
     /// `fetch --no-tags <remoto> <refspecs…>` (rede).
     pub fn buscar(e: &dyn Executor, pasta: &Path, remoto: &str, refspecs: &[&str]) -> Result<(), ErroRemoto> {
         conferir_argumento(remoto)?;
@@ -3020,6 +3034,17 @@ mod pr_e_rede {
             let local = criar_worktree_de(&b.projeto, &b.raiz.join("c2"), "vitral/t2-y", None).unwrap();
             assert!(local.caminho.join("local.txt").exists());
             assert!(criar_worktree_de(&b.projeto, &b.raiz.join("c3"), "vitral/t3-z", Some("origin/nao-existe")).is_err());
+        }
+
+        #[test]
+        fn remotos_da_pasta_sem_rede() {
+            let b = Bancada::nova();
+            git(&b.projeto, &["remote", "add", "meu.fork", "git@github.com:VictorMenegate/top-bar-app-color.git"]).unwrap();
+            let achados = remotos(&b.projeto);
+            assert_eq!(achados.len(), 2, "{achados:?}");
+            assert_eq!(achados[0], ("origin".to_string(), b.origem.to_string_lossy().to_string()));
+            assert_eq!(achados[1].0, "meu.fork");
+            assert!(remotos(&b.raiz).is_empty());
         }
 
         #[test]

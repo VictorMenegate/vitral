@@ -18,10 +18,22 @@ use gpui_kit::{AnyWeakEntity, AppContext as _, Context, Task};
 use serde_json::{Value, json};
 use smol::channel::{Sender, unbounded};
 
+mod conexoes;
 mod importacao;
+mod issues;
 mod mestre;
+mod prs;
 
+pub use conexoes::{
+    Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, Provedor, RemotoGithub, RepoGithub, estados_padrao,
+    metodos_permitidos, modo_pr_disponivel, remoto_escolhido,
+};
+// Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
+#[allow(unused_imports)]
+pub use issues::{EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
 pub use mestre::ResumoVolta;
+#[allow(unused_imports)]
+pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
 use mestre::{Ciclos, MotivoPassagem, Readmes};
 
 use crate::{
@@ -94,6 +106,8 @@ enum Sinal {
     Mcp(Chamada),
     /// O clique numa notificação do sistema: abrir a conversa.
     Abrir(String),
+    /// Uma leitura do GitHub ou do Linear pediu uma busca (`conexoes::Motor::pedir`).
+    Integracao,
 }
 
 /// A notificação de um chat que ainda está na tela: a próxima do mesmo chat a substitui.
@@ -338,6 +352,8 @@ pub struct MudancaProjeto {
     pub permissao: Option<Option<String>>,
     pub modelo: Option<Option<String>>,
     pub conta: Option<Option<String>>,
+    /// O time do Linear e os estados automáticos; `Some(None)` desliga o Linear do projeto.
+    pub linear: Option<Option<crate::modelo::LinearDoProjeto>>,
 }
 
 pub struct Motor {
@@ -465,6 +481,8 @@ pub struct Motor {
     /// Marcado ao fechar ou trocar de pasta: a etapa seguinte de uma entrega ou preparação em
     /// segundo plano (revisor, script de preparação) não abre processo depois da parada.
     encerrado: Arc<AtomicBool>,
+    /// GitHub e Linear: as conexões, a chave do Linear na memória e o que veio da rede.
+    integracao: conexoes::Integracao,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -716,6 +734,7 @@ impl Motor {
             avisos: Arc::default(),
             visiveis: HashSet::new(),
             encerrado: Arc::default(),
+            integracao: conexoes::Integracao::new(Arc::new(crate::remoto::Real)),
             servidor,
             sinais,
             _recebedor,
@@ -738,6 +757,8 @@ impl Motor {
         motor.dados.esperar_gravacoes();
         // O último uso do plano que o Claude Code guardou de cada conta e o do Codex.
         motor.reler_uso(cx);
+        // O bwrap, o login do gh e a chave do Linear (sem destravar o chaveiro).
+        motor.iniciar_conexoes(cx);
         motor
     }
 
@@ -3395,6 +3416,7 @@ impl Motor {
                 }
                 self.pedido_de_abrir = Some(chat);
             }
+            Sinal::Integracao => self.atender_pedidos(cx),
         }
         true
     }
@@ -6604,6 +6626,9 @@ pub fn aplicar_mudanca(p: &mut Projeto, m: MudancaProjeto) {
     }
     if let Some(conta) = m.conta {
         p.conta = vazio(conta);
+    }
+    if let Some(linear) = m.linear {
+        p.linear = linear;
     }
 }
 
