@@ -401,6 +401,8 @@ impl Janela {
                 ponto,
                 ultrathink,
                 ultracode,
+                // Provisório (G3b): o chip das issues anexadas na bolha.
+                referencias: _,
             } => {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
@@ -3793,7 +3795,7 @@ mod testes {
     }
 
     fn usuario(texto: &str) -> Item {
-        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false }
+        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() }
     }
 
     fn assistente(texto: &str) -> Item {

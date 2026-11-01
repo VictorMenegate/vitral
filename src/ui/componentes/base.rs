@@ -129,11 +129,12 @@ impl RenderOnce for CirculoDePapel {
     }
 }
 
-/// Marca de um serviço de IA.
+/// Marca de um serviço: as IAs e o Linear (o GitHub é o ícone `Github` do Lucide).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Marca {
     Claude,
     Codex,
+    Linear,
 }
 
 static DISCO_CLAUDE: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -144,20 +145,26 @@ static DISCO_CODEX: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/codex.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
 });
+static DISCO_LINEAR: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let svg = include_bytes!("../../../assets/marcas/linear.svg");
+    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+});
 
 impl Marca {
     pub fn nome(self) -> &'static str {
         match self {
             Marca::Claude => "Claude",
             Marca::Codex => "Codex",
+            Marca::Linear => "Linear",
         }
     }
 
-    /// Cor do arco de uso enquanto há folga.
+    /// Cor do arco de uso enquanto há folga (e a do disco do Linear).
     pub fn cor(self) -> Hsla {
         match self {
             Marca::Claude => Cores::claude(),
             Marca::Codex => Cores::codex(),
+            Marca::Linear => Cores::linear(),
         }
     }
 
@@ -187,6 +194,7 @@ impl RenderOnce for DiscoDeMarca {
         let imagem = match self.marca {
             Marca::Claude => DISCO_CLAUDE.clone(),
             Marca::Codex => DISCO_CODEX.clone(),
+            Marca::Linear => DISCO_LINEAR.clone(),
         };
         img(imagem)
             .flex_none()

@@ -567,12 +567,14 @@ pub struct LinhaDeOpcao {
     titulo: SharedString,
     arco_iris: bool,
     simbolo: Option<(Lucide, Hsla)>,
+    marca: Option<Simbolo>,
     descricao: Option<AnyElement>,
     aviso: Option<SharedString>,
     info: Option<SharedString>,
     controle: Controle,
     campo: Option<AnyElement>,
     desabilitada: Option<SharedString>,
+    embaixo: bool,
 }
 
 impl LinhaDeOpcao {
@@ -582,12 +584,14 @@ impl LinhaDeOpcao {
             titulo: titulo.into(),
             arco_iris: false,
             simbolo: None,
+            marca: None,
             descricao: None,
             aviso: None,
             info: None,
             controle: Controle::Nenhum,
             campo: None,
             desabilitada: None,
+            embaixo: false,
         }
     }
 
@@ -615,6 +619,12 @@ impl LinhaDeOpcao {
         self
     }
 
+    /// No diálogo estreito: o controle (menu, botões) desce para baixo do texto.
+    pub fn embaixo(mut self, sim: bool) -> Self {
+        self.embaixo = sim;
+        self
+    }
+
     /// Campo embaixo do título (linha vertical).
     pub fn campo(mut self, e: impl IntoElement) -> Self {
         self.campo = Some(e.into_any_element());
@@ -630,6 +640,12 @@ impl LinhaDeOpcao {
     /// Ícone antes do título, com o título na mesma cor (o Ultracode, em violeta).
     pub fn simbolo(mut self, icone: Lucide, cor: Hsla) -> Self {
         self.simbolo = Some((icone, cor));
+        self
+    }
+
+    /// O logo do serviço (16) antes do título, que fica na cor de sempre (GitHub, Linear).
+    pub fn marca(mut self, s: Simbolo) -> Self {
+        self.marca = Some(s);
         self
     }
 
@@ -660,6 +676,7 @@ impl RenderOnce for LinhaDeOpcao {
             .font_weight(FontWeight::MEDIUM)
             .text_color(self.simbolo.map_or_else(Cores::texto, |(_, cor)| cor))
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
+            .when_some(self.marca, |d, marca| d.child(marca.desenhar(16., window)))
             .map(|d| {
                 if self.arco_iris {
                     d.child(texto_arco_iris(&self.titulo))
@@ -676,6 +693,7 @@ impl RenderOnce for LinhaDeOpcao {
                         .tooltip(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
                 )
             });
+        let mut controle_embaixo = None;
         let (direita, alternar) = match self.controle {
             Controle::Interruptor { ligado, ao_mudar } => {
                 let f = ao_mudar.clone();
@@ -684,6 +702,10 @@ impl RenderOnce for LinhaDeOpcao {
                     .disabled(desabilitada)
                     .on_click(move |novo, window, cx| f(*novo, window, cx));
                 (Some(switch.into_any_element()), Some((ligado, ao_mudar)))
+            }
+            Controle::Elemento(e) if self.embaixo => {
+                controle_embaixo = Some(div().flex().child(e));
+                (None, None)
             }
             Controle::Elemento(e) => (Some(e), None),
             Controle::Nenhum => (None, None),
@@ -715,6 +737,7 @@ impl RenderOnce for LinhaDeOpcao {
                     .children(direita),
             )
             .children(self.campo)
+            .children(controle_embaixo)
             .when_some(alternar.filter(|_| !desabilitada), |d, (ligado, f)| {
                 d.cursor_pointer().on_click(move |_, window, cx| f(!ligado, window, cx))
             })

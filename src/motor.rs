@@ -18,10 +18,25 @@ use gpui_kit::{AnyWeakEntity, AppContext as _, Context, Task};
 use serde_json::{Value, json};
 use smol::channel::{Sender, unbounded};
 
+mod conexoes;
 mod importacao;
+mod issues;
 mod mestre;
+mod prs;
 
+pub use conexoes::{
+    Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, RemotoGithub, estados_padrao, linear_com_time,
+    modo_pr_disponivel, remoto_escolhido,
+};
+// Provisório: o PR (G4 e G5) usa o estado da rede, o repositório inteiro e os métodos permitidos.
+#[allow(unused_imports)]
+pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
+// Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
+#[allow(unused_imports)]
+pub use issues::{EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
 pub use mestre::ResumoVolta;
+#[allow(unused_imports)]
+pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
 use mestre::{Ciclos, MotivoPassagem, Readmes};
 
 use crate::{
@@ -97,6 +112,8 @@ enum Sinal {
     /// Um aviso do Windows (toast) a mostrar: o GPUI só mostra pela thread da janela.
     #[cfg(windows)]
     Aviso(gpui_kit::SystemNotification),
+    /// Uma leitura do GitHub ou do Linear pediu uma busca (`conexoes::Motor::pedir`).
+    Integracao,
 }
 
 /// A notificação de um chat que ainda está na tela: a próxima do mesmo chat a substitui. (Só no
@@ -324,6 +341,8 @@ pub struct NovoProjeto {
     pub permissao: Option<String>,
     pub modelo: Option<String>,
     pub conta: Option<String>,
+    /// O time do Linear escolhido no formulário.
+    pub linear: Option<crate::modelo::LinearDoProjeto>,
 }
 
 /// O que muda num projeto: só o que vem preenchido (é um patch: a ordem e o arquivamento mexidos com
@@ -343,6 +362,8 @@ pub struct MudancaProjeto {
     pub permissao: Option<Option<String>>,
     pub modelo: Option<Option<String>>,
     pub conta: Option<Option<String>>,
+    /// O time do Linear e os estados automáticos; `Some(None)` desliga o Linear do projeto.
+    pub linear: Option<Option<crate::modelo::LinearDoProjeto>>,
 }
 
 pub struct Motor {
@@ -371,8 +392,10 @@ pub struct Motor {
     processos: HashMap<String, Processo>,
     geracao: u64,
     geracao_atual: HashMap<String, u64>,
-    /// O que entrou no último turno de cada chat, para "Tentar de novo".
-    ultima_entrada: HashMap<String, Vec<Entrada>>,
+    /// O que entrou no último turno de cada chat, para "Tentar de novo", com o uuid do turno: a
+    /// repetição (tentar de novo, a troca de conta) é o mesmo turno, e a guarda das ações externas
+    /// não repete o que ele já fez.
+    ultima_entrada: HashMap<String, (String, Vec<Entrada>)>,
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
@@ -469,6 +492,8 @@ pub struct Motor {
     /// Marcado ao fechar ou trocar de pasta: a etapa seguinte de uma entrega ou preparação em
     /// segundo plano (revisor, script de preparação) não abre processo depois da parada.
     encerrado: Arc<AtomicBool>,
+    /// GitHub e Linear: as conexões, a chave do Linear na memória e o que veio da rede.
+    integracao: conexoes::Integracao,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -728,6 +753,7 @@ impl Motor {
             avisos: Arc::default(),
             visiveis: HashSet::new(),
             encerrado: Arc::default(),
+            integracao: conexoes::Integracao::new(Arc::new(crate::remoto::Real)),
             servidor,
             sinais,
             _recebedor,
@@ -751,6 +777,8 @@ impl Motor {
         motor.dados.esperar_gravacoes();
         // O último uso do plano que o Claude Code guardou de cada conta e o do Codex.
         motor.reler_uso(cx);
+        // O bwrap, o login do gh e a chave do Linear (sem destravar o chaveiro).
+        motor.iniciar_conexoes(cx);
         motor
     }
 
@@ -1250,6 +1278,7 @@ impl Motor {
                         permissao: vazio(novo.permissao),
                         modelo: vazio(novo.modelo),
                         conta: vazio(novo.conta),
+                        linear: novo.linear,
                         ..Default::default()
                     });
                     if let Some(cartao) = cartao {
@@ -2304,7 +2333,7 @@ impl Motor {
         if self.processos.contains_key(chat) {
             return;
         }
-        if let Some(mensagens) = self.ultima_entrada.get(chat).cloned() {
+        if let Some((_, mensagens)) = self.ultima_entrada.get(chat).cloned() {
             self.avisar(chat, "Tentando de novo.", false);
             self.comecar_turno_com(chat, mensagens, false, cx);
         }
@@ -2425,7 +2454,7 @@ impl Motor {
     /// Ultracode, que rodaria um fluxo inteiro de novo sem o usuário pedir. Só o "Tentar de novo"
     /// o repete.
     fn entrada_para_repetir(&mut self, chat_id: &str) -> Option<Vec<Entrada>> {
-        let mut mensagens = self.ultima_entrada.get(chat_id).cloned()?;
+        let (_, mut mensagens) = self.ultima_entrada.get(chat_id).cloned()?;
         if mensagens.iter().any(|e| e.ultracode) {
             for entrada in &mut mensagens {
                 entrada.ultracode = false;
@@ -2681,17 +2710,18 @@ impl Motor {
             None => texto,
         };
         let ultrathink = mensagens.iter().any(|e| e.ultrathink);
-        self.ultima_entrada
-            .insert(chat_id.to_string(), mensagens.clone());
-        // Ponto de volta: foto dos arquivos antes de quem edita começar o turno. Na cópia, o grupo
-        // vem do branch; na pasta própria, do número do chat. Sem git, não há foto.
+        let turno = turno_do_lote(self.ultima_entrada.get(chat_id).map(|(t, _)| t.as_str()), &mensagens);
+        self.ultima_entrada.insert(chat_id.to_string(), (turno, mensagens.clone()));
+        // Ponto de volta: foto dos arquivos antes de quem edita começar o turno, no grupo da tarefa
+        // (o ramo da cópia pode ter qualquer nome). Sem git, não há foto.
         let novas = mensagens.iter().any(|e| !e.registrada);
+        let grupo = tarefa.as_ref().map(Tarefa::grupo);
         let ponto = match (&tarefa, chat.papel) {
             _ if !novas => None,
-            (_, Papel::Trabalhador) if git::e_repositorio(&chat.cwd) => git::foto(&chat.cwd).ok(),
-            (Some(t), Papel::Projeto) if t.tem_copia() => git::foto(&chat.cwd).ok(),
+            (_, Papel::Trabalhador) if git::e_repositorio(&chat.cwd) => git::foto(&chat.cwd, grupo.as_deref()).ok(),
+            (Some(t), Papel::Projeto) if t.tem_copia() => git::foto(&chat.cwd, grupo.as_deref()).ok(),
             (Some(t), Papel::Projeto) if t.forma == Forma::DiretaGit && git::e_repositorio(&chat.cwd) => {
-                git::foto_no_grupo(&chat.cwd, &format!("t{}", t.id)).ok()
+                git::foto(&chat.cwd, grupo.as_deref()).ok()
             }
             _ => None,
         };
@@ -2959,7 +2989,7 @@ impl Motor {
     /// O init mostrou que o Ultracode não ligou: as mensagens dele perdem o selo e o turno deixa
     /// de contar como Ultracode (o de outra conversa não espera por ele).
     fn ultracode_nao_ligou(&mut self, chat_id: &str) {
-        let Some(mensagens) = self.ultima_entrada.get_mut(chat_id) else {
+        let Some((_, mensagens)) = self.ultima_entrada.get_mut(chat_id) else {
             return;
         };
         let mut faltam = mensagens.iter().filter(|e| e.ultracode).count();
@@ -2993,7 +3023,7 @@ impl Motor {
     fn turno_com_ultracode(&self, chat: &str) -> bool {
         self.ultima_entrada
             .get(chat)
-            .is_some_and(|m| m.iter().any(|e| e.ultracode))
+            .is_some_and(|(_, m)| m.iter().any(|e| e.ultracode))
     }
 
     /// A conversa que roda um turno com Ultracode agora.
@@ -3136,7 +3166,7 @@ impl Motor {
         } else {
             return false;
         };
-        let Some(mensagens) = self.ultima_entrada.get(chat_id).cloned() else {
+        let Some((_, mensagens)) = self.ultima_entrada.get(chat_id).cloned() else {
             return false;
         };
         if chat.sessao_criada == existe || !self.repetidos_sessao.insert(chat_id.to_string()) {
@@ -3433,6 +3463,7 @@ impl Motor {
                 cx.show_system_notification(aviso);
                 return false;
             }
+            Sinal::Integracao => self.atender_pedidos(cx),
         }
         true
     }
@@ -4581,7 +4612,10 @@ impl Motor {
         }
         let caminho_projeto = self.origem_da_tarefa(&tarefa);
         let area = self.dados.pasta_copias(&tarefa.projeto);
-        let novo_branch = format!("vitral/t{id}-{}", slug(&tarefa.titulo));
+        // O ramo e o ponto de partida escolhidos antes (o do Linear, o prefixo da pasta, o
+        // `<remoto>/<base>` do modo PR) valem sempre, também ao refazer: nunca são recalculados.
+        let novo_branch = tarefa.ramo_planejado.clone().unwrap_or_else(|| format!("vitral/t{id}-{}", slug(&tarefa.titulo)));
+        let partir_de = tarefa.partir_de.clone();
         // O chat de projeto tem a pasta gravada desde que nasceu, e a cópia que já rodou volta
         // nela (o `--resume` vale pela pasta), partindo do branch dela.
         let (destino, branch, recriar) = if de_projeto {
@@ -4642,7 +4676,7 @@ impl Motor {
                     // O ponto do pai e a cópia nova ficam na mesma vez.
                     git::na_vez_do_projeto(&projeto, || {
                         if let Some((pasta, branch)) = antiga {
-                            let _ = git::limpar_copia(&projeto, &pasta, &area, &branch, &[], false);
+                            let _ = git::limpar_copia(&projeto, &pasta, &area, &branch, Some(&format!("t{id}")), &[], false);
                         }
                         if let Some(mensagem) = &ponto
                             && let Err(erro) = git::checkpoint(&projeto, mensagem)
@@ -4650,9 +4684,10 @@ impl Motor {
                             return Some(Err(erro.context(format!("não deu para guardar num commit o que {} tem", projeto.display()))));
                         }
                         Some(if recriar {
-                            git::recriar_worktree(&projeto, &destino, &branch).map(|(c, existia)| (c, Some(existia)))
+                            git::recriar_worktree_de(&projeto, &destino, &branch, partir_de.as_deref())
+                                .map(|(c, existia)| (c, Some(existia)))
                         } else {
-                            git::criar_worktree(&projeto, &destino, &branch).map(|c| (c, None))
+                            git::criar_worktree_de(&projeto, &destino, &branch, partir_de.as_deref()).map(|c| (c, None))
                         })
                     })
                 })
@@ -5184,10 +5219,11 @@ impl Motor {
                                 projeto
                             };
                             let limpou = git::na_vez_do_projeto(&projeto, || {
+                                let grupo = format!("t{id}");
                                 if de_projeto {
-                                    limpar_copia_do_chat(&projeto, &pasta, &area, &branch, &pontos)
+                                    limpar_copia_do_chat(&projeto, &pasta, &area, &branch, &grupo, &pontos)
                                 } else {
-                                    git::limpar_copia(&projeto, &pasta, &area, &branch, &pontos, false).map(|_| false)
+                                    git::limpar_copia(&projeto, &pasta, &area, &branch, Some(&grupo), &pontos, false).map(|_| false)
                                 }
                             });
                             (id, limpou)
@@ -5630,6 +5666,7 @@ impl Motor {
         self.juntando.insert(id);
         cx.notify();
         let pontos = self.pontos_so_do_chat(&tarefa.trabalhador);
+        let grupo = tarefa.grupo();
         let (ajudante, pai) = (tarefa.trabalhador.clone(), tarefa.coordenador.clone());
         cx.spawn(async move |motor, cx| {
             let alvo = pasta_do_pai.clone();
@@ -5642,7 +5679,7 @@ impl Motor {
                             .map_err(|e| e.context(format!("não deu para guardar num commit o que {} tem", alvo.display())))?;
                         let juncao = git::aprovar(&alvo, &pasta, &branch, &base, &mensagem);
                         if matches!(juncao, Ok(git::Juncao::Juntou { .. } | git::Juncao::SemMudancas)) {
-                            let _ = git::limpar_copia(&alvo, &pasta, &area, &branch, &pontos, false);
+                            let _ = git::limpar_copia(&alvo, &pasta, &area, &branch, Some(&grupo), &pontos, false);
                         }
                         juncao
                     })
@@ -6651,6 +6688,9 @@ pub fn aplicar_mudanca(p: &mut Projeto, m: MudancaProjeto) {
     if let Some(conta) = m.conta {
         p.conta = vazio(conta);
     }
+    if let Some(linear) = m.linear {
+        p.linear = linear;
+    }
 }
 
 /// Onde ficam as cópias como a da tarefa: a pasta dela em `copias` (a área nova), ou a
@@ -6743,10 +6783,21 @@ fn itens_das_entradas(mensagens: Vec<Entrada>, mut ponto: Option<String>) -> Vec
                     ponto,
                     ultrathink: entrada.ultrathink,
                     ultracode: entrada.ultracode,
+                    referencias: entrada.referencias,
                 },
             }
         })
         .collect()
+}
+
+/// O uuid do turno que vai abrir: o mesmo do anterior quando o lote é uma repetição dele (todas as
+/// entradas já estão na conversa: "Tentar de novo", a troca de conta, a nova tentativa depois de
+/// uma queda, mesmo que tenha esperado na fila); senão, um novo.
+fn turno_do_lote(anterior: Option<&str>, mensagens: &[Entrada]) -> String {
+    match anterior {
+        Some(turno) if !mensagens.is_empty() && mensagens.iter().all(|e| e.registrada) => turno.to_string(),
+        _ => uuid::Uuid::new_v4().to_string(),
+    }
 }
 
 /// A mensagem que o usuário escreveu, pronta para entrar no turno ou na fila.
@@ -6997,7 +7048,7 @@ pub fn guarda_da_copia(t: &Tarefa, preparando: bool) -> GuardaCopia {
 /// O que a limpeza faz com a cópia de um chat de projeto, na vez do repositório: nada sem a origem,
 /// nada se a cópia é de outro repositório; com trabalho não juntado, um commit e o branch fica. Diz
 /// se guardou trabalho.
-fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, pontos: &[String]) -> anyhow::Result<bool> {
+fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, grupo: &str, pontos: &[String]) -> anyhow::Result<bool> {
     if !origem.is_dir() {
         anyhow::bail!("a pasta {} não foi encontrada; a cópia fica até ela voltar", origem.display());
     }
@@ -7009,7 +7060,7 @@ fn limpar_copia_do_chat(origem: &Path, copia: &Path, area: &Path, branch: &str, 
     if guardar {
         git::commit_de_turno(copia, "Vitral: guardado antes de apagar a cópia")?;
     }
-    git::limpar_copia(origem, copia, area, branch, pontos, guardar)?;
+    git::limpar_copia(origem, copia, area, branch, Some(grupo), pontos, guardar)?;
     Ok(guardar)
 }
 
@@ -7380,6 +7431,7 @@ mod testes {
             ponto: None,
             ultrathink: false,
             ultracode: false,
+            referencias: Vec::new(),
         });
         let mut chats = vec![chat("c", Papel::Coordenador, None), trabalhador];
         let mut tarefas = vec![tarefa(1, "w", EstadoTarefa::Rodando)];
@@ -7808,6 +7860,21 @@ mod testes {
     }
 
     #[test]
+    fn a_repeticao_do_turno_leva_o_mesmo_uuid() {
+        let nova = Entrada { texto: "abre o PR".into(), ..Default::default() };
+        let repetida = Entrada { registrada: true, ..nova.clone() };
+        let primeiro = turno_do_lote(None, std::slice::from_ref(&nova));
+        assert_eq!(primeiro.len(), 36);
+        // "Tentar de novo" e a troca de conta mandam o lote já registrado: o mesmo turno.
+        assert_eq!(turno_do_lote(Some(&primeiro), std::slice::from_ref(&repetida)), primeiro);
+        // Uma mensagem nova (mesmo com uma nota já registrada junto) é outro turno.
+        let nota = Entrada { nota: true, registrada: true, ..Default::default() };
+        assert_ne!(turno_do_lote(Some(&primeiro), &[nota, nova.clone()]), primeiro);
+        assert_ne!(turno_do_lote(Some(&primeiro), &[]), primeiro);
+        assert_ne!(turno_do_lote(None, &[repetida]), primeiro);
+    }
+
+    #[test]
     fn entrada_antiga_sem_ultrathink_continua_abrindo() {
         let lida: Entrada = serde_json::from_value(serde_json::json!({"de": null, "texto": "oi"})).unwrap();
         assert!(!lida.ultrathink && !lida.registrada);
@@ -8045,7 +8112,7 @@ mod testes {
         let pedido = Tarefa { estado: EstadoTarefa::Rodando, coordenador: "mestre".into(), ..conversa.clone() };
         assert!(!nunca_rodou(&c, &[&pedido]), "pedido do Mestre aberto");
         let mut falou = c.clone();
-        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false });
+        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() });
         assert!(!nunca_rodou(&falou, &[&conversa]));
         let mut sessao = c.clone();
         sessao.sessao_criada = true;
@@ -8121,7 +8188,7 @@ mod testes {
 
     #[test]
     fn passagem_de_sessao_leva_as_ultimas_mensagens_e_o_pedido() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
         let mut itens = vec![usuario("primeira")];
         for i in 0..12 {
             itens.push(Item::Assistente { texto: format!("resposta {i}") });
@@ -8265,7 +8332,7 @@ mod testes {
 
     #[test]
     fn revisor_sem_pedido_le_as_mensagens_desde_a_juncao() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
         let mut itens = vec![usuario("antes"), Item::Aviso { texto: format!("{JUNTOU} /p/loja."), erro: false }];
         assert_eq!(mensagens_desde_a_juncao(&itens), "(nenhuma mensagem do usuário desde a última junção)");
         itens.extend([usuario("troque o frete"), Item::Assistente { texto: "feito".into() }, usuario("/compact"), usuario("e o cupom")]);

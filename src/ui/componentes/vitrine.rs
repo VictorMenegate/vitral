@@ -1308,6 +1308,8 @@ impl Vitrine {
             .child(Marca::Claude.disco(24.))
             .child(Marca::Codex.disco(24.))
             .child(Marca::Codex.disco(24.).apagada())
+            .child(Marca::Linear.disco(24.))
+            .child(icone(Lucide::Github, 24., window))
             .child(div().text_size(r(14.)).font_semibold().child(texto_arco_iris("Ultrathink")))
             .child(icone(Lucide::Sparkles, 16., window));
         um("Projetos, papéis e marcas", cx, div().flex().flex_col().gap(r(16.)).child(quadrados).child(papeis))

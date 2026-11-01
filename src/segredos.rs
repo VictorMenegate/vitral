@@ -103,19 +103,33 @@ mod sistema {
         ATRIBUTOS.to_vec()
     }
 
-    async fn abrir(destravar: bool) -> Result<oo7::Keyring, ErroChaveiro> {
-        let chaveiro = oo7::Keyring::new().await.map_err(indisponivel)?;
+    /// O chaveiro padrão. O `Keyring::new()` do oo7 cria a coleção padrão quando ela não existe
+    /// (e o sistema pede uma senha nova): só a gravação, por ação do usuário, pode criar. Ler e
+    /// apagar procuram a coleção pelo apelido e, sem ela, não há chave (`None`). Sem `destravar`,
+    /// nada abre diálogo: trancado é `Err(Trancado)`.
+    async fn abrir(destravar: bool, criar: bool) -> Result<Option<oo7::Keyring>, ErroChaveiro> {
+        let chaveiro = if criar || oo7::ashpd::is_sandboxed() {
+            oo7::Keyring::new().await.map_err(indisponivel)?
+        } else {
+            let servico = oo7::dbus::Service::new().await.map_err(|e| indisponivel(e.into()))?;
+            match servico.with_alias(oo7::dbus::Service::DEFAULT_COLLECTION).await.map_err(|e| indisponivel(e.into()))? {
+                Some(colecao) => oo7::Keyring::DBus(colecao),
+                None => return Ok(None),
+            }
+        };
         if chaveiro.is_locked().await.map_err(indisponivel)? {
             if !destravar {
                 return Err(ErroChaveiro::Trancado);
             }
             chaveiro.unlock().await.map_err(indisponivel)?;
         }
-        Ok(chaveiro)
+        Ok(Some(chaveiro))
     }
 
     pub async fn ler(destravar: bool) -> Result<Option<Chave>, ErroChaveiro> {
-        let chaveiro = abrir(destravar).await?;
+        let Some(chaveiro) = abrir(destravar, false).await? else {
+            return Ok(None);
+        };
         let itens = chaveiro.search_items(&atributos()).await.map_err(indisponivel)?;
         let Some(item) = itens.into_iter().next() else {
             return Ok(None);
@@ -135,13 +149,16 @@ mod sistema {
     }
 
     pub async fn gravar(chave: &Chave) -> Result<(), ErroChaveiro> {
-        let chaveiro = abrir(true).await?;
+        let chaveiro = abrir(true, true).await?.ok_or_else(|| ErroChaveiro::Indisponivel("o chaveiro não abriu".into()))?;
         let segredo = oo7::Secret::text(chave.texto());
         chaveiro.create_item(ROTULO, &atributos(), segredo, true).await.map_err(indisponivel)
     }
 
     pub async fn apagar() -> Result<(), ErroChaveiro> {
-        let chaveiro = abrir(true).await?;
+        // Sem a coleção padrão, não há o que apagar.
+        let Some(chaveiro) = abrir(true, false).await? else {
+            return Ok(());
+        };
         chaveiro.delete(&atributos()).await.map_err(indisponivel)
     }
 }

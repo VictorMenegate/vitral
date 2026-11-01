@@ -1058,6 +1058,9 @@ pub fn resumo_desde(desde: u64, ate: u64, ocorrencias: &[Ocorrencia], cartoes: &
             }
             TipoCartao::Projeto(s) => format!("O Mestre sugere criar o projeto {}", s.nome),
             TipoCartao::Memoria { texto } => format!("O Mestre quer lembrar: {texto}"),
+            // A linha de acompanhamento do PR não espera ninguém (os avisos dele vêm à parte).
+            TipoCartao::Pr { .. } => continue,
+            TipoCartao::Confirmar(c) => format!("Confirmar: {}", c.resumo),
             TipoCartao::Desconhecido(_) => format!("Cartão {} aberto", c.id),
         };
         linhas.push(LinhaResumo { grupo: "precisa", projeto: String::new(), chat: c.chat.clone(), texto });
@@ -1362,6 +1365,8 @@ impl Motor {
             }
             TipoCartao::Projeto(s) => format!("sugestão de criar o projeto {}", s.nome),
             TipoCartao::Memoria { texto } => format!("pedido para lembrar: {texto}"),
+            TipoCartao::Pr { tarefa } => format!("acompanhamento do PR da tarefa {tarefa}"),
+            TipoCartao::Confirmar(c) => format!("confirmação pendente: {}", c.resumo),
             TipoCartao::Desconhecido(_) => format!("cartão {} de uma versão mais nova", c.id),
         }
     }
@@ -1811,7 +1816,7 @@ impl Motor {
         // Com ajudante aberto, o relatório dele é que acorda o chat de novo.
         let ajudantes = !self.ajudantes_abertos(&chat.id).is_empty();
         let pendente = self.aguardando_resposta.contains(&chat.id) || self.na_fila(&chat.id) > 0 || ajudantes;
-        let do_dono = aberto_pelo_dono(self.ultima_entrada.get(&chat.id).map_or(&[][..], Vec::as_slice), &dono);
+        let do_dono = aberto_pelo_dono(self.ultima_entrada.get(&chat.id).map_or(&[][..], |(_, m)| m.as_slice()), &dono);
         match decidir_fim(t, pendente, do_dono) {
             FimDoPedido::Entregar { formal } => {
                 let relatorio = match t.entrega.as_ref().filter(|_| formal) {
@@ -1971,6 +1976,8 @@ impl Motor {
     /// A janela voltou depois de `minutos_para_resumo` fora (ou abriu, com uma saída gravada): monta o
     /// resumo do que aconteceu, só na memória.
     pub fn usuario_voltou(&mut self, cx: &mut Context<Self>) {
+        // O login do gh depois de "Entrar no GitHub" e a chave do Linear que ainda não foi lida.
+        self.conexoes_ao_voltar(cx);
         let desde = self.visto_em;
         let ate = agora();
         if desde == 0 || ate.saturating_sub(desde) < self.config.minutos_para_resumo * 60 {
@@ -2488,7 +2495,7 @@ impl Motor {
     /// `propor_divisao`: valida, confere se já não foi proposta (mesmo turno ou mesma assinatura em 2
     /// h), grava o cartão e, nos três casos da regra, começa direto.
     fn propor_divisao(&mut self, a: &Value, cx: &mut Context<Self>) -> Resposta {
-        let entradas = self.ultima_entrada.get(ID_MESTRE).cloned().unwrap_or_default();
+        let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
         let brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
         let perguntas: Vec<String> = lista_de_textos(&a["perguntas"]).into_iter().filter(|p| !p.trim().is_empty()).collect();
         let partes = {
@@ -2634,7 +2641,7 @@ impl Motor {
 
     /// `lembrar`: num turno só do usuário, grava; nos outros, o usuário confirma pelo cartão.
     fn lembrar(&mut self, texto: &str, cx: &mut Context<Self>) -> Resposta {
-        let entradas = self.ultima_entrada.get(ID_MESTRE).cloned().unwrap_or_default();
+        let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
         if turno_so_do_usuario(&entradas) {
             return match lembrar_em(&self.dados.memoria(), texto) {
                 Ok(nova) => match self.dados.gravar_memoria(&nova) {

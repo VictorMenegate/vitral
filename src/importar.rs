@@ -496,6 +496,7 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                         ponto: None,
                         ultrathink: false,
                         ultracode: false,
+                        referencias: Vec::new(),
                     }),
                     Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false)),
                     Fala::Interrompido => itens.push(aviso("Interrompido pelo usuário.", false)),

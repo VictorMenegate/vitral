@@ -130,6 +130,28 @@ pub struct IssueDetalhe {
     pub repositorio: Option<String>,
 }
 
+/// O recorte da lista de issues do popover. No Linear: Minhas, Do time e Ciclo atual; no GitHub,
+/// Minhas e Todas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Recorte {
+    #[default]
+    Minhas,
+    DoTime,
+    CicloAtual,
+    Todas,
+}
+
+/// O filtro da lista de issues (lembrado por projeto em `interface.json`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FiltroIssues {
+    pub recorte: Recorte,
+    /// As fechadas nos últimos 30 dias, no lugar das abertas.
+    pub fechadas: bool,
+    /// A busca no servidor (Enter com 3 ou mais caracteres); o filtro local fica na interface.
+    pub termo: Option<String>,
+}
+
 /// Uma issue ou PR citado num texto.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Referencia {

@@ -1245,19 +1245,22 @@ pub fn iniciar_repositorio(projeto: &Path) -> Result<RepositorioNovo> {
 
 #[cfg(test)]
 pub fn remover_worktree(projeto: &Path, copia: &Path, branch: &str) {
-    let _ = limpar_copia(projeto, copia, &projeto.with_extension("area"), branch, &[], false);
+    let _ = limpar_copia(projeto, copia, &projeto.with_extension("area"), branch, None, &[], false);
 }
 
 /// Apaga a cópia de uma tarefa: a pasta (com node_modules, .venv e target/), o branch e os pontos
-/// de volta dela. `pontos_antigos` são os gravados antes de os pontos irem para o grupo da tarefa.
-/// `area` é a pasta onde o Vitral cria as cópias deste projeto. Com `manter_branch`, só a pasta
-/// sai (o branch e os pontos ficam, para a cópia ser refeita dele). Sem a origem, ou com o git dela
-/// falhando, nada é apagado à mão: a limpeza fica para depois.
+/// de volta dela. `grupo` é o da tarefa ("t12"): o ramo pode ter qualquer nome (o do Linear, o
+/// prefixo da pasta); sem ele, vale o que o ramo `vitral/t<N>-…` diz, como antes. `pontos_antigos`
+/// são os gravados antes de os pontos irem para o grupo da tarefa. `area` é a pasta onde o Vitral
+/// cria as cópias deste projeto. Com `manter_branch`, só a pasta sai (o branch e os pontos ficam,
+/// para a cópia ser refeita dele). Sem a origem, ou com o git dela falhando, nada é apagado à mão:
+/// a limpeza fica para depois.
 pub fn limpar_copia(
     projeto: &Path,
     copia: &Path,
     area: &Path,
     branch: &str,
+    grupo: Option<&str>,
     pontos_antigos: &[String],
     manter_branch: bool,
 ) -> Result<()> {
@@ -1282,7 +1285,7 @@ pub fn limpar_copia(
         return Ok(());
     }
     let _ = git(projeto, &["branch", "-D", branch]);
-    let grupo = grupo_do_branch(branch).map(|g| format!("refs/vitral/pontos/{g}/"));
+    let grupo = grupo.map(str::to_string).or_else(|| grupo_do_branch(branch)).map(|g| format!("refs/vitral/pontos/{g}/"));
     let mut apagar = String::new();
     let refs = git(projeto, &["for-each-ref", "--format=%(refname)", "refs/vitral/pontos/"]).unwrap_or_default();
     for nome in refs.lines() {
@@ -1318,7 +1321,8 @@ pub fn podar(projeto: &Path) {
     let _ = git(projeto, &["worktree", "prune"]);
 }
 
-/// Grupo dos pontos de volta da cópia de uma tarefa: "t12" no branch "vitral/t12-titulo".
+/// Grupo dos pontos de volta da cópia de uma tarefa pelo nome do branch: "t12" em
+/// "vitral/t12-titulo". Só a alternativa de quando a tarefa não diz o grupo (as fotos antigas).
 fn grupo_do_branch(branch: &str) -> Option<String> {
     let resto = branch.strip_prefix("vitral/t")?;
     let numero: String = resto.chars().take_while(char::is_ascii_digit).collect();
@@ -1460,22 +1464,13 @@ pub fn inicio_do_texto(texto: &str, limite: usize) -> String {
 }
 
 /// Foto dos arquivos da pasta (rastreados e novos, sem lixo) num commit solto, sem mexer no
-/// índice nem no histórico: vira um ponto de volta antes de cada turno. Na cópia de uma tarefa, a
-/// referência fica no grupo dela (`refs/vitral/pontos/t<N>/`), que limpar_copia apaga.
-pub fn foto(pasta: &Path) -> Result<String> {
-    let grupo = ramo_atual(pasta).and_then(|branch| grupo_do_branch(&branch));
-    foto_com_grupo(pasta, grupo.as_deref())
-}
-
-/// A foto de uma pasta que não é cópia (a pasta própria): o grupo vem do chat ("t12"), não do
-/// branch, e a poda depois de cada vez fica com as mais novas.
-pub fn foto_no_grupo(pasta: &Path, grupo: &str) -> Result<String> {
-    foto_com_grupo(pasta, Some(grupo))
-}
-
-fn foto_com_grupo(pasta: &Path, grupo: Option<&str>) -> Result<String> {
+/// índice nem no histórico: vira um ponto de volta antes de cada turno. A referência fica no grupo
+/// da tarefa (`refs/vitral/pontos/t<N>/`), que limpar_copia apaga e a poda depois de cada vez
+/// encurta: o ramo da cópia pode ter qualquer nome. Sem grupo, vale o do ramo `vitral/t<N>-…`.
+pub fn foto(pasta: &Path, grupo: Option<&str>) -> Result<String> {
+    let grupo = grupo.map(str::to_string).or_else(|| ramo_atual(pasta).and_then(|branch| grupo_do_branch(&branch)));
     let commit = foto_solta(pasta)?;
-    let nome = match grupo {
+    let nome = match &grupo {
         Some(grupo) => format!("refs/vitral/pontos/{grupo}/{commit}"),
         None => format!("refs/vitral/pontos/{commit}"),
     };
@@ -1616,7 +1611,7 @@ mod testes {
     fn voltar_ao_ponto_restaura_e_apaga_o_que_veio_depois() {
         let pasta = repositorio();
         std::fs::write(pasta.join("a.txt"), "dois\n").unwrap();
-        let ponto = foto(&pasta).unwrap();
+        let ponto = foto(&pasta, None).unwrap();
         std::fs::write(pasta.join("a.txt"), "tres\n").unwrap();
         std::fs::write(pasta.join("novo.txt"), "x\n").unwrap();
         std::fs::create_dir_all(pasta.join("sub")).unwrap();
@@ -1644,7 +1639,7 @@ mod testes {
     fn voltar_ao_ponto_com_acento_conta_certo() {
         let pasta = repositorio();
         std::fs::write(pasta.join("ação.txt"), "antes\n").unwrap();
-        let ponto = foto(&pasta).unwrap();
+        let ponto = foto(&pasta, None).unwrap();
         std::fs::write(pasta.join("ação.txt"), "depois\n").unwrap();
         std::fs::write(pasta.join("configuração.md"), "x\n").unwrap();
         assert_eq!(voltar_para(&pasta, &ponto).unwrap(), 2);
@@ -2047,11 +2042,11 @@ mod testes {
         }
 
         std::fs::write(copia.caminho.join("a.txt"), "mudou\n").unwrap();
-        let ponto = foto(&copia.caminho).unwrap();
+        let ponto = foto(&copia.caminho, None).unwrap();
         std::fs::write(copia.caminho.join("a.txt"), "de novo\n").unwrap();
-        foto(&copia.caminho).unwrap();
+        foto(&copia.caminho, None).unwrap();
         std::fs::write(outra.caminho.join("b.txt"), "da outra\n").unwrap();
-        let da_outra = foto(&outra.caminho).unwrap();
+        let da_outra = foto(&outra.caminho, None).unwrap();
         // Pontos da versão que não agrupava: um desta tarefa e um que não é dela.
         std::fs::write(copia.caminho.join("a.txt"), "antigo\n").unwrap();
         let antigo = foto_solta(&copia.caminho).unwrap();
@@ -2067,7 +2062,7 @@ mod testes {
         assert_eq!(refs().lines().count(), 5, "{}", refs());
 
         let area = projeto.with_extension("area");
-        limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, std::slice::from_ref(&antigo), false).unwrap();
+        limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, None, std::slice::from_ref(&antigo), false).unwrap();
         assert!(!copia.caminho.exists());
         assert!(git(&projeto, &["rev-parse", "--verify", "-q", "refs/heads/vitral/t7-limpar"]).is_err());
         let sobrou = refs();
@@ -2076,7 +2071,7 @@ mod testes {
 
         // Pasta apagada à mão: a limpeza esquece o registro e apaga o branch.
         std::fs::remove_dir_all(&outra.caminho).unwrap();
-        limpar_copia(&projeto, &outra.caminho, &area, &outra.branch, &[], false).unwrap();
+        limpar_copia(&projeto, &outra.caminho, &area, &outra.branch, None, &[], false).unwrap();
         assert_eq!(git(&projeto, &["worktree", "list", "--porcelain"]).unwrap().matches("worktree ").count(), 1);
         assert!(git(&projeto, &["branch", "--list", "vitral/*"]).unwrap().is_empty());
         assert_eq!(refs().lines().count(), 1, "{}", refs());
@@ -2084,7 +2079,7 @@ mod testes {
         let estranha = projeto.with_extension("estranha");
         std::fs::create_dir_all(&estranha).unwrap();
         std::fs::write(estranha.join("importante.txt"), "x").unwrap();
-        assert!(limpar_copia(&projeto, &estranha, &area, "vitral/t9-x", &[], false).is_err());
+        assert!(limpar_copia(&projeto, &estranha, &area, "vitral/t9-x", None, &[], false).is_err());
         assert!(estranha.join("importante.txt").exists());
         let _ = std::fs::remove_dir_all(&estranha);
 
@@ -2094,10 +2089,30 @@ mod testes {
         std::fs::create_dir_all(cortada.caminho.join("node_modules/pacote")).unwrap();
         std::fs::remove_file(cortada.caminho.join(".git")).unwrap();
         podar(&projeto);
-        limpar_copia(&projeto, &cortada.caminho, &area, &cortada.branch, &[], false).unwrap();
+        limpar_copia(&projeto, &cortada.caminho, &area, &cortada.branch, None, &[], false).unwrap();
         assert!(!cortada.caminho.exists());
         assert!(git(&projeto, &["branch", "--list", "vitral/*"]).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&area);
+        let _ = std::fs::remove_dir_all(&projeto);
+    }
+
+    /// O aceite do G2: com um ramo de qualquer nome, a foto vai para o grupo da tarefa e a
+    /// limpeza da cópia a apaga.
+    #[test]
+    fn foto_de_ramo_livre_fica_no_grupo_da_tarefa() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("t7"), "feature/vitor-x").unwrap();
+        std::fs::write(copia.caminho.join("a.txt"), "mudou\n").unwrap();
+        let ponto = foto(&copia.caminho, Some("t7")).unwrap();
+        let refs = || git(&projeto, &["for-each-ref", "--format=%(refname)", "refs/vitral/"]).unwrap();
+        assert_eq!(refs(), format!("refs/vitral/pontos/t7/{ponto}"));
+        // Sem o grupo, um ramo que não é `vitral/t<N>` não diz de quem é a foto: ela fica solta.
+        let solta = foto(&copia.caminho, None).unwrap_or_default();
+        assert!(refs().contains(&format!("refs/vitral/pontos/{solta}")), "{}", refs());
+        let area = projeto.with_extension("area");
+        limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, Some("t7"), &[], false).unwrap();
+        assert!(!copia.caminho.exists());
+        assert!(!refs().contains("pontos/t7/"), "{}", refs());
         let _ = std::fs::remove_dir_all(&projeto);
     }
 
@@ -2321,7 +2336,7 @@ mod testes {
         let area = projeto.with_extension("area5");
         let copia = criar_worktree(&projeto, &destino, "vitral/t5-recriar").unwrap();
         commit_em(&copia.caminho, "feito.txt", "trabalho\n");
-        limpar_copia(&projeto, &destino, &area, &copia.branch, &[], true).unwrap();
+        limpar_copia(&projeto, &destino, &area, &copia.branch, None, &[], true).unwrap();
         assert!(!destino.exists());
         std::fs::create_dir_all(&destino).unwrap();
         std::fs::write(destino.join("importante.txt"), "não apague").unwrap();
@@ -2341,7 +2356,7 @@ mod testes {
         assert!(antiga.join("importante.txt").exists());
 
         // Sem o branch: do HEAD da origem, com o mesmo nome e no mesmo caminho.
-        limpar_copia(&projeto, &destino, &area, &copia.branch, &[], false).unwrap();
+        limpar_copia(&projeto, &destino, &area, &copia.branch, None, &[], false).unwrap();
         let (nova, existia) = recriar_worktree(&projeto, &destino, &copia.branch).unwrap();
         assert!(!existia && nova.branch == copia.branch && nova.caminho == destino);
         assert!(!destino.join("feito.txt").exists());
@@ -2378,7 +2393,7 @@ mod testes {
         let movido = projeto.with_extension("movido");
         std::fs::rename(&projeto, &movido).unwrap();
         let area = copia.caminho.parent().unwrap().to_path_buf();
-        assert!(limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, &[], false).is_err());
+        assert!(limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, None, &[], false).is_err());
         assert!(copia.caminho.join("a.txt").exists(), "a cópia continua inteira");
         limpar(&movido, &[&copia.caminho]);
     }
@@ -2397,9 +2412,9 @@ mod testes {
 
         for i in 0..5 {
             std::fs::write(projeto.join("b.txt"), format!("{i}\n")).unwrap();
-            foto_no_grupo(&projeto, "t3").unwrap();
+            foto(&projeto, Some("t3")).unwrap();
         }
-        foto_no_grupo(&projeto, "t4").unwrap();
+        foto(&projeto, Some("t4")).unwrap();
         let grupo = |g: &str| {
             git(&projeto, &["for-each-ref", "--format=%(refname)", &format!("refs/vitral/pontos/{g}/")])
                 .unwrap()
@@ -2440,7 +2455,7 @@ mod testes {
         assert!(pai.caminho.join("do-ajudante.txt").exists());
         assert_eq!(std::fs::read_to_string(pai.caminho.join("do-pai.txt")).unwrap(), "pai de novo\n");
         assert!(!origem.join("do-ajudante.txt").exists(), "a origem só recebe no Juntar do pai");
-        limpar_copia(&pai.caminho, &ajudante.caminho, &origem.with_extension("area"), &ajudante.branch, &[], false).unwrap();
+        limpar_copia(&pai.caminho, &ajudante.caminho, &origem.with_extension("area"), &ajudante.branch, None, &[], false).unwrap();
         assert!(!ajudante.caminho.exists());
 
         // O Juntar do pai leva tudo à origem.
@@ -2615,6 +2630,31 @@ mod pr_e_rede {
         // .git/config compartilhado.
         git(projeto, &["worktree", "add", "-b", &ramo, &destino.to_string_lossy(), &base])?;
         Ok(CopiaIsolada { caminho: destino, branch: ramo, base, sujo, ramo: ramo_da_origem })
+    }
+
+    /// O `recriar_worktree` de uma cópia que parte de `ponto` (o modo PR, ao refazer depois de
+    /// fechar o Vitral no meio): sem o ramo antigo, ele renasce do ponto, nunca do HEAD da origem.
+    /// Com o ramo, ou sem ponto, é o `recriar_worktree` de sempre.
+    pub fn recriar_worktree_de(origem: &Path, destino: &Path, branch: &str, ponto: Option<&str>) -> Result<(CopiaIsolada, bool)> {
+        let existe = git(origem, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok();
+        match ponto {
+            Some(ponto) if !existe && !destino.exists() => criar_worktree_de(origem, destino, branch, Some(ponto)).map(|c| (c, false)),
+            _ => recriar_worktree(origem, destino, branch),
+        }
+    }
+
+    /// Os remotes da pasta e o endereço de cada um (`remote.<nome>.url`), sem rede. Sem git ou
+    /// sem remote, nenhum.
+    pub fn remotos(pasta: &Path) -> Vec<(String, String)> {
+        let lista = git(pasta, &["config", "--local", "--get-regexp", r"^remote\..*\.url$"]).unwrap_or_default();
+        lista
+            .lines()
+            .filter_map(|linha| {
+                let (chave, url) = linha.split_once(' ')?;
+                let nome = chave.strip_prefix("remote.")?.strip_suffix(".url")?;
+                Some((nome.to_string(), url.trim().to_string()))
+            })
+            .collect()
     }
 
     /// `fetch --no-tags <remoto> <refspecs…>` (rede).
@@ -3054,6 +3094,32 @@ mod pr_e_rede {
             let local = criar_worktree_de(&b.projeto, &b.raiz.join("c2"), "vitral/t2-y", None).unwrap();
             assert!(local.caminho.join("local.txt").exists());
             assert!(criar_worktree_de(&b.projeto, &b.raiz.join("c3"), "vitral/t3-z", Some("origin/nao-existe")).is_err());
+        }
+
+        #[test]
+        fn remotos_da_pasta_sem_rede() {
+            let b = Bancada::nova();
+            git(&b.projeto, &["remote", "add", "meu.fork", "git@github.com:VictorMenegate/top-bar-app-color.git"]).unwrap();
+            let achados = remotos(&b.projeto);
+            assert_eq!(achados.len(), 2, "{achados:?}");
+            assert_eq!(achados[0], ("origin".to_string(), b.origem.to_string_lossy().to_string()));
+            assert_eq!(achados[1].0, "meu.fork");
+            assert!(remotos(&b.raiz).is_empty());
+        }
+
+        #[test]
+        fn refazer_a_copia_do_modo_pr_nao_parte_do_head_local() {
+            let b = Bancada::nova_com_commit_local();
+            let destino = b.raiz.join("c1");
+            // A cópia não chegou a nascer (o Vitral fechou antes): nasce do ponto gravado.
+            let (copia, existia) = recriar_worktree_de(&b.projeto, &destino, "feature/vitor-eng-5-x", Some("origin/main")).unwrap();
+            assert!(!existia && !copia.caminho.join("local.txt").exists());
+            assert_eq!(copia.base, git(&b.projeto, &["rev-parse", "origin/main"]).unwrap());
+            // Com o ramo e a pasta já lá, é a mesma cópia (o `--resume` vale pela pasta).
+            commit(&copia.caminho, "feito.txt", "feito\n");
+            let (de_novo, existia) = recriar_worktree_de(&b.projeto, &destino, "feature/vitor-eng-5-x", Some("origin/main")).unwrap();
+            assert!(existia && de_novo.caminho.join("feito.txt").exists());
+            assert_eq!(de_novo.branch, "feature/vitor-eng-5-x");
         }
 
         #[test]
