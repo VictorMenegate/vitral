@@ -1090,8 +1090,15 @@ impl Janela {
     }
 
     fn arrastavel_com_id(&self, id: impl Into<ElementId>) -> Stateful<Div> {
-        div()
-            .id(id)
+        let faixa = div().id(id);
+        // No Windows quem arrasta é o próprio sistema: a área `Drag` vira a barra de título
+        // (HTCAPTION), com o clique duplo, o Aero Snap e o menu do botão direito. Lá o
+        // `start_window_move` não faz nada e o `zoom_window` só maximiza. Os botões de dentro da
+        // faixa continuam com o `sem_arrastar`: o clique para neles e o sistema não arrasta.
+        if cfg!(windows) {
+            return faixa.window_control_area(WindowControlArea::Drag);
+        }
+        faixa
             .on_mouse_down(MouseButton::Left, |evento, window, _| {
                 if evento.click_count >= 2 {
                     window.zoom_window();
@@ -1224,8 +1231,11 @@ impl Render for Janela {
         ]));
         // No Wayland, o ponteiro que sai da janela não mexe na posição guardada, e o hover do
         // último lugar (dicas, botões de hover) ficava preso: uma camada por cima tira o hover.
-        // Fica fora durante um arrasto, para não tapar a soltura de arquivos de fora.
-        let fora = (!window.is_window_hovered() && !cx.has_active_drag())
+        // Fica fora durante um arrasto, para não tapar a soltura de arquivos de fora. No Windows o
+        // problema não existe, e a camada atrapalharia: passar da área do cliente para a faixa de
+        // arrastar (que lá é a barra de título do sistema) conta como sair da janela por um instante,
+        // e com a camada por cima a faixa deixaria de ser faixa.
+        let fora = (cfg!(not(windows)) && !window.is_window_hovered() && !cx.has_active_drag())
             .then(|| div().id("ponteiro-fora").absolute().inset_0().occlude());
         let Some(motor) = self.motor.clone() else {
             return base.children(fora).into_any_element();
@@ -1484,7 +1494,13 @@ fn botoes_do_layout(layout: Option<WindowButtonLayout>) -> Vec<WindowButton> {
 }
 
 fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
-    sem_arrastar()
+    // No Windows, os botões são áreas do sistema (`Min`, `Max`, `Close`): o clique vai para ele, que
+    // minimiza, maximiza ou restaura e mostra o Snap Layouts no □; o × vira um WM_CLOSE, que passa
+    // pela pergunta de `fechar.rs`. Por isso lá nada para o clique no caminho (o `sem_arrastar`
+    // pararia, e o sistema nunca o veria), e cada botão tapa a faixa de baixo (`occlude`), senão a
+    // área dela, que vem antes, ganharia.
+    let grupo = if cfg!(windows) { div() } else { sem_arrastar() };
+    grupo
         .flex()
         .flex_none()
         .items_center()
@@ -1509,11 +1525,21 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
                 .hover(|s| s.bg(rgba(0xffffff26)))
                 .active(|s| s.bg(rgba(0xffffff40)))
                 .child(Icon::new(icone).size(r(14.)).text_color(Cores::tenue()))
-                .on_click(move |_, window, cx| match botao {
-                    WindowButton::Minimize => window.minimize_window(),
-                    WindowButton::Maximize => window.zoom_window(),
-                    // Pergunta antes se algo está trabalhando (o remove_window não pergunta).
-                    WindowButton::Close => fechar::fechar_janela(window, cx),
+                .map(|b| {
+                    if cfg!(windows) {
+                        let area = match botao {
+                            WindowButton::Minimize => WindowControlArea::Min,
+                            WindowButton::Maximize => WindowControlArea::Max,
+                            WindowButton::Close => WindowControlArea::Close,
+                        };
+                        return b.occlude().window_control_area(area);
+                    }
+                    b.on_click(move |_, window, cx| match botao {
+                        WindowButton::Minimize => window.minimize_window(),
+                        WindowButton::Maximize => window.zoom_window(),
+                        // Pergunta antes se algo está trabalhando (o remove_window não pergunta).
+                        WindowButton::Close => fechar::fechar_janela(window, cx),
+                    })
                 })
         }))
 }
