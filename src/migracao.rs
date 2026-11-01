@@ -1415,6 +1415,8 @@ mod testes {
         let _ = fs::remove_dir_all(&base);
     }
 
+    // No Windows o link simbólico pede o Modo de Desenvolvedor.
+    #[cfg(unix)]
     #[test]
     fn link_simbolico_e_pasta_oculta_ficam_de_fora() {
         let base = pasta_de_teste("links");

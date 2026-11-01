@@ -216,9 +216,14 @@ impl Processo {
 
     pub fn interromper(&mut self) {
         self.entrada = None;
+        // SAFETY: o processo ainda não foi colhido (é do `Child`), então o número é dele.
+        #[cfg(unix)]
         unsafe {
             libc::kill(self.filho.id() as i32, libc::SIGINT);
         }
+        // Sem console, no Windows não há Ctrl+C para mandar: por enquanto, para tudo.
+        #[cfg(windows)]
+        self.escopo.parar();
     }
 
     /// SIGTERM no claude e em tudo que ele abriu (com SIGKILL ele não limpa nada e os shells,

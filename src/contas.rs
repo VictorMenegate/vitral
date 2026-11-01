@@ -118,7 +118,7 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
         let fonte = original.join(item);
         let destino = pasta.join(item);
         if fonte.exists() && fs::symlink_metadata(&destino).is_err() {
-            std::os::unix::fs::symlink(&fonte, &destino)?;
+            ligar(&fonte, &destino)?;
         }
     }
     let config = pasta.join(".claude.json");
@@ -133,6 +133,18 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
         crate::dados::gravar_json_seguro(&config, &conteudo, false)?;
     }
     Ok(pasta)
+}
+
+#[cfg(unix)]
+fn ligar(fonte: &Path, destino: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(fonte, destino)
+}
+
+/// No Windows o link pede o Modo de Desenvolvedor (o certo lá é junction e hard link): as contas
+/// extras ficam para depois.
+#[cfg(windows)]
+fn ligar(_fonte: &Path, _destino: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "as contas extras ainda não funcionam no Windows"))
 }
 
 pub fn apagar_pasta(id: &str) {

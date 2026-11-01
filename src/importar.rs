@@ -886,6 +886,7 @@ mod testes {
     const S3: &str = "33333333-3333-4333-8333-333333333333";
     const S4: &str = "44444444-4444-4444-8444-444444444444";
     const S5: &str = "55555555-5555-4555-8555-555555555555";
+    #[cfg_attr(not(unix), allow(dead_code, reason = "só o teste do link da conta usa"))]
     const S6: &str = "66666666-6666-4666-8666-666666666666";
 
     fn usuario(cwd: &Path, quando: &str, conteudo: Value) -> String {
@@ -1042,6 +1043,8 @@ mod testes {
         assert_eq!(titulo_de("supercalifragilistico", 5), "super…");
     }
 
+    // O link simbólico da conta extra é do Unix (as contas extras ainda não existem no Windows).
+    #[cfg(unix)]
     #[test]
     fn listagem_filtra_e_nao_repete_pelo_link_da_conta() {
         let raiz = pasta_de_teste("listar");

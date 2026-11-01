@@ -1056,10 +1056,23 @@ pub fn tamanho(bytes: u64) -> String {
     }
 }
 
+/// O que uma entrada ocupa no disco e, se é um arquivo com mais de um nome (hard link), quem ele é
+/// (disco e inode), para contar uma vez só.
+#[cfg(unix)]
+fn no_disco(dados: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+    use std::os::unix::fs::MetadataExt as _;
+    (dados.blocks() * 512, (!dados.is_dir() && dados.nlink() > 1).then(|| (dados.dev(), dados.ino())))
+}
+
+/// No Windows, o tamanho do arquivo: os hard links contam de novo (o total é aproximado).
+#[cfg(not(unix))]
+fn no_disco(dados: &std::fs::Metadata) -> (u64, Option<(u64, u64)>) {
+    (dados.len(), None)
+}
+
 /// Espaço que a pasta ocupa no disco, sem seguir links e contando uma vez só os arquivos com hard
 /// link (o node_modules do pnpm aponta para a loja dele).
 pub fn espaco_ocupado(pasta: &Path) -> u64 {
-    use std::os::unix::fs::MetadataExt as _;
     let mut vistos = std::collections::HashSet::new();
     let mut pendentes = vec![pasta.to_path_buf()];
     let mut total = 0;
@@ -1067,10 +1080,11 @@ pub fn espaco_ocupado(pasta: &Path) -> u64 {
         let Ok(dados) = std::fs::symlink_metadata(&caminho) else {
             continue;
         };
-        if !dados.is_dir() && dados.nlink() > 1 && !vistos.insert((dados.dev(), dados.ino())) {
+        let (ocupa, quem) = no_disco(&dados);
+        if quem.is_some_and(|quem| !vistos.insert(quem)) {
             continue;
         }
-        total += dados.blocks() * 512;
+        total += ocupa;
         if dados.is_dir()
             && let Ok(entradas) = std::fs::read_dir(&caminho)
         {
@@ -1083,7 +1097,6 @@ pub fn espaco_ocupado(pasta: &Path) -> u64 {
 /// Quantos arquivos a pasta tem e quanto ocupa (como `espaco_ocupado`), parando em `limite`
 /// entradas: o `node_modules` de um projeto pode ter centenas de milhares. Devolve se contou tudo.
 pub fn medir_pasta(pasta: &Path, limite: usize) -> (usize, u64, bool) {
-    use std::os::unix::fs::MetadataExt as _;
     let mut vistos = std::collections::HashSet::new();
     let mut pendentes = vec![pasta.to_path_buf()];
     let (mut arquivos, mut bytes, mut entradas) = (0, 0, 0);
@@ -1095,18 +1108,19 @@ pub fn medir_pasta(pasta: &Path, limite: usize) -> (usize, u64, bool) {
         let Ok(dados) = std::fs::symlink_metadata(&caminho) else {
             continue;
         };
+        let (ocupa, quem) = no_disco(&dados);
         if dados.is_dir() {
-            bytes += dados.blocks() * 512;
+            bytes += ocupa;
             if let Ok(lidas) = std::fs::read_dir(&caminho) {
                 pendentes.extend(lidas.flatten().map(|e| e.path()));
             }
             continue;
         }
         arquivos += 1;
-        if dados.nlink() > 1 && !vistos.insert((dados.dev(), dados.ino())) {
+        if quem.is_some_and(|quem| !vistos.insert(quem)) {
             continue;
         }
-        bytes += dados.blocks() * 512;
+        bytes += ocupa;
     }
     (arquivos, bytes, true)
 }
@@ -1831,6 +1845,8 @@ mod testes {
         let _ = std::fs::remove_dir_all(&projeto);
     }
 
+    // A verificação roda no bash: no Windows ela vai para o Git Bash (Lote W2).
+    #[cfg(unix)]
     #[test]
     fn verificacao_com_saida_grande_nao_trava_e_guarda_o_fim() {
         let pasta = std::env::temp_dir();
@@ -1847,6 +1863,7 @@ mod testes {
         assert!(v.saida.ends_with("a\nb"), "{}", v.saida);
     }
 
+    #[cfg(unix)]
     #[test]
     fn verificacao_derruba_o_que_ficou_em_segundo_plano() {
         let pasta = std::env::temp_dir().join(format!("vitral-verif-{}", crate::modelo::novo_id()));

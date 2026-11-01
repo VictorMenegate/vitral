@@ -1468,9 +1468,13 @@ pub fn sem_arrastar() -> Div {
 }
 
 /// Botões da direita do `button-layout`. Se o usuário pôs todos à esquerda, eles vêm para a
-/// direita mesmo assim (o canto esquerdo é do trilho); sem configuração, – □ ×.
+/// direita mesmo assim (o canto esquerdo é do trilho); sem configuração (e fora do Linux, onde o
+/// GPUI não lê nenhuma), – □ ×, o mesmo do `WindowButtonLayout::linux_default`.
 fn botoes_do_layout(layout: Option<WindowButtonLayout>) -> Vec<WindowButton> {
-    let layout = layout.unwrap_or_else(WindowButtonLayout::linux_default);
+    let layout = layout.unwrap_or(WindowButtonLayout {
+        left: [None; 3],
+        right: [Some(WindowButton::Minimize), Some(WindowButton::Maximize), Some(WindowButton::Close)],
+    });
     let direita: Vec<WindowButton> = layout.right.into_iter().flatten().collect();
     if direita.is_empty() {
         layout.left.into_iter().flatten().collect()
@@ -1529,7 +1533,8 @@ pub fn duracao(desde: u64) -> String {
     componentes::duracao_curta(modelo::agora().saturating_sub(desde))
 }
 
-#[cfg(test)]
+// O `button-layout` (e o `WindowButtonLayout::parse`) é do Linux.
+#[cfg(all(test, target_os = "linux"))]
 mod testes_botoes_janela {
     use super::botoes_do_layout;
     use gpui_kit::{WindowButton, WindowButtonLayout};
@@ -1559,6 +1564,7 @@ mod testes_botoes_janela {
             botoes_do_layout(None),
             vec![WindowButton::Minimize, WindowButton::Maximize, WindowButton::Close]
         );
+        assert_eq!(botoes_do_layout(None), botoes_do_layout(Some(WindowButtonLayout::linux_default())));
         assert!(botoes(":").is_empty());
     }
 }
