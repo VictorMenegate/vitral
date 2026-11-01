@@ -1,3 +1,4 @@
+mod atualizacao;
 mod claude;
 mod codex;
 mod contas;
@@ -21,6 +22,10 @@ fn main() {
     // `vitral <pasta>` abre direto nela; sem argumento, volta à última pasta usada.
     // `vitral <pasta> --nova <projeto> <mensagem>` já começa uma conversa.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
+    // `vitral --versao [--json]` responde sem janela (o release e o atualizador conferem o binário).
+    if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
+        std::process::exit(codigo);
+    }
     // `vitral --vitrine` mostra os componentes da linguagem visual, sem pasta e sem motor.
     if argumentos.iter().any(|a| a == "--vitrine") {
         gpui_kit::application().with_assets(tema::Icones).run(|cx| {

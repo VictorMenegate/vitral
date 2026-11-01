@@ -457,7 +457,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   Vitral**, que abre à direita: no cabeçalho, "Vitral" e o nome da pasta de trabalho, com o caminho
   inteiro na dica; depois três grupos, Nova conversa, Novo projeto… e Rotinas; Contas do Claude,
   Instalar o Codex… quando ele falta, e Configurações; Trocar a pasta… e Abrir a pasta ↗; com os
-  atalhos de cada um; com projeto arquivado, entre o primeiro e o segundo grupo, **Projetos
+  atalhos de cada um; no rodapé, a versão em tênue, "Vitral 0.2.0-rc.1", com o commit na dica
+  ("Compilado no PC" no que não veio do GitHub); com projeto arquivado, entre o primeiro e o segundo grupo, **Projetos
   arquivados**, cada um com o quadrado apagado e **Desarquivar**), um atalho por projeto (filtra tudo por ele; o ativo ganha um aro na cor do
   projeto; o ponteiro em cima acende o quadrado suave, e o aro entra na mesma transição; um ponto
   mostra erro em vermelho, pedido ou parada em âmbar, resposta nova em azul e, vazado, algo
@@ -712,7 +713,12 @@ para o Mestre.
 cargo test                              # testes de unidade (git, motor, revisor, processos, interface)
 ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral ~/pasta   # teste visual isolado
 ./target/debug/vitral --vitrine         # todos os componentes da linguagem visual, sem pasta e sem motor
+./target/debug/vitral --versao [--json] # a versão (e canal, commit, formato dos dados), sem janela
 ```
+
+O `rust-toolchain.toml` fixa o Rust em 1.99.1, o mesmo do GitHub Actions. Com o rustup, a primeira
+compilação na pasta instala esse toolchain (perfil mínimo) se ele ainda não estiver lá; enquanto o
+`stable` do PC for o mesmo 1.99.1, `RUSTUP_TOOLCHAIN=stable` evita o download.
 
 Sem a pasta, o Vitral abre nas boas-vindas ("Boas-vindas ao Vitral"): **Escolher pasta…**, que fica
 carregando enquanto o seletor do sistema está aberto, e até 5 recentes, com o caminho cortado no
@@ -744,6 +750,47 @@ Precisa do `claude` (Claude Code) no PATH ou em `~/.local/bin`, do `git`, e no F
 freetype-devel libxcb-devel` para compilar. Das dependências em Rust, o `chrono` entrou para a hora
 das Rotinas (o `TimeField` do kit); já vinha no `Cargo.lock` pelo vendor.
 
+## Versões e releases
+
+O Vitral sai pronto do GitHub (`VictorMenegate/vitral`, licença MIT): o PC não precisa compilar
+para instalar. Cada versão tem a seção dela no `NOVIDADES.md` (`## 0.2.0`, frases curtas, o que se
+nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um pré-lançamento
+(`0.2.0-rc.1`) usa a seção da versão sem o sufixo.
+
+- **CI** (`.github/workflows/ci.yml`): em todo PR e push no `main`, `cargo test --locked` no
+  `ubuntu-24.04`. Lá não há systemd do usuário nem identidade do git: os processos caem no grupo
+  próprio e os commits dos testes saem com a identidade do Vitral, como num PC sem isso. O Windows
+  fica desligado até compilar (variável do repositório `WINDOWS_CI=true` liga sem reprovar;
+  `WINDOWS_OBRIGATORIO=true` faz reprovar). No `main`, um job compila em release para deixar o
+  cache do tag aquecido. O `dependabot.yml` só atualiza as actions (o `Swatinem/rust-cache` vai
+  fixado pelo commit).
+- **Release** (`.github/workflows/release.yml`): sai com um tag `v<versão>` igual ao `version` do
+  `Cargo.toml` (`git tag v0.2.0 && git push origin v0.2.0`), ou à mão em Actions › Release (sem
+  tag, só compila e guarda os pacotes por 14 dias). Testa e compila em release com
+  `VITRAL_CANAL=estavel` e o commit embutidos, confere o `vitral --versao` e o `--versao --json` do
+  pacote, gera o `vitral-<versão>-linux-x86_64.tar.gz` (o binário, LEIA-ME, NOVIDADES e LICENSE), o
+  `vitral-versao.json` (`pacote/manifesto.py`: versão, commit, página, formato dos dados, notas e o
+  tamanho e o SHA-256 de cada pacote) e o `SHA256SUMS`. O job de publicar roda no environment
+  `release` (com aprovação do dono): assina o manifesto e as somas com o minisign, confere com o
+  `pacote/vitral.pub` e publica como rascunho antes de soltar, para o "latest" nunca ficar pela
+  metade. Versão com sufixo sai como pré-lançamento, que o `releases/latest` ignora. O Windows já tem
+  os passos no workflow e entra descomentando a linha da matriz.
+- **Assinatura**: minisign (Ed25519). A chave principal e a reserva, sem senha, ficam em
+  `~/.config/vitral/chaves` (pasta 700, arquivos 600): a principal também vive no secret
+  `MINISIGN_SECRET_KEY` do environment `release`; a reserva nunca vai ao GitHub. Guarde uma cópia
+  das duas `.key` fora do PC: perder as duas é ter de reinstalar à mão em todo PC. As públicas ficam
+  em `pacote/` e entram no app por `include_str!` (`src/atualizacao/assinatura.rs`), que só aceita o
+  formato com pré-hash; se a principal vazar ou se perder, a reserva assina uma versão que troca as
+  chaves. Os testes usam uma chave de teste (`src/atualizacao/teste/`), nunca a principal.
+- **De onde veio**: `VITRAL_CANAL` e `VITRAL_COMMIT` são lidos na compilação (`option_env!`); sem
+  eles o binário se diz "pc" (compilado no PC), e só o canal estável vai se atualizar sozinho.
+  `FORMATO_DADOS` (em `modelo.rs`) é o formato de `.vitral/`, para a volta de versão não abrir dados
+  que não entende.
+- **Instalar de uma vez**: `pacote/linux/instalar.sh` vai como arquivo do Release (`curl -fsSL
+  …/releases/latest/download/instalar.sh | sh`): confere o `SHA256SUMS` (e a assinatura, com o
+  minisign instalado), baixa o pacote e chama `vitral --instalar`, que ainda só avisa que não chegou
+  (lote 3 da especificação de distribuição); o `instalar.sh` da raiz continua sendo o do PC.
+
 ## Arquivos
 
 | Arquivo | O que faz |
@@ -757,11 +804,15 @@ das Rotinas (o `TimeField` do kit); já vinha no `Cargo.lock` pelo vendor.
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
 | `src/git.rs` | Cópia isolada, diff, fotos/volta, junção (uma por vez por projeto), verificação, limpeza das cópias |
 | `src/prompts.rs` | Instruções do coordenador e dos trabalhadores |
-| `src/modelo.rs` | Tipos e gravação em `.vitral/` |
+| `src/modelo.rs` | Tipos e gravação em `.vitral/` (e o `FORMATO_DADOS`) |
+| `src/atualizacao/` | Versão embutida, `--versao [--json]` sem janela e a assinatura das versões (`assinatura.rs`, com as fixtures de teste em `teste/`); a atualização automática entra aqui |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
 | `src/ui/` | Trilho, lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, Equipe, revisão, gavetas e diálogos; `lateral.rs` (a lista), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a Equipe) e `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e aprovar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `boas_vindas.rs`, `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e mandar para a lixeira: a pergunta, os avisos e o que a janela esquece), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual de cada tarefa) e a vitrine (`--vitrine`) |
-| `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual e os ícones de projeto (`icones/`, Lucide, ISC) |
+| `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`) e o `linux/instalar.sh` |
+| `.github/` | `workflows/ci.yml`, `workflows/release.yml` e `dependabot.yml` |
+| `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
+| `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual e os ícones de projeto (`icones/`, Lucide, ISC) |
 
 Ícones do Lucide que não estão entre os do GPUI Kit precisam entrar em `icon_assets!` em
 `src/tema.rs`, senão saem em branco (um teste confere). Os textos dos componentes do Kit saem em

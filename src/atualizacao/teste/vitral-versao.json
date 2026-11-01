@@ -1,0 +1,17 @@
+{
+  "formato": 1,
+  "app": "vitral",
+  "versao": "0.2.0-rc.1",
+  "commit": "5109ec3aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5",
+  "data": "2026-11-01T14:22:34Z",
+  "pagina": "https://github.com/VictorMenegate/vitral/releases/tag/v0.2.0-rc.1",
+  "formato_dados": 1,
+  "notas": "A primeira versão publicada, para Linux.\n\n- **Conversas que coordenam.** Cada conversa planeja, divide o pedido em tarefas e abre um\n  trabalhador para cada uma, numa cópia isolada do projeto, com portas próprias. O projeto só\n  muda quando a tarefa é aprovada.\n- **Verificação em três camadas.** Os testes rodam quando o trabalhador para, o Vitral confere de\n  novo e um revisor independente aponta os problemas. Aprovar faz o commit e junta; no **Revisar**\n  você vê o diff, comenta e pede ajuste.\n- **Nada se perde numa queda.** Se o Vitral fecha ou o PC desliga, a tarefa fica parada, com\n  **Retomar**, e as conversas voltam como estavam.\n- **Tudo à vista.** A lista separa **Esperando você** e **Rodando agora**, o sino junta o que\n  precisa de você (Ctrl+G vai à próxima pendência), a **Equipe** mostra as tarefas da conversa e a\n  notificação do GNOME abre a conversa certa.\n- **Opções da conversa** como na extensão do Claude Code: modo de permissão, modelo, esforço,\n  Ultrathink e Ultracode, anexos e o uso do contexto.\n- **Contas e planos.** Várias contas do Claude e os anéis de uso das 5 h e da semana, também do\n  Codex.\n- **Projetos.** Criar, arquivar (com Desfazer) e mandar para a Lixeira do GNOME; ícone e cor de\n  cada um; **Rotinas** que mandam um pedido num horário.\n- **Visual de vidro** azul-marinho, zoom com Ctrl+= e Ctrl+-, e animações que seguem as do GNOME\n  (ou desligadas nas Configurações).",
+  "arquivos": {
+    "linux-x86_64": {
+      "nome": "vitral-0.2.0-rc.1-linux-x86_64.tar.gz",
+      "tamanho": 100000,
+      "sha256": "d94d48656e56b95b5e75a93a44a88ac1e3c0f59760bf797f2f9dcba5f249cd4f"
+    }
+  }
+}

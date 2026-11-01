@@ -1,0 +1,116 @@
+# Compila e testa nos PRs e nos pushes. No main, deixa o cache do release aquecido para o tag.
+#
+# Windows: desligado até o Lote W1 (o código ainda usa std::os::unix e libc). Para ver como está,
+# a variável do repositório WINDOWS_CI=true (Settings › Secrets and variables › Actions ›
+# Variables) liga o job sem reprovar nada; WINDOWS_OBRIGATORIO=true faz ele reprovar.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  linux:
+    name: Testes (linux-x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dependências do GPUI
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev \
+            libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev
+
+      - name: Rust (versão do rust-toolchain.toml)
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+          rustc --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev-linux-x86_64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Testes
+        run: cargo test --locked
+
+  windows:
+    name: Testes (windows-x86_64)
+    if: vars.WINDOWS_CI == 'true' || vars.WINDOWS_OBRIGATORIO == 'true'
+    runs-on: windows-2025
+    continue-on-error: ${{ vars.WINDOWS_OBRIGATORIO != 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Rust (versão do rust-toolchain.toml)
+        shell: bash
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+          rustc --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev-windows-x86_64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Testes
+        shell: bash
+        run: cargo test --locked
+
+  # O cache criado num tag só serve àquele tag; quem aquece o do release é o main. Sem ele, cada
+  # release compila do zero (uns 15 a 25 minutos).
+  aquecer-release:
+    name: Cache do release (linux-x86_64)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: linux
+    runs-on: ubuntu-24.04
+    env:
+      VITRAL_CANAL: estavel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Dependências do GPUI
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev \
+            libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev
+
+      - name: Rust (versão do rust-toolchain.toml)
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-linux-x86_64
+
+      # O mesmo que o release faz (testes em release e o binário), para o cache servir aos dois.
+      - name: Compilar como no release
+        run: |
+          cargo test --locked --release --no-run
+          cargo build --locked --release

@@ -1,7 +1,9 @@
 [package]
 name = "vitral"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/VictorMenegate/vitral"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -11,6 +13,8 @@ dirs = "7.0.0"
 # syntect: cor de sintaxe no chat, no painel de arquivo e no Revisar (o realce leve; o tree-sitter custa dezenas de MB).
 gpui-kit = { version = "0.8.1", features = ["syntect"] }
 libc = "0.2.191"
+# minisign-verify: confere a assinatura das versões novas (sem dependências, do autor do minisign).
+minisign-verify = "0.3.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 smol = "2.0.2"
@@ -23,6 +27,11 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# Como saem os pacotes dos releases (o GitHub Actions compila assim): sem símbolos e com LTO leve.
+[profile.release]
+strip = true
+lto = "thin"
 
 # Cópia do gpui-component com poucas mudanças, marcadas com "Vitral:": a borda da janela segue o
 # tema (a original desenha um contorno cinza fixo; ver vendor/gpui-component/src/window_border.rs),

@@ -27,7 +27,7 @@ use super::{
     componentes::{
         BotaoRedondo, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, QuadradoDeProjeto, Reflexo as _,
         Selo, Simbolo, Sinal, TamanhoBotao, VarianteRedonda, anel_do_pulso, botao_fantasma,
-        cabecalho_objeto_com_dica, contagem, popover, sinal_do_projeto,
+        cabecalho_objeto_com_dica, contagem, popover, rodape_menu_com_dica, sinal_do_projeto,
     },
     icone_projeto,
     menus::itens_do_projeto,
@@ -35,6 +35,7 @@ use super::{
     uso_plano,
 };
 use crate::{
+    atualizacao,
     modelo::{Execucao, Papel},
     motor::{Motor, PrecisaDeVoce},
     tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam},
@@ -772,8 +773,8 @@ impl Janela {
             })
     }
 
-    /// Os itens do menu do Vitral, em três grupos: criar, ajustes e a pasta. No modo recolhido,
-    /// antes deles, o que o trilho mostrava: a lista, o sino e os projetos.
+    /// Os itens do menu do Vitral, em três grupos: criar, ajustes e a pasta, e a versão no rodapé.
+    /// No modo recolhido, antes deles, o que o trilho mostrava: a lista, o sino e os projetos.
     fn itens_menu(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> ConstruirMenu {
         let janela = cx.entity().downgrade();
         let raiz = motor.raiz().to_path_buf();
@@ -860,6 +861,8 @@ impl Janela {
                         .external()
                         .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", gerenciador.display()))),
                 )
+                .separator()
+                .item(rodape_menu_com_dica(atualizacao::rotulo(), atualizacao::origem()))
         })
     }
 

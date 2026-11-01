@@ -1,0 +1,4 @@
+# O mesmo Rust no PC e no GitHub Actions (os workflows leem o canal daqui).
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"

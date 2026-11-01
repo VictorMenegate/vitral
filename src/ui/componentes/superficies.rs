@@ -364,6 +364,23 @@ pub fn rodape_menu(
     })
 }
 
+/// Rodapé de texto (28, 12 tênue) com uma dica: a versão no menu do logo, com o commit na dica.
+pub fn rodape_menu_com_dica(texto: impl Into<SharedString>, dica: impl Into<SharedString>) -> PopupMenuItem {
+    let (texto, dica) = (texto.into(), dica.into());
+    PopupMenuItem::static_element(move |_, _| {
+        let dica = dica.clone();
+        div()
+            .id("rodape-menu")
+            .flex()
+            .items_center()
+            .h(r(28.))
+            .metadado()
+            .text_color(Cores::tenue())
+            .child(div().flex_1().min_w_0().truncate().child(texto.clone()))
+            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+    })
+}
+
 /// Tom de alertas e avisos: a cor fica no ícone (e na tinta do alerta).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tom {

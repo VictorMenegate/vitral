@@ -1,0 +1,248 @@
+# Gera os arquivos para baixar, assina e publica o Release. Por enquanto só Linux; o Windows entra
+# no Lote W3 (as linhas dele estão comentadas na matriz e os passos já esperam por ele).
+# Dispara com um tag (git tag v0.2.0 && git push origin v0.2.0) ou à mão em Actions › Release.
+# Versão com sufixo (0.2.0-rc.1) sai como pré-lançamento: o app no canal estável não vê.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag já existente para publicar (ex.: v0.2.0). Vazio: só compila e guarda os arquivos neste run."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # Embutido no binário: só o que sai deste workflow se atualiza sozinho.
+  VITRAL_CANAL: estavel
+
+jobs:
+  versao:
+    name: Versão
+    runs-on: ubuntu-24.04
+    outputs:
+      versao: ${{ steps.v.outputs.versao }}
+      tag: ${{ steps.v.outputs.tag }}
+      publicar: ${{ steps.v.outputs.publicar }}
+      pre: ${{ steps.v.outputs.pre }}
+      commit: ${{ steps.v.outputs.commit }}
+      secao: ${{ steps.v.outputs.secao }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - id: v
+        env:
+          EVENTO: ${{ github.event_name }}
+          TAG_DO_PUSH: ${{ github.ref_name }}
+          TAG_PEDIDA: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          versao=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if ! printf '%s' "$versao" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::versão inválida no Cargo.toml: $versao"; exit 1
+          fi
+          if [ "$EVENTO" = push ]; then tag=$TAG_DO_PUSH; else tag=$TAG_PEDIDA; fi
+          # A seção do NOVIDADES.md: a da versão ou, num pré-lançamento, a da versão sem o sufixo.
+          secao=$versao
+          grep -qxF "## $secao" NOVIDADES.md || secao=${versao%%-*}
+          publicar=false
+          if [ -n "$tag" ]; then
+            [ "$tag" = "v$versao" ] || { echo "::error::o tag $tag não bate com a versão $versao do Cargo.toml"; exit 1; }
+            grep -qxF "## $secao" NOVIDADES.md || { echo "::error::falta a seção '## $versao' no NOVIDADES.md"; exit 1; }
+            publicar=true
+          fi
+          case "$versao" in *-*) pre=true ;; *) pre=false ;; esac
+          {
+            echo "versao=$versao"; echo "tag=$tag"; echo "publicar=$publicar"; echo "pre=$pre"
+            echo "secao=$secao"; echo "commit=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+  compilar:
+    name: Compilar (${{ matrix.plataforma }})
+    needs: versao
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - plataforma: linux-x86_64
+            os: ubuntu-24.04
+          # Entra quando o Lote W3 terminar:
+          # - plataforma: windows-x86_64
+          #   os: windows-2025
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      VITRAL_COMMIT: ${{ needs.versao.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.versao.outputs.commit }}
+          persist-credentials: false
+
+      - name: Dependências do GPUI (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev \
+            libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev
+
+      - name: Rust (versão do rust-toolchain.toml)
+        shell: bash
+        run: |
+          canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$canal" --profile minimal --no-self-update
+          rustc --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-${{ matrix.plataforma }}
+          save-if: "false" # quem salva é o ci.yml no main; aqui só lê
+
+      - name: Testes
+        shell: bash
+        run: cargo test --locked --release
+
+      - name: Compilar
+        shell: bash
+        run: |
+          cargo build --locked --release -p vitral
+          if [ "$RUNNER_OS" = Windows ]; then cargo build --locked --release -p vitral-lancador; fi
+
+      - name: Empacotar (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          nome="vitral-$VERSAO-linux-x86_64"
+          mkdir -p "dist/$nome"
+          install -m 755 target/release/vitral "dist/$nome/vitral"
+          cp LEIA-ME.md NOVIDADES.md LICENSE "dist/$nome/"
+          # O mesmo teste que o atualizador faz antes de trocar de versão: abre sem janela e responde.
+          test "$("dist/$nome/vitral" --versao)" = "vitral $VERSAO"
+          "dist/$nome/vitral" --versao --json | python3 -I -c '
+          import json, os, sys
+          v = json.load(sys.stdin)
+          esperado = {"versao": os.environ["VERSAO"], "canal": "estavel", "commit": os.environ["VITRAL_COMMIT"], "plataforma": "linux-x86_64"}
+          errado = {k: v.get(k) for k in esperado if v.get(k) != esperado[k]}
+          if errado or not isinstance(v.get("formato_dados"), int):
+              sys.exit(f"--versao --json respondeu {v}")
+          '
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@$(git log -1 --format=%ct)" -czf "dist/$nome.tar.gz" "$nome"
+          rm -rf "dist/$nome"
+          install -m 755 pacote/linux/instalar.sh dist/instalar.sh
+
+      - name: Empacotar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nome = "vitral-$env:VERSAO-windows-x86_64"
+          $pasta = "dist\$nome"
+          New-Item -ItemType Directory -Force $pasta | Out-Null
+          Copy-Item target\release\vitral.exe, target\release\vitral-lancador.exe, LEIA-ME.md, NOVIDADES.md, LICENSE $pasta
+          $saida = (& "$pasta\vitral.exe" --versao | Out-String).Trim()
+          if ($saida -ne "vitral $env:VERSAO") { throw "vitral.exe --versao respondeu '$saida'" }
+          Compress-Archive -Path "$pasta\*" -DestinationPath "dist\$nome.zip"
+          tar -C dist -czf "dist\$nome.tar.gz" $nome
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc /Qp "/DVersao=$env:VERSAO" "/DOrigem=$((Resolve-Path $pasta).Path)" "/O$((Resolve-Path dist).Path)" pacote\windows\vitral.iss
+          if ($LASTEXITCODE -ne 0) { throw "o Inno Setup falhou" }
+          Remove-Item -Recurse -Force $pasta
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pacote-${{ matrix.plataforma }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publicar:
+    name: Assinar e publicar
+    needs: [versao, compilar]
+    if: needs.versao.outputs.publicar == 'true'
+    runs-on: ubuntu-24.04
+    environment: release # o secret da chave só existe aqui
+    permissions:
+      contents: write
+    env:
+      VERSAO: ${{ needs.versao.outputs.versao }}
+      TAG: ${{ needs.versao.outputs.tag }}
+      COMMIT: ${{ needs.versao.outputs.commit }}
+      PRE: ${{ needs.versao.outputs.pre }}
+      SECAO: ${{ needs.versao.outputs.secao }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.versao.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: pacote-*
+          merge-multiple: true
+          path: dist
+
+      - name: Notas da versão
+        run: |
+          awk -v v="## $SECAO" '$0 == v {achou = 1; next} achou && /^## / {exit} achou {print}' NOVIDADES.md > notas.md
+          grep -q '[^[:space:]]' notas.md || { echo "::error::a seção '## $SECAO' do NOVIDADES.md está vazia"; exit 1; }
+
+      - name: Manifesto e somas
+        run: |
+          set -euo pipefail
+          python3 -I pacote/manifesto.py dist "$VERSAO" "$TAG" "$GITHUB_REPOSITORY" "$COMMIT" notas.md src/modelo.rs
+          (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
+          cat dist/vitral-versao.json dist/SHA256SUMS
+
+      - name: Assinar (minisign)
+        env:
+          CHAVE: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$CHAVE" ] || { echo "::error::falta o secret MINISIGN_SECRET_KEY no environment release"; exit 1; }
+          sudo apt-get update -q && sudo apt-get install -y --no-install-recommends minisign
+          umask 077
+          chave="$RUNNER_TEMP/vitral.key"
+          trap 'shred -u "$chave" 2>/dev/null || rm -f "$chave"' EXIT
+          printf '%s\n' "$CHAVE" > "$chave"
+          for f in vitral-versao.json SHA256SUMS; do
+            minisign -S -s "$chave" -m "dist/$f" -t "vitral $VERSAO $f" < /dev/null
+          done
+          # Confere com a chave pública do repositório (a mesma embutida no app): assinatura no
+          # formato novo (-H) e o comentário confiável que o app espera.
+          for f in vitral-versao.json SHA256SUMS; do
+            comentario=$(minisign -V -H -Q -p pacote/vitral.pub -m "dist/$f")
+            [ "$comentario" = "vitral $VERSAO $f" ] || { echo "::error::$f: comentário confiável '$comentario'"; exit 1; }
+          done
+          ls -l dist
+
+      - name: Publicar o Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          extra=(); [ "$PRE" = true ] && extra+=(--prerelease)
+          # Rascunho primeiro: o "latest" só muda quando todos os arquivos já estão lá.
+          gh release create "$TAG" dist/* --draft --verify-tag --title "Vitral $VERSAO" \
+            --notes-file notas.md "${extra[@]}"
+          if [ "$PRE" = true ]; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi

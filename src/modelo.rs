@@ -18,6 +18,11 @@ use std::{
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
+/// O formato do que fica em `.vitral/`. Sobe quando uma migração muda o formato (guardando uma
+/// cópia antes); o atualizador só volta para uma versão que leia o formato que está no disco. O
+/// `pacote/manifesto.py` lê esta linha.
+pub const FORMATO_DADOS: u32 = 1;
+
 pub fn agora() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

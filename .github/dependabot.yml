@@ -1,0 +1,10 @@
+# Só as versões das actions dos workflows. O Cargo fica de fora: o gpui está fixado e o
+# vendor/gpui-component tem mudanças nossas.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "Actions:"
