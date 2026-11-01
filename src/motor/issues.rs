@@ -350,6 +350,26 @@ fn estado_pedido_no_github(estado: &str) -> Option<(bool, bool, EstadoIssue)> {
     }
 }
 
+/// A issue do campo `issue` de uma parte da divisão, como chave do detalhe: ENG-123, #45 (com o
+/// único repositório que as pastas do projeto têm), dono/nome#45 ou a URL. PR não vale.
+pub fn referencia_da_parte(texto: &str, repos_do_projeto: &[String]) -> Result<(FonteIssue, String), String> {
+    match comum::parse_referencia(texto) {
+        None => Err(format!("\"{texto}\" não é uma issue (use ENG-123, #45, dono/nome#45 ou a URL).")),
+        Some(Referencia::Linear { chave }) => Ok((FonteIssue::Linear, chave)),
+        Some(Referencia::Github { pr: true, .. }) => Err(format!("{texto} é um pull request, não uma issue.")),
+        Some(Referencia::Github { repositorio, numero, .. }) => {
+            let mut repos: Vec<String> = repos_do_projeto.iter().map(|r| r.to_ascii_lowercase()).collect();
+            repos.sort();
+            repos.dedup();
+            let unico = (repos.len() == 1).then(|| repos_do_projeto[0].clone());
+            repositorio
+                .or(unico)
+                .map(|r| (FonteIssue::Github, format!("{r}#{numero}")))
+                .ok_or_else(|| format!("diga o repositório da issue (dono/nome#{numero})."))
+        }
+    }
+}
+
 /// "há 3 d" a partir da data ISO do Linear ou do GitHub.
 pub fn idade(iso: &str, agora: i64) -> String {
     match chrono::DateTime::parse_from_rfc3339(iso.trim()) {
@@ -1763,30 +1783,18 @@ impl Motor {
             if texto.is_empty() {
                 continue;
             }
-            let rotulo = format!("Parte {}", i + 1);
-            let chave = match comum::parse_referencia(texto) {
-                None => Err(format!("{rotulo}: \"{texto}\" não é uma issue (use ENG-123, #45, dono/nome#45 ou a URL).")),
-                Some(Referencia::Linear { .. }) if self.chave_na_memoria().is_none() => {
-                    Err(format!("{rotulo}: {} Sem ela o Vitral não lê a {texto}.", self.motivo_sem_chave()))
-                }
-                Some(Referencia::Linear { chave }) => Ok((FonteIssue::Linear, chave)),
-                Some(Referencia::Github { pr: true, .. }) => Err(format!("{rotulo}: {texto} é um pull request, não uma issue.")),
-                Some(Referencia::Github { repositorio, numero, .. }) => {
-                    // Sem o repositório, vale o único que as pastas do projeto da parte têm.
-                    let repo = repositorio.or_else(|| {
-                        let nome = parte["projeto"].as_str().unwrap_or_default().trim().trim_start_matches('#');
-                        let Resolucao::Um(projeto) = resolver_projeto(&self.projetos, nome) else {
-                            return None;
-                        };
-                        let mut repos: Vec<String> = self.repos_das_pastas(&projeto).into_iter().flat_map(|(_, r)| r).collect();
-                        repos.sort();
-                        repos.dedup();
-                        (repos.len() == 1).then(|| repos.remove(0))
-                    });
-                    repo.map(|r| (FonteIssue::Github, format!("{r}#{numero}")))
-                        .ok_or_else(|| format!("{rotulo}: diga o repositório da issue (dono/nome#{numero})."))
-                }
+            // Os repositórios do projeto da parte (para o "#45" sem repositório).
+            let nome = parte["projeto"].as_str().unwrap_or_default().trim().trim_start_matches('#');
+            let repos: Vec<String> = match resolver_projeto(&self.projetos, nome) {
+                Resolucao::Um(projeto) => self.repos_das_pastas(&projeto).into_iter().flat_map(|(_, r)| r).collect(),
+                _ => Vec::new(),
             };
+            let chave = referencia_da_parte(texto, &repos).map_err(|motivo| format!("Parte {}: {motivo}", i + 1)).and_then(|chave| {
+                if chave.0 == FonteIssue::Linear && self.chave_na_memoria().is_none() {
+                    return Err(format!("Parte {}: {} Sem ela o Vitral não lê a {texto}.", i + 1, self.motivo_sem_chave()));
+                }
+                Ok(chave)
+            });
             match chave {
                 Ok(chave) => pedidos.push((i, chave)),
                 Err(motivo) => {
@@ -2047,6 +2055,21 @@ mod testes {
         assert!(cache.vista(vista.clone(), agora));
         assert!(!cache.vista(vista.clone(), agora + Duration::from_secs(1)));
         assert!(cache.vista(vista, agora + Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn issue_da_parte_da_divisao() {
+        let um = ["eita/loja".to_string()];
+        assert_eq!(referencia_da_parte("ENG-7", &[]), Ok((FonteIssue::Linear, "ENG-7".into())));
+        assert_eq!(referencia_da_parte("https://linear.app/eita/issue/ENG-8/x", &[]), Ok((FonteIssue::Linear, "ENG-8".into())));
+        // "#45" vale o único repositório do projeto; com dois, pede o repositório.
+        assert_eq!(referencia_da_parte("#45", &um), Ok((FonteIssue::Github, "eita/loja#45".into())));
+        let dois = ["eita/loja".to_string(), "eita/app".to_string()];
+        assert_eq!(referencia_da_parte("#45", &dois).unwrap_err(), "diga o repositório da issue (dono/nome#45).");
+        assert_eq!(referencia_da_parte("eita/app#45", &dois), Ok((FonteIssue::Github, "eita/app#45".into())));
+        assert_eq!(referencia_da_parte("https://github.com/eita/app/issues/9", &[]), Ok((FonteIssue::Github, "eita/app#9".into())));
+        assert!(referencia_da_parte("https://github.com/eita/app/pull/9", &um).unwrap_err().contains("pull request"));
+        assert!(referencia_da_parte("o login", &um).unwrap_err().contains("não é uma issue"));
     }
 
     #[test]

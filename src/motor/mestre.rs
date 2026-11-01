@@ -6,8 +6,9 @@
 use std::{cell::RefCell, time::SystemTime};
 
 use super::*;
-use crate::modelo::{
-    CriterioEntregue, Divisao, Entrega, EstadoCartao, ID_MESTRE, Parte, ParteCriada, SEM_PROJETO, SugestaoProjeto,
+use crate::{
+    issues::IssueLigada,
+    modelo::{CriterioEntregue, Divisao, Entrega, EstadoCartao, ID_MESTRE, Parte, ParteCriada, SEM_PROJETO, SugestaoProjeto},
 };
 
 /// No máximo tantas partes numa divisão.
@@ -1630,13 +1631,19 @@ impl Motor {
             } else {
                 format!("pedido enviado ao chat {tarefa} \"{titulo_do_chat}\" ({projeto})")
             });
-            let entrada = Entrada {
+            let mut entrada = Entrada {
                 de: Some("Mestre".into()),
                 remetente: Some(ID_MESTRE.into()),
                 texto,
                 anexos: divisao.anexos.clone(),
                 ..Default::default()
             };
+            // A parte com issue leva o texto dela, delimitado (o chat roda isolado já neste turno).
+            if let Some(issue) = &p.issue {
+                entrada.extra = self.bloco_guardado(issue);
+                entrada.terceiros = true;
+                entrada.referencias = vec![issue.chave.clone()];
+            }
             self.filas.entry(chat.clone()).or_default().push(entrada);
             self.registrar("pedido", autor, chat, &p.projeto, Some(*tarefa), &format!("Pedido \"{}\"", p.titulo));
             chats.push(chat.clone());
@@ -1688,6 +1695,10 @@ impl Motor {
                 t.base = git::cabeca(&origem);
             }
         }
+        // A parte com issue nasce como o chat da issue: isolado, no ramo dela e com os efeitos.
+        if let Some(issue) = &p.issue {
+            self.tarefa_da_parte_com_issue(n, issue, cx);
+        }
         Ok((id, n))
     }
 
@@ -1698,6 +1709,10 @@ impl Motor {
         let t = self.tarefa_mut(n).ok_or("O chat não recebe pedidos.")?;
         t.rodada += 1;
         abrir_pedido(t, p, cartao);
+        // A issue da parte fica ligada ao chat que ainda não tem uma (o ramo continua o mesmo).
+        if t.issue.is_none() {
+            t.issue = p.issue.clone();
+        }
         if t.forma == Forma::DiretaGit {
             t.base = git::cabeca(&origem);
         }
@@ -2080,7 +2095,27 @@ impl Motor {
             }
             "ver_chat" => self.texto_ver_chat(&texto("chat"), a["ultimas"].as_u64().unwrap_or(10)).map_or_else(Resposta::erro, Resposta::ok),
             "historico" => self.texto_historico(a["horas"].as_u64().unwrap_or(24), &texto("projeto")).map_or_else(Resposta::erro, Resposta::ok),
-            "propor_divisao" => self.propor_divisao(&a, cx),
+            "propor_divisao" => {
+                // A issue de cada parte é lida antes (o detalhe dela vai no pedido do chat); um
+                // erro volta ao Mestre com o número da parte.
+                let partes = lista_de(&a["partes"]).unwrap_or_default();
+                let argumentos = a.clone();
+                let resposta = chamada.resposta;
+                self.issues_das_partes(
+                    &partes,
+                    move |m, issues, cx| {
+                        let r = match issues {
+                            Ok(issues) => m.propor_divisao(&argumentos, issues, cx),
+                            Err(motivo) => Resposta::erro(motivo),
+                        };
+                        let _ = resposta.try_send(r);
+                        m.salvar();
+                        cx.notify();
+                    },
+                    cx,
+                );
+                return Ok(());
+            }
             "sugerir_projeto" => self.sugerir_projeto(&a, cx),
             "lembrar" => self.lembrar(&texto("texto"), cx),
             "esquecer" => match esquecer_em(&self.dados.memoria(), &texto("texto")) {
@@ -2505,9 +2540,13 @@ impl Motor {
 
     /// `propor_divisao`: valida, confere se já não foi proposta (mesmo turno ou mesma assinatura em 2
     /// h), grava o cartão e, nos três casos da regra, começa direto.
-    fn propor_divisao(&mut self, a: &Value, cx: &mut Context<Self>) -> Resposta {
+    /// `issues`: a issue resolvida de cada parte (`None` sem issue), na ordem de `partes`.
+    fn propor_divisao(&mut self, a: &Value, issues: Vec<Option<IssueLigada>>, cx: &mut Context<Self>) -> Resposta {
         let entradas = self.ultima_entrada.get(ID_MESTRE).map(|(_, m)| m.clone()).unwrap_or_default();
-        let brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
+        let mut brutas: Vec<Parte> = lista_de(&a["partes"]).unwrap_or_default().iter().map(parte_do_json).collect();
+        for (parte, issue) in brutas.iter_mut().zip(issues) {
+            parte.issue = issue;
+        }
         let perguntas: Vec<String> = lista_de_textos(&a["perguntas"]).into_iter().filter(|p| !p.trim().is_empty()).collect();
         let partes = {
             let ocupado = |id: &str| self.ocupado_para_pedido(id);
