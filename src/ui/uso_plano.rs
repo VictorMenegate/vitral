@@ -117,8 +117,26 @@ fn popover_uso(
         })
         .content(move |_, window, cx| {
             let popover = cx.entity();
+            if marca == Marca::Claude {
+                vigiar_uso(&motor, window, cx);
+            }
             detalhes(marca, motor.clone(), janela.clone(), popover, window, cx)
         })
+}
+
+/// A marca de que o popover do uso do Claude está na tela: vive no estado do conteúdo, nasce a
+/// cada abertura e some com ele (até quando o popover sai sem fechar direito, com o trilho
+/// escondido no meio). Ao nascer, pede a busca de agora; enquanto vive, o motor busca de minuto
+/// em minuto.
+struct UsoEmVista;
+
+fn vigiar_uso(motor: &Entity<Motor>, window: &mut Window, cx: &mut App) {
+    let motor = motor.clone();
+    window.use_keyed_state("uso-em-vista", cx, move |_, cx: &mut Context<UsoEmVista>| {
+        let vista = cx.weak_entity().into();
+        motor.update(cx, |m, cx| m.uso_em_vista(vista, cx));
+        UsoEmVista
+    });
 }
 
 /// Botão redondo de um serviço: o disco da marca com os dois anéis do uso sobre um disco preto,
@@ -353,6 +371,7 @@ fn detalhes_claude(
         })
         .collect();
     let medido_em = uso.medido_em;
+    let sem_atualizar = motor.uso_sem_atualizar(&conta.id);
     let secao = secao_contas(linhas, marcada, entidade.clone(), janela.clone(), popover.clone(), window, cx);
     // 400, e não 360: o e-mail da conta inteiro numa linha.
     CorpoPopover::new(LarguraPopover::P400)
@@ -373,7 +392,7 @@ fn detalhes_claude(
         .when_some(plano.creditos, |s, creditos| s.child(linha_creditos(&creditos)))
         .child(separador())
         .child(secao)
-        .rodape(rodape(Marca::Claude, medido_em, agora, entidade.clone(), janela, popover, window, cx))
+        .rodape(rodape(Marca::Claude, medido_em, sem_atualizar, agora, entidade.clone(), janela, popover, window, cx))
 }
 
 /// Codex: as janelas da última resposta neste computador ou, sem dados, o que falta fazer.
@@ -394,7 +413,7 @@ fn detalhes_codex(
         selo: plano.map(Selo::neutro),
     };
     let medido_em = motor.codex.as_ref().and_then(|c| c.uso.medido_em);
-    let pe = rodape(Marca::Codex, medido_em, agora, entidade.clone(), janela, popover.clone(), window, cx);
+    let pe = rodape(Marca::Codex, medido_em, false, agora, entidade.clone(), janela, popover.clone(), window, cx);
     let corpo = CorpoPopover::new(LarguraPopover::P360).rodape(pe);
     let Some(codex) = motor.codex.clone() else {
         if !motor.codex_lido {
@@ -706,10 +725,13 @@ fn nome_do_plano(plano: Option<&Plano>, conta: &Conta) -> Option<String> {
         .or_else(|| (!conta.plano.is_empty()).then(|| maiuscula(&conta.plano)))
 }
 
-/// "atualizado há 3 min", o botão de reler agora e, no do Claude, o diálogo das contas.
+/// "atualizado há 3 min" (com "não deu para atualizar" embaixo quando a última busca falhou), o
+/// botão de atualizar agora e, no do Claude, o diálogo das contas. No Claude, "Atualizar" relê o
+/// cache e busca na Anthropic; no Codex, relê os arquivos dele.
 fn rodape(
     marca: Marca,
     medido_em: Option<i64>,
+    sem_atualizar: bool,
     agora: i64,
     motor: Entity<Motor>,
     janela: WeakEntity<Janela>,
@@ -717,20 +739,24 @@ fn rodape(
     window: &Window,
     cx: &App,
 ) -> impl IntoElement + use<> {
+    let linha = |texto: SharedString| div().truncate().metadado().text_color(Cores::apagado()).child(texto);
     h_flex()
         .gap(r(4.))
         .child(
-            div()
+            v_flex()
                 .flex_1()
                 .min_w_0()
-                .truncate()
-                .metadado()
-                .text_color(Cores::apagado())
-                .child(atualizado(medido_em, agora)),
+                .child(linha(atualizado(medido_em, agora).into()))
+                .when(sem_atualizar, |s| s.child(linha("não deu para atualizar".into()))),
         )
         .child(
             botao_fantasma(("uso-atualizar", marca as usize), Some(Lucide::RotateCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
-                .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.reler_uso(cx))),
+                .on_click(move |_, _, cx| {
+                    motor.update(cx, |m, cx| match marca {
+                        Marca::Claude => m.atualizar_uso(cx),
+                        Marca::Codex => m.reler_uso(cx),
+                    })
+                }),
         )
         .when(marca == Marca::Claude, |s| {
             s.child(

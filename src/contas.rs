@@ -20,6 +20,8 @@ use serde_json::Value;
 
 use crate::{claude::binario_claude, motor::Uso};
 
+pub mod busca;
+
 /// Id reservado da conta principal (o login normal do Claude Code).
 pub const PRINCIPAL: &str = "principal";
 /// Escolha que deixa o Vitral usar a conta com mais folga no plano.
@@ -234,6 +236,22 @@ pub struct Plano {
     pub por_modelo: Vec<(String, f64, Option<i64>)>,
     /// Créditos extras, quando estão ligados ou pararam sem o usuário desligar.
     pub creditos: Option<Creditos>,
+    /// Quando os limites por modelo e os créditos foram medidos (segundos Unix): o `fetchedAtMs`
+    /// do cache ou a hora da busca na Anthropic.
+    pub medido_em: Option<i64>,
+}
+
+impl Plano {
+    /// Junta uma leitura nova ao que já se sabia: os limites por modelo e os créditos ficam os da
+    /// medição mais recente (o cache do Claude Code costuma ser mais velho que a busca, e uma
+    /// releitura dele não desfaz o que ela trouxe); o nome do plano vem sempre da leitura nova.
+    pub fn juntar(self, lido: Plano) -> Plano {
+        if lido.medido_em < self.medido_em {
+            Plano { nome: lido.nome, ..self }
+        } else {
+            lido
+        }
+    }
 }
 
 /// Créditos extras (`extra_usage`), em unidades mínimas da moeda (centavos).
@@ -261,13 +279,26 @@ pub enum Parada {
 /// Uso do plano que o próprio Claude Code guardou da última vez (`cachedUsageUtilization`) e os
 /// detalhes do plano (`oauthAccount`); o `.claude.json` não tem tokens.
 fn guardado(conta: &Conta) -> Option<(Uso, Plano)> {
-    let arquivo = match conta.pasta() {
-        Some(pasta) => pasta.join(".claude.json"),
-        None => dirs::home_dir()?.join(".claude.json"),
-    };
-    let valor: Value = serde_json::from_str(&fs::read_to_string(arquivo).ok()?).ok()?;
+    let valor: Value = serde_json::from_str(&fs::read_to_string(arquivo_config(conta)?).ok()?).ok()?;
     let uso = ler_uso(&valor["cachedUsageUtilization"]).unwrap_or_default();
     Some((uso, ler_plano(&valor)))
+}
+
+/// O `.claude.json` da conta: o da pasta dela ou, na principal, o `~/.claude.json`.
+fn arquivo_config(conta: &Conta) -> Option<PathBuf> {
+    match conta.pasta() {
+        Some(pasta) => Some(pasta.join(".claude.json")),
+        None => Some(dirs::home_dir()?.join(".claude.json")),
+    }
+}
+
+/// Onde o Claude Code guarda o login da conta (`.credentials.json`): a pasta dela ou, na
+/// principal, `~/.claude`.
+fn pasta_do_login(conta: &Conta) -> Option<PathBuf> {
+    match conta.pasta() {
+        Some(pasta) => Some(pasta),
+        None => Some(dirs::home_dir()?.join(".claude")),
+    }
 }
 
 /// O uso guardado e o plano de cada conta (lê arquivos: rodar fora da thread da interface).
@@ -333,10 +364,12 @@ fn ler_plano(valor: &Value) -> Plano {
         casas: extra["decimal_places"].as_u64().unwrap_or(2).min(6) as u32,
         parada,
     });
+    let medido_em = valor["cachedUsageUtilization"]["fetchedAtMs"].as_f64().map(|ms| (ms / 1000.0) as i64);
     Plano {
         nome,
         por_modelo,
         creditos,
+        medido_em,
     }
 }
 
@@ -491,6 +524,25 @@ mod testes {
         let max = json!({ "oauthAccount": {
             "planDisplayName": "Max", "organizationRateLimitTier": "default_claude_max_5x" } });
         assert_eq!(ler_plano(&max).nome.as_deref(), Some("Max 5x"));
+    }
+
+    #[test]
+    fn plano_fica_com_os_limites_da_medicao_mais_nova() {
+        let lido = |nome: &str, fracao: f64, medido_em: Option<i64>| Plano {
+            nome: Some(nome.into()),
+            por_modelo: vec![("Opus".into(), fracao, None)],
+            medido_em,
+            ..Plano::default()
+        };
+        let busca = lido("Max 20x", 0.3, Some(2000));
+        // O cache mais velho traz o nome, mas não desfaz os limites da busca.
+        let junto = busca.clone().juntar(lido("Max 5x", 0.1, Some(1000)));
+        assert_eq!(junto.nome.as_deref(), Some("Max 5x"));
+        assert_eq!((junto.por_modelo[0].1, junto.medido_em), (0.3, Some(2000)));
+        assert_eq!(busca.clone().juntar(lido("Max 20x", 0.1, None)).por_modelo[0].1, 0.3);
+        // Uma medição mais nova (ou a do mesmo instante) vale inteira.
+        assert_eq!(busca.clone().juntar(lido("Max 20x", 0.5, Some(3000))), lido("Max 20x", 0.5, Some(3000)));
+        assert_eq!(Plano::default().juntar(lido("Pro", 0.1, None)), lido("Pro", 0.1, None));
     }
 
     #[test]

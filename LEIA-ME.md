@@ -610,9 +610,17 @@ que abre o terminal com o instalador oficial e o login (também no menu do logo,
 Codex…**). O clique abre o painel de detalhes, à direita do trilho: o plano, as duas janelas
 com a hora em que renovam ("renova em 2 h 13 min · 15:59"; uma janela sem leitura fica só com o
 rótulo e "sem dado", sem a barra), os limites semanais por modelo, os
-créditos extras do mês e, no rodapé, quando o número foi lido, com **Atualizar**. O uso vem do
-que o Claude Code e o Codex guardam no disco (relido a cada 30 s) e dos avisos de limite
-durante os turnos; nada roda e nenhum token é lido.
+créditos extras do mês e, no rodapé, quando o número foi lido, com **Atualizar** (e, discreto,
+"não deu para atualizar" embaixo quando a última busca não trouxe número). O uso do Claude se
+atualiza sozinho, direto da Anthropic, com o mesmo pedido que o Claude Code faz para o `/usage` e o
+login de cada conta: logo ao abrir o painel e a cada minuto com ele aberto, a cada 5 min com ele
+fechado (os anéis do trilho também mostram), a cada 15 min com a janela sem foco há mais de 15 min
+(30 min depois de 2 h fora) e na hora com **Atualizar**. O token é lido do `.credentials.json` da
+conta a cada busca e só vai para `https://api.anthropic.com`; vencido ou recusado, o Vitral não o
+renova (quem renova é o Claude Code) e espera, e a falta de rede e o excesso de pedidos fazem
+esperar mais antes de tentar de novo, sem aviso. Contam também o que o Claude Code e o Codex
+guardam no disco (relido a cada 30 s) e os avisos de limite durante os turnos; o Codex só por
+esses dois caminhos.
 
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e os
