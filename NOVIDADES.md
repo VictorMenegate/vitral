@@ -26,6 +26,14 @@ O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de
   popover aberto, a cada 5 min fechado), buscando direto na Anthropic com o login que o Claude Code
   já guarda; o Vitral nunca renova esse login.
 - **Modo foco no ⋯** de cada painel; o botão dele só aparece com ele ligado.
+- **Windows (prévia).** Instalador por usuário (sem administrador), zip portátil e o mesmo visual,
+  com os botões e o acrílico do Windows, notificações, terminal, Lixeira e Git Bash. Ainda sem
+  atualização automática no Windows nem contas extras.
+- **Conexões.** Configurações › Conexões mostra o login do GitHub e conecta o Linear (a chave fica no
+  chaveiro do sistema); o editor do projeto mostra o repositório de cada pasta. Issues e PRs ao lado
+  do chat chegam nas próximas versões.
+- **Parar** pede ao Claude para interromper (ele fecha o turno direito) e só derruba o processo se
+  ele não sair em 5 s. As fontes (Inter e JetBrains Mono) vêm dentro do Vitral.
 - **Um Vitral só.** Abrir de novo (pelo menu, `vitral <pasta>` ou `--nova`) entrega o pedido ao que
   já está aberto.
 - **Na primeira abertura**, o Vitral traz sozinho o que havia nas pastas do Vitral antigo: cada
