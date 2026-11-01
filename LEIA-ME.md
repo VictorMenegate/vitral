@@ -1047,6 +1047,18 @@ Precisa do `claude` (Claude Code) no PATH ou em `~/.local/bin`, do `git`, e no F
 freetype-devel libxcb-devel` para compilar. Das dependências em Rust, o `chrono` entrou para a hora
 das Rotinas (o `TimeField` do kit); já vinha no `Cargo.lock` pelo vendor.
 
+**No Windows** (10 1809 ou mais novo, x64; ainda sem instalador): precisa do **Git para Windows**
+(as cópias, a verificação e o hook rodam no Git Bash dele, achado como o Claude Code acha) e do
+**Claude Code nativo** (`irm https://claude.ai/install.ps1 | iex`, o `claude.exe` em
+`%USERPROFILE%\.local\bin`); o que faltar aparece como aviso no Mestre, e uma pasta de projeto
+dentro do OneDrive também. Os dados ficam em `%LOCALAPPDATA%\vitral` (o cache em `cache\` dentro
+dela) e a configuração em `%APPDATA%\vitral`. As fontes vão dentro do binário nos dois sistemas. A
+janela tem o fundo acrílico do sistema (`VITRAL_FUNDO=mica`, `transparente` ou `opaco` troca), e o
+arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Windows. Os avisos saem como
+notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
+entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
+árvore inteira. Ainda não: contas extras, "Instalar o Codex" e a atualização sozinho.
+
 ## Versões e releases
 
 O Vitral sai pronto do GitHub (`VictorMenegate/vitral`, licença MIT): o PC não precisa compilar
@@ -1174,8 +1186,9 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta, o histórico como itens da conversa, o projeto de destino e o registro do que já veio |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code e conferência da sessão |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral, as rotas por papel e a tabela de quem pode cada ferramenta (com a regra do dono) |
-| `src/revisor.rs` | Revisor independente e o hook que roda os testes quando o chat para |
-| `src/processos.rs` | Escopos do systemd (ou grupos de processos) para parar cada processo por inteiro |
+| `src/revisor.rs` | Revisor independente e o hook que roda os testes quando o chat para (no Linux, um script do bash; no Windows, o próprio Vitral com `--hook-verificacao`, em exec form) |
+| `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`) |
+| `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, Lixeira, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano que o Claude Code guarda em `.claude.json` |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
 | `src/git.rs` | Cópia isolada (a do chat de projeto, refeita no mesmo caminho, juntada sem ser apagada e em dia com a origem), diff, fotos/volta, o commit de cada vez na pasta própria, junção (uma por vez por repositório, e a cortada conferida ao abrir), o ponto (checkpoint) antes de um ajudante nascer ou ser juntado, religar as cópias de uma origem que mudou de lugar, verificação, limpeza das cópias |
@@ -1187,10 +1200,12 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`) e o `linux/instalar.sh` |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
-| `.github/` | `workflows/ci.yml`, `workflows/release.yml` e `dependabot.yml` |
+| `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`) e `dependabot.yml` |
+| `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); fora dele, nada |
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
+| `tests/hook.rs` | `--hook-verificacao`: código 2 e o fim da saída no stderr quando a verificação falha, 0 na segunda parada seguida |
 | `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
-| `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual e os ícones de projeto (`icones/`, Lucide, ISC) |
+| `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual, os ícones de projeto (`icones/`, Lucide, ISC) e as fontes embutidas (`fontes/`: Inter 4.1 e JetBrains Mono 2.304, só os pesos usados, OFL 1.1 em `fontes/OFL.txt`, que vai no pacote como `OFL-fontes.txt`) |
 
 Ícones do Lucide que não estão entre os do GPUI Kit precisam entrar em `icon_assets!` em
 `src/tema.rs`, senão saem em branco (um teste confere). Os textos dos componentes do Kit saem em
