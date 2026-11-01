@@ -1046,7 +1046,8 @@ impl Janela {
                 .item(item("Contas do Claude", Lucide::CircleUser, &janela, |this, window, cx| {
                     this.dialogo_contas(window, cx)
                 }))
-                .when(sem_codex, |menu| {
+                // O instalador oficial do Codex é um script do sh: no Windows não há o item.
+                .when(sem_codex && cfg!(not(windows)), |menu| {
                     menu.item(
                         PopupMenuItem::new("Instalar o Codex…")
                             .icon(Lucide::Download)
