@@ -235,8 +235,16 @@ pub fn visual(p: &Projeto) -> (&'static Icone, u32) {
     escolha(&p.icone, &p.cor, &p.id, p.principal().map(|l| l.caminho.as_path()))
 }
 
-/// O mesmo pelo id; um projeto que sumiu fica com os automáticos.
+/// Os Avulsos (projeto ""): o balão de conversa na cor tênue, o mesmo do atalho no trilho.
+pub fn avulsos() -> (&'static Icone, u32) {
+    (icone_por_id("message-circle").unwrap_or(&ICONES[0]), 0x9ba8cf)
+}
+
+/// O mesmo pelo id; os Avulsos ficam com o balão e um projeto que sumiu, com os automáticos.
 pub fn visual_do(motor: &Motor, projeto: &str) -> (&'static Icone, u32) {
+    if projeto.is_empty() {
+        return avulsos();
+    }
     match motor.projeto(projeto) {
         Some(p) => visual(p),
         None => escolha("", "", projeto, None),
@@ -449,7 +457,14 @@ impl Render for EscolhaIconeCor {
 #[cfg(test)]
 mod testes {
     // Sem `use super::*`: o `gpui_kit::*` de lá traz um `test` que esconde o `#[test]`.
-    use super::{CORES, Projeto, cor_automatica, escolha, filtrar, icone_por_id, ler_cor, nome_da_cor, palpite, visual};
+    use super::{CORES, Projeto, avulsos, cor_automatica, escolha, filtrar, icone_por_id, ler_cor, nome_da_cor, palpite, visual};
+
+    #[test]
+    fn avulsos_com_o_balao_do_trilho() {
+        let (icone, cor) = avulsos();
+        assert_eq!(icone.id, "message-circle");
+        assert_eq!(cor, 0x9ba8cf);
+    }
 
     #[test]
     fn cores_de_projeto_sem_cores_de_estado() {
