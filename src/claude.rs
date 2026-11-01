@@ -548,19 +548,26 @@ fn conteudo_resultado(conteudo: &Value) -> String {
 
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
 pub fn binario_claude() -> PathBuf {
-    if let Some(caminho) = std::env::var_os("PATH").and_then(|path| {
+    binario_claude_em(std::env::var_os("PATH"), dirs::home_dir().unwrap_or_default())
+}
+
+/// No Windows, só o `claude.exe` do instalador nativo: o `claude.cmd` do npm precisa de um shell.
+const NOME_DO_CLAUDE: &str = if cfg!(windows) { "claude.exe" } else { "claude" };
+
+fn binario_claude_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
+    if let Some(caminho) = path.and_then(|path| {
         std::env::split_paths(&path)
-            .map(|p| p.join("claude"))
+            .map(|p| p.join(NOME_DO_CLAUDE))
             .find(|p| p.is_file())
     }) {
         return caminho;
     }
-    let home = dirs::home_dir().unwrap_or_default();
-    [".local/bin/claude", ".claude/local/claude"]
+    let locais: &[[&str; 2]] = if cfg!(windows) { &[[".local", "bin"]] } else { &[[".local", "bin"], [".claude", "local"]] };
+    locais
         .iter()
-        .map(|p| home.join(p))
+        .map(|[pasta, dentro]| home.join(pasta).join(dentro).join(NOME_DO_CLAUDE))
         .find(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("claude"))
+        .unwrap_or_else(|| PathBuf::from(NOME_DO_CLAUDE))
 }
 
 /// A versão a partir da qual o prompt vai por arquivo, sem a foto da sessão
@@ -757,6 +764,25 @@ fn base64(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn acha_o_claude_no_path_e_na_pasta_do_instalador() {
+        let base = std::env::temp_dir().join(format!("vitral-claude-{}", crate::modelo::novo_id()));
+        let (bin, casa) = (base.join("bin"), base.join("casa"));
+        let instalado = casa.join(".local").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&instalado).unwrap();
+        let path = || Some(std::env::join_paths([&bin]).unwrap());
+        // Em lugar nenhum: o nome solto, para o sistema procurar.
+        assert_eq!(binario_claude_em(path(), casa.clone()), PathBuf::from(NOME_DO_CLAUDE));
+        // O claude.cmd do npm (Windows) não serve: precisa de um shell.
+        std::fs::write(bin.join("claude.cmd"), "").unwrap();
+        std::fs::write(instalado.join(NOME_DO_CLAUDE), "").unwrap();
+        assert_eq!(binario_claude_em(path(), casa.clone()), instalado.join(NOME_DO_CLAUDE));
+        std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
+        assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn pasta_do_projeto_igual_a_do_claude_code() {
