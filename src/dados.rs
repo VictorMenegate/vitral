@@ -652,8 +652,28 @@ pub fn gravar_seguro(caminho: &Path, bytes: &[u8], anterior: bool) -> Result<()>
     if anterior {
         ligar_anterior(caminho);
     }
-    fs::rename(&temporario, caminho).with_context(|| caminho.display().to_string())?;
+    renomear(&temporario, caminho).with_context(|| caminho.display().to_string())?;
     sincronizar_pasta(pasta)
+}
+
+/// O rename por cima. No Windows, o antivírus e o indexador às vezes seguram o arquivo por um
+/// instante, e o rename volta "Acesso negado" (ou a violação de compartilhamento): até 5
+/// tentativas, a cada 20 ms. Um erro de verdade (pasta sem permissão) só demora 80 ms a mais.
+pub fn renomear(de: &Path, para: &Path) -> io::Result<()> {
+    let mut tentativas = if cfg!(windows) { 5 } else { 1 };
+    loop {
+        match fs::rename(de, para) {
+            // ERROR_SHARING_VIOLATION (32) e ERROR_LOCK_VIOLATION (33) não têm ErrorKind próprio.
+            Err(erro)
+                if tentativas > 1
+                    && (erro.kind() == io::ErrorKind::PermissionDenied || matches!(erro.raw_os_error(), Some(32 | 33))) =>
+            {
+                tentativas -= 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            resultado => return resultado,
+        }
+    }
 }
 
 pub fn gravar_json_seguro<T: Serialize>(caminho: &Path, valor: &T, anterior: bool) -> Result<()> {
@@ -690,7 +710,7 @@ fn ligar_anterior(caminho: &Path) {
     let anterior = com_sufixo(caminho, ".anterior");
     let link = com_sufixo(&anterior, ".tmp");
     let _ = fs::remove_file(&link);
-    let ligado = fs::hard_link(caminho, &link).and_then(|()| fs::rename(&link, &anterior));
+    let ligado = fs::hard_link(caminho, &link).and_then(|()| renomear(&link, &anterior));
     // Com o `.anterior` já sendo o mesmo arquivo (a queda veio logo depois do link), o rename não
     // faz nada e deixa o link.
     let _ = fs::remove_file(&link);
@@ -1369,6 +1389,28 @@ mod testes {
         assert_eq!(ler(&arquivo), Some(3));
         assert_eq!(ler(&com_sufixo(&arquivo, ".anterior")), Some(1));
         assert_eq!(fs::read_dir(&pasta).unwrap().count(), 2);
+        let _ = fs::remove_dir_all(&pasta);
+    }
+
+    /// No Windows, um arquivo aberto sem compartilhar (como o antivírus faz ao ler) recusa o rename
+    /// por cima: as novas tentativas esperam ele soltar.
+    #[cfg(windows)]
+    #[test]
+    fn rename_espera_quem_segura_o_arquivo() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let pasta = pasta_de_teste("preso");
+        let (de, para) = (pasta.join("estado.json.tmp"), pasta.join("estado.json"));
+        fs::write(&de, "novo").unwrap();
+        fs::write(&para, "velho").unwrap();
+        let preso = fs::OpenOptions::new().read(true).share_mode(0).open(&para).unwrap();
+        assert!(fs::rename(&de, &para).is_err(), "o Windows devia recusar com o arquivo preso");
+        let soltar = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            drop(preso);
+        });
+        renomear(&de, &para).unwrap();
+        soltar.join().unwrap();
+        assert_eq!(fs::read_to_string(&para).unwrap(), "novo");
         let _ = fs::remove_dir_all(&pasta);
     }
 
