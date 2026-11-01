@@ -4,7 +4,7 @@
 
 use gpui_kit::base::actions::SelectDown;
 use gpui_kit::component::{
-    ElementExt as _, Selectable, h_flex,
+    ElementExt as _, Selectable, WindowExt as _, h_flex,
     menu::{ContextMenuExt as _, DropdownMenu, PopupMenu, PopupMenuItem},
     popover::Popover,
     tooltip::Tooltip,
@@ -14,12 +14,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AlternarPainel, FecharPainel, Gaveta, IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4, Janela,
-    MoverPainelDireita, MoverPainelEsquerda, NovaConversa,
+    AbrirMestre, AlternarPainel, FecharPainel, Gaveta, IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4, Janela,
+    MoverPainelDireita, MoverPainelEsquerda, NovaConversa, NovoProjeto,
     componentes::{
-        Aba, Anel, CabecalhoPopover, CorpoPopover, EstadoVazio, LarguraPainel, LarguraPopover, Papel, PreviaArrasto,
-        QuadradoDeProjeto, Reflexo as _, Selo, Simbolo, TamanhoBotao, TomAba, botao_icone, botao_primario,
-        cabecalho_objeto, cor_da_faixa, formatar_custo, sinal_do_chat,
+        Aba, Anel, CabecalhoPopover, Confirmacao, CorpoPopover, EstadoVazio, LarguraPainel, LarguraPopover, Papel,
+        PreviaArrasto, QuadradoDeProjeto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom, TomAba, TomConfirmacao, aviso,
+        botao_fantasma, botao_icone, botao_primario, cabecalho_objeto, confirmar, cor_da_faixa, formatar_custo,
+        sinal_do_chat,
     },
     composer, equipe, icone_projeto, menus,
     movimento::{self, Curva, De, com_estado, entrada},
@@ -30,26 +31,76 @@ use crate::{
     contas,
     modelo::{Chat, Papel as PapelDoChat},
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, esp, gradiente_destaque, halo_suave, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, gradiente_destaque, halo_suave, r, raio, tam},
 };
 
-/// Quem age na conversa, para o símbolo da aba e o fundo do cabeçalho. O Mestre e os avulsos
-/// chegam com a onda 2.
+/// A resposta do Juntar: o aviso do que entrou, a pergunta da troca de branch (que junta no branch
+/// atual) ou o porquê de não ter juntado.
+fn responder_juntar(
+    motor: Entity<Motor>,
+    tarefa: u64,
+    recebe: smol::channel::Receiver<crate::mcp::Resposta>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            let Ok(resposta) = recebe.recv().await else {
+                return;
+            };
+            let _ = cx.update(|window, cx| {
+                if !resposta.erro {
+                    let texto = resposta.texto.lines().next().unwrap_or("As mudanças entraram na pasta original.").to_string();
+                    window.push_notification(aviso(Tom::Pronto, texto), cx);
+                } else if resposta.texto.starts_with(crate::motor::RAMO_TROCADO) {
+                    let m = motor.clone();
+                    confirmar(
+                        Confirmacao {
+                            tom: TomConfirmacao::Atencao,
+                            icone: Lucide::GitBranch.into(),
+                            titulo: "Juntar em outro branch?".into(),
+                            texto: resposta.texto.clone().into(),
+                            detalhes: Vec::new(),
+                            ok: "Juntar".into(),
+                            cancelar: "Cancelar".into(),
+                            ok_perigo: false,
+                        },
+                        move |window, cx| {
+                            let recebe = m.update(cx, |m, cx| m.juntar_no_ramo_atual(tarefa, cx));
+                            responder_juntar(m.clone(), tarefa, recebe, window, cx);
+                        },
+                        None,
+                        window,
+                        cx,
+                    );
+                } else {
+                    let tom = if resposta.texto.starts_with("Conflito") { Tom::Atencao } else { Tom::Erro };
+                    window.push_notification(aviso(tom, resposta.texto.clone()), cx);
+                }
+            });
+        })
+        .detach();
+}
+
+/// Quem age na conversa, para o símbolo da aba e o fundo do cabeçalho (o gradiente do Mestre).
 fn papel_da_conversa(chat: &Chat) -> Papel {
     match chat.papel {
+        PapelDoChat::Mestre => Papel::Mestre,
         PapelDoChat::Coordenador => Papel::Coordenador,
-        PapelDoChat::Trabalhador => Papel::Trabalhador,
+        PapelDoChat::Trabalhador | PapelDoChat::Projeto => Papel::Trabalhador,
     }
 }
 
-/// O símbolo da conversa: o quadrado do projeto no coordenador, o círculo do papel nos outros.
+/// O símbolo da conversa: o quadrado do projeto no chat de projeto (e na conversa antiga), o
+/// balão no avulso e o círculo do papel nos outros.
 fn simbolo_da_conversa(motor: &Motor, chat: &Chat) -> Simbolo {
-    match papel_da_conversa(chat) {
-        Papel::Coordenador => {
-            let (icone, cor) = icone_projeto::visual(motor, &chat.projeto);
+    match simbolo_da_aba(chat, false) {
+        SimboloDaAba::Projeto => {
+            let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
             Simbolo::Projeto(icone, cor)
         }
-        papel => Simbolo::Papel(papel),
+        SimboloDaAba::Avulso => Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue()),
+        _ => Simbolo::Papel(papel_da_conversa(chat)),
     }
 }
 
@@ -78,7 +129,7 @@ fn pasta_do_chat(motor: &Motor, chat: &Chat) -> Pasta {
     let tarefa = chat.tarefa.and_then(|id| motor.tarefa(id)).filter(|t| !t.copia_limpa);
     match tarefa.filter(|t| t.worktree.is_some()) {
         Some(t) => Pasta::Copia { tarefa: t.id },
-        None if chat.cwd == motor.caminho_projeto(&chat.projeto) => Pasta::Original,
+        None if motor.pasta_do_chat(chat).is_some_and(|p| p == chat.cwd) => Pasta::Original,
         None => Pasta::Nenhuma,
     }
 }
@@ -103,11 +154,26 @@ fn modelo_da_conversa(chat: &Chat) -> (String, Option<String>) {
     }
 }
 
-/// Onde a conversa está, em texto, para a dica da aba: "loja › Cupons… · cópia t2".
+/// Onde a conversa está, em texto, para a dica da aba: "loja › Cupons… · cópia t2"; no chat de
+/// projeto, a pasta e o jeito ("site · cópia t12", "receitas · direto").
 fn caminho_em_texto(motor: &Motor, chat: &Chat) -> String {
-    let mut texto = chat.projeto.clone();
+    if chat.papel == PapelDoChat::Mestre {
+        return "vê todos os projetos e manda o trabalho para os chats".into();
+    }
+    let mut texto = motor.nome_do_projeto(&chat.projeto);
     if let Some(pai) = chat.pai.as_ref().and_then(|p| motor.chat(p)) {
         texto.push_str(&format!(" › {}", pai.titulo));
+    }
+    if chat.papel == PapelDoChat::Projeto {
+        if let Some(t) = chat.tarefa.and_then(|t| motor.tarefa(t)) {
+            let origem = motor.origem_da_tarefa(t);
+            let pasta = origem.file_name().map_or_else(|| origem.display().to_string(), |n| n.to_string_lossy().to_string());
+            let jeito = if t.tem_copia() { format!("cópia t{}", t.id) } else { "direto".into() };
+            if !chat.projeto.is_empty() {
+                texto.push_str(&format!(" · {pasta} · {jeito}"));
+            }
+        }
+        return texto;
     }
     match pasta_do_chat(motor, chat) {
         Pasta::Copia { tarefa, .. } => texto.push_str(&format!(" · cópia t{tarefa}")),
@@ -117,18 +183,39 @@ fn caminho_em_texto(motor: &Motor, chat: &Chat) -> String {
     texto
 }
 
-/// O que vai no lugar do símbolo da aba: o quadrado do projeto (com o menu dele) no coordenador,
-/// o ↰ que abre o coordenador no trabalhador e, sem pai, o círculo do papel.
+/// O que a dica da aba diz do papel: "chat 12", "Avulso · chat 3", "Ajudante de “Checkout”",
+/// "Conversa antiga".
+fn papel_em_texto(motor: &Motor, chat: &Chat) -> String {
+    let pai = chat.pai.as_ref().and_then(|p| motor.chat(p));
+    match (chat.papel, chat.tarefa) {
+        (PapelDoChat::Projeto, Some(n)) if chat.projeto.is_empty() => format!("Avulso · chat {n}"),
+        (PapelDoChat::Projeto, Some(n)) => format!("Chat {n}"),
+        (PapelDoChat::Projeto, None) => "Chat".into(),
+        (PapelDoChat::Trabalhador, _) if pai.is_some_and(|p| p.papel == PapelDoChat::Projeto) => {
+            format!("Ajudante de “{}”", pai.map(|p| p.titulo.as_str()).unwrap_or_default())
+        }
+        (PapelDoChat::Trabalhador, Some(n)) => format!("Ajudante #{n}"),
+        (PapelDoChat::Trabalhador, None) => "Ajudante".into(),
+        (PapelDoChat::Mestre, _) => "Mestre".into(),
+        (PapelDoChat::Coordenador, _) => "Conversa do Vitral antigo".into(),
+    }
+}
+
+/// O que vai no lugar do símbolo da aba: o quadrado do projeto (com o menu dele) no chat de
+/// projeto e na conversa antiga, o balão no avulso, o ↰ que abre o chat pai no ajudante e, sem
+/// pai, o círculo do papel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SimboloDaAba {
     Projeto,
+    Avulso,
     Pai,
     Papel,
 }
 
 fn simbolo_da_aba(chat: &Chat, tem_pai: bool) -> SimboloDaAba {
-    match papel_da_conversa(chat) {
-        Papel::Coordenador => SimboloDaAba::Projeto,
+    match chat.papel {
+        PapelDoChat::Projeto if chat.projeto.is_empty() => SimboloDaAba::Avulso,
+        PapelDoChat::Projeto | PapelDoChat::Coordenador => SimboloDaAba::Projeto,
         _ if tem_pai => SimboloDaAba::Pai,
         _ => SimboloDaAba::Papel,
     }
@@ -214,28 +301,20 @@ fn itens_do_chip_projeto(
     window: &mut Window,
     cx: &mut App,
 ) -> PopupMenu {
-    let filtrado = janela
-        .upgrade()
-        .is_some_and(|j| j.read(cx).projeto_filtro.as_deref() == Some(projeto));
-    let (icone, cor) = icone_projeto::visual(motor.read(cx), projeto);
-    let caminho = motor.read(cx).caminho_projeto(projeto).display().to_string();
+    let filtrado = janela.upgrade().is_some_and(|j| j.read(cx).vista.projeto() == Some(projeto));
+    let (icone, cor) = icone_projeto::visual_do(motor.read(cx), projeto);
+    let caminho = motor.read(cx).pasta_principal(projeto).map_or("sem pasta".into(), |p| p.display().to_string());
+    let exibido = motor.read(cx).nome_do_projeto(projeto);
     let nome = projeto.to_string();
     let menu = menu
         .when(cabecalho, |menu| {
-            menu.item(cabecalho_objeto(Simbolo::Projeto(icone, cor), nome.clone(), Some(caminho.into())))
+            menu.item(cabecalho_objeto(Simbolo::Projeto(icone, cor), exibido.clone(), Some(caminho.into())))
                 .separator()
         })
         .item(
             PopupMenuItem::new("Mostrar só este projeto")
                 .checked(filtrado)
-                .on_click(na_janela(&janela, move |this, window, cx| {
-                    this.projeto_filtro = if this.projeto_filtro.as_deref() == Some(nome.as_str()) {
-                        None
-                    } else {
-                        Some(nome.clone())
-                    };
-                    this.mostrar_lista(window, cx);
-                })),
+                .on_click(na_janela(&janela, move |this, window, cx| this.alternar_vista(nome.clone(), window, cx))),
         )
         .separator();
     menus::itens_do_projeto(menu, janela, motor, projeto, false, window, cx)
@@ -260,16 +339,16 @@ fn menu_do_painel(
         ultimo: bool,
         varios: bool,
         direita_aberta: bool,
-        /// A direita mostra um arquivo (e não a Equipe) e, com a Equipe fora da vista, quantas
-        /// tarefas pedem você.
-        direita: (bool, Option<(usize, bool, String)>),
+        /// O que a direita mostra (o arquivo aberto, Este chat, os ajudantes…) e, com ela fora da
+        /// vista, quantos chats pedem você.
+        direita: (Direita, Option<(usize, bool, String)>),
         cheio: Option<String>,
         rotulo: Option<String>,
         pasta: Pasta,
         /// A aba não mostra o quadrado do projeto (trabalhador, ou o número no lugar dele): o
         /// menu do projeto vem para cá.
         projeto_no_menu: bool,
-        /// O ↰ não está à vista na aba: "Abrir o coordenador" vem para cá.
+        /// O ↰ não está à vista na aba: "Abrir o chat" vem para cá.
         pai_no_menu: Option<(String, String)>,
     }
     let dados = (|| {
@@ -333,10 +412,10 @@ fn menu_do_painel(
         );
     }
     if minimo && d.ultimo {
-        // O botão da direita saiu do cabeçalho: o número do que a Equipe espera vem para cá,
-        // tingido porque fica na linha.
-        let (arquivo, pedidos) = d.direita;
-        let rotulo = if arquivo { "Mostrar o arquivo aberto" } else { "Mostrar a Equipe" };
+        // O botão da direita saiu do cabeçalho: o número do que ela espera vem para cá, tingido
+        // porque fica na linha.
+        let (direita, pedidos) = d.direita;
+        let rotulo = direita.no_menu();
         menu = menu.item(
             PopupMenuItem::element(move |_, _| {
                 h_flex()
@@ -397,17 +476,17 @@ fn menu_do_painel(
     }
     if let Some((pai, titulo)) = d.pai_no_menu {
         menu = menu.item(
-            PopupMenuItem::new(format!("Abrir o coordenador “{titulo}”"))
+            PopupMenuItem::new(format!("Abrir o chat “{titulo}”"))
                 .icon(Lucide::CornerLeftUp)
                 .on_click(na_janela(&janela, move |this, window, cx| this.selecionar(Some(pai.clone()), window, cx))),
         );
     }
     if d.projeto_no_menu {
-        let (icone, cor) = icone_projeto::visual(motor.read(cx), &d.projeto);
+        let (icone, cor) = icone_projeto::visual_do(motor.read(cx), &d.projeto);
         let (j, m, projeto) = (janela.clone(), motor.clone(), d.projeto.clone());
         menu = menu.submenu_with_icon(
             Some(icone_projeto::desenho(icone, 16., rgb(cor))),
-            format!("Projeto {}", d.projeto),
+            format!("Projeto {}", motor.read(cx).nome_do_projeto(&d.projeto)),
             window,
             cx,
             move |sub, window, cx| itens_do_chip_projeto(sub, j.clone(), &m, &projeto, false, window, cx),
@@ -508,7 +587,7 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
                 .child(linha("Modelo", modelo))
                 .child(linha("Conta", texto(format!("Claude · {conta}"))))
                 .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
-                .when_some(com_trabalhadores, |s, total| s.child(linha("Com os trabalhadores", texto(total)))),
+                .when_some(com_trabalhadores, |s, total| s.child(linha("Com os ajudantes", texto(total)))),
         )
         .rodape(
             h_flex()
@@ -526,6 +605,16 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
 }
 
 impl Janela {
+    /// "Juntar" (a barra acima da caixa, a Equipe): leva as mudanças da cópia para a pasta
+    /// original. Com a pasta em outro branch, pergunta antes; o resto da recusa vira aviso.
+    pub(super) fn juntar_do_chat(&mut self, tarefa: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let recebe = motor.update(cx, |m, cx| m.aprovar_pelo_usuario(tarefa, None, cx));
+        responder_juntar(motor, tarefa, recebe, window, cx);
+    }
+
     /// Um painel de conversa (`ix` em `self.paineis`); sem painel, a tela de começar.
     pub(super) fn conversa(
         &mut self,
@@ -613,8 +702,19 @@ impl Janela {
             .child(corpo)
             .children(faixa)
             .when_some(chat.zip(ix), |s, (chat, ix)| {
-                s.child(self.permissoes(motor, chat, window, cx))
-                    .child(self.caixa_mensagem(motor, chat, ix, window, cx))
+                // No Mestre, "Enquanto você esteve fora" também fica acima da caixa.
+                let resumo = (chat.papel == PapelDoChat::Mestre)
+                    .then(|| self.faixa_do_resumo(motor, "mestre", window, cx))
+                    .flatten()
+                    .map(|f| div().map(super::mensagens::coluna).pb(esp::E8).child(f));
+                // A conversa do Vitral antigo é só para leitura: no lugar da caixa, a faixa que
+                // continua o assunto num chat novo do mesmo projeto.
+                let caixa = if chat.papel == PapelDoChat::Coordenador {
+                    self.faixa_conversa_antiga(chat, window, cx).into_any_element()
+                } else {
+                    self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element()
+                };
+                s.child(self.permissoes(motor, chat, window, cx)).children(resumo).child(caixa)
             })
             .when(arquivos_sobre, |s| {
                 s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
@@ -689,9 +789,19 @@ impl Janela {
             })
             .when_some(aneis, |s, aneis| s.child(sem_arrastar().flex_none().child(aneis)))
             .child(
-                div().flex().flex_1().min_w_0().children(
-                    conversa.map(|(chat, ix)| self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx)),
-                ),
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap(esp::E8)
+                    .children(conversa.map(|(chat, ix)| self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx)))
+                    // O chat que o Mestre criou leva o selo de volta a ele (fora da largura mínima).
+                    .children(
+                        chat.filter(|_| nivel != LarguraPainel::Minimo)
+                            .and_then(|c| super::cartoes::do_mestre(motor, c))
+                            .map(|dica| super::cartoes::selo_do_mestre_no_chat(SharedString::from(format!("do-mestre-aba-{painel_id}")), dica, cx)),
+                    ),
             )
             .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx)))
             .when(mostra_botoes_janela, |s| {
@@ -746,11 +856,7 @@ impl Janela {
         if varios {
             aba = aba.numero(ix + 1, ativo);
         }
-        let papel = match (chat.papel, chat.tarefa) {
-            (PapelDoChat::Trabalhador, Some(n)) => format!("Trabalhador da tarefa #{n}"),
-            (PapelDoChat::Trabalhador, None) => "Trabalhador".to_string(),
-            (PapelDoChat::Coordenador, _) => "Coordenador".to_string(),
-        };
+        let papel = papel_em_texto(motor, chat);
         let dica = SharedString::from(format!("{}\n{papel} · {}", chat.titulo, caminho_em_texto(motor, chat)));
         let acao = acao_do_painel(ix).filter(|_| varios);
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: Some(painel_id) };
@@ -818,9 +924,9 @@ impl Janela {
         };
         match simbolo_da_aba(chat, pai.is_some()) {
             SimboloDaAba::Projeto => {
-                let (icone, cor) = icone_projeto::visual(motor, &chat.projeto);
-                let caminho = motor.caminho_projeto(&chat.projeto).display().to_string();
-                let dica = SharedString::from(format!("Projeto {}\n{caminho}", chat.projeto));
+                let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
+                let caminho = motor.pasta_do_chat(chat).map_or("sem pasta".into(), |p| p.display().to_string());
+                let dica = SharedString::from(format!("Projeto {}\n{caminho}", motor.nome_do_projeto(&chat.projeto)));
                 let (m, projeto) = (motor_entidade.clone(), chat.projeto.clone());
                 let lado = 18.;
                 let base = div()
@@ -838,10 +944,26 @@ impl Janela {
                     ))
                     .into_any_element()
             }
+            SimboloDaAba::Avulso => {
+                let dica = if chat.importada.is_some() {
+                    "Avulso: uma conversa do Claude Code, direto na pasta dela\nArraste para um projeto do trilho para mover"
+                } else {
+                    "Avulso: um chat sem projeto, numa pasta só dele\nArraste para um projeto do trilho para mover"
+                };
+                div()
+                    .id(("avulso-aba", painel_id as usize))
+                    .flex_none()
+                    .text_color(Cores::tenue())
+                    .child(svg().path(Lucide::MessageCircle.path()).size(r(16.)).text_color(Cores::tenue()))
+                    .tooltip(move |window, cx| Tooltip::new(dica).build(window, cx))
+                    .into_any_element()
+            }
             SimboloDaAba::Pai => {
+                let do_projeto = pai.is_some_and(|p| p.papel == PapelDoChat::Projeto);
                 let pai = pai.map(|p| (p.id.clone(), p.titulo.clone())).unwrap_or_default();
                 let original = matches!(pasta_do_chat(motor, chat), Pasta::Original);
-                let dica = format!("Abrir o coordenador “{}”\nCtrl+clique abre ao lado", pai.1);
+                let quem = if do_projeto { "o chat" } else { "a conversa" };
+                let dica = format!("Abrir {quem} “{}”\nCtrl+clique abre ao lado", pai.1);
                 let id_pai = pai.0;
                 let botao = botao_icone(("pai-aba", painel_id as usize), Lucide::CornerLeftUp, dica, TamanhoBotao::Linha, window, cx)
                     .on_click(move |evento, window, cx| {
@@ -907,7 +1029,7 @@ impl Janela {
                 let dica = if foco {
                     "Mostrar as ferramentas\nVolta a mostrar as ferramentas usadas neste painel"
                 } else {
-                    "Modo foco\nSó as mensagens e as tarefas, sem as ferramentas (neste painel)"
+                    "Modo foco\nSó as mensagens, sem as ferramentas (neste painel)"
                 };
                 s.child(sem_arrastar().child(
                     botao_icone(("modo-foco", painel_id as usize), Lucide::Focus, dica, TamanhoBotao::Barra, window, cx)
@@ -922,10 +1044,10 @@ impl Janela {
             })
             .child(sem_arrastar().child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx)))
             .when(mostra_direita, |s| {
-                // Com a Equipe fora da vista, o número do que ela espera fica no canto do botão
-                // (vermelho se uma tarefa caiu), e o resumo, na dica.
-                let (arquivo, pedidos) = self.o_que_a_direita_mostra(motor_entidade.read(cx));
-                let nome = if arquivo { "Arquivo aberto" } else { "Equipe" };
+                // Com a direita fora da vista, o número do que ela espera fica no canto do botão
+                // (vermelho se um chat caiu), e o resumo, na dica.
+                let (direita, pedidos) = self.o_que_a_direita_mostra(motor_entidade.read(cx));
+                let nome = direita.nome();
                 let dica: SharedString = match &pedidos {
                     Some((_, _, resumo)) => format!("{nome}\n{resumo}").into(),
                     None => nome.into(),
@@ -957,10 +1079,16 @@ impl Janela {
     /// Se a direita mostra um arquivo aberto (e não a Equipe) e, com a Equipe fora da vista (a
     /// direita fechada, ou a gaveta dela fechada), quantas tarefas pedem você, se alguma caiu e o
     /// resumo. Com o arquivo na direita, o botão não leva à Equipe: nada de número.
-    fn o_que_a_direita_mostra(&self, motor: &Motor) -> (bool, Option<(usize, bool, String)>) {
+    fn o_que_a_direita_mostra(&self, motor: &Motor) -> (Direita, Option<(usize, bool, String)>) {
         if self.arquivo_aberto.is_some() {
-            return (true, None);
+            return (Direita::Arquivo, None);
         }
+        let direita = match self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.papel) {
+            Some(PapelDoChat::Mestre) => Direita::Distribuido,
+            Some(PapelDoChat::Projeto) => Direita::EsteChat,
+            Some(PapelDoChat::Coordenador) => Direita::ConversaAntiga,
+            _ => Direita::Ajudantes,
+        };
         let a_vista = self.direita_visivel() || self.gaveta == Some(Gaveta::Direita);
         let pedidos = self
             .selecionado
@@ -970,7 +1098,7 @@ impl Janela {
             .and_then(|chat| equipe::coordenador_da_equipe(motor, chat))
             .map(|coordenador| equipe::pedidos_da_equipe(motor, &coordenador))
             .filter(|(n, ..)| *n > 0);
-        (false, pedidos)
+        (direita, pedidos)
     }
 
     /// O "⋯" do painel, controlado por `Painel.menu_aberto` para o Shift+F10 da aba abrir o mesmo.
@@ -1044,39 +1172,149 @@ impl Janela {
             })
     }
 
-    /// Painel sem conversa: o estado vazio amplo, com a ação de começar (ou de criar o primeiro
-    /// projeto).
+    /// "Conversa do Vitral antigo, só para leitura." com "Continuar num chat novo", no lugar da caixa.
+    fn faixa_conversa_antiga(&self, chat: &Chat, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let id = chat.id.clone();
+        let continuar = botao_primario("continuar-antiga", Some(Lucide::MessageSquarePlus.into()), "Continuar num chat novo", TamanhoBotao::Controle, window, cx)
+            .tooltip("Um chat novo no mesmo projeto, com esta conversa anexada como contexto")
+            .on_click(cx.listener(move |this, _, window, cx| this.continuar_conversa_antiga(&id, window, cx)));
+        div().map(super::mensagens::coluna).pb(esp::E12).child(
+            h_flex()
+                .flex_wrap()
+                .gap(esp::E12)
+                .p(dentro_da_borda(12.))
+                .rounded(raio::PECA)
+                .bg(Cores::cartao_elevado())
+                .border_1()
+                .border_color(Cores::linha())
+                .child(svg().path(Lucide::Archive.path()).flex_none().size(r(16.)).text_color(Cores::tenue()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(r(160.))
+                        .corpo_ui()
+                        .text_color(Cores::texto())
+                        .child("Conversa do Vitral antigo, só para leitura."),
+                )
+                .child(div().flex_none().child(continuar)),
+        )
+    }
+
+    /// Um chat novo no projeto da conversa antiga (`Motor::continuar_conversa_antiga`), com ela
+    /// anexada à primeira mensagem e o cursor na caixa.
+    fn continuar_conversa_antiga(&mut self, antiga: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let Some(titulo) = motor.read(cx).chat(antiga).map(|c| c.titulo.clone()) else {
+            return;
+        };
+        let (novo, arquivo) = match motor.update(cx, |m, cx| m.continuar_conversa_antiga(antiga, cx)) {
+            Ok(feito) => feito,
+            Err(erro) => {
+                window.push_notification(aviso(Tom::Erro, format!("Não abriu o chat: {erro}")), cx);
+                return;
+            }
+        };
+        self.anexos.entry(novo.clone()).or_default().push(arquivo);
+        self.selecionar(Some(novo), window, cx);
+        if let Some(painel) = self.paineis.get(self.ativo).map(|p| p.id) {
+            self.escrever_na_caixa(painel, &format!("Continuando a conversa “{titulo}” (anexada): "), window, cx);
+        }
+    }
+
+    /// Painel sem conversa: o estado vazio amplo, com o Mestre primeiro, Novo chat e Novo projeto
+    /// (sem projetos, o projeto antes do chat avulso).
     fn sem_conversa(&self, motor: &Motor, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let vazio = if motor.projetos().is_empty() {
-            EstadoVazio::new(Lucide::FolderPlus, "Nenhum projeto ainda")
-                .texto(
-                    "Cada subpasta da pasta de trabalho é um projeto. Crie um para começar a conversar \
-                     com o coordenador.",
+        if motor.mestre_id().is_some() {
+            let vazio = EstadoVazio::new(Lucide::Orbit, "Fale com o Mestre")
+                .texto("Ele entende o pedido, manda para o projeto certo e mostra como vai dividir antes de começar.")
+                .acao(
+                    botao_primario("abrir-mestre-vazio", Some(Lucide::Orbit.into()), "Abrir o Mestre", TamanhoBotao::Controle, window, cx)
+                        .tooltip_with_action("Abrir o Mestre", &AbrirMestre, None)
+                        .on_click(cx.listener(|this, _, window, cx| this.abrir_mestre(window, cx))),
                 )
                 .acao(
-                    botao_primario(
-                        "criar-projeto-vazio",
-                        Some(Lucide::FolderPlus.into()),
-                        "Novo projeto…",
-                        TamanhoBotao::Controle,
-                        window,
-                        cx,
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| this.dialogo_criar_projeto(window, cx))),
-                )
-        } else {
-            EstadoVazio::new(Lucide::MessageSquarePlus, "Comece uma conversa")
-                .texto(
-                    "Você fala com o coordenador do projeto. Ele divide o trabalho em tarefas, abre uma \
-                     conversa de trabalhador para cada uma, revisa as entregas e te devolve um resumo.",
-                )
-                .acao(
-                    botao_primario("comecar", Some(Lucide::Plus.into()), "Nova conversa", TamanhoBotao::Controle, window, cx)
-                        .tooltip_with_action("Nova conversa", &NovaConversa, None)
+                    botao_fantasma("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
+                        .tooltip_with_action("Novo chat", &NovaConversa, None)
                         .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
                 )
+                .acao(
+                    botao_fantasma("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
+                        .tooltip_with_action("Novo projeto…", &NovoProjeto, None)
+                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_criar_projeto(window, cx))),
+                );
+            return v_flex().flex_1().items_center().justify_center().p(esp::E32).child(vazio.amplo());
+        }
+        let novo_projeto = |primario: bool, window: &Window| {
+            let botao = if primario {
+                botao_primario("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
+            } else {
+                botao_fantasma("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
+            };
+            botao
+                .tooltip_with_action("Novo projeto…", &NovoProjeto, None)
+                .on_click(cx.listener(|this, _, window, cx| this.dialogo_criar_projeto(window, cx)))
+        };
+        let vazio = if motor.projetos_visiveis().is_empty() {
+            EstadoVazio::new(Lucide::FolderPlus, "Nenhum projeto ainda")
+                .texto(
+                    "Um projeto liga as pastas em que você trabalha (ou ganha uma pasta própria, com git). \
+                     Também dá para começar um chat avulso, numa pasta só dele.",
+                )
+                .acao(novo_projeto(true, window))
+                .acao(
+                    botao_fantasma("avulso-vazio", Some(Lucide::MessageCircle.into()), "Chat avulso", TamanhoBotao::Controle, window, cx)
+                        .on_click(cx.listener(|this, _, window, cx| this.nova_conversa("", window, cx))),
+                )
+        } else {
+            EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
+                .texto(
+                    "Cada chat trabalha numa pasta de um projeto: numa cópia só dele quando a pasta usa git \
+                     (você junta as mudanças quando quiser) ou direto nela.",
+                )
+                .acao(
+                    botao_primario("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
+                        .tooltip_with_action("Novo chat", &NovaConversa, None)
+                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
+                )
+                .acao(novo_projeto(false, window))
         };
         v_flex().flex_1().items_center().justify_center().p(esp::E32).child(vazio.amplo())
+    }
+}
+
+/// O que o painel da direita mostra, pelo papel do chat aberto (ou o arquivo aberto).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Direita {
+    Arquivo,
+    Distribuido,
+    EsteChat,
+    ConversaAntiga,
+    Ajudantes,
+}
+
+impl Direita {
+    /// O nome da aba dela, na dica do botão.
+    fn nome(self) -> &'static str {
+        match self {
+            Direita::Arquivo => "Arquivo aberto",
+            Direita::Distribuido => "Distribuído",
+            Direita::EsteChat => "Este chat",
+            Direita::ConversaAntiga => "Esta conversa",
+            Direita::Ajudantes => "Ajudantes",
+        }
+    }
+
+    /// O item do "⋯" quando o botão sai do cabeçalho.
+    fn no_menu(self) -> &'static str {
+        match self {
+            Direita::Arquivo => "Mostrar o arquivo aberto",
+            Direita::Distribuido => "Mostrar o Distribuído",
+            Direita::EsteChat => "Mostrar Este chat",
+            Direita::ConversaAntiga => "Mostrar Esta conversa",
+            Direita::Ajudantes => "Mostrar os ajudantes",
+        }
     }
 }
 
@@ -1112,3 +1350,4 @@ mod testes {
         assert_eq!(ver(Some("claude-opus-4-1"), Some("claude-opus-4-1")), ("Opus 4.1".into(), None));
     }
 }
+

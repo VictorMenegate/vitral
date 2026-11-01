@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Um `claude` de mentira para a bancada (CLAUDE_FALSO=1): responde a versão, recusa o
+`auth status` e, num turno, anota a mensagem em notas-do-chat.md na pasta onde roda (a cópia,
+ou a pasta direta) e responde em stream-json, sem chamar a API. Com "[demora]" na mensagem, leva
+10 s. Os argumentos e o ambiente de cada turno vão para $XDG_STATE_HOME/claude-falso.log.
+
+Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
+vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
+tool_result no stream. E, sem precisar pedir:
+- no chat de projeto, o pedido do Mestre (ou o ajuste, ou o lembrete) termina com entregar_tarefa,
+  todos os critérios "feito" (o número deles fica guardado por sessão para o ajuste);
+- no Mestre, o relatório de uma verificação que FALHOU na rodada 1 vira pedir_ajuste;
+- no chat de projeto, o relatório de um ajudante ("Ajudante #N ... terminou") vira aprovar_tarefa N
+  (`[nao-aprovar]` desliga), ou pedir_ajuste N na rodada 1 com `[ajuste-uma-vez]` no relatório; a
+  pergunta de um ajudante ("Pergunta do ajudante #N") ganha resposta por mensagem_para_chat;
+- o Mestre não escreve arquivo nenhum; o ajudante escreve em notas-do-t<N>.md (o nome da cópia dele),
+  para dois ajudantes não mexerem no mesmo arquivo. A anotação vem antes das ferramentas: um
+  criar_tarefa ou aprovar_tarefa na mesma vez já encontra a pasta com o que ela anotou.
+Como revisor (--json-schema), devolve o parecer "aprovar" (ou "ajustar", com "[revisor-ajustar]"
+no pedido) sem mexer em nada."""
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+
+args = sys.argv[1:]
+if "--version" in args:
+    print("2.1.300 (Claude Code)")
+    sys.exit(0)
+if args[:1] == ["auth"]:
+    sys.exit(1)
+
+estado = os.environ.get("XDG_STATE_HOME", "/nao-existe")
+registro = os.path.join(estado, "claude-falso.log")
+
+
+def anotar(valor):
+    try:
+        with open(registro, "a") as saida:
+            saida.write(json.dumps(valor, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+if "--json-schema" in args:
+    pedido = args[-1] if args else ""
+    ajustar = "[revisor-ajustar]" in pedido
+    parecer = {
+        "veredito": "ajustar" if ajustar else "aprovar",
+        "resumo": "(claude falso) revisão de mentira",
+        "problemas": [{"arquivo": "notas-do-chat.md", "linha": 1, "gravidade": "media",
+                       "descricao": "(claude falso) pediu ajuste"}] if ajustar else [],
+    }
+    anotar({"cwd": os.getcwd(), "revisor": parecer["veredito"]})
+    print(json.dumps({"type": "result", "is_error": False, "result": "", "structured_output": parecer}))
+    sys.exit(0)
+
+
+def emitir(valor):
+    print(json.dumps(valor, ensure_ascii=False), flush=True)
+
+
+def valor_de(chave):
+    return args[args.index(chave) + 1] if chave in args and args.index(chave) + 1 < len(args) else None
+
+
+try:
+    url = json.loads(valor_de("--mcp-config") or "{}")["mcpServers"]["vitral"]["url"]
+except (ValueError, KeyError, TypeError):
+    url = None
+papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else ""
+
+linha = sys.stdin.readline()
+try:
+    conteudo = json.loads(linha)["message"]["content"]
+    texto = "\n".join(b.get("text", "") for b in conteudo if b.get("type") == "text")
+except (ValueError, KeyError, TypeError):
+    texto = ""
+pedido = next((l.strip() for l in reversed(texto.splitlines()) if l.strip() and not l.startswith("[")), "")
+prompt = valor_de("--append-system-prompt-file")
+sessao = valor_de("--session-id") or valor_de("--resume") or "falsa"
+# A conversa trazida do Claude Code continua numa cópia (--resume <id> --fork-session --session-id
+# <nova>): como no de verdade, a sessão nova nasce com o que a original tinha, ao lado dela. Só com
+# um CLAUDE_CONFIG_DIR de mentira: o ~/.claude de verdade nunca é tocado.
+config = os.environ.get("CLAUDE_CONFIG_DIR")
+if "--fork-session" in args and config and valor_de("--resume") and valor_de("--session-id"):
+    import glob
+    import shutil
+    for original in glob.glob(os.path.join(config, "projects", "*", valor_de("--resume") + ".jsonl")):
+        shutil.copyfile(original, os.path.join(os.path.dirname(original), valor_de("--session-id") + ".jsonl"))
+anotar({
+    "cwd": os.getcwd(),
+    "args": args,
+    "VITRAL_PORT": os.environ.get("VITRAL_PORT"),
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY"),
+    "prompt": open(prompt).read()[:600] if prompt else None,
+    "pedido": pedido,
+})
+
+emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_id": sessao,
+        "slash_commands": ["clear", "compact"], "claude_code_version": "2.1.300", "tools": ["Read", "Edit", "Bash"]})
+if "[demora]" in texto:
+    time.sleep(10)
+
+chamadas = []
+
+
+def chamar(nome, argumentos):
+    n = len(chamadas) + 1
+    id_ = f"toolu_falso_{n}"
+    emitir({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": id_, "name": f"mcp__vitral__{nome}", "input": argumentos}]}})
+    corpo = json.dumps({"jsonrpc": "2.0", "id": n, "method": "tools/call",
+                        "params": {"name": nome, "arguments": argumentos}}).encode()
+    try:
+        req = urllib.request.Request(url, data=corpo, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            resposta = json.loads(r.read())["result"]
+        resultado, erro = resposta["content"][0]["text"], bool(resposta.get("isError"))
+    except Exception as e:  # noqa: BLE001 (a bancada só anota)
+        resultado, erro = f"(claude falso) a chamada falhou: {e}", True
+    emitir({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": id_, "content": resultado, "is_error": erro}]}})
+    chamadas.append({"nome": nome, "erro": erro, "resultado": resultado[:300]})
+    return resultado, erro
+
+
+def diretivas(texto):
+    """Os `[mcp nome {json}]` do texto, fora das linhas citadas."""
+    proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
+    achadas = []
+    decodificador = json.JSONDecoder()
+    for m in re.finditer(r"\[mcp (\w+)", proprio):
+        resto = proprio[m.end():].lstrip()
+        argumentos = {}
+        if resto.startswith("{"):
+            try:
+                argumentos, _ = decodificador.raw_decode(resto)
+            except ValueError:
+                continue
+        achadas.append((m.group(1), argumentos))
+    return achadas
+
+
+guardado = os.path.join(estado, f"claude-falso-{sessao}.json")
+if papel != "mestre":
+    arquivo = f"notas-do-{os.path.basename(os.getcwd())}.md" if papel == "trabalhador" else "notas-do-chat.md"
+    # Num pedido do Mestre, o título e o pedido (a verificação dele procura uma palavra deles), não a
+    # última linha ("Quando terminar e verificar, chame entregar_tarefa.").
+    nota = pedido[:80]
+    if "Pedido do Mestre (" in texto:
+        corpo = texto.split("Pedido do Mestre (", 1)[1].split("\n", 1)[-1].split("Critérios de aceitação:", 1)[0]
+        nota = " · ".join(l.strip() for l in corpo.splitlines() if l.strip())[:160] or nota
+    with open(arquivo, "a") as notas:
+        notas.write(f"- {nota}\n")
+else:
+    arquivo = None
+if url:
+    for nome, argumentos in diretivas(texto):
+        chamar(nome, argumentos)
+    if papel == "projeto" and "[nao-entregar]" not in texto and any(
+            marca in texto for marca in ("Pedido do Mestre", "Ajuste pedido pelo Mestre", "Se já terminou o pedido")):
+        bloco = texto.split("Critérios de aceitação:", 1)
+        criterios = len(re.findall(r"^\d+\. ", bloco[1], re.M)) if len(bloco) > 1 else 0
+        if criterios:
+            with open(guardado, "w") as saida:
+                json.dump({"criterios": criterios}, saida)
+        else:
+            try:
+                criterios = json.load(open(guardado))["criterios"]
+            except (OSError, ValueError, KeyError):
+                criterios = 1
+    if papel == "projeto" and "[nao-aprovar]" not in texto:
+        for bloco in re.split(r"(?=Ajudante #\d+ )", texto):
+            achado = re.search(r"aprovar_tarefa (\d+) \(junta na sua pasta\)", bloco)
+            if not achado:
+                continue
+            n = int(achado.group(1))
+            if "[ajuste-uma-vez]" in bloco and "terminou a rodada 1" in bloco:
+                chamar("pedir_ajuste", {"tarefa": n, "feedback": "(claude falso) anote mais uma linha."})
+            else:
+                chamar("aprovar_tarefa", {"tarefa": n})
+    if papel == "projeto":
+        for n in re.findall(r"Pergunta do ajudante #(\d+)", texto):
+            chamar("mensagem_para_chat", {"chat": n, "texto": "(claude falso) resposta: siga com o que tem."})
+    if papel == "mestre":
+        decidir = re.search(r"Decida: aprovar_tarefa (\d+)", texto)
+        if decidir and "FALHOU" in texto and "· rodada 1" in texto:
+            chamar("pedir_ajuste", {"tarefa": int(decidir.group(1)),
+                                    "feedback": "(claude falso) a verificação falhou: anote mais uma linha."})
+
+if url and papel == "projeto" and "[nao-entregar]" not in texto and any(
+        marca in texto for marca in ("Pedido do Mestre", "Ajuste pedido pelo Mestre", "Se já terminou o pedido")):
+    chamar("entregar_tarefa", {
+        "resumo": "(claude falso) anotei o pedido em notas-do-chat.md",
+        "como_verificou": "li o arquivo de volta",
+        "criterios": [{"indice": i, "estado": "feito", "evidencia": "notas-do-chat.md"} for i in range(1, criterios + 1)],
+    })
+
+if papel == "mestre":
+    if "terminou:" in texto and "A divisão" in texto:
+        resposta = "(claude falso) Resumo por projeto: " + texto.split("terminou:", 1)[1].split("Responda", 1)[0].strip()
+    else:
+        resposta = f"(claude falso) Mestre: {pedido[:80]}"
+    if chamadas:
+        resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+else:
+    pasta = os.getcwd()
+    casa = os.path.expanduser("~")
+    if pasta == casa or pasta.startswith(casa + "/"):
+        pasta = "~" + pasta[len(casa):]
+    resposta = f"(claude falso) Anotei em {arquivo}, na pasta {pasta}: {pedido[:80]}"
+    if chamadas:
+        resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+anotar({"papel": papel, "chamadas": chamadas})
+emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
+                                         "usage": {"input_tokens": 1200}}})
+emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0,
+        "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+# O Vitral fecha a entrada no fim do turno; sem isso, sai sozinho depois de um tempo.
+inicio = time.time()
+while time.time() - inicio < 30 and sys.stdin.readline():
+    pass

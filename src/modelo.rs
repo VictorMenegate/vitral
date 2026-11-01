@@ -1,48 +1,19 @@
-//! Dados do Vitral que vão para o disco: chats, tarefas e configuração.
-//!
-//! Tudo fica em `<pasta de trabalho>/.vitral/`:
-//! - `estado.json`: chats (sem as mensagens) e tarefas;
-//! - `chats/<id>.json`: mensagens de cada chat;
-//! - `config.json`: preferências desta pasta;
-//! - `notas/<projeto>.md`: decisões anotadas pelo coordenador;
-//! - `worktrees/<projeto>/t<N>`: cópias isoladas (git worktree) das tarefas.
+//! Os tipos do que vai para o disco: projetos, chats, tarefas, cartões e configuração. Onde e
+//! como cada um é gravado fica em `dados.rs`.
 
 use std::{
-    collections::{HashMap, VecDeque},
-    fs,
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
-/// O formato do que fica em `.vitral/`. Sobe quando uma migração muda o formato (guardando uma
-/// cópia antes); o atualizador só volta para uma versão que leia o formato que está no disco. O
+/// O formato dos dados no disco. Sobe quando uma migração muda o formato; o atualizador só volta
+/// para uma versão que leia o formato que está no disco (`dados::formato_em`). O 1 é o Vitral antigo
+/// (o `.vitral/` em cada pasta de trabalho, que a migração não muda) e o 2, os dados globais. O
 /// `pacote/manifesto.py` lê esta linha.
-pub const FORMATO_DADOS: u32 = 1;
-
-/// O formato de `.vitral/` desta pasta: o número que a migração grava em `.vitral/formato` depois
-/// de guardar a cópia em `.vitral/copias/formato-<n>/`. Sem o arquivo, é o 1.
-pub fn formato_no_disco(raiz: &Path) -> u32 {
-    fs::read_to_string(raiz.join(".vitral").join("formato"))
-        .ok()
-        .and_then(|texto| texto.trim().parse().ok())
-        .unwrap_or(1)
-}
-
-/// O maior formato entre as pastas recentes (e a que vai abrir): a volta de versão só vai para uma
-/// que leia todas.
-pub fn maior_formato_no_disco(abrir: Option<&Path>) -> u32 {
-    abrir
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(recentes())
-        .map(|pasta| formato_no_disco(&pasta))
-        .max()
-        .unwrap_or(1)
-}
+pub const FORMATO_DADOS: u32 = 2;
 
 pub fn agora() -> u64 {
     SystemTime::now()
@@ -55,12 +26,66 @@ pub fn novo_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..10].to_string()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Id do projeto dos chats sem projeto (Avulsos) e do Mestre.
+pub const SEM_PROJETO: &str = "";
+/// O chat único do Mestre.
+pub const ID_MESTRE: &str = "mestre";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Papel {
-    /// Conversa com o usuário, distribui tarefas e revisa.
+    /// Conversa com o usuário, distribui tarefas e revisa (a do Vitral antigo).
+    #[default]
     Coordenador,
-    /// Executa uma tarefa do coordenador.
+    /// Executa uma tarefa do coordenador; o ajudante de um chat de projeto.
     Trabalhador,
+    /// Único, global, id "mestre".
+    Mestre,
+    /// Chat de projeto ou avulso (projeto ""); sempre com tarefa.
+    Projeto,
+}
+
+impl Papel {
+    /// O pedaço da URL do MCP de cada papel.
+    pub fn rota(self) -> &'static str {
+        match self {
+            Papel::Coordenador => "coordenador",
+            Papel::Trabalhador => "trabalhador",
+            Papel::Mestre => "mestre",
+            Papel::Projeto => "projeto",
+        }
+    }
+
+    /// Rota desconhecida dá `None` (o MCP responde 404).
+    pub fn da_rota(rota: &str) -> Option<Papel> {
+        [Papel::Coordenador, Papel::Trabalhador, Papel::Mestre, Papel::Projeto]
+            .into_iter()
+            .find(|p| p.rota() == rota)
+    }
+
+    pub fn rotulo(self) -> &'static str {
+        match self {
+            Papel::Coordenador => "conversa antiga",
+            Papel::Trabalhador => "ajudante",
+            Papel::Mestre => "Mestre",
+            Papel::Projeto => "chat",
+        }
+    }
+
+    /// Ocupa uma das vagas de `max_trabalhadores`.
+    pub fn conta_vaga(self) -> bool {
+        matches!(self, Papel::Projeto | Papel::Trabalhador)
+    }
+
+    /// Aparece sozinho na lista (o ajudante vai embaixo do chat dele).
+    pub fn de_topo(self) -> bool {
+        self != Papel::Trabalhador
+    }
+
+    /// Conversa com o usuário e aparece como cartão de topo na lista de hoje: a conversa antiga e
+    /// o chat de projeto. O Mestre fica de fora até a interface dele (L6).
+    pub fn na_lista(self) -> bool {
+        matches!(self, Papel::Coordenador | Papel::Projeto)
+    }
 }
 
 /// Estado de execução de um chat. Não vai para o disco: ao abrir, todos estão parados.
@@ -118,11 +143,20 @@ pub enum Item {
         texto: String,
         erro: bool,
     },
+    /// Cartão interativo; os dados ficam em `Estado.cartoes`.
+    Cartao {
+        id: u64,
+    },
+    /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
+    #[serde(untagged)]
+    Desconhecido(serde_json::Value),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Chat {
     pub id: String,
+    /// Id do projeto; "" é Avulsos (e o Mestre).
+    #[serde(default)]
     pub projeto: String,
     pub titulo: String,
     pub papel: Papel,
@@ -177,11 +211,59 @@ pub struct Chat {
     /// Modo em que a conversa estava antes de entrar em Planejar: aprovar o plano volta a ele.
     #[serde(default)]
     pub modo_antes_do_plano: Option<String>,
+    /// Quem criou: "" o usuário, "mestre", "rotina:<id>", "migracao", "continuacao:<chat>",
+    /// "importacao".
+    #[serde(default)]
+    pub criado_por: String,
+    /// A conversa do Claude Code que este chat continua (o histórico vem do arquivo dela).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importada: Option<crate::importar::Importada>,
+    /// Campos de versões mais novas, regravados como vieram.
+    #[serde(flatten)]
+    pub resto: serde_json::Map<String, serde_json::Value>,
     #[serde(skip)]
     pub itens: Vec<Item>,
 }
 
 impl Chat {
+    /// O construtor único dos chats novos.
+    pub fn novo(id: String, papel: Papel, projeto: &str, titulo: &str, cwd: PathBuf) -> Chat {
+        let agora = agora();
+        Chat {
+            id,
+            projeto: projeto.to_string(),
+            titulo: titulo.to_string(),
+            papel,
+            pai: None,
+            tarefa: None,
+            sessao: uuid::Uuid::new_v4().to_string(),
+            sessao_criada: false,
+            cwd,
+            modelo: None,
+            modelo_atual: None,
+            permissao: None,
+            permitidas: Vec::new(),
+            esforco: None,
+            conta: None,
+            contexto: None,
+            janela: None,
+            comandos: Vec::new(),
+            criado_em: agora,
+            atualizado_em: agora,
+            custo_usd: 0.0,
+            custo_da_sessao: None,
+            fixado: false,
+            arquivado: false,
+            lido_em: agora,
+            turno_aberto: false,
+            modo_antes_do_plano: None,
+            criado_por: String::new(),
+            importada: None,
+            resto: Default::default(),
+            itens: Vec::new(),
+        }
+    }
+
     /// Soma o custo de um `result`. O `total_cost_usd` dele é o total da sessão, não o do turno:
     /// cresce a cada `result` do mesmo processo e, numa retomada (`--resume`), continua do total
     /// que a sessão gravou. Entra só o que cresceu desde o último visto. Um total menor (a sessão
@@ -233,14 +315,17 @@ pub fn dentro_da_pasta(caminho: &Path, pasta: &Path) -> bool {
         && (caminho.is_relative() || caminho.starts_with(pasta))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EstadoTarefa {
+    #[default]
     Rodando,
     EmRevisao,
     Ajustando,
     Aprovada,
     Falhou,
     Cancelada,
+    /// Chat de projeto pronto para conversar, sem pedido pendente (nem ativa nem encerrada).
+    Conversa,
 }
 
 impl EstadoTarefa {
@@ -252,6 +337,7 @@ impl EstadoTarefa {
             EstadoTarefa::Aprovada => "aprovada",
             EstadoTarefa::Falhou => "falhou",
             EstadoTarefa::Cancelada => "cancelada",
+            EstadoTarefa::Conversa => "conversa",
         }
     }
 
@@ -332,13 +418,137 @@ pub struct Tarefa {
     /// ignorado e por quê (vai também no commit).
     #[serde(default)]
     pub ressalva: Option<String>,
+    #[serde(default)]
+    pub forma: Forma,
+    /// A pasta de onde a cópia saiu e onde ela é juntada; na forma direta, a pasta de trabalho.
+    #[serde(default)]
+    pub origem: PathBuf,
+    /// Branch da origem quando a cópia nasceu.
+    #[serde(default)]
+    pub ramo_alvo: Option<String>,
+    /// Início da faixa de 10 portas (`VITRAL_PORT`); 0 é sem faixa (vale `porta_da_tarefa`).
+    #[serde(default)]
+    pub porta: u64,
+    #[serde(default)]
+    pub atualizada_em: u64,
+    /// Entrega registrada por `entregar_tarefa` na rodada atual.
+    #[serde(default)]
+    pub entrega: Option<Entrega>,
+    /// Cartão de divisão do pedido atual.
+    #[serde(default)]
+    pub divisao: Option<u64>,
+    /// Rodada em que o lembrete de chamar `entregar_tarefa` já foi mandado.
+    #[serde(default)]
+    pub lembrete_rodada: u32,
+    /// Números do que a cópia tem para juntar.
+    #[serde(default)]
+    pub mudancas: Option<Mudancas>,
+    /// Junção em andamento desde (gravado antes do merge; 0 é nenhuma).
+    #[serde(default)]
+    pub juntando_desde: u64,
+    /// Geração da preparação da cópia: o resultado de uma geração antiga é descartado.
+    #[serde(default)]
+    pub geracao_preparo: u32,
+    /// Por que a cópia não pôde ser preparada; não muda o estado.
+    #[serde(default)]
+    pub falha_copia: Option<String>,
+    /// Campos de versões mais novas, regravados como vieram.
+    #[serde(flatten)]
+    pub resto: serde_json::Map<String, serde_json::Value>,
 }
 
 fn sim() -> bool {
     true
 }
 
+impl Default for Tarefa {
+    fn default() -> Self {
+        Tarefa {
+            id: 0,
+            projeto: String::new(),
+            coordenador: String::new(),
+            trabalhador: String::new(),
+            titulo: String::new(),
+            objetivo: String::new(),
+            criterios: Vec::new(),
+            verificacao: None,
+            estado: EstadoTarefa::Rodando,
+            rodada: 1,
+            worktree: None,
+            branch: None,
+            base: None,
+            copia_limpa: false,
+            progresso: None,
+            relatorio: None,
+            ultima_verificacao: None,
+            criada_em: 0,
+            revisao: None,
+            sobreposicao: Vec::new(),
+            preparacao: None,
+            parada: None,
+            entrega_pendente: None,
+            preparada: true,
+            ressalva: None,
+            forma: Forma::Copia,
+            origem: PathBuf::new(),
+            ramo_alvo: None,
+            porta: 0,
+            atualizada_em: 0,
+            entrega: None,
+            divisao: None,
+            lembrete_rodada: 0,
+            mudancas: None,
+            juntando_desde: 0,
+            geracao_preparo: 0,
+            falha_copia: None,
+            resto: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mudancas {
+    pub arquivos: u32,
+    pub mais: u32,
+    pub menos: u32,
+    pub em: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Entrega {
+    pub resumo: String,
+    pub como_verificou: String,
+    pub criterios: Vec<CriterioEntregue>,
+    pub pendencias: String,
+    pub rodada: u32,
+    pub em: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CriterioEntregue {
+    pub indice: usize,
+    /// "feito", "parcial" ou "nao".
+    pub estado: String,
+    pub evidencia: String,
+}
+
 impl Tarefa {
+    /// Quem fez o pedido aberto: "mestre", o chat pai (ajudante); `None` é o usuário.
+    pub fn dono(&self) -> Option<&str> {
+        Some(self.coordenador.as_str()).filter(|d| !d.is_empty())
+    }
+
+    pub fn tem_copia(&self) -> bool {
+        self.forma == Forma::Copia
+    }
+
+    pub fn tem_git(&self) -> bool {
+        matches!(self.forma, Forma::Copia | Forma::DiretaGit)
+    }
+
     /// A cópia foi apagada: limpa, ou removida numa aprovação (que antes não marcava `copia_limpa`).
     pub fn copia_apagada(&self) -> bool {
         self.copia_limpa || (self.worktree.is_none() && self.branch.is_some())
@@ -380,7 +590,7 @@ pub struct Revisao {
     pub problemas: Vec<Problema>,
 }
 
-/// Configuração de um projeto da pasta de trabalho.
+/// Configuração de uma pasta de projeto (o ícone e a cor ficam no `Projeto`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConfigProjeto {
@@ -388,26 +598,110 @@ pub struct ConfigProjeto {
     pub preparacao: String,
     /// Comando que sobe o projeto para testar (botão "Rodar").
     pub rodar: String,
-    /// Arquivos fora do git copiados para cada cópia (padrões; o padrão é ".env*").
+    /// Arquivos fora do git copiados para cada cópia (padrões; vazio vale `.env*` e
+    /// `CLAUDE.local.md`).
     pub copiar: Vec<String>,
-    /// Ícone do atalho no trilho (nome do Lucide); vazio é palpite pelo conteúdo da pasta.
+}
+
+impl ConfigProjeto {
+    pub fn padroes_de_copia(&self) -> Vec<String> {
+        if self.copiar.is_empty() {
+            vec![".env*".into(), "CLAUDE.local.md".into()]
+        } else {
+            self.copiar.clone()
+        }
+    }
+}
+
+/// Formato do `estado.json` dos dados globais. 0 (ou ausente) é o do `.vitral/` de cada pasta de
+/// trabalho; um maior que este abre o app só para leitura.
+pub const VERSAO_ESTADO: u32 = 2;
+
+/// Chaves que nenhum projeto pode ter: são o Mestre e o grupo dos chats sem projeto.
+pub const CHAVES_RESERVADAS: [&str; 2] = ["mestre", "avulsos"];
+
+/// Como os chats de um projeto trabalham. Decidida quando o chat nasce, com a pasta presente, e
+/// gravada: nunca é deduzida de a tarefa ter ou não uma cópia.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Forma {
+    /// Numa cópia (git worktree) da origem, que é uma pasta ligada com git.
+    #[default]
+    Copia,
+    /// Direto na origem, que tem git (a pasta própria): commit no fim de cada vez, sem cópia.
+    DiretaGit,
+    /// Direto na origem, sem git (pasta ligada sem git, pasta dentro de outro repositório, avulso).
+    Direta,
+}
+
+/// Projeto dos dados globais: um nome, a aparência e as pastas onde os chats dele trabalham.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Projeto {
+    /// Chave estável: o nome da subpasta num projeto migrado, `novo_id()` num criado no app.
+    pub id: String,
+    /// Único pela chave (sem acento e sem diferenciar maiúsculas); as reservadas são proibidas.
+    pub nome: String,
+    /// Id em `ICONES`; vazio é palpite pela primeira pasta.
     pub icone: String,
-    /// Cor do atalho ("#rrggbb"); vazio é escolhida pelo nome.
+    /// "#rrggbb"; vazio é a cor automática do id.
     pub cor: String,
-    /// Fora do trilho, dos filtros, do "Nova conversa" e da lista (as conversas dele vão para
-    /// Arquivadas); não roda rotinas.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    /// O que vai neste projeto (o Mestre encaminha por aqui); vazio usa o README.
+    pub descricao: String,
+    /// Vão no prompt de todo chat do projeto.
+    pub instrucoes: String,
+    /// A primeira é a principal. Vazio só num provisório.
+    pub pastas: Vec<PastaLigada>,
     pub arquivado: bool,
+    pub ordem: u32,
+    pub criado_em: u64,
+    /// Sobrepõem a configuração para os chats novos do projeto.
+    pub permissao: Option<String>,
+    pub modelo: Option<String>,
+    pub conta: Option<String>,
+    /// Pasta de trabalho do Vitral antigo de onde ele veio.
+    pub importado_de: Option<PathBuf>,
+    /// Recriado na carga para um chat órfão não sumir.
+    pub provisorio: bool,
+    /// Campos de versões mais novas, regravados como vieram.
+    #[serde(flatten)]
+    pub resto: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Projeto {
+    pub fn chave(&self) -> String {
+        crate::dados::chave(&self.nome)
+    }
+
+    pub fn principal(&self) -> Option<&PastaLigada> {
+        self.pastas.first()
+    }
+}
+
+/// Uma pasta de um projeto, com a configuração dela (preparação, rodar e o que copiar).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PastaLigada {
+    /// Canônico ao ligar; só muda por "Localizar pasta…".
+    pub caminho: PathBuf,
+    /// A pasta própria do projeto (`projetos/<slug>` nos dados), criada com git.
+    pub propria: bool,
+    #[serde(flatten)]
+    pub config: ConfigProjeto,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub versao: u32,
     /// `bypassPermissions`, `auto`, `acceptEdits` ou `manual`.
     pub permissao: String,
-    /// Modelo dos coordenadores; vazio usa o padrão do Claude Code.
-    pub modelo_coordenador: String,
-    pub modelo_trabalhador: String,
+    /// Modelo do Mestre (e das conversas antigas); vazio usa o padrão do Claude Code.
+    #[serde(alias = "modelo_coordenador")]
+    pub modelo_mestre: String,
+    /// Modelo dos chats de projeto e dos ajudantes.
+    #[serde(alias = "modelo_trabalhador")]
+    pub modelo_chats: String,
+    /// Chats de projeto e ajudantes rodando ao mesmo tempo.
     pub max_trabalhadores: usize,
     pub max_rodadas: u32,
     /// Apaga sozinho, ao abrir, as cópias das tarefas encerradas paradas há mais dias que isso; 0 é nunca.
@@ -420,10 +714,15 @@ pub struct Config {
     pub modelo_revisor: String,
     /// Trabalhadores também carregam os servidores MCP do Claude Code do usuário.
     pub mcp_trabalhadores: bool,
-    pub projetos: HashMap<String, ConfigProjeto>,
-    pub rotinas: Vec<Rotina>,
     /// Arquiva sozinho as conversas paradas há tantos dias (0 = nunca).
     pub arquivar_apos_dias: u32,
+    /// O Mestre começa a divisão sem mostrar o cartão.
+    pub comecar_sem_perguntar: bool,
+    /// Entrega verde é juntada pelo motor sozinho.
+    pub aprovar_sozinho: bool,
+    pub max_ajudantes: usize,
+    /// Fora da janela por mais que isso, a volta mostra o resumo.
+    pub minutos_para_resumo: u64,
 }
 
 /// Pedido que o Vitral manda sozinho para um coordenador novo, num horário (com o Vitral aberto).
@@ -456,6 +755,16 @@ pub fn agora_local() -> (u8, u32, String) {
     )
 }
 
+/// "12/10", no fuso local.
+pub fn data_curta(segundos: u64) -> String {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let s = segundos as libc::time_t;
+    unsafe {
+        libc::localtime_r(&s, &mut tm);
+    }
+    format!("{:02}/{:02}", tm.tm_mday, tm.tm_mon + 1)
+}
+
 /// "às 15:42", ou "em 03/11 às 15:42" quando não é hoje, no fuso local.
 pub fn quando_local(segundos: u64) -> String {
     let local = |s: u64| {
@@ -478,9 +787,10 @@ pub fn quando_local(segundos: u64) -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            versao: 0,
             permissao: "bypassPermissions".into(),
-            modelo_coordenador: String::new(),
-            modelo_trabalhador: String::new(),
+            modelo_mestre: String::new(),
+            modelo_chats: String::new(),
             max_trabalhadores: 4,
             max_rodadas: 3,
             limpar_copias_dias: 0,
@@ -488,31 +798,17 @@ impl Default for Config {
             revisor: true,
             modelo_revisor: String::new(),
             mcp_trabalhadores: false,
-            projetos: HashMap::new(),
-            rotinas: Vec::new(),
             arquivar_apos_dias: 0,
+            comecar_sem_perguntar: false,
+            aprovar_sozinho: true,
+            max_ajudantes: 3,
+            minutos_para_resumo: 15,
         }
     }
 }
 
-impl Config {
-    pub fn projeto_arquivado(&self, projeto: &str) -> bool {
-        self.projetos.get(projeto).is_some_and(|p| p.arquivado)
-    }
-
-    /// A conversa fica fora da lista principal: arquivada ela mesma ou com o projeto.
-    pub fn conversa_arquivada(&self, c: &Chat) -> bool {
-        c.arquivado || self.projeto_arquivado(&c.projeto)
-    }
-
-    /// Os projetos à vista e os arquivados, cada grupo na ordem de `nomes`.
-    pub fn separar_arquivados(&self, nomes: Vec<String>) -> (Vec<String>, Vec<String>) {
-        nomes.into_iter().partition(|p| !self.projeto_arquivado(p))
-    }
-}
-
 /// Uma mensagem a caminho de um chat. `de` vazio é o usuário; anexos são arquivos dele.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Entrada {
     pub de: Option<String>,
     pub texto: String,
@@ -529,6 +825,25 @@ pub struct Entrada {
     /// fluxo. Só o usuário liga, só para esta mensagem.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ultracode: bool,
+    /// Chat que mandou; `None` é o usuário ou o Vitral.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remetente: Option<String>,
+    /// Não abre turno sozinha: entra junto com a próxima entrada que abre.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nota: bool,
+    /// Rotina que mandou.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotina: Option<String>,
+    /// Vai só ao Claude, sem aparecer na conversa.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub extra: String,
+}
+
+impl Entrada {
+    /// Escrita pelo usuário (nem o Vitral, nem outro chat, nem uma rotina).
+    pub fn do_usuario(&self) -> bool {
+        self.de.is_none() && self.rotina.is_none() && self.remetente.is_none()
+    }
 }
 
 /// O que a caixa ligou só para a próxima mensagem.
@@ -543,20 +858,203 @@ pub type Filas = HashMap<String, Vec<Entrada>>;
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Estado {
+    /// 0 no `.vitral/` de uma pasta de trabalho; `VERSAO_ESTADO` nos dados globais.
+    #[serde(default)]
+    pub versao: u32,
+    #[serde(default)]
+    pub projetos: Vec<Projeto>,
     pub chats: Vec<Chat>,
     pub tarefas: Vec<Tarefa>,
     pub proxima_tarefa: u64,
     #[serde(default)]
     pub filas: Filas,
+    #[serde(default)]
+    pub rotinas: Vec<Rotina>,
+    #[serde(default)]
+    pub cartoes: Vec<Cartao>,
+    #[serde(default)]
+    pub proximo_cartao: u64,
+    #[serde(default)]
+    pub ocorrencias: Vec<Ocorrencia>,
+    /// Quando o usuário saiu da janela.
+    #[serde(default)]
+    pub visto_em: u64,
+    /// Campos de versões mais novas, regravados como vieram.
+    #[serde(flatten)]
+    pub resto: serde_json::Map<String, serde_json::Value>,
 }
 
 /// O mesmo `Estado` emprestado, para gravar sem clonar os chats com todas as mensagens.
 #[derive(Serialize)]
 pub struct EstadoRef<'a> {
+    pub versao: u32,
+    pub projetos: &'a [Projeto],
     pub chats: &'a [Chat],
     pub tarefas: &'a [Tarefa],
     pub proxima_tarefa: u64,
     pub filas: &'a Filas,
+    pub rotinas: &'a [Rotina],
+    pub cartoes: &'a [Cartao],
+    pub proximo_cartao: u64,
+    pub ocorrencias: &'a [Ocorrencia],
+    pub visto_em: u64,
+    #[serde(flatten)]
+    pub resto: &'a serde_json::Map<String, serde_json::Value>,
+}
+
+impl Estado {
+    #[cfg(test)]
+    pub fn por_referencia(&self) -> EstadoRef<'_> {
+        EstadoRef {
+            versao: self.versao,
+            projetos: &self.projetos,
+            chats: &self.chats,
+            tarefas: &self.tarefas,
+            proxima_tarefa: self.proxima_tarefa,
+            filas: &self.filas,
+            rotinas: &self.rotinas,
+            cartoes: &self.cartoes,
+            proximo_cartao: self.proximo_cartao,
+            ocorrencias: &self.ocorrencias,
+            visto_em: self.visto_em,
+            resto: &self.resto,
+        }
+    }
+}
+
+/// Até quantas ocorrências o estado guarda.
+pub const MAX_OCORRENCIAS: usize = 500;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Cartao {
+    pub id: u64,
+    /// Onde aparece (sempre "mestre" por enquanto).
+    pub chat: String,
+    pub criado_em: u64,
+    #[serde(default)]
+    pub decidido_em: u64,
+    pub estado: EstadoCartao,
+    pub tipo: TipoCartao,
+    #[serde(flatten)]
+    pub resto: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Cartao {
+    pub fn aberto(&self) -> bool {
+        self.estado == EstadoCartao::Aberto
+    }
+
+    pub fn divisao(&self) -> Option<&Divisao> {
+        match &self.tipo {
+            TipoCartao::Divisao(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    pub fn divisao_mut(&mut self) -> Option<&mut Divisao> {
+        match &mut self.tipo {
+            TipoCartao::Divisao(d) => Some(d),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EstadoCartao {
+    Aberto,
+    Aceito,
+    Recusado,
+    Substituido,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TipoCartao {
+    Divisao(Divisao),
+    Projeto(SugestaoProjeto),
+    Memoria {
+        texto: String,
+    },
+    #[serde(untagged)]
+    Desconhecido(serde_json::Value),
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Divisao {
+    pub resumo: String,
+    pub partes: Vec<Parte>,
+    pub perguntas: Vec<String>,
+    /// O texto das entradas do usuário do turno (até 8000 caracteres).
+    pub pedido_original: String,
+    pub anexos: Vec<PathBuf>,
+    /// A chave do turno que propôs.
+    pub turno: String,
+    /// Projeto, chat e título de cada parte, em ordem.
+    pub assinatura: String,
+    pub sem_perguntar: bool,
+    pub por_referencia: bool,
+    pub conclusao_avisada: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Parte {
+    /// Id; "" é Avulsos.
+    pub projeto: String,
+    pub pasta: Option<PathBuf>,
+    /// Chat que já existe e recebe a parte.
+    pub chat: Option<String>,
+    pub titulo: String,
+    pub pedido: String,
+    pub criterios: Vec<String>,
+    pub verificacao: Option<String>,
+    pub modelo: Option<String>,
+    pub arquivos: Vec<String>,
+    pub aviso: Option<String>,
+    pub removida: bool,
+    pub criada: Option<ParteCriada>,
+    pub falha: Option<String>,
+    /// "juntada" ou "cancelada".
+    pub resultado: Option<String>,
+    /// Onde foi juntada ("em ~/Projetos/loja") ou por que foi cancelada.
+    pub detalhe: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParteCriada {
+    pub chat: String,
+    pub tarefa: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SugestaoProjeto {
+    pub nome: String,
+    pub descricao: String,
+    pub instrucoes: String,
+    pub icone: String,
+    pub cor: String,
+    pub pastas: Vec<PathBuf>,
+    pub motivo: String,
+    pub pedido_pendente: String,
+    /// Id do projeto criado.
+    pub criado: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ocorrencia {
+    pub quando: u64,
+    /// "pedido", "entrega", "juntou", "conflito", "falhou", "parou", "permissao", "pergunta",
+    /// "divisao", "projeto", "cancelada", "ciclo" ou "migracao" (texto: uma versão nova não quebra).
+    pub tipo: String,
+    /// "usuario", "mestre", "vitral" ou o id de um chat.
+    pub autor: String,
+    pub chat: String,
+    pub projeto: String,
+    pub tarefa: Option<u64>,
+    pub texto: String,
 }
 
 impl Chat {
@@ -569,315 +1067,10 @@ impl Chat {
     }
 }
 
-/// Leitura e escrita da pasta `.vitral`.
-pub struct Disco {
-    /// Projetos e notas lidos há pouco: a interface pergunta por eles a cada quadro.
-    lembrado: std::cell::RefCell<Lembrado>,
-    pub raiz: PathBuf,
-    gravador: Gravador,
-}
-
-/// Escreve as mensagens dos chats, o estado e a configuração numa thread só, fora da janela: o
-/// fsync de conversas de alguns MB a cada poucos segundos engasgava a interface. A ordem fica (um arquivo por vez) e um arquivo
-/// que ainda espera a vez só troca de conteúdo.
-struct Gravador {
-    fila: Arc<(Mutex<FilaDeGravacao>, Condvar)>,
-}
-
-#[derive(Default)]
-struct FilaDeGravacao {
-    /// O conteúdo de cada arquivo, ou `None` para apagá-lo.
-    pendentes: VecDeque<(PathBuf, Option<Vec<u8>>)>,
-    gravando: bool,
-    fechada: bool,
-}
-
-impl Gravador {
-    fn new() -> Self {
-        let fila: Arc<(Mutex<FilaDeGravacao>, Condvar)> = Default::default();
-        let dela = fila.clone();
-        std::thread::spawn(move || {
-            let (trava, sinal) = &*dela;
-            loop {
-                let (caminho, bytes) = {
-                    let mut f = trava.lock().unwrap_or_else(|e| e.into_inner());
-                    loop {
-                        if let Some(proxima) = f.pendentes.pop_front() {
-                            f.gravando = true;
-                            break proxima;
-                        }
-                        if f.fechada {
-                            return;
-                        }
-                        f = sinal.wait(f).unwrap_or_else(|e| e.into_inner());
-                    }
-                };
-                match bytes {
-                    Some(bytes) => {
-                        if let Err(erro) = gravar_bytes(&caminho, &bytes) {
-                            eprintln!("vitral: não salvou {}: {erro:#}", caminho.display());
-                        }
-                    }
-                    None => match fs::remove_file(&caminho) {
-                        Err(erro) if erro.kind() != std::io::ErrorKind::NotFound => {
-                            eprintln!("vitral: não apagou {}: {erro}", caminho.display())
-                        }
-                        _ => {}
-                    },
-                }
-                trava.lock().unwrap_or_else(|e| e.into_inner()).gravando = false;
-                sinal.notify_all();
-            }
-        });
-        Self { fila }
-    }
-
-    fn gravar(&self, caminho: PathBuf, bytes: Vec<u8>) {
-        let (trava, sinal) = &*self.fila;
-        let mut f = trava.lock().unwrap_or_else(|e| e.into_inner());
-        match f.pendentes.iter_mut().find(|(c, _)| *c == caminho) {
-            Some(pendente) => pendente.1 = Some(bytes),
-            None => f.pendentes.push_back((caminho, Some(bytes))),
-        }
-        sinal.notify_all();
-    }
-
-    /// Apaga o arquivo na vez dele, depois do que já está na fila: uma gravação dele que ainda
-    /// esperava sai da fila, para não recriá-lo.
-    fn apagar(&self, caminho: PathBuf) {
-        let (trava, sinal) = &*self.fila;
-        let mut f = trava.lock().unwrap_or_else(|e| e.into_inner());
-        f.pendentes.retain(|(c, _)| *c != caminho);
-        f.pendentes.push_back((caminho, None));
-        sinal.notify_all();
-    }
-
-    /// Espera tudo o que está na fila chegar ao disco.
-    fn esperar(&self) {
-        let (trava, sinal) = &*self.fila;
-        let mut f = trava.lock().unwrap_or_else(|e| e.into_inner());
-        while f.gravando || !f.pendentes.is_empty() {
-            f = sinal.wait(f).unwrap_or_else(|e| e.into_inner());
-        }
-    }
-}
-
-impl Drop for Gravador {
-    /// A thread termina o que já está na fila e sai.
-    fn drop(&mut self) {
-        let (trava, sinal) = &*self.fila;
-        trava.lock().unwrap_or_else(|e| e.into_inner()).fechada = true;
-        sinal.notify_all();
-    }
-}
-
-#[derive(Default)]
-struct Lembrado {
-    projetos: Option<(std::time::Instant, Vec<String>)>,
-    notas: HashMap<String, (std::time::Instant, String)>,
-}
-
-/// Quanto tempo uma leitura de `Lembrado` vale antes de ir ao disco de novo.
-const VALIDADE_LEMBRADO: std::time::Duration = std::time::Duration::from_secs(2);
-
-impl Disco {
-    pub fn new(raiz: &Path) -> Self {
-        Self {
-            lembrado: Default::default(),
-            raiz: raiz.to_path_buf(),
-            gravador: Gravador::new(),
-        }
-    }
-
-    pub fn pasta(&self) -> PathBuf {
-        self.raiz.join(".vitral")
-    }
-
-    pub fn carregar(&self) -> (Estado, Config) {
-        let mut estado: Estado = ler_json(&self.pasta().join("estado.json")).unwrap_or_default();
-        let config: Config = ler_json(&self.pasta().join("config.json")).unwrap_or_default();
-        for chat in &mut estado.chats {
-            chat.itens = ler_json(&self.arquivo_chat(&chat.id)).unwrap_or_default();
-        }
-        // Nunca repete o número de uma tarefa que já existe (a cópia e o branch levam o número).
-        let maior = estado.tarefas.iter().map(|t| t.id).max().unwrap_or(0);
-        estado.proxima_tarefa = estado.proxima_tarefa.max(maior + 1).max(1);
-        (estado, config)
-    }
-
-    /// Como as conversas: serializa aqui e deixa a escrita (com fsync) para o `Gravador`, fora
-    /// da thread da janela.
-    pub fn salvar_estado(&self, estado: &EstadoRef) {
-        match serde_json::to_vec_pretty(estado) {
-            Ok(bytes) => self.gravador.gravar(self.pasta().join("estado.json"), bytes),
-            Err(erro) => eprintln!("vitral: não salvou o estado: {erro:#}"),
-        }
-    }
-
-    /// Serializa aqui e deixa a escrita (com fsync) para a thread do `Gravador`.
-    pub fn salvar_chat(&self, chat: &Chat) {
-        match serde_json::to_vec_pretty(&chat.itens) {
-            Ok(bytes) => self.gravador.gravar(self.arquivo_chat(&chat.id), bytes),
-            Err(erro) => eprintln!("vitral: não salvou o chat {}: {erro:#}", chat.id),
-        }
-    }
-
-    /// Espera as conversas, o estado e a configuração chegarem ao disco (ao fechar o Vitral).
-    pub fn esperar_gravacoes(&self) {
-        self.gravador.esperar();
-    }
-
-    pub fn salvar_config(&self, config: &Config) {
-        match serde_json::to_vec_pretty(config) {
-            Ok(bytes) => self.gravador.gravar(self.pasta().join("config.json"), bytes),
-            Err(erro) => eprintln!("vitral: não salvou a configuração: {erro:#}"),
-        }
-    }
-
-    /// Apaga as mensagens de uma conversa, na fila, depois do estado que já não a tem.
-    pub fn apagar_chat(&self, id: &str) {
-        self.gravador.apagar(self.arquivo_chat(id));
-    }
-
-    pub fn apagar_notas(&self, projeto: &str) {
-        self.lembrado.borrow_mut().notas.remove(projeto);
-        self.gravador.apagar(self.arquivo_notas(projeto));
-    }
-
-    /// A pasta mudou por fora (um projeto foi para a lixeira): a próxima pergunta vai ao disco.
-    pub fn esquecer_projetos(&self) {
-        self.lembrado.borrow_mut().projetos = None;
-    }
-
-    fn arquivo_chat(&self, id: &str) -> PathBuf {
-        self.pasta().join("chats").join(format!("{id}.json"))
-    }
-
-    pub fn arquivo_notas(&self, projeto: &str) -> PathBuf {
-        self.pasta().join("notas").join(format!("{projeto}.md"))
-    }
-
-    pub fn notas(&self, projeto: &str) -> String {
-        let mut lembrado = self.lembrado.borrow_mut();
-        if let Some((quando, notas)) = lembrado.notas.get(projeto)
-            && quando.elapsed() < VALIDADE_LEMBRADO
-        {
-            return notas.clone();
-        }
-        let notas = fs::read_to_string(self.arquivo_notas(projeto)).unwrap_or_default();
-        lembrado
-            .notas
-            .insert(projeto.to_string(), (std::time::Instant::now(), notas.clone()));
-        notas
-    }
-
-    pub fn anotar(&self, projeto: &str, texto: &str) -> Result<()> {
-        self.lembrado.borrow_mut().notas.remove(projeto);
-        let caminho = self.arquivo_notas(projeto);
-        fs::create_dir_all(caminho.parent().unwrap())?;
-        let mut atual = fs::read_to_string(&caminho).unwrap_or_default();
-        if !atual.is_empty() && !atual.ends_with('\n') {
-            atual.push('\n');
-        }
-        atual.push_str(&format!("- {}\n", texto.trim()));
-        fs::write(&caminho, atual)?;
-        Ok(())
-    }
-
-    pub fn pasta_worktrees(&self, projeto: &str) -> PathBuf {
-        self.pasta().join("worktrees").join(projeto)
-    }
-
-    /// Subpastas da raiz que contam como projetos (ocultas ficam de fora).
-    pub fn projetos(&self) -> Vec<String> {
-        let mut lembrado = self.lembrado.borrow_mut();
-        if let Some((quando, nomes)) = &lembrado.projetos
-            && quando.elapsed() < VALIDADE_LEMBRADO
-        {
-            return nomes.clone();
-        }
-        let nomes = self.ler_projetos();
-        lembrado.projetos = Some((std::time::Instant::now(), nomes.clone()));
-        nomes
-    }
-
-    fn ler_projetos(&self) -> Vec<String> {
-        let mut nomes: Vec<String> = fs::read_dir(&self.raiz)
-            .map(|entradas| {
-                entradas
-                    .flatten()
-                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .filter(|nome| !nome.starts_with('.'))
-                    .collect()
-            })
-            .unwrap_or_default();
-        nomes.sort_by_key(|n| n.to_lowercase());
-        nomes
-    }
-}
-
-fn ler_json<T: for<'de> Deserialize<'de>>(caminho: &Path) -> Option<T> {
-    let texto = fs::read_to_string(caminho).ok()?;
-    match serde_json::from_str(&texto) {
-        Ok(valor) => Some(valor),
-        Err(erro) => {
-            // Guarda o arquivo antes que a próxima gravação o substitua por um vazio.
-            let copia = caminho.with_extension(format!("ilegivel-{}.json", agora()));
-            let _ = fs::copy(caminho, &copia);
-            eprintln!(
-                "vitral: {} ilegível ({erro}); cópia em {}",
-                caminho.display(),
-                copia.display()
-            );
-            None
-        }
-    }
-}
-
-pub(crate) fn gravar_json<T: Serialize>(caminho: &Path, valor: &T) -> Result<()> {
-    gravar_bytes(caminho, &serde_json::to_vec_pretty(valor)?)
-}
-
-fn gravar_bytes(caminho: &Path, bytes: &[u8]) -> Result<()> {
-    fs::create_dir_all(caminho.parent().unwrap())?;
-    let temporario = caminho.with_extension("json.tmp");
-    // Grava no disco de verdade antes de trocar: uma queda de energia logo depois não pode
-    // deixar o arquivo zerado (aconteceu com o binário durante o desenvolvimento).
-    {
-        use std::io::Write as _;
-        let mut arquivo =
-            fs::File::create(&temporario).with_context(|| temporario.display().to_string())?;
-        arquivo.write_all(bytes)?;
-        arquivo.sync_all()?;
-    }
-    fs::rename(&temporario, caminho)?;
-    if let Ok(pasta) = fs::File::open(caminho.parent().unwrap()) {
-        let _ = pasta.sync_all();
-    }
-    Ok(())
-}
-
-/// Pastas de trabalho abertas recentemente (em `~/.config/vitral/recentes.json`).
-pub fn recentes() -> Vec<PathBuf> {
-    dirs::config_dir()
-        .and_then(|d| ler_json(&d.join("vitral").join("recentes.json")))
-        .unwrap_or_default()
-}
-
-pub fn lembrar_recente(raiz: &Path) {
-    let Some(pasta) = dirs::config_dir().map(|d| d.join("vitral")) else {
-        return;
-    };
-    let mut lista = recentes();
-    lista.retain(|p| p != raiz);
-    lista.insert(0, raiz.to_path_buf());
-    lista.truncate(8);
-    let _ = gravar_json(&pasta.join("recentes.json"), &lista);
-}
-
 #[cfg(test)]
 mod testes {
+    use std::fs;
+
     use super::*;
 
     fn chat_de_teste() -> Chat {
@@ -924,36 +1117,98 @@ mod testes {
         }))
         .unwrap();
         let mut filas = Filas::new();
-        filas.insert(
-            "c1".into(),
-            vec![Entrada {
-                de: None,
-                texto: "depois".into(),
-                anexos: Vec::new(),
-                registrada: false,
-                ultrathink: false,
-                ultracode: false,
-            }],
-        );
-        let referencia = serde_json::to_value(EstadoRef {
-            chats: std::slice::from_ref(&chat),
-            tarefas: std::slice::from_ref(&tarefa),
-            proxima_tarefa: 4,
-            filas: &filas,
-        })
-        .unwrap();
-        let copia = serde_json::to_value(Estado {
+        filas.insert("c1".into(), vec![Entrada { texto: "depois".into(), ..Default::default() }]);
+        let mut resto = serde_json::Map::new();
+        resto.insert("de_uma_versao_nova".into(), serde_json::json!({"x": 1}));
+        let estado = Estado {
+            versao: VERSAO_ESTADO,
+            projetos: vec![Projeto { id: "loja".into(), nome: "Loja".into(), ..Default::default() }],
             chats: vec![chat],
             tarefas: vec![tarefa],
             proxima_tarefa: 4,
             filas,
-        })
-        .unwrap();
-        assert_eq!(referencia, copia);
-        let lido: Estado = serde_json::from_value(referencia).unwrap();
+            rotinas: vec![Rotina { id: "r1".into(), projeto: "loja".into(), ..Default::default() }],
+            cartoes: vec![Cartao {
+                id: 1,
+                chat: ID_MESTRE.into(),
+                criado_em: 2,
+                decidido_em: 0,
+                estado: EstadoCartao::Aberto,
+                tipo: TipoCartao::Memoria { texto: "lembrar".into() },
+                resto: Default::default(),
+            }],
+            proximo_cartao: 2,
+            ocorrencias: vec![Ocorrencia { quando: 3, tipo: "pedido".into(), ..Default::default() }],
+            visto_em: 9,
+            resto,
+        };
+        let referencia = serde_json::to_value(estado.por_referencia()).unwrap();
+        assert_eq!(referencia, serde_json::to_value(&estado).unwrap());
+        let lido: Estado = serde_json::from_value(referencia.clone()).unwrap();
         assert_eq!(lido.chats[0].id, "c1");
         assert_eq!(lido.proxima_tarefa, 4);
         assert_eq!(lido.filas["c1"][0].texto, "depois");
+        assert_eq!(lido.resto["de_uma_versao_nova"], serde_json::json!({"x": 1}));
+        assert_eq!(serde_json::to_value(lido.por_referencia()).unwrap(), referencia);
+    }
+
+    #[test]
+    fn desconhecido_e_resto_voltam_iguais() {
+        let item = serde_json::json!({"Divisao": {"partes": [1, 2]}});
+        let itens: Vec<Item> = serde_json::from_value(serde_json::json!([
+            {"Assistente": {"texto": "oi"}}, item.clone(), {"Cartao": {"id": 4}}
+        ]))
+        .unwrap();
+        assert!(matches!(&itens[1], Item::Desconhecido(v) if *v == item));
+        assert!(matches!(itens[2], Item::Cartao { id: 4 }));
+        assert_eq!(serde_json::to_value(&itens).unwrap()[1], item);
+
+        let mut chat = serde_json::to_value(chat_de_teste()).unwrap();
+        chat["campo_novo"] = serde_json::json!([1, 2]);
+        let lido: Chat = serde_json::from_value(chat.clone()).unwrap();
+        assert_eq!(lido.resto["campo_novo"], serde_json::json!([1, 2]));
+        assert_eq!(serde_json::to_value(&lido).unwrap(), chat);
+
+        let tarefa = serde_json::json!({
+            "id": 3, "projeto": "loja", "coordenador": "", "trabalhador": "c1", "titulo": "t",
+            "objetivo": "o", "criterios": [], "estado": "Conversa", "rodada": 1, "criada_em": 5,
+            "forma": "DiretaGit", "origem": "/p/loja", "vindo_de_longe": true
+        });
+        let lida: Tarefa = serde_json::from_value(tarefa).unwrap();
+        assert_eq!((lida.estado, lida.forma), (EstadoTarefa::Conversa, Forma::DiretaGit));
+        assert!(!lida.estado.ativa() && !lida.estado.encerrada());
+        assert_eq!(lida.origem, PathBuf::from("/p/loja"));
+        assert_eq!(serde_json::to_value(&lida).unwrap()["vindo_de_longe"], true);
+        assert_eq!(lida.dono(), None);
+
+        let cartao = serde_json::json!({
+            "id": 1, "chat": "mestre", "criado_em": 0, "estado": "Aberto",
+            "tipo": {"Futuro": {"a": 1}}, "extra": "x"
+        });
+        let lido: Cartao = serde_json::from_value(cartao).unwrap();
+        assert!(matches!(&lido.tipo, TipoCartao::Desconhecido(_)));
+        let regravado = serde_json::to_value(&lido).unwrap();
+        assert_eq!(regravado["tipo"], serde_json::json!({"Futuro": {"a": 1}}));
+        assert_eq!(regravado["extra"], "x");
+    }
+
+    #[test]
+    fn entrada_antiga_le_com_os_padroes_e_grava_igual() {
+        let antiga = serde_json::json!({"de": null, "texto": "oi", "anexos": []});
+        let lida: Entrada = serde_json::from_value(antiga.clone()).unwrap();
+        assert!(lida.remetente.is_none() && !lida.nota && lida.rotina.is_none() && lida.extra.is_empty());
+        assert_eq!(serde_json::to_value(&lida).unwrap(), antiga);
+    }
+
+    #[test]
+    fn papel_pela_rota() {
+        for papel in [Papel::Coordenador, Papel::Trabalhador, Papel::Mestre, Papel::Projeto] {
+            assert_eq!(Papel::da_rota(papel.rota()), Some(papel));
+        }
+        assert_eq!(Papel::da_rota("intruso"), None);
+        assert_eq!(Papel::da_rota(""), None);
+        assert!(Papel::Projeto.conta_vaga() && Papel::Trabalhador.conta_vaga() && !Papel::Mestre.conta_vaga());
+        assert!(!Papel::Trabalhador.de_topo() && Papel::Mestre.de_topo());
     }
 
     #[test]
@@ -971,141 +1226,62 @@ mod testes {
     #[test]
     fn chat_gravado_em_segundo_plano_volta_igual() {
         let raiz = std::env::temp_dir().join(format!("vitral-gravador-{}", novo_id()));
-        let disco = Disco::new(&raiz);
+        let dados = crate::dados::Dados::em(&raiz);
         let mut chat = chat_de_teste();
-        let filas = Filas::new();
-        disco.salvar_estado(&EstadoRef {
-            chats: std::slice::from_ref(&chat),
-            tarefas: &[],
-            proxima_tarefa: 1,
-            filas: &filas,
-        });
-        disco.salvar_chat(&chat);
+        let estado = Estado { chats: vec![chat.clone()], proxima_tarefa: 1, ..Default::default() };
+        dados.salvar_estado(&estado.por_referencia()).unwrap();
+        dados.salvar_chat(&chat).unwrap();
         chat.itens.push(Item::Assistente { texto: "tchau".into() });
-        disco.salvar_chat(&chat);
-        disco.esperar_gravacoes();
-        let (estado, _) = disco.carregar();
-        assert_eq!(estado.chats[0].itens.len(), 2);
-        assert!(!disco.arquivo_chat("c1").with_extension("json.tmp").exists());
+        dados.salvar_chat(&chat).unwrap();
+        dados.esperar_gravacoes();
+        let carregado = dados.carregar().unwrap();
+        assert_eq!(carregado.estado.chats[0].itens.len(), 2);
+        assert!(!crate::dados::com_sufixo(&dados.arquivo_chat("c1"), ".tmp").exists());
         let _ = fs::remove_dir_all(&raiz);
     }
 
     #[test]
-    fn notas_lembradas_mudam_logo_depois_de_anotar() {
-        let raiz = std::env::temp_dir().join(format!("vitral-disco-{}", novo_id()));
-        fs::create_dir_all(raiz.join("loja")).unwrap();
-        fs::create_dir_all(raiz.join(".oculta")).unwrap();
-        let disco = Disco::new(&raiz);
-        assert_eq!(disco.projetos(), vec!["loja".to_string()]);
-        assert_eq!(disco.notas("loja"), "");
-        disco.anotar("loja", "usar Decimal para preços").unwrap();
-        assert_eq!(disco.notas("loja"), "- usar Decimal para preços\n");
-        let _ = fs::remove_dir_all(&raiz);
-    }
-
-    #[test]
-    fn estado_antigo_conta_tarefas_como_prontas_e_nao_repete_numero() {
-        let raiz = std::env::temp_dir().join(format!("vitral-estado-{}", novo_id()));
-        let disco = Disco::new(&raiz);
-        let tarefa = serde_json::json!({
+    fn tarefa_antiga_conta_como_pronta() {
+        let tarefa: Tarefa = serde_json::from_value(serde_json::json!({
             "id": 5, "projeto": "p", "coordenador": "c", "trabalhador": "w", "titulo": "t",
             "objetivo": "o", "criterios": ["c"], "estado": "Rodando", "rodada": 1, "criada_em": 0,
-        });
-        let estado = serde_json::json!({ "chats": [], "tarefas": [tarefa], "proxima_tarefa": 1 });
-        gravar_json(&disco.pasta().join("estado.json"), &estado).unwrap();
-        let (estado, _) = disco.carregar();
-        assert!(estado.tarefas[0].preparada);
-        assert_eq!(estado.proxima_tarefa, 6);
-        let _ = fs::remove_dir_all(&raiz);
-    }
-
-    #[test]
-    fn projeto_arquivado_sai_da_vista_e_leva_as_conversas() {
-        let mut config = Config::default();
-        config.projetos.entry("site".into()).or_default().arquivado = true;
-        config.projetos.entry("loja".into()).or_default().icone = "store".into();
-        let nomes = ["extensao", "loja", "site", "rascunhos"].map(String::from).to_vec();
-        let (vista, arquivados) = config.separar_arquivados(nomes);
-        assert_eq!(vista, ["extensao", "loja", "rascunhos"]);
-        assert_eq!(arquivados, ["site"]);
-        assert!(config.projeto_arquivado("site") && !config.projeto_arquivado("loja"));
-        assert!(!config.projeto_arquivado("sem-config"));
-
-        let mut chat = chat_de_teste();
-        assert!(!config.conversa_arquivada(&chat));
-        chat.arquivado = true;
-        assert!(config.conversa_arquivada(&chat));
-        (chat.arquivado, chat.projeto) = (false, "site".into());
-        assert!(config.conversa_arquivada(&chat));
-
-        // Só o arquivado vai para o arquivo; a marca volta igual.
-        let gravado = serde_json::to_value(&config).unwrap();
-        assert_eq!(gravado["projetos"]["site"]["arquivado"], true);
-        assert!(gravado["projetos"]["loja"].get("arquivado").is_none());
-        let lido: Config = serde_json::from_value(gravado).unwrap();
-        assert!(lido.projeto_arquivado("site") && !lido.projeto_arquivado("loja"));
+        }))
+        .unwrap();
+        assert!(tarefa.preparada);
+        assert_eq!((tarefa.forma, tarefa.porta), (Forma::Copia, 0));
     }
 
     #[test]
     fn apagar_na_fila_tira_a_gravacao_pendente_e_o_arquivo() {
         let raiz = std::env::temp_dir().join(format!("vitral-apagar-{}", novo_id()));
-        let disco = Disco::new(&raiz);
+        let dados = crate::dados::Dados::em(&raiz);
         let chat = chat_de_teste();
-        disco.salvar_chat(&chat);
-        disco.esperar_gravacoes();
-        assert!(disco.arquivo_chat("c1").exists());
-        disco.salvar_chat(&chat);
-        disco.apagar_chat("c1");
-        disco.anotar("loja", "nota").unwrap();
-        disco.apagar_notas("loja");
-        disco.apagar_chat("nunca-existiu");
-        disco.esperar_gravacoes();
-        assert!(!disco.arquivo_chat("c1").exists());
-        assert!(!disco.arquivo_notas("loja").exists());
-        assert_eq!(disco.notas("loja"), "");
+        dados.salvar_chat(&chat).unwrap();
+        dados.esperar_gravacoes();
+        assert!(dados.arquivo_chat("c1").exists());
+        dados.salvar_chat(&chat).unwrap();
+        dados.apagar_chat("c1");
+        dados.anotar("loja", "nota").unwrap();
+        dados.apagar_notas("loja");
+        dados.apagar_chat("nunca-existiu");
+        dados.esperar_gravacoes();
+        assert!(!dados.arquivo_chat("c1").exists());
+        assert!(!dados.arquivo_notas("loja").exists());
+        assert_eq!(dados.notas("loja"), "");
+        assert_eq!(dados.falha_de_gravacao(), None);
         let _ = fs::remove_dir_all(&raiz);
     }
 
     #[test]
-    fn config_antiga_sem_icone_e_cor_continua_abrindo() {
-        let raiz = std::env::temp_dir().join(format!("vitral-config-{}", novo_id()));
-        let disco = Disco::new(&raiz);
-        fs::create_dir_all(disco.pasta()).unwrap();
-        fs::write(
-            disco.pasta().join("config.json"),
-            r#"{"permissao":"auto","projetos":{"loja":{"preparacao":"pip install","rodar":"","copiar":[".env*"]}}}"#,
-        )
+    fn configuracao_antiga_de_pasta_continua_abrindo() {
+        let antiga = serde_json::json!({"preparacao": "pip install", "rodar": "", "icone": "store", "cor": "#fff", "arquivado": true});
+        let config: ConfigProjeto = serde_json::from_value(antiga).unwrap();
+        assert_eq!(config.preparacao, "pip install");
+        assert_eq!(config.padroes_de_copia(), [".env*", "CLAUDE.local.md"]);
+        let pasta: PastaLigada = serde_json::from_value(serde_json::json!({
+            "caminho": "/p/loja", "propria": false, "preparacao": "npm i", "copiar": [".env"]
+        }))
         .unwrap();
-        let (_, config) = disco.carregar();
-        assert_eq!(config.permissao, "auto");
-        let loja = &config.projetos["loja"];
-        assert_eq!(loja.preparacao, "pip install");
-        assert!(loja.icone.is_empty() && loja.cor.is_empty());
-        // Lida sem erro: nenhuma cópia "ilegível" ao lado.
-        assert_eq!(fs::read_dir(disco.pasta()).unwrap().count(), 1);
-
-        let mut config = config;
-        let loja = config.projetos.get_mut("loja").unwrap();
-        loja.icone = "shopping-bag".into();
-        loja.cor = "#f49ac1".into();
-        disco.salvar_config(&config);
-        disco.esperar_gravacoes();
-        let (_, relida) = disco.carregar();
-        assert_eq!(relida.projetos["loja"].icone, "shopping-bag");
-        assert_eq!(relida.projetos["loja"].cor, "#f49ac1");
-        let _ = fs::remove_dir_all(&raiz);
-    }
-
-    #[test]
-    fn formato_do_disco_e_1_sem_o_arquivo() {
-        let raiz = std::env::temp_dir().join(format!("vitral-formato-{}", novo_id()));
-        assert_eq!(formato_no_disco(&raiz), 1);
-        fs::create_dir_all(raiz.join(".vitral")).unwrap();
-        fs::write(raiz.join(".vitral/formato"), "2\n").unwrap();
-        assert_eq!(formato_no_disco(&raiz), 2);
-        assert!(maior_formato_no_disco(Some(&raiz)) >= 2);
-        fs::write(raiz.join(".vitral/formato"), "lixo").unwrap();
-        assert_eq!(formato_no_disco(&raiz), 1);
-        let _ = fs::remove_dir_all(&raiz);
+        assert_eq!((pasta.config.preparacao.as_str(), pasta.config.padroes_de_copia()), ("npm i", vec![".env".to_string()]));
     }
 }

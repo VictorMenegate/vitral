@@ -9,3 +9,4 @@ Categories=Development;IDE;
 Keywords=claude;ia;agentes;chat;
 StartupWMClass=vitral
 StartupNotify=true
+SingleMainWindow=true

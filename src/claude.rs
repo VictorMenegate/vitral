@@ -23,9 +23,17 @@ pub struct Opcoes {
     pub cwd: PathBuf,
     pub sessao: String,
     pub retomar: bool,
+    /// A conversa do Claude Code de onde a primeira vez continua, numa cópia dela (`--resume <id>
+    /// --fork-session`, com a sessão nova em `sessao`): a original fica como está.
+    pub bifurcar: Option<String>,
     pub modelo: Option<String>,
     pub permissao: String,
     pub prompt_sistema: String,
+    /// O mesmo prompt já gravado num arquivo: vai por `--append-system-prompt-file`, com
+    /// `--system-prompt-snapshot off` (vale já no turno seguinte de uma sessão retomada).
+    pub prompt_arquivo: Option<PathBuf>,
+    /// `--tools`: a lista do que o chat pode usar (o resto não existe para ele).
+    pub ferramentas: Option<String>,
     pub url_mcp: String,
     pub bloqueadas: Vec<String>,
     pub pastas_extras: Vec<PathBuf>,
@@ -261,11 +269,21 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
         &mcp,
         "--allowedTools",
         "mcp__vitral",
-        "--append-system-prompt",
-        &opcoes.prompt_sistema,
     ]
     .map(String::from)
     .to_vec();
+    match &opcoes.prompt_arquivo {
+        Some(arquivo) => args.extend([
+            "--append-system-prompt-file".to_string(),
+            arquivo.display().to_string(),
+            "--system-prompt-snapshot".to_string(),
+            "off".to_string(),
+        ]),
+        None => args.extend(["--append-system-prompt".to_string(), opcoes.prompt_sistema.clone()]),
+    }
+    if let Some(ferramentas) = opcoes.ferramentas.as_deref().filter(|f| !f.is_empty()) {
+        args.extend(["--tools".to_string(), ferramentas.to_string()]);
+    }
     if opcoes.permissao != "bypassPermissions" {
         args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
     }
@@ -273,8 +291,13 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if opcoes.permissao == "plan" {
         args.push("--allow-dangerously-skip-permissions".into());
     }
-    let sessao = if opcoes.retomar { "--resume" } else { "--session-id" };
-    args.extend([sessao, &opcoes.sessao].map(String::from));
+    match (opcoes.retomar, &opcoes.bifurcar) {
+        (true, _) => args.extend(["--resume", &opcoes.sessao].map(String::from)),
+        (false, Some(origem)) => {
+            args.extend(["--resume", origem, "--fork-session", "--session-id", &opcoes.sessao].map(String::from))
+        }
+        (false, None) => args.extend(["--session-id", &opcoes.sessao].map(String::from)),
+    }
     if let Some(modelo) = opcoes.modelo.as_deref().filter(|m| !m.is_empty()) {
         args.extend(["--model", modelo].map(String::from));
     }
@@ -536,14 +559,36 @@ pub fn binario_claude() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("claude"))
 }
 
-/// O Claude Code já gravou conversa nesta sessão: com `--session-id` ele recusaria ("already in
-/// use"), então o turno tem de ir com `--resume`. As contas extras têm `projects` ligado ao normal.
-pub fn sessao_existe(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path, sessao: &str) -> bool {
-    let Some(config) = pasta_conta
+/// A versão a partir da qual o prompt vai por arquivo, sem a foto da sessão
+/// (`--system-prompt-snapshot off`, conferido no 2.1.278).
+pub const VERSAO_PROMPT_POR_ARQUIVO: Versao = (2, 1, 278);
+
+/// A sessão gravada sumiu da pasta do projeto que ainda existe: o Claude Code a apagou (o
+/// `cleanupPeriodDays`, 30 dias por padrão). Sem a pasta do projeto não dá para saber, e quem
+/// responde é o erro do `--resume`.
+pub fn sessao_expirou(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path, sessao: &str) -> bool {
+    let Some(config) = pasta_de_config(pasta_conta) else {
+        return false;
+    };
+    let projetos: Vec<PathBuf> = [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
+        .into_iter()
+        .flatten()
+        .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())))
+        .collect();
+    projetos.iter().any(|p| p.is_dir()) && !sessao_existe(pasta_conta, cwd, sessao)
+}
+
+fn pasta_de_config(pasta_conta: Option<&std::path::Path>) -> Option<PathBuf> {
+    pasta_conta
         .map(|p| p.to_path_buf())
         .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from))
         .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
-    else {
+}
+
+/// O Claude Code já gravou conversa nesta sessão: com `--session-id` ele recusaria ("already in
+/// use"), então o turno tem de ir com `--resume`. As contas extras têm `projects` ligado ao normal.
+pub fn sessao_existe(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path, sessao: &str) -> bool {
+    let Some(config) = pasta_de_config(pasta_conta) else {
         return false;
     };
     [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
@@ -612,17 +657,68 @@ pub fn resumo_ferramenta(nome: &str, entrada: &Value) -> String {
         "WebSearch" => campo("query"),
         "Task" | "Agent" => campo("description"),
         "Workflow" => campo("name").or_else(|| campo("description")),
-        "TodoWrite" => Some("lista de tarefas".into()),
-        _ if nome.starts_with("mcp__vitral__") => campo("titulo")
-            .or_else(|| campo("pergunta"))
-            .or_else(|| campo("texto"))
-            .or_else(|| entrada["tarefa"].as_u64().map(|n| format!("tarefa #{n}"))),
+        "TodoWrite" => Some("lista de afazeres".into()),
+        _ if nome.starts_with("mcp__vitral__") => resumo_do_vitral(nome.trim_start_matches("mcp__vitral__"), entrada),
         _ => None,
     };
     let nome = nome.strip_prefix("mcp__vitral__").unwrap_or(nome);
     match detalhe {
         Some(d) => format!("{nome} · {}", curto(d)),
         None => nome.to_string(),
+    }
+}
+
+/// O detalhe de uma ferramenta do Vitral: as partes e os projetos da divisão ("3 partes: Ninee,
+/// Vitral"), o projeto sugerido, o chat de destino, o texto lembrado, o título do chat criado.
+fn resumo_do_vitral(nome: &str, entrada: &Value) -> Option<String> {
+    let campo = |chave: &str| entrada[chave].as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    let chat = |chave: &str| match &entrada[chave] {
+        Value::Number(n) => Some(format!("chat {n}")),
+        Value::String(t) if t.trim().eq_ignore_ascii_case("mestre") => Some("Mestre".into()),
+        Value::String(t) if !t.trim().is_empty() => {
+            let t = t.trim().trim_start_matches(['#', '@']);
+            Some(if t.chars().all(|c| c.is_ascii_digit()) { format!("chat {t}") } else { t.to_string() })
+        }
+        _ => None,
+    };
+    match nome {
+        "propor_divisao" => {
+            let partes = entrada["partes"].as_array()?;
+            let mut projetos: Vec<String> = Vec::new();
+            for p in partes {
+                let projeto = match p["projeto"].as_str().map(str::trim) {
+                    Some("") | None => "Avulsos".to_string(),
+                    Some(nome) => nome.trim_start_matches('#').to_string(),
+                };
+                if !projetos.contains(&projeto) {
+                    projetos.push(projeto);
+                }
+            }
+            let quantas = if partes.len() == 1 { "1 parte".to_string() } else { format!("{} partes", partes.len()) };
+            Some(if projetos.is_empty() { quantas } else { format!("{quantas}: {}", projetos.join(", ")) })
+        }
+        "sugerir_projeto" => campo("nome"),
+        "mensagem_para_chat" | "ver_chat" => chat("chat"),
+        "aprovar_tarefa" | "pedir_ajuste" | "cancelar_tarefa" | "ver_diff" => {
+            let alvo = chat("tarefa")?;
+            Some(match campo("arquivo").filter(|_| nome == "ver_diff") {
+                Some(arquivo) => format!("{alvo} · {arquivo}"),
+                None => alvo,
+            })
+        }
+        "historico" => {
+            let horas = entrada["horas"].as_u64().unwrap_or(24);
+            Some(match campo("projeto") {
+                Some(p) => format!("{horas} h · {p}"),
+                None => format!("{horas} h"),
+            })
+        }
+        "listar_chats" | "anotar_decisao" if campo("texto").is_none() => campo("projeto"),
+        "entregar_tarefa" => campo("resumo"),
+        _ => campo("titulo")
+            .or_else(|| campo("pergunta"))
+            .or_else(|| campo("texto"))
+            .or_else(|| entrada["tarefa"].as_u64().map(|n| format!("chat {n}"))),
     }
 }
 
@@ -673,9 +769,12 @@ mod testes {
             cwd: PathBuf::from("/tmp/x"),
             sessao: "s1".into(),
             retomar: true,
+            bifurcar: None,
             modelo: Some("opus".into()),
             permissao: "acceptEdits".into(),
             prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
             url_mcp: "http://127.0.0.1:1/mcp".into(),
             bloqueadas: vec!["Edit(//a/**)".into()],
             pastas_extras: Vec::new(),
@@ -757,6 +856,55 @@ mod testes {
     }
 
     #[test]
+    fn conversa_do_claude_code_continua_numa_copia() {
+        let bifurcar = Some("orig".to_string());
+        let args = argumentos(&Opcoes { retomar: false, bifurcar: bifurcar.clone(), ..opcoes() });
+        let i = args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(&args[i..i + 5], ["--resume", "orig", "--fork-session", "--session-id", "s1"]);
+        // Depois da primeira vez, a sessão nova.
+        let args = argumentos(&Opcoes { bifurcar, ..opcoes() });
+        assert_eq!(valor_de(&args, "--resume"), Some("s1"));
+        assert!(!args.iter().any(|a| a == "--fork-session" || a == "--session-id"));
+        let args = argumentos(&Opcoes { retomar: false, ..opcoes() });
+        assert_eq!(valor_de(&args, "--session-id"), Some("s1"));
+        assert!(!args.iter().any(|a| a == "--resume" || a == "--fork-session"));
+    }
+
+    #[test]
+    fn prompt_por_arquivo_sem_a_foto_e_lista_de_ferramentas() {
+        let args = argumentos(&opcoes());
+        assert_eq!(valor_de(&args, "--append-system-prompt"), Some("p"));
+        assert!(!args.iter().any(|a| a == "--system-prompt-snapshot" || a == "--tools"));
+        let por_arquivo = Opcoes {
+            prompt_arquivo: Some(PathBuf::from("/c/prompts/c1.md")),
+            ferramentas: Some("Read,Grep,Glob".into()),
+            ..opcoes()
+        };
+        let args = argumentos(&por_arquivo);
+        assert_eq!(valor_de(&args, "--append-system-prompt-file"), Some("/c/prompts/c1.md"));
+        assert_eq!(valor_de(&args, "--system-prompt-snapshot"), Some("off"));
+        assert_eq!(valor_de(&args, "--tools"), Some("Read,Grep,Glob"));
+        // Os dois jeitos juntos o Claude Code recusa.
+        assert!(!args.iter().any(|a| a == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn sessao_que_sumiu_da_pasta_do_projeto_expirou() {
+        let base = std::env::temp_dir().join(format!("vitral-sessao-{}", crate::modelo::novo_id()));
+        let cwd = base.join("loja");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let conta = base.join("conta");
+        // Sem a pasta do projeto: não dá para saber.
+        assert!(!sessao_expirou(Some(&conta), &cwd, "s1"));
+        let projeto = conta.join("projects").join(nome_do_projeto(&cwd.canonicalize().unwrap().to_string_lossy()));
+        std::fs::create_dir_all(&projeto).unwrap();
+        assert!(sessao_expirou(Some(&conta), &cwd, "s1"));
+        std::fs::write(projeto.join("s1.jsonl"), "{}").unwrap();
+        assert!(!sessao_expirou(Some(&conta), &cwd, "s1") && sessao_existe(Some(&conta), &cwd, "s1"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn versao_do_claude_code() {
         assert_eq!(versao_de("2.1.278 (Claude Code)"), Some((2, 1, 278)));
         assert_eq!(versao_de("2.1.314"), Some((2, 1, 314)));
@@ -798,6 +946,29 @@ mod testes {
         assert!(matches!(interpretar(&evento).as_slice(), [Evento::Fundo(2)]));
         let vazio = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
         assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0)]));
+    }
+
+    #[test]
+    fn resumo_das_ferramentas_do_mestre() {
+        let r = |nome: &str, v: Value| resumo_ferramenta(&format!("mcp__vitral__{nome}"), &v);
+        let partes = json!({ "resumo": "x", "partes": [
+            { "projeto": "Ninee", "titulo": "Checkout" },
+            { "projeto": "vitral", "titulo": "Docs" },
+            { "projeto": "Ninee", "titulo": "Pix" }
+        ]});
+        assert_eq!(r("propor_divisao", partes), "propor_divisao · 3 partes: Ninee, vitral");
+        assert_eq!(r("propor_divisao", json!({ "partes": [{ "projeto": "" }] })), "propor_divisao · 1 parte: Avulsos");
+        assert_eq!(r("sugerir_projeto", json!({ "nome": "Receitas", "motivo": "m" })), "sugerir_projeto · Receitas");
+        assert_eq!(r("mensagem_para_chat", json!({ "chat": "12", "texto": "oi" })), "mensagem_para_chat · chat 12");
+        assert_eq!(r("mensagem_para_chat", json!({ "chat": "mestre", "texto": "oi" })), "mensagem_para_chat · Mestre");
+        assert_eq!(r("ver_chat", json!({ "chat": 7 })), "ver_chat · chat 7");
+        assert_eq!(r("pedir_ajuste", json!({ "tarefa": 12, "feedback": "f" })), "pedir_ajuste · chat 12");
+        assert_eq!(r("ver_diff", json!({ "tarefa": 12, "arquivo": "a.rs" })), "ver_diff · chat 12 · a.rs");
+        assert_eq!(r("lembrar", json!({ "texto": "pagamentos vão para a Ninee" })), "lembrar · pagamentos vão para a Ninee");
+        assert_eq!(r("historico", json!({})), "historico · 24 h");
+        assert_eq!(r("entregar_tarefa", json!({ "resumo": "feito" })), "entregar_tarefa · feito");
+        assert_eq!(r("criar_tarefa", json!({ "titulo": "Cupons" })), "criar_tarefa · Cupons");
+        assert_eq!(r("estado", json!({})), "estado");
     }
 
     #[test]

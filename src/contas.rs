@@ -36,28 +36,33 @@ pub struct Conta {
 impl Conta {
     /// Pasta de configuração da conta (`None` na principal).
     pub fn pasta(&self) -> Option<PathBuf> {
-        (self.id != PRINCIPAL).then(|| pasta_contas().join(&self.id))
+        (self.id != PRINCIPAL).then(|| pasta_contas().map(|p| p.join(&self.id))).flatten()
     }
 }
 
-fn pasta_contas() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("vitral")
-        .join("contas")
+static CONFIG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A pasta da configuração (`Dados::config`): `contas.json` e `contas/<id>/` ficam nela.
+pub fn usar_pasta(config: PathBuf) {
+    let _ = CONFIG.set(config);
 }
 
-fn arquivo_cadastro() -> PathBuf {
-    pasta_contas().with_file_name("contas.json")
+/// Sem a pasta da configuração não há contas extras: nunca cai em ".".
+fn pasta_contas() -> Option<PathBuf> {
+    Some(CONFIG.get()?.join("contas"))
+}
+
+fn arquivo_cadastro() -> Option<PathBuf> {
+    Some(CONFIG.get()?.join("contas.json"))
 }
 
 /// Todas as contas, com a principal primeiro.
 pub fn carregar() -> Vec<Conta> {
-    let mut extras: Vec<Conta> = fs::read_to_string(arquivo_cadastro())
-        .ok()
+    let mut extras: Vec<Conta> = arquivo_cadastro()
+        .and_then(|a| fs::read_to_string(a).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
-    extras.retain(|c| c.id != PRINCIPAL && pasta_contas().join(&c.id).is_dir());
+    extras.retain(|c| c.id != PRINCIPAL && c.pasta().is_some_and(|p| p.is_dir()));
     // O email da principal vem depois, pelo `status` (é lento para a abertura da janela).
     let principal = Conta {
         id: PRINCIPAL.into(),
@@ -72,9 +77,8 @@ pub fn carregar() -> Vec<Conta> {
 
 pub fn salvar(contas: &[Conta]) -> Result<()> {
     let extras: Vec<&Conta> = contas.iter().filter(|c| c.id != PRINCIPAL).collect();
-    fs::create_dir_all(pasta_contas())?;
-    fs::write(arquivo_cadastro(), serde_json::to_vec_pretty(&extras)?)?;
-    Ok(())
+    let arquivo = arquivo_cadastro().context("sem a pasta da configuração")?;
+    crate::dados::gravar_json_seguro(&arquivo, &extras, true)
 }
 
 /// Email e plano de uma conta, pelo `claude auth status`.
@@ -96,7 +100,7 @@ pub fn status(pasta: Option<&Path>) -> Result<(String, String)> {
 /// Prepara a pasta de uma conta nova: links para o que é compartilhado com `~/.claude` e um
 /// `.claude.json` com os servidores MCP do usuário.
 pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
-    let pasta = pasta_contas().join(id);
+    let pasta = pasta_contas().context("sem a pasta da configuração")?.join(id);
     fs::create_dir_all(&pasta)?;
     let home = dirs::home_dir().context("sem pasta pessoal")?;
     let original = home.join(".claude");
@@ -126,14 +130,16 @@ pub fn preparar_pasta(id: &str) -> Result<PathBuf> {
             .filter(|v| v.is_object())
             .unwrap_or_else(|| serde_json::json!({}));
         let conteudo = serde_json::json!({ "hasCompletedOnboarding": true, "mcpServers": mcp });
-        fs::write(&config, serde_json::to_vec_pretty(&conteudo)?)?;
+        crate::dados::gravar_json_seguro(&config, &conteudo, false)?;
     }
     Ok(pasta)
 }
 
 pub fn apagar_pasta(id: &str) {
-    if id != PRINCIPAL && !id.is_empty() {
-        let _ = fs::remove_dir_all(pasta_contas().join(id));
+    if id != PRINCIPAL && !id.is_empty() && !id.contains('/') && !id.starts_with('.')
+        && let Some(pasta) = pasta_contas()
+    {
+        let _ = fs::remove_dir_all(pasta.join(id));
     }
 }
 

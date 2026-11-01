@@ -225,7 +225,7 @@ pub struct QuadradoDeProjeto {
     icone: &'static Icone,
     cor: u32,
     lado: f32,
-    ativo: bool,
+    aro: f32,
     realcado: bool,
     sinal: Option<Sinal>,
     suave: Option<ElementId>,
@@ -233,7 +233,7 @@ pub struct QuadradoDeProjeto {
 
 impl QuadradoDeProjeto {
     pub fn new(icone: &'static Icone, cor: u32, lado: f32) -> Self {
-        QuadradoDeProjeto { icone, cor, lado, ativo: false, realcado: false, sinal: None, suave: None }
+        QuadradoDeProjeto { icone, cor, lado, aro: 0., realcado: false, sinal: None, suave: None }
     }
 
     /// O hover suave do trilho: a troca de `realcado` e de `ativo` anda em 120 ms. Quem desenha
@@ -245,7 +245,13 @@ impl QuadradoDeProjeto {
 
     /// Aro de 2 px na cor, a 2 px do quadrado.
     pub fn ativo(mut self, sim: bool) -> Self {
-        self.ativo = sim;
+        self.aro = if sim { 1. } else { 0. };
+        self
+    }
+
+    /// O mesmo aro, mais fraco (`0.4`: o projeto do chat aberto, sem a vista dele).
+    pub fn aro(mut self, opacidade: f32) -> Self {
+        self.aro = opacidade;
         self
     }
 
@@ -267,7 +273,7 @@ impl RenderOnce for QuadradoDeProjeto {
         let cor = Hsla::from(rgb(self.cor));
         let raio = raio::do_icone(self.lado);
         let lado_icone = (self.lado * 18. / 32.).max(12.);
-        let alvo = (if self.realcado { 0.26 } else { 0.18 }, if self.ativo { 1. } else { 0. });
+        let alvo = (if self.realcado { 0.26 } else { 0.18 }, self.aro);
         let (base, aro) = match &self.suave {
             Some(id) => movimento::valor(movimento::chave(id, "realce"), alvo, movimento::COR, Curva::Sair, window, cx),
             None => alvo,
@@ -303,6 +309,6 @@ impl RenderOnce for QuadradoDeProjeto {
 
 /// O quadrado do projeto com o ícone e a cor escolhidos (ou o palpite).
 pub fn quadrado_do_projeto(motor: &Motor, projeto: &str, lado: f32) -> QuadradoDeProjeto {
-    let (icone, cor) = icone_projeto::visual(motor, projeto);
+    let (icone, cor) = icone_projeto::visual_do(motor, projeto);
     QuadradoDeProjeto::new(icone, cor, lado)
 }

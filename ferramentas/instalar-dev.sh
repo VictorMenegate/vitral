@@ -6,6 +6,11 @@
 # ou o próprio app): nada de compilar no PC dele para instalar.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Enquanto os dados globais não estão ligados, o ramo está no meio da mudança do Mestre.
+if ! grep -q 'DADOS_GLOBAIS: bool = true' src/dados.rs; then
+    echo "Os dados globais ainda estão desligados (DADOS_GLOBAIS em src/dados.rs): não instalo um Vitral no meio da mudança." >&2
+    exit 1
+fi
 versao=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
 base=${versao%%-*}
 if [ "$base" = "$versao" ]; then

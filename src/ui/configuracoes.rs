@@ -76,9 +76,15 @@ impl Configuracoes {
         let motor = self.motor.read(cx);
         self.copias = contar_copias(motor);
         self.espaco = None;
-        let pasta = motor.disco.pasta().join("worktrees");
+        // As cópias novas ficam nos dados; as do Vitral antigo, nas `.vitral/worktrees` delas.
+        let mut pastas = vec![motor.dados.pasta.join("copias")];
+        for area in motor.tarefas.iter().filter_map(|t| t.worktree.as_deref()?.parent()) {
+            if !area.starts_with(&pastas[0]) && !pastas.iter().any(|p| p == area) {
+                pastas.push(area.to_path_buf());
+            }
+        }
         self._medicao = cx.spawn(async move |este, cx| {
-            let bytes = cx.background_spawn(async move { git::espaco_ocupado(&pasta) }).await;
+            let bytes = cx.background_spawn(async move { pastas.iter().map(|p| git::espaco_ocupado(p)).sum() }).await;
             let _ = este.update(cx, |este, cx| {
                 este.espaco = Some(bytes);
                 cx.notify();
@@ -266,15 +272,15 @@ fn opcoes_de_modelo(padrao: &'static str) -> Vec<Opcao> {
         .collect()
 }
 
-/// "1,2 GB no total · 3 de tarefas encerradas".
+/// "1,2 GB no total · 3 paradas".
 fn resumo_das_copias(espaco: Option<u64>, encerradas: usize) -> String {
     let Some(espaco) = espaco.map(git::tamanho) else {
         return "Medindo…".into();
     };
     match encerradas {
-        0 => format!("{espaco} no total · nenhuma de tarefa encerrada"),
-        1 => format!("{espaco} no total · 1 de tarefa encerrada"),
-        n => format!("{espaco} no total · {n} de tarefas encerradas"),
+        0 => format!("{espaco} no total · nenhuma parada"),
+        1 => format!("{espaco} no total · 1 parada"),
+        n => format!("{espaco} no total · {n} paradas"),
     }
 }
 
@@ -297,7 +303,56 @@ impl Render for Configuracoes {
                 Opcao::new(*valor, *nome).descricao(*descricao).simbolo(Simbolo::Icone(icone, Some(cor)))
             })
             .collect();
-        let conversas = GrupoDeOpcoes::new(Some("Conversas".into()))
+        let (mostrar_antes, juntar_sozinho) = (!config.comecar_sem_perguntar, config.aprovar_sozinho);
+        let (alternar_divisao, alternar_juntar) = (m(), m());
+        let mestre = GrupoDeOpcoes::new(Some("Mestre".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-modelo-coord", "Modelo do Mestre")
+                    .descricao("“Padrão” usa o modelo do seu Claude Code."),
+                menu_escolha(
+                    "cfg-modelo-coord",
+                    ancora,
+                    opcoes_de_modelo("O do seu Claude Code"),
+                    &config.modelo_mestre,
+                    "",
+                    gravar(m(), |c, v| c.modelo_mestre = v),
+                    window,
+                    cx,
+                ),
+            ))
+            .linha(
+                LinhaDeOpcao::new("cfg-divisao", "Mostrar a divisão antes de começar")
+                    .info(
+                        "Ligado, o Mestre mostra o cartão “Vou dividir assim” e espera o seu Começar. Desligado, os \
+                         chats começam direto (o cartão fica na conversa dele, para ver o que foi mandado).",
+                    )
+                    .descricao("Também no chip Divisão da caixa do Mestre.")
+                    .interruptor(mostrar_antes, move |ligado, _, cx| {
+                        alternar_divisao.update(cx, |m, cx| m.mudar_config(|c| c.comecar_sem_perguntar = !ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-juntar-sozinho", "Juntar sozinho quando a verificação e o revisor aprovarem")
+                    .info(
+                        "Vale para os pedidos do Mestre: com a verificação passando, o revisor aprovando sem problema \
+                         alto ou médio e todos os critérios feitos, as mudanças entram na pasta e o Mestre só recebe \
+                         uma nota. O resto chama o Mestre para decidir.",
+                    )
+                    .descricao("Desligado, o Mestre decide cada entrega.")
+                    .interruptor(juntar_sozinho, move |ligado, _, cx| {
+                        alternar_juntar.update(cx, |m, cx| m.mudar_config(|c| c.aprovar_sozinho = ligado, cx))
+                    }),
+            )
+            .linha(com(
+                LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
+                    .descricao("Minutos com a janela fora de foco antes do “Enquanto você esteve fora”."),
+                contador("cfg-resumo", &[5, 10, 15, 30, 60, 120], config.minutos_para_resumo as u32, m(), |c, v| {
+                    c.minutos_para_resumo = v as u64
+                })
+                .into_any_element(),
+            ));
+
+        let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
                     .info("“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.")
@@ -305,26 +360,25 @@ impl Render for Configuracoes {
                 menu_escolha("cfg-permissao", ancora, modos, &config.permissao, &padrao.permissao, gravar(m(), |c, v| c.permissao = v), window, cx),
             ))
             .linha(com(
-                LinhaDeOpcao::new("cfg-modelo-coord", "Modelo dos coordenadores")
-                    .descricao("“Padrão” usa o modelo do seu Claude Code."),
+                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats").descricao("O Mestre ainda pode escolher outro por parte."),
                 menu_escolha(
-                    "cfg-modelo-coord",
+                    "cfg-modelo-trab",
                     ancora,
                     opcoes_de_modelo("O do seu Claude Code"),
-                    &config.modelo_coordenador,
+                    &config.modelo_chats,
                     "",
-                    gravar(m(), |c, v| c.modelo_coordenador = v),
+                    gravar(m(), |c, v| c.modelo_chats = v),
                     window,
                     cx,
                 ),
             ))
             .linha(com(
-                LinhaDeOpcao::new("cfg-arquivar", "Arquivar conversas paradas")
+                LinhaDeOpcao::new("cfg-arquivar", "Arquivar chats parados depois de")
                     .info(
-                        "Vale para as conversas sem novidade há esse tempo, já lidas, sem fila e com todas as \
-                         tarefas encerradas. As fixadas ficam.",
+                        "Vale para os chats sem novidade há esse tempo, já lidos, sem fila, sem pedido aberto e \
+                         sem nada para juntar. Os fixados ficam.",
                     )
-                    .descricao("Nada é apagado: elas vão para Arquivadas."),
+                    .descricao("Nada é apagado: eles vão para Arquivadas."),
                 prazo("cfg-arquivar", &PRAZOS_ARQUIVAR, config.arquivar_apos_dias, estreito, m(), |c, v| {
                     c.arquivar_apos_dias = v
                 }, window, cx),
@@ -332,38 +386,33 @@ impl Render for Configuracoes {
 
         let mcp = config.mcp_trabalhadores;
         let alternar_mcp = m();
-        let trabalhadores = GrupoDeOpcoes::new(Some("Trabalhadores".into()))
+        let trabalhadores = GrupoDeOpcoes::new(Some("Trabalho".into()))
             .linha(com(
-                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo").descricao("O coordenador ainda pode escolher outro por tarefa."),
-                menu_escolha(
-                    "cfg-modelo-trab",
-                    ancora,
-                    opcoes_de_modelo("O do seu Claude Code"),
-                    &config.modelo_trabalhador,
-                    "",
-                    gravar(m(), |c, v| c.modelo_trabalhador = v),
-                    window,
-                    cx,
-                ),
-            ))
-            .linha(com(
-                LinhaDeOpcao::new("cfg-max", "Ao mesmo tempo").descricao("Os outros esperam na fila; cada um usa uns 300 MB."),
+                LinhaDeOpcao::new("cfg-max", "Chats trabalhando ao mesmo tempo").descricao("Os outros esperam na fila; cada um usa uns 300 MB."),
                 contador("cfg-max", &[1, 2, 3, 4, 6, 8], config.max_trabalhadores as u32, m(), |c, v| {
                     c.max_trabalhadores = v as usize
                 })
                 .into_any_element(),
             ))
             .linha(com(
+                LinhaDeOpcao::new("cfg-ajudantes", "Ajudantes por chat")
+                    .descricao("Quantos ajudantes um chat de projeto abre ao mesmo tempo, cada um numa cópia."),
+                contador("cfg-ajudantes", &[0, 1, 2, 3, 4, 6], config.max_ajudantes as u32, m(), |c, v| {
+                    c.max_ajudantes = v as usize
+                })
+                .into_any_element(),
+            ))
+            .linha(com(
                 LinhaDeOpcao::new("cfg-rodadas", "Rodadas de ajuste antes de chamar você")
-                    .descricao("Depois disso o coordenador para e explica o impasse."),
+                    .descricao("Depois disso o Mestre para e explica o impasse."),
                 contador("cfg-rodadas", &[1, 2, 3, 5, 8], config.max_rodadas, m(), |c, v| c.max_rodadas = v)
                     .into_any_element(),
             ))
             .linha(
                 LinhaDeOpcao::new("cfg-mcp", "Servidores MCP do Claude Code")
                     .info(
-                        "Ligado, os trabalhadores carregam também os servidores MCP do seu Claude Code. No Haiku, \
-                         muitos servidores estouram o contexto.",
+                        "Ligado, os chats de projeto e os ajudantes carregam também os servidores MCP do seu Claude \
+                         Code. No Haiku, muitos servidores estouram o contexto.",
                     )
                     .descricao("Desligado, eles só têm as ferramentas do Vitral.")
                     .interruptor(mcp, move |ligado, _, cx| {
@@ -377,11 +426,11 @@ impl Render for Configuracoes {
         let modelo_revisor = LinhaDeOpcao::new("cfg-modelo-rev", "Modelo do revisor");
         let modelo_revisor = if revisor {
             com(
-                modelo_revisor.descricao("“Padrão” usa o dos trabalhadores; outro dá uma segunda opinião."),
+                modelo_revisor.descricao("“Padrão” usa o dos chats; outro dá uma segunda opinião."),
                 menu_escolha(
                     "cfg-modelo-rev",
                     ancora,
-                    opcoes_de_modelo("O dos trabalhadores"),
+                    opcoes_de_modelo("O dos chats"),
                     &config.modelo_revisor,
                     "",
                     gravar(m(), |c, v| c.modelo_revisor = v),
@@ -408,8 +457,8 @@ impl Render for Configuracoes {
                 LinhaDeOpcao::new("cfg-revisor", "Revisor independente")
                     .info(
                         "Cada entrega passa por uma sessão nova, só de leitura, que confere os critérios e \
-                         procura problemas antes do coordenador decidir. Gasta um pouco mais do plano e pega o \
-                         que o coordenador deixaria passar.",
+                         procura problemas antes de quem pediu decidir. Gasta um pouco mais do plano e pega o \
+                         que passaria sem ela.",
                     )
                     .descricao("Uma sessão nova, só de leitura, confere cada entrega.")
                     .interruptor(revisor, move |ligado, _, cx| {
@@ -422,26 +471,28 @@ impl Render for Configuracoes {
         let n = encerradas.len();
         let apagar = m();
         let limpar = botao_perigo("cfg-limpar-copias", Some(Lucide::Trash.into()), format!("Limpar {n}"), TamanhoBotao::Barra, window, cx)
-            .when(n == 0, |b| b.disabled(true).opacity(0.45).tooltip("Nenhuma cópia de tarefa encerrada"))
+            .when(n == 0, |b| b.disabled(true).opacity(0.45).tooltip("Nenhuma cópia parada"))
             .on_click(move |_, window, cx| {
                 let pergunta = move |_: &str| Pergunta {
                     titulo: if n == 1 {
-                        "Apagar a cópia da tarefa encerrada?".into()
+                        "Apagar a cópia parada?".into()
                     } else {
-                        format!("Apagar as {n} cópias das tarefas encerradas?")
+                        format!("Apagar as {n} cópias paradas?")
                     },
-                    texto: "As conversas dos trabalhadores ficam para leitura, mas não rodam mais.".into(),
+                    texto: "O que não foi juntado fica guardado num branch. Um chat arquivado refaz a cópia na \
+                            próxima mensagem; o de um ajudante encerrado fica só para leitura."
+                        .into(),
                     botao: if n == 1 { "Apagar a cópia".into() } else { "Apagar as cópias".into() },
                 };
                 confirmar_limpeza(apagar.clone(), encerradas.clone(), pergunta, window, cx);
             });
-        let copias = GrupoDeOpcoes::new(Some("Cópias das tarefas".into()))
+        let copias = GrupoDeOpcoes::new(Some("Cópias dos chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-copias", "Espaço ocupado")
                     .info(
-                        "Cada tarefa trabalha numa cópia do projeto em .vitral/worktrees, com o que a preparação \
-                         instala (node_modules, .venv). A cópia some quando a tarefa é aprovada; as das canceladas \
-                         ficam até você limpar.",
+                        "Cada chat de projeto com git trabalha numa cópia da pasta (em ~/.local/share/vitral/copias), com \
+                         o que a preparação instala (node_modules, .venv). A cópia continua depois de juntar; as dos chats \
+                         arquivados sem nada para juntar e as dos ajudantes encerrados ficam paradas até você limpar.",
                     )
                     .descricao(match self.espaco {
                         Some(_) => resumo_das_copias(self.espaco, n).into_any_element(),
@@ -457,7 +508,7 @@ impl Render for Configuracoes {
             ))
             .linha(com(
                 LinhaDeOpcao::new("cfg-limpar-dias", "Apagar sozinho")
-                    .descricao("Ao abrir a pasta, as das tarefas encerradas há mais tempo."),
+                    .descricao("Ao abrir o Vitral, as paradas há mais tempo."),
                 prazo("cfg-limpar-dias", &PRAZOS_COPIAS, config.limpar_copias_dias, estreito, m(), |c, v| {
                     c.limpar_copias_dias = v
                 }, window, cx),
@@ -475,7 +526,7 @@ impl Render for Configuracoes {
                 .descricao(if animacoes == Animacoes::SeguirGnome && sistema_sem {
                     "O GNOME está sem animações: tudo aparece pronto."
                 } else {
-                    "Vale para o app todo, em todas as pastas."
+                    "Vale para o app todo."
                 }),
             ControleSegmentado::new("cfg-animacoes", segmentos, atual, |novo, _, cx| {
                 let escolha = if novo == 1 { Animacoes::Desligadas } else { Animacoes::SeguirGnome };
@@ -493,6 +544,7 @@ impl Render for Configuracoes {
             .flex()
             .flex_col()
             .gap(r(24.))
+            .child(mestre)
             .child(conversas)
             .child(trabalhadores)
             .child(revisao)
@@ -520,8 +572,8 @@ mod testes {
     #[test]
     fn espaco_das_copias_sem_plural_errado() {
         assert_eq!(resumo_das_copias(None, 3), "Medindo…");
-        assert!(resumo_das_copias(Some(0), 0).ends_with(" no total · nenhuma de tarefa encerrada"));
-        assert!(resumo_das_copias(Some(0), 1).ends_with(" · 1 de tarefa encerrada"));
-        assert!(resumo_das_copias(Some(0), 3).ends_with(" · 3 de tarefas encerradas"));
+        assert!(resumo_das_copias(Some(0), 0).ends_with(" no total · nenhuma parada"));
+        assert!(resumo_das_copias(Some(0), 1).ends_with(" · 1 parada"));
+        assert!(resumo_das_copias(Some(0), 3).ends_with(" · 3 paradas"));
     }
 }

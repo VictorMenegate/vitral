@@ -1,5 +1,6 @@
-//! Painel da direita: a equipe do coordenador (com a tarefa do trabalhador aberto em destaque) e
-//! as decisões anotadas do projeto.
+//! Painel da direita: num chat de projeto, "Este chat" (onde ele trabalha, o que falta juntar, o
+//! pedido em aberto e os ajudantes); numa conversa antiga, a equipe do coordenador (com a tarefa do
+//! trabalhador aberto em destaque) e as decisões anotadas do projeto.
 
 use std::collections::BTreeMap;
 
@@ -29,7 +30,7 @@ use super::{
     sem_arrastar,
 };
 use crate::{
-    modelo::{Chat, EstadoTarefa, Execucao, Papel, Revisao, Tarefa, Verificacao},
+    modelo::{Chat, EstadoTarefa, Execucao, Forma, Papel, Revisao, Tarefa, Verificacao},
     motor::Motor,
     tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, halo_foco, r, raio, tam},
 };
@@ -56,9 +57,10 @@ impl Janela {
     ) -> impl IntoElement + use<> {
         let motor = motor_entidade.read(cx);
         let chat = self.selecionado.as_ref().and_then(|id| motor.chat(id));
-        // Num trabalhador, a direita continua mostrando a equipe, com a tarefa dele em destaque.
+        // Num trabalhador, a direita continua mostrando a equipe, com a tarefa dele em destaque; no
+        // chat de projeto, a tarefa do próprio chat.
         let destacada = chat
-            .filter(|c| c.papel == Papel::Trabalhador)
+            .filter(|c| matches!(c.papel, Papel::Trabalhador | Papel::Projeto))
             .and_then(|c| c.tarefa);
         let coordenador = chat.and_then(|c| coordenador_da_equipe(motor, c));
 
@@ -67,14 +69,25 @@ impl Janela {
         if let Some(chat) = chat {
             // Um botão azul sólido no painel: o do cartão que pede ação ou, sem nenhum, o do aviso.
             let solida = coordenador.as_deref().and_then(|c| primaria(motor, c, destacada));
-            if chat.papel == Papel::Coordenador && !self.usa_git(motor, &chat.projeto) {
-                filhos.push((Bloco::Caixa, self.aviso_sem_git(&chat.projeto, solida.is_none(), window, cx)));
-            }
-            if let Some(coordenador) = &coordenador {
+            if chat.papel == Papel::Mestre {
+                filhos.extend(self.distribuido(motor, window, cx));
+            } else if chat.papel == Papel::Projeto {
+                filhos.push((Bloco::Caixa, self.este_chat(motor_entidade, chat, window, cx)));
+                // O cartão da tarefa do próprio chat só com um pedido aberto (ou uma conferência);
+                // em conversa, "Este chat" já diz tudo. Os ajudantes vêm embaixo.
+                let com_pedido = chat
+                    .tarefa
+                    .and_then(|t| motor.tarefa(t))
+                    .is_some_and(|t| t.dono().is_some() || t.estado != EstadoTarefa::Conversa || t.revisao.is_some());
+                let ajudantes = motor.tarefas_do(&chat.id).next().is_some();
+                if com_pedido || ajudantes {
+                    ix_destacada = self.lista_tarefas(motor, &chat.id, destacada.filter(|_| com_pedido), solida, &mut filhos, window, cx);
+                }
+            } else if let Some(coordenador) = coordenador.as_ref().filter(|_| chat.papel != Papel::Mestre) {
                 ix_destacada = self.lista_tarefas(motor, coordenador, destacada, solida, &mut filhos, window, cx);
             }
-            let notas = motor.disco.notas(&chat.projeto);
-            if !notas.trim().is_empty() {
+            let notas = motor.dados.notas(&chat.projeto);
+            if chat.papel == Papel::Coordenador && !notas.trim().is_empty() {
                 filhos.push((Bloco::Secao, self.decisoes(&chat.projeto, notas, cx)));
             }
         }
@@ -135,16 +148,28 @@ impl Janela {
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let numero = chat.and_then(|c| self.painel_da_conversa(&c.id));
-        let mut aba = Aba::new("aba-equipe", "Equipe")
-            .tom(TomAba::Unica)
-            .simbolo(Simbolo::icone_cor(Lucide::UsersRound, Cores::tenue()));
+        let de_projeto = chat.is_some_and(|c| c.papel == Papel::Projeto);
+        let mestre = chat.is_some_and(|c| c.papel == Papel::Mestre);
+        let mut aba = if mestre {
+            Aba::new("aba-equipe", "Distribuído").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::GitFork, Cores::tenue()))
+        } else if de_projeto {
+            Aba::new("aba-equipe", "Este chat").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()))
+        } else if chat.is_some_and(|c| c.papel == Papel::Coordenador) {
+            Aba::new("aba-equipe", "Esta conversa").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()))
+        } else {
+            Aba::new("aba-equipe", "Ajudantes").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::UsersRound, Cores::tenue()))
+        };
         if let Some((n, ativo)) = numero {
             aba = aba.numero(n, ativo);
         }
+        let nome = |c: &Chat| self.motor.as_ref().map_or(c.projeto.clone(), |m| m.read(cx).nome_do_projeto(&c.projeto));
         let dica = chat.map(|c| {
-            let mut dica = match &titulo_coordenador {
-                Some(t) => format!("Equipe de “{t}” · {}", c.projeto),
-                None => format!("Equipe · {}", c.projeto),
+            let mut dica = match (&titulo_coordenador, de_projeto) {
+                _ if mestre => "O que o Mestre mandou aos chats, por projeto".to_string(),
+                (_, true) => format!("Onde “{}” trabalha · {}", c.titulo, nome(c)),
+                _ if c.papel == Papel::Coordenador => format!("Conversa do Vitral antigo · {}", nome(c)),
+                (Some(t), false) => format!("Ajudantes de “{t}” · {}", nome(c)),
+                (None, false) => format!("Ajudantes · {}", nome(c)),
             };
             if let Some((n, _)) = numero {
                 dica.push_str(&format!(" · painel {n}"));
@@ -192,27 +217,175 @@ impl Janela {
         }
     }
 
-    fn aviso_sem_git(&self, projeto: &str, solido: bool, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let projeto = projeto.to_string();
-        let botao = botao_primario(
-            "ativar-git",
-            Some(Lucide::GitBranch.into()),
-            "Ativar git neste projeto",
-            TamanhoBotao::Barra,
-            window,
-            cx,
-        );
-        Alerta::new(
-            Tom::Atencao,
-            "Sem git, os trabalhadores mexem direto na pasta e ao mesmo tempo. Com git, cada tarefa \
-             ganha uma cópia isolada e só entra no projeto quando o coordenador aprova.",
-        )
-        .titulo("Projeto sem git")
-        .acao(
-            if solido { botao } else { botao.custom(variante_tinta(cx)) }
-                .on_click(cx.listener(move |this, _, window, cx| this.confirmar_git(projeto.clone(), window, cx))),
-        )
-        .into_any_element()
+    /// "Este chat": onde o chat de projeto trabalha e o que dá para fazer com isso. Na cópia, a
+    /// pasta de onde ela saiu, o branch, quanto está à frente e atrás e o que falta juntar, com
+    /// Revisar e juntar e o parecer do revisor; direto na pasta própria, o commit de cada vez;
+    /// direto numa pasta sem git, como ativar; no avulso, a pasta dele; sem a pasta, Localizar.
+    fn este_chat(&mut self, motor_e: &Entity<Motor>, chat: &Chat, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let motor = motor_e.read(cx);
+        let Some(t) = chat.tarefa.and_then(|t| motor.tarefa(t)) else {
+            return div().into_any_element();
+        };
+        let origem = motor.origem_da_tarefa(t);
+        let curta = super::dialogos::com_til(&origem);
+        let mut linhas: Vec<AnyElement> = Vec::new();
+        let mut botoes: Vec<AnyElement> = Vec::new();
+        let texto = |t: String| div().corpo_ui().text_color(Cores::texto()).child(t).into_any_element();
+        let abrir_pasta = |id: &'static str, pasta: std::path::PathBuf, window: &Window| {
+            botao_fantasma(id, Some(Lucide::FolderOpen.into()), "Abrir pasta", TamanhoBotao::Barra, window, cx)
+                .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", pasta.display())))
+                .into_any_element()
+        };
+        let sumiu = !origem.as_os_str().is_empty() && !origem.exists();
+        if sumiu {
+            let indice = motor.pastas_do(&chat.projeto).iter().position(|p| p.caminho == origem);
+            let projeto = chat.projeto.clone();
+            let alerta = Alerta::new(Tom::Erro, format!("A pasta {curta} não foi encontrada (disco desmontado ou pasta renomeada)."))
+                .when_some(indice, |a, indice| {
+                    a.acao(
+                        botao_fantasma("este-chat-localizar", Some(Lucide::FolderSearch.into()), "Localizar pasta…", TamanhoBotao::Barra, window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| this.localizar_pasta(projeto.clone(), indice, window, cx))),
+                    )
+                });
+            linhas.push(alerta.into_any_element());
+        }
+        let estreita = self.direita_estreita;
+        // O pedido aberto do Mestre: de que divisão e o caminho de volta a ele.
+        if t.coordenador == crate::modelo::ID_MESTRE {
+            let divisao = t.divisao.map(|d| format!("divisão {d}, ")).unwrap_or_default();
+            linhas.push(
+                h_flex_linha()
+                    .child(svg().path(Lucide::Orbit.path()).flex_none().size(r(14.)).text_color(Cores::destaque_texto()))
+                    .child(div().flex_1().min_w_0().corpo_ui().text_color(Cores::texto()).child(format!("Pedido do Mestre ({divisao}rodada {})", t.rodada)))
+                    .into_any_element(),
+            );
+            botoes.push(
+                botao_fantasma("este-chat-mestre", Some(Lucide::CornerLeftUp.into()), "Mestre", TamanhoBotao::Barra, window, cx)
+                    .tooltip("Abrir o Mestre, que fez o pedido")
+                    .on_click(cx.listener(|this, _, window, cx| this.abrir_mestre(window, cx)))
+                    .into_any_element(),
+            );
+        }
+        match t.forma {
+            // A conversa trazida do Claude Code mexe direto na pasta dela (sem Ativar git: a pasta
+            // pode ser a pessoal).
+            Forma::Direta if chat.importada.is_some() => {
+                if let Some(i) = &chat.importada {
+                    linhas.push(texto(crate::importar::descricao(i, &curta)));
+                }
+                linhas.push(linha_dado(format!("este-chat-pasta-{}", t.id), "Pasta", curta.clone(), origem.display().to_string(), origem.display().to_string(), 56.).into_any_element());
+                botoes.push(abrir_pasta("este-chat-abrir", origem.clone(), window));
+            }
+            _ if chat.projeto.is_empty() => {
+                linhas.push(texto("Um chat avulso, numa pasta só dele: os arquivos que ele criar ficam lá.".into()));
+                linhas.push(linha_dado(format!("este-chat-pasta-{}", t.id), "Pasta", curta.clone(), origem.display().to_string(), origem.display().to_string(), 56.).into_any_element());
+                botoes.push(abrir_pasta("este-chat-abrir", origem.clone(), window));
+            }
+            Forma::Copia => {
+                let copia = t.worktree.clone().filter(|w| w.is_dir());
+                linhas.push(texto("Trabalha numa cópia só dele, num branch próprio; Juntar leva as mudanças para a origem.".into()));
+                linhas.push(linha_dado(format!("este-chat-origem-{}", t.id), "Origem", curta.clone(), origem.display().to_string(), origem.display().to_string(), 56.).into_any_element());
+                if let Some(branch) = &t.branch {
+                    let alvo = t.ramo_alvo.clone().map(|r| format!(" → {r}")).unwrap_or_default();
+                    linhas.push(linha_dado(format!("este-chat-branch-{}", t.id), "Branch", format!("{branch}{alvo}"), branch.clone(), branch.clone(), 56.).into_any_element());
+                }
+                match &copia {
+                    None if t.preparada => linhas.push(texto("A cópia foi limpa; a próxima mensagem a refaz no mesmo lugar.".into())),
+                    None => linhas.push(texto("A cópia nasce na primeira mensagem.".into())),
+                    Some(copia) => {
+                        let estado = self.estado_da_copia(t.id, copia, &origem, cx);
+                        let mut partes = Vec::new();
+                        if let Some(e) = estado {
+                            partes.push(format!("{} à frente · {} atrás", e.a_frente, e.atras));
+                            if e.suja {
+                                partes.push("mudanças sem commit".into());
+                            }
+                        }
+                        if let Some(m) = t.mudancas.as_ref().filter(|m| m.arquivos > 0) {
+                            partes.push(format!("{} · +{} −{}", contagem(m.arquivos as usize, "arquivo", "arquivos"), m.mais, m.menos));
+                        } else if estado.is_some() {
+                            partes.push("nada para juntar".into());
+                        }
+                        if !partes.is_empty() {
+                            linhas.push(div().metadado().text_color(Cores::tenue()).child(partes.join(" · ")).into_any_element());
+                        }
+                        let tarefa = t.id;
+                        let tem_mudancas = t.mudancas.as_ref().is_some_and(|m| m.arquivos > 0);
+                        let revisar = botao_fantasma("este-chat-revisar", Some(Lucide::GitMerge.into()), "Revisar e juntar", TamanhoBotao::Barra, window, cx)
+                            .tooltip("Ver as mudanças da cópia e juntá-las na pasta original")
+                            .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx)));
+                        botoes.push(if tem_mudancas { revisar.custom(variante_tinta(cx)) } else { revisar }.into_any_element());
+                        let (m, id) = (motor_e.clone(), chat.id.clone());
+                        let rotulo = if estreita { "Parecer" } else { "Pedir parecer do revisor" };
+                        botoes.push(
+                            botao_fantasma("este-chat-parecer", Some(Lucide::ListChecks.into()), rotulo, TamanhoBotao::Barra, window, cx)
+                                .tooltip("Um revisor confere o que o chat mudou desde a última junção")
+                                .on_click(move |_, _, cx| m.update(cx, |m, cx| m.pedir_parecer(&id, cx)))
+                                .into_any_element(),
+                        );
+                    }
+                }
+            }
+            Forma::DiretaGit => {
+                linhas.push(texto(format!("Os arquivos ficam direto em {curta}; cada vez vira um commit (Voltar no tempo desfaz).")));
+                botoes.push(abrir_pasta("este-chat-abrir", origem.clone(), window));
+            }
+            Forma::Direta => {
+                linhas.push(texto(format!("Mexe direto em {curta}, que não usa git: não há cópia, revisão nem Voltar no tempo.")));
+                if !sumiu {
+                    let pasta = origem.clone();
+                    let nome = origem.file_name().map_or_else(|| curta.clone(), |n| n.to_string_lossy().to_string());
+                    botoes.push(
+                        botao_fantasma("este-chat-git", Some(Lucide::GitBranch.into()), format!("Ativar git em {nome}…"), TamanhoBotao::Barra, window, cx)
+                            .tooltip("Os próximos chats ganham uma cópia; este continua direto na pasta")
+                            .on_click(cx.listener(move |this, _, window, cx| this.confirmar_git_na_pasta(pasta.clone(), window, cx)))
+                            .into_any_element(),
+                    );
+                }
+                botoes.push(abrir_pasta("este-chat-abrir", origem.clone(), window));
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(esp::E8)
+            .p(dentro_da_borda(12.))
+            .rounded(raio::CARTAO)
+            .bg(Cores::cartao_elevado())
+            .border_1()
+            .border_color(Cores::linha())
+            .reflexo(raio::CARTAO)
+            .children(linhas)
+            .when(!botoes.is_empty(), |s| s.child(sem_arrastar().flex().flex_wrap().gap(esp::E4).children(botoes)))
+            .into_any_element()
+    }
+
+    /// À frente e atrás da cópia, lido em segundo plano (de novo a cada 15 s); até a primeira
+    /// leitura, nada.
+    fn estado_da_copia(
+        &self,
+        tarefa: u64,
+        copia: &std::path::Path,
+        origem: &std::path::Path,
+        cx: &Context<Self>,
+    ) -> Option<crate::git::EstadoCopia> {
+        let mut lidos = self.estados_de_copia.borrow_mut();
+        let atual = lidos.get(&tarefa).cloned();
+        let vencido = atual.as_ref().is_none_or(|(quando, _, lendo)| !lendo && quando.elapsed() >= std::time::Duration::from_secs(15));
+        if vencido {
+            let anterior = atual.as_ref().and_then(|(_, e, _)| e.clone());
+            lidos.insert(tarefa, (std::time::Instant::now(), anterior, true));
+            let (copia, origem) = (copia.to_path_buf(), origem.to_path_buf());
+            cx.spawn(async move |this, cx| {
+                let estado = cx.background_spawn(async move { crate::git::estado_copia(&copia, &origem).ok() }).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.estados_de_copia.borrow_mut().insert(tarefa, (std::time::Instant::now(), estado, false));
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        atual.and_then(|(_, e, _)| e)
     }
 
     /// Resumo da equipe, as tarefas abertas de #1 a #N e as concluídas. Devolve a posição do
@@ -228,13 +401,13 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<usize> {
-        let mut tarefas: Vec<&Tarefa> = motor.tarefas_do(coordenador).collect();
+        let mut tarefas: Vec<&Tarefa> = motor.tarefas_da_equipe(coordenador).collect();
         tarefas.sort_by_key(|t| t.id);
         if tarefas.is_empty() {
             filhos.push((
                 Bloco::Caixa,
-                EstadoVazio::new(Lucide::ListChecks, "Nenhuma tarefa ainda")
-                    .texto("Quando o coordenador dividir o trabalho, as tarefas aparecem aqui.")
+                EstadoVazio::new(Lucide::ListChecks, "Nada aberto aqui")
+                    .texto("Os pedidos que esta conversa abriu viraram chats do projeto: estão na lista dele.")
                     .into_any_element(),
             ));
             return None;
@@ -242,7 +415,9 @@ impl Janela {
         let mut posicao = None;
         let (concluidas, abertas): (Vec<&Tarefa>, Vec<&Tarefa>) =
             tarefas.iter().copied().partition(|t| t.estado.encerrada());
-        filhos.push((Bloco::Resumo, self.resumo_tarefas(motor, coordenador, &tarefas, destacada.is_some(), window, cx)));
+        // O atalho para o chat dono só num ajudante: no chat de projeto, o dono é ele mesmo.
+        let de_ajudante = destacada.is_some() && self.selecionado.as_deref() != Some(coordenador);
+        filhos.push((Bloco::Resumo, self.resumo_tarefas(motor, coordenador, &tarefas, de_ajudante, window, cx)));
         let cartao = |tarefa: &Tarefa| {
             let destaque = destacada == Some(tarefa.id);
             self.cartao_tarefa(motor, tarefa, destaque, solida == Some(tarefa.id), window, cx)
@@ -295,14 +470,14 @@ impl Janela {
     /// marcador da lista cai na guia de 24.
     fn decisoes(&self, projeto: &str, notas: String, cx: &Context<Self>) -> AnyElement {
         let chave = format!("equipe-decisoes-{projeto}");
-        let aberta = !self.recolhidos.contains(&chave);
+        let aberta = !self.expandidos.contains(&chave);
         let janela = cx.entity().downgrade();
         let alternar = {
             let chave = chave.clone();
             move |_: &mut Window, cx: &mut App| {
                 let _ = janela.update(cx, |this, cx| {
-                    if !this.recolhidos.remove(&chave) {
-                        this.recolhidos.insert(chave.clone());
+                    if !this.expandidos.remove(&chave) {
+                        this.expandidos.insert(chave.clone());
                     }
                     cx.notify();
                 });
@@ -334,7 +509,7 @@ impl Janela {
         motor: &Motor,
         coordenador: &str,
         tarefas: &[&Tarefa],
-        num_trabalhador: bool,
+        num_ajudante: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -357,9 +532,9 @@ impl Janela {
             .flex_none()
             .items_center()
             .gap(esp::E4)
-            .when(num_trabalhador, |s| {
+            .when(num_ajudante, |s| {
                 s.child(
-                    botao("equipe-coordenador", Lucide::CornerLeftUp, "Coordenador", "Abrir o coordenador ao lado")
+                    botao("equipe-coordenador", Lucide::CornerLeftUp, "Chat", "Abrir ao lado o chat que criou este ajudante")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let perto = this.paineis.get(this.ativo).map(|p| (p.id, Lado::Esquerda));
                             this.abrir_ao_lado(c1.clone(), perto, window, cx)
@@ -372,7 +547,7 @@ impl Janela {
                         "equipe-lado-a-lado",
                         Lucide::Columns3,
                         "Lado a lado",
-                        "Coordenador e tarefas em andamento, um painel para cada",
+                        "Este chat e os ajudantes em andamento, um painel para cada",
                     )
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_equipe(c2.clone(), window, cx))),
                 )
@@ -390,7 +565,7 @@ impl Janela {
                     .flex_none()
                     .items_center()
                     .gap(esp::E6)
-                    .child(div().rotulo_secao().whitespace_nowrap().child("Tarefas"))
+                    .child(div().rotulo_secao().whitespace_nowrap().child("Chats"))
                     .child(Selo::contagem(tarefas.len())),
             )
             .child(div().flex_1().min_w_0().px(esp::E4).child(BarraSegmentada::new(conta.partes()).fina()))
@@ -597,7 +772,8 @@ impl Janela {
         let copia = tarefa.worktree.is_some() && tarefa.preparada;
         let pode_apagar = motor.pode_apagar_copia(id);
         let aberto = self.aberta_em_painel(&tarefa.trabalhador);
-        let rodar = rodar_do(motor, &tarefa.projeto).filter(|_| destacada && copia);
+        let rodar = rodar_do(motor, tarefa).filter(|_| destacada && copia);
+        let porta = crate::motor::porta_de(tarefa);
         let (trab, coord) = (tarefa.trabalhador.clone(), tarefa.coordenador.clone());
         let abrir = move |foco: bool| {
             let (trab, coord) = (trab.clone(), coord.clone());
@@ -626,7 +802,7 @@ impl Janela {
             };
             match p {
                 Principal::VerPedido => botao("ver-pedido", Lucide::ArrowRight, "Ver pedido")
-                    .tooltip("O trabalhador espera a sua permissão")
+                    .tooltip("Este chat espera a sua permissão")
                     .on_click(abrir(true)),
                 Principal::Retomar => {
                     let trabalhador = tarefa.trabalhador.clone();
@@ -645,7 +821,7 @@ impl Janela {
         let mut fantasmas: Vec<(&'static str, Lucide, &'static str, String, bool, Clique)> = Vec::new();
         if !destacada && trabalhador {
             let (chave, icone, rotulo, dica) = if erro {
-                let dica = "O processo do trabalhador caiu: abre a conversa dele ao lado";
+                let dica = "O processo deste chat caiu: abre a conversa dele ao lado";
                 ("ver-erro", Lucide::CircleX, "Ver erro", dica)
             } else if aberto {
                 ("ir-ao-chat", Lucide::MessageSquare, "Ir à conversa", "A conversa já está aberta num painel")
@@ -654,7 +830,7 @@ impl Janela {
                     "abrir",
                     Lucide::Columns2,
                     "Abrir ao lado",
-                    "Abre ao lado do coordenador (ou arraste o cartão para um painel)",
+                    "Abre ao lado (ou arraste o cartão para um painel)",
                 )
             };
             fantasmas.push((chave, icone, rotulo, dica.into(), erro, Box::new(abrir(false))));
@@ -667,7 +843,7 @@ impl Janela {
                 "diff",
                 Lucide::FileDiff,
                 "Mudanças",
-                "O que mudou na cópia da tarefa".into(),
+                "O que mudou na cópia".into(),
                 false,
                 Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| this.dialogo_diff(id, window, cx))),
             ));
@@ -677,10 +853,10 @@ impl Janela {
                 "rodar",
                 Lucide::MonitorPlay,
                 "Rodar",
-                format!("Rodar “{comando}” na cópia da tarefa"),
+                format!("Rodar “{comando}” na cópia"),
                 false,
                 Box::new(move |_: &ClickEvent, _: &mut Window, _: &mut App| {
-                    crate::sistema::abrir_terminal(&pasta, Some(id), Some(&comando))
+                    crate::sistema::abrir_terminal(&pasta, Some(porta), Some(&comando))
                 }),
             ));
         }
@@ -705,7 +881,7 @@ impl Janela {
             let botao = botao_icone(
                 SharedString::from(format!("menu-copia-t{id}")),
                 Lucide::Ellipsis,
-                "Mais opções da tarefa",
+                "Mais opções",
                 TamanhoBotao::Barra,
                 window,
                 cx,
@@ -951,7 +1127,7 @@ impl Janela {
                     format!("selo-sobre-{id}"),
                     Selo::cor(numeros_sobrepostos(&tarefa.sobreposicao), Cores::ambar())
                         .icone(Lucide::GitMerge, Cores::ambar()),
-                    format!("Mesmos arquivos que outras tarefas:\n{}", tarefa.sobreposicao.join("\n")),
+                    format!("Mesmos arquivos que outros chats:\n{}", tarefa.sobreposicao.join("\n")),
                 )
                 .into_any_element(),
             );
@@ -963,7 +1139,7 @@ impl Janela {
                 selo_com_dica(
                     format!("selo-sem-copia-{id}"),
                     Selo::neutro("sem cópia"),
-                    "Projeto sem git: o trabalhador mexe direto na pasta".into(),
+                    "Projeto sem git: o chat mexe direto na pasta".into(),
                 )
                 .into_any_element(),
             );
@@ -1155,9 +1331,9 @@ impl Janela {
             })
             .when_some(tarefa.worktree.clone(), |s, w| {
                 let relativo = w
-                    .strip_prefix(motor.raiz())
+                    .strip_prefix(&motor.dados.pasta)
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| w.display().to_string());
+                    .unwrap_or_else(|_| super::dialogos::com_til(&w));
                 let absoluto = w.display().to_string();
                 s.child(
                     div()
@@ -1223,7 +1399,7 @@ impl Janela {
             let botao = botao_icone(
                 SharedString::from(format!("menu-concluida-{id}")),
                 Lucide::Ellipsis,
-                "Mais opções da tarefa",
+                "Mais opções",
                 TamanhoBotao::Linha,
                 window,
                 cx,
@@ -1364,8 +1540,8 @@ impl Janela {
         let mut fila: Vec<(u8, u64, String)> = {
             let motor = motor.read(cx);
             motor
-                .tarefas_do(&coordenador)
-                .filter(|t| !t.estado.encerrada() && motor.chat(&t.trabalhador).is_some())
+                .tarefas_da_equipe(&coordenador)
+                .filter(|t| !t.estado.encerrada() && t.trabalhador != coordenador && motor.chat(&t.trabalhador).is_some())
                 .map(|t| {
                     let ordem = match motor.execucao(&t.trabalhador) {
                         Execucao::EsperandoVoce => 0,
@@ -1423,10 +1599,15 @@ impl Janela {
             } else {
                 "maximize a janela para ver mais".to_string()
             };
-            window.push_notification(format!("Mostrando {mostradas} de {total} tarefas ({motivo})."), cx);
+            window.push_notification(format!("Mostrando {mostradas} de {total} chats ({motivo})."), cx);
         }
         cx.notify();
     }
+}
+
+/// Uma linha de ícone e texto dentro de um cartão.
+fn h_flex_linha() -> Div {
+    div().flex().items_center().gap(esp::E8)
 }
 
 /// Do lado de dentro do painel (que já tem 12) até o texto dos cabeçalhos de seção: a guia de 24.
@@ -1434,7 +1615,7 @@ const RECUO_SECAO: f32 = 12.;
 
 /// O que cada linha do painel é, para o respiro entre elas.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Bloco {
+pub(super) enum Bloco {
     /// Com fundo ou contorno (cartão, aviso, estado vazio): a tinta começa na borda.
     Caixa,
     /// A linha do resumo (28, o texto no meio).
@@ -1463,11 +1644,11 @@ fn respiro(antes: Option<Bloco>, agora: Bloco) -> Rems {
     })
 }
 
-/// De quem é a equipe que a direita mostra com esta conversa: do próprio coordenador ou, num
-/// trabalhador, do coordenador da tarefa dele.
+/// De quem é a equipe que a direita mostra com esta conversa: do próprio coordenador (ou do chat de
+/// projeto, com a tarefa dele) ou, num trabalhador, do coordenador da tarefa dele.
 pub(super) fn coordenador_da_equipe(motor: &Motor, chat: &Chat) -> Option<String> {
     match chat.papel {
-        Papel::Coordenador => Some(chat.id.clone()),
+        Papel::Coordenador | Papel::Mestre | Papel::Projeto => Some(chat.id.clone()),
         Papel::Trabalhador => chat
             .tarefa
             .and_then(|t| motor.tarefa(t))
@@ -1480,7 +1661,7 @@ pub(super) fn coordenador_da_equipe(motor: &Motor, chat: &Chat) -> Option<String
 /// tarefas abertas pedem ação ou caíram, se alguma caiu e o resumo ("1 em revisão, 1 parada").
 pub(super) fn pedidos_da_equipe(motor: &Motor, coordenador: &str) -> (usize, bool, String) {
     let mut pedidos = Pedidos::default();
-    for tarefa in motor.tarefas_do(coordenador).filter(|t| !t.estado.encerrada()) {
+    for tarefa in motor.tarefas_da_equipe(coordenador).filter(|t| !t.estado.encerrada()) {
         let erro = tarefa.estado.ativa() && matches!(motor.execucao(&tarefa.trabalhador), Execucao::Erro(_));
         match principal(motor, tarefa) {
             Some(Principal::VerPedido) => pedidos.permissao += 1,
@@ -1551,7 +1732,7 @@ fn primaria(motor: &Motor, coordenador: &str, destacada: Option<u64>) -> Option<
         return Some(t.id);
     }
     motor
-        .tarefas_do(coordenador)
+        .tarefas_da_equipe(coordenador)
         .filter(|t| !t.estado.encerrada() && pede(t))
         .map(|t| t.id)
         .min()
@@ -1729,13 +1910,9 @@ fn importantes(revisao: &Revisao) -> usize {
     revisao.problemas.iter().filter(|p| p.gravidade != "baixa").count()
 }
 
-fn rodar_do(motor: &Motor, projeto: &str) -> Option<String> {
-    motor
-        .config
-        .projetos
-        .get(projeto)
-        .map(|p| p.rodar.trim().to_string())
-        .filter(|r| !r.is_empty())
+fn rodar_do(motor: &Motor, tarefa: &Tarefa) -> Option<String> {
+    let pasta = motor.origem_da_tarefa(tarefa);
+    Some(motor.config_da_pasta(&tarefa.projeto, &pasta).rodar.trim().to_string()).filter(|r| !r.is_empty())
 }
 
 /// Quantas conversas cabem lado a lado com a lista (se pedida) e a Equipe ao lado, na área útil
@@ -1768,7 +1945,7 @@ enum Grupo {
 
 impl Grupo {
     /// O grupo de uma tarefa, pelas palavras da pílula: "preparando" e "ajustando" contam como
-    /// rodando, "esperando o coordenador" como na fila.
+    /// rodando, "esperando resposta" como na fila.
     fn de(visual: &EstadoVisual) -> Grupo {
         match visual.estado {
             Estado::Pronto => Grupo::Aprovada,
@@ -1802,12 +1979,12 @@ impl Grupo {
 
 /// Quantas tarefas há em cada parte da barra (e quais), com o estado que dá a cor.
 #[derive(Debug, Default, PartialEq)]
-struct Contagem {
+pub(super) struct Contagem {
     grupos: BTreeMap<Grupo, (Estado, Vec<u64>)>,
 }
 
 impl Contagem {
-    fn somar(&mut self, tarefa: u64, visual: &EstadoVisual) {
+    pub(super) fn somar(&mut self, tarefa: u64, visual: &EstadoVisual) {
         let (estado, tarefas) = self.grupos.entry(Grupo::de(visual)).or_insert((visual.estado, Vec::new()));
         // Uma parada que pede Retomar pinta o grupo de âmbar.
         if visual.estado == Estado::ParadoAtencao {
@@ -1822,7 +1999,7 @@ impl Contagem {
     }
 
     /// Os segmentos da barra: tamanho, cor e a dica ("1 em revisão: #2").
-    fn partes(&self) -> Vec<(usize, Hsla, SharedString)> {
+    pub(super) fn partes(&self) -> Vec<(usize, Hsla, SharedString)> {
         self.grupos
             .iter()
             .map(|(grupo, (estado, tarefas))| {
@@ -1919,7 +2096,7 @@ fn etapas(t: &Tarefa, revisor_ligado: bool, parada: bool) -> Vec<Etapa> {
     }
     let decidindo = t.estado == EstadoTarefa::EmRevisao && !conferindo && !cortada;
     lista.push(Etapa {
-        nome: "Coordenador",
+        nome: "Decisão",
         passo: if aprovada {
             Passo::Ok
         } else if decidindo {
@@ -1930,7 +2107,7 @@ fn etapas(t: &Tarefa, revisor_ligado: bool, parada: bool) -> Vec<Etapa> {
         detalhe: if aprovada {
             "aprovou".into()
         } else if decidindo {
-            "decide: aprovar ou pedir ajuste".into()
+            "quem pediu decide: juntar ou pedir ajuste".into()
         } else {
             "decide depois da conferência".into()
         },
@@ -2039,7 +2216,7 @@ mod testes {
         conta.somar(6, &visual(Estado::Pronto, "aprovada"));
         conta.somar(7, &visual(Estado::Parado, "cancelada"));
         conta.somar(8, &visual(Estado::Verificando, "verificando"));
-        conta.somar(9, &visual(Estado::NaFila, "esperando o coordenador"));
+        conta.somar(9, &visual(Estado::NaFila, "esperando resposta"));
         let dicas: Vec<String> = conta.partes().into_iter().map(|(_, _, d)| d.to_string()).collect();
         assert_eq!(
             dicas.join(" · "),
@@ -2115,7 +2292,7 @@ mod testes {
                 ("Trabalho", Passo::Atual),
                 ("Verificação", Passo::Pendente),
                 ("Revisor", Passo::Pendente),
-                ("Coordenador", Passo::Pendente),
+                ("Decisão", Passo::Pendente),
                 ("Juntada", Passo::Pendente),
             ]
         );
@@ -2137,7 +2314,7 @@ mod testes {
         });
         assert_eq!(
             passos(&t, true, false)[1..4],
-            [("Verificação", Passo::Falha), ("Revisor", Passo::Aviso), ("Coordenador", Passo::Atual)]
+            [("Verificação", Passo::Falha), ("Revisor", Passo::Aviso), ("Decisão", Passo::Atual)]
         );
         // A dica cita o comando entre aspas curvas, nunca entre crases.
         let detalhe = &etapas(&t, true, false)[1].detalhe;
@@ -2160,7 +2337,7 @@ mod testes {
                 ("Trabalho", Passo::Ok),
                 ("Verificação", Passo::Aviso),
                 ("Revisor", Passo::Aviso),
-                ("Coordenador", Passo::Pendente),
+                ("Decisão", Passo::Pendente),
             ]
         );
         cortada.parada = None;
@@ -2174,7 +2351,7 @@ mod testes {
         let mut simples = tarefa("Rodando");
         simples.verificacao = None;
         simples.branch = None;
-        assert_eq!(passos(&simples, false, false), [("Trabalho", Passo::Atual), ("Coordenador", Passo::Pendente)]);
+        assert_eq!(passos(&simples, false, false), [("Trabalho", Passo::Atual), ("Decisão", Passo::Pendente)]);
     }
 
     #[test]

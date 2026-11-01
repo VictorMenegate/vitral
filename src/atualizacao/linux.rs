@@ -40,7 +40,7 @@ impl Raiz {
     }
 
     pub fn app(&self) -> PathBuf {
-        self.dados.join("vitral").join("app")
+        self.dados.join("vitral").join(crate::dados::PASTA_DO_APP)
     }
 
     /// `app/atual/vitral`: o que o menu abre e para onde o Reiniciar volta.

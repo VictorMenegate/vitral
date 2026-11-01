@@ -84,20 +84,40 @@ fn ocupado(erro: &str) -> bool {
     erro.contains("index.lock'")
 }
 
-/// Roda `f` na vez do projeto: as junções e as cópias novas do Vitral num mesmo projeto vão uma
-/// de cada vez (dois git juntos disputam o index.lock e leem um HEAD que já ficou velho).
+thread_local! {
+    /// As vezes que esta thread segura agora: `na_vez_do_projeto` não é reentrante.
+    static SEGURADAS: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Solta a marca da vez mesmo quando o closure entra em pânico.
+struct Soltar(PathBuf);
+
+impl Drop for Soltar {
+    fn drop(&mut self) {
+        SEGURADAS.with(|s| s.borrow_mut().retain(|c| *c != self.0));
+    }
+}
+
+/// Roda `f` na vez do repositório: as junções, as cópias novas e as limpezas do Vitral num mesmo
+/// repositório vão uma de cada vez (dois git juntos disputam o index.lock e leem um HEAD que já
+/// ficou velho). A chave é o `git-common-dir` (a origem e todas as cópias dela têm o mesmo); sem
+/// git, a pasta. Não é reentrante: chamar de novo dentro de `f` travaria, então dá pânico.
 pub fn na_vez_do_projeto<T>(projeto: &Path, f: impl FnOnce() -> T) -> T {
     type Travas = std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>;
     static TRAVAS: std::sync::OnceLock<std::sync::Mutex<Travas>> = std::sync::OnceLock::new();
-    let chave = projeto.canonicalize().unwrap_or_else(|_| projeto.to_path_buf());
+    let chave = raiz_comum(projeto).unwrap_or_else(|| projeto.canonicalize().unwrap_or_else(|_| projeto.to_path_buf()));
+    let reentrou = SEGURADAS.with(|s| s.borrow().contains(&chave));
+    assert!(!reentrou, "na_vez_do_projeto chamada dentro dela mesma ({})", chave.display());
     let trava = TRAVAS
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .entry(chave)
+        .entry(chave.clone())
         .or_default()
         .clone();
     let _vez = trava.lock().unwrap_or_else(|e| e.into_inner());
+    SEGURADAS.with(|s| s.borrow_mut().push(chave.clone()));
+    let _soltar = Soltar(chave);
     f()
 }
 
@@ -107,10 +127,13 @@ pub struct CopiaIsolada {
     pub base: String,
     /// O projeto tinha mudanças sem commit, que a cópia não vê.
     pub sujo: bool,
+    /// O branch da origem quando a cópia nasceu (`None` com o HEAD solto).
+    pub ramo: Option<String>,
 }
 
 pub fn criar_worktree(projeto: &Path, destino: &Path, branch: &str) -> Result<CopiaIsolada> {
     let base = git(projeto, &["rev-parse", "HEAD"])?;
+    let ramo = ramo_atual(projeto);
     // Só o que está no git: __pycache__ e afins (sem .gitignore) davam aviso falso em toda tarefa.
     let sujo = !git(projeto, &["status", "--porcelain", "--untracked-files=no"])?.is_empty();
     if let Some(pai) = destino.parent() {
@@ -146,7 +169,287 @@ pub fn criar_worktree(projeto: &Path, destino: &Path, branch: &str) -> Result<Co
         branch,
         base,
         sujo,
+        ramo,
     })
+}
+
+/// Refaz a cópia de um chat que já rodou no mesmo caminho (o `--resume` do Claude Code vale pela
+/// pasta): a partir do branch antigo, se ele ainda existe, ou do HEAD da origem com o mesmo nome
+/// (ou com sufixo só no branch). Uma pasta solta no caminho vai para `<nome>.antiga-<hora>`, nunca
+/// é apagada. Devolve também se o branch antigo existia.
+pub fn recriar_worktree(origem: &Path, destino: &Path, branch: &str) -> Result<(CopiaIsolada, bool)> {
+    let _ = git(origem, &["worktree", "prune"]);
+    let sujo = !git(origem, &["status", "--porcelain", "--untracked-files=no"])?.is_empty();
+    let ramo = ramo_atual(origem);
+    let existe = |b: &str| git(origem, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")]).is_ok();
+    if destino.exists() {
+        let canonico = destino.canonicalize().unwrap_or_else(|_| destino.to_path_buf());
+        let registradas = git(origem, &["worktree", "list", "--porcelain"])?;
+        let registrada = registradas
+            .lines()
+            .filter_map(|l| l.strip_prefix("worktree "))
+            .any(|p| Path::new(p) == canonico || Path::new(p) == destino);
+        if registrada {
+            let atual = git(destino, &["symbolic-ref", "--quiet", "--short", "HEAD"]).unwrap_or_else(|_| branch.to_string());
+            let base = git(origem, &["merge-base", &atual, "HEAD"]).or_else(|_| git(origem, &["rev-parse", "HEAD"]))?;
+            let copia = CopiaIsolada { caminho: destino.to_path_buf(), branch: atual, base, sujo, ramo };
+            return Ok((copia, true));
+        }
+        let nome = destino.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let antiga = destino.with_file_name(format!("{nome}.antiga-{}", crate::modelo::agora()));
+        std::fs::rename(destino, &antiga)
+            .map_err(|e| anyhow::anyhow!("não liberou {} para a cópia: {e}", destino.display()))?;
+    }
+    if let Some(pai) = destino.parent() {
+        std::fs::create_dir_all(pai)?;
+    }
+    let caminho = destino.to_string_lossy().to_string();
+    let antigo = existe(branch);
+    let (branch, base) = if antigo {
+        git(origem, &["worktree", "add", &caminho, branch])?;
+        let base = git(origem, &["merge-base", branch, "HEAD"]).or_else(|_| git(origem, &["rev-parse", "HEAD"]))?;
+        (branch.to_string(), base)
+    } else {
+        let livre = (1..=20)
+            .map(|n| if n == 1 { branch.to_string() } else { format!("{branch}-{n}") })
+            .find(|b| !existe(b))
+            .ok_or_else(|| anyhow::anyhow!("não há nome livre para o branch {branch}"))?;
+        git(origem, &["worktree", "add", "-b", &livre, &caminho, "HEAD"])?;
+        (livre, git(origem, &["rev-parse", "HEAD"])?)
+    };
+    Ok((CopiaIsolada { caminho: destino.to_path_buf(), branch, base, sujo, ramo }, antigo))
+}
+
+/// O branch em que a pasta está (`None` com o HEAD solto ou sem git).
+pub fn ramo_atual(pasta: &Path) -> Option<String> {
+    git(pasta, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().filter(|r| !r.is_empty())
+}
+
+/// O `git-common-dir` canônico: o mesmo na origem e em todas as cópias dela. É a chave da vez e o
+/// que diz se uma cópia ainda pertence ao repositório da origem.
+pub fn raiz_comum(pasta: &Path) -> Option<PathBuf> {
+    let comum = git(pasta, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+    Path::new(&comum).canonicalize().ok()
+}
+
+/// A pasta tem o commit: é o mesmo repositório da cópia que nasceu dele (ou um clone).
+pub fn tem_commit(pasta: &Path, commit: &str) -> bool {
+    git(pasta, &["cat-file", "-e", &format!("{commit}^{{commit}}")]).is_ok()
+}
+
+/// "Localizar pasta…" com cópias: a origem mudou de lugar e as cópias voltam a apontar para ela
+/// (`git worktree repair`). Devolve as que continuam fora do repositório dela.
+pub fn reparar_copias(origem: &Path, copias: &[PathBuf]) -> Vec<PathBuf> {
+    if copias.is_empty() {
+        return Vec::new();
+    }
+    let caminhos: Vec<String> = copias.iter().map(|c| c.to_string_lossy().to_string()).collect();
+    let mut args = vec!["worktree", "repair"];
+    args.extend(caminhos.iter().map(String::as_str));
+    let _ = git(origem, &args);
+    let raiz = raiz_comum(origem);
+    copias.iter().filter(|c| raiz.is_none() || raiz_comum(c) != raiz).cloned().collect()
+}
+
+/// A raiz do repositório onde a pasta está (pode ser uma pasta acima dela).
+pub fn topo_do_repositorio(pasta: &Path) -> Option<PathBuf> {
+    let topo = git(pasta, &["rev-parse", "--show-toplevel"]).ok()?;
+    Path::new(&topo).canonicalize().ok()
+}
+
+/// Onde a cópia está em relação à origem: commits que só ela tem, commits da origem que ela ainda
+/// não tem e mudanças sem commit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EstadoCopia {
+    pub a_frente: u32,
+    pub atras: u32,
+    pub suja: bool,
+}
+
+pub fn estado_copia(copia: &Path, origem: &Path) -> Result<EstadoCopia> {
+    let alvo = git(origem, &["rev-parse", "HEAD"])?;
+    let contagem = git(copia, &["rev-list", "--left-right", "--count", &format!("HEAD...{alvo}")])?;
+    let mut numeros = contagem.split_whitespace().map(|n| n.parse::<u32>().unwrap_or(0));
+    let (a_frente, atras) = (numeros.next().unwrap_or(0), numeros.next().unwrap_or(0));
+    Ok(EstadoCopia { a_frente, atras, suja: suja(copia)? })
+}
+
+/// Mudanças sem commit, fora o lixo de build e de testes (o mesmo que o commit deixa de fora).
+fn suja(pasta: &Path) -> Result<bool> {
+    let lixo = ["__pycache__/", ".pyc", "node_modules/", ".pytest_cache/", ".DS_Store", ".claude/worktrees/"];
+    let status = git(pasta, &["status", "--porcelain", "-z"])?;
+    Ok(separar_nulos(&status)
+        .iter()
+        .filter(|l| l.len() > 3)
+        .any(|l| !lixo.iter().any(|x| l[3..].contains(x))))
+}
+
+/// Depois de juntar: a cópia anda até o HEAD novo da origem (ela já tem tudo o que ele tem) e esse
+/// passa a ser o ponto de partida do próximo diff. Se não der para andar (alguém refez a história
+/// da origem), a cópia fica e a base vira o ponto comum dos dois. Devolve a base e se andou.
+pub fn depois_de_juntar(copia: &Path, origem: &Path) -> Result<(String, bool)> {
+    let alvo = git(origem, &["rev-parse", "HEAD"])?;
+    if git(copia, &["merge", "--ff-only", "-q", &alvo]).is_ok() {
+        return Ok((alvo, true));
+    }
+    Ok((git(copia, &["merge-base", "HEAD", &alvo])?, false))
+}
+
+/// Traz para a cópia o que entrou na origem, quando ela não tem nada só dela (nem commit, nem
+/// mudança sem commit): um `merge --ff-only`. Diz se andou.
+pub fn sincronizar_copia(copia: &Path, origem: &Path) -> Result<bool> {
+    let estado = estado_copia(copia, origem)?;
+    if estado.a_frente > 0 || estado.suja || estado.atras == 0 {
+        return Ok(false);
+    }
+    let alvo = git(origem, &["rev-parse", "HEAD"])?;
+    git(copia, &["merge", "--ff-only", "-q", &alvo])?;
+    Ok(true)
+}
+
+/// O commit do fim de cada vez na pasta própria (e o ponto antes de apagar uma cópia com trabalho):
+/// tudo, menos o lixo, e só se mudou alguma coisa. Diz se fez o commit.
+pub fn commit_de_turno(pasta: &Path, mensagem: &str) -> Result<bool> {
+    adicionar(pasta, "-A")?;
+    if git(pasta, &["diff", "--cached", "--name-only"])?.is_empty() {
+        return Ok(false);
+    }
+    git(pasta, &["commit", "-q", "--no-verify", "-m", mensagem])?;
+    Ok(true)
+}
+
+/// O ponto na pasta de um chat antes de um ajudante nascer dela ou ser juntado nela: o mesmo commit
+/// do fim de cada vez (tudo, menos o lixo, e só se mudou alguma coisa). Assim a cópia do ajudante
+/// parte do trabalho do pai, e a junção não esbarra no que o pai ainda não tinha posto em commit.
+/// Roda dentro da vez do repositório e não a pede.
+pub fn checkpoint(pasta: &Path, mensagem: &str) -> Result<bool> {
+    commit_de_turno(pasta, mensagem)
+}
+
+/// Quantos arquivos a cópia mudou desde a base e quantas linhas entraram e saíram (os novos
+/// contam; um binário conta o arquivo, sem linhas).
+pub fn contar_mudancas(copia: &Path, base: &str) -> Result<(u32, u32, u32)> {
+    adicionar(copia, "-N")?;
+    let texto = git(copia, &["diff", "--numstat", base, "--", "."])?;
+    let (mut arquivos, mut mais, mut menos) = (0, 0, 0);
+    for linha in texto.lines() {
+        let mut campos = linha.split('\t');
+        let (a, b) = (campos.next().unwrap_or("-"), campos.next().unwrap_or("-"));
+        arquivos += 1;
+        mais += a.parse::<u32>().unwrap_or(0);
+        menos += b.parse::<u32>().unwrap_or(0);
+    }
+    Ok((arquivos, mais, menos))
+}
+
+/// O resultado de juntar a cópia de um chat de projeto na origem.
+pub enum Juntada {
+    /// Entrou (ou não havia o que juntar); `base` é o ponto de partida novo da cópia e `andou`, se
+    /// ela foi até o HEAD novo da origem.
+    Feita { commits: Option<String>, base: String, andou: bool },
+    Falhou(Juncao),
+    /// A origem está em outro branch que o de quando a cópia nasceu: junta só com confirmação.
+    RamoTrocado { alvo: String, atual: String },
+    /// A cópia não é mais do repositório da origem (pasta movida, outro clone no lugar).
+    OutroRepositorio,
+}
+
+/// Junta a cópia na origem sem apagá-la, para o chat continuar nela, e poda os pontos de volta do
+/// grupo. Roda dentro da vez do repositório e não a pede de novo.
+pub fn juntar(
+    origem: &Path,
+    copia: &Path,
+    branch: &str,
+    base: &str,
+    mensagem: &str,
+    ramo_alvo: Option<&str>,
+    grupo: &str,
+) -> Result<Juntada> {
+    if raiz_comum(copia).is_none() || raiz_comum(copia) != raiz_comum(origem) {
+        return Ok(Juntada::OutroRepositorio);
+    }
+    if let Some(alvo) = ramo_alvo {
+        let atual = ramo_atual(origem).unwrap_or_else(|| "HEAD solto".into());
+        if atual != alvo {
+            return Ok(Juntada::RamoTrocado { alvo: alvo.to_string(), atual });
+        }
+    }
+    let commits = match aprovar(origem, copia, branch, base, mensagem)? {
+        Juncao::Juntou { commits } => Some(commits),
+        Juncao::SemMudancas => None,
+        outra => return Ok(Juntada::Falhou(outra)),
+    };
+    let (base, andou) = depois_de_juntar(copia, origem)?;
+    podar_pontos(origem, grupo, PONTOS_GUARDADOS);
+    Ok(Juntada::Feita { commits, base, andou })
+}
+
+/// Quantos pontos de volta cada chat guarda (os mais novos).
+pub const PONTOS_GUARDADOS: usize = 30;
+
+/// Apaga os pontos de volta mais antigos do grupo ("t12"), ficando com os `manter` mais novos.
+pub fn podar_pontos(repositorio: &Path, grupo: &str, manter: usize) {
+    let prefixo = format!("refs/vitral/pontos/{grupo}/");
+    let refs = git(repositorio, &["for-each-ref", "--sort=-committerdate", "--format=%(refname)", &prefixo])
+        .unwrap_or_default();
+    let apagar: String = refs.lines().skip(manter).map(|nome| format!("delete {nome}\n")).collect();
+    if !apagar.is_empty() {
+        let _ = git_com_entrada(repositorio, &["update-ref", "--stdin"], &apagar);
+    }
+}
+
+/// O que a abertura achou de uma junção que o Vitral fechado (ou a queda) cortou no meio.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JuncaoCortada {
+    /// A ponta da cópia já está na origem e nada ficou de fora: a junção conta como feita.
+    Entrou,
+    NaoEntrou,
+}
+
+/// Desfaz o que a junção cortada deixou na origem (o merge parado com a ponta da cópia, um
+/// index.lock de antes do boot sem nenhum git rodando) e diz se ela chegou a entrar.
+pub fn recuperar_juncao(origem: &Path, copia: &Path, branch: &str) -> Result<JuncaoCortada> {
+    let ponta = git(origem, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).ok();
+    if let (Ok(parado), Some(ponta)) = (git(origem, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]), &ponta)
+        && parado == *ponta
+    {
+        git(origem, &["merge", "--abort"])?;
+    }
+    let boot = momento_do_boot();
+    for pasta in [origem, copia].into_iter().filter(|p| p.is_dir()) {
+        let Ok(trava) = git(pasta, &["rev-parse", "--path-format=absolute", "--git-path", "index.lock"]) else {
+            continue;
+        };
+        let antiga = std::fs::metadata(&trava)
+            .and_then(|m| m.modified())
+            .ok()
+            .zip(boot)
+            .is_some_and(|(feita, boot)| feita < boot);
+        if antiga && !git_rodando() {
+            let _ = std::fs::remove_file(&trava);
+        }
+    }
+    let entrou = ponta.is_some_and(|p| git(origem, &["merge-base", "--is-ancestor", &p, "HEAD"]).is_ok())
+        && copia.is_dir()
+        && !suja(copia)?;
+    Ok(if entrou { JuncaoCortada::Entrou } else { JuncaoCortada::NaoEntrou })
+}
+
+/// Quando o computador ligou (o `btime` de `/proc/stat`).
+fn momento_do_boot() -> Option<std::time::SystemTime> {
+    let texto = std::fs::read_to_string("/proc/stat").ok()?;
+    let segundos: u64 = texto.lines().find_map(|l| l.strip_prefix("btime "))?.trim().parse().ok()?;
+    Some(std::time::UNIX_EPOCH + Duration::from_secs(segundos))
+}
+
+/// Há algum `git` rodando agora (de quem for).
+fn git_rodando() -> bool {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit()))
+        .any(|e| std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "git"))
 }
 
 /// Lixo de build e de testes que nunca entra no commit de uma tarefa, mesmo sem .gitignore. As
@@ -464,7 +767,7 @@ pub fn descartar_arquivo(copia: &Path, base: &str, arquivo: &str) -> Result<Opti
             Err(erro) => bail!("não deu para apagar {arquivo}: {erro}"),
         };
         if !no_indice && !no_disco {
-            bail!("{arquivo} não está na cópia da tarefa");
+            bail!("{arquivo} não está na cópia");
         }
     }
     let mut conferir = vec!["diff", "--quiet", base, "--", literal.as_str()];
@@ -908,31 +1211,42 @@ pub fn iniciar_repositorio(projeto: &Path) -> Result<RepositorioNovo> {
 
 #[cfg(test)]
 pub fn remover_worktree(projeto: &Path, copia: &Path, branch: &str) {
-    let _ = limpar_copia(projeto, copia, &projeto.with_extension("area"), branch, &[]);
+    let _ = limpar_copia(projeto, copia, &projeto.with_extension("area"), branch, &[], false);
 }
 
 /// Apaga a cópia de uma tarefa: a pasta (com node_modules, .venv e target/), o branch e os pontos
 /// de volta dela. `pontos_antigos` são os gravados antes de os pontos irem para o grupo da tarefa.
-/// `area` é a pasta onde o Vitral cria as cópias deste projeto.
+/// `area` é a pasta onde o Vitral cria as cópias deste projeto. Com `manter_branch`, só a pasta
+/// sai (o branch e os pontos ficam, para a cópia ser refeita dele). Sem a origem, ou com o git dela
+/// falhando, nada é apagado à mão: a limpeza fica para depois.
 pub fn limpar_copia(
     projeto: &Path,
     copia: &Path,
     area: &Path,
     branch: &str,
     pontos_antigos: &[String],
+    manter_branch: bool,
 ) -> Result<()> {
+    if !projeto.is_dir() {
+        bail!("a pasta {} não foi encontrada; a cópia fica até ela voltar", projeto.display());
+    }
     let caminho = copia.to_string_lossy().to_string();
     if let Err(erro) = git(projeto, &["worktree", "remove", "--force", "--force", &caminho])
         && copia.exists()
     {
         // Com submódulo o git não remove. À mão, só o que é mesmo uma cópia: `.git` é um arquivo,
         // ou a pasta é das cópias do Vitral (uma limpeza cortada pode ter apagado o `.git` antes).
-        if !copia.join(".git").is_file() && copia.parent() != Some(area) {
+        // E só com o git da origem respondendo: senão o erro pode ser dele, não da cópia.
+        let origem_responde = git(projeto, &["rev-parse", "--git-dir"]).is_ok();
+        if !origem_responde || (!copia.join(".git").is_file() && copia.parent() != Some(area)) {
             bail!("não apagou {}: {erro:#}", copia.display());
         }
         std::fs::remove_dir_all(copia).map_err(|erro| anyhow::anyhow!("não apagou {}: {erro}", copia.display()))?;
     }
     podar(projeto);
+    if manter_branch {
+        return Ok(());
+    }
     let _ = git(projeto, &["branch", "-D", branch]);
     let grupo = grupo_do_branch(branch).map(|g| format!("refs/vitral/pontos/{g}/"));
     let mut apagar = String::new();
@@ -949,6 +1263,20 @@ pub fn limpar_copia(
         git_com_entrada(projeto, &["update-ref", "--stdin"], &apagar)?;
     }
     Ok(())
+}
+
+/// Apaga os pontos de volta (`refs/vitral/pontos/<grupo>/`) dos grupos dados ("t12"): são do
+/// Vitral e só serviam às conversas que saíram.
+pub fn apagar_pontos(repositorio: &Path, grupos: &[String]) {
+    let refs = git(repositorio, &["for-each-ref", "--format=%(refname)", "refs/vitral/pontos/"]).unwrap_or_default();
+    let apagar: String = refs
+        .lines()
+        .filter(|nome| grupos.iter().any(|g| nome.starts_with(&format!("refs/vitral/pontos/{g}/"))))
+        .map(|nome| format!("delete {nome}\n"))
+        .collect();
+    if !apagar.is_empty() {
+        let _ = git_com_entrada(repositorio, &["update-ref", "--stdin"], &apagar);
+    }
 }
 
 /// Esquece as cópias cujas pastas sumiram (apagadas à mão): o registro delas segurava o branch.
@@ -1093,10 +1421,18 @@ pub fn inicio_do_texto(texto: &str, limite: usize) -> String {
 /// índice nem no histórico: vira um ponto de volta antes de cada turno. Na cópia de uma tarefa, a
 /// referência fica no grupo dela (`refs/vitral/pontos/t<N>/`), que limpar_copia apaga.
 pub fn foto(pasta: &Path) -> Result<String> {
+    let grupo = ramo_atual(pasta).and_then(|branch| grupo_do_branch(&branch));
+    foto_com_grupo(pasta, grupo.as_deref())
+}
+
+/// A foto de uma pasta que não é cópia (a pasta própria): o grupo vem do chat ("t12"), não do
+/// branch, e a poda depois de cada vez fica com as mais novas.
+pub fn foto_no_grupo(pasta: &Path, grupo: &str) -> Result<String> {
+    foto_com_grupo(pasta, Some(grupo))
+}
+
+fn foto_com_grupo(pasta: &Path, grupo: Option<&str>) -> Result<String> {
     let commit = foto_solta(pasta)?;
-    let grupo = git(pasta, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .ok()
-        .and_then(|branch| grupo_do_branch(&branch));
     let nome = match grupo {
         Some(grupo) => format!("refs/vitral/pontos/{grupo}/{commit}"),
         None => format!("refs/vitral/pontos/{commit}"),
@@ -1191,9 +1527,31 @@ fn volta_parcial(mexidos: usize, falharam: &[String]) -> String {
     }
 }
 
+/// O repositório de onde uma cópia (worktree) saiu: a pasta do `git-common-dir`, canônica.
+pub fn repositorio_da_copia(copia: &Path) -> Option<PathBuf> {
+    let comum = git(copia, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+    let comum = Path::new(&comum).canonicalize().ok()?;
+    match comum.file_name() {
+        Some(nome) if nome == ".git" => comum.parent().map(Path::to_path_buf),
+        _ => Some(comum),
+    }
+}
+
 /// A pasta é um repositório git ou uma cópia (worktree) de um.
 pub fn e_repositorio(pasta: &Path) -> bool {
     git(pasta, &["rev-parse", "--is-inside-work-tree"]).is_ok_and(|s| s == "true")
+}
+
+/// O commit em que a pasta está (o ponto de partida de um pedido na pasta própria).
+pub fn cabeca(pasta: &Path) -> Option<String> {
+    git(pasta, &["rev-parse", "HEAD"]).ok().filter(|h| !h.is_empty())
+}
+
+/// Os arquivos rastreados com mudanças sem commit (o que faz uma junção recusar).
+pub fn arquivos_sem_commit(pasta: &Path) -> Vec<String> {
+    git(pasta, &["status", "--porcelain", "--untracked-files=no"])
+        .map(|t| t.lines().filter_map(|l| l.get(3..)).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1409,6 +1767,31 @@ mod testes {
     }
 
     #[test]
+    fn localizar_a_origem_movida_religa_as_copias() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("copia"), "vitral/t1-movida").unwrap();
+        let movida = projeto.with_extension("movida");
+        std::fs::rename(&projeto, &movida).unwrap();
+        assert!(raiz_comum(&copia.caminho).is_none(), "a cópia aponta para a pasta antiga");
+        // Outro repositório (o `repositorio()` no mesmo segundo daria o mesmo commit).
+        let outro = projeto.with_extension("outro");
+        std::fs::create_dir_all(&outro).unwrap();
+        git(&outro, &["init", "-q"]).unwrap();
+        std::fs::write(outro.join("b.txt"), "outro\n").unwrap();
+        git(&outro, &["add", "-A"]).unwrap();
+        git(&outro, &["commit", "-q", "-m", "outro"]).unwrap();
+        assert!(tem_commit(&movida, &copia.base));
+        assert!(!tem_commit(&outro, &copia.base), "outro repositório não tem a base da cópia");
+        assert!(reparar_copias(&movida, &[copia.caminho.clone()]).is_empty());
+        assert_eq!(raiz_comum(&copia.caminho), raiz_comum(&movida));
+        assert_eq!(reparar_copias(&outro, &[copia.caminho.clone()]), [copia.caminho.clone()]);
+        assert_eq!(raiz_comum(&copia.caminho), raiz_comum(&movida), "o repair de outro repositório não a tira do dela");
+        remover_worktree(&movida, &copia.caminho, &copia.branch);
+        let _ = std::fs::remove_dir_all(&movida);
+        let _ = std::fs::remove_dir_all(&outro);
+    }
+
+    #[test]
     fn copias_dos_agentes_do_fluxo_nao_entram_no_commit() {
         let pasta = repositorio();
         let agente = pasta.join(".claude/worktrees/agente-1");
@@ -1602,7 +1985,7 @@ mod testes {
         assert_eq!(refs().lines().count(), 5, "{}", refs());
 
         let area = projeto.with_extension("area");
-        limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, std::slice::from_ref(&antigo)).unwrap();
+        limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, std::slice::from_ref(&antigo), false).unwrap();
         assert!(!copia.caminho.exists());
         assert!(git(&projeto, &["rev-parse", "--verify", "-q", "refs/heads/vitral/t7-limpar"]).is_err());
         let sobrou = refs();
@@ -1611,7 +1994,7 @@ mod testes {
 
         // Pasta apagada à mão: a limpeza esquece o registro e apaga o branch.
         std::fs::remove_dir_all(&outra.caminho).unwrap();
-        limpar_copia(&projeto, &outra.caminho, &area, &outra.branch, &[]).unwrap();
+        limpar_copia(&projeto, &outra.caminho, &area, &outra.branch, &[], false).unwrap();
         assert_eq!(git(&projeto, &["worktree", "list", "--porcelain"]).unwrap().matches("worktree ").count(), 1);
         assert!(git(&projeto, &["branch", "--list", "vitral/*"]).unwrap().is_empty());
         assert_eq!(refs().lines().count(), 1, "{}", refs());
@@ -1619,7 +2002,7 @@ mod testes {
         let estranha = projeto.with_extension("estranha");
         std::fs::create_dir_all(&estranha).unwrap();
         std::fs::write(estranha.join("importante.txt"), "x").unwrap();
-        assert!(limpar_copia(&projeto, &estranha, &area, "vitral/t9-x", &[]).is_err());
+        assert!(limpar_copia(&projeto, &estranha, &area, "vitral/t9-x", &[], false).is_err());
         assert!(estranha.join("importante.txt").exists());
         let _ = std::fs::remove_dir_all(&estranha);
 
@@ -1629,7 +2012,7 @@ mod testes {
         std::fs::create_dir_all(cortada.caminho.join("node_modules/pacote")).unwrap();
         std::fs::remove_file(cortada.caminho.join(".git")).unwrap();
         podar(&projeto);
-        limpar_copia(&projeto, &cortada.caminho, &area, &cortada.branch, &[]).unwrap();
+        limpar_copia(&projeto, &cortada.caminho, &area, &cortada.branch, &[], false).unwrap();
         assert!(!cortada.caminho.exists());
         assert!(git(&projeto, &["branch", "--list", "vitral/*"]).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&area);
@@ -1742,6 +2125,249 @@ mod testes {
             fio.join().unwrap();
         }
         let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    #[should_panic(expected = "dentro dela mesma")]
+    fn na_vez_nao_e_reentrante() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("reentra"), "vitral/t1-r").unwrap();
+        // A cópia tem a mesma vez que a origem: pedir a dela dentro da da origem travaria.
+        na_vez_do_projeto(&projeto, || na_vez_do_projeto(&copia.caminho, || ()));
+    }
+
+    fn commit_em(pasta: &Path, arquivo: &str, texto: &str) {
+        std::fs::write(pasta.join(arquivo), texto).unwrap();
+        git(pasta, &["add", "-A"]).unwrap();
+        git(pasta, &["commit", "-q", "-m", arquivo]).unwrap();
+    }
+
+    fn limpar(projeto: &Path, copias: &[&Path]) {
+        for copia in copias {
+            let _ = std::fs::remove_dir_all(copia);
+        }
+        let _ = std::fs::remove_dir_all(projeto);
+    }
+
+    #[test]
+    fn duas_juncoes_seguidas_levam_so_o_que_e_novo() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("t1"), "vitral/t1-juntar").unwrap();
+        assert_eq!(copia.ramo.as_deref(), ramo_atual(&projeto).as_deref());
+        std::fs::write(copia.caminho.join("b.txt"), "primeira\n").unwrap();
+        assert_eq!(contar_mudancas(&copia.caminho, &copia.base).unwrap(), (1, 1, 0));
+        let juntar_agora = |base: &str| {
+            na_vez_do_projeto(&projeto, || {
+                juntar(&projeto, &copia.caminho, &copia.branch, base, "teste", copia.ramo.as_deref(), "t1")
+            })
+            .unwrap()
+        };
+        let Juntada::Feita { commits: Some(_), base, andou: true } = juntar_agora(&copia.base) else {
+            panic!("a primeira junção devia entrar e a cópia andar");
+        };
+        assert!(projeto.join("b.txt").exists() && copia.caminho.join("b.txt").exists());
+        assert_eq!(base, git(&projeto, &["rev-parse", "HEAD"]).unwrap());
+        assert_eq!(estado_copia(&copia.caminho, &projeto).unwrap(), EstadoCopia::default());
+
+        std::fs::write(copia.caminho.join("c.txt"), "segunda\n").unwrap();
+        let diff = diff(&copia.caminho, &base).unwrap();
+        assert!(diff.contains("c.txt") && !diff.contains("b.txt"), "{diff}");
+        let Juntada::Feita { commits: Some(commits), .. } = juntar_agora(&base) else {
+            panic!("a segunda junção devia entrar");
+        };
+        assert_eq!(commits.lines().count(), 1, "{commits}");
+        assert!(projeto.join("c.txt").exists());
+        // Origem em outro branch: só com confirmação.
+        git(&projeto, &["checkout", "-q", "-b", "outro"]).unwrap();
+        let ramo = ramo_atual(&copia.caminho).unwrap();
+        assert!(matches!(
+            juntar(&projeto, &copia.caminho, &ramo, &base, "x", copia.ramo.as_deref(), "t1").unwrap(),
+            Juntada::RamoTrocado { atual, .. } if atual == "outro"
+        ));
+        limpar(&projeto, &[&copia.caminho]);
+    }
+
+    #[test]
+    fn depois_de_juntar_sem_avancar_fica_no_ponto_comum() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("ff"), "vitral/t2-ff").unwrap();
+        commit_em(&copia.caminho, "da-copia.txt", "c\n");
+        commit_em(&projeto, "da-origem.txt", "o\n");
+        let (base, andou) = depois_de_juntar(&copia.caminho, &projeto).unwrap();
+        assert!(!andou);
+        assert_eq!(base, copia.base);
+        limpar(&projeto, &[&copia.caminho]);
+    }
+
+    #[test]
+    fn estado_da_copia_a_frente_atras_e_suja() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("estado"), "vitral/t3-e").unwrap();
+        let estado = || estado_copia(&copia.caminho, &projeto).unwrap();
+        assert_eq!(estado(), EstadoCopia::default());
+        std::fs::create_dir_all(copia.caminho.join("__pycache__")).unwrap();
+        std::fs::write(copia.caminho.join("__pycache__/x.pyc"), "lixo").unwrap();
+        assert!(!estado().suja, "lixo de teste não suja a cópia");
+        std::fs::write(copia.caminho.join("solto.txt"), "x").unwrap();
+        assert!(estado().suja);
+        std::fs::remove_file(copia.caminho.join("solto.txt")).unwrap();
+        commit_em(&copia.caminho, "c.txt", "c\n");
+        commit_em(&projeto, "o.txt", "o\n");
+        assert_eq!(estado(), EstadoCopia { a_frente: 1, atras: 1, suja: false });
+        limpar(&projeto, &[&copia.caminho]);
+    }
+
+    #[test]
+    fn copia_limpa_anda_com_a_origem_e_a_com_trabalho_nao() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("sinc"), "vitral/t4-s").unwrap();
+        assert!(!sincronizar_copia(&copia.caminho, &projeto).unwrap(), "nada novo na origem");
+        commit_em(&projeto, "o.txt", "o\n");
+        std::fs::write(copia.caminho.join("meu.txt"), "x").unwrap();
+        assert!(!sincronizar_copia(&copia.caminho, &projeto).unwrap(), "a cópia tem mudança sem commit");
+        std::fs::remove_file(copia.caminho.join("meu.txt")).unwrap();
+        assert!(sincronizar_copia(&copia.caminho, &projeto).unwrap());
+        assert!(copia.caminho.join("o.txt").exists());
+        assert_eq!(git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap(), git(&projeto, &["rev-parse", "HEAD"]).unwrap());
+        limpar(&projeto, &[&copia.caminho]);
+    }
+
+    #[test]
+    fn recriar_no_mesmo_caminho_tira_a_pasta_solta_do_lugar() {
+        let projeto = repositorio();
+        let destino = projeto.with_extension("t5");
+        let area = projeto.with_extension("area5");
+        let copia = criar_worktree(&projeto, &destino, "vitral/t5-recriar").unwrap();
+        commit_em(&copia.caminho, "feito.txt", "trabalho\n");
+        limpar_copia(&projeto, &destino, &area, &copia.branch, &[], true).unwrap();
+        assert!(!destino.exists());
+        std::fs::create_dir_all(&destino).unwrap();
+        std::fs::write(destino.join("importante.txt"), "não apague").unwrap();
+
+        let (nova, existia) = recriar_worktree(&projeto, &destino, &copia.branch).unwrap();
+        assert!(existia);
+        assert_eq!((nova.caminho.as_path(), nova.branch.as_str()), (destino.as_path(), copia.branch.as_str()));
+        assert!(destino.join("feito.txt").exists(), "a cópia volta do branch antigo");
+        let mae = destino.parent().unwrap();
+        let nome = format!("{}.antiga-", destino.file_name().unwrap().to_string_lossy());
+        let antiga = std::fs::read_dir(mae)
+            .unwrap()
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().starts_with(&nome))
+            .expect("a pasta solta foi para o lado")
+            .path();
+        assert!(antiga.join("importante.txt").exists());
+
+        // Sem o branch: do HEAD da origem, com o mesmo nome e no mesmo caminho.
+        limpar_copia(&projeto, &destino, &area, &copia.branch, &[], false).unwrap();
+        let (nova, existia) = recriar_worktree(&projeto, &destino, &copia.branch).unwrap();
+        assert!(!existia && nova.branch == copia.branch && nova.caminho == destino);
+        assert!(!destino.join("feito.txt").exists());
+        limpar(&projeto, &[&destino, &antiga]);
+    }
+
+    #[test]
+    fn juncao_cortada_desfaz_o_merge_parado_e_conta_a_que_ja_entrou() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("t6"), "vitral/t6-cortada").unwrap();
+        std::fs::write(copia.caminho.join("a.txt"), "da cópia\n").unwrap();
+        git(&copia.caminho, &["commit", "-q", "-am", "copia"]).unwrap();
+        commit_em(&projeto, "a.txt", "da origem\n");
+        assert!(git(&projeto, &["merge", "--no-ff", "--no-edit", &copia.branch]).is_err());
+        assert!(git(&projeto, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok());
+        assert_eq!(recuperar_juncao(&projeto, &copia.caminho, &copia.branch).unwrap(), JuncaoCortada::NaoEntrou);
+        assert!(git(&projeto, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_err(), "o merge parado saiu");
+        assert_eq!(std::fs::read_to_string(projeto.join("a.txt")).unwrap(), "da origem\n");
+
+        let outra = criar_worktree(&projeto, &projeto.with_extension("t7"), "vitral/t7-entrou").unwrap();
+        commit_em(&outra.caminho, "novo.txt", "x\n");
+        git(&projeto, &["merge", "--no-ff", "--no-edit", &outra.branch]).unwrap();
+        assert_eq!(recuperar_juncao(&projeto, &outra.caminho, &outra.branch).unwrap(), JuncaoCortada::Entrou);
+        // Com mudança sem commit na cópia, ficou coisa de fora.
+        std::fs::write(outra.caminho.join("depois.txt"), "y").unwrap();
+        assert_eq!(recuperar_juncao(&projeto, &outra.caminho, &outra.branch).unwrap(), JuncaoCortada::NaoEntrou);
+        limpar(&projeto, &[&copia.caminho, &outra.caminho]);
+    }
+
+    #[test]
+    fn limpeza_recusada_com_a_origem_fora_do_lugar() {
+        let projeto = repositorio();
+        let copia = criar_worktree(&projeto, &projeto.with_extension("t8"), "vitral/t8-longe").unwrap();
+        let movido = projeto.with_extension("movido");
+        std::fs::rename(&projeto, &movido).unwrap();
+        let area = copia.caminho.parent().unwrap().to_path_buf();
+        assert!(limpar_copia(&projeto, &copia.caminho, &area, &copia.branch, &[], false).is_err());
+        assert!(copia.caminho.join("a.txt").exists(), "a cópia continua inteira");
+        limpar(&movido, &[&copia.caminho]);
+    }
+
+    #[test]
+    fn commit_de_turno_so_com_mudanca_e_poda_dos_pontos() {
+        let projeto = repositorio();
+        let commits = || git(&projeto, &["rev-list", "--count", "HEAD"]).unwrap();
+        assert!(!commit_de_turno(&projeto, "Vitral: nada").unwrap());
+        std::fs::create_dir_all(projeto.join("__pycache__")).unwrap();
+        std::fs::write(projeto.join("__pycache__/x.pyc"), "lixo").unwrap();
+        assert!(!commit_de_turno(&projeto, "Vitral: só lixo").unwrap());
+        std::fs::write(projeto.join("b.txt"), "b\n").unwrap();
+        assert!(commit_de_turno(&projeto, "Vitral: chat").unwrap());
+        assert_eq!(commits(), "2");
+
+        for i in 0..5 {
+            std::fs::write(projeto.join("b.txt"), format!("{i}\n")).unwrap();
+            foto_no_grupo(&projeto, "t3").unwrap();
+        }
+        foto_no_grupo(&projeto, "t4").unwrap();
+        let grupo = |g: &str| {
+            git(&projeto, &["for-each-ref", "--format=%(refname)", &format!("refs/vitral/pontos/{g}/")])
+                .unwrap()
+                .lines()
+                .count()
+        };
+        assert_eq!(grupo("t3"), 5);
+        podar_pontos(&projeto, "t3", 2);
+        assert_eq!((grupo("t3"), grupo("t4")), (2, 1));
+        limpar(&projeto, &[]);
+    }
+
+    #[test]
+    fn ajudante_parte_do_trabalho_do_pai_e_junta_no_branch_dele() {
+        let origem = repositorio();
+        let pai = criar_worktree(&origem, &origem.with_extension("t1"), "vitral/t1-pai").unwrap();
+        assert!(!checkpoint(&pai.caminho, "Vitral: nada").unwrap());
+        std::fs::write(pai.caminho.join("do-pai.txt"), "pai\n").unwrap();
+        // A cópia do ajudante nasce de outra cópia, depois do ponto: vê o que o pai ainda não juntou.
+        let ajudante = na_vez_do_projeto(&pai.caminho, || {
+            assert!(checkpoint(&pai.caminho, "Vitral: ponto antes do ajudante #2").unwrap());
+            criar_worktree(&pai.caminho, &origem.with_extension("t2"), "vitral/t2-ajudante").unwrap()
+        });
+        assert_eq!(ajudante.base, git(&pai.caminho, &["rev-parse", "HEAD"]).unwrap());
+        assert_eq!(ajudante.ramo.as_deref(), Some("vitral/t1-pai"));
+        assert!(ajudante.caminho.join("do-pai.txt").exists() && !origem.join("do-pai.txt").exists());
+        assert!(!ajudante.sujo);
+
+        // O ajudante entrega; o pai mexeu de novo sem commit. Num único na_vez: o ponto e a junção.
+        std::fs::write(ajudante.caminho.join("do-ajudante.txt"), "ajudante\n").unwrap();
+        std::fs::write(pai.caminho.join("do-pai.txt"), "pai de novo\n").unwrap();
+        let juncao = na_vez_do_projeto(&pai.caminho, || {
+            assert!(checkpoint(&pai.caminho, "Vitral: ponto antes de juntar o ajudante #2").unwrap());
+            aprovar(&pai.caminho, &ajudante.caminho, &ajudante.branch, &ajudante.base, "Ajudante #2").unwrap()
+        });
+        assert!(matches!(juncao, Juncao::Juntou { .. }));
+        assert_eq!(ramo_atual(&pai.caminho).as_deref(), Some("vitral/t1-pai"));
+        assert!(pai.caminho.join("do-ajudante.txt").exists());
+        assert_eq!(std::fs::read_to_string(pai.caminho.join("do-pai.txt")).unwrap(), "pai de novo\n");
+        assert!(!origem.join("do-ajudante.txt").exists(), "a origem só recebe no Juntar do pai");
+        limpar_copia(&pai.caminho, &ajudante.caminho, &origem.with_extension("area"), &ajudante.branch, &[], false).unwrap();
+        assert!(!ajudante.caminho.exists());
+
+        // O Juntar do pai leva tudo à origem.
+        let feita = na_vez_do_projeto(&origem, || {
+            juntar(&origem, &pai.caminho, &pai.branch, &pai.base, "Chat 1", pai.ramo.as_deref(), "t1").unwrap()
+        });
+        assert!(matches!(feita, Juntada::Feita { commits: Some(_), .. }));
+        assert!(origem.join("do-ajudante.txt").exists() && origem.join("do-pai.txt").exists());
+        limpar(&origem, &[&pai.caminho]);
     }
 }
 

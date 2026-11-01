@@ -1,5 +1,5 @@
-//! Ícone e cor do atalho de cada projeto no trilho: o que o usuário escolheu (guardado em
-//! `ConfigProjeto`) ou, sem escolha, um palpite pelo conteúdo da pasta e uma cor pelo nome.
+//! Ícone e cor do atalho de cada projeto no trilho: o que o usuário escolheu (guardado no
+//! `Projeto`) ou, sem escolha, um palpite pelo conteúdo da pasta principal e uma cor pelo id.
 //! Os SVGs são do Lucide (ISC, `assets/icones/LICENSE-LUCIDE`), embutidos no binário.
 
 use std::{
@@ -11,7 +11,7 @@ use std::{
 };
 
 use gpui_kit::component::{
-    Icon, Sizable as _, WindowExt as _, h_flex,
+    Icon, Sizable as _, h_flex,
     input::{InputEvent, InputState},
     tooltip::Tooltip,
     v_flex,
@@ -19,15 +19,9 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{
-    Janela,
-    componentes::{
-        EstadoVazio, QuadradoDeProjeto, RodapeDialogo, TamanhoBotao, botao_fantasma,
-        botao_primario, campo_de_busca,
-    },
-};
+use super::componentes::{EstadoVazio, QuadradoDeProjeto, campo_de_busca};
 use crate::{
-    modelo::ConfigProjeto,
+    modelo::Projeto,
     motor::Motor,
     tema::{Cores, Lucide, Tipo as _, halo_foco, r, raio, tam},
 };
@@ -227,22 +221,26 @@ fn palpite_guardado(pasta: &Path) -> &'static str {
     })
 }
 
-/// Ícone e cor de um projeto: a escolha do usuário ou, sem ela, os automáticos.
-fn escolha(config: Option<&ConfigProjeto>, nome: &str, pasta: &Path) -> (&'static Icone, u32) {
-    let icone = config
-        .and_then(|c| icone_por_id(&c.icone))
-        .or_else(|| icone_por_id(palpite_guardado(pasta)))
+/// Ícone e cor de um projeto: a escolha do usuário ou, sem ela, os automáticos (o palpite pela
+/// pasta e a cor pela chave).
+fn escolha(icone: &str, cor: &str, chave: &str, pasta: Option<&Path>) -> (&'static Icone, u32) {
+    let icone = icone_por_id(icone)
+        .or_else(|| icone_por_id(pasta.map_or("folder", palpite_guardado)))
         .unwrap_or(&ICONES[0]);
-    (icone, cor_escolhida(config, nome))
-}
-
-fn cor_escolhida(config: Option<&ConfigProjeto>, nome: &str) -> u32 {
-    config.and_then(|c| ler_cor(&c.cor)).unwrap_or_else(|| cor_automatica(nome))
+    (icone, ler_cor(cor).unwrap_or_else(|| cor_automatica(chave)))
 }
 
 /// O que o trilho mostra para o projeto.
-pub fn visual(motor: &Motor, projeto: &str) -> (&'static Icone, u32) {
-    escolha(motor.config.projetos.get(projeto), projeto, &motor.caminho_projeto(projeto))
+pub fn visual(p: &Projeto) -> (&'static Icone, u32) {
+    escolha(&p.icone, &p.cor, &p.id, p.principal().map(|l| l.caminho.as_path()))
+}
+
+/// O mesmo pelo id; um projeto que sumiu fica com os automáticos.
+pub fn visual_do(motor: &Motor, projeto: &str) -> (&'static Icone, u32) {
+    match motor.projeto(projeto) {
+        Some(p) => visual(p),
+        None => escolha("", "", projeto, None),
+    }
 }
 
 /// Desenha direto dos bytes embutidos (o GPUI guarda o resultado pelo hash), sem precisar
@@ -252,26 +250,6 @@ pub fn desenho(icone: &'static Icone, tamanho: f32, cor: impl Into<Hsla>) -> Ico
         .data(icone.svg)
         .size(r(tamanho))
         .text_color(cor)
-}
-
-/// Grava a escolha na configuração da pasta (`None` volta ao automático).
-fn gravar(motor: &Entity<Motor>, projeto: &str, icone: Option<&'static str>, cor: Option<u32>, cx: &mut App) {
-    let projeto = projeto.to_string();
-    motor.update(cx, |m, cx| {
-        m.mudar_config(
-            |c| {
-                let p = c.projetos.entry(projeto).or_default();
-                p.icone = icone.unwrap_or_default().to_string();
-                p.cor = cor.map(|c| format!("#{c:06x}")).unwrap_or_default();
-            },
-            cx,
-        )
-    });
-}
-
-/// "Usar automático" do clique direito no projeto: apaga a escolha gravada.
-pub(super) fn usar_automatico(motor: &Entity<Motor>, projeto: &str, cx: &mut App) {
-    gravar(motor, projeto, None, None, cx);
 }
 
 /// Os ícones cujo nome (ou arquivo) tem a busca, sem diferença de maiúsculas.
@@ -288,59 +266,20 @@ fn nome_da_cor(cor: u32) -> &'static str {
     CORES.iter().find(|(valor, _)| *valor == cor).map(|(_, nome)| *nome).unwrap_or("Personalizada")
 }
 
-impl Janela {
-    /// "Ícone e cor…" do menu do projeto: a escolha num diálogo de 460, que só grava ao salvar.
-    pub(super) fn dialogo_icone_projeto(&mut self, projeto: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let escolha = cx.new(|cx| EscolhaIconeCor::sem_retorno(motor, projeto.clone(), cx));
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let (automatico, salvar, enter) = (escolha.clone(), escolha.clone(), escolha.clone());
-            let rodape = RodapeDialogo::new()
-                .esquerda(
-                    botao_fantasma("icone-automatico", Some(Lucide::Undo2.into()), "Usar automático", TamanhoBotao::Controle, window, cx)
-                        .tooltip("Ícone pelo conteúdo da pasta e cor pelo nome")
-                        .on_click(move |_, window, cx| automatico.update(cx, |e, cx| e.usar_automatico(window, cx))),
-                )
-                .cancelar(
-                    botao_fantasma("icone-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                )
-                .principal(
-                    botao_primario("icone-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx).on_click(
-                        move |_, window, cx| {
-                            salvar.update(cx, |e, cx| e.gravar(cx));
-                            window.close_dialog(cx);
-                        },
-                    ),
-                );
-            // A moldura dos diálogos; 460 porque a grade de ícones tem 396.
-            super::dialogos::moldura(dialogo, 460., window)
-                .title(super::dialogos::topo(super::dialogos::cabecalho("Ícone e cor do projeto", Some(projeto.clone()))))
-                .child(escolha.clone())
-                .footer(rodape)
-                .on_ok(move |_, _, cx| {
-                    enter.update(cx, |e, cx| e.gravar(cx));
-                    true
-                })
-        });
-    }
-}
-
 /// Quem embute a escolha recebe cada mudança (`None` é automático).
 type AoMudar = Rc<dyn Fn(Option<&'static Icone>, Option<u32>, &mut Window, &mut App)>;
 
 /// A escolha de ícone e cor do projeto: prévia, busca, grade de ícones e cores. A escolhida
-/// fica na cor do projeto. O diálogo "Ícone e cor…" grava ao salvar; embutida (Configurar
-/// projeto, Novo projeto), cada mudança vai para quem embutiu.
+/// fica na cor do projeto. Fica embutida em Editar projeto, que recebe cada mudança e grava no
+/// Salvar; o automático sai da pasta principal (o ícone) e da chave (a cor).
 pub struct EscolhaIconeCor {
-    motor: Entity<Motor>,
-    projeto: String,
+    nome: SharedString,
+    chave: String,
+    pasta: Option<PathBuf>,
     /// `None` é automático.
     icone: Option<&'static Icone>,
     cor: Option<u32>,
-    ao_mudar: Option<AoMudar>,
+    ao_mudar: AoMudar,
     /// Criada no primeiro desenho (o campo precisa da janela).
     busca: Option<Entity<InputState>>,
     _assinatura: Option<Subscription>,
@@ -348,27 +287,35 @@ pub struct EscolhaIconeCor {
 
 impl EscolhaIconeCor {
     pub fn new(
-        motor: Entity<Motor>,
-        projeto: String,
+        icone: Option<&'static Icone>,
+        cor: Option<u32>,
         ao_mudar: impl Fn(Option<&'static Icone>, Option<u32>, &mut Window, &mut App) + 'static,
-        cx: &mut Context<Self>,
     ) -> Self {
-        Self { ao_mudar: Some(Rc::new(ao_mudar)), ..Self::sem_retorno(motor, projeto, cx) }
+        Self {
+            nome: SharedString::default(),
+            chave: String::new(),
+            pasta: None,
+            icone,
+            cor,
+            ao_mudar: Rc::new(ao_mudar),
+            busca: None,
+            _assinatura: None,
+        }
     }
 
-    fn sem_retorno(motor: Entity<Motor>, projeto: String, cx: &mut Context<Self>) -> Self {
-        let config = motor.read(cx).config.projetos.get(&projeto);
-        let icone = config.and_then(|c| icone_por_id(&c.icone));
-        let cor = config.and_then(|c| ler_cor(&c.cor));
-        Self { motor, projeto, icone, cor, ao_mudar: None, busca: None, _assinatura: None }
+    /// O nome que a prévia mostra, a chave da cor automática e a pasta do ícone automático.
+    pub fn contexto(&mut self, nome: &str, chave: &str, pasta: Option<&Path>) {
+        self.nome = nome.to_string().into();
+        self.chave = chave.to_string();
+        self.pasta = pasta.map(Path::to_path_buf);
     }
 
-    /// Grava a escolha na configuração da pasta (quem embute decide quando).
-    pub fn gravar(&self, cx: &mut App) {
-        gravar(&self.motor, &self.projeto, self.icone.map(|i| i.id), self.cor, cx);
+    /// O que vale sem escolha: o palpite pela pasta e a cor pela chave.
+    pub fn automatico(&self) -> (&'static Icone, u32) {
+        escolha("", "", &self.chave, self.pasta.as_deref())
     }
 
-    /// Volta ao palpite pelo conteúdo da pasta e à cor pelo nome.
+    /// Volta ao palpite pelo conteúdo da pasta e à cor pela chave.
     pub fn usar_automatico(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.icone = None;
         self.cor = None;
@@ -377,9 +324,7 @@ impl EscolhaIconeCor {
 
     /// Avisa quem embutiu a escolha.
     fn mudou(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(f) = &self.ao_mudar {
-            f(self.icone, self.cor, window, cx);
-        }
+        (self.ao_mudar)(self.icone, self.cor, window, cx);
         cx.notify();
     }
 }
@@ -397,8 +342,8 @@ impl Render for EscolhaIconeCor {
         }
         let busca = self.busca.clone().expect("criada acima");
         let consulta = busca.read(cx).value().to_string();
-        let motor = self.motor.read(cx);
-        let (icone_auto, cor_auto) = escolha(None, &self.projeto, &motor.caminho_projeto(&self.projeto));
+        let (icone_auto, cor_auto) = self.automatico();
+        let nome = if self.nome.is_empty() { SharedString::from("Projeto novo") } else { self.nome.clone() };
         let icone = self.icone.unwrap_or(icone_auto);
         let cor = self.cor.unwrap_or(cor_auto);
         let cor_hsla = Hsla::from(rgb(cor));
@@ -417,7 +362,7 @@ impl Render for EscolhaIconeCor {
                 v_flex()
                     .gap(r(2.))
                     .min_w_0()
-                    .child(div().titulo_cartao().text_color(Cores::texto()).truncate().child(self.projeto.clone()))
+                    .child(div().titulo_cartao().text_color(Cores::texto()).truncate().child(nome))
                     .child(div().text_size(r(13.)).text_color(Cores::tenue()).child(descricao)),
             );
 
@@ -504,7 +449,7 @@ impl Render for EscolhaIconeCor {
 #[cfg(test)]
 mod testes {
     // Sem `use super::*`: o `gpui_kit::*` de lá traz um `test` que esconde o `#[test]`.
-    use super::{CORES, ConfigProjeto, cor_automatica, escolha, filtrar, icone_por_id, ler_cor, nome_da_cor, palpite};
+    use super::{CORES, Projeto, cor_automatica, escolha, filtrar, icone_por_id, ler_cor, nome_da_cor, palpite, visual};
 
     #[test]
     fn cores_de_projeto_sem_cores_de_estado() {
@@ -552,15 +497,21 @@ mod testes {
             assert!(icone_por_id(esperado).is_some());
         }
         // Escolha gravada ganha do palpite; cor inválida volta à automática.
-        let config = ConfigProjeto {
-            icone: "rocket".into(),
-            cor: "azul".into(),
-            ..Default::default()
-        };
-        let (icone, cor) = escolha(Some(&config), "site", &casos[0].0);
+        let (icone, cor) = escolha("rocket", "azul", "site", Some(&casos[0].0));
         assert_eq!(icone.id, "rocket");
         assert_eq!(cor, cor_automatica("site"));
-        assert_eq!(escolha(None, "site", &casos[0].0).0.id, "globe");
+        assert_eq!(escolha("", "", "site", Some(&casos[0].0)).0.id, "globe");
+        assert_eq!(escolha("", "", "sem-pasta", None).0.id, "folder");
+        let projeto = Projeto {
+            id: "loja".into(),
+            icone: "store".into(),
+            pastas: vec![crate::modelo::PastaLigada { caminho: casos[1].0.clone(), ..Default::default() }],
+            ..Default::default()
+        };
+        let (icone, cor) = visual(&projeto);
+        assert_eq!((icone.id, cor), ("store", cor_automatica("loja")));
+        let sem_escolha = Projeto { icone: String::new(), ..projeto };
+        assert_eq!(visual(&sem_escolha).0.id, "server");
         assert_eq!(ler_cor("#b39dff"), Some(0xb39dff));
         assert_eq!(ler_cor("#a9b5d6"), Some(0xc8b98f));
         assert_eq!(ler_cor("#4f8dff"), Some(0x8fb6ff));

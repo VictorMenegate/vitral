@@ -2,8 +2,12 @@ mod atualizacao;
 mod claude;
 mod codex;
 mod contas;
+mod dados;
 mod git;
+mod importar;
+mod instancia;
 mod mcp;
+mod migracao;
 mod modelo;
 mod motor;
 mod processos;
@@ -13,21 +17,28 @@ mod sistema;
 mod tema;
 mod ui;
 
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 fn main() {
-    // `vitral <pasta>` abre direto nela; sem argumento, volta à última pasta usada.
-    // `vitral <pasta> --nova <projeto> <mensagem>` já começa uma conversa.
+    // `vitral` abre o app; `vitral <pasta>` liga ou abre o projeto da pasta; `vitral --nova
+    // <projeto> [mensagem]` já começa uma conversa. Com o Vitral aberto, o pedido vai para ele.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
-    // `vitral --versao [--json]` responde sem janela (o release e o atualizador conferem o binário).
+    // `vitral --versao [--json]` e `vitral --instalar` respondem sem janela (o release e o
+    // atualizador conferem o binário), antes de tocar nos dados.
     if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
         std::process::exit(codigo);
     }
-    // `vitral --vitrine` mostra os componentes da linguagem visual, sem pasta e sem motor.
+    // `vitral --vitrine` mostra os componentes da linguagem visual, sem dados e sem motor.
     if argumentos.iter().any(|a| a == "--vitrine") {
+        if let Ok(dados) = dados::Dados::padrao() {
+            ui::zoom::usar_pasta(dados.config.clone());
+        }
         gpui_kit::application().with_assets(tema::Icones).run(|cx| {
             gpui_kit::init(cx);
             gpui_kit::component::set_locale("pt-BR");
@@ -38,22 +49,37 @@ fn main() {
         });
         return;
     }
-    let raiz = argumentos
-        .first()
-        .filter(|a| !a.starts_with("--"))
-        .map(PathBuf::from)
-        .and_then(|p| p.canonicalize().ok())
-        .or_else(|| modelo::recentes().into_iter().find(|p| p.is_dir()));
-    let nova = argumentos.iter().position(|a| a == "--nova").and_then(|i| {
-        Some((
-            argumentos.get(i + 1)?.clone(),
-            argumentos.get(i + 2)?.clone(),
-        ))
-    });
+    let dados = match dados::Dados::padrao() {
+        Ok(dados) => dados,
+        Err(erro) => {
+            eprintln!("vitral: {erro:#}");
+            std::process::exit(1);
+        }
+    };
+    let atual = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let abertura = instancia::Abertura::de_args(&argumentos, &atual);
 
+    // A ordem: trava, saúde da versão, socket, migração, janela. Com a trava ocupada, o pedido vai ao
+    // Vitral aberto (que pode estar migrando: ele já ouve o socket) e este sai sem janela.
+    let _trava = match instancia::travar(&dados.arquivo_trava()) {
+        Ok(Some(trava)) => trava,
+        Ok(None) => match instancia::entregar(&dados.arquivo_socket(), &abertura, Duration::from_secs(10)) {
+            Ok(()) => return,
+            Err(_) => {
+                eprintln!("O Vitral já está aberto, mas não respondeu");
+                std::process::exit(1);
+            }
+        },
+        Err(erro) => {
+            eprintln!("vitral: não travou {}: {erro}", dados.arquivo_trava().display());
+            std::process::exit(1);
+        }
+    };
     // A versão nova que não abriu duas vezes nesta sessão do PC volta para a anterior, com os mesmos
-    // argumentos (só na versão instalada; a volta só vai para uma que leia os dados do disco).
-    let aviso = match atualizacao::saude::ao_abrir(&|| modelo::maior_formato_no_disco(raiz.as_deref())) {
+    // argumentos (só na versão instalada). Depois da trava, para não contar a abertura que só entrega
+    // o pedido ao Vitral aberto; antes da migração, para contar a que cai migrando. A volta só vai
+    // para uma versão que leia o formato dos dados do disco (o exec solta a trava).
+    let aviso = match atualizacao::saude::ao_abrir(&|| dados.formato_no_disco()) {
         atualizacao::saude::AoAbrir::Seguir(aviso) => aviso,
         atualizacao::saude::AoAbrir::Voltar(binario) => {
             use std::os::unix::process::CommandExt as _;
@@ -62,6 +88,28 @@ fn main() {
             None
         }
     };
+    let pedidos = instancia::ouvir(&dados.arquivo_socket())
+        .map_err(|erro| eprintln!("vitral: sem o socket {} ({erro}); outra abertura não chega aqui", dados.arquivo_socket().display()))
+        .ok();
+    ui::zoom::usar_pasta(dados.config.clone());
+    contas::usar_pasta(dados.config.clone());
+
+    // Antes de qualquer thread que abra processos: um fork ainda sem o exec se chama "vitral".
+    let na_bancada = std::env::var_os("DENTRO_DA_BANCADA").is_some_and(|v| v == "1");
+    let raizes = migracao::raizes_antigas(&dados, abertura.pasta.as_deref());
+    // Na primeira abertura com os dados novos, as conversas do Claude Code vêm junto.
+    let primeiro_uso = dados.primeiro_uso();
+    let migrou = migracao::migrar(&dados, &raizes, Path::new("/proc"), std::process::id(), na_bancada, modelo::agora());
+    let (aberto, relatorio) = match migrou {
+        migracao::Resultado::Adiada { raizes, pids } => (Err(motor::SomenteLeitura::MigracaoAdiada { raizes, pids }), None),
+        migracao::Resultado::Falhou { raiz, erro } => (Err(motor::SomenteLeitura::MigracaoFalhou { raiz, erro }), None),
+        migracao::Resultado::Migrou(relatorio) => (dados.carregar().map_err(Into::into), Some(relatorio)),
+        migracao::Resultado::NaoPrecisa | migracao::Resultado::SemRaizes => (dados.carregar().map_err(Into::into), None),
+    };
+    // Os dados abriram no formato desta versão: o atualizador não volta para uma que não o lê.
+    if aberto.is_ok() {
+        dados.marcar_formato();
+    }
 
     // O que um Vitral que caiu deixou rodando; de quebra, já descobre se o systemd abre escopos.
     std::thread::spawn(processos::limpar_sobras);
@@ -76,7 +124,7 @@ fn main() {
             ui::zoom::iniciar(cx);
             ui::atalhos(cx);
             // Procura versão nova em segundo plano; na versão instalada, o reinício vai para o link `atual`.
-            atualizacao::iniciar(aviso, cx);
+            atualizacao::iniciar(aviso, dados.pasta.clone(), cx);
             let opcoes = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(920.)), cx)),
                 window_min_size: Some(size(px(960.), px(600.))),
@@ -85,17 +133,31 @@ fn main() {
                 app_id: Some("vitral".into()),
                 ..TitleBar::window_options()
             };
+            let motor = cx.new(|cx| motor::Motor::new(dados, aberto, cx));
+            motor.update(cx, |m, cx| {
+                if let Some(relatorio) = &relatorio {
+                    m.migracao_concluida(relatorio, cx);
+                }
+                m.importar_na_abertura(primeiro_uso, cx);
+                m.pedir_abertura(abertura, cx);
+            });
+            // Os pedidos de outras aberturas, que esperaram a janela.
+            if let Some(pedidos) = pedidos {
+                let motor = motor.downgrade();
+                cx.spawn(async move |cx| {
+                    while let Ok(abertura) = pedidos.recv().await {
+                        if motor.update(cx, |m, cx| m.pedir_abertura(abertura, cx)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+            }
             gpui_kit::open_window(opcoes, cx, move |window, cx| {
                 window.set_window_title("Vitral");
                 // 10 s depois do primeiro quadro, a versão nova abriu direito.
                 window.on_next_frame(|_, cx| atualizacao::primeiro_quadro(cx));
-                let janela = cx.new(|cx| ui::Janela::new(raiz, window, cx));
-                if let Some((projeto, mensagem)) = nova {
-                    janela.update(cx, |j, cx| {
-                        j.comecar_conversa(&projeto, mensagem, window, cx)
-                    });
-                }
-                janela
+                cx.new(|cx| ui::Janela::new(motor, window, cx))
             })
             .expect("não abriu a janela");
             cx.activate(true);

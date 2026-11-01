@@ -283,7 +283,7 @@ fn texto_do_ajuste(rodada: u32, recado: &str, comentarios: &[Comentario], aponta
     texto.trim_end().to_string()
 }
 
-/// "Ajuste enviado ao trabalhador da #2: 3 comentários."
+/// "Ajuste enviado ao chat 2: 3 comentários."
 fn resumo_do_ajuste(tarefa: u64, comentarios: usize, apontamentos: usize) -> String {
     let mut partes = Vec::new();
     if comentarios > 0 {
@@ -293,9 +293,9 @@ fn resumo_do_ajuste(tarefa: u64, comentarios: usize, apontamentos: usize) -> Str
         partes.push(format!("{} do revisor", contagem(apontamentos, "apontamento", "apontamentos")));
     }
     if partes.is_empty() {
-        format!("Ajuste enviado ao trabalhador da #{tarefa}.")
+        format!("Ajuste enviado ao chat {tarefa}.")
     } else {
-        format!("Ajuste enviado ao trabalhador da #{tarefa}: {}.", partes.join(" e "))
+        format!("Ajuste enviado ao chat {tarefa}: {}.", partes.join(" e "))
     }
 }
 
@@ -330,7 +330,7 @@ fn pendencias_de(t: &Tarefa, comentarios: usize, diff_com_erro: bool) -> Vec<Pen
         });
     }
     if diff_com_erro {
-        lista.push(Pendencia { texto: "Não deu para ler o diff desta tarefa.".into(), ressalva: None });
+        lista.push(Pendencia { texto: "Não deu para ler o diff deste chat.".into(), ressalva: None });
     }
     match comentarios {
         0 => {}
@@ -482,7 +482,7 @@ impl RevisaoDiff {
             TextareaState::new(window, cx)
                 .auto_grow(3, 6)
                 .submit_on_enter(true)
-                .placeholder("Recado geral para o trabalhador (opcional)…")
+                .placeholder("Recado geral para o chat (opcional)…")
         });
         let filtro = cx.new(|cx| InputState::new(window, cx).placeholder("Filtrar arquivos"));
         let lista_arquivos = cx.new(|cx| ListaDeEscolha::new("Buscar arquivo", window, cx));
@@ -973,7 +973,7 @@ impl RevisaoDiff {
         cx.notify();
     }
 
-    /// "Enviar ao trabalhador": o recado, os comentários e, com o interruptor, os apontamentos
+    /// "Enviar ao chat": o recado, os comentários e, com o interruptor, os apontamentos
     /// que sobraram. O diálogo fecha e a revisão desta rodada sai do cache.
     fn pedir_ajuste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.pode_pedir_ajuste(cx) {
@@ -1031,7 +1031,7 @@ impl RevisaoDiff {
         }
     }
 
-    /// "Aprovar e juntar": com pendências, pergunta antes; a pendência vermelha vai como ressalva.
+    /// "Juntar": com pendências, pergunta antes; a pendência vermelha vai como ressalva.
     fn pedir_aprovacao(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(t) = self.motor.read(cx).tarefa(self.tarefa).cloned() else {
             return;
@@ -1056,14 +1056,14 @@ impl RevisaoDiff {
             Confirmacao {
                 tom: if vermelha { TomConfirmacao::Perigo } else { TomConfirmacao::Atencao },
                 icone: Lucide::TriangleAlert.into(),
-                titulo: "Aprovar com pendências?".into(),
+                titulo: "Juntar com pendências?".into(),
                 texto: if vermelha {
-                    "Dá para aprovar assim mesmo; o que está vermelho vai como ressalva no commit.".into()
+                    "Dá para juntar assim mesmo; o que está vermelho vai como ressalva no commit.".into()
                 } else {
-                    "Dá para aprovar assim mesmo.".into()
+                    "Dá para juntar assim mesmo.".into()
                 },
                 detalhes,
-                ok: "Aprovar e juntar mesmo assim".into(),
+                ok: "Juntar mesmo assim".into(),
                 cancelar: "Voltar".into(),
                 ok_perigo: vermelha,
             },
@@ -1077,21 +1077,69 @@ impl RevisaoDiff {
         );
     }
 
+    /// O revisado é um chat de projeto (o botão é "Juntar", e o título diz "chat N").
+    fn de_chat(&self, cx: &App) -> bool {
+        let m = self.motor.read(cx);
+        m.tarefa(self.tarefa).and_then(|t| m.chat(&t.trabalhador)).is_some_and(|c| c.papel == crate::modelo::Papel::Projeto)
+    }
+
     fn aprovar(&mut self, ressalva: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.tarefa;
+        let recebe = self.motor.update(cx, |m, cx| m.aprovar_pelo_usuario(id, ressalva, cx));
+        self.esperar_juntar(recebe, window, cx);
+    }
+
+    /// Espera a junção: fecha com o aviso do que entrou, pergunta antes de juntar em outro branch
+    /// ou mostra no diálogo o que não deixou.
+    fn esperar_juntar(
+        &mut self,
+        recebe: smol::channel::Receiver<crate::mcp::Resposta>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.enviando = true;
         self.aviso = None;
         cx.notify();
         let id = self.tarefa;
-        let recebe = self.motor.update(cx, |m, cx| m.aprovar_pelo_usuario(id, ressalva, cx));
+        let de_chat = self.de_chat(cx);
         cx.spawn_in(window, async move |this, cx| {
             let resposta = recebe.recv().await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.enviando = false;
                 match resposta {
                     Ok(r) if !r.erro => {
-                        window.push_notification(aviso(Tom::Pronto, format!("Tarefa #{id} aprovada e juntada.")), cx);
+                        let texto = if de_chat {
+                            r.texto.lines().next().unwrap_or("As mudanças entraram na pasta original.").to_string()
+                        } else {
+                            format!("Ajudante #{id} juntado na pasta do chat dele.")
+                        };
+                        window.push_notification(aviso(Tom::Pronto, texto), cx);
                         let _ = this.janela.update(cx, |j, _| j.revisoes.remove(&id));
                         window.close_dialog(cx);
+                    }
+                    Ok(r) if r.texto.starts_with(crate::motor::RAMO_TROCADO) => {
+                        let fraca = cx.entity().downgrade();
+                        confirmar(
+                            Confirmacao {
+                                tom: TomConfirmacao::Atencao,
+                                icone: Lucide::GitBranch.into(),
+                                titulo: "Juntar em outro branch?".into(),
+                                texto: r.texto.into(),
+                                detalhes: Vec::new(),
+                                ok: "Juntar".into(),
+                                cancelar: "Voltar".into(),
+                                ok_perigo: false,
+                            },
+                            move |window, cx| {
+                                let _ = fraca.update(cx, |this, cx| {
+                                    let recebe = this.motor.update(cx, |m, cx| m.juntar_no_ramo_atual(id, cx));
+                                    this.esperar_juntar(recebe, window, cx);
+                                });
+                            },
+                            None,
+                            window,
+                            cx,
+                        );
                     }
                     Ok(r) => {
                         let tom = if r.texto.starts_with("Conflito") { Tom::Atencao } else { Tom::Erro };
@@ -1114,7 +1162,7 @@ impl RevisaoDiff {
                 tom: TomConfirmacao::Perigo,
                 icone: Lucide::Undo2.into(),
                 titulo: format!("Descartar as mudanças em {nome}?").into(),
-                texto: "O arquivo volta a como estava antes da tarefa (se a tarefa o criou, ele é apagado). \
+                texto: "O arquivo volta a como está no projeto (se este chat o criou, ele é apagado). \
                         Não dá para desfazer."
                     .into(),
                 detalhes: Vec::new(),
@@ -1222,9 +1270,34 @@ impl RevisaoDiff {
     pub fn cabecalho(&self, cx: &App) -> CabecalhoDialogo {
         let m = self.motor.read(cx);
         let Some(t) = m.tarefa(self.tarefa) else {
-            return CabecalhoDialogo::new(format!("Tarefa #{}", self.tarefa));
+            return CabecalhoDialogo::new(format!("Chat {}", self.tarefa));
         };
         let ponto = || div().text_color(Cores::apagado()).child("·");
+        if self.de_chat(cx) {
+            let origem = m.origem_da_tarefa(t);
+            let pasta = origem.file_name().map_or_else(|| origem.display().to_string(), |n| n.to_string_lossy().to_string());
+            let subtitulo = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(r(6.))
+                .font_weight(FontWeight::NORMAL)
+                .child(quadrado_do_projeto(m, &t.projeto, 18.))
+                .child(m.nome_do_projeto(&t.projeto))
+                .child(ponto())
+                .child(pasta)
+                .when(t.rodada > 1, |s| s.child(ponto()).child(format!("rodada {}", t.rodada)))
+                .map(|s| match self.tamanho() {
+                    Some((0, _, _)) => s.child(ponto()).child("sem mudanças"),
+                    Some((n, mais, menos)) => s
+                        .child(ponto())
+                        .child(contagem(n, "arquivo", "arquivos"))
+                        .child(ponto())
+                        .child(format!("+{mais} −{menos}")),
+                    None => s,
+                });
+            return CabecalhoDialogo::new(format!("Revisar e juntar · chat {} {}", t.id, t.titulo)).uma_linha().subtitulo(subtitulo);
+        }
         let subtitulo = div()
             .flex()
             .flex_wrap()
@@ -1232,9 +1305,9 @@ impl RevisaoDiff {
             .gap(r(6.))
             .font_weight(FontWeight::NORMAL)
             .child(quadrado_do_projeto(m, &t.projeto, 18.))
-            .child(t.projeto.clone())
+            .child(m.nome_do_projeto(&t.projeto))
             .child(ponto())
-            .child(format!("tarefa #{}", t.id))
+            .child(format!("ajudante #{}", t.id))
             .when(t.rodada > 1, |s| s.child(ponto()).child(format!("rodada {}", t.rodada)))
             .child(ponto())
             .child(pilula_da_tarefa(m, t))
@@ -1507,7 +1580,8 @@ impl RevisaoDiff {
             .min_w_0()
             .gap(r(4.))
             .when(pronta && d.lateral.is_none(), |s| {
-                s.child(self.chip_arquivos(t.map_or("", |t| t.projeto.as_str()), window, cx))
+                let nome = t.map(|t| self.motor.read(cx).nome_do_projeto(&t.projeto)).unwrap_or_default();
+                s.child(self.chip_arquivos(&nome, window, cx))
             })
             .when_some(t.filter(|_| lido), |s, t| {
                 s.children(self.chip_verificacao(t, d, window, cx))
@@ -1982,7 +2056,7 @@ impl RevisaoDiff {
     /// Spinner e ícone, texto e cor da linha da esquerda do rodapé.
     fn estado_do_rodape(&self, t: Option<&Tarefa>, cx: &App) -> (Option<Lucide>, String) {
         let Some(t) = t else {
-            return (Some(Lucide::Info), "A tarefa não existe mais.".into());
+            return (Some(Lucide::Info), "Este chat não existe mais.".into());
         };
         match t.estado {
             EstadoTarefa::Aprovada => return (Some(Lucide::CircleCheck), "Juntada ao projeto.".into()),
@@ -2064,7 +2138,7 @@ impl RevisaoDiff {
             ajuste = ajuste.child(if ajuste_primeiro { selo.tingida(Cores::sobre_cor()) } else { selo });
         }
         if ajuste_primeiro && self.pop != Some(Pop::Ajuste) {
-            ajuste = ajuste.tooltip_with_action("Pedir ajuste ao trabalhador", &AcaoPrincipal, Some("Revisao"));
+            ajuste = ajuste.tooltip_with_action("Pedir ajuste ao chat", &AcaoPrincipal, Some("Revisao"));
         }
         let ajuste = if self.enviando || lendo {
             ajuste.into_any_element()
@@ -2081,7 +2155,11 @@ impl RevisaoDiff {
             )
         };
         let recusa = self.motor.read(cx).recusa_aprovar(self.tarefa);
-        let rotulo = if self.enviando { "Juntando…" } else { "Aprovar e juntar" };
+        let rotulo = match (self.enviando, self.de_chat(cx)) {
+            (true, _) => "Juntando…",
+            (false, true) => "Juntar",
+            (false, false) => "Juntar",
+        };
         let icone_aprovar = Some(Lucide::GitMerge.into());
         let mut aprovar = if ajuste_primeiro {
             botao_fantasma("aprovar-juntar", icone_aprovar, rotulo, TamanhoBotao::Controle, window, cx)
@@ -2165,11 +2243,11 @@ impl RevisaoDiff {
                 let apagada = t.is_some_and(|t| t.copia_apagada());
                 let aprovada = t.is_some_and(|t| t.estado == EstadoTarefa::Aprovada);
                 let (titulo, texto) = match (apagada, aprovada) {
-                    (_, true) => ("A cópia desta tarefa já foi apagada", "Aprovada: as mudanças já estão no projeto."),
-                    (true, false) => ("A cópia desta tarefa já foi apagada", "Sem cópia isolada, não há o que comparar."),
+                    (_, true) => ("A cópia deste chat já foi apagada", "Juntado: as mudanças já estão no projeto."),
+                    (true, false) => ("A cópia deste chat já foi apagada", "Sem cópia isolada, não há o que comparar."),
                     (false, false) => (
-                        "Esta tarefa não tem cópia isolada",
-                        "Sem cópia isolada, não há o que comparar: o trabalhador mexe direto na pasta do projeto.",
+                        "Este chat não tem cópia isolada",
+                        "Sem cópia isolada, não há o que comparar: ele mexe direto na pasta do projeto.",
                     ),
                 };
                 EstadoVazio::new(Lucide::FolderX, titulo).texto(texto)
@@ -2248,7 +2326,7 @@ impl Render for RevisaoDiff {
             }
         }
         let t = self.motor.read(cx).tarefa(self.tarefa).cloned();
-        let projeto = t.as_ref().map(|t| t.projeto.clone()).unwrap_or_default();
+        let projeto = t.as_ref().map(|t| self.motor.read(cx).nome_do_projeto(&t.projeto)).unwrap_or_default();
         let problemas = t.as_ref().and_then(|t| t.revisao.as_ref()).map(|r| r.problemas.clone()).unwrap_or_default();
         let com_lateral = match &self.carga {
             Carga::Lendo => d.lateral,
@@ -2609,7 +2687,7 @@ fn corpo_ajuste(
             simbolo: Some(Simbolo::icone(Lucide::MessageSquare)),
             titulo: "Pedir ajuste".into(),
             valor: Some((format!("rodada {}", dados.rodada + 1).into(), Cores::destaque_texto())),
-            dica: Some("volta ao trabalhador".into()),
+            dica: Some("volta ao chat".into()),
         })
         .when(!dados.arquivos.is_empty(), |c| {
             c.child(
@@ -2655,7 +2733,7 @@ fn corpo_ajuste(
                     ),
                 )
                 .child(
-                    botao_primario("ajuste-enviar", None, "Enviar ao trabalhador", TamanhoBotao::Controle, window, cx)
+                    botao_primario("ajuste-enviar", None, "Enviar ao chat", TamanhoBotao::Controle, window, cx)
                         .disabled(!dados.pode)
                         .when(!dados.pode, |b| b.tooltip("Escreva um recado, comente uma linha ou inclua os apontamentos"))
                         .on_click(move |_, window, cx| {
@@ -3161,12 +3239,12 @@ diff --git a/x.md b/x.md
             texto_do_ajuste(3, "só o recado", &[], &[]),
             "Ajustes pedidos pelo usuário na revisão (rodada 3):\n\nsó o recado"
         );
-        assert_eq!(resumo_do_ajuste(2, 3, 0), "Ajuste enviado ao trabalhador da #2: 3 comentários.");
+        assert_eq!(resumo_do_ajuste(2, 3, 0), "Ajuste enviado ao chat 2: 3 comentários.");
         assert_eq!(
             resumo_do_ajuste(2, 1, 2),
-            "Ajuste enviado ao trabalhador da #2: 1 comentário e 2 apontamentos do revisor."
+            "Ajuste enviado ao chat 2: 1 comentário e 2 apontamentos do revisor."
         );
-        assert_eq!(resumo_do_ajuste(7, 0, 0), "Ajuste enviado ao trabalhador da #7.");
+        assert_eq!(resumo_do_ajuste(7, 0, 0), "Ajuste enviado ao chat 7.");
     }
 
     #[test]

@@ -1,26 +1,25 @@
-//! Diálogos: nova conversa (escolher o projeto), projeto novo, renomear, configurações da pasta,
-//! contas, arquivos do projeto, conversa como contexto e rotinas, todos na mesma moldura.
+//! Diálogos: novo chat (escolher o projeto, ou Avulsos, e a pasta), mover para projeto, projetos
+//! arquivados, localizar pasta, ativar git, renomear, contas, arquivos do projeto, conversa como
+//! contexto e rotinas, todos na mesma moldura. Novo e Editar projeto ficam em `projeto.rs`.
 
-use std::{cell::{Cell, RefCell}, path::Path, rc::Rc};
+use std::{cell::RefCell, path::{Path, PathBuf}, rc::Rc};
 
 use gpui_kit::component::{
     Disableable as _, WindowExt as _,
     dialog::Dialog,
-    input::{Input, InputState},
+    input::{Input, InputState, Textarea, TextareaState},
     tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    Janela,
+    Janela, Vista,
     componentes::{
-        CabecalhoDialogo, Campo, Confirmacao, EventoEscolha, GrupoDeEscolha, GrupoDeOpcoes, ItemDeEscolha,
-        LinhaDeOpcao, ListaDeEscolha, QuadradoDeProjeto, RodapeDialogo, Selo, Simbolo, Sinal, TamanhoBotao,
-        Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_primario, confirmar, contagem,
-        desenho_teclas, icone, largura, sinal_do_chat,
+        CabecalhoDialogo, Confirmacao, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, RodapeDialogo, Selo,
+        Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_primario, confirmar, contagem, desenho_teclas, largura,
+        sinal_do_chat,
     },
-    config_projeto::ConfigProjetoView,
     configuracoes::Configuracoes,
     icone_projeto,
     painel_contas::PainelContas,
@@ -65,19 +64,6 @@ pub(super) fn topo(cabecalho: CabecalhoDialogo) -> impl IntoElement {
     div().pb(r(8.)).child(cabecalho)
 }
 
-/// Subtítulo com um caminho: cortado no meio, inteiro na dica.
-pub(super) fn subtitulo_caminho(id: &'static str, texto: String) -> impl IntoElement {
-    let dica: SharedString = texto.clone().into();
-    div()
-        .id(id)
-        .font_weight(FontWeight::NORMAL)
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis_middle()
-        .child(texto)
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-}
-
 /// Caminho com a pasta pessoal como "~".
 pub(super) fn com_til(caminho: &Path) -> String {
     match dirs::home_dir().and_then(|casa| caminho.strip_prefix(&casa).ok().map(Path::to_path_buf)) {
@@ -103,12 +89,43 @@ fn contas_conectadas(n: usize) -> String {
     contagem(n, "conta conectada", "contas conectadas")
 }
 
-/// Chaves da paleta que não são projetos (nenhum nome de pasta tem o "\0").
+/// Chaves da paleta que não são projetos (nenhum id de projeto tem o "\0").
 const NOVO_PROJETO: &str = "\0novo";
 const CRIAR_PROJETO: &str = "\0criar:";
+const AVULSOS: &str = "\0avulsos";
+
+/// Para onde vai o Ctrl+N.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum AlvoCtrlN {
+    /// Cria direto no projeto (`""`: avulso).
+    Direto(String),
+    /// A paleta, com este destino marcado (`Some("")`: Avulsos).
+    Paleta(Option<String>),
+}
+
+/// O Ctrl+N cria direto na vista de um projeto e nos Avulsos. Na visão geral abre a paleta,
+/// marcando Avulsos quando o chat aberto não tem projeto; senão, o último destino (ou o projeto do
+/// chat aberto). `chat_ativo` é o projeto do chat aberto.
+pub(super) fn alvo_do_ctrl_n(vista: &Vista, chat_ativo: Option<&str>, ultimo_destino: Option<&str>, projetos: &[String]) -> AlvoCtrlN {
+    let existe = |p: &str| p.is_empty() || projetos.iter().any(|x| x == p);
+    match vista {
+        Vista::Projeto(id) if existe(id) => return AlvoCtrlN::Direto(id.clone()),
+        Vista::Avulsos => return AlvoCtrlN::Direto(String::new()),
+        _ => {}
+    }
+    let marcado = match chat_ativo {
+        Some("") => Some(String::new()),
+        _ => ultimo_destino
+            .filter(|d| existe(d))
+            .or(chat_ativo.filter(|p| existe(p)))
+            .map(str::to_string),
+    };
+    AlvoCtrlN::Paleta(marcado)
+}
 
 /// Um projeto na paleta de Nova conversa.
 struct ProjetoNaPaleta {
+    id: String,
     nome: String,
     icone: &'static icone_projeto::Icone,
     cor: u32,
@@ -128,22 +145,27 @@ fn descricao_do_projeto(conversas: usize, ultima: Option<u64>) -> String {
     }
 }
 
-/// Os projetos que têm a busca no nome e, no fim, "Novo projeto…" (ou, sem nenhum, "Criar o
-/// projeto “x”"), que o teclado também alcança.
+/// Os projetos que têm a busca no nome (ou na descrição), Avulsos e, no fim, "Novo projeto…"
+/// (ou, sem nenhum, "Criar o projeto “x”"), que o teclado também alcança.
 fn grupos_da_paleta(projetos: &[ProjetoNaPaleta], busca: &str) -> Vec<GrupoDeEscolha> {
     let busca = busca.trim();
     let termo = busca.to_lowercase();
+    let avulsos = "avulsos chat sem projeto".contains(&termo).then(|| ItemDeEscolha {
+        simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
+        descricao: Some("Um chat sem projeto, numa pasta só dele".into()),
+        ..ItemDeEscolha::new(AVULSOS, "Avulsos")
+    });
     let itens: Vec<ItemDeEscolha> = projetos
         .iter()
-        .filter(|p| p.nome.to_lowercase().contains(&termo))
+        .filter(|p| p.nome.to_lowercase().contains(&termo) || p.descricao.to_lowercase().contains(&termo))
         .map(|p| ItemDeEscolha {
             simbolo: Some(Simbolo::Projeto(p.icone, p.cor)),
             descricao: Some(p.descricao.clone().into()),
             selos: p.selo.map(Selo::neutro).into_iter().collect(),
-            ..ItemDeEscolha::new(p.nome.clone(), p.nome.clone())
+            ..ItemDeEscolha::new(p.id.clone(), p.nome.clone())
         })
         .collect();
-    let novo = if itens.is_empty() && !busca.is_empty() {
+    let novo = if itens.is_empty() && avulsos.is_none() && !busca.is_empty() {
         ItemDeEscolha::new(format!("{CRIAR_PROJETO}{busca}"), format!("Criar o projeto “{busca}”"))
     } else {
         ItemDeEscolha::new(NOVO_PROJETO, "Novo projeto…")
@@ -153,95 +175,65 @@ fn grupos_da_paleta(projetos: &[ProjetoNaPaleta], busca: &str) -> Vec<GrupoDeEsc
     if !itens.is_empty() {
         grupos.push(GrupoDeEscolha { titulo: Some("Projetos".into()), itens });
     }
-    grupos.push(GrupoDeEscolha { titulo: None, itens: vec![novo] });
+    grupos.push(GrupoDeEscolha { titulo: None, itens: avulsos.into_iter().chain([novo]).collect() });
     grupos
 }
 
-/// O nome que vai virar a pasta, ou por que não serve (`None`: o campo está vazio).
-fn validar_nome(texto: &str, existe: impl Fn(&str) -> bool) -> Result<String, Option<String>> {
-    if texto.trim().is_empty() {
-        return Err(None);
-    }
-    let nome = Motor::nome_de_projeto(texto)
-        .map_err(|_| Some("Use um nome sem “/” e que não comece com ponto.".to_string()))?;
-    if existe(&nome) {
-        return Err(Some("Já existe uma pasta com esse nome.".into()));
-    }
-    Ok(nome)
-}
-
 impl Janela {
-    /// Ctrl+N: sem projetos, o diálogo de projeto novo; com um só ou com um projeto no filtro,
-    /// cria direto nele; nos outros casos, a paleta dos projetos.
+    /// Ctrl+N: direto na vista de um projeto (com duas pastas, pergunta qual) e nos Avulsos; na
+    /// visão geral, a paleta dos projetos, de Avulsos e do projeto novo.
     pub(super) fn dialogo_nova_conversa(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let projetos = motor.read(cx).projetos();
-        if projetos.is_empty() {
-            self.dialogo_criar_projeto(window, cx);
-            return;
-        }
-        if let Some(projeto) = self.projeto_filtro.clone().filter(|p| projetos.contains(p)) {
-            self.nova_conversa(&projeto, window, cx);
-            return;
-        }
-        if projetos.len() == 1 {
-            self.nova_conversa(&projetos[0], window, cx);
-            return;
-        }
+        let projetos: Vec<String> = motor.read(cx).projetos_visiveis().iter().map(|p| p.id.clone()).collect();
         let m = motor.read(cx);
-        // O projeto da conversa aberta, senão o da conversa mais recente.
-        let atual = self.selecionado.as_ref().and_then(|id| m.chat(id)).map(|c| c.projeto.clone());
-        let realce = atual.clone().or_else(|| {
-            m.chats.iter().filter(|c| !m.arquivada(c)).max_by_key(|c| c.atualizado_em).map(|c| c.projeto.clone())
-        });
+        let ativo = self.selecionado.as_ref().and_then(|id| m.chat(id)).map(|c| c.projeto.clone());
+        let marcado = match alvo_do_ctrl_n(&self.vista, ativo.as_deref(), self.ultimo_destino.as_deref(), &projetos) {
+            AlvoCtrlN::Direto(projeto) => {
+                self.novo_chat_em(&projeto, window, cx);
+                return;
+            }
+            AlvoCtrlN::Paleta(marcado) => marcado,
+        };
         let mut dados = Vec::new();
-        for nome in &projetos {
+        for id in &projetos {
             let conversas: Vec<u64> = m
                 .chats
                 .iter()
-                .filter(|c| c.projeto == *nome && c.papel == Papel::Coordenador && !m.arquivada(c))
+                .filter(|c| c.projeto == *id && c.papel.na_lista() && !m.arquivada(c))
                 .map(|c| c.atualizado_em)
                 .collect();
-            let (icone, cor) = icone_projeto::visual(m, nome);
-            // Só o que já se sabe: perguntar ao git por projeto travaria o Ctrl+N.
-            let sem_git = self.git_projetos.get(nome) == Some(&false);
+            let (icone, cor) = icone_projeto::visual_do(m, id);
+            let descricao = m
+                .projeto(id)
+                .map(|p| p.descricao.lines().next().unwrap_or_default().trim().to_string())
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| descricao_do_projeto(conversas.len(), conversas.iter().max().copied()));
             dados.push(ProjetoNaPaleta {
-                nome: nome.clone(),
+                id: id.clone(),
+                nome: m.nome_do_projeto(id),
                 icone,
                 cor,
-                descricao: descricao_do_projeto(conversas.len(), conversas.iter().max().copied()),
-                selo: if atual.as_deref() == Some(nome.as_str()) {
-                    Some("atual")
-                } else {
-                    sem_git.then_some("sem git")
-                },
+                descricao,
+                selo: (ativo.as_deref() == Some(id.as_str())).then_some("atual"),
             });
         }
+        let realce = marcado.map(|d| if d.is_empty() { SharedString::from(AVULSOS) } else { SharedString::from(d) });
         let dados = Rc::new(dados);
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
-            lista.definir(grupos_da_paleta(&dados, ""), realce.map(SharedString::from), cx);
+            lista.definir(grupos_da_paleta(&dados, ""), realce, cx);
             let filtro = dados.clone();
             lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, busca));
-            let criar = janela.clone();
-            lista.rodape(move |window, cx| {
-                let criar = criar.clone();
+            lista.rodape(move |window, _| {
                 let largo = tam(window, 420.) < window.viewport_size().width - px(32.);
                 div()
                     .flex()
                     .items_center()
                     .gap(r(12.))
                     .w_full()
-                    .child(
-                        botao_fantasma("paleta-novo-projeto", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Barra, window, cx)
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let _ = criar.update(cx, |this, cx| this.dialogo_criar_projeto(window, cx));
-                            }),
-                    )
                     .child(div().flex_1())
                     .when(largo, |s| {
                         s.child(dica_teclas(&["↑", "↓"], "escolher")).child(dica_teclas(&["Enter"], "abrir"))
@@ -258,16 +250,19 @@ impl Janela {
             if chave.as_ref() == NOVO_PROJETO {
                 this.dialogo_criar_projeto(window, cx);
             } else if let Some(nome) = chave.strip_prefix(CRIAR_PROJETO) {
-                this.dialogo_projeto_novo(nome.to_string(), window, cx);
+                this.dialogo_projeto_novo(nome.to_string(), None, window, cx);
             } else {
-                this.nova_conversa(chave, window, cx);
+                let projeto = if chave.as_ref() == AVULSOS { String::new() } else { chave.to_string() };
+                this.lembrar_destino(&projeto, cx);
+                this.novo_chat_em(&projeto, window, cx);
             }
         }));
+        self.foco_antes_do_dialogo(window, cx);
         let vista = lista.clone();
         window.open_dialog(cx, move |dialogo, window, _| {
             let fechou = janela.clone();
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Nova conversa", Some("Em qual projeto? O coordenador dele recebe a mensagem.".into()))))
+                .title(topo(cabecalho("Novo chat", Some("Em qual projeto?".into()))))
                 .child(vista.clone())
                 .on_ok(|_, _, _| false)
                 // Fechado sem escolher (Esc, clique fora), "Nova conversa ao lado" não vale mais.
@@ -278,172 +273,241 @@ impl Janela {
         lista.update(cx, |l, cx| l.abrir(window, cx));
     }
 
-    /// Projeto novo: uma subpasta da pasta de trabalho, com git se marcado, e já uma conversa nela.
-    pub(super) fn dialogo_criar_projeto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.dialogo_projeto_novo(String::new(), window, cx);
-    }
-
-    /// O mesmo, com o nome já escrito ("Criar o projeto “ops”" da paleta).
-    fn dialogo_projeto_novo(&mut self, nome: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Um chat novo no projeto (`""`: avulso). Com mais de uma pasta à mão, pergunta em qual.
+    pub(super) fn novo_chat_em(&mut self, projeto: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let raiz = motor.read(cx).raiz().to_path_buf();
-        let campo = cx.new(|cx| InputState::new(window, cx).placeholder("loja-api").default_value(nome));
-        let com_git = Rc::new(Cell::new(true));
-        let janela = cx.entity().downgrade();
-        let foco = campo.read(cx).focus_handle(cx);
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let texto = campo.read(cx).value().to_string();
-            let validacao = validar_nome(&texto, |n| motor.read(cx).caminho_projeto(n).exists());
-            let git = com_git.get();
-            let previa = if texto.trim().is_empty() {
-                div()
-                    .flex_none()
-                    .size(r(56.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(raio::do_icone(56.))
-                    .bg(Cores::recuo())
-                    .text_color(Cores::tenue())
-                    .child(icone(Lucide::FolderPlus, 24., window))
-                    .into_any_element()
-            } else {
-                QuadradoDeProjeto::new(&icone_projeto::ICONES[0], icone_projeto::cor_automatica(texto.trim()), 56.)
-                    .into_any_element()
-            };
-            let (ajuda, erro, motivo) = match &validacao {
-                Ok(nome) => (format!("Vira a pasta {}.", com_til(&raiz.join(nome))), None, None),
-                Err(None) => ("A pasta fica dentro da pasta de trabalho.".into(), None, Some("Escreva o nome do projeto")),
-                Err(Some(erro)) => (String::new(), Some(SharedString::from(erro.clone())), Some("O nome não serve")),
-            };
-            let entrada = Input::new(&campo).when(erro.is_some(), |i| i.border_color(Cores::vermelho()));
-            let alternar = com_git.clone();
-            let linha_git = LinhaDeOpcao::new("projeto-novo-git", "Usar git")
-                .descricao(if git {
-                    "Cada tarefa trabalha numa cópia isolada."
+        let pastas: Vec<(PathBuf, bool)> =
+            motor.read(cx).pastas_do(projeto).iter().map(|p| (p.caminho.clone(), p.propria)).filter(|(p, _)| p.is_dir()).collect();
+        if pastas.len() < 2 {
+            self.nova_conversa(projeto, window, cx);
+            return;
+        }
+        let itens: Vec<ItemDeEscolha> = pastas
+            .iter()
+            .enumerate()
+            .map(|(i, (caminho, propria))| {
+                let nome = if *propria {
+                    "Pasta própria".to_string()
                 } else {
-                    "As tarefas vão trabalhar direto na pasta."
-                })
-                .interruptor(git, move |ligado, window, _| {
-                    alternar.set(ligado);
-                    window.refresh();
-                });
-            let criar = {
-                let (janela, campo, com_git) = (janela.clone(), campo.clone(), com_git.clone());
-                move |window: &mut Window, cx: &mut App| -> bool {
-                    let texto = campo.read(cx).value().to_string();
-                    let Some(motor) = janela.upgrade().and_then(|j| j.read(cx).motor.clone()) else {
-                        return false;
-                    };
-                    let Ok(nome) = validar_nome(&texto, |n| motor.read(cx).caminho_projeto(n).exists()) else {
-                        return false;
-                    };
-                    let git = com_git.get();
-                    let _ = janela.update(cx, |this, cx| this.criar_projeto(nome, git, window, cx));
-                    true
+                    caminho.file_name().map_or_else(|| caminho.display().to_string(), |n| n.to_string_lossy().to_string())
+                };
+                let descricao = if i == 0 { format!("principal · {}", com_til(caminho)) } else { com_til(caminho) };
+                ItemDeEscolha {
+                    simbolo: Some(Simbolo::icone(Lucide::Folder)),
+                    descricao: Some(descricao.into()),
+                    ..ItemDeEscolha::new(caminho.display().to_string(), nome)
                 }
-            };
-            let criar = Rc::new(criar);
-            let no_botao = criar.clone();
-            let principal = botao_primario("projeto-novo-criar", None, "Criar e abrir conversa", TamanhoBotao::Controle, window, cx)
-                .when_some(motivo, |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
-                .on_click(move |_, window, cx| {
-                    if no_botao(window, cx) {
-                        window.close_dialog(cx);
-                    }
-                });
-            moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Novo projeto", Some(format!("Uma pasta nova dentro de {}.", com_til(&raiz))))))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(r(16.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_start()
-                                .gap(r(16.))
-                                .child(previa)
-                                .child(div().flex_1().min_w_0().child(Campo::new("Nome", entrada).ajuda(ajuda).erro(erro))),
-                        )
-                        .child(GrupoDeOpcoes::new(None).linha(linha_git)),
-                )
-                .footer(
-                    RodapeDialogo::new()
-                        .cancelar(
-                            botao_fantasma("projeto-novo-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .principal(principal),
-                )
-                .on_ok(move |_, window, cx| criar(window, cx))
+            })
+            .collect();
+        let primeira = itens.first().map(|i| i.chave.clone());
+        let lista = cx.new(|cx| {
+            let mut lista = ListaDeEscolha::new("Buscar pasta…", window, cx);
+            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], primeira, cx);
+            lista
         });
-        window.focus(&foco, cx);
+        let alvo = projeto.to_string();
+        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, move |this, _, evento: &EventoEscolha, window, cx| {
+            let EventoEscolha::Escolheu(pasta) = evento else {
+                return;
+            };
+            window.close_dialog(cx);
+            this.nova_conversa_na_pasta(&alvo, Some(PathBuf::from(pasta.as_ref())), window, cx);
+        }));
+        self.foco_antes_do_dialogo(window, cx);
+        let vista = lista.clone();
+        let nome = motor.read(cx).nome_do_projeto(projeto);
+        window.open_dialog(cx, move |dialogo, window, _| {
+            moldura(dialogo, largura::M, window)
+                .title(topo(cabecalho("Em qual pasta?", Some(format!("O chat novo de {nome} trabalha numa pasta só.")))))
+                .child(vista.clone())
+                .on_ok(|_, _, _| false)
+        });
+        lista.update(cx, |l, cx| l.abrir(window, cx));
     }
 
-    /// Cria a pasta (e o git) em segundo plano e abre uma conversa nela.
-    fn criar_projeto(&mut self, nome: String, com_git: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Grava o destino do último chat criado pela paleta (a próxima já vem marcada nele).
+    fn lembrar_destino(&mut self, projeto: &str, cx: &mut Context<Self>) {
+        self.ultimo_destino = Some(projeto.to_string());
+        let valor = if projeto.is_empty() { "avulsos".to_string() } else { projeto.to_string() };
+        super::gravar_interface("ultimo_destino", serde_json::Value::String(valor), cx);
+    }
+
+    /// "Mover para projeto…" do menu do chat: os projetos e Avulsos; mover pergunta quando o motor
+    /// avisa de algo, e a recusa vira aviso.
+    pub(super) fn dialogo_mover_chat(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let tarefa = motor.update(cx, |m, cx| m.criar_projeto(&nome, com_git, cx));
-        cx.spawn_in(window, async move |this, cx| {
-            let resultado = tarefa.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.git_projetos.remove(&nome);
-                match resultado {
-                    Ok(()) => window.push_notification(aviso(Tom::Pronto, format!("Projeto {nome} criado")), cx),
-                    Err(erro) => window.push_notification(aviso_erro("Não deu para criar o projeto", &erro), cx),
-                }
-                // Se só o git falhou, a pasta já está lá e a conversa pode começar.
-                let existe = this.motor.as_ref().is_some_and(|m| m.read(cx).caminho_projeto(&nome).is_dir());
-                if existe {
-                    this.nova_conversa(&nome, window, cx);
-                }
-                cx.notify();
+        let m = motor.read(cx);
+        let Some(atual) = m.chat(&chat).map(|c| c.projeto.clone()) else {
+            return;
+        };
+        let mut itens: Vec<ItemDeEscolha> = m
+            .projetos_visiveis()
+            .into_iter()
+            .filter(|p| p.id != atual)
+            .map(|p| {
+                let (icone, cor) = icone_projeto::visual(p);
+                ItemDeEscolha { simbolo: Some(Simbolo::Projeto(icone, cor)), ..ItemDeEscolha::new(p.id.clone(), p.nome.clone()) }
+            })
+            .collect();
+        if !atual.is_empty() {
+            itens.push(ItemDeEscolha {
+                simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
+                descricao: Some("Sem projeto".into()),
+                ..ItemDeEscolha::new(AVULSOS, "Avulsos")
             });
-        })
-        .detach();
+        }
+        let titulo = m.chat(&chat).map(|c| c.titulo.clone()).unwrap_or_default();
+        let lista = cx.new(|cx| {
+            let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
+            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], None, cx);
+            lista
+        });
+        let id = chat.clone();
+        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, move |this, _, evento: &EventoEscolha, window, cx| {
+            let EventoEscolha::Escolheu(destino) = evento else {
+                return;
+            };
+            window.close_dialog(cx);
+            let destino = if destino.as_ref() == AVULSOS { String::new() } else { destino.to_string() };
+            this.soltar_chat(&id, &destino, window, cx);
+        }));
+        self.foco_antes_do_dialogo(window, cx);
+        let vista = lista.clone();
+        window.open_dialog(cx, move |dialogo, window, _| {
+            moldura(dialogo, largura::M, window)
+                .title(topo(cabecalho("Mover para projeto", Some(titulo.clone()))))
+                .child(vista.clone())
+                .on_ok(|_, _, _| false)
+        });
+        lista.update(cx, |l, cx| l.abrir(window, cx));
+    }
+
+    /// "Projetos arquivados…": cada um com o quadrado; escolher desarquiva e abre o projeto.
+    pub(super) fn dialogo_projetos_arquivados(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let itens: Vec<ItemDeEscolha> = motor
+            .read(cx)
+            .projetos_arquivados()
+            .into_iter()
+            .map(|p| {
+                let (icone, cor) = icone_projeto::visual(p);
+                ItemDeEscolha {
+                    simbolo: Some(Simbolo::Projeto(icone, cor)),
+                    descricao: Some("Escolher desarquiva".into()),
+                    ..ItemDeEscolha::new(p.id.clone(), p.nome.clone())
+                }
+            })
+            .collect();
+        if itens.is_empty() {
+            window.push_notification(aviso(Tom::Info, "Nenhum projeto arquivado"), cx);
+            return;
+        }
+        let lista = cx.new(|cx| {
+            let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
+            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], None, cx);
+            lista
+        });
+        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, |this, _, evento: &EventoEscolha, window, cx| {
+            let EventoEscolha::Escolheu(projeto) = evento else {
+                return;
+            };
+            window.close_dialog(cx);
+            this.desarquivar_projeto(projeto.to_string(), cx);
+            this.abrir_vista(super::Vista::Projeto(projeto.to_string()), window, cx);
+        }));
+        self.foco_antes_do_dialogo(window, cx);
+        let vista = lista.clone();
+        window.open_dialog(cx, move |dialogo, window, _| {
+            moldura(dialogo, largura::M, window)
+                .title(topo(cabecalho("Projetos arquivados", None)))
+                .child(vista.clone())
+                .on_ok(|_, _, _| false)
+        });
+        lista.update(cx, |l, cx| l.abrir(window, cx));
     }
 
     pub(super) fn abrir_configuracoes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let pasta = com_til(motor.read(cx).raiz());
+        // O caminho só na dica: no cabeçalho, ele não diz nada a quem usa.
+        let dica: SharedString = format!("Gravadas em {}", com_til(&motor.read(cx).dados.arquivo_config())).into();
         let vista = cx.new(|cx| Configuracoes::new(motor, cx));
+        self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, _| {
+            let dica = dica.clone();
+            let subtitulo = div()
+                .id("configuracoes-pasta")
+                .font_weight(FontWeight::NORMAL)
+                .child("Valem para todos os projetos e chats")
+                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
             moldura(dialogo, largura::G, window)
-                .title(topo(
-                    CabecalhoDialogo::new("Configurações")
-                        .subtitulo(subtitulo_caminho("configuracoes-pasta", format!("Valem para a pasta {pasta}"))),
-                ))
+                .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
                 .child(vista.clone())
         });
     }
 }
 
 impl Janela {
-    pub(super) fn confirmar_git(&mut self, projeto: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.as_ref() else {
-            return;
-        };
-        let sem_gitignore = !motor.read(cx).caminho_projeto(&projeto).join(".gitignore").exists();
+    /// "Localizar pasta…": uma pasta do projeto não está mais lá (renomeada, disco em outro lugar);
+    /// a escolhida passa a ser ela, e as tarefas que trabalhavam nela vão junto.
+    pub(super) fn localizar_pasta(&mut self, projeto: String, indice: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let escolha = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Usar esta pasta".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(caminhos))) = escolha.await else {
+                return;
+            };
+            let Some(pasta) = caminhos.into_iter().next() else {
+                return;
+            };
+            let Ok(Some(tarefa)) = this.update(cx, |this, cx| {
+                this.motor.clone().map(|motor| motor.update(cx, |m, cx| m.localizar_pasta(&projeto, indice, &pasta, cx)))
+            }) else {
+                return;
+            };
+            let resultado = tarefa.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let nota = match resultado {
+                    Ok(None) => aviso(Tom::Pronto, format!("Pasta localizada: {}", com_til(&pasta))),
+                    Ok(Some(atencao)) => aviso(Tom::Atencao, format!("Pasta localizada. {atencao}")),
+                    Err(erro) => aviso(Tom::Erro, format!("A pasta não mudou: {erro}")),
+                };
+                window.push_notification(nota, cx);
+                this.git_pastas.clear();
+                this.readmes.borrow_mut().clear();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "Ativar git em “pasta”?": o repositório nasce com um commit dos arquivos atuais.
+    pub(super) fn confirmar_git_na_pasta(&mut self, pasta: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let nome = pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().to_string());
+        let sem_gitignore = !pasta.join(".gitignore").exists();
         let detalhes = if sem_gitignore {
             vec![(Lucide::FileText.into(), "Cria um .gitignore sem .env, ambientes e builds".into(), false)]
         } else {
             Vec::new()
         };
         let janela = cx.entity().downgrade();
-        let alvo = projeto.clone();
+        let alvo = pasta.clone();
         confirmar(
             Confirmacao {
                 tom: TomConfirmacao::Neutro,
                 icone: Lucide::GitBranch.into(),
-                titulo: format!("Ativar git em “{projeto}”?").into(),
+                titulo: format!("Ativar git em “{nome}”?").into(),
                 texto: "Cria um repositório com um commit dos arquivos atuais. Nada é apagado nem enviado.".into(),
                 detalhes,
                 ok: "Ativar git".into(),
@@ -451,8 +515,8 @@ impl Janela {
                 ok_perigo: false,
             },
             move |window, cx| {
-                let projeto = alvo.clone();
-                let _ = janela.update(cx, |this, cx| this.ativar_git(projeto, window, cx));
+                let pasta = alvo.clone();
+                let _ = janela.update(cx, |this, cx| this.ativar_git(pasta, window, cx));
             },
             None,
             window,
@@ -460,24 +524,25 @@ impl Janela {
         );
     }
 
-    fn ativar_git(&mut self, projeto: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn ativar_git(&mut self, pasta: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let tarefa = motor.update(cx, |m, cx| m.ativar_git(&projeto, cx));
+        let nome = pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().to_string());
+        let tarefa = motor.update(cx, |m, cx| m.ativar_git(pasta.clone(), cx));
         cx.spawn_in(window, async move |this, cx| {
             let resultado = tarefa.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 match resultado {
                     Ok(novo) => {
-                        // O repositório nasce com o commit: Configurar projeto tira o aviso já.
-                        this.git_projetos.insert(projeto.clone(), true);
-                        let resumo = novo.resumo(&projeto);
+                        // O repositório nasce com o commit: o aviso de sem git sai já.
+                        this.git_pastas.insert(pasta.clone(), true);
+                        let resumo = novo.resumo(&nome);
                         let resumo = resumo.strip_suffix('.').unwrap_or(&resumo).to_string();
                         window.push_notification(aviso(Tom::Pronto, resumo), cx);
                     }
                     Err(erro) => {
-                        this.git_projetos.remove(&projeto);
+                        this.git_pastas.remove(&pasta);
                         window.push_notification(aviso_erro("Não deu para ativar o git", &erro), cx);
                     }
                 }
@@ -509,6 +574,7 @@ impl Janela {
             })
         };
         let foco = campo.read(cx).focus_handle(cx);
+        self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
             let vazio = campo.read(cx).value().trim().is_empty();
             let (no_botao, no_enter) = (salvar.clone(), salvar.clone());
@@ -537,7 +603,148 @@ impl Janela {
     }
 }
 
+/// O que a memória ganhou no disco desde que o diálogo abriu: as linhas que não estavam lá nem
+/// estão no texto editado (o Mestre lembrou algo com o diálogo aberto).
+pub(super) fn linhas_novas_da_memoria(inicial: &str, no_disco: &str, editado: &str) -> Vec<String> {
+    let antes: std::collections::HashSet<&str> = inicial.lines().map(str::trim).collect();
+    let agora: std::collections::HashSet<&str> = editado.lines().map(str::trim).collect();
+    no_disco
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !antes.contains(l) && !agora.contains(l))
+        .map(str::to_string)
+        .collect()
+}
+
 impl Janela {
+    /// "Memória do Mestre": o texto que entra no prompt dele a cada turno, editável (até 6000
+    /// caracteres), com Esquecer tudo, Cancelar e Salvar. Se o Mestre lembrou algo com o diálogo
+    /// aberto, o Salvar traz as linhas novas para o fim e pede para conferir.
+    pub(super) fn dialogo_memoria(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        const LIMITE: usize = 6000;
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let inicial = motor.read(cx).memoria_do_mestre();
+        let campo = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(8, 18)
+                .placeholder("Nada lembrado ainda. Ex.: pagamentos vão para a Ninee; os textos da loja em português.")
+                .default_value(inicial.clone())
+        });
+        // O que estava no disco da última vez que o diálogo olhou.
+        let visto = Rc::new(RefCell::new(inicial));
+        let salvar = {
+            let (campo, motor, visto) = (campo.clone(), motor.clone(), visto.clone());
+            Rc::new(move |window: &mut Window, cx: &mut App| -> bool {
+                let editado = campo.read(cx).value().to_string();
+                let no_disco = motor.read(cx).memoria_do_mestre();
+                if no_disco != *visto.borrow() {
+                    let novas = linhas_novas_da_memoria(&visto.borrow(), &no_disco, &editado);
+                    *visto.borrow_mut() = no_disco;
+                    if !novas.is_empty() {
+                        let junto = format!("{}\n{}", editado.trim_end(), novas.join("\n"));
+                        campo.update(cx, |c, cx| c.set_value(junto, window, cx));
+                        let texto = format!(
+                            "O Mestre lembrou {} enquanto você editava; {} no fim. Confira e salve de novo.",
+                            contagem(novas.len(), "linha nova", "linhas novas"),
+                            if novas.len() == 1 { "ela entrou" } else { "elas entraram" }
+                        );
+                        window.push_notification(aviso(Tom::Atencao, texto), cx);
+                        return false;
+                    }
+                }
+                if editado.chars().count() > LIMITE {
+                    window.push_notification(aviso(Tom::Atencao, format!("A memória passa de {LIMITE} caracteres: junte ou tire itens.")), cx);
+                    return false;
+                }
+                match motor.read(cx).gravar_memoria_do_mestre(&editado) {
+                    Ok(()) => {
+                        window.push_notification(aviso(Tom::Pronto, "Memória do Mestre salva"), cx);
+                        true
+                    }
+                    Err(erro) => {
+                        window.push_notification(aviso_erro("Não deu para salvar a memória", &erro), cx);
+                        false
+                    }
+                }
+            })
+        };
+        let foco = campo.read(cx).focus_handle(cx);
+        self.foco_antes_do_dialogo(window, cx);
+        window.open_dialog(cx, move |dialogo, window, cx| {
+            let texto = campo.read(cx).value().to_string();
+            let n = texto.chars().count();
+            let no_botao = salvar.clone();
+            let (m, c) = (motor.clone(), campo.clone());
+            let esquecer = botao_fantasma("memoria-esquecer", Some(Lucide::Trash.into()), "Esquecer tudo", TamanhoBotao::Controle, window, cx)
+                .when(texto.trim().is_empty(), |b| b.disabled(true).opacity(0.45))
+                .on_click(move |_, window, cx| {
+                    let (m, c) = (m.clone(), c.clone());
+                    confirmar(
+                        Confirmacao {
+                            tom: TomConfirmacao::Perigo,
+                            icone: Lucide::Brain.into(),
+                            titulo: "Esquecer tudo o que o Mestre lembra?".into(),
+                            texto: "A memória fica vazia: o Mestre deixa de saber as preferências que você disse.".into(),
+                            detalhes: Vec::new(),
+                            ok: "Esquecer tudo".into(),
+                            cancelar: "Cancelar".into(),
+                            ok_perigo: true,
+                        },
+                        move |window, cx| match m.read(cx).gravar_memoria_do_mestre("") {
+                            Ok(()) => {
+                                c.update(cx, |c, cx| c.set_value("", window, cx));
+                                window.push_notification(aviso(Tom::Pronto, "Memória do Mestre esvaziada"), cx);
+                            }
+                            Err(erro) => window.push_notification(aviso_erro("Não deu para esvaziar a memória", &erro), cx),
+                        },
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+            let principal = botao_primario("memoria-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
+                .when(n > LIMITE, |b| b.disabled(true).opacity(0.45).tooltip(format!("Passa de {LIMITE} caracteres")))
+                .on_click(move |_, window, cx| {
+                    if no_botao(window, cx) {
+                        window.close_dialog(cx);
+                    }
+                });
+            let cor = if n > LIMITE { Cores::vermelho() } else { Cores::tenue() };
+            moldura(dialogo, largura::M, window)
+                .title(topo(cabecalho("Memória do Mestre", Some("Entra no começo de cada conversa dele; você pode editar".into()))))
+                .child(Textarea::new(&campo))
+                .child(
+                    div()
+                        .pt(r(8.))
+                        .flex()
+                        .gap(r(8.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .metadado()
+                                .text_color(Cores::tenue())
+                                .child("Uma preferência por linha. O Mestre só grava sozinho o que você mesmo disse; o resto pede confirmação."),
+                        )
+                        .child(div().flex_none().metadado().text_color(cor).child(format!("{} de {LIMITE}", super::lateral::milhar(n)))),
+                )
+                .footer(
+                    RodapeDialogo::new()
+                        .esquerda(esquecer)
+                        .cancelar(
+                            botao_fantasma("memoria-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .principal(principal),
+                )
+                // O Enter quebra a linha no campo; quem salva é o botão.
+                .on_ok(|_, _, _| false)
+        });
+        window.focus(&foco, cx);
+    }
+
     pub(super) fn dialogo_contas(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.abrir_contas(false, window, cx);
     }
@@ -556,6 +763,7 @@ impl Janela {
         if entrar {
             painel.update(cx, |p, cx| p.entrar(window, cx));
         }
+        self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
             let conectadas = contas_conectadas(motor.read(cx).contas.len());
             moldura(dialogo, largura::M, window)
@@ -620,59 +828,12 @@ impl Janela {
             texto.push(' ');
         }
         texto.push_str(&format!("@{caminho} "));
-        composer.update(cx, |c, cx| c.set_value(texto, window, cx));
+        composer.update(cx, |c, cx| super::composer::por_texto(c, texto, window, cx));
         // Vindo do arquivo na gaveta, a caixa está embaixo dela: aberta, o Esc pararia o turno.
         if self.gaveta.take().is_some() {
             cx.notify();
         }
         let foco = composer.read(cx).focus_handle(cx);
-        window.focus(&foco, cx);
-    }
-}
-
-impl Janela {
-    /// Preparação, comando de rodar, arquivos que vão junto e ícone e cor; grava no Salvar.
-    pub(super) fn dialogo_config_projeto(&mut self, projeto: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let usa_git = self.usa_git(motor.read(cx), &projeto);
-        let janela = cx.entity().downgrade();
-        let vista = cx.new(|cx| ConfigProjetoView::new(motor, projeto, janela, usa_git, window, cx));
-        let foco = vista.read(cx).foco(cx);
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let (cabecalho_projeto, mudou) = {
-                let v = vista.read(cx);
-                (v.cabecalho(estreito(window, largura::G), cx), v.mudou(cx))
-            };
-            let (no_botao, no_enter) = (vista.clone(), vista.clone());
-            moldura(dialogo, largura::G, window)
-                .title(topo(cabecalho_projeto))
-                .child(vista.clone())
-                .footer(
-                    RodapeDialogo::new()
-                        .cancelar(
-                            botao_fantasma("projeto-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .principal(
-                            botao_primario("projeto-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
-                                .when(!mudou, |b| b.disabled(true).opacity(0.45).tooltip("Nada mudou"))
-                                .on_click(move |_, window, cx| {
-                                    no_botao.update(cx, |v, cx| v.salvar(window, cx));
-                                    window.close_dialog(cx);
-                                }),
-                        ),
-                )
-                .on_ok(move |_, window, cx| {
-                    no_enter.update(cx, |v, cx| {
-                        if v.mudou(cx) {
-                            v.salvar(window, cx);
-                        }
-                    });
-                    true
-                })
-        });
         window.focus(&foco, cx);
     }
 }
@@ -683,10 +844,13 @@ fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
     let mut conversas: Vec<_> = motor.chats.iter().filter(|c| c.id != chat && !c.itens.is_empty()).collect();
     conversas.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
     let mut grupos: Vec<GrupoDeEscolha> = Vec::new();
-    for projeto in motor.projetos() {
+    let mut projetos: Vec<String> = motor.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
+    projetos.push(String::new());
+    for projeto in projetos {
+        let nome = motor.nome_do_projeto(&projeto);
         let itens: Vec<ItemDeEscolha> = conversas
             .iter()
-            .filter(|c| c.projeto == projeto)
+            .filter(|c| c.projeto == projeto && c.papel != Papel::Mestre)
             .map(|c| {
                 let mensagens = c
                     .itens
@@ -701,13 +865,13 @@ fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
                     simbolo: Some(Simbolo::icone(icone)),
                     descricao: Some(format!("{quando} · {}", contagem(mensagens, "mensagem", "mensagens")).into()),
                     selos: rodando.map(|s| Selo::ponto(s.cor()).vazado()).into_iter().collect(),
-                    termos: Some(projeto.clone().into()),
+                    termos: Some(nome.clone().into()),
                     ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
                 }
             })
             .collect();
         if !itens.is_empty() {
-            grupos.push(GrupoDeEscolha { titulo: Some(projeto.into()), itens });
+            grupos.push(GrupoDeEscolha { titulo: Some(nome.into()), itens });
         }
     }
     if grupos.is_empty() {
@@ -762,8 +926,9 @@ impl Janela {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let (janela, projeto) = (cx.entity().downgrade(), self.projeto_filtro.clone());
+        let (janela, projeto) = (cx.entity().downgrade(), self.vista.projeto().map(str::to_string));
         let vista = cx.new(|cx| super::rotinas::Rotinas::new(motor, janela, projeto, window, cx));
+        self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
             let enter = vista.clone();
             moldura(dialogo, largura::G, window)
@@ -783,28 +948,11 @@ impl Janela {
 mod testes {
     // Só o que é preciso: o `use gpui_kit::*` lá de cima traz um `test` que troca o da std.
     use super::{
-        CRIAR_PROJETO, NOVO_PROJETO, ProjetoNaPaleta, com_til, contas_conectadas, descricao_do_projeto,
-        grupos_da_paleta, validar_nome,
+        AVULSOS, AlvoCtrlN, CRIAR_PROJETO, NOVO_PROJETO, ProjetoNaPaleta, alvo_do_ctrl_n, com_til, contas_conectadas,
+        descricao_do_projeto, grupos_da_paleta,
     };
-    use crate::{modelo::agora, motor::Motor, ui::icone_projeto::ICONES};
-
-    #[test]
-    fn nome_de_projeto_novo() {
-        assert_eq!(Motor::nome_de_projeto("  loja-api ").unwrap(), "loja-api");
-        assert_eq!(Motor::nome_de_projeto("Meu site").unwrap(), "Meu site");
-        for ruim in ["", "   ", "a/b", "/etc", "..", ".oculto", "../fora"] {
-            assert!(Motor::nome_de_projeto(ruim).is_err(), "{ruim:?} passou");
-        }
-    }
-
-    #[test]
-    fn nome_validado_ao_digitar() {
-        assert_eq!(validar_nome("  ", |_| false), Err(None));
-        assert_eq!(validar_nome(" loja ", |_| false), Ok("loja".to_string()));
-        assert_eq!(validar_nome("loja", |n| n == "loja"), Err(Some("Já existe uma pasta com esse nome.".into())));
-        assert!(matches!(validar_nome("a/b", |_| false), Err(Some(_))));
-        assert!(matches!(validar_nome(".oculto", |_| false), Err(Some(_))));
-    }
+    use crate::ui::Vista;
+    use crate::{modelo::agora, ui::icone_projeto::ICONES};
 
     #[test]
     fn contagem_de_contas() {
@@ -822,6 +970,7 @@ mod testes {
 
     fn projeto(nome: &str) -> ProjetoNaPaleta {
         ProjetoNaPaleta {
+            id: nome.into(),
             nome: nome.into(),
             icone: &ICONES[0],
             cor: 0x8fb6ff,
@@ -839,11 +988,30 @@ mod testes {
                 .flat_map(|g| g.itens.iter().map(|i| i.chave.to_string()))
                 .collect()
         };
-        assert_eq!(chaves(""), ["loja-api", "site-ninee", NOVO_PROJETO]);
+        assert_eq!(chaves(""), ["loja-api", "site-ninee", AVULSOS, NOVO_PROJETO]);
         assert_eq!(chaves("NINEE"), ["site-ninee", NOVO_PROJETO]);
+        assert_eq!(chaves("avul"), [AVULSOS, NOVO_PROJETO]);
         assert_eq!(chaves(" ops "), [format!("{CRIAR_PROJETO}ops")]);
         let titulo = &grupos_da_paleta(&projetos, "ops")[0].itens[0].titulo;
         assert_eq!(titulo.as_ref(), "Criar o projeto “ops”");
+    }
+
+    #[test]
+    fn ctrl_n_direto_no_projeto_e_nos_avulsos_e_marcado_na_visao_geral() {
+        let projetos = vec!["loja".to_string(), "site".to_string()];
+        let projeto = Vista::Projeto("loja".into());
+        assert_eq!(alvo_do_ctrl_n(&projeto, Some("site"), None, &projetos), AlvoCtrlN::Direto("loja".into()));
+        assert_eq!(alvo_do_ctrl_n(&Vista::Avulsos, Some("loja"), None, &projetos), AlvoCtrlN::Direto(String::new()));
+        // Um projeto que sumiu da vista cai na paleta.
+        let sumiu = Vista::Projeto("velho".into());
+        assert!(matches!(alvo_do_ctrl_n(&sumiu, None, None, &projetos), AlvoCtrlN::Paleta(_)));
+        // Na visão geral: o chat aberto sem projeto (o Mestre, um avulso) marca Avulsos.
+        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some(""), Some("site"), &projetos), AlvoCtrlN::Paleta(Some(String::new())));
+        // Senão, o último destino; sem ele (ou se sumiu), o projeto do chat aberto.
+        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some("loja"), Some("site"), &projetos), AlvoCtrlN::Paleta(Some("site".into())));
+        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some("loja"), Some("velho"), &projetos), AlvoCtrlN::Paleta(Some("loja".into())));
+        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, Some(""), &projetos), AlvoCtrlN::Paleta(Some(String::new())));
+        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, None, &projetos), AlvoCtrlN::Paleta(None));
     }
 
     #[test]

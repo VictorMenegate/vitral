@@ -119,7 +119,7 @@ impl Vitrine {
                     .py(r(8.))
                     .metadado()
                     .text_color(Cores::tenue())
-                    .child("O coordenador ainda pode trocar por tarefa")
+                    .child("Cada chat ainda pode trocar")
                     .into_any_element()
             });
             lista
@@ -335,7 +335,7 @@ impl Vitrine {
                 .child(fileira()
                     .child(botao_fantasma(id("f24"), Some(Lucide::Eye.into()), "Revisar", TamanhoBotao::Linha, window, cx))
                     .child(botao_fantasma(id("f28"), Some(Lucide::CodeXml.into()), "Abrir no VS Code", TamanhoBotao::Barra, window, cx))
-                    .child(botao_fantasma(id("f32"), None, "Coordenador", TamanhoBotao::Controle, window, cx))
+                    .child(botao_fantasma(id("f32"), None, "Mestre", TamanhoBotao::Controle, window, cx))
                     .child(botao_fantasma(id("fsel"), Some(Lucide::Focus.into()), "Modo foco", TamanhoBotao::Barra, window, cx).selected(true))
                     .child(botao_fantasma(id("fdes"), Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Barra, window, cx).disabled(true).tooltip("Já está rodando")))
                 .child(fileira()
@@ -344,7 +344,7 @@ impl Vitrine {
                     .child(botao_icone(id("i28h"), Lucide::Ellipsis, "Mais", TamanhoBotao::Barra, window, cx).bg(Cores::hover()))
                     .child(botao_icone(id("i28s"), Lucide::PanelRight, "Painel da direita", TamanhoBotao::Barra, window, cx).selected(true))
                     .child(botao_perigo(id("perigo"), Some(Lucide::Trash.into()), "Apagar a cópia…", TamanhoBotao::Barra, window, cx))
-                    .child(botao_primario(id("prim"), Some(Lucide::GitMerge.into()), "Aprovar e juntar", TamanhoBotao::Controle, window, cx)))
+                    .child(botao_primario(id("prim"), Some(Lucide::GitMerge.into()), "Juntar", TamanhoBotao::Controle, window, cx)))
                 .child(fileira()
                     .child(BotaoRedondo::new(id("r-prim"), Some(Lucide::Plus.into()), "Nova conversa").variante(VarianteRedonda::Primario).diametro(28.))
                     .child(BotaoRedondo::new(id("r-claro"), Some(Lucide::ArrowUp.into()), "Enviar").variante(VarianteRedonda::Claro))
@@ -462,7 +462,7 @@ impl Vitrine {
                     .shadow(vec![linha_de_luz(1.), halo_suave(forca)])
                     .corpo_ui()
                     .text_color(Cores::tenue())
-                    .child("Peça ao coordenador…"),
+                    .child("Mensagem para este chat…"),
             )
             .child(botao("mov-foco", "Focar / tirar o foco", window, cx).on_click(mudar(|v| v.focada = !v.focada)))
             .child(
@@ -542,7 +542,7 @@ impl Vitrine {
             .child(
                 CartaoDeLista::new("esp-pai", "Cupons de desconto na API")
                     .simbolo(Simbolo::Projeto(&ICONES[1], CORES_PROJETO[0].0))
-                    .subtitulo("loja · 2 tarefas")
+                    .subtitulo("loja · 2 chats")
                     .meta("4 h"),
             )
             .child(
@@ -643,7 +643,7 @@ impl Vitrine {
                 .gap(esp::E16)
                 .child(escala)
                 .child(legenda(
-                    "guias: lista em 16 e 58 (o traço da árvore em 31); Equipe em 24, com 16 na tinta antes de cada seção",
+                    "guias: lista em 16 e 58 (o traço da árvore em 31); direita em 24, com 16 na tinta antes de cada seção",
                 ))
                 .child(fileira().items_start().gap(esp::E24).child(lista).child(equipe).child(ritmo).child(flutuante)),
         )
@@ -735,7 +735,7 @@ impl Vitrine {
             )
             .child(
                 Campo::new("Nome do projeto", gpui_kit::component::input::Input::new(&self.campo))
-                    .ajuda("Vira a pasta dentro da pasta de trabalho"),
+                    .ajuda("Vira a pasta própria do projeto"),
             )
             .child(
                 Campo::new("Comando de verificação", gpui_kit::component::input::Input::new(&self.campo))
@@ -937,7 +937,7 @@ impl Vitrine {
             .gap(r(8.))
             .w(r(520.))
             .child(
-                Alerta::new(Tom::Atencao, "Sem git, os trabalhadores mexem direto na pasta.")
+                Alerta::new(Tom::Atencao, "Sem git, os chats mexem direto na pasta.")
                     .titulo("Projeto sem git")
                     .acao(botao_fantasma("alerta-git", Some(Lucide::GitBranch.into()), "Ativar git neste projeto", TamanhoBotao::Barra, window, cx)),
             )
@@ -948,7 +948,7 @@ impl Vitrine {
                 Button::new(("aviso", tom as usize))
                     .outline()
                     .label(format!("Aviso {tom:?}"))
-                    .on_click(move |_, window, cx| window.push_notification(aviso(tom, "Tarefa #2 aprovada e juntada"), cx))
+                    .on_click(move |_, window, cx| window.push_notification(aviso(tom, "Chat 2 juntado"), cx))
             }))
             .child(Button::new("aviso-acao").outline().label("Com Desfazer").on_click(|_, window, cx| {
                 window.push_notification(
@@ -973,15 +973,15 @@ impl Vitrine {
             .gap(r(16.))
             .child(
                 div().w(r(360.)).child(
-                    EstadoVazio::new(Lucide::ListChecks, "Nenhuma tarefa ainda")
-                        .texto("Quando o coordenador dividir o trabalho, as tarefas aparecem aqui.")
-                        .acao(Button::new("vazio-acao").outline().label("Pedir ao coordenador")),
+                    EstadoVazio::new(Lucide::ListChecks, "Nada aberto aqui")
+                        .texto("Os pedidos que esta conversa abriu viraram chats do projeto.")
+                        .acao(Button::new("vazio-acao").outline().label("Pedir ao Mestre")),
                 ),
             )
             .child(
                 div().flex_1().child(
                     EstadoVazio::new(Lucide::MessageSquarePlus, "Comece uma conversa")
-                        .texto("Escolha um projeto e diga o que fazer; o coordenador divide em tarefas.")
+                        .texto("Diga o que quer fazer; o Mestre manda para o projeto certo.")
                         .amplo(),
                 ),
             );
@@ -1034,7 +1034,7 @@ impl Vitrine {
                 CartaoDeLista::new("c-sel", "Cupons de desconto na API")
                     .simbolo(projeto.copia().unwrap())
                     .sinal(Some(Sinal::Rodando))
-                    .subtitulo("loja-api · 1 tarefa rodando")
+                    .subtitulo("loja-api · 1 ajudante rodando")
                     .meta("agora")
                     .meta_inferior(PilulaDeEstado::new(Estado::Rodando).compacta())
                     .selecionado(true)
@@ -1064,7 +1064,7 @@ impl Vitrine {
                 CartaoDeLista::new("c-nl", "Resposta nova esperando leitura")
                     .simbolo(Simbolo::Projeto(&ICONES[10], CORES_PROJETO[1].0))
                     .sinal(Some(Sinal::Nova))
-                    .subtitulo("site · terminou: 3 tarefas aprovadas")
+                    .subtitulo("site · terminou: 3 ajudantes aprovados")
                     .meta("10:42")
                     .nao_lido(true)
                     .acao(acoes("c-nl-a", window, cx)),
@@ -1092,7 +1092,7 @@ impl Vitrine {
             .child(
                 CartaoDeLista::new("c-outro", "Aberta em outro painel")
                     .simbolo(Simbolo::Papel(Papel::Coordenador))
-                    .subtitulo("vitral · coordenador")
+                    .subtitulo("vitral · chat 12")
                     .meta("seg.")
                     .aberto_em_outro(true),
             )
@@ -1125,16 +1125,16 @@ impl Vitrine {
                 });
             }
         };
-        let grupo = GrupoDeOpcoes::new(Some("Trabalhadores".into()))
+        let grupo = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(
                 LinhaDeOpcao::new("op-revisor", "Revisor independente")
-                    .descricao("Confere os critérios antes do coordenador aprovar")
+                    .descricao("Confere os critérios antes de juntar")
                     .info("Roda numa sessão nova, só de leitura, e pode ser outro modelo.")
                     .interruptor(ligado, mudar_ligado.clone()),
             )
             .linha(
                 LinhaDeOpcao::new("op-modelo", "Modelo do revisor")
-                    .descricao("Padrão: o mesmo do coordenador")
+                    .descricao("Padrão: o mesmo dos chats")
                     .controle(ControleSegmentado::new("op-seg", ["Padrão", "Opus", "Sonnet"], segmento.min(2), {
                         let eu = eu.clone();
                         move |i, _, cx| {
@@ -1147,7 +1147,7 @@ impl Vitrine {
             )
             .linha(
                 LinhaDeOpcao::new("op-campo", "Comando de verificação")
-                    .descricao("Roda quando o trabalhador para")
+                    .descricao("Roda quando o chat para")
                     .campo(div().h(r(32.)).px(esp::E12).flex().items_center().rounded(raio::CONTROLE).bg(Cores::recuo()).mono_pequeno().child("cargo test")),
             )
             .linha(
@@ -1167,7 +1167,7 @@ impl Vitrine {
                     .descricao("Vários agentes em paralelo, só na próxima mensagem")
                     .aviso("Gasta bem mais do plano e roda no esforço Extra")
                     .interruptor(false, |_, _, _| {})
-                    .desabilitada("Só nos trabalhadores"),
+                    .desabilitada("Só nos chats de projeto"),
             );
         um("Opções", cx, div().w(r(560.)).child(grupo))
     }
@@ -1349,7 +1349,7 @@ impl Vitrine {
     /// clica pela posição.
     fn atualizacoes(&self, window: &mut Window, cx: &mut App) -> Div {
         const NOTAS: &str = "- **Conversas que se lembram.** O Mestre guarda o que importa entre as conversas.\n\
-                             - **Mais rápido ao abrir.** A lista aparece antes do motor terminar de ler as tarefas.";
+                             - **Mais rápido ao abrir.** A lista aparece antes do motor terminar de ler os chats.";
         let pagina = || crate::atualizacao::pagina("0.3.0");
         let botoes = fileira()
             .child(Button::new("at-pronta").outline().w(r(200.)).label("Aviso: pronta").on_click(move |_, window, cx| {
@@ -1425,7 +1425,7 @@ impl Vitrine {
         let tons = [
             (TomConfirmacao::Neutro, Lucide::GitBranch, "Ativar git em “loja”?", false),
             (TomConfirmacao::Atencao, Lucide::TriangleAlert, "2 conversas estão trabalhando", false),
-            (TomConfirmacao::Perigo, Lucide::Trash, "Apagar a cópia da tarefa #2?", true),
+            (TomConfirmacao::Perigo, Lucide::Trash, "Apagar a cópia do chat 2?", true),
         ];
         let botoes = fileira().children(tons.map(|(tom, icone, titulo, perigo)| {
             Button::new(SharedString::from(format!("conf-{titulo}")))
@@ -1462,8 +1462,8 @@ impl Vitrine {
             .child(
                 TelaCheia::new("Vitral")
                     .simbolo(Marca::Claude.disco(40.))
-                    .texto("Escolha a pasta de trabalho. Cada subpasta vira um projeto.")
-                    .child(botao_primario("tela-ok", Some(Lucide::FolderOpen.into()), "Escolher pasta de trabalho", TamanhoBotao::Controle, window, cx)),
+                    .texto("Ligue uma pasta ao projeto ou deixe o Vitral criar uma.")
+                    .child(botao_primario("tela-ok", Some(Lucide::FolderOpen.into()), "Escolher pasta…", TamanhoBotao::Controle, window, cx)),
             );
         um("Diálogos", cx, div().flex().flex_col().gap(r(16.)).child(estatico).child(botoes).child(tela))
     }
@@ -1528,7 +1528,7 @@ impl Vitrine {
                 formatar_custo(0.42),
                 formatar_custo(0.004),
                 formatar_custo(1234.56),
-                contagem(3, "tarefa", "tarefas"),
+                contagem(3, "chat", "chats"),
                 truncar_no_meio("/home/victor/.cache/worktrees/loja-api/t2", 28)
             )))
             .child(legenda(dica_uso("Claude", Some(0.23), Some("renova em 2 h 13 min · 15:59"), Some(0.41), None)));

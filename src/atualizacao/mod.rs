@@ -36,7 +36,7 @@ use std::{
 use gpui_kit::{App, AppContext as _, BorrowAppContext as _, Global, Subscription, Task};
 use serde_json::json;
 
-use crate::modelo::{self, FORMATO_DADOS};
+use crate::{dados, modelo::FORMATO_DADOS};
 use config::Modo;
 
 pub const REPO: &str = "VictorMenegate/vitral";
@@ -95,6 +95,11 @@ pub fn sem_janela(argumentos: &[String]) -> Option<i32> {
         return Some(0);
     }
     if tem("--instalar") {
+        // Com os dados desligados, o Vitral só abre na bancada: o menu abriria um que sai na hora.
+        if !crate::dados::DADOS_GLOBAIS {
+            eprintln!("Não instalei o Vitral: este build tem os dados globais desligados (DADOS_GLOBAIS) e só abre na bancada.");
+            return Some(1);
+        }
         return Some(linux::instalar_por_comando());
     }
     None
@@ -247,6 +252,8 @@ pub struct Atualizacoes {
     /// A pasta do app e a versão gerenciada que roda dela.
     app: Option<PathBuf>,
     rodando: Option<String>,
+    /// A pasta de dados, de onde sai o formato do disco que a volta confere.
+    dados: PathBuf,
     _ponte: Task<()>,
     _ao_sair: Subscription,
 }
@@ -297,8 +304,9 @@ pub fn secao_de(novidades: &str, versao: &str) -> Option<String> {
 
 /// Liga a atualização: põe a `Global` e abre a thread (nada se ela estiver desligada por
 /// `VITRAL_SEM_ATUALIZACAO=1`, como na bancada). Na versão gerenciada, já aponta o reinício do GPUI
-/// para o link `atual` e confirma a saúde ao fechar. `aviso` é o que o `saude::ao_abrir` contou.
-pub fn iniciar(aviso: Option<saude::Aviso>, cx: &mut App) {
+/// para o link `atual` e confirma a saúde ao fechar. `aviso` é o que o `saude::ao_abrir` contou e
+/// `dados` é a pasta de dados (`Dados::pasta`).
+pub fn iniciar(aviso: Option<saude::Aviso>, dados: PathBuf, cx: &mut App) {
     let raiz = linux::Raiz::do_usuario();
     let app = raiz.as_ref().map(linux::Raiz::app);
     let rodando = app.as_deref().and_then(linux::versao_rodando);
@@ -329,7 +337,7 @@ pub fn iniciar(aviso: Option<saude::Aviso>, cx: &mut App) {
     let volta = app
         .as_deref()
         .zip(rodando.as_deref())
-        .and_then(|(app, rodando)| saude::volta_possivel(app, rodando, modelo::maior_formato_no_disco(None)));
+        .and_then(|(app, rodando)| saude::volta_possivel(app, rodando, dados::formato_em(&dados)));
     let (app_saida, rodando_saida) = (app.clone(), rodando.clone());
     let _ao_sair = cx.on_app_quit(move |_| {
         if let Some((app, rodando)) = app_saida.as_deref().zip(rodando_saida.as_deref()) {
@@ -350,6 +358,7 @@ pub fn iniciar(aviso: Option<saude::Aviso>, cx: &mut App) {
         atual,
         app,
         rodando,
+        dados,
         _ponte: Task::ready(()),
         _ao_sair,
     });
@@ -445,11 +454,11 @@ impl Drop for Acompanhando {
 /// aponta para a anterior; depois disso, [`reiniciar`]. Devolve a versão para onde voltou, ou o
 /// porquê de não voltar.
 pub fn voltar_a_mao(cx: &mut App) -> Result<String, String> {
-    let (app, rodando) = cx
+    let (app, rodando, pasta) = cx
         .try_global::<Atualizacoes>()
-        .and_then(|a| a.app.clone().zip(a.rodando.clone()))
+        .and_then(|a| Some((a.app.clone()?, a.rodando.clone()?, a.dados.clone())))
         .ok_or_else(|| "Só a versão instalada volta.".to_string())?;
-    let para = saude::voltar(&app, &rodando, modelo::maior_formato_no_disco(None))?;
+    let para = saude::voltar(&app, &rodando, dados::formato_em(&pasta))?;
     cx.update_global::<Atualizacoes, _>(|a, _| a.volta = None);
     Ok(para)
 }
@@ -543,6 +552,7 @@ mod testes {
         assert_eq!(secao_de(texto, "0.4.0"), None);
         assert_eq!(secao_de("## 0.5.0\n\n## 0.4.0\nx", "0.5.0"), None, "seção vazia");
         assert!(secao_de(NOVIDADES, "0.2.0").is_some_and(|t| t.contains("atualiza")), "a 0.2.0 conta da atualização automática");
+        assert!(secao_de(NOVIDADES, VERSAO).is_some(), "a versão que roda tem a seção dela");
         assert_eq!(pagina("0.3.0"), "https://github.com/VictorMenegate/vitral/releases/tag/v0.3.0");
     }
 

@@ -23,7 +23,7 @@ pub fn abrir_no_editor(pasta: &Path) {
 }
 
 /// Abre um terminal na pasta; com `comando`, roda ele e deixa o shell aberto depois.
-pub fn abrir_terminal(pasta: &Path, tarefa: Option<u64>, comando: Option<&str>) {
+pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
     let mut terminal = Command::new("ptyxis");
     match comando {
         Some(comando) => {
@@ -34,8 +34,8 @@ pub fn abrir_terminal(pasta: &Path, tarefa: Option<u64>, comando: Option<&str>) 
             terminal.arg("--new-window").arg("--working-directory").arg(pasta);
         }
     }
-    if let Some(id) = tarefa {
-        terminal.env("VITRAL_PORT", crate::motor::porta_da_tarefa(id).to_string());
+    if let Some(porta) = porta {
+        terminal.env("VITRAL_PORT", porta.to_string());
     }
     soltar(&mut terminal);
 }

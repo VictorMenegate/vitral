@@ -2,7 +2,10 @@
 //! modo de permissão, modelo, esforço, conta, uso do contexto e o menu de comandos de barra.
 //! Os chips da barra, com os menus e os popovers deles, ficam em `composer_seletores.rs`.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use gpui_kit::component::{
     ElementExt as _,
@@ -114,6 +117,64 @@ pub enum PopCaixa {
 
 /// Linhas da caixa antes de ela rolar por dentro, com a janela alta.
 pub const LINHAS_CAIXA: usize = 12;
+
+/// No máximo tantas sugestões no menu da caixa.
+const MAX_SUGESTOES: usize = 8;
+
+/// Uma sugestão do menu da caixa: um comando de barra, um projeto (`#`) ou um chat (`@`).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Sugestao {
+    /// O que entra no lugar do token ("/compact", "#ninee", "@12").
+    pub valor: String,
+    pub titulo: String,
+    pub detalhe: Option<String>,
+    /// O começo que casa primeiro (o nome do comando, a chave do projeto, o número do chat).
+    pub chave: String,
+    /// Onde a busca olha, sem acento.
+    pub busca: String,
+    /// A ordem entre as que casam igual (o tamanho do comando, a ordem do trilho, a do mais recente).
+    pub peso: usize,
+    /// O projeto da sugestão, para o quadrado (`Some("")` é Avulsos).
+    pub projeto: Option<String>,
+}
+
+/// O que a última palavra da caixa pede: o sinal, o que veio depois dele e onde a palavra começa.
+/// `/` só no começo e sem espaço depois; `#` e `@` no começo ou depois de um espaço.
+pub(super) fn gatilho(texto: &str) -> Option<(char, &str, usize)> {
+    if let Some(resto) = texto.strip_prefix('/') {
+        return (!resto.contains(char::is_whitespace)).then_some(('/', resto, 0));
+    }
+    let inicio = texto.char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
+    let palavra = &texto[inicio..];
+    let sinal = palavra.chars().next().filter(|c| matches!(c, '#' | '@'))?;
+    Some((sinal, &palavra[sinal.len_utf8()..], inicio))
+}
+
+/// As sugestões que casam com o digitado: quem começa com ele primeiro, depois quem só o contém,
+/// cada grupo pelo peso; no máximo 8.
+pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugestao> {
+    let digitado = crate::dados::chave(digitado);
+    let mut lista: Vec<Sugestao> = itens
+        .into_iter()
+        .filter(|s| digitado.is_empty() || s.chave.contains(&digitado) || s.busca.contains(&digitado))
+        .collect();
+    lista.sort_by_key(|s| (!s.chave.starts_with(&digitado), s.peso));
+    lista.truncate(MAX_SUGESTOES);
+    lista
+}
+
+/// Troca o texto da caixa e deixa o cursor no fim (o `set_value` do kit o põe no começo).
+pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Window, cx: &mut Context<TextareaState>) {
+    let fim = texto.len();
+    c.set_value(texto, window, cx);
+    c.set_selected_range(fim..fim, cx);
+}
+
+/// O texto com a última palavra trocada pela escolhida e um espaço depois.
+pub(super) fn completar(texto: &str, inicio: usize, valor: &str) -> String {
+    let inicio = if texto.is_char_boundary(inicio) { inicio } else { texto.len() };
+    format!("{}{valor} ", &texto[..inicio])
+}
 
 pub fn nome_do_modo(valor: &str) -> &'static str {
     MODOS
@@ -284,8 +345,8 @@ impl Janela {
     ) -> impl IntoElement + use<> {
         // Sem cópia isolada, o "Sem perguntar" mexe direto na pasta do projeto.
         let sem_copia = match chat.papel {
-            Papel::Trabalhador => chat.cwd == motor.caminho_projeto(&chat.projeto),
-            Papel::Coordenador => !self.usa_git(motor, &chat.projeto),
+            Papel::Trabalhador | Papel::Projeto => motor.pasta_do_chat(chat).is_some_and(|p| p == chat.cwd),
+            Papel::Coordenador | Papel::Mestre => !self.usa_git(motor, &chat.projeto),
         };
         let painel = &self.paineis[ix];
         let (painel_id, faixa, linhas) = (painel.id, painel.medida.faixa, painel.linhas_caixa);
@@ -298,6 +359,7 @@ impl Janela {
         let anexos = self.anexos.get(&chat.id).cloned().unwrap_or_default();
         let janela = cx.entity().downgrade();
         let (colar, chat_colar) = (janela.clone(), chat.id.clone());
+        let pasta_anexos = motor.dados.pasta_anexos();
         let barra = Barra {
             painel: painel_id,
             chat: chat.id.clone(),
@@ -352,7 +414,7 @@ impl Janela {
                             .appearance(false)
                             // Colar imagem ou arquivos copiados no gerenciador vira anexo.
                             .on_paste(move |item, _, cx| {
-                                let caminhos = anexos_da_area_de_transferencia(item);
+                                let caminhos = anexos_da_area_de_transferencia(item, &pasta_anexos);
                                 if caminhos.is_empty() {
                                     return false;
                                 }
@@ -400,7 +462,7 @@ impl Janela {
                 let chat = chat.id.clone();
                 move |this, _: &AlternarModo, _, cx| this.alternar_modo(&chat, cx)
             }))
-            .child(self.menu_comandos(chat, &composer, painel_id, cx))
+            .child(self.menu_comandos(motor, chat, &composer, painel_id, cx))
             .child(caixa)
     }
 
@@ -430,7 +492,11 @@ impl Janela {
             .flex()
             .items_center()
             .h(r(altura))
-            .child(div().flex_none().child(self.chip_modo(motor, chat, b, window, cx)))
+            .child(div().flex_none().child(if chat.papel == Papel::Mestre {
+                self.chip_divisao(motor, b, window, cx)
+            } else {
+                self.chip_modo(motor, chat, b, window, cx)
+            }))
             .child(
                 div()
                     .flex()
@@ -602,7 +668,7 @@ impl Janela {
         let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
             return;
         };
-        composer.update(cx, |c, cx| c.set_value(texto.to_string(), window, cx));
+        composer.update(cx, |c, cx| por_texto(c, texto.to_string(), window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
         cx.notify();
@@ -703,31 +769,49 @@ impl Janela {
             }))
     }
 
-    /// Lista de comandos de barra que aparece acima da caixa quando o texto começa com "/". Entra
-    /// como os popovers: fade e 6 px vindos de baixo, do lado da caixa.
+    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/") e,
+    /// no Mestre, os projetos (`#`) e os chats (`@`). Fechado com Esc, o menu fica fechado até o
+    /// texto mudar.
+    pub(super) fn sugestoes_da_caixa(&self, motor: &Motor, chat: &Chat, painel: u64, texto: &str) -> Option<(char, usize, Vec<Sugestao>)> {
+        let (sinal, digitado, inicio) = gatilho(texto)?;
+        if sinal != '/' && self.sugestao_fechada.as_ref().is_some_and(|(p, t)| *p == painel && t == texto) {
+            return None;
+        }
+        let itens: Vec<Sugestao> = match sinal {
+            '/' => self
+                .comandos_de(chat)
+                .into_iter()
+                .map(|c| Sugestao {
+                    valor: format!("/{c}"),
+                    titulo: format!("/{c}"),
+                    detalhe: descricao_comando(&c).map(str::to_string),
+                    busca: c.clone(),
+                    peso: c.len(),
+                    chave: c,
+                    projeto: None,
+                })
+                .collect(),
+            '#' if chat.papel == Papel::Mestre => sugestoes_de_projetos(motor),
+            '@' if chat.papel == Papel::Mestre => sugestoes_de_chats(motor),
+            _ => return None,
+        };
+        let lista = menu_sugestoes(itens, digitado);
+        (!lista.is_empty()).then_some((sinal, inicio, lista))
+    }
+
+    /// O menu das sugestões, acima da caixa. Entra como os popovers: fade e 6 px vindos de baixo,
+    /// do lado da caixa. A primeira está marcada (o Enter a escolhe).
     fn menu_comandos(
         &self,
+        motor: &Motor,
         chat: &Chat,
         composer: &Entity<TextareaState>,
         painel: u64,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        let filtro = prefixo_de(composer, cx);
-        let comandos: Vec<String> = match &filtro {
-            Some(f) => {
-                let mut lista: Vec<String> = self
-                    .comandos_de(chat)
-                    .into_iter()
-                    .filter(|c| c.contains(f.as_str()))
-                    .collect();
-                // Quem começa com o que foi digitado vem primeiro, depois os nomes curtos.
-                lista.sort_by_key(|c| (!c.starts_with(f.as_str()), c.len()));
-                lista.truncate(8);
-                lista
-            }
-            None => Vec::new(),
-        };
-        div().relative().when(!comandos.is_empty(), |s| {
+        let texto = composer.read(cx).value().to_string();
+        let sugestoes = self.sugestoes_da_caixa(motor, chat, painel, &texto);
+        div().relative().when_some(sugestoes, |s, (sinal, inicio, lista)| {
             let menu = div()
                 .flex()
                 .flex_col()
@@ -735,34 +819,46 @@ impl Janela {
                 .w_full()
                 .p(esp::E8)
                 .flutuante(cx)
-                .children(comandos.into_iter().enumerate().map(|(i, comando)| {
-                    let descricao = descricao_comando(&comando);
+                .children(lista.into_iter().enumerate().map(|(i, sugestao)| {
+                    let simbolo = sugestao.projeto.as_ref().map(|p| {
+                        if p.is_empty() {
+                            div()
+                                .flex_none()
+                                .size(r(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(svg().path(Lucide::MessageCircle.path()).size(r(14.)).text_color(Cores::tenue()))
+                                .into_any_element()
+                        } else {
+                            super::componentes::quadrado_do_projeto(motor, p, 18.).into_any_element()
+                        }
+                    });
+                    let valor = sugestao.valor.clone();
                     div()
-                        .id(("comando", i))
+                        .id(("sugestao-caixa", i))
                         .flex()
                         .items_center()
                         .h(r(32.))
                         .px(esp::E8)
-                        .gap(esp::E12)
+                        .gap(esp::E8)
                         .rounded(raio::CONTROLE)
                         .cursor_pointer()
                         .when(i == 0, |s| s.bg(Cores::selecao()))
                         .when(i != 0, |s| s.hover(|s| s.bg(Cores::hover())))
+                        .children(simbolo)
                         .child(
                             div()
                                 .flex_shrink_0()
                                 .max_w(relative(0.6))
                                 .truncate()
-                                .mono()
-                                .text_color(Cores::codigo())
-                                .child(format!("/{comando}")),
+                                .map(|d| if sinal == '/' { d.mono().text_color(Cores::codigo()) } else { d.corpo_ui().text_color(Cores::texto()) })
+                                .child(sugestao.titulo.clone()),
                         )
-                        .when_some(descricao, |s, d| {
+                        .when_some(sugestao.detalhe.clone(), |s, d| {
                             s.child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(d))
                         })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.completar_comando(&comando, window, cx)
-                        }))
+                        .on_click(cx.listener(move |this, _, window, cx| this.escolher_sugestao(painel, inicio, &valor, window, cx)))
                 }))
                 .with_animation(
                     ("entra-comandos", painel as usize),
@@ -772,6 +868,55 @@ impl Janela {
             // O absoluto fica por fora: o deslize mexe no `top` de quem está dentro.
             s.child(div().absolute().bottom(esp::E4).left_0().w_full().max_w(r(420.)).child(menu))
         })
+    }
+
+    /// Troca a última palavra da caixa pela sugestão escolhida (o comando, `#chave ` ou `@12 `).
+    pub(super) fn escolher_sugestao(&mut self, painel: u64, inicio: usize, valor: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
+            return;
+        };
+        // A palavra é medida de novo no texto de agora (o clique pode vir depois de outra tecla).
+        let atual = composer.read(cx).value().to_string();
+        let inicio = gatilho(&atual).map_or(inicio, |(_, _, i)| i);
+        let texto = completar(&atual, inicio, valor);
+        composer.update(cx, |c, cx| por_texto(c, texto, window, cx));
+        let foco = composer.read(cx).focus_handle(cx);
+        window.focus(&foco, cx);
+        cx.notify();
+    }
+
+    /// O Enter com o menu de `#`/`@` aberto no painel ativo: escolhe a primeira sugestão.
+    pub(super) fn completar_citacao(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let (Some(motor), Some(painel)) = (self.motor.clone(), self.paineis.get(self.ativo)) else {
+            return false;
+        };
+        let (id, texto) = (painel.id, painel.composer.read(cx).value().to_string());
+        let escolha = {
+            let m = motor.read(cx);
+            let Some(chat) = painel.chat.as_deref().and_then(|c| m.chat(c)) else {
+                return false;
+            };
+            self.sugestoes_da_caixa(m, chat, id, &texto).filter(|(sinal, ..)| *sinal != '/').map(|(_, inicio, lista)| (inicio, lista[0].valor.clone()))
+        };
+        match escolha {
+            Some((inicio, valor)) => {
+                self.escolher_sugestao(id, inicio, &valor, window, cx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// "Mandar para um projeto…" e "Falar de um chat…" do clipe: o sinal no fim da caixa, depois
+    /// de um espaço, com o menu aberto.
+    pub(super) fn acrescentar_gatilho(&mut self, painel: u64, sinal: char, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
+            return;
+        };
+        let antes = composer.read(cx).value().to_string();
+        let texto = if antes.is_empty() || antes.ends_with(char::is_whitespace) { format!("{antes}{sinal}") } else { format!("{antes} {sinal}") };
+        self.sugestao_fechada = None;
+        self.por_na_caixa(painel, &texto, window, cx);
     }
 
     pub(super) fn comandos_de(&self, chat: &Chat) -> Vec<String> {
@@ -795,8 +940,7 @@ impl Janela {
         let Some(composer) = self.composer_ativo() else {
             return;
         };
-        composer
-            .update(cx, |c, cx| c.set_value(format!("/{comando} "), window, cx));
+        composer.update(cx, |c, cx| por_texto(c, format!("/{comando} "), window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
         cx.notify();
@@ -815,15 +959,25 @@ impl Janela {
             cx.propagate();
             return;
         };
-        let (menu_aberto, ocupado) = {
+        let texto = composer.read(cx).value().to_string();
+        let painel = self.paineis.iter().find(|p| p.composer == *composer).map(|p| p.id);
+        let (menu_aberto, citacao, ocupado) = {
             let m = motor.read(cx);
             let menu = match (prefixo_de(composer, cx), m.chat(chat)) {
                 (Some(f), Some(c)) => self.comandos_de(c).iter().any(|x| x.contains(f.as_str())),
                 _ => false,
             };
-            (menu, m.execucao(chat).rodando() || m.esperando_vaga(chat))
+            let citacao = match (painel, m.chat(chat)) {
+                (Some(p), Some(c)) => self.sugestoes_da_caixa(m, c, p, &texto).is_some_and(|(sinal, ..)| sinal != '/'),
+                _ => false,
+            };
+            (menu, citacao, m.execucao(chat).rodando() || m.esperando_vaga(chat))
         };
-        if menu_aberto {
+        if citacao {
+            // O menu de # e @ fecha sem apagar o que foi escrito.
+            self.sugestao_fechada = painel.map(|p| (p, texto));
+            cx.notify();
+        } else if menu_aberto {
             composer.update(cx, |c, cx| c.set_value("", window, cx));
             cx.notify();
         } else if ocupado {
@@ -887,10 +1041,76 @@ fn descricao_comando(comando: &str) -> Option<&'static str> {
     })
 }
 
+/// Os projetos para o `#` do Mestre (na ordem do trilho) e Avulsos no fim.
+fn sugestoes_de_projetos(motor: &Motor) -> Vec<Sugestao> {
+    let mut lista: Vec<Sugestao> = motor
+        .projetos_visiveis()
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let descricao = p.descricao.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string);
+            Sugestao {
+                valor: format!("#{}", p.chave()),
+                titulo: p.nome.clone(),
+                busca: crate::dados::chave(&format!("{} {}", p.nome, descricao.clone().unwrap_or_default())),
+                detalhe: descricao,
+                chave: p.chave(),
+                peso: i,
+                projeto: Some(p.id.clone()),
+            }
+        })
+        .collect();
+    lista.push(Sugestao {
+        valor: "#avulsos".into(),
+        titulo: "Avulsos".into(),
+        detalhe: Some("chats sem projeto".into()),
+        chave: "avulsos".into(),
+        busca: "avulsos sem projeto".into(),
+        peso: lista.len(),
+        projeto: Some(String::new()),
+    });
+    lista
+}
+
+/// Os chats para o `@` do Mestre: "chat 12 · título", com o projeto e o estado, o mais recente
+/// primeiro.
+fn sugestoes_de_chats(motor: &Motor) -> Vec<Sugestao> {
+    let mut chats: Vec<&Chat> = motor
+        .chats
+        .iter()
+        .filter(|c| matches!(c.papel, Papel::Projeto | Papel::Trabalhador) && c.tarefa.is_some() && !motor.arquivada(c))
+        .collect();
+    chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+    chats
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let n = c.tarefa.unwrap_or_default();
+            let estado = if motor.execucao(&c.id).rodando() {
+                "rodando".to_string()
+            } else if motor.espera_do_chat(c).is_some_and(|e| e != motor::Espera::Nova) {
+                "esperando você".to_string()
+            } else {
+                super::tempo_relativo(c.atualizado_em)
+            };
+            let projeto = motor.nome_do_projeto(&c.projeto);
+            Sugestao {
+                valor: format!("@{n}"),
+                titulo: format!("chat {n} · {}", c.titulo),
+                detalhe: Some(format!("{projeto} · {estado}")),
+                chave: n.to_string(),
+                busca: crate::dados::chave(&format!("{} {projeto}", c.titulo)),
+                peso: i,
+                projeto: Some(c.projeto.clone()),
+            }
+        })
+        .collect()
+}
+
 /// Uma regra de "permitir sempre" como aparece no menu do modo.
 fn descricao_regra(regra: &str) -> String {
     if regra == "edicoes" {
-        return "Edições de arquivos nesta pasta".into();
+        return "Edições de arquivos neste chat".into();
     }
     if let Some(comando) = regra.strip_prefix("bash:") {
         let linha = comando.lines().next().unwrap_or_default();
@@ -959,9 +1179,9 @@ fn rotulo_modelo(escolhido: &str, em_uso: Option<&str>) -> String {
     }
 }
 
-/// Imagens coladas viram arquivos em `~/.cache/vitral/anexos`; arquivos copiados do gerenciador
-/// entram pelo caminho.
-fn anexos_da_area_de_transferencia(item: &ClipboardItem) -> Vec<PathBuf> {
+/// Imagens coladas viram arquivos na pasta dos anexos (`anexos/` nos dados); arquivos copiados do
+/// gerenciador entram pelo caminho.
+fn anexos_da_area_de_transferencia(item: &ClipboardItem, pasta: &Path) -> Vec<PathBuf> {
     let mut caminhos = Vec::new();
     for entrada in item.entries() {
         match entrada {
@@ -974,15 +1194,11 @@ fn anexos_da_area_de_transferencia(item: &ClipboardItem) -> Vec<PathBuf> {
                     ImageFormat::Webp => "webp",
                     _ => continue,
                 };
-                let pasta = dirs::cache_dir()
-                    .unwrap_or_else(std::env::temp_dir)
-                    .join("vitral")
-                    .join("anexos");
                 let arquivo = pasta.join(format!(
                     "colado-{}.{extensao}",
                     crate::modelo::novo_id()
                 ));
-                if std::fs::create_dir_all(&pasta).is_ok()
+                if std::fs::create_dir_all(pasta).is_ok()
                     && std::fs::write(&arquivo, &imagem.bytes).is_ok()
                 {
                     caminhos.push(arquivo);
@@ -999,6 +1215,65 @@ fn prefixo_de(composer: &Entity<TextareaState>, cx: &App) -> Option<String> {
     let texto = composer.read(cx).value().to_string();
     let resto = texto.strip_prefix('/')?;
     (!resto.contains(char::is_whitespace)).then(|| resto.to_string())
+}
+
+#[cfg(test)]
+mod testes_sugestoes {
+    use super::{Sugestao, completar, gatilho, menu_sugestoes};
+
+    fn sugestao(valor: &str, chave: &str, busca: &str, peso: usize) -> Sugestao {
+        Sugestao {
+            valor: valor.into(),
+            titulo: valor.into(),
+            detalhe: None,
+            chave: chave.into(),
+            busca: busca.into(),
+            peso,
+            projeto: None,
+        }
+    }
+
+    #[test]
+    fn o_gatilho_e_a_ultima_palavra() {
+        assert_eq!(gatilho("/comp"), Some(('/', "comp", 0)));
+        assert_eq!(gatilho("/compact agora"), None);
+        assert_eq!(gatilho("veja a /barra"), None);
+        assert_eq!(gatilho("#nin"), Some(('#', "nin", 0)));
+        assert_eq!(gatilho("mande para #nin"), Some(('#', "nin", 11)));
+        assert_eq!(gatilho("fale do @"), Some(('@', "", 8)));
+        assert_eq!(gatilho("fale do @12 e"), None);
+        // No meio da palavra não é citação.
+        assert_eq!(gatilho("C#"), None);
+        assert_eq!(gatilho("eu@x.com"), None);
+        assert_eq!(gatilho("ação #lój"), Some(('#', "lój", 7)));
+    }
+
+    #[test]
+    fn completar_troca_so_o_ultimo_token() {
+        assert_eq!(completar("fale do @1", 8, "@12"), "fale do @12 ");
+        assert_eq!(completar("#nin", 0, "#ninee"), "#ninee ");
+        assert_eq!(completar("/comp", 0, "/compact"), "/compact ");
+    }
+
+    #[test]
+    fn quem_comeca_com_o_digitado_vem_antes_e_no_maximo_oito() {
+        let itens = vec![
+            sugestao("#site-loja", "site-loja", "site-loja loja do site", 0),
+            sugestao("#loja", "loja", "loja loja", 1),
+            sugestao("#vitral", "vitral", "vitral", 2),
+        ];
+        let achadas: Vec<String> = menu_sugestoes(itens.clone(), "loj").into_iter().map(|s| s.valor).collect();
+        assert_eq!(achadas, ["#loja", "#site-loja"]);
+        // Sem acento nem maiúscula; vazio mostra todas, pelo peso.
+        assert_eq!(menu_sugestoes(itens.clone(), "LÓJ").len(), 2);
+        let todas: Vec<String> = menu_sugestoes(itens, "").into_iter().map(|s| s.valor).collect();
+        assert_eq!(todas, ["#site-loja", "#loja", "#vitral"]);
+        let muitas: Vec<Sugestao> = (0..12).map(|i| sugestao(&format!("@{i}"), &i.to_string(), "", i)).collect();
+        assert_eq!(menu_sugestoes(muitas.clone(), "").len(), 8);
+        // O número do chat: "@1" traz o 1 e os que começam com 1 antes dos que só o contêm.
+        let achados: Vec<String> = menu_sugestoes(muitas, "1").into_iter().map(|s| s.valor).collect();
+        assert_eq!(achados, ["@1", "@10", "@11"]);
+    }
 }
 
 #[cfg(test)]

@@ -245,6 +245,15 @@ fn linha_de_codigo(
         )
 }
 
+/// O nome que a barra do arquivo mostra para a pasta: o do projeto na pasta própria, senão o da
+/// pasta.
+fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
+    match motor.projeto_da_pasta(raiz) {
+        Some(p) if motor.pastas_do(&p).iter().any(|l| l.propria && l.caminho == raiz) => motor.nome_do_projeto(&p),
+        _ => raiz.file_name().map_or_else(|| raiz.display().to_string(), |n| n.to_string_lossy().to_string()),
+    }
+}
+
 impl Janela {
     /// O conteúdo do arquivo aberto, relido só quando ele muda (a data é conferida no máximo a
     /// cada segundo), com as cores do código se já chegaram e a rolagem.
@@ -295,15 +304,14 @@ impl Janela {
     }
 
     pub(super) fn painel_arquivo(&self, motor: &Entity<Motor>, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let Some((projeto, caminho)) = self.arquivo_aberto.clone() else {
+        let Some((raiz, caminho)) = self.arquivo_aberto.clone() else {
             return div().into_any_element();
         };
-        let pasta_projeto = motor.read(cx).caminho_projeto(&projeto);
-        let completo = pasta_projeto.join(&caminho);
-        // Na raiz do projeto, a barra mostra o nome dele no lugar da pasta.
+        let completo = raiz.join(&caminho);
+        // Na raiz da pasta, a barra mostra o nome dela (ou o do projeto, se ela é a pasta própria).
         let (pasta, nome) = match caminho.rsplit_once('/') {
             Some((d, n)) => (format!("{d}/"), n.to_string()),
-            None => (projeto.clone(), caminho.clone()),
+            None => (nome_da_raiz(motor.read(cx), &raiz), caminho.clone()),
         };
         let markdown = caminho.ends_with(".md");
         let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, markdown, cx);

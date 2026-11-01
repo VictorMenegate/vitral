@@ -97,7 +97,7 @@ fn aviso_da_limpeza(apagadas: usize, erros: &[String]) -> (Tom, String) {
     }
     let quais = erros.join("; ");
     if apagadas == 0 {
-        let o_que = if erros.len() == 1 { "a cópia da tarefa" } else { "as cópias das tarefas" };
+        let o_que = if erros.len() == 1 { "a cópia do chat" } else { "as cópias dos chats" };
         return (Tom::Erro, format!("Não deu para apagar {o_que} {quais}"));
     }
     (
@@ -111,7 +111,7 @@ fn aviso_da_limpeza(apagadas: usize, erros: &[String]) -> (Tom, String) {
 }
 
 impl Janela {
-    /// "Apagar a cópia…" no menu da cópia de uma tarefa parada.
+    /// "Apagar a cópia…" no menu da cópia de um chat parado.
     pub(super) fn perguntar_limpeza(&mut self, tarefa: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
@@ -121,19 +121,19 @@ impl Janela {
             .tarefa(tarefa)
             .is_some_and(|t| t.estado == EstadoTarefa::EmRevisao);
         let pergunta = move |_: &str| Pergunta {
-            titulo: format!("Apagar a cópia da tarefa #{tarefa}?"),
+            titulo: format!("Apagar a cópia do chat {tarefa}?"),
             texto: format!(
-                "Somem a pasta, o branch e os pontos de volta.{} A conversa do trabalhador fica \
-                 para leitura, mas não roda mais.",
-                if em_revisao { " A tarefa está em revisão e vira cancelada." } else { "" }
+                "Somem a pasta, o branch e os pontos de volta.{} A conversa fica para leitura, mas \
+                 não roda mais.",
+                if em_revisao { " O pedido está em revisão e vira cancelado." } else { "" }
             ),
             botao: "Apagar a cópia".into(),
         };
         confirmar_limpeza(motor, vec![tarefa], pergunta, window, cx);
     }
 
-    /// Ao arquivar um coordenador sem tarefas rodando, oferece apagar as cópias que sobraram. É
-    /// uma pergunta à parte: arquivar se desfaz, e uma tarefa em revisão ainda pode ser aprovada.
+    /// Ao arquivar um chat sem ajudantes rodando, oferece apagar as cópias deles que sobraram. É
+    /// uma pergunta à parte: arquivar se desfaz, e um ajudante em revisão ainda pode ser aprovado.
     pub(super) fn oferecer_limpeza_ao_arquivar(&mut self, coordenador: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
@@ -151,14 +151,14 @@ impl Janela {
         let em_revisao = paradas.iter().any(|(_, r)| *r);
         let pergunta = move |_: &str| Pergunta {
             titulo: if n == 1 {
-                "Apagar também a cópia da tarefa?".into()
+                "Apagar também a cópia do ajudante?".into()
             } else {
-                format!("Apagar também as {n} cópias das tarefas?")
+                format!("Apagar também as {n} cópias dos ajudantes?")
             },
             texto: format!(
-                "A conversa foi arquivada, mas as tarefas dela ainda guardam {} do projeto.{}",
+                "O chat foi arquivado, mas os ajudantes dele ainda guardam {} do projeto.{}",
                 if n == 1 { "uma cópia".to_string() } else { format!("{n} cópias") },
-                if em_revisao { " Tarefas em revisão serão canceladas." } else { "" }
+                if em_revisao { " Ajudantes em revisão serão cancelados." } else { "" }
             ),
             botao: if n == 1 { "Apagar a cópia".into() } else { "Apagar as cópias".into() },
         };
@@ -178,7 +178,7 @@ mod testes {
         let um = vec!["#3: pasta em uso".to_string()];
         assert_eq!(
             aviso_da_limpeza(0, &um),
-            (Tom::Erro, "Não deu para apagar a cópia da tarefa #3: pasta em uso".to_string())
+            (Tom::Erro, "Não deu para apagar a cópia do chat #3: pasta em uso".to_string())
         );
         assert_eq!(
             aviso_da_limpeza(2, &um),

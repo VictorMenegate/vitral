@@ -363,10 +363,36 @@ struct DadosAnexar {
     janela: WeakEntity<Janela>,
     chat: String,
     painel: u64,
+    mestre: bool,
 }
 
 fn itens_de_anexar(menu: PopupMenu, d: &DadosAnexar, com_comandos: bool) -> PopupMenu {
     let (j1, j2, j3, j4) = (d.janela.clone(), d.janela.clone(), d.janela.clone(), d.janela.clone());
+    if d.mestre {
+        // O Mestre não tem pasta: o que se anexa a ele é para onde vai e de que chat se fala.
+        let (c1, painel) = (d.chat.clone(), d.painel);
+        return menu
+            .item(
+                PopupMenuItem::element(|_, _| rotulo_com_gatilho("Mandar para um projeto…", "#"))
+                    .icon(Lucide::FolderInput)
+                    .on_click(move |_, window, cx| {
+                        let _ = j2.update(cx, |this, cx| this.acrescentar_gatilho(painel, '#', window, cx));
+                    }),
+            )
+            .item(
+                PopupMenuItem::element(|_, _| rotulo_com_gatilho("Falar de um chat…", "@"))
+                    .icon(Lucide::AtSign)
+                    .on_click(move |_, window, cx| {
+                        let _ = j3.update(cx, |this, cx| this.acrescentar_gatilho(painel, '@', window, cx));
+                    }),
+            )
+            .item(
+                PopupMenuItem::new("Arquivo do computador…").icon(Lucide::FolderOpen).on_click(move |_, window, cx| {
+                    let chat = c1.clone();
+                    let _ = j1.update(cx, |this, cx| this.escolher_anexos(chat, window, cx));
+                }),
+            );
+    }
     let (c1, c2, c3, painel) = (d.chat.clone(), d.chat.clone(), d.chat.clone(), d.painel);
     let menu = menu
         .item(
@@ -418,7 +444,7 @@ struct LinhaDeModelo {
 /// As linhas do seletor: Padrão, as quatro famílias e, numa conversa antiga que guardou o nome
 /// completo, uma sexta com ele. A versão só aparece quando o modelo em uso é daquela família
 /// (nunca inventada) e a conversa segue um apelido. Seguindo o Padrão, é ele que diz qual está
-/// em uso ("Padrão da pasta · Opus 5.5"), e a família não ganha o selo.
+/// em uso ("Padrão · Opus 5.5"), e a família não ganha o selo.
 fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta: &str) -> Vec<LinhaDeModelo> {
     let em_uso = em_uso.filter(|m| !m.is_empty());
     let curto = em_uso.map(nome_curto_modelo);
@@ -429,8 +455,8 @@ fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta:
     let padrao = match (padrao_pasta.is_empty(), qual) {
         (true, Some(m)) => format!("O do Claude Code · {m}"),
         (true, None) => "O que o Claude Code escolher".to_string(),
-        (false, Some(m)) => format!("Padrão da pasta · {m}"),
-        (false, None) => format!("Padrão da pasta · {}", rotulo_modelo(padrao_pasta, None)),
+        (false, Some(m)) => format!("Padrão · {m}"),
+        (false, None) => format!("Padrão · {}", rotulo_modelo(padrao_pasta, None)),
     };
     let mut linhas = vec![LinhaDeModelo {
         valor: String::new(),
@@ -460,8 +486,8 @@ fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta:
 
 fn padrao_da_pasta<'a>(motor: &'a Motor, chat: &Chat) -> &'a str {
     match chat.papel {
-        Papel::Coordenador => &motor.config.modelo_coordenador,
-        Papel::Trabalhador => &motor.config.modelo_trabalhador,
+        Papel::Coordenador | Papel::Mestre => &motor.config.modelo_mestre,
+        Papel::Trabalhador | Papel::Projeto => &motor.config.modelo_chats,
     }
 }
 
@@ -539,8 +565,8 @@ struct DadosEsforco {
     fluxos_desligados: bool,
     /// O modo de permissão pergunta antes de agir: os agentes do fluxo não conseguem perguntar.
     modo_pergunta: bool,
-    /// A conversa é de coordenador: o porquê de o Ultracode não valer nela vai na dica da linha.
-    coordenador: bool,
+    /// A conversa é a do Mestre: o porquê de o Ultracode não valer nela vai na dica da linha.
+    mestre: bool,
     estreita: bool,
     largura: LarguraPopover,
     foco: FocusHandle,
@@ -612,14 +638,14 @@ fn linha_ultracode(d: &Rc<DadosEsforco>) -> AnyElement {
     let Some(motivo) = &d.sem_ultracode else {
         return linha.into_any_element();
     };
-    // Desabilitada, a linha mostra o motivo curto; no coordenador, a explicação vai na dica.
+    // Desabilitada, a linha mostra o motivo curto; no Mestre, a explicação vai na dica.
     let linha = linha.desabilitada(motivo.clone());
-    if d.coordenador {
+    if d.mestre {
         div()
             .id(("ultracode-porque", d.painel as usize))
             .child(linha)
             .tooltip(|window, cx| {
-                Tooltip::new("No coordenador, o trabalho é dividido em tarefas para os trabalhadores")
+                Tooltip::new("O Mestre não edita nada: o trabalho vai para os chats de projeto")
                     .build(window, cx)
             })
             .into_any_element()
@@ -755,6 +781,53 @@ impl Janela {
             .into_any_element()
     }
 
+    /// No Mestre, no lugar do modo: se a divisão é mostrada antes (o cartão "Vou dividir assim")
+    /// ou começa direto. É a opção "Mostrar a divisão antes de começar" das Configurações.
+    pub(super) fn chip_divisao(&self, motor: &Motor, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let direto = motor.config.comecar_sem_perguntar;
+        let (icone, nome, cor) =
+            if direto { (Lucide::Zap, "Começar direto", Cores::ambar()) } else { (Lucide::GitFork, "Mostrar antes", Cores::destaque_texto()) };
+        let dica: SharedString = if direto {
+            "Divisão: começar direto\nO Mestre cria os chats e manda o pedido sem mostrar o cartão antes".into()
+        } else {
+            "Divisão: mostrar antes\nO Mestre mostra como vai dividir e espera o seu Começar".into()
+        };
+        let chip = |aberto: bool| {
+            let mut chip = Chip::new(b.id("chip-divisao"), if b.larga() { format!("Divisão: {nome}") } else { nome.to_string() })
+                .simbolo(Simbolo::Icone(Icon::new(icone), Some(cor)))
+                .tamanho(b.tamanho())
+                .mudado(direto)
+                .seta(b.larga())
+                .so_icone(b.estreita())
+                .aberto(aberto);
+            if !aberto {
+                chip = chip.dica(dica.clone());
+            }
+            chip.construir(window, cx)
+        };
+        let motor_e = self.motor.clone();
+        GatilhoChip::new(chip(false), chip(true))
+            .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, window, _| {
+                let largura = tam(window, 380.);
+                let opcao = |valor: bool, icone: Lucide, cor: Hsla, titulo: &'static str, descricao: &'static str| {
+                    let m = motor_e.clone();
+                    item_descrito(Some(Simbolo::Icone(Icon::new(icone), Some(cor))), titulo, descricao, valor == direto).on_click(
+                        move |_, _, cx| {
+                            if let Some(m) = &m {
+                                m.update(cx, |m, cx| m.mudar_config(|c| c.comecar_sem_perguntar = valor, cx));
+                            }
+                        },
+                    )
+                };
+                menu.min_w(largura)
+                    .max_w(largura)
+                    .item(cabecalho_escolha("Divisão do Mestre", None))
+                    .item(opcao(false, Lucide::GitFork, Cores::destaque_texto(), "Mostrar antes", "Você vê o cartão “Vou dividir assim” e decide"))
+                    .item(opcao(true, Lucide::Zap, Cores::ambar(), "Começar direto", "Os chats começam sem perguntar; o cartão fica para ver"))
+            })
+            .into_any_element()
+    }
+
     pub(super) fn chip_modelo(
         &self,
         motor: &Motor,
@@ -770,8 +843,8 @@ impl Janela {
         let curto = rotulo_modelo(&efetivo, em_uso.as_deref());
         let nome = com_claude(&curto);
         let detalhe = match (&chat.modelo, &em_uso) {
-            (None, Some(m)) => format!("padrão da pasta · em uso: {m}"),
-            (None, None) => "padrão da pasta".to_string(),
+            (None, Some(m)) => format!("padrão · em uso: {m}"),
+            (None, None) => "padrão".to_string(),
             (Some(_), Some(m)) => format!("em uso: {m}"),
             (Some(_), None) => "escolhido nesta conversa".to_string(),
         };
@@ -901,7 +974,7 @@ impl Janela {
             outro_ultracode: motor.ultracode_rodando().is_some_and(|c| c != chat.id),
             fluxos_desligados: motor.fluxos_desligados(chat),
             modo_pergunta: !matches!(motor.permissao_de(chat).as_str(), "bypassPermissions" | "auto"),
-            coordenador: chat.papel == Papel::Coordenador,
+            mestre: chat.papel == Papel::Mestre,
             sem_ultracode,
             estreita: b.estreita(),
             largura: b.largura_popover(),
@@ -939,9 +1012,9 @@ impl Janela {
             descricao_da_conta(&uso)
         };
         let onde = match chat.papel {
-            Papel::Trabalhador if b.sem_copia => "roda na pasta do projeto",
-            Papel::Trabalhador => "roda na cópia isolada",
-            Papel::Coordenador => "os trabalhadores usam a mesma",
+            Papel::Trabalhador | Papel::Projeto if b.sem_copia => "roda na pasta do projeto",
+            Papel::Trabalhador | Papel::Projeto => "roda na cópia isolada",
+            Papel::Coordenador | Papel::Mestre => "os chats de projeto usam a mesma",
         };
         let dica: SharedString = format!("Conta: {nome}\n{detalhe} · {onde}").into();
         let chip = |aberto: bool| {
@@ -977,8 +1050,10 @@ impl Janela {
     }
 
     pub(super) fn botao_anexar(&self, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let dados = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
-        botao_icone(b.id("anexar"), Lucide::Paperclip, "Anexar arquivo ou contexto", TamanhoBotao::Controle, window, cx)
+        let mestre = b.chat == crate::modelo::ID_MESTRE;
+        let dados = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel, mestre };
+        let dica = if mestre { "Citar um projeto ou um chat, ou anexar um arquivo" } else { "Anexar arquivo ou contexto" };
+        botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
                 let largura = tam(window, 300.);
                 let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
@@ -993,7 +1068,8 @@ impl Janela {
     /// conta, que saem da barra.
     pub(super) fn botao_mais(&self, motor: &Motor, chat: &Chat, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
         let estreita = b.estreita();
-        let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
+        let mestre = chat.papel == Papel::Mestre;
+        let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel, mestre };
         let conta = estreita.then(|| Rc::new(self.dados_da_conta(motor, chat, cx)));
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
         let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
@@ -1019,16 +1095,18 @@ impl Janela {
                                 }
                             }),
                     )
-                    .separator()
-                    .item(
-                        PopupMenuItem::new(if fixado { "Desafixar conversa" } else { "Fixar conversa" })
-                            .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
-                            .on_click(move |_, _, cx| {
-                                if let Some(m) = &m2 {
-                                    m.update(cx, |m, cx| m.alternar_fixado(&c2, cx));
-                                }
-                            }),
-                    );
+                    // O Mestre não se fixa: ele já tem o lugar dele no trilho.
+                    .when(!mestre, |menu| {
+                        menu.separator().item(
+                            PopupMenuItem::new(if fixado { "Desafixar conversa" } else { "Fixar conversa" })
+                                .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
+                                .on_click(move |_, _, cx| {
+                                    if let Some(m) = &m2 {
+                                        m.update(cx, |m, cx| m.alternar_fixado(&c2, cx));
+                                    }
+                                }),
+                        )
+                    });
                 if estreita {
                     menu = itens_de_anexar(menu.separator(), &anexar, false);
                     if let Some(conta) = &conta {
@@ -1065,7 +1143,7 @@ mod testes {
         assert!(linhas.iter().all(|l| !l.em_uso));
         assert_eq!(linhas[2].valor, "opus");
         let linhas = linhas_de_modelo(None, Some("claude-opus-5-5"), "opus");
-        assert_eq!(linhas[0].descricao, "Padrão da pasta · Opus 5.5");
+        assert_eq!(linhas[0].descricao, "Padrão · Opus 5.5");
         // Escolhido um apelido, o selo vai na família em uso (um só).
         let linhas = linhas_de_modelo(Some("opus"), Some("claude-opus-5-5"), "sonnet");
         assert_eq!(linhas.iter().filter(|l| l.em_uso).count(), 1);
@@ -1079,7 +1157,7 @@ mod testes {
         assert!(linhas.iter().all(|l| !l.em_uso));
         // Escolhido um apelido, o Padrão diz o da pasta e não o que está em uso.
         let linhas = linhas_de_modelo(Some("sonnet"), Some("claude-opus-5-5"), "opus");
-        assert_eq!(linhas[0].descricao, "Padrão da pasta · Opus");
+        assert_eq!(linhas[0].descricao, "Padrão · Opus");
         assert_eq!(linhas[2].titulo, "Claude Opus 5.5");
         assert_eq!(linhas[3].titulo, "Claude Sonnet");
     }

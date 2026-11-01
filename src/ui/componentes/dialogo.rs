@@ -115,10 +115,10 @@ impl RenderOnce for CabecalhoDialogo {
     }
 }
 
-/// Rodapé: uma ação à esquerda e, à direita, cancelar e a principal.
+/// Rodapé: as ações da esquerda e, à direita, cancelar e a principal.
 #[derive(IntoElement, Default)]
 pub struct RodapeDialogo {
-    esquerda: Option<Button>,
+    esquerda: Vec<Button>,
     cancelar: Option<Button>,
     principal: Option<Button>,
 }
@@ -128,8 +128,9 @@ impl RodapeDialogo {
         Self::default()
     }
 
+    /// Mais uma ação à esquerda (Editar projeto tem Arquivar e Apagar).
     pub fn esquerda(mut self, b: Button) -> Self {
-        self.esquerda = Some(b);
+        self.esquerda.push(b);
         self
     }
 

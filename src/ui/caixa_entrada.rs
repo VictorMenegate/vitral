@@ -68,7 +68,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
         let Some(chat) = motor.chat(p.chat()) else {
             continue;
         };
-        let (icone, cor) = icone_projeto::visual(motor, &chat.projeto);
+        let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
         // A mesma conversa pode ter mais de um pedido, ou estar parada e com erro.
         let chave = match &p {
             Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } => pedido.clone(),
@@ -82,7 +82,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
                 let (motivo, detalhe) = MotivoDaPrevia::de(&causa, None, 0);
                 (Some(motivo), detalhe)
             }
-            None => (None, format!("Resposta nova em {}", chat.projeto)),
+            None => (None, format!("Resposta nova em {}", motor.nome_do_projeto(&chat.projeto))),
         };
         let pedido = match p {
             Pendencia::Permissao { pedido, ferramenta, .. } => {
@@ -165,6 +165,10 @@ impl Janela {
             .or(pendencias.first())
             .map(|p| p.chat().to_string())
         else {
+            // Sem outra pendência, o primeiro cartão aberto do Mestre (ou o par travado no freio).
+            if let Some(e) = super::cartoes::esperas_do_mestre(motor.read(cx)).into_iter().next() {
+                self.ver_cartao(e.cartao, &e.chat, window, cx);
+            }
             return;
         };
         self.selecionar(Some(chat), window, cx);
@@ -204,15 +208,16 @@ fn caixa_do_sino(
     let Some(motor) = j.read(cx).motor.clone() else {
         return div().into_any_element();
     };
-    let (secoes, precisa) = {
+    let (secoes, precisa, do_mestre) = {
         let m = motor.read(cx);
-        (ler_secoes(j.read(cx), m), m.precisa_de_voce(None))
+        (ler_secoes(j.read(cx), m), super::cartoes::precisa_com_o_mestre(m), super::cartoes::esperas_do_mestre(m))
     };
     let popover = popover.downgrade();
     let numero = precisa.numero();
     let cor = if precisa.erro { Cores::vermelho() } else { Cores::ambar() };
     let novas: Vec<String> = secoes.novas.iter().map(|l| l.chat.clone()).collect();
-    let vazia = secoes.pedidos.is_empty()
+    let vazia = do_mestre.is_empty()
+        && secoes.pedidos.is_empty()
         && secoes.paradas.is_empty()
         && secoes.erros.is_empty()
         && secoes.novas.is_empty();
@@ -250,7 +255,35 @@ fn caixa_do_sino(
         );
     }
     // A primeira seção encosta no título (4 em cima, e não os 16 de respiro).
-    let primeira = [&secoes.pedidos, &secoes.paradas, &secoes.erros, &secoes.novas].iter().position(|l| !l.is_empty());
+    let primeira = if do_mestre.is_empty() {
+        [&secoes.pedidos, &secoes.paradas, &secoes.erros, &secoes.novas].iter().position(|l| !l.is_empty())
+    } else {
+        Some(usize::MAX)
+    };
+    if !do_mestre.is_empty() {
+        corpo = corpo.child(CabecalhoDeSecao::new("Do Mestre").contagem(do_mestre.len()).tingida(Cores::ambar()).primeira(true));
+        for e in do_mestre {
+            let (cartao, chat, chave) = (e.cartao, e.chat.clone(), e.chave.clone());
+            let (janela_v, popover_v) = (janela.clone(), popover.clone());
+            let abrir = move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                let _ = popover_v.update(cx, |p, cx| p.dismiss(window, cx));
+                let _ = janela_v.update(cx, |this, cx| this.ver_cartao(cartao, &chat, window, cx));
+            };
+            let abrir = std::rc::Rc::new(abrir);
+            let (a1, a2) = (abrir.clone(), abrir);
+            let subtitulo = previa_elemento(None, e.texto, false);
+            corpo = corpo.child(
+                CartaoDeLista::new(id("caixa-mestre", &chave), "Mestre")
+                    .simbolo(Simbolo::Papel(super::componentes::Papel::Mestre))
+                    .subtitulo(subtitulo)
+                    .acao_fixa(
+                        botao_fantasma(id("caixa-mestre-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
+                            .on_click(move |ev, window, cx| a1(ev, window, cx)),
+                    )
+                    .on_click(move |ev, window, cx| a2(ev, window, cx)),
+            );
+        }
+    }
     let secao = |ordem: usize, titulo: &'static str, linhas: &[Linha], cor: Option<Hsla>| {
         (!linhas.is_empty()).then(|| {
             let cabecalho = CabecalhoDeSecao::new(titulo).contagem(linhas.len()).primeira(primeira == Some(ordem));

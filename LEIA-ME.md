@@ -1,97 +1,249 @@
 # Vitral
 
-Ambiente para trabalhar com vários chats do Claude Code ao mesmo tempo, com o visual de vidro
-azul-marinho da Stained Glass UI e a organização do Ratoeira (trilho de ícones, seções
-"Esperando você" e "Rodando agora", abas em pílula). Feito em Rust com GPUI (o motor de
-interface do Zed) e os componentes do GPUI Kit.
+Ambiente para trabalhar com o Claude Code em vários projetos ao mesmo tempo: um **Mestre** que
+entende o pedido e o manda para o projeto certo, e **chats de projeto** que fazem o trabalho, cada
+um na sua cópia da pasta. Tem o visual de vidro azul-marinho da Stained Glass UI e a organização do
+Ratoeira (trilho de ícones, seções "Esperando você" e "Rodando agora", abas em pílula). Feito em
+Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
 
 ## Como funciona
 
-- **Pasta de trabalho.** No começo você escolhe uma pasta (por exemplo `~/Projetos`). Cada
-  subpasta é um projeto. As conversas ficam em `.vitral/` dentro da pasta escolhida. Dá para
-  criar um projeto pelo app: **Novo projeto…** no menu do logo, no fim de Nova conversa ou no
-  botão da tela vazia (com 0 projetos, Ctrl+N abre esse diálogo). O diálogo mostra a prévia do
-  quadrado do projeto enquanto você escreve, diz em que pasta ele vai ficar, avisa na hora se o
-  nome não serve (ou se a pasta já existe) e tem a chave **Usar git**, ligada por padrão.
-- **Arquivar e apagar projetos.** No fim do menu do projeto, separados, ficam **Arquivar projeto**
-  e **Mover para a lixeira…** (em vermelho). Arquivar age na hora, com **Desfazer** no aviso
-  ("Projeto site arquivado · 3 conversas em Arquivadas"): o projeto sai do trilho, do filtro, do
-  Ctrl+1…9, do Nova conversa e das rotinas (que não rodam enquanto ele está arquivado; o dia passa
-  marcado, então desarquivar à tarde não dispara a das 8h), e as conversas dele vão para
-  **Arquivadas** sem perder nada. A marca fica na configuração da pasta. Ele volta pelo menu do
-  Vitral (seção **Projetos arquivados**, com **Desarquivar**), pelo grupo **Arquivados** de
-  **Todos os projetos** (escolher desarquiva e filtra), por **Desarquivar o projeto loja** no menu
-  de uma conversa dele em Arquivadas ou por uma conversa nova com `--nova`. Com conversa
-  trabalhando, pergunta antes ("Parar e arquivar loja?", o Enter fica com **Continuar
-  trabalhando**); com uma tarefa sendo conferida, juntada ou preparada, não arquiva e diz qual
-  esperar. **Mover para a lixeira…** mede a pasta (até 100 mil arquivos) e pergunta, com o caminho,
-  quantos arquivos e quanto ocupa, quantas conversas e trabalhadores saem do Vitral e quantas rotinas
-  são apagadas (em vermelho: isso sai de vez), e quantas cópias de tarefa vão junto para a Lixeira (os
-  branches ficam no repositório). O botão é vermelho e o Enter só fecha. A pasta vai para a Lixeira
-  do GNOME com `gio trash` (nunca `rm`; volta pelo Arquivos, em Lixeira › Restaurar) e, só se ela
-  foi, as cópias vão atrás e saem do Vitral as conversas (com as mensagens), as tarefas, as filas,
-  as rotinas, as notas e a configuração do projeto; os painéis com conversas dele fecham. Se a
-  lixeira recusa, nada sai ("Nada foi apagado: …"). Com uma conversa ou tarefa do projeto
-  trabalhando, não deixa ("loja tem 2 conversas trabalhando; pare-as antes de mover para a
-  lixeira."). O aviso do fim diz o que saiu ("loja na Lixeira · 5 conversas apagadas") e tem
-  **Abrir a Lixeira**.
-- **Nova conversa** (Ctrl+N). Com um projeto só, ou com um projeto escolhido no trilho, a
-  conversa nasce direto nele. Nos outros casos abre uma paleta com busca: cada projeto com o
-  quadrado dele, quantas conversas tem e quando foi a última ("atual" no da conversa aberta, "sem
-  git" quando se sabe); ↑/↓ e Enter escolhem, o primeiro Esc limpa a busca e o segundo fecha. No
-  fim fica **Novo projeto…** (ou, quando a busca não acha nada, **Criar o projeto “ops”**, que
-  abre o diálogo com o nome já escrito).
-- **Coordenador.** Cada conversa que você abre é um coordenador. Ele não edita código:
-  planeja, divide o pedido em tarefas com critérios de aceitação, abre uma conversa de
-  trabalhador para cada uma, revisa as entregas e pede ajustes até ficar bom. No fim manda um
-  resumo, que aparece destacado.
-- **Trabalhadores.** Cada tarefa roda num chat próprio, numa cópia isolada do projeto
-  (`git worktree`, branch `vitral/t<N>-...`). A pasta original fica bloqueada para escrita
-  deles. A cópia recebe os arquivos locais fora do git (`.env*` por padrão), roda o script de
-  preparação do projeto e ganha dez portas próprias (`$VITRAL_PORT`). Num projeto git o
-  trabalhador nunca roda na pasta original: enquanto a cópia é preparada, as mensagens para ele
-  esperam e entram junto com o pedido; se a cópia não puder ser criada, a tarefa fica como falhou
-  e o coordenador recebe o erro. O pedido da tarefa aparece no chat do trabalhador como mensagem
-  do coordenador.
-- **Projeto sem git.** Os trabalhadores mexem direto na pasta, e a Equipe avisa. **Ativar git**
-  cria um `.gitignore` quando não há (`.env`, lixo de testes, `target`, `dist`/`build`, `.venv` e
-  outros ambientes virtuais, conforme a pilha) e diz quantos arquivos e MB entraram no commit
-  inicial.
-- **Verificação em três camadas.** Se a tarefa tem comando de verificação, um hook roda os
-  testes quando o trabalhador para e, se falharem, ele continua sozinho. Depois o Vitral roda a
-  verificação de novo e um **revisor independente** (sessão nova, só de leitura, pode ser outro
-  modelo) confere os critérios e aponta problemas numerados, com arquivo e linha. Tudo vai para o
-  coordenador, que aprova (o Vitral faz o commit e junta) ou pede ajuste. A saída da verificação
-  e da preparação é lida enquanto o comando roda (fica só o fim), então um `cargo test` ou
-  `npm install` barulhento não trava; as duas mostram quanto tempo levaram ("PASSOU em 12 s"). Num
-  turno com Ultracode o hook não vai: ele rodaria já na primeira resposta, com os agentes do fluxo
-  ainda mexendo nos arquivos. A verificação do Vitral e o revisor continuam, quando o turno termina
-  de verdade.
-- **Portão de aprovação.** O coordenador só aprova uma tarefa em revisão cujo relatório desta
-  rodada já saiu. Com a verificação falhando ou um problema de gravidade alta do revisor, o
-  Vitral recusa e lista o que está vermelho; aprovar mesmo assim exige `forcar` com um motivo, que
-  vai para o commit ("Aprovada apesar de: ..."), aparece em vermelho na conversa e numa linha
-  âmbar no cartão da tarefa. Ninguém aprova uma tarefa já aprovada, cancelada, em verificação,
-  sendo juntada ou com o trabalhador ainda rodando. Você, pelo Revisar, aprova sem o portão; com a
-  verificação vermelha, um apontamento de gravidade alta do revisor ou comentários seus ainda não
-  enviados, ele pergunta antes ("Aprovar com pendências?"), e o que estava vermelho vai como
-  ressalva no commit.
+- **Mestre.** Uma conversa só, global, que vê todos os projetos: o círculo com a órbita logo abaixo
+  do logo, Ctrl+M ou **Falar com o Mestre** no menu do Vitral. Ele não edita nada (só lê, com Read,
+  Grep e Glob, nas pastas dos projetos e nas cópias): entende o pedido, responde o que dá (como estão
+  os chats, perguntas rápidas sobre o código) e manda o trabalho para os chats de projeto. Roda sem
+  perguntar permissão (nada do que ele tem escreve ou roda comando), sem Ultracode e fora da conta
+  de vagas. `#nome` cita um projeto e `@12` (ou `@"Título"`) um chat; na caixa dele, `#` abre a lista
+  dos projetos e `@` a dos chats, as duas filtrando enquanto você digita (Enter ou o clique troca só a
+  última palavra; Esc fecha a lista sem apagar). O Vitral resolve as citações e avisa do ambíguo ou
+  do não achado; sem citação, o Mestre escolhe pela descrição do projeto (ou pelo começo do README da
+  pasta principal) e pela memória. O Vitral abre no último chat aberto e, sem ele, no Mestre. Vazio,
+  o Mestre convida ("Peça qualquer coisa ao Mestre", com três sugestões que só preenchem a caixa).
+- **"Vou dividir assim".** Todo trabalho vira uma divisão: uma ou mais partes, cada uma para um chat
+  de projeto (um novo, ou um que já cuida do assunto e está em conversa), com o pedido, os critérios
+  e a verificação. O cartão mostra o resumo e uma linha por parte (o projeto, "→ chat novo “título”"
+  ou "→ chat 7 “Docs”", o pedido em duas linhas, os critérios e a verificação; o clique abre o pedido
+  inteiro). O × tira a parte (riscada, com Desfazer); **Ajustar** põe "Ajuste na divisão 3: " na
+  caixa; **Descartar** avisa o Mestre e nada começa; **Começar** cria os chats e manda os pedidos,
+  numa gravação só. Decidido, o cartão vira uma linha ("Divisão 3 começada · 2 partes", "1 de 2
+  terminaram", "Mandado direto ao chat 7"), que mostra cada chat com o estado. A divisão começa
+  direto, sem cartão, com **Divisão: Começar direto** (o chip no lugar do modo, na caixa do Mestre),
+  numa rotina ou quando há uma parte só e ela vai para o projeto (ou o chat) que você citou. Propor
+  de novo no mesmo turno, ou a mesma divisão em 2 h, não cria nada. A parte que já não vale (projeto
+  arquivado, chat ocupado) fica com o motivo e as outras seguem.
+- **O pedido no chat.** Chega como "Pedido do Mestre (chat 12, rodada 1) · Ninee", com os critérios
+  numerados, a verificação, as outras partes da divisão e a mensagem original. O chat faz, verifica
+  e entrega (`entregar_tarefa`, com o estado de cada critério); sem a entrega, ganha um lembrete por
+  rodada. Uma dúvida vai ao Mestre. O chat que o Mestre criou (ou com um pedido dele aberto) leva a
+  órbita pequena no cartão da lista e, no cabeçalho, o selo "do Mestre ↩"; em Este chat, "Pedido do
+  Mestre (divisão 3, rodada 2)" com o botão **Mestre**.
+- **Junta sozinho.** Com **Juntar sozinho quando a verificação e o revisor aprovarem** (o padrão), a
+  entrega toda verde (verificação passou ou não existe, revisor aprovou sem problema alto nem médio,
+  todos os critérios feitos, ninguém mexendo nos mesmos arquivos) entra na pasta sem acordar o
+  Mestre: ele só recebe uma nota. O resto (vermelho, conflito, pasta suja, sem revisor, pasta sem
+  git) o acorda com um relatório curto, e ele junta (`aprovar_tarefa`) ou pede ajuste. Quando todas
+  as partes que começaram terminam, o Mestre é acordado uma vez para o resumo, que ganha o cartão
+  azul **Resumo do Mestre · Divisão 3**.
+- **Criar o projeto “X”?** Quando o pedido não cabe em nenhum projeto, o Mestre sugere um: o
+  motivo, a descrição e as pastas, com **Agora não** e **Criar projeto…**, que abre o Novo projeto
+  preenchido ("Sugerido pelo Mestre; confira antes de criar"); criar responde ao cartão e o Mestre
+  continua o pedido.
+- **Memória do Mestre** (`~/.local/share/vitral/mestre/memoria.md`, até 6000 caracteres). Ele grava
+  direto só quando o turno inteiro é seu; com um aviso, um relatório ou uma rotina no meio, vira o
+  cartão "O Mestre quer lembrar" (**Não** e **Lembrar**). **Memória do Mestre…** (menu do Vitral,
+  menu do Mestre, Editar do Distribuído) edita o texto, com a contagem e **Esquecer tudo**; se o
+  Mestre lembrou algo com o diálogo aberto, o Salvar traz as linhas novas para o fim.
+- **Projetos.** Ficam nos dados do Vitral, cada um com nome, ícone, cor, descrição ("o Mestre usa
+  isto para saber o que mandar para este projeto"), instruções para os chats (até 8000 caracteres) e
+  as pastas dele: nenhuma, uma ou várias ligadas (a primeira é a principal) ou, sem nenhuma, uma
+  pasta própria com git em `~/.local/share/vitral/projetos/<nome>`. **Novo projeto** (Ctrl+Shift+N,
+  o **+** do trilho) e **Editar projeto** são o mesmo formulário: o nome (Enter cria ou salva; "Já
+  existe um projeto com esse nome", "Nome reservado"), o ícone e a cor (o chip abre a escolha, com
+  Automático: o ícone pelo conteúdo da primeira pasta, a cor pelo nome), a descrição, as pastas
+  ("Adicionar pasta…" escolhe várias; ligar uma que já é de outro projeto, ou que fica dentro ou em
+  volta de uma ligada, pergunta antes; tirar uma em que chats trabalham avisa que eles continuam lá)
+  e as instruções; na edição, também as **decisões anotadas pelos chats** (o que um chat anotar com o
+  formulário aberto entra no fim). O **Avançado** (recolhido) tem, por pasta, a preparação de cada
+  cópia, os arquivos que vão junto e o comando de rodar (e Ativar git na pasta sem git), e a
+  permissão, o modelo e a conta dos chats novos do projeto. Nada grava antes do Criar ou do Salvar.
+  Uma pasta que sumiu (disco desmontado, renomeada) aparece como "não encontrada", com **Localizar
+  pasta…**, que também religa as cópias dos chats àquela pasta (`git worktree repair`; com cópias,
+  só aceita uma pasta do mesmo repositório e avisa da que não voltou). `vitral <pasta>` abre o projeto
+  que já tem essa pasta ou o Novo projeto com ela ligada.
+- **Chat de projeto.** Cada chat trabalha numa pasta do projeto (a principal, ou a escolhida no chip
+  **Pasta: x** antes da primeira mensagem), de um de três jeitos, decidido quando ele nasce, com a
+  pasta presente, e guardado: numa **cópia** só dele (`git worktree` em
+  `~/.local/share/vitral/copias/<projeto>/t<N>`, branch `vitral/t<N>-…`) quando a pasta é a raiz de
+  um repositório com commit; **direto na pasta própria** do projeto, com um commit no fim de cada vez
+  ("Vitral: <título>") e Voltar no tempo; ou **direto numa pasta sem git** (sem cópia, sem diff, sem
+  Voltar no tempo). Uma pasta dentro de um repositório (sem ser a raiz) vai direto, com o aviso para
+  ligar a raiz. As outras pastas do projeto entram só para leitura. O chat conversa com você como
+  uma conversa do Claude Code e recebe os pedidos do Mestre; o número dele é o que você vê ("chat 12").
+  Ctrl+N cria um na vista do projeto (com mais de uma pasta, pergunta **Em qual pasta?**); na visão
+  geral, abre a paleta com os projetos, **Avulsos** e **Novo projeto…**.
+- **A cópia nasce na primeira mensagem**, não quando o chat é criado: a mensagem espera ("Preparando
+  a cópia de ~/Projetos/loja; a mensagem entra quando ela ficar pronta.") e entra quando a cópia fica
+  pronta. A cópia recebe os arquivos locais fora do git (`.env*` e `CLAUDE.local.md` por padrão), roda
+  o script de preparação da pasta e ganha dez portas próprias (`$VITRAL_PORT`). Se não der ("Não deu
+  para preparar a cópia (…)", com **Tentar preparar de novo**), a mensagem fica guardada e a próxima
+  tenta de novo. O Vitral fechado no meio refaz a preparação ao abrir, uma vez. A pasta original fica
+  bloqueada para escrita do chat.
+- **Juntar.** Acima da caixa, quando nada roda: "4 arquivos mudados na cópia (+12 −3)" com
+  **Revisar** e **Juntar**. As mudanças da cópia entram na pasta original e a cópia continua, em dia
+  com ela: a próxima junção leva só o que é novo. O chat ganha "As mudanças entraram em ~/x." (e o
+  Claude fica sabendo na mensagem seguinte). Com a pasta original em outro branch que o de quando a
+  cópia nasceu, pergunta antes ("Juntar em outro branch?"). Pasta original com mudanças sem commit,
+  arquivos soltos no caminho ou outro git segurando a pasta (um `index.lock`): nada entra e o aviso
+  diz o que fazer. Conflito: nada entra e o próprio chat recebe o pedido de resolver na cópia (`git
+  merge`). Uma junção cortada por uma queda é conferida ao abrir: o merge parado é desfeito; se já
+  tinha entrado, conta como feita; senão, "nada entrou; junte de novo". Depois de juntar, as outras
+  cópias do mesmo repositório sem nada só delas andam junto (as com trabalho andam antes do próximo
+  turno delas). As junções e criações de cópia de um mesmo repositório entram uma de cada vez.
+- **Um escritor por pasta.** Dois chats diretos não mexem ao mesmo tempo na mesma pasta, nem numa de
+  dentro da outra: o segundo espera ("Outro chat está mexendo em ~/x; esta mensagem entra quando ele
+  terminar."). A pasta pessoal não trava as outras (as conversas trazidas do Claude Code em `~`).
+- **Vagas e trabalho pesado.** Chats de projeto e ajudantes dividem as vagas (**Chats trabalhando ao
+  mesmo tempo**); a mensagem que você escreveu tem uma vaga a mais e passa na frente da fila.
+  Preparar uma cópia, conferir uma entrega (verificação e revisor) e o parecer que um chat pede
+  (`revisar_minhas_mudancas`) entram numa fila única do Vitral inteiro, um de cada vez; o que você
+  pediu vai na frente.
+- **Ajudantes.** Um chat de projeto com git (numa cópia ou na pasta própria) pode dividir um pedido
+  grande em até 3 ajudantes (**Ajudantes por chat**; 0 desliga), cada um num chat próprio, numa
+  cópia da pasta do chat feita a partir do que ela tem agora (antes, o Vitral põe num commit o que o
+  chat ainda não tinha posto, "Vitral: ponto antes do ajudante #M"). O ajudante trabalha só na cópia
+  dele, pergunta ao chat que o criou e, no fim de cada vez, manda o relatório a ele (com a
+  verificação e o parecer do revisor). O chat junta (na pasta dele, mesmo com mudanças sem commit:
+  antes vai um commit "Vitral: ponto antes de juntar o ajudante #M"; a cópia do ajudante sai e o chat
+  dele vai para as arquivadas), pede ajuste ou cancela. O **Juntar** do chat leva tudo à pasta
+  original; num pedido do Mestre, o chat só entrega depois que os ajudantes terminam. Ajudante não
+  cria ajudante, entra na conta de vagas e vai junto quando o chat muda de projeto. Pasta sem git e
+  avulso não têm ajudantes.
+- **Avulsos.** Chats sem projeto, cada um numa pasta só dele em `~/.local/share/vitral/avulsos/<chat>`,
+  direto (sem cópia). Ficam no atalho **Avulsos** do trilho (o balão), com **Novo chat avulso**.
+- **Conversas do Claude Code.** Na primeira abertura (junto da migração), o Vitral traz as conversas
+  da extensão do VS Code e do terminal (`~/.claude/projects/<pasta>/<sessão>.jsonl`, só lidos: nada lá
+  é mudado). Cada uma vira um chat: no projeto cuja pasta ligada contém a pasta da conversa (a mais
+  funda), senão em Avulsos. O chat mexe direto nessa pasta, como lá (o Claude Code só retoma uma
+  sessão a partir da pasta dela): sem cópia nem Juntar, e sem commit (só a pasta própria de um projeto
+  ganha o commit de cada vez). O título é o que você deu (`/rename`), o resumo do Claude Code ou o
+  começo da primeira mensagem; as datas e a ordem na lista são as da conversa. Ficam de fora as vazias
+  (só um `/clear`), as de testes (pasta em `/tmp`), as dos chats do próprio Vitral, as de programas
+  (`claude -p`) e as de pasta que não existe mais (um disco desmontado: entram quando ele estiver
+  montado e você pedir de novo). O aviso diz o resultado ("40 conversas do Claude Code importadas ·
+  38 em Avulsos · 2 em jcm-climatizacao · 3 abertas agora no Claude Code"), também na conversa do
+  Mestre. O histórico aparece no chat, lido do arquivo da sessão quando ele abre (em segundo plano;
+  nada disso vai para os dados do Vitral): os 300 últimos itens, com **Carregar mais**, e a linha
+  "Trazida do Claude Code (VS Code) em 01/11" antes do que vem no Vitral. A primeira mensagem
+  continua numa cópia da conversa (`--resume <id> --fork-session`): a original fica como está e pode
+  seguir no VS Code; as seguintes retomam a cópia. A conversa que estava aberta no Claude Code quando
+  foi trazida ganha o aviso disso. **Importar do Claude Code…** (menu do Vitral) traz as novas desde a
+  última vez, sem repetir (nem as de chats apagados depois).
+- **Conversas do Vitral antigo.** O coordenador que conversou fica só para leitura: no lugar da caixa,
+  "Conversa do Vitral antigo, só para leitura." e **Continuar num chat novo**, que abre um chat no
+  mesmo projeto com a conversa anexada e "Continuando a conversa “…” (anexada): " na caixa. Os
+  trabalhadores dele viram chats de projeto, sem dono: o que estava rodando ou em revisão fica em
+  conversa com o aviso "Este chat nasceu de uma conversa do Vitral antigo; o pedido agora é seu:
+  continue a conversa ou use Juntar." (a barra de juntar já aparece ao abrir); o que já tinha
+  terminado vai para as arquivadas como está. O coordenador que nunca conversou vira chat de projeto.
+- **Verificação em três camadas.** Se o pedido tem comando de verificação, um hook roda os testes
+  quando o chat para e, se falharem, ele continua sozinho. Depois o Vitral roda a verificação de novo
+  e um **revisor independente** (sessão nova, só de leitura, pode ser outro modelo) confere os
+  critérios e aponta problemas numerados, com arquivo e linha. Tudo vai para quem pediu (o Mestre, o
+  chat de um ajudante ou você), que junta ou pede ajuste. A saída da verificação e da preparação é
+  lida enquanto o comando roda (fica só o fim), então um `cargo test` ou `npm install` barulhento não
+  trava; as duas mostram quanto tempo levaram ("PASSOU em 12 s"). Num turno com Ultracode o hook não
+  vai: ele rodaria já na primeira resposta, com os agentes do fluxo ainda mexendo nos arquivos. A
+  verificação do Vitral e o revisor continuam, quando o turno termina de verdade.
+- **Portão.** Quem pediu (o Mestre ou o chat de um ajudante) só junta uma entrega cujo relatório
+  desta rodada já saiu. Com a verificação falhando ou um problema de gravidade alta do revisor, o
+  Vitral recusa e lista o que está vermelho; juntar mesmo assim exige `forcar` com um motivo, que vai
+  para o commit ("Aprovada apesar de: ..."), aparece em vermelho na conversa e numa linha âmbar no
+  cartão. Você, pelo Revisar, junta sem o portão; com a verificação vermelha, um apontamento de
+  gravidade alta ou comentários seus ainda não enviados, ele pergunta antes ("Juntar com
+  pendências?"), e o que estava vermelho vai como ressalva no commit.
 - **Ajustes.** `pedir_ajuste` anexa sozinho os problemas do revisor e as últimas 40 linhas da
-  verificação quando eles apontaram algo; o coordenador escolhe o que vai com `incluir` e tira
-  falsos positivos pelo número com `ignorar_problemas`. `ver_diff` deixa os gerados (lockfiles,
-  `.min.js`, `.map`, `.snap`) numa linha à parte e resume um diff grande (o `--stat`, os arquivos
-  que cabem inteiros e o que falta); `arquivos: [...]` traz o diff completo só desses.
-- **Junção e conflitos.** Antes de juntar, o Vitral traz o que já entrou no projeto para a cópia;
-  se der conflito, ele fica na cópia. Depois disso, diff, Revisar, Descartar e revisor comparam
-  com o que veio do projeto, então o trabalho de outras tarefas não aparece como desta. As
-  junções e criações de cópia de um mesmo projeto entram uma de cada vez. Outro git segurando a
-  pasta (um `index.lock`) não vira conflito: a resposta diz que dá para aprovar de novo. Arquivos
-  soltos fora do git no projeto (`__pycache__`, `.coverage`) não travam a junção; se a tarefa cria
-  um arquivo que já existe solto ali, o coordenador recebe um aviso próprio para falar com você.
-  Tarefas em andamento que mexem nos mesmos arquivos são avisadas.
-- **Chats conversam entre si** (`mensagem_para_chat`, `perguntar_coordenador`); mensagens que
-  chegam com o chat ocupado esperam na fila. Uma mensagem sua direto a um trabalhador em revisão
-  abre uma nova rodada (verificação, revisor e relatório) e avisa o coordenador.
+  verificação quando eles apontaram algo; quem pediu escolhe o que vai com `incluir` e tira falsos
+  positivos pelo número com `ignorar_problemas`. `ver_diff` deixa os gerados (lockfiles, `.min.js`,
+  `.map`, `.snap`) numa linha à parte e resume um diff grande (o `--stat`, os arquivos que cabem
+  inteiros e o que falta); `arquivo` (no Mestre) ou `arquivos: [...]` (no chat, para um ajudante)
+  traz o diff completo só desses. Uma mensagem sua
+  direto a um chat em revisão abre uma nova rodada (verificação, revisor e relatório) e avisa quem
+  pediu.
+- **Chats conversam entre si** (`mensagem_para_chat`, `perguntar_coordenador` para quem pediu);
+  mensagens que chegam com o chat ocupado esperam na fila. **Freio de ciclo:** depois de 6 mensagens
+  automáticas seguidas entre dois chats (o Mestre inclusive) sem você no meio, a próxima fica guardada
+  e os dois avisam "muitas mensagens seguidas entre X e Y; esperando você"; escrever para um dos dois
+  zera.
+- **Enquanto você esteve fora.** Ao voltar à janela depois de 15 min fora (**Resumo ao voltar
+  depois de**), ou ao abrir o Vitral, a visão geral (no topo) e o Mestre (acima da caixa) mostram o
+  que terminou, o que precisa de você e o que falhou ou parou desde que você saiu, cada linha abrindo
+  o chat (Ctrl+clique, ao lado), com **Pedir ao Mestre um resumo** e o ×. Fica só na memória: a
+  próxima volta troca, e nada entra no histórico.
+- **Sessão do Mestre.** Com o contexto acima de 70% no fim de um turno, o seguinte começa numa sessão
+  nova ("Sessão nova (contexto cheio).") com os pedidos abertos dele, os cartões abertos e as últimas
+  5 mensagens suas; o mesmo bloco vai quando a sessão antiga expirou.
+- **Rotinas.** Um pedido que o Vitral manda sozinho num horário e dias da semana, para o Mestre
+  (que começa a divisão direto) ou para um chat novo num projeto; a de projeto arquivado não roda.
+
+## Primeira abertura, dados e linha de comando
+
+- **A migração.** Na primeira abertura desta versão (quando ainda não há
+  `~/.local/share/vitral/estado.json`), antes de a janela abrir, o Vitral traz o que havia nas
+  pastas do Vitral antigo (as de `~/.config/vitral/recentes.json`, a mais recente primeiro, e a do
+  `vitral <pasta>`): cada subpasta vira um projeto (o id é o nome da subpasta), com o ícone, a cor, a
+  configuração e a marca de arquivado de antes; as conversas, as tarefas, as filas, as rotinas e as
+  notas vão junto, com o mesmo `cwd` e a mesma sessão. Uma tarefa com o número repetido entre duas
+  pastas ganha outro, e o chat dela avisa ("Na importação, este chat passou de #3 para chat 12.").
+  Nada nas pastas antigas é mudado, movido ou apagado (`<raiz>/.vitral/` fica intacto, inclusive as
+  cópias antigas em `.vitral/worktrees`, que continuam valendo: os caminhos são absolutos); o
+  `estado.json` é o último arquivo gravado, então um PC que desliga no meio refaz tudo na abertura
+  seguinte. O relatório fica na conversa do Mestre ("Trouxe 6 projetos de ~/Projetos: … Os 2 chats
+  foram junto."), com o pedido de escrever a descrição dos projetos que não têm descrição nem README,
+  e em `~/.local/share/vitral/migracao.json`. Ela roda uma vez só: depois, `vitral <pasta antiga>`
+  só avisa no Mestre que essa pasta tem conversas do Vitral antigo.
+- **O Vitral antigo aberto.** Com um Vitral de antes desta versão aberto na primeira abertura, nada é
+  gravado e a tela diz "O Vitral antigo está aberto (pid N). Feche-o para eu trazer as conversas de
+  ~/Projetos.", com **Tentar de novo** e **Sair**. Se ele mexer numa pasta antiga depois da migração,
+  o Mestre avisa uma vez por mudança ("O Vitral antigo mexeu em ~/Projetos depois da importação …
+  O que foi feito lá não aparece aqui.").
+- **Não apague `<raiz>/.vitral`** enquanto houver chats com cópia lá (as tarefas do Vitral antigo
+  que ainda não foram juntadas): a cópia mora em `.vitral/worktrees/<projeto>/t<N>`.
+- **Voltar para a 0.2.0** fica desligado depois de migrar: ela não lê as conversas do formato novo
+  (as Configurações dizem "A 0.2.0-rc.2 não lê as conversas do formato novo"). O `.vitral/` de
+  cada pasta continua lá, como a 0.2.0 o deixou.
+- **Onde fica cada coisa.** Os dados em `~/.local/share/vitral`: `estado.json` (com `.anterior`),
+  `chats/<id>.json`, `notas/<projeto>.md`, `mestre/` (a pasta do Mestre e a `memoria.md`),
+  `avulsos/<chat>/`, `projetos/<nome>/` (as pastas próprias), `copias/<projeto>/t<N>/`, `exportadas/`,
+  `anexos/`, `migracao.json` e o `formato` dos dados; ao lado deles, em `app/`, o app instalado pelo
+  atualizador (as versões e os links `atual` e `anterior`). As preferências em `~/.config/vitral`
+  (`config.json`, `interface.json`, as contas, `atualizacoes.json`; o `recentes.json` antigo, que só
+  a migração lê) e o prompt de cada turno em `~/.cache/vitral/prompts/`. Um arquivo estragado vai
+  para `<nome>.ilegivel-<hora>.json` e o Vitral abre com o `.anterior`, avisando.
+- **Um Vitral só.** A trava é `~/.local/share/vitral.trava` (fora da pasta de dados) e o socket,
+  `$XDG_RUNTIME_DIR/vitral/vitral.sock`. Abrir de novo (pelo menu, `vitral <pasta>` ou `--nova`)
+  entrega o pedido ao que está aberto (também enquanto ele migra) e não abre outra janela; com ele
+  travado, a segunda abertura espera até 10 s e diz "O Vitral já está aberto, mas não respondeu".
+- **Linha de comando.** `vitral` abre o app. `vitral <pasta>` (o `%f` do Nautilus) abre a visão
+  geral se a pasta é uma das migradas, o projeto se ela já está ligada a um, e senão o Novo projeto
+  com ela ligada (avisando se contém uma pasta ligada ou está dentro de uma). `vitral --nova mestre
+  [mensagem]` abre o Mestre (com a mensagem, já enviada; sem ela, o cursor na caixa); `--nova
+  <projeto> [mensagem]` cria um chat no projeto (id, nome ou chave sem ambiguidade); com um destino
+  que não é um projeto (ou é mais de um), a mensagem vai ao Mestre como `#<destino> <mensagem>`, e sem
+  mensagem o Mestre abre com `#<destino> ` na caixa.
+- **Quando os dados não abrem.** Estado ilegível (e o `.anterior` também), dados de uma versão mais
+  nova, ou a migração adiada ou que falhou: a tela de recuperação, sem gravar nada por cima, com
+  **Abrir a pasta de dados**, **Tentar de novo**, **Sair** e **Começar do zero**, que pergunta antes,
+  afasta os dados para `~/.local/share/vitral.descartado-<hora>` (menos o `app/`, que fica: o menu
+  continua abrindo o Vitral) e abre como na primeira vez, trazendo de novo as pastas do Vitral antigo e
+  as conversas do Claude Code.
+- **Quando não grava.** Se o disco recusa (cheio, sem permissão), aparece a faixa vermelha "Não
+  estou conseguindo gravar (…). Nada novo começa até voltar a gravar." e o Vitral tenta de novo
+  sozinho; as mensagens enviadas nesse meio-tempo esperam na fila e entram quando voltar.
+- **Transcrições do Claude Code.** O Claude Code apaga as conversas sem atividade há mais de 30 dias
+  (`cleanupPeriodDays`), e um chat parado esse tempo perde a sessão: o Vitral continua numa nova, com
+  um resumo, e avisa ("A sessão antiga do Claude Code expirou; continuei numa nova com um resumo.").
+  Para guardar mais, ponha um valor alto em `~/.claude/settings.json`, como `"cleanupPeriodDays":
+  3650`.
 
 ## Quando algo para no meio
 
@@ -108,20 +260,20 @@ interface do Zed) e os componentes do GPUI Kit.
   fechar). A 0.3.0 não volta a ser instalada sozinha. Uma queda de energia entre as tentativas não
   conta, e a volta só vai para uma versão que leia as conversas do disco.
 
-- **Tarefa parada.** Se o Vitral fecha, o PC cai ou você aperta Parar, a tarefa aparece como
-  **parada** em âmbar, com ícone de pausa, sobe para "Esperando você" (menos quando foi você que
-  parou) e ganha **Retomar** no cartão da lista, na Equipe e no fim da conversa. Um coordenador
+- **Pedido parado.** Se o Vitral fecha, o PC cai ou você aperta Parar, o pedido do chat aparece
+  como **parada** em âmbar, com ícone de pausa, sobe para "Esperando você" (menos quando foi você
+  que parou) e ganha **Retomar** no cartão da lista, na direita e no fim da conversa. Um chat
   cortado no meio do turno também. O aviso ao reabrir sai uma vez só.
 - **Verificação, revisor ou preparação cortados** rodam de novo sozinhos ao reabrir, um de cada
-  vez. Se cair de novo nessa mesma refeita, a tarefa fica parada com Retomar, para não entrar num
+  vez. Se cair de novo nessa mesma refeita, o pedido fica parado com Retomar, para não entrar num
   ciclo de quedas.
-- **Trabalhador que cai** (processo que morre ou não abre) ganha uma nova tentativa depois de
-  10 s; um erro passageiro da API (sobrecarga, 5xx, tempo esgotado, conexão), depois de 60 s. Se
-  falhar de novo, a tarefa volta ao coordenador com ERRO e o motivo, com notificação se a janela
-  estiver em segundo plano. Mandar uma mensagem ou Parar cancela a nova tentativa.
+- **Chat que cai** (processo que morre ou não abre) ganha uma nova tentativa depois de 10 s; um
+  erro passageiro da API (sobrecarga, 5xx, tempo esgotado, conexão), depois de 60 s. Se falhar de
+  novo, o pedido volta a quem pediu com ERRO e o motivo (o ajudante, ao chat dele), com notificação
+  se a janela estiver em segundo plano. Mandar uma mensagem ou Parar cancela a nova tentativa.
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
   ainda rodando, o turno não acaba ali: o chat continua rodando, a conversa ganha o aviso "Os
-  agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e a tarefa só
+  agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e o pedido só
   vai para a verificação e o revisor com a última resposta, depois que eles acabam (ou quando o
   processo do Claude Code sai). Se o processo sai com eles ainda rodando, com o teto da espera
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
@@ -141,7 +293,7 @@ interface do Zed) e os componentes do GPUI Kit.
   fila, fora da thread da janela.
 - **Fechar com coisa rodando.** O × da janela, Alt+F4, o × do Panorama e o Sair do dash pedem
   confirmação quando há conversas trabalhando ("1 conversa está trabalhando", "3 conversas estão
-  trabalhando"; "Fechar mesmo assim" / "Continuar aberto"); trocar a pasta de trabalho também. O
+  trabalhando"; "Fechar mesmo assim" / "Continuar aberto"); o Reiniciar da atualização também. O
   Enter fica com **Continuar aberto**: fechar pede o clique.
 - **Processos.** O claude, a verificação e o revisor rodam cada um num escopo do systemd do
   usuário (`vitral-<pid>-...scope`, em `vitral.slice`). Parar um deles derruba tudo o que ele
@@ -151,9 +303,10 @@ interface do Zed) e os componentes do GPUI Kit.
 - **Confirmações.** Toda pergunta antes de agir tem o mesmo desenho: o ícone num círculo na cor
   do tom, o título, o que acontece e, numa caixa embaixo, o que some (o tamanho, o branch, os
   pontos de volta). Nas que apagam ou desfazem (**Apagar a cópia**, **Voltar os arquivos**,
-  **Descartar**, **Desconectar**, **Mover para a lixeira**) e nas que param o que trabalha
+  **Descartar**, **Desconectar**, **Apagar projeto**, **Começar do zero**) e nas que param o que trabalha
   (**Parar e arquivar**), o Enter só fecha, sem agir; em **Ativar git**, o Enter confirma.
-  Arquivar (conversa ou projeto) não pergunta: age na hora, e o aviso tem **Desfazer**.
+  Arquivar (chat ou projeto) não pergunta: age na hora, e o aviso tem **Desfazer** (com chats
+  trabalhando ou pedidos do Mestre abertos no projeto, arquivar o projeto pergunta antes).
 - Com agentes rodando, a janela redesenha no máximo 12 a 20 vezes por segundo (e não a cada
   quadro do monitor de 165 Hz). Os efeitos só andam em resposta a uma ação (abrir, focar, clicar,
   o ponteiro entrar num botão redondo, chegar dado novo), duram de 120 a 240 ms e redesenham no
@@ -174,8 +327,8 @@ cópia isolada, o chip inteiro em vermelho), **modelo** (o logo do Claude e o qu
 Opus 5.5"), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
 uso de 5 h). O que segue o padrão da pasta fica em tom tênue. À direita ficam o anel do contexto (a
 porcentagem no meio; âmbar a 70%, vermelho a 90%; o clique abre o uso da conversa: em cima o
-contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta, os tokens e, no
-coordenador, o custo com os trabalhadores, e no rodapé **Compactar a conversa**, que prepara o
+contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta, os tokens e, na
+conversa do Vitral antigo, o custo com os ajudantes, e no rodapé **Compactar a conversa**, que prepara o
 `/compact`), o clipe de anexar (arquivo ou imagem, arquivo do projeto, conversa anterior e comandos
 de barra), o **…** (comandos de barra, compactar, sessão nova e fixar) e o botão redondo de enviar,
 apagado com a caixa vazia, que acende quando ela ganha texto e dá um pulso claro a cada envio (o
@@ -183,9 +336,12 @@ pulso fica no botão também quando ele já virou o parar). Clicar em qualquer p
 (o vão entre o texto e os chips, a margem, o espaço entre os chips) mantém o cursor nela. Com a
 conversa rodando, ele vira o parar (o
 quadrado); com texto escrito, ficam os dois, e o enviar entra na fila. Vazia, a caixa diz "Peça ao
-coordenador…" e, no trabalhador, "Mensagem ao trabalhador…" ("Sem cópia: fale com o coordenador" e
-"Cópia removida: fale com o coordenador" quando não dá); numa tarefa em revisão, a dica do enviar
-diz que a mensagem abre uma nova rodada de ajuste, com verificação e revisor. **Shift+Tab** troca o
+Mestre… (#projeto, @chat)" no Mestre, "Mensagem para este chat…" no chat de projeto, "Mensagem…" no
+avulso e "Mensagem direta para este ajudante…" no ajudante ("Sem cópia: fale com o chat dele" e
+"Cópia removida: fale com o chat dele" quando não dá); num chat em revisão, a dica do enviar diz
+que a mensagem abre uma nova rodada de ajuste, com verificação e revisor. No Mestre, no lugar do
+modo de permissão fica o chip **Divisão: Mostrar antes | Começar direto**, e o clipe tem "Mandar
+para um projeto…" (#), "Falar de um chat…" (@) e "Arquivo do computador…". **Shift+Tab** troca o
 modo. O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
 segmentado (←/→, Home e End mudam na hora; o nível fica só na pílula do segmentado, sem repetir no
@@ -199,8 +355,9 @@ ferramenta Workflow do Claude Code). A linha avisa em âmbar que gasta bem mais 
 no esforço Extra (o Máximo vira Extra nessa mensagem). Ligada, o chip do esforço vira "Ultracode" em
 violeta com o ícone de fluxo (com o Ultrathink junto, as barrinhas ficam em arco-íris; na caixa
 estreita, só o ícone de fluxo). Começa sempre desligada, também ao abrir o Vitral. Fica
-desabilitada, com o motivo curto no lugar da descrição, no coordenador ("só nos trabalhadores"; a
-explicação, que ele divide o trabalho em tarefas para os trabalhadores, vai na dica da linha), com
+desabilitada, com o motivo curto no lugar da descrição, no Mestre ("só nos chats de projeto"; a
+explicação, que ele não edita e manda o trabalho aos chats, vai na dica da linha), na conversa do
+Vitral antigo, com
 um Claude Code anterior à 2.1.278 (a versão em que o Vitral conferiu o Ultracode; o limite de
 agentes só existe desde a 2.1.269) e com um modelo sem o esforço Extra (o Haiku, os 4.x até o 4.6).
 Numa conta em que um turno com Ultracode mostrou os fluxos de agentes desligados (em Dynamic
@@ -211,12 +368,12 @@ ser recusados (eles não conseguem pedir permissão). Um Ultracode por vez no Vi
 outro rodando, a linha avisa ("Ligado, espera o Ultracode da outra conversa terminar") e a mensagem
 espera a vez na fila de vagas, com um aviso só. As novas tentativas automáticas (queda, erro da API,
 troca de conta) vão sem o Ultracode, com o aviso "A nova tentativa vai sem o Ultracode; ligue de
-novo se quiser."; só o **Tentar de novo** o repete. Fora do Ultracode, e sempre no coordenador, a
-ferramenta Workflow fica bloqueada: nem o coordenador nem um "Continue de onde parou" relançam um
-fluxo sozinhos. O **modelo** abre um seletor com busca: Padrão (o da pasta) e as famílias do Claude,
+novo se quiser."; só o **Tentar de novo** o repete. Fora do Ultracode, a ferramenta Workflow fica
+bloqueada: nem um chat nem um "Continue de onde parou" relançam um fluxo sozinhos (o Mestre nunca
+a tem). O **modelo** abre um seletor com busca: Padrão (o do projeto, ou o das Configurações) e as famílias do Claude,
 com a versão quando o modelo em uso é daquela família; o logo do Claude fica só no rótulo do grupo e
-o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está em uso ("Padrão da pasta
-· Opus 5.5"); só uma família escolhida na conversa ganha o selo "em uso". Uma conversa antiga que
+o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está em uso ("Padrão · Opus
+5.5"); só uma família escolhida na conversa ganha o selo "em uso". Uma conversa antiga que
 guardou o nome completo do modelo ganha a linha dele. Fora da caixa estreita, os popovers de esforço
 e de modelo terminam num rodapé com as teclas que aceitam, no desenho de tecla da paleta: **← →**
 nível, **Espaço** Ultrathink, **U** Ultracode, **Enter** fecha; no de modelo, **↑ ↓** escolher,
@@ -264,32 +421,34 @@ ferramentas, vale por painel).
   "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. A partir de 4 a trilha começa recolhida
   ("6 ações · leu 3 · rodou 2", com "1 falhou" em vermelho); o cabeçalho entra no Tab. O clique numa
-  chamada mostra o resultado (as últimas 40 linhas, com Copiar e Mostrar tudo). O que o coordenador
-  faz com as tarefas aparece como evento ("Criou #2 ...", "Pediu ajuste em", "Aprovou e juntou",
-  "Distribuiu 3 tarefas"), com a pílula do estado na última menção de cada tarefa (só a palavra, "em
-  revisão"; o detalhe e a explicação na dica). Fora da largura larga, o verbo e a frase vão para a
-  dica (o ícone já diz o que foi) e o título da tarefa fica com o espaço. O clique mostra o detalhe
-  e, no hover, a linha ganha **Abrir a conversa da tarefa** (o balão de conversa; Ctrl+clique abre
-  ao lado) e Copiar. Em repouso, a pílula do estado encosta na seta de abrir; no hover, só a linha
+  chamada mostra o resultado (as últimas 40 linhas, com Copiar e Mostrar tudo). O que um chat faz
+  com os ajudantes (e o Mestre com os chats) aparece como evento ("Criou o ajudante #2 …", "Pediu
+  ajuste em", "Aprovou e juntou", "Criou 3 ajudantes"), com a pílula do estado na última menção de
+  cada um (só a palavra, "em revisão"; o detalhe e a explicação na dica). As ferramentas do Mestre
+  têm os ícones e os verbos delas ("Propôs a divisão · 3 partes: Ninee, Vitral", "Sugeriu o
+  projeto", "Lembrou"). Fora da largura larga, o verbo e a frase vão para a dica (o ícone já diz o
+  que foi) e o título fica com o espaço. O clique mostra o detalhe e, no hover, a linha ganha
+  **Abrir o chat** (o balão de conversa; Ctrl+clique abre ao lado) e Copiar. Em repouso, a pílula do estado encosta na seta de abrir; no hover, só a linha
   sob o ponteiro abre espaço para as ações. A
-  última entrega de uma tarefa em revisão vira um cartão com "#4 título" e a pílula, a rodada e o
+  última entrega de um ajudante em revisão vira um cartão com "#4 título" e a pílula, a rodada e o
   que a verificação e o revisor acharam ("Rodada 1 · verificação falhou · 4 observações do revisor";
   a frase do Vitral, o tempo da verificação e o parecer na dica) e **Revisar** (em tinta, o
-  azul-claro dos cartões da Equipe; o azul cheio fica só no primeiro cartão da Equipe que pede
+  azul-claro dos cartões da direita; o azul cheio fica só no primeiro cartão da direita que pede
   ação), **Abrir conversa** (o balão; a chave inglesa fica só no título, onde quer dizer
-  trabalhador) e o relatório. O cartão tem os cantos dos cartões da Equipe, e o ícone dos botões cai
+  ajudante) e o relatório. O cartão tem os cantos dos cartões da direita, e o ícone dos botões cai
   na coluna da linha de cima; na largura mínima, os dois botões ficam só com o ícone.
 - **Mensagens.** O que você escreve fica num balão neutro à direita (sem avatar, com o reflexo do
   vidro), com as miniaturas das imagens anexadas, o nome e o tamanho dos outros arquivos e os selos
   **Ultrathink** (em arco-íris) e **Ultracode** (em violeta, com o ícone de fluxo) quando a mensagem
-  foi com eles; texto com mais de 14 linhas mostra 12 e **Mostrar tudo**. Mensagens que outra
-  conversa (ou o Vitral) entregou mostram quem mandou (coordenador, trabalhador, outra conversa ou
-  o logo do Vitral) e uma prévia, que termina com reticências antes da coluna da seta, nunca
+  foi com eles; texto com mais de 14 linhas mostra 12 e **Mostrar tudo**. Mensagens que outro chat
+  (ou o Vitral) entregou mostram quem mandou (o círculo do Mestre, o quadrado do projeto de outro
+  chat, a chave inglesa de um ajudante ou o logo do Vitral) e uma prévia; as dos chats ao Mestre (e
+  o aviso do Vitral que cita um chat) têm **Abrir o chat**. A prévia termina com reticências antes da coluna da seta, nunca
   cortada no meio da letra; o clique abre o texto inteiro. Os avisos do Vitral são marcos
   centralizados ("Sessão nova", "Turno interrompido"), linhas tênues ("Tentando de novo.") ou,
-  quando é erro, um alerta vermelho com Copiar. O resumo final do coordenador fica num cartão com a
-  contagem das tarefas ("3 tarefas aprovadas · 1 cancelada"). Conversa nova de coordenador sugere
-  dois começos que só preenchem a caixa. O que chega com a conversa aberta no painel (a sua
+  quando é erro, um alerta vermelho com Copiar. A resposta do Mestre ao fim de uma divisão fica no
+  cartão **Resumo do Mestre · Divisão 3** (na conversa do Vitral antigo, o resumo final é o **Resumo
+  da conversa**, com a contagem: "3 ajudantes aprovados · 1 cancelado"). O que chega com a conversa aberta no painel (a sua
   mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
   conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 24 px antes do seu balão,
   16 depois dele e 12 entre os blocos de um turno.
@@ -305,77 +464,90 @@ ferramentas, vale por painel).
   Em janela baixa, o plano e os pedidos encolhem e rolam, e a caixa cresce menos. Blocos de código
   têm cor de sintaxe.
 
-**Voltar no tempo:** antes de cada turno de um trabalhador o Vitral tira uma foto dos arquivos;
+**Voltar no tempo:** antes de cada turno de um chat com git (numa cópia ou na pasta própria) o
+Vitral tira uma foto dos arquivos;
 passe o mouse na sua mensagem e use ↶, na barra que aparece à esquerda do balão, para voltar os
 arquivos àquele ponto (o botão vermelho da confirmação é o que volta). A resposta diz quantos
 voltaram e quais não. Com a cópia apagada, o ↶ some.
 
-## Equipe (painel da direita)
+## Painel da direita (Ctrl+J)
 
-- No topo, a aba **Equipe** (na dica, o projeto, de qual coordenador é a equipe e o número do
-  painel). Com a lista rolada, uma linha separa o cabeçalho, como na conversa; a lista não rola
-  sozinha, e ao trocar para uma conversa sem cartão destacado ela volta ao topo. Logo embaixo, uma
-  linha só: **Tarefas (n)**, uma barra fina com a proporção de cada
-  estado (cada parte diz na dica quais tarefas são: "1 em revisão: #2", com as mesmas palavras e
-  cores da pílula) e os atalhos da equipe, só com o ícone (com o rótulo quando o painel está largo,
-  de uns 450 px para cima): com um trabalhador aberto, **Coordenador** abre o coordenador ao lado;
-  com tarefas abertas, **Lado a lado** monta o coordenador e as tarefas em andamento, quantas
-  couberem na largura.
-- Cada cartão tem "#2 título", a pílula do estado ("● em revisão · com o coordenador"; a parada é
-  âmbar quando precisa de Retomar e neutra quando foi você que parou) e a trilha de pontos
-  (Trabalho, Verificação, Revisor, Coordenador, Juntada; o detalhe de cada um na dica). Embaixo,
-  numa linha só, o motivo principal: a preparação ou a verificação que falhou ("Verificação falhou ·
-  19 s", com o comando na dica), o revisor que pede ajustes ("Revisor pede ajustes · 2 importantes"),
-  os mesmos arquivos de outra tarefa ou o andamento (o resumo do revisor e o andamento terminam
-  em reticências quando não cabem). O clique no motivo, ou nos pontos da
-  verificação e do revisor, abre a saída do comando (o fim dela, com **Mostrar tudo** e copiar) ou o
-  parecer do revisor, com a gravidade em cada problema; cada problema abre o Revisar já na linha.
-  Selos pequenos só para o que não virou motivo: ressalva, mesmos arquivos (#1) e "sem cópia".
+O que ele mostra depende do chat aberto: o **Distribuído** no Mestre, **Este chat** num chat de
+projeto, **Ajudantes** num ajudante (os do chat dele, com o seu em destaque) e **Esta conversa**
+numa conversa do Vitral antigo (as tarefas dela que já tinham terminado). Na dica da aba, o projeto
+e o número do painel. Com a lista rolada, uma linha separa o cabeçalho, como na conversa; a lista não
+rola sozinha, e ao trocar para um chat sem cartão destacado ela volta ao topo.
+
+- **Distribuído** (o Mestre): por projeto (o quadrado, o nome, quantos chats e a barra do estado
+  deles), cada chat das divisões que ainda andam ou terminaram nas últimas 24 h, com o estado, "+N
+  −M" ou o andamento e **Revisar** quando ele entregou; o clique abre ao lado (Ctrl+clique, no
+  lugar). "Ver anteriores (N)" mostra as mais antigas. Embaixo, a **Memória do Mestre** com Editar.
+- **Este chat**: na cópia, a origem, o branch (→ o da origem), "N à frente · N atrás", mudanças sem
+  commit e o que falta juntar, com **Revisar e juntar** (em tinta quando há o que juntar) e **Pedir
+  parecer do revisor**; na pasta própria, "cada vez vira um commit (Voltar no tempo desfaz)" e Abrir
+  pasta; na pasta sem git, **Ativar git em x…** (os próximos chats ganham cópia) e Abrir pasta; no
+  avulso, a pasta dele; numa conversa trazida do Claude Code, de onde ela veio, as datas e quantas
+  mensagens tinha; **Localizar pasta…** quando ela sumiu. Embaixo, o cartão do pedido em aberto (só
+  com um pedido, ou numa conferência) e os ajudantes, sob **Chats (n)**.
+- **Chats (n)**: uma linha só com a barra fina da proporção de cada estado (cada parte diz na dica
+  quais são: "1 em revisão: #2", com as mesmas palavras e cores da pílula) e os atalhos, só com o
+  ícone (com o rótulo quando o painel está largo, de uns 450 px para cima): num ajudante, **Chat**
+  abre ao lado o chat que o criou; com ajudantes em andamento, **Lado a lado** monta o chat e eles,
+  quantos couberem na largura.
+- Cada cartão tem "#2 título", a pílula do estado ("● em revisão · com o Mestre", "com você" ou "com
+  o chat dele"; a parada é âmbar quando precisa de Retomar e neutra quando foi você que parou) e a
+  trilha de pontos (Trabalho, Verificação, Revisor, Decisão, Juntada; o detalhe de cada um na dica).
+  Embaixo, numa linha só, o motivo principal: a preparação ou a verificação que falhou ("Verificação
+  falhou · 19 s", com o comando na dica), o revisor que pede ajustes ("Revisor pede ajustes · 2
+  importantes"), os mesmos arquivos de outro chat ou o andamento (o resumo do revisor e o andamento
+  terminam em reticências quando não cabem). O clique no motivo, ou nos pontos da verificação e do
+  revisor, abre a saída do comando (o fim dela, com **Mostrar tudo** e copiar) ou o parecer do
+  revisor, com a gravidade em cada problema; cada problema abre o Revisar já na linha. Selos
+  pequenos só para o que não virou motivo: ressalva, mesmos arquivos (#1) e "sem cópia".
 - Uma ação principal por cartão, e um só botão azul cheio no painel: o do cartão destacado, se ele
-  pede ação, ou o do primeiro que pede; nos outros, o mesmo botão fica azul-claro, em tinta (sem
-  nenhum, o azul cheio é o **Ativar git** do aviso). As ações: **Ver pedido** (o trabalhador espera
-  permissão: abre a conversa dele ao lado com o cursor na caixa), **Retomar** (parada) ou **Revisar**
-  (em revisão). Ao lado, **Abrir ao lado** (ou **Ir à conversa**, se já está aberta; **Ver erro** se
-  o processo caiu), **Mudanças** e, na tarefa do trabalhador aberto, **Rodar** com o comando de rodar
-  do projeto. O **…** tem rodar na cópia (com o `$VITRAL_PORT` da tarefa), terminal, VS Code, copiar
-  o caminho, **Abrir neste painel**, configurar o projeto e, quando a cópia já não vai ser juntada,
-  **Apagar a cópia…** em vermelho. A seta no fim mostra o objetivo, os critérios, o comando de
-  verificação, a pasta e o branch da cópia (cada um com copiar) e a ressalva da aprovação. O detalhe
-  abre e fecha deslizando.
-- Clicar no cartão (ou Enter, com ele em foco pelo Tab) abre o trabalhador à direita dos painéis
-  da equipe; Espaço mostra ou esconde o detalhe; também dá para arrastar o cartão para um painel.
-  Com um trabalhador aberto, a tarefa dele fica com borda e barra azuis e o detalhe aberto, e o
-  painel rola até ela ao trocar de conversa. Quem pede permissão fica com o cartão âmbar.
-- As concluídas ficam em **Concluídas (n)**, recolhidas enquanto houver abertas, numa linha cada
-  (aprovada, cancelada ou falhou no ícone, a ressalva à direita e o **…** no hover). Embaixo,
-  **Decisões**, que também recolhe. Sem tarefas, o painel diz que elas aparecem quando o coordenador
-  dividir o trabalho. As duas seções abrem e fecham deslizando, e a pílula de uma tarefa pisca mais
-  forte por um instante quando ela muda de estado com o painel aberto.
+  pede ação, ou o do primeiro que pede; nos outros, o mesmo botão fica azul-claro, em tinta. As
+  ações: **Ver pedido** (o chat espera permissão: abre a conversa dele ao lado com o cursor na
+  caixa), **Retomar** (parado) ou **Revisar** (em revisão). Ao lado, **Abrir ao lado** (ou **Ir à
+  conversa**, se já está aberta; **Ver erro** se o processo caiu), **Mudanças** e, no ajudante
+  aberto, **Rodar** com o comando de rodar da pasta. O **…** tem rodar na cópia (com o
+  `$VITRAL_PORT` dela), terminal, VS Code, copiar o caminho, **Abrir neste painel**, configurar o
+  projeto e, quando a cópia já não vai ser juntada, **Apagar a cópia…** em vermelho. A seta no fim
+  mostra o objetivo, os critérios, o comando de verificação, a pasta e o branch da cópia (cada um com
+  copiar) e a ressalva da aprovação. O detalhe abre e fecha deslizando.
+- Clicar no cartão (ou Enter, com ele em foco pelo Tab) abre o chat dele à direita dos painéis;
+  Espaço mostra ou esconde o detalhe; também dá para arrastar o cartão para um painel. Com um
+  ajudante aberto, o cartão dele fica com borda e barra azuis e o detalhe aberto, e o painel rola até
+  ele ao trocar de conversa. Quem pede permissão fica com o cartão âmbar.
+- Os encerrados ficam em **Concluídas (n)**, recolhidas enquanto houver abertos, numa linha cada
+  (aprovado, cancelado ou falhou no ícone, a ressalva à direita e o **…** no hover). As seções abrem
+  e fecham deslizando, e a pílula pisca mais forte por um instante quando o estado muda com o painel
+  aberto. As decisões anotadas pelos chats ficam em **Editar projeto**.
 - Num painel estreito (abaixo de uns 330 px, ou a 150% de zoom), os botões ficam só com o ícone e o
   detalhe da pílula e o tempo do motivo vão para a dica.
 - Na gaveta (janela estreita), o painel é opaco por cima das conversas, com o fundo escurecido; ele
   entra deslizando da borda direita, e o botão do canto (ou Esc) o recolhe.
-- No trabalhador, o ↰ no lugar do símbolo da aba leva ao coordenador (Ctrl+clique abre ao lado), e
-  o ⋯ do painel tem **Cópia t2**, com o menu da cópia: rodar, terminal e VS Code na cópia, não na
-  pasta original. Num projeto sem git, um ponto âmbar no ↰ avisa que ele mexe na pasta original (a
-  dica da aba diz isso).
+- No ajudante, o ↰ no lugar do símbolo da aba leva ao chat dele (Ctrl+clique abre ao lado), e o ⋯
+  do painel tem **Cópia t2**, com o menu da cópia: rodar, terminal e VS Code na cópia, não na pasta
+  original.
 
 ## Revisão das mudanças
 
-No cartão da tarefa, **Revisar** abre os arquivos mudados no diff do GPUI Kit, num diálogo do
+**Revisar** (na barra acima da caixa do chat, em Este chat, no Distribuído ou no cartão de um
+ajudante) abre os arquivos mudados no diff do GPUI Kit, num diálogo do
 tamanho da janela: o diff num fundo preto, com cor de sintaxe, número antigo e novo em cada linha, o
 que não mudou dobrado, **Unificado** ou **Lado a lado** num segmentado com a pílula que desliza
 (Lado a lado apagado, com o motivo na dica, quando falta largura), **Arquivo
-inteiro**, **Quebrar linhas** e as setas de mudança anterior e próxima. Em cima, o título da tarefa
-(numa linha, inteiro na dica) e, embaixo dele, o projeto, a tarefa, a rodada, a pílula do estado e
-o tamanho do diff ("3 arquivos · +11 −1").
+inteiro**, **Quebrar linhas** e as setas de mudança anterior e próxima. Em cima, "Revisar e juntar
+· chat 12 título" (numa linha, inteiro na dica) e, embaixo, o projeto, a pasta, a rodada, os
+arquivos e o tamanho do diff ("loja · site · rodada 2 · 3 arquivos · +11 −1"); num ajudante, o
+projeto, "ajudante #4", a rodada e a pílula do estado.
 
 - **Conferência em chips.** Na barra, **Verificação passou** (ou falhou, em vermelho) e **Revisor
   aprovaria** (ou **pede ajustes**, com o número de apontamentos na cor da maior gravidade). O
   clique abre a saída do comando (o fim dela, com **Mostrar tudo** e copiar) ou o parecer do
   revisor, com cada apontamento ("alta", "média", "baixa"): o clique vai à linha, e **Usar** o
   transforma em comentário. Enquanto a conferência roda, os chips mostram o spinner; da rodada
-  anterior (o trabalhador ajustando), ficam em tom tênue e dizem isso.
+  anterior (o chat ajustando), ficam em tom tênue e dizem isso.
 - **Arquivos à esquerda**, por pasta (a raiz primeiro, os gerados como lockfiles e `.min.js` no
   fim, recolhidos e com o selo "gerado"), cada um com o ponto do apontamento mais grave, os seus
   comentários e o +N −M. Com mais de 8, um campo filtra. Embaixo, **Seus comentários**: o clique
@@ -390,39 +562,42 @@ o tamanho do diff ("3 arquivos · +11 −1").
   seguinte; F7 e Shift+F7, à mudança. Ctrl+Enter, fora de um campo, aciona o botão azul do rodapé.
 - **Pedir ajuste** mostra o que vai junto (os comentários por arquivo), tem um recado geral
   (Enter envia) e, quando sobram apontamentos do revisor, um interruptor para incluí-los. Vira uma
-  rodada de ajuste do trabalhador.
-- **O botão azul segue o que está vermelho.** Sem pendências, o azul é **Aprovar e juntar**. Com a
+  rodada de ajuste do chat.
+- **O botão azul segue o que está vermelho.** Sem pendências, o azul é **Juntar**. Com a
   verificação vermelha nesta rodada, apontamento de gravidade alta, o diff que não deu para ler ou
   comentário por enviar, o azul passa para **Pedir ajuste** (com o selo do que vai junto: os
-  comentários e, com o interruptor ligado, os apontamentos que você não usou), e **Aprovar e
-  juntar** fica fantasma, com o ícone de junção. **Ctrl+Enter** aciona o botão azul do momento (abre
+  comentários e, com o interruptor ligado, os apontamentos que você não usou), e **Juntar** fica
+  fantasma, com o ícone de junção. **Ctrl+Enter** aciona o botão azul do momento (abre
   o Pedir ajuste ou aprova), e a dica dele mostra o atalho; num campo de texto, com um comentário
   aberto ou com um popover aberto, o Ctrl+Enter fica com eles.
-- **Aprovar e juntar** fica desabilitado com o motivo quando a tarefa não pode ser aprovada
-  (conferindo, trabalhador rodando, já juntada); com pendências, pergunta antes. Um conflito na
+- **Juntar** fica desabilitado com o motivo quando o chat não pode ser juntado agora (conferindo,
+  rodando, já juntado); com pendências, pergunta antes ("Juntar com pendências?"); com a pasta
+  original em outro branch, "Juntar em outro branch?". Um conflito na
   junção aparece num aviso dentro do diálogo, que continua aberto. **Abrir a cópia** tem rodar,
   terminal, VS Code e copiar o caminho, na cópia.
 - **Fechar não perde nada**: Esc, o × e o clique fora fecham, e ao reabrir os comentários, o
   rascunho e os vistos estão lá. Se chegou uma entrega nova, o diff é relido (com o diálogo aberto,
   um aviso oferece **Recarregar**).
-- Sem cópia (apagada, ou projeto sem git), com erro do git ou sem mudanças, o diálogo diz isso no
-  lugar do diff. Aprovada ou cancelada, a revisão é só de leitura.
+- Sem cópia (apagada, ou pasta sem git), com erro do git ou sem mudanças, o diálogo diz isso no
+  lugar do diff. Juntado ou cancelado, a revisão é só de leitura.
 - Dá para descartar as mudanças de um arquivo (com confirmação): um renomeado volta ao nome antigo
   e, se não der para voltar, aparece "Não deu" e o arquivo fica na lista. Nomes com acento, espaço
   ou aspas aparecem certos aqui, em Arquivos e no `@`.
 
-## Cópias das tarefas
+## Cópias dos chats
 
-Com `node_modules`, `.venv` e `target/`, cada cópia pode passar de 1 GB. No **…** do cartão de
-uma tarefa encerrada (ou de um coordenador arquivado), **Apagar a cópia…** mede o espaço e
-pergunta antes. Arquivar um coordenador parado oferece apagar as cópias que sobraram. Em
-Configurações, **Cópias das tarefas** mostra o espaço ocupado ("Medindo…", com o spinner, enquanto
-mede) e quantas são de tarefas encerradas, tem **Limpar N** (com o número; desligado quando não há
-nenhuma) e a escolha de apagar sozinho depois de nunca, 7 ou 30 dias. O aviso no fim diz quantas
-saíram e, se alguma não deu, qual e por quê. A limpeza apaga a pasta, o branch e os pontos de volta
-da tarefa; a aprovação também. A conversa de um trabalhador sem cópia continua para leitura, mas
-não roda mais. As cópias que os agentes de um fluxo criam dentro da cópia da tarefa
-(`.claude/worktrees/`) não entram no commit da tarefa.
+Com `node_modules`, `.venv` e `target/`, cada cópia pode passar de 1 GB. A cópia de um chat de
+projeto continua depois de juntar; ela fica **parada** quando o chat é arquivado sem nada para
+juntar, e a de um ajudante quando ele termina. Em Configurações, **Cópias dos chats** mostra o espaço
+ocupado ("Medindo…", com o spinner, enquanto mede) e quantas estão paradas, tem **Limpar N** (com o
+número; desligado quando não há nenhuma) e a escolha de apagar sozinho depois de nunca, 7 ou 30
+dias. O aviso no fim diz quantas saíram e, se alguma não deu, qual e por quê. A limpeza apaga a
+pasta e os pontos de volta; o que não tinha sido juntado ganha antes um commit e o branch fica, e a
+próxima mensagem ao chat refaz a cópia no mesmo lugar, a partir dele ("A cópia foi recriada a partir
+de …"). Sem a pasta original à mão, nada é apagado. No **…** do cartão de um ajudante encerrado,
+**Apagar a cópia…** mede o espaço e pergunta antes; arquivar um chat com ajudantes parados oferece
+apagar as cópias deles. As cópias que os agentes de um fluxo criam dentro da cópia
+(`.claude/worktrees/`) não entram no commit.
 
 ## Contas e uso dos planos
 
@@ -439,7 +614,7 @@ créditos extras do mês e, no rodapé, quando o número foi lido, com **Atualiz
 que o Claude Code e o Codex guardam no disco (relido a cada 30 s) e dos avisos de limite
 durante os turnos; nada roda e nenhum token é lido.
 
-No painel do Claude também se escolhe a conta padrão da pasta, em **Conta padrão**: clicar numa
+No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e os
 dois anéis, como no trilho (5 h por fora, a semana por dentro), o e-mail inteiro em cima e o uso
 embaixo, "5 h 7% · semana 38%", sem a janela que ainda não foi lida) a torna a padrão, e o check
@@ -449,7 +624,7 @@ fica nela; **Entrar com outra conta…** conecta uma nova e o **…** de uma con
 repete o seletor do popover, maior: em **Conta padrão**, a Automática e uma linha por conta com o
 mesmo anel do trilho (5 h por fora, a semana por dentro), o login e o plano, o uso ("5 h 23% ·
 semana 41%", com a hora de renovar na dica, ou "no limite · volta às 14:30") e o check na padrão; o
-clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como padrão nesta pasta**,
+clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como padrão**,
 **Copiar o e-mail** e, nas extras, **Desconectar…**. **Entrar com outra conta…** mostra dois passos:
 o navegador (com **Abrir de novo** e **Copiar endereço**, que vira "Copiado" por um instante) e o
 código da página, com **Entrar**; se falhar, o erro aparece ali com **Tentar de novo**.
@@ -466,52 +641,60 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 ## Organização
 
 - Trilho à esquerda, numa peça de vidro própria (a área vazia arrasta a janela, o clique duplo
-  maximiza e o clique direito abre o menu da janela): o logo (clique ou F10 para o **menu do
-  Vitral**, que abre à direita: no cabeçalho, "Vitral" e o nome da pasta de trabalho, com o caminho
-  inteiro na dica; depois três grupos, Nova conversa, Novo projeto… e Rotinas; Contas do Claude,
-  Instalar o Codex… quando ele falta, e Configurações; Trocar a pasta… e Abrir a pasta ↗; com os
-  atalhos de cada um; no rodapé, a versão em tênue, "Vitral 0.2.0-rc.1", com o commit na dica
-  ("Compilado no PC" no que não veio do GitHub); com uma versão nova pronta, um ponto azul de 8 no
-  canto do logo, a versão na dica e **Reiniciar para a 0.3.0** logo acima das Configurações; com projeto arquivado, entre o primeiro e o segundo grupo, **Projetos
-  arquivados**, cada um com o quadrado apagado e **Desarquivar**), um atalho por projeto (filtra tudo por ele; o ativo ganha um aro na cor do
-  projeto; o ponteiro em cima acende o quadrado suave, e o aro entra na mesma transição; um ponto
-  mostra erro em vermelho, pedido ou parada em âmbar, resposta nova em azul e, vazado, algo
-  rodando), o sino do que precisa de você e os anéis de uso do Claude e do Codex (o logo e os anéis
-  ficam sobre um disco preto, que clareia com o ponteiro em cima). Quando os projetos
-  não cabem na altura, o último lugar vira **+N**, que abre **Todos os projetos** com busca (os
-  arquivados num grupo à parte, "Escolher desarquiva", e Novo projeto… no rodapé); o projeto filtrado sempre fica à vista. Com todos cabendo, o último lugar é
-  **Novo projeto**. Os dois também acendem suave. O número do sino é o mesmo de "Esperando você"
-  (pedidos, erros e paradas que pedem Retomar), em vermelho se algo falhou e âmbar nos outros casos;
-  só com respostas novas, um ponto azul. Quando o número aumenta (um pedido, uma parada ou um erro
-  novo), o sino pulsa uma vez com um anel âmbar (vermelho se algo falhou); abrir o app, o número
-  cair ou marcar como lido não pulsam, e com as animações desligadas nada pulsa. O clique abre **O
-  que precisa de você**: cada linha com o quadrado do projeto e, embaixo, a mesma frase e o mesmo
-  sinal da prévia da lista (o ponto na cor e o rótulo: "Permissão · Bash · npm test", "Plano para
-  aprovar", "Parada · Vitral fechou", "Erro · …"): os pedidos (com Negar e Permitir, ou **Permitir
-  mesmo assim** em vermelho quando o comando tem um trecho arriscado; um plano abre a conversa para
-  ler antes), as paradas (Retomar), os erros (Tentar de novo) e as respostas novas (marcar como
-  lida), com o número do painel quando a conversa está aberta; clicar numa linha abre a conversa
-  (Ctrl+clique, ao lado). No rodapé, os botões **Marcar tudo como lido** e **Ver na lista** (tira
-  filtro, busca e arquivadas e mostra a seção); cabeçalho, seções, linhas e o ícone do rodapé ficam
-  na mesma guia, a 16 da borda.
-  Ctrl+G vai direto à próxima pendência.
+  maximiza e o clique direito abre o menu da janela), de cima para baixo: o logo (clique ou F10 para
+  o **menu do Vitral**, que abre à direita: no cabeçalho, "Vitral" e quantos projetos há, com a pasta
+  de dados na dica; depois **Falar com o Mestre**, **Novo chat…**, **Novo projeto…**, **Rotinas** e
+  **Importar do Claude Code…**; os **Projetos arquivados**, quando há, cada um com o quadrado apagado e
+  **Desarquivar**; **Contas do Claude**, **Instalar o Codex…** quando ele falta, **Configurações** e
+  **Memória do Mestre…**; **Abrir a pasta de dados** ↗; com os atalhos de cada um; no rodapé, a
+  versão em tênue, "Vitral 0.3.0-rc.1", com o commit na dica ("Compilado no PC" no que não veio do
+  GitHub); com uma versão nova pronta, um ponto azul de 8 no canto do logo, a versão na dica e
+  **Reiniciar para a 0.3.0** logo acima das Configurações). Logo abaixo, o **Mestre**: o círculo com a
+  órbita (Ctrl+M) abre o Mestre no painel ativo, sem mudar a lista; aberto no painel ativo, fica na
+  seleção com o aro azul; o número âmbar no canto conta os cartões que esperam você (e um a mais se o
+  Mestre parou ou deu erro, em vermelho no erro); sem isso, um ponto azul é resposta nova que você
+  não leu e, rodando, o ponto vazado. Depois, os **projetos**, numa área que rola, na ordem que você
+  der: arraste um quadrado para cima ou para baixo (uma linha azul mostra se ele vai antes ou depois;
+  perto da borda, a área rola; a ordem fica). O clique num projeto abre a lista dele; clicar de novo
+  volta à **Visão geral**. O quadrado do projeto em que está o chat aberto ganha um aro fraco; o do
+  projeto aberto na lista, o aro inteiro; o ponteiro em cima acende o quadrado suave; um ponto mostra
+  erro em vermelho, pedido ou parada em âmbar, resposta nova em azul e, vazado, algo rodando. Soltar
+  um chat (da lista ou a aba de um painel) num projeto, ou em Avulsos, o move para lá: enquanto ele
+  está por cima, uma faixa diz "Mover para X"; quando há algo a dizer (a cópia continua ligada à
+  pasta de antes), pergunta antes; a recusa (o chat está trabalhando, o projeto está arquivado) vira
+  aviso. O clique direito num projeto abre o menu dele. Embaixo deles, fixos, **Avulsos** (o balão;
+  no clique direito, **Novo chat avulso** e **Projetos arquivados…**) e o **+** do projeto novo.
+  No pé, o sino do que precisa de você e os anéis de uso do Claude e do Codex (o logo e os anéis
+  ficam sobre um disco preto, que clareia com o ponteiro em cima). O número do sino é o mesmo de
+  "Esperando você" (pedidos, erros, paradas que pedem Retomar e os cartões do Mestre), em vermelho se
+  algo falhou e âmbar nos outros casos; só com respostas novas, um ponto azul. Quando o número aumenta
+  (um pedido, uma parada ou um erro novo), o sino pulsa uma vez com um anel âmbar (vermelho se algo
+  falhou); abrir o app, o número cair ou marcar como lido não pulsam, e com as animações desligadas
+  nada pulsa. O clique abre **O que precisa de você**: cada linha com o quadrado do projeto e,
+  embaixo, a mesma frase e o mesmo sinal da prévia da lista (o ponto na cor e o rótulo: "Permissão ·
+  Bash · npm test", "Plano para aprovar", "Parada · Vitral fechou", "Erro · …"): a seção **Do Mestre**
+  (os cartões que esperam você e os pares de chats parados no freio de ciclo), os pedidos (com Negar e
+  Permitir, ou **Permitir mesmo assim** em vermelho quando o comando tem um trecho arriscado; um plano
+  abre a conversa para ler antes), as paradas (Retomar), os erros (Tentar de novo) e as respostas
+  novas (marcar como lida), com o número do painel quando a conversa está aberta; clicar numa linha
+  abre a conversa (Ctrl+clique, ao lado). No rodapé, os botões **Marcar tudo como lido** e **Ver na
+  lista** (volta à visão geral, sem busca e sem arquivadas, e mostra a seção); cabeçalho, seções,
+  linhas e o ícone do rodapé ficam na mesma guia, a 16 da borda. Ctrl+G vai direto à próxima
+  pendência (sem outra, ao primeiro cartão aberto do Mestre).
 - **Ctrl+B recolhido.** A lista e o trilho somem e a conversa vai até a borda. No lugar deles ficam
   o logo, no começo das abas do 1º painel, com o selo do sino (o número ou o ponto, que pulsa como
-  o sino), e os anéis de
-  uso, de 24, no cabeçalho do 1º painel, logo depois do logo (o do Codex só quando está instalado e
-  tem uso lido; os popovers abrem para baixo). O menu do logo ganha, em cima, **Mostrar a lista**,
-  **O que precisa de você** (abre a mesma caixa do sino) e os projetos (até 9, com Ctrl+1…9, e
-  **Todos os projetos…**); escolher um projeto liga o filtro e traz a lista de volta. Ctrl+B de novo
-  volta tudo.
-- **Ícone e cor do projeto.** Cada atalho tem um ícone do Lucide e uma cor. Sem escolha, o ícone
-  sai do conteúdo da pasta (um `Cargo.toml` vira chip, um `manage.py` ou `Dockerfile` vira
-  servidor, um `next.config` vira site, só `.md` vira documento) e a cor, do nome, numa paleta
-  sem as cores de estado. Para trocar: clique direito no atalho ou **Ícone e cor…** no menu
-  **…** do projeto, que abre a prévia, a busca de ícone pelo nome ("loja", "banco"), 60 ícones e
-  8 cores, com o escolhido na cor do projeto; **Usar automático** (também no clique direito,
-  quando há escolha gravada) volta ao palpite, e **Salvar** (ou Enter) grava. Em **Configurar
-  projeto…** a mesma escolha fica em **Aparência**, num popover, e só grava no Salvar. A escolha
-  fica na configuração da pasta e vale também na lista, nos diálogos e em Arquivos.
+  o sino), e os anéis de uso, de 24, no cabeçalho do 1º painel, logo depois do logo (o do Codex só
+  quando está instalado e tem uso lido; os popovers abrem para baixo). O menu do logo ganha, em
+  cima, **Mostrar a lista**, **O que precisa de você** (abre a mesma caixa do sino) e os projetos
+  (até 9, com Ctrl+1…9, e **Todos os projetos…**); escolher um projeto abre a vista dele e traz a
+  lista de volta. Ctrl+B de novo volta tudo.
+- **Ícone e cor do projeto.** Cada projeto tem um ícone do Lucide e uma cor. Sem escolha, o ícone
+  sai do conteúdo da primeira pasta (um `Cargo.toml` vira chip, um `manage.py` ou `Dockerfile` vira
+  servidor, um `next.config` vira site, só `.md` vira documento) e a cor, do nome, numa paleta sem
+  as cores de estado. Para trocar, o chip do ícone em **Editar projeto** (também pelo **Ícone e
+  cor…**), que abre a prévia, a busca de ícone pelo nome ("loja", "banco"), 60 ícones e 8 cores, com
+  o escolhido na cor do projeto, e **Automático**, que volta ao palpite. A escolha fica no projeto e
+  vale no trilho, na lista, nos diálogos e em Arquivos.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista (ou a aba de
   um painel) para a borda esquerda ou direita de um painel para abrir ao lado, ou para o meio para
   trocar. A forma diz o que vai acontecer: meio painel em azul para "Abrir ao lado", uma barra na
@@ -519,7 +702,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   quando não cabe outro); a aba que você arrasta fica apagada e tracejada. Também dá com Ctrl+clique
   ou o botão "abrir ao lado" no cartão. O painel que abre ao lado entra com um fade (a largura não
   anima). Com vários painéis, cada um tem um número em forma de tecla (na aba, na lista e na
-  Equipe), Alt+1…4 vai para ele, e o ativo tem a aba azul e a borda e um halo azuis, que acendem
+  direita), Alt+1…4 vai para ele, e o ativo tem a aba azul e a borda e um halo azuis, que acendem
   suave (180 ms; apagam em 120); clicar na aba (ou em qualquer parte do painel) ativa o painel e põe
   o cursor na caixa dele. O × fica dentro da aba, no lugar do ponto de estado (azul rodando, âmbar
   pedido ou parada, vermelho erro): aparece no hover, no foco e sempre no painel ativo; o clique do
@@ -531,37 +714,38 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   Ctrl+PgUp/PgDn vão para o vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
 - **Cabeçalho do painel.** Uma linha só (44): a aba e os botões, modo foco, **⋯** (**Mais opções da
   conversa**, o mesmo menu do clique direito na aba, como diz a dica) e, no último painel, o da
-  direita, com a dica **Equipe** (ou **Arquivo aberto**, quando é o arquivo que ela mostra) e o
-  Ctrl+J. Com a Equipe fora da vista (a direita fechada, ou a gaveta dela fechada) e tarefas que
-  pedem você, o botão leva no canto um selo com o número, âmbar, ou vermelho se uma caiu, e a dica
-  diz quais ("1 em revisão, 1 parada"; também "pedindo permissão" e "com erro"). Quando o botão vai
-  para o **⋯**, o item vira **Mostrar a Equipe** (ou **Mostrar o arquivo aberto**), com o mesmo
-  número tingido. Ligados, ficam num cinza mais
-  claro, nunca azul. No coordenador, o quadrado do projeto na aba abre o menu do projeto (com
-  **Mostrar só este projeto**; a dica diz o projeto e a pasta); no trabalhador, no lugar dele fica o
-  ↰ que abre o coordenador. A dica da aba diz onde a conversa está ("loja › Carrinho… · cópia t4").
-  O **⋯** tem **Nova conversa ao lado**, **Mover para a esquerda/direita**, **Fechar os outros
-  painéis**, **Fechar este painel**, o menu da conversa (renomear, fixar, arquivar, abrir a pasta
-  fora do app) e, embaixo, o que a aba não mostra: **Cópia t2** no trabalhador, **Projeto loja**
-  quando o quadrado não está na aba e **Abrir o coordenador** quando o ↰ não está. O custo ("US$
-  0,42") está no anel do contexto da caixa. Uma linha separa o cabeçalho das mensagens só quando há
-  mensagens roladas por baixo dele. Em painel estreito o modo foco e depois o painel da direita vão
-  para o **⋯**; no mais estreito, com vários painéis, o número toma o lugar do símbolo da aba.
-  Nenhum texto é cortado no meio.
-- **Painel sem conversa:** "Comece uma conversa" com **Nova conversa** (ou, sem projetos, "Nenhum
-  projeto ainda" com **Novo projeto…**); dá para soltar ali uma conversa arrastada da lista.
+  direita, com a dica do que ela mostra (**Distribuído**, **Este chat**, **Ajudantes**, **Esta
+  conversa** ou **Arquivo aberto**) e o Ctrl+J. Com a direita fora da vista (fechada, ou a gaveta
+  dela fechada) e chats que pedem você, o botão leva no canto um selo com o número, âmbar, ou
+  vermelho se um caiu, e a dica diz quais ("1 em revisão, 1 parada"; também "pedindo permissão" e
+  "com erro"). Quando o botão vai para o **⋯**, o item vira **Mostrar Este chat** (ou **Mostrar o
+  arquivo aberto**, **Mostrar os ajudantes**…), com o mesmo número tingido. Ligados, ficam num cinza
+  mais claro, nunca azul. No chat de projeto e na conversa antiga, o quadrado do projeto na aba abre
+  o menu do projeto; no avulso, fica o balão; no ajudante, o ↰ que abre o chat dele; no Mestre, a
+  órbita. A dica da aba diz onde o chat está ("Chat 12 · loja · site · cópia t12", "· direto", "Avulso
+  · chat 3", "Ajudante de “Checkout”"). O chat que veio do Mestre leva, no cabeçalho, o selo "do
+  Mestre ↩", que abre o Mestre. O **⋯** tem **Nova conversa ao lado**, **Mover para a
+  esquerda/direita**, **Fechar os outros painéis**, **Fechar este painel**, o menu da conversa
+  (renomear, fixar, mover para projeto, arquivar, abrir a pasta fora do app) e, embaixo, o que a aba
+  não mostra: **Cópia t2**, **Projeto loja** quando o quadrado não está na aba e **Abrir o chat**
+  quando o ↰ não está. O custo ("US$ 0,42") está no anel do contexto da caixa. Uma linha separa o
+  cabeçalho das mensagens só quando há mensagens roladas por baixo dele. Em painel estreito o modo
+  foco e depois o painel da direita vão para o **⋯**; no mais estreito, com vários painéis, o número
+  toma o lugar do símbolo da aba. Nenhum texto é cortado no meio.
+- **Painel sem conversa:** "Fale com o Mestre" com **Abrir o Mestre**, **Novo chat** e **Novo
+  projeto**; dá para soltar ali uma conversa arrastada da lista.
 - **Zoom:** Ctrl + roda do mouse (ou do touchpad), Ctrl+= / Ctrl+- e Ctrl+0 (volta a 100%)
   aumentam e diminuem a interface inteira de 10 em 10%, de 70% a 200%, como num navegador; a
   porcentagem aparece no alto da janela por um instante. Tudo cresce junto, inclusive as larguras
-  das partes: a 150% a lista normal tem 468 px, a Equipe 570 e cada conversa pede no mínimo 420,
-  então numa janela que não comporta a Equipe e depois a lista viram gaveta, como numa janela
+  das partes: a 150% a lista normal tem 468 px, a direita 570 e cada conversa pede no mínimo 420,
+  então numa janela que não comporta a direita e depois a lista viram gaveta, como numa janela
   estreita. O que você arrastou nas divisórias fica guardado a 100% e acompanha o zoom (a lista
   de 240 a 100% vira 360 a 150%, e a divisão entre as conversas se mantém). Vale para o app todo
   e fica guardado em `~/.config/vitral/interface.json`.
 - **Visual:** o fundo é um vidro fosco, mais opaco, em que o papel de parede aparece apagado atrás
   do trilho e da lista; nas frestas entre as peças e na margem ele fica num chumbo azulado escuro, e
   as peças ficam mais claras que o fundo, para se destacarem. O trilho, a lista, os painéis, o
-  seu balão e os cartões da Equipe e de entrega têm o reflexo do vidro (a linha de luz e o brilho no
+  seu balão e os cartões da direita e de entrega têm o reflexo do vidro (a linha de luz e o brilho no
   topo). O vidro azul-marinho fica no fundo (trilho, lista, painéis, diálogos e as gavetas); o
   preto entra no que vai por cima e por dentro, para dar profundidade: popovers, menus, dicas, avisos
   e a barra de ações das mensagens são quase pretos (#0c0e13, opacos, com a borda clara fina e a
@@ -571,161 +755,189 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   disco preto, para a cor de cada marca saltar. Dentro de um popover, o que no vidro é um recuo
   escuro (o trilho do segmentado do esforço, o recado do Pedir ajuste) vira um claro leve. O
   logo é um vitral redondo: o completo (`assets/vitral.svg` e PNGs de 64 a 256 px) no menu de
-  aplicativos e na tela de boas-vindas, o pequeno (`assets/vitral-pequeno.svg`, feito para 16 a 32
+  aplicativos e na tela de recuperação, o pequeno (`assets/vitral-pequeno.svg`, feito para 16 a 32
   px, e o PNG de 48) no trilho e nos ícones pequenos. Popovers e menus entram com um fade e 6 px
   vindos do lado do botão que os abriu, e todos os flutuantes têm uma linha de luz de 1 px no topo,
-  como o reflexo de um vidro; as gavetas da lista e da Equipe entram deslizando 24 px da borda, em
+  como o reflexo de um vidro; as gavetas da lista e da direita entram deslizando 24 px da borda, em
   180 ms, com o véu em fade junto, e fecham secas. O véu dos diálogos cobre só a janela, não a
   margem da sombra. A pílula do segmentado (Conversas · Arquivos, o esforço) desliza até a
   opção nova; os botões redondos (enviar, +, sino) acendem suave com o ponteiro em cima; os anéis de
   uso e de contexto deslizam até o valor novo; o sino pulsa quando chega algo que precisa de você;
   e o ponto de "rodando" respira enquanto um spinner gira. Listas, menus e cartões continuam com o
-  hover seco. "Em revisão" fica no azul do rodando (a pílula, o ponto e a parte da barra da Equipe);
+  hover seco. "Em revisão" fica no azul do rodando (a pílula, o ponto e a parte da barra da direita);
   o âmbar é só do que precisa de você. Com o ponteiro fora da janela, nada fica em hover nem com a
-  dica aberta. Na Equipe tudo começa na mesma coluna, a
-  24 da borda do painel (o texto de Tarefas, das seções e dos cartões, o ícone das concluídas e o
-  marcador das decisões), e o espaço é medido no que se vê: 8 entre cartões, 16 antes de cada seção
+  dica aberta. Na direita tudo começa na mesma coluna, a
+  24 da borda do painel (o texto de Chats, das seções e dos cartões e o ícone das concluídas), e o
+  espaço é medido no que se vê: 8 entre cartões, 16 antes de cada seção
   e, dentro do cartão, 8 entre as linhas e 12 da borda ao título e ao botão.
 - **Janela estreita:** quando falta largura, o painel da direita e depois a lista saem do lado e
   abrem por cima, como gaveta (Ctrl+J, Ctrl+B, Ctrl+K e os botões de sempre); Esc ou um clique
   fora fecham. A gaveta entra deslizando da borda dela, com o fundo escurecendo junto; fecha seca.
   Os botões de janela seguem o layout do GNOME (no Fedora, só o ×).
-- **Lista** numa peça de vidro própria, com as abas **Conversas · Arquivos** num segmentado (um
-  ponto âmbar em Conversas avisa, de dentro de Arquivos, que algo espera você), a busca (Ctrl+K;
-  acha também no texto das mensagens e nas conversas arquivadas) e o **+** de nova conversa: com um
-  projeto no escopo, ele cria a conversa direto nele. Tudo na lista começa a 16 px da borda da peça
-  (o texto dos cabeçalhos de seção, o quadrado do projeto, a lupa da busca e o primeiro ícone do
-  rodapé); a seta das seções fica à esquerda dessa guia. A busca diz só "Buscar"; o que ela acha e o
-  Ctrl+K ficam na dica do campo (que não aparece enquanto se digita nele). Na busca, quando o termo
-  não está no título, a prévia do cartão mostra o trecho que casou ("Você: valide o **frete**
-  grátis…", com o termo em forte; de um trabalhador, "#2: …"), e as arquivadas que casam aparecem no
-  fim, numa seção **Arquivadas** (com o número) e com o cartão tênue. Fora da busca, elas continuam
-  só em Arquivadas. Estreitando a lista (ou com o zoom alto, porque a conta é a mesma), ela abre mão
-  do que é menos importante antes de cortar o título: abaixo de uns 290 px (a 100%), os
-  trabalhadores perdem o selo de pedido ou erro (o ponto já diz) e, no hover, fica só o **…**;
-  abaixo de 275, as abas ficam só com o ícone e a prévia fica com o rótulo curto do motivo: o do
-  próprio coordenador sai (o ponto diz qual é), e o de um trabalhador fica só com o número e o
-  "(+N)" ("#5 (+1) · Vitral fechou"); abaixo de 260, a busca de arquivos diz só "Buscar" e **Retomar
-  tudo** e **Arquivar estas** ficam só com o ícone. Os horários continuam à vista. A barra de
-  rolagem é fina, colada na borda da peça, não cobre os cartões e aparece e some sem fade, 1,2 s
-  depois de rolar.
-- **Linha de escopo** embaixo da busca quando algo restringe a lista: o projeto escolhido no
-  trilho (com o **…** do projeto, o **×** que mostra todos e um "+N" âmbar quando há conversas
-  esperando você em outros projetos; o clique tira o filtro), as Arquivadas, ou o projeto da aba
-  Arquivos (com **↻** para reler os arquivos).
-- Seções, cada uma com o próprio cabeçalho: **Esperando você** (o número é o mesmo do sino: pedidos,
-  erros e paradas; respostas novas não contam, viram ponto; pedidos, paradas e erros vêm antes das
-  respostas novas, e com duas paradas ou mais aparece **Retomar tudo**), **Rodando agora**,
-  **Fixadas** e as faixas de data (**Recentes**, até 7 dias, e **Mais antigas**; o tempo de cada
-  conversa já está no cartão). Em Esperando você os cartões são neutros como os outros (selecionado
-  em azul); o âmbar fica no ponto do quadrado, no ponto da prévia e no número da seção. Fixadas e as
-  faixas recolhem no clique do cabeçalho (a seta fica à esquerda do nome, e o hover clareia os
-  dois); Mais antigas começa recolhida e tem **Arquivar estas**, que arquiva na hora e
-  mostra "3 conversas arquivadas" com **Desfazer** (que devolve só as que ela arquivou). O
-  **Arquivar** do menu da conversa também mostra "Conversa arquivada" com Desfazer; desarquivar não
-  avisa.
-- **Cartão de conversa**: o quadrado do projeto (ícone e cor dele) com o ponto do estado da família
-  no canto (vermelho erro, âmbar pedido ou parada, azul resposta nova, aro azul rodando), o título,
-  a prévia com o motivo no ponto do sinal e no rótulo ("Permissão · Bash · npm test", "Plano para
-  aprovar", "Parada · Vitral fechou", "Erro · …"; quando é um trabalhador, "#5 parada · Vitral
-  fechou"; a mesma frase do sino; a resposta nova só com o texto, porque o ponto azul e o título em
-  forte já dizem; rodando, "#3 · Edit · README.md"; as prévias começam com maiúscula, "Pensando…",
-  "Na fila, esperando vaga") e, à direita, o horário (ou há quanto tempo roda), o número do painel e
-  o ponto de não lido (só quando o ponto do quadrado não é já o azul da resposta nova). No hover, o
-  horário dá lugar a duas ações: **Abrir ao lado** (ou Ver o pedido da tarefa, ou Retomar) e **…**;
-  fora do hover, o título usa o lugar delas, e só o cartão sob o ponteiro (ou realçado pelo
-  teclado) corta o título para mostrá-las. O clique
-  direito ou o **…** abrem o menu da conversa: abrir ao lado, renomear, fixar, arquivar e abrir a
-  pasta no VS Code ou no terminal. Clique duplo também renomeia; Ctrl+clique ou o clique do meio
-  abrem ao lado.
-- **Trabalhadores** embaixo do coordenador, numa árvore: um traço fino sai do centro do quadrado
-  do pai e passa por um ponto de 8 por trabalhador, na cor do estado da tarefa (o sinal quando
-  roda, pede, falhou ou parou e pede Retomar; o aro de quem roda fica solto, com o traço parando
-  antes dele); "#2 título" fica na coluna do título do pai, e a palavra do estado vai para a dica
-  do ponto ("Em revisão" e a explicação). À direita só o que pede ação (o selo "permissão",
-  "plano" ou "erro"), a duração de quem roda e o número do painel. Fora da conversa aberta, as
-  tarefas aprovadas e canceladas ficam em **Mais N concluídas**, no fim do ramo (o traço termina na
-  seta).
+- **Lista** numa peça de vidro própria, em três vistas, lembradas ao reabrir (com o último chat
+  aberto): a **Visão geral** ("Esperando você", "Rodando agora", "Fixadas" e os 15 **Recentes** de
+  todos os projetos, com o nome do projeto antes da prévia; na busca, todos os que casam), um
+  **projeto** (o cabeçalho com o quadrado, o nome, a descrição numa linha, ou o começo do README em
+  itálico, o **…** com o menu e um chip por pasta ligada; as abas **Conversas · Arquivos** num
+  segmentado; as faixas Recentes e Mais antigas) e os **Avulsos**. Fora da visão geral, "← Visão
+  geral" no topo e, quando outro projeto espera você, o "+N" âmbar que leva de volta a ela. O chip de
+  uma pasta que sumiu fica em vermelho ("não encontrada") e o clique abre **Localizar pasta…**; o de
+  uma que existe abre os arquivos dela. A lista vazia de um projeto diz "Comece um chat aqui, ou peça
+  ao Mestre com #chave", com **Pedir ao Mestre** (abre o Mestre com `#chave ` na caixa). Em cima, a
+  busca (Ctrl+K; acha também no texto das mensagens e nas conversas arquivadas) e o **+ Novo chat**,
+  que faz o mesmo que o Ctrl+N. Um ponto âmbar em Conversas avisa, de dentro de Arquivos, que algo
+  espera você. Tudo na lista começa a 16 px da borda da peça (o texto dos cabeçalhos de seção, o
+  quadrado do projeto, a lupa da busca e o primeiro ícone do rodapé); a seta das seções fica à
+  esquerda dessa guia. A busca diz só "Buscar"; o que ela acha e o Ctrl+K ficam na dica do campo
+  (que não aparece enquanto se digita nele). Na busca, quando o termo não está no título, a prévia do
+  cartão mostra o trecho que casou ("Você: valide o **frete** grátis…", com o termo em forte; de um
+  ajudante, "#2: …"), e as arquivadas que casam aparecem no fim, numa seção **Arquivadas** (com o
+  número) e com o cartão tênue. Fora da busca, elas continuam só em Arquivadas. Estreitando a lista
+  (ou com o zoom alto, porque a conta é a mesma), ela abre mão do que é menos importante antes de
+  cortar o título: abaixo de uns 290 px (a 100%), os ajudantes perdem o selo de pedido ou erro (o
+  ponto já diz) e, no hover, fica só o **…**; abaixo de 275, as abas ficam só com o ícone e a prévia
+  fica com o rótulo curto do motivo: o do próprio chat sai (o ponto diz qual é), e o de um ajudante
+  fica só com o número e o "(+N)" ("#5 (+1) · Vitral fechou"); abaixo de 260, a busca de arquivos diz
+  só "Buscar" e **Retomar tudo** e **Arquivar estas** ficam só com o ícone. Os horários continuam à
+  vista. A barra de rolagem é fina, colada na borda da peça, não cobre os cartões e aparece e some
+  sem fade, 1,2 s depois de rolar.
+- Seções, cada uma com o próprio cabeçalho: **Esperando você** (o número é o mesmo do sino:
+  pedidos, erros e paradas; respostas novas não contam, viram ponto; na visão geral, ela começa
+  pelas linhas do Mestre, uma por cartão aberto, "Divisão 3 espera Começar (2 partes)", "Criar o
+  projeto Receitas?", "Quer lembrar: …", e uma por par de chats parado no freio de ciclo, cada uma
+  com **Ver**, que abre o Mestre rolado até o cartão; pedidos, paradas e erros vêm antes das
+  respostas novas, e com duas paradas ou mais aparece **Retomar tudo**), **Rodando agora** (o Mestre
+  também, quando roda), **Fixadas** e as faixas de data (**Recentes**, até 7 dias, e **Mais
+  antigas**; o tempo de cada conversa já está no cartão). Em Esperando você os cartões são neutros
+  como os outros (selecionado em azul); o âmbar fica no ponto do quadrado, no ponto da prévia e no
+  número da seção. Fixadas e as faixas recolhem no clique do cabeçalho (a seta fica à esquerda do
+  nome, e o hover clareia os dois); Mais antigas começa recolhida e tem **Arquivar estas**, que
+  arquiva na hora e mostra "3 conversas arquivadas" com **Desfazer** (que devolve só as que ela
+  arquivou). O **Arquivar** do menu do chat também mostra "Conversa arquivada" com Desfazer (um chat
+  de projeto que nunca rodou sai do Vitral: "Chat vazio apagado"); desarquivar não avisa.
+- **Cartão de conversa**: o quadrado do projeto (ícone e cor dele; o balão no avulso) com o ponto
+  do estado da família no canto (vermelho erro, âmbar pedido ou parada, azul resposta nova, aro azul
+  rodando; a dica diz "loja · chat 12"), o título, a prévia com o motivo no ponto do sinal e no
+  rótulo ("Permissão · Bash · npm test", "Plano para aprovar", "Parada · Vitral fechou", "Erro · …";
+  quando é um ajudante, "#5 parada · Vitral fechou"; a mesma frase do sino; parado, o estado do
+  chat: "Pronto para revisar" com o olho âmbar, "Para juntar: +12 −3", "Juntado", "A cópia não foi
+  preparada", "Na fila para preparar a cópia", "2 ajudantes rodando"; a resposta nova só com o
+  texto, porque o ponto azul e o título em forte já dizem; rodando, "#3 · Edit · README.md"; as
+  prévias começam com maiúscula, "Pensando…", "Na fila, esperando vaga") e, à direita, o horário (ou
+  há quanto tempo roda), o número do painel e o ponto de não lido (só quando o ponto do quadrado não
+  é já o azul da resposta nova). O chat que o Mestre criou (ou com um pedido dele aberto) leva a
+  órbita pequena (a dica diz a parte e a divisão). No hover, o horário dá lugar a duas ações:
+  **Abrir ao lado** (ou Ver o pedido do ajudante, ou Retomar) e **…**; fora do hover, o título usa o
+  lugar delas, e só o cartão sob o ponteiro (ou realçado pelo teclado) corta o título para
+  mostrá-las. O clique direito ou o **…** abrem o menu do chat: abrir ao lado, renomear, fixar,
+  **Mover para projeto…** (os projetos e Avulsos), arquivar e abrir a pasta no VS Code ou no
+  terminal. Clique duplo também renomeia; Ctrl+clique ou o clique do meio abrem ao lado.
+- **Ajudantes** embaixo do chat, numa árvore: um traço fino sai do centro do quadrado do pai e
+  passa por um ponto de 8 por ajudante, na cor do estado (o sinal quando roda, pede, falhou ou parou
+  e pede Retomar; o aro de quem roda fica solto, com o traço parando antes dele); "#2 título" fica na
+  coluna do título do pai, e a palavra do estado vai para a dica do ponto ("Em revisão" e a
+  explicação). À direita só o que pede ação (o selo "permissão", "plano" ou "erro"), a duração de
+  quem roda e o número do painel. Fora do chat aberto, os aprovados e cancelados ficam em **Mais N
+  concluídas**, no fim do ramo (o traço termina na seta).
 - **Teclado na lista**: ↓ na busca entra na lista; ↑/↓, Home e End andam pelos cartões; → mostra
-  as concluídas da família (e os trabalhadores, nas faixas de data), ← esconde ou volta ao
-  coordenador; Enter abre (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado, F2
-  renomeia e Esc volta à busca. Na busca, Esc limpa e, vazia, volta à caixa do painel.
+  as concluídas da família (e os ajudantes, nas faixas de data), ← esconde ou volta ao chat pai;
+  Enter abre (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado, F2 renomeia e Esc
+  volta à busca. Na busca, Esc limpa e, vazia, volta à caixa do painel.
 - **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone com o número; liga e desliga a
-  vista das arquivadas, que mostra também as conversas dos projetos arquivados; a busca acha as
-  duas) e, com algo rodando, quantos agentes rodam em toda a pasta ("2 rodando · 1
-  na fila"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos o projeto tem.
-- Aba **Arquivos**: os arquivos do projeto numa árvore (pastas recolhidas, menos o caminho até o
-  arquivo aberto); com busca, uma lista plana sem limite, com o trecho achado em destaque e a
-  pasta cortada no meio. Clicar abre no painel da direita: a aba com o nome e o ícone do tipo, e
-  uma barra com a pasta, o número de linhas e a linguagem, **Mencionar**, **VS Code** e o **…**
-  (copiar o conteúdo ou o caminho, mostrar na pasta). O markdown sai renderizado; o código, com
-  cor e número de linha, rola para os lados. Arquivo grande (mais de 400 KB), binário, vazio ou
-  que sumiu dá um aviso no lugar, com **Abrir no VS Code** ou **Fechar**. Na lista, no hover,
-  **@** menciona o arquivo na conversa e **…** (ou o clique direito) abre no VS Code, copia o
-  caminho ou mostra na pasta. A lista é relida a cada
-  20 s em segundo plano, sem travar a tela.
-- Menu **…** do projeto, o mesmo no clique direito num atalho do trilho (com o quadrado, o nome
-  e o caminho em cima): rodar o projeto num terminal, abrir no VS Code, no terminal e no
-  gerenciador, Ícone e cor… (e Usar automático, quando há escolha gravada) e Configurar
-  projeto… (com o quadrado e o caminho do projeto em cima: ícone e cor, preparação de cada cópia,
-  arquivos que vão junto e comando de rodar, os comandos em fonte mono; sem git, um aviso com
-  **Ativar git…**; o Salvar só acende quando algo mudou, e o Enter num campo salva) e, no fim,
-  separados, **Arquivar projeto** (**Desarquivar projeto** num arquivado) e **Mover para a
-  lixeira…**, em vermelho (ver "Arquivar e apagar projetos").
-- **Rotinas:** um pedido que o Vitral manda sozinho num horário e dias da semana, abrindo um
-  coordenador novo no projeto (com o Vitral aberto; se estava fechado, roda ao abrir). O diálogo
-  abre na lista (o quadrado do projeto, o pedido, "loja · Seg a Sex às 08:00 · próxima: amanhã" e
-  a chave de pausar; no hover, **Rodar agora**, **Editar** e **Apagar**, que tem Desfazer). A de
-  um projeto arquivado diz "projeto arquivado, não roda", e o Rodar agora fica apagado. **Nova
-  rotina** (ou o clique numa rotina) troca para o formulário: o pedido em várias linhas (Enter
-  salva, Shift+Enter quebra), a hora num campo de hora e minuto (↑/↓ em cada parte), os dias em
-  chips com **Dias úteis** e **Todo dia**, e o projeto num menu. O que falta aparece no campo, e o
-  **Criar rotina** diz na dica o que falta; a seta volta à lista. Sem rotinas, **Usar exemplo**
-  preenche um.
-- **Configurações** (Ctrl+,) em seis grupos: Conversas, Trabalhadores, Revisão, Cópias das
-  tarefas, Interface e Atualizações, gravando na hora. Em Interface, **Animações** (Seguir o GNOME ou
-  Desligadas) vale para o app todo, em todas as pastas, e muda na hora; seguindo um GNOME sem
-  animações, a linha diz isso. **Atualizações** também vale para o app todo: o modo
-  (**Automáticas**, o padrão, **Só avisar** ou **Desligadas**), a **Versão** ("0.2.0 · procurada
-  hoje às 14:02", "Procurando…", "Baixando 0.3.0 · 12 de 21 MB", "é a mais nova", "A 0.3.0 está
-  pronta; vale quando reiniciar") com o botão do momento (**Procurar agora**, **Instalar**,
-  **Novidades** e **Reiniciar**), o erro numa linha (âmbar sem conexão, com a hora da próxima
-  tentativa; vermelho quando a assinatura ou o arquivo não conferem) e, na versão instalada,
-  **Voltar para a 0.2.0…**, que pergunta antes (o Enter só fecha), recusa a versão de agora e
-  reinicia na anterior; se a anterior não lê o formato das conversas, a linha fica apagada e diz
-  isso. No compilado no PC: "Compilado no PC · sem atualização automática", com **Instalar a 0.3.0
-  como app**. Os menus mostram o ícone e a cor do modo, ou a marca do Claude e uma
-  linha sobre cada modelo; os prazos são escolhas lado a lado; o (i) explica o resto. Em
-  Conversas, **Arquivar conversas paradas** (nunca, 3, 7 ou 30 dias) arquiva só coordenadores já
-  lidos e não fixados, sem nada rodando, pedindo ou parado e com as tarefas encerradas. Com o
-  diálogo estreito (zoom alto ou janela pequena), os controles descem para baixo do texto.
+  vista das arquivadas, que mostra também os chats dos projetos arquivados; a busca acha as duas) e,
+  com algo rodando, quantos agentes rodam no Vitral inteiro ("2 rodando · 1 na fila"; o clique
+  volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.
+- Aba **Arquivos**: os arquivos de uma pasta numa árvore (pastas recolhidas, menos o caminho até o
+  arquivo aberto); com mais de uma pasta (ou com o chat aberto numa cópia), um seletor em cima ("site
+  | site-docs | Cópia deste chat"); com uma só, o caminho dela e o ↻ para reler. Com busca, uma lista
+  plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel
+  da direita: a aba com o nome e o ícone do tipo, e uma barra com a pasta, o número de linhas e a
+  linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, mostrar na pasta).
+  O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. Arquivo grande
+  (mais de 400 KB), binário, vazio ou que sumiu dá um aviso no lugar, com **Abrir no VS Code** ou
+  **Fechar**. Na lista, no hover, **@** menciona o arquivo na conversa (fora do Mestre) e **…** (ou o
+  clique direito) abre no VS Code, copia o caminho ou mostra na pasta. A lista é relida a cada 20 s
+  em segundo plano, sem travar a tela.
+- Menu do projeto (clique direito no trilho, **…** do cabeçalho do projeto, quadrado da aba): com o
+  quadrado, o nome e o caminho em cima, **Editar projeto…**, **Novo chat neste projeto**; por pasta
+  (com o nome dela quando há várias), **Rodar** (ou **Definir como rodar…**), VS Code, terminal e
+  gerenciador, ou **Localizar pasta…** na que sumiu; e, no fim, **Arquivar projeto…** (**Desarquivar
+  projeto** num arquivado) e **Apagar projeto…**, em vermelho. **Arquivar** age na hora, com
+  **Desfazer** ("Projeto site arquivado · 3 conversas em Arquivadas"): o projeto sai do trilho, do
+  Ctrl+1…9, do Novo chat e das rotinas (que não rodam enquanto ele está arquivado; o dia passa
+  marcado, então desarquivar à tarde não dispara a das 8h), e os chats dele vão para **Arquivadas**
+  sem perder nada. Com chats trabalhando, pergunta antes ("Parar e arquivar loja?", o Enter fica com
+  **Continuar trabalhando**); com pedidos do Mestre abertos nos chats dele, ou com uma divisão
+  esperando o Começar com parte nele, também pergunta: os pedidos são cancelados (a conversa e a
+  cópia ficam; o Mestre recebe uma nota) e a parte sai da divisão; o Desfazer só desarquiva. Com um
+  chat sendo conferido, juntado ou preparado, não arquiva e diz qual esperar. Ele volta pelo menu do
+  Vitral (**Projetos arquivados**, com **Desarquivar**), pelo **Projetos arquivados…** de Avulsos,
+  por **Desarquivar o projeto loja** no menu de um chat dele em Arquivadas ou por um chat novo com
+  `--nova`. **Apagar projeto…** pergunta antes, em vermelho, o que sai: o projeto e os chats dele saem
+  do Vitral de vez (com as mensagens, as filas, as rotinas e as notas), as cópias vão para a Lixeira
+  do GNOME (`gio trash`, nunca `rm`; com os branches no repositório), e as pastas ligadas ficam como
+  estão; a pasta própria vai para a Lixeira só quando o projeto não tem pasta ligada. Se a lixeira
+  recusa, nada sai ("Nada foi apagado: …"); com um chat do projeto trabalhando, não deixa. O aviso do
+  fim diz o que saiu, com **Abrir a Lixeira** quando algo foi para lá.
+- **Rotinas:** um pedido que o Vitral manda sozinho num horário e dias da semana, ao Mestre ou a um
+  chat novo num projeto (com o Vitral aberto; se estava fechado, roda ao abrir). O diálogo abre na
+  lista (o quadrado do projeto, ou a órbita do Mestre, o pedido, "loja · Seg a Sex às 08:00 ·
+  próxima: amanhã" e a chave de pausar; no hover, **Rodar agora**, **Editar** e **Apagar**, que tem
+  Desfazer). A de um projeto arquivado diz "projeto arquivado, não roda", e o Rodar agora fica
+  apagado. **Nova rotina** (ou o clique numa rotina) troca para o formulário: **Para quem** (o
+  **Mestre** primeiro e os projetos com o quadrado e a descrição), **O que pedir** em várias linhas
+  (Enter salva, Shift+Enter quebra), a hora num campo de hora e minuto (↑/↓ em cada parte) e os dias
+  em chips com **Dias úteis** e **Todo dia**. O que falta aparece no campo, e o **Criar rotina** diz
+  na dica o que falta; a seta volta à lista. Sem rotinas, **Usar exemplo** preenche uma.
+- **Configurações** (Ctrl+,), gravando na hora, valem para todos os projetos e chats (o caminho do
+  `config.json` fica na dica do subtítulo), em sete grupos: **Mestre** (o modelo, **Mostrar a
+  divisão antes de começar**, **Juntar sozinho quando a verificação e o revisor aprovarem** e
+  **Resumo ao voltar depois de**), **Chats** (o modo de permissão padrão, o modelo dos chats e
+  **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os chats já lidos e não
+  fixados, sem fila, sem pedido aberto e sem nada para juntar), **Trabalho** (chats trabalhando ao
+  mesmo tempo, ajudantes por chat, rodadas de ajuste antes de chamar você e os servidores MCP do seu
+  Claude Code), **Revisão** (o revisor independente e o modelo dele), **Cópias dos chats**,
+  **Interface** e **Atualizações**. Em Interface, **Animações** (Seguir o GNOME ou Desligadas) vale
+  para o app todo e muda na hora; seguindo um GNOME sem animações, a linha diz isso.
+  **Atualizações** também vale para o app todo: o modo (**Automáticas**, o padrão, **Só avisar** ou
+  **Desligadas**), a **Versão** ("0.3.0 · procurada hoje às 14:02", "Procurando…", "Baixando 0.3.1 ·
+  12 de 21 MB", "é a mais nova", "A 0.3.1 está pronta; vale quando reiniciar") com o botão do
+  momento (**Procurar agora**, **Instalar**, **Novidades** e **Reiniciar**), o erro numa linha (âmbar
+  sem conexão, com a hora da próxima tentativa; vermelho quando a assinatura ou o arquivo não
+  conferem) e, na versão instalada, **Voltar para a 0.2.0…**, que pergunta antes (o Enter só fecha),
+  recusa a versão de agora e reinicia na anterior; se a anterior não lê o formato das conversas (como
+  a 0.2.0 depois da migração), a linha fica apagada e diz isso. No compilado no PC: "Compilado no PC ·
+  sem atualização automática", com **Instalar a 0.3.1 como app**. Os menus mostram o ícone e a cor do
+  modo, ou a marca do Claude e uma linha sobre cada modelo; os prazos são escolhas lado a lado; o (i)
+  explica o resto. Com o diálogo estreito (zoom alto ou janela pequena), os controles descem para
+  baixo do texto.
 - **Diálogos** opacos, com cantos de 20, o título grande e o × com a dica; o rodapé fica sempre à
   vista e só o meio rola. **Mencionar arquivo** e **Conversa como contexto** são listas com busca
   e teclado (os arquivos são lidos em segundo plano, com o ícone do tipo e a pasta embaixo; as
   conversas, por projeto, com quando falaram e quantas mensagens têm). **Renomear** já abre com o
   título selecionado e não salva vazio.
-- Notificação do sistema, só com a janela em segundo plano, quando um coordenador termina tudo,
-  quando uma conversa pede permissão ou quando um trabalhador cai e a tarefa volta ao coordenador:
-  com o ícone do Vitral, "projeto · conversa" no título e uma linha só ("Precisa da sua permissão:
-  Bash, $ cargo test", "Terminou: 3 tarefas aprovadas", "Parou com erro: ..."). Clicar nela abre a
-  conversa no painel ativo e traz a janela para a frente (ou o GNOME avisa que o Vitral está
-  pronto). Uma notificação nova da mesma conversa substitui a anterior em vez de empilhar. A
-  permissão se responde dentro do app, nunca na notificação.
+- Notificação do sistema, só com a janela em segundo plano, quando um chat termina, quando um chat
+  pede permissão, quando o Mestre propõe uma divisão ou quando um chat cai e o pedido volta a quem
+  pediu: com o ícone do Vitral, "projeto · chat" no título e uma linha só ("Precisa da sua permissão:
+  Bash, $ cargo test", "Vou dividir assim: …", "Terminou: …", "Parou com erro: ..."). Clicar nela abre
+  a conversa no painel ativo e traz a janela para a frente (ou o GNOME avisa que o Vitral está
+  pronto). Uma notificação nova do mesmo chat substitui a anterior em vez de empilhar. A permissão se
+  responde dentro do app, nunca na notificação.
 
-Atalhos: `Ctrl+N` nova conversa, `Ctrl+K` buscar (`↓` entra na lista; nela, `Enter` abre,
-`Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita, `Ctrl+B` lista e
-trilho, `Alt+1…4` painel N, `Ctrl+1…9` filtra pelo projeto N do trilho, `F10` menu do Vitral,
-`Ctrl+,` configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha o painel, `Ctrl+PgUp/PgDn`
-painel vizinho, `Ctrl+Shift+PgUp/PgDn` muda o painel de lugar (na aba: `Enter` vai para a caixa,
-`Delete` fecha, `Shift+F10` abre o menu), `Ctrl+End` vai ao fim da conversa, `F7`/`Shift+F7`
-próxima e anterior mudança na revisão (nela, `Ctrl+PgUp/PgDn` vão ao arquivo anterior e ao
-seguinte, e `C` ou `Enter` comentam as linhas escolhidas), `Shift+Tab` troca o modo, `Esc` para o
-turno (ou fecha a gaveta), `Enter` envia, `Shift+Enter` quebra a linha, `Ctrl+roda`, `Ctrl+=` e
-`Ctrl+-` zoom, `Ctrl+0` zoom normal. `Ctrl+Shift+M` (modelo) e `Ctrl+E` (esforço) abrem e fecham
-os popovers da caixa do painel ativo (no do esforço, ←/→, Home e End mudam o nível, Espaço liga o
-Ultrathink, U liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fecha sem
-parar a conversa); no Revisar, `Ctrl+Enter` aciona o botão azul do rodapé; `Ctrl+M` fica reservado
-para o Mestre.
+Atalhos: `Ctrl+M` o Mestre, `Ctrl+N` novo chat (na vista do projeto, nele; na visão geral, a
+paleta), `Ctrl+Shift+N` novo projeto, `Ctrl+K` buscar (`↓` entra na lista; nela, `Enter` abre,
+`Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita, `Ctrl+B` lista e trilho,
+`Alt+1…4` painel N, `Ctrl+1…9` abre o projeto N do trilho, `F10` menu do Vitral, `Ctrl+,`
+configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha o painel, `Ctrl+PgUp/PgDn` painel vizinho,
+`Ctrl+Shift+PgUp/PgDn` muda o painel de lugar (na aba: `Enter` vai para a caixa, `Delete` fecha,
+`Shift+F10` abre o menu), `Ctrl+End` vai ao fim da conversa, `F7`/`Shift+F7` próxima e anterior
+mudança na revisão (nela, `Ctrl+PgUp/PgDn` vão ao arquivo anterior e ao seguinte, e `C` ou `Enter`
+comentam as linhas escolhidas), `Shift+Tab` troca o modo, `Esc` para o turno (ou fecha a gaveta),
+`Enter` envia, `Shift+Enter` quebra a linha, `Ctrl+roda`, `Ctrl+=` e `Ctrl+-` zoom, `Ctrl+0` zoom
+normal. `Ctrl+Shift+M` (modelo) e `Ctrl+E` (esforço) abrem e fecham os popovers da caixa do painel
+ativo (no do esforço, ←/→, Home e End mudam o nível, Espaço liga o Ultrathink, U liga o Ultracode e
+Enter fecha (as teclas estão no rodapé do popover); Esc fecha sem parar a conversa); no Revisar,
+`Ctrl+Enter` aciona o botão azul do rodapé.
 
 ## Compilar e rodar
 
@@ -734,10 +946,12 @@ https://github.com/VictorMenegate/vitral/releases/latest/download/instalar.sh | 
 atualiza sozinho; ver **Versões e releases**).
 
 ```sh
-./target/release/vitral ~/Projetos      # abre nessa pasta
-./target/release/vitral ~/Projetos --nova meu-projeto "o que fazer"
-cargo test                              # testes (git, motor, revisor, processos, atualização, interface, --instalar)
-ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral ~/pasta   # teste visual isolado
+vitral                                  # abre o app (no último chat, ou no Mestre)
+vitral ~/Projetos/loja                  # o projeto dessa pasta, ou o Novo projeto com ela ligada
+vitral --nova loja "o que fazer"        # um chat novo no projeto loja, já com a mensagem
+vitral --nova mestre "como estão os projetos?"
+cargo test                              # testes (git, motor, revisor, processos, dados e migração, importação, atualização, interface, --instalar)
+ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral [pasta]   # teste visual isolado
 ./target/debug/vitral --vitrine         # todos os componentes da linguagem visual, sem pasta e sem motor
 ./target/debug/vitral --versao [--json] # a versão (e canal, commit, formato dos dados), sem janela
 ferramentas/instalar-dev.sh             # só desenvolvimento: compila e instala no layout do app como <próxima>-dev.<commit>
@@ -747,18 +961,54 @@ O `rust-toolchain.toml` fixa o Rust em 1.99.1, o mesmo do GitHub Actions. Com o 
 compilação na pasta instala esse toolchain (perfil mínimo) se ele ainda não estiver lá; enquanto o
 `stable` do PC for o mesmo 1.99.1, `RUSTUP_TOOLCHAIN=stable` evita o download.
 
-Sem a pasta, o Vitral abre nas boas-vindas ("Boas-vindas ao Vitral"): **Escolher pasta…**, que fica
-carregando enquanto o seletor do sistema está aberto, e até 5 recentes, com o caminho cortado no
-meio (inteiro na dica).
-
 O `vitral --instalar` põe o logo completo no tamanho escalável e de 64 a 256 px, e o pequeno
 (`vitral-pequeno.svg`, feito para tamanhos pequenos) em 16, 24 e 32 px e no PNG de 48, o que as
 notificações e o alt+tab usam. Os ícones e o `.desktop` vão dentro do binário (`include_bytes!`).
 
-Bancada: `FUNDO=branco` (ou `FUNDO=<imagem>`) troca o papel de parede e `ZOOM=1.5` abre com esse
-zoom. `python3 -I ferramentas/demo_vitral.py <pasta> [--16]` cria a pasta de demonstração (4
+`DADOS_GLOBAIS` (em `src/dados.rs`) é a chave dos dados globais, ligada desde a 0.3.0. Numa mudança
+grande dos dados, desligada, o Vitral só abre na bancada (`DENTRO_DA_BANCADA=1`, que isola os XDG),
+o `vitral --instalar` e o `ferramentas/instalar-dev.sh` recusam, e um release estável não passa nos
+testes: um build do meio da mudança nunca grava nos dados de verdade. Nenhum teste toca
+`~/.local/share` nem `~/.config` (`Dados::padrao()` dá panic nos testes; eles usam `Dados::em`).
+Para conferir a migração com dados de verdade sem tocar neles, copie para uma pasta de mentira só os
+`.vitral/` das pastas antigas e o `recentes.json` (apontando para as cópias) e rode
+`VITRAL_COPIA_DA_MIGRACAO=<casa> target/debug/deps/vitral-<hash> --ignored --nocapture --exact
+migracao::testes::migrar_uma_copia` com `HOME` e os `XDG_*` na pasta de mentira (o binário dos
+testes sai do `cargo test --no-run`): ele migra para `<casa>/.local/share/vitral`, abre como o
+motor abriria e escreve o que virou o quê; com `VITRAL_COPIA_PROC_REAL=1`, confere que o Vitral
+antigo aberto adia sem gravar nada.
+
+Bancada: o comando é o Vitral com uma pasta opcional, que ele importa (no primeiro uso, uma pasta do
+Vitral antigo) ou liga (depois, abre o Novo projeto com ela). `FUNDO=branco` (ou `FUNDO=<imagem>`)
+troca o papel de parede e `ZOOM=1.5` abre com esse zoom. `DADOS_NOVOS=1` abre como primeiro uso
+(afasta para `$B/afastados/<hora>` os dados, a configuração e o `interface.json` da bancada; o `app/`
+que a atualização da bancada instalou fica) e `RAIZ_SINTETICA=1` é a migração de ponta a ponta: gera
+com o `demo_vitral.py` uma pasta do Vitral antigo dentro da bancada (com os `cwd` dentro dela e
+sessões novas, nunca uma cópia de uma pasta de verdade), põe ela no `recentes.json` da bancada, abre
+como primeiro uso e confere no fim que os hashes do `.vitral` dela não mudaram
+(`hashes-antes.txt` e `hashes-depois.txt` na pasta dos prints, e "raiz sintética intacta" no
+stderr). `CLAUDE_CONFIG_DIR=<pasta de mentira>` dá à bancada um Claude Code de mentira para
+importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdade nunca entra numa
+bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
+`ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
+na pasta do chat (o ajudante, em `notas-do-t<N>.md`), antes das ferramentas; leva 10 s com
+`[demora]`; executa os `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ") como
+chamadas de verdade ao MCP do Vitral; faz o revisor (com `--json-schema` devolve "aprovar", ou
+"ajustar" com `[revisor-ajustar]`); entrega sozinho o pedido do Mestre num chat de projeto
+(`[nao-entregar]` desliga); aprova sozinho o relatório de um ajudante (`[nao-aprovar]` desliga;
+`[ajuste-uma-vez]` pede ajuste na rodada 1); responde a "Pergunta do ajudante #N"; no
+`--fork-session`, copia a sessão original para a nova ao lado dela (só nesse `CLAUDE_CONFIG_DIR`); e
+grava os argumentos, o ambiente e as chamadas em `$XDG_STATE_HOME/claude-falso.log`. No roteiro,
+`roda <comando>` (saída em `roda.log`, sem comentário na linha; os XDG são os da bancada) e `reabre
+[comando]` (derruba o Vitral com SIGKILL, roda o comando com ele fechado e abre de novo).
+`ferramentas/conferir-snapshot.sh` é a conferência manual do prompt por arquivo (chama o Claude: dois
+turnos curtos). Duas bancadas ao mesmo tempo precisam de `BANCADA=N` diferentes e de pastas diferentes
+(`XDG_CACHE_HOME=~/.cache/vitral-trabalho/bancada-x BANCADA=5`; a bancada fica em
+`$XDG_CACHE_HOME/vitral-bancada`); com o número ou a pasta já em uso, ela recusa começar. `python3 -I
+ferramentas/demo_vitral.py <pasta> [--16]` cria uma pasta do Vitral antigo de demonstração (4
 projetos, 11 conversas, 8 tarefas em todos os estados, rotinas; com `--16`, mais 12 projetos), sem
-rodar nenhum processo; gere de novo antes de cada rodada. `python3 -I ferramentas/medir_print.py
+rodar nenhum processo, que a bancada migra no primeiro uso; gere de novo e rode com `DADOS_NOVOS=1`
+antes de cada rodada. `python3 -I ferramentas/medir_print.py
 <print.png> X Y` (ou `--pontos <arquivo>`) mede o contraste de um texto no print. Os roteiros da
 linguagem visual ficam em `ferramentas/roteiros/` (`4c-antes.txt` tira todas as telas;
 `4c-zoom-larguras.txt` vai de 100% a 150% com a lista arrastada, os popovers do Claude e do sino, a
@@ -781,7 +1031,7 @@ na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reinicia
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. `VITRAL_SEM_ANIMACAO=1` abre como se as
 animações do GNOME estivessem desligadas. A vitrine (`--vitrine`) ganhou as seções **Movimento**
-(um botão para cada efeito) e **Espaçamento** (a escala e as guias da lista, da Equipe e da
+(um botão para cada efeito) e **Espaçamento** (a escala e as guias da lista, da direita e da
 conversa).
 
 Precisa do `claude` (Claude Code) no PATH ou em `~/.local/bin`, do `git`, e no Fedora de
@@ -823,8 +1073,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
   chaves. Os testes usam uma chave de teste (`src/atualizacao/teste/`), nunca a principal.
 - **De onde veio**: `VITRAL_CANAL` e `VITRAL_COMMIT` são lidos na compilação (`option_env!`); sem
   eles o binário se diz "pc" (compilado no PC), e só o canal estável se atualiza sozinho.
-  `FORMATO_DADOS` (em `modelo.rs`) é o formato de `.vitral/`, para a volta de versão não abrir dados
-  que não entende.
+  `FORMATO_DADOS` (em `modelo.rs`) é o formato dos dados (1, o `.vitral/` de cada pasta do Vitral
+  antigo; 2, os dados globais do Mestre), para a volta de versão não abrir dados que não entende.
 - **Instalar de uma vez**: `pacote/linux/instalar.sh` vai como arquivo do Release (`curl -fsSL
   …/releases/latest/download/instalar.sh | sh`), com o tag do release gravado nele pelo
   `release.yml`: o de um pré-lançamento, que o "latest" não mostra, instala o pré-lançamento
@@ -889,10 +1139,15 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
   fechar normalmente (`on_app_quit`). A primeira abertura depois de uma atualização conta
   "Atualizado". Tudo com a trava das instalações (outro Vitral instalando: a abertura não conta) e
   a gravação atômica (temporário + fsync + rename). A volta à mão (`saude::voltar`) faz o mesmo,
-  com `automatica: false`, e quem chama reinicia. A regra do formato: `modelo::formato_no_disco`
-  lê `.vitral/formato` (sem ele, 1; a migração que mudar o formato guarda antes a cópia em
-  `.vitral/copias/formato-<n>/` e grava o número novo), e a volta só vai para uma versão cujo
-  `formato_dados` (do `estado.json`) seja maior ou igual ao maior das pastas recentes.
+  com `automatica: false`, e quem chama reinicia. A regra do formato: `dados::formato_em` lê o
+  `formato` da pasta de dados (`~/.local/share/vitral/formato`; sem ele, 2 se já há `estado.json`
+  e 1 se não há), que a migração grava logo depois do `estado.json` e cada abertura confere
+  (`Dados::marcar_formato`, que nunca abaixa o número); a volta só vai para uma versão cujo
+  `formato_dados` (do `estado.json` do app) seja maior ou igual a ele. A cópia de antes é o próprio
+  `.vitral/` das pastas antigas, que a migração só lê. A saúde roda depois da trava (a abertura que só
+  entrega o pedido ao Vitral aberto não conta) e antes da migração (a que cai migrando conta).
+  `app/` mora dentro da pasta de dados do Mestre (`dados::PASTA_DO_APP`), e nada dos dados mexe
+  nela: o Começar do zero afasta tudo menos `app/`, e o `estado.json` do app não é o dos dados.
 - **Desenvolvimento**: o `ferramentas/instalar-dev.sh` compila este checkout em release (pelo
   `compilar.sh`) e instala no mesmo layout como `<próxima>-dev.<commit>` (`VITRAL_VERSAO` na
   compilação; `.modificado` no fim com mudança sem commit). Pelo semver isso é menor que a
@@ -902,20 +1157,26 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 
 | Arquivo | O que faz |
 | --- | --- |
-| `src/motor.rs` | Chats, tarefas, turnos, fila, contas, rotinas, retomadas e novas tentativas, Ultracode e agentes em segundo plano, ciclo coordenador → trabalhador → revisão |
+| `src/motor.rs` | Chats, projetos (a API deles: criar, mudar, arquivar, apagar, reordenar, localizar pasta, mover chat), os pedidos de cada chat (as tarefas), turnos, fila, vagas e trabalho pesado, contas, rotinas, retomadas e novas tentativas, Ultracode e agentes em segundo plano, a cópia na primeira mensagem, a junção, os ajudantes e a revisão |
+| `src/motor/mestre.rs` | O Mestre no motor: o turno dele (prompt, catálogo, referências, fila com o usuário primeiro, passagem de sessão), as ferramentas que só ele tem, os cartões (divisão, sugestão de projeto, memória), a entrega dos chats de projeto, a junção sozinha das entregas verdes, o freio de ciclo e o resumo ao voltar |
+| `src/motor/importacao.rs` | A importação no motor: um chat por conversa do Claude Code, a da primeira abertura, o menu e a marca de quando ela continua no Vitral |
+| `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior`, as notas e a memória, a `normalizar`, a pasta própria dos projetos (criada com git, atômica), a chave do nome de um projeto, o `formato` dos dados e a `DADOS_GLOBAIS` |
+| `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
+| `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova`) e a reexecução da tela de recuperação |
+| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta, o histórico como itens da conversa, o projeto de destino e o registro do que já veio |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code e conferência da sessão |
-| `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral |
-| `src/revisor.rs` | Revisor independente e o hook que roda os testes quando o trabalhador para |
+| `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral, as rotas por papel e a tabela de quem pode cada ferramenta (com a regra do dono) |
+| `src/revisor.rs` | Revisor independente e o hook que roda os testes quando o chat para |
 | `src/processos.rs` | Escopos do systemd (ou grupos de processos) para parar cada processo por inteiro |
 | `src/contas.rs` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano que o Claude Code guarda em `.claude.json` |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
-| `src/git.rs` | Cópia isolada, diff, fotos/volta, junção (uma por vez por projeto), verificação, limpeza das cópias |
-| `src/prompts.rs` | Instruções do coordenador e dos trabalhadores |
-| `src/modelo.rs` | Tipos e gravação em `.vitral/` (e o `FORMATO_DADOS`) |
+| `src/git.rs` | Cópia isolada (a do chat de projeto, refeita no mesmo caminho, juntada sem ser apagada e em dia com a origem), diff, fotos/volta, o commit de cada vez na pasta própria, junção (uma por vez por repositório, e a cortada conferida ao abrir), o ponto (checkpoint) antes de um ajudante nascer ou ser juntado, religar as cópias de uma origem que mudou de lugar, verificação, limpeza das cópias |
+| `src/prompts.rs` | Instruções do Mestre, do chat de projeto, do ajudante e o pedido do Mestre a um chat |
+| `src/modelo.rs` | Os tipos do que vai para o disco (projetos, chats, tarefas, cartões, ocorrências e a configuração global, com os nomes antigos como alias) e o `FORMATO_DADOS` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | Trilho, lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, Equipe, revisão, gavetas e diálogos; `lateral.rs` (a lista), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a Equipe) e `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e aprovar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `boas_vindas.rs`, `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e mandar para a lixeira: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar, trocar de pasta ou reiniciar), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
-| `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual de cada tarefa) e a vitrine (`--vitrine`) |
+| `src/ui/` | Trilho (com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
+| `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`) e o `linux/instalar.sh` |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml` e `dependabot.yml` |
@@ -938,7 +1199,7 @@ decide o que sai, e o texto da busca é trocado em `lateral()` (`dica_da_busca`)
 decide o `Aperto` fica guardada a 100% (o estado `largura-da-lista`), e assim a troca de zoom não
 dá um quadro com a conta da escala anterior. A busca da lista é o `componentes::campo_de_busca`
 sem o atalho (a lupa a 8 da borda dele, que na peça de 8 cai na guia de 16), com a dica por cima
-(`campo_da_lista`). Os trabalhadores vão no nível 1 do `CartaoDeLista`: o `.sinal()` e, sem sinal,
+(`campo_da_lista`). Os ajudantes vão no nível 1 do `CartaoDeLista`: o `.sinal()` e, sem sinal,
 um ponto de 8 na cor do estado como símbolo, com a palavra do estado em `.dica_do_ponto()`; o traço
 da árvore conta com os 2 em cima de todo cartão da lista (`esp::E2`) e para a 2 do aro de rodando.
 A barra de rolagem fina é `componentes::barra_de_rolagem` (sem fade: o `SCROLLBAR_*` do vendor
@@ -956,8 +1217,8 @@ e 11,25). O teste `espacos_na_escala` barra os dois casos em todo o `src/ui`, se
 `movimento_com_teto` barra animação feita fora de `src/ui/movimento.rs`.
 
 Raios só três e a pílula (`tema::raio`, em Pixels fixos): `PECA` 20 nas peças (trilho, lista,
-conversa, Equipe, arquivo aberto, gavetas, popovers, menus, diálogos, avisos, a caixa de mensagem e
-a tela cheia); `CARTAO` 14 no que vai dentro delas (cartões da Equipe e da conversa, balão,
+conversa, direita, arquivo aberto, gavetas, popovers, menus, diálogos, avisos, a caixa de mensagem e
+a tela cheia); `CARTAO` 14 no que vai dentro delas (cartões da direita e da conversa, balão,
 cartão de lista de duas linhas, blocos de código e tabelas do chat, diff do Revisar, anotação,
 grupos de opções, alertas, a caixa na Estreita e a dica); `CONTROLE` 10 em campos, linhas (de uma
 linha na lista, item de menu, árvore, log e listas do Revisar), teclas, blocos dentro de cartão
@@ -1005,7 +1266,7 @@ com deslize de algo que acabou de aparecer: `nova` só no primeiro quadro, entã
 painel abriu, a lista recolheu) não repete nada nem redesenha. Os blocos usam `Painel.base_animacao`
 (o tamanho da conversa quando ela abriu no painel) e `Painel.vistos` (`entrada_do_bloco`, com
 teste). O pulso do enviar sobe com `Painel.envios`, em `paineis::enviar_do_painel` (o Enter e o
-clique). Na Equipe, o `Revelar` abre e fecha a altura em 180 ms pelo `movimento::valor`, medindo a
+clique). Na direita, o `Revelar` abre e fecha a altura em 180 ms pelo `movimento::valor`, medindo a
 altura do conteúdo no próprio desenho (`on_prepaint`); não usa o `MotionReveal` do kit, que faz o
 layout do conteúdo à parte e, sem a altura guardada, desenha um quadro vazio na montagem. O
 `Realce` é um `movimento::disparo` com a chave do estado da pílula (palavra e cor). O pulso do sino
@@ -1028,23 +1289,63 @@ configuração quando alguma rodou. `usa_git` responde "sem git" até a consulta
 o id por conversa para o `--replace-id` seguinte; o clique manda `Sinal::Abrir`, e o observer da
 Janela seleciona a conversa e chama `activate_window`.
 
-Projetos arquivados e lixeira: a marca é `ConfigProjeto.arquivado` (gravada só quando ligada).
-`Motor::projetos()` já vem sem os arquivados (`Config::separar_arquivados`, com teste), e tudo o
-que lista projetos passa por ele; `projetos_arquivados()` dá os outros. Uma conversa conta como
-arquivada pela `Motor::arquivada` (`Config::conversa_arquivada`: ela mesma ou o projeto), usada no
-sino, no Ctrl+G, nos sinais, na lista e no `arquivadas_que_casam`; o `c.arquivado` cru fica para
-o menu da conversa e os trabalhadores. `ocupacao_do_projeto` diz o que roda (conversas: turno,
-vaga, nova tentativa; tarefas: conferência, junção, preparação ou retomada na fila).
-`mover_projeto_para_lixeira` confere de novo, valida a pasta (`pasta_para_lixeira`: subpasta direta
-da pasta de trabalho, nunca ela nem a `.vitral`; com teste), roda o `gio trash` na vez do projeto
-(`sistema::para_a_lixeira`, que confere que a pasta saiu) e, só depois, as cópias e o
-`tirar_do_estado` (puro, com teste: conversas do projeto, trabalhadores das tarefas dele, tarefas,
-filas, rotinas e configuração); o `esquecer` limpa os mapas do motor e nega pedidos de permissão. As
-cópias vão para a Lixeira em vez do `git worktree remove`: com o repositório já na Lixeira o git
-não as acha, e removê-las antes perderia o trabalho não juntado se a lixeira falhasse; o registro
-delas fica no repositório da Lixeira (um `git worktree prune` limpa, se ele voltar). O gravador
-apaga arquivos na vez deles (`Gravador::apagar`, que tira da fila uma gravação pendente do mesmo
-arquivo): as mensagens das conversas e as notas saem depois do estado novo.
+Projetos, arquivar e apagar: os projetos são `Estado.projetos` (no `estado.json`, um ponto de
+gravação só), com `id` opaco (o nome da subpasta antiga, num migrado; `novo_id()` num novo), e a
+interface só fala com eles pela API do motor: `projetos_visiveis()` (sem os arquivados, na ordem do
+trilho) e `projetos_arquivados()`, `projeto(id)`, `nome_do_projeto(id)` ("Avulsos" para `""`),
+`projeto_por_nome(texto) -> Resolucao` (id, nome exato ou chave; o `#` da frente sai), `pastas_do`,
+`pasta_principal`, `projeto_da_pasta`, `criar_projeto(NovoProjeto)` e `mudar_projeto(id,
+MudancaProjeto)` (um patch; as pastas novas entram canônicas), `arquivar_projeto`,
+`parar_e_arquivar` (com os pedidos do Mestre cancelados), `reordenar_projeto`, `localizar_pasta`
+(em segundo plano, com o `git worktree repair`), `pode_mover`/`mover_chat` (o chat, os descendentes
+e os pedidos deles; o `cwd` não muda) e `novo_chat`. Um chat conta como arquivado pela
+`Motor::arquivada` (`conversa_arquivada`: ele mesmo ou o projeto), usada no sino, no Ctrl+G, nos
+sinais, na lista e no `arquivadas_que_casam`; o `c.arquivado` cru fica para o menu do chat e os
+ajudantes. `ocupacao_do_projeto` diz o que roda (chats: turno, vaga, nova tentativa; pedidos:
+conferência, junção, preparação ou retomada na fila). `apagar_projeto` recusa com algo rodando,
+manda a pasta própria para a Lixeira só quando o projeto não tem pasta ligada
+(`pasta_propria_para_lixeira`: direto em `dados/projetos`, sem ponto na frente; com teste), roda o
+`gio trash` (`sistema::para_a_lixeira`, que confere que a pasta saiu) e, só depois, as cópias para a
+Lixeira, o `git worktree prune` e os pontos de volta apagados em cada origem, e o `tirar_do_estado`
+(puro, com teste: chats do projeto, ajudantes, pedidos, filas, rotinas e as partes dos cartões); o
+`esquecer` limpa os mapas do motor e nega pedidos de permissão. O gravador apaga arquivos na vez
+deles (`Gravador::apagar`, que tira da fila uma gravação pendente do mesmo arquivo): as mensagens
+dos chats e as notas saem depois do estado novo.
+
+Dados e normalização: `Dados` (em `dados.rs`) tem o gravador: estado e configuração com
+`.anterior` por link duro (o link vai num `.anterior.tmp` e entra por rename, então nunca há um
+momento sem `.anterior`), os chats sem. Uma gravação que falha fica em `falhas` até o mesmo arquivo
+gravar; `Motor::gravar_sujos` (a cada 5 s) liga a faixa de falha, põe as falhas de novo na fila e,
+quando volta, entrega as filas que esperaram. `carregar` lê cada `chats/<id>.json` item a item: o que
+não converte vira `Item::Desconhecido` e é regravado como veio; `Chat`, `Tarefa`, `Projeto`,
+`Cartao` e `Estado` têm `resto` (flatten), e uma `versao` maior que a suportada abre só para
+leitura. `salvar_config` relê o `config.json` como `Value`, tira as chaves legadas
+(`modelo_coordenador` vira `modelo_mestre`, `modelo_trabalhador` vira `modelo_chats`; com as duas,
+vale a nova) e mantém as desconhecidas. A `normalizar(estado, dados, consultas, agora)` roda no
+`Motor::new`, antes de tudo, com o trait `Consultas` (o `NoDisco` de verdade, um falso nos testes):
+garante o Mestre (id `"mestre"`, cwd `dados/mestre`), recria como provisório o projeto que só é
+citado, acha a origem dos pedidos antigos, converte o coordenador vazio em chat de projeto e os
+trabalhadores do Vitral antigo em chats sem dono (a conversa com histórico fica só para leitura),
+dá uma faixa de portas a cada pedido aberto, põe na conversa do Mestre o cartão aberto que não
+estava nela, poda os cartões e as ocorrências velhas, recolhe os chats vazios com mais de 24 h e
+acerta a `proxima_tarefa` acima de todo `t<N>` de `dados/copias`; o `Motor::new` grava tudo antes de
+qualquer turno. O prompt de sistema vai por arquivo (`~/.cache/vitral/prompts/<chat>.md`, regravado
+a cada turno) com `--append-system-prompt-file` e `--system-prompt-snapshot off` a partir do Claude
+Code 2.1.278 (`claude::VERSAO_PROMPT_POR_ARQUIVO`).
+
+Migração: `migracao::migrar(dados, raizes, proc, pid, na_bancada, quando)` devolve `NaoPrecisa`,
+`SemRaizes`, `Migrou(Relatorio)`, `Adiada { raizes, pids }` ou `Falhou { raiz, erro }` (as duas
+últimas viram a tela de recuperação). Ela trabalha sobre `serde_json::Value` (o que esta versão não
+conhece passa como veio): `ler_raiz` lê sem escrever (os bytes dos chats, o texto das notas, o mtime
+e o tamanho do `estado.json`), `planejar` é pura e trata as raízes juntas (ids das tarefas
+renumerados em duas passadas, a raiz mais recente primeiro), e `aplicar` grava direto na pasta
+final, com o `estado.json` por último e o `formato` logo depois dele. `vitral_antigo_vivo` varre
+`/proc/*/comm == "vitral"`, menos o próprio processo, os filhos dele e, conforme o lado, os da
+bancada (`DENTRO_DA_BANCADA=1`; dentro dela, só o da mesma bancada, pelo `XDG_DATA_HOME`). O
+`migracao.json` guarda, por raiz, o mtime e o tamanho do `estado.json` antigo (o aviso de que o
+Vitral antigo mexeu depois), os ids dos projetos e as tarefas renumeradas. A ordem do `main`:
+`--versao`/`--instalar`, dados, trava (ou a entrega ao Vitral aberto), saúde da versão, socket,
+migração, carregar, `processos::limpar_sobras`, janela.
 
 Textos e pendências: `textos::duracao_curta` é o formato único do tempo ("19 s", "2 min 13 s",
 "1 h 05 min", com dois dígitos depois do primeiro para o tempo que anda não mudar de largura), usado
@@ -1059,7 +1360,7 @@ prende de novo nos últimos 48 descendo, e `Painel.manter_lugar`, ligado por `al
 lugar quando um bloco no fim abre. O `coordenador_da_equipe` e o `pedidos_da_equipe` de `equipe.rs`
 dão o selo do botão da direita.
 
-Ritmo da Equipe: o painel é uma pilha de `Bloco` (Caixa, Resumo, Secao, Linha), sem `gap`; o
+Ritmo da direita (`equipe.rs`): o painel é uma pilha de `Bloco` (Caixa, Resumo, Secao, Linha), sem `gap`; o
 `respiro(antes, agora)` de `equipe.rs` dá a margem de cima de cada um, medida na tinta (16 do texto
 de uma seção até a borda do cartão, o texto da seção de cima ou a última linha). Os cabeçalhos de
 seção usam `.respiro(4.)` para ficarem com 4 em cima e 4 embaixo (o texto no meio de uma faixa de
@@ -1074,7 +1375,8 @@ funções puras (`argumentos`, `ambiente`, `configuracoes_do_turno`), com teste.
 `--effort ultracode` (o jeito que liga antes e depois da 2.1.284; antes dela o Ultracode só vale em
 Extra) e, no mesmo `--settings`, `"enableWorkflows": true` (no plano Pro os fluxos começam
 desligados) e `"ultracode": true`. Fora do Ultracode, `Workflow` vai em `--disallowedTools`; o
-coordenador o bloqueia em todo turno, junto com `Task`. O limite de agentes vai em todo turno. O
+Mestre roda só com `--tools Read,Grep,Glob` e o MCP do Vitral (com `--disallowedTools` de segunda
+camada), em `bypassPermissions`. O limite de agentes vai em todo turno. O
 `Saiu` traz o código de saída (lido sem colher o processo, em `processos::codigo_de_saida`). A
 versão do Claude Code vem do link `versions/<versão>` do instalador ou de `claude --version` e, a
 cada init, de `claude_code_version`, junto com a ferramenta `Workflow` na lista (ou não). O
@@ -1096,7 +1398,7 @@ cada turno somado).
 O Ultracode ainda não rodou num turno de verdade. Na primeira vez, conferir: com `ps -o args` no
 `claude` filho, o `--effort ultracode` e o `--settings` com `enableWorkflows`; que o init traz
 `Workflow` e o fluxo aparece como "Fluxo de agentes"; que o turno fica rodando até o fluxo acabar e
-só então a tarefa vai para a verificação; e, no modo Manual (o Vitral pede permissão para o
+só então o pedido vai para a verificação; e, no modo Manual (o Vitral pede permissão para o
 `Workflow`), se os agentes do fluxo, que rodam em segundo plano, têm recusado o que precisaria de
 permissão, como o binário 2.1.278 sugere (a camada `avoid_prompts`). Se confirmar, a linha do
 Ultracode passa de aviso em âmbar a desabilitada fora de Sem perguntar e Automático; em Sem

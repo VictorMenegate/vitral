@@ -48,6 +48,8 @@ use crate::{
     },
 };
 
+pub(super) mod historico;
+
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../assets/vitral-pequeno.svg");
@@ -163,12 +165,23 @@ impl Janela {
         let foco = self.paineis[ix].modo_foco;
         let nivel = self.paineis[ix].medida.nivel;
         let resumo = indice_do_resumo(motor, chat);
+        let resumos_do_mestre: HashMap<usize, u64> = if chat.papel == Papel::Mestre {
+            super::cartoes::resumos_do_mestre(&chat.itens, motor.execucao(&chat.id).rodando()).into_iter().collect()
+        } else {
+            HashMap::new()
+        };
         let contexto = Contexto::novo(motor, chat, nivel);
         let finais = finais_de_turno(&chat.itens);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
-        if chat.itens.is_empty() {
-            blocos.push((Bloco::Texto, None, self.dica_inicial(chat, painel_id, window, cx)));
+        // O Mestre ainda sem conversa (só os avisos do Vitral) também abre com o convite.
+        let mestre_novo = chat.papel == Papel::Mestre && chat.itens.iter().all(|i| matches!(i, Item::Aviso { .. }));
+        if chat.itens.is_empty() || mestre_novo {
+            blocos.push((Bloco::Texto, None, self.dica_inicial(motor, chat, painel_id, window, cx)));
+        }
+        // A conversa trazida do Claude Code: o que foi dito lá vem antes, lido do arquivo dela.
+        if chat.importada.is_some() {
+            blocos.extend(self.blocos_do_historico(motor, chat, nivel, window, cx));
         }
         // Conversas antigas guardaram as buscas de ferramenta; não interessam. O modo foco mantém
         // só as ações sobre tarefas.
@@ -180,6 +193,8 @@ impl Janela {
                 Item::Ferramenta { nome, .. } => {
                     nome != "ToolSearch" && (!foco || acao_de_tarefa(nome).is_some())
                 }
+                // As boas-vindas do Mestre já estão no convite de cima.
+                Item::Aviso { texto, .. } => !(mestre_novo && texto.starts_with("Sou o Mestre")),
                 _ => true,
             })
             .collect();
@@ -201,7 +216,19 @@ impl Janela {
             if Some(indice) == resumo
                 && let Item::Assistente { texto } = item
             {
-                blocos.push((Bloco::Resumo, Some(indice), cartao_resumo(motor, chat, indice, texto, cx)));
+                let estados: Vec<EstadoTarefa> = motor.tarefas_do(&chat.id).map(|t| t.estado).collect();
+                let meta = meta_do_resumo(&estados);
+                blocos.push((Bloco::Resumo, Some(indice), cartao_resumo(chat, indice, texto, "Resumo da conversa", meta, cx)));
+                continue;
+            }
+            if let (Some(divisao), Item::Assistente { texto }) = (resumos_do_mestre.get(&indice), item) {
+                let meta = format!("Divisão {divisao}");
+                blocos.push((Bloco::Resumo, Some(indice), cartao_resumo(chat, indice, texto, "Resumo do Mestre", meta, cx)));
+                continue;
+            }
+            if let Item::Cartao { id } = item {
+                let elemento = self.cartao_do_mestre(motor, painel_id, &rolagem, *id, window, cx);
+                blocos.push((Bloco::Cartao, Some(indice), elemento));
                 continue;
             }
             let (bloco, elemento) = self.item(&contexto, indice, item, finais.contains(&indice), window, cx);
@@ -286,47 +313,58 @@ impl Janela {
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
     }
 
-    /// Conversa vazia: o coordenador convida a escrever (com duas sugestões que só preenchem a
-    /// caixa); o trabalhador espera a tarefa.
-    fn dica_inicial(&self, chat: &Chat, painel_id: u64, window: &Window, cx: &Context<Self>) -> AnyElement {
+    /// Conversa vazia: o chat de projeto diz onde trabalha (e, antes do primeiro turno, deixa
+    /// trocar a pasta); o Mestre convida a escrever (com sugestões que só preenchem a caixa); o
+    /// ajudante diz de quem é.
+    fn dica_inicial(&self, motor: &Motor, chat: &Chat, painel_id: u64, window: &Window, cx: &Context<Self>) -> AnyElement {
         let janela = cx.entity().downgrade();
+        if chat.papel == Papel::Projeto {
+            let vazio = EstadoVazio::new(Lucide::MessagesSquare, "Converse com este chat")
+                .texto(onde_o_chat_trabalha(motor, chat))
+                .amplo();
+            return match self.chip_da_pasta_do_chat(motor, chat, window, cx) {
+                Some(chip) => vazio.acao(chip).into_any_element(),
+                None => vazio.into_any_element(),
+            };
+        }
+        if let Some(pai) = chat.pai.as_ref().and_then(|p| motor.chat(p)).filter(|p| p.papel == Papel::Projeto) {
+            let abrir = fantasma("abrir-pai", Some(Lucide::CornerLeftUp), "Abrir o chat", TamanhoBotao::Controle, abrir_chat(pai.id.clone(), cx), window, cx);
+            return EstadoVazio::new(Lucide::Wrench, format!("Ajudante de “{}”", pai.titulo))
+                .texto("Este ajudante recebe uma parte do pedido do chat dele, numa cópia da pasta do chat.")
+                .acao(abrir)
+                .into_any_element();
+        }
         match chat.papel {
-            Papel::Coordenador => {
-                let sugestao = |i: usize, texto: &'static str| {
+            Papel::Mestre => {
+                let sugestao = |i: usize, rotulo: &'static str, texto: &'static str| {
                     let janela = janela.clone();
-                    Chip::new(("sugestao", i), texto)
+                    Chip::new(("sugestao-mestre", i), rotulo)
                         .tamanho(TamanhoChip::Medio)
                         .construir(window, cx)
                         .on_click(move |_, window, cx| {
                             let _ = janela.update(cx, |this, cx| this.escrever_na_caixa(painel_id, texto, window, cx));
                         })
                 };
-                EstadoVazio::new(Lucide::Bot, "Diga o que você quer fazer")
+                EstadoVazio::new(Lucide::Orbit, "Peça qualquer coisa ao Mestre")
                     .texto(
-                        "O coordenador planeja, distribui tarefas para trabalhadores (cada um numa cópia \
-                         isolada do projeto), revisa e pede ajustes até ficar bom, e no fim te manda um \
-                         resumo.",
+                        "Use #projeto para mandar a um projeto ou @chat para falar de um chat; ele mostra como vai \
+                         dividir antes de começar e avisa quando os chats terminarem.",
                     )
                     .amplo()
-                    .acao(sugestao(0, "Explique como este projeto está organizado."))
-                    .acao(sugestao(1, "Quero planejar uma mudança: "))
+                    .acao(sugestao(0, "Como estão os projetos?", "Como estão os projetos?"))
+                    .acao(sugestao(1, "O que terminou hoje?", "O que terminou hoje?"))
+                    .acao(sugestao(2, "Mandar a um projeto…", "#"))
                     .into_any_element()
             }
-            Papel::Trabalhador => {
-                let pai = chat.pai.clone();
-                let abrir = pai.map(|pai| {
-                    fantasma(
-                        "abrir-coordenador",
-                        Some(Lucide::CornerLeftUp),
-                        "Abrir o coordenador",
-                        TamanhoBotao::Controle,
-                        abrir_chat(pai, cx),
-                        window,
-                        cx,
-                    )
+            Papel::Coordenador => EstadoVazio::new(Lucide::Archive, "Conversa do Vitral antigo")
+                .texto("Só para leitura: para continuar, abra um chat novo no projeto.")
+                .into_any_element(),
+            Papel::Trabalhador | Papel::Projeto => {
+                let abrir = chat.pai.clone().map(|pai| {
+                    fantasma("abrir-pai", Some(Lucide::CornerLeftUp), "Abrir o chat", TamanhoBotao::Controle, abrir_chat(pai, cx), window, cx)
                 });
-                EstadoVazio::new(Lucide::Wrench, "Ainda sem tarefa")
-                    .texto("Esta conversa recebe as tarefas do coordenador.")
+                EstadoVazio::new(Lucide::Wrench, "Ajudante")
+                    .texto("Este ajudante recebe uma parte do pedido do chat dele.")
                     .when_some(abrir, |e, abrir| e.acao(abrir))
                     .into_any_element()
             }
@@ -334,11 +372,11 @@ impl Janela {
     }
 
     /// Escreve na caixa do painel e põe o foco nela (quem envia é você, com Enter).
-    fn escrever_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn escrever_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
             return;
         };
-        composer.update(cx, |c, cx| c.set_value(texto.to_string(), window, cx));
+        composer.update(cx, |c, cx| composer::por_texto(c, texto.to_string(), window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
         cx.notify();
@@ -379,6 +417,8 @@ impl Janela {
             },
             Item::Ferramenta { .. } => (Bloco::Log, self.ferramentas(contexto, &[(indice, item)], false, window, cx)),
             Item::Aviso { texto, erro } => aviso_do_chat(&chave, texto, *erro),
+            Item::Cartao { id } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false),
+            Item::Desconhecido(_) => aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false),
         }
     }
 
@@ -534,11 +574,31 @@ impl Janela {
         let aberto = self.expandidos.contains(chave);
         let grupo = SharedString::from(format!("msg-{chave}"));
         let (quem, nome) = remetente(contexto.motor, de);
-        let avatar = match quem {
-            Some(papel) => papel.circulo(24.).into_any_element(),
-            None => img(LOGO.clone()).flex_none().size(r(20.)).into_any_element(),
+        // O chat que mandou (ou, num aviso do Vitral ao Mestre, o que ele cita): o quadrado do
+        // projeto no lugar do círculo e "Abrir o chat" nas ações.
+        let de_chat = chat_que_mandou(contexto.motor, de)
+            .or_else(|| (contexto.chat.papel == Papel::Mestre && de == "Vitral").then(|| chat_citado(contexto.motor, texto)).flatten());
+        let avatar = match (quem, de_chat.filter(|c| c.papel == Papel::Projeto && de != "Vitral")) {
+            (_, Some(c)) => super::componentes::quadrado_do_projeto(contexto.motor, &c.projeto, 24.).into_any_element(),
+            (Some(papel), None) => papel.circulo(24.).into_any_element(),
+            (None, None) => img(LOGO.clone()).flex_none().size(r(20.)).into_any_element(),
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
+        if let Some(c) = de_chat {
+            let (alvo, numero) = (c.id.clone(), c.tarefa.map(|n| n.to_string()).unwrap_or_default());
+            acoes.push(
+                botao_so_icone(
+                    SharedString::from(format!("abrir-de-{chave}")),
+                    Lucide::ArrowRight,
+                    format!("Abrir o chat {numero}\nCtrl+clique abre ao lado"),
+                    TamanhoBotao::Linha,
+                    abrir_chat(alvo, cx),
+                    window,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
         if let Some(ponto) = ponto {
             acoes.push(botao_voltar(chave, &contexto.chat.id, ponto, window, cx).into_any_element());
         }
@@ -593,7 +653,7 @@ const COLUNA_DO_COPIAR: Rems = r(40.);
 
 /// Markdown com o estilo das mensagens; os blocos de código ganham o Copiar, com a linguagem na
 /// dica.
-fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
+pub(super) fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
     TextView::markdown(id, texto)
         .style(estilo_texto(cx))
         .blockquote_style(
@@ -875,7 +935,14 @@ fn remetente(motor: &Motor, de: &str) -> (Option<Quem>, String) {
         return (None, "Vitral".into());
     }
     if de == "coordenador" {
-        return (Some(Quem::Coordenador), "Coordenador".into());
+        return (Some(Quem::Coordenador), "Conversa antiga".into());
+    }
+    if de == "Mestre" {
+        return (Some(Quem::Mestre), "Mestre".into());
+    }
+    if let Some(c) = chat_que_mandou(motor, de) {
+        let quem = if c.papel == Papel::Trabalhador { Quem::Trabalhador } else { Quem::Coordenador };
+        return (Some(quem), sem_marcacao(de));
     }
     let (nome, id) = nome_e_id(de);
     let papel = match id.and_then(|id| motor.chat(id)) {
@@ -885,6 +952,29 @@ fn remetente(motor: &Motor, de: &str) -> (Option<Quem>, String) {
         None => Quem::Avulso,
     };
     (Some(papel), sem_marcacao(nome))
+}
+
+/// O chat de `chat 12 "Título"` (como os chats de projeto assinam o que mandam).
+fn chat_que_mandou<'a>(motor: &'a Motor, de: &str) -> Option<&'a Chat> {
+    let numero = de.strip_prefix("chat ")?;
+    let n: u64 = numero.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()?;
+    motor.chats.iter().find(|c| c.tarefa == Some(n) && c.papel != Papel::Mestre && c.papel != Papel::Coordenador)
+}
+
+/// O primeiro "chat 12" (ou "Chat 12") de um aviso do Vitral, quando o chat existe.
+fn chat_citado<'a>(motor: &'a Motor, texto: &str) -> Option<&'a Chat> {
+    let minusculo = texto.to_lowercase();
+    let mut resto = minusculo.as_str();
+    while let Some(i) = resto.find("chat ") {
+        resto = &resto[i + 5..];
+        let digitos: String = resto.chars().take_while(char::is_ascii_digit).collect();
+        if let Ok(n) = digitos.parse::<u64>()
+            && let Some(c) = motor.chats.iter().find(|c| c.tarefa == Some(n) && c.papel != Papel::Mestre && c.papel != Papel::Coordenador)
+        {
+            return Some(c);
+        }
+    }
+    None
 }
 
 /// "Título (id)" vira o título e o id do chat.
@@ -1301,7 +1391,7 @@ impl Janela {
             .into_any_element()
     }
 
-    /// Tarefas criadas em sequência: "Distribuiu 3 tarefas" e um evento por tarefa, ligados pelo
+    /// Ajudantes criados em sequência: "Criou 3 ajudantes" e um evento por ajudante, ligados pelo
     /// trilho.
     fn criacoes(
         &self,
@@ -1326,8 +1416,8 @@ impl Janela {
                     .child(icone_de(Lucide::Network, 14.).text_color(Cores::tenue()))
                     .child(div().font_semibold().text_color(Cores::texto()).child(format!(
                         "{} {}",
-                        if criando { "Distribuindo" } else { "Distribuiu" },
-                        contagem(n, "tarefa", "tarefas")
+                        if criando { "Criando" } else { "Criou" },
+                        contagem(n, "ajudante", "ajudantes")
                     )))
                     .child(trilho_do_log()),
             )
@@ -1404,7 +1494,7 @@ impl Janela {
                 botao_so_icone(
                     SharedString::from(format!("abrir-{chave}")),
                     Lucide::MessageSquare,
-                    "Abrir a conversa da tarefa\nCtrl+clique abre ao lado",
+                    "Abrir o chat\nCtrl+clique abre ao lado",
                     TamanhoBotao::Linha,
                     abrir_chat(t.trabalhador.clone(), cx),
                     window,
@@ -1477,7 +1567,7 @@ impl Janela {
             botao_so_icone(
                 SharedString::from(format!("abrir-{chave}")),
                 Lucide::MessageSquare,
-                "Abrir a conversa da tarefa\nCtrl+clique abre ao lado",
+                "Abrir o chat\nCtrl+clique abre ao lado",
                 TamanhoBotao::Linha,
                 abrir_chat(tarefa.trabalhador.clone(), cx),
                 window,
@@ -1568,7 +1658,7 @@ impl Janela {
                 botao_icone(
                     id_abrir,
                     Lucide::MessageSquare,
-                    "Abrir a conversa da tarefa\nCtrl+clique abre ao lado",
+                    "Abrir o chat\nCtrl+clique abre ao lado",
                     TamanhoBotao::Barra,
                     window,
                     cx,
@@ -1804,7 +1894,7 @@ impl LinhaDeEvento {
 
 /// Abre ou fecha um item da conversa (a chave fica em `expandidos`, começando pelo id do chat).
 /// Ao abrir, os painéis dessa conversa no fim ficam onde estão em vez de seguir o fim do bloco.
-fn alternar(
+pub(super) fn alternar(
     chave: String,
     cx: &Context<Janela>,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -1864,6 +1954,14 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
         "mensagem_para_chat" | "listar_chats" => Lucide::MessagesSquare,
         "perguntar_coordenador" => Lucide::MessageCircleQuestionMark,
         "informar_progresso" => Lucide::Milestone,
+        "estado" => Lucide::Gauge,
+        "ver_chat" => Lucide::Eye,
+        "historico" => Lucide::Clock,
+        "propor_divisao" => Lucide::GitFork,
+        "sugerir_projeto" => Lucide::FolderPlus,
+        "lembrar" | "esquecer" => Lucide::Brain,
+        "entregar_tarefa" => Lucide::CircleCheck,
+        "revisar_minhas_mudancas" => Lucide::ListChecks,
         acao if ACOES_DE_TAREFA.contains(&acao) => icone_da_acao(acao),
         n if n.starts_with("mcp__") => Lucide::Network,
         _ => Lucide::Asterisk,
@@ -1885,13 +1983,22 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "Task" | "Agent" => ("Subagente", "Subagente"),
         "Workflow" => ("Fluxo de agentes", "Fluxo de agentes"),
         "TodoWrite" => ("Atualizou os passos", "Atualizando os passos"),
-        "listar_tarefas" => ("Listou as tarefas", "Listando as tarefas"),
+        "listar_tarefas" => ("Listou os ajudantes", "Listando os ajudantes"),
         "listar_chats" => ("Listou as conversas", "Listando as conversas"),
         "anotar_decisao" => ("Anotou", "Anotando"),
         "mensagem_para_chat" => ("Mandou mensagem", "Mandando mensagem"),
         "perguntar_coordenador" => ("Perguntou", "Perguntando"),
         "informar_progresso" => ("Informou", "Informando"),
-        "criar_tarefa" => ("Criou a tarefa", "Criando a tarefa"),
+        "estado" => ("Olhou o estado", "Olhando o estado"),
+        "ver_chat" => ("Leu o chat", "Lendo o chat"),
+        "historico" => ("Leu o histórico", "Lendo o histórico"),
+        "propor_divisao" => ("Propôs a divisão", "Propondo a divisão"),
+        "sugerir_projeto" => ("Sugeriu o projeto", "Sugerindo o projeto"),
+        "lembrar" => ("Lembrou", "Lembrando"),
+        "esquecer" => ("Esqueceu", "Esquecendo"),
+        "entregar_tarefa" => ("Entregou", "Entregando"),
+        "revisar_minhas_mudancas" => ("Pediu o revisor", "Pedindo o revisor"),
+        "criar_tarefa" => ("Criou o ajudante", "Criando o ajudante"),
         "ver_diff" => ("Olhou as mudanças", "Olhando as mudanças"),
         "pedir_ajuste" => ("Pediu ajuste", "Pedindo ajuste"),
         "aprovar_tarefa" => ("Aprovou", "Aprovando"),
@@ -2003,7 +2110,7 @@ fn tarefa_do_item(item: &Item) -> Option<u64> {
                 numero_no_inicio(resultado.as_deref()?.strip_prefix("Tarefa #")?)
             }
             "criar_tarefa" => None,
-            _ => numero_depois(resumo, "tarefa #"),
+            _ => numero_depois(resumo, "tarefa #").or_else(|| numero_depois(resumo, "chat ")),
         },
         Item::Entrega { de, texto, .. } if de == "Vitral" => {
             numero_depois(texto.lines().find(|l| !l.trim().is_empty())?, "#")
@@ -2021,16 +2128,23 @@ fn frase_da_entrega(texto: &str, n: u64, titulo: &str) -> String {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .unwrap_or_default();
-    let frase = if let Some(resto) = primeira.strip_prefix(&format!("A tarefa #{n} \"")) {
+    let titulada = [format!("A tarefa #{n} \""), format!("Ajudante #{n} \"")]
+        .into_iter()
+        .find_map(|prefixo| primeira.strip_prefix(&prefixo));
+    let frase = if let Some(resto) = titulada {
         resto
             .strip_prefix(&format!("{titulo}\" "))
             .or_else(|| resto.split_once("\" ").map(|(_, d)| d))
             .unwrap_or(resto)
             .to_string()
-    } else if primeira.starts_with(&format!("O usuário aprovou a tarefa #{n} ")) {
+    } else if primeira.starts_with(&format!("O usuário aprovou a tarefa #{n} "))
+        || primeira.starts_with(&format!("O usuário aprovou o ajudante #{n} "))
+    {
         "você aprovou pelo painel".to_string()
     } else if primeira.starts_with(&format!("O usuário pediu ajustes na tarefa #{n} ")) {
-        "você pediu ajustes direto ao trabalhador".to_string()
+        "você pediu ajustes direto ao ajudante".to_string()
+    } else if primeira.starts_with(&format!("O usuário pediu ajustes direto ao ajudante #{n}")) {
+        "você pediu ajustes direto ao ajudante".to_string()
     } else if let Some(resto) =
         primeira.strip_prefix(&format!("Pergunta do trabalhador da tarefa #{n} ("))
     {
@@ -2038,10 +2152,75 @@ fn frase_da_entrega(texto: &str, n: u64, titulo: &str) -> String {
             "perguntou: {}",
             resto.split_once("): ").map(|(_, p)| p).unwrap_or(resto)
         )
+    } else if let Some(resto) = primeira.strip_prefix(&format!("Pergunta do ajudante #{n} \"")) {
+        let pergunta = resto.strip_prefix(&format!("{titulo}\": ")).or_else(|| resto.split_once("\": ").map(|(_, p)| p));
+        format!("perguntou: {}", pergunta.unwrap_or(resto))
     } else {
         primeira.to_string()
     };
     frase.trim().trim_end_matches(['.', ':']).to_string()
+}
+
+impl Janela {
+    /// "Pasta: x", só antes do primeiro turno e com mais de uma pasta no projeto: o menu troca a
+    /// pasta em que o chat vai trabalhar.
+    fn chip_da_pasta_do_chat(&self, motor: &Motor, chat: &Chat, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let pastas: Vec<PathBuf> = motor.pastas_do(&chat.projeto).iter().map(|p| p.caminho.clone()).collect();
+        if pastas.len() < 2 || !motor.pode_trocar_pasta(&chat.id) {
+            return None;
+        }
+        let atual = chat.tarefa.and_then(|t| motor.tarefa(t)).map(|t| motor.origem_da_tarefa(t))?;
+        let nome = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string());
+        let rotulo = format!("Pasta: {}", nome(&atual));
+        let chip = |aberto: bool| {
+            Chip::new("pasta-do-chat", rotulo.clone())
+                .tamanho(TamanhoChip::Medio)
+                .simbolo(super::componentes::Simbolo::icone(Lucide::Folder))
+                .seta(true)
+                .aberto(aberto)
+                .dica("Em qual pasta do projeto este chat trabalha. Depois da primeira mensagem, fica.")
+                .construir(window, cx)
+        };
+        let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+        Some(
+            super::componentes::GatilhoChip::new(chip(false), chip(true))
+                .dropdown_menu_with_anchor(Anchor::TopCenter, move |mut menu, _, _| {
+                    for pasta in &pastas {
+                        let (motor_e, id, destino) = (motor_e.clone(), id.clone(), pasta.clone());
+                        let marcado = *pasta == atual;
+                        menu = menu.item(
+                            PopupMenuItem::new(nome(pasta))
+                                .icon(Lucide::Folder)
+                                .checked(marcado)
+                                .on_click(move |_, window, cx| {
+                                    let Some(m) = &motor_e else { return };
+                                    if let Err(erro) = m.update(cx, |m, cx| m.trocar_pasta(&id, &destino, cx)) {
+                                        window.push_notification(aviso(Tom::Erro, format!("A pasta não mudou: {erro}")), cx);
+                                    }
+                                }),
+                        );
+                    }
+                    menu
+                })
+                .into_any_element(),
+        )
+    }
+}
+
+/// Onde o chat de projeto trabalha, para a conversa vazia: numa cópia que depois é juntada, direto na
+/// pasta do projeto, ou na pasta só dele (o avulso).
+fn onde_o_chat_trabalha(motor: &Motor, chat: &Chat) -> String {
+    let Some(t) = chat.tarefa.and_then(|t| motor.tarefa(t)) else {
+        return "Escreva o que quer fazer.".into();
+    };
+    let pasta = super::trilho::pasta_curta(&motor.origem_da_tarefa(t));
+    match t.forma {
+        _ if chat.projeto.is_empty() => "Este chat tem uma pasta só dele: os arquivos que ele criar ficam lá.".into(),
+        crate::modelo::Forma::Copia => {
+            format!("Este chat trabalha numa cópia de {pasta}. Quando quiser levar as mudanças para lá, use Juntar.")
+        }
+        _ => format!("Este chat mexe direto em {pasta}."),
+    }
 }
 
 /// A última resposta do coordenador depois que todas as tarefas acabaram é o resumo para você.
@@ -2064,12 +2243,12 @@ fn indice_do_resumo(motor: &Motor, chat: &Chat) -> Option<usize> {
     depois_de_tudo.then_some(ultimo)
 }
 
-/// "3 tarefas aprovadas · 1 cancelada".
+/// "3 ajudantes aprovados · 1 cancelado".
 fn meta_do_resumo(estados: &[EstadoTarefa]) -> String {
     let conta = |e: EstadoTarefa| estados.iter().filter(|x| **x == e).count();
     [
-        (conta(EstadoTarefa::Aprovada), "tarefa aprovada", "tarefas aprovadas"),
-        (conta(EstadoTarefa::Cancelada), "cancelada", "canceladas"),
+        (conta(EstadoTarefa::Aprovada), "ajudante aprovado", "ajudantes aprovados"),
+        (conta(EstadoTarefa::Cancelada), "cancelado", "cancelados"),
         (conta(EstadoTarefa::Falhou), "falhou", "falharam"),
     ]
     .into_iter()
@@ -2082,14 +2261,14 @@ fn meta_do_resumo(estados: &[EstadoTarefa]) -> String {
 /// O resumo para você: cartão com o gradiente azul numa camada com o próprio raio (o recorte do
 /// pai não arredonda).
 fn cartao_resumo(
-    motor: &Motor,
     chat: &Chat,
     indice: usize,
     texto: &str,
+    titulo: &'static str,
+    meta: String,
     cx: &Context<Janela>,
 ) -> AnyElement {
     let chave = format!("{}:{indice}", chat.id);
-    let estados: Vec<EstadoTarefa> = motor.tarefas_do(&chat.id).map(|t| t.estado).collect();
     div()
         .relative()
         .w_full()
@@ -2116,7 +2295,7 @@ fn cartao_resumo(
                     h_flex()
                         .gap(esp::E8)
                         .child(icone_de(Lucide::CircleCheck, 16.).text_color(Cores::verde()))
-                        .child(div().flex_none().titulo_cartao().text_color(Cores::forte()).child("Resumo do coordenador"))
+                        .child(div().flex_none().titulo_cartao().text_color(Cores::forte()).child(titulo))
                         .child(
                             div()
                                 .flex_1()
@@ -2124,7 +2303,7 @@ fn cartao_resumo(
                                 .truncate()
                                 .metadado()
                                 .text_color(Cores::tenue())
-                                .child(meta_do_resumo(&estados)),
+                                .child(meta),
                         )
                         .child(copiar(&chave, texto)),
                 )
@@ -2150,7 +2329,8 @@ enum ClasseAvisoChat {
 
 /// Os textos vêm todos de `motor.rs`.
 fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
-    const MARCOS: [&str; 4] = ["Sessão nova", "Interrompido", "Saiu do modo Planejar", "Retomando a sessão"];
+    const MARCOS: [&str; 5] =
+        ["Sessão nova", "Interrompido", "Saiu do modo Planejar", "Retomando a sessão", crate::importar::MARCO];
     if erro {
         ClasseAvisoChat::Alerta
     } else if MARCOS.iter().any(|m| texto.starts_with(m)) {
@@ -2177,6 +2357,8 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool) -> (Bloco, AnyElement) {
                 (Lucide::CirclePause, Cores::tenue(), "Turno interrompido".to_string())
             } else if texto.starts_with("Saiu do modo Planejar") {
                 (Lucide::Map, Cores::verde(), texto.to_string())
+            } else if texto.starts_with(crate::importar::MARCO) {
+                (Lucide::Download, Cores::tenue(), texto.to_string())
             } else {
                 (Lucide::RefreshCw, Cores::tenue(), texto.to_string())
             };
@@ -2277,7 +2459,49 @@ enum Situacao {
     NovaTentativa { em: u64 },
     Parada { motivo: String, atencao: bool },
     Falhou,
+    /// A cópia do chat de projeto não pôde ser preparada (o motivo).
+    FalhaCopia(String),
+    /// A pasta de onde o chat trabalha sumiu (o projeto, o índice dela e o caminho).
+    OrigemSumiu { projeto: String, indice: usize, pasta: PathBuf },
+    Juntando,
+    /// O que a cópia tem para juntar (a tarefa, os arquivos e as linhas).
+    ParaJuntar { tarefa: u64, arquivos: u32, mais: u32, menos: u32 },
     Fila(usize),
+}
+
+/// O que um chat de projeto parado tem a dizer acima da caixa: a cópia que não foi preparada, a
+/// pasta que sumiu, a junção em andamento ou o que falta juntar (só na cópia, em conversa).
+fn situacao_do_chat(motor: &Motor, chat: &Chat) -> Option<Situacao> {
+    if chat.papel != Papel::Projeto {
+        return None;
+    }
+    let t = chat.tarefa.and_then(|t| motor.tarefa(t))?;
+    if let Some(erro) = &t.falha_copia {
+        return Some(Situacao::FalhaCopia(erro.clone()));
+    }
+    let origem = motor.origem_da_tarefa(t);
+    if !origem.as_os_str().is_empty() && !origem.exists() && !chat.projeto.is_empty() {
+        let indice = motor.pastas_do(&chat.projeto).iter().position(|p| p.caminho == origem);
+        if let Some(indice) = indice {
+            return Some(Situacao::OrigemSumiu { projeto: chat.projeto.clone(), indice, pasta: origem });
+        }
+    }
+    if t.juntando_desde > 0 {
+        return Some(Situacao::Juntando);
+    }
+    let mudancas = t.mudancas.as_ref().filter(|m| m.arquivos > 0)?;
+    (t.tem_copia() && t.estado == EstadoTarefa::Conversa).then(|| Situacao::ParaJuntar {
+        tarefa: t.id,
+        arquivos: mudancas.arquivos,
+        mais: mudancas.mais,
+        menos: mudancas.menos,
+    })
+}
+
+/// "4 arquivos mudados na cópia (+12 −3)".
+fn texto_para_juntar(arquivos: u32, mais: u32, menos: u32) -> String {
+    let arquivos = contagem(arquivos as usize, "arquivo mudado", "arquivos mudados");
+    format!("{arquivos} na cópia (+{mais} −{menos})")
 }
 
 fn situacao_do_turno(motor: &Motor, chat: &str) -> Option<Situacao> {
@@ -2314,7 +2538,13 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let situacao = situacao_do_turno(motor, &chat.id)?;
+        // O que roda (ou parou) vale mais; parado, o que o chat de projeto tem a dizer, e só então
+        // a fila que espera.
+        let situacao = match situacao_do_turno(motor, &chat.id) {
+            Some(Situacao::Fila(n)) => situacao_do_chat(motor, chat).unwrap_or(Situacao::Fila(n)),
+            Some(s) => s,
+            None => situacao_do_chat(motor, chat)?,
+        };
         let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
         let (estreita, minima) = (!larga(medida.nivel), minima(medida.nivel));
         // Alinha com o texto da caixa (a margem da coluna mais o recuo do texto nela) e, à direita,
@@ -2397,7 +2627,7 @@ impl Janela {
                     .min_w_0()
                     .gap(r(8.))
                     .child(icone_de(Lucide::Clock, 14.).text_color(Cores::tenue()))
-                    .child(texto("Na fila: começa quando um trabalhador terminar".into()))
+                    .child(texto("Na fila: começa quando outro chat terminar".into()))
                     .into_any_element(),
                 Some(esc("tirar da fila", window)),
             ),
@@ -2451,6 +2681,77 @@ impl Janela {
                     )
                     .on_click(tentar)
                     .into_any_element(),
+                ),
+            ),
+            Situacao::FalhaCopia(erro) => {
+                let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+                (
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(r(8.))
+                        .child(icone_de(Lucide::TriangleAlert, 14.).text_color(Cores::ambar()))
+                        .child(texto(format!("Não deu para preparar a cópia ({})", erro.lines().next().unwrap_or_default())))
+                        .into_any_element(),
+                    Some(
+                        botao_fantasma("faixa-preparar", Some(Lucide::RotateCw.into()), "Tentar preparar de novo", TamanhoBotao::Barra, window, cx)
+                            .on_click(move |_, _, cx| {
+                                if let Some(m) = &motor_e {
+                                    m.update(cx, |m, cx| m.tentar_preparar_de_novo(&id, cx));
+                                }
+                            })
+                            .into_any_element(),
+                    ),
+                )
+            }
+            Situacao::OrigemSumiu { projeto, indice, pasta } => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::FolderX, 14.).text_color(Cores::vermelho()))
+                    .child(texto(format!("A pasta {} não foi encontrada", super::dialogos::com_til(&pasta))))
+                    .into_any_element(),
+                Some(
+                    botao_fantasma("faixa-localizar", Some(Lucide::FolderSearch.into()), "Localizar pasta…", TamanhoBotao::Barra, window, cx)
+                        .on_click(cx.listener(move |this, _, window, cx| this.localizar_pasta(projeto.clone(), indice, window, cx)))
+                        .into_any_element(),
+                ),
+            ),
+            Situacao::Juntando => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::GitMerge, 14.).text_color(Cores::destaque_texto()))
+                    .child(texto("Juntando…".into()))
+                    .into_any_element(),
+                None,
+            ),
+            Situacao::ParaJuntar { tarefa, arquivos, mais, menos } => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::GitMerge, 14.).text_color(Cores::tenue()))
+                    .child(texto(texto_para_juntar(arquivos, mais, menos)))
+                    .into_any_element(),
+                Some(
+                    h_flex()
+                        .flex_none()
+                        .gap(esp::E4)
+                        .child(
+                            botao_fantasma("faixa-revisar", Some(Lucide::Eye.into()), "Revisar", TamanhoBotao::Barra, window, cx)
+                                .tooltip("Ver as mudanças da cópia antes de juntar")
+                                .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx))),
+                        )
+                        .child(
+                            botao_fantasma("faixa-juntar", Some(Lucide::GitMerge.into()), "Juntar", TamanhoBotao::Barra, window, cx)
+                                .custom(variante_tinta(cx))
+                                .tooltip("Levar as mudanças da cópia para a pasta original")
+                                .on_click(cx.listener(move |this, _, window, cx| this.juntar_do_chat(tarefa, window, cx))),
+                        )
+                        .into_any_element(),
                 ),
             ),
             Situacao::Fila(n) => (
@@ -3174,26 +3475,26 @@ fn texto_atividade(itens: &[Item], escrevendo: bool) -> String {
             None => "Montando o fluxo de agentes…".into(),
         },
         "criar_tarefa" => match detalhe {
-            Some(d) => format!("Criando a tarefa “{d}”…"),
-            None => "Criando uma tarefa…".into(),
+            Some(d) => format!("Criando o ajudante “{d}”…"),
+            None => "Criando um ajudante…".into(),
         },
         "ver_diff" => match detalhe {
-            Some(d) => format!("Olhando as mudanças da {d}…"),
+            Some(d) => format!("Olhando as mudanças do {d}…"),
             None => "Olhando as mudanças…".into(),
         },
         "pedir_ajuste" => match detalhe {
-            Some(d) => format!("Pedindo ajuste na {d}…"),
+            Some(d) => format!("Pedindo ajuste ao {d}…"),
             None => "Pedindo um ajuste…".into(),
         },
         "aprovar_tarefa" => match detalhe {
-            Some(d) => format!("Juntando a {d}…"),
-            None => "Juntando uma tarefa…".into(),
+            Some(d) => format!("Juntando o {d}…"),
+            None => "Juntando um chat…".into(),
         },
         "cancelar_tarefa" => match detalhe {
-            Some(d) => format!("Cancelando a {d}…"),
-            None => "Cancelando uma tarefa…".into(),
+            Some(d) => format!("Cancelando o {d}…"),
+            None => "Cancelando um pedido…".into(),
         },
-        "perguntar_coordenador" => "Perguntando ao coordenador…".into(),
+        "perguntar_coordenador" => "Perguntando a quem pediu…".into(),
         "mensagem_para_chat" => "Mandando mensagem a outra conversa…".into(),
         "TodoWrite" | "listar_tarefas" | "listar_chats" | "anotar_decisao" | "informar_progresso" => {
             format!("{verbo}…")
@@ -3335,7 +3636,7 @@ fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
         return (
             "Permitir edições nesta conversa".into(),
             format!(
-                "As edições de arquivos desta pasta passam sem perguntar, já neste turno.{modo} \
+                "As edições de arquivos passam sem perguntar nesta conversa, já neste turno.{modo} \
                  {DESFAZER}"
             ),
         );
@@ -3555,13 +3856,27 @@ mod testes {
         );
         assert_eq!(
             frase_da_entrega("O usuário pediu ajustes na tarefa #4 direto ao trabalhador:\nmais testes", 4, "x"),
-            "você pediu ajustes direto ao trabalhador"
+            "você pediu ajustes direto ao ajudante"
         );
         assert_eq!(
             frase_da_entrega("Pergunta do trabalhador da tarefa #3 (#3 Login): qual porta?\n\nResponda", 3, "Login"),
             "perguntou: qual porta?"
         );
         assert_eq!(frase_da_entrega("\n  Já terminei o que dava.\n", 3, "Login"), "Já terminei o que dava");
+        // Os textos do ajudante de um chat de projeto.
+        assert_eq!(
+            frase_da_entrega("Ajudante #13 \"Login\" terminou a rodada 2.\n\nRelatório do ajudante:", 13, "Login"),
+            "terminou a rodada 2"
+        );
+        assert_eq!(
+            frase_da_entrega("Pergunta do ajudante #13 \"Login\": qual porta?\n\nResponda com mensagem_para_chat", 13, "Login"),
+            "perguntou: qual porta?"
+        );
+        assert_eq!(frase_da_entrega("O usuário aprovou o ajudante #13 pelo painel. Ajudante #13 aprovado", 13, "x"), "você aprovou pelo painel");
+        assert_eq!(
+            frase_da_entrega("O usuário pediu ajustes direto ao ajudante #13:\nmais testes", 13, "x"),
+            "você pediu ajustes direto ao ajudante"
+        );
     }
 
     #[test]
@@ -3769,9 +4084,9 @@ mod testes {
     #[test]
     fn resumo_conta_as_tarefas_por_estado() {
         use EstadoTarefa::*;
-        assert_eq!(meta_do_resumo(&[Aprovada, Aprovada, Aprovada, Cancelada]), "3 tarefas aprovadas · 1 cancelada");
-        assert_eq!(meta_do_resumo(&[Aprovada]), "1 tarefa aprovada");
-        assert_eq!(meta_do_resumo(&[Falhou, Cancelada, Cancelada]), "2 canceladas · 1 falhou");
+        assert_eq!(meta_do_resumo(&[Aprovada, Aprovada, Aprovada, Cancelada]), "3 ajudantes aprovados · 1 cancelado");
+        assert_eq!(meta_do_resumo(&[Aprovada]), "1 ajudante aprovado");
+        assert_eq!(meta_do_resumo(&[Falhou, Cancelada, Cancelada]), "2 cancelados · 1 falhou");
         assert_eq!(meta_do_resumo(&[]), "");
     }
 
@@ -3788,9 +4103,9 @@ mod testes {
         let bash = ferramenta("Bash", "Bash · cargo test -p vitral…", None, false);
         assert_eq!(texto_atividade(&[bash], false), "Rodando: cargo test -p vitral…");
         let criar = ferramenta("mcp__vitral__criar_tarefa", "criar_tarefa · Validar entrada", None, false);
-        assert_eq!(texto_atividade(&[criar], false), "Criando a tarefa “Validar entrada”…");
-        let diff = ferramenta("mcp__vitral__ver_diff", "ver_diff · tarefa #3", None, false);
-        assert_eq!(texto_atividade(&[diff], false), "Olhando as mudanças da tarefa #3…");
+        assert_eq!(texto_atividade(&[criar], false), "Criando o ajudante “Validar entrada”…");
+        let diff = ferramenta("mcp__vitral__ver_diff", "ver_diff · chat 3", None, false);
+        assert_eq!(texto_atividade(&[diff], false), "Olhando as mudanças do chat 3…");
         let outro = ferramenta("mcp__github__create_issue", "mcp__github__create_issue", None, false);
         assert_eq!(texto_atividade(&[outro], false), "Usando create_issue…");
         let sem_detalhe = ferramenta("Edit", "Edit", None, false);

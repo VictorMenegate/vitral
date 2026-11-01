@@ -2,31 +2,36 @@
 //! equipe (tarefas do coordenador) à direita, em cartões de vidro como na Stained Glass UI.
 
 pub mod componentes;
+mod abertura;
 mod atualizacao;
-mod boas_vindas;
 mod caixa_entrada;
+mod cartoes;
 mod composer;
 mod config_projeto;
 mod configuracoes;
 mod conversa;
 mod dialogos;
+mod distribuido;
 mod equipe;
-mod icone_projeto;
+pub(crate) mod icone_projeto;
 mod lateral;
 mod limpeza;
 mod mensagens;
 mod menus;
 pub mod movimento;
 mod painel_contas;
+mod projeto;
 mod revisao;
 mod fechar;
 mod painel_arquivo;
 mod paineis;
+mod recuperacao;
 mod rotinas;
 mod seletor_arquivos;
 mod tirar_projeto;
 mod trilho;
 mod uso_plano;
+mod visao_geral;
 pub mod zoom;
 
 use std::{
@@ -36,7 +41,7 @@ use std::{
 };
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, ResizableState, h_resizable, resizable_panel,
+    ActiveTheme as _, Icon, IconName, ResizableState, WindowExt as _, h_resizable, resizable_panel,
     h_flex,
     input::{InputEvent, InputState},
     spinner::compasso_recente,
@@ -51,9 +56,9 @@ use crate::{
 };
 use componentes::{Flutuante as _, TamanhoBotao, botao_icone};
 
-actions!(vitral, [NovaConversa, Buscar, AlternarPainel, AlternarLista]);
+actions!(vitral, [NovaConversa, NovoProjeto, Buscar, AlternarPainel, AlternarLista]);
 actions!(vitral, [IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4]);
-actions!(vitral, [FecharGaveta]);
+actions!(vitral, [FecharGaveta, AbrirMestre]);
 actions!(vitral, [AumentarZoom, DiminuirZoom, ZoomPadrao]);
 actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, IrAoFim]);
 actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsquerda, MoverPainelDireita]);
@@ -70,6 +75,7 @@ pub fn atalhos(cx: &mut App) {
         // no campo da mensagem: a busca de um popover da caixa continua recuando.
         KeyBinding::new("shift-tab", composer::AlternarModo, Some("Composer > Input")),
         KeyBinding::new("ctrl-n", NovaConversa, None),
+        KeyBinding::new("ctrl-shift-n", NovoProjeto, None),
         KeyBinding::new("ctrl-k", Buscar, None),
         KeyBinding::new("ctrl-j", AlternarPainel, None),
         KeyBinding::new("ctrl-b", AlternarLista, None),
@@ -84,7 +90,8 @@ pub fn atalhos(cx: &mut App) {
         KeyBinding::new("ctrl--", DiminuirZoom, None),
         KeyBinding::new("ctrl-subtract", DiminuirZoom, None),
         KeyBinding::new("ctrl-0", ZoomPadrao, None),
-        // Decisão 3 da linguagem visual. O Ctrl+M fica reservado para o Mestre, sem ação.
+        // Decisão 3 da linguagem visual: o Ctrl+M é do Mestre (o campo do kit não usa).
+        KeyBinding::new("ctrl-m", AbrirMestre, None),
         KeyBinding::new("f10", AbrirMenuVitral, None),
         KeyBinding::new("ctrl-,", AbrirConfiguracoes, None),
         KeyBinding::new("ctrl-g", ProximaPendencia, None),
@@ -331,6 +338,50 @@ pub enum AbaLateral {
     Arquivos,
 }
 
+/// O que a lista mostra: a visão geral, um projeto ou os chats sem projeto. Fica no
+/// interface.json ("geral", "avulsos" ou "projeto:<id>").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Vista {
+    #[default]
+    Geral,
+    Projeto(String),
+    Avulsos,
+}
+
+impl Vista {
+    /// O projeto que restringe a lista: `Some("")` nos avulsos, `None` na visão geral.
+    pub fn filtro(&self) -> Option<&str> {
+        match self {
+            Vista::Geral => None,
+            Vista::Projeto(id) => Some(id),
+            Vista::Avulsos => Some(""),
+        }
+    }
+
+    /// O id do projeto, só na vista de um projeto.
+    pub fn projeto(&self) -> Option<&str> {
+        match self {
+            Vista::Projeto(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    fn texto(&self) -> String {
+        match self {
+            Vista::Geral => "geral".into(),
+            Vista::Avulsos => "avulsos".into(),
+            Vista::Projeto(id) => format!("projeto:{id}"),
+        }
+    }
+
+    fn de_texto(texto: &str) -> Vista {
+        match texto {
+            "avulsos" => Vista::Avulsos,
+            _ => texto.strip_prefix("projeto:").map_or(Vista::Geral, |id| Vista::Projeto(id.to_string())),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Filtro {
     Todos,
@@ -356,18 +407,17 @@ pub struct Janela {
     /// Arquivos anexados à próxima mensagem de cada conversa.
     anexos: HashMap<String, Vec<PathBuf>>,
     aba: AbaLateral,
-    /// Projeto escolhido no trilho: a lista e os arquivos mostram só ele.
-    projeto_filtro: Option<String>,
+    /// O que a lista mostra (a visão geral, um projeto ou os avulsos).
+    vista: Vista,
     rolagem_lista: ScrollHandle,
     /// Seções da lista recolhidas ("Mais antigas" começa assim).
     secoes_recolhidas: HashSet<&'static str>,
-    /// Arquivo aberto no painel da direita (projeto, caminho relativo).
-    arquivo_aberto: Option<(String, String)>,
-    cache_arquivos: std::cell::RefCell<HashMap<String, ArquivosLidos>>,
+    /// Arquivo aberto no painel da direita (a pasta e o caminho relativo a ela).
+    arquivo_aberto: Option<(PathBuf, String)>,
+    cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
-    recolhidos: HashSet<String>,
     expandidos: HashSet<String>,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
@@ -391,19 +441,33 @@ pub struct Janela {
     geracao_gaveta: u64,
     foco_gaveta: FocusHandle,
     foco: FocusHandle,
-    /// Se cada projeto usa git (consultar o git a cada quadro sairia caro).
-    git_projetos: HashMap<String, bool>,
-    /// Consultas de git pedidas e ainda sem resposta: a pasta e se já foi lançada.
-    git_consultas: HashMap<String, (PathBuf, bool)>,
+    /// Se cada pasta usa git (consultar o git a cada quadro sairia caro).
+    git_pastas: HashMap<PathBuf, bool>,
+    /// Consultas de git pedidas e ainda sem resposta, e se já foram lançadas.
+    git_consultas: HashMap<PathBuf, bool>,
+    /// O projeto do trilho sob o ponteiro enquanto outro é arrastado, e se o solto vai antes dele.
+    alvo_trilho: Option<(String, bool)>,
+    /// O projeto do trilho (`""`: Avulsos) sob um chat arrastado, com os limites do lugar.
+    chat_no_trilho: Option<(String, Bounds<Pixels>)>,
+    rolagem_trilho: ScrollHandle,
+    /// O último chat aberto, como foi gravado no interface.json (só grava quando muda).
+    ultimo_chat: Option<String>,
+    /// Onde a paleta do Ctrl+N criou o último chat (`""`: Avulsos), também no interface.json.
+    ultimo_destino: Option<String>,
+    /// A pasta escolhida na aba Arquivos de cada projeto.
+    pasta_arquivos: HashMap<String, PathBuf>,
+    /// A primeira linha do README de cada pasta principal (a descrição de quem não tem uma).
+    readmes: std::cell::RefCell<HashMap<PathBuf, Option<String>>>,
+    /// À frente e atrás de cada cópia ("Este chat"): quando foi lido, o que deu e se está lendo.
+    estados_de_copia: std::cell::RefCell<HashMap<u64, (std::time::Instant, Option<crate::git::EstadoCopia>, bool)>>,
+    /// O histórico de cada conversa trazida do Claude Code, lido do arquivo dela quando ela abre.
+    historicos: mensagens::historico::Historicos,
     _assinaturas: Vec<Subscription>,
     _assinatura_motor: Option<Subscription>,
     _assinatura_dialogo: Option<Subscription>,
     _relogio: Task<()>,
-    /// O alerta de fechar (ou de trocar de pasta) com chats trabalhando está aberto.
+    /// O alerta de fechar com chats trabalhando está aberto.
     confirmando_saida: bool,
-    /// O seletor de pasta do sistema está aberto: o "Escolher pasta…" das boas-vindas fica
-    /// carregando, e outro clique não abre um segundo.
-    escolhendo_pasta: bool,
     /// Conversas com o Ultrathink ligado para a próxima mensagem.
     ultrathink: HashSet<String>,
     /// Conversas com o Ultracode ligado para a próxima mensagem (desligado ao abrir, sempre).
@@ -437,6 +501,14 @@ pub struct Janela {
     dica_busca: &'static str,
     /// Popover da caixa aberto (um por vez em toda a janela): painel e qual.
     pop_caixa: Option<(u64, composer::PopCaixa)>,
+    /// O "Ver" de um cartão do Mestre: o painel rola até ele no próximo desenho.
+    rolar_ao_cartao: Option<(u64, u64)>,
+    /// A sugestão do Mestre que o próximo Novo projeto preenche.
+    sugestao_no_editor: Option<(u64, modelo::SugestaoProjeto)>,
+    /// O menu de `#`/`@` fechado com Esc neste texto (volta quando o texto muda).
+    sugestao_fechada: Option<(u64, String)>,
+    /// A memória do Mestre que o Distribuído mostra, relida a cada 5 s.
+    memoria_lida: std::cell::RefCell<Option<(std::time::Instant, String)>>,
     /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
     /// de atualização mostrado ("pronta 0.3.0"): um por versão.
     atualizacao_pronta: Option<String>,
@@ -475,7 +547,7 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
 }
 
 impl Janela {
-    pub fn new(raiz: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         iniciar_contador_de_quadros(cx);
         let busca = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar"));
         let mut assinaturas = vec![cx.subscribe_in(&busca, window, |_, _, evento, _, cx| {
@@ -485,8 +557,16 @@ impl Janela {
         })];
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
+            // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
             if let Some(motor) = &this.motor {
-                motor.update(cx, |m, _| m.janela_ativa = ativa);
+                motor.update(cx, |m, cx| {
+                    m.janela_ativa = ativa;
+                    if ativa {
+                        m.usuario_voltou(cx);
+                    } else {
+                        m.usuario_saiu();
+                    }
+                });
             }
             // Sem foco, os spinners e o brilho param na fase em que estavam; na volta, voltam a bater.
             if ativa {
@@ -497,7 +577,10 @@ impl Janela {
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         assinaturas.push(cx.on_app_quit(|this, cx| {
             if let Some(motor) = &this.motor {
-                motor.update(cx, |m, _| m.encerrar_tudo());
+                motor.update(cx, |m, _| {
+                    m.usuario_saiu();
+                    m.encerrar_tudo();
+                });
             }
             async {}
         }));
@@ -540,14 +623,13 @@ impl Janela {
             rascunhos: HashMap::new(),
             anexos: HashMap::new(),
             aba: AbaLateral::Conversas,
-            projeto_filtro: None,
+            vista: Vista::Geral,
             rolagem_lista: ScrollHandle::new(),
             secoes_recolhidas: HashSet::from(RECOLHIDAS_DE_INICIO),
             arquivo_aberto: None,
             cache_arquivos: Default::default(),
             arquivo_lido: Default::default(),
             feedback_plano: HashMap::new(),
-            recolhidos: HashSet::new(),
             expandidos: HashSet::new(),
             explicacao: None,
             rolagem_equipe: ScrollHandle::new(),
@@ -562,14 +644,22 @@ impl Janela {
             geracao_gaveta: 0,
             foco_gaveta: cx.focus_handle(),
             foco: cx.focus_handle(),
-            git_projetos: HashMap::new(),
+            git_pastas: HashMap::new(),
             git_consultas: HashMap::new(),
+            alvo_trilho: None,
+            chat_no_trilho: None,
+            rolagem_trilho: ScrollHandle::new(),
+            ultimo_chat: None,
+            ultimo_destino: None,
+            pasta_arquivos: HashMap::new(),
+            readmes: Default::default(),
+            estados_de_copia: Default::default(),
+            historicos: Default::default(),
             _assinaturas: assinaturas,
             _assinatura_motor: None,
             _assinatura_dialogo: None,
             _relogio,
             confirmando_saida: false,
-            escolhendo_pasta: false,
             ultrathink: HashSet::new(),
             ultracode: HashSet::new(),
             menu_aberto: false,
@@ -587,13 +677,15 @@ impl Janela {
             direita_estreita: false,
             dica_busca: "Buscar",
             pop_caixa: None,
+            rolar_ao_cartao: None,
+            sugestao_no_editor: None,
+            sugestao_fechada: None,
+            memoria_lida: Default::default(),
             atualizacao_pronta: None,
             atualizacao_avisada: None,
         };
         window.focus(&janela.foco, cx);
-        if let Some(raiz) = raiz {
-            janela.abrir_raiz(raiz, window, cx);
-        }
+        janela.ligar_motor(motor, window, cx);
         janela
     }
 
@@ -699,20 +791,19 @@ impl Janela {
         )
     }
 
-    /// Arquivos de um projeto. A primeira leitura é na hora; depois, a cada 20 segundos (ou no
+    /// Arquivos de uma pasta. A primeira leitura é na hora; depois, a cada 20 segundos (ou no
     /// ↻), a lista é relida em segundo plano, e a anterior fica na tela enquanto isso.
-    pub(super) fn arquivos_do(&self, projeto: &str, motor: &Motor, cx: &Context<Self>) -> std::rc::Rc<Vec<String>> {
-        let pasta = motor.caminho_projeto(projeto);
+    pub(super) fn arquivos_da_pasta(&self, pasta: &std::path::Path, cx: &Context<Self>) -> std::rc::Rc<Vec<String>> {
         let mut cache = self.cache_arquivos.borrow_mut();
-        let lidos = cache.entry(projeto.to_string()).or_insert_with(|| ArquivosLidos {
-            lista: std::rc::Rc::new(seletor_arquivos::listar(&pasta)),
+        let lidos = cache.entry(pasta.to_path_buf()).or_insert_with(|| ArquivosLidos {
+            lista: std::rc::Rc::new(seletor_arquivos::listar(pasta)),
             lidos_em: Some(std::time::Instant::now()),
             relendo: None,
         });
         let vencida = lidos.lidos_em.is_none_or(|q| q.elapsed() >= Duration::from_secs(20));
         if vencida && lidos.relendo.is_none() {
-            lidos.relendo = Some(pasta.clone());
-            let projeto = projeto.to_string();
+            lidos.relendo = Some(pasta.to_path_buf());
+            let pasta = pasta.to_path_buf();
             cx.spawn(async move |this, cx| {
                 let lida = {
                     let pasta = pasta.clone();
@@ -721,8 +812,8 @@ impl Janela {
                 let _ = this.update(cx, |this, cx| {
                     let mudou = {
                         let mut cache = this.cache_arquivos.borrow_mut();
-                        // A leitura de uma pasta-mãe anterior (ou de um cache limpo) não vale mais.
-                        let Some(lidos) = cache.get_mut(&projeto).filter(|l| l.relendo.as_ref() == Some(&pasta)) else {
+                        // A leitura de um cache limpo no meio do caminho não vale mais.
+                        let Some(lidos) = cache.get_mut(&pasta).filter(|l| l.relendo.as_ref() == Some(&pasta)) else {
                             return;
                         };
                         lidos.relendo = None;
@@ -745,42 +836,45 @@ impl Janela {
     }
 
     /// O ↻ da aba Arquivos: a próxima vez que a lista for pedida, ela é relida.
-    pub(super) fn reler_arquivos(&self, projeto: &str) {
-        if let Some(lidos) = self.cache_arquivos.borrow_mut().get_mut(projeto) {
+    pub(super) fn reler_arquivos(&self, pasta: &std::path::Path) {
+        if let Some(lidos) = self.cache_arquivos.borrow_mut().get_mut(pasta) {
             lidos.lidos_em = None;
         }
     }
 
-    /// Se o projeto usa git. A primeira vez, os dois processos git rodam em segundo plano (fora
-    /// do render), e até a resposta o projeto conta como sem git.
-    pub(super) fn usa_git(&mut self, motor: &Motor, projeto: &str) -> bool {
-        if let Some(usa) = self.git_projetos.get(projeto) {
+    /// Se a pasta usa git. A primeira vez, os dois processos git rodam em segundo plano (fora do
+    /// render), e até a resposta a pasta conta como sem git.
+    pub(super) fn pasta_usa_git(&mut self, pasta: &std::path::Path) -> bool {
+        if let Some(usa) = self.git_pastas.get(pasta) {
             return *usa;
         }
-        self.git_consultas
-            .entry(projeto.to_string())
-            .or_insert_with(|| (motor.caminho_projeto(projeto), false));
+        self.git_consultas.entry(pasta.to_path_buf()).or_insert(false);
         false
     }
 
-    /// Lança as consultas de git pedidas neste quadro. A resposta de uma pasta que não vale mais
-    /// (outra raiz, ou o projeto que já ganhou o git pelo diálogo) é descartada.
+    /// O mesmo para a pasta principal de um projeto (sem pasta, conta como sem git).
+    pub(super) fn usa_git(&mut self, motor: &Motor, projeto: &str) -> bool {
+        match motor.pasta_principal(projeto) {
+            Some(pasta) => self.pasta_usa_git(&pasta),
+            None => false,
+        }
+    }
+
+    /// Lança as consultas de git pedidas neste quadro.
     fn consultar_git(&mut self, cx: &mut Context<Self>) {
-        for (projeto, (pasta, lancada)) in self.git_consultas.iter_mut().filter(|(_, (_, lancada))| !*lancada) {
+        for (pasta, lancada) in self.git_consultas.iter_mut().filter(|(_, lancada)| !**lancada) {
             *lancada = true;
-            let (projeto, pasta) = (projeto.clone(), pasta.clone());
+            let pasta = pasta.clone();
             cx.spawn(async move |this, cx| {
                 let usa = {
                     let pasta = pasta.clone();
                     cx.background_spawn(async move { crate::git::usa_git(&pasta) }).await
                 };
                 let _ = this.update(cx, |this, cx| {
-                    if this.git_consultas.get(&projeto).is_some_and(|(p, _)| *p == pasta) {
-                        this.git_consultas.remove(&projeto);
-                        if !this.git_projetos.contains_key(&projeto) {
-                            this.git_projetos.insert(projeto, usa);
-                            cx.notify();
-                        }
+                    // A resposta de uma pasta que já ganhou o git pelo diálogo é descartada.
+                    if this.git_consultas.remove(&pasta).is_some() && !this.git_pastas.contains_key(&pasta) {
+                        this.git_pastas.insert(pasta, usa);
+                        cx.notify();
                     }
                 });
             })
@@ -788,18 +882,57 @@ impl Janela {
         }
     }
 
-    fn abrir_raiz(&mut self, raiz: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(antigo) = self.motor.take() {
-            antigo.update(cx, |m, _| m.encerrar_tudo());
+    /// Antes de abrir um diálogo: o foco vai para a caixa do painel ativo (ou para a janela). O kit
+    /// devolve o foco, ao fechar, a quem o tinha na abertura; vindo de um menu, que já foi embora,
+    /// ninguém ficaria com ele, e os atalhos parariam.
+    pub(super) fn foco_antes_do_dialogo(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let foco = match self.composer_ativo() {
+            Some(composer) => composer.read(cx).focus_handle(cx),
+            None => self.foco.clone(),
+        };
+        window.focus(&foco, cx);
+    }
+
+    /// Troca o que a lista mostra e grava no interface.json.
+    pub(super) fn mudar_vista(&mut self, vista: Vista, cx: &mut Context<Self>) {
+        if self.vista != vista {
+            self.vista = vista;
+            gravar_interface("vista", serde_json::Value::String(self.vista.texto()), cx);
         }
-        let motor = cx.new(|cx| Motor::new(&raiz, cx));
-        // Trocar a assinatura descarta a do motor anterior.
+        cx.notify();
+    }
+
+    /// Grava o último chat aberto, quando muda (a abertura volta nele).
+    fn lembrar_ultimo_chat(&mut self, cx: &mut Context<Self>) {
+        if self.selecionado.is_some() && self.selecionado != self.ultimo_chat {
+            self.ultimo_chat = self.selecionado.clone();
+            let valor = serde_json::Value::String(self.ultimo_chat.clone().unwrap_or_default());
+            gravar_interface("ultimo_chat", valor, cx);
+        }
+    }
+
+    /// Liga a janela ao motor (uma vez, ao abrir) e abre na conversa mais recente.
+    fn ligar_motor(&mut self, motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) {
         self._assinatura_motor = Some(cx.observe_in(&motor, window, |this, motor, window, cx| {
             // O clique numa notificação: a conversa abre como no sino, e a janela vem para a frente
             // (ou o GNOME avisa que o Vitral está pronto).
             if let Some(chat) = motor.update(cx, |m, _| m.pedido_de_abrir.take()) {
                 this.selecionar(Some(chat), window, cx);
                 window.activate_window();
+            }
+            let aberturas = motor.update(cx, |m, _| std::mem::take(&mut m.aberturas));
+            for abertura in aberturas {
+                this.aplicar_abertura(abertura, window, cx);
+                window.activate_window();
+            }
+            // Os avisos que chegam depois de aberta (o resultado da importação do Claude Code).
+            let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
+            if !avisos.is_empty() {
+                cx.on_next_frame(window, move |_, window, cx| {
+                    for texto in avisos {
+                        window.push_notification(componentes::aviso(componentes::Tom::Info, texto), cx);
+                    }
+                });
             }
             // Uma rolagem pela barra ainda não desenhada não pode ser desfeita pelo fim abaixo.
             this.acompanhar_rolagem(cx);
@@ -814,78 +947,48 @@ impl Janela {
             }
             cx.notify();
         }));
-        // Abre na conversa mais recente.
+        // Abre no último chat aberto (ou no mais recente), na vista de antes; os avisos da abertura
+        // vão para a tela.
         let m = motor.read(cx);
-        let recente = m
-            .chats
-            .iter()
-            .filter(|c| !m.arquivada(c) && c.papel == modelo::Papel::Coordenador)
-            .max_by_key(|c| c.atualizado_em)
-            .map(|c| c.id.clone());
+        let interface = zoom::interface();
+        let lido = |chave: &str| interface.as_ref().and_then(|i| i.get(chave)?.as_str().map(str::to_string));
+        // Abre no último chat aberto e, sem ele, no Mestre (ou, sem o Mestre, no mais recente).
+        let ultimo = lido("ultimo_chat").filter(|id| m.chat(id).is_some_and(|c| !m.arquivada(c) && c.papel.de_topo()));
+        let recente = ultimo.clone().or_else(|| m.mestre_id().map(str::to_string)).or_else(|| {
+            m.chats
+                .iter()
+                .filter(|c| !m.arquivada(c) && c.papel.na_lista())
+                .max_by_key(|c| c.atualizado_em)
+                .map(|c| c.id.clone())
+        });
+        self.ultimo_chat = ultimo;
+        self.ultimo_destino = lido("ultimo_destino").map(|d| if d == "avulsos" { String::new() } else { d });
+        self.vista = match lido("vista").map(|t| Vista::de_texto(&t)) {
+            Some(Vista::Projeto(id)) if m.projeto(&id).is_some_and(|p| !p.arquivado) => Vista::Projeto(id),
+            Some(Vista::Avulsos) => Vista::Avulsos,
+            _ => Vista::Geral,
+        };
+        // O relatório da migração fica só na conversa do Mestre (não vem aqui).
+        let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
+        let aberturas = motor.update(cx, |m, _| std::mem::take(&mut m.aberturas));
+        // Uma vez na abertura: com uma saída gravada, o resumo do que aconteceu com o Vitral fechado.
+        motor.update(cx, |m, cx| m.usuario_voltou(cx));
         self.motor = Some(motor);
-        self.git_projetos.clear();
-        self.git_consultas.clear();
-        self.paineis.clear();
-        self.selecionado = None;
-        // Filtro, arquivo aberto e cache eram da pasta anterior.
-        self.projeto_filtro = None;
-        self.arquivo_aberto = None;
-        self.cache_arquivos.borrow_mut().clear();
-        self.filtro = Filtro::Todos;
-        self.expandidos.clear();
-        self.feedback_plano.clear();
-        self.secoes_recolhidas = HashSet::from(RECOLHIDAS_DE_INICIO);
-        self.explicacao = None;
-        *self.arquivo_lido.borrow_mut() = None;
-        self.gaveta = None;
-        // O que era da pasta anterior: menus e popovers abertos, revisões, realces e a lista.
-        self.menu_aberto = false;
-        self.sino_numero.set(None);
-        self.caixa_aberta = false;
-        self.revisoes.clear();
-        self.pedido_aberto = None;
-        self.nova_ao_lado = false;
-        self.arrastando_aba = None;
-        self.familias_abertas.clear();
-        self.arvores.clear();
-        self.realce_lista = None;
-        self.direita_estreita = false;
-        self.pop_caixa = None;
-        self.ultrathink.clear();
-        self.ultracode.clear();
-        self.busca.update(cx, |b, cx| b.set_value("", window, cx));
         if recente.is_some() {
             self.selecionar(recente, window, cx);
         }
-        cx.notify();
-    }
-
-    fn escolher_pasta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.escolhendo_pasta {
-            return;
-        }
-        self.escolhendo_pasta = true;
-        cx.notify();
-        let escolha = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Usar esta pasta".into()),
+        // O kit só monta a raiz da janela (que guarda avisos e diálogos) depois desta construção:
+        // os avisos da abertura e o que ela pede (o Novo projeto de `vitral <pasta>`) vão no primeiro
+        // quadro.
+        cx.on_next_frame(window, move |this, window, cx| {
+            for texto in avisos {
+                window.push_notification(componentes::aviso(componentes::Tom::Info, texto), cx);
+            }
+            for abertura in aberturas {
+                this.aplicar_abertura(abertura, window, cx);
+            }
         });
-        cx.spawn_in(window, async move |this, cx| {
-            let raiz = match escolha.await {
-                Ok(Ok(Some(caminhos))) => caminhos.into_iter().next(),
-                _ => None,
-            };
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.escolhendo_pasta = false;
-                cx.notify();
-                if let Some(raiz) = raiz {
-                    this.trocar_raiz(raiz, window, cx);
-                }
-            });
-        })
-        .detach();
+        cx.notify();
     }
 
     /// Envia o que está na caixa do painel ativo.
@@ -895,6 +998,10 @@ impl Janela {
         else {
             return;
         };
+        // Enter com o menu de # ou @ aberto (no Mestre) escolhe a primeira sugestão.
+        if self.completar_citacao(window, cx) {
+            return;
+        }
         // Enter com um comando pela metade completa o comando em vez de enviar.
         if let Some(prefixo) = self.prefixo_comando(cx)
             && let Some(c) = motor.read(cx).chat(&chat)
@@ -947,16 +1054,29 @@ impl Janela {
         self.enviar(window, cx);
     }
 
-    fn nova_conversa(&mut self, projeto: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn nova_conversa(&mut self, projeto: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.nova_conversa_na_pasta(projeto, None, window, cx);
+    }
+
+    /// Um chat novo no projeto (`""`: avulso), na pasta escolhida ou na principal.
+    pub(super) fn nova_conversa_na_pasta(
+        &mut self,
+        projeto: &str,
+        pasta: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        // Pelo `--nova`: conversa nova num projeto arquivado o traz de volta.
-        if motor.read(cx).projeto_arquivado(projeto) {
-            self.desarquivar_projeto(projeto.to_string(), cx);
-        }
-        let id = motor.update(cx, |m, cx| m.novo_coordenador(projeto, cx));
-        self.recolhidos.remove(projeto);
+        // Pelo `--nova`: conversa nova num projeto arquivado o traz de volta (o motor desarquiva).
+        let id = match motor.update(cx, |m, cx| m.novo_chat(projeto, pasta.as_deref(), "", cx)) {
+            Ok(id) => id,
+            Err(erro) => {
+                window.push_notification(componentes::aviso(componentes::Tom::Erro, format!("Não abriu o chat: {erro}")), cx);
+                return;
+            }
+        };
         self.selecionar(Some(id), window, cx);
         if let Some(composer) = self.composer_ativo() {
             let foco = composer.read(cx).focus_handle(cx);
@@ -1108,8 +1228,11 @@ impl Render for Janela {
         let fora = (!window.is_window_hovered() && !cx.has_active_drag())
             .then(|| div().id("ponteiro-fora").absolute().inset_0().occlude());
         let Some(motor) = self.motor.clone() else {
-            return base.child(self.boas_vindas(cx)).children(fora).into_any_element();
+            return base.children(fora).into_any_element();
         };
+        if let Some(leitura) = motor.read(cx).somente_leitura().cloned() {
+            return base.child(self.tela_de_recuperacao(leitura, cx)).children(fora).into_any_element();
+        }
         // As conversas dos painéis abertos: o texto parcial das outras não redesenha a janela.
         let visiveis: HashSet<String> = self.paineis.iter().filter_map(|p| p.chat.clone()).collect();
         if motor.read(cx).visiveis != visiveis {
@@ -1128,6 +1251,8 @@ impl Render for Janela {
             self.alvo_arrasto = None;
             self.arquivos_sobre = None;
             self.arrastando_aba = None;
+            self.alvo_trilho = None;
+            self.chat_no_trilho = None;
         }
         // Um campo de comentário por plano esperando aprovação, cada um no seu cartão.
         let planos: Vec<String> = motor
@@ -1165,6 +1290,8 @@ impl Render for Janela {
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| {
                 this.dialogo_nova_conversa(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &NovoProjeto, window, cx| this.dialogo_criar_projeto(window, cx)))
+            .on_action(cx.listener(|this, _: &AbrirMestre, window, cx| this.abrir_mestre(window, cx)))
             .on_action(cx.listener(|this, _: &Buscar, window, cx| this.focar_busca(window, cx)))
             .on_action(cx.listener(|this, _: &AlternarPainel, window, cx| {
                 this.alternar_painel(window, cx)
@@ -1204,7 +1331,7 @@ impl Render for Janela {
                     .gap(esp::E8)
                     .items_start()
                     // Ctrl+B esconde o trilho junto com a lista (4d).
-                    .when(self.lista, |s| s.child(self.trilho(&motor, cx)))
+                    .when(self.lista, |s| s.child(self.trilho(&motor, window, cx)))
                     .child(
                         div()
                             .relative()
@@ -1215,14 +1342,35 @@ impl Render for Janela {
                             .children(gaveta),
                     ),
             )
+            .children(self.faixa_de_gravacao(&motor, cx))
             .children(fora)
             .into_any_element();
         self.consultar_git(cx);
+        self.lembrar_ultimo_chat(cx);
         janela
     }
 }
 
 impl Janela {
+    /// A faixa fixa de quando uma gravação falhou: nada novo começa até voltar a gravar (o motor
+    /// tenta de novo sozinho). Sem ×: some quando gravar.
+    fn faixa_de_gravacao(&self, motor: &Entity<Motor>, cx: &Context<Self>) -> Option<AnyElement> {
+        let (erro, _) = motor.read(cx).falha_gravacao.clone()?;
+        let texto = format!("Não estou conseguindo gravar ({erro}). Nada novo começa até voltar a gravar.");
+        Some(
+            div()
+                .absolute()
+                .top(esp::E8)
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .px(esp::E16)
+                .child(componentes::Alerta::new(componentes::Tom::Erro, texto))
+                .into_any_element(),
+        )
+    }
+
     /// Lista, conversas lado a lado e painel da direita, com divisórias que redimensionam. Só
     /// entram as partes que o orçamento deixou ancoradas; as outras vão para a gaveta.
     fn partes(
@@ -1304,6 +1452,14 @@ impl Janela {
 fn largura_da_gaveta(guardada: f32, minima: f32, o: &Orcamento) -> f32 {
     let u = |medida: f32| medida * o.escala;
     u(guardada).min(o.util - u(FRESTA_GAVETA)).max(u(minima)).floor()
+}
+
+/// Grava uma chave do interface.json em segundo plano (com fsync, fora da thread da janela).
+pub(super) fn gravar_interface(chave: &'static str, valor: serde_json::Value, cx: &App) {
+    cx.background_spawn(async move {
+        zoom::gravar_na_interface(chave, valor);
+    })
+    .detach();
 }
 
 /// Contêiner para botões dentro de uma faixa arrastável: o clique neles não move a janela.

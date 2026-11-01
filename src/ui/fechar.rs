@@ -1,7 +1,5 @@
-//! Fechar a janela, trocar de pasta ou reiniciar para a versão nova mata os processos do Claude:
-//! com conversas trabalhando, o Vitral pergunta antes.
-
-use std::path::PathBuf;
+//! Fechar a janela ou reiniciar para a versão nova mata os processos do Claude: com conversas
+//! trabalhando, o Vitral pergunta antes.
 
 use std::rc::Rc;
 
@@ -18,7 +16,6 @@ use crate::{atualizacao, tema::Lucide};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Parar {
     Fechar,
-    TrocarPasta,
     Reiniciar,
 }
 
@@ -32,7 +29,6 @@ pub(super) fn conversas_trabalhando(n: usize) -> String {
 pub(super) fn confirmacao_de_parar(n: usize, parar: Parar) -> Confirmacao {
     let param = if n == 1 { "ela para" } else { "elas param" };
     let (acao, ok, cancelar, depois) = match parar {
-        Parar::TrocarPasta => ("trocar de pasta", "Trocar mesmo assim", "Ficar nesta pasta", "Ao voltar a esta pasta"),
         Parar::Fechar => ("fechar", "Fechar mesmo assim", "Continuar aberto", "Ao abrir o Vitral de novo"),
         Parar::Reiniciar => ("reiniciar", "Reiniciar mesmo assim", "Continuar aberto", "Quando o Vitral abrir de novo"),
     };
@@ -100,18 +96,6 @@ impl Janela {
         }
     }
 
-    /// Escolher outra pasta de trabalho também para tudo o que roda nesta.
-    pub(super) fn trocar_raiz(&mut self, raiz: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let fraca = cx.weak_entity();
-        let destino = raiz.clone();
-        let seguir = move |window: &mut Window, cx: &mut App| {
-            let _ = fraca.update(cx, |this, cx| this.abrir_raiz(destino.clone(), window, cx));
-        };
-        if self.pode_parar_tudo(Parar::TrocarPasta, seguir, window, cx) {
-            self.abrir_raiz(raiz, window, cx);
-        }
-    }
-
     /// Com conversas trabalhando, abre o alerta e devolve false; o "mesmo assim" faz `seguir`. Esc e o
     /// outro botão deixam tudo como está.
     fn pode_parar_tudo(
@@ -155,10 +139,12 @@ mod testes {
         assert_eq!(duas.titulo, "2 conversas estão trabalhando");
         assert!(duas.texto.contains("elas param no meio") && duas.texto.contains("Retomar"), "{}", duas.texto);
         assert_eq!((duas.ok.as_ref(), duas.cancelar.as_ref()), ("Reiniciar mesmo assim", "Continuar aberto"));
-        for parar in [Parar::Fechar, Parar::TrocarPasta, Parar::Reiniciar] {
+        for parar in [Parar::Fechar, Parar::Reiniciar] {
             // O OK perigoso é o que deixa o Enter só fechar (`confirmar`).
             assert!(confirmacao_de_parar(3, parar).ok_perigo, "{parar:?}");
         }
-        assert_eq!(confirmacao_de_parar(2, Parar::TrocarPasta).cancelar, "Ficar nesta pasta");
+        let fechar = confirmacao_de_parar(1, Parar::Fechar);
+        assert_eq!((fechar.ok.as_ref(), fechar.cancelar.as_ref()), ("Fechar mesmo assim", "Continuar aberto"));
+        assert!(fechar.texto.starts_with("Se fechar agora, ela para no meio. Ao abrir o Vitral de novo"), "{}", fechar.texto);
     }
 }

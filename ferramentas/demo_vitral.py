@@ -1843,6 +1843,10 @@ class CupomAdmin(admin.ModelAdmin):
                                 "o comando `gunicorn loja.wsgi`, e ligue o volume em `/app/media`."),
                  ], arquivado=True, custo_usd=0.02, contexto=2400))
 
+    # ---------- C11 site (vazio): aberto e nunca usado; a migração o traz como chat de projeto ----------
+    guardar(chat(novo_id(), "site", "Nova conversa", "Coordenador", raiz_site, dia(1, 9, 0), dia(1, 9, 0), [],
+                 sessao_criada=False, modelo_atual=None))
+
     # ================================================= gravação
 
     estado = {"chats": chats, "tarefas": tarefas, "proxima_tarefa": 9, "filas": {}}

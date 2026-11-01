@@ -3,6 +3,33 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.3.0
+
+O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de trabalho.
+
+- **Mestre.** Uma conversa só, para todos os projetos (o círculo no alto do trilho, ou Ctrl+M). Ele
+  entende o pedido, mostra como vai dividir ("Vou dividir assim", com **Começar**) e manda cada
+  parte para o projeto certo. Quando os chats terminam, junta sozinho o que passou na verificação e
+  no revisor e conta o resumo. Ele não edita nada. `#projeto` e `@chat` dizem para onde vai.
+- **Projetos criados no app.** Nome, ícone, cor, descrição e uma ou mais pastas ligadas (ou uma
+  pasta própria, com git, que o Vitral cria). O trilho rola e se reordena arrastando; a lista tem a
+  **Visão geral**, cada projeto e os **Avulsos**, para os chats sem projeto.
+- **Chats de projeto.** Cada chat conversa com você e trabalha numa cópia só dele da pasta (ou
+  direto, numa pasta sem git). Acima da caixa, o que mudou, com **Revisar** e **Juntar**; a cópia
+  continua depois de juntar.
+- **Ajudantes.** Um chat divide um pedido grande em até 3 ajudantes, cada um numa cópia da pasta
+  dele, e junta o trabalho deles antes de entregar.
+- **Conversas do Claude Code.** As da extensão do VS Code e do terminal viram chats, no projeto da
+  pasta delas ou em Avulsos, com o histórico. A primeira mensagem continua numa cópia da conversa: a
+  original fica como está. **Importar do Claude Code…**, no menu do logo, traz as novas.
+- **Um Vitral só.** Abrir de novo (pelo menu, `vitral <pasta>` ou `--nova`) entrega o pedido ao que
+  já está aberto.
+- **Na primeira abertura**, o Vitral traz sozinho o que havia nas pastas do Vitral antigo: cada
+  subpasta vira um projeto, e as conversas vão junto (as que já tinham conversado ficam só para
+  leitura, com **Continuar num chat novo**). Nada nas pastas antigas é mudado nem apagado; os dados
+  novos ficam em `~/.local/share/vitral`. Depois disso, a volta para a 0.2.0 fica desligada: ela não
+  lê as conversas do formato novo.
+
 ## 0.2.0
 
 A primeira versão publicada, para Linux.

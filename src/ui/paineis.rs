@@ -70,6 +70,13 @@ pub struct ArrastoChat {
     pub de_painel: Option<u64>,
 }
 
+/// Um projeto arrastado no trilho, para mudar de lugar.
+#[derive(Clone)]
+pub struct ArrastoProjeto {
+    pub id: String,
+    pub nome: SharedString,
+}
+
 /// Onde a conversa arrastada cai num painel.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lado {
@@ -279,7 +286,7 @@ impl Janela {
             TextareaState::new(window, cx)
                 .auto_grow(1, super::composer::LINHAS_CAIXA)
                 .submit_on_enter(true)
-                .placeholder("Peça ao coordenador…")
+                .placeholder("Mensagem…")
         });
         self._assinaturas.push(cx.subscribe_in(
             &composer,
@@ -291,10 +298,13 @@ impl Janela {
                 }
                 InputEvent::Focus => this.ativar_painel(id, cx),
                 InputEvent::Change => {
-                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos.
+                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos; no
+                    // Mestre, que não tem pasta, o "@" cita um chat (o menu da caixa).
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
+                    let mestre = this.selecionado.as_deref() == Some(modelo::ID_MESTRE);
                     if (texto == "@" || texto.ends_with(" @"))
+                        && !mestre
                         && let Some(chat) = this.selecionado.clone()
                     {
                         this.dialogo_arquivos_projeto(chat, window, cx);
@@ -360,12 +370,25 @@ impl Janela {
                 Some((Some(chat.papel), tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some())))
             })
             .unwrap_or((None, 0));
+        let (avulso, ajudante) = novo
+            .as_ref()
+            .and_then(|id| {
+                let m = self.motor.as_ref()?.read(cx);
+                let c = m.chat(id)?;
+                let pai = c.pai.as_deref().and_then(|p| m.chat(p));
+                Some((c.projeto.is_empty(), pai.is_some_and(|p| p.papel == modelo::Papel::Projeto)))
+            })
+            .unwrap_or_default();
         let dica = match papel {
+            Some(modelo::Papel::Mestre) => "Peça ao Mestre… (#projeto, @chat)",
+            Some(modelo::Papel::Trabalhador) if ajudante => "Mensagem direta para este ajudante…",
             Some(modelo::Papel::Trabalhador) => novo
                 .as_ref()
                 .and_then(|id| Some(self.motor.as_ref()?.read(cx).dica_do_trabalhador(id)))
-                .unwrap_or("Mensagem ao trabalhador…"),
-            _ => "Peça ao coordenador…",
+                .unwrap_or("Mensagem direta para este ajudante…"),
+            Some(modelo::Papel::Projeto) if avulso => "Mensagem…",
+            Some(modelo::Papel::Projeto) => "Mensagem para este chat…",
+            _ => "Mensagem…",
         };
         painel.composer.update(cx, |c, cx| {
             c.set_value(rascunho, window, cx);

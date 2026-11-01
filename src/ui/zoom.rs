@@ -198,8 +198,16 @@ fn definir(fator: f32, cx: &mut App) {
     }
 }
 
+static PASTA: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A pasta da configuração (`Dados::config`), onde fica o interface.json. Sem ela (a vitrine fora
+/// da bancada), o zoom vale só até fechar.
+pub fn usar_pasta(pasta: PathBuf) {
+    let _ = PASTA.set(pasta);
+}
+
 fn arquivo() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("vitral").join("interface.json"))
+    Some(PASTA.get()?.join("interface.json"))
 }
 
 fn gravar(fator: f32) -> bool {
@@ -212,13 +220,16 @@ pub(super) fn interface() -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(&texto).ok().filter(|valor| valor.is_object())
 }
 
-/// Grava uma chave em interface.json sem perder as outras que o arquivo tiver.
+/// Grava uma chave em interface.json sem perder as outras que o arquivo tiver. Uma gravação por
+/// vez (a vista e o último chat vão em segundo plano): duas ao mesmo tempo perderiam uma chave.
 pub(super) fn gravar_na_interface(chave: &str, valor: serde_json::Value) -> bool {
+    static VEZ: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let Some(caminho) = arquivo() else {
         return false;
     };
+    let _vez = VEZ.lock().unwrap_or_else(|e| e.into_inner());
     let existente = std::fs::read_to_string(&caminho).ok();
-    match crate::modelo::gravar_json(&caminho, &com_chave(existente.as_deref(), chave, valor)) {
+    match crate::dados::gravar_json_seguro(&caminho, &com_chave(existente.as_deref(), chave, valor), false) {
         Ok(()) => true,
         Err(erro) => {
             eprintln!("vitral: não gravou {} ({erro})", caminho.display());

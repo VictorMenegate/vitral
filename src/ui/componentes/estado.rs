@@ -449,7 +449,7 @@ fn fatos_do_sinal(motor: &Motor, c: &Chat) -> FatosDoSinal {
         erro: espera && matches!(execucao, Execucao::Erro(_)),
         pedido: espera && execucao == Execucao::EsperandoVoce,
         parada: espera && motor.precisa_retomar(&c.id),
-        nova: espera && c.papel == Papel::Coordenador && motor.nao_lido(c),
+        nova: espera && c.papel.na_lista() && motor.nao_lido(c),
         rodando: matches!(execucao, Execucao::Rodando { .. }) || motor.esperando_vaga(&c.id),
     }
 }
@@ -475,7 +475,9 @@ fn sinal_de(fatos: &[FatosDoSinal]) -> Option<Sinal> {
 /// O sinal de um chat; no coordenador vale a família toda (os trabalhadores não arquivados).
 pub fn sinal_do_chat(motor: &Motor, chat: &Chat) -> Option<Sinal> {
     let fatos: Vec<FatosDoSinal> = match chat.papel {
-        Papel::Coordenador => motor.familia(chat).into_iter().map(|c| fatos_do_sinal(motor, c)).collect(),
+        Papel::Coordenador | Papel::Mestre | Papel::Projeto => {
+            motor.familia(chat).into_iter().map(|c| fatos_do_sinal(motor, c)).collect()
+        }
         Papel::Trabalhador => vec![fatos_do_sinal(motor, chat)],
     };
     sinal_de(&fatos)
@@ -549,7 +551,7 @@ fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
                 Estado::EsperandoVoce,
                 "esperando você",
                 Some("permissão".into()),
-                "O trabalhador espera a sua permissão para continuar.".into(),
+                "O chat espera a sua permissão para continuar.".into(),
             );
         }
         Some(Execucao::Erro(erro)) if ativa => {
@@ -573,26 +575,26 @@ fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
             Estado::NaFila,
             "na fila",
             Some("esperando vaga".into()),
-            "Começa quando outro trabalhador terminar.".into(),
+            "Começa quando outro chat terminar.".into(),
         ),
         EstadoTarefa::Rodando | EstadoTarefa::Ajustando if !t.preparada || progresso.starts_with("preparando") => {
-            visual(Estado::Rodando, "preparando", Some("a cópia".into()), "Preparando a cópia isolada da tarefa.".into())
+            visual(Estado::Rodando, "preparando", Some("a cópia".into()), "Preparando a cópia isolada do chat.".into())
         }
         EstadoTarefa::Rodando | EstadoTarefa::Ajustando if progresso.starts_with("esperando") => visual(
             Estado::NaFila,
-            "esperando o coordenador",
+            "esperando resposta",
             None,
-            "O trabalhador perguntou algo e espera a resposta do coordenador.".into(),
+            "O chat perguntou algo e espera a resposta de quem pediu.".into(),
         ),
         EstadoTarefa::Rodando => {
-            visual(Estado::Rodando, "rodando", f.decorrido.clone(), "O trabalhador está na tarefa.".into())
+            visual(Estado::Rodando, "rodando", f.decorrido.clone(), "O chat está trabalhando no pedido.".into())
         }
         EstadoTarefa::Ajustando => {
             let detalhe = match &f.decorrido {
                 Some(d) => format!("rodada {} · {d}", t.rodada),
                 None => format!("rodada {}", t.rodada),
             };
-            visual(Estado::Rodando, "ajustando", Some(detalhe), "O trabalhador ajusta o que foi pedido.".into())
+            visual(Estado::Rodando, "ajustando", Some(detalhe), "O chat ajusta o que foi pedido.".into())
         }
         EstadoTarefa::EmRevisao if t.conferindo() => {
             let detalhe = match (t.verificacao.is_some(), f.revisor_ligado) {
@@ -605,23 +607,26 @@ fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
                 Estado::Verificando,
                 "verificando",
                 Some(detalhe.into()),
-                "A verificação e o revisor conferem a entrega antes do coordenador.".into(),
+                "A verificação e o revisor conferem a entrega antes de quem pediu decidir.".into(),
             )
         }
-        EstadoTarefa::EmRevisao => visual(
-            Estado::EmRevisao,
-            "em revisão",
-            Some("com o coordenador".into()),
-            "O coordenador decide: aprovar ou pedir ajuste.".into(),
-        ),
+        EstadoTarefa::EmRevisao => {
+            let (com_quem, quem) = match t.dono() {
+                None => ("com você", "Você decide"),
+                Some(crate::modelo::ID_MESTRE) => ("com o Mestre", "O Mestre decide"),
+                Some(_) => ("com o chat dele", "O chat que pediu decide"),
+            };
+            visual(Estado::EmRevisao, "em revisão", Some(com_quem.into()), format!("{quem}: juntar ou pedir ajuste."))
+        }
         EstadoTarefa::Aprovada => visual(
             Estado::Pronto,
             "aprovada",
             t.branch.is_some().then(|| "juntada".into()),
             "Aprovada e juntada ao projeto.".into(),
         ),
-        EstadoTarefa::Falhou => visual(Estado::Erro, "falhou", None, "A tarefa falhou.".into()),
-        EstadoTarefa::Cancelada => visual(Estado::Parado, "cancelada", None, "A tarefa foi cancelada.".into()),
+        EstadoTarefa::Falhou => visual(Estado::Erro, "falhou", None, "O pedido falhou.".into()),
+        EstadoTarefa::Cancelada => visual(Estado::Parado, "cancelada", None, "O pedido foi cancelado.".into()),
+        EstadoTarefa::Conversa => visual(Estado::Parado, "conversa", None, "Pronto para conversar.".into()),
     }
 }
 
@@ -697,7 +702,7 @@ mod testes {
         assert_eq!(caso(&preparando, Default::default()), (Estado::Rodando, com("preparando", Some("a cópia"))));
         preparando.preparada = true;
         preparando.progresso = Some("esperando resposta do coordenador".into());
-        assert_eq!(caso(&preparando, Default::default()), (Estado::NaFila, com("esperando o coordenador", None)));
+        assert_eq!(caso(&preparando, Default::default()), (Estado::NaFila, com("esperando resposta", None)));
 
         let mut ajustando = tarefa("Ajustando");
         ajustando.rodada = 2;
@@ -712,7 +717,7 @@ mod testes {
         assert_eq!(caso(&conferindo, revisor), (Estado::Verificando, com("verificando", Some("revisor"))));
         assert_eq!(
             caso(&tarefa("EmRevisao"), Default::default()),
-            (Estado::EmRevisao, com("em revisão", Some("com o coordenador")))
+            (Estado::EmRevisao, com("em revisão", Some("com o chat dele")))
         );
         assert_eq!(caso(&tarefa("Aprovada"), Default::default()), (Estado::Pronto, com("aprovada", Some("juntada"))));
         assert_eq!(caso(&tarefa("Falhou"), Default::default()), (Estado::Erro, com("falhou", None)));

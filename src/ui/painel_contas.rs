@@ -226,7 +226,7 @@ impl PainelContas {
                 let (padrao, sair) = ((motor.clone(), id.clone()), (motor.clone(), id.clone()));
                 let copiar = email.clone();
                 menu.item(
-                    PopupMenuItem::new("Usar como padrão nesta pasta")
+                    PopupMenuItem::new("Usar como padrão")
                         .checked(escolhida)
                         .on_click(move |_, _, cx| escolher_conta(&padrao.0, &padrao.1, cx)),
                 )
@@ -461,7 +461,7 @@ impl Render for PainelContas {
                         .px(r(4.))
                         .metadado()
                         .text_color(Cores::tenue())
-                        .child("A padrão vale para as conversas desta pasta que não escolheram outra."),
+                        .child("A padrão vale para os chats que não escolheram outra."),
                 )
                 .into_any_element()
         };

@@ -1,5 +1,5 @@
-//! Rotinas: pedidos que o Vitral manda sozinho num horário, abrindo um coordenador novo no
-//! projeto (com o Vitral aberto). Ex.: "todo dia às 8h, rode os testes e me diga o que quebrou".
+//! Rotinas: pedidos que o Vitral manda sozinho num horário, ao Mestre ou num chat novo do projeto
+//! (com o Vitral aberto). Ex.: "todo dia às 8h, rode os testes e me diga o que quebrou".
 //! O diálogo tem duas páginas: a lista e o formulário (nova ou editar).
 
 use chrono::{NaiveTime, Timelike as _};
@@ -16,7 +16,7 @@ use super::{
     AbaLateral, Filtro, Janela,
     componentes::{
         CabecalhoDialogo, Campo, CartaoDeLista, Chip, EstadoVazio, GRUPO_DO_CARTAO, GrupoDeOpcoes, RodapeDialogo,
-        Simbolo, TamanhoBotao, TamanhoChip, Tom, aviso_com_acao, botao_fantasma, botao_icone, botao_perigo,
+        Simbolo, TamanhoBotao, TamanhoChip, Tom, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_perigo,
         botao_primario, icone,
     },
     configuracoes::{Opcao, menu_escolha},
@@ -76,7 +76,7 @@ impl Rotinas {
             TextareaState::new(window, cx)
                 .auto_grow(2, 5)
                 .submit_on_enter(true)
-                .placeholder("O que pedir ao coordenador (ex.: rode os testes e me diga o que quebrou)")
+                .placeholder("O que pedir (ex.: rode os testes e me diga o que quebrou)")
         });
         let hora = cx.new(|cx| {
             let mut hora = TimeFieldState::new(window, cx);
@@ -95,7 +95,7 @@ impl Rotinas {
             }),
             cx.subscribe(&hora, |_, _, _: &TimeFieldEvent, cx| cx.notify()),
         ];
-        let projetos = motor.read(cx).projetos();
+        let projetos: Vec<String> = motor.read(cx).projetos_visiveis().iter().map(|p| p.id.clone()).collect();
         let projeto_inicial = projeto_filtro.filter(|p| projetos.contains(p)).or_else(|| projetos.first().cloned());
         Self {
             texto,
@@ -120,11 +120,11 @@ impl Rotinas {
 
     /// O que falta para salvar, numa frase só ("Escreva o pedido e escolha pelo menos um dia").
     fn motivo(&self, cx: &App) -> Option<String> {
-        let projetos = self.motor.read(cx).projetos();
+        let projetos: Vec<String> = self.motor.read(cx).projetos_visiveis().iter().map(|p| p.id.clone()).collect();
         motivo_para_nao_salvar(
             !self.texto.read(cx).value().trim().is_empty(),
             !self.dias.is_empty(),
-            self.projeto.as_ref().is_some_and(|p| projetos.contains(p)),
+            self.projeto.as_ref().is_some_and(|p| p.is_empty() || projetos.contains(p)),
         )
     }
 
@@ -194,9 +194,9 @@ impl Rotinas {
         let ja_passou = agora >= minutos;
         match self.editando.take() {
             Some(id) => self.motor.update(cx, |m, cx| {
-                m.mudar_config(
-                    |c| {
-                        if let Some(r) = c.rotinas.iter_mut().find(|r| r.id == id) {
+                m.mudar_rotinas(
+                    |rotinas| {
+                        if let Some(r) = rotinas.iter_mut().find(|r| r.id == id) {
                             r.projeto = projeto;
                             r.texto = texto;
                             r.hora = minutos;
@@ -219,7 +219,7 @@ impl Rotinas {
                     ativa: true,
                     ultima: if ja_passou { hoje } else { String::new() },
                 };
-                self.motor.update(cx, |m, cx| m.mudar_config(|c| c.rotinas.push(rotina), cx));
+                self.motor.update(cx, |m, cx| m.mudar_rotinas(|rotinas| rotinas.push(rotina), cx));
             }
         }
         self.voltar(window, cx);
@@ -229,10 +229,10 @@ impl Rotinas {
     fn apagar(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let mut tirada = None;
         self.motor.update(cx, |m, cx| {
-            m.mudar_config(
-                |c| {
-                    if let Some(ix) = c.rotinas.iter().position(|r| r.id == id) {
-                        tirada = Some((ix, c.rotinas.remove(ix)));
+            m.mudar_rotinas(
+                |rotinas| {
+                    if let Some(ix) = rotinas.iter().position(|r| r.id == id) {
+                        tirada = Some((ix, rotinas.remove(ix)));
                     }
                 },
                 cx,
@@ -249,11 +249,11 @@ impl Rotinas {
         let nota = aviso_com_acao(Tom::Info, texto, "Desfazer", move |_, cx| {
             let rotina = rotina.clone();
             motor.update(cx, |m, cx| {
-                m.mudar_config(
-                    |c| {
-                        if !c.rotinas.iter().any(|r| r.id == rotina.id) {
-                            let ix = ix.min(c.rotinas.len());
-                            c.rotinas.insert(ix, rotina);
+                m.mudar_rotinas(
+                    |rotinas| {
+                        if !rotinas.iter().any(|r| r.id == rotina.id) {
+                            let ix = ix.min(rotinas.len());
+                            rotinas.insert(ix, rotina);
                         }
                     },
                     cx,
@@ -321,7 +321,7 @@ impl Rotinas {
 
     fn lista(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let motor = self.motor.read(cx);
-        let rotinas = motor.config.rotinas.clone();
+        let rotinas = motor.rotinas.clone();
         if rotinas.is_empty() {
             return EstadoVazio::new(Lucide::Calendar, "Nenhuma rotina ainda")
                 .texto(format!("Ex.: todo dia útil às 08:00, “{EXEMPLO}”."))
@@ -345,7 +345,12 @@ impl Rotinas {
             } else {
                 "pausada".into()
             };
-            let (icone, cor) = icone_projeto::visual(motor, &rotina.projeto);
+            let (simbolo, destino) = if rotina.projeto.is_empty() {
+                (Simbolo::icone_cor(Lucide::Sparkles, Cores::destaque_texto()), "Mestre".to_string())
+            } else {
+                let (icone, cor) = icone_projeto::visual_do(motor, &rotina.projeto);
+                (Simbolo::Projeto(icone, cor), motor.nome_do_projeto(&rotina.projeto))
+            };
             let (ativar, rodar, apagar, editar) = (self.motor.clone(), rotina.clone(), rotina.id.clone(), rotina.clone());
             let (motor_rodar, janela) = (self.motor.clone(), self.janela.clone());
             let id = rotina.id.clone();
@@ -364,7 +369,12 @@ impl Rotinas {
                             let chat = motor_rodar.update(cx, |m, cx| m.rodar_rotina(&rodar, cx));
                             window.close_dialog(cx);
                             let projeto = rodar.projeto.clone();
-                            let _ = janela.update(cx, |j, cx| j.mostrar_conversa_da_rotina(&projeto, chat, window, cx));
+                            match chat {
+                                Ok(chat) => {
+                                    let _ = janela.update(cx, |j, cx| j.mostrar_conversa_da_rotina(&projeto, chat, window, cx));
+                                }
+                                Err(erro) => window.push_notification(aviso(Tom::Erro, format!("A rotina não rodou: {erro}")), cx),
+                            }
                         }),
                 )
                 .child(
@@ -384,9 +394,9 @@ impl Rotinas {
                 .on_click(move |ativa: &bool, _, cx| {
                     let (id, ativa) = (id.clone(), *ativa);
                     ativar.update(cx, |m, cx| {
-                        m.mudar_config(
-                            |c| {
-                                if let Some(r) = c.rotinas.iter_mut().find(|r| r.id == id) {
+                        m.mudar_rotinas(
+                            |rotinas| {
+                                if let Some(r) = rotinas.iter_mut().find(|r| r.id == id) {
                                     r.ativa = ativa;
                                 }
                             },
@@ -396,8 +406,8 @@ impl Rotinas {
                 });
             grupo = grupo.linha(
                 CartaoDeLista::new(SharedString::from(format!("rotina-{}", rotina.id)), rotina.texto.clone())
-                    .simbolo(Simbolo::Projeto(icone, cor))
-                    .subtitulo(format!("{} · {quando} · {estado}", rotina.projeto))
+                    .simbolo(simbolo)
+                    .subtitulo(format!("{destino} · {quando} · {estado}"))
                     .acao_fixa(
                         // O clique no interruptor e nas ações não abre a edição.
                         div()
@@ -417,7 +427,7 @@ impl Rotinas {
 
     fn formulario(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let motor = self.motor.read(cx);
-        let projetos = motor.projetos();
+        let projetos: Vec<String> = motor.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
         let pedido_vazio = self.texto.read(cx).value().trim().is_empty();
         let dias = div().flex().flex_wrap().gap(r(4.)).children(DIAS.iter().enumerate().map(|(i, nome)| {
             let dia = i as u8;
@@ -469,12 +479,20 @@ impl Rotinas {
             .child(div().flex().items_center().gap(r(12.)).child(hora).child(atalhos))
             .child(dias);
         let eu = cx.entity().downgrade();
-        let opcoes = projetos
-            .iter()
-            .map(|p| {
-                let (icone, cor) = icone_projeto::visual(motor, p);
-                Opcao::new(p.clone(), p.clone()).simbolo(Simbolo::Projeto(icone, cor))
-            })
+        // O Mestre primeiro (guarda ""), depois os projetos com o quadrado de cada um.
+        let mestre = Opcao::new("", "Mestre")
+            .descricao("Ele decide para onde vai o pedido")
+            .simbolo(Simbolo::icone_cor(Lucide::Sparkles, Cores::destaque_texto()));
+        let opcoes = std::iter::once(mestre)
+            .chain(projetos.iter().map(|p| {
+                let (icone, cor) = icone_projeto::visual_do(motor, p);
+                let descricao = motor
+                    .projeto(p)
+                    .map(|x| x.descricao.lines().next().unwrap_or_default().trim().to_string())
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| "Num chat novo do projeto".into());
+                Opcao::new(p.clone(), motor.nome_do_projeto(p)).descricao(descricao).simbolo(Simbolo::Projeto(icone, cor))
+            }))
             .collect();
         let atual = self.projeto.clone().unwrap_or_default();
         let projeto = menu_escolha(
@@ -501,7 +519,7 @@ impl Rotinas {
                     .erro((self.pedido_tocado && pedido_vazio).then(|| "Escreva o pedido".into())),
             )
             .child(Campo::new("Quando", quando).erro(self.dias.is_empty().then(|| "Escolha pelo menos um dia".into())))
-            .child(Campo::new("Projeto", div().flex().child(projeto)))
+            .child(Campo::new("Para quem", div().flex().child(projeto)))
             .into_any_element()
     }
 }
@@ -520,7 +538,7 @@ fn motivo_para_nao_salvar(texto: bool, dias: bool, projeto: bool) -> Option<Stri
     let faltam: Vec<&str> = [
         (!texto).then_some("escreva o pedido"),
         (!dias).then_some("escolha pelo menos um dia"),
-        (!projeto).then_some("escolha o projeto"),
+        (!projeto).then_some("escolha para quem"),
     ]
     .into_iter()
     .flatten()
@@ -538,9 +556,8 @@ impl Janela {
     /// Abre a conversa que a rotina acabou de criar e garante que ela apareça na lista.
     fn mostrar_conversa_da_rotina(&mut self, projeto: &str, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         self.lista = true;
-        self.recolhidos.remove(projeto);
-        if self.projeto_filtro.as_deref().is_some_and(|p| p != projeto) {
-            self.projeto_filtro = None;
+        if self.vista.filtro().is_some_and(|p| p != projeto) {
+            self.mudar_vista(super::Vista::Geral, cx);
         }
         if self.filtro == Filtro::Arquivados {
             self.filtro = Filtro::Todos;
@@ -631,7 +648,7 @@ mod testes {
         );
         assert_eq!(
             motivo_para_nao_salvar(false, false, false).as_deref(),
-            Some("Escreva o pedido, escolha pelo menos um dia e escolha o projeto")
+            Some("Escreva o pedido, escolha pelo menos um dia e escolha para quem")
         );
     }
 
