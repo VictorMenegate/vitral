@@ -162,3 +162,29 @@ fn main() {
             cx.activate(true);
         });
 }
+
+#[cfg(test)]
+mod testes {
+    /// `dunce::canonicalize` no lugar do da std: no Windows o da std devolve `\\?\C:\…`, que estraga
+    /// as regras de permissão, a comparação com o que o git devolve e o que aparece na tela. (O
+    /// atualizador do Linux fica de fora: só roda lá.)
+    #[test]
+    fn canonicalize_sem_o_prefixo_do_windows() {
+        let raiz = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+        let mut erros = Vec::new();
+        for caminho in crate::tema::testes::arquivos_rs(raiz) {
+            let relativo = caminho.strip_prefix(raiz).unwrap();
+            if relativo == std::path::Path::new("atualizacao").join("linux.rs") {
+                continue;
+            }
+            let texto = std::fs::read_to_string(&caminho).unwrap();
+            for (numero, linha) in texto.lines().enumerate() {
+                let sem_dunce = linha.replace("dunce::canonicalize", "");
+                if sem_dunce.contains(concat!(".canonicalize", "()")) || sem_dunce.contains(concat!("fs::canonicalize", "(")) {
+                    erros.push(format!("{}:{}: {}", relativo.display(), numero + 1, linha.trim()));
+                }
+            }
+        }
+        assert!(erros.is_empty(), "canonicalize da std (use dunce::canonicalize):\n{}", erros.join("\n"));
+    }
+}
