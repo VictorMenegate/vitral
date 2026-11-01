@@ -112,6 +112,35 @@ pub struct PedidoPermissao {
     resposta: Sender<Resposta>,
 }
 
+/// O que uma leitura do uso mudou, do menos ao mais visível.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Mudanca {
+    Nada,
+    /// Só a hora da medição: aparece só no popover.
+    Hora,
+    /// As porcentagens, as renovações, o limite ou o plano.
+    Numeros,
+}
+
+impl Mudanca {
+    /// Do uso e do plano antes e depois de juntar uma leitura.
+    fn entre((antes, depois): (Uso, Uso), (velho, novo): (Option<&Plano>, &Plano)) -> Mudanca {
+        let uso_sem_hora = |uso: Uso| Uso { medido_em: None, ..uso };
+        let plano_sem_hora = |plano: &Plano| Plano { medido_em: None, ..plano.clone() };
+        let do_uso = match () {
+            _ if antes == depois => Mudanca::Nada,
+            _ if uso_sem_hora(antes) == uso_sem_hora(depois) => Mudanca::Hora,
+            _ => Mudanca::Numeros,
+        };
+        let do_plano = match velho {
+            Some(velho) if velho == novo => Mudanca::Nada,
+            Some(velho) if plano_sem_hora(velho) == plano_sem_hora(novo) => Mudanca::Hora,
+            _ => Mudanca::Numeros,
+        };
+        do_uso.max(do_plano)
+    }
+}
+
 #[derive(Default, Clone, Copy, PartialEq, Debug)]
 pub struct Uso {
     pub cinco_horas: Option<f64>,
@@ -3134,23 +3163,28 @@ impl Motor {
         let mut mudou = self.codex != codex || !self.codex_lido;
         self.codex = codex;
         self.codex_lido = true;
-        for conta in &self.contas {
+        let ids: Vec<String> = self.contas.iter().map(|c| c.id.clone()).collect();
+        for id in ids {
             let (lido, plano) = lidos
                 .iter()
-                .find(|(id, ..)| *id == conta.id)
+                .find(|(conta, ..)| *conta == id)
                 .map(|(_, uso, plano)| (*uso, plano.clone()))
                 .unwrap_or_default();
-            let antes = self.uso_por_conta.get(&conta.id).copied().unwrap_or_default();
-            let depois = antes.juntar(lido, agora);
-            if depois != antes {
-                self.uso_por_conta.insert(conta.id.clone(), depois);
-                mudou = true;
-            }
-            if self.plano_por_conta.get(&conta.id) != Some(&plano) {
-                self.plano_por_conta.insert(conta.id.clone(), plano);
-                mudou = true;
-            }
+            mudou |= self.juntar_uso_da_conta(&id, lido, plano, agora) != Mudanca::Nada;
         }
+        mudou
+    }
+
+    /// Junta uma leitura do uso de uma conta (do arquivo ou da busca) ao que já se sabia e diz o
+    /// que mudou.
+    fn juntar_uso_da_conta(&mut self, id: &str, lido: Uso, plano: Plano, agora: i64) -> Mudanca {
+        let antes = self.uso_por_conta.get(id).copied().unwrap_or_default();
+        let depois = antes.juntar(lido, agora);
+        let velho = self.plano_por_conta.get(id);
+        let novo = velho.cloned().unwrap_or_default().juntar(plano);
+        let mudou = Mudanca::entre((antes, depois), (velho, &novo));
+        self.uso_por_conta.insert(id.to_string(), depois);
+        self.plano_por_conta.insert(id.to_string(), novo);
         mudou
     }
 
@@ -8094,5 +8128,38 @@ mod testes {
         assert!(!Entrada { de: Some("Vitral".into()), ..Default::default() }.do_usuario());
         assert!(!Entrada { rotina: Some("r".into()), ..Default::default() }.do_usuario());
         assert!(!Entrada { remetente: Some("mestre".into()), ..Default::default() }.do_usuario());
+    }
+
+    #[test]
+    fn busca_nova_nao_e_desfeita_pelo_cache_velho() {
+        let por_modelo = |f: f64| vec![("Opus".to_string(), f, None)];
+        let cache = (
+            Uso { cinco_horas: Some(0.07), semana: Some(0.38), medido_em: Some(1000), ..Uso::default() },
+            Plano { nome: Some("Max 20x".into()), por_modelo: por_modelo(0.1), medido_em: Some(1000), ..Plano::default() },
+        );
+        let busca = (
+            Uso { cinco_horas: Some(0.42), semana: Some(0.61), medido_em: Some(2000), ..Uso::default() },
+            Plano { nome: Some("Max 20x".into()), por_modelo: por_modelo(0.2), medido_em: Some(2000), ..Plano::default() },
+        );
+        let uso = cache.0.juntar(busca.0, 2000);
+        let plano = cache.1.clone().juntar(busca.1.clone());
+        assert_eq!((uso.cinco_horas, uso.medido_em), (Some(0.42), Some(2000)));
+        assert_eq!(plano.por_modelo, por_modelo(0.2));
+        assert_eq!(Mudanca::entre((cache.0, uso), (Some(&cache.1), &plano)), Mudanca::Numeros);
+        // A releitura do cache, mais velho, não desfaz a busca; o nome do plano vem dele.
+        let releitura = Plano { nome: Some("Pro".into()), ..cache.1.clone() };
+        let depois = plano.clone().juntar(releitura);
+        assert_eq!((depois.por_modelo.clone(), depois.medido_em), (por_modelo(0.2), Some(2000)));
+        assert_eq!(depois.nome.as_deref(), Some("Pro"));
+        assert_eq!(uso.juntar(cache.0, 2100), uso);
+        assert_eq!(Mudanca::entre((uso, uso), (Some(&plano), &plano)), Mudanca::Nada);
+        // Os mesmos números um minuto depois: só a hora muda (o trilho não redesenha).
+        let de_novo = Uso { medido_em: Some(2060), ..busca.0 };
+        let plano_de_novo = Plano { medido_em: Some(2060), ..busca.1.clone() };
+        let junto = uso.juntar(de_novo, 2060);
+        let plano_junto = plano.clone().juntar(plano_de_novo);
+        assert_eq!(Mudanca::entre((uso, junto), (Some(&plano), &plano_junto)), Mudanca::Hora);
+        // A primeira leitura de uma conta é número novo.
+        assert_eq!(Mudanca::entre((Uso::default(), uso), (None, &plano)), Mudanca::Numeros);
     }
 }
