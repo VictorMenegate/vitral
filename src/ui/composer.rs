@@ -357,6 +357,7 @@ impl Janela {
         let focada = composer.read(cx).focus_handle(cx).contains_focused(window, cx)
             || self.pop_caixa.is_some_and(|(p, _)| p == painel_id);
         let anexos = self.anexos.get(&chat.id).cloned().unwrap_or_default();
+        let issues = self.chips_de_issues_na_caixa(&chat.id, window, cx);
         let janela = cx.entity().downgrade();
         let (colar, chat_colar) = (janela.clone(), chat.id.clone());
         let pasta_anexos = motor.dados.pasta_anexos();
@@ -368,7 +369,7 @@ impl Janela {
             composer: composer.clone(),
             rodando: motor.execucao(&chat.id).rodando() || motor.esperando_vaga(&chat.id),
         };
-        let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty(), window, cx);
+        let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty() && issues.is_empty(), window, cx);
         let raio_caixa = if estreita { raio::CARTAO } else { raio::PECA };
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
 
@@ -400,7 +401,7 @@ impl Janela {
                     .rounded(raio_caixa - px(1.))
                     .bg(Cores::caixa_brilho()),
             )
-            .when(!anexos.is_empty(), |s| s.child(self.anexos_pendentes(&chat.id, anexos, window, cx)))
+            .when(!anexos.is_empty() || !issues.is_empty(), |s| s.child(self.anexos_pendentes(&chat.id, issues, anexos, window, cx)))
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
                 // na busca de um popover da caixa. Sem margem própria, o texto (com os 10 do campo
@@ -708,10 +709,12 @@ impl Janela {
         cx.notify();
     }
 
-    /// Os anexos da próxima mensagem, em chips acima do texto, alinhados com o primeiro chip.
+    /// Os anexos da próxima mensagem, em chips acima do texto, alinhados com o primeiro chip: as
+    /// issues anexadas primeiro, depois os arquivos.
     fn anexos_pendentes(
         &self,
         chat: &str,
+        issues: Vec<AnyElement>,
         anexos: Vec<PathBuf>,
         window: &Window,
         cx: &Context<Self>,
@@ -721,6 +724,7 @@ impl Janela {
             .flex_wrap()
             .gap(esp::E6)
             .pb(esp::E8)
+            .children(issues)
             .children(anexos.into_iter().enumerate().map(|(i, caminho)| {
                 let chat = chat.to_string();
                 let nome = caminho

@@ -803,6 +803,8 @@ impl Janela {
                             .map(|dica| super::cartoes::selo_do_mestre_no_chat(SharedString::from(format!("do-mestre-aba-{painel_id}")), dica, cx)),
                     ),
             )
+            // As issues do projeto: o chip da issue do chat e os botões do Linear e do GitHub.
+            .children(conversa.and_then(|(chat, _)| self.botoes_de_issues(motor, chat, painel_id, nivel, window, cx)))
             .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx)))
             .when(mostra_botoes_janela, |s| {
                 // Com ações do painel à esquerda, um traço separa os botões da janela.
