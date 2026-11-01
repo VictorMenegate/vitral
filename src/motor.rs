@@ -33,7 +33,7 @@ pub use conexoes::{
 pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 // Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
 #[allow(unused_imports)]
-pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
+pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
 pub use mestre::ResumoVolta;
 #[allow(unused_imports)]
 pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
