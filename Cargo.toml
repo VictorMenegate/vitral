@@ -28,6 +28,13 @@ serde_json = "1.0.154"
 smol = "2.0.2"
 tiny_http = "0.12.0"
 uuid = { version = "1.29.0", features = ["v4"] }
+# zeroize: a chave do Linear some da memória quando sai de uso (já vinha com o oo7).
+zeroize = "1"
+
+# oo7: a chave do Linear no chaveiro do sistema (Secret Service). As mesmas features do
+# gpui-pre-linux, que já o compila: com outras, o cargo puxaria o tokio.
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
 
 [target.'cfg(unix)'.dependencies]
 # libc: grupos de processos, sinais e o waitid (src/processos/unix.rs) e o renameat2 e o statvfs do

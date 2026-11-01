@@ -92,6 +92,11 @@ pub fn comando(programa: impl AsRef<OsStr>, _tipo: &str) -> Comando {
     Comando { comando: novo_comando(programa) }
 }
 
+/// No Windows não há systemd: o leve é o mesmo `comando`, com o job.
+pub fn comando_leve(programa: impl AsRef<OsStr>, tipo: &str) -> Comando {
+    comando(programa, tipo)
+}
+
 /// Abre o processo de `comando` suspenso, põe no job e só então solta. Se o Windows não aceitar o
 /// job (um job dentro de outro que não deixa), o processo roda sem ele e parar derruba só ele. O
 /// `Command` sai daqui junto: as pontas de pipe que ele guardava (a saída da verificação) fecham.

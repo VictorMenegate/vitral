@@ -106,6 +106,12 @@ pub fn comando(programa: impl AsRef<OsStr>, tipo: &str) -> Comando {
     montar(programa, tipo, systemd())
 }
 
+/// Como `comando`, mas sem o escopo do systemd: só o grupo próprio. Para os programas curtos de
+/// rede (gh, curl, git), em que um systemd-run a cada chamada pesaria no relógio.
+pub fn comando_leve(programa: impl AsRef<OsStr>, tipo: &str) -> Comando {
+    montar(programa, tipo, None)
+}
+
 fn montar(programa: impl AsRef<OsStr>, tipo: &str, systemd: Option<&Vec<String>>) -> Comando {
     let unidade = systemd.map(|args| (args, nome_unidade(tipo)));
     let mut comando = match &unidade {

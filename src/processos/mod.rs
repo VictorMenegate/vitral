@@ -27,7 +27,7 @@ mod windows;
 #[cfg(windows)]
 use windows as plataforma;
 
-pub use plataforma::{Escopo, abrir, codigo_de_saida, colher, comando, encerrar_todos, limpar_sobras};
+pub use plataforma::{Escopo, abrir, codigo_de_saida, colher, comando, comando_leve, encerrar_todos, limpar_sobras};
 #[cfg(all(test, unix))]
 pub use plataforma::{morre_logo, usa_systemd};
 

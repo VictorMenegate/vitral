@@ -945,10 +945,9 @@ pub fn aprovar(
     base: &str,
     mensagem: &str,
 ) -> Result<Juncao> {
-    adicionar(copia, "-A")?;
-    if !git(copia, &["diff", "--cached", "--name-only"])?.is_empty() {
-        git(copia, &["commit", "-m", mensagem])?;
-    }
+    // Os arquivos copiados da origem (tarefa.arquivos_copiados) entram aqui quando o modelo os
+    // tiver guardados.
+    commitar(copia, mensagem, &[])?;
     let desde = base_efetiva(projeto, copia, base);
     let commits = git(copia, &["log", "--oneline", &format!("{desde}..HEAD")])?;
     if commits.is_empty() {
@@ -2417,5 +2416,870 @@ mod testes_copia {
         assert_eq!(copiados, vec![".env".to_string(), ".env.local".to_string()]);
         assert!(!copia.join("outro.txt").exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+// ---------- PR e rede (integração com o GitHub) ----------
+//
+// O git de rede (fetch, push) roda pelo `remoto::Executor`, com limite de tempo, sem nenhuma
+// pergunta e com as mensagens em inglês (`LC_ALL=C`, para reconhecer a recusa). Nada de rede
+// roda dentro de `na_vez_do_projeto`, que fica para o que é local e curto; fetches e pushes de um
+// mesmo repositório vão um de cada vez pela `na_vez_da_rede`. O push nunca usa `-u` (gravaria no
+// `.git/config` que as cópias compartilham).
+
+pub use pr_e_rede::*;
+
+// Provisório: o motor passa a usar este bloco no G4.
+#[allow(dead_code)]
+mod pr_e_rede {
+    use super::*;
+    use crate::remoto::{self, ErroRemoto, Executor, SaidaBruta};
+
+    const LIMITE_FETCH: Duration = Duration::from_secs(60);
+    const LIMITE_PUSH: Duration = Duration::from_secs(120);
+    const LIMITE_LOCAL: Duration = Duration::from_secs(120);
+
+    fn ambiente_de_rede() -> remoto::Ambiente {
+        let definir = [
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
+            ("GIT_HTTP_LOW_SPEED_LIMIT", "1000"),
+            ("GIT_HTTP_LOW_SPEED_TIME", "30"),
+            ("LC_ALL", "C"),
+        ];
+        remoto::Ambiente {
+            limpar: false,
+            manter: Vec::new(),
+            definir: definir.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect(),
+            remover: vec!["SSH_ASKPASS"],
+        }
+    }
+
+    fn git_rede(e: &dyn Executor, pasta: &Path, args: &[&str], limite: Duration) -> Result<SaidaBruta, ErroRemoto> {
+        let todos: Vec<String> = ["-c", "core.quotePath=false"].iter().chain(args).map(|a| a.to_string()).collect();
+        e.rodar("git", &todos, &ambiente_de_rede(), pasta, None, limite)
+    }
+
+    /// Um git local que precisa da saída com qualquer código (o `merge-tree` sai com 1 no conflito).
+    fn git_bruto(pasta: &Path, args: &[&str]) -> Result<SaidaBruta> {
+        let mut todos: Vec<String> = vec!["-c".into(), "core.quotePath=false".into()];
+        if sem_identidade() {
+            todos.extend(["-c", "user.name=Vitral", "-c", "user.email=vitral@localhost"].map(String::from));
+        }
+        todos.extend(args.iter().map(|a| a.to_string()));
+        let ambiente = remoto::Ambiente {
+            definir: vec![("GIT_TERMINAL_PROMPT".into(), "0".into()), ("GIT_OPTIONAL_LOCKS".into(), "0".into())],
+            ..Default::default()
+        };
+        remoto::Real
+            .rodar("git", &todos, &ambiente, pasta, None, LIMITE_LOCAL)
+            .map_err(|erro| anyhow::anyhow!("git {}: {}", args.join(" "), erro.para_usuario("git")))
+    }
+
+    /// Nome de remote, ramo ou refspec que vai como argumento: nunca começa com "-".
+    fn conferir_argumento(texto: &str) -> Result<(), ErroRemoto> {
+        if texto.is_empty() || texto.starts_with('-') || texto.chars().any(char::is_whitespace) {
+            return Err(ErroRemoto::Validacao(format!("nome inválido para o git: {texto:?}")));
+        }
+        Ok(())
+    }
+
+    /// A trava de rede do repositório (a chave é o `git-common-dir`, a mesma da origem e de todas as
+    /// cópias). Sai do git: chame fora da thread da interface.
+    pub fn trava_da_rede(repo: &Path) -> Arc<smol::lock::Mutex<()>> {
+        type Travas = std::collections::HashMap<PathBuf, Arc<smol::lock::Mutex<()>>>;
+        static TRAVAS: std::sync::OnceLock<Mutex<Travas>> = std::sync::OnceLock::new();
+        let chave = raiz_comum(repo).unwrap_or_else(|| dunce::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf()));
+        TRAVAS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner()).entry(chave).or_default().clone()
+    }
+
+    /// Espera a vez de rede do repositório: dois fetches juntos brigariam pelo lock das refs. A guarda
+    /// vai para dentro da tarefa de fundo.
+    pub async fn na_vez_da_rede(repo: &Path) -> smol::lock::MutexGuardArc<()> {
+        trava_da_rede(repo).lock_arc().await
+    }
+
+    /// O commit de uma cópia: tudo menos o lixo e os arquivos copiados da origem (`excluir`, que
+    /// nunca entram no commit, nem se um `git add` os tiver posto no índice). Diz se fez o commit.
+    pub fn commitar(copia: &Path, mensagem: &str, excluir: &[String]) -> Result<bool> {
+        commitar_com(copia, mensagem, excluir, false)
+    }
+
+    fn commitar_com(copia: &Path, mensagem: &str, excluir: &[String], sem_ganchos: bool) -> Result<bool> {
+        let fora: Vec<String> = excluir.iter().map(|a| format!(":(exclude,literal){a}")).collect();
+        let mut args = vec!["add", "-A", "--"];
+        args.extend(SEM_LIXO);
+        args.extend(fora.iter().map(String::as_str));
+        git(copia, &args)?;
+        if !excluir.is_empty() {
+            let literais: Vec<String> = excluir.iter().map(|a| format!(":(literal){a}")).collect();
+            let mut tirar = vec!["reset", "-q", "--"];
+            tirar.extend(literais.iter().map(String::as_str));
+            // Sem nenhum commit ainda o reset falha; aí o add com exclude já bastou.
+            let _ = git(copia, &tirar);
+        }
+        if git(copia, &["diff", "--cached", "--name-only"])?.is_empty() {
+            return Ok(false);
+        }
+        let mut commit = vec!["commit", "-q", "-m", mensagem];
+        if sem_ganchos {
+            commit.push("--no-verify");
+        }
+        git(copia, &commit)?;
+        Ok(true)
+    }
+
+    /// Uma cópia nova que parte de `ponto` (`origin/main` no modo PR); sem ponto, do HEAD da origem,
+    /// como `criar_worktree`. A base gravada é o sha do ponto, e o ramo nasce sem upstream.
+    pub fn criar_worktree_de(projeto: &Path, destino: &Path, ramo: &str, ponto: Option<&str>) -> Result<CopiaIsolada> {
+        let Some(ponto) = ponto else {
+            return criar_worktree(projeto, destino, ramo);
+        };
+        let base = git(projeto, &["rev-parse", "--verify", "--quiet", &format!("{ponto}^{{commit}}")])
+            .map_err(|_| anyhow::anyhow!("{ponto} não existe nesta máquina"))?;
+        let ramo_da_origem = ramo_atual(projeto);
+        let sujo = !git(projeto, &["status", "--porcelain", "--untracked-files=no"])?.is_empty();
+        if let Some(pai) = destino.parent() {
+            std::fs::create_dir_all(pai)?;
+        }
+        let _ = git(projeto, &["worktree", "prune"]);
+        let nome = destino.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let livre = (1..=20)
+            .map(|n| match n {
+                1 => (destino.to_path_buf(), ramo.to_string()),
+                n => (destino.with_file_name(format!("{nome}-{n}")), format!("{ramo}-{n}")),
+            })
+            .find(|(pasta, ramo)| {
+                !pasta.exists() && git(projeto, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{ramo}")]).is_err()
+            });
+        let Some((destino, ramo)) = livre else {
+            bail!("não há nome livre para a cópia em {}", destino.display());
+        };
+        // Pelo sha, e não pelo nome: partindo de um ramo remoto, o git gravaria o upstream no
+        // .git/config compartilhado.
+        git(projeto, &["worktree", "add", "-b", &ramo, &destino.to_string_lossy(), &base])?;
+        Ok(CopiaIsolada { caminho: destino, branch: ramo, base, sujo, ramo: ramo_da_origem })
+    }
+
+    /// `fetch --no-tags <remoto> <refspecs…>` (rede).
+    pub fn buscar(e: &dyn Executor, pasta: &Path, remoto: &str, refspecs: &[&str]) -> Result<(), ErroRemoto> {
+        conferir_argumento(remoto)?;
+        for refspec in refspecs {
+            conferir_argumento(refspec)?;
+        }
+        let mut args = vec!["fetch", "--no-tags", "--quiet", remoto];
+        args.extend(refspecs);
+        let saida = git_rede(e, pasta, &args, LIMITE_FETCH)?;
+        if saida.codigo == Some(0) {
+            Ok(())
+        } else {
+            Err(remoto::classificar_git(saida.codigo, &saida.erros()))
+        }
+    }
+
+    /// Commits da `base` local que ainda não estão no GitHub (a cópia do modo PR parte do GitHub).
+    pub fn commits_locais_fora(projeto: &Path, remoto: &str, base: &str) -> u32 {
+        git(projeto, &["rev-list", "--count", &format!("refs/remotes/{remoto}/{base}..refs/heads/{base}")])
+            .ok()
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// Com que comparar a cópia: no modo PR, o ponto comum com `<remoto>/<base>` (depois de trazer o
+    /// main, o trabalho dos outros não entra no diff); senão, o `base_efetiva` de sempre.
+    pub fn base_da_tarefa(projeto: &Path, copia: &Path, base: &str, remoto_base: Option<&str>) -> String {
+        match remoto_base {
+            Some(alvo) => git(copia, &["merge-base", alvo, "HEAD"]).unwrap_or_else(|_| base.to_string()),
+            None => base_efetiva(projeto, copia, base),
+        }
+    }
+
+    /// Os arquivos que dariam conflito ao juntar `alvo` no HEAD da cópia, sem mexer em nada
+    /// (`merge-tree --write-tree`). Vazio = junta limpo.
+    pub fn simular_mescla(copia: &Path, alvo: &str) -> Result<Vec<String>> {
+        let saida = git_bruto(copia, &["merge-tree", "--write-tree", "--name-only", "-z", alvo, "HEAD"])?;
+        match saida.codigo {
+            Some(0) => Ok(Vec::new()),
+            // A árvore, os arquivos em conflito (um por NUL) e, depois de um NUL a mais, as mensagens.
+            Some(1) => {
+                let texto = saida.texto();
+                let arquivos = texto.split("\0\0").next().unwrap_or_default();
+                Ok(arquivos.split('\0').skip(1).filter(|a| !a.is_empty()).map(str::to_string).collect())
+            }
+            _ => bail!("git merge-tree: {}", saida.erros().trim()),
+        }
+    }
+
+    /// Junta `alvo` na cópia (`merge --no-edit`). Conflito: desfaz o merge e devolve os arquivos.
+    pub fn trazer(copia: &Path, alvo: &str) -> Result<Juncao> {
+        let antes = git(copia, &["rev-parse", "HEAD"])?;
+        if let Err(erro) = git(copia, &["merge", "--no-edit", alvo]) {
+            return falha_do_merge(copia, alvo, alvo.to_string(), erro);
+        }
+        let depois = git(copia, &["rev-parse", "HEAD"])?;
+        if antes == depois {
+            return Ok(Juncao::SemMudancas);
+        }
+        Ok(Juncao::Juntou { commits: git(copia, &["log", "--oneline", &format!("{antes}..{depois}")])? })
+    }
+
+    /// O resultado de mandar a cópia para o GitHub.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Empurrao {
+        /// Foi; o sha enviado.
+        Enviado(String),
+        /// O ramo no GitHub tem commits que a cópia não tem (não é fast-forward).
+        Rejeitado(String),
+        /// A proteção de push do GitHub achou um segredo (`GH013`); os lugares, sem o segredo.
+        SegredoRecusado(String),
+        Erro(ErroRemoto),
+    }
+
+    /// `push <remoto> <HEAD>:refs/heads/<ramo>` (rede). Vai o sha do HEAD de agora, o que foi
+    /// verificado, e nunca com `-u`.
+    pub fn empurrar(e: &dyn Executor, copia: &Path, remoto: &str, ramo: &str) -> Empurrao {
+        if let Err(erro) = conferir_argumento(remoto).and(conferir_argumento(ramo)) {
+            return Empurrao::Erro(erro);
+        }
+        let sha = match git(copia, &["rev-parse", "HEAD"]) {
+            Ok(sha) => sha,
+            Err(erro) => return Empurrao::Erro(ErroRemoto::Outro(erro.to_string())),
+        };
+        let destino = format!("{sha}:refs/heads/{ramo}");
+        match git_rede(e, copia, &["push", "--porcelain", remoto, &destino], LIMITE_PUSH) {
+            Ok(saida) => interpretar_push(&sha, &saida),
+            Err(erro) => Empurrao::Erro(erro),
+        }
+    }
+
+    fn interpretar_push(sha: &str, saida: &SaidaBruta) -> Empurrao {
+        if saida.codigo == Some(0) {
+            return Empurrao::Enviado(sha.to_string());
+        }
+        let (stdout, stderr) = (saida.texto(), saida.erros());
+        let tudo = format!("{stdout}\n{stderr}");
+        let regra = ["GH013", "GH009", "push declined due to repository rule violations"].iter().any(|t| tudo.contains(t));
+        if regra && tudo.to_lowercase().contains("secret") {
+            let lugares: Vec<&str> = stderr
+                .lines()
+                .filter_map(|l| l.trim_start_matches("remote:").trim().strip_prefix("path:"))
+                .map(str::trim)
+                .collect();
+            let texto = if lugares.is_empty() { final_do_texto(stderr.trim(), 1500) } else { lugares.join(", ") };
+            return Empurrao::SegredoRecusado(remoto::sem_segredos(&texto));
+        }
+        // No --porcelain, a recusa local é `!` com `[rejected]` (a do servidor é `[remote rejected]`).
+        let rejeitado = stdout.lines().any(|l| l.starts_with('!') && l.contains("[rejected]"));
+        if rejeitado {
+            return Empurrao::Rejeitado(remoto::sem_segredos(&final_do_texto(tudo.trim(), 1500)));
+        }
+        if regra {
+            return Empurrao::Erro(ErroRemoto::Validacao(remoto::sem_segredos(&final_do_texto(stderr.trim(), 300))));
+        }
+        Empurrao::Erro(remoto::classificar_git(saida.codigo, &stderr))
+    }
+
+    /// Um segredo que a cópia acrescentaria ao PR.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Achado {
+        pub arquivo: String,
+        /// A linha nova; `None` quando é o arquivo inteiro (um `.env`, uma chave).
+        pub linha: Option<u32>,
+        pub tipo: &'static str,
+    }
+
+    impl Achado {
+        pub fn descricao(&self) -> String {
+            match self.linha {
+                Some(linha) => format!("linha {linha} de {} ({})", self.arquivo, self.tipo),
+                None => format!("{} ({})", self.arquivo, self.tipo),
+            }
+        }
+    }
+
+    /// Arquivo que costuma guardar segredo: `.env*` (menos os de exemplo), `*.pem`, `*.p12`, `*.pfx`
+    /// e chaves ssh privadas.
+    fn arquivo_de_segredo(caminho: &str) -> bool {
+        let nome = caminho.rsplit('/').next().unwrap_or(caminho);
+        let exemplo = [".env.example", ".env.sample", ".env.template"].contains(&nome);
+        let env = nome.starts_with(".env") && !exemplo;
+        let certificado = [".pem", ".p12", ".pfx"].iter().any(|ext| nome.ends_with(ext));
+        let chave_ssh = ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"].iter().any(|p| nome.starts_with(p)) && !nome.ends_with(".pub");
+        env || certificado || chave_ssh
+    }
+
+    /// O que parece segredo no que a cópia mudou desde a base: arquivos novos ou mudados com nome de
+    /// segredo e linhas acrescentadas com token, `Authorization:` ou chave privada. Os arquivos
+    /// copiados da origem (`excluir`) não entram no commit e ficam de fora.
+    pub fn segredos_no_diff(copia: &Path, base: &str, excluir: &[String]) -> Vec<Achado> {
+        let _ = adicionar(copia, "-N");
+        let mut achados = Vec::new();
+        let situacao = git(copia, &["diff", "--name-status", "--no-renames", "-z", base, "--", "."]).unwrap_or_default();
+        for par in separar_nulos(&situacao).chunks_exact(2) {
+            let (estado, arquivo) = (par[0].as_str(), par[1].as_str());
+            if estado != "D" && arquivo_de_segredo(arquivo) && !excluir.iter().any(|x| x == arquivo) {
+                achados.push(Achado { arquivo: arquivo.to_string(), linha: None, tipo: "arquivo de segredo" });
+            }
+        }
+        let diff = git(copia, &["diff", "-U0", "--no-color", "--no-ext-diff", base, "--", "."]).unwrap_or_default();
+        let (mut arquivo, mut linha, mut no_cabecalho) = (String::new(), 0u32, false);
+        for texto in diff.lines() {
+            if texto.starts_with("diff --git ") {
+                no_cabecalho = true;
+                arquivo.clear();
+                continue;
+            }
+            if no_cabecalho {
+                if let Some(caminho) = texto.strip_prefix("+++ ").and_then(|_| caminho_do_diff(texto)) {
+                    arquivo = caminho;
+                }
+                if !texto.starts_with("@@") {
+                    continue;
+                }
+                no_cabecalho = false;
+            }
+            if let Some(resto) = texto.strip_prefix("@@ ") {
+                // "@@ -a,b +c,d @@": a primeira linha nova é c.
+                linha = resto
+                    .split_whitespace()
+                    .find_map(|p| p.strip_prefix('+'))
+                    .and_then(|p| p.split(',').next())
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(0);
+                continue;
+            }
+            if let Some(novo) = texto.strip_prefix('+') {
+                if !arquivo.is_empty() && !excluir.iter().any(|x| *x == arquivo) {
+                    for faixa in remoto::achar_segredos(novo) {
+                        achados.push(Achado { arquivo: arquivo.clone(), linha: Some(linha), tipo: remoto::tipo_do_segredo(&novo[faixa]) });
+                    }
+                }
+                linha += 1;
+            }
+        }
+        achados
+    }
+
+    /// Algum caminho em `.github/`: o push dispararia workflows com os segredos do repositório.
+    pub fn mexe_em_workflows(arquivos: &[String]) -> bool {
+        arquivos.iter().any(|a| a.starts_with(".github/"))
+    }
+
+    /// Como ficou a cópia depois do PR mesclado.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Recomeco {
+        /// A cópia está em `ramo`, a partir de `<remoto>/<base>` (o sha em `base`), com os commits
+        /// feitos depois do PR por cima e as mudanças sem commit de volta.
+        Feito { ramo: String, base: String, commits_levados: usize, voltaram_mudancas: bool },
+        /// O PR foi mesclado com commits que esta cópia não tem: nada mudou.
+        FaltamCommits,
+        /// Os commits depois do PR não couberam em cima da base: a cópia ficou no ramo antigo, como
+        /// estava.
+        Conflito { arquivos: Vec<String> },
+    }
+
+    /// Depois do PR mesclado (por qualquer pessoa): traz a base e o head final do PR (rede, fora da
+    /// trava) e, se a cópia tem tudo o que foi mesclado, passa ao `ramo_novo` a partir da base nova.
+    /// Pede a vez do projeto: não chame dentro dela.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recomecar_depois_do_pr(
+        e: &dyn Executor,
+        copia: &Path,
+        remoto: &str,
+        base: &str,
+        numero: u64,
+        head_final: &str,
+        ramo_novo: &str,
+        excluir: &[String],
+        grupo: &str,
+    ) -> Result<Recomeco> {
+        let do_pr = format!("refs/pull/{numero}/head");
+        let trouxe = match buscar(e, copia, remoto, &[base, &do_pr]) {
+            // Fora do GitHub (ou sem o ref do PR) vale só a base.
+            Err(ErroRemoto::NaoEncontrado(_)) => buscar(e, copia, remoto, &[base]),
+            outro => outro,
+        };
+        trouxe.map_err(|erro| anyhow::anyhow!("{}", erro.para_usuario("GitHub")))?;
+        if git(copia, &["merge-base", "--is-ancestor", head_final, "HEAD"]).is_err() {
+            return Ok(Recomeco::FaltamCommits);
+        }
+        recomecar_da_base(copia, remoto, base, head_final, ramo_novo, excluir, grupo)
+    }
+
+    /// O recomeço em si, sem rede e sem stash (o `refs/stash` é de todas as cópias): guarda o HEAD em
+    /// `refs/vitral/antes-do-recomeco/<grupo>`, põe as mudanças sem commit num commit temporário, leva
+    /// o que veio depois de `head_final` para cima de `<remoto>/<base>` e devolve as mudanças. Também é
+    /// o "Recomeçar a partir de origin/main" do usuário.
+    pub fn recomecar_da_base(
+        copia: &Path,
+        remoto: &str,
+        base: &str,
+        head_final: &str,
+        ramo_novo: &str,
+        excluir: &[String],
+        grupo: &str,
+    ) -> Result<Recomeco> {
+        na_vez_do_projeto(copia, || {
+            let alvo = git(copia, &["rev-parse", "--verify", &format!("refs/remotes/{remoto}/{base}^{{commit}}")])?;
+            if git(copia, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{ramo_novo}")]).is_ok() {
+                bail!("o ramo {ramo_novo} já existe");
+            }
+            let antigo = ramo_atual(copia);
+            git(copia, &["update-ref", &format!("refs/vitral/antes-do-recomeco/{grupo}"), "HEAD"])?;
+            let temporario = suja(copia)? && commitar_com(copia, "vitral: mudanças em andamento", excluir, true)?;
+            let depois_do_pr = git(copia, &["rev-list", &format!("{head_final}..HEAD")])?.lines().count();
+            let desfazer_temporario = || -> Result<()> {
+                if temporario {
+                    git(copia, &["reset", "-q", "--mixed", "HEAD~1"])?;
+                }
+                Ok(())
+            };
+            if depois_do_pr > 0 {
+                if let Err(erro) = git(copia, &["rebase", "--onto", &alvo, head_final]) {
+                    let arquivos: Vec<String> = git(copia, &["diff", "--name-only", "--diff-filter=U"])
+                        .unwrap_or_default()
+                        .lines()
+                        .map(str::to_string)
+                        .collect();
+                    let _ = git(copia, &["rebase", "--abort"]);
+                    desfazer_temporario()?;
+                    if arquivos.is_empty() {
+                        return Err(erro);
+                    }
+                    return Ok(Recomeco::Conflito { arquivos });
+                }
+                match &antigo {
+                    Some(_) => git(copia, &["branch", "-m", ramo_novo])?,
+                    None => git(copia, &["checkout", "-q", "-b", ramo_novo])?,
+                };
+            } else {
+                git(copia, &["checkout", "-q", "-B", ramo_novo, &alvo])?;
+                // Seguro: o histórico está no PR e no ref de antes do recomeço.
+                if let Some(antigo) = antigo.as_deref().filter(|a| *a != ramo_novo) {
+                    let _ = git(copia, &["branch", "-D", antigo]);
+                }
+            }
+            desfazer_temporario()?;
+            Ok(Recomeco::Feito {
+                ramo: ramo_novo.to_string(),
+                base: alvo,
+                commits_levados: depois_do_pr - usize::from(temporario),
+                voltaram_mudancas: temporario,
+            })
+        })
+    }
+
+    /// Apaga o ramo do PR no GitHub, só se ele ainda está em `sha_esperado` (`--force-with-lease`).
+    /// Um ramo que já não existe conta como apagado.
+    pub fn apagar_ramo_remoto(e: &dyn Executor, pasta: &Path, remoto: &str, ramo: &str, sha_esperado: &str) -> Result<(), ErroRemoto> {
+        conferir_argumento(remoto)?;
+        conferir_argumento(ramo)?;
+        conferir_argumento(sha_esperado)?;
+        let lease = format!("--force-with-lease=refs/heads/{ramo}:{sha_esperado}");
+        let apagar = format!(":refs/heads/{ramo}");
+        let saida = git_rede(e, pasta, &["push", "--porcelain", &lease, remoto, &apagar], LIMITE_PUSH)?;
+        let tudo = format!("{}\n{}", saida.texto(), saida.erros());
+        if saida.codigo == Some(0) || tudo.contains("remote ref does not exist") {
+            return Ok(());
+        }
+        if tudo.contains("stale info") || tudo.contains("[rejected]") {
+            // O lease também recusa quando o ramo já não existe (o GitHub apagou ao mesclar).
+            let ref_remoto = format!("refs/heads/{ramo}");
+            let conferido = git_rede(e, pasta, &["ls-remote", "--exit-code", remoto, &ref_remoto], LIMITE_FETCH)?;
+            if conferido.codigo == Some(2) {
+                return Ok(());
+            }
+            return Err(ErroRemoto::Conflito(format!("o ramo {ramo} mudou no GitHub; não foi apagado")));
+        }
+        Err(remoto::classificar_git(saida.codigo, &saida.erros()))
+    }
+
+    #[cfg(test)]
+    mod testes_pr {
+        use super::*;
+        use crate::remoto::{Real, falso};
+
+        /// Uma origem bare local fazendo de GitHub, o projeto (clone dela) e um clone "site" para as
+        /// mudanças de outras pessoas.
+        struct Bancada {
+            raiz: PathBuf,
+            origem: PathBuf,
+            projeto: PathBuf,
+            site: PathBuf,
+        }
+
+        impl Bancada {
+            fn nova() -> Self {
+                let raiz = std::env::temp_dir().join(format!("vitral-pr-{}", crate::modelo::novo_id()));
+                let (origem, projeto, site) = (raiz.join("origem.git"), raiz.join("projeto"), raiz.join("site"));
+                std::fs::create_dir_all(&projeto).unwrap();
+                git(&projeto, &["init", "-q", "-b", "main"]).unwrap();
+                std::fs::write(projeto.join("a.txt"), "um\n").unwrap();
+                git(&projeto, &["add", "-A"]).unwrap();
+                git(&projeto, &["commit", "-q", "-m", "inicio"]).unwrap();
+                let texto = |p: &Path| p.to_string_lossy().to_string();
+                git(&raiz, &["clone", "-q", "--bare", &texto(&projeto), &texto(&origem)]).unwrap();
+                git(&projeto, &["remote", "add", "origin", &texto(&origem)]).unwrap();
+                git(&projeto, &["fetch", "-q", "origin"]).unwrap();
+                Self { raiz, origem, projeto, site }
+            }
+
+            fn nova_com_commit_local() -> Self {
+                let b = Self::nova();
+                commit(&b.projeto, "local.txt", "só aqui\n");
+                b
+            }
+
+            fn copia(&self, nome: &str, ramo: &str) -> CopiaIsolada {
+                criar_worktree_de(&self.projeto, &self.raiz.join(nome), ramo, Some("origin/main")).unwrap()
+            }
+
+            /// Um commit de outra pessoa, mandado direto para o ramo do GitHub.
+            fn commit_no_site(&self, ramo: &str, arquivo: &str, conteudo: &str) -> String {
+                let texto = |p: &Path| p.to_string_lossy().to_string();
+                if !self.site.exists() {
+                    git(&self.raiz, &["clone", "-q", &texto(&self.origem), &texto(&self.site)]).unwrap();
+                }
+                git(&self.site, &["fetch", "-q", "origin"]).unwrap();
+                git(&self.site, &["checkout", "-q", "-B", ramo, &format!("origin/{ramo}")]).unwrap();
+                std::fs::write(self.site.join(arquivo), conteudo).unwrap();
+                git(&self.site, &["add", "-A"]).unwrap();
+                git(&self.site, &["commit", "-q", "-m", &format!("do site: {arquivo}")]).unwrap();
+                git(&self.site, &["push", "-q", "origin", &format!("HEAD:refs/heads/{ramo}")]).unwrap();
+                git(&self.site, &["rev-parse", "HEAD"]).unwrap()
+            }
+
+            /// O "Squash and merge" do GitHub: um commit só no main com o conteúdo do PR, e o ref do PR.
+            fn mesclar_por_squash(&self, numero: u64, ramo: &str) -> String {
+                let texto = |p: &Path| p.to_string_lossy().to_string();
+                if !self.site.exists() {
+                    git(&self.raiz, &["clone", "-q", &texto(&self.origem), &texto(&self.site)]).unwrap();
+                }
+                git(&self.site, &["fetch", "-q", "origin"]).unwrap();
+                let head = git(&self.site, &["rev-parse", &format!("origin/{ramo}")]).unwrap();
+                git(&self.origem, &["update-ref", &format!("refs/pull/{numero}/head"), &head]).unwrap();
+                git(&self.site, &["checkout", "-q", "-B", "main", "origin/main"]).unwrap();
+                git(&self.site, &["merge", "-q", "--squash", &format!("origin/{ramo}")]).unwrap();
+                git(&self.site, &["commit", "-q", "-m", &format!("PR (#{numero})")]).unwrap();
+                git(&self.site, &["push", "-q", "origin", "main"]).unwrap();
+                head
+            }
+        }
+
+        impl Drop for Bancada {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.raiz);
+            }
+        }
+
+        fn commit(pasta: &Path, arquivo: &str, conteudo: &str) {
+            std::fs::write(pasta.join(arquivo), conteudo).unwrap();
+            assert!(commitar(pasta, &format!("muda {arquivo}"), &[]).unwrap());
+        }
+
+        fn existe_ramo(pasta: &Path, ramo: &str) -> bool {
+            git(pasta, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{ramo}")]).is_ok()
+        }
+
+        #[test]
+        fn copia_do_modo_pr_parte_do_github_sem_upstream() {
+            let b = Bancada::nova_com_commit_local();
+            let copia = b.copia("c1", "vitral/t1-x");
+            assert_eq!(copia.base, git(&b.projeto, &["rev-parse", "origin/main"]).unwrap());
+            assert_ne!(copia.base, git(&b.projeto, &["rev-parse", "HEAD"]).unwrap());
+            assert!(!copia.caminho.join("local.txt").exists());
+            assert!(git(&b.projeto, &["config", "--get", "branch.vitral/t1-x.remote"]).is_err());
+            assert_eq!(commits_locais_fora(&b.projeto, "origin", "main"), 1);
+            // Sem ponto é o criar_worktree de sempre (HEAD local).
+            let local = criar_worktree_de(&b.projeto, &b.raiz.join("c2"), "vitral/t2-y", None).unwrap();
+            assert!(local.caminho.join("local.txt").exists());
+            assert!(criar_worktree_de(&b.projeto, &b.raiz.join("c3"), "vitral/t3-z", Some("origin/nao-existe")).is_err());
+        }
+
+        #[test]
+        fn empurrar_envia_recusa_fora_de_ordem_e_reconhece_o_segredo() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            commit(&copia.caminho, "feat.txt", "novo\n");
+            let sha = git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap();
+            assert_eq!(empurrar(&Real, &copia.caminho, "origin", "vitral/t1-x"), Empurrao::Enviado(sha.clone()));
+            assert_eq!(git(&b.origem, &["rev-parse", "refs/heads/vitral/t1-x"]).unwrap(), sha);
+            assert!(git(&b.projeto, &["config", "--get", "branch.vitral/t1-x.remote"]).is_err());
+            // Alguém mandou um commit no ramo pelo site: o próximo push é recusado, nada é trazido.
+            b.commit_no_site("vitral/t1-x", "site.txt", "do site\n");
+            commit(&copia.caminho, "feat.txt", "mais\n");
+            assert!(matches!(empurrar(&Real, &copia.caminho, "origin", "vitral/t1-x"), Empurrao::Rejeitado(_)));
+            assert!(!copia.caminho.join("site.txt").exists());
+            // A proteção de push do GitHub (saída gravada de um GH013).
+            let gh013 = "remote: error: GH013: Repository rule violations found for refs/heads/vitral/t1-x.\n\
+                         remote: \n\
+                         remote: - GITHUB PUSH PROTECTION\n\
+                         remote:   —————————————————————————————————————————\n\
+                         remote:     Resolve the following violations before pushing again\n\
+                         remote: \n\
+                         remote:     - Push cannot contain secrets\n\
+                         remote: \n\
+                         remote:       —— GitHub Personal Access Token ——————————————————————\n\
+                         remote:        locations:\n\
+                         remote:          - commit: 8728dbe67f6a8e6a3bfb1f2f6a2e2f8b1d8f7e1a\n\
+                         remote:            path: config.rs:12\n\
+                         To https://github.com/o/r.git\n";
+            let saida = "To https://github.com/o/r.git\n!\tHEAD:refs/heads/vitral/t1-x\t[remote rejected] (push declined due to repository rule violations)\nDone\n";
+            let e = falso::Falso::com(vec![falso::saida(1, saida, gh013)]);
+            assert_eq!(empurrar(&e, &copia.caminho, "origin", "vitral/t1-x"), Empurrao::SegredoRecusado("config.rs:12".into()));
+            let chamada = &e.chamadas()[0];
+            assert_eq!(chamada.programa, "git");
+            assert!(chamada.args.contains(&"--porcelain".to_string()) && !chamada.args.contains(&"-u".to_string()));
+            assert!(chamada.ambiente.definir.contains(&("GIT_SSH_COMMAND".into(), "ssh -o BatchMode=yes -o ConnectTimeout=10".into())));
+            assert!(chamada.ambiente.remover.contains(&"SSH_ASKPASS"));
+            assert_eq!(chamada.limite, LIMITE_PUSH);
+            assert!(matches!(empurrar(&e, &copia.caminho, "--upload-pack=x", "r"), Empurrao::Erro(ErroRemoto::Validacao(_))));
+        }
+
+        #[test]
+        fn trazer_com_conflito_aborta_e_simular_nao_mexe() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            commit(&copia.caminho, "b.txt", "da cópia\n");
+            // O main andou num arquivo que a cópia não mexeu: junta limpo.
+            b.commit_no_site("main", "c.txt", "do main\n");
+            buscar(&Real, &copia.caminho, "origin", &["main"]).unwrap();
+            assert_eq!(simular_mescla(&copia.caminho, "origin/main").unwrap(), Vec::<String>::new());
+            // Agora os dois mexem no a.txt.
+            commit(&copia.caminho, "a.txt", "da cópia\n");
+            b.commit_no_site("main", "a.txt", "do main\n");
+            buscar(&Real, &copia.caminho, "origin", &["main"]).unwrap();
+            let antes = git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap();
+            assert_eq!(simular_mescla(&copia.caminho, "origin/main").unwrap(), ["a.txt"]);
+            assert_eq!(git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap(), antes);
+            assert!(git(&copia.caminho, &["status", "--porcelain"]).unwrap().is_empty());
+            match trazer(&copia.caminho, "origin/main").unwrap() {
+                Juncao::Conflito { arquivos, alvo, .. } => {
+                    assert_eq!(arquivos, ["a.txt"]);
+                    assert_eq!(alvo, "origin/main");
+                }
+                _ => panic!("devia dar conflito"),
+            }
+            assert!(git(&copia.caminho, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_err());
+            assert_eq!(git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap(), antes);
+            assert_eq!(std::fs::read_to_string(copia.caminho.join("a.txt")).unwrap(), "da cópia\n");
+            // Sem conflito, traz; de novo, não há o que trazer.
+            let outra = b.copia("c2", "vitral/t2-y");
+            commit(&outra.caminho, "e.txt", "da outra\n");
+            b.commit_no_site("main", "d.txt", "mais\n");
+            buscar(&Real, &outra.caminho, "origin", &["main"]).unwrap();
+            assert!(matches!(trazer(&outra.caminho, "origin/main").unwrap(), Juncao::Juntou { .. }));
+            assert!(matches!(trazer(&outra.caminho, "origin/main").unwrap(), Juncao::SemMudancas));
+            // A base da tarefa no modo PR é o ponto comum com origin/main: o d.txt dos outros, que
+            // veio com o merge, não entra no diff (com a base antiga, entraria).
+            let base = base_da_tarefa(&b.projeto, &outra.caminho, &outra.base, Some("origin/main"));
+            assert_eq!(arquivos_mudados(&outra.caminho, &base), ["e.txt"]);
+            assert!(arquivos_mudados(&outra.caminho, &outra.base).contains(&"d.txt".to_string()));
+        }
+
+        #[test]
+        fn commitar_deixa_de_fora_os_arquivos_copiados() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            let pasta = &copia.caminho;
+            std::fs::write(pasta.join("segredo.local"), "SENHA=1\n").unwrap();
+            std::fs::write(pasta.join("outro copiado.cfg"), "x\n").unwrap();
+            std::fs::write(pasta.join("x.txt"), "x\n").unwrap();
+            // Um `git add` do agente pôs um deles no índice.
+            git(pasta, &["add", "segredo.local"]).unwrap();
+            let excluir = ["segredo.local".to_string(), "outro copiado.cfg".to_string()];
+            assert!(commitar(pasta, "tarefa", &excluir).unwrap());
+            let no_commit = git(pasta, &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]).unwrap();
+            assert_eq!(no_commit, "x.txt");
+            assert!(pasta.join("segredo.local").exists());
+            assert!(!commitar(pasta, "nada", &excluir).unwrap());
+        }
+
+        #[test]
+        fn segredos_no_diff_acha_arquivos_e_linhas() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            let pasta = &copia.caminho;
+            let token = concat!("gh", "p_0123456789abcdefghijABCDEFGHIJ012345");
+            for (nome, conteudo) in [
+                (".env.local", "A=1\n".to_string()),
+                (".env.example", "A=\n".to_string()),
+                ("id_rsa", "x\n".to_string()),
+                ("id_rsa.pub", "ssh-rsa AAAA\n".to_string()),
+                ("certs/servidor.pem", "x\n".to_string()),
+                ("config.rs", format!("fn a() {{}}\n// nada\nconst T: &str = \"{token}\";\n")),
+                ("copiado.env", "B=2\n".to_string()),
+                (".env", format!("TOKEN={token}\n")),
+            ] {
+                std::fs::create_dir_all(pasta.join(nome).parent().unwrap()).unwrap();
+                std::fs::write(pasta.join(nome), conteudo).unwrap();
+            }
+            // Um arquivo que já existia, com uma linha nova no meio.
+            std::fs::write(pasta.join("a.txt"), "um\nAuthorization: Bearer xyz\n").unwrap();
+            let achados = segredos_no_diff(pasta, &copia.base, &[".env".to_string()]);
+            let descricoes: Vec<String> = achados.iter().map(Achado::descricao).collect();
+            assert_eq!(
+                descricoes,
+                [
+                    ".env.local (arquivo de segredo)",
+                    "certs/servidor.pem (arquivo de segredo)",
+                    "id_rsa (arquivo de segredo)",
+                    "linha 2 de a.txt (cabeçalho Authorization)",
+                    "linha 3 de config.rs (token do GitHub)",
+                ]
+            );
+            assert!(mexe_em_workflows(&[".github/workflows/ci.yml".into()]));
+            assert!(!mexe_em_workflows(&["src/github.rs".into(), "docs/.github.md".into()]));
+        }
+
+        #[test]
+        fn apagar_ramo_remoto_so_com_o_sha_esperado() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            commit(&copia.caminho, "feat.txt", "novo\n");
+            let Empurrao::Enviado(sha) = empurrar(&Real, &copia.caminho, "origin", "vitral/t1-x") else { panic!("não enviou") };
+            let errado = git(&copia.caminho, &["rev-parse", "HEAD~1"]).unwrap();
+            assert!(matches!(apagar_ramo_remoto(&Real, &copia.caminho, "origin", "vitral/t1-x", &errado), Err(ErroRemoto::Conflito(_))));
+            assert!(existe_ramo(&b.origem, "vitral/t1-x"));
+            assert_eq!(apagar_ramo_remoto(&Real, &copia.caminho, "origin", "vitral/t1-x", &sha), Ok(()));
+            assert!(!existe_ramo(&b.origem, "vitral/t1-x"));
+            // Já apagado (pelo GitHub, por exemplo) conta como apagado.
+            assert_eq!(apagar_ramo_remoto(&Real, &copia.caminho, "origin", "vitral/t1-x", &sha), Ok(()));
+        }
+
+        /// Uma cópia com um PR enviado e mesclado por squash no GitHub: devolve a cópia e o head final.
+        fn pr_mesclado(b: &Bancada) -> (CopiaIsolada, String) {
+            let copia = b.copia("c1", "vitral/t1-x");
+            commit(&copia.caminho, "feat.txt", "novo\n");
+            commit(&copia.caminho, "feat.txt", "novo e melhor\n");
+            assert!(matches!(empurrar(&Real, &copia.caminho, "origin", "vitral/t1-x"), Empurrao::Enviado(_)));
+            let head = b.mesclar_por_squash(1, "vitral/t1-x");
+            (copia, head)
+        }
+
+        fn recomecar(copia: &Path, head: &str) -> Recomeco {
+            recomecar_depois_do_pr(&Real, copia, "origin", "main", 1, head, "vitral/t1-x-r2", &[], "t1").unwrap()
+        }
+
+        #[test]
+        fn recomeco_limpo_vai_para_o_ramo_novo_sem_os_commits_antigos() {
+            let b = Bancada::nova();
+            let (copia, head) = pr_mesclado(&b);
+            let pasta = &copia.caminho;
+            let Recomeco::Feito { ramo, base, commits_levados, voltaram_mudancas } = recomecar(pasta, &head) else {
+                panic!("devia recomeçar")
+            };
+            assert_eq!((ramo.as_str(), commits_levados, voltaram_mudancas), ("vitral/t1-x-r2", 0, false));
+            assert_eq!(ramo_atual(pasta).as_deref(), Some("vitral/t1-x-r2"));
+            assert_eq!(git(pasta, &["rev-parse", "HEAD"]).unwrap(), base);
+            assert_eq!(base, git(pasta, &["rev-parse", "origin/main"]).unwrap());
+            assert!(git(pasta, &["merge-base", "--is-ancestor", &head, "HEAD"]).is_err(), "os commits do PR voltaram");
+            assert_eq!(std::fs::read_to_string(pasta.join("feat.txt")).unwrap(), "novo e melhor\n");
+            assert!(!existe_ramo(&b.projeto, "vitral/t1-x"));
+            assert_eq!(git(pasta, &["rev-parse", "refs/vitral/antes-do-recomeco/t1"]).unwrap(), head);
+        }
+
+        #[test]
+        fn recomeco_leva_os_commits_novos_e_as_mudancas_sem_stash() {
+            let b = Bancada::nova();
+            let (copia, head) = pr_mesclado(&b);
+            let pasta = &copia.caminho;
+            // Outra cópia do mesmo repositório com um stash: o refs/stash é de todas.
+            let vizinha = b.copia("c9", "vitral/t9-v");
+            std::fs::write(vizinha.caminho.join("a.txt"), "na vizinha\n").unwrap();
+            git(&vizinha.caminho, &["stash", "-q"]).unwrap();
+            commit(pasta, "depois.txt", "depois do PR\n");
+            let antes = git(pasta, &["rev-parse", "HEAD"]).unwrap();
+            std::fs::write(pasta.join("a.txt"), "mudança sem commit\n").unwrap();
+            std::fs::write(pasta.join("solto.txt"), "novo sem add\n").unwrap();
+            let Recomeco::Feito { commits_levados, voltaram_mudancas, .. } = recomecar(pasta, &head) else {
+                panic!("devia recomeçar")
+            };
+            assert_eq!((commits_levados, voltaram_mudancas), (1, true));
+            let novos = git(pasta, &["log", "--format=%s", "origin/main..HEAD"]).unwrap();
+            assert_eq!(novos, "muda depois.txt");
+            assert!(git(pasta, &["merge-base", "--is-ancestor", &head, "HEAD"]).is_err());
+            assert_eq!(std::fs::read_to_string(pasta.join("a.txt")).unwrap(), "mudança sem commit\n");
+            let situacao = git(pasta, &["status", "--porcelain"]).unwrap();
+            assert!(situacao.contains(" M a.txt") && situacao.contains("?? solto.txt"), "{situacao}");
+            assert_eq!(git(pasta, &["rev-parse", "refs/vitral/antes-do-recomeco/t1"]).unwrap(), antes);
+            // O stash da vizinha continua lá e volta inteiro.
+            assert_eq!(git(&vizinha.caminho, &["stash", "list"]).unwrap().lines().count(), 1);
+            git(&vizinha.caminho, &["stash", "pop", "-q"]).unwrap();
+            assert_eq!(std::fs::read_to_string(vizinha.caminho.join("a.txt")).unwrap(), "na vizinha\n");
+        }
+
+        #[test]
+        fn recomeco_com_conflito_desiste_e_mantem_o_ramo_antigo() {
+            let b = Bancada::nova();
+            let (copia, head) = pr_mesclado(&b);
+            let pasta = &copia.caminho;
+            // Depois do PR, a cópia e o main mexeram no a.txt.
+            commit(pasta, "a.txt", "da cópia\n");
+            b.commit_no_site("main", "a.txt", "do main\n");
+            std::fs::write(pasta.join("c.txt"), "sem commit\n").unwrap();
+            let antes = git(pasta, &["rev-parse", "HEAD"]).unwrap();
+            assert_eq!(recomecar(pasta, &head), Recomeco::Conflito { arquivos: vec!["a.txt".into()] });
+            assert_eq!(ramo_atual(pasta).as_deref(), Some("vitral/t1-x"));
+            assert_eq!(git(pasta, &["rev-parse", "HEAD"]).unwrap(), antes);
+            assert_eq!(std::fs::read_to_string(pasta.join("c.txt")).unwrap(), "sem commit\n");
+            assert_eq!(git(pasta, &["status", "--porcelain"]).unwrap(), "?? c.txt");
+            assert!(!existe_ramo(pasta, "vitral/t1-x-r2"));
+            assert_eq!(git(pasta, &["rev-parse", "refs/vitral/antes-do-recomeco/t1"]).unwrap(), antes);
+        }
+
+        #[test]
+        fn recomeco_sem_os_commits_de_fora_nao_mexe() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            commit(&copia.caminho, "feat.txt", "novo\n");
+            assert!(matches!(empurrar(&Real, &copia.caminho, "origin", "vitral/t1-x"), Empurrao::Enviado(_)));
+            // Alguém completou o PR pelo site antes de mesclar.
+            b.commit_no_site("vitral/t1-x", "site.txt", "do site\n");
+            let head = b.mesclar_por_squash(1, "vitral/t1-x");
+            let antes = git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap();
+            assert_eq!(recomecar(&copia.caminho, &head), Recomeco::FaltamCommits);
+            assert_eq!(git(&copia.caminho, &["rev-parse", "HEAD"]).unwrap(), antes);
+            assert_eq!(ramo_atual(&copia.caminho).as_deref(), Some("vitral/t1-x"));
+            // "Recomeçar a partir de origin/main", pelo usuário: o mesmo caminho a partir da base.
+            let Recomeco::Feito { ramo, .. } =
+                recomecar_da_base(&copia.caminho, "origin", "main", &head, "vitral/t1-x-r2", &[], "t1").unwrap()
+            else {
+                panic!("devia recomeçar")
+            };
+            assert_eq!(ramo, "vitral/t1-x-r2");
+            assert!(copia.caminho.join("site.txt").exists());
+        }
+
+        #[test]
+        fn a_vez_da_rede_e_por_repositorio() {
+            let b = Bancada::nova();
+            let copia = b.copia("c1", "vitral/t1-x");
+            let outra = Bancada::nova();
+            smol::block_on(async {
+                let _vez = na_vez_da_rede(&b.projeto).await;
+                // A cópia é do mesmo repositório: espera.
+                assert!(trava_da_rede(&copia.caminho).try_lock().is_none());
+                assert!(trava_da_rede(&outra.projeto).try_lock().is_some());
+            });
+            assert!(trava_da_rede(&copia.caminho).try_lock().is_some());
+        }
+
+        #[test]
+        fn buscar_vai_pelo_executor_com_limite() {
+            let e = falso::Falso::com(vec![
+                falso::saida(0, "", ""),
+                falso::saida(128, "", "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com"),
+            ]);
+            let pasta = Path::new("/");
+            assert_eq!(buscar(&e, pasta, "origin", &["main", "refs/pull/3/head"]), Ok(()));
+            assert!(matches!(buscar(&e, pasta, "origin", &["main"]), Err(ErroRemoto::SemRede(_))));
+            let chamada = &e.chamadas()[0];
+            assert_eq!(chamada.args, ["-c", "core.quotePath=false", "fetch", "--no-tags", "--quiet", "origin", "main", "refs/pull/3/head"]);
+            assert_eq!(chamada.limite, LIMITE_FETCH);
+            assert!(chamada.ambiente.definir.contains(&("GIT_HTTP_LOW_SPEED_TIME".into(), "30".into())));
+            assert!(matches!(buscar(&e, pasta, "origin", &["--upload-pack=x"]), Err(ErroRemoto::Validacao(_))));
+            assert_eq!(e.chamadas().len(), 2);
+        }
     }
 }
