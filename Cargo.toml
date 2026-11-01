@@ -5,6 +5,12 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/VictorMenegate/vitral"
 
+# O lançador do Windows (lancador/) é outra crate, só da std. Os dois por padrão: o `cargo test`
+# também testa a escolha do lançador, e o `cargo build` do Linux compila o dele, que só avisa.
+[workspace]
+members = ["lancador"]
+default-members = [".", "lancador"]
+
 [dependencies]
 anyhow = "1.0.104"
 # chrono: a hora das Rotinas no TimeField do kit (que já depende dele).

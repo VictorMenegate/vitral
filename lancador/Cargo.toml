@@ -1,0 +1,16 @@
+# O lançador do Windows: o Vitral.exe da raiz da instalação, que abre a versão certa (src/main.rs).
+# Só a std: pequeno, sem nada que mude a cada versão do app (o atualizador só o troca quando ele
+# mudou). A versão é dele, não a do app.
+[package]
+name = "vitral-lancador"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/VictorMenegate/vitral"
+publish = false
+
+[dependencies]
+
+# embed-resource: o ícone, a versão e o manifesto no Vitral.exe (build.rs), como no vitral.exe.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.12"

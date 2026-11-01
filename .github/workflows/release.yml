@@ -1,7 +1,11 @@
-# Gera os arquivos para baixar, assina e publica o Release. Por enquanto só Linux; o Windows entra
-# no Lote W3 (as linhas dele estão comentadas na matriz e os passos já esperam por ele).
+# Gera os arquivos para baixar (Linux e Windows), assina e publica o Release.
 # Dispara com um tag (git tag v0.2.0 && git push origin v0.2.0) ou à mão em Actions › Release.
 # Versão com sufixo (0.2.0-rc.1) sai como pré-lançamento: o app no canal estável não vê.
+#
+# Windows: o .zip portátil, o .tar.gz (o que o atualizador do Windows baixa, com o mesmo conteúdo) e
+# o -instalador.exe (Inno Setup, pacote/windows/vitral.iss), somados no SHA256SUMS e no manifesto
+# como os do Linux. Enquanto a variável WINDOWS_OBRIGATORIO não é true (a mesma do ci.yml), uma falha
+# do Windows não segura o release: ele sai só com o Linux, com um aviso.
 name: Release
 
 on:
@@ -80,10 +84,10 @@ jobs:
         include:
           - plataforma: linux-x86_64
             os: ubuntu-24.04
-          # Entra quando o Lote W3 terminar:
-          # - plataforma: windows-x86_64
-          #   os: windows-2025
+          - plataforma: windows-x86_64
+            os: windows-2025
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.plataforma == 'windows-x86_64' && vars.WINDOWS_OBRIGATORIO != 'true' }}
     env:
       VERSAO: ${{ needs.versao.outputs.versao }}
       TAG: ${{ needs.versao.outputs.tag }}
@@ -109,10 +113,14 @@ jobs:
           rustup toolchain install "$canal" --profile minimal --no-self-update
           rustc --version
 
+      # Quem salva é o ci.yml no main; aqui só lê. Enquanto os lotes do Windows (W3 e W4) estão no
+      # ramo `windows`, o Windows também salva lá (e mesmo com falha, que é quando se roda de novo):
+      # sem cache, ele compila tudo em release a cada rodada (uns 30 minutos).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: release-${{ matrix.plataforma }}
-          save-if: "false" # quem salva é o ci.yml no main; aqui só lê
+          save-if: ${{ matrix.plataforma == 'windows-x86_64' && github.ref == 'refs/heads/windows' }}
+          cache-on-failure: ${{ matrix.plataforma == 'windows-x86_64' && github.ref == 'refs/heads/windows' }}
 
       - name: Testes
         shell: bash
@@ -163,15 +171,45 @@ jobs:
           New-Item -ItemType Directory -Force $pasta | Out-Null
           Copy-Item target\release\vitral.exe, target\release\vitral-lancador.exe, LEIA-ME.md, NOVIDADES.md, LICENSE $pasta
           Copy-Item assets\fontes\OFL.txt (Join-Path $pasta 'OFL-fontes.txt')
+          # O mesmo teste que o atualizador faz antes de trocar de versão: abre sem janela e responde
+          # (o vitral.exe do release é de janela, sem console, e mesmo assim escreve na saída).
           $saida = (& "$pasta\vitral.exe" --versao | Out-String).Trim()
-          if ($saida -ne "vitral $env:VERSAO") { throw "vitral.exe --versao respondeu '$saida'" }
-          Compress-Archive -Path "$pasta\*" -DestinationPath "dist\$nome.zip"
-          tar -C dist -czf "dist\$nome.tar.gz" $nome
+          if ($saida -cne "vitral $env:VERSAO") { throw "vitral.exe --versao respondeu '$saida'" }
+          $json = (& "$pasta\vitral.exe" --versao --json | Out-String).Trim()
+          $v = $json | ConvertFrom-Json
+          $esperado = @{ versao = $env:VERSAO; canal = 'estavel'; commit = $env:VITRAL_COMMIT; plataforma = 'windows-x86_64' }
+          foreach ($chave in $esperado.Keys) {
+            if ($v.$chave -cne $esperado[$chave]) { throw "--versao --json respondeu $json" }
+          }
+          if (-not ($v.formato_dados -is [long] -or $v.formato_dados -is [int])) { throw "--versao --json respondeu $json" }
+          # O portátil: os arquivos na raiz do zip, com as barras normais nos nomes.
+          Compress-Archive -Path "$pasta\*" -DestinationPath "dist\$nome.zip" -CompressionLevel Optimal
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "dist\$nome.zip").Path)
+          $noZip = @($zip.Entries.FullName | Sort-Object); $zip.Dispose()
+          $naPasta = @(Get-ChildItem $pasta -Name | Sort-Object)
+          if (Compare-Object -CaseSensitive $noZip $naPasta) { throw "o zip saiu com: $($noZip -join ', ')" }
+          # O Inno Setup veio no windows-2025 de 2025, mas pode sair da imagem.
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          $inno = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1' -ErrorAction SilentlyContinue
+          "Inno Setup $($inno.DisplayVersion) ($iscc)"
           & $iscc /Qp "/DVersao=$env:VERSAO" "/DOrigem=$((Resolve-Path $pasta).Path)" "/O$((Resolve-Path dist).Path)" pacote\windows\vitral.iss
           if ($LASTEXITCODE -ne 0) { throw "o Inno Setup falhou" }
-          Remove-Item -Recurse -Force $pasta
+          Get-ChildItem dist | Format-Table Name, Length
+
+      # O .tar.gz com o mesmo tar do Linux (o GNU tar do Git para Windows) e as mesmas opções: o
+      # atualizador abre os dois com a mesma rotina.
+      - name: Empacotar (Windows, .tar.gz)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          nome="vitral-$VERSAO-windows-x86_64"
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@$(git log -1 --format=%ct)" -czf "dist/$nome.tar.gz" "$nome"
+          tar -tvzf "dist/$nome.tar.gz"
+          rm -rf "dist/$nome"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -215,6 +253,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I pacote/manifesto.py dist "$VERSAO" "$TAG" "$GITHUB_REPOSITORY" "$COMMIT" notas.md src/modelo.rs
+          if [ ! -f "dist/vitral-$VERSAO-windows-x86_64.tar.gz" ]; then
+            echo "::warning::sem os pacotes do Windows (a linha dele falhou com o WINDOWS_OBRIGATORIO desligado): o release sai só com o Linux"
+          fi
           (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
           cat dist/vitral-versao.json dist/SHA256SUMS
 
