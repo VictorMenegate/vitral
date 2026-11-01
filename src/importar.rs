@@ -954,7 +954,7 @@ mod testes {
     }
 
     fn gravar(projects: &Path, cwd: &Path, id: &str, conteudo: &str) -> PathBuf {
-        let pasta = projects.join(cwd.to_string_lossy().replace(['/', '.'], "-"));
+        let pasta = projects.join(cwd.to_string_lossy().replace(['/', '\\', ':', '.'], "-"));
         fs::create_dir_all(&pasta).unwrap();
         let arquivo = pasta.join(format!("{id}.jsonl"));
         fs::write(&arquivo, conteudo).unwrap();

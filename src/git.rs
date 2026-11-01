@@ -1574,6 +1574,8 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("vitral-teste-{}", crate::modelo::novo_id()));
         std::fs::create_dir_all(&pasta).unwrap();
         git(&pasta, &["init", "-q"]).unwrap();
+        // O Git para Windows vem com core.autocrlf=true, e os testes comparam o conteúdo byte a byte.
+        git(&pasta, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(pasta.join("a.txt"), "um\n").unwrap();
         git(&pasta, &["add", "-A"]).unwrap();
         git(&pasta, &["commit", "-q", "-m", "inicio"]).unwrap();
@@ -1626,9 +1628,13 @@ mod testes {
         let projeto = repositorio();
         let copia = criar_worktree(&projeto, &projeto.with_extension("copia"), "vitral/t1-nomes").unwrap();
         let (pasta, base) = (&copia.caminho, &copia.base);
-        let nomes = ["a.txt", "ação.txt", "com\"aspas.txt", "meu arquivo.txt", "pasta/configuração.md"];
+        // No Windows, aspas não valem em nome de arquivo.
+        let nomes: Vec<&str> = ["a.txt", "ação.txt", "com\"aspas.txt", "meu arquivo.txt", "pasta/configuração.md"]
+            .into_iter()
+            .filter(|nome| !(cfg!(windows) && nome.contains('"')))
+            .collect();
         std::fs::create_dir_all(pasta.join("pasta")).unwrap();
-        for nome in nomes {
+        for nome in &nomes {
             std::fs::write(pasta.join(nome), "mudou\n").unwrap();
         }
         let mut mudados = arquivos_mudados(pasta, base);
@@ -1934,8 +1940,10 @@ mod testes {
         let do_projeto = projeto.join("src/main.rs").to_string_lossy().to_string();
         let main = diff_para_coordenador(pasta, &projeto, base, &[do_projeto], &[], 20_000).unwrap();
         assert!(main.contains("b/src/main.rs") && !main.contains("Cargo.lock"), "{main}");
-        let fora = diff_para_coordenador(pasta, &projeto, base, &["/etc/hosts".into()], &[], 20_000).unwrap();
-        assert!(fora.contains("/etc/hosts não fica dentro do projeto"), "{fora}");
+        // Um caminho absoluto fora do projeto (no Windows, "/etc/hosts" não é absoluto).
+        let de_fora = if cfg!(windows) { r"C:\Windows\win.ini" } else { "/etc/hosts" };
+        let fora = diff_para_coordenador(pasta, &projeto, base, &[de_fora.into()], &[], 20_000).unwrap();
+        assert!(fora.contains(&format!("{de_fora} não fica dentro do projeto")), "{fora}");
 
         // Grande demais: --stat, os arquivos que cabem inteiros (o apontado primeiro) e o que falta.
         for nome in ["a.txt", "b.txt", "c.txt", "d.txt"] {
@@ -1977,7 +1985,12 @@ mod testes {
         std::fs::write(pacote.join("index.js"), &bytes).unwrap();
         std::fs::hard_link(pacote.join("index.js"), pacote.join("mesmo.js")).unwrap();
         let ocupado = espaco_ocupado(&pacote);
-        assert!((10_000..20_000).contains(&ocupado), "o hard link conta uma vez só: {ocupado}");
+        if cfg!(unix) {
+            assert!((10_000..20_000).contains(&ocupado), "o hard link conta uma vez só: {ocupado}");
+        } else {
+            // No Windows, o tamanho de cada nome: o hard link conta de novo.
+            assert_eq!(ocupado, 20_000);
+        }
 
         std::fs::write(copia.caminho.join("a.txt"), "mudou\n").unwrap();
         let ponto = foto(&copia.caminho).unwrap();
