@@ -192,7 +192,8 @@ jobs:
           # O Inno Setup veio no windows-2025 de 2025, mas pode sair da imagem.
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
-          (Get-Item $iscc).VersionInfo.ProductVersion | ForEach-Object { "Inno Setup $_" }
+          $inno = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1' -ErrorAction SilentlyContinue
+          "Inno Setup $($inno.DisplayVersion) ($iscc)"
           & $iscc /Qp "/DVersao=$env:VERSAO" "/DOrigem=$((Resolve-Path $pasta).Path)" "/O$((Resolve-Path dist).Path)" pacote\windows\vitral.iss
           if ($LASTEXITCODE -ne 0) { throw "o Inno Setup falhou" }
           Get-ChildItem dist | Format-Table Name, Length
