@@ -50,6 +50,9 @@ pub struct Opcoes {
     pub ambiente: Vec<(String, String)>,
     /// JSON passado em `--settings` (ex.: hook que roda os testes ao parar).
     pub configuracoes: Option<Value>,
+    /// Chat isolado (recebeu texto de terceiros, ou a pasta entrega por PR): o claude roda no bwrap
+    /// (ou só com o ambiente, sem ele), sem o barramento, o chaveiro, o agente ssh e o login do gh.
+    pub isolado: Option<crate::isolamento::Modo>,
 }
 
 /// Versão do Claude Code (2.1.278 vira `(2, 1, 278)`).
@@ -135,7 +138,10 @@ impl Processo {
         mensagem: Mensagem,
         mut enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
-        let mut comando = processos::comando(binario_claude(), "claude");
+        let mut comando = match opcoes.isolado {
+            Some(modo) => crate::isolamento::comando(binario_claude(), "claude", modo),
+            None => processos::comando(binario_claude(), "claude"),
+        };
         comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
         if let Some(pasta) = &opcoes.pasta_conta {
             comando.env("CLAUDE_CONFIG_DIR", pasta);
@@ -759,6 +765,17 @@ fn resumo_do_vitral(nome: &str, entrada: &Value) -> Option<String> {
         }
         "listar_chats" | "anotar_decisao" if campo("texto").is_none() => campo("projeto"),
         "entregar_tarefa" => campo("resumo"),
+        "ver_issue" => campo("issue"),
+        // "listar_issues · Vitral · abertas" (o projeto só aparece no Mestre).
+        "listar_issues" => {
+            let estado = if campo("estado").is_some_and(|e| e.eq_ignore_ascii_case("fechadas")) { "fechadas" } else { "abertas" };
+            let mut partes: Vec<String> = campo("projeto").map(|p| p.trim_start_matches('#').to_string()).into_iter().collect();
+            partes.push(estado.to_string());
+            if let Some(busca) = campo("busca") {
+                partes.push(format!("\"{busca}\""));
+            }
+            Some(partes.join(" · "))
+        }
         _ => campo("titulo")
             .or_else(|| campo("pergunta"))
             .or_else(|| campo("texto"))
@@ -862,6 +879,7 @@ mod testes {
             pasta_conta: None,
             ambiente: Vec::new(),
             configuracoes: None,
+            isolado: None,
         }
     }
 

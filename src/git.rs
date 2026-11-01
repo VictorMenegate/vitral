@@ -1350,10 +1350,12 @@ fn git_com_entrada(pasta: &Path, args: &[&str], entrada: &str) -> Result<()> {
     Ok(())
 }
 
-/// Roda o comando de verificação (ou de preparação) da tarefa na cópia, com limite de tempo.
-pub fn verificar(pasta: &Path, comando: &str) -> Verificacao {
+/// Roda o comando de verificação (ou de preparação) da tarefa na cópia, com limite de tempo. Na
+/// cópia de um chat isolado (`isolado`), roda isolado como ele: um teste escrito por um agente
+/// induzido por texto de terceiros não sai do isolamento pela verificação.
+pub fn verificar(pasta: &Path, comando: &str, isolado: Option<crate::isolamento::Modo>) -> Verificacao {
     let inicio = Instant::now();
-    let (passou, saida) = rodar_com_limite(pasta, comando, Duration::from_secs(15 * 60));
+    let (passou, saida) = rodar_com_limite(pasta, comando, Duration::from_secs(15 * 60), isolado);
     Verificacao {
         comando: comando.to_string(),
         passou,
@@ -1364,21 +1366,29 @@ pub fn verificar(pasta: &Path, comando: &str) -> Verificacao {
 
 /// Lê a saída enquanto o comando roda (com 64 KiB parados no pipe ele travaria até o limite) e,
 /// no fim, derruba o que ele deixou em segundo plano, que seguraria o pipe e gastaria CPU.
-fn rodar_com_limite(pasta: &Path, comando: &str, limite: Duration) -> (bool, String) {
+fn rodar_com_limite(pasta: &Path, comando: &str, limite: Duration, isolado: Option<crate::isolamento::Modo>) -> (bool, String) {
     // No Windows, o Git Bash (ou o PowerShell, com o aviso na frente da saída).
     let bash = crate::sistema::comando_bash(comando);
-    let (passou, texto) = rodar_no_shell(pasta, &bash, limite);
+    let (passou, texto) = rodar_no_shell(pasta, &bash, limite, isolado);
     match bash.aviso {
         Some(aviso) => (passou, format!("{aviso}\n{texto}")),
         None => (passou, texto),
     }
 }
 
-fn rodar_no_shell(pasta: &Path, bash: &crate::sistema::ComandoBash, limite: Duration) -> (bool, String) {
+fn rodar_no_shell(
+    pasta: &Path,
+    bash: &crate::sistema::ComandoBash,
+    limite: Duration,
+    isolado: Option<crate::isolamento::Modo>,
+) -> (bool, String) {
     let abrir = || -> std::io::Result<_> {
         // Um pipe só para stdout e stderr: a saída fica intercalada como no terminal.
         let (leitor, escritor) = std::io::pipe()?;
-        let mut processo = processos::comando(&bash.programa, "verificacao");
+        let mut processo = match isolado {
+            Some(modo) => crate::isolamento::comando(&bash.programa, "verificacao", modo),
+            None => processos::comando(&bash.programa, "verificacao"),
+        };
         bash.preparar(&mut processo);
         processo
             .current_dir(pasta)
@@ -1881,14 +1891,14 @@ mod testes {
     fn verificacao_com_saida_grande_nao_trava_e_guarda_o_fim() {
         let pasta = std::env::temp_dir();
         let inicio = Instant::now();
-        let v = verificar(&pasta, "yes linha | head -c 300000; echo FIM; exit 0");
+        let v = verificar(&pasta, "yes linha | head -c 300000; echo FIM; exit 0", None);
         assert!(v.passou, "{}", v.saida);
         assert!(inicio.elapsed() < Duration::from_secs(10));
         assert!(v.saida.starts_with('…') && v.saida.ends_with("FIM"), "{}", v.saida);
         assert!(v.saida.len() <= 4010);
         assert!(v.duracao_s.is_some());
 
-        let v = verificar(&pasta, "echo a; echo b >&2; exit 3");
+        let v = verificar(&pasta, "echo a; echo b >&2; exit 3", None);
         assert!(!v.passou);
         assert!(v.saida.ends_with("a\nb"), "{}", v.saida);
     }
@@ -1901,20 +1911,20 @@ mod testes {
         // O servidor de teste fica com o pipe aberto: antes, a verificação nunca voltava. No Git
         // Bash o `$!` é o número do MSYS; o do Windows está no /proc dele.
         let pid = if cfg!(windows) { "$(cat /proc/$!/winpid)" } else { "$!" };
-        let v = verificar(&pasta, &format!("sleep 120 & echo {pid} > servidor; echo pronto"));
+        let v = verificar(&pasta, &format!("sleep 120 & echo {pid} > servidor; echo pronto"), None);
         assert!(v.passou && v.saida.ends_with("pronto"), "{}", v.saida);
         assert!(inicio.elapsed() < Duration::from_secs(5));
         let servidor: u32 = std::fs::read_to_string(pasta.join("servidor")).unwrap().trim().parse().unwrap();
         assert!(processos::morre_logo(servidor));
 
-        let (passou, saida) = rodar_com_limite(&pasta, "echo comecei; sleep 120", Duration::from_secs(1));
+        let (passou, saida) = rodar_com_limite(&pasta, "echo comecei; sleep 120", Duration::from_secs(1), None);
         assert!(!passou);
         assert!(saida.starts_with("comecei") && saida.ends_with("(passou de 1 s e foi interrompido)"), "{saida}");
 
         #[cfg(unix)]
         if processos::usa_systemd() {
             // Nem quem se solta do grupo com setsid escapa do escopo.
-            let v = verificar(&pasta, "setsid sleep 120 & echo $! > solto; echo ok");
+            let v = verificar(&pasta, "setsid sleep 120 & echo $! > solto; echo ok", None);
             assert!(v.passou, "{}", v.saida);
             let solto: u32 = std::fs::read_to_string(pasta.join("solto")).unwrap().trim().parse().unwrap();
             assert!(processos::morre_logo(solto));
@@ -2655,6 +2665,29 @@ mod pr_e_rede {
                 Some((nome.to_string(), url.trim().to_string()))
             })
             .collect()
+    }
+
+    /// Os nomes dos ramos locais e dos remotos (sem o nome do remote: `origin/x` vira `x`), para o
+    /// ramo planejado de uma tarefa não repetir um que já existe. Sem git, nenhum.
+    pub fn nomes_de_ramos(pasta: &Path) -> std::collections::HashSet<String> {
+        let lista = git(pasta, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]).unwrap_or_default();
+        lista
+            .lines()
+            .filter_map(|linha| {
+                if let Some(ramo) = linha.strip_prefix("refs/heads/") {
+                    return Some(ramo.to_string());
+                }
+                let (_, ramo) = linha.strip_prefix("refs/remotes/")?.split_once('/')?;
+                (ramo != "HEAD").then(|| ramo.to_string())
+            })
+            .collect()
+    }
+
+    /// O ramo padrão do remote como o último fetch o viu (`refs/remotes/<remoto>/HEAD`), sem rede.
+    pub fn ramo_padrao_do_remoto(pasta: &Path, remoto: &str) -> Option<String> {
+        conferir_argumento(remoto).ok()?;
+        let alvo = git(pasta, &["symbolic-ref", "--quiet", &format!("refs/remotes/{remoto}/HEAD")]).ok()?;
+        alvo.trim().strip_prefix(&format!("refs/remotes/{remoto}/")).map(str::to_string).filter(|r| !r.is_empty())
     }
 
     /// `fetch --no-tags <remoto> <refspecs…>` (rede).

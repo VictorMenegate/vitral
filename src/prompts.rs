@@ -332,6 +332,33 @@ pub fn tarefa(tarefa: &Tarefa) -> String {
     )
 }
 
+/// Por que um chat roda isolado.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PorqueIsolado {
+    /// Recebeu texto de fora (issue anexada, aviso de PR).
+    Terceiros,
+    /// A pasta entrega por pull request.
+    EntregaPorPr,
+}
+
+/// O parágrafo que o prompt de um chat isolado ganha no fim (o do ajudante fala do chat dele).
+pub fn nota_de_isolamento(motivo: PorqueIsolado, ajudante: bool) -> &'static str {
+    match (motivo, ajudante) {
+        (_, true) => {
+            "\n\nVocê roda isolado, como o chat que criou você: sem gh, sem git push e sem acesso ao chaveiro nem \
+ao ssh. Quem publica é o Vitral."
+        }
+        (PorqueIsolado::Terceiros, false) => {
+            "\n\nEste chat roda isolado porque recebeu texto de fora (issue): sem gh, sem git push e sem acesso ao \
+chaveiro nem ao ssh. O Vitral cuida da issue e da entrega."
+        }
+        (PorqueIsolado::EntregaPorPr, false) => {
+            "\n\nEste chat roda isolado porque a pasta entrega por pull request: sem gh, sem git push e sem acesso \
+ao chaveiro nem ao ssh. O Vitral faz o commit, o push e o PR."
+        }
+    }
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;

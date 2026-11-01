@@ -2704,6 +2704,14 @@ impl Motor {
             bloco_de_passagem(itens, tarefa, ja_na_conversa)
         });
 
+        // A marca de isolado é avaliada com o lote que vai entrar: o turno que traz texto de terceiros
+        // (issue anexada, aviso de PR) já roda isolado, e daí em diante o chat não sai mais.
+        if matches!(chat.papel, Papel::Projeto | Papel::Trabalhador) && !chat.isolado && issues::marca_isolado(&mensagens) {
+            chat.isolado = true;
+            if let Some(c) = self.chat_mut(chat_id) {
+                c.isolado = true;
+            }
+        }
         let (texto, imagens) = texto_do_turno(&mensagens);
         let texto = match passagem {
             Some(bloco) => format!("{bloco}\n\n---\n\n{texto}"),
@@ -2744,7 +2752,7 @@ impl Motor {
             return;
         };
         let conta = self.conta_para(&chat);
-        let mut opcoes = self.opcoes(&chat, servidor.url(chat.papel, &chat.id));
+        let mut opcoes = self.opcoes(&chat, servidor.url(chat.papel, &chat.id, self.roda_isolado(&chat)));
         opcoes.pasta_conta = conta.pasta();
         // No `-p` a palavra só injeta o lembrete; o esforço do turno sobe aqui, como no terminal.
         if ultrathink {
@@ -2820,11 +2828,19 @@ impl Motor {
         let notas = self.dados.notas(&chat.projeto);
         let tarefa = chat.tarefa.and_then(|t| self.tarefa(t));
         // A conversa do Vitral antigo não roda (a guarda do turno a recusa antes).
-        let (prompt_sistema, bloqueadas, pastas_extras, modelo_padrao) = match chat.papel {
+        let (mut prompt_sistema, mut bloqueadas, pastas_extras, modelo_padrao) = match chat.papel {
             Papel::Mestre => self.opcoes_do_mestre(),
             Papel::Trabalhador => self.opcoes_do_ajudante(chat, tarefa, &notas),
             Papel::Projeto | Papel::Coordenador => self.opcoes_de_projeto(chat, tarefa, &notas),
         };
+        // Chat isolado (seção 3.6): o claude no bwrap (ou só com o ambiente, sem ele) e, como
+        // reforço, os redutores (o `bash -c` passa por eles); o prompt diz por quê.
+        let isolado = self.modo_isolado(chat);
+        if isolado.is_some() {
+            bloqueadas.extend(crate::isolamento::BLOQUEADAS.map(String::from));
+            let motivo = self.motivo_do_isolamento(chat);
+            prompt_sistema.push_str(prompts::nota_de_isolamento(motivo, chat.papel == Papel::Trabalhador));
+        }
         if let Some(pasta) = pastas_extras.first() {
             let _ = std::fs::create_dir_all(pasta);
         }
@@ -2880,6 +2896,7 @@ impl Motor {
             pasta_conta: None,
             ambiente,
             configuracoes,
+            isolado,
         }
     }
 
@@ -4036,6 +4053,8 @@ impl Motor {
             .filter_map(|t| Some((t.id, t.worktree.clone()?, t.base.clone()?)))
             .collect();
         let encerrado = self.encerrado.clone();
+        // Na cópia de um chat isolado, a verificação e o revisor rodam isolados como ele.
+        let isolado = self.modo_isolado_da_tarefa(&tarefa);
 
         cx.spawn(async move |motor, cx| {
             let tarefa_bg = tarefa.clone();
@@ -4048,7 +4067,7 @@ impl Motor {
                         .verificacao
                         .clone()
                         .filter(|_| !parou())
-                        .map(|c| git::verificar(&onde, &c));
+                        .map(|c| git::verificar(&onde, &c, isolado));
                     // Depois de um `git merge` pedido num conflito, a base certa é o que veio do projeto.
                     let base = match (&pasta_diff, &tarefa.base) {
                         (Some(_), Some(b)) if direta => Some(b.clone()),
@@ -4081,7 +4100,7 @@ impl Motor {
                     // seria jogado fora, e a entrega é refeita ao abrir a pasta de novo.
                     let revisao = match (&pasta_diff, &base) {
                         (Some(p), Some(b)) if revisar && !meus.is_empty() && !parou() => Some(
-                            crate::revisor::revisar(p, b, &tarefa, modelo_revisor.as_deref(), pasta_conta)
+                            crate::revisor::revisar(p, b, &tarefa, modelo_revisor.as_deref(), pasta_conta, isolado)
                                 .map_err(|e| format!("{e:#}")),
                         ),
                         _ => None,
@@ -4250,6 +4269,7 @@ impl Motor {
             .or_else(|| Some(self.config.modelo_chats.clone()).filter(|m| !m.is_empty()));
         let pasta_conta = self.chat(&t.trabalhador).map(|c| self.conta_para(c)).and_then(|c| c.pasta());
         let encerrado = self.encerrado.clone();
+        let isolado = self.modo_isolado_da_tarefa(&t);
         if let Some(t) = self.tarefa_mut(id) {
             t.progresso = Some("o revisor está conferindo as mudanças".into());
         }
@@ -4257,13 +4277,13 @@ impl Motor {
             let (verificacao, revisao) = cx
                 .background_spawn(async move {
                     let base = if origem.is_dir() { git::base_efetiva(&origem, &pasta, &base) } else { base };
-                    let verificacao = conferida.verificacao.clone().map(|c| git::verificar(&pasta, &c));
+                    let verificacao = conferida.verificacao.clone().map(|c| git::verificar(&pasta, &c, isolado));
                     let revisao = if git::arquivos_mudados(&pasta, &base).is_empty() {
                         Err("nada mudou na cópia desde a última junção".to_string())
                     } else if encerrado.load(Ordering::SeqCst) {
                         Err("o Vitral fechou".to_string())
                     } else {
-                        crate::revisor::revisar(&pasta, &base, &conferida, modelo.as_deref(), pasta_conta)
+                        crate::revisor::revisar(&pasta, &base, &conferida, modelo.as_deref(), pasta_conta, isolado)
                             .map_err(|e| format!("{e:#}"))
                     };
                     (verificacao, revisao)
@@ -4326,7 +4346,7 @@ impl Motor {
             let _ = chamada.resposta.try_send(Resposta::erro("o papel deste chat mudou; encerre a vez"));
             return;
         }
-        if !mcp::pode(chat.papel, &chamada.ferramenta) {
+        if !mcp::pode(chat.papel, &chamada.ferramenta, self.roda_isolado(&chat)) {
             let erro = format!("Ferramenta \"{}\" não existe para este chat.", chamada.ferramenta);
             let _ = chamada.resposta.try_send(Resposta::erro(erro));
             return;
@@ -4529,8 +4549,9 @@ impl Motor {
         chat.pai = Some(pai.id.clone());
         chat.tarefa = Some(id);
         chat.modelo = modelo;
-        // Com a conta e a permissão do pai.
+        // Com a conta e a permissão do pai; o ajudante de um chat isolado nasce isolado.
         (chat.conta, chat.permissao) = (pai.conta.clone(), pai.permissao.clone());
+        chat.isolado = self.roda_isolado(pai);
         self.chats.push(chat);
         self.preparar_copia(id, Some(resposta), false, cx);
     }
@@ -4640,6 +4661,8 @@ impl Motor {
         let config_projeto = self.config_da_pasta(&tarefa.projeto, &pasta_ligada);
         // O ajudante parte do que a pasta do pai tem agora: antes da cópia, um ponto nela.
         let ponto = (!de_projeto).then(|| format!("Vitral: ponto antes do ajudante #{id}"));
+        // A preparação na cópia de um chat isolado roda isolada como ele.
+        let isolado = self.modo_isolado_da_tarefa(&tarefa);
         let geracao = match self.tarefa_mut(id) {
             Some(t) => {
                 t.geracao_preparo += 1;
@@ -4725,7 +4748,7 @@ impl Motor {
                             git::copiar_arquivos_locais(&caminho_projeto, &pasta, &padroes);
                         let preparacao = Some(config_projeto.preparacao.trim().to_string())
                             .filter(|p| !p.is_empty())
-                            .map(|comando| git::verificar(&pasta, &comando));
+                            .map(|comando| git::verificar(&pasta, &comando, isolado));
                         (copiados, preparacao)
                     })
                     .await
