@@ -1,6 +1,7 @@
 //! `vitral --instalar` com o binário de verdade, num HOME temporário (nunca o do PC): cria o layout,
 //! o link `atual`, o `.desktop` com `Exec` no link e o link em `~/.local/bin`; reinstalar não
-//! duplica nada.
+//! duplica nada. A instalação gerenciada (e o `--instalar`) por enquanto é só do Linux.
+#![cfg(target_os = "linux")]
 
 use std::{
     fs,

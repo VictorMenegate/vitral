@@ -19,7 +19,7 @@ use semver::Version;
 use super::{
     Comando, Erro, Estado, Noticia, Novidade, REPO, VERSAO, assinatura,
     config::{self, Config, DESISTE_DEPOIS, Modo},
-    linux::{self, Falha, Origem, Raiz},
+    instalador::{self, Falha, Origem, Raiz},
     manifesto::{self, LIMITE_ASSINATURA, LIMITE_MANIFESTO, Lido, Publicada},
     plataforma,
     rede::{self, Baixar, Rede, Resposta},
@@ -164,7 +164,7 @@ fn uma_volta(amb: &Ambiente, config: &mut Config, pedido: Pedido, agora: u64, av
     let novidade = Novidade { versao: versao.clone(), notas: publicada.notas.clone(), pagina: publicada.pagina.clone(), pela_pagina: false };
     // Já instalada por esta ou outra abertura, esperando o reinício. Só na cópia instalada: no
     // build do PC, o Reiniciar abriria o app no lugar do build.
-    if amb.rodando.is_some() && amb.raiz.as_ref().and_then(|r| linux::versao_atual(&r.app())).as_deref() == Some(versao.as_str()) {
+    if amb.rodando.is_some() && amb.raiz.as_ref().and_then(|r| instalador::versao_atual(&r.app())).as_deref() == Some(versao.as_str()) {
         return Estado::Pronta(novidade);
     }
     let instalar = pedido == Pedido::Instalar || (amb.instala_sozinho && config.modo == Modo::Automaticas);
@@ -207,7 +207,7 @@ fn procurar(amb: &Ambiente, config: &mut Config, pedido: Pedido, agora: u64) -> 
     let comentario = (amb.conferir)(&bytes, &assinatura).map_err(|_| Erro::Assinatura)?;
     let lido = manifesto::ler(&bytes, &comentario, &amb.plataforma).map_err(|e| Erro::Manifesto(format!("{e:#}")))?;
     config.ultima_procura = Some(agora);
-    let recusadas = amb.raiz.as_ref().map(|r| linux::EstadoApp::ler(&r.app()).recusadas).unwrap_or_default();
+    let recusadas = amb.raiz.as_ref().map(|r| instalador::EstadoApp::ler(&r.app()).recusadas).unwrap_or_default();
     let nova = |publicada: &Version| manifesto::e_nova(&amb.versao, publicada, amb.aceita_pre, &recusadas, config.ignorada.as_deref());
     let publicada = match lido {
         Lido::FormatoNovo { versao: publicada, pagina } if nova(&publicada) => {
@@ -232,9 +232,9 @@ fn baixar_e_instalar(amb: &Ambiente, publicada: &Publicada, avisar: &mut dyn FnM
     let instalacao = |detalhe: String| Erro::Instalacao { versao: versao.clone(), detalhe };
     let raiz = amb.raiz.as_ref().ok_or_else(|| instalacao("sem pasta de dados".into()))?;
     let app = raiz.app();
-    let trava = linux::travar(&app).map_err(|e| instalacao(e.to_string()))?.ok_or(Erro::Ocupado)?;
+    let trava = instalador::travar(&app).map_err(|e| instalacao(e.to_string()))?.ok_or(Erro::Ocupado)?;
     let pacote = &publicada.pacote;
-    let livre = linux::espaco_livre(&app).map_err(|e| instalacao(e.to_string()))?;
+    let livre = instalador::espaco_livre(&app).map_err(|e| instalacao(e.to_string()))?;
     if !cabe(livre, pacote.tamanho) {
         return Err(Erro::Espaco { versao: versao.clone() });
     }
@@ -269,7 +269,7 @@ fn baixar_e_instalar(amb: &Ambiente, publicada: &Publicada, avisar: &mut dyn FnM
     }
     avisar(Estado::Instalando { versao: versao.clone() });
     let prefixo = pacote.nome.trim_end_matches(".tar.gz");
-    let instalada = linux::instalar(&app, Origem::Pacote { arquivo: &destino, prefixo }, &versao, amb.rodando.as_deref(), &trava);
+    let instalada = instalador::instalar(&app, Origem::Pacote { arquivo: &destino, prefixo }, &versao, amb.rodando.as_deref(), &trava);
     let _ = fs::remove_file(&destino);
     match instalada {
         Ok(_) => {}
@@ -277,7 +277,7 @@ fn baixar_e_instalar(amb: &Ambiente, publicada: &Publicada, avisar: &mut dyn FnM
         Err(falha) => return Err(instalacao(falha.to_string())),
     }
     // O .desktop aponta para o link: só muda na primeira vez (o build do PC que vira app).
-    let _ = linux::integrar(raiz, amb.caches);
+    let _ = instalador::integrar(raiz, amb.caches);
     Ok(())
 }
 
@@ -315,13 +315,13 @@ fn laco(
     if let Some(raiz) = &amb.raiz {
         let app = raiz.app();
         if app.is_dir()
-            && let Ok(Some(trava)) = linux::travar(&app)
+            && let Ok(Some(trava)) = instalador::travar(&app)
         {
-            linux::limpar_restos(&app, &trava);
+            instalador::limpar_restos(&app, &trava);
         }
         // Toda abertura da versão atual confere o menu (os ícones podem ter mudado nela).
-        if amb.rodando.is_some() && amb.rodando == linux::versao_atual(&app) {
-            let _ = linux::integrar(raiz, amb.caches);
+        if amb.rodando.is_some() && amb.rodando == instalador::versao_atual(&app) {
+            let _ = instalador::integrar(raiz, amb.caches);
         }
     }
     let mut config = caminho.as_deref().map(Config::ler).unwrap_or_default();
@@ -393,12 +393,17 @@ fn gravar(caminho: &Option<PathBuf>, config: &Config) {
 
 /// `nice 10` só nesta thread (no Linux, o tid vale como processo para o `setpriority`); o
 /// `--versao` do binário novo herda.
+#[cfg(target_os = "linux")]
 fn baixar_prioridade() {
     // SAFETY: chamadas sem ponteiros; o pior caso é não mudar a prioridade.
     unsafe {
         libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, 10);
     }
 }
+
+/// Fora do Linux a procura ainda não roda (`iniciar`).
+#[cfg(not(target_os = "linux"))]
+fn baixar_prioridade() {}
 
 fn agora() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
@@ -408,10 +413,10 @@ fn folga() -> Duration {
     Duration::from_secs((uuid::Uuid::new_v4().as_u128() % (config::FOLGA.as_secs() as u128 + 1)) as u64)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod testes {
     use super::*;
-    use crate::atualizacao::linux::testes::layout_com;
+    use crate::atualizacao::linux::{self, testes::layout_com};
     use std::{
         collections::HashMap,
         path::Path,

@@ -1566,6 +1566,8 @@ mod testes {
         let _ = fs::remove_dir_all(&raiz);
     }
 
+    // O link `atual` do atualizador é do Linux.
+    #[cfg(unix)]
     #[test]
     fn descartar_afasta_os_dados_e_deixa_o_app_instalado() {
         let raiz = pasta_de_teste("descartar");
@@ -1598,7 +1600,7 @@ mod testes {
     fn o_estado_do_atualizador_nao_e_o_dos_dados() {
         let raiz = pasta_de_teste("dois-estados");
         let dados = Dados::em(&raiz);
-        let app = crate::atualizacao::linux::Raiz { dados: raiz.clone(), bin: None }.app();
+        let app = crate::atualizacao::instalador::Raiz { dados: raiz.clone(), bin: None }.app();
         let dados_no_mesmo_lugar = Dados { pasta: raiz.join("vitral"), ..dados.clone() };
         assert_eq!(app, dados_no_mesmo_lugar.pasta.join(PASTA_DO_APP));
         assert_ne!(app.join("estado.json"), dados_no_mesmo_lugar.arquivo_estado());
@@ -1626,7 +1628,7 @@ mod testes {
         dados.marcar_formato();
         assert_eq!(dados.formato_no_disco(), FORMATO_DADOS);
         // A 0.2.0-rc.2 instalada (formato 1) não é destino de volta com os dados globais no disco.
-        use crate::atualizacao::{linux::EstadoApp, saude::pode_voltar};
+        use crate::atualizacao::{estado_app::EstadoApp, saude::pode_voltar};
         let app = EstadoApp { formatos: [("0.2.0-rc.2".to_string(), 1)].into(), ..Default::default() };
         assert!(!pode_voltar(&app, "0.2.0-rc.2", dados.formato_no_disco()));
         assert!(pode_voltar(&app, "0.2.0-rc.2", Dados::em(&raiz.join("vazia")).formato_no_disco()));

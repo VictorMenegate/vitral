@@ -4,7 +4,6 @@
 use std::{
     fs,
     io::{self, Read as _, Write as _},
-    os::unix::fs::PermissionsExt as _,
     path::{Component, Path},
     process::Stdio,
     time::{Duration, Instant},
@@ -14,7 +13,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 
-use crate::processos::novo_comando;
+use crate::{dados::fsync_da_pasta, processos::novo_comando};
 
 /// O que um pacote pode ter depois de aberto (o binário tem dezenas de MB; o resto, texto).
 pub const LIMITE_EXTRAIDO: u64 = 512 * 1024 * 1024;
@@ -72,12 +71,16 @@ pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, limite: u64) -> Res
         let copiado = io::copy(&mut (&mut entrada).take(tamanho + 1), &mut saida)?;
         ensure!(copiado == tamanho, "{} veio com tamanho diferente do cabeçalho", caminho.display());
         let modo = if relativo == Path::new("vitral") { 0o755 } else { 0o644 };
-        saida.set_permissions(fs::Permissions::from_mode(modo))?;
+        if let Some(modo) = permissao(modo) {
+            saida.set_permissions(modo)?;
+        }
         saida.sync_all()?;
     }
     for pasta in pastas.iter().rev() {
-        fs::set_permissions(pasta, fs::Permissions::from_mode(0o755))?;
-        fs::File::open(pasta)?.sync_all()?;
+        if let Some(modo) = permissao(0o755) {
+            fs::set_permissions(pasta, modo)?;
+        }
+        fsync_da_pasta(pasta)?;
     }
     let binario = destino.join("vitral");
     ensure!(
@@ -85,6 +88,18 @@ pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, limite: u64) -> Res
         "o pacote não tem o vitral"
     );
     Ok(())
+}
+
+/// O modo Unix como permissão; fora do Unix não há o que dar (nem o bit de execução).
+#[cfg(unix)]
+fn permissao(modo: u32) -> Option<fs::Permissions> {
+    use std::os::unix::fs::PermissionsExt as _;
+    Some(fs::Permissions::from_mode(modo))
+}
+
+#[cfg(not(unix))]
+fn permissao(_modo: u32) -> Option<fs::Permissions> {
+    None
 }
 
 /// O caminho sem o prefixo (None para a própria pasta do prefixo). Só componentes comuns.
@@ -153,13 +168,23 @@ fn abrir_sem_tela(binario: &Path) -> Result<std::process::Child> {
             .stderr(Stdio::null())
             .spawn();
         match resultado {
-            Err(erro) if erro.raw_os_error() == Some(libc::ETXTBSY) && tentativas < 20 => {
+            Err(erro) if texto_ocupado(&erro) && tentativas < 20 => {
                 tentativas += 1;
                 std::thread::sleep(Duration::from_millis(50));
             }
             resultado => return resultado.with_context(|| format!("não abriu {}", binario.display())),
         }
     }
+}
+
+#[cfg(unix)]
+fn texto_ocupado(erro: &io::Error) -> bool {
+    erro.raw_os_error() == Some(libc::ETXTBSY)
+}
+
+#[cfg(not(unix))]
+fn texto_ocupado(_erro: &io::Error) -> bool {
+    false
 }
 
 /// Grava `bytes` em `caminho` sem nunca deixar o arquivo pela metade: temporário ao lado,
@@ -172,14 +197,16 @@ pub fn gravar_atomico(caminho: &Path, bytes: &[u8], modo: u32) -> io::Result<()>
     {
         let mut arquivo = fs::File::create(&temporario)?;
         arquivo.write_all(bytes)?;
-        arquivo.set_permissions(fs::Permissions::from_mode(modo))?;
+        if let Some(modo) = permissao(modo) {
+            arquivo.set_permissions(modo)?;
+        }
         arquivo.sync_all()?;
     }
     if let Err(erro) = fs::rename(&temporario, caminho) {
         let _ = fs::remove_file(&temporario);
         return Err(erro);
     }
-    fs::File::open(pasta)?.sync_all()
+    fsync_da_pasta(pasta)
 }
 
 #[cfg(test)]
@@ -202,6 +229,7 @@ pub mod testes {
     }
 
     pub enum Entrada<'a> {
+        #[cfg_attr(not(unix), allow(dead_code, reason = "só os testes do Unix abrem um pacote com pasta"))]
         Pasta(&'a str),
         Arquivo(&'a str, &'a [u8]),
         /// Cabeçalho escrito à mão (caminho e tipo crus), para o que o `tar::Builder` não deixa fazer.
@@ -241,6 +269,7 @@ pub mod testes {
         construtor.into_inner().unwrap().finish().unwrap()
     }
 
+    #[cfg_attr(not(unix), allow(dead_code, reason = "o binário de mentira é um script do sh"))]
     pub fn pacote_bom(prefixo: &str, versao: &str) -> Vec<u8> {
         let binario = binario_falso(versao);
         let vitral = format!("{prefixo}/vitral");
@@ -263,8 +292,11 @@ pub mod testes {
 
     const PREFIXO: &str = "vitral-0.9.0-linux-x86_64";
 
+    // O binário de mentira é um script do sh, e as permissões são as do Unix.
+    #[cfg(unix)]
     #[test]
     fn abre_o_pacote_e_acerta_as_permissoes() {
+        use std::os::unix::fs::PermissionsExt as _;
         let (destino, resultado) = abrir(&pacote_bom(PREFIXO, "0.9.0"), PREFIXO, LIMITE_EXTRAIDO);
         resultado.unwrap();
         let modo = |n: &str| fs::metadata(destino.join(n)).unwrap().permissions().mode() & 0o777;
@@ -275,6 +307,7 @@ pub mod testes {
         fs::remove_dir_all(destino.parent().unwrap()).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn abre_o_pacote_do_tar_do_gnu() {
         // O mesmo formato que o release.yml gera (tar do GNU com --sort=name --owner=0 …).
@@ -357,6 +390,7 @@ pub mod testes {
         fs::remove_dir_all(destino.parent().unwrap()).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn o_binario_que_nao_responde_direito_e_recusado() {
         let pasta = pasta_de_teste("conferir");

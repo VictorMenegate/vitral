@@ -1,9 +1,13 @@
 //! A versão embutida no binário, os comandos que respondem sem abrir janela e a atualização
 //! automática (especificação em `distribuicao.md`, seção 3): a procura numa thread própria
 //! (`procura.rs`), o manifesto assinado (`manifesto.rs`, `assinatura.rs`), o download (`rede.rs`),
-//! o pacote (`pacote.rs`), a instalação por versão no Linux (`linux.rs`), o
-//! `atualizacoes.json` (`config.rs`) e a saúde da versão nova, com a volta para a anterior
-//! (`saude.rs`).
+//! o pacote (`pacote.rs`), a instalação por versão no Linux (`linux.rs`, com o estado dela em
+//! `estado_app.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova, com a volta para
+//! a anterior (`saude.rs`).
+//!
+//! Fora do Linux ainda não há instalação gerenciada (a do Windows é o Lote W4): no lugar do
+//! `linux.rs` entra o `sem_instalacao.rs`, com a mesma API e nada instalado, e a procura fica
+//! desligada (o manifesto ainda não tem pacote de outro sistema).
 //!
 //! A interface (`ui/atualizacao.rs`) lê a `Global` [`Atualizacoes`] e redesenha com
 //! `cx.observe_global::<Atualizacoes>(…)`, que só dispara quando o estado muda. As ações são
@@ -16,12 +20,24 @@
 
 pub mod assinatura;
 pub mod config;
+pub mod estado_app;
+#[cfg(target_os = "linux")]
 pub mod linux;
 pub mod manifesto;
+// Abrir o pacote é da instalação, que fora do Linux é o Lote W4.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub mod pacote;
 pub mod procura;
 pub mod rede;
 pub mod saude;
+#[cfg(not(target_os = "linux"))]
+pub mod sem_instalacao;
+
+/// A instalação gerenciada deste sistema.
+#[cfg(target_os = "linux")]
+pub(crate) use linux as instalador;
+#[cfg(not(target_os = "linux"))]
+pub(crate) use sem_instalacao as instalador;
 
 use std::{
     path::{Path, PathBuf},
@@ -100,7 +116,7 @@ pub fn sem_janela(argumentos: &[String]) -> Option<i32> {
             eprintln!("Não instalei o Vitral: este build tem os dados globais desligados (DADOS_GLOBAIS) e só abre na bancada.");
             return Some(1);
         }
-        return Some(linux::instalar_por_comando());
+        return Some(instalador::instalar_por_comando());
     }
     None
 }
@@ -303,14 +319,14 @@ pub fn secao_de(novidades: &str, versao: &str) -> Option<String> {
 }
 
 /// Liga a atualização: põe a `Global` e abre a thread (nada se ela estiver desligada por
-/// `VITRAL_SEM_ATUALIZACAO=1`, como na bancada). Na versão gerenciada, já aponta o reinício do GPUI
-/// para o link `atual` e confirma a saúde ao fechar. `aviso` é o que o `saude::ao_abrir` contou e
-/// `dados` é a pasta de dados (`Dados::pasta`).
+/// `VITRAL_SEM_ATUALIZACAO=1`, como na bancada, ou fora do Linux). Na versão gerenciada, já aponta
+/// o reinício do GPUI para o link `atual` e confirma a saúde ao fechar. `aviso` é o que o
+/// `saude::ao_abrir` contou e `dados` é a pasta de dados (`Dados::pasta`).
 pub fn iniciar(aviso: Option<saude::Aviso>, dados: PathBuf, cx: &mut App) {
-    let raiz = linux::Raiz::do_usuario();
-    let app = raiz.as_ref().map(linux::Raiz::app);
-    let rodando = app.as_deref().and_then(linux::versao_rodando);
-    let atual = raiz.as_ref().map(linux::Raiz::binario_atual);
+    let raiz = instalador::Raiz::do_usuario();
+    let app = raiz.as_ref().map(instalador::Raiz::app);
+    let rodando = app.as_deref().and_then(instalador::versao_rodando);
+    let atual = raiz.as_ref().map(instalador::Raiz::binario_atual);
     if rodando.is_some()
         && let Some(caminho) = &atual
     {
@@ -326,7 +342,8 @@ pub fn iniciar(aviso: Option<saude::Aviso>, dados: PathBuf, cx: &mut App) {
     let permissao = permissao(canal(), rodando.is_some());
     let progresso = Arc::new(AtomicBool::new(false));
     let (envia, recebe) = smol::channel::unbounded::<Noticia>();
-    let comandos = if std::env::var_os("VITRAL_SEM_ATUALIZACAO").is_some_and(|v| v == "1") {
+    let desligada = std::env::var_os("VITRAL_SEM_ATUALIZACAO").is_some_and(|v| v == "1");
+    let comandos = if desligada || !cfg!(target_os = "linux") {
         None
     } else {
         let ambiente = procura::Ambiente::do_app(raiz, rodando.clone(), permissao == Permissao::Sozinha);
@@ -384,7 +401,7 @@ pub fn primeiro_quadro(cx: &mut App) {
 
 /// Outra abertura (ou outro Vitral) já instalou uma versão mais nova que esta: está pronta.
 fn trocada_por_fora(app: &Path, rodando: &str) -> Option<Novidade> {
-    let atual = linux::versao_atual(app)?;
+    let atual = instalador::versao_atual(app)?;
     let maior = semver::Version::parse(&atual).ok()? > semver::Version::parse(rodando).ok()?;
     maior.then(|| Novidade { versao: atual, notas: String::new(), pagina: String::new(), pela_pagina: false })
 }
@@ -556,6 +573,7 @@ mod testes {
         assert_eq!(pagina("0.3.0"), "https://github.com/VictorMenegate/vitral/releases/tag/v0.3.0");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn versao_instalada_por_fora_fica_pronta() {
         let (pasta, app) = linux::testes::layout_com("0.9.0");
