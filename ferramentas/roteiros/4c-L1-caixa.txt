@@ -1,0 +1,12 @@
+# Lote 1, caixa de mensagem. Base: a tela principal (M) e o menu de modo. A fazer no lote:
+#   (L) o mesmo com Ctrl+J (sem a Equipe); (E) 3 painéis; popover de esforço (Ctrl+E) e de modelo
+#   (Ctrl+Shift+M); enviar apagado com a caixa vazia; parar com o quadrado; anel a 70% e a 90%;
+#   "Sem perguntar" vermelho só sem cópia isolada. Também a 150% e com FUNDO=branco.
+# Conferir com medir_print.py: o rótulo do chip no padrão (tenue) a 4,5:1 sobre a parte quente.
+
+espera 10                 # tela principal, painel único com a lista e a Equipe (faixa Média)
+print c01-caixa-media     # caixa no pé da conversa
+clique 552 905            # chip de modo (as coordenadas mudam com o desenho novo da caixa)
+espera 1                  # menu abre para cima
+print c02-menu-modo       # cabeçalho "Modo de permissão" com Shift+Tab, regras permitidas clicáveis
+tecla Escape              # fecha o menu

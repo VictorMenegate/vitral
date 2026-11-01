@@ -1,0 +1,33 @@
+# Lista estreita em detalhe, a 100% e a 150%. Começa a 100% ({"zoom": 1.0} na bancada).
+
+espera 10
+print y01-100                   # largura normal: "Buscar nas conversas" inteiro, sem o Ctrl+K
+arrastar 479 600 400 600        # lista no mínimo (240)
+espera 1
+mover 300 298                   # hover na linha do #4
+espera 2
+print y02-100-estreita-hover    # só o "…" no hover; a dica diz o estado
+tecla Control_L+k
+tecla Down
+tecla End                       # rola até o fim da lista
+espera 1
+print y03-100-estreita-fim      # "Arquivar estas" só com o ícone; barra fina na borda
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+espera 2
+mover 380 600
+espera 1
+print y04-150-estreita-fim      # o mesmo a 150% (lista de 360)
+clique 152 903                  # Codex no pé do trilho
+espera 1
+print y05-150-uso-codex
+tecla Escape
+espera 1
+clique 426 122                  # aba Arquivos
+espera 2
+print y06-150-estreita-arquivos
+tecla Control_L+0
+espera 1

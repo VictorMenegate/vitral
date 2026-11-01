@@ -1,0 +1,14 @@
+# Lote 4, painéis e cabeçalho. A fazer no lote: 3 painéis a 1600 (Mínimo, sem linha 2); arrastos
+# com PRINT_NO_ARRASTO (trocar, barra de inserção, "Já há 4 lado a lado", arquivo do Nautilus);
+# trabalhador com o chip da cópia; projeto sem git ("na pasta original"). Ctrl+W, Ctrl+PgUp/PgDn
+# e Ctrl+Shift+PgUp/PgDn.
+# Conferir: azul só na aba do painel ativo; número no estilo de tecla; interruptores ligados
+# neutros; prévia de arrasto opaca; nenhuma palavra cortada.
+
+espera 10                 # 1 painel
+print p01-um-painel       # aba, ações e linha de contexto
+clique 304 352            # trabalhador "#4 Aplicar cupom no carrinho" na lista
+espera 2                  # abre no painel
+clique 1336 154           # "Coordenador" na Equipe: abre ao lado
+espera 2                  # 2 painéis
+print p02-dois-paineis    # cada aba com o número do painel

@@ -1,0 +1,14 @@
+# Janela mínima (960x600), para a quarta combinação do plano (rode com ZOOM=1.5). Encolhe a
+# janela pelas bordas e tira os prints principais. As bordas são as da janela de 1440x920 aberta
+# no centro (a borda direita em x ~1500 e a de baixo em y ~956); conferir na primeira rodada.
+
+espera 10                 # o Vitral abre na pasta de demonstração
+arrastar 1500 500 1020 500 # borda direita até 960 de largura
+espera 2                  # a janela encolhe
+arrastar 760 958 760 638  # borda de baixo até 600 de altura
+espera 2                  # a lista e a Equipe viram gaveta, a caixa cresce menos
+print m01-minima          # tudo cabe sem cortar palavra; o painel 1 começa pelo botão da lista
+tecla F10                 # menu do Vitral (com o trilho escondido, ele volta)
+espera 1                  # o menu desenha
+print m02-minima-menu     # menu do logo inteiro dentro da janela
+tecla Escape              # fecha o menu

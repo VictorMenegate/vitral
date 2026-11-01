@@ -1,0 +1,53 @@
+# Larguras com zoom e lista estreita. Começa a 100% (interface.json da bancada com {"zoom": 1.0}).
+# Janela de 1440x920 centrada na tela de 1600x1000: a borda de dentro fica em x=100 e x=1500.
+
+espera 10                       # tela principal a 100%
+print z01-100                   # lista de 312, conversa e Equipe ao lado
+arrastar 479 600 400 600        # divisória da lista para a esquerda: 240 (o mínimo)
+espera 1
+print z02-100-lista-estreita    # busca "Buscar", trabalhadores com o ponto, Retomar só ícone
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+espera 2
+print z03-150-lista-estreita    # 150%: a lista arrastada vira 360 (1,5×), sem pular
+arrastar 564 600 672 600        # a 150%, a lista volta a 468 (312 a 100%)
+espera 1
+print z04-150-lista-larga
+clique 152 838                  # anéis do Claude no pé do trilho
+espera 1
+print z05-150-uso-claude        # popover de 600, e-mail inteiro, fundo opaco
+tecla Escape
+espera 1
+clique 152 770                  # sino
+espera 1
+print z06-150-sino
+tecla Escape
+espera 1
+tecla Control_L+0
+espera 2
+print z07-100-de-volta          # de volta a 100%: a lista de 468 vira 312
+arrastar 1497 500 1000 500      # janela estreita (para no mínimo de 960)
+espera 2
+print z08-100-janela-estreita   # a Equipe sai do lado
+tecla Control_L+j
+espera 1
+print z09-100-gaveta-direita    # Equipe como gaveta opaca, com véu
+tecla Escape
+espera 1
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+tecla Control_L+equal
+espera 2
+print z10-150-janela-estreita   # 150% na janela mínima: a lista também vira gaveta
+tecla Control_L+b
+espera 1
+print z11-150-gaveta-lista
+tecla Escape
+espera 1
+tecla Control_L+0
+espera 1

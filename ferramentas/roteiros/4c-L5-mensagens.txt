@@ -1,0 +1,11 @@
+# Lote 5, mensagens. A fazer no lote: a conversa de demonstração inteira em Larga, Estreita e
+# Mínima; pedido normal e perigoso; plano; faixa rodando, parada e falhou; a pílula "Novas
+# mensagens" (rolar para cima com conteúdo chegando).
+# Conferir: espaços de 24, 12 e 4; balão sem azul; ferramenta bem-sucedida em tenue; "Permitir" a
+# 4,6:1; cantos do resumo sem o gradiente vazando.
+
+espera 10                 # conversa "Carrinho com cupom de desconto" no fim
+print g01-conversa        # resposta em markdown, ferramentas, eventos e entregas
+clique 304 352            # trabalhador #4
+espera 2                  # pedido do coordenador, trilha de 8 ações, relatório
+print g02-trabalhador     # mensagem recebida e trilha recolhida

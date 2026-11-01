@@ -1,0 +1,14 @@
+# Lote 7, Revisão. A fazer no lote: a 1100 (média) e a 960 com 150% (estreita); popovers da
+# verificação e do revisor; rascunho aberto; comentário salvo; alerta de pendências; os estados
+# carregando, sem cópia, erro e sem mudanças. F7 e Shift+F7 andam pelas mudanças.
+# Conferir: cantos do diff ampliados sem fundo de linha vazando; comentário sem azul; palavra
+# mudada a 4,5:1; nada em caixa alta.
+
+espera 10                 # tela principal
+clique 1165 312           # "Revisar" do cartão #4 na Equipe
+espera 3                  # o diff é lido da cópia
+print r01-revisao-larga   # verificação falhou, arquivos com +N −M, cartões do revisor nas linhas
+tecla F7                  # próxima mudança
+espera 1                  # o diff rola
+print r02-f7              # a mudança seguinte em vista
+tecla Escape              # fecha o diálogo

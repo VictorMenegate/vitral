@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Vitral
+Comment=Vários chats do Claude Code trabalhando juntos
+Exec=@BINARIO@ %f
+Icon=vitral
+Terminal=false
+Categories=Development;IDE;
+Keywords=claude;ia;agentes;chat;
+StartupWMClass=vitral
+StartupNotify=true

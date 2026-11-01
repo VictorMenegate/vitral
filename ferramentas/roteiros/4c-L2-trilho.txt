@@ -1,0 +1,19 @@
+# Lote 2, trilho, uso e sino. A fazer no lote: trilho com 16 projetos (demo_vitral.py --16, o
+# "+N"), popover do sino, popover de uso, Ctrl+B recolhido e a janela mínima a 150%.
+# Conferir: centro do logo na altura da aba do painel 1; Índigo a 3:1 com FUNDO=branco; projeto
+# ativo com aro na cor dele; ponto vazado em "rodando"; nenhum aro escuro nos pontos.
+
+espera 10                 # tela principal
+print t01-trilho          # logo, projetos, sino e anéis
+clique 135 106            # logo: menu do Vitral
+espera 1                  # menu desenha
+print t02-menu-logo       # menu com o cabeçalho do Vitral e os grupos
+tecla Escape              # fecha o menu
+tecla F10                 # o mesmo menu pelo teclado
+espera 1                  # menu desenha
+print t03-menu-f10        # foco no primeiro item
+tecla Escape              # fecha o menu
+clique 135 876            # anel do Claude no pé do trilho
+espera 2                  # o popover lê o uso guardado
+print t04-uso-claude      # popover de uso de 360
+tecla Escape              # fecha o popover

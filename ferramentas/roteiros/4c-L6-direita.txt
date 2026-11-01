@@ -1,0 +1,12 @@
+# Lote 6, painel da direita. A fazer no lote: 4 tarefas; trabalhador ativo no fim da lista (o
+# painel rola até ele); permissão; 300 px; gaveta a 1100; arquivo .rs, .md, binário e de 1 MB.
+# Conferir: nada translúcido sobre texto na gaveta e no "…"; ícone da aba em tenue; comentários
+# do código a 5,8:1.
+
+espera 10                 # Equipe com #4 em revisão, #5 parada, Concluídas (2)
+print d01-equipe          # cartões com pílula, trilha de etapas e ações
+clique 240 108            # aba Arquivos da lista
+espera 1                  # arquivos da loja
+clique 304 290            # README.md
+espera 2                  # abre no painel da direita
+print d02-arquivo         # markdown renderizado

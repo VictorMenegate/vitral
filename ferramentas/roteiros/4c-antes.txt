@@ -1,0 +1,100 @@
+# Prints "antes" do 4c: todas as telas, como referência para os Lotes 1 a 9.
+# Uso (de dentro do worktree, com o binário compilado):
+#   python3 -I ferramentas/demo_vitral.py ~/.cache/vitral-trabalho/demo
+#   ZOOM=1.0 ferramentas/bancada.sh ferramentas/roteiros/4c-antes.txt \
+#       ~/.cache/vitral-trabalho/prints-4c/antes/100-escuro target/debug/vitral ~/.cache/vitral-trabalho/demo
+# As quatro combinações do plano: ZOOM=1.0; ZOOM=1.0 FUNDO=branco; ZOOM=1.5 (as coordenadas
+# abaixo são de 100%: a 150% use só os prints, ou ajuste os y); e 960x600 a 150%
+# (4c-janela-minima.txt). Gere a pasta de novo antes de cada rodada: as datas são relativas a agora.
+#
+# Vem do roteiro da vitrine (~/.cache/vitral-trabalho/vitrine/roteiro.txt), com as peças à direita
+# do trilho 4 px mais à direita depois do Lote 0b (frestas de 8 no lugar de 4). Conferir na
+# primeira rodada.
+#   janela 1440x920 com sombra de 20 px; conteúdo em ~(109, 85) até ~(1491, 947).
+#   trilho x 109-161 (centro 135) | lista x 169-477 | conversa x 481-1111 | Equipe x 1111-1491.
+
+espera 10                 # o Vitral abre na pasta da vitrine, já na conversa mais recente
+print 01-principal        # trilho (logo, 4 projetos com ícone e cor, sino com número, anéis de uso); lista com "Esperando você" (Carrinho com cupom + 4 trabalhadores, Página de contato não lida + 2, Lista de apps parada), Fixadas, Conversas por data; conversa "Carrinho com cupom de desconto" no fim (resposta em markdown com código); Equipe com #4 em revisão, #5 parada, Concluídas (2) e Decisões do projeto
+
+clique 135 106            # logo redondo do topo do trilho: abre o menu do Vitral
+espera 1                  # o menu desenha
+print 02-menu-logo        # menu: Nova conversa, Novo projeto…, Rotinas, Contas do Claude, Configurações desta pasta, Trocar a pasta, Abrir a pasta
+tecla Escape              # fecha o menu
+
+clique 552 905            # chip de modo na caixa de mensagem (logo depois do clipe): "Editar automaticamente", esmaecido porque segue a pasta
+espera 1                  # o menu abre para cima
+print 03-menu-modo        # os 5 modos com ícone e cor e, embaixo, o que foi permitido nesta conversa (edições e "python3 manage.py test produtos") com "Voltar a perguntar"
+tecla Escape              # fecha o menu de modo
+
+mover 334 461             # ponteiro sobre o cartão "Página de contato com formulário" (não lido)
+espera 1                  # o hover troca a hora pelos botões
+print 04-hover-cartao     # cartão realçado com Responder, abrir ao lado e arquivar; prévia "Resposta nova:" em azul
+mover 135 600             # tira o ponteiro da lista (espaço vazio do trilho)
+
+clique 135 876            # primeiro botão redondo do pé do trilho (logo do Claude, com os anéis de uso)
+espera 2                  # o popover lê o uso guardado
+print 05-uso-claude       # popover à direita do trilho: uso de 5 h e da semana do Claude (da conta real do ~/.claude), contas e organização
+tecla Escape              # fecha o popover
+clique 135 600            # clique no vazio do trilho, caso o popover não feche com Esc
+espera 1                  # tudo fechado
+
+clique 1165 312           # botão "Revisar" do cartão #4 Aplicar cupom no carrinho, na Equipe
+espera 3                  # o diff é lido da cópia (git worktree) em segundo plano
+print 06-revisar          # diálogo de revisão: linha vermelha "verificação falhou", lista com cupons.py (novo), views.py, carrinho.html e tests.py com +N −M, diff com cor de sintaxe e os cartões do revisor nas linhas (cupons.py:18 alta, :27 média…)
+tecla Escape              # fecha o diálogo
+espera 1                  # volta à tela principal
+
+clique 304 352            # linha do trabalhador "#4 Aplicar cupom no carrinho", embaixo do coordenador na lista
+espera 2                  # a conversa do trabalhador abre no painel
+print 07-trabalhador      # trabalhador: pedido "de coordenador" recolhido, bloco "8 ações · Read ×2, Grep, Write, Edit ×3, Bash" (recolhido), relatório em markdown; linha de contexto com a pasta da cópia; Equipe com o #4 destacado e aberto (objetivo e critérios)
+
+clique 1336 154           # botão "Coordenador" na barra de resumo da Equipe (à esquerda de "Lado a lado")
+espera 2                  # o coordenador abre ao lado, à esquerda do trabalhador
+print 08-lado-a-lado      # duas conversas lado a lado (coordenador | trabalhador #4), cada aba com o número do painel e o ativo com borda azul; Equipe continua à direita
+
+clique 135 106            # menu do logo de novo
+espera 1                  # menu aberto
+clique 204 289            # item "Configurações desta pasta"
+espera 2                  # diálogo desenha (mede o espaço das cópias)
+print 09-configuracoes    # Configurações em quatro grupos: Conversas (arquivar após 30 dias), Trabalhadores (opus/sonnet, 4 ao mesmo tempo, 3 rodadas), Revisão (revisor ligado), Cópias das tarefas (espaço ocupado, apagar após 30 dias)
+tecla Escape              # fecha o diálogo
+
+clique 135 106            # menu do logo
+espera 1                  # menu aberto
+clique 204 221            # item "Rotinas"
+espera 2                  # diálogo desenha
+print 10-rotinas          # 3 rotinas: loja Seg a Sex às 08:00 (já rodou hoje), site Seg/Qua/Sex às 18:30, extensao Dom às 10:00 desligada
+tecla Escape              # fecha o diálogo
+
+clique 240 108            # aba "Arquivos" no topo da lista
+espera 1                  # lista os arquivos do projeto loja (git ls-files)
+clique 304 290            # segundo arquivo da lista: README.md (o primeiro é .gitignore)
+espera 2                  # o arquivo abre no painel da direita
+print 11-arquivos         # aba Arquivos com os arquivos da loja e o README.md renderizado em markdown (tabela e blocos de código) no painel da direita
+
+clique 459 227            # botão "…" ao lado do nome do projeto, no topo da aba Arquivos
+espera 1                  # menu do projeto abre
+print 12-menu-projeto     # Rodar: .venv/bin/python manage.py runserver, Abrir no VS Code, Abrir terminal aqui, Configurar projeto…, Ícone e cor…
+clique 354 398            # último item, "Ícone e cor…" (um clique abaixo dele só fecha o menu)
+espera 1                  # diálogo desenha
+print 13-icone-e-cor      # diálogo "Ícone e cor do projeto" da loja: prévia grande (sacola rosa), grade de ícones e cores
+tecla Escape              # fecha o diálogo
+
+clique 377 108            # aba "Conversas" de volta
+espera 1                  # lista de conversas
+mover 334 461             # hover no cartão "Página de contato com formulário"
+espera 1                  # botões aparecem
+clique 432 461            # botão "abrir ao lado" do cartão (o do meio; o da direita arquiva)
+espera 2                  # terceiro painel: a Equipe não cabe mais ao lado e vira gaveta
+clique 1418 108           # botão do painel da direita no cabeçalho do último painel (o × da janela fica 22 px à direita)
+espera 2                  # a gaveta abre por cima das conversas
+print 14-gaveta-direita   # três conversas lado a lado e o painel da direita (o README aberto antes) como gaveta por cima, com fundo escurecido
+tecla Escape              # fecha a gaveta
+
+arrastar 1500 500 1020 500 # puxa a borda direita da janela até o mínimo (960 px de largura)
+espera 2                  # a janela encolhe; a lista não cabe ao lado das três conversas
+print 15-janela-estreita  # janela estreita: sem lista e sem Equipe ao lado, botão de mostrar a lista no primeiro painel
+clique 197 108            # botão "Mostrar a lista" no canto esquerdo do primeiro painel
+espera 2                  # a lista abre como gaveta
+print 16-gaveta-lista     # lista de conversas como gaveta por cima dos painéis
+tecla Escape              # fecha a gaveta

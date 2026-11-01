@@ -1,0 +1,13 @@
+# Lote 8, diálogos. A fazer no lote: cada diálogo a 1600 e em 960x600 a 150% (Contas, Rotinas,
+# Nova conversa, Novo projeto, Renomear, Configurar projeto, boas-vindas). Roteiro do Enter
+# seguro: abrir "Apagar a cópia", Return, print (o diálogo fechou e a cópia continua).
+# Conferir: sombra visível sobre o véu; grupos visíveis (grupo()); linhas de opção que empilham na
+# versão estreita; rodapé sempre visível.
+
+espera 10                 # tela principal
+tecla F10                 # menu do Vitral
+espera 1                  # menu desenha
+clique 200 289            # "Configurações desta pasta" (conferir o y com o menu novo)
+espera 2                  # diálogo desenha
+print x01-configuracoes   # quatro grupos
+tecla Escape              # fecha o diálogo

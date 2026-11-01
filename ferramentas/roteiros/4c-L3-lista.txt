@@ -1,0 +1,15 @@
+# Lote 3, lista. A fazer no lote: Hoje e Ontem, Mais antigas recolhida, cartão selecionado e
+# aberto em outro painel, família com concluídas recolhidas, escopo com "+1", Arquivadas, Arquivos
+# em árvore e com busca, menu de contexto, gaveta a 1100 e largura de 240.
+# Conferir: tenue e apagado a 4,5:1 sobre o vidro de leitura com FUNDO=branco; hover neutro e
+# seleção azul com barra; no máximo 2 itens na linha 2 da meta; cabeçalho alinhado com o logo.
+
+espera 10                 # tela principal
+print l01-lista           # Esperando você (pedido, parada, erro), Fixadas e Conversas por data
+mover 334 461             # cartão "Página de contato com formulário"
+espera 1                  # o hover troca a hora pelos botões
+print l02-hover           # o título nunca fica coberto
+mover 135 600             # tira o ponteiro da lista
+clique 240 108            # aba Arquivos
+espera 1                  # arquivos do projeto
+print l03-arquivos        # a árvore do kit (Tree) depois do lote

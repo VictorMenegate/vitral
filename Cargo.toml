@@ -1,0 +1,48 @@
+[package]
+name = "vitral"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+# chrono: a hora das Rotinas no TimeField do kit (que já depende dele).
+chrono = "0.4.45"
+dirs = "7.0.0"
+# syntect: cor de sintaxe no chat, no painel de arquivo e no Revisar (o realce leve; o tree-sitter custa dezenas de MB).
+gpui-kit = { version = "0.8.1", features = ["syntect"] }
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+smol = "2.0.2"
+tiny_http = "0.12.0"
+uuid = { version = "1.29.0", features = ["v4"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# Cópia do gpui-component com poucas mudanças, marcadas com "Vitral:": a borda da janela segue o
+# tema (a original desenha um contorno cinza fixo; ver vendor/gpui-component/src/window_border.rs),
+# os spinners giram num compasso só, a 12 quadros por segundo para todos juntos (src/spinner.rs), o
+# realce de sintaxe de um trecho solto é público (src/highlighter), o diff dá o texto de uma linha e
+# abre a dobra de uma linha sem rolar (src/diff/document.rs e src/diff/state.rs), o rádio marca com
+# uma bolinha (src/radio.rs) e o texto com brilho anda no mesmo compasso (src/shimmer.rs). Menus,
+# dicas, avisos, sombras e o Kbd seguem a linguagem visual do Vitral (src/menu, src/tooltip.rs,
+# src/notification.rs, src/styled.rs, src/dialog/dialog.rs, src/kbd.rs e src/diff/mod.rs). Do
+# polimento: popovers e menus entram com fade e 6 px do lado do gatilho, em 160 ms a no máximo 60
+# quadros por segundo (src/popover.rs, `entrada_flutuante`, e src/menu/context_menu.rs); os
+# flutuantes têm a linha de luz de 1 px no topo (src/styled.rs); os avisos animam a no máximo 60
+# quadros por segundo (src/notification.rs); o compasso dos spinners diz se está batendo, para o
+# ponto de "rodando" respirar de carona (src/spinner.rs, `compasso_recente`); e a lista com busca
+# tem o rótulo de grupo de 24 com um símbolo antes e a linha sem margem vertical
+# (src/command/item.rs, `CommandGroup::label_prefix`, e src/command/state.rs). A barra de rolagem
+# aparece e some seca, sem o fade que pedia quadros no ritmo do monitor, e some 1,2 s depois do
+# último uso (src/theme/mod.rs, `SCROLLBAR_*`, e `scrollbar_motion` pública para o teste do tema).
+# O véu dos diálogos cobre só o quadro da janela, sem a margem da sombra (src/dialog/dialog.rs);
+# a dica não reabre com o ponteiro fora da janela (src/tooltip.rs); e, com a janela sem foco, o
+# compasso não bate e devolve a fase parada (src/spinner.rs).
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
