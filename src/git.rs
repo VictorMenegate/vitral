@@ -544,7 +544,9 @@ pub fn diff_para_coordenador(
             .iter()
             .find_map(|pasta| caminho.strip_prefix(pasta).ok())
             .unwrap_or(caminho);
-        caminho_em_texto(caminho).trim_start_matches("./").to_string()
+        // O relativo com a barra do git; um absoluto de fora fica como veio (ele volta na resposta).
+        let texto = if caminho.is_absolute() { caminho.to_string_lossy().into_owned() } else { caminho_em_texto(caminho) };
+        texto.trim_start_matches("./").to_string()
     };
     let leia = format!("leia direto em {}/<arquivo>", copia.display());
     let pedidos: Vec<String> = arquivos.iter().map(relativo).filter(|a| !a.is_empty()).collect();
@@ -3333,7 +3335,13 @@ mod pr_e_rede {
             assert_eq!(buscar(&e, pasta, "origin", &["main", "refs/pull/3/head"]), Ok(()));
             assert!(matches!(buscar(&e, pasta, "origin", &["main"]), Err(ErroRemoto::SemRede(_))));
             let chamada = &e.chamadas()[0];
-            assert_eq!(chamada.args, ["-c", "core.quotePath=false", "fetch", "--no-tags", "--quiet", "origin", "main", "refs/pull/3/head"]);
+            // No Windows, com os caminhos longos na frente.
+            let esperados: Vec<&str> = CAMINHOS_LONGOS
+                .iter()
+                .copied()
+                .chain(["-c", "core.quotePath=false", "fetch", "--no-tags", "--quiet", "origin", "main", "refs/pull/3/head"])
+                .collect();
+            assert_eq!(chamada.args, esperados);
             assert_eq!(chamada.limite, LIMITE_FETCH);
             assert!(chamada.ambiente.definir.contains(&("GIT_HTTP_LOW_SPEED_TIME".into(), "30".into())));
             assert!(matches!(buscar(&e, pasta, "origin", &["--upload-pack=x"]), Err(ErroRemoto::Validacao(_))));
