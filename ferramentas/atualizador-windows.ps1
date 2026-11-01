@@ -332,7 +332,7 @@ if ($vitral) {
     Start-Sleep -Seconds 12
     Print '09-b-aberta'
 }
-$confirmada = Esperar { (Ler $estado) -notmatch '"confirmar"' } 50 "a $vB confirmada"
+$confirmada = Esperar { (Ler $estado) -match "`"$vB`"" -and (Ler $estado) -notmatch '"confirmar"' } 50 "a $vB confirmada"
 Conferir $confirmada "a $vB ficou confirmada (10 s depois do primeiro quadro): $(Mostrar (Ler $estado))"
 
 # --- 5. A B instala a C, que cai: a terceira abertura volta para a B -------------------------------

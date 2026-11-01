@@ -39,7 +39,8 @@ VERSAO = "0.9.0"
 
 def assinador(pasta):
     """A função que assina no formato do minisign com a chave da bancada (gerada pelo openssl na
-    primeira vez), e a pública dela em <pasta>/bancada.pub."""
+    primeira vez), e a pública dela em <pasta>/bancada.pub. Os textos saem com LF também no Windows:
+    um CR entraria no comentário confiável, e a assinatura não conferiria."""
     chave = os.path.join(pasta, "chave.pem")
     if not os.path.exists(chave):
         subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", chave], check=True)
@@ -61,7 +62,7 @@ def assinador(pasta):
         linha = base64.b64encode(b"ED" + keyid + sig).decode()
         return f"untrusted comment: assinatura da bancada\n{linha}\ntrusted comment: {comentario}\n{base64.b64encode(glob).decode()}\n"
 
-    with open(os.path.join(pasta, "bancada.pub"), "w") as f:
+    with open(os.path.join(pasta, "bancada.pub"), "w", newline="\n") as f:
         f.write("untrusted comment: chave da bancada do Vitral (só testes)\n")
         f.write(base64.b64encode(b"Ed" + keyid + pk).decode() + "\n")
     return minisig
@@ -113,7 +114,7 @@ def gerar(pasta):
     dados = json.dumps(manifesto, indent=2, ensure_ascii=False).encode()
     with open(os.path.join(r, "vitral-versao.json"), "wb") as f:
         f.write(dados)
-    with open(os.path.join(r, "vitral-versao.json.minisig"), "w") as f:
+    with open(os.path.join(r, "vitral-versao.json.minisig"), "w", newline="\n") as f:
         f.write(minisig(dados, f"vitral {VERSAO} vitral-versao.json"))
     with open(os.path.join(pasta, "adulterado.json"), "wb") as f:
         f.write(dados.replace(b'"formato_dados": 1', b'"formato_dados": 2'))
@@ -147,7 +148,7 @@ def publicar(pasta, pacote, saida):
     dados = json.dumps(manifesto, indent=2, ensure_ascii=False).encode()
     with open(os.path.join(saida, "vitral-versao.json"), "wb") as f:
         f.write(dados)
-    with open(os.path.join(saida, "vitral-versao.json.minisig"), "w") as f:
+    with open(os.path.join(saida, "vitral-versao.json.minisig"), "w", newline="\n") as f:
         f.write(minisig(dados, f"vitral {versao} vitral-versao.json"))
     print(f"{versao} ({plataforma}): {len(dados_do_pacote)} bytes em {saida}; chave {os.path.join(pasta, 'bancada.pub')}")
 
