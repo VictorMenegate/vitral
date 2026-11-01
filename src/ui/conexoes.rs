@@ -19,7 +19,7 @@ use super::{
         CabecalhoDialogo, Confirmacao, GrupoDeOpcoes, LinhaDeOpcao, Marca, RodapeDialogo, Selo, Simbolo, TamanhoBotao, Tom,
         TomConfirmacao, aviso, botao_fantasma, botao_icone, botao_primario, confirmar, largura,
     },
-    dialogos::{moldura, topo},
+    dialogos::{estreito, moldura, topo},
 };
 use crate::{
     modelo::ContaLinear,
@@ -281,9 +281,11 @@ impl Render for PainelConexoes {
                 .aviso(if cfg!(target_os = "linux") { "O bwrap não funciona aqui." } else { "Só no Linux." })
                 .controle(Selo::cor("indisponível", Cores::ambar())),
         };
+        // No diálogo estreito, os controles descem para baixo do texto, como nos outros grupos.
+        let estreito = estreito(window, largura::G);
         GrupoDeOpcoes::new(Some("Conexões".into()))
-            .linha(self.linha_github(&estado.github, window, cx))
-            .linha(self.linha_linear(estado.linear.as_ref(), &estado.chave, window, cx))
+            .linha(self.linha_github(&estado.github, window, cx).embaixo(estreito))
+            .linha(self.linha_linear(estado.linear.as_ref(), &estado.chave, window, cx).embaixo(estreito))
             .linha(mostrar_botao)
             .linha(isolamento)
     }

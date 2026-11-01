@@ -574,6 +574,7 @@ pub struct LinhaDeOpcao {
     controle: Controle,
     campo: Option<AnyElement>,
     desabilitada: Option<SharedString>,
+    embaixo: bool,
 }
 
 impl LinhaDeOpcao {
@@ -590,6 +591,7 @@ impl LinhaDeOpcao {
             controle: Controle::Nenhum,
             campo: None,
             desabilitada: None,
+            embaixo: false,
         }
     }
 
@@ -614,6 +616,12 @@ impl LinhaDeOpcao {
     /// Menu, segmentado ou contador à direita.
     pub fn controle(mut self, e: impl IntoElement) -> Self {
         self.controle = Controle::Elemento(e.into_any_element());
+        self
+    }
+
+    /// No diálogo estreito: o controle (menu, botões) desce para baixo do texto.
+    pub fn embaixo(mut self, sim: bool) -> Self {
+        self.embaixo = sim;
         self
     }
 
@@ -685,6 +693,7 @@ impl RenderOnce for LinhaDeOpcao {
                         .tooltip(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
                 )
             });
+        let mut controle_embaixo = None;
         let (direita, alternar) = match self.controle {
             Controle::Interruptor { ligado, ao_mudar } => {
                 let f = ao_mudar.clone();
@@ -693,6 +702,10 @@ impl RenderOnce for LinhaDeOpcao {
                     .disabled(desabilitada)
                     .on_click(move |novo, window, cx| f(*novo, window, cx));
                 (Some(switch.into_any_element()), Some((ligado, ao_mudar)))
+            }
+            Controle::Elemento(e) if self.embaixo => {
+                controle_embaixo = Some(div().flex().child(e));
+                (None, None)
             }
             Controle::Elemento(e) => (Some(e), None),
             Controle::Nenhum => (None, None),
@@ -724,6 +737,7 @@ impl RenderOnce for LinhaDeOpcao {
                     .children(direita),
             )
             .children(self.campo)
+            .children(controle_embaixo)
             .when_some(alternar.filter(|_| !desabilitada), |d, (ligado, f)| {
                 d.cursor_pointer().on_click(move |_, window, cx| f(!ligado, window, cx))
             })

@@ -509,6 +509,22 @@ impl EditorProjeto {
         m.tarefas.iter().filter(|t| t.projeto == *id && !t.estado.encerrada() && t.origem == caminho).count()
     }
 
+    /// A configuração de cada pasta como está no formulário, com o destino dos PRs que a detecção
+    /// achou guardado em cache.
+    fn configs(&self, cx: &App) -> Vec<ConfigProjeto> {
+        let motor = self.motor.read(cx);
+        self.pastas
+            .iter()
+            .map(|p| {
+                let mut config = p.config.config(cx);
+                if let Some(destino) = motor.destino_do_pr(&p.caminho, &config.github) {
+                    config.github.repositorio = destino;
+                }
+                config
+            })
+            .collect()
+    }
+
     /// Cria ou grava. Devolve se fechou (com o nome que não serve, não).
     pub(super) fn confirmar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.problemas(cx).nenhum() {
@@ -529,7 +545,7 @@ impl EditorProjeto {
             cor: format!("#{cor:06x}"),
             descricao: self.descricao.read(cx).value().trim().to_string(),
             instrucoes: self.instrucoes.read(cx).value().trim().to_string(),
-            configs: self.pastas.iter().map(|p| p.config.config(cx)).collect(),
+            configs: self.configs(cx),
             permissao: Some(self.permissao.clone()),
             modelo: Some(self.modelo.clone()),
             conta: Some(self.conta.clone()),
@@ -582,19 +598,13 @@ impl EditorProjeto {
         };
         let texto = |e: &Entity<TextareaState>| e.read(cx).value().trim().to_string();
         let nome = self.nome.read(cx).value().trim().to_string();
-        // As pastas com a configuração de cada uma (a pasta própria continua própria), com o destino
-        // dos PRs que a detecção achou guardado em cache.
-        let motor = self.motor.read(cx);
+        // As pastas com a configuração de cada uma (a pasta própria continua própria).
+        let configs = self.configs(cx);
         let pastas: Vec<PastaLigada> = self
             .pastas
             .iter()
-            .map(|p| {
-                let mut config = p.config.config(cx);
-                if let Some(destino) = motor.destino_do_pr(&p.caminho, &config.github) {
-                    config.github.repositorio = destino;
-                }
-                PastaLigada { caminho: p.caminho.clone(), propria: p.propria, config }
-            })
+            .zip(configs)
+            .map(|(p, config)| PastaLigada { caminho: p.caminho.clone(), propria: p.propria, config })
             .collect();
         let mudanca = MudancaProjeto {
             nome: (nome != self.inicial.nome).then(|| nome.clone()),
@@ -887,9 +897,14 @@ fn carregando_texto(texto: &'static str, window: &Window) -> AnyElement {
         .into_any_element()
 }
 
-/// "› Mais opções" dentro de um grupo: o texto alinhado com os títulos, o chevron antes dele.
-fn mais_opcoes(aberto: bool, alternar: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
-    div().px(esp::E4).pb(esp::E4).child(CabecalhoDeSecao::new("Mais opções").recolhivel(aberto, alternar).respiro(4.).recuo(20.))
+/// "› Mais opções" dentro de um grupo, com o chevron alinhado aos títulos. O `id` separa os de
+/// cada grupo (o cabeçalho tira o dele do título, igual em todos).
+fn mais_opcoes(id: impl Into<ElementId>, aberto: bool, alternar: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
+    div()
+        .id(id)
+        .px(esp::E4)
+        .pb(esp::E4)
+        .child(CabecalhoDeSecao::new("Mais opções").recolhivel(aberto, alternar).respiro(4.).recuo(20.))
 }
 
 impl EditorProjeto {
@@ -1016,7 +1031,7 @@ impl EditorProjeto {
             let eu = eu.clone();
             move |_: &mut Window, cx: &mut App| Self::mudar_github(&eu, i, cx, |c| c.mais_opcoes = !c.mais_opcoes)
         };
-        let mut grupo = grupo.linha(linha_repo).linha(linha_entrega).linha(mais_opcoes(p.config.mais_opcoes, alternar));
+        let mut grupo = grupo.linha(linha_repo).linha(linha_entrega).linha(mais_opcoes(("gh-mais", i), p.config.mais_opcoes, alternar));
         if p.config.mais_opcoes {
             for linha in self.mais_opcoes_github(i, &lista, &remoto, &destino, info_destino.as_ref().map(|i| i.ramo_padrao.as_str()), original.as_deref(), login.map(|l| l.login.as_str()), window, cx) {
                 grupo = grupo.linha(linha);
@@ -1079,7 +1094,7 @@ impl EditorProjeto {
         });
         let descricao = match &sugerido {
             Some(s) => format!("Sugerido pelos seus PRs: {s}"),
-            None => format!("Vazio: {}", crate::issues::PREFIXO_PADRAO),
+            None => "O começo do nome dos ramos dos chats desta pasta.".to_string(),
         };
         let campo = div().w(tam(window, 180.)).child(Input::new(&p.config.prefixo).font_family(crate::tema::FONTE_MONO));
         linhas.push(
@@ -1172,7 +1187,7 @@ impl EditorProjeto {
                 });
             }
         };
-        grupo = grupo.linha(mais_opcoes(self.mais_linear, alternar));
+        grupo = grupo.linha(mais_opcoes("linear-mais", self.mais_linear, alternar));
         if !self.mais_linear {
             return grupo.into_any_element();
         }
@@ -1183,12 +1198,16 @@ impl EditorProjeto {
         });
         let estados: Vec<(String, String)> =
             dados.valor().map(|d| d.estados.iter().map(|e| (e.estado.id.clone(), e.estado.nome.clone())).collect()).unwrap_or_default();
-        let menu_de_estado = |id: &'static str, automatico: Option<String>, gravado: &Option<String>, aplicar: fn(&mut LinearDoProjeto, Option<String>)| {
+        let menu_de_estado = |id: &'static str, automatico: String, gravado: &Option<String>, aplicar: fn(&mut LinearDoProjeto, Option<String>)| {
             let mut opcoes = vec![
-                Opcao::new(AUTOMATICO, format!("Automático ({})", automatico.unwrap_or_else(|| "o primeiro do tipo".into()))),
+                Opcao::new(AUTOMATICO, format!("Automático ({automatico})")),
                 Opcao::new(NAO_MUDAR, "Não mudar"),
             ];
             opcoes.extend(estados.iter().map(|(id, nome)| Opcao::new(id.clone(), nome.clone())));
+            // Sem os estados do time (a chave não está na memória), o escolhido antes aparece assim.
+            if let Some(escolhido) = gravado.as_deref().filter(|g| !g.is_empty() && !estados.iter().any(|(id, _)| id == g)) {
+                opcoes.push(Opcao::new(escolhido, "Estado escolhido antes"));
+            }
             let e = eu.clone();
             menu_escolha(id, ancora, opcoes, &valor_do_estado(gravado), AUTOMATICO, move |valor, _, cx| {
                 let _ = e.update(cx, |this, cx| {
@@ -1199,9 +1218,12 @@ impl EditorProjeto {
                 });
             }, window, cx)
         };
-        let ao_iniciar = menu_de_estado("linear-iniciar", iniciar.map(|e| e.nome), &linear.estado_iniciar, |l, v| l.estado_iniciar = v);
-        let ao_mesclar = menu_de_estado("linear-mesclar", mesclar.map(|e| e.nome), &linear.estado_mesclar, |l, v| l.estado_mesclar = v);
-        let lendo = matches!(dados, Carregando::Carregando(None) | Carregando::Nada);
+        // Sem os estados do time, o nome que o Linear dá por padrão.
+        let iniciar = iniciar.map_or_else(|| "Em andamento".to_string(), |e| e.nome);
+        let mesclar = mesclar.map_or_else(|| "Concluída".to_string(), |e| e.nome);
+        let ao_iniciar = menu_de_estado("linear-iniciar", iniciar, &linear.estado_iniciar, |l, v| l.estado_iniciar = v);
+        let ao_mesclar = menu_de_estado("linear-mesclar", mesclar, &linear.estado_mesclar, |l, v| l.estado_mesclar = v);
+        let lendo = matches!(conexoes.chave, EstadoConexao::Pronta) && matches!(dados, Carregando::Carregando(None) | Carregando::Nada);
         let com_leitura = |linha: LinhaDeOpcao| if lendo { linha.descricao(carregando_texto("Lendo os estados do time…", window)) } else { linha };
         grupo
             .linha(com_leitura(LinhaDeOpcao::new("linear-iniciar", "Ao iniciar um agente")).controle(ao_iniciar))
