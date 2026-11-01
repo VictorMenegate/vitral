@@ -981,6 +981,7 @@ impl PopoverIssues {
                         let motor = motor.clone();
                         let eu = eu.clone();
                         EstadoVazio::new(Lucide::Unplug, "A chave não está mais no chaveiro")
+                            .texto("A conta do Linear continua nas Conexões; cole a chave de novo.")
                             .acao(botao_fantasma("issues-reconectar", None, "Conectar de novo…", TamanhoBotao::Barra, window, cx).on_click(
                                 move |_, window, cx| {
                                     let _ = eu.update(cx, |p, cx| p.fechar(cx));
