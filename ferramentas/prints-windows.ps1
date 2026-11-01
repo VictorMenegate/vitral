@@ -195,4 +195,16 @@ $v = Start-Process -FilePath $Vitral -ArgumentList @('--vitrine') -PassThru -NoN
 Start-Sleep -Seconds 25
 Print '08-vitrine'
 if (-not $v.HasExited) { Stop-Process -Id $v.Id -Force }
+
+# Os outros fundos (VITRAL_FUNDO), para comparar com o acrílico padrão do 01.
+foreach ($fundo in @('transparente', 'mica')) {
+    Start-Sleep -Seconds 2
+    $env:VITRAL_FUNDO = $fundo
+    $f = Start-Process -FilePath $Vitral -ArgumentList $argumentos -PassThru -NoNewWindow `
+        -RedirectStandardError (Join-Path $Saida "fundo-$fundo-stderr.log")
+    Start-Sleep -Seconds 15
+    Print "09-fundo-$fundo"
+    if (-not $f.HasExited) { Stop-Process -Id $f.Id -Force }
+}
+Remove-Item Env:VITRAL_FUNDO
 Anotar 'fim'

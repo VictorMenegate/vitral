@@ -1576,6 +1576,8 @@ impl Render for Vitrine {
                     .items_center()
                     .titulo_tela()
                     .child("Vitrine da linguagem visual")
+                    // No Windows quem arrasta é o sistema (o start_window_move de lá não faz nada).
+                    .window_control_area(WindowControlArea::Drag)
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
             )
             .child(legenda("Ctrl + roda ou Ctrl+= / Ctrl+- mudam o zoom"))
