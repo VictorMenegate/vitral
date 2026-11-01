@@ -883,6 +883,105 @@ mod testes {
         }
     }
 
+    /// Manual, com rede e com a conta do Claude (`cargo test -- --ignored integracao_`): o aceite do
+    /// G3 "dentro do chat da issue". Um turno curto no haiku, na pasta de teste
+    /// `~/.cache/vitral-trabalho/g3a-isolamento/chat`, com os argumentos, o ambiente e os redutores
+    /// de um chat isolado, pelo `isolamento::comando` de verdade (sem gravar a sessão). O claude roda
+    /// `bash aceite.sh` (os comandos do aceite; a saída vai para `aceite.txt`) e chama uma ferramenta
+    /// do Vitral, que só responde pelo 127.0.0.1.
+    #[test]
+    #[ignore]
+    #[cfg(target_os = "linux")]
+    fn integracao_chat_isolado_de_verdade() {
+        use std::{
+            io::Read as _,
+            sync::atomic::{AtomicBool, Ordering},
+        };
+        let pasta = dirs::home_dir().unwrap().join(".cache/vitral-trabalho/g3a-isolamento/chat");
+        assert!(pasta.join("aceite.sh").is_file(), "falta a pasta de teste");
+        let _ = std::fs::remove_file(pasta.join("aceite.txt"));
+        // O servidor MCP de verdade: a chamada da ferramenta prova o 127.0.0.1 de dentro do bwrap.
+        let chamou = Arc::new(AtomicBool::new(false));
+        let marca = chamou.clone();
+        let servidor = crate::mcp::iniciar(move |chamada| {
+            if chamada.ferramenta == "informar_progresso" {
+                marca.store(true, Ordering::SeqCst);
+            }
+            let _ = chamada.resposta.try_send(crate::mcp::Resposta::ok("ok"));
+        })
+        .unwrap();
+        let opcoes = Opcoes {
+            cwd: pasta.clone(),
+            sessao: uuid::Uuid::new_v4().to_string(),
+            retomar: false,
+            modelo: Some("haiku".into()),
+            permissao: "bypassPermissions".into(),
+            prompt_sistema: format!(
+                "Você é um teste do Vitral.{}",
+                crate::prompts::nota_de_isolamento(crate::prompts::PorqueIsolado::Terceiros, false)
+            ),
+            ferramentas: None,
+            url_mcp: servidor.url(crate::modelo::Papel::Projeto, "teste", true),
+            bloqueadas: crate::isolamento::BLOQUEADAS.map(String::from).to_vec(),
+            so_mcp_vitral: true,
+            esforco: Some("low".into()),
+            isolado: Some(crate::isolamento::Modo::Bwrap),
+            ..opcoes()
+        };
+        let mut comando = crate::isolamento::comando(binario_claude(), "claude", crate::isolamento::Modo::Bwrap);
+        comando.current_dir(&pasta).args(argumentos(&opcoes)).arg("--no-session-persistence");
+        for (chave, valor) in ambiente(&opcoes) {
+            comando.env(chave, valor);
+        }
+        // Sem as marcas desta sessão do Claude Code nem o alvo do cargo de fora.
+        for (nome, _) in std::env::vars_os() {
+            let texto = nome.to_string_lossy();
+            if texto.starts_with("CLAUDE") || texto.starts_with("ANTHROPIC") || texto == "CARGO_TARGET_DIR" {
+                comando.env_remove(&nome);
+            }
+        }
+        comando.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        let (mut filho, escopo) = processos::abrir(comando).unwrap();
+        let mut entrada = filho.stdin.take().unwrap();
+        let pedido = "Rode com a ferramenta Bash exatamente: bash aceite.sh\nDepois chame a ferramenta \
+                      mcp__vitral__informar_progresso com o texto \"isolado ok\" e responda só \"feito\".";
+        escrever_mensagem(&mut entrada, Mensagem { texto: pedido, imagens: &[] }).unwrap();
+        drop(entrada);
+        let mut saida = String::new();
+        filho.stdout.take().unwrap().read_to_string(&mut saida).unwrap();
+        processos::esperar(&mut filho, &escopo, Duration::from_secs(600));
+        let mut custo = 0.0;
+        let mut ferramentas = Vec::new();
+        for linha in saida.lines() {
+            let Ok(valor) = serde_json::from_str::<Value>(linha) else { continue };
+            for evento in interpretar(&valor) {
+                match evento {
+                    Evento::Ferramenta { nome, .. } => ferramentas.push(nome),
+                    Evento::Fim { custo_usd, texto, erro, .. } => {
+                        custo = custo_usd;
+                        println!("fim (erro: {erro}): {texto}");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let aceite = std::fs::read_to_string(pasta.join("aceite.txt")).unwrap_or_default();
+        println!("ferramentas: {ferramentas:?}\ncusto: US$ {custo:.4}\n{aceite}");
+        let depois = |marca: &str| aceite.split(marca).nth(1).unwrap_or_default().to_string();
+        let codigo = |marca: &str| depois(marca).lines().find_map(|l| l.strip_prefix("codigo=")).map(str::to_string);
+        assert_ne!(codigo("== secret-tool").as_deref(), Some("0"), "o secret-tool não alcança o chaveiro");
+        assert!(depois("== barramento").starts_with("\nsem bus"));
+        assert_ne!(codigo("== gh auth status").as_deref(), Some("0"), "o gh sem login");
+        assert_ne!(codigo("== git ls-remote HUB").as_deref(), Some("0"), "o git sem a credencial do gh");
+        assert!(depois("== agente ssh").contains("SSH_AUTH_SOCK=vazio ssh=0"));
+        assert!(depois("== x11 abstrato").contains("x11 cortado"));
+        assert_eq!(codigo("== cargo build").as_deref(), Some("0"));
+        assert!(aceite.contains("cargo ok"));
+        assert_eq!(codigo("== npm test").as_deref(), Some("0"));
+        assert!(aceite.contains("npm test ok"));
+        assert!(chamou.load(Ordering::SeqCst), "a ferramenta do Vitral pelo 127.0.0.1");
+    }
+
     fn valor_de<'a>(args: &'a [String], chave: &str) -> Option<&'a str> {
         let i = args.iter().position(|a| a == chave)?;
         args.get(i + 1).map(String::as_str)
