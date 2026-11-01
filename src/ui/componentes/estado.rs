@@ -488,7 +488,7 @@ pub fn sinal_do_projeto(motor: &Motor, projeto: &str) -> Option<Sinal> {
     let fatos: Vec<FatosDoSinal> = motor
         .chats
         .iter()
-        .filter(|c| c.projeto == projeto && !c.arquivado)
+        .filter(|c| c.projeto == projeto && !c.arquivado && c.papel != Papel::Mestre)
         .map(|c| fatos_do_sinal(motor, c))
         .collect();
     sinal_de(&fatos)

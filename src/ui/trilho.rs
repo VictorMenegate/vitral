@@ -38,7 +38,7 @@ use super::{
 };
 use crate::{
     atualizacao,
-    modelo::{Cartao, Execucao},
+    modelo::{Cartao, Execucao, Papel},
     motor::{Espera, Motor, PrecisaDeVoce},
     tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam},
 };
@@ -94,7 +94,8 @@ impl Atividade {
 /// A atividade de cada projeto, numa passada pelos chats.
 fn atividades(motor: &Motor) -> HashMap<String, Atividade> {
     let mut mapa: HashMap<String, Atividade> = HashMap::new();
-    for c in motor.chats.iter().filter(|c| !motor.arquivada(c)) {
+    // O Mestre também tem projeto "", mas é o círculo de cima: não conta nos Avulsos.
+    for c in motor.chats.iter().filter(|c| !motor.arquivada(c) && c.papel != Papel::Mestre) {
         let a = mapa.entry(c.projeto.clone()).or_default();
         if matches!(motor.execucao(&c.id), Execucao::Rodando { .. }) || motor.esperando_vaga(&c.id) {
             a.rodando += 1;
@@ -763,7 +764,12 @@ impl Janela {
         let precisa = super::cartoes::precisa_com_o_mestre(m);
         let mestre = self.botao_mestre(m, cx);
         // O projeto do chat do painel ativo ganha o aro a 40%.
-        let do_painel = self.selecionado.as_ref().and_then(|id| m.chat(id)).map(|c| c.projeto.clone());
+        let do_painel = self
+            .selecionado
+            .as_ref()
+            .and_then(|id| m.chat(id))
+            .filter(|c| c.papel != Papel::Mestre)
+            .map(|c| c.projeto.clone());
         let atalhos: Vec<AnyElement> = projetos
             .iter()
             .enumerate()
