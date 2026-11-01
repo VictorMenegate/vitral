@@ -1291,7 +1291,11 @@ impl PopupMenu {
     fn update_submenu_menu_anchor(&mut self, window: &Window) {
         let bounds = self.bounds;
         let max_width = self.max_width(window);
-        let (anchor, left) = if max_width + bounds.origin.x > window.bounds().size.width {
+        // Vitral: o submenu nasce na borda direita deste menu, então o que precisa caber é
+        // a largura dele somada à do submenu (a conta antiga ignorava a deste menu, e um menu
+        // perto da borda abria o submenu cortado para fora da janela).
+        let direita = bounds.origin.x + bounds.size.width - px(8.) + max_width;
+        let (anchor, left) = if direita > window.bounds().size.width {
             (Anchor::TopRight, -px(16.))
         } else {
             (Anchor::TopLeft, bounds.size.width - px(8.))

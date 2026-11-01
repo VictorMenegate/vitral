@@ -373,7 +373,8 @@ fn menu_do_painel(
         let pai = chat.pai.as_ref().and_then(|p| m.chat(p));
         let simbolo = simbolo_da_aba(chat, pai.is_some());
         Some(Dados {
-            projeto_no_menu: !(simbolo_a_vista && simbolo == SimboloDaAba::Projeto),
+            // O Mestre e os Avulsos têm projeto "": não há projeto para editar, arquivar ou apagar.
+            projeto_no_menu: !chat.projeto.is_empty() && !(simbolo_a_vista && simbolo == SimboloDaAba::Projeto),
             pai_no_menu: pai.filter(|_| !simbolo_a_vista).map(|p| (p.id.clone(), p.titulo.clone())),
             chat: chat.id.clone(),
             projeto: chat.projeto.clone(),
@@ -392,14 +393,13 @@ fn menu_do_painel(
     let Some(d) = dados else {
         return menu;
     };
-    let estreito = matches!(d.nivel, LarguraPainel::Estreito | LarguraPainel::Minimo);
     let minimo = d.nivel == LarguraPainel::Minimo;
     let mut menu = menu.min_w(tam(window, 300.)).max_w(tam(window, 360.));
     if let Some(rotulo) = d.rotulo {
         menu = menu.label(rotulo).separator();
     }
-    if estreito {
-        menu = menu.item(
+    menu = menu
+        .item(
             PopupMenuItem::new("Modo foco")
                 .icon(Lucide::Focus)
                 .checked(d.foco)
@@ -410,7 +410,6 @@ fn menu_do_painel(
                     cx.notify();
                 })),
         );
-    }
     if minimo && d.ultimo {
         // O botão da direita saiu do cabeçalho: o número do que ela espera vem para cá, tingido
         // porque fica na linha.
@@ -433,6 +432,7 @@ fn menu_do_painel(
         );
     }
     menu = menu
+        .separator()
         .item(
             item_com_motivo("Nova conversa ao lado", Lucide::Columns2, d.cheio)
                 .on_click(na_janela(&janela, |this, window, cx| this.nova_conversa_ao_lado(window, cx))),
@@ -1005,9 +1005,9 @@ impl Janela {
         }
     }
 
-    /// Modo foco, "⋯" e painel da direita, em botões de 28. Os interruptores ligados ficam no
-    /// pressionado neutro; na largura estreita, o modo foco e depois o painel da direita vão para
-    /// o "⋯".
+    /// "⋯" e painel da direita, em botões de 28. O modo foco mora no "⋯": o botão dele só aparece
+    /// com ele ligado, no pressionado neutro, para desligar com um clique. Na largura estreita, ele
+    /// e depois o painel da direita ficam só no "⋯".
     fn acoes_do_painel(
         &self,
         motor_entidade: &Entity<Motor>,
@@ -1020,7 +1020,7 @@ impl Janela {
         let (painel_id, foco) = (painel.id, painel.modo_foco);
         let ultimo = ix + 1 == self.paineis.len();
         let direita_aberta = self.direita_visivel() || self.gaveta == Some(Gaveta::Direita);
-        let mostra_foco = matches!(nivel, LarguraPainel::Medio | LarguraPainel::Largo);
+        let mostra_foco = foco && matches!(nivel, LarguraPainel::Medio | LarguraPainel::Largo);
         let mostra_direita = ultimo && nivel != LarguraPainel::Minimo;
         h_flex()
             .flex_none()
