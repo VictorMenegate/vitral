@@ -102,13 +102,15 @@ pub fn abrir(comando: Comando) -> io::Result<(Child, Escopo)> {
     let mut filho = comando.spawn()?;
     let preparado = (|| {
         let processo = filho.as_handle().try_clone_to_owned()?;
-        let job = match job {
+        let no_job = job.and_then(|job| {
             // SAFETY: os dois handles estão vivos (o do processo é do `Child`).
-            Ok(job) if unsafe { AssignProcessToJobObject(job.handle(), filho.as_raw_handle() as HANDLE) } != 0 => {
-                Some(Arc::new(job))
-            }
-            Ok(_) | Err(_) => {
-                eprintln!("vitral: o processo roda fora de um job ({}); parar não derruba o que ele abrir", io::Error::last_os_error());
+            let entrou = unsafe { AssignProcessToJobObject(job.handle(), filho.as_raw_handle() as HANDLE) } != 0;
+            if entrou { Ok(job) } else { Err(io::Error::last_os_error()) }
+        });
+        let job = match no_job {
+            Ok(job) => Some(Arc::new(job)),
+            Err(erro) => {
+                eprintln!("vitral: o processo roda fora de um job ({erro}); parar não derruba o que ele abrir");
                 None
             }
         };

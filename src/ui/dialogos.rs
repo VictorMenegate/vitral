@@ -68,7 +68,7 @@ pub(super) fn topo(cabecalho: CabecalhoDialogo) -> impl IntoElement {
 pub(super) fn com_til(caminho: &Path) -> String {
     match dirs::home_dir().and_then(|casa| caminho.strip_prefix(&casa).ok().map(Path::to_path_buf)) {
         Some(resto) if resto.as_os_str().is_empty() => "~".into(),
-        Some(resto) => format!("~/{}", resto.display()),
+        Some(resto) => format!("~{}{}", std::path::MAIN_SEPARATOR, resto.display()),
         None => caminho.display().to_string(),
     }
 }
@@ -963,7 +963,8 @@ mod testes {
     #[test]
     fn caminho_com_a_pasta_pessoal_em_til() {
         let casa = dirs::home_dir().unwrap();
-        assert_eq!(com_til(&casa.join("Projetos").join("loja")), "~/Projetos/loja");
+        let barra = std::path::MAIN_SEPARATOR;
+        assert_eq!(com_til(&casa.join("Projetos").join("loja")), format!("~{barra}Projetos{barra}loja"));
         assert_eq!(com_til(&casa), "~");
         assert_eq!(com_til(std::path::Path::new("/etc/vitral")), "/etc/vitral");
     }

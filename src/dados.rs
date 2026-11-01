@@ -713,10 +713,23 @@ fn sincronizar_arvore(raiz: &Path) -> Result<()> {
         if tipo.is_dir() {
             sincronizar_arvore(&entrada.path())?;
         } else if tipo.is_file() {
-            fs::File::open(entrada.path())?.sync_all()?;
+            fsync_do_arquivo(&entrada.path())?;
         }
     }
     sincronizar_pasta(raiz)
+}
+
+/// fsync de um arquivo já escrito. No Windows o FlushFileBuffers pede o arquivo aberto para escrita,
+/// e o que é só leitura (os objetos do git) fica como está.
+fn fsync_do_arquivo(caminho: &Path) -> io::Result<()> {
+    if cfg!(windows) {
+        return match fs::OpenOptions::new().write(true).open(caminho) {
+            Ok(arquivo) => arquivo.sync_all(),
+            Err(erro) if erro.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+            Err(erro) => Err(erro),
+        };
+    }
+    fs::File::open(caminho)?.sync_all()
 }
 
 fn ler_bytes(caminho: &Path) -> Result<Option<Vec<u8>>> {
