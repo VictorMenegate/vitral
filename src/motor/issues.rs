@@ -128,3 +128,72 @@ impl Motor {
         respondido(Resposta::erro(AINDA_NAO))
     }
 }
+
+// ---------- ponte do G3b (provisória) ----------
+// O G3a (o motor das issues) define estes mesmos nomes, com estas assinaturas e o mesmo
+// comportamento; aqui só o mínimo para a interface do G3b compilar e ser testada antes da junção.
+// Na junção vale o motor/issues.rs do G3a inteiro (que já tem tudo isto).
+
+impl ResultadoLote {
+    /// "3 chats criados, 1 falhou: ENG-158 (motivo)".
+    pub fn texto(&self) -> String {
+        let criados = crate::ui::componentes::contagem(self.criados.len(), "chat criado", "chats criados");
+        if self.falhas.is_empty() {
+            return criados;
+        }
+        let falhas: Vec<String> = self.falhas.iter().map(|(chave, motivo)| format!("{chave} ({motivo})")).collect();
+        let falhou = if self.falhas.len() == 1 { "1 falhou".to_string() } else { format!("{} falharam", self.falhas.len()) };
+        format!("{criados}, {falhou}: {}", falhas.join("; "))
+    }
+}
+
+/// Uma issue anexada no composer, com o bloco que `bloco_da_issue` devolveu, pronta para ir na
+/// mensagem (`enviar_com_issues`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnexoIssue {
+    pub issue: IssueLigada,
+    pub bloco: String,
+}
+
+/// A issue ligada a partir da linha da lista (só ids e nomes). No GitHub, o repositório sai da URL.
+pub fn ligada_de(issue: &IssueResumo) -> IssueLigada {
+    let repositorio = match (issue.fonte, crate::issues::parse_referencia(&issue.url)) {
+        (FonteIssue::Github, Some(crate::issues::Referencia::Github { repositorio, .. })) => repositorio,
+        _ => None,
+    };
+    IssueLigada {
+        fonte: issue.fonte,
+        id: issue.id.clone(),
+        chave: issue.chave.clone(),
+        titulo: issue.titulo.clone(),
+        url: issue.url.clone(),
+        repositorio,
+        time_id: None,
+        movida_para: None,
+    }
+}
+
+impl Motor {
+    /// "Em qual pasta?": a interface pergunta antes de "Iniciar agente" (só no Linear, com mais de
+    /// uma pasta e nenhuma lembrada).
+    pub fn precisa_escolher_pasta(&self, projeto: &str, issue: &IssueResumo) -> bool {
+        let pastas = self.pastas_do(projeto);
+        let lembrada = self.projeto(projeto).and_then(|p| p.linear.as_ref()).and_then(|l| l.pasta.clone());
+        issue.fonte == FonteIssue::Linear && pastas.len() > 1 && !lembrada.is_some_and(|l| pastas.iter().any(|p| p.caminho == l))
+    }
+
+    /// A mensagem do usuário com issues anexadas: o bloco de cada uma vai só ao Claude (`extra`), a
+    /// mensagem traz texto de terceiros e a bolha mostra as chaves. (No G3a, a primeira mensagem
+    /// com a issue do chat do "Só a cópia" também faz os efeitos de iniciar.)
+    pub fn enviar_com_issues(
+        &mut self,
+        chat: &str,
+        texto: String,
+        anexos: Vec<PathBuf>,
+        reforco: Reforco,
+        issues: Vec<AnexoIssue>,
+        cx: &mut Context<Self>,
+    ) {
+        self.enviar_do_usuario_com(chat, texto, anexos, reforco, &issues, cx);
+    }
+}

@@ -33,7 +33,7 @@ pub use conexoes::{
 pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 // Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
 #[allow(unused_imports)]
-pub use issues::{EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista};
+pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
 pub use mestre::ResumoVolta;
 #[allow(unused_imports)]
 pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
@@ -1865,8 +1865,22 @@ impl Motor {
         reforco: Reforco,
         cx: &mut Context<Self>,
     ) {
+        self.enviar_do_usuario_com(chat, texto, anexos, reforco, &[], cx);
+    }
+
+    /// A mensagem do usuário, com as issues anexadas (`issues::enviar_com_issues`): o bloco de cada
+    /// uma vai só ao Claude, e a mensagem traz texto de terceiros.
+    fn enviar_do_usuario_com(
+        &mut self,
+        chat: &str,
+        texto: String,
+        anexos: Vec<PathBuf>,
+        reforco: Reforco,
+        issues: &[issues::AnexoIssue],
+        cx: &mut Context<Self>,
+    ) {
         let texto = texto.trim().to_string();
-        if texto.is_empty() && anexos.is_empty() {
+        if texto.is_empty() && anexos.is_empty() && issues.is_empty() {
             return;
         }
         // Comandos que o Vitral resolve sozinho.
@@ -1904,6 +1918,15 @@ impl Motor {
         let mut entrada = entrada_do_usuario(texto, anexos, reforco);
         if self.chat(chat).is_some_and(|c| c.papel == Papel::Mestre) {
             entrada.extra = self.extra_para_o_mestre(&entrada.texto);
+        }
+        if !issues.is_empty() {
+            let blocos: Vec<&str> = issues.iter().map(|a| a.bloco.trim()).filter(|b| !b.is_empty()).collect();
+            if !blocos.is_empty() {
+                let antes = std::mem::take(&mut entrada.extra);
+                entrada.extra = std::iter::once(antes.as_str()).filter(|e| !e.is_empty()).chain(blocos).collect::<Vec<_>>().join("\n\n");
+            }
+            entrada.terceiros = true;
+            entrada.referencias = issues.iter().map(|a| a.issue.chave.clone()).collect();
         }
         self.entregar_entrada(chat, entrada, cx);
     }
