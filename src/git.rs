@@ -1359,12 +1359,22 @@ pub fn verificar(pasta: &Path, comando: &str) -> Verificacao {
 /// Lê a saída enquanto o comando roda (com 64 KiB parados no pipe ele travaria até o limite) e,
 /// no fim, derruba o que ele deixou em segundo plano, que seguraria o pipe e gastaria CPU.
 fn rodar_com_limite(pasta: &Path, comando: &str, limite: Duration) -> (bool, String) {
+    // No Windows, o Git Bash (ou o PowerShell, com o aviso na frente da saída).
+    let bash = crate::sistema::comando_bash(comando);
+    let (passou, texto) = rodar_no_shell(pasta, &bash, limite);
+    match bash.aviso {
+        Some(aviso) => (passou, format!("{aviso}\n{texto}")),
+        None => (passou, texto),
+    }
+}
+
+fn rodar_no_shell(pasta: &Path, bash: &crate::sistema::ComandoBash, limite: Duration) -> (bool, String) {
     let abrir = || -> std::io::Result<_> {
         // Um pipe só para stdout e stderr: a saída fica intercalada como no terminal.
         let (leitor, escritor) = std::io::pipe()?;
-        let mut processo = processos::comando("bash", "verificacao");
+        let mut processo = processos::comando(&bash.programa, "verificacao");
+        bash.preparar(&mut processo);
         processo
-            .args(["-lc", comando])
             .current_dir(pasta)
             .stdin(Stdio::null())
             .stdout(escritor.try_clone()?)
@@ -1869,8 +1879,7 @@ mod testes {
         let _ = std::fs::remove_dir_all(&projeto);
     }
 
-    // A verificação roda no bash: no Windows ela vai para o Git Bash (Lote W2).
-    #[cfg(unix)]
+    // A verificação roda no bash: no Windows, no Git Bash (o runner do GitHub tem).
     #[test]
     fn verificacao_com_saida_grande_nao_trava_e_guarda_o_fim() {
         let pasta = std::env::temp_dir();
@@ -1887,14 +1896,15 @@ mod testes {
         assert!(v.saida.ends_with("a\nb"), "{}", v.saida);
     }
 
-    #[cfg(unix)]
     #[test]
     fn verificacao_derruba_o_que_ficou_em_segundo_plano() {
         let pasta = std::env::temp_dir().join(format!("vitral-verif-{}", crate::modelo::novo_id()));
         std::fs::create_dir_all(&pasta).unwrap();
         let inicio = Instant::now();
-        // O servidor de teste fica com o pipe aberto: antes, a verificação nunca voltava.
-        let v = verificar(&pasta, "sleep 120 & echo $! > servidor; echo pronto");
+        // O servidor de teste fica com o pipe aberto: antes, a verificação nunca voltava. No Git
+        // Bash o `$!` é o número do MSYS; o do Windows está no /proc dele.
+        let pid = if cfg!(windows) { "$(cat /proc/$!/winpid)" } else { "$!" };
+        let v = verificar(&pasta, &format!("sleep 120 & echo {pid} > servidor; echo pronto"));
         assert!(v.passou && v.saida.ends_with("pronto"), "{}", v.saida);
         assert!(inicio.elapsed() < Duration::from_secs(5));
         let servidor: u32 = std::fs::read_to_string(pasta.join("servidor")).unwrap().trim().parse().unwrap();
@@ -1904,6 +1914,7 @@ mod testes {
         assert!(!passou);
         assert!(saida.starts_with("comecei") && saida.ends_with("(passou de 1 s e foi interrompido)"), "{saida}");
 
+        #[cfg(unix)]
         if processos::usa_systemd() {
             // Nem quem se solta do grupo com setsid escapa do escopo.
             let v = verificar(&pasta, "setsid sleep 120 & echo $! > solto; echo ok");
@@ -1912,18 +1923,6 @@ mod testes {
             assert!(processos::morre_logo(solto));
         }
         let _ = std::fs::remove_dir_all(&pasta);
-    }
-
-    #[test]
-    fn gerados_pelo_nome_do_arquivo() {
-        for gerado in ["Cargo.lock", "web/package-lock.json", "pnpm-lock.yaml", "dist/app.min.js",
-            "estilo.min.css", "app.js.map", "testes/__snapshots__/tela.snap", "npm-shrinkwrap.json"]
-        {
-            assert!(eh_gerado(gerado), "{gerado}");
-        }
-        for fonte in ["src/main.rs", "package.json", "lock", ".lock", "app.js", "mapa.rs", "lockfile.txt"] {
-            assert!(!eh_gerado(fonte), "{fonte}");
-        }
     }
 
     /// Todo git do Vitral sai de `novo_git` (no Windows, com os caminhos longos).
@@ -1947,6 +1946,18 @@ mod testes {
     fn caminho_relativo_com_barra_normal() {
         assert_eq!(caminho_em_texto(&Path::new("src").join("ui").join("mod.rs")), "src/ui/mod.rs");
         assert_eq!(caminho_em_texto(Path::new("relatório.md")), "relatório.md");
+    }
+
+    #[test]
+    fn gerados_pelo_nome_do_arquivo() {
+        for gerado in ["Cargo.lock", "web/package-lock.json", "pnpm-lock.yaml", "dist/app.min.js",
+            "estilo.min.css", "app.js.map", "testes/__snapshots__/tela.snap", "npm-shrinkwrap.json"]
+        {
+            assert!(eh_gerado(gerado), "{gerado}");
+        }
+        for fonte in ["src/main.rs", "package.json", "lock", ".lock", "app.js", "mapa.rs", "lockfile.txt"] {
+            assert!(!eh_gerado(fonte), "{fonte}");
+        }
     }
 
     #[test]

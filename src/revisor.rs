@@ -146,8 +146,14 @@ pub fn onde(p: &crate::modelo::Problema) -> String {
 
 /// Hook `Stop` do Claude Code para os trabalhadores: roda a verificação da tarefa quando ele
 /// para; se falhar, o Claude Code devolve a saída e o trabalhador continua (uma vez só, graças ao
-/// `stop_hook_active`). Devolve o JSON para `--settings`.
+/// `stop_hook_active`). Devolve o JSON para `--settings`. No Linux, um script do bash; no Windows,
+/// o próprio Vitral em exec form (sem shell), com `--hook-verificacao`.
 pub fn configuracao_hook_verificacao() -> Option<Value> {
+    Some(json!({ "hooks": { "Stop": [ { "hooks": [ hook_verificacao()? ] } ] } }))
+}
+
+#[cfg(not(windows))]
+fn hook_verificacao() -> Option<Value> {
     let pasta = dirs::cache_dir()?.join("vitral").join("hooks");
     std::fs::create_dir_all(&pasta).ok()?;
     let script = pasta.join("verificar-ao-parar.sh");
@@ -166,26 +172,51 @@ exit 2
     if std::fs::read_to_string(&script).ok().as_deref() != Some(conteudo) {
         std::fs::write(&script, conteudo).ok()?;
     }
-    Some(
-        json!({
-            "hooks": { "Stop": [ { "hooks": [ {
-                "type": "command",
-                "command": format!("bash '{}'", script.display()),
-                "timeout": 900
-            } ] } ] }
-        }),
-    )
+    Some(json!({ "type": "command", "command": format!("bash '{}'", script.display()), "timeout": 900 }))
 }
 
-// O hook roda no bash: no Windows ele vira o `--hook-verificacao` do próprio Vitral (Lote W2).
-#[cfg(all(test, unix))]
+/// O `vitral.exe` desta versão (não o lançador, que sairia logo e perderia o código de saída), sem
+/// shell: no Windows o shell do hook seria o Git Bash ou o PowerShell, cada um com a sua regra de
+/// aspas. O `args` (exec form) existe no Claude Code 2.1.278.
+#[cfg(windows)]
+fn hook_verificacao() -> Option<Value> {
+    let vitral = std::env::current_exe().ok()?;
+    Some(json!({ "type": "command", "command": vitral, "args": ["--hook-verificacao"], "timeout": 900 }))
+}
+
+/// `vitral --hook-verificacao`: o hook `Stop` do Windows. Lê o que o Claude Code manda na entrada;
+/// na segunda parada seguida (`stop_hook_active`) ou sem verificação, sai com 0. Senão roda a
+/// verificação na pasta do trabalhador (no Git Bash, como a do Revisar) e, se ela falhar, sai com 2
+/// e o fim da saída no stderr, que o Claude Code devolve ao trabalhador.
+pub fn rodar_hook_verificacao() -> i32 {
+    let mut entrada = String::new();
+    let _ = std::io::stdin().read_to_string(&mut entrada);
+    let de_novo = serde_json::from_str::<Value>(&entrada).ok().and_then(|v| v["stop_hook_active"].as_bool()).unwrap_or(false);
+    let verificacao = std::env::var("VITRAL_VERIFICACAO").unwrap_or_default();
+    if de_novo || verificacao.trim().is_empty() {
+        return 0;
+    }
+    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let resultado = crate::git::verificar(&pasta, &verificacao);
+    if resultado.passou {
+        return 0;
+    }
+    let linhas: Vec<&str> = resultado.saida.lines().collect();
+    eprintln!("A verificação da tarefa falhou (`{verificacao}`). Corrija antes de terminar:");
+    eprintln!("{}", linhas[linhas.len().saturating_sub(40)..].join("\n"));
+    2
+}
+
+// O hook do Linux roda no bash; o do Windows (`--hook-verificacao`) tem o teste em tests/hook.rs.
+#[cfg(test)]
 mod testes {
-    use std::io::Write;
-
-    use crate::processos::novo_comando;
-
+    #[cfg(not(windows))]
     #[test]
     fn hook_de_verificacao_faz_o_trabalhador_continuar_so_uma_vez() {
+        use std::io::Write;
+
+        use crate::processos::novo_comando;
+
         let valor = super::configuracao_hook_verificacao().unwrap();
         let comando = valor["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
         let rodar = |verificacao: &str, entrada: &str| {
@@ -205,5 +236,16 @@ mod testes {
         assert!(erro.contains("falhou"));
         assert_eq!(rodar("exit 1", r#"{"stop_hook_active": true}"#).0, Some(0));
         assert_eq!(rodar("true", r#"{"stop_hook_active":false}"#).0, Some(0));
+    }
+
+    /// No Windows, o próprio executável dos testes, sem shell e sem script na pasta do usuário.
+    #[cfg(windows)]
+    #[test]
+    fn hook_de_verificacao_no_windows_e_o_vitral_sem_shell() {
+        let valor = super::configuracao_hook_verificacao().unwrap();
+        let hook = &valor["hooks"]["Stop"][0]["hooks"][0];
+        assert_eq!(hook["command"].as_str().map(std::path::PathBuf::from), std::env::current_exe().ok());
+        assert_eq!(hook["args"], serde_json::json!(["--hook-verificacao"]));
+        assert_eq!(hook["timeout"], 900);
     }
 }

@@ -36,6 +36,10 @@ fn main() {
     // `vitral` abre o app; `vitral <pasta>` liga ou abre o projeto da pasta; `vitral --nova
     // <projeto> [mensagem]` já começa uma conversa. Com o Vitral aberto, o pedido vai para ele.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
+    // O hook Stop dos ajudantes no Windows (exec form, sem shell): responde e sai, sem tocar em nada.
+    if argumentos.first().is_some_and(|a| a == "--hook-verificacao") {
+        std::process::exit(revisor::rodar_hook_verificacao());
+    }
     // `vitral --versao [--json]` e `vitral --instalar` respondem sem janela (o release e o
     // atualizador conferem o binário), antes de tocar nos dados.
     if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
