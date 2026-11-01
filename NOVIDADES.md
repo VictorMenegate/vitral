@@ -22,6 +22,10 @@ O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de
 - **Conversas do Claude Code.** As da extensão do VS Code e do terminal viram chats, no projeto da
   pasta delas ou em Avulsos, com o histórico. A primeira mensagem continua numa cópia da conversa: a
   original fica como está. **Importar do Claude Code…**, no menu do logo, traz as novas.
+- **Uso do plano ao vivo.** Os anéis de 5 h e da semana se atualizam sozinhos (a cada minuto com o
+  popover aberto, a cada 5 min fechado), buscando direto na Anthropic com o login que o Claude Code
+  já guarda; o Vitral nunca renova esse login.
+- **Modo foco no ⋯** de cada painel; o botão dele só aparece com ele ligado.
 - **Um Vitral só.** Abrir de novo (pelo menu, `vitral <pasta>` ou `--nova`) entrega o pedido ao que
   já está aberto.
 - **Na primeira abertura**, o Vitral traz sozinho o que havia nas pastas do Vitral antigo: cada
