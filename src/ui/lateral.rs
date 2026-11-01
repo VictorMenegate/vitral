@@ -422,6 +422,8 @@ fn estado_do_chat(motor: &Motor, chat: &Chat) -> Option<(Lucide, Hsla, String)> 
             None if acabou_de_juntar(chat) => Some((Lucide::Check, Cores::tenue(), "Juntado".into())),
             None => None,
         },
+        // Provisório (G5): o estado do PR com os checks.
+        EstadoTarefa::NoPr => t.pr.as_ref().map(|pr| (Lucide::GitPullRequest, Cores::tenue(), format!("PR #{} aberto", pr.numero))),
         _ => None,
     }
 }
@@ -2683,6 +2685,7 @@ mod testes {
                 ponto: None,
                 ultrathink: false,
                 ultracode: false,
+                referencias: Vec::new(),
             },
         );
         // O termo só numa mensagem: a prévia vira o trecho dela, numa linha, com o termo marcado.

@@ -1058,6 +1058,9 @@ pub fn resumo_desde(desde: u64, ate: u64, ocorrencias: &[Ocorrencia], cartoes: &
             }
             TipoCartao::Projeto(s) => format!("O Mestre sugere criar o projeto {}", s.nome),
             TipoCartao::Memoria { texto } => format!("O Mestre quer lembrar: {texto}"),
+            // A linha de acompanhamento do PR não espera ninguém (os avisos dele vêm à parte).
+            TipoCartao::Pr { .. } => continue,
+            TipoCartao::Confirmar(c) => format!("Confirmar: {}", c.resumo),
             TipoCartao::Desconhecido(_) => format!("Cartão {} aberto", c.id),
         };
         linhas.push(LinhaResumo { grupo: "precisa", projeto: String::new(), chat: c.chat.clone(), texto });
@@ -1347,6 +1350,8 @@ impl Motor {
             }
             TipoCartao::Projeto(s) => format!("sugestão de criar o projeto {}", s.nome),
             TipoCartao::Memoria { texto } => format!("pedido para lembrar: {texto}"),
+            TipoCartao::Pr { tarefa } => format!("acompanhamento do PR da tarefa {tarefa}"),
+            TipoCartao::Confirmar(c) => format!("confirmação pendente: {}", c.resumo),
             TipoCartao::Desconhecido(_) => format!("cartão {} de uma versão mais nova", c.id),
         }
     }

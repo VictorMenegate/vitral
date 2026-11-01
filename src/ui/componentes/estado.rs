@@ -627,6 +627,13 @@ fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
         EstadoTarefa::Falhou => visual(Estado::Erro, "falhou", None, "O pedido falhou.".into()),
         EstadoTarefa::Cancelada => visual(Estado::Parado, "cancelada", None, "O pedido foi cancelado.".into()),
         EstadoTarefa::Conversa => visual(Estado::Parado, "conversa", None, "Pronto para conversar.".into()),
+        // Provisório (G5): a pílula do PR com os checks.
+        EstadoTarefa::NoPr => visual(
+            Estado::Parado,
+            "PR aberto",
+            t.pr.as_ref().map(|pr| format!("#{}", pr.numero)),
+            "O PR está aberto no GitHub; o Vitral acompanha os checks e a revisão.".into(),
+        ),
     }
 }
 

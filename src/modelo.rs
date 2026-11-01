@@ -9,6 +9,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::github::{EstadoChecks, EstadoPr, ResumoChecks};
+pub use crate::issues::{FonteIssue, IssueLigada};
+
 /// O formato dos dados no disco. Sobe quando uma migração muda o formato; o atualizador só volta
 /// para uma versão que leia o formato que está no disco (`dados::formato_em`). O 1 é o Vitral antigo
 /// (o `.vitral/` em cada pasta de trabalho, que a migração não muda) e o 2, os dados globais. O
@@ -121,6 +124,9 @@ pub enum Item {
         /// Foi com Ultracode (fluxo de agentes): o histórico mostra o selo.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         ultracode: bool,
+        /// Issues anexadas ("ENG-123", "#45"), para o chip na bolha.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        referencias: Vec<String>,
     },
     /// Mensagem que o Vitral (ou outro chat) entregou a este chat, no lugar do usuário.
     Entrega {
@@ -218,11 +224,33 @@ pub struct Chat {
     /// A conversa do Claude Code que este chat continua (o histórico vem do arquivo dela).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importada: Option<crate::importar::Importada>,
+    /// Roda isolado (no bwrap, sem o chaveiro, o ssh e o login do gh): recebeu texto de terceiros
+    /// (issue, aviso de PR). Pegajoso: uma vez ligado, não desliga mais.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub isolado: bool,
+    /// As ações com efeito fora do Vitral que cada turno já fez (no máximo `MAX_ACOES_EXTERNAS`):
+    /// "Tentar de novo" e a troca de conta reenviam o mesmo turno, e a ação não se repete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acoes_externas: Vec<RegistroAcao>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
     #[serde(skip)]
     pub itens: Vec<Item>,
+}
+
+/// Até quantos registros de ação externa um chat guarda (os mais antigos saem).
+pub const MAX_ACOES_EXTERNAS: usize = 50;
+
+/// Uma ação com efeito fora do Vitral (abrir, atualizar ou mesclar um PR) feita num turno.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RegistroAcao {
+    /// O uuid do turno (o mesmo numa repetição).
+    pub turno: String,
+    /// A `AcaoExterna` em JSON canônico.
+    pub acao: String,
+    pub resultado: String,
+    pub em: u64,
 }
 
 impl Chat {
@@ -259,6 +287,8 @@ impl Chat {
             modo_antes_do_plano: None,
             criado_por: String::new(),
             importada: None,
+            isolado: false,
+            acoes_externas: Vec::new(),
             resto: Default::default(),
             itens: Vec::new(),
         }
@@ -326,6 +356,9 @@ pub enum EstadoTarefa {
     Cancelada,
     /// Chat de projeto pronto para conversar, sem pedido pendente (nem ativa nem encerrada).
     Conversa,
+    /// O PR da tarefa está aberto no GitHub (nem ativa nem encerrada): o Vitral acompanha os
+    /// checks e a revisão. `estado == NoPr` implica `pr` aberto ou rascunho.
+    NoPr,
 }
 
 impl EstadoTarefa {
@@ -338,6 +371,7 @@ impl EstadoTarefa {
             EstadoTarefa::Falhou => "falhou",
             EstadoTarefa::Cancelada => "cancelada",
             EstadoTarefa::Conversa => "conversa",
+            EstadoTarefa::NoPr => "PR aberto",
         }
     }
 
@@ -452,9 +486,120 @@ pub struct Tarefa {
     /// Por que a cópia não pôde ser preparada; não muda o estado.
     #[serde(default)]
     pub falha_copia: Option<String>,
+    // ---------- GitHub e Linear ----------
+    /// O PR aberto a partir da cópia (um por vez).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<Pr>,
+    /// Os PRs mesclados ou fechados deste chat, do mais antigo para o mais novo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prs_anteriores: Vec<PrAnterior>,
+    /// A issue que originou o chat ou que foi ligada a ele.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<IssueLigada>,
+    /// O ramo escolhido antes da cópia existir (o `branchName` do Linear, o prefixo da pasta):
+    /// `preparar_copia` usa este, e nunca recalcula ao refazer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ramo_planejado: Option<String>,
+    /// De onde a cópia parte: "origin/main" no modo PR; `None` é o HEAD da origem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partir_de: Option<String>,
+    /// O que `copiar_arquivos_locais` pôs na cópia (o .env): nunca entra no commit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arquivos_copiados: Vec<String>,
+    /// A rodada em que o ciclo atual começou (o limite de rodadas do dono conta daqui).
+    #[serde(default)]
+    pub rodada_do_ciclo: u32,
+    /// O PR foi mesclado com o chat rodando: o recomeço da cópia fica para o fim do turno.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recomeco_pendente: bool,
+    /// O pedido atual veio de "Iniciar agente" numa issue (conta como pedido para a entrega).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pedido_da_issue: bool,
+    /// Uma rodada verificada espera o usuário apertar "Atualizar PR".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pronto_para_atualizar: bool,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
+}
+
+/// O PR de uma tarefa, como o Vitral o viu por último. Nada aqui é segredo: `erro` já passou
+/// por `remoto::sem_segredos`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pr {
+    /// "dono/nome" do destino.
+    pub repositorio: String,
+    pub numero: u64,
+    pub url: String,
+    pub titulo: String,
+    pub base: String,
+    pub ramo: String,
+    /// O `--head` do gh: o ramo, ou "dono:ramo" num PR do fork para o original.
+    pub cabeca: String,
+    pub dono_do_head: String,
+    pub estado: EstadoPr,
+    /// O `headRefOid` visto por último.
+    pub sha: String,
+    /// O HEAD que o Vitral verificou e enviou: só ele é mesclado sozinho.
+    pub sha_publicado: String,
+    /// Shas curtos no head que não são do Vitral.
+    pub commits_de_fora: Vec<String>,
+    pub checks: ResumoChecks,
+    /// A última vez que as contagens dos checks mudaram.
+    pub checks_progresso_em: u64,
+    /// O `mergeStateStatus` (CLEAN, BLOCKED, BEHIND, DIRTY…).
+    pub mesclavel: String,
+    /// O `reviewDecision`.
+    pub decisao: String,
+    pub conversas_abertas: u32,
+    /// Para perceber novidade: o último comentário, a última revisão e o `updatedAt`.
+    pub ultimo_comentario: u64,
+    pub ultima_revisao: u64,
+    pub atualizado: String,
+    /// Os ids já levados ao chat (no máximo 500, os mais antigos saem).
+    pub comentarios_entregues: Vec<u64>,
+    /// Os ids dos comentários que o próprio Vitral fez.
+    pub comentarios_nossos: Vec<u64>,
+    /// `Some(método)`: mesclar quando ficar pronto (o "Ship").
+    pub ao_ficar_pronto: Option<String>,
+    pub acompanhando: bool,
+    /// O sha e os links dos checks falhos já avisados, em ordem.
+    pub falha_avisada: Option<String>,
+    pub primeira_falha_em: Option<u64>,
+    pub tentativas_log: u32,
+    /// Rodadas disparadas por aviso do PR, para qualquer dono (no máximo 3).
+    pub rodadas_automaticas: u32,
+    /// "sha|mergeStateStatus" que o Vitral já tentou mesclar sozinho.
+    pub tentativa_mescla: Option<String>,
+    pub empurrado_em: u64,
+    pub conferido_em: u64,
+    pub fila_de_merge: bool,
+    /// A mesclagem automática do GitHub está ligada (pelo site ou pela fila de merge).
+    pub auto_github: bool,
+    pub mesclado_por: Option<String>,
+    pub metodo_mesclado: Option<String>,
+    pub commit_mesclado: Option<String>,
+    pub erro: Option<String>,
+}
+
+impl Pr {
+    /// Aberto ou rascunho: o estado em que a tarefa fica em `NoPr`.
+    pub fn aberto(&self) -> bool {
+        matches!(self.estado, EstadoPr::Aberto | EstadoPr::Rascunho)
+    }
+}
+
+/// Um PR da tarefa que já foi mesclado ou fechado.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrAnterior {
+    pub numero: u64,
+    pub url: String,
+    pub titulo: String,
+    pub estado: EstadoPr,
+    pub mesclado_por: Option<String>,
+    pub em: u64,
 }
 
 fn sim() -> bool {
@@ -501,6 +646,16 @@ impl Default for Tarefa {
             juntando_desde: 0,
             geracao_preparo: 0,
             falha_copia: None,
+            pr: None,
+            prs_anteriores: Vec::new(),
+            issue: None,
+            ramo_planejado: None,
+            partir_de: None,
+            arquivos_copiados: Vec::new(),
+            rodada_do_ciclo: 0,
+            recomeco_pendente: false,
+            pedido_da_issue: false,
+            pronto_para_atualizar: false,
             resto: Default::default(),
         }
     }
@@ -601,6 +756,60 @@ pub struct ConfigProjeto {
     /// Arquivos fora do git copiados para cada cópia (padrões; vazio vale `.env*` e
     /// `CLAUDE.local.md`).
     pub copiar: Vec<String>,
+    /// Como as mudanças dos chats desta pasta chegam ao GitHub.
+    #[serde(skip_serializing_if = "ConfigGithub::padrao")]
+    pub github: ConfigGithub,
+}
+
+/// "Ao aprovar": juntar na pasta, ou abrir um PR no GitHub.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum ModoEntrega {
+    #[default]
+    Juntar,
+    Pr,
+}
+
+/// Um modo desconhecido (o "PrEMesclar" de uma versão antiga da especificação, ou um de uma
+/// versão mais nova) lê como Juntar: o seguro, e o arquivo continua abrindo.
+impl<'de> Deserialize<'de> for ModoEntrega {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match serde_json::Value::deserialize(d)?.as_str() {
+            Some("Pr") => ModoEntrega::Pr,
+            _ => ModoEntrega::Juntar,
+        })
+    }
+}
+
+/// O GitHub de uma pasta ligada. Vazio vale o padrão de cada campo.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ConfigGithub {
+    pub entrega: ModoEntrega,
+    /// "" = origin, senão o primeiro remote do GitHub.
+    pub remoto: String,
+    /// O ramo de destino; "" = o padrão do repositório.
+    pub base: String,
+    /// "" = "vitral/".
+    pub prefixo_ramo: String,
+    pub rascunho: bool,
+    /// Num fork: os PRs vão para o original.
+    pub pr_no_original: bool,
+    /// "dono/nome" do destino dos PRs, reescrito a cada detecção (só cache).
+    pub repositorio: String,
+}
+
+impl ConfigGithub {
+    pub fn padrao(&self) -> bool {
+        *self == ConfigGithub::default()
+    }
+
+    /// O prefixo dos ramos, com o padrão.
+    pub fn prefixo(&self) -> &str {
+        match self.prefixo_ramo.trim() {
+            "" => crate::issues::PREFIXO_PADRAO,
+            p => p,
+        }
+    }
 }
 
 impl ConfigProjeto {
@@ -662,9 +871,28 @@ pub struct Projeto {
     pub importado_de: Option<PathBuf>,
     /// Recriado na carga para um chat órfão não sumir.
     pub provisorio: bool,
+    /// O time do Linear do projeto (só ids e nomes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearDoProjeto>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
+}
+
+/// O Linear de um projeto: o time e para onde as issues vão ao iniciar e ao mesclar.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinearDoProjeto {
+    pub time_id: String,
+    /// "ENG".
+    pub time_chave: String,
+    pub time_nome: String,
+    /// `None` é o automático (o `started` de menor posição); `Some("")` é não mudar; senão, o id.
+    pub estado_iniciar: Option<String>,
+    /// `None` é o automático (o `completed` de menor posição).
+    pub estado_mesclar: Option<String>,
+    /// A última pasta escolhida para as issues do Linear (num projeto com mais de uma).
+    pub pasta: Option<PathBuf>,
 }
 
 impl Projeto {
@@ -723,6 +951,27 @@ pub struct Config {
     pub max_ajudantes: usize,
     /// Fora da janela por mais que isso, a volta mostra o resumo.
     pub minutos_para_resumo: u64,
+    /// As contas ligadas (a do Linear sem a chave, que fica no chaveiro).
+    pub conexoes: Conexoes,
+    /// "Agora não" no popover das issues: o botão do Linear some das conversas.
+    pub esconder_botao_linear: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Conexoes {
+    pub linear: Option<ContaLinear>,
+}
+
+/// Quem está conectado no Linear. A chave nunca vem para cá: só os 4 últimos caracteres.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContaLinear {
+    pub workspace: String,
+    pub url_key: String,
+    pub nome: String,
+    pub id_usuario: String,
+    pub final_da_chave: String,
 }
 
 /// Pedido que o Vitral manda sozinho para um coordenador novo, num horário (com o Vitral aberto).
@@ -796,6 +1045,8 @@ impl Default for Config {
             aprovar_sozinho: true,
             max_ajudantes: 3,
             minutos_para_resumo: 15,
+            conexoes: Conexoes::default(),
+            esconder_botao_linear: false,
         }
     }
 }
@@ -827,9 +1078,16 @@ pub struct Entrada {
     /// Rotina que mandou.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotina: Option<String>,
-    /// Vai só ao Claude, sem aparecer na conversa.
+    /// Vai só ao Claude, sem aparecer na conversa (o bloco de uma issue anexada).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub extra: String,
+    /// Traz texto de terceiros (issue, comentário de PR, log de CI): o turno nunca faz ação
+    /// externa sem confirmação, e o chat passa a rodar isolado.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub terceiros: bool,
+    /// As issues anexadas ("ENG-123"), para o chip na bolha.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referencias: Vec<String>,
 }
 
 impl Entrada {
@@ -967,8 +1225,33 @@ pub enum TipoCartao {
     Memoria {
         texto: String,
     },
+    /// A linha de acompanhamento do PR de uma tarefa (os dados vêm ao vivo de `Tarefa.pr`).
+    Pr {
+        tarefa: u64,
+    },
+    /// Uma ação com efeito fora do Vitral que um chat pediu e o usuário confirma.
+    Confirmar(Confirmacao),
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Confirmacao {
+    pub acao: AcaoExterna,
+    /// O chat que pediu.
+    pub pedido_por: String,
+    pub resumo: String,
+    /// O que aconteceu depois de decidido.
+    #[serde(default)]
+    pub resultado: Option<String>,
+}
+
+/// O que tem efeito no GitHub e passa pela guarda (seção 8.1 da especificação).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum AcaoExterna {
+    AbrirPr { tarefa: u64, titulo: String, descricao: String, rascunho: bool, quando_pronto: Option<String> },
+    AtualizarPr { tarefa: u64 },
+    Mesclar { tarefa: u64, metodo: String, sha: String, quando_pronto: bool },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1011,6 +1294,9 @@ pub struct Parte {
     pub resultado: Option<String>,
     /// Onde foi juntada ("em ~/Projetos/loja") ou por que foi cancelada.
     pub detalhe: Option<String>,
+    /// A issue que esta parte resolve (o `issue` do `propor_divisao`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue: Option<IssueLigada>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1262,6 +1548,140 @@ mod testes {
         assert!(!dados.arquivo_notas("loja").exists());
         assert_eq!(dados.notas("loja"), "");
         assert_eq!(dados.falha_de_gravacao(), None);
+        let _ = fs::remove_dir_all(&raiz);
+    }
+
+    #[test]
+    fn projeto_antigo_abre_com_os_padroes_do_github_e_do_linear() {
+        let antigo = serde_json::json!({
+            "id": "a1", "nome": "Loja", "pastas": [{"caminho": "/p/loja", "propria": false, "preparacao": "npm i"}],
+            "ordem": 2, "campo_novo": 1
+        });
+        let projeto: Projeto = serde_json::from_value(antigo.clone()).unwrap();
+        assert!(projeto.linear.is_none());
+        let github = &projeto.pastas[0].config.github;
+        assert_eq!(github.entrega, ModoEntrega::Juntar);
+        assert_eq!((github.prefixo(), github.base.as_str(), github.rascunho), ("vitral/", "", false));
+        // Sem nada do GitHub e do Linear configurado, nada disso vai para o arquivo.
+        let gravado = serde_json::to_value(&projeto).unwrap();
+        assert!(gravado.get("linear").is_none() && gravado["pastas"][0].get("github").is_none(), "{gravado}");
+        assert_eq!((&gravado["campo_novo"], &gravado["pastas"][0]["preparacao"]), (&antigo["campo_novo"], &antigo["pastas"][0]["preparacao"]));
+
+        let tarefa: Tarefa = serde_json::from_value(serde_json::json!({
+            "id": 5, "projeto": "a1", "coordenador": "", "trabalhador": "c", "titulo": "t", "objetivo": "o",
+            "criterios": [], "estado": "Conversa", "rodada": 2, "criada_em": 0
+        }))
+        .unwrap();
+        assert!(tarefa.pr.is_none() && tarefa.issue.is_none() && tarefa.ramo_planejado.is_none() && tarefa.partir_de.is_none());
+        assert_eq!((tarefa.rodada_do_ciclo, tarefa.recomeco_pendente, tarefa.pronto_para_atualizar), (0, false, false));
+        let gravada = serde_json::to_value(&tarefa).unwrap();
+        for campo in ["pr", "prs_anteriores", "issue", "partir_de", "arquivos_copiados", "pedido_da_issue"] {
+            assert!(gravada.get(campo).is_none(), "{campo}");
+        }
+        let chat: Chat = serde_json::from_value(serde_json::to_value(chat_de_teste()).unwrap()).unwrap();
+        assert!(!chat.isolado && chat.acoes_externas.is_empty());
+        let config: Config = serde_json::from_value(serde_json::json!({"permissao": "auto"})).unwrap();
+        assert!(config.conexoes.linear.is_none() && !config.esconder_botao_linear);
+        let parte: Parte = serde_json::from_value(serde_json::json!({"projeto": "a1", "titulo": "x"})).unwrap();
+        assert!(parte.issue.is_none());
+    }
+
+    #[test]
+    fn modo_de_entrega_ausente_ou_desconhecido_e_juntar() {
+        let ler = |valor: serde_json::Value| serde_json::from_value::<ConfigGithub>(valor).unwrap().entrega;
+        assert_eq!(ler(serde_json::json!({})), ModoEntrega::Juntar);
+        assert_eq!(ler(serde_json::json!({"entrega": "Pr"})), ModoEntrega::Pr);
+        // O "PR e mesclar" saiu do v1: não existe, e um arquivo com ele continua abrindo.
+        assert_eq!(ler(serde_json::json!({"entrega": "PrEMesclar"})), ModoEntrega::Juntar);
+        assert_eq!(ler(serde_json::json!({"entrega": 3})), ModoEntrega::Juntar);
+        let pasta = PastaLigada {
+            caminho: "/p/loja".into(),
+            config: ConfigProjeto {
+                github: ConfigGithub { entrega: ModoEntrega::Pr, prefixo_ramo: "feature/vitor-".into(), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let gravada = serde_json::to_value(&pasta).unwrap();
+        assert_eq!(gravada["github"]["entrega"], "Pr");
+        let lida: PastaLigada = serde_json::from_value(gravada).unwrap();
+        assert_eq!((lida.config.github.entrega, lida.config.github.prefixo()), (ModoEntrega::Pr, "feature/vitor-"));
+    }
+
+    #[test]
+    fn estados_e_cartoes_novos_voltam_iguais() {
+        assert_eq!(EstadoTarefa::NoPr.nome(), "PR aberto");
+        assert!(!EstadoTarefa::NoPr.ativa() && !EstadoTarefa::NoPr.encerrada());
+        let cartoes = [
+            TipoCartao::Pr { tarefa: 12 },
+            TipoCartao::Confirmar(Confirmacao {
+                acao: AcaoExterna::Mesclar { tarefa: 12, metodo: "squash".into(), sha: "abc1234".into(), quando_pronto: false },
+                pedido_por: "c12".into(),
+                resumo: "mesclar o PR #12 (squash)".into(),
+                resultado: None,
+            }),
+        ];
+        for tipo in cartoes {
+            let valor = serde_json::to_value(&tipo).unwrap();
+            let lido: TipoCartao = serde_json::from_value(valor.clone()).unwrap();
+            assert!(!matches!(lido, TipoCartao::Desconhecido(_)), "{valor}");
+            assert_eq!(serde_json::to_value(&lido).unwrap(), valor);
+        }
+        let mut tarefa = Tarefa { estado: EstadoTarefa::NoPr, ..Default::default() };
+        tarefa.pr = Some(Pr { numero: 12, estado: EstadoPr::Rascunho, acompanhando: true, ..Default::default() });
+        let lida: Tarefa = serde_json::from_value(serde_json::to_value(&tarefa).unwrap()).unwrap();
+        assert!(lida.pr.as_ref().is_some_and(|pr| pr.aberto() && pr.numero == 12 && pr.acompanhando));
+    }
+
+    /// Invariante 1 da especificação: com o Linear conectado e um PR com erro, nenhum arquivo
+    /// gravado tem um token (a chave fica só no chaveiro e na memória).
+    #[test]
+    fn nenhum_arquivo_gravado_tem_token() {
+        let raiz = std::env::temp_dir().join(format!("vitral-sem-token-{}", novo_id()));
+        let dados = crate::dados::Dados::em(&raiz);
+        let chave = crate::segredos::Chave::linear(concat!("lin_", "api_ABCdef0123456789xyzWa1b2")).unwrap();
+        let config = Config {
+            conexoes: Conexoes {
+                linear: Some(ContaLinear {
+                    workspace: "Eita".into(),
+                    url_key: "eita".into(),
+                    nome: "Victor".into(),
+                    id_usuario: "u1".into(),
+                    final_da_chave: chave.final_(),
+                }),
+            },
+            ..Default::default()
+        };
+        let erro_do_gh = concat!("remote: token gh", "p_ABCdef0123456789xyzWa1b2 recusado (Authorization: Bearer x)");
+        let tarefa = Tarefa {
+            id: 3,
+            estado: EstadoTarefa::NoPr,
+            pr: Some(Pr { numero: 12, erro: Some(crate::remoto::sem_segredos(erro_do_gh)), ..Default::default() }),
+            issue: Some(IssueLigada { chave: "ENG-5".into(), ..Default::default() }),
+            ..Default::default()
+        };
+        let mut chat = chat_de_teste();
+        chat.isolado = true;
+        chat.acoes_externas.push(RegistroAcao { turno: "u".into(), acao: "{}".into(), resultado: "ok".into(), em: 1 });
+        let estado = Estado { chats: vec![chat.clone()], tarefas: vec![tarefa], proxima_tarefa: 4, ..Default::default() };
+        dados.salvar_estado(&estado.por_referencia()).unwrap();
+        dados.salvar_config(&config).unwrap();
+        dados.salvar_chat(&chat).unwrap();
+        dados.esperar_gravacoes();
+        let mut arquivos = vec![raiz.clone()];
+        let mut lidos = 0;
+        while let Some(caminho) = arquivos.pop() {
+            if caminho.is_dir() {
+                arquivos.extend(fs::read_dir(&caminho).unwrap().map(|e| e.unwrap().path()));
+                continue;
+            }
+            let texto = fs::read_to_string(&caminho).unwrap_or_default();
+            lidos += 1;
+            for prefixo in ["lin_api_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] {
+                assert!(!texto.contains(prefixo), "{prefixo} em {}", caminho.display());
+            }
+        }
+        assert!(lidos >= 3, "{lidos}");
         let _ = fs::remove_dir_all(&raiz);
     }
 

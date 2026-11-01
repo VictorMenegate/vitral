@@ -6688,6 +6688,7 @@ fn itens_das_entradas(mensagens: Vec<Entrada>, mut ponto: Option<String>) -> Vec
                     ponto,
                     ultrathink: entrada.ultrathink,
                     ultracode: entrada.ultracode,
+                    referencias: entrada.referencias,
                 },
             }
         })
@@ -7324,6 +7325,7 @@ mod testes {
             ponto: None,
             ultrathink: false,
             ultracode: false,
+            referencias: Vec::new(),
         });
         let mut chats = vec![chat("c", Papel::Coordenador, None), trabalhador];
         let mut tarefas = vec![tarefa(1, "w", EstadoTarefa::Rodando)];
@@ -7989,7 +7991,7 @@ mod testes {
         let pedido = Tarefa { estado: EstadoTarefa::Rodando, coordenador: "mestre".into(), ..conversa.clone() };
         assert!(!nunca_rodou(&c, &[&pedido]), "pedido do Mestre aberto");
         let mut falou = c.clone();
-        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false });
+        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() });
         assert!(!nunca_rodou(&falou, &[&conversa]));
         let mut sessao = c.clone();
         sessao.sessao_criada = true;
@@ -8065,7 +8067,7 @@ mod testes {
 
     #[test]
     fn passagem_de_sessao_leva_as_ultimas_mensagens_e_o_pedido() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
         let mut itens = vec![usuario("primeira")];
         for i in 0..12 {
             itens.push(Item::Assistente { texto: format!("resposta {i}") });
@@ -8209,7 +8211,7 @@ mod testes {
 
     #[test]
     fn revisor_sem_pedido_le_as_mensagens_desde_a_juncao() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
         let mut itens = vec![usuario("antes"), Item::Aviso { texto: format!("{JUNTOU} /p/loja."), erro: false }];
         assert_eq!(mensagens_desde_a_juncao(&itens), "(nenhuma mensagem do usuário desde a última junção)");
         itens.extend([usuario("troque o frete"), Item::Assistente { texto: "feito".into() }, usuario("/compact"), usuario("e o cupom")]);

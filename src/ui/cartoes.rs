@@ -41,6 +41,8 @@ pub(super) fn frase_do_cartao(c: &Cartao) -> String {
         }
         TipoCartao::Projeto(s) => format!("Criar o projeto {}?", s.nome),
         TipoCartao::Memoria { texto } => format!("Quer lembrar: {}", uma_linha(texto)),
+        TipoCartao::Pr { tarefa } => format!("PR da tarefa {tarefa}"),
+        TipoCartao::Confirmar(c) => format!("Confirmar: {}", uma_linha(&c.resumo)),
         TipoCartao::Desconhecido(_) => format!("Cartão {} aberto", c.id),
     }
 }
@@ -295,6 +297,23 @@ impl Janela {
                         (Lucide::X, Cores::tenue(), format!("Não lembrado: {}", uma_linha(texto)))
                     };
                     linha_decidida(format!("cartao-{id}").into(), icone, cor, frase, None, None).into_any_element()
+                }
+                // Provisório (G5): a linha de acompanhamento e o cartão de confirmação de verdade.
+                (TipoCartao::Pr { tarefa }, _) => {
+                    let texto = match motor.tarefa(*tarefa).and_then(|t| t.pr.as_ref()) {
+                        Some(pr) => format!("PR #{} · {}", pr.numero, pr.titulo),
+                        None => "PR (sem dados)".into(),
+                    };
+                    linha_decidida(format!("cartao-{id}").into(), Lucide::GitPullRequest, Cores::tenue(), texto, None, None)
+                        .into_any_element()
+                }
+                (TipoCartao::Confirmar(confirmacao), _) => {
+                    let texto = match &confirmacao.resultado {
+                        Some(resultado) => format!("{} · {resultado}", uma_linha(&confirmacao.resumo)),
+                        None => format!("Confirmar: {}", uma_linha(&confirmacao.resumo)),
+                    };
+                    linha_decidida(format!("cartao-{id}").into(), Lucide::ShieldQuestionMark, Cores::ambar(), texto, None, None)
+                        .into_any_element()
                 }
                 (TipoCartao::Desconhecido(_), _) => {
                     linha_decidida(format!("cartao-{id}").into(), Lucide::Info, Cores::tenue(), "(cartão de uma versão mais nova)".into(), None, None)
@@ -821,7 +840,7 @@ mod testes {
         assert_eq!(divisao_terminada("[Vitral] A divisão 12 terminou: x"), Some(12));
         assert_eq!(divisao_terminada("A divisão 3 ainda espera o Começar."), None);
         let itens = vec![
-            Item::Usuario { texto: "faça".into(), anexos: vec![], ponto: None, ultrathink: false, ultracode: false },
+            Item::Usuario { texto: "faça".into(), anexos: vec![], ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() },
             assistente("Divisão mostrada."),
             entrega("A divisão 3 terminou: chat 12 juntado."),
             entrega("Chat 12 entregou e foi juntado sozinho."),

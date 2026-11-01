@@ -1280,6 +1280,8 @@ pub fn resumo_do_cartao(c: &Cartao) -> String {
         }
         TipoCartao::Projeto(p) => format!("Sugestão do projeto {} {a} em {quando}", p.nome),
         TipoCartao::Memoria { texto } => format!("Memória {a} em {quando}: {texto}"),
+        TipoCartao::Pr { tarefa } => format!("Acompanhamento do PR da tarefa {tarefa} em {quando}"),
+        TipoCartao::Confirmar(confirmar) => format!("Confirmação {a} em {quando}: {}", confirmar.resumo),
         TipoCartao::Desconhecido(_) => format!("Cartão {} {aceito} em {quando}", c.id),
     }
 }

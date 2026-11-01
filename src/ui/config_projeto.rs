@@ -5,14 +5,20 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::*;
 
 use super::componentes::{GrupoDeOpcoes, LinhaDeOpcao};
-use crate::{modelo::ConfigProjeto, tema::FONTE_MONO};
+use crate::{
+    modelo::{ConfigGithub, ConfigProjeto},
+    tema::FONTE_MONO,
+};
 
-/// Os três campos de uma pasta e como estavam ao abrir.
+/// Os três campos de uma pasta e como estavam ao abrir, mais o GitHub dela (a seção "GitHub e
+/// Linear" do editor mexe nele).
 pub(super) struct ConfigDaPasta {
     preparacao: Entity<InputState>,
     rodar: Entity<InputState>,
     copiar: Entity<InputState>,
     inicial: [String; 3],
+    pub(super) github: ConfigGithub,
+    github_inicial: ConfigGithub,
 }
 
 /// Os três textos de uma configuração, na ordem dos campos.
@@ -46,7 +52,7 @@ impl ConfigDaPasta {
         let preparacao = campo(&inicial[0], "npm install");
         let rodar = campo(&inicial[1], "npm run dev -- --port $VITRAL_PORT");
         let copiar = campo(&inicial[2], ".env*, CLAUDE.local.md");
-        ConfigDaPasta { preparacao, rodar, copiar, inicial }
+        ConfigDaPasta { preparacao, rodar, copiar, inicial, github: config.github.clone(), github_inicial: config.github.clone() }
     }
 
     /// A configuração como está nos campos.
@@ -55,11 +61,12 @@ impl ConfigDaPasta {
             preparacao: self.preparacao.read(cx).value().trim().to_string(),
             rodar: self.rodar.read(cx).value().trim().to_string(),
             copiar: lista_de_copiar(&self.copiar.read(cx).value()),
+            github: self.github.clone(),
         }
     }
 
     pub(super) fn mudou(&self, cx: &App) -> bool {
-        textos(&self.config(cx)) != self.inicial
+        textos(&self.config(cx)) != self.inicial || self.github != self.github_inicial
     }
 
     /// As linhas da pasta num grupo do Avançado.
