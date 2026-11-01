@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use gpui_kit::{AppContext as _, Context, Task};
+use gpui_kit::{AnyWeakEntity, AppContext as _, Context, Task};
 use serde_json::{Value, json};
 use smol::channel::{Sender, unbounded};
 
@@ -27,7 +27,10 @@ use mestre::{Ciclos, MotivoPassagem, Readmes};
 use crate::{
     claude::{self, Evento, Mensagem, Opcoes, Processo, VERSAO_ULTRACODE, Versao},
     codex::{self, Codex},
-    contas::{self, Conta, Plano},
+    contas::{
+        self, Conta, Plano,
+        busca::{self, Agenda, Busca},
+    },
     dados::{self, Carregado, Dados, ErroCarga, slug},
     git,
     mcp::{self, Chamada, Resposta},
@@ -116,7 +119,7 @@ pub struct PedidoPermissao {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Mudanca {
     Nada,
-    /// Só a hora da medição: aparece só no popover.
+    /// Só a hora da medição ou o "não deu para atualizar": aparece só no popover.
     Hora,
     /// As porcentagens, as renovações, o limite ou o plano.
     Numeros,
@@ -372,6 +375,11 @@ pub struct Motor {
     limite_ate: HashMap<String, u64>,
     /// Nome do plano, limites por modelo e créditos extras de cada conta (do `.claude.json`).
     plano_por_conta: HashMap<String, Plano>,
+    /// Quando buscar o uso dos planos na Anthropic e o recuo de cada conta (`contas::busca`).
+    agenda_uso: Agenda,
+    /// A marca do popover do uso do Claude aberto: enquanto ela vive, a busca é de minuto em
+    /// minuto (a interface solta a marca quando o popover some da tela).
+    uso_em_vista: Option<AnyWeakEntity>,
     /// Uso do plano do Codex lido do disco (`None`: sem pasta do Codex neste computador).
     pub codex: Option<Codex>,
     /// A primeira leitura do Codex terminou (antes dela, `None` não quer dizer "não instalado").
@@ -583,6 +591,19 @@ impl Motor {
             }
         })
         .detach();
+        // O uso dos planos direto da Anthropic: a cada 15 s confere se é hora (o ritmo muda com o
+        // popover aberto e com a janela sem foco); a primeira rodada sai logo na abertura.
+        cx.spawn(async move |motor, cx| {
+            loop {
+                if motor.update(cx, |m, cx| m.rotina_uso(cx)).is_err() {
+                    break;
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(15))
+                    .await;
+            }
+        })
+        .detach();
         // As mensagens do turno em andamento vão para o disco a cada poucos segundos (o PC cai).
         cx.spawn(async move |motor, cx| {
             loop {
@@ -651,6 +672,8 @@ impl Motor {
             uso_por_conta: HashMap::new(),
             limite_ate: HashMap::new(),
             plano_por_conta: HashMap::new(),
+            agenda_uso: Agenda::default(),
+            uso_em_vista: None,
             codex: None,
             codex_lido: false,
             conta_do_turno: HashMap::new(),
@@ -3186,6 +3209,91 @@ impl Motor {
         self.uso_por_conta.insert(id.to_string(), depois);
         self.plano_por_conta.insert(id.to_string(), novo);
         mudou
+    }
+
+    /// O popover do uso do Claude abriu: busca agora e, enquanto `vista` viver, de minuto em
+    /// minuto.
+    pub fn uso_em_vista(&mut self, vista: AnyWeakEntity, cx: &mut Context<Self>) {
+        self.uso_em_vista = Some(vista);
+        self.buscar_uso(false, cx);
+    }
+
+    fn vendo_uso(&self) -> bool {
+        self.uso_em_vista.as_ref().is_some_and(AnyWeakEntity::is_upgradable)
+    }
+
+    /// "Atualizar" do Claude: relê o cache e busca na Anthropic agora.
+    pub fn atualizar_uso(&mut self, cx: &mut Context<Self>) {
+        self.reler_uso(cx);
+        self.buscar_uso(true, cx);
+    }
+
+    /// A última busca do uso da conta não trouxe número e nada mais novo chegou depois.
+    pub fn uso_sem_atualizar(&self, conta: &str) -> bool {
+        self.agenda_uso.sem_atualizar(conta, self.uso_da_conta(conta).medido_em)
+    }
+
+    /// A rodada automática, no ritmo da `Agenda` (popover aberto, janela sem foco).
+    fn rotina_uso(&mut self, cx: &mut Context<Self>) {
+        let agora = agora();
+        let fora_ha = (!self.janela_ativa).then(|| agora.saturating_sub(self.visto_em));
+        if self.agenda_uso.na_hora(agora, self.vendo_uso(), fora_ha) {
+            self.rodada_uso(false, cx);
+        }
+    }
+
+    /// Uma rodada pedida (popover aberto, "Atualizar"), se a última não acabou de sair.
+    fn buscar_uso(&mut self, a_pedido: bool, cx: &mut Context<Self>) {
+        if self.agenda_uso.pode_agora(agora()) {
+            self.rodada_uso(a_pedido, cx);
+        }
+    }
+
+    /// Busca o uso de cada conta fora do recuo, uma depois da outra, fora da thread da
+    /// interface; só redesenha se algo mudou.
+    fn rodada_uso(&mut self, a_pedido: bool, cx: &mut Context<Self>) {
+        let da_vez = self.agenda_uso.comecar(&self.contas, agora(), a_pedido);
+        cx.spawn(async move |motor, cx| {
+            let buscas = cx
+                .background_spawn(async move {
+                    da_vez
+                        .into_iter()
+                        .map(|(conta, recusado)| {
+                            let busca = busca::buscar(&conta, recusado);
+                            (conta.id, busca)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let _ = motor.update(cx, |m, cx| {
+                if m.guardar_buscas(buscas) {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Junta o que a rodada trouxe e diz se é para redesenhar: números novos sempre; a hora da
+    /// medição e o "não deu para atualizar" só com o popover aberto (o trilho não mostra).
+    fn guardar_buscas(&mut self, buscas: Vec<(String, Busca)>) -> bool {
+        self.agenda_uso.terminar();
+        let agora = agora();
+        let mut mudou = Mudanca::Nada;
+        for (id, busca) in buscas {
+            if !self.contas.iter().any(|c| c.id == id) {
+                continue;
+            }
+            let antes = self.uso_sem_atualizar(&id);
+            self.agenda_uso.registrar(&id, &busca, agora);
+            if let Busca::Lida(uso, plano) = busca {
+                mudou = mudou.max(self.juntar_uso_da_conta(&id, uso, plano, agora as i64));
+            }
+            if self.uso_sem_atualizar(&id) != antes {
+                mudou = mudou.max(Mudanca::Hora);
+            }
+        }
+        mudou == Mudanca::Numeros || (mudou == Mudanca::Hora && self.vendo_uso())
     }
 
     pub fn adicionar_conta(&mut self, conta: Conta, cx: &mut Context<Self>) {

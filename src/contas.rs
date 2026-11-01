@@ -20,6 +20,8 @@ use serde_json::Value;
 
 use crate::{claude::binario_claude, motor::Uso};
 
+pub mod busca;
+
 /// Id reservado da conta principal (o login normal do Claude Code).
 pub const PRINCIPAL: &str = "principal";
 /// Escolha que deixa o Vitral usar a conta com mais folga no plano.
@@ -287,6 +289,15 @@ fn arquivo_config(conta: &Conta) -> Option<PathBuf> {
     match conta.pasta() {
         Some(pasta) => Some(pasta.join(".claude.json")),
         None => Some(dirs::home_dir()?.join(".claude.json")),
+    }
+}
+
+/// Onde o Claude Code guarda o login da conta (`.credentials.json`): a pasta dela ou, na
+/// principal, `~/.claude`.
+fn pasta_do_login(conta: &Conta) -> Option<PathBuf> {
+    match conta.pasta() {
+        Some(pasta) => Some(pasta),
+        None => Some(dirs::home_dir()?.join(".claude")),
     }
 }
 
