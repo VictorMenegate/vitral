@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::{
     claude::binario_claude,
     modelo::{Revisao, Tarefa},
-    processos::{self, Escopo},
+    processos,
 };
 
 pub fn revisar(
@@ -61,7 +61,7 @@ se não houver problema de gravidade alta ou média. Escreva em português.",
     );
     // Num escopo próprio: no limite de tempo ou com o Vitral fechando, os comandos que ele roda
     // (cargo test, servidores) param junto.
-    let (mut comando, unidade) = processos::comando(binario_claude(), "revisor");
+    let mut comando = processos::comando(binario_claude(), "revisor");
     comando
         .current_dir(pasta)
         .args(["-p", "--output-format", "json", "--strict-mcp-config"])
@@ -83,8 +83,7 @@ se não houver problema de gravidade alta ou média. Escreva em português.",
     for variavel in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] {
         comando.env_remove(variavel);
     }
-    let mut filho = comando.spawn().context("não abriu o claude")?;
-    let escopo = Escopo::novo(unidade, filho.id());
+    let (mut filho, escopo) = processos::abrir(comando).context("não abriu o claude")?;
     let mut saida = filho.stdout.take().unwrap();
     let leitura = std::thread::spawn(move || {
         let mut texto = String::new();
@@ -178,16 +177,19 @@ exit 2
     )
 }
 
-#[cfg(test)]
+// O hook roda no bash: no Windows ele vira o `--hook-verificacao` do próprio Vitral (Lote W2).
+#[cfg(all(test, unix))]
 mod testes {
-    use std::{io::Write, process::Command};
+    use std::io::Write;
+
+    use crate::processos::novo_comando;
 
     #[test]
     fn hook_de_verificacao_faz_o_trabalhador_continuar_so_uma_vez() {
         let valor = super::configuracao_hook_verificacao().unwrap();
         let comando = valor["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
         let rodar = |verificacao: &str, entrada: &str| {
-            let mut filho = Command::new("bash")
+            let mut filho = novo_comando("bash")
                 .args(["-c", &comando])
                 .env("VITRAL_VERIFICACAO", verificacao)
                 .stdin(std::process::Stdio::piped())

@@ -4,7 +4,7 @@
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 
 use crate::{
     modelo::Verificacao,
-    processos::{self, Escopo},
+    processos::{self, novo_comando},
 };
 
 /// Sem user.name/user.email no git, os commits do Vitral saem com uma identidade própria.
@@ -21,7 +21,7 @@ fn sem_identidade() -> bool {
     static SEM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SEM.get_or_init(|| {
         let valor = |chave: &str| {
-            Command::new("git")
+            novo_comando("git")
                 .args(["config", chave])
                 .output()
                 .map(|s| !String::from_utf8_lossy(&s.stdout).trim().is_empty())
@@ -32,7 +32,7 @@ fn sem_identidade() -> bool {
 }
 
 fn git(pasta: &Path, args: &[&str]) -> Result<String> {
-    let mut comando = Command::new("git");
+    let mut comando = novo_comando("git");
     // Sem isso, "ação.txt" sai como "a\303\247\303\243o.txt" (entre aspas) e nenhum caminho bate.
     comando.arg("-C").arg(pasta).args(["-c", "core.quotePath=false"]);
     if sem_identidade() {
@@ -1294,7 +1294,7 @@ fn grupo_do_branch(branch: &str) -> Option<String> {
 
 fn git_com_entrada(pasta: &Path, args: &[&str], entrada: &str) -> Result<()> {
     use std::io::Write as _;
-    let mut filho = Command::new("git")
+    let mut filho = novo_comando("git")
         .arg("-C")
         .arg(pasta)
         .args(args)
@@ -1330,23 +1330,21 @@ fn rodar_com_limite(pasta: &Path, comando: &str, limite: Duration) -> (bool, Str
     let abrir = || -> std::io::Result<_> {
         // Um pipe só para stdout e stderr: a saída fica intercalada como no terminal.
         let (leitor, escritor) = std::io::pipe()?;
-        let (mut processo, unidade) = processos::comando("bash", "verificacao");
+        let mut processo = processos::comando("bash", "verificacao");
         processo
             .args(["-lc", comando])
             .current_dir(pasta)
             .stdin(Stdio::null())
             .stdout(escritor.try_clone()?)
             .stderr(escritor);
-        let filho = processo.spawn()?;
-        // O Command guarda a ponta de escrita: sem soltá-la, o pipe nunca fecha.
-        drop(processo);
-        Ok((leitor, unidade, filho))
+        // O Command guarda a ponta de escrita: o `abrir` solta, senão o pipe nunca fecha.
+        let (filho, escopo) = processos::abrir(processo)?;
+        Ok((leitor, filho, escopo))
     };
-    let (mut leitor, unidade, mut filho) = match abrir() {
+    let (mut leitor, mut filho, escopo) = match abrir() {
         Ok(aberto) => aberto,
         Err(erro) => return (false, format!("não rodou: {erro}")),
     };
-    let escopo = Escopo::novo(unidade, filho.id());
     let guardado = Arc::new(Mutex::new(Vec::new()));
     let leitura = std::thread::spawn({
         let guardado = guardado.clone();
@@ -1447,7 +1445,7 @@ fn foto_solta(pasta: &Path) -> Result<String> {
     let indice = std::env::temp_dir().join(format!("vitral-indice-{}", crate::modelo::novo_id()));
     let resultado = (|| {
         let com_indice = |args: &[&str]| -> Result<String> {
-            let saida = Command::new("git")
+            let saida = novo_comando("git")
                 .arg("-C")
                 .arg(pasta)
                 .args(args)
@@ -1491,7 +1489,7 @@ pub fn voltar_para(pasta: &Path, foto_antiga: &str) -> Result<usize> {
                 Err(erro) => erro.kind() == std::io::ErrorKind::NotFound,
             }
         } else {
-            Command::new("git")
+            novo_comando("git")
                 .arg("-C")
                 .arg(pasta)
                 .args(["show", &format!("{foto_antiga}:{arquivo}")])

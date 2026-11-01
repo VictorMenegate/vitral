@@ -509,7 +509,7 @@ fn reduzido_no_sistema() -> bool {
     if std::env::var("VITRAL_SEM_ANIMACAO").is_ok_and(|v| v == "1") {
         return true;
     }
-    std::process::Command::new("gsettings")
+    crate::processos::novo_comando("gsettings")
         .args(["get", "org.gnome.desktop.interface", "enable-animations"])
         .output()
         .ok()

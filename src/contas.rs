@@ -9,7 +9,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Stdio},
     sync::mpsc,
     time::Duration,
 };
@@ -18,7 +18,7 @@ use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{claude::binario_claude, motor::Uso};
+use crate::{claude::binario_claude, motor::Uso, processos::novo_comando};
 
 /// Id reservado da conta principal (o login normal do Claude Code).
 pub const PRINCIPAL: &str = "principal";
@@ -83,7 +83,7 @@ pub fn salvar(contas: &[Conta]) -> Result<()> {
 
 /// Email e plano de uma conta, pelo `claude auth status`.
 pub fn status(pasta: Option<&Path>) -> Result<(String, String)> {
-    let mut comando = Command::new(binario_claude());
+    let mut comando = novo_comando(binario_claude());
     comando.args(["auth", "status", "--json"]);
     if let Some(pasta) = pasta {
         comando.env("CLAUDE_CONFIG_DIR", pasta);
@@ -156,7 +156,7 @@ impl Login {
     /// também tenta abrir o navegador).
     pub fn iniciar(id: &str) -> Result<(Self, String)> {
         let pasta = preparar_pasta(id)?;
-        let mut filho = Command::new(binario_claude())
+        let mut filho = novo_comando(binario_claude())
             .args(["auth", "login", "--claudeai"])
             .env("CLAUDE_CONFIG_DIR", &pasta)
             .stdin(Stdio::piped())

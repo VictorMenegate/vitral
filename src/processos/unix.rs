@@ -1,19 +1,21 @@
-//! Processos que o Vitral abre e precisa conseguir parar por inteiro (claude, verificação, revisor).
-//!
-//! Cada um roda num escopo próprio do systemd do usuário: parar o escopo derruba também o que ele
-//! abriu, até os shells que o claude separa com setsid (servidores, testes, cargo). Sem systemd,
-//! cai num grupo de processos próprio. Nos dois casos o processo morre se o Vitral morrer.
+//! Os processos no Linux: cada um roda num escopo próprio do systemd do usuário. Parar o escopo
+//! derruba também o que ele abriu, até os shells que o claude separa com setsid (servidores,
+//! testes, cargo). Sem systemd, cai num grupo de processos próprio. Nos dois casos o processo morre
+//! se o Vitral morrer.
 
 use std::{
     ffi::OsStr,
+    io,
     os::unix::process::CommandExt,
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, Stdio},
     sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
+
+use super::{Comando, novo_comando};
 
 /// Argumentos do systemd-run que funcionaram aqui; None quando o systemd do usuário não abre
 /// escopos (aí vale o grupo de processos).
@@ -63,7 +65,7 @@ fn unidade_propria() -> Option<String> {
 
 /// Testa os argumentos com um `true`, uma vez só: se o systemd-run falhar depois, o claude nem roda.
 fn abre_escopo(args: &[String]) -> bool {
-    let Ok(mut filho) = Command::new("systemd-run")
+    let Ok(mut filho) = novo_comando("systemd-run")
         .args(args)
         .arg(format!("--unit={}", nome_unidade("teste")))
         .args(["--", "true"])
@@ -99,22 +101,22 @@ pub fn usa_systemd() -> bool {
 }
 
 /// Comando que roda `programa` num escopo novo (ou num grupo próprio, sem systemd). Quem chama
-/// acrescenta argumentos, ambiente e pastas normalmente e, depois do spawn, cria o Escopo.
-pub fn comando(programa: impl AsRef<OsStr>, tipo: &str) -> (Command, Option<String>) {
+/// acrescenta argumentos, ambiente e pastas normalmente e abre com `abrir`.
+pub fn comando(programa: impl AsRef<OsStr>, tipo: &str) -> Comando {
     montar(programa, tipo, systemd())
 }
 
-fn montar(programa: impl AsRef<OsStr>, tipo: &str, systemd: Option<&Vec<String>>) -> (Command, Option<String>) {
+fn montar(programa: impl AsRef<OsStr>, tipo: &str, systemd: Option<&Vec<String>>) -> Comando {
     let unidade = systemd.map(|args| (args, nome_unidade(tipo)));
     let mut comando = match &unidade {
         Some((args, nome)) => {
             // No modo escopo, o systemd-run executa o programa no próprio processo: o pid, os
             // pipes, a pasta e o ambiente continuam os mesmos.
-            let mut c = Command::new("systemd-run");
+            let mut c = novo_comando("systemd-run");
             c.args(args.iter()).arg(format!("--unit={nome}")).arg("--").arg(programa);
             c
         }
-        None => Command::new(programa),
+        None => novo_comando(programa),
     };
     comando.process_group(0);
     unsafe {
@@ -123,7 +125,16 @@ fn montar(programa: impl AsRef<OsStr>, tipo: &str, systemd: Option<&Vec<String>>
             Ok(())
         });
     }
-    (comando, unidade.map(|(_, nome)| nome))
+    Comando { comando, unidade: unidade.map(|(_, nome)| nome) }
+}
+
+/// Abre o processo de `comando` e o escopo dele. O `Command` sai daqui junto: as pontas de pipe que
+/// ele guardava (a saída da verificação) fecham.
+pub fn abrir(comando: Comando) -> io::Result<(Child, Escopo)> {
+    let Comando { mut comando, unidade } = comando;
+    let filho = comando.spawn()?;
+    let escopo = Escopo::novo(unidade, filho.id());
+    Ok((filho, escopo))
 }
 
 /// Um processo aberto por `comando`, com o que ele abrir.
@@ -133,7 +144,7 @@ pub struct Escopo {
 }
 
 impl Escopo {
-    pub fn novo(unidade: Option<String>, pid: u32) -> Self {
+    fn novo(unidade: Option<String>, pid: u32) -> Self {
         Self {
             unidade,
             pid: pid as i32,
@@ -183,28 +194,6 @@ pub fn codigo_de_saida(pid: u32) -> Option<i32> {
     Some(if info.si_code == libc::CLD_EXITED { unsafe { info.si_status() } } else { -1 })
 }
 
-/// Espera o processo terminar até o prazo; estourado, para tudo e dá 2 s antes do SIGKILL. No fim
-/// derruba o que ficou rodando em segundo plano e colhe. None quando estourou o prazo.
-pub fn esperar(filho: &mut Child, escopo: &Escopo, prazo: Duration) -> Option<ExitStatus> {
-    let limite = Instant::now() + prazo;
-    let mut estourou = false;
-    while !escopo.terminou() {
-        if Instant::now() > limite {
-            estourou = true;
-            escopo.parar();
-            let folga = Instant::now() + Duration::from_secs(2);
-            while !escopo.terminou() && Instant::now() < folga {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    escopo.matar();
-    let status = filho.wait().ok();
-    if estourou { None } else { status }
-}
-
 /// Colhe o processo numa thread, sem travar quem chamou; se passar do prazo, SIGKILL no grupo.
 pub fn colher(pid: u32, prazo: Duration) {
     std::thread::spawn(move || {
@@ -226,7 +215,7 @@ pub fn colher(pid: u32, prazo: Duration) {
 
 /// `systemctl stop` sem esperar o fim da parada (o systemd segue sozinho) e sem travar quem chamou.
 fn parar_unidades(unidades: &[&str]) {
-    let filho = Command::new("systemctl")
+    let filho = novo_comando("systemctl")
         .args(["--user", "stop", "--no-block", "--"])
         .args(unidades)
         .stdin(Stdio::null())
@@ -244,7 +233,7 @@ pub fn encerrar_todos() {
     if SYSTEMD.get().is_none_or(Option::is_none) {
         return;
     }
-    let filho = Command::new("systemctl")
+    let filho = novo_comando("systemctl")
         .args(["--user", "stop", "--no-block"])
         .arg(format!("vitral-{}-*.scope", std::process::id()))
         .stdin(Stdio::null())
@@ -265,7 +254,7 @@ pub fn limpar_sobras() {
     if systemd().is_none() {
         return;
     }
-    let Ok(saida) = Command::new("systemctl")
+    let Ok(saida) = novo_comando("systemctl")
         .args(["--user", "list-units", "--plain", "--no-legend", "--type=scope", "vitral-*"])
         .stderr(Stdio::null())
         .output()
@@ -320,10 +309,11 @@ pub fn morre_logo(pid: u32) -> bool {
 #[cfg(test)]
 mod testes {
     use super::*;
+    use crate::processos::esperar;
 
     #[test]
     fn codigo_de_saida_sem_colher() {
-        let mut filho = Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
+        let mut filho = novo_comando("sh").args(["-c", "exit 3"]).spawn().unwrap();
         let pid = filho.id();
         let limite = Instant::now() + Duration::from_secs(5);
         let mut codigo = None;
@@ -361,13 +351,12 @@ mod testes {
     fn parar_derruba_o_que_o_processo_abriu_com(systemd: Option<&Vec<String>>) {
         let pasta = std::env::temp_dir().join(format!("vitral-proc-{}", crate::modelo::novo_id()));
         std::fs::create_dir_all(&pasta).unwrap();
-        let (mut comando, unidade) = montar("bash", "teste", systemd);
+        let mut comando = montar("bash", "teste", systemd);
         comando
             .args(["-c", "sleep 60 & echo $! > neto; wait"])
             .current_dir(&pasta)
             .stdout(Stdio::null());
-        let mut filho = comando.spawn().unwrap();
-        let escopo = Escopo::novo(unidade, filho.id());
+        let (mut filho, escopo) = abrir(comando).unwrap();
         let arquivo = pasta.join("neto");
         let limite = Instant::now() + Duration::from_secs(5);
         let neto = loop {

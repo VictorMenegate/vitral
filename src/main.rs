@@ -83,7 +83,7 @@ fn main() {
         atualizacao::saude::AoAbrir::Seguir(aviso) => aviso,
         atualizacao::saude::AoAbrir::Voltar(binario) => {
             use std::os::unix::process::CommandExt as _;
-            let erro = std::process::Command::new(&binario).args(&argumentos).exec();
+            let erro = processos::novo_comando(&binario).args(&argumentos).exec();
             eprintln!("vitral: não abri {}: {erro}", binario.display());
             None
         }

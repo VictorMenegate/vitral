@@ -135,7 +135,7 @@ impl Processo {
         mensagem: Mensagem,
         mut enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
-        let (mut comando, unidade) = processos::comando(binario_claude(), "claude");
+        let mut comando = processos::comando(binario_claude(), "claude");
         comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
         if let Some(pasta) = &opcoes.pasta_conta {
             comando.env("CLAUDE_CONFIG_DIR", pasta);
@@ -156,9 +156,8 @@ impl Processo {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut filho = comando.spawn().context("não abriu o claude")?;
+        let (mut filho, escopo) = processos::abrir(comando).context("não abriu o claude")?;
         let pid = filho.id();
-        let escopo = Escopo::novo(unidade, pid);
         let saida = filho.stdout.take().unwrap();
         let erros = filho.stderr.take().unwrap();
         let mut entrada = filho.stdin.take();
@@ -380,7 +379,7 @@ pub fn versao_instalada() -> Option<Versao> {
     {
         return Some(versao);
     }
-    let saida = std::process::Command::new(&binario)
+    let saida = processos::novo_comando(&binario)
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())

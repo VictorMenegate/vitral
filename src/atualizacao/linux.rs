@@ -23,6 +23,7 @@ use anyhow::{Context as _, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use super::pacote::{self, LIMITE_EXTRAIDO, PRAZO_CONFERENCIA, gravar_atomico};
+use crate::processos::novo_comando;
 
 /// Onde o Vitral gerenciado mora (`<dados>/vitral/app`) e onde ele se mostra ao sistema
 /// (`<dados>/applications`, `<dados>/icons` e o link em `<bin>`). Os testes passam uma pasta
@@ -462,10 +463,10 @@ pub fn integrar(raiz: &Raiz, caches: bool) -> io::Result<bool> {
         ligar_no_bin(bin, &raiz.binario_atual())?;
     }
     if caches && mudou_desktop {
-        melhor_esforco(Command::new("update-desktop-database").arg(raiz.aplicativos()));
+        melhor_esforco(novo_comando("update-desktop-database").arg(raiz.aplicativos()));
     }
     if caches && mudou_icone {
-        melhor_esforco(Command::new("gtk-update-icon-cache").arg("-q").arg("-t").arg(raiz.hicolor()));
+        melhor_esforco(novo_comando("gtk-update-icon-cache").arg("-q").arg("-t").arg(raiz.hicolor()));
     }
     Ok(mudou_desktop || mudou_icone)
 }

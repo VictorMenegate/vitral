@@ -5915,7 +5915,7 @@ impl Motor {
                     let _ = velho.kill();
                     let _ = velho.wait();
                 }
-                let filho = std::process::Command::new("notify-send")
+                let filho = crate::processos::novo_comando("notify-send")
                     .args(argumentos_do_aviso(&titulo, &corpo, aviso.id))
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())

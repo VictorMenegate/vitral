@@ -6,13 +6,15 @@ use std::{
     io::{self, Read as _, Write as _},
     os::unix::fs::PermissionsExt as _,
     path::{Component, Path},
-    process::{Command, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
+
+use crate::processos::novo_comando;
 
 /// O que um pacote pode ter depois de aberto (o binário tem dezenas de MB; o resto, texto).
 pub const LIMITE_EXTRAIDO: u64 = 512 * 1024 * 1024;
@@ -141,7 +143,7 @@ pub fn conferir_binario(binario: &Path, versao: &str, prazo: Duration) -> Result
 fn abrir_sem_tela(binario: &Path) -> Result<std::process::Child> {
     let mut tentativas = 0;
     loop {
-        let resultado = Command::new(binario)
+        let resultado = novo_comando(binario)
             .args(["--versao", "--json"])
             .env_remove("DISPLAY")
             .env_remove("WAYLAND_DISPLAY")

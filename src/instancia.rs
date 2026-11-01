@@ -144,7 +144,7 @@ pub fn entregar(socket: &Path, abertura: &Abertura, prazo: Duration) -> io::Resu
 /// fecham no exec (os arquivos abrem com `O_CLOEXEC`); só volta com o erro.
 pub fn reexecutar() -> io::Error {
     use std::os::unix::process::CommandExt as _;
-    std::process::Command::new("/proc/self/exe").args(std::env::args_os().skip(1)).exec()
+    crate::processos::novo_comando("/proc/self/exe").args(std::env::args_os().skip(1)).exec()
 }
 
 #[cfg(test)]
