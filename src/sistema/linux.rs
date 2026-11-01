@@ -1,18 +1,14 @@
-//! Abrir coisas fora do Vitral: VS Code, terminal (Ptyxis) e comandos do projeto.
+//! No Linux: VS Code, terminal (Ptyxis) e a Lixeira do GNOME.
 
 use std::{path::Path, process::Command};
 
 use crate::processos::novo_comando;
 
 fn soltar(comando: &mut Command) {
-    // Fora do grupo do Vitral: o programa continua aberto se o Vitral fechar. (No Windows ele já
-    // nasce fora: só os processos do `processos::abrir` entram num job.)
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        comando.process_group(0);
-    }
-    for variavel in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] {
+    // Fora do grupo do Vitral: o programa continua aberto se o Vitral fechar.
+    use std::os::unix::process::CommandExt;
+    comando.process_group(0);
+    for variavel in super::MARCAS_DO_CLAUDE {
         comando.env_remove(variavel);
     }
     if let Err(erro) = comando.spawn() {

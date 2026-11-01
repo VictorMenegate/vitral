@@ -1075,7 +1075,7 @@ impl Janela {
                     PopupMenuItem::new("Abrir a pasta de dados")
                         .icon(Lucide::FolderOpen)
                         .external()
-                        .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", gerenciador.display()))),
+                        .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&gerenciador, cx)),
                 )
                 .separator()
                 .item(rodape_menu_com_dica(atualizacao::rotulo(), atualizacao::origem()))

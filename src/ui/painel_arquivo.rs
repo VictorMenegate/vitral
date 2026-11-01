@@ -491,7 +491,7 @@ fn barra_do_arquivo(
                     PopupMenuItem::new("Mostrar na pasta")
                         .icon(Lucide::FolderOpen)
                         .external()
-                        .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", onde.display()))),
+                        .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&onde, cx)),
                 )
             })
     };

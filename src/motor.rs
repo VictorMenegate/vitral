@@ -726,6 +726,7 @@ impl Motor {
                 motor.avisar_no_mestre(BOAS_VINDAS);
             }
             motor.conferir_vitral_antigo();
+            motor.conferir_instalacao();
             if motor.chats_sujos.remove(crate::modelo::ID_MESTRE)
                 && let Some(c) = motor.chat(crate::modelo::ID_MESTRE)
             {

@@ -1337,6 +1337,21 @@ impl Motor {
         }
     }
 
+    /// Ao abrir: o que falta instalar (o git, o Claude Code, o Git Bash no Windows) e as pastas de
+    /// projeto no OneDrive. Cada aviso vai uma vez para o Mestre (o mesmo texto não se repete).
+    pub(super) fn conferir_instalacao(&mut self) {
+        let pastas: Vec<PathBuf> =
+            self.projetos.iter().flat_map(|p| p.pastas.iter().map(|l| l.caminho.clone())).collect();
+        for texto in crate::sistema::avisos_de_instalacao(&pastas) {
+            let ja = self
+                .chat(ID_MESTRE)
+                .is_some_and(|c| c.itens.iter().any(|i| matches!(i, Item::Aviso { texto: t, .. } if *t == texto)));
+            if !ja {
+                self.avisar_no_mestre(&texto);
+            }
+        }
+    }
+
     // ---------- cartões ----------
 
     fn texto_do_cartao(&self, c: &Cartao) -> String {

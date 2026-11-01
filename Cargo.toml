@@ -42,13 +42,15 @@ oo7 = { version = "0.6", default-features = false, features = ["async-std", "nat
 libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
-# windows-sys: Job Objects e threads (src/processos/windows.rs). Já vinha no Cargo.lock pelo GPUI.
+# windows-sys: Job Objects e threads (src/processos/windows.rs) e a Lixeira (src/sistema/windows.rs).
+# Já vinha no Cargo.lock pelo GPUI.
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
 ] }
 
 [profile.dev]

@@ -233,7 +233,7 @@ impl Janela {
         let texto = |t: String| div().corpo_ui().text_color(Cores::texto()).child(t).into_any_element();
         let abrir_pasta = |id: &'static str, pasta: std::path::PathBuf, window: &Window| {
             botao_fantasma(id, Some(Lucide::FolderOpen.into()), "Abrir pasta", TamanhoBotao::Barra, window, cx)
-                .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", pasta.display())))
+                .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&pasta, cx))
                 .into_any_element()
         };
         let sumiu = !origem.as_os_str().is_empty() && !origem.exists();

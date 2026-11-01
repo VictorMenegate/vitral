@@ -80,7 +80,7 @@ fn itens_fora_do_app(menu: PopupMenu, pasta: PathBuf, porta: Option<u64>, gerenc
             PopupMenuItem::new("Abrir no gerenciador de arquivos")
                 .icon(IconName::FolderOpen)
                 .external()
-                .on_click(move |_, _, cx| cx.open_url(&format!("file://{}", p3.display()))),
+                .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&p3, cx)),
         )
     })
 }
