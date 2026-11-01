@@ -1224,11 +1224,8 @@ impl Render for Janela {
             .text_color(tema.foreground)
             .child(zoom::captura_roda())
             .children(zoom::pilula(cx));
-        // O Noto Color Emoji (COLRv1) sai em branco; o monocromático aparece.
-        base.text_style().font_fallbacks = Some(FontFallbacks::from_fonts(vec![
-            "Noto Emoji".into(),
-            "Noto Sans Symbols 2".into(),
-        ]));
+        base.text_style().font_fallbacks =
+            Some(FontFallbacks::from_fonts(crate::tema::FONTES_DE_RESERVA.map(String::from).to_vec()));
         // No Wayland, o ponteiro que sai da janela não mexe na posição guardada, e o hover do
         // último lugar (dicas, botões de hover) ficava preso: uma camada por cima tira o hover.
         // Fica fora durante um arrasto, para não tapar a soltura de arquivos de fora. No Windows o

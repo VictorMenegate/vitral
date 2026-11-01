@@ -132,6 +132,8 @@ jobs:
           mkdir -p "dist/$nome"
           install -m 755 target/release/vitral "dist/$nome/vitral"
           cp LEIA-ME.md NOVIDADES.md LICENSE "dist/$nome/"
+          # A licença das fontes embutidas no binário (Inter e JetBrains Mono, OFL).
+          cp assets/fontes/OFL.txt "dist/$nome/OFL-fontes.txt"
           # O mesmo teste que o atualizador faz antes de trocar de versão: abre sem janela e responde.
           test "$("dist/$nome/vitral" --versao)" = "vitral $VERSAO"
           "dist/$nome/vitral" --versao --json | python3 -I -c '
@@ -160,6 +162,7 @@ jobs:
           $pasta = "dist\$nome"
           New-Item -ItemType Directory -Force $pasta | Out-Null
           Copy-Item target\release\vitral.exe, target\release\vitral-lancador.exe, LEIA-ME.md, NOVIDADES.md, LICENSE $pasta
+          Copy-Item assets\fontes\OFL.txt (Join-Path $pasta 'OFL-fontes.txt')
           $saida = (& "$pasta\vitral.exe" --versao | Out-String).Trim()
           if ($saida -ne "vitral $env:VERSAO") { throw "vitral.exe --versao respondeu '$saida'" }
           Compress-Archive -Path "$pasta\*" -DestinationPath "dist\$nome.zip"
