@@ -53,6 +53,11 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
 ] }
 
+# embed-resource: o ícone e a versão no vitral.exe (build.rs). Já vinha no Cargo.lock: o GPUI embute
+# o manifesto com ele. O `cfg` de uma dependência do build.rs é o do sistema que compila.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.12"
+
 [profile.dev]
 debug = "line-tables-only"
 
