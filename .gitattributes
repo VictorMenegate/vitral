@@ -1,0 +1,3 @@
+# Fim de linha LF em todo sistema. No Windows o Git trocaria para CRLF ao baixar, e os testes leem
+# byte a byte o que vai embutido no binário (o manifesto de teste assinado, as novidades).
+* text=auto eol=lf
