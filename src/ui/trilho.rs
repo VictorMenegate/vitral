@@ -266,7 +266,7 @@ type ConstruirMenu = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) 
 
 /// O logo redondo: o medalhão ocupa o botão inteiro (sem disco atrás); no hover e com o menu
 /// aberto ganha um aro. No modo recolhido ele leva o selo do
-/// sino, que some junto com o trilho.
+/// sino, que some junto com o trilho. Com uma versão nova pronta, um ponto azul de 8 embaixo.
 #[derive(IntoElement)]
 struct BotaoLogo {
     lado: f32,
@@ -275,6 +275,8 @@ struct BotaoLogo {
     selo: Option<Selo>,
     /// No modo recolhido, o pulso do sino (a geração e a cor), que vai no logo com o selo.
     pulso: Option<(u64, Hsla)>,
+    /// A versão pronta esperando o reinício.
+    pronta: Option<SharedString>,
 }
 
 impl Selectable for BotaoLogo {
@@ -310,14 +312,34 @@ impl RenderOnce for BotaoLogo {
             .border_2()
             .border_color(if self.aberto { Cores::borda_forte() } else { transparent_black() })
             .when(!self.aberto, |s| {
-                s.hover(|s| s.border_color(Cores::borda())).tooltip(|window, cx| {
-                    Tooltip::new("Menu do Vitral").action(&AbrirMenuVitral, None).build(window, cx)
+                let dica = match &self.pronta {
+                    Some(versao) => format!("Menu do Vitral\nVersão {versao} pronta"),
+                    None => "Menu do Vitral".to_string(),
+                };
+                s.hover(|s| s.border_color(Cores::borda())).tooltip(move |window, cx| {
+                    Tooltip::new(dica.clone()).action(&AbrirMenuVitral, None).build(window, cx)
                 })
             })
             .child(img(LOGO.clone()).flex_none().size(r(self.medalhao)))
             .children(pulso)
             .when_some(self.selo, |s, selo| {
                 s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo))
+            })
+            .when(self.pronta.is_some(), |s| {
+                // O aro opaco separa o ponto das cores do medalhão.
+                s.child(
+                    div()
+                        .absolute()
+                        .bottom(r(-2.))
+                        .right(r(-2.))
+                        .size(r(12.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(Cores::dialogo())
+                        .child(div().size(r(8.)).rounded_full().bg(Cores::destaque())),
+                )
             })
     }
 }
@@ -744,6 +766,7 @@ impl Janela {
                 aberto: false,
                 selo: compacto.then(|| selo_do_sino(&precisa)).flatten(),
                 pulso: compacto.then(|| (self.geracao_do_sino(&precisa), cor_do_pulso(&precisa))),
+                pronta: self.atualizacao_pronta.clone().map(SharedString::from),
             })
             .content(move |_, window, cx| {
                 // Feito uma vez por abertura (o conteúdo é pedido a cada quadro) e refeito
@@ -774,9 +797,11 @@ impl Janela {
     }
 
     /// Os itens do menu do Vitral, em três grupos: criar, ajustes e a pasta, e a versão no rodapé.
-    /// No modo recolhido, antes deles, o que o trilho mostrava: a lista, o sino e os projetos.
+    /// No modo recolhido, antes deles, o que o trilho mostrava: a lista, o sino e os projetos. Com
+    /// uma versão nova pronta, "Reiniciar para a 0.3.0" logo acima das Configurações.
     fn itens_menu(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> ConstruirMenu {
         let janela = cx.entity().downgrade();
+        let pronta = self.atualizacao_pronta.clone();
         let raiz = motor.raiz().to_path_buf();
         let sem_codex = motor.codex_lido && motor.codex.is_none();
         let todos = motor.projetos();
@@ -844,6 +869,14 @@ impl Janela {
                             .icon(Lucide::Download)
                             .on_click(|_, _, _| uso_plano::instalar_codex()),
                     )
+                })
+                .when_some(pronta.clone(), |menu, versao| {
+                    let janela = janela.clone();
+                    menu.item(PopupMenuItem::new(format!("Reiniciar para a {versao}")).icon(Lucide::RotateCw).on_click(
+                        move |_, window, cx| {
+                            let _ = janela.update(cx, |this, cx| this.reiniciar(window, cx));
+                        },
+                    ))
                 })
                 .item(
                     item("Configurações", Lucide::Settings, &janela, |this, window, cx| {

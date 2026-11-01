@@ -1,7 +1,7 @@
 //! Configurações da pasta de trabalho (valem para as conversas que não escolheram outra coisa),
 //! em grupos de linhas como as preferências do GNOME: o texto à esquerda e o controle à direita
-//! (embaixo do texto no diálogo estreito). Grava na hora. As Animações, no fim, valem para o app
-//! todo (ficam em `interface.json`, como o zoom).
+//! (embaixo do texto no diálogo estreito). Grava na hora. As Animações e as Atualizações, no fim,
+//! valem para o app todo (ficam em `interface.json` e em `atualizacoes.json`).
 
 use std::rc::Rc;
 
@@ -19,11 +19,13 @@ use super::{
         Chip, Contador, ControleSegmentado, GatilhoChip, GrupoDeOpcoes, LinhaDeOpcao, Marca, Simbolo, TamanhoBotao,
         TamanhoChip, botao_perigo, icone_do_modo, item_descrito, largura,
     },
+    atualizacao::{Vista, grupo as grupo_de_atualizacoes},
     dialogos::estreito,
     limpeza::{Pergunta, confirmar_limpeza},
     movimento::{self, Animacoes},
 };
 use crate::{
+    atualizacao::{self, Acompanhando, Atualizacoes},
     git,
     modelo::Config,
     motor::Motor,
@@ -41,6 +43,9 @@ pub struct Configuracoes {
     copias: usize,
     _medicao: Task<()>,
     _observa: Subscription,
+    _atualizacoes: Subscription,
+    /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
+    _acompanhando: Option<Acompanhando>,
 }
 
 impl Configuracoes {
@@ -51,7 +56,17 @@ impl Configuracoes {
             }
             cx.notify()
         });
-        let mut este = Self { motor, espaco: None, copias: 0, _medicao: Task::ready(()), _observa };
+        let _atualizacoes = cx.observe_global::<Atualizacoes>(|_, cx| cx.notify());
+        let _acompanhando = atualizacao::acompanhar_progresso(cx);
+        let mut este = Self {
+            motor,
+            espaco: None,
+            copias: 0,
+            _medicao: Task::ready(()),
+            _observa,
+            _atualizacoes,
+            _acompanhando,
+        };
         este.medir(cx);
         este
     }
@@ -471,6 +486,9 @@ impl Render for Configuracoes {
             .into_any_element(),
         ));
 
+        let trabalhando = self.motor.read(cx).trabalhando();
+        let atualizacoes = Vista::da_global(cx).map(|vista| grupo_de_atualizacoes(&vista, trabalhando, estreito, window, cx));
+
         div()
             .flex()
             .flex_col()
@@ -480,6 +498,7 @@ impl Render for Configuracoes {
             .child(revisao)
             .child(copias)
             .child(interface)
+            .children(atualizacoes)
     }
 }
 

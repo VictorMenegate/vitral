@@ -2,6 +2,7 @@
 //! equipe (tarefas do coordenador) à direita, em cartões de vidro como na Stained Glass UI.
 
 pub mod componentes;
+mod atualizacao;
 mod boas_vindas;
 mod caixa_entrada;
 mod composer;
@@ -436,6 +437,10 @@ pub struct Janela {
     dica_busca: &'static str,
     /// Popover da caixa aberto (um por vez em toda a janela): painel e qual.
     pop_caixa: Option<(u64, composer::PopCaixa)>,
+    /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
+    /// de atualização mostrado ("pronta 0.3.0"): um por versão.
+    atualizacao_pronta: Option<String>,
+    atualizacao_avisada: Option<String>,
 }
 
 /// Redesenhos da janela desde a última conta (o `VITRAL_QUADROS`).
@@ -496,6 +501,12 @@ impl Janela {
             }
             async {}
         }));
+        // A atualização só redesenha a janela quando a versão pronta muda.
+        assinaturas.push(cx.observe_global_in::<crate::atualizacao::Atualizacoes>(window, |this, window, cx| {
+            this.atualizacao_mudou(window, cx)
+        }));
+        // Os avisos precisam da raiz da janela, que só existe depois do primeiro quadro.
+        cx.on_next_frame(window, |this, window, cx| this.atualizacao_ao_abrir(window, cx));
         Self::vigiar_fechamento(window, cx);
 
         // Redesenha a cada segundo enquanto houver algo rodando ou uma nova tentativa marcada
@@ -576,6 +587,8 @@ impl Janela {
             direita_estreita: false,
             dica_busca: "Buscar",
             pop_caixa: None,
+            atualizacao_pronta: None,
+            atualizacao_avisada: None,
         };
         window.focus(&janela.foco, cx);
         if let Some(raiz) = raiz {

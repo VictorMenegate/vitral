@@ -86,6 +86,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSAO: ${{ needs.versao.outputs.versao }}
+      TAG: ${{ needs.versao.outputs.tag }}
       VITRAL_COMMIT: ${{ needs.versao.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
@@ -144,7 +145,11 @@ jobs:
           tar -C dist --sort=name --owner=0 --group=0 --numeric-owner \
               --mtime="@$(git log -1 --format=%ct)" -czf "dist/$nome.tar.gz" "$nome"
           rm -rf "dist/$nome"
-          install -m 755 pacote/linux/instalar.sh dist/instalar.sh
+          # O instalar.sh deste release instala este release (também num pré-lançamento, que o
+          # "latest" não mostra).
+          sed 's|^TAG_DO_RELEASE=""$|TAG_DO_RELEASE="'"$TAG"'"|' pacote/linux/instalar.sh > dist/instalar.sh
+          chmod 755 dist/instalar.sh
+          [ -z "$TAG" ] || grep -qxF "TAG_DO_RELEASE=\"$TAG\"" dist/instalar.sh
 
       - name: Empacotar (Windows)
         if: runner.os == 'Windows'

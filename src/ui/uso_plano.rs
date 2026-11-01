@@ -854,7 +854,7 @@ fn atualizado(medido_em: Option<i64>, agora: i64) -> String {
 }
 
 /// Dia (contado no fuso local desde 1970), dia da semana, hora e minuto de um instante Unix.
-fn local(segundos: i64) -> (i64, usize, i32, i32) {
+pub(super) fn local(segundos: i64) -> (i64, usize, i32, i32) {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let instante = segundos as libc::time_t;
     unsafe {
@@ -865,7 +865,7 @@ fn local(segundos: i64) -> (i64, usize, i32, i32) {
 }
 
 /// "às 12:59", "amanhã às 12:59" ou "dom. às 03:59", visto do dia `hoje`.
-fn quando((dia, semana, hora, minuto): (i64, usize, i32, i32), hoje: i64) -> String {
+pub(super) fn quando((dia, semana, hora, minuto): (i64, usize, i32, i32), hoje: i64) -> String {
     let horario = format!("às {hora:02}:{minuto:02}");
     match dia - hoje {
         0 => horario,

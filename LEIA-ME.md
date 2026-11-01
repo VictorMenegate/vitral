@@ -95,6 +95,19 @@ interface do Zed) e os componentes do GPUI Kit.
 
 ## Quando algo para no meio
 
+- **Versão nova.** Instalado pelo release, o Vitral procura versão nova no GitHub, confere a
+  assinatura, baixa e instala sozinho, e avisa uma vez: "Versão 0.3.0 pronta", com **Reiniciar** e
+  o link das **Novidades** (o Markdown da versão e "Ver no GitHub"). Nunca reinicia sozinho; fechar
+  o aviso não perde nada (fica o ponto azul no logo e o item no menu). O Reiniciar faz a mesma
+  pergunta do fechar ("2 conversas estão trabalhando", **Reiniciar mesmo assim** / **Continuar
+  aberto**, o Enter no Continuar), e o que foi cortado fica parado, com Retomar. Depois de
+  reiniciar, uma vez: "Atualizado para a 0.3.0 · Ver novidades". No **Só avisar**, o aviso é "Há a
+  0.3.0 no GitHub", com **Instalar**.
+- **Versão nova que não abre.** Se ela cai duas vezes ao abrir na mesma sessão do PC, a terceira
+  tentativa abre a anterior e avisa: "A 0.3.0 não abriu duas vezes; voltei para a 0.2.0" (fica até
+  fechar). A 0.3.0 não volta a ser instalada sozinha. Uma queda de energia entre as tentativas não
+  conta, e a volta só vai para uma versão que leia as conversas do disco.
+
 - **Tarefa parada.** Se o Vitral fecha, o PC cai ou você aperta Parar, a tarefa aparece como
   **parada** em âmbar, com ícone de pausa, sobe para "Esperando você" (menos quando foi você que
   parou) e ganha **Retomar** no cartão da lista, na Equipe e no fim da conversa. Um coordenador
@@ -458,7 +471,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   inteiro na dica; depois três grupos, Nova conversa, Novo projeto… e Rotinas; Contas do Claude,
   Instalar o Codex… quando ele falta, e Configurações; Trocar a pasta… e Abrir a pasta ↗; com os
   atalhos de cada um; no rodapé, a versão em tênue, "Vitral 0.2.0-rc.1", com o commit na dica
-  ("Compilado no PC" no que não veio do GitHub); com projeto arquivado, entre o primeiro e o segundo grupo, **Projetos
+  ("Compilado no PC" no que não veio do GitHub); com uma versão nova pronta, um ponto azul de 8 no
+  canto do logo, a versão na dica e **Reiniciar para a 0.3.0** logo acima das Configurações; com projeto arquivado, entre o primeiro e o segundo grupo, **Projetos
   arquivados**, cada um com o quadrado apagado e **Desarquivar**), um atalho por projeto (filtra tudo por ele; o ativo ganha um aro na cor do
   projeto; o ponteiro em cima acende o quadrado suave, e o aro entra na mesma transição; um ponto
   mostra erro em vermelho, pedido ou parada em âmbar, resposta nova em azul e, vazado, algo
@@ -668,10 +682,19 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   chips com **Dias úteis** e **Todo dia**, e o projeto num menu. O que falta aparece no campo, e o
   **Criar rotina** diz na dica o que falta; a seta volta à lista. Sem rotinas, **Usar exemplo**
   preenche um.
-- **Configurações** (Ctrl+,) em cinco grupos: Conversas, Trabalhadores, Revisão, Cópias das
-  tarefas e Interface, gravando na hora. Em Interface, **Animações** (Seguir o GNOME ou
+- **Configurações** (Ctrl+,) em seis grupos: Conversas, Trabalhadores, Revisão, Cópias das
+  tarefas, Interface e Atualizações, gravando na hora. Em Interface, **Animações** (Seguir o GNOME ou
   Desligadas) vale para o app todo, em todas as pastas, e muda na hora; seguindo um GNOME sem
-  animações, a linha diz isso. Os menus mostram o ícone e a cor do modo, ou a marca do Claude e uma
+  animações, a linha diz isso. **Atualizações** também vale para o app todo: o modo
+  (**Automáticas**, o padrão, **Só avisar** ou **Desligadas**), a **Versão** ("0.2.0 · procurada
+  hoje às 14:02", "Procurando…", "Baixando 0.3.0 · 12 de 21 MB", "é a mais nova", "A 0.3.0 está
+  pronta; vale quando reiniciar") com o botão do momento (**Procurar agora**, **Instalar**,
+  **Novidades** e **Reiniciar**), o erro numa linha (âmbar sem conexão, com a hora da próxima
+  tentativa; vermelho quando a assinatura ou o arquivo não conferem) e, na versão instalada,
+  **Voltar para a 0.2.0…**, que pergunta antes (o Enter só fecha), recusa a versão de agora e
+  reinicia na anterior; se a anterior não lê o formato das conversas, a linha fica apagada e diz
+  isso. No compilado no PC: "Compilado no PC · sem atualização automática", com **Instalar a 0.3.0
+  como app**. Os menus mostram o ícone e a cor do modo, ou a marca do Claude e uma
   linha sobre cada modelo; os prazos são escolhas lado a lado; o (i) explica o resto. Em
   Conversas, **Arquivar conversas paradas** (nunca, 3, 7 ou 30 dias) arquiva só coordenadores já
   lidos e não fixados, sem nada rodando, pedindo ou parado e com as tarefas encerradas. Com o
@@ -706,14 +729,18 @@ para o Mestre.
 
 ## Compilar e rodar
 
+Para usar no dia a dia, instale pelo release, sem compilar: `curl -fsSL
+https://github.com/VictorMenegate/vitral/releases/latest/download/instalar.sh | sh` (depois ele se
+atualiza sozinho; ver **Versões e releases**).
+
 ```sh
-./instalar.sh                           # compila e põe no menu de aplicativos (com o ícone)
 ./target/release/vitral ~/Projetos      # abre nessa pasta
 ./target/release/vitral ~/Projetos --nova meu-projeto "o que fazer"
-cargo test                              # testes de unidade (git, motor, revisor, processos, interface)
+cargo test                              # testes (git, motor, revisor, processos, atualização, interface, --instalar)
 ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral ~/pasta   # teste visual isolado
 ./target/debug/vitral --vitrine         # todos os componentes da linguagem visual, sem pasta e sem motor
 ./target/debug/vitral --versao [--json] # a versão (e canal, commit, formato dos dados), sem janela
+ferramentas/instalar-dev.sh             # só desenvolvimento: compila e instala no layout do app como <próxima>-dev.<commit>
 ```
 
 O `rust-toolchain.toml` fixa o Rust em 1.99.1, o mesmo do GitHub Actions. Com o rustup, a primeira
@@ -724,9 +751,9 @@ Sem a pasta, o Vitral abre nas boas-vindas ("Boas-vindas ao Vitral"): **Escolher
 carregando enquanto o seletor do sistema está aberto, e até 5 recentes, com o caminho cortado no
 meio (inteiro na dica).
 
-`./instalar.sh` põe o logo completo no tamanho escalável e de 64 a 256 px, e o pequeno
+O `vitral --instalar` põe o logo completo no tamanho escalável e de 64 a 256 px, e o pequeno
 (`vitral-pequeno.svg`, feito para tamanhos pequenos) em 16, 24 e 32 px e no PNG de 48, o que as
-notificações e o alt+tab usam.
+notificações e o alt+tab usam. Os ícones e o `.desktop` vão dentro do binário (`include_bytes!`).
 
 Bancada: `FUNDO=branco` (ou `FUNDO=<imagem>`) troca o papel de parede e `ZOOM=1.5` abre com esse
 zoom. `python3 -I ferramentas/demo_vitral.py <pasta> [--16]` cria a pasta de demonstração (4
@@ -737,7 +764,19 @@ linguagem visual ficam em `ferramentas/roteiros/` (`4c-antes.txt` tira todas as 
 `4c-zoom-larguras.txt` vai de 100% a 150% com a lista arrastada, os popovers do Claude e do sino, a
 janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista); no meio de um
 roteiro, `tecla Control_L+equal` muda o zoom, e `rolar X Y N` gira a roda N entalhes com o ponteiro
-em X, Y (N negativo sobe; serve para ver o fim de um diálogo que rola).
+em X, Y (N negativo sobe; serve para ver o fim de um diálogo que rola). A bancada usa o socket do
+Wayland que o Shell anuncia no log (um lock velho de uma rodada que caiu o leva ao `wayland-1`) e
+põe o `XDG_BIN_HOME` na pasta dela. A atualização fica desligada; com `VITRAL_SEM_ATUALIZACAO=0`,
+`VITRAL_ATUALIZACAO_BASE` e `VITRAL_ATUALIZACAO_CHAVE`, o build de desenvolvimento procura num
+release falso local e instala na pasta de dados da bancada: `ferramentas/release_falso.py gerar`
+faz a 0.9.0 de mentira (20 MB, assinada com uma chave só da bancada pelo `openssl`) e `servir` a
+entrega com o manifesto respondendo 503, adulterado e certo, nessa ordem, e o pacote a 1 MB/s; o
+roteiro `ferramentas/roteiros/dist-atualizacao.txt` (com o comando no topo) fotografa a vitrine e o
+caminho inteiro no app, do "ainda não procurou" ao ponto no logo. A vitrine abre na seção
+**Atualizações**: o grupo das Configurações em cada estado (parado com a anterior, procurando, em
+dia, baixando, pronta, só avisar, sem conexão, assinatura recusada, compilado no PC e formato novo
+na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reiniciar com 2 conversas
+(o "mesmo assim" deixa um aviso, para conferir que o Enter não o aciona).
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. `VITRAL_SEM_ANIMACAO=1` abre como se as
@@ -783,13 +822,81 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
   formato com pré-hash; se a principal vazar ou se perder, a reserva assina uma versão que troca as
   chaves. Os testes usam uma chave de teste (`src/atualizacao/teste/`), nunca a principal.
 - **De onde veio**: `VITRAL_CANAL` e `VITRAL_COMMIT` são lidos na compilação (`option_env!`); sem
-  eles o binário se diz "pc" (compilado no PC), e só o canal estável vai se atualizar sozinho.
+  eles o binário se diz "pc" (compilado no PC), e só o canal estável se atualiza sozinho.
   `FORMATO_DADOS` (em `modelo.rs`) é o formato de `.vitral/`, para a volta de versão não abrir dados
   que não entende.
 - **Instalar de uma vez**: `pacote/linux/instalar.sh` vai como arquivo do Release (`curl -fsSL
-  …/releases/latest/download/instalar.sh | sh`): confere o `SHA256SUMS` (e a assinatura, com o
-  minisign instalado), baixa o pacote e chama `vitral --instalar`, que ainda só avisa que não chegou
-  (lote 3 da especificação de distribuição); o `instalar.sh` da raiz continua sendo o do PC.
+  …/releases/latest/download/instalar.sh | sh`), com o tag do release gravado nele pelo
+  `release.yml`: o de um pré-lançamento, que o "latest" não mostra, instala o pré-lançamento
+  (`VITRAL_TAG=v…` escolhe à mão). Confere o `SHA256SUMS` (e a assinatura, com o minisign
+  instalado), baixa o pacote para `~/.cache` (fora do `/tmp`), confere que o binário abre e chama
+  `vitral --instalar`.
+- **Instalação** (`src/atualizacao/linux.rs`): cada versão numa pasta,
+  `~/.local/share/vitral/app/<versão>/`, e dois links: `atual`, o que o menu abre (o
+  `vitral.desktop` tem `Exec=…/app/atual/vitral %f`), e `anterior`, a que estava. O `vitral
+  --instalar` copia o próprio binário (e o LEIA-ME, o NOVIDADES e a LICENSE que estiverem ao lado)
+  e escreve o mesmo `vitral.desktop` de antes (o favorito do dash continua), os ícones e o link
+  `~/.local/bin/vitral`, se essa pasta existir (um `vitral` que não é link fica onde está); só grava
+  o que mudou. Rodado de dentro da pasta do app, só confere o menu. A ordem aguenta a queda de
+  energia em qualquer ponto: abre numa `.novo-*`, testa o binário novo (`--versao --json`, 10 s),
+  põe no lugar com um rename (a mesma versão de novo troca de lugar com a velha num
+  `RENAME_EXCHANGE`), aponta `anterior` e depois `atual` (link temporário e rename), grava o
+  `estado.json` (a versão a confirmar, as recusadas e o formato dos dados de cada versão) e tira as
+  outras versões por `.lixo-*`. O `atual` sempre aponta para uma versão completa, e a abertura
+  seguinte apaga o que sobrou pela metade. A `app/.trava` impede duas instalações juntas. Na
+  versão instalada, o reinício do GPUI vai para `app/atual/vitral` (sem isso abriria a versão
+  velha, porque o `/proc/self/exe` resolve o link), e cada abertura da versão atual confere o menu.
+- **Atualização automática** (`src/atualizacao/`): a thread `vitral-atualizacao` (`nice 10`)
+  procura 60 s depois de abrir e a cada 6 h (mais uma folga de até 10 min), nunca antes de 1 h da
+  última procura que deu certo, e 1 h depois de um erro de rede. Lê o `vitral-versao.json` do
+  `releases/latest` (sem API e sem token; com o ETag, um 304 basta), confere a assinatura antes de
+  ler o JSON (o comentário confiável tem de ser "vitral <versão> vitral-versao.json"), valida o
+  manifesto e só fica com versão maior e sem sufixo. No modo **Automáticas**, o padrão, o release
+  instalado na pasta do app baixa o pacote para `app/.baixando` (até 200 MB, com 3 vezes o tamanho
+  livre no disco, tamanho e SHA-256 conferidos no caminho), instala como acima e fica **pronto**:
+  vale quando reiniciar, e o Vitral nunca reinicia sozinho. **Só avisar**, o compilado no PC (canal
+  "pc", também o do `instalar-dev.sh`) e o pacote aberto fora da pasta do app só avisam; o
+  "Instalar" (no compilado no PC, o "Instalar como app") baixa e instala do mesmo jeito. Três falhas
+  seguidas da mesma versão (arquivo diferente, binário que não abre) desistem até sair outra; sem
+  release publicado (404), está em dia. O `~/.config/vitral/atualizacoes.json` guarda o modo
+  (`automaticas`, `so_avisar` ou `desligadas`), a última procura, o ETag e as falhas.
+  `VITRAL_SEM_ATUALIZACAO=1` desliga a thread (a bancada usa). Fora do canal estável (compilado no
+  PC ou pré-lançamento), `VITRAL_ATUALIZACAO_BASE=https://github.com/VictorMenegate/vitral/releases/download/v0.3.0-rc.2`
+  procura nesse release e aceita pré-lançamento; no build de desenvolvimento (só com
+  `debug_assertions`), `VITRAL_ATUALIZACAO_CHAVE=<arquivo .pub>` junta uma chave às embutidas, para
+  a bancada servir um release falso assinado com uma chave dela. A interface (`src/ui/atualizacao.rs`)
+  lê a `Global` `Atualizacoes` (estado, modo, permissão, última e próxima procura, o aviso da
+  abertura e a volta possível) e redesenha com `observe_global`: a Janela só quando a versão pronta
+  muda (o ponto e o item do menu), as Configurações a cada mudança, e o progresso do download vai
+  no máximo 2 vezes por segundo e só enquanto as Configurações estão abertas (o
+  `acompanhar_progresso` devolve uma guarda que elas seguram). As frases saem de funções puras do
+  estado (`linha_da_versao`, `texto_do_erro`, `megas`, `botoes`, `texto_do_aviso`), com teste; os
+  avisos de versão usam a mesma chave e se substituem, e a Janela guarda qual já mostrou (um por
+  versão). As novidades vêm do `notas` do manifesto, do `NOVIDADES.md` que veio com a versão na
+  pasta do app ou, para a versão que roda, do próprio binário (`include_str!`). O Reiniciar
+  (`fechar::reiniciar_pela_janela`) passa pelo `pode_parar_tudo` com `Parar::Reiniciar`; o texto da
+  pergunta é `confirmacao_de_parar`, com teste do plural.
+- **Saúde e volta** (`src/atualizacao/saude.rs`): no começo do `main`, antes do GPUI (e depois do
+  `--versao` e do `--instalar`), `saude::ao_abrir` olha o `estado.json` da versão gerenciada que
+  roda. A instalação grava ali `confirmar = { versao, aberturas: [] }`; cada abertura da versão do
+  link `atual` sem confirmar entra com a sessão do PC (`/proc/sys/kernel/random/boot_id`) e a hora,
+  e as de outra sessão saem (uma queda de energia não conta). Com duas aberturas sem confirmar na
+  mesma sessão, a terceira põe a versão em `recusadas` (a procura não a oferece de novo), grava
+  `voltou` e só então aponta `atual` para a anterior (que precisa responder ao `--versao --json` e
+  ler o formato do disco); o `main` faz `exec` dela com os mesmos argumentos, e ela conta a volta
+  uma vez. Uma volta cortada entre gravar o estado e trocar o link termina na abertura seguinte. A
+  versão fica confirmada 10 s depois do primeiro quadro (`atualizacao::primeiro_quadro`) ou ao
+  fechar normalmente (`on_app_quit`). A primeira abertura depois de uma atualização conta
+  "Atualizado". Tudo com a trava das instalações (outro Vitral instalando: a abertura não conta) e
+  a gravação atômica (temporário + fsync + rename). A volta à mão (`saude::voltar`) faz o mesmo,
+  com `automatica: false`, e quem chama reinicia. A regra do formato: `modelo::formato_no_disco`
+  lê `.vitral/formato` (sem ele, 1; a migração que mudar o formato guarda antes a cópia em
+  `.vitral/copias/formato-<n>/` e grava o número novo), e a volta só vai para uma versão cujo
+  `formato_dados` (do `estado.json`) seja maior ou igual ao maior das pastas recentes.
+- **Desenvolvimento**: o `ferramentas/instalar-dev.sh` compila este checkout em release (pelo
+  `compilar.sh`) e instala no mesmo layout como `<próxima>-dev.<commit>` (`VITRAL_VERSAO` na
+  compilação; `.modificado` no fim com mudança sem commit). Pelo semver isso é menor que a
+  próxima, e o release dela o substitui. Para o dono, instalar é só pelos releases.
 
 ## Arquivos
 
@@ -805,13 +912,15 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/git.rs` | Cópia isolada, diff, fotos/volta, junção (uma por vez por projeto), verificação, limpeza das cópias |
 | `src/prompts.rs` | Instruções do coordenador e dos trabalhadores |
 | `src/modelo.rs` | Tipos e gravação em `.vitral/` (e o `FORMATO_DADOS`) |
-| `src/atualizacao/` | Versão embutida, `--versao [--json]` sem janela e a assinatura das versões (`assinatura.rs`, com as fixtures de teste em `teste/`); a atualização automática entra aqui |
+| `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | Trilho, lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, Equipe, revisão, gavetas e diálogos; `lateral.rs` (a lista), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a Equipe) e `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e aprovar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `boas_vindas.rs`, `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e mandar para a lixeira: a pergunta, os avisos e o que a janela esquece), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
+| `src/ui/` | Trilho, lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, Equipe, revisão, gavetas e diálogos; `lateral.rs` (a lista), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a Equipe) e `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e aprovar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `boas_vindas.rs`, `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e mandar para a lixeira: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar, trocar de pasta ou reiniciar), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual de cada tarefa) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`) e o `linux/instalar.sh` |
+| `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml` e `dependabot.yml` |
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
+| `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
 | `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual e os ícones de projeto (`icones/`, Lucide, ISC) |
 
 Ícones do Lucide que não estão entre os do GPUI Kit precisam entrar em `icon_assets!` em

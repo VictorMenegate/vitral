@@ -2,7 +2,6 @@
 //! O `vitral-versao.json` e o `SHA256SUMS` de cada release saem assinados pela principal no GitHub
 //! Actions. A reserva fica fora do GitHub e só assina se a principal se perder ou vazar, numa
 //! versão que troca as chaves daqui. As públicas das duas ficam em `pacote/`.
-#![cfg_attr(not(test), expect(dead_code, reason = "quem confere é o atualizador (lote 4)"))]
 
 use anyhow::{Context as _, Result, bail};
 use minisign_verify::{PublicKey, Signature};
@@ -18,6 +17,15 @@ pub const CHAVES: [&str; 2] = [
 /// assinatura legada é recusada.
 pub fn conferir(dados: &[u8], minisig: &str) -> Result<String> {
     conferir_com(&CHAVES, dados, minisig)
+}
+
+/// Só no build de desenvolvimento (a bancada, com um release falso local): aceita também a chave
+/// pública do arquivo em `VITRAL_ATUALIZACAO_CHAVE`. O que sai do release não tem isto.
+#[cfg(debug_assertions)]
+pub fn conferir_com_a_de_teste(dados: &[u8], minisig: &str) -> Result<String> {
+    let caminho = std::env::var_os("VITRAL_ATUALIZACAO_CHAVE").context("sem VITRAL_ATUALIZACAO_CHAVE")?;
+    let teste = std::fs::read_to_string(caminho).context("a chave de teste não se lê")?;
+    conferir_com(&[CHAVES[0], CHAVES[1], &teste], dados, minisig)
 }
 
 fn conferir_com(chaves: &[&str], dados: &[u8], minisig: &str) -> Result<String> {

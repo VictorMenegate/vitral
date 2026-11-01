@@ -1,0 +1,102 @@
+# Atualização na bancada (lote 5 da distribuição): a seção Atualizações da vitrine e o caminho de
+# verdade no app, contra um release falso local. Uso (de dentro do worktree, com o build de
+# desenvolvimento compilado; nada sai da pasta da bancada):
+#   python3 -I ferramentas/release_falso.py gerar ~/.cache/vitral-trabalho/release-falso
+#   python3 -I ferramentas/release_falso.py servir ~/.cache/vitral-trabalho/release-falso 18731 &
+#   python3 -I ferramentas/demo_vitral.py ~/.cache/vitral-trabalho/demo
+#   VITRAL_SEM_ATUALIZACAO=0 VITRAL_QUADROS=1 VITRAL_ATUALIZACAO_BASE=http://127.0.0.1:18731/r \
+#   VITRAL_ATUALIZACAO_CHAVE=$HOME/.cache/vitral-trabalho/release-falso/bancada.pub \
+#   ferramentas/bancada.sh ferramentas/roteiros/dist-atualizacao.txt <prints> bash -c \
+#     '"$1" --vitrine & v=$!; sleep 50; kill $v; wait $v; exec "$1" "$2" 2> >(gawk "{ print systime(), \$0; fflush() }" >&2)' \
+#     _ "$PWD/target/debug/vitral" ~/.cache/vitral-trabalho/demo
+# O servidor precisa começar do zero (a ordem do manifesto é 503, adulterado, certo). A hora em cada
+# linha do VITRAL_QUADROS deixa conferir, com a hora dos prints, que parado nada redesenha.
+#
+# Geometria (conferida na rodada de 2026-11-01): a vitrine ocupa a tela a partir de (0, 32); os
+# botões da seção Atualizações têm 200 de largura, em y 158, centros em x 132 + 208·i. O app tem a
+# janela 1440x920 com a sombra: conteúdo 1400x880 em (100, 76). As Configurações transbordam e vão
+# de 92 a 940; roladas até o fim, o botão da linha "Versão" fica em y ~870 (de 2 a 4 linhas de
+# texto), terminando em x 1083; com Novidades e Reiniciar, Novidades em x ~926.
+espera 9
+print 01-vitrine-atualizacoes  # os dez estados do grupo das Configurações
+clique 132 158                 # Aviso: pronta
+espera 2
+print 02-aviso-pronta          # "Versão 0.3.0 pronta / Vale quando reiniciar · Novidades", Reiniciar
+clique 340 158                 # Aviso: só avisar
+espera 2
+print 03-aviso-so-avisar       # "Há a 0.3.0 no GitHub", Instalar
+clique 548 158                 # Aviso: atualizado
+espera 2
+print 04-aviso-atualizado      # "Atualizado para a 0.2.0", Ver novidades
+clique 756 158                 # Aviso: voltou
+espera 2
+print 05-aviso-voltou          # "A 0.3.0 não abriu duas vezes; voltei para a 0.2.0" em âmbar
+clique 964 158                 # Novidades
+espera 2
+print 06-novidades             # o Markdown e "Ver no GitHub"
+tecla Escape
+espera 1
+clique 1172 158                # Reiniciar com 2 conversas
+espera 2
+print 07-reiniciar-2-conversas # "2 conversas estão trabalhando", Reiniciar mesmo assim / Continuar aberto
+tecla Return
+espera 2
+print 08-depois-do-enter       # o alerta fechou e nenhum aviso de "Reiniciar mesmo assim": o Enter ficou no Continuar
+rolar 800 600 5
+espera 1
+print 09-grupos-1
+rolar 800 600 5
+espera 1
+print 10-grupos-2
+espera 6
+espera 12
+print 11-app-aberto            # o app na pasta de demonstração, sem o ponto no logo
+tecla Control_L+comma
+espera 2
+rolar 800 500 40
+espera 1
+print 12-config-parado         # "Compilado no PC · sem atualização automática", "0.2.0-rc.1 · ainda não procurou"
+clique 1030 869                # Procurar agora: 503
+espera 2
+rolar 800 500 10
+espera 1
+print 13-erro-rede             # em âmbar, "Sem conexão com o GitHub; tento de novo às …"
+clique 1030 869                # Procurar agora: manifesto adulterado
+espera 2
+rolar 800 500 10
+espera 1
+print 14-erro-assinatura       # em vermelho, "A atualização foi recusada: a assinatura não confere…"
+clique 1030 869                # Procurar agora: o certo
+espera 2
+rolar 800 500 10
+espera 1
+print 15-disponivel-pc         # "Há a 0.9.0 no GitHub", Novidades e "Instalar a 0.9.0 como app"
+clique 1030 869                # Instalar a 0.9.0 como app
+espera 4
+rolar 800 500 10
+espera 1
+print 16-baixando              # spinner e "Baixando 0.9.0 · 6 de 20 MB"
+espera 6
+print 17-baixando-meio
+espera 14
+rolar 800 500 10
+espera 1
+print 18-pronta                # "A 0.9.0 está pronta; vale quando reiniciar", Novidades e Reiniciar; o aviso no topo
+clique 926 877                 # Novidades
+espera 2
+print 19-novidades
+tecla Escape
+espera 1
+tecla Escape
+espera 2
+print 20-pronta-janela         # o aviso no topo e o ponto azul no canto do logo
+mover 135 110
+espera 2
+print 21-dica-logo             # "Menu do Vitral / Versão 0.9.0 pronta"
+clique 135 110
+espera 1
+print 22-menu-logo             # "Reiniciar para a 0.9.0" logo acima das Configurações
+tecla Escape
+mover 135 600
+espera 15
+print 23-parado                # nenhuma linha de quadros desde o Escape

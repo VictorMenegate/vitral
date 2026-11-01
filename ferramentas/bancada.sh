@@ -11,6 +11,9 @@
 # FUNDO=branco (fundo branco liso, o pior caso de contraste) ou FUNDO=<imagem> troca o papel de
 # parede; sem ele, vale o da sessão.
 # ZOOM=1.5 abre o Vitral com esse zoom (grava o interface.json da bancada antes de abrir).
+# A atualização fica desligada; VITRAL_SEM_ATUALIZACAO=0 com VITRAL_ATUALIZACAO_BASE (e, no build de
+# desenvolvimento, VITRAL_ATUALIZACAO_CHAVE) procura num release falso. O que ela instala vai para a
+# pasta de dados da bancada, e o link do ~/.local/bin para o $B/bin.
 # Pasta de demonstração: python3 -I ferramentas/demo_vitral.py <pasta> [--16]. Contraste nos
 # prints: python3 -I ferramentas/medir_print.py <print.png> --pontos <arquivo>.
 set -u
@@ -60,15 +63,23 @@ $LISO
 [org/gnome/desktop/notifications]
 show-banners=false
 J
-    export XDG_CONFIG_HOME=$B/config XDG_DATA_HOME=$B/data XDG_CACHE_HOME=$B/cache \
-        XDG_STATE_HOME=$B/state$N XDG_RUNTIME_DIR=$RUN GSETTINGS_BACKEND=keyfile DENTRO_DA_BANCADA=1
+    export XDG_CONFIG_HOME=$B/config XDG_DATA_HOME=$B/data XDG_CACHE_HOME=$B/cache XDG_BIN_HOME=$B/bin \
+        XDG_STATE_HOME=$B/state$N XDG_RUNTIME_DIR=$RUN GSETTINGS_BACKEND=keyfile DENTRO_DA_BANCADA=1 \
+        VITRAL_SEM_ATUALIZACAO=${VITRAL_SEM_ATUALIZACAO:-1}
     unset WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS
     exec dbus-run-session -- "$0" "$ROTEIRO" "$PRINTS" "$@"
 fi
 
 gnome-shell --headless --wayland --virtual-monitor 1600x1000 --no-x11 > "$XDG_STATE_HOME/shell.log" 2>&1 &
 SHELL_PID=$!
-for i in $(seq 1 40); do [ -S "$XDG_RUNTIME_DIR/wayland-0" ] && break; sleep 0.25; done
+# O nome do socket sai no log: o lock velho de uma rodada que caiu faz o Shell ir para o wayland-1, e
+# o wayland-0 que sobrou não tem ninguém atrás (o app abria sem tela).
+for i in $(seq 1 40); do
+    SOCKET=$(sed -n "s/.*Using Wayland display name '\([^']*\)'.*/\1/p" "$XDG_STATE_HOME/shell.log" | head -1)
+    [ -n "$SOCKET" ] && [ -S "$XDG_RUNTIME_DIR/$SOCKET" ] && break
+    sleep 0.25
+done
+SOCKET=${SOCKET:-wayland-0}
 sleep 2
 # O socket do Wayland sai antes do Shell terminar de subir; com a máquina ocupada, o objeto do Shell
 # no D-Bus (e o Eval, que a extensão libera) pode levar 10 s ou mais. Sem esperar por ele, o
@@ -84,7 +95,7 @@ ev() { gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shel
 PREP='const C = imports.gi.Clutter; const G = imports.gi.GLib; const seat = global.stage.context.get_backend().get_default_seat(); if (!global._vp) global._vp = seat.create_virtual_device(C.InputDeviceType.POINTER_DEVICE); if (!global._vk) global._vk = seat.create_virtual_device(C.InputDeviceType.KEYBOARD_DEVICE);'
 ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), 800, 500); 'ok'"
 sleep 0.5; ev 'Main.overview.hide(); "ok"'; sleep 0.5
-WAYLAND_DISPLAY=$XDG_RUNTIME_DIR/wayland-0 "$@" > "$XDG_STATE_HOME/app.log" 2>&1 &
+WAYLAND_DISPLAY=$XDG_RUNTIME_DIR/$SOCKET "$@" > "$XDG_STATE_HOME/app.log" 2>&1 &
 APP_PID=$!
 # A animação de entrada do Shell ainda pode abrir o Panorama: esconde de novo com a janela já no ar.
 (sleep 4; ev 'Main.overview.hide(); "ok"') &

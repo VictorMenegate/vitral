@@ -570,17 +570,21 @@ pub fn aviso_com_acao(
     let f = Rc::new(f);
     aviso(tom, texto).action(move |_, _, cx| {
         let f = f.clone();
-        Button::new("aviso-acao")
-            .custom(variante_fantasma(cx).foreground(Cores::destaque_texto()))
-            .h(r(28.))
-            .px(esp::E12)
-            .rounded(raio::PILULA)
-            .child(div().text_size(r(13.)).font_semibold().child(rotulo))
-            .on_click(cx.listener(move |aviso, _, window, cx| {
-                f(window, cx);
-                aviso.dismiss(window, cx);
-            }))
+        botao_do_aviso(rotulo, cx).on_click(cx.listener(move |aviso, _, window, cx| {
+            f(window, cx);
+            aviso.dismiss(window, cx);
+        }))
     })
+}
+
+/// O botão da ação de um aviso (28, texto 13/600 em azul, sem fundo).
+pub fn botao_do_aviso(rotulo: &'static str, cx: &App) -> Button {
+    Button::new("aviso-acao")
+        .custom(variante_fantasma(cx).foreground(Cores::destaque_texto()))
+        .h(r(28.))
+        .px(esp::E12)
+        .rounded(raio::PILULA)
+        .child(div().text_size(r(13.)).font_semibold().child(rotulo))
 }
 
 /// "Não deu para …": o resumo no título, a primeira linha da causa no texto e "Detalhes", que

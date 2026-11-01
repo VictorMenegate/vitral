@@ -23,6 +23,27 @@ use serde::{Deserialize, Serialize};
 /// `pacote/manifesto.py` lê esta linha.
 pub const FORMATO_DADOS: u32 = 1;
 
+/// O formato de `.vitral/` desta pasta: o número que a migração grava em `.vitral/formato` depois
+/// de guardar a cópia em `.vitral/copias/formato-<n>/`. Sem o arquivo, é o 1.
+pub fn formato_no_disco(raiz: &Path) -> u32 {
+    fs::read_to_string(raiz.join(".vitral").join("formato"))
+        .ok()
+        .and_then(|texto| texto.trim().parse().ok())
+        .unwrap_or(1)
+}
+
+/// O maior formato entre as pastas recentes (e a que vai abrir): a volta de versão só vai para uma
+/// que leia todas.
+pub fn maior_formato_no_disco(abrir: Option<&Path>) -> u32 {
+    abrir
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(recentes())
+        .map(|pasta| formato_no_disco(&pasta))
+        .max()
+        .unwrap_or(1)
+}
+
 pub fn agora() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1072,6 +1093,19 @@ mod testes {
         let (_, relida) = disco.carregar();
         assert_eq!(relida.projetos["loja"].icone, "shopping-bag");
         assert_eq!(relida.projetos["loja"].cor, "#f49ac1");
+        let _ = fs::remove_dir_all(&raiz);
+    }
+
+    #[test]
+    fn formato_do_disco_e_1_sem_o_arquivo() {
+        let raiz = std::env::temp_dir().join(format!("vitral-formato-{}", novo_id()));
+        assert_eq!(formato_no_disco(&raiz), 1);
+        fs::create_dir_all(raiz.join(".vitral")).unwrap();
+        fs::write(raiz.join(".vitral/formato"), "2\n").unwrap();
+        assert_eq!(formato_no_disco(&raiz), 2);
+        assert!(maior_formato_no_disco(Some(&raiz)) >= 2);
+        fs::write(raiz.join(".vitral/formato"), "lixo").unwrap();
+        assert_eq!(formato_no_disco(&raiz), 1);
         let _ = fs::remove_dir_all(&raiz);
     }
 }

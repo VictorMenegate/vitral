@@ -19,6 +19,9 @@ use crate::tema::{
     halo_foco, halo_suave, linha_de_luz,
     r, raio, sombra_dialogo, sombra_elevado, sombra_flutuante, sombra_recuo, tam,
 };
+use crate::atualizacao::saude::Aviso;
+use crate::ui::atualizacao as atualizacao_ui;
+use crate::ui::fechar::{Parar, confirmacao_de_parar};
 use crate::ui::icone_projeto::ICONES;
 use crate::ui::movimento::{self, Curva, De};
 use crate::ui::{NovaConversa, zoom};
@@ -1340,6 +1343,56 @@ impl Vitrine {
         )
     }
 
+    /// O grupo das Configurações em cada estado, os avisos da versão nova e da abertura, as
+    /// Novidades e a pergunta do Reiniciar com conversa trabalhando (o Enter fica no Continuar
+    /// aberto; o "mesmo assim" deixa um aviso). Os botões têm 200 de largura: o roteiro da bancada
+    /// clica pela posição.
+    fn atualizacoes(&self, window: &mut Window, cx: &mut App) -> Div {
+        const NOTAS: &str = "- **Conversas que se lembram.** O Mestre guarda o que importa entre as conversas.\n\
+                             - **Mais rápido ao abrir.** A lista aparece antes do motor terminar de ler as tarefas.";
+        let pagina = || crate::atualizacao::pagina("0.3.0");
+        let botoes = fileira()
+            .child(Button::new("at-pronta").outline().w(r(200.)).label("Aviso: pronta").on_click(move |_, window, cx| {
+                window.push_notification(atualizacao_ui::aviso_pronta("0.3.0", NOTAS.into(), pagina()), cx)
+            }))
+            .child(Button::new("at-disponivel").outline().w(r(200.)).label("Aviso: só avisar").on_click(move |_, window, cx| {
+                window.push_notification(atualizacao_ui::aviso_disponivel("0.3.0", NOTAS.into(), pagina()), cx)
+            }))
+            .child(Button::new("at-atualizado").outline().w(r(200.)).label("Aviso: atualizado").on_click(|_, window, cx| {
+                let aviso = Aviso::Atualizada { versao: crate::atualizacao::VERSAO.into() };
+                let nota = atualizacao_ui::aviso_ao_abrir(&aviso, cx);
+                window.push_notification(nota, cx)
+            }))
+            .child(Button::new("at-voltou").outline().w(r(200.)).label("Aviso: voltou").on_click(|_, window, cx| {
+                let aviso = Aviso::Voltou { de: "0.3.0".into(), para: "0.2.0".into(), automatica: true };
+                let nota = atualizacao_ui::aviso_ao_abrir(&aviso, cx);
+                window.push_notification(nota, cx)
+            }))
+            .child(Button::new("at-novidades").outline().w(r(200.)).label("Novidades").on_click(move |_, window, cx| {
+                atualizacao_ui::abrir_novidades("0.3.0", NOTAS.into(), pagina(), window, cx)
+            }))
+            .child(Button::new("at-reiniciar").outline().w(r(200.)).label("Reiniciar com 2 conversas").on_click(|_, window, cx| {
+                let mesmo_assim = |window: &mut Window, cx: &mut App| {
+                    window.push_notification(aviso(Tom::Atencao, "Reiniciar mesmo assim (na vitrine, nada reinicia)"), cx)
+                };
+                confirmar(confirmacao_de_parar(2, Parar::Reiniciar), mesmo_assim, None, window, cx)
+            }));
+        let grupos = atualizacao_ui::vistas_de_exemplo(crate::modelo::agora()).into_iter().map(|(nome, vista)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(r(8.))
+                .w(r(640.))
+                .child(legenda(nome))
+                .child(atualizacao_ui::grupo(&vista, 2, false, window, cx))
+        });
+        um(
+            "Atualizações",
+            cx,
+            div().flex().flex_col().gap(r(16.)).child(botoes).child(div().flex().flex_wrap().gap(r(16.)).children(grupos)),
+        )
+    }
+
     fn dialogos(&self, window: &mut Window, cx: &mut App) -> Div {
         let estatico = div()
             .flex()
@@ -1540,6 +1593,7 @@ impl Render for Vitrine {
             .flex()
             .flex_col()
             .gap(r(32.))
+            .child(self.atualizacoes(window, cx))
             .child(self.tipografia(window, cx))
             .child(self.chips(window, cx))
             .child(self.botoes(window, cx))

@@ -1,6 +1,6 @@
 [package]
 name = "vitral"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/VictorMenegate/vitral"
@@ -15,6 +15,13 @@ gpui-kit = { version = "0.8.1", features = ["syntect"] }
 libc = "0.2.191"
 # minisign-verify: confere a assinatura das versões novas (sem dependências, do autor do minisign).
 minisign-verify = "0.3.0"
+# Atualização automática: semver compara as versões, sha2 confere o pacote baixado, tar e flate2
+# abrem o .tar.gz (sem xattr) e o ureq baixa do GitHub com rustls (sem OpenSSL).
+semver = "1.0.28"
+sha2 = "0.10.9"
+tar = { version = "0.4", default-features = false }
+flate2 = "1.1.10"
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 smol = "2.0.2"

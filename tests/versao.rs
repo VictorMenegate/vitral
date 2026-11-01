@@ -29,6 +29,11 @@ fn rodar(argumentos: &[&str]) -> Output {
     filho.wait_with_output().unwrap()
 }
 
+/// A do Cargo.toml, ou a de desenvolvimento do `ferramentas/instalar-dev.sh`.
+fn versao() -> &'static str {
+    option_env!("VITRAL_VERSAO").filter(|v| !v.is_empty()).unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 fn texto(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -37,7 +42,7 @@ fn texto(bytes: &[u8]) -> String {
 fn versao_sai_sem_janela() {
     let saida = rodar(&["--versao"]);
     assert!(saida.status.success(), "{}", texto(&saida.stderr));
-    assert_eq!(texto(&saida.stdout), format!("vitral {}\n", env!("CARGO_PKG_VERSION")));
+    assert_eq!(texto(&saida.stdout), format!("vitral {}\n", versao()));
     assert_eq!(texto(&saida.stderr), "");
 }
 
@@ -46,17 +51,10 @@ fn versao_em_json_diz_canal_commit_e_formato() {
     let saida = rodar(&["--versao", "--json"]);
     assert!(saida.status.success(), "{}", texto(&saida.stderr));
     let valor: serde_json::Value = serde_json::from_slice(&saida.stdout).unwrap();
-    assert_eq!(valor["versao"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(valor["versao"], versao());
     let canal = option_env!("VITRAL_CANAL").filter(|c| !c.is_empty()).unwrap_or("pc");
     assert_eq!(valor["canal"], canal);
     assert_eq!(valor["commit"], option_env!("VITRAL_COMMIT").unwrap_or(""));
     assert_eq!(valor["plataforma"], format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH));
     assert!(valor["formato_dados"].as_u64().is_some_and(|f| f >= 1), "{valor}");
-}
-
-#[test]
-fn instalar_ainda_nao_abre_janela() {
-    let saida = rodar(&["--instalar"]);
-    assert_eq!(saida.status.code(), Some(2));
-    assert!(texto(&saida.stderr).contains("ainda não se instala"));
 }

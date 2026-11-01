@@ -272,6 +272,7 @@ gpui_kit::assets::icon_assets!(
         CalendarClock,
         ChartColumn,
         CheckCheck,
+        CircleArrowUp,
         CirclePause,
         CircleUserRound,
         Clock,

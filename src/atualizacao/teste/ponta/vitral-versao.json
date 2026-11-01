@@ -1,0 +1,17 @@
+{
+  "formato": 1,
+  "app": "vitral",
+  "versao": "0.9.0",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "data": "2026-11-01T14:42:48Z",
+  "pagina": "https://github.com/VictorMenegate/vitral/releases/tag/v0.9.0",
+  "formato_dados": 1,
+  "notas": "Versão de teste do atualizador.",
+  "arquivos": {
+    "linux-x86_64": {
+      "nome": "vitral-0.9.0-linux-x86_64.tar.gz",
+      "tamanho": 328,
+      "sha256": "fe1539f79498544840ae7fd314dc53de0b9857d042fe4d19752b313e9c3aa028"
+    }
+  }
+}

@@ -26,3 +26,11 @@ A primeira versão publicada, para Linux.
   cada um; **Rotinas** que mandam um pedido num horário.
 - **Visual de vidro** azul-marinho, zoom com Ctrl+= e Ctrl+-, e animações que seguem as do GNOME
   (ou desligadas nas Configurações).
+- **Se atualiza sozinho.** Instalado pelo `instalar.sh` do release, o Vitral procura versão nova no
+  GitHub, confere a assinatura, baixa e instala em segundo plano, e avisa "Versão 0.3.0 pronta ·
+  Reiniciar". Nunca reinicia sozinho; com conversa trabalhando, pergunta antes. Em
+  **Configurações › Atualizações** dá para escolher Automáticas, Só avisar ou Desligadas, procurar
+  na hora e ver as novidades.
+- **Volta sozinho se a versão nova não abrir.** Se ela cair duas vezes ao abrir, a terceira
+  tentativa abre a anterior, com o aviso. Uma queda de energia no meio não conta contra a versão.
+  Dá para voltar à mão nas Configurações.
