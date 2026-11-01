@@ -116,19 +116,16 @@ impl Faixa {
     }
 }
 
-/// Meia-noite, no fuso local, do dia de `instante`.
+/// Meia-noite, no fuso local, do dia de `instante`. Num dia em que o horário de verão começa à
+/// meia-noite, ela não existe e vale a 1h (como no `mktime`).
 fn meia_noite_local(instante: u64) -> u64 {
-    let segundos = instante as libc::time_t;
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe {
-        libc::localtime_r(&segundos, &mut tm);
+    use chrono::{Local, TimeDelta};
+    let dia = crate::modelo::no_fuso_local(instante as i64).date_naive().and_time(chrono::NaiveTime::MIN);
+    let inicio = [dia, dia + TimeDelta::hours(1)].into_iter().find_map(|hora| hora.and_local_timezone(Local).earliest());
+    match inicio.map(|i| i.timestamp()) {
+        Some(inicio) if inicio >= 0 => inicio as u64,
+        _ => instante - instante % 86_400,
     }
-    tm.tm_hour = 0;
-    tm.tm_min = 0;
-    tm.tm_sec = 0;
-    tm.tm_isdst = -1;
-    let inicio = unsafe { libc::mktime(&mut tm) };
-    if inicio < 0 { instante - instante % 86_400 } else { inicio as u64 }
 }
 
 /// Um coordenador, os trabalhadores dele e o que a família espera de você.

@@ -741,46 +741,39 @@ pub struct Rotina {
     pub ultima: String,
 }
 
+/// Um instante Unix no fuso local (o do sistema, como o `localtime_r`); fora do alcance do chrono,
+/// o próprio 1970.
+pub fn no_fuso_local(segundos: i64) -> chrono::DateTime<chrono::Local> {
+    chrono::DateTime::from_timestamp(segundos, 0).unwrap_or_default().with_timezone(&chrono::Local)
+}
+
 /// Dia da semana (0 = domingo), minutos desde a meia-noite e a data AAAA-MM-DD, no fuso local.
 pub fn agora_local() -> (u8, u32, String) {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let segundos = agora() as libc::time_t;
-    unsafe {
-        libc::localtime_r(&segundos, &mut tm);
-    }
+    use chrono::{Datelike as _, Timelike as _};
+    let local = no_fuso_local(agora() as i64);
     (
-        tm.tm_wday as u8,
-        (tm.tm_hour * 60 + tm.tm_min) as u32,
-        format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday),
+        local.weekday().num_days_from_sunday() as u8,
+        local.hour() * 60 + local.minute(),
+        format!("{:04}-{:02}-{:02}", local.year(), local.month(), local.day()),
     )
 }
 
 /// "12/10", no fuso local.
 pub fn data_curta(segundos: u64) -> String {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let s = segundos as libc::time_t;
-    unsafe {
-        libc::localtime_r(&s, &mut tm);
-    }
-    format!("{:02}/{:02}", tm.tm_mday, tm.tm_mon + 1)
+    use chrono::Datelike as _;
+    let local = no_fuso_local(segundos as i64);
+    format!("{:02}/{:02}", local.day(), local.month())
 }
 
 /// "às 15:42", ou "em 03/11 às 15:42" quando não é hoje, no fuso local.
 pub fn quando_local(segundos: u64) -> String {
-    let local = |s: u64| {
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        let s = s as libc::time_t;
-        unsafe {
-            libc::localtime_r(&s, &mut tm);
-        }
-        tm
-    };
-    let (tm, hoje) = (local(segundos), local(agora()));
-    let hora = format!("às {:02}:{:02}", tm.tm_hour, tm.tm_min);
-    if (tm.tm_year, tm.tm_yday) == (hoje.tm_year, hoje.tm_yday) {
+    use chrono::{Datelike as _, Timelike as _};
+    let (local, hoje) = (no_fuso_local(segundos as i64), no_fuso_local(agora() as i64));
+    let hora = format!("às {:02}:{:02}", local.hour(), local.minute());
+    if (local.year(), local.ordinal()) == (hoje.year(), hoje.ordinal()) {
         hora
     } else {
-        format!("em {:02}/{:02} {hora}", tm.tm_mday, tm.tm_mon + 1)
+        format!("em {:02}/{:02} {hora}", local.day(), local.month())
     }
 }
 
