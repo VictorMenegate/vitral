@@ -1088,7 +1088,7 @@ impl Motor {
 
     /// O projeto que tem essa pasta ligada (pelo caminho canônico).
     pub fn projeto_da_pasta(&self, caminho: &Path) -> Option<String> {
-        let canonico = caminho.canonicalize().unwrap_or_else(|_| caminho.to_path_buf());
+        let canonico = dunce::canonicalize(caminho).unwrap_or_else(|_| caminho.to_path_buf());
         self.projetos
             .iter()
             .find(|p| p.pastas.iter().any(|l| l.caminho == canonico || l.caminho == caminho))
@@ -1157,7 +1157,7 @@ impl Motor {
                         .iter()
                         .enumerate()
                         .map(|(i, p)| {
-                            let caminho = p.canonicalize().map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
+                            let caminho = dunce::canonicalize(&p).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
                             Ok(PastaLigada { caminho, propria: false, config: config(i) })
                         })
                         .collect()
@@ -1211,7 +1211,7 @@ impl Motor {
         let projeto = self.projeto(id).ok_or("Projeto não encontrado.")?;
         if let Some(pastas) = mudanca.pastas.as_mut() {
             for p in pastas.iter_mut().filter(|p| !projeto.pastas.iter().any(|l| l.caminho == p.caminho)) {
-                if let Ok(canonico) = p.caminho.canonicalize() {
+                if let Ok(canonico) = dunce::canonicalize(&p.caminho) {
                     p.caminho = canonico;
                 }
             }
@@ -1289,7 +1289,7 @@ impl Motor {
     /// git ou de outro repositório (sem o commit de onde elas saíram). Devolve o aviso das cópias que
     /// não voltaram.
     pub fn localizar_pasta(&mut self, id: &str, indice: usize, nova: &Path, cx: &mut Context<Self>) -> Task<Result<Option<String>, String>> {
-        let nova = match nova.canonicalize() {
+        let nova = match dunce::canonicalize(&nova) {
             Ok(nova) if nova.is_dir() => nova,
             Ok(nova) => return Task::ready(Err(format!("{} não é uma pasta", nova.display()))),
             Err(e) => return Task::ready(Err(format!("{}: {e}", nova.display()))),
@@ -6343,7 +6343,7 @@ pub fn pasta_propria_para_lixeira(projeto: &Projeto, pasta_projetos: &Path) -> R
     let caminho = &propria.caminho;
     let dentro = caminho.parent().is_some_and(|mae| {
         mae == pasta_projetos
-            || matches!((mae.canonicalize(), pasta_projetos.canonicalize()), (Ok(a), Ok(b)) if a == b)
+            || matches!((dunce::canonicalize(mae), dunce::canonicalize(&pasta_projetos)), (Ok(a), Ok(b)) if a == b)
     });
     let nome_ok = caminho.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.'));
     if !dentro || !nome_ok {
@@ -6758,7 +6758,7 @@ pub fn pode_comecar(papel: Papel, do_usuario: bool, ativos: usize, limite: usize
 /// A pasta de outro chat direto vivo que é a mesma, está dentro ou contém `cwd` (pelos caminhos
 /// canônicos), ou nada.
 pub fn escritor_ocupado(cwd: &Path, ativos: &[PathBuf]) -> Option<PathBuf> {
-    let canonico = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let canonico = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let meu = canonico(cwd);
     // A pasta pessoal (a das conversas trazidas do Claude Code) não é pasta de projeto: lá, como no
     // VS Code, várias conversas rodam juntas, e ela não trava as pastas de dentro.

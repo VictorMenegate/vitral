@@ -599,7 +599,7 @@ pub fn pastas_de_projects(raizes: &[PathBuf]) -> Vec<PathBuf> {
     let mut vistas = HashSet::new();
     raizes
         .iter()
-        .filter_map(|r| r.join("projects").canonicalize().ok())
+        .filter_map(|r| dunce::canonicalize(r.join("projects")).ok())
         .filter(|p| p.is_dir() && vistas.insert(p.clone()))
         .collect()
 }
@@ -608,7 +608,7 @@ pub fn pastas_de_projects(raizes: &[PathBuf]) -> Vec<PathBuf> {
 /// Vitral (os chats dele).
 pub fn pastas_de_fora(dados: &Path) -> Vec<PathBuf> {
     let mut pastas = vec![PathBuf::from("/tmp"), PathBuf::from("/var/tmp"), std::env::temp_dir(), dados.to_path_buf()];
-    let canonicas: Vec<PathBuf> = pastas.iter().filter_map(|p| p.canonicalize().ok()).collect();
+    let canonicas: Vec<PathBuf> = pastas.iter().filter_map(|p| dunce::canonicalize(p).ok()).collect();
     pastas.extend(canonicas);
     pastas.sort();
     pastas.dedup();
@@ -716,7 +716,7 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
                     l.vazias += 1;
                     continue;
                 };
-                let canonica = cwd.canonicalize().ok();
+                let canonica = dunce::canonicalize(&cwd).ok();
                 let de_fora = |c: &Path| filtro.de_fora.iter().any(|f| c.starts_with(f));
                 if lida.entrada.starts_with("sdk") || de_fora(&cwd) || canonica.as_deref().is_some_and(de_fora) {
                     l.de_teste += 1;
@@ -878,7 +878,7 @@ mod testes {
     fn pasta_de_teste(nome: &str) -> PathBuf {
         let pasta = std::env::temp_dir().join(format!("vitral-importar-{nome}-{}", novo_id()));
         fs::create_dir_all(&pasta).unwrap();
-        pasta.canonicalize().unwrap()
+        dunce::canonicalize(pasta).unwrap()
     }
 
     const S1: &str = "11111111-1111-4111-8111-111111111111";

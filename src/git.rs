@@ -75,7 +75,7 @@ pub fn usa_git(projeto: &Path) -> bool {
     let Ok(topo) = git(projeto, &["rev-parse", "--show-toplevel"]) else {
         return false;
     };
-    let mesmo = |a: &Path, b: &Path| a.canonicalize().ok() == b.canonicalize().ok();
+    let mesmo = |a: &Path, b: &Path| dunce::canonicalize(a).ok() == dunce::canonicalize(b).ok();
     mesmo(Path::new(&topo), projeto) && git(projeto, &["rev-parse", "HEAD"]).is_ok()
 }
 
@@ -105,7 +105,7 @@ impl Drop for Soltar {
 pub fn na_vez_do_projeto<T>(projeto: &Path, f: impl FnOnce() -> T) -> T {
     type Travas = std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>;
     static TRAVAS: std::sync::OnceLock<std::sync::Mutex<Travas>> = std::sync::OnceLock::new();
-    let chave = raiz_comum(projeto).unwrap_or_else(|| projeto.canonicalize().unwrap_or_else(|_| projeto.to_path_buf()));
+    let chave = raiz_comum(projeto).unwrap_or_else(|| dunce::canonicalize(projeto).unwrap_or_else(|_| projeto.to_path_buf()));
     let reentrou = SEGURADAS.with(|s| s.borrow().contains(&chave));
     assert!(!reentrou, "na_vez_do_projeto chamada dentro dela mesma ({})", chave.display());
     let trava = TRAVAS
@@ -183,7 +183,7 @@ pub fn recriar_worktree(origem: &Path, destino: &Path, branch: &str) -> Result<(
     let ramo = ramo_atual(origem);
     let existe = |b: &str| git(origem, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")]).is_ok();
     if destino.exists() {
-        let canonico = destino.canonicalize().unwrap_or_else(|_| destino.to_path_buf());
+        let canonico = dunce::canonicalize(destino).unwrap_or_else(|_| destino.to_path_buf());
         let registradas = git(origem, &["worktree", "list", "--porcelain"])?;
         let registrada = registradas
             .lines()
@@ -229,7 +229,7 @@ pub fn ramo_atual(pasta: &Path) -> Option<String> {
 /// que diz se uma cópia ainda pertence ao repositório da origem.
 pub fn raiz_comum(pasta: &Path) -> Option<PathBuf> {
     let comum = git(pasta, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
-    Path::new(&comum).canonicalize().ok()
+    dunce::canonicalize(Path::new(&comum)).ok()
 }
 
 /// A pasta tem o commit: é o mesmo repositório da cópia que nasceu dele (ou um clone).
@@ -254,7 +254,7 @@ pub fn reparar_copias(origem: &Path, copias: &[PathBuf]) -> Vec<PathBuf> {
 /// A raiz do repositório onde a pasta está (pode ser uma pasta acima dela).
 pub fn topo_do_repositorio(pasta: &Path) -> Option<PathBuf> {
     let topo = git(pasta, &["rev-parse", "--show-toplevel"]).ok()?;
-    Path::new(&topo).canonicalize().ok()
+    dunce::canonicalize(Path::new(&topo)).ok()
 }
 
 /// Onde a cópia está em relação à origem: commits que só ela tem, commits da origem que ela ainda
@@ -1528,7 +1528,7 @@ fn volta_parcial(mexidos: usize, falharam: &[String]) -> String {
 /// O repositório de onde uma cópia (worktree) saiu: a pasta do `git-common-dir`, canônica.
 pub fn repositorio_da_copia(copia: &Path) -> Option<PathBuf> {
     let comum = git(copia, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
-    let comum = Path::new(&comum).canonicalize().ok()?;
+    let comum = dunce::canonicalize(Path::new(&comum)).ok()?;
     match comum.file_name() {
         Some(nome) if nome == ".git" => comum.parent().map(Path::to_path_buf),
         _ => Some(comum),

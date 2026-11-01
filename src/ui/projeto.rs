@@ -252,7 +252,7 @@ impl EditorProjeto {
             }
             None => {
                 for caminho in pastas_novas {
-                    let caminho = caminho.canonicalize().unwrap_or(caminho);
+                    let caminho = dunce::canonicalize(&caminho).unwrap_or(caminho);
                     let config = ConfigDaPasta::new(&ConfigProjeto::default(), &mut assinaturas, window, cx);
                     pastas.push(PastaNoEditor { caminho, propria: false, config });
                 }
@@ -382,7 +382,7 @@ impl EditorProjeto {
     }
 
     fn pedir_para_ligar(&mut self, caminho: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let caminho = caminho.canonicalize().unwrap_or(caminho);
+        let caminho = dunce::canonicalize(&caminho).unwrap_or(caminho);
         if self.pastas.iter().any(|p| p.caminho == caminho) {
             return;
         }
@@ -462,7 +462,7 @@ impl EditorProjeto {
             let _ = this.update_in(cx, |this, window, cx| {
                 match resultado {
                     Ok(atencao) => {
-                        let nova = nova.canonicalize().unwrap_or(nova);
+                        let nova = dunce::canonicalize(&nova).unwrap_or(nova);
                         if let Some(p) = this.pastas.iter_mut().find(|p| p.caminho == antiga) {
                             p.caminho = nova.clone();
                         }

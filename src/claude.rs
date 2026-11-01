@@ -373,7 +373,7 @@ pub fn versao_de(texto: &str) -> Option<Versao> {
 /// `versions/<versão>`; sem ele, pergunta ao próprio `claude --version`.
 pub fn versao_instalada() -> Option<Versao> {
     let binario = binario_claude();
-    if let Some(versao) = std::fs::canonicalize(&binario)
+    if let Some(versao) = dunce::canonicalize(&binario)
         .ok()
         .and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
     {
@@ -569,7 +569,7 @@ pub fn sessao_expirou(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Pa
     let Some(config) = pasta_de_config(pasta_conta) else {
         return false;
     };
-    let projetos: Vec<PathBuf> = [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
+    let projetos: Vec<PathBuf> = [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()]
         .into_iter()
         .flatten()
         .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())))
@@ -590,7 +590,7 @@ pub fn sessao_existe(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Pat
     let Some(config) = pasta_de_config(pasta_conta) else {
         return false;
     };
-    [Some(cwd.to_path_buf()), cwd.canonicalize().ok()]
+    [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()]
         .into_iter()
         .flatten()
         .any(|pasta| {
@@ -895,7 +895,7 @@ mod testes {
         let conta = base.join("conta");
         // Sem a pasta do projeto: não dá para saber.
         assert!(!sessao_expirou(Some(&conta), &cwd, "s1"));
-        let projeto = conta.join("projects").join(nome_do_projeto(&cwd.canonicalize().unwrap().to_string_lossy()));
+        let projeto = conta.join("projects").join(nome_do_projeto(&dunce::canonicalize(&cwd).unwrap().to_string_lossy()));
         std::fs::create_dir_all(&projeto).unwrap();
         assert!(sessao_expirou(Some(&conta), &cwd, "s1"));
         std::fs::write(projeto.join("s1.jsonl"), "{}").unwrap();

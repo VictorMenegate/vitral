@@ -483,7 +483,7 @@ pub fn validar_parte(
             let lista = || projeto.pastas.iter().map(|l| com_til(&l.caminho)).collect::<Vec<_>>().join(", ");
             let pasta = match &p.pasta {
                 Some(pedida) => {
-                    let canonica = pedida.canonicalize().unwrap_or_else(|_| pedida.clone());
+                    let canonica = dunce::canonicalize(&pedida).unwrap_or_else(|_| pedida.clone());
                     let achada = projeto.pastas.iter().find(|l| {
                         l.caminho == *pedida
                             || l.caminho == canonica
@@ -2580,7 +2580,7 @@ impl Motor {
             if !pasta.is_dir() {
                 return Resposta::erro(format!("A pasta {} não existe (ou não é uma pasta).", pasta.display()));
             }
-            let pasta = pasta.canonicalize().unwrap_or(pasta);
+            let pasta = dunce::canonicalize(&pasta).unwrap_or(pasta);
             for p in &self.projetos {
                 for l in &p.pastas {
                     if l.caminho == pasta {

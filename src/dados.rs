@@ -832,7 +832,7 @@ pub fn escolher_origem<'a>(projeto: &'a Projeto, pasta: Option<&Path>) -> Result
     match pasta {
         None => Ok(&projeto.pastas[0]),
         Some(pasta) => {
-            let canonica = pasta.canonicalize().ok();
+            let canonica = dunce::canonicalize(pasta).ok();
             projeto
                 .pastas
                 .iter()

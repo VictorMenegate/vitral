@@ -10,6 +10,8 @@ anyhow = "1.0.104"
 # chrono: a hora das Rotinas no TimeField do kit (que já depende dele).
 chrono = "0.4.45"
 dirs = "7.0.0"
+# dunce: o canonicalize sem o `\\?\C:\…` do Windows (no Linux é o próprio fs::canonicalize).
+dunce = "1.0.5"
 # syntect: cor de sintaxe no chat, no painel de arquivo e no Revisar (o realce leve; o tree-sitter custa dezenas de MB).
 gpui-kit = { version = "0.8.1", features = ["syntect"] }
 libc = "0.2.191"
