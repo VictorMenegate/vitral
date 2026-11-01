@@ -127,6 +127,10 @@ fn main() {
     gpui_kit::application()
         .with_assets(tema::Icones)
         .run(move |cx| {
+            // O AppUserModelID do Windows (os avisos do sistema saem com ele; o atalho do Menu
+            // Iniciar usa o mesmo). Não muda depois: o Windows guarda as preferências por ele.
+            #[cfg(windows)]
+            cx.set_app_identity("VictorMenegate.Vitral", "Vitral");
             gpui_kit::init(cx);
             // Textos dos componentes do Kit (diff, diálogos, menus de texto) em português.
             gpui_kit::component::set_locale("pt-BR");
