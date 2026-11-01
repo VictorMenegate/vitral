@@ -16,12 +16,31 @@ use crate::{
     processos::{self, novo_comando},
 };
 
+/// No Windows, `core.longpaths` em todo git do Vitral: as cópias ficam em `.vitral\worktrees\…`, e
+/// um `node_modules` lá dentro passa fácil dos 260 caracteres de caminho do Windows.
+const CAMINHOS_LONGOS: &[&str] = if cfg!(windows) { &["-c", "core.longpaths=true"] } else { &[] };
+
+/// O `git` de todo comando do Vitral: o `novo_comando` com os caminhos longos do Windows. O teste
+/// `todo_git_sai_daqui` barra o git aberto direto pelo `novo_comando` fora daqui.
+pub fn novo_git() -> std::process::Command {
+    let mut comando = novo_comando("git");
+    comando.args(CAMINHOS_LONGOS);
+    comando
+}
+
+/// O caminho relativo como o git escreve, com `/`: no Windows o `Path` usa `\`, e o texto vai para o
+/// git ou é comparado com o que ele devolve.
+pub fn caminho_em_texto(caminho: &Path) -> String {
+    let texto = caminho.to_string_lossy();
+    if cfg!(windows) { texto.replace('\\', "/") } else { texto.into_owned() }
+}
+
 /// Sem user.name/user.email no git, os commits do Vitral saem com uma identidade própria.
 fn sem_identidade() -> bool {
     static SEM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SEM.get_or_init(|| {
         let valor = |chave: &str| {
-            novo_comando("git")
+            novo_git()
                 .args(["config", chave])
                 .output()
                 .map(|s| !String::from_utf8_lossy(&s.stdout).trim().is_empty())
@@ -32,7 +51,7 @@ fn sem_identidade() -> bool {
 }
 
 fn git(pasta: &Path, args: &[&str]) -> Result<String> {
-    let mut comando = novo_comando("git");
+    let mut comando = novo_git();
     // Sem isso, "ação.txt" sai como "a\303\247\303\243o.txt" (entre aspas) e nenhum caminho bate.
     comando.arg("-C").arg(pasta).args(["-c", "core.quotePath=false"]);
     if sem_identidade() {
@@ -525,7 +544,7 @@ pub fn diff_para_coordenador(
             .iter()
             .find_map(|pasta| caminho.strip_prefix(pasta).ok())
             .unwrap_or(caminho);
-        caminho.to_string_lossy().trim_start_matches("./").to_string()
+        caminho_em_texto(caminho).trim_start_matches("./").to_string()
     };
     let leia = format!("leia direto em {}/<arquivo>", copia.display());
     let pedidos: Vec<String> = arquivos.iter().map(relativo).filter(|a| !a.is_empty()).collect();
@@ -1307,7 +1326,7 @@ fn grupo_do_branch(branch: &str) -> Option<String> {
 
 fn git_com_entrada(pasta: &Path, args: &[&str], entrada: &str) -> Result<()> {
     use std::io::Write as _;
-    let mut filho = novo_comando("git")
+    let mut filho = novo_git()
         .arg("-C")
         .arg(pasta)
         .args(args)
@@ -1458,7 +1477,7 @@ fn foto_solta(pasta: &Path) -> Result<String> {
     let indice = std::env::temp_dir().join(format!("vitral-indice-{}", crate::modelo::novo_id()));
     let resultado = (|| {
         let com_indice = |args: &[&str]| -> Result<String> {
-            let saida = novo_comando("git")
+            let saida = novo_git()
                 .arg("-C")
                 .arg(pasta)
                 .args(args)
@@ -1502,7 +1521,7 @@ pub fn voltar_para(pasta: &Path, foto_antiga: &str) -> Result<usize> {
                 Err(erro) => erro.kind() == std::io::ErrorKind::NotFound,
             }
         } else {
-            novo_comando("git")
+            novo_git()
                 .arg("-C")
                 .arg(pasta)
                 .args(["show", &format!("{foto_antiga}:{arquivo}")])
@@ -1905,6 +1924,29 @@ mod testes {
         for fonte in ["src/main.rs", "package.json", "lock", ".lock", "app.js", "mapa.rs", "lockfile.txt"] {
             assert!(!eh_gerado(fonte), "{fonte}");
         }
+    }
+
+    /// Todo git do Vitral sai de `novo_git` (no Windows, com os caminhos longos).
+    #[test]
+    fn todo_git_sai_daqui() {
+        let raiz = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+        let mut erros = Vec::new();
+        for caminho in crate::tema::testes::arquivos_rs(raiz) {
+            let texto = std::fs::read_to_string(&caminho).unwrap();
+            for (numero, linha) in texto.lines().enumerate() {
+                let definicao = linha.trim() == concat!("let mut comando = novo_comando(", "\"git\");");
+                if linha.contains(concat!("novo_comando(", "\"git\")")) && !(definicao && caminho.ends_with("git.rs")) {
+                    erros.push(format!("{}:{}: {}", caminho.display(), numero + 1, linha.trim()));
+                }
+            }
+        }
+        assert!(erros.is_empty(), "git aberto fora de git::novo_git:\n{}", erros.join("\n"));
+    }
+
+    #[test]
+    fn caminho_relativo_com_barra_normal() {
+        assert_eq!(caminho_em_texto(&Path::new("src").join("ui").join("mod.rs")), "src/ui/mod.rs");
+        assert_eq!(caminho_em_texto(Path::new("relatório.md")), "relatório.md");
     }
 
     #[test]
@@ -2456,13 +2498,14 @@ mod pr_e_rede {
     }
 
     fn git_rede(e: &dyn Executor, pasta: &Path, args: &[&str], limite: Duration) -> Result<SaidaBruta, ErroRemoto> {
-        let todos: Vec<String> = ["-c", "core.quotePath=false"].iter().chain(args).map(|a| a.to_string()).collect();
+        let todos: Vec<String> =
+            CAMINHOS_LONGOS.iter().chain(&["-c", "core.quotePath=false"]).chain(args).map(|a| a.to_string()).collect();
         e.rodar("git", &todos, &ambiente_de_rede(), pasta, None, limite)
     }
 
     /// Um git local que precisa da saída com qualquer código (o `merge-tree` sai com 1 no conflito).
     fn git_bruto(pasta: &Path, args: &[&str]) -> Result<SaidaBruta> {
-        let mut todos: Vec<String> = vec!["-c".into(), "core.quotePath=false".into()];
+        let mut todos: Vec<String> = CAMINHOS_LONGOS.iter().chain(&["-c", "core.quotePath=false"]).map(|a| a.to_string()).collect();
         if sem_identidade() {
             todos.extend(["-c", "user.name=Vitral", "-c", "user.email=vitral@localhost"].map(String::from));
         }

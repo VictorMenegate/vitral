@@ -1438,7 +1438,7 @@ mod testes {
     }
 
     fn tem_commit(pasta: &Path) -> bool {
-        crate::processos::novo_comando("git")
+        crate::git::novo_git()
             .arg("-C")
             .arg(pasta)
             .args(["rev-parse", "--verify", "-q", "HEAD"])
