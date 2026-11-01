@@ -82,8 +82,7 @@ fn main() {
     let aviso = match atualizacao::saude::ao_abrir(&|| dados.formato_no_disco()) {
         atualizacao::saude::AoAbrir::Seguir(aviso) => aviso,
         atualizacao::saude::AoAbrir::Voltar(binario) => {
-            use std::os::unix::process::CommandExt as _;
-            let erro = processos::novo_comando(&binario).args(&argumentos).exec();
+            let erro = instancia::trocar_por(&binario, &argumentos);
             eprintln!("vitral: não abri {}: {erro}", binario.display());
             None
         }

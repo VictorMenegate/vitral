@@ -102,6 +102,8 @@ impl Dados {
         let cache = dirs::cache_dir().ok_or_else(|| falta("cache"))?.join("vitral");
         let socket = match dirs::runtime_dir() {
             Some(execucao) => execucao.join("vitral").join("vitral.sock"),
+            // No Windows, o arquivo com a porta e a senha do canal (`instancia.rs`).
+            None if cfg!(windows) => cache.join("vitral.porta"),
             None => cache.join("vitral.sock"),
         };
         Ok(Self { pasta, config, cache, socket, gravador: Default::default(), notas: Default::default() })
@@ -690,9 +692,17 @@ fn ligar_anterior(caminho: &Path) {
 }
 
 pub fn sincronizar_pasta(pasta: &Path) -> Result<()> {
-    fs::File::open(pasta)
-        .and_then(|p| p.sync_all())
-        .with_context(|| format!("fsync de {}", pasta.display()))
+    fsync_da_pasta(pasta).with_context(|| format!("fsync de {}", pasta.display()))
+}
+
+/// O fsync da pasta, que grava no disco os renames de dentro dela. No Windows uma pasta não abre
+/// como arquivo e não há o que fazer: no NTFS o rename é atômico e entra no diário do sistema de
+/// arquivos.
+pub fn fsync_da_pasta(pasta: &Path) -> io::Result<()> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    fs::File::open(pasta)?.sync_all()
 }
 
 /// fsync de cada arquivo e pasta abaixo de `raiz` (sem seguir links), e dela por último.

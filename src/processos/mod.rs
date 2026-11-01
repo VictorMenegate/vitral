@@ -61,12 +61,15 @@ pub fn novo_comando(programa: impl AsRef<OsStr>) -> Command {
 }
 
 /// O `Command` de todo processo do Vitral, sem janela de console (`CREATE_NO_WINDOW`): o Vitral não
-/// tem console, e cada git, claude ou bash abriria uma janela preta piscando.
+/// tem console, e cada git, claude ou bash abriria uma janela preta piscando. A marca da reabertura
+/// (`instancia::REABRINDO`) não passa adiante.
 #[cfg(windows)]
 pub fn novo_comando(programa: impl AsRef<OsStr>) -> Command {
     use std::os::windows::process::CommandExt as _;
     let mut comando = Command::new(programa);
-    comando.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    comando
+        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+        .env_remove(crate::instancia::REABRINDO);
     comando
 }
 
