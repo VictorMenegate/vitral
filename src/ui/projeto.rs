@@ -1019,12 +1019,9 @@ impl EditorProjeto {
             .when(!pr && disponivel.is_err(), |d| d.child(format!("Abrir PR: {}.", disponivel.as_ref().err().map_or("", String::as_str))))
             .when(pr && legado, |d| d.child("Conversas antigas (coordenador) continuam juntando aqui."));
         let mut linha_entrega = LinhaDeOpcao::new(("gh-entrega", i), "Ao aprovar").descricao(descricao).controle(entrega);
-        if pr {
-            // Provisório (G4): a publicação ainda não existe.
-            linha_entrega = linha_entrega.aviso(match &disponivel {
-                Err(motivo) => motivo.clone(),
-                Ok(()) => "A entrega por PR chega numa próxima versão do Vitral; até lá, aprovar junta aqui.".to_string(),
-            });
+        // Escolhido antes e indisponível agora (sem login, sem permissão): o motivo.
+        if pr && let Err(motivo) = &disponivel {
+            linha_entrega = linha_entrega.aviso(motivo.clone());
         }
 
         let alternar = {

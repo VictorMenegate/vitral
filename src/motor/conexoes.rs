@@ -54,7 +54,6 @@ impl<T> Carregando<T> {
         }
     }
 
-    #[allow(dead_code)] // Provisório: o popover das issues e a aba PR (G3b e G5).
     pub fn carregando(&self) -> bool {
         matches!(self, Carregando::Carregando(_))
     }
@@ -648,7 +647,6 @@ impl Motor {
 
     /// O repositório do GitHub da pasta, pelo remote que vale na configuração dela. `Nada` também
     /// numa pasta sem GitHub (ver `remotos_github`).
-    #[allow(dead_code)] // API da seção 10.1; quem chama é o popover das issues (G3b).
     pub fn info_github(&self, pasta: &Path) -> Carregando<InfoRepo> {
         let Some(remotos) = self.remotos_github(pasta).tirar() else {
             return Carregando::Nada;
@@ -725,7 +723,6 @@ impl Motor {
     }
 
     /// O time do Linear do projeto, gravado na hora (o chip "Time" do popover das issues).
-    #[allow(dead_code)] // API da seção 10.1; quem chama é o chip "Time" do popover das issues (G3b).
     pub fn escolher_time(&mut self, projeto: &str, time: &Time, cx: &mut Context<Self>) {
         if self.somente_leitura.is_some() {
             return;
@@ -738,7 +735,6 @@ impl Motor {
         cx.notify();
     }
 
-    #[allow(dead_code)] // API da seção 10.1; quem chama é a faixa "sem conexão" (G3b e G5).
     pub fn estado_rede(&self, p: Provedor) -> EstadoRede {
         self.integracao.rede.get(&p).map_or(EstadoRede::Ok, |r| r.estado.clone())
     }

@@ -1353,7 +1353,6 @@ impl Motor {
     }
 
     /// "Destravar e tentar" no efeito que encontrou o chaveiro trancado (também os do PR).
-    #[allow(dead_code)] // Provisório: o item de "Esperando você" (G5).
     pub fn tentar_efeito_pendente(&mut self, tarefa: u64, cx: &mut Context<Self>) -> Receiver<Resposta> {
         let do_pr = self.tarefa(tarefa).and_then(|t| t.efeitos_issue.as_ref()).is_some_and(|e| !e.do_pr.is_empty());
         let pendente = do_pr || self.tarefa(tarefa).and_then(|t| t.efeitos_issue.as_ref()).is_some_and(|e| !e.feitos && e.pendente.is_some());

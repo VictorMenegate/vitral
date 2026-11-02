@@ -367,7 +367,6 @@ pub async fn depois_da_mescla(e: &dyn Executor, d: &DepoisDaMescla) -> Recomecad
     feito
 }
 
-#[allow(dead_code)] // Provisório: a aba PR (G5).
 /// "Atualizar com main": traz a base para a cópia e envia (o `sha_publicado` vira o HEAD novo). No
 /// conflito, nada é enviado e os arquivos voltam.
 pub async fn atualizar_com_base(e: &dyn Executor, copia: &Path, origem: &Path, remoto: &str, base: &str, ramo: &str) -> Result<Option<String>, FalhaPublicacao> {
@@ -386,7 +385,6 @@ pub async fn atualizar_com_base(e: &dyn Executor, copia: &Path, origem: &Path, r
     }
 }
 
-#[allow(dead_code)] // Provisório: a aba PR (G5).
 /// "Trazer as mudanças do GitHub": o ramo do PR para a cópia (sem enviar nada). Devolve os commits
 /// que vieram (os de fora).
 pub async fn trazer_do_github(e: &dyn Executor, copia: &Path, origem: &Path, remoto: &str, ramo: &str) -> Result<Vec<String>, FalhaPublicacao> {

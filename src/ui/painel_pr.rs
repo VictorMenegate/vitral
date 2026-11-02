@@ -1295,6 +1295,8 @@ impl Janela {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AcaoDaEspera {
     MandarFalha,
+    /// "Mandar ao chat" dos comentários da revisão (ou de quem não tem acesso).
+    MandarComentarios(Vec<u64>),
     Mesclar,
     AtualizarPr,
     /// Abre a aba PR.
@@ -1305,42 +1307,68 @@ pub enum AcaoDaEspera {
     Destravar,
 }
 
-/// O que o PR da tarefa espera de você (B21): só o que pede uma ação. No "Mesclar quando ficar
-/// pronto" (Ship), a falha e a revisão vão sozinhas ao chat; no "Watch", viram item aqui.
-pub fn esperas_da_tarefa(t: &Tarefa, agora: u64, pronto_para_mesclar: bool) -> Vec<(String, super::componentes::Sinal, AcaoDaEspera)> {
+/// O que o PR da tarefa espera de você (B21): só o que pede uma ação. Os itens do PR são os que o
+/// motor deixou em `Pr.esperando` (ele põe e tira com os eventos do vigia: no "Mesclar quando ficar
+/// pronto", a falha e a revisão vão sozinhas ao chat; no "Watch", viram item aqui), conferidos com o
+/// PR de agora; a rodada pronta para atualizar e a issue que não deu para mover vêm da tarefa. O
+/// último campo é o item do motor, que o × tira da lista.
+#[allow(clippy::type_complexity)]
+pub fn esperas_da_tarefa(
+    t: &Tarefa,
+    agora: u64,
+    pronto_para_mesclar: bool,
+) -> Vec<(String, super::componentes::Sinal, AcaoDaEspera, Option<crate::modelo::EsperaPr>)> {
     use super::componentes::Sinal;
+    use crate::modelo::EsperaPr;
     let mut lista = Vec::new();
     if let Some(p) = &t.efeitos_issue
         && !p.feitos
         && let Some(motivo) = &p.pendente
         && let Some(issue) = &t.issue
     {
-        lista.push((format!("Não consegui mover a {} ({motivo})", issue.chave), Sinal::Pedido, AcaoDaEspera::Destravar));
+        lista.push((format!("Não consegui mover a {} ({motivo})", issue.chave), Sinal::Pedido, AcaoDaEspera::Destravar, None));
     }
     let Some(pr) = t.pr.as_ref().filter(|p| p.aberto()) else {
         return lista;
     };
     let n = pr.numero;
-    let watch = pr.ao_ficar_pronto.is_none() && pr.acompanhando;
     if t.pronto_para_atualizar {
-        lista.push((format!("Pronto para atualizar o PR #{n}"), Sinal::Pedido, AcaoDaEspera::AtualizarPr));
+        lista.push((format!("Pronto para atualizar o PR #{n}"), Sinal::Pedido, AcaoDaEspera::AtualizarPr, None));
     }
-    // Com a rodada que corrige pronta, a falha já foi tratada: só o Atualizar PR.
-    if watch && pr.checks.estado == EstadoChecks::Falhou && !t.pronto_para_atualizar {
-        lista.push((format!("CI falhou no PR #{n}"), Sinal::Erro, AcaoDaEspera::MandarFalha));
-    }
-    if watch && pr.decisao == "CHANGES_REQUESTED" {
-        lista.push((format!("Revisão no PR #{n}: mudanças pedidas"), Sinal::Pedido, AcaoDaEspera::Ver));
-    }
-    if watch && pronto_para_mesclar {
-        lista.push((format!("PR #{n} pronto para mesclar"), Sinal::Pedido, AcaoDaEspera::Mesclar));
-    }
-    if !pr.commits_de_fora.is_empty() {
-        lista.push((format!("Chegou commit de fora no PR #{n}"), Sinal::Pedido, AcaoDaEspera::Ver));
-    }
-    let parado = agora.saturating_sub(pr.checks_progresso_em);
-    if pr.acompanhando && pr.checks.pendentes > 0 && pr.checks_progresso_em > 0 && parado >= 2 * 3600 {
-        lista.push((format!("Checks parados há {} h no PR #{n}", parado / 3600), Sinal::Parada, AcaoDaEspera::Ver));
+    let arroba = |autores: &[String]| autores.iter().map(|a| format!("@{a}")).collect::<Vec<_>>().join(", ");
+    for item in &pr.esperando {
+        let (texto, sinal, acao) = match item {
+            // Com a rodada que corrige pronta, a falha já foi tratada: só o Atualizar PR.
+            EsperaPr::CiFalhou { .. } if t.pronto_para_atualizar || pr.checks.estado != EstadoChecks::Falhou => continue,
+            EsperaPr::CiFalhou { .. } => (format!("CI falhou no PR #{n}"), Sinal::Erro, AcaoDaEspera::MandarFalha),
+            EsperaPr::Revisao { ids, autores } if ids.is_empty() => {
+                (format!("Revisão no PR #{n}: mudanças pedidas por {}", arroba(autores)), Sinal::Pedido, AcaoDaEspera::Ver)
+            }
+            EsperaPr::Revisao { ids, autores } => {
+                let quantos = if ids.len() == 1 { "1 comentário".to_string() } else { format!("{} comentários", ids.len()) };
+                (format!("Revisão no PR #{n} ({quantos} de {})", arroba(autores)), Sinal::Pedido, AcaoDaEspera::MandarComentarios(ids.clone()))
+            }
+            EsperaPr::Terceiro { id, autor, .. } => (
+                format!("Comentário de @{autor} (sem acesso ao repositório) no PR #{n}"),
+                Sinal::Pedido,
+                AcaoDaEspera::MandarComentarios(vec![*id]),
+            ),
+            // O pronto de quando o vigia viu, se ainda vale com o PR de agora.
+            EsperaPr::ProntoParaMesclar if !pronto_para_mesclar => continue,
+            EsperaPr::ProntoParaMesclar => (format!("PR #{n} pronto para mesclar"), Sinal::Pedido, AcaoDaEspera::Mesclar),
+            EsperaPr::CommitDeFora { .. } if pr.commits_de_fora.is_empty() => continue,
+            EsperaPr::CommitDeFora { .. } => (format!("Chegou commit de fora no PR #{n}"), Sinal::Pedido, AcaoDaEspera::Ver),
+            EsperaPr::ChecksParados if !pr.acompanhando || pr.checks.pendentes == 0 || pr.checks_progresso_em == 0 => continue,
+            EsperaPr::ChecksParados => {
+                let horas = agora.saturating_sub(pr.checks_progresso_em) / 3600;
+                (format!("Checks parados há {} h no PR #{n}", horas.max(2)), Sinal::Parada, AcaoDaEspera::Ver)
+            }
+            EsperaPr::MesclaRecusada { motivo } => {
+                (format!("O GitHub não aceitou mesclar o PR #{n}: {motivo}"), Sinal::Erro, AcaoDaEspera::Ver)
+            }
+            EsperaPr::Desconhecido(_) => continue,
+        };
+        lista.push((texto, sinal, acao, Some(item.clone())));
     }
     lista
 }
@@ -1355,6 +1383,8 @@ pub(super) struct EsperaDoPr {
     pub texto: String,
     pub sinal: super::componentes::Sinal,
     pub acao: AcaoDaEspera,
+    /// O item do motor (`Pr.esperando`), que o × tira.
+    pub item: Option<crate::modelo::EsperaPr>,
 }
 
 /// O que os PRs (e os "Confirmar" dos chats) esperam de você, num projeto ou em todos: uma linha
@@ -1398,7 +1428,7 @@ fn esperas_soltas(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaDoPr> {
             let acoes = motor.acoes_do_pr(t.id);
             falta_para_mesclar(pr, motor.simulacao(t.id).as_ref()).is_empty() && resultado(&acoes, &acao_mesclar_padrao(&acoes)).is_ok()
         });
-        for (i, (texto, sinal, acao)) in esperas_da_tarefa(t, agora, pronto).into_iter().enumerate() {
+        for (i, (texto, sinal, acao, item)) in esperas_da_tarefa(t, agora, pronto).into_iter().enumerate() {
             lista.push(EsperaDoPr {
                 chave: format!("pr-{}-{i}", t.id),
                 chat: chat.id.clone(),
@@ -1408,6 +1438,7 @@ fn esperas_soltas(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaDoPr> {
                 texto,
                 sinal,
                 acao,
+                item,
             });
         }
         for c in motor.cartoes().iter().filter(|c| c.aberto() && c.chat == chat.id) {
@@ -1421,6 +1452,7 @@ fn esperas_soltas(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaDoPr> {
                     texto: format!("Confirmar: {}", super::cartoes::acao_da_confirmacao(motor, conf)),
                     sinal: super::componentes::Sinal::Pedido,
                     acao: AcaoDaEspera::Confirmar(c.id),
+                    item: None,
                 });
             }
         }
@@ -1446,6 +1478,21 @@ impl Janela {
         let atual = m.atual.cloned();
         let acoes = if atual.is_some() { motor.acoes_do_pr(tarefa) } else { Vec::new() };
         let motor_e = self.motor.clone();
+        let ultimo = t.prs_anteriores.last().filter(|a| a.numero == numero);
+        let recomecar = t.pr.is_none() && ultimo.is_some_and(|a| a.estado == EstadoPr::Mesclado) && t.worktree.is_some();
+        let base_anterior = t.partir_de.clone().unwrap_or_else(|| "origin/main".into());
+        let acao_sem_pr = {
+            let motor_e = motor_e.clone();
+            move |f: fn(&mut Motor, u64, &mut Context<Motor>) -> smol::channel::Receiver<Resposta>| {
+                let motor_e = motor_e.clone();
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    if let Some(motor) = &motor_e {
+                        let recebe = motor.update(cx, |m, cx| f(m, tarefa, cx));
+                        responder(recebe, window, cx);
+                    }
+                }
+            }
+        };
         botao_icone("pr-mais", Lucide::Ellipsis, "Mais opções do PR", TamanhoBotao::Linha, window, cx)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, window, _| {
                 menu = menu
@@ -1457,6 +1504,15 @@ impl Janela {
                         cx.write_to_clipboard(ClipboardItem::new_string(format!("#{numero}")))
                     }));
                 let Some(pr) = atual.clone() else {
+                    // O último PR mesclado com commits que a cópia não tem: ela ficou como estava, e o
+                    // aviso do chat manda recomeçar daqui.
+                    if recomecar {
+                        menu = menu.separator().item(
+                            PopupMenuItem::new(format!("Recomeçar a partir de {base_anterior}"))
+                                .icon(Lucide::RotateCcw)
+                                .on_click(acao_sem_pr(|m, id, cx| m.recomecar_do_main(id, cx))),
+                        );
+                    }
                     return menu.min_w(tam(window, 240.));
                 };
                 let pode = |a: &AcaoPr| resultado(&acoes, a).is_ok();
@@ -2261,6 +2317,16 @@ impl Janela {
                             responder(recebe, window, cx);
                         }
                     }),
+                    AcaoDaEspera::MandarComentarios(ids) => {
+                        let ids = ids.clone();
+                        botao_icone(id("acao"), Lucide::MessageSquareQuote, "Mandar ao chat", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            if let Some(motor) = &motor_e {
+                                let r = motor.update(cx, |m, cx| m.mandar_comentarios_ao_chat(tarefa, ids.clone(), cx));
+                                avisar(&r, window, cx);
+                            }
+                        })
+                    }
                     AcaoDaEspera::Mesclar => botao_icone(id("acao"), Lucide::GitMerge, "Mesclar", TamanhoBotao::Linha, window, cx).on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.mesclar_pr(tarefa, None, window, cx)
@@ -2297,11 +2363,23 @@ impl Janela {
                     .min_w_0()
                     .child(div().flex_none().child(e.sinal.ponto(6.)))
                     .child(div().flex_1().min_w_0().truncate().child(e.texto.clone()));
-                let cartao = CartaoDeLista::new(id("cartao"), e.titulo.clone())
+                let tirar = e.item.clone().map(|item| {
+                    let motor_e = self.motor.clone();
+                    botao_icone(id("tirar"), Lucide::X, "Tirar daqui", TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(motor) = &motor_e {
+                            motor.update(cx, |m, cx| m.dispensar_espera_do_pr(tarefa, &item, cx));
+                        }
+                    })
+                });
+                let mut cartao = CartaoDeLista::new(id("cartao"), e.titulo.clone())
                     .simbolo(Simbolo::Projeto(icone, cor))
                     .subtitulo(subtitulo)
                     .acao_fixa(botao)
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba_pr(&chat, window, cx)));
+                if let Some(tirar) = tirar {
+                    cartao = cartao.acao(tirar);
+                }
                 div().mt(esp::E2).child(cartao).into_any_element()
             })
             .collect()
@@ -2536,29 +2614,51 @@ mod testes {
     #[test]
     fn esperando_voce_so_com_acao() {
         use super::{AcaoDaEspera, esperas_da_tarefa};
-        use crate::modelo::Tarefa;
+        use crate::modelo::{EsperaPr, Tarefa};
         let agora = 100_000;
         let mut t = Tarefa { pr: Some(pr()), ..Default::default() };
-        // Passou, Watch, sem nada pronto: nada espera você.
-        assert!(esperas_da_tarefa(&t, agora, false).is_empty());
+        let textos = |t: &Tarefa, pronto: bool| esperas_da_tarefa(t, agora, pronto).into_iter().map(|e| e.0).collect::<Vec<_>>();
+        // Passou, sem nada que o motor tenha deixado: nada espera você.
+        assert!(esperas_da_tarefa(&t, agora, true).is_empty());
+        // O pronto do vigia só aparece enquanto o PR de agora ainda está pronto.
+        t.pr.as_mut().unwrap().esperando = vec![EsperaPr::ProntoParaMesclar];
         assert_eq!(esperas_da_tarefa(&t, agora, true).last().map(|e| e.2.clone()), Some(AcaoDaEspera::Mesclar));
-        // CI falhou no Watch vira item; no Ship, vai sozinho ao chat.
+        assert!(esperas_da_tarefa(&t, agora, false).is_empty());
+        // CI falhou (no Watch o motor deixa o item); com a rodada que corrige pronta, só o Atualizar PR.
         let p = t.pr.as_mut().unwrap();
         p.checks = ResumoChecks { estado: EstadoChecks::Falhou, total: 4, terminados: 4, falhos: 1, pendentes: 0 };
-        assert_eq!(esperas_da_tarefa(&t, agora, false)[0].0, "CI falhou no PR #12");
-        t.pr.as_mut().unwrap().ao_ficar_pronto = Some("squash".into());
-        assert!(esperas_da_tarefa(&t, agora, false).is_empty());
-        // A rodada pronta para atualizar, o commit de fora e os checks parados há 2 h.
+        p.esperando = vec![EsperaPr::CiFalhou { chave: "abc".into(), falhos: vec!["test".into()] }];
+        assert_eq!(textos(&t, false), ["CI falhou no PR #12"]);
         t.pronto_para_atualizar = true;
+        assert_eq!(textos(&t, false), ["Pronto para atualizar o PR #12"]);
+        t.pronto_para_atualizar = false;
+        // A revisão de quem tem acesso e o comentário de quem não tem: "Mandar ao chat" só os deles.
+        t.pr.as_mut().unwrap().esperando = vec![
+            EsperaPr::Revisao { ids: vec![7, 8], autores: vec!["VictorMenegate".into()] },
+            EsperaPr::Terceiro { id: 9, autor: "estranho".into(), url: String::new() },
+            EsperaPr::Revisao { ids: Vec::new(), autores: vec!["x".into()] },
+            EsperaPr::MesclaRecusada { motivo: "Base branch was modified".into() },
+        ];
+        let esperas = esperas_da_tarefa(&t, agora, false);
+        assert_eq!(esperas[0].0, "Revisão no PR #12 (2 comentários de @VictorMenegate)");
+        assert_eq!(esperas[0].2, AcaoDaEspera::MandarComentarios(vec![7, 8]));
+        assert_eq!(esperas[1].0, "Comentário de @estranho (sem acesso ao repositório) no PR #12");
+        assert_eq!(esperas[1].2, AcaoDaEspera::MandarComentarios(vec![9]));
+        assert_eq!((esperas[2].0.as_str(), &esperas[2].2), ("Revisão no PR #12: mudanças pedidas por @x", &AcaoDaEspera::Ver));
+        assert_eq!(esperas[3].0, "O GitHub não aceitou mesclar o PR #12: Base branch was modified");
+        // Cada item do motor vai junto, para o × tirar só ele.
+        assert!(esperas.iter().all(|e| e.3.is_some()));
+        // O commit de fora e os checks parados há 2 h, conferidos com o PR de agora.
         let p = t.pr.as_mut().unwrap();
         p.commits_de_fora = vec!["abc1234".into()];
         p.checks = ResumoChecks { estado: EstadoChecks::Pendente, total: 4, terminados: 1, falhos: 0, pendentes: 3 };
-        p.checks_progresso_em = agora - 2 * 3600;
-        let textos: Vec<String> = esperas_da_tarefa(&t, agora, false).into_iter().map(|e| e.0).collect();
-        assert_eq!(textos, ["Pronto para atualizar o PR #12", "Chegou commit de fora no PR #12", "Checks parados há 2 h no PR #12"]);
-        // Parado de acompanhar: nada de checks parados.
+        p.checks_progresso_em = agora - 3 * 3600;
+        p.esperando = vec![EsperaPr::CommitDeFora { shas: vec!["abc1234".into()] }, EsperaPr::ChecksParados];
+        assert_eq!(textos(&t, false), ["Chegou commit de fora no PR #12", "Checks parados há 3 h no PR #12"]);
+        // Parado de acompanhar: nada de checks parados; o commit de fora trazido, nada dele.
         t.pr.as_mut().unwrap().acompanhando = false;
-        assert_eq!(esperas_da_tarefa(&t, agora, false).len(), 2);
+        t.pr.as_mut().unwrap().commits_de_fora.clear();
+        assert!(esperas_da_tarefa(&t, agora, false).is_empty());
     }
 
     #[test]

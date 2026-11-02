@@ -37,7 +37,6 @@ use regras::{Condicoes, Destino, EventoPr};
 use trabalho::{Acompanhado, DepoisDaMescla, FalhaLida, FalhaPublicacao, Publicacao, Publicado};
 
 /// De onde vem o diff que o diálogo mostra.
-#[allow(dead_code)] // Provisório: o diálogo do diff no modo PR (G5).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FonteDiff {
     /// A cópia da tarefa contra `base_da_tarefa` (sem rede).
@@ -83,10 +82,11 @@ pub enum Confirmado {
     Instavel,
 }
 
-#[allow(dead_code)] // Provisório: "Rodar falhas de novo" da sub-aba Checks (G5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RodarDeNovo {
     Falhas,
+    /// Um job só: a sub-aba Checks ainda só tem o "Rodar falhas de novo".
+    #[allow(dead_code)]
     Job(u64),
 }
 
@@ -1871,7 +1871,6 @@ impl Motor {
 
     // ---------- leituras da aba PR ----------
 
-    #[allow(dead_code)] // Provisório: as leituras da aba PR (G5).
     fn pedir_pr(&self, pedido: PedidoPrLeitura) {
         let mut pedidos = self.prs.pedidos.borrow_mut();
         if pedidos.contains(&pedido) {
@@ -1963,7 +1962,6 @@ impl Motor {
     }
 
     /// A simulação da mescla da cópia com a base (depois de um fetch), em segundo plano.
-    #[allow(dead_code)] // Provisório: a aba PR (G5).
     fn simular(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(t) = self.tarefa(id).cloned() else {
             return;
@@ -2061,9 +2059,6 @@ fn linha_do_tempo_de(d: &DetalhePr, comentarios: &[ComentarioPr], de_fora: &[Str
     itens.into_iter().map(|(_, e)| e).collect()
 }
 
-// Provisório: quem chama a API da aba PR é a interface do G5 (feita ao mesmo tempo, contra estas
-// assinaturas).
-#[allow(dead_code)]
 impl Motor {
     // ---------- leitura (seção 10.1) ----------
 

@@ -696,7 +696,6 @@ impl ResumoChecks {
     }
 
     /// A partir da lista do `gh pr checks` (pelo `bucket`).
-    #[allow(dead_code)] // Provisório: o anel da sub-aba Checks (G5).
     pub fn da_lista(checks: &[Check]) -> Self {
         Self::das_contagens(checks.iter().map(|c| match c.balde.as_str() {
             "pending" => ("PENDING", 1),

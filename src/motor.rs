@@ -29,15 +29,10 @@ pub use conexoes::{
     Carregando, EstadoConexao, EstadoConexoes, EstadoGithub, RemotoGithub, estados_padrao, linear_com_time,
     modo_pr_disponivel, remoto_escolhido,
 };
-// Provisório: o PR (G4 e G5) usa o estado da rede, o repositório inteiro e os métodos permitidos.
-#[allow(unused_imports)]
-pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
-// Provisório: a interface das issues (G3b) e a do PR (G5) passam a usar estes tipos.
-#[allow(unused_imports)]
-pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
+pub use conexoes::{Provedor, metodos_permitidos};
+pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ligada_de};
 pub use mestre::ResumoVolta;
-#[allow(unused_imports)]
-pub use prs::{AcaoPr, AndamentoPr, Confirmado, EventoLinha, FonteDiff, OrigemAcao, OrigemAjuste, PedidoPr, RodarDeNovo};
+pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, OrigemAcao, OrigemAjuste, PedidoPr, RodarDeNovo};
 use mestre::{Ciclos, MotivoPassagem, Readmes};
 
 use crate::{
