@@ -20,7 +20,7 @@ use gpui_kit::component::{
         Diff, DiffAnnotation, DiffChangeIndicator, DiffFile, DiffFileStatus, DiffHoverHighlight, DiffHunkSeparator,
         DiffLinePosition, DiffLineRange, DiffMode, DiffSide, DiffState,
     },
-    input::{InputEvent, InputState, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     kbd::Kbd,
     menu::DropdownMenu as _,
     spinner::Spinner,
@@ -42,10 +42,10 @@ use super::{
     menus,
 };
 use crate::{
-    git,
-    modelo::{EstadoTarefa, Problema, Revisao, Tarefa, Verificacao},
-    motor::{LeituraDiff, Motor},
-    tema::{Cores, Lucide, Tipo as _, esp, r, raio, sombra_elevado, tam},
+    git, issues,
+    modelo::{EstadoTarefa, Forma, ModoEntrega, Problema, Revisao, Tarefa, Verificacao},
+    motor::{FonteDiff, LeituraDiff, Motor, PedidoPr},
+    tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio, sombra_elevado, tam},
 };
 
 /// Linhas de um comentário: do começo (lado e número) ao fim, que pode ser do outro lado quando o
@@ -114,7 +114,8 @@ struct Rascunho {
 /// O que cada anotação do diff mostra (um retrato do estado, montado a cada quadro).
 #[derive(Clone)]
 enum Cartao {
-    Problema { indice: usize, problema: Problema, usado: bool },
+    /// `so_ler`: o diff do PR no GitHub, onde nada vira comentário (sem o "Usar").
+    Problema { indice: usize, problema: Problema, usado: bool, so_ler: bool },
     Comentario { indice: usize, texto: String, onde: String, gravidade: Option<String> },
     Rascunho { rotulo: String, editando: bool },
 }
@@ -429,6 +430,10 @@ pub struct RevisaoDiff {
     motor: Entity<Motor>,
     janela: WeakEntity<Janela>,
     tarefa: u64,
+    /// De onde vem o diff: a cópia da tarefa, ou o PR no GitHub (só para ler, da aba PR).
+    fonte: FonteDiff,
+    /// A pasta entrega por PR: o formulário do PR embaixo do diff ("Revisar e abrir PR").
+    pr: Option<FormularioPr>,
     carga: Carga,
     /// Na ordem da lateral (raiz, pastas, gerados).
     arquivos: Vec<DiffFile>,
@@ -469,6 +474,19 @@ impl RevisaoDiff {
         janela: WeakEntity<Janela>,
         tarefa: u64,
         foco: Option<(String, Option<u64>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::com_fonte(motor, janela, tarefa, foco, FonteDiff::Tarefa(tarefa), window, cx)
+    }
+
+    /// A revisão de um diff de outra fonte (o PR no GitHub, quando a cópia já foi limpa).
+    pub fn com_fonte(
+        motor: Entity<Motor>,
+        janela: WeakEntity<Janela>,
+        tarefa: u64,
+        foco: Option<(String, Option<u64>)>,
+        fonte: FonteDiff,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -515,6 +533,8 @@ impl RevisaoDiff {
             motor,
             janela,
             tarefa,
+            fonte,
+            pr: None,
             carga: Carga::Lendo,
             arquivos: Vec::new(),
             grupos: Vec::new(),
@@ -540,15 +560,281 @@ impl RevisaoDiff {
             focada: false,
             _assinaturas,
         };
+        revisao.pr = revisao.formulario_novo(window, cx);
         revisao.ler(cx);
         revisao
     }
 
+    /// O formulário do PR, quando a pasta entrega por PR (ou o chat já tem um PR aberto): o título
+    /// e a descrição gerados sem gastar turno (`titulo_do_pr`, `corpo_do_pr`), e os segredos e os
+    /// arquivos novos lidos em segundo plano.
+    fn formulario_novo(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<FormularioPr> {
+        let FonteDiff::Tarefa(id) = self.fonte else { return None };
+        let m = self.motor.read(cx);
+        let t = m.tarefa(id)?.clone();
+        let origem = m.origem_da_tarefa(&t);
+        let config = m.config_da_pasta(&t.projeto, &origem).github;
+        let aberto = t.pr.clone().filter(|p| p.aberto());
+        if (config.entrega != ModoEntrega::Pr && aberto.is_none()) || t.forma != Forma::Copia {
+            return None;
+        }
+        let info = m.destino_do_pr(&origem, &config).and_then(|repo| m.repo_github(&repo).valor().map(|r| r.info.clone()));
+        let metodo = super::painel_pr::metodos_do_pr(info.as_ref()).remove(0);
+        let titulo = aberto.as_ref().map(|p| p.titulo.clone()).unwrap_or_else(|| issues::titulo_do_pr(&t.titulo, t.issue.as_ref()));
+        let resumo = t.entrega.as_ref().map(|e| e.resumo.clone()).filter(|r| !r.trim().is_empty()).unwrap_or_else(|| t.objetivo.clone());
+        let como = t.entrega.as_ref().map(|e| e.como_verificou.clone()).unwrap_or_default();
+        let corpo = issues::corpo_do_pr(&issues::DadosDoCorpo {
+            resumo: &resumo,
+            como_verificou: &como,
+            verificacao: t.ultima_verificacao.as_ref().map(|v| (v.comando.as_str(), v.passou)),
+            issue: t.issue.as_ref(),
+        });
+        let segredos = m.segredos_da_tarefa(id, cx);
+        let novos = m.arquivos_novos(id, cx);
+        cx.spawn(async move |this, cx| {
+            let achados = segredos.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(f) = &mut this.pr {
+                    f.achados = Some(achados);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.spawn(async move |this, cx| {
+            let lista = novos.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(f) = &mut this.pr {
+                    f.novos = Some(lista);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        let campo_titulo = cx.new(|cx| InputState::new(window, cx).placeholder("O título do PR").default_value(titulo));
+        let descricao = cx.new(|cx| {
+            TextareaState::new(window, cx).auto_grow(4, 8).placeholder("O que muda e como foi verificado").default_value(corpo)
+        });
+        Some(FormularioPr {
+            atualizar: aberto.as_ref().map(|p| p.numero),
+            titulo: campo_titulo,
+            descricao,
+            atualizar_descricao: false,
+            rascunho: config.rascunho,
+            ship: aberto.as_ref().is_some_and(|p| p.ao_ficar_pronto.is_some()),
+            metodo: aberto.and_then(|p| p.ao_ficar_pronto).unwrap_or(metodo),
+            segredos_ok: false,
+            achados: None,
+            novos: None,
+            enviando: false,
+        })
+    }
+
+    /// Por que "Abrir PR" ainda não vai: os segredos sem a confirmação, o título vazio.
+    fn bloqueio_do_pr(&self, cx: &App) -> Option<String> {
+        let f = self.pr.as_ref()?;
+        if f.achados.as_ref().is_some_and(|a| !a.is_empty()) && !f.segredos_ok {
+            return Some("Parece haver um segredo nas mudanças: confira e marque “Confirmo que não são segredos”".into());
+        }
+        let vai_titulo = f.atualizar.is_none() || f.atualizar_descricao;
+        if vai_titulo && f.titulo.read(cx).value().trim().is_empty() {
+            return Some("Escreva o título do PR".into());
+        }
+        None
+    }
+
+    /// "Abrir PR" / "Atualizar PR": manda o pedido ao motor e espera; o erro fica no topo do diálogo.
+    fn publicar_pr(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.bloqueio_do_pr(cx).is_some() || self.motor.read(cx).recusa_aprovar(self.tarefa).is_some() {
+            return;
+        }
+        let Some(f) = &mut self.pr else { return };
+        let vai_texto = f.atualizar.is_none() || f.atualizar_descricao;
+        let pedido = PedidoPr {
+            titulo: vai_texto.then(|| f.titulo.read(cx).value().trim().to_string()),
+            descricao: vai_texto.then(|| f.descricao.read(cx).value().to_string()),
+            rascunho: f.rascunho && f.atualizar.is_none(),
+            quando_pronto: f.ship.then(|| f.metodo.clone()),
+            segredos_confirmados: f.segredos_ok,
+        };
+        f.enviando = true;
+        let atualizar = f.atualizar.is_some();
+        let id = self.tarefa;
+        let recebe = self.motor.update(cx, |m, cx| m.publicar_pr_pelo_usuario(id, pedido, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(resposta) = recebe.recv().await else { return };
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(f) = &mut this.pr {
+                    f.enviando = false;
+                }
+                if resposta.erro {
+                    let titulo = if atualizar { "Não deu para atualizar o PR" } else { "Não deu para abrir o PR" };
+                    this.aviso = Some((Tom::Erro, format!("{titulo}: {}", resposta.texto)));
+                    cx.notify();
+                    return;
+                }
+                let texto = resposta.texto.lines().next().unwrap_or("Pronto.").to_string();
+                window.push_notification(aviso(Tom::Pronto, texto), cx);
+                let _ = this.janela.update(cx, |j, _| j.revisoes.remove(&id));
+                window.close_dialog(cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// "Pedir ao chat uma descrição": uma mensagem do usuário, visível, e o diálogo fecha.
+    fn pedir_descricao(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(chat) = self.motor.read(cx).tarefa(self.tarefa).map(|t| t.trabalhador.clone()) else { return };
+        let texto = "Escreva o título e a descrição do PR destas mudanças (o que muda e como verificou) e abra o PR com abrir_pr.".to_string();
+        self.motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, texto, Vec::new(), Default::default(), cx));
+        window.push_notification(aviso(Tom::Pronto, "Pedi ao chat o título e a descrição do PR."), cx);
+        window.close_dialog(cx);
+    }
+
+    /// O formulário do PR, embaixo do diff: título e descrição (recolhidos no "Atualizar PR" até
+    /// "Atualizar a descrição"), os arquivos novos, os segredos com a confirmação, o aviso dos
+    /// workflows e as escolhas de rascunho e de mesclar quando ficar pronto.
+    fn formulario_pr(&self, d: Disposicao, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let f = self.pr.as_ref()?;
+        let fraca = cx.entity().downgrade();
+        let mudar = |mudanca: fn(&mut FormularioPr, bool)| {
+            let fraca = fraca.clone();
+            move |marcado: &bool, _: &mut Window, cx: &mut App| {
+                let marcado = *marcado;
+                let _ = fraca.update(cx, |this, cx| {
+                    if let Some(f) = &mut this.pr {
+                        mudanca(f, marcado);
+                    }
+                    cx.notify();
+                });
+            }
+        };
+        let estreito = d.rotulos == Rotulos::Icone;
+        let rotulo = |texto: &'static str| div().flex_none().w(r(88.)).pt(esp::E6).rotulo().text_color(Cores::tenue()).child(texto);
+        let linha = |r: &'static str, campo: AnyElement| {
+            if estreito {
+                v_flex().gap(esp::E4).child(div().rotulo().text_color(Cores::tenue()).child(r)).child(campo).into_any_element()
+            } else {
+                h_flex().items_start().gap(esp::E12).child(rotulo(r)).child(div().flex_1().min_w_0().child(campo)).into_any_element()
+            }
+        };
+        let mostra_texto = f.atualizar.is_none() || f.atualizar_descricao;
+        let mut filhos: Vec<AnyElement> = Vec::new();
+        if f.atualizar.is_some() {
+            filhos.push(
+                Checkbox::new("pr-atualizar-descricao")
+                    .label("Atualizar a descrição")
+                    .checked(f.atualizar_descricao)
+                    .on_click(mudar(|f, v| f.atualizar_descricao = v))
+                    .into_any_element(),
+            );
+        }
+        if mostra_texto {
+            filhos.push(linha("Título", Input::new(&f.titulo).with_size(Size::Medium).into_any_element()));
+            let pedir = botao_fantasma("pr-pedir-descricao", Some(Lucide::MessageSquareQuote.into()), "Pedir ao chat uma descrição", TamanhoBotao::Linha, window, cx)
+                .tooltip("Manda ao chat um pedido para escrever o título e a descrição e abrir o PR; o diálogo fecha")
+                .on_click(cx.listener(|this, _, window, cx| this.pedir_descricao(window, cx)));
+            filhos.push(linha(
+                "Descrição",
+                v_flex().gap(esp::E4).child(Textarea::new(&f.descricao)).child(h_flex().ml(r(-8.)).child(pedir)).into_any_element(),
+            ));
+        }
+        // Os arquivos que o PR acrescenta (os copiados da origem nunca entram no commit).
+        let achados = f.achados.clone().unwrap_or_default();
+        if let Some(novos) = f.novos.as_ref().filter(|n| !n.is_empty()) {
+            let marcados: Vec<String> = novos
+                .iter()
+                .map(|a| if achados.iter().any(|x| &x.arquivo == a) { format!("{a} (!)") } else { a.clone() })
+                .collect();
+            filhos.push(
+                h_flex()
+                    .gap(esp::E8)
+                    .metadado()
+                    .child(div().flex_none().text_color(Cores::tenue()).child("Arquivos novos"))
+                    .child(div().min_w_0().text_color(Cores::texto()).child(marcados.join(", ")))
+                    .into_any_element(),
+            );
+        }
+        if !achados.is_empty() {
+            let lista: Vec<String> = achados.iter().map(|a| a.descricao()).collect();
+            filhos.push(
+                v_flex()
+                    .gap(esp::E6)
+                    .child(Alerta::new(Tom::Erro, format!("Parece segredo: {}.", lista.join("; "))).compacto())
+                    .child(
+                        Checkbox::new("pr-segredos-ok")
+                            .label("Confirmo que não são segredos")
+                            .checked(f.segredos_ok)
+                            .on_click(mudar(|f, v| f.segredos_ok = v)),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let caminhos: Vec<String> = self.arquivos.iter().map(|a| a.path().to_string()).collect();
+        if git::mexe_em_workflows(&caminhos) {
+            filhos.push(
+                Alerta::new(Tom::Atencao, "Este PR muda workflows do GitHub Actions (rodam com os segredos do repositório); o Vitral nunca publica isso sozinho.")
+                    .compacto()
+                    .into_any_element(),
+            );
+        }
+        let ship = Checkbox::new("pr-ship")
+            .label(format!("Mesclar quando ficar pronto ({})", f.metodo))
+            .checked(f.ship)
+            .tooltip("O Vitral corrige CI e revisão (até 3 rodadas), publica de novo e mescla sozinho quando passar")
+            .on_click(mudar(|f, v| f.ship = v));
+        filhos.push(
+            h_flex()
+                .flex_wrap()
+                .gap(esp::E16)
+                .when(f.atualizar.is_none(), |s| {
+                    s.child(
+                        Checkbox::new("pr-rascunho")
+                            .label("Abrir como rascunho")
+                            .checked(f.rascunho)
+                            .on_click(mudar(|f, v| f.rascunho = v)),
+                    )
+                })
+                .child(ship)
+                .into_any_element(),
+        );
+        Some(
+            v_flex()
+                .id("formulario-pr")
+                .flex_none()
+                .max_h(r(360.))
+                .overflow_y_scroll()
+                .mt(esp::E12)
+                .gap(esp::E12)
+                .p(dentro_da_borda(12.))
+                .rounded(raio::CARTAO)
+                .bg(Cores::cartao_elevado())
+                .border_1()
+                .border_color(Cores::linha())
+                .children(filhos)
+                .into_any_element(),
+        )
+    }
+
     /// Lê o diff em segundo plano; o que já foi comentado fica.
     fn ler(&mut self, cx: &mut Context<Self>) {
-        let leitura = self.motor.update(cx, |m, cx| m.diff_da_tarefa(self.tarefa, cx));
+        enum Leitura {
+            Copia(Task<Result<String, LeituraDiff>>),
+            Pr(Task<Option<String>>),
+        }
+        let leitura = match &self.fonte {
+            FonteDiff::Tarefa(id) => {
+                let id = *id;
+                Leitura::Copia(self.motor.update(cx, |m, cx| m.diff_da_tarefa(id, cx)))
+            }
+            FonteDiff::Pr { .. } => Leitura::Pr(self.motor.read(cx).diff_do_pr(self.fonte.clone(), cx)),
+        };
         cx.spawn(async move |this, cx| {
-            let resultado = leitura.await;
+            let resultado = match leitura {
+                Leitura::Copia(t) => t.await,
+                Leitura::Pr(t) => t.await.ok_or_else(|| LeituraDiff::Git("Não consegui ler o diff do PR no GitHub.".into())),
+            };
             let _ = this.update(cx, |this, cx| {
                 this.carregar(resultado, cx);
                 if let Some((arquivo, linha)) = this.foco.take() {
@@ -702,13 +988,23 @@ impl RevisaoDiff {
         }
     }
 
+    /// Os apontamentos que viram sugestão no diff: os do revisor e, com o PR do chat (ou o diff do
+    /// PR), os comentários em linha da revisão do PR, depois deles ("A revisão do PR apontou").
     fn problemas(&self, cx: &App) -> Vec<Problema> {
-        self.motor
-            .read(cx)
-            .tarefa(self.tarefa)
-            .and_then(|t| t.revisao.as_ref())
-            .map(|r| r.problemas.clone())
-            .unwrap_or_default()
+        let m = self.motor.read(cx);
+        let mut lista = m.tarefa(self.tarefa).and_then(|t| t.revisao.as_ref()).map(|r| r.problemas.clone()).unwrap_or_default();
+        let pr = match &self.fonte {
+            FonteDiff::Pr { repositorio, numero } => Some((repositorio.clone(), *numero)),
+            FonteDiff::Tarefa(id) => m.pr_da_tarefa(*id).filter(|p| p.aberto()).map(|p| (p.repositorio.clone(), p.numero)),
+        };
+        if let Some(eventos) = pr.as_ref().and_then(|(repo, n)| m.linha_do_tempo(repo, *n).valor().cloned()) {
+            for e in eventos {
+                if let crate::motor::EventoLinha::ComentarioEmLinha { autor, arquivo, linha, corpo, .. } = e {
+                    lista.push(Problema { arquivo, linha, gravidade: format!("{DA_REVISAO_DO_PR}{autor}"), descricao: corpo });
+                }
+            }
+        }
+        lista
     }
 
     fn arquivo(&self, caminho: &str) -> Option<&DiffFile> {
@@ -788,9 +1084,10 @@ impl RevisaoDiff {
         cx.notify();
     }
 
-    /// Aprovada ou cancelada: só leitura (sem "+", rascunho nem Descartar).
+    /// Aprovada ou cancelada, ou o diff do PR no GitHub: só leitura (sem "+", rascunho nem
+    /// Descartar).
     fn so_leitura(&self, cx: &App) -> bool {
-        self.motor.read(cx).tarefa(self.tarefa).is_none_or(|t| t.estado.encerrada())
+        matches!(self.fonte, FonteDiff::Pr { .. }) || self.motor.read(cx).tarefa(self.tarefa).is_none_or(|t| t.estado.encerrada())
     }
 
     fn abrir_rascunho(&mut self, arquivo: String, linhas: Option<Linhas>, window: &mut Window, cx: &mut Context<Self>) {
@@ -946,11 +1243,13 @@ impl RevisaoDiff {
         cx.notify();
     }
 
-    /// Os apontamentos do revisor que não viraram comentário.
+    /// Os apontamentos do revisor que não viraram comentário (os da revisão do PR só vão pelo
+    /// "Usar").
     fn nao_usados(&self, cx: &App) -> Vec<Problema> {
         self.problemas(cx)
             .into_iter()
             .enumerate()
+            .filter(|(_, p)| !p.gravidade.starts_with(DA_REVISAO_DO_PR))
             .filter(|(i, _)| !self.comentarios.iter().any(|c| c.problema == Some(*i)))
             .map(|(_, p)| p)
             .collect()
@@ -1022,6 +1321,9 @@ impl RevisaoDiff {
         let Some(t) = self.motor.read(cx).tarefa(self.tarefa).cloned() else {
             return;
         };
+        if self.pr.is_some() {
+            return self.publicar_pr(window, cx);
+        }
         match principal(&self.pendencias(&t)) {
             Principal::Ajuste => self.mudar_pop(Pop::Ajuste, true, cx),
             Principal::Aprovar if self.motor.read(cx).recusa_aprovar(self.tarefa).is_none() => {
@@ -1269,6 +1571,31 @@ impl RevisaoDiff {
     /// do diff. Refeito a cada quadro, com o diálogo.
     pub fn cabecalho(&self, cx: &App) -> CabecalhoDialogo {
         let m = self.motor.read(cx);
+        if let FonteDiff::Pr { repositorio, numero } = &self.fonte {
+            let titulo = m
+                .tarefa(self.tarefa)
+                .and_then(|t| t.pr.iter().map(|p| (p.numero, p.titulo.clone())).chain(t.prs_anteriores.iter().map(|a| (a.numero, a.titulo.clone()))).find(|(n, _)| n == numero))
+                .map(|(_, t)| t)
+                .unwrap_or_default();
+            let subtitulo = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(r(6.))
+                .font_weight(FontWeight::NORMAL)
+                .child(repositorio.clone())
+                .child(div().text_color(Cores::apagado()).child("·"))
+                .child("o diff no GitHub, só para ler")
+                .map(|s| match self.tamanho() {
+                    Some((n, mais, menos)) if n > 0 => s
+                        .child(div().text_color(Cores::apagado()).child("·"))
+                        .child(contagem(n, "arquivo", "arquivos"))
+                        .child(div().text_color(Cores::apagado()).child("·"))
+                        .child(format!("+{mais} −{menos}")),
+                    _ => s,
+                });
+            return CabecalhoDialogo::new(format!("PR #{numero} · {titulo}")).uma_linha().subtitulo(subtitulo);
+        }
         let Some(t) = m.tarefa(self.tarefa) else {
             return CabecalhoDialogo::new(format!("Chat {}", self.tarefa));
         };
@@ -1296,7 +1623,12 @@ impl RevisaoDiff {
                         .child(format!("+{mais} −{menos}")),
                     None => s,
                 });
-            return CabecalhoDialogo::new(format!("Revisar e juntar · chat {} {}", t.id, t.titulo)).uma_linha().subtitulo(subtitulo);
+            let acao = match &self.pr {
+                Some(f) if f.atualizar.is_some() => "Revisar e atualizar PR",
+                Some(_) => "Revisar e abrir PR",
+                None => "Revisar e juntar",
+            };
+            return CabecalhoDialogo::new(format!("{acao} · chat {} {}", t.id, t.titulo)).uma_linha().subtitulo(subtitulo);
         }
         let subtitulo = div()
             .flex()
@@ -1904,6 +2236,7 @@ impl RevisaoDiff {
             });
             cartoes.insert(id, cartao);
         };
+        let so_ler = matches!(self.fonte, FonteDiff::Pr { .. });
         for (i, p) in problemas.iter().enumerate() {
             if let Some((caminho, linha)) = self.ancorar(&p.arquivo, p.linha) {
                 let usado = self.comentarios.iter().any(|c| c.problema == Some(i));
@@ -1911,6 +2244,7 @@ impl RevisaoDiff {
                     indice: i,
                     problema: p.clone(),
                     usado,
+                    so_ler,
                 };
                 anotar(("problema", i).into(), caminho, linha.map(|l| (DiffSide::Modified, l)), cartao);
             }
@@ -1920,10 +2254,10 @@ impl RevisaoDiff {
             if editando != Some(i)
                 && let Some(arquivo) = self.arquivo(&c.arquivo)
             {
-                let gravidade = c
-                    .problema
-                    .and_then(|p| problemas.get(p))
-                    .map(|p| nome_da_gravidade(peso_da_gravidade(&p.gravidade)).to_string());
+                let gravidade = c.problema.and_then(|p| problemas.get(p)).map(|p| match p.gravidade.strip_prefix(DA_REVISAO_DO_PR) {
+                    Some(autor) => format!("{DA_REVISAO_DO_PR}{autor}"),
+                    None => nome_da_gravidade(peso_da_gravidade(&p.gravidade)).to_string(),
+                });
                 let cartao = Cartao::Comentario {
                     indice: i,
                     texto: c.texto.clone(),
@@ -2055,6 +2389,9 @@ impl RevisaoDiff {
 
     /// Spinner e ícone, texto e cor da linha da esquerda do rodapé.
     fn estado_do_rodape(&self, t: Option<&Tarefa>, cx: &App) -> (Option<Lucide>, String) {
+        if let FonteDiff::Pr { numero, .. } = &self.fonte {
+            return (Some(Lucide::Info), format!("O diff do PR #{numero} no GitHub, só para ler."));
+        }
         let Some(t) = t else {
             return (Some(Lucide::Info), "Este chat não existe mais.".into());
         };
@@ -2127,10 +2464,13 @@ impl RevisaoDiff {
         // selo; sem nada, fica no Aprovar.
         let ajuste_primeiro = t.is_some_and(|t| principal(&self.pendencias(t)) == Principal::Ajuste);
         let vai_junto = self.comentarios.len() + if self.incluir_revisor { self.nao_usados(cx).len() } else { 0 };
+        let modo_pr = self.pr.as_ref();
+        let rotulo_ajuste = if modo_pr.is_some() { "Enviar comentários ao chat" } else { "Pedir ajuste" };
+        let ajuste_primeiro = ajuste_primeiro && modo_pr.is_none();
         let mut ajuste = if ajuste_primeiro {
-            botao_primario("pedir-ajuste", None, "Pedir ajuste", TamanhoBotao::Controle, window, cx)
+            botao_primario("pedir-ajuste", None, rotulo_ajuste, TamanhoBotao::Controle, window, cx)
         } else {
-            botao_fantasma("pedir-ajuste", None, "Pedir ajuste", TamanhoBotao::Controle, window, cx)
+            botao_fantasma("pedir-ajuste", None, rotulo_ajuste, TamanhoBotao::Controle, window, cx)
         }
         .disabled(self.enviando || lendo);
         if vai_junto > 0 {
@@ -2155,6 +2495,24 @@ impl RevisaoDiff {
             )
         };
         let recusa = self.motor.read(cx).recusa_aprovar(self.tarefa);
+        if let Some(f) = modo_pr {
+            let rotulo = match (f.enviando, f.atualizar.is_some()) {
+                (true, false) => "Abrindo o PR…",
+                (true, true) => "Atualizando o PR…",
+                (false, false) => "Abrir PR",
+                (false, true) => "Atualizar PR",
+            };
+            let motivo = recusa.map(|r| r.replace("para juntar", "para publicar").replace("o que juntar", "o que publicar")).or_else(|| self.bloqueio_do_pr(cx));
+            let mut abrir = botao_primario("abrir-pr", Some(Lucide::GitPullRequest.into()), rotulo, TamanhoBotao::Controle, window, cx)
+                .loading(f.enviando)
+                .disabled(motivo.is_some() || lendo || f.enviando)
+                .on_click(cx.listener(|this, _, window, cx| this.publicar_pr(window, cx)));
+            abrir = match motivo {
+                Some(m) => abrir.tooltip(m),
+                None => abrir.tooltip_with_action(if f.atualizar.is_some() { "Mandar as mudanças para o PR" } else { "Abrir o PR no GitHub" }, &AcaoPrincipal, Some("Revisao")),
+            };
+            return h_flex().flex_none().h(r(32.)).mt(r(16.)).gap(r(8.)).child(esquerda).children(copia).child(ajuste).child(abrir);
+        }
         let rotulo = match (self.enviando, self.de_chat(cx)) {
             (true, _) => "Juntando…",
             (false, true) => "Juntar",
@@ -2327,7 +2685,7 @@ impl Render for RevisaoDiff {
         }
         let t = self.motor.read(cx).tarefa(self.tarefa).cloned();
         let projeto = t.as_ref().map(|t| self.motor.read(cx).nome_do_projeto(&t.projeto)).unwrap_or_default();
-        let problemas = t.as_ref().and_then(|t| t.revisao.as_ref()).map(|r| r.problemas.clone()).unwrap_or_default();
+        let problemas = self.problemas(cx);
         let com_lateral = match &self.carga {
             Carga::Lendo => d.lateral,
             Carga::Pronta(_) if !self.arquivos.is_empty() => d.lateral,
@@ -2388,8 +2746,31 @@ impl Render for RevisaoDiff {
                             .child(corpo),
                     ),
             )
+            .children(self.formulario_pr(d, window, cx))
             .child(self.rodape(t.as_ref(), d, window, cx))
     }
+}
+
+/// Marca, na gravidade, o apontamento que veio da revisão do PR (com o autor depois).
+const DA_REVISAO_DO_PR: &str = "pr:";
+
+/// O que o formulário do PR guarda enquanto o diálogo está aberto.
+struct FormularioPr {
+    /// O número do PR aberto ("Revisar e atualizar PR"); `None` abre um PR novo.
+    atualizar: Option<u64>,
+    titulo: Entity<InputState>,
+    descricao: Entity<TextareaState>,
+    /// No "Atualizar PR", o título e a descrição só vão com "Atualizar a descrição".
+    atualizar_descricao: bool,
+    rascunho: bool,
+    /// "Mesclar quando ficar pronto" (o Ship), pelo método padrão do repositório.
+    ship: bool,
+    metodo: String,
+    segredos_ok: bool,
+    /// `None` enquanto lê.
+    achados: Option<Vec<git::Achado>>,
+    novos: Option<Vec<String>>,
+    enviando: bool,
 }
 
 /// O que o popover do revisor mostra.
@@ -2769,7 +3150,37 @@ fn desenhar_cartao(
             })
     };
     match cartao.clone() {
-        Cartao::Problema { indice, problema, usado } => {
+        // Um comentário em linha da revisão do PR, no molde do apontamento do revisor.
+        Cartao::Problema { indice, problema, usado, so_ler } if problema.gravidade.starts_with(DA_REVISAO_DO_PR) => {
+            let autor = problema.gravidade[DA_REVISAO_DO_PR.len()..].to_string();
+            let cor = Cores::destaque();
+            let cabecalho = h_flex()
+                .gap(r(6.))
+                .child(div().text_color(if usado { Cores::tenue() } else { Cores::destaque_texto() }).child(icone(Lucide::GitPullRequest, 14., window)))
+                .child(div().rotulo_secao().child("A revisão do PR apontou"))
+                .child(div().metadado().text_color(Cores::tenue()).child(format!("@{autor}")));
+            if usado {
+                return cabecalho
+                    .my(r(4.))
+                    .px(r(12.))
+                    .child(div().metadado().text_color(Cores::tenue()).child("· virou seu comentário"))
+                    .into_any_element();
+            }
+            caixa(Cores::tinta(cor), Some(cor))
+                .child(cabecalho)
+                .child(div().corpo_ui().text_color(Cores::texto()).child(problema.descricao))
+                .when(!so_ler, |s| s.child(
+                    h_flex().child(
+                        botao_fantasma(("usar-problema", indice), Some(Lucide::Plus.into()), "Usar", TamanhoBotao::Barra, window, cx)
+                            .tooltip("Vira seu comentário nesta linha, que vai ao chat com os outros")
+                            .on_click(move |_, _, cx| {
+                                let _ = fraca.update(cx, |this, cx| this.usar_problema(indice, false, cx));
+                            }),
+                    ),
+                ))
+                .into_any_element()
+        }
+        Cartao::Problema { indice, problema, usado, .. } => {
             let peso = peso_da_gravidade(&problema.gravidade);
             let cor = cor_da_gravidade(peso);
             let cabecalho = h_flex()
@@ -2808,7 +3219,10 @@ fn desenhar_cartao(
         Cartao::Comentario { indice, texto, onde, gravidade } => {
             let apagar = fraca.clone();
             let rotulo = match gravidade {
-                Some(g) => format!("Seu comentário · {onde} · do revisor, {g}"),
+                Some(g) => match g.strip_prefix(DA_REVISAO_DO_PR) {
+                    Some(autor) => format!("Seu comentário · {onde} · da revisão do PR, @{autor}"),
+                    None => format!("Seu comentário · {onde} · do revisor, {g}"),
+                },
                 None => format!("Seu comentário · {onde}"),
             };
             caixa(Cores::cartao_elevado(), Some(Cores::borda_forte()))
@@ -3018,21 +3432,43 @@ impl Janela {
                 revisao
             }
         };
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            // Refeito a cada quadro: o subtítulo muda quando o diff carrega e quando o estado
-            // muda, e a largura acompanha a janela.
-            dialogo
-                .bg(Cores::dialogo())
-                .w(largura_do_dialogo(window))
-                .margin_top(px(24.))
-                .rounded(raio::PECA)
-                .close_button(false)
-                // Enter não fecha: na revisão ele abre o rascunho.
-                .on_ok(|_, _, _| false)
-                .title(div().pb(r(8.)).child(revisao.read(cx).cabecalho(cx)))
-                .child(revisao.clone())
-        });
+        abrir_revisao(revisao, window, cx);
     }
+
+    /// O diff de um arquivo do PR (a aba PR): com a cópia, a revisão de sempre já nele; sem ela,
+    /// o diff do GitHub, só para ler.
+    pub(super) fn dialogo_diff_do_pr(&mut self, tarefa: u64, fonte: FonteDiff, arquivo: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let foco = arquivo.map(|a| (a, None));
+        match fonte {
+            FonteDiff::Tarefa(id) => self.dialogo_diff_em(id, foco, window, cx),
+            FonteDiff::Pr { .. } => {
+                let Some(motor) = self.motor.clone() else {
+                    return;
+                };
+                let janela = cx.entity().downgrade();
+                let revisao = cx.new(|cx| RevisaoDiff::com_fonte(motor, janela, tarefa, foco, fonte, window, cx));
+                abrir_revisao(revisao, window, cx);
+            }
+        }
+    }
+}
+
+/// Abre o diálogo da revisão, refeito a cada quadro.
+fn abrir_revisao(revisao: Entity<RevisaoDiff>, window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, move |dialogo, window, cx| {
+        // Refeito a cada quadro: o subtítulo muda quando o diff carrega e quando o estado
+        // muda, e a largura acompanha a janela.
+        dialogo
+            .bg(Cores::dialogo())
+            .w(largura_do_dialogo(window))
+            .margin_top(px(24.))
+            .rounded(raio::PECA)
+            .close_button(false)
+            // Enter não fecha: na revisão ele abre o rascunho.
+            .on_ok(|_, _, _| false)
+            .title(div().pb(r(8.)).child(revisao.read(cx).cabecalho(cx)))
+            .child(revisao.clone())
+    });
 }
 
 #[cfg(test)]

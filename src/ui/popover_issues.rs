@@ -157,13 +157,13 @@ fn nome_da_prioridade(p: u8) -> Option<&'static str> {
 }
 
 /// A data ISO do Linear e do GitHub em segundos desde 1970.
-fn instante(iso: &str) -> Option<u64> {
+pub(super) fn instante(iso: &str) -> Option<u64> {
     let data = chrono::DateTime::parse_from_rfc3339(iso.trim()).ok()?;
     u64::try_from(data.timestamp()).ok()
 }
 
 /// "há 3 d", "há 5 min", "agora".
-fn idade(iso: &str) -> Option<String> {
+pub(super) fn idade(iso: &str) -> Option<String> {
     let quando = tempo_relativo(instante(iso)?);
     Some(if quando == "agora" { quando } else { format!("há {quando}") })
 }
@@ -1948,17 +1948,20 @@ impl Render for PopoverIssues {
     }
 }
 
-/// Texto de terceiros (a descrição, um comentário) em markdown: as imagens viram link e só os
-/// links `http(s)` abrem.
-fn texto_de_fora(id: SharedString, texto: &str, linhas: Option<usize>, cx: &App) -> AnyElement {
+/// Texto de terceiros (a descrição de uma issue ou de um PR, um comentário) em markdown: as
+/// imagens viram link e só os links `http(s)` abrem; os outros (`file://`, `vitral:`) avisam que
+/// não abriram.
+pub(super) fn texto_de_fora(id: SharedString, texto: &str, linhas: Option<usize>, cx: &App) -> AnyElement {
     div()
         .corpo_ui()
         .text_color(Cores::texto())
         .child(
-            super::mensagens::markdown(id, imagens_viram_link(texto), cx)
-                .on_link_click(|url, _, _, cx| {
-                    if link_seguro(url) {
+            super::mensagens::markdown_compacto(id, imagens_viram_link(texto), cx)
+                .on_link_click(|url, _, window, cx| {
+                    if super::painel_pr::link_permitido(url, super::painel_pr::OrigemDoTexto::Terceiros) {
                         cx.open_url(url);
+                    } else {
+                        window.push_notification(aviso(Tom::Atencao, "Link não aberto: daqui só abrem os endereços http e https."), cx);
                     }
                 })
                 .when_some(linhas, |t, n| t.max_lines(n)),
@@ -1982,7 +1985,7 @@ fn area_rolavel(id: &'static str, rolagem: &ScrollHandle, corpo: AnyElement) -> 
 }
 
 /// Spinner tênue.
-fn spinner(lado: f32, window: &Window) -> AnyElement {
+pub(super) fn spinner(lado: f32, window: &Window) -> AnyElement {
     Spinner::new().with_size(Size::Size(tam(window, lado))).color(Cores::tenue()).into_any_element()
 }
 
@@ -2000,7 +2003,7 @@ fn carregando(texto: &'static str, window: &Window) -> AnyElement {
 }
 
 /// Uma barra do esqueleto (a `borda()` a 40%), na fração da largura.
-fn barra_esqueleto(fracao: f32) -> Div {
+pub(super) fn barra_esqueleto(fracao: f32) -> Div {
     div().h(r(10.)).w(relative(fracao)).rounded_full().bg(Cores::borda().opacity(0.4))
 }
 

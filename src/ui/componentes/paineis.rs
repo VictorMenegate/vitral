@@ -38,6 +38,8 @@ pub struct Aba {
     fechar: Option<(SharedString, bool, Rc<dyn Fn(&mut Window, &mut App)>)>,
     arrastando: bool,
     foco: Option<FocusHandle>,
+    fim: Option<AnyElement>,
+    so_simbolo: bool,
 }
 
 impl Aba {
@@ -53,7 +55,21 @@ impl Aba {
             fechar: None,
             arrastando: false,
             foco: None,
+            fim: None,
+            so_simbolo: false,
         }
+    }
+
+    /// Um elemento depois do título, antes do × (o anel dos checks na aba do PR).
+    pub fn fim(mut self, e: impl IntoElement) -> Self {
+        self.fim = Some(e.into_any_element());
+        self
+    }
+
+    /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
+    pub fn so_simbolo(mut self, sim: bool) -> Self {
+        self.so_simbolo = sim;
+        self
     }
 
     pub fn simbolo(mut self, s: Simbolo) -> Self {
@@ -189,8 +205,8 @@ impl Aba {
             })
             .children(self.numero.map(|(n, ativo)| numero_painel(n, ativo)))
             .children(simbolo)
-            .child(div().min_w_0().truncate().rotulo().child(self.titulo))
-            .children(self.detalhe.map(|(t, mono)| {
+            .when(!self.so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
+            .children(self.detalhe.filter(|_| !self.so_simbolo).map(|(t, mono)| {
                 div()
                     .flex_none()
                     .max_w(r(160.))
@@ -199,6 +215,7 @@ impl Aba {
                     .map(|d| if mono { d.mono_pequeno() } else { d.metadado() })
                     .child(t)
             }))
+            .children(self.fim)
             .children(fim)
             .when_some(fechar_meio, |s, f| {
                 s.on_aux_click(move |ev: &ClickEvent, window, cx| {

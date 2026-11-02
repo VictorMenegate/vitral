@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use gpui_kit::component::{
-    ElementExt as _, Sizable as _, WindowExt as _,
+    Disableable as _, ElementExt as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     clipboard::Clipboard,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
@@ -19,8 +19,8 @@ use gpui_kit::*;
 use super::{
     Gaveta, Janela,
     componentes::{
-        Aba, Alerta, BarraSegmentada, BotaoCopiar, CabecalhoDeSecao, CaixaDeCodigo, CartaoDeLista, Estado, EstadoVazio,
-        EstadoVisual, PilulaDeEstado, PreviaArrasto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom, TomAba,
+        Alerta, BarraSegmentada, BotaoCopiar, CabecalhoDeSecao, CaixaDeCodigo, CartaoDeLista, Estado, EstadoVazio,
+        EstadoVisual, PilulaDeEstado, PreviaArrasto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom,
         botao_fantasma, botao_icone, botao_perigo, botao_primario, contagem, estado_visual, numero_painel,
         pilula_da_tarefa, rotulo_tarefa, selo_gravidade, variante_perigo,
     },
@@ -101,9 +101,9 @@ impl Janela {
             }
         }
 
-        let titulo_coordenador =
-            coordenador.as_deref().and_then(|c| motor.chat(c)).map(|c| c.titulo.clone());
-        let cabecalho = self.cabecalho_equipe(chat, titulo_coordenador, window, cx);
+        // Com a lista rolada, uma borda separa o cabeçalho, como na conversa.
+        let rolado = self.rolagem_equipe.offset().y < px(0.);
+        let cabecalho = self.barra_de_abas(motor, super::abas_direita::AbaDireita::Chat, rolado, "arrastar-equipe", window, cx);
         // O respiro de cima e o de baixo vão nos próprios filhos: com padding, a área rolável
         // somava os 20 ao máximo (por causa da barra, absoluta) e rolava sozinha.
         let mut anterior = None;
@@ -139,62 +139,6 @@ impl Janela {
             .on_prepaint(self.medir_direita(cx))
     }
 
-    /// A aba "Equipe" (o projeto e de quem é a equipe na dica) e o canto da direita.
-    fn cabecalho_equipe(
-        &self,
-        chat: Option<&Chat>,
-        titulo_coordenador: Option<String>,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let numero = chat.and_then(|c| self.painel_da_conversa(&c.id));
-        let de_projeto = chat.is_some_and(|c| c.papel == Papel::Projeto);
-        let mestre = chat.is_some_and(|c| c.papel == Papel::Mestre);
-        let mut aba = if mestre {
-            Aba::new("aba-equipe", "Distribuído").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::GitFork, Cores::tenue()))
-        } else if de_projeto {
-            Aba::new("aba-equipe", "Este chat").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()))
-        } else if chat.is_some_and(|c| c.papel == Papel::Coordenador) {
-            Aba::new("aba-equipe", "Esta conversa").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()))
-        } else {
-            Aba::new("aba-equipe", "Ajudantes").tom(TomAba::Unica).simbolo(Simbolo::icone_cor(Lucide::UsersRound, Cores::tenue()))
-        };
-        if let Some((n, ativo)) = numero {
-            aba = aba.numero(n, ativo);
-        }
-        let nome = |c: &Chat| self.motor.as_ref().map_or(c.projeto.clone(), |m| m.read(cx).nome_do_projeto(&c.projeto));
-        let dica = chat.map(|c| {
-            let mut dica = match (&titulo_coordenador, de_projeto) {
-                _ if mestre => "O que o Mestre mandou aos chats, por projeto".to_string(),
-                (_, true) => format!("Onde “{}” trabalha · {}", c.titulo, nome(c)),
-                _ if c.papel == Papel::Coordenador => format!("Conversa do Vitral antigo · {}", nome(c)),
-                (Some(t), false) => format!("Ajudantes de “{t}” · {}", nome(c)),
-                (None, false) => format!("Ajudantes · {}", nome(c)),
-            };
-            if let Some((n, _)) = numero {
-                dica.push_str(&format!(" · painel {n}"));
-            }
-            SharedString::from(dica)
-        });
-        // Com a lista rolada, uma borda separa o cabeçalho, como na conversa.
-        let rolado = self.rolagem_equipe.offset().y < px(0.);
-        self.arrastavel("arrastar-equipe")
-            .flex_none()
-            .h(altura::CABECALHO)
-            .px(esp::E8)
-            .flex()
-            .items_center()
-            .gap(esp::E8)
-            .border_b_1()
-            .border_color(if rolado { Cores::borda() } else { gpui_kit::transparent_black().into() })
-            .child(
-                aba.construir(window, cx)
-                    .when_some(dica, |s, d| s.tooltip(move |window, cx| Tooltip::new(d.clone()).build(window, cx))),
-            )
-            .child(div().flex_1())
-            .child(self.botoes_da_direita(false, window, cx))
-    }
-
     /// Guarda se o painel da direita ficou estreito (abaixo de 22 rem, com folga) quando isso
     /// muda: no quadro seguinte, porque avisar a janela durante o desenho não a redesenha.
     pub(super) fn medir_direita(
@@ -202,15 +146,18 @@ impl Janela {
         cx: &Context<Self>,
     ) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static {
         let janela = cx.entity().downgrade();
-        let antes = self.direita_estreita;
+        let (antes, compacta_antes) = (self.direita_estreita, self.direita_compacta);
         move |limites, window, _| {
-            let estreita = fica_estreita(limites.size.width / window.rem_size(), antes);
-            if estreita == antes {
+            let rem = limites.size.width / window.rem_size();
+            let estreita = fica_estreita(rem, antes);
+            let compacta = fica_compacta(rem, compacta_antes);
+            if estreita == antes && compacta == compacta_antes {
                 return;
             }
             window.on_next_frame(move |_, cx| {
                 let _ = janela.update(cx, |this, cx| {
                     this.direita_estreita = estreita;
+                    this.direita_compacta = compacta;
                     cx.notify();
                 });
             });
@@ -283,7 +230,12 @@ impl Janela {
             }
             Forma::Copia => {
                 let copia = t.worktree.clone().filter(|w| w.is_dir());
-                linhas.push(texto("Trabalha numa cópia só dele, num branch próprio; Juntar leva as mudanças para a origem.".into()));
+                let por_pr = motor.config_da_pasta(&t.projeto, &origem).github.entrega == crate::modelo::ModoEntrega::Pr;
+                linhas.push(texto(if por_pr {
+                    "Trabalha numa cópia só dele, num branch próprio; as mudanças vão para o GitHub num PR.".into()
+                } else {
+                    "Trabalha numa cópia só dele, num branch próprio; Juntar leva as mudanças para a origem.".into()
+                }));
                 linhas.push(linha_dado(format!("este-chat-origem-{}", t.id), "Origem", curta.clone(), origem.display().to_string(), origem.display().to_string(), 56.).into_any_element());
                 if let Some(branch) = &t.branch {
                     let alvo = t.ramo_alvo.clone().map(|r| format!(" → {r}")).unwrap_or_default();
@@ -304,17 +256,61 @@ impl Janela {
                         if let Some(m) = t.mudancas.as_ref().filter(|m| m.arquivos > 0) {
                             partes.push(format!("{} · +{} −{}", contagem(m.arquivos as usize, "arquivo", "arquivos"), m.mais, m.menos));
                         } else if estado.is_some() {
-                            partes.push("nada para juntar".into());
+                            partes.push(if por_pr { "nada novo para o PR".into() } else { "nada para juntar".into() });
                         }
                         if !partes.is_empty() {
                             linhas.push(div().metadado().text_color(Cores::tenue()).child(partes.join(" · ")).into_any_element());
                         }
                         let tarefa = t.id;
                         let tem_mudancas = t.mudancas.as_ref().is_some_and(|m| m.arquivos > 0);
-                        let revisar = botao_fantasma("este-chat-revisar", Some(Lucide::GitMerge.into()), "Revisar e juntar", TamanhoBotao::Barra, window, cx)
-                            .tooltip("Ver as mudanças da cópia e juntá-las na pasta original")
-                            .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx)));
-                        botoes.push(if tem_mudancas { revisar.custom(variante_tinta(cx)) } else { revisar }.into_any_element());
+                        // O modo de entrega da pasta vai no rótulo do botão (seção 4.2).
+                        let modo_pr = motor.config_da_pasta(&t.projeto, &origem).github.entrega == crate::modelo::ModoEntrega::Pr;
+                        let rodando = motor.execucao(&chat.id).rodando() || motor.na_fila(&chat.id) > 0;
+                        let suja = estado.as_ref().is_some_and(|e| e.suja);
+                        let revisar = |id: &'static str, icone: Lucide, rotulo: String, dica: &'static str| {
+                            botao_fantasma(id, Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx)
+                                .tooltip(dica)
+                                .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx)))
+                        };
+                        match entrega_do_chat(modo_pr, t, suja, rodando) {
+                            Entrega::Juntar => {
+                                let b = revisar("este-chat-revisar", Lucide::GitMerge, "Revisar e juntar".into(), "Ver as mudanças da cópia e juntá-las na pasta original");
+                                botoes.push(if tem_mudancas { b.custom(variante_tinta(cx)) } else { b }.into_any_element());
+                            }
+                            Entrega::AbrirPr => {
+                                let b = revisar("este-chat-revisar", Lucide::GitPullRequest, "Revisar e abrir PR".into(), "Ver as mudanças da cópia, escrever o título e a descrição e abrir o PR");
+                                botoes.push(if tem_mudancas { b.custom(variante_tinta(cx)) } else { b }.into_any_element());
+                            }
+                            Entrega::RevisarEAtualizar => {
+                                let b = revisar("este-chat-revisar", Lucide::GitPullRequest, "Revisar e atualizar PR".into(), "Ver o que mudou desde o PR e mandar para ele");
+                                botoes.push(b.custom(variante_tinta(cx)).into_any_element());
+                            }
+                            Entrega::AtualizarPr => {
+                                botoes.push(
+                                    botao_primario("este-chat-atualizar-pr", Some(Lucide::GitPullRequest.into()), "Atualizar PR", TamanhoBotao::Barra, window, cx)
+                                        .tooltip("A rodada passou na verificação: manda as mudanças para o PR")
+                                        .on_click(cx.listener(move |this, _, window, cx| this.atualizar_pr_do_usuario(tarefa, window, cx)))
+                                        .into_any_element(),
+                                );
+                                botoes.push(revisar("este-chat-revisar", Lucide::Eye, "Ver mudanças".into(), "Ver as mudanças da cópia").into_any_element());
+                            }
+                            Entrega::VerPr(n) => {
+                                botoes.push(
+                                    botao_fantasma("este-chat-ver-pr", Some(Lucide::GitPullRequest.into()), format!("Ver PR #{n}"), TamanhoBotao::Barra, window, cx)
+                                        .tooltip("Abrir a aba PR")
+                                        .on_click(cx.listener(|this, _, _, cx| this.escolher_aba(super::abas_direita::AbaDireita::Pr, cx)))
+                                        .into_any_element(),
+                                );
+                            }
+                            Entrega::Trabalhando(rotulo) => {
+                                botoes.push(
+                                    botao_fantasma("este-chat-revisar", Some(Lucide::GitPullRequest.into()), rotulo, TamanhoBotao::Barra, window, cx)
+                                        .disabled(true)
+                                        .tooltip("O chat está trabalhando")
+                                        .into_any_element(),
+                                );
+                            }
+                        }
                         let (m, id) = (motor_e.clone(), chat.id.clone());
                         let rotulo = if estreita { "Parecer" } else { "Pedir parecer do revisor" };
                         botoes.push(
@@ -638,6 +634,16 @@ impl Janela {
             .gap(esp::E8)
             .h(r(22.))
             .child(pilula)
+            .children(super::painel_pr::chip_do_pr(("chip-pr-tarefa", id as usize), tarefa, super::componentes::TamanhoChip::Pequeno, self.direita_compacta).map(|chip| {
+                let chat = tarefa.trabalhador.clone();
+                sem_arrastar().flex_none().child(
+                    chip.on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.abrir_aba_pr(&chat, window, cx)
+                    }))
+                    .construir(window, cx),
+                )
+            }))
             .child(div().flex_1())
             .when(!matches!(tarefa.estado, EstadoTarefa::Falhou | EstadoTarefa::Cancelada), |s| {
                 s.child(self.trilha_etapas(tarefa, &etapas, cx))
@@ -1829,6 +1835,51 @@ fn fica_estreita(rem: f32, antes: bool) -> bool {
     }
 }
 
+/// O botão de entrega de "Este chat" (seção 4.2): o modo da pasta vai no rótulo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Entrega {
+    Juntar,
+    AbrirPr,
+    /// A rodada verificada espera o "Atualizar PR" (com "Ver mudanças").
+    AtualizarPr,
+    /// O PR está aberto e a cópia mudou depois dele.
+    RevisarEAtualizar,
+    VerPr(u64),
+    /// O chat roda: o botão do modo, desabilitado.
+    Trabalhando(String),
+}
+
+/// Qual botão de entrega o chat mostra. "Mudanças novas" depois do PR é a cópia suja (a
+/// publicação faz o commit, então o que o chat mudou depois fica sem commit).
+fn entrega_do_chat(modo_pr: bool, t: &Tarefa, suja: bool, rodando: bool) -> Entrega {
+    let aberto = t.pr.as_ref().filter(|p| p.aberto());
+    if !modo_pr && aberto.is_none() {
+        return Entrega::Juntar;
+    }
+    if rodando {
+        let rotulo = if aberto.is_some() { "Revisar e atualizar PR" } else { "Revisar e abrir PR" };
+        return Entrega::Trabalhando(rotulo.into());
+    }
+    match aberto {
+        Some(_) if t.pronto_para_atualizar => Entrega::AtualizarPr,
+        Some(_) if suja => Entrega::RevisarEAtualizar,
+        Some(pr) => Entrega::VerPr(pr.numero),
+        None => Entrega::AbrirPr,
+    }
+}
+
+fn minuscula(texto: &str) -> String {
+    let mut letras = texto.chars();
+    letras.next().map(|c| c.to_lowercase().chain(letras).collect()).unwrap_or_default()
+}
+
+/// As abas da direita ficam só com o símbolo abaixo de 520 px a 100% (em rem) e só voltam acima
+/// de 520 + 7,5 (a mesma folga de meio rem).
+fn fica_compacta(rem: f32, antes: bool) -> bool {
+    let limite = super::abas_direita::LIMITE_DAS_ABAS / 15.;
+    if antes { rem < limite + 0.5 } else { rem < limite }
+}
+
 /// Ícone no tamanho de desenho, crescendo com o zoom.
 fn icone_em(icone: Lucide, lado: f32, window: &Window) -> impl IntoElement {
     gpui_kit::component::Icon::new(icone).with_size(tam(window, lado))
@@ -2112,7 +2163,24 @@ fn etapas(t: &Tarefa, revisor_ligado: bool, parada: bool) -> Vec<Etapa> {
             "decide depois da conferência".into()
         },
     });
-    if t.branch.is_some() {
+    if let Some(pr) = t.pr.as_ref() {
+        let (passo, detalhe) = if t.pronto_para_atualizar {
+            (Passo::Atual, format!("rodada pronta para atualizar o PR #{}", pr.numero))
+        } else {
+            (Passo::Ok, format!("PR #{} {}", pr.numero, pr.estado.nome()))
+        };
+        lista.push(Etapa { nome: "PR", passo, detalhe });
+        let rotulo = super::painel_pr::rotulo_checks(&pr.checks);
+        let passo = match pr.checks.estado {
+            crate::github::EstadoChecks::Passou => Passo::Ok,
+            crate::github::EstadoChecks::Falhou => Passo::Falha,
+            crate::github::EstadoChecks::Pendente => Passo::Atual,
+            crate::github::EstadoChecks::Nenhum => Passo::Pendente,
+        };
+        lista.push(Etapa { nome: "Checks", passo, detalhe: minuscula(&rotulo.frase) });
+    } else if let Some(a) = t.prs_anteriores.last().filter(|_| t.estado != EstadoTarefa::EmRevisao) {
+        lista.push(Etapa { nome: "PR", passo: Passo::Ok, detalhe: format!("PR #{} {}", a.numero, a.estado.nome()) });
+    } else if t.branch.is_some() {
         lista.push(Etapa {
             nome: "Juntada",
             passo: if aprovada { Passo::Ok } else { Passo::Pendente },
@@ -2352,6 +2420,26 @@ mod testes {
         simples.verificacao = None;
         simples.branch = None;
         assert_eq!(passos(&simples, false, false), [("Trabalho", Passo::Atual), ("Decisão", Passo::Pendente)]);
+    }
+
+    #[test]
+    fn o_botao_de_entrega_segue_o_modo_e_o_pr() {
+        use super::{Entrega, entrega_do_chat};
+        use crate::modelo::Pr;
+        let sem_pr = tarefa("Conversa");
+        assert_eq!(entrega_do_chat(false, &sem_pr, false, false), Entrega::Juntar);
+        assert_eq!(entrega_do_chat(true, &sem_pr, false, false), Entrega::AbrirPr);
+        assert_eq!(entrega_do_chat(true, &sem_pr, false, true), Entrega::Trabalhando("Revisar e abrir PR".into()));
+        let mut com_pr = tarefa("NoPr");
+        com_pr.pr = Some(Pr { numero: 12, ..Default::default() });
+        assert_eq!(entrega_do_chat(true, &com_pr, false, false), Entrega::VerPr(12));
+        assert_eq!(entrega_do_chat(true, &com_pr, true, false), Entrega::RevisarEAtualizar);
+        assert_eq!(entrega_do_chat(true, &com_pr, true, true), Entrega::Trabalhando("Revisar e atualizar PR".into()));
+        com_pr.pronto_para_atualizar = true;
+        assert_eq!(entrega_do_chat(true, &com_pr, true, false), Entrega::AtualizarPr);
+        // Com o PR aberto, a pasta que voltou a juntar continua mostrando o PR.
+        com_pr.pronto_para_atualizar = false;
+        assert_eq!(entrega_do_chat(false, &com_pr, false, false), Entrega::VerPr(12));
     }
 
     #[test]

@@ -803,7 +803,9 @@ impl Janela {
                             .map(|dica| super::cartoes::selo_do_mestre_no_chat(SharedString::from(format!("do-mestre-aba-{painel_id}")), dica, cx)),
                     ),
             )
-            // As issues do projeto: o chip da issue do chat e os botões do Linear e do GitHub.
+            // O PR do chat (abre a aba PR) e as issues do projeto: o chip da issue do chat e os
+            // botões do Linear e do GitHub.
+            .children(conversa.and_then(|(chat, _)| self.chip_do_pr_no_cabecalho(motor, chat, painel_id, nivel, window, cx)))
             .children(conversa.and_then(|(chat, _)| self.botoes_de_issues(motor, chat, painel_id, nivel, window, cx)))
             .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx)))
             .when(mostra_botoes_janela, |s| {
@@ -1082,8 +1084,10 @@ impl Janela {
     /// direita fechada, ou a gaveta dela fechada), quantas tarefas pedem você, se alguma caiu e o
     /// resumo. Com o arquivo na direita, o botão não leva à Equipe: nada de número.
     fn o_que_a_direita_mostra(&self, motor: &Motor) -> (Direita, Option<(usize, bool, String)>) {
-        if self.arquivo_aberto.is_some() {
-            return (Direita::Arquivo, None);
+        match self.aba_visivel(motor) {
+            super::abas_direita::AbaDireita::Arquivo(_) => return (Direita::Arquivo, None),
+            super::abas_direita::AbaDireita::Pr => return (Direita::Pr, None),
+            super::abas_direita::AbaDireita::Chat => {}
         }
         let direita = match self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.papel) {
             Some(PapelDoChat::Mestre) => Direita::Distribuido,
@@ -1290,6 +1294,7 @@ impl Janela {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Direita {
     Arquivo,
+    Pr,
     Distribuido,
     EsteChat,
     ConversaAntiga,
@@ -1301,6 +1306,7 @@ impl Direita {
     fn nome(self) -> &'static str {
         match self {
             Direita::Arquivo => "Arquivo aberto",
+            Direita::Pr => "O PR do chat",
             Direita::Distribuido => "Distribuído",
             Direita::EsteChat => "Este chat",
             Direita::ConversaAntiga => "Esta conversa",
@@ -1312,6 +1318,7 @@ impl Direita {
     fn no_menu(self) -> &'static str {
         match self {
             Direita::Arquivo => "Mostrar o arquivo aberto",
+            Direita::Pr => "Mostrar o PR do chat",
             Direita::Distribuido => "Mostrar o Distribuído",
             Direita::EsteChat => "Mostrar Este chat",
             Direita::ConversaAntiga => "Mostrar Esta conversa",

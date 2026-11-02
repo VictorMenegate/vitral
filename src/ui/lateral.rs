@@ -422,8 +422,21 @@ fn estado_do_chat(motor: &Motor, chat: &Chat) -> Option<(Lucide, Hsla, String)> 
             None if acabou_de_juntar(chat) => Some((Lucide::Check, Cores::tenue(), "Juntado".into())),
             None => None,
         },
-        // Provisório (G5): o estado do PR com os checks.
-        EstadoTarefa::NoPr => t.pr.as_ref().map(|pr| (Lucide::GitPullRequest, Cores::tenue(), format!("PR #{} aberto", pr.numero))),
+        // O PR aberto, com os checks.
+        EstadoTarefa::NoPr => t.pr.as_ref().map(|pr| {
+            let checks = (pr.checks.total > 0).then(|| format!(" · {} checks", super::painel_pr::rotulo_checks(&pr.checks).curto));
+            let cor = match pr.checks.estado {
+                crate::github::EstadoChecks::Falhou => Cores::vermelho(),
+                _ if t.pronto_para_atualizar => Cores::ambar(),
+                _ => Cores::tenue(),
+            };
+            let texto = if t.pronto_para_atualizar {
+                format!("Pronto para atualizar o PR #{}", pr.numero)
+            } else {
+                format!("PR #{} {}{}", pr.numero, pr.estado.nome(), checks.unwrap_or_default())
+            };
+            (Lucide::GitPullRequest, cor, texto)
+        }),
         _ => None,
     }
 }
@@ -1599,11 +1612,13 @@ impl Janela {
         esperando.sort_by_key(|f| f.2.as_ref().is_some_and(|p| p.motivo == Motivo::Nova));
         // Os cartões abertos do Mestre e os chats parados no freio de ciclo vêm primeiro.
         let do_mestre = if geral && busca.is_empty() { super::cartoes::esperas_do_mestre(motor) } else { Vec::new() };
-        if !esperando.is_empty() || !do_mestre.is_empty() {
+        // O que os PRs esperam de você (falhou no Watch, pronto para atualizar, commit de fora…).
+        let do_pr = if busca.is_empty() && !mostrar_arquivados { super::painel_pr::esperas_do_pr(motor, filtro) } else { Vec::new() };
+        if !esperando.is_empty() || !do_mestre.is_empty() || !do_pr.is_empty() {
             let numero = if busca.is_empty() && geral {
-                super::cartoes::precisa_com_o_mestre(motor).numero()
+                super::cartoes::precisa_com_o_mestre(motor).numero() + do_pr.len()
             } else if busca.is_empty() {
-                motor.precisa_de_voce(filtro).numero()
+                motor.precisa_de_voce(filtro).numero() + do_pr.len()
             } else {
                 esperando.iter().filter(|f| f.2.as_ref().is_some_and(|p| p.motivo != Motivo::Nova)).count()
             };
@@ -1635,6 +1650,7 @@ impl Janela {
             }
             m.cabecalho(cabecalho);
             m.itens.extend(self.linhas_do_mestre(do_mestre, window, cx));
+            m.itens.extend(self.linhas_do_pr(motor, do_pr, window, cx));
             for f in esperando {
                 self.familia(&mut m, motor, f, true, ctx, window, cx);
             }
@@ -2301,6 +2317,7 @@ impl Janela {
 
     fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
         self.arquivo_aberto = Some((pasta, caminho));
+        self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
         self.mostrar_direita(window, cx);
     }
 

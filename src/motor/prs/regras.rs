@@ -1,14 +1,14 @@
 //! As regras do PR sem rede nem disco: a transição de uma consulta do vigia para a seguinte
 //! (`transicao_pr`), quando dá para mesclar (`pronto_para_mesclar`), para onde vai um aviso do PR
-//! (`destino_do_aviso`), quando a rodada publica sozinha (`pode_publicar_sozinho`), o que a aba PR
-//! habilita (`acoes_possiveis`), a separação dos comentários pela confiança e o registro do PR que
-//! foi mesclado, fechado ou reaberto na tarefa. Tudo aqui é testado sem o motor.
+//! (`destino_do_aviso`), quando a rodada publica sozinha (`pode_publicar_sozinho`), a separação dos
+//! comentários pela confiança e o registro do PR que foi mesclado, fechado ou reaberto na tarefa. O
+//! que a aba PR habilita (a tabela 4.3) mora em `ui::painel_pr::acoes_do_pr`. Tudo aqui é testado
+//! sem o motor.
 
 use std::time::Duration;
 
-use super::AcaoPr;
 use crate::{
-    github::{Check, ComentarioPr, EstadoChecks, EstadoPr, InfoRepo, ResumoPr, TipoComentario},
+    github::{Check, ComentarioPr, EstadoChecks, EstadoPr, ResumoPr, TipoComentario},
     issues::Confianca,
     modelo::{EstadoTarefa, GatilhoAjuste, Pr, PrAnterior, Tarefa},
     vigia::Contexto,
@@ -359,69 +359,6 @@ pub fn pode_publicar_sozinho(t: &Tarefa, mexe_em_workflows: bool, segredos: bool
         return Err("o revisor apontou problema de gravidade alta".into());
     }
     condicoes_sem_usuario(pr, mexe_em_workflows, segredos)
-}
-
-/// O que a aba PR habilita e por quê não (a tabela da seção 4.3).
-#[allow(dead_code)] // Provisório: a aba PR (G5) lê pelo `Motor::acoes_do_pr`. `ocupado`: o chat roda, ou o
-/// Vitral está publicando ou mesclando (o motivo). `simulacao`: os arquivos em conflito com a base.
-pub fn acoes_possiveis(
-    pr: &Pr,
-    info: Option<&InfoRepo>,
-    metodos: &[&str],
-    simulacao: Option<&Result<Vec<String>, String>>,
-    ocupado: Option<&str>,
-) -> Vec<(AcaoPr, Result<(), String>)> {
-    let conflito = simulacao.is_some_and(|s| s.as_ref().is_ok_and(|a| !a.is_empty())) || pr.mesclavel == "DIRTY";
-    let base = if pr.base.is_empty() { "a base".to_string() } else { pr.base.clone() };
-    let aberto = pr.aberto();
-    let fechado = || -> Result<(), String> { if aberto { Ok(()) } else { Err(format!("O PR está {}", pr.estado.nome())) } };
-    let livre = || -> Result<(), String> {
-        fechado()?;
-        match ocupado {
-            Some(motivo) => Err(motivo.to_string()),
-            None => Ok(()),
-        }
-    };
-    let escrita = info.is_none_or(InfoRepo::pode_escrever);
-    let mesclar = || -> Result<(), String> {
-        livre()?;
-        if !escrita {
-            return Err(format!("Sua conta não pode mesclar em {}", pr.repositorio));
-        }
-        if pr.estado == EstadoPr::Rascunho {
-            return Err("Rascunho: marque como pronto para revisão".into());
-        }
-        if conflito {
-            return Err(format!("Tem conflito com {base}: peça ao chat para resolver"));
-        }
-        if pr.mesclavel == "BEHIND" {
-            return Err(format!("Atrás de {base}: atualize antes"));
-        }
-        let c = &pr.checks;
-        if c.falhos > 0 {
-            return Err(if c.falhos == 1 { "1 check falhou".into() } else { format!("{} checks falharam", c.falhos) });
-        }
-        if c.pendentes > 0 {
-            return Err(format!("{} de {} checks terminaram", c.terminados, c.total));
-        }
-        if pr.mesclavel == "BLOCKED" {
-            return Err("O GitHub ainda não permite (aprovação ou check obrigatório)".into());
-        }
-        // Commit de fora e UNSTABLE mesclam com confirmação (a interface pergunta).
-        Ok(())
-    };
-    let mut acoes: Vec<(AcaoPr, Result<(), String>)> =
-        metodos.iter().map(|m| (AcaoPr::Mesclar { metodo: m.to_string() }, mesclar())).collect();
-    let quando_pronto = livre().and_then(|()| if escrita { Ok(()) } else { Err(format!("Sua conta não pode mesclar em {}", pr.repositorio)) });
-    acoes.push((AcaoPr::MesclarQuandoPronto, quando_pronto));
-    acoes.push((AcaoPr::AtualizarComBase, livre()));
-    acoes.push((AcaoPr::PedirAoChat, livre().and_then(|()| if conflito { Ok(()) } else { Err(format!("Sem conflito com {base}")) })));
-    match pr.estado {
-        EstadoPr::Rascunho => acoes.push((AcaoPr::ProntoParaRevisao, livre())),
-        _ => acoes.push((AcaoPr::VoltarParaRascunho, livre())),
-    }
-    acoes.push((AcaoPr::Fechar, livre()));
-    acoes
 }
 
 /// Os comentários novos de uma consulta, separados pela confiança no autor.
@@ -938,39 +875,6 @@ mod testes {
         // Sem o Ship (Watch), nunca.
         let watch = Pr { ao_ficar_pronto: None, ..ship };
         assert!(pode_publicar_sozinho(&Tarefa { pr: Some(watch), ..t }, false, false).is_err());
-    }
-
-    #[test]
-    fn acoes_da_aba_pr_seguem_a_tabela() {
-        let metodos = ["squash", "merge"];
-        let motivo = |p: &Pr, ocupado: Option<&str>| {
-            acoes_possiveis(p, None, &metodos, None, ocupado)
-                .into_iter()
-                .find(|(a, _)| *a == AcaoPr::Mesclar { metodo: "squash".into() })
-                .map(|(_, r)| r)
-                .unwrap()
-        };
-        let base = Pr { base: "main".into(), ..pronto() };
-        assert_eq!(motivo(&base, None), Ok(()));
-        assert_eq!(motivo(&Pr { estado: EstadoPr::Rascunho, ..base.clone() }, None), Err("Rascunho: marque como pronto para revisão".into()));
-        assert_eq!(motivo(&Pr { mesclavel: "DIRTY".into(), ..base.clone() }, None), Err("Tem conflito com main: peça ao chat para resolver".into()));
-        assert_eq!(motivo(&Pr { mesclavel: "BEHIND".into(), ..base.clone() }, None), Err("Atrás de main: atualize antes".into()));
-        assert_eq!(motivo(&Pr { checks: checks(41, 0, 26), ..base.clone() }, None), Err("15 de 41 checks terminaram".into()));
-        assert_eq!(motivo(&Pr { checks: checks(41, 2, 0), ..base.clone() }, None), Err("2 checks falharam".into()));
-        assert!(motivo(&Pr { mesclavel: "BLOCKED".into(), ..base.clone() }, None).is_err());
-        assert_eq!(motivo(&Pr { mesclavel: "UNSTABLE".into(), ..base.clone() }, None), Ok(()), "com confirmação na interface");
-        assert_eq!(motivo(&Pr { commits_de_fora: vec!["abc".into()], ..base.clone() }, None), Ok(()), "com confirmação");
-        assert_eq!(motivo(&base, Some("Esperando o chat terminar")), Err("Esperando o chat terminar".into()));
-        assert_eq!(motivo(&Pr { estado: EstadoPr::Mesclado, ..base.clone() }, None), Err("O PR está mesclado".into()));
-        let leitura = InfoRepo { permissao: "READ".into(), ..Default::default() };
-        let sem_escrita = acoes_possiveis(&Pr { repositorio: "o/r".into(), ..base.clone() }, Some(&leitura), &metodos, None, None);
-        assert_eq!(sem_escrita[0].1, Err("Sua conta não pode mesclar em o/r".into()));
-        // Os métodos permitidos, um por um; o conflito local habilita "Pedir ao chat".
-        let conflito = Ok(vec!["src/a.rs".to_string()]);
-        let todas = acoes_possiveis(&base, None, &metodos, Some(&conflito), None);
-        assert_eq!(todas.iter().filter(|(a, _)| matches!(a, AcaoPr::Mesclar { .. })).count(), 2);
-        assert!(todas.iter().any(|(a, r)| *a == AcaoPr::PedirAoChat && r.is_ok()));
-        assert!(todas.iter().any(|(a, r)| *a == AcaoPr::VoltarParaRascunho && r.is_ok()));
     }
 
     #[test]

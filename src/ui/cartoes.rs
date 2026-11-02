@@ -3,7 +3,7 @@
 //! ou recolhidos numa linha depois de decididos —, as linhas do que ele espera de você ("Esperando
 //! você" e o sino), o "Resumo do Mestre" e a faixa "Enquanto você esteve fora".
 
-use gpui_kit::component::{Disableable as _, ElementExt as _, Icon, WindowExt as _, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{Disableable as _, ElementExt as _, Icon, WindowExt as _, button::Button, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -13,10 +13,13 @@ use super::{
         CartaoDeLista, Papel as Quem, QuadradoDeProjeto, Selo, Sinal, Simbolo, TamanhoBotao, Tom, aviso, botao_fantasma,
         botao_icone, botao_primario, contagem, pilula_da_tarefa,
     },
-    icone_projeto,
+    icone_projeto, painel_pr,
 };
 use crate::{
-    modelo::{Cartao, Chat, Divisao, EstadoCartao, ID_MESTRE, Item, Papel, Parte, SugestaoProjeto, TipoCartao},
+    modelo::{
+        AcaoExterna, Cartao, Chat, Confirmacao, Divisao, EstadoCartao, ID_MESTRE, Item, Papel, Parte, Pr, PrAnterior,
+        SugestaoProjeto, Tarefa, TipoCartao,
+    },
     motor::{Motor, PrecisaDeVoce},
     tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio, sombra_elevado},
 };
@@ -41,7 +44,7 @@ pub(super) fn frase_do_cartao(c: &Cartao) -> String {
         }
         TipoCartao::Projeto(s) => format!("Criar o projeto {}?", s.nome),
         TipoCartao::Memoria { texto } => format!("Quer lembrar: {}", uma_linha(texto)),
-        TipoCartao::Pr { tarefa } => format!("PR da tarefa {tarefa}"),
+        TipoCartao::Pr { tarefa } => format!("PR do chat {tarefa}"),
         TipoCartao::Confirmar(c) => format!("Confirmar: {}", uma_linha(&c.resumo)),
         TipoCartao::Desconhecido(_) => format!("Cartão {} aberto", c.id),
     }
@@ -64,6 +67,11 @@ pub(super) fn nome_do_chat(c: &Chat) -> String {
     }
 }
 
+fn maiuscula(texto: &str) -> String {
+    let mut letras = texto.chars();
+    letras.next().map(|c| c.to_uppercase().chain(letras).collect()).unwrap_or_default()
+}
+
 fn uma_linha(texto: &str) -> String {
     let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
     if linha.chars().count() > 120 { format!("{}…", linha.chars().take(120).collect::<String>()) } else { linha.to_string() }
@@ -77,7 +85,7 @@ pub(super) fn esperas_do_mestre(motor: &Motor) -> Vec<EsperaDoMestre> {
     let mut linhas: Vec<EsperaDoMestre> = motor
         .cartoes()
         .iter()
-        .filter(|c| c.aberto() && c.chat == ID_MESTRE)
+        .filter(|c| c.aberto() && c.chat == ID_MESTRE && !matches!(c.tipo, TipoCartao::Pr { .. }))
         .map(|c| EsperaDoMestre { chave: format!("cartao-{}", c.id), cartao: Some(c.id), chat: mestre.clone(), texto: frase_do_cartao(c) })
         .collect();
     for (a, b) in motor.ciclos_travados() {
@@ -298,22 +306,19 @@ impl Janela {
                     };
                     linha_decidida(format!("cartao-{id}").into(), icone, cor, frase, None, None).into_any_element()
                 }
-                // Provisório (G5): a linha de acompanhamento e o cartão de confirmação de verdade.
-                (TipoCartao::Pr { tarefa }, _) => {
-                    let texto = match motor.tarefa(*tarefa).and_then(|t| t.pr.as_ref()) {
-                        Some(pr) => format!("PR #{} · {}", pr.numero, pr.titulo),
-                        None => "PR (sem dados)".into(),
-                    };
-                    linha_decidida(format!("cartao-{id}").into(), Lucide::GitPullRequest, Cores::tenue(), texto, None, None)
-                        .into_any_element()
+                (TipoCartao::Pr { tarefa }, _) => self.linha_do_pr(motor, c, *tarefa, window, cx),
+                (TipoCartao::Confirmar(confirmacao), EstadoCartao::Aberto) => {
+                    self.confirmacao_aberta(motor, c.id, confirmacao, window, cx)
                 }
-                (TipoCartao::Confirmar(confirmacao), _) => {
-                    let texto = match &confirmacao.resultado {
-                        Some(resultado) => format!("{} · {resultado}", uma_linha(&confirmacao.resumo)),
-                        None => format!("Confirmar: {}", uma_linha(&confirmacao.resumo)),
+                (TipoCartao::Confirmar(confirmacao), estado) => {
+                    // Decidido: a decisão e o resultado primeiro, porque a linha corta no fim.
+                    let acao = acao_da_confirmacao(motor, confirmacao);
+                    let resultado = confirmacao.resultado.as_deref().map(|r| format!(" · {}", uma_linha(r))).unwrap_or_default();
+                    let (icone, cor, texto) = match estado {
+                        EstadoCartao::Aceito => (Lucide::ShieldCheck, Cores::verde(), format!("Confirmado: {acao}{resultado}")),
+                        _ => (Lucide::X, Cores::tenue(), format!("Agora não: {acao}{resultado}")),
                     };
-                    linha_decidida(format!("cartao-{id}").into(), Lucide::ShieldQuestionMark, Cores::ambar(), texto, None, None)
-                        .into_any_element()
+                    linha_decidida(format!("cartao-{id}").into(), icone, cor, texto, None, None).into_any_element()
                 }
                 (TipoCartao::Desconhecido(_), _) => {
                     linha_decidida(format!("cartao-{id}").into(), Lucide::Info, Cores::tenue(), "(cartão de uma versão mais nova)".into(), None, None)
@@ -789,6 +794,238 @@ impl Janela {
                 .child(h_flex().ml(r(-12.)).pt(esp::E4).child(pedir))
                 .into_any_element(),
         )
+    }
+}
+
+/// "mesclar o PR #12 (squash)", "abrir o PR “Corrige login” como rascunho": o que a confirmação
+/// deixa fazer, sem quem pediu.
+pub(super) fn acao_da_confirmacao(motor: &Motor, c: &Confirmacao) -> String {
+    let numero = |tarefa: &u64| motor.pr_da_tarefa(*tarefa).map_or_else(|| "o PR".to_string(), |p| format!("o PR #{}", p.numero));
+    match &c.acao {
+        AcaoExterna::AbrirPr { titulo, rascunho, quando_pronto, .. } => {
+            let rascunho = if *rascunho { " como rascunho" } else { "" };
+            let ship = quando_pronto.as_ref().map(|m| format!(" e mesclar quando ficar pronto ({m})")).unwrap_or_default();
+            format!("abrir o PR “{titulo}”{rascunho}{ship}")
+        }
+        AcaoExterna::AtualizarPr { tarefa } => format!("atualizar {}", numero(tarefa)),
+        AcaoExterna::Mesclar { tarefa, metodo, quando_pronto: true, .. } => {
+            format!("mesclar {} quando ficar pronto ({metodo})", numero(tarefa))
+        }
+        AcaoExterna::Mesclar { tarefa, metodo, .. } => format!("mesclar {} ({metodo})", numero(tarefa)),
+    }
+}
+
+/// O PR que uma linha de acompanhamento mostra: o que ela acompanhava quando nasceu. A linha nasce
+/// com o PR e o cartão só guarda a tarefa; um anterior que terminou depois que a linha nasceu é o
+/// dela (recolhida). Sem isso, o PR atual, ao vivo.
+fn pr_da_linha<'a>(t: &'a Tarefa, criado_em: u64) -> Option<Result<&'a Pr, &'a PrAnterior>> {
+    match t.prs_anteriores.iter().find(|a| a.em >= criado_em) {
+        Some(a) => Some(Err(a)),
+        None => t.pr.as_ref().map(Ok).or_else(|| t.prs_anteriores.last().map(Err)),
+    }
+}
+
+impl Janela {
+    /// A linha de acompanhamento do PR (no lugar do "Poll PR until terminal" do print): o anel dos
+    /// checks, "PR #12 · título", o resumo (checks, acompanhando, mesclar quando pronto), no máximo
+    /// um botão contextual, Parar e Abrir. Mesclado ou fechado, recolhe numa linha.
+    fn linha_do_pr(&self, motor: &Motor, c: &Cartao, tarefa: u64, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let id = SharedString::from(format!("cartao-{}", c.id));
+        let Some(t) = motor.tarefa(tarefa) else {
+            return linha_decidida(id, Lucide::GitPullRequest, Cores::tenue(), "PR (sem dados)".into(), None, None).into_any_element();
+        };
+        let chat = t.trabalhador.clone();
+        match pr_da_linha(t, c.criado_em) {
+            None => linha_decidida(id, Lucide::GitPullRequest, Cores::tenue(), "PR (sem dados)".into(), None, None).into_any_element(),
+            Some(Err(a)) => self.linha_do_pr_recolhida(motor, t, a, id, window, cx),
+            Some(Ok(pr)) => {
+                let (icone, cor) = painel_pr::icone_do_estado(pr.estado);
+                let simbolo = match painel_pr::anel_dos_checks(SharedString::from(format!("{id}-anel")), pr.estado, &pr.checks, 20.) {
+                    Some(anel) => anel.into_any_element(),
+                    None => Icon::new(icone).size(r(16.)).flex_none().text_color(cor).into_any_element(),
+                };
+                let mut meta: Vec<String> = Vec::new();
+                if pr.checks.total > 0 {
+                    meta.push(format!("{} checks", painel_pr::rotulo_checks(&pr.checks).curto));
+                }
+                if pr.estado == crate::github::EstadoPr::Rascunho {
+                    meta.push("rascunho".into());
+                }
+                // O Ship já diz que acompanha.
+                match &pr.ao_ficar_pronto {
+                    Some(_) => meta.push("mesclar quando pronto".into()),
+                    None if pr.acompanhando => meta.push("acompanhando".into()),
+                    None => meta.push("sem acompanhar".into()),
+                }
+                let ship = pr.ao_ficar_pronto.is_some();
+                let falhou = pr.checks.falhos > 0 && pr.checks.pendentes == 0;
+                let acoes = motor.acoes_do_pr(tarefa);
+                let pronto = !ship
+                    && painel_pr::falta_para_mesclar(pr, motor.simulacao(tarefa).as_ref()).is_empty()
+                    && painel_pr::resultado(&acoes, &painel_pr::acao_mesclar_padrao(&acoes)).is_ok();
+                let motor_e = self.motor.clone();
+                let contextual: Option<Button> = if t.pronto_para_atualizar {
+                    Some(
+                        botao_fantasma(SharedString::from(format!("{id}-atualizar")), Some(Lucide::GitPullRequest.into()), "Atualizar PR", TamanhoBotao::Linha, window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| this.atualizar_pr_do_usuario(tarefa, window, cx))),
+                    )
+                } else if falhou && !ship && pr.acompanhando {
+                    Some(
+                        botao_fantasma(SharedString::from(format!("{id}-falha")), Some(Lucide::MessageSquareQuote.into()), "Mandar falha ao chat", TamanhoBotao::Linha, window, cx)
+                            .on_click(move |_, window, cx| {
+                                if let Some(motor) = &motor_e {
+                                    let recebe = motor.update(cx, |m, cx| m.mandar_falha_ao_chat(tarefa, None, cx));
+                                    painel_pr::responder(recebe, window, cx);
+                                }
+                            }),
+                    )
+                } else if pronto && pr.acompanhando {
+                    Some(
+                        botao_fantasma(SharedString::from(format!("{id}-mesclar")), Some(Lucide::GitMerge.into()), "Mesclar", TamanhoBotao::Linha, window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| this.mesclar_pr(tarefa, None, window, cx))),
+                    )
+                } else {
+                    None
+                };
+                let acompanhando = pr.acompanhando;
+                let motor_p = self.motor.clone();
+                let parar = botao_fantasma(SharedString::from(format!("{id}-parar")), None, if acompanhando { "Parar" } else { "Acompanhar" }, TamanhoBotao::Linha, window, cx)
+                    .tooltip(if acompanhando {
+                        "Parar de acompanhar: nada deste PR vira aviso (o Vitral ainda confere ao abrir)"
+                    } else {
+                        "Voltar a acompanhar os checks e a revisão"
+                    })
+                    .on_click(move |_, _, cx| {
+                        if let Some(motor) = &motor_p {
+                            motor.update(cx, |m, cx| m.acompanhar(tarefa, !acompanhando, cx));
+                        }
+                    });
+                let abrir = botao_fantasma(SharedString::from(format!("{id}-abrir")), None, "Abrir", TamanhoBotao::Linha, window, cx)
+                    .tooltip("Abrir na aba PR")
+                    .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba_pr(&chat, window, cx)));
+                let dica = SharedString::from(format!("{}\n{}", painel_pr::dica_do_pr(pr.numero, pr.estado, Some(&pr.checks)), pr.titulo));
+                h_flex()
+                    .id(id)
+                    .w_full()
+                    .min_h(r(40.))
+                    .pl(dentro_da_borda(12.))
+                    .pr(dentro_da_borda(8.))
+                    .gap(esp::E8)
+                    .rounded(raio::CARTAO)
+                    .bg(Cores::cartao_elevado())
+                    .border_1()
+                    .border_color(Cores::linha())
+                    .child(div().flex_none().child(simbolo))
+                    .child(
+                        h_flex()
+                            .id("texto-do-pr")
+                            .flex_1()
+                            .min_w_0()
+                            .gap(esp::E6)
+                            .child(div().flex_none().rotulo().text_color(Cores::forte()).child(format!("PR #{}", pr.numero)))
+                            // O título e o resumo dividem o que sobra; os dois cortam no fim.
+                            .child(div().flex_shrink(1.).min_w(r(64.)).truncate().corpo_ui().text_color(Cores::texto()).child(pr.titulo.clone()))
+                            .child(div().flex_shrink(1.).min_w_0().truncate().metadado().text_color(Cores::tenue()).child(meta.join(" · ")))
+                            .child(div().flex_1())
+                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                    )
+                    .children(contextual)
+                    .child(parar)
+                    .child(abrir)
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// A linha do PR que terminou: "PR #12 mesclado por x (squash) · ENG-123", Abrir no GitHub e,
+    /// mesclado sem fechar a issue do GitHub do chat, "Fechar a issue #45".
+    fn linha_do_pr_recolhida(&self, motor: &Motor, t: &Tarefa, a: &PrAnterior, id: SharedString, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let (icone, cor) = painel_pr::icone_do_estado(a.estado);
+        let mut texto = match (a.estado, &a.mesclado_por) {
+            (crate::github::EstadoPr::Mesclado, Some(login)) => format!("PR #{} mesclado por {login}", a.numero),
+            (crate::github::EstadoPr::Mesclado, None) => format!("PR #{} mesclado", a.numero),
+            _ => format!("PR #{} fechado sem mesclar", a.numero),
+        };
+        if let Some(issue) = &t.issue {
+            texto.push_str(&format!(" · issue {}", issue.chave));
+        }
+        let quando = (a.em > 0).then(|| match super::tempo_relativo(a.em).as_str() {
+            "agora" => "agora".to_string(),
+            q => format!("há {q}"),
+        });
+        // A issue do GitHub do chat que o PR mesclado não fechou (pelo detalhe, se já foi lido).
+        let issue_aberta = (a.estado == crate::github::EstadoPr::Mesclado && t.prs_anteriores.last().is_some_and(|u| u.numero == a.numero) && t.pr.is_none())
+            .then(|| t.issue.as_ref().filter(|i| i.fonte == crate::issues::FonteIssue::Github))
+            .flatten()
+            .and_then(|i| {
+                let n: u64 = i.chave.trim_start_matches('#').parse().ok()?;
+                let repo = a.url.strip_prefix("https://github.com/")?.split("/pull/").next()?.to_string();
+                let d = motor.detalhe_pr(&repo, a.numero);
+                (!d.valor()?.issues_fechadas.contains(&n)).then(|| i.chave.clone())
+            });
+        let tarefa = t.id;
+        let fechar_issue = issue_aberta.map(|chave| {
+            let motor_e = self.motor.clone();
+            botao_fantasma(SharedString::from(format!("{id}-fechar-issue")), None, format!("Fechar a issue {chave}"), TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
+                if let Some(motor) = &motor_e {
+                    let recebe = motor.update(cx, |m, cx| m.fechar_issue_do_pr(tarefa, cx));
+                    painel_pr::responder(recebe, window, cx);
+                }
+            })
+        });
+        let abrir = painel_pr::link_permitido(&a.url, painel_pr::OrigemDoTexto::Terceiros).then(|| {
+            let url = a.url.clone();
+            botao_fantasma(SharedString::from(format!("{id}-github")), Some(Lucide::ExternalLink.into()), "Abrir no GitHub", TamanhoBotao::Linha, window, cx)
+                .on_click(move |_, _, cx| cx.open_url(&url))
+        });
+        h_flex()
+            .id(id)
+            .w_full()
+            .min_h(r(36.))
+            .pl(dentro_da_borda(12.))
+            .pr(dentro_da_borda(8.))
+            .gap(esp::E8)
+            .rounded(raio::CARTAO)
+            .bg(Cores::cartao_elevado())
+            .border_1()
+            .border_color(Cores::linha())
+            .child(Icon::new(icone).size(r(14.)).flex_none().text_color(cor))
+            .child(div().flex_1().min_w_0().truncate().corpo_ui().text_color(Cores::texto()).child(texto))
+            .children(quando.map(|q| div().flex_none().metadado().text_color(Cores::tenue()).child(q)))
+            .children(fechar_issue)
+            .children(abrir)
+            .into_any_element()
+    }
+
+    /// O "Confirmar" de um chat (no molde dos outros cartões): o que ele quer fazer, o resumo e
+    /// Confirmar / Agora não.
+    fn confirmacao_aberta(&self, motor: &Motor, cartao: u64, c: &Confirmacao, window: &Window, cx: &Context<Self>) -> AnyElement {
+        // A ação vem no título (o que importa, e o que corta por último); quem pediu e o resumo,
+        // embaixo, em até 3 linhas.
+        let acao = acao_da_confirmacao(motor, c);
+        let titulo = format!("{}?", maiuscula(&acao));
+        let quem = motor.chat(&c.pedido_por).map_or_else(|| "Um chat pediu".to_string(), |chat| format!("Pedido do chat “{}”", chat.titulo));
+        let decidir = |aceitar: bool| {
+            let motor_e = self.motor.clone();
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                if let Some(motor) = &motor_e {
+                    motor.update(cx, |m, cx| m.decidir_confirmacao(cartao, aceitar, cx));
+                }
+            }
+        };
+        let resumo = c.resumo.trim().to_string();
+        moldura(Cores::ambar())
+            .child(cabecalho(Lucide::ShieldQuestionMark, Cores::ambar(), titulo, Some(quem)))
+            .when(!resumo.is_empty(), |s| {
+                s.child(div().px(dentro_da_borda(12.)).pt(esp::E12).corpo_ui().text_color(Cores::texto()).line_clamp(3).text_ellipsis().child(resumo))
+            })
+            .child(
+                rodape()
+                    .child(div().flex_1())
+                    .child(botao_fantasma(("confirmar-nao", cartao as usize), None, "Agora não", TamanhoBotao::Barra, window, cx).on_click(decidir(false)))
+                    .child(botao_primario(("confirmar-sim", cartao as usize), None, "Confirmar", TamanhoBotao::Barra, window, cx).on_click(decidir(true))),
+            )
+            .into_any_element()
     }
 }
 

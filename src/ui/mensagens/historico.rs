@@ -124,6 +124,8 @@ impl Janela {
             marco: None,
             ultimas: HashMap::new(),
             entregas: HashMap::new(),
+            // O histórico trazido do Claude Code não liga referências (não é deste projeto).
+            referencias: Default::default(),
         };
         let inicio = itens.len().saturating_sub(vista.mostrar);
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();

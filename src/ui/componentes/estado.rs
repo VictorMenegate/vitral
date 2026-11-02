@@ -145,11 +145,19 @@ pub struct PilulaDeEstado {
     rotulo: Option<SharedString>,
     detalhe: Option<SharedString>,
     compacta: bool,
+    cor: Option<Hsla>,
 }
 
 impl PilulaDeEstado {
     pub fn new(estado: Estado) -> Self {
-        PilulaDeEstado { estado, rotulo: None, detalhe: None, compacta: false }
+        PilulaDeEstado { estado, rotulo: None, detalhe: None, compacta: false, cor: None }
+    }
+
+    /// Outra cor no lugar da do estado: só o "mesclado" do PR, em violeta (a convenção do GitHub,
+    /// exceção documentada na especificação).
+    pub fn cor(mut self, cor: Hsla) -> Self {
+        self.cor = Some(cor);
+        self
     }
 
     /// Troca o texto padrão ("aprovada", "cancelada").
@@ -173,7 +181,8 @@ impl PilulaDeEstado {
 
 impl RenderOnce for PilulaDeEstado {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let cor = self.estado.cor();
+        let cor = self.cor.or(self.estado.cor());
+        let cor_texto = self.cor.unwrap_or(self.estado.cor_texto());
         let rotulo = self.rotulo.unwrap_or_else(|| self.estado.rotulo().into());
         let ponto = div()
             .flex_none()
@@ -210,7 +219,7 @@ impl RenderOnce for PilulaDeEstado {
                 div()
                     .metadado()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(self.estado.cor_texto())
+                    .text_color(cor_texto)
                     .whitespace_nowrap()
                     .child(rotulo)
                     .when_some(self.detalhe, |s, d| {
@@ -627,13 +636,36 @@ fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
         EstadoTarefa::Falhou => visual(Estado::Erro, "falhou", None, "O pedido falhou.".into()),
         EstadoTarefa::Cancelada => visual(Estado::Parado, "cancelada", None, "O pedido foi cancelado.".into()),
         EstadoTarefa::Conversa => visual(Estado::Parado, "conversa", None, "Pronto para conversar.".into()),
-        // Provisório (G5): a pílula do PR com os checks.
-        EstadoTarefa::NoPr => visual(
-            Estado::Parado,
-            "PR aberto",
-            t.pr.as_ref().map(|pr| format!("#{}", pr.numero)),
-            "O PR está aberto no GitHub; o Vitral acompanha os checks e a revisão.".into(),
-        ),
+        // O PR aberto: a cor segue os checks (e a rodada que espera o "Atualizar PR").
+        EstadoTarefa::NoPr => {
+            let Some(pr) = t.pr.as_ref() else {
+                return visual(Estado::Parado, "PR aberto", None, "O PR está aberto no GitHub.".into());
+            };
+            let n = format!("#{}", pr.numero);
+            let c = &pr.checks;
+            let checks = (c.total > 0).then(|| format!("{n} · {}/{}", c.terminados, c.total)).unwrap_or_else(|| n.clone());
+            match () {
+                _ if t.pronto_para_atualizar => visual(
+                    Estado::EsperandoVoce,
+                    "pronto para atualizar",
+                    Some(n),
+                    "A rodada passou na verificação e espera o Atualizar PR.".into(),
+                ),
+                _ if pr.estado == crate::github::EstadoPr::Rascunho => {
+                    visual(Estado::Parado, "rascunho", Some(n), "O PR está aberto como rascunho.".into())
+                }
+                _ if c.estado == crate::github::EstadoChecks::Falhou => {
+                    visual(Estado::Erro, "CI falhou", Some(n), format!("{} de {} checks falharam no PR.", c.falhos, c.total))
+                }
+                _ if c.estado == crate::github::EstadoChecks::Pendente => visual(
+                    Estado::Rodando,
+                    "PR aberto",
+                    Some(checks),
+                    "O PR está aberto e os checks rodam; o Vitral acompanha.".into(),
+                ),
+                _ => visual(Estado::Pronto, "PR aberto", Some(n), "O PR está aberto no GitHub; o Vitral acompanha os checks e a revisão.".into()),
+            }
+        }
     }
 }
 

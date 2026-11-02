@@ -1022,3 +1022,196 @@ mod testes {
         assert_eq!(descricao_do_projeto(3, Some(agora() - 7200)), "3 conversas · última há 2 h");
     }
 }
+
+impl Janela {
+    /// "Ver log" de um check que falhou (720): o fim do log (o motor já recorta) em código, "Log
+    /// completo no GitHub" e "Mandar ao chat".
+    pub(super) fn dialogo_log(&mut self, tarefa: u64, repo: String, nome: String, link: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let recebe = motor.update(cx, |m, cx| m.log_do_check(&repo, link.clone(), cx));
+        let lido: Rc<RefCell<Option<Result<String, String>>>> = Rc::new(RefCell::new(None));
+        let guardar = lido.clone();
+        // O log abre no fim, onde costuma estar o erro.
+        let rolagem = ScrollHandle::new();
+        let ao_fim = rolagem.clone();
+        window
+            .spawn(cx, async move |cx| {
+                let resultado = recebe.recv().await.unwrap_or_else(|_| Err("A leitura do log parou no meio.".into()));
+                let _ = cx.update(|window, _| {
+                    *guardar.borrow_mut() = Some(resultado);
+                    ao_fim.scroll_to_bottom();
+                    window.refresh();
+                });
+            })
+            .detach();
+        let largura_log = largura_do_log(window);
+        window.open_dialog(cx, move |dialogo, window, cx| {
+            let corpo: AnyElement = match &*lido.borrow() {
+                None => div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(r(8.))
+                    .py(r(32.))
+                    .corpo_ui()
+                    .text_color(Cores::tenue())
+                    .child(super::popover_issues::spinner(14., window))
+                    .child("Lendo o log no GitHub…")
+                    .into_any_element(),
+                Some(Err(erro)) => super::componentes::Alerta::new(Tom::Atencao, format!("Não consegui ler o log: {erro}")).into_any_element(),
+                Some(Ok(texto)) => div()
+                    .id("log-do-check")
+                    .max_h(r(440.))
+                    .overflow_y_scroll()
+                    .track_scroll(&rolagem)
+                    .child(super::mensagens::markdown("log-do-check".into(), format!("````text\n{}\n````", texto.trim_end()), cx))
+                    .into_any_element(),
+            };
+            let abrir = super::painel_pr::link_permitido(&link, super::painel_pr::OrigemDoTexto::Terceiros).then(|| {
+                let url = link.clone();
+                botao_fantasma("log-no-github", Some(Lucide::ExternalLink.into()), "Log completo no GitHub", TamanhoBotao::Controle, window, cx)
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            });
+            let (motor, link) = (motor.clone(), link.clone());
+            let mandar = botao_primario("log-mandar", Some(Lucide::MessageSquareQuote.into()), "Mandar ao chat", TamanhoBotao::Controle, window, cx)
+                .tooltip("Mandar esta falha ao chat (com o log), para ele corrigir")
+                .on_click(move |_, window, cx| {
+                    let recebe = motor.update(cx, |m, cx| m.mandar_falha_ao_chat(tarefa, Some(link.clone()), cx));
+                    super::painel_pr::responder(recebe, window, cx);
+                    window.close_dialog(cx);
+                });
+            let mut rodape = RodapeDialogo::new();
+            if let Some(abrir) = abrir {
+                rodape = rodape.esquerda(abrir);
+            }
+            moldura(dialogo, largura_log, window)
+                .title(topo(cabecalho(format!("Log de {nome}"), Some("O fim do log, onde costuma estar o erro.".into())).uma_linha()))
+                .child(corpo)
+                .footer(rodape.principal(mandar))
+        });
+    }
+
+    /// Mesclar com o que pede confirmação: os commits que não vieram do Vitral (o PR mescla
+    /// exatamente o head que está na tela) e os checks não obrigatórios que falharam (`UNSTABLE`).
+    pub(super) fn confirmar_mescla(
+        &mut self,
+        tarefa: u64,
+        pr: &crate::modelo::Pr,
+        metodo: Option<String>,
+        confirmados: Vec<crate::motor::Confirmado>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let de_fora = confirmados.iter().any(|c| matches!(c, crate::motor::Confirmado::CommitsDeFora(_)));
+        let instavel = confirmados.contains(&crate::motor::Confirmado::Instavel);
+        let mut detalhes: Vec<(gpui_kit::component::Icon, SharedString, bool)> = pr
+            .commits_de_fora
+            .iter()
+            .map(|sha| (Lucide::GitCommitHorizontal.into(), SharedString::from(format!("{sha}, de fora do Vitral")), true))
+            .collect();
+        if instavel {
+            detalhes.push((Lucide::TriangleAlert.into(), "Checks que não são obrigatórios falharam".into(), true));
+        }
+        let head: String = pr.sha.chars().take(7).collect();
+        let texto = match (de_fora, instavel) {
+            (true, _) => format!(
+                "Chegaram commits que não vieram do Vitral. O PR mescla exatamente o head que você vê agora ({head}); se chegar outro, o GitHub recusa."
+            ),
+            (false, _) => "O GitHub deixa mesclar assim, mas algum check que não é obrigatório falhou.".to_string(),
+        };
+        let metodo_texto = metodo.clone().unwrap_or_else(|| "o método padrão".into());
+        confirmar(
+            Confirmacao {
+                tom: TomConfirmacao::Atencao,
+                icone: Lucide::GitMerge.into(),
+                titulo: format!("Mesclar o PR #{} mesmo assim?", pr.numero).into(),
+                texto: texto.into(),
+                detalhes,
+                ok: format!("Mesclar ({metodo_texto})").into(),
+                cancelar: "Agora não".into(),
+                ok_perigo: false,
+            },
+            move |window, cx| {
+                let recebe = motor.update(cx, |m, cx| m.mesclar_pelo_usuario(tarefa, metodo.clone(), confirmados.clone(), cx));
+                super::painel_pr::responder(recebe, window, cx);
+            },
+            None,
+            window,
+            cx,
+        );
+    }
+}
+
+/// O diálogo do log tem 720 a 100%, sem passar da janela.
+fn largura_do_log(window: &Window) -> f32 {
+    let escala = window.rem_size().as_f32() / 15.;
+    (window.viewport_size().width.as_f32() / escala - 64.).min(720.)
+}
+
+impl Janela {
+    /// Arquivar pelo menu do chat: o chat vazio sai em vez de arquivar; arquivar se desfaz no aviso.
+    pub(super) fn arquivar_do_menu(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        if motor.update(cx, |m, cx| m.arquivar_chat(&chat, cx)) {
+            self.largar_chats(std::slice::from_ref(&chat), true, window, cx);
+            window.push_notification(aviso(Tom::Info, "Chat vazio apagado"), cx);
+            return;
+        }
+        super::lateral::avisar_arquivadas(motor, vec![chat.clone()], "Conversa arquivada".into(), window, cx);
+        // Só pergunta ao arquivar um coordenador parado com cópias sobrando.
+        self.oferecer_limpeza_ao_arquivar(&chat, window, cx)
+    }
+
+    /// Arquivar um chat com o PR aberto (seção 6.9): fechar o PR no GitHub, ou deixar aberto (o
+    /// Vitral para de acompanhar e desliga o mesclar quando ficar pronto). Cancelar não arquiva.
+    pub(super) fn dialogo_arquivar_com_pr(&mut self, chat: String, tarefa: u64, numero: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let janela = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialogo, window, cx| {
+            let cancelar = botao_fantasma("arquivar-pr-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                .on_click(|_, window, cx| window.close_dialog(cx));
+            let deixar = {
+                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
+                botao_fantasma("arquivar-pr-deixar", None, "Deixar aberto", TamanhoBotao::Controle, window, cx)
+                    .tooltip("Arquiva o chat; o PR fica no GitHub e o Vitral para de acompanhar")
+                    .on_click(move |_, window, cx| {
+                        motor.update(cx, |m, cx| {
+                            m.armar_mescla(tarefa, false, None, cx);
+                            m.acompanhar(tarefa, false, cx);
+                        });
+                        window.close_dialog(cx);
+                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
+                    })
+            };
+            let fechar = {
+                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
+                super::componentes::botao_perigo("arquivar-pr-fechar", None, "Fechar o PR", TamanhoBotao::Controle, window, cx)
+                    .tooltip("Fecha o PR no GitHub, com o comentário “Fechado pelo Vitral: chat arquivado.”, e arquiva o chat")
+                    .on_click(move |_, window, cx| {
+                        let recebe = motor.update(cx, |m, cx| m.fechar_pr(tarefa, Some("Fechado pelo Vitral: chat arquivado.".into()), cx));
+                        super::painel_pr::responder(recebe, window, cx);
+                        window.close_dialog(cx);
+                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
+                    })
+            };
+            moldura(dialogo, largura::P, window)
+                .title(topo(cabecalho(format!("O chat tem o PR #{numero} aberto"), Some("Arquivar o chat não mexe no PR sozinho.".into()))))
+                .child(
+                    div()
+                        .corpo_ui()
+                        .text_color(Cores::tenue())
+                        .child("Fechar o PR o fecha no GitHub. Deixar aberto mantém o PR lá, e o Vitral para de acompanhar e desliga o “Mesclar quando ficar pronto”."),
+                )
+                .footer(RodapeDialogo::new().esquerda(cancelar).cancelar(deixar).principal(fechar))
+        });
+    }
+}

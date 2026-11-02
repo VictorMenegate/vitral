@@ -30,6 +30,7 @@ use crate::{
         PrAnterior,
     },
     remoto::{self, ErroRemoto, sem_segredos},
+    ui::painel_pr::Ocupado,
 };
 pub use laco::esperar as esperar_vigia;
 use regras::{Condicoes, Destino, EventoPr};
@@ -2159,7 +2160,9 @@ impl Motor {
         self.prs.simulacoes.get(&id).map(|(_, s)| s.clone())
     }
 
-    /// As ações da aba PR e por que cada uma não está habilitada.
+    /// As ações da aba PR e por que cada uma não está habilitada: a tabela 4.3, pura, em
+    /// `ui::painel_pr::acoes_do_pr`. Aqui entram o repositório, a simulação e quem ocupa o PR (a
+    /// publicação, a mesclagem ou o chat).
     pub fn acoes_do_pr(&self, id: u64) -> Vec<(AcaoPr, Result<(), String>)> {
         let Some(t) = self.tarefa(id) else {
             return Vec::new();
@@ -2172,9 +2175,15 @@ impl Motor {
             };
         };
         let info = self.repo_github(&pr.repositorio).tirar().map(|r| r.info);
-        let metodos = info.as_ref().map(super::conexoes::metodos_permitidos).unwrap_or_else(|| vec!["squash"]);
-        let ocupado = self.ocupado_para_o_pr(t, OrigemAcao::Usuario);
-        regras::acoes_possiveis(pr, info.as_ref(), &metodos, self.simulacao(id).as_ref(), ocupado.as_deref())
+        // Sem publicação nem mesclagem em andamento, o que sobra do `ocupado_para_o_pr` é o chat
+        // (rodando, com fila ou juntando), que as ações do usuário esperam terminar.
+        let rodando = self.ocupado_para_o_pr(t, OrigemAcao::Usuario).is_some();
+        let ocupado = match self.andamento_do_pr(id) {
+            Some(AndamentoPr::Publicando) => Some(Ocupado::Publicando),
+            Some(AndamentoPr::Mesclando) => Some(Ocupado::Mesclando),
+            None => rodando.then_some(Ocupado::Chat),
+        };
+        crate::ui::painel_pr::acoes_do_pr(pr, info.as_ref(), self.simulacao(id).as_ref(), ocupado)
     }
 
     /// O que parece segredo no que a cópia acrescentaria ao PR.
