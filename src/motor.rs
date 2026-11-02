@@ -6378,6 +6378,8 @@ impl Motor {
     }
 
     fn salvar(&self) {
+        // Todo estado novo passa por aqui (e o Motor::new também): quem roda isolado agora.
+        self.marcar_pastas_isoladas();
         if self.somente_leitura.is_some() {
             return;
         }

@@ -64,7 +64,7 @@ se não houver problema de gravidade alta ou média. Escreva em português.",
     // (cargo test, servidores) param junto. Na cópia de um chat isolado, o revisor (que tem Bash e lê
     // o que o agente escreveu) roda isolado como ele.
     let mut comando = match isolado {
-        Some(modo) => crate::isolamento::comando(binario_claude(), "revisor", modo),
+        Some(modo) => crate::isolamento::comando(binario_claude(), "revisor", modo, pasta),
         None => processos::comando(binario_claude(), "revisor"),
     };
     comando

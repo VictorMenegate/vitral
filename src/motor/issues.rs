@@ -486,6 +486,21 @@ impl Motor {
         isolamento_do_chat(chat.papel, chat.isolado, em_pr, pai_isolado)
     }
 
+    /// As pastas dos chats isolados para o git do Vitral, que roda fora do bwrap
+    /// (`git::marcar_isoladas`): a do chat e, com tarefa, a cópia e a origem dela, que têm o mesmo
+    /// `.git`.
+    pub(super) fn marcar_pastas_isoladas(&self) {
+        let mut pastas = Vec::new();
+        for c in self.chats.iter().filter(|c| self.roda_isolado(c)) {
+            pastas.push(c.cwd.clone());
+            if let Some(t) = c.tarefa.and_then(|n| self.tarefa(n)) {
+                pastas.extend(t.worktree.clone());
+                pastas.push(self.origem_da_tarefa(t));
+            }
+        }
+        git::marcar_isoladas(pastas);
+    }
+
     /// A pasta do chat entrega por PR.
     fn pasta_em_pr(&self, chat: &Chat) -> bool {
         !chat.projeto.is_empty()

@@ -139,7 +139,7 @@ impl Processo {
         mut enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
         let mut comando = match opcoes.isolado {
-            Some(modo) => crate::isolamento::comando(binario_claude(), "claude", modo),
+            Some(modo) => crate::isolamento::comando(binario_claude(), "claude", modo, &opcoes.cwd),
             None => processos::comando(binario_claude(), "claude"),
         };
         comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
@@ -971,7 +971,7 @@ mod testes {
             isolado: Some(crate::isolamento::Modo::Bwrap),
             ..opcoes()
         };
-        let mut comando = crate::isolamento::comando(binario_claude(), "claude", crate::isolamento::Modo::Bwrap);
+        let mut comando = crate::isolamento::comando(binario_claude(), "claude", crate::isolamento::Modo::Bwrap, &pasta);
         comando.current_dir(&pasta).args(argumentos(&opcoes)).arg("--no-session-persistence");
         for (chave, valor) in ambiente(&opcoes) {
             comando.env(chave, valor);

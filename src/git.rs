@@ -28,6 +28,48 @@ pub fn novo_git() -> std::process::Command {
     comando
 }
 
+/// Sem o que o repositório manda executar: o `core.fsmonitor` (um programa que o git roda a cada
+/// `status`, `diff` e `add`) e os ganchos (`core.hooksPath` vazio, o do Vitral). Vale no git do
+/// Vitral nas pastas dos chats isolados (`marcar_isoladas`), que roda fora do bwrap, com o
+/// barramento e as credenciais: o `.git` delas é o mesmo da origem e de todas as cópias.
+pub(crate) const SEM_EXECUTAVEIS: [&str; 4] =
+    ["-c", "core.fsmonitor=false", "-c", if cfg!(windows) { "core.hooksPath=NUL" } else { "core.hooksPath=/dev/null" }];
+
+/// As pastas (cópias e origens) dos chats isolados. Só cresce: uma pasta que deixou de ser de um
+/// chat isolado continua sem os executáveis do repositório até o Vitral fechar, o que só tira os
+/// ganchos do usuário do git do Vitral nela.
+fn pastas_isoladas() -> &'static Mutex<Vec<PathBuf>> {
+    static PASTAS: std::sync::OnceLock<Mutex<Vec<PathBuf>>> = std::sync::OnceLock::new();
+    PASTAS.get_or_init(Default::default)
+}
+
+/// O motor diz quais pastas são de chats isolados (o chat, a cópia da tarefa e a origem dela).
+pub fn marcar_isoladas(pastas: impl IntoIterator<Item = PathBuf>) {
+    let mut lista = pastas_isoladas().lock().unwrap_or_else(|e| e.into_inner());
+    for pasta in pastas {
+        if !pasta.as_os_str().is_empty() && !lista.contains(&pasta) {
+            lista.push(pasta);
+        }
+    }
+}
+
+/// A pasta é (ou fica dentro de) uma pasta de chat isolado.
+pub fn pasta_isolada(pasta: &Path) -> bool {
+    pastas_isoladas().lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| pasta.starts_with(p))
+}
+
+/// Os `-c` de todo git do Vitral em `pasta`: nas de chats isolados, `SEM_EXECUTAVEIS`.
+pub(crate) fn protecoes(pasta: &Path) -> &'static [&'static str] {
+    if pasta_isolada(pasta) { &SEM_EXECUTAVEIS } else { &[] }
+}
+
+/// O `git -C pasta`, com as proteções da pasta (`protecoes`).
+pub fn git_em(pasta: &Path) -> std::process::Command {
+    let mut comando = novo_git();
+    comando.arg("-C").arg(pasta).args(protecoes(pasta));
+    comando
+}
+
 /// O caminho relativo como o git escreve, com `/`: no Windows o `Path` usa `\`, e o texto vai para o
 /// git ou é comparado com o que ele devolve.
 pub fn caminho_em_texto(caminho: &Path) -> String {
@@ -51,9 +93,9 @@ fn sem_identidade() -> bool {
 }
 
 fn git(pasta: &Path, args: &[&str]) -> Result<String> {
-    let mut comando = novo_git();
+    let mut comando = git_em(pasta);
     // Sem isso, "ação.txt" sai como "a\303\247\303\243o.txt" (entre aspas) e nenhum caminho bate.
-    comando.arg("-C").arg(pasta).args(["-c", "core.quotePath=false"]);
+    comando.args(["-c", "core.quotePath=false"]);
     if sem_identidade() {
         comando.args([
             "-c",
@@ -1333,9 +1375,7 @@ fn grupo_do_branch(branch: &str) -> Option<String> {
 
 fn git_com_entrada(pasta: &Path, args: &[&str], entrada: &str) -> Result<()> {
     use std::io::Write as _;
-    let mut filho = novo_git()
-        .arg("-C")
-        .arg(pasta)
+    let mut filho = git_em(pasta)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -1387,7 +1427,7 @@ fn rodar_no_shell(
         // Um pipe só para stdout e stderr: a saída fica intercalada como no terminal.
         let (leitor, escritor) = std::io::pipe()?;
         let mut processo = match isolado {
-            Some(modo) => crate::isolamento::comando(&bash.programa, "verificacao", modo),
+            Some(modo) => crate::isolamento::comando(&bash.programa, "verificacao", modo, pasta),
             None => processos::comando(&bash.programa, "verificacao"),
         };
         bash.preparar(&mut processo);
@@ -1495,9 +1535,7 @@ fn foto_solta(pasta: &Path) -> Result<String> {
     let indice = std::env::temp_dir().join(format!("vitral-indice-{}", crate::modelo::novo_id()));
     let resultado = (|| {
         let com_indice = |args: &[&str]| -> Result<String> {
-            let saida = novo_git()
-                .arg("-C")
-                .arg(pasta)
+            let saida = git_em(pasta)
                 .args(args)
                 .env("GIT_INDEX_FILE", &indice)
                 .output()?;
@@ -1539,9 +1577,7 @@ pub fn voltar_para(pasta: &Path, foto_antiga: &str) -> Result<usize> {
                 Err(erro) => erro.kind() == std::io::ErrorKind::NotFound,
             }
         } else {
-            novo_git()
-                .arg("-C")
-                .arg(pasta)
+            git_em(pasta)
                 .args(["show", &format!("{foto_antiga}:{arquivo}")])
                 .output()
                 .ok()
@@ -1616,6 +1652,56 @@ mod testes {
         git(&pasta, &["add", "-A"]).unwrap();
         git(&pasta, &["commit", "-q", "-m", "inicio"]).unwrap();
         pasta
+    }
+
+    /// Um `core.fsmonitor` e os ganchos postos no `.git` comum (como um chat isolado sem o bwrap
+    /// poria): o git do Vitral numa pasta de chat isolado não executa nenhum deles.
+    #[test]
+    #[cfg(unix)]
+    fn o_git_do_vitral_nas_pastas_isoladas_nao_executa_nada_do_repositorio() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let origem = repositorio();
+        let copia = origem.with_extension("copia");
+        let marcas = origem.with_extension("marcas");
+        std::fs::create_dir_all(&marcas).unwrap();
+        let script = |nome: &str| {
+            let caminho = marcas.join(format!("{nome}.sh"));
+            std::fs::write(&caminho, format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marcas.join(nome).display())).unwrap();
+            std::fs::set_permissions(&caminho, std::fs::Permissions::from_mode(0o755)).unwrap();
+            caminho
+        };
+        let monitor = script("fsmonitor");
+        git(&origem, &["config", "core.fsmonitor", &monitor.to_string_lossy()]).unwrap();
+        let ganchos = origem.join(".git/hooks");
+        std::fs::create_dir_all(&ganchos).unwrap();
+        for gancho in ["pre-commit", "post-checkout", "reference-transaction"] {
+            std::fs::copy(script(gancho), ganchos.join(gancho)).unwrap();
+        }
+        let rodou = |nome: &str| marcas.join(nome).exists();
+        // O controle: fora das pastas isoladas, o git roda o que o repositório manda.
+        git(&origem, &["status", "--porcelain"]).unwrap();
+        assert!(rodou("fsmonitor"), "sem o fsmonitor o teste não prova nada");
+        std::fs::remove_dir_all(&marcas).unwrap();
+        std::fs::create_dir_all(&marcas).unwrap();
+        // Isoladas: a origem e a cópia, criada já depois da marca (o post-checkout do worktree add).
+        marcar_isoladas([origem.clone(), copia.clone()]);
+        let c = criar_worktree(&origem, &copia, "vitral/t1-isolado").unwrap();
+        std::fs::write(copia.join("b.txt"), "novo\n").unwrap();
+        assert_eq!(arquivos_mudados(&copia, &c.base), ["b.txt"]);
+        assert!(commitar(&copia, "pelo Vitral", &[]).unwrap());
+        foto(&copia, None).unwrap();
+        let rodaram: Vec<String> = std::fs::read_dir(&marcas)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.ends_with(".sh"))
+            .collect();
+        assert!(rodaram.is_empty(), "o git do Vitral executou {rodaram:?}");
+        assert!(pasta_isolada(&copia.join("src")) && !pasta_isolada(&origem.with_extension("outra")));
+        let _ = git(&origem, &["worktree", "remove", "--force", &copia.to_string_lossy()]);
+        for pasta in [&origem, &copia, &marcas] {
+            let _ = std::fs::remove_dir_all(pasta);
+        }
     }
 
     #[test]
@@ -2535,14 +2621,16 @@ mod pr_e_rede {
     }
 
     /// Sem os ganchos do repositório no que o Vitral roda nas cópias do modo PR (push, merge, o
-    /// commit e o rebase do recomeço): o `.git` é de todas as cópias, e o chat isolado alcança ele.
-    /// Um `pre-push` escrito por um agente rodaria fora do isolamento, com as credenciais.
+    /// commit e o rebase do recomeço): o `.git` é de todas as cópias. Um `pre-push` rodaria fora do
+    /// isolamento, com as credenciais. (Nas pastas dos chats isolados, todo git do Vitral já sai
+    /// sem eles, pelo `protecoes`; aqui é o git de rede de qualquer pasta e o do modo PR.)
     pub(crate) const SEM_GANCHOS: [&str; 2] = ["-c", if cfg!(windows) { "core.hooksPath=NUL" } else { "core.hooksPath=/dev/null" }];
 
     fn git_rede(e: &dyn Executor, pasta: &Path, args: &[&str], limite: Duration) -> Result<SaidaBruta, ErroRemoto> {
         let todos: Vec<String> = CAMINHOS_LONGOS
             .iter()
             .chain(&["-c", "core.quotePath=false"])
+            .chain(protecoes(pasta))
             .chain(&SEM_GANCHOS)
             .chain(args)
             .map(|a| a.to_string())
@@ -2559,7 +2647,8 @@ mod pr_e_rede {
 
     /// Um git local que precisa da saída com qualquer código (o `merge-tree` sai com 1 no conflito).
     fn git_bruto(pasta: &Path, args: &[&str]) -> Result<SaidaBruta> {
-        let mut todos: Vec<String> = CAMINHOS_LONGOS.iter().chain(&["-c", "core.quotePath=false"]).map(|a| a.to_string()).collect();
+        let mut todos: Vec<String> =
+            CAMINHOS_LONGOS.iter().chain(&["-c", "core.quotePath=false"]).chain(protecoes(pasta)).map(|a| a.to_string()).collect();
         if sem_identidade() {
             todos.extend(["-c", "user.name=Vitral", "-c", "user.email=vitral@localhost"].map(String::from));
         }

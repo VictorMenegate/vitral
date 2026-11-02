@@ -79,9 +79,7 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
 /// repositório de cima ignora) também cai na varredura.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
     // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
-    let saida = crate::git::novo_git()
-        .arg("-C")
-        .arg(pasta)
+    let saida = crate::git::git_em(pasta)
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         .output();
     if let Ok(saida) = saida
