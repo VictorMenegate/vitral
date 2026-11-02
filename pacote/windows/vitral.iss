@@ -84,11 +84,12 @@ Filename: "{app}\Vitral.exe"; Description: "{cm:LaunchProgram,Vitral}"; Flags: n
 
 [UninstallDelete]
 ; Só o programa, com o que o atualizador deixar: as versões, o download pela metade, as extrações
-; que não terminaram, as trocas atômicas e o estado. Os dados (%LOCALAPPDATA%\vitral) e a
-; configuração (%APPDATA%\vitral) ficam. Nunca a pasta inteira: um /DIR= errado apagaria o que não
-; é do Vitral.
+; que não terminaram, as versões velhas que ficaram por estar em uso (.lixo-*), as trocas atômicas e
+; o estado. Os dados (%LOCALAPPDATA%\vitral) e a configuração (%APPDATA%\vitral) ficam. Nunca a
+; pasta inteira: um /DIR= errado apagaria o que não é do Vitral.
 Type: filesandordirs; Name: "{app}\app-*"
 Type: filesandordirs; Name: "{app}\.novo-*"
+Type: filesandordirs; Name: "{app}\.lixo-*"
 Type: filesandordirs; Name: "{app}\.baixando"
 Type: files; Name: "{app}\versoes.txt"
 Type: files; Name: "{app}\versoes.txt.novo"

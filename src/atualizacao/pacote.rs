@@ -24,9 +24,10 @@ pub const PRAZO_CONFERENCIA: Duration = Duration::from_secs(10);
 /// Abre `pacote` (um `.tar.gz`) em `destino`, que precisa ser uma pasta nova e vazia. Só passam
 /// arquivos e pastas comuns sob `prefixo/` (a pasta `vitral-<versão>-<plataforma>/` do release),
 /// que perde o prefixo no caminho. Recusa caminho absoluto, `..`, links, dispositivos, entrada
-/// repetida e soma acima de `limite`; o `vitral` sai com 0755 e o resto com 0644, seja qual for a
-/// permissão no pacote. Cada arquivo e cada pasta vão para o disco (`sync_all`) antes de voltar.
-pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, limite: u64) -> Result<()> {
+/// repetida e soma acima de `limite`, e o pacote sem o `binario` (`vitral` no Linux, `vitral.exe`
+/// no Windows); ele sai com 0755 e o resto com 0644, seja qual for a permissão no pacote. Cada
+/// arquivo e cada pasta vão para o disco (`sync_all`) antes de voltar.
+pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, binario: &str, limite: u64) -> Result<()> {
     let arquivo = fs::File::open(pacote).with_context(|| pacote.display().to_string())?;
     let mut tar = tar::Archive::new(GzDecoder::new(io::BufReader::new(arquivo)));
     let mut total = 0u64;
@@ -70,7 +71,7 @@ pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, limite: u64) -> Res
         // O cabeçalho pode mentir o tamanho: lê no máximo o que ele disse, mais um byte para pegar.
         let copiado = io::copy(&mut (&mut entrada).take(tamanho + 1), &mut saida)?;
         ensure!(copiado == tamanho, "{} veio com tamanho diferente do cabeçalho", caminho.display());
-        let modo = if relativo == Path::new("vitral") { 0o755 } else { 0o644 };
+        let modo = if relativo == Path::new(binario) { 0o755 } else { 0o644 };
         if let Some(modo) = permissao(modo) {
             saida.set_permissions(modo)?;
         }
@@ -82,10 +83,9 @@ pub fn extrair(pacote: &Path, destino: &Path, prefixo: &str, limite: u64) -> Res
         }
         fsync_da_pasta(pasta)?;
     }
-    let binario = destino.join("vitral");
     ensure!(
-        fs::symlink_metadata(&binario).is_ok_and(|m| m.is_file()),
-        "o pacote não tem o vitral"
+        fs::symlink_metadata(destino.join(binario)).is_ok_and(|m| m.is_file()),
+        "o pacote não tem o {binario}"
     );
     Ok(())
 }
@@ -182,9 +182,11 @@ fn texto_ocupado(erro: &io::Error) -> bool {
     erro.raw_os_error() == Some(libc::ETXTBSY)
 }
 
+/// No Windows, o antivírus lê o .exe recém-gravado e segura o arquivo por um instante
+/// (ERROR_SHARING_VIOLATION).
 #[cfg(not(unix))]
-fn texto_ocupado(_erro: &io::Error) -> bool {
-    false
+fn texto_ocupado(erro: &io::Error) -> bool {
+    erro.raw_os_error() == Some(32)
 }
 
 /// Grava `bytes` em `caminho` sem nunca deixar o arquivo pela metade: temporário ao lado,
@@ -202,11 +204,44 @@ pub fn gravar_atomico(caminho: &Path, bytes: &[u8], modo: u32) -> io::Result<()>
         }
         arquivo.sync_all()?;
     }
-    if let Err(erro) = fs::rename(&temporario, caminho) {
+    if let Err(erro) = trocar_por_cima(&temporario, caminho) {
         let _ = fs::remove_file(&temporario);
         return Err(erro);
     }
     fsync_da_pasta(pasta)
+}
+
+/// `de` passa a ser `para` de uma vez (o velho ou o novo, nunca pela metade), por cima do que
+/// houver. No Linux, o rename (o fsync da pasta fica com quem chama).
+#[cfg(not(windows))]
+pub fn trocar_por_cima(de: &Path, para: &Path) -> io::Result<()> {
+    fs::rename(de, para)
+}
+
+/// No Windows, o `MoveFileExW` com `MOVEFILE_WRITE_THROUGH`: só volta depois de a troca estar no
+/// disco (lá não há fsync de pasta). O antivírus e o indexador às vezes seguram o arquivo por um
+/// instante: até 5 tentativas, a cada 20 ms, como o `dados::renomear`.
+#[cfg(windows)]
+pub fn trocar_por_cima(de: &Path, para: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
+
+    let largo = |caminho: &Path| caminho.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
+    let (de, para) = (largo(de), largo(para));
+    let mut tentativas = 5;
+    loop {
+        // SAFETY: dois caminhos terminados em zero, vivos durante a chamada.
+        if unsafe { MoveFileExW(de.as_ptr(), para.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } != 0 {
+            return Ok(());
+        }
+        let erro = io::Error::last_os_error();
+        // ERROR_ACCESS_DENIED (5), ERROR_SHARING_VIOLATION (32) e ERROR_LOCK_VIOLATION (33).
+        if tentativas == 1 || !matches!(erro.raw_os_error(), Some(5 | 32 | 33)) {
+            return Err(erro);
+        }
+        tentativas -= 1;
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[cfg(test)]
@@ -286,7 +321,7 @@ pub mod testes {
         fs::write(pasta.join("pacote.tar.gz"), bytes).unwrap();
         let destino = pasta.join("novo");
         fs::create_dir(&destino).unwrap();
-        let resultado = extrair(&pasta.join("pacote.tar.gz"), &destino, prefixo, limite);
+        let resultado = extrair(&pasta.join("pacote.tar.gz"), &destino, prefixo, "vitral", limite);
         (destino, resultado)
     }
 

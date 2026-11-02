@@ -19,10 +19,13 @@ pub fn conferir(dados: &[u8], minisig: &str) -> Result<String> {
     conferir_com(&CHAVES, dados, minisig)
 }
 
-/// Só no build de desenvolvimento (a bancada, com um release falso local): aceita também a chave
-/// pública do arquivo em `VITRAL_ATUALIZACAO_CHAVE`. O que sai do release não tem isto.
-#[cfg(debug_assertions)]
+/// Só fora do canal estável (a bancada com um release falso local, o aceite do atualizador no
+/// runner do Windows): aceita também a chave pública do arquivo em `VITRAL_ATUALIZACAO_CHAVE`. No
+/// que sai do release (`VITRAL_CANAL=estavel`, embutido na compilação), recusa sempre.
 pub fn conferir_com_a_de_teste(dados: &[u8], minisig: &str) -> Result<String> {
+    if super::canal() == "estavel" {
+        bail!("o canal estável só aceita as chaves embutidas");
+    }
     let caminho = std::env::var_os("VITRAL_ATUALIZACAO_CHAVE").context("sem VITRAL_ATUALIZACAO_CHAVE")?;
     let teste = std::fs::read_to_string(caminho).context("a chave de teste não se lê")?;
     conferir_com(&[CHAVES[0], CHAVES[1], &teste], dados, minisig)

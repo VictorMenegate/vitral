@@ -213,7 +213,7 @@ fn preparar(
 ) -> Result<pacote::Resposta, Falha> {
     match origem {
         Origem::Pacote { arquivo, prefixo } => {
-            pacote::extrair(arquivo, novo, prefixo, LIMITE_EXTRAIDO).map_err(Falha::Pacote)?
+            pacote::extrair(arquivo, novo, prefixo, "vitral", LIMITE_EXTRAIDO).map_err(Falha::Pacote)?
         }
         Origem::Binario(binario) => copiar_binario(binario, novo).map_err(disco)?,
     }
@@ -296,6 +296,27 @@ pub(super) fn apontar(app: &Path, nome: &str, versao: &str) -> io::Result<()> {
     std::os::unix::fs::symlink(versao, &temporario)?;
     fs::rename(&temporario, app.join(nome))?;
     fs::File::open(app)?.sync_all()
+}
+
+/// A pasta de `versao` (`app/<versão>`).
+pub fn pasta_da_versao(app: &Path, versao: &str) -> PathBuf {
+    app.join(versao)
+}
+
+/// O binário de `versao` (`app/<versão>/vitral`).
+pub fn binario_da_versao(app: &Path, versao: &str) -> PathBuf {
+    app.join(versao).join("vitral")
+}
+
+/// A volta (da saúde ou das Configurações): `atual` passa para `para`; o `anterior` apontava para
+/// ela e sobra.
+pub fn voltar_para(app: &Path, para: &str) -> io::Result<()> {
+    apontar(app, "atual", para)?;
+    if versao_do_link(app, "anterior").as_deref() == Some(para) {
+        fs::remove_file(app.join("anterior"))?;
+        fs::File::open(app)?.sync_all()?;
+    }
+    Ok(())
 }
 
 /// A versão para onde o link `app/<nome>` aponta (só um nome de versão, nunca um caminho).
