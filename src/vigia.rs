@@ -2,8 +2,6 @@
 //! acorda. Só lógica pura; o laço (um só, `select` entre o timer e o canal `acordar`) fica no
 //! motor. Há um único tipo de alvo periódico: os PRs acompanhados de um repositório, numa
 //! consulta; o PR mais "quente" decide o intervalo.
-// Provisório: o motor passa a usar estes módulos no G4.
-#![allow(dead_code)]
 
 use std::time::{Duration, Instant};
 
@@ -27,7 +25,9 @@ pub struct Contexto {
     /// As contagens dos checks mudaram nos últimos 30 min, `UNKNOWN` há menos de 10 min ou fila de
     /// merge.
     pub progresso: bool,
-    /// Revisão, BLOCKED, BEHIND, REVIEW_REQUIRED ou checks parados.
+    /// Revisão, BLOCKED, BEHIND, REVIEW_REQUIRED ou checks parados. O intervalo é o mesmo de "sem
+    /// progresso" (a tabela junta os dois): fica para a dica da interface.
+    #[allow(dead_code)]
     pub esperando_pessoas: bool,
     pub sem_mudanca: u32,
     pub algum_acompanhado: bool,

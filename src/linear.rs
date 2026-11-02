@@ -1,8 +1,6 @@
 //! Linear por GraphQL, com o `curl` como subprocesso (nenhuma crate HTTP). A chave e o corpo vão
 //! pelo stdin (`-K -`), nunca no argv nem no ambiente; o ambiente do curl é limpo, o endereço é
 //! fixo e o `-q` vem primeiro, para nenhum `~/.curlrc` ligar o modo verboso.
-// Provisório: o motor passa a usar estes módulos no G3.
-#![allow(dead_code)]
 
 use std::{path::Path, time::Duration};
 
@@ -511,6 +509,7 @@ impl Linear<'_> {
     }
 
     /// Uma página da lista (50), com o cursor da próxima se houver.
+    #[cfg_attr(not(test), allow(dead_code))] // O motor usa `pagina` (com o limite de pedidos).
     pub fn listar_issues(&self, filtro: Value, depois: Option<&str>) -> Result<(Vec<IssueResumo>, Option<String>), ErroRemoto> {
         self.pagina(filtro, depois).map(|p| (p.itens, p.proxima))
     }

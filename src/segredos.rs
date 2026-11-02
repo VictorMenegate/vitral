@@ -1,8 +1,6 @@
 //! A chave do Linear: no chaveiro do sistema (Secret Service, pelo `oo7`) e na memória do Vitral
 //! (`Zeroizing`). Nunca em arquivo, argumento, variável de ambiente, log ou aviso. O chaveiro só é
 //! destravado por ação do usuário: a leitura de fundo com ele trancado não abre diálogo nenhum.
-// Provisório: o motor passa a usar estes módulos no G2.
-#![allow(dead_code)]
 
 use std::time::Duration;
 
@@ -45,12 +43,14 @@ impl std::fmt::Debug for Chave {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ErroChaveiro {
     /// Trancado, e a leitura não podia destravar (ou o usuário recusou a senha).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // O chaveiro do GNOME é só do Linux.
     Trancado,
     Indisponivel(String),
     TempoEsgotado,
 }
 
 impl ErroChaveiro {
+    #[allow(dead_code)] // O motor usa o motivo dele (motivo_do_chaveiro); fica para a interface.
     pub fn para_usuario(&self) -> String {
         match self {
             Self::Trancado => "O chaveiro está trancado.".into(),
@@ -61,7 +61,9 @@ impl ErroChaveiro {
 }
 
 /// Como o item aparece em Senhas e chaves (e no `secret-tool lookup application vitral …`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const ROTULO: &str = "Vitral · chave do Linear";
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const ATRIBUTOS: [(&str, &str); 3] = [("application", "vitral"), ("servico", "linear"), ("tipo", "chave-api")];
 /// Inclui o tempo de o usuário digitar a senha do chaveiro.
 const LIMITE: Duration = Duration::from_secs(60);

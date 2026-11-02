@@ -1,8 +1,6 @@
 //! Execução dos programas que falam com a rede (gh, curl, git fetch/push) e o que vem junto: limite
 //! de tempo, erros classificados, recuo, estado da rede por provedor, filas e a varredura de
 //! segredos. Tudo bloqueia: rode fora da thread da interface.
-// Provisório: o motor passa a usar estes módulos no G4.
-#![allow(dead_code)]
 
 use std::{
     io::{Read, Write},

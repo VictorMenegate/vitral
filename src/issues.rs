@@ -1,7 +1,5 @@
 //! O que é comum às issues do Linear e do GitHub: os tipos que o motor e a interface usam, e as
 //! funções puras de nomes (ramo, título e corpo do PR), referências e confiança dos autores.
-// Provisório: o motor passa a usar estes módulos no G4.
-#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

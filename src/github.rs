@@ -1,8 +1,6 @@
 //! GitHub pelo `gh` (2.97) como subprocesso: argumentos em vetor, `--json`, e o repositório sempre
 //! explícito (`-R dono/nome`, ou o caminho `repos/O/R` no `gh api`). O login é todo do gh: o
 //! Vitral só confere quem está conectado e com que escopos, e o git usa o helper que já existe.
-// Provisório: o motor passa a usar estes módulos no G4.
-#![allow(dead_code)]
 
 use std::{path::Path, time::Duration};
 
@@ -59,6 +57,8 @@ pub struct Gh<'a> {
 
 pub struct Saida {
     pub stdout: String,
+    /// Os cabeçalhos HTTP (o `gh api -i`); nenhuma chamada do v1 pede.
+    #[allow(dead_code)]
     pub cabecalhos: Vec<(String, String)>,
 }
 
@@ -694,6 +694,7 @@ impl ResumoChecks {
     }
 
     /// A partir da lista do `gh pr checks` (pelo `bucket`).
+    #[allow(dead_code)] // Provisório: o anel da sub-aba Checks (G5).
     pub fn da_lista(checks: &[Check]) -> Self {
         Self::das_contagens(checks.iter().map(|c| match c.balde.as_str() {
             "pending" => ("PENDING", 1),
