@@ -461,10 +461,7 @@ impl Motor {
                 let mut mudou = false;
                 for (tarefa, r) in lista {
                     match r {
-                        Ok((novo, eventos)) => {
-                            mudou |= !eventos.is_empty();
-                            self.aplicar_pr(tarefa, novo, eventos, cx);
-                        }
+                        Ok(conferencia) => mudou |= self.aplicar_pr(tarefa, conferencia, cx),
                         Err(erro) => {
                             let texto = match &erro {
                                 ErroRemoto::NaoEncontrado(_) => {
@@ -512,28 +509,32 @@ impl Motor {
         self.salvar();
     }
 
-    /// O PR novo de uma consulta entra na tarefa, e cada mudança vira o que precisa (aviso, rodada,
-    /// mescla, o depois de mesclar).
-    fn aplicar_pr(&mut self, id: u64, novo: Pr, mut eventos: Vec<EventoPr>, cx: &mut Context<Self>) {
+    /// O PR de uma consulta entra na tarefa, e cada mudança vira o que precisa (aviso, rodada,
+    /// mescla, o depois de mesclar). A transição é refeita sobre o PR de agora (o motor pode ter
+    /// mexido nele enquanto a consulta rodava). Diz se algo mudou.
+    fn aplicar_pr(&mut self, id: u64, c: trabalho::Conferencia, cx: &mut Context<Self>) -> bool {
         let Some(t) = self.tarefa(id).cloned() else {
-            return;
+            return false;
         };
         // O último fechado de um chat sem PR: só vale se alguém o reabriu.
         if t.pr.is_none() {
-            if eventos.contains(&EventoPr::Reaberto)
+            if c.eventos.contains(&EventoPr::Reaberto)
                 && let Some(t) = self.tarefa_mut(id)
             {
-                regras::registrar_reabertura(t, novo, agora());
+                regras::registrar_reabertura(t, c.novo, agora());
                 let (chat, n) = (t.trabalhador.clone(), t.pr.as_ref().map_or(0, |p| p.numero));
                 self.avisar(&chat, &format!("O PR #{n} foi reaberto; o Vitral volta a acompanhar."), false);
                 self.cartao_do_pr(id, cx);
+                return true;
             }
-            return;
+            return false;
         }
         let antes = t.pr.clone().unwrap_or_default();
-        if antes.numero != novo.numero {
-            return;
+        if antes.numero != c.novo.numero {
+            return false;
         }
+        let (novo, mut eventos) = c.sobre(&antes, agora());
+        let mudou = !eventos.is_empty();
         if novo.checks.total > 0 {
             self.prs.com_checks.insert(novo.repositorio.clone());
         }
@@ -585,6 +586,7 @@ impl Motor {
             }
         }
         cx.notify();
+        mudou
     }
 
     /// O item de "Esperando você" do PR, sem repetir o mesmo tipo (o novo substitui).
@@ -909,6 +911,17 @@ impl Motor {
         }
     }
 
+    /// O título e a descrição que o Vitral gera para o PR da tarefa, sem gastar turno: os do
+    /// diálogo "Revisar e abrir PR" e os da publicação que não trouxe os seus. Sem entrega nem
+    /// objetivo, o que muda são as mensagens do usuário desde a última junção.
+    pub fn titulo_e_corpo_do_pr(&self, id: u64) -> Option<(String, String)> {
+        let t = self.tarefa(id)?;
+        let chat = self.chat(&t.trabalhador);
+        let titulo_chat = chat.map_or_else(|| t.titulo.clone(), |c| c.titulo.clone());
+        let mensagens = chat.map(|c| super::mensagens_desde_a_juncao(&c.itens)).unwrap_or_default();
+        Some((comum::titulo_do_pr(&titulo_chat, t.issue.as_ref()), corpo_da_tarefa(t, &mensagens)))
+    }
+
     /// As guardas e o que publicar.
     fn plano_de_publicacao(&self, id: u64, pedido: &PedidoPr, origem: OrigemAcao) -> Result<Publicacao, String> {
         if self.somente_leitura.is_some() {
@@ -963,19 +976,18 @@ impl Motor {
         let (cabeca, dono_do_head) = if do_fork { (format!("{dono_remoto}:{ramo}"), dono_remoto) } else {
             (ramo.clone(), destino.split_once('/').map_or("", |(d, _)| d).to_string())
         };
-        let titulo_chat = self.chat(&t.trabalhador).map_or_else(|| t.titulo.clone(), |c| c.titulo.clone());
+        let (titulo_gerado, corpo_gerado) = self.titulo_e_corpo_do_pr(id).unwrap_or_default();
         let titulo = pedido
             .titulo
             .clone()
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
             .or_else(|| pr.map(|p| p.titulo.clone()))
-            .unwrap_or_else(|| comum::titulo_do_pr(&titulo_chat, t.issue.as_ref()));
-        let mensagens = self.chat(&t.trabalhador).map(|c| super::mensagens_desde_a_juncao(&c.itens)).unwrap_or_default();
+            .unwrap_or(titulo_gerado);
         let corpo = match (&pedido.descricao, pr) {
             (Some(d), _) => Some(d.clone()),
             (None, Some(_)) => None,
-            (None, None) => Some(corpo_da_tarefa(t, &mensagens)),
+            (None, None) => Some(corpo_gerado),
         };
         Ok(Publicacao {
             pasta_dados: self.dados.pasta.clone(),
@@ -1475,10 +1487,11 @@ impl Motor {
                     // Confere de novo: o head e o mergeStateStatus de agora.
                     let acompanhado = [Acompanhado { tarefa: id, pr: pr.clone(), copia }];
                     let (mut conferidos, _) = trabalho::conferir_prs(&*e, &pasta, &pr.repositorio, &acompanhado, agora())?;
-                    let (novo, _) = match conferidos.pop() {
+                    let conferencia = match conferidos.pop() {
                         Some((_, r)) => r?,
                         None => return Err(ErroRemoto::NaoEncontrado(format!("o PR #{}", pr.numero))),
                     };
+                    let novo = conferencia.novo.clone();
                     let sha = if automatico {
                         novo.sha_publicado.clone()
                     } else if novo.sha != novo.sha_publicado {
@@ -1491,9 +1504,10 @@ impl Motor {
                     };
                     let pronto = regras::pronto_para_mesclar(&Pr { sha: sha.clone(), ..novo.clone() }, agora(), &condicoes);
                     if let Err(motivo) = pronto {
-                        return Ok((novo, Err(ErroRemoto::Validacao(motivo))));
+                        return Ok((conferencia, Err(ErroRemoto::Validacao(motivo))));
                     }
-                    Ok((novo.clone(), trabalho::mesclar_conferindo(&*e, &pasta, &novo, &metodo_bg, &sha)))
+                    let mescla = trabalho::mesclar_conferindo(&*e, &pasta, &novo, &metodo_bg, &sha);
+                    Ok((conferencia, mescla))
                 })
                 .await;
             let _ = motor.update(cx, |m, cx| {
@@ -1513,19 +1527,20 @@ impl Motor {
         id: u64,
         metodo: &str,
         origem: OrigemAcao,
-        r: Result<(Pr, Result<Mescla, ErroRemoto>), ErroRemoto>,
+        r: Result<(trabalho::Conferencia, Result<Mescla, ErroRemoto>), ErroRemoto>,
         cx: &mut Context<Self>,
     ) -> Resposta {
         self.prs.mesclando.remove(&id);
-        let (novo, mescla) = match r {
-            Ok((novo, mescla)) => (Some(novo), mescla),
+        let (conferencia, mescla) = match r {
+            Ok((conferencia, mescla)) => (Some(conferencia), mescla),
             Err(erro) => (None, Err(erro)),
         };
-        if let Some(novo) = novo
+        // A conferência de antes de mesclar, sobre o PR de agora (como a do vigia).
+        if let Some(c) = conferencia
             && let Some(t) = self.tarefa_mut(id)
-            && t.pr.as_ref().is_some_and(|p| p.numero == novo.numero && p.aberto())
+            && let Some(atual) = t.pr.as_mut().filter(|p| p.numero == c.novo.numero && p.aberto())
         {
-            t.pr = Some(novo);
+            *atual = c.sobre(atual, agora()).0;
         }
         let Some(t) = self.tarefa(id).cloned() else {
             return Resposta::erro("Tarefa não encontrada.");

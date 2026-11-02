@@ -15,7 +15,7 @@ use std::{
 use super::regras::{self, EventoPr};
 use crate::{
     git::{self, Achado, Empurrao, Juncao},
-    github::{Check, ComentarioPr, Gh, Mescla, ResumoDoRepo},
+    github::{Check, ComentarioPr, Gh, Mescla, ResumoDoRepo, ResumoPr},
     modelo::Pr,
     prompts::{self, CheckFalho},
     remoto::{ErroRemoto, Executor, sem_segredos},
@@ -216,8 +216,29 @@ pub struct Acompanhado {
     pub copia: Option<PathBuf>,
 }
 
-/// O resultado da consulta de um PR: o PR novo e o que mudou, ou o erro só dele.
-pub type Conferido = (u64, Result<(Pr, Vec<EventoPr>), ErroRemoto>);
+/// A conferência de um PR: o PR novo a partir do que a tarefa tinha quando a consulta saiu e o que
+/// mudou, e o que veio do GitHub (o resumo e se o head é do Vitral) para refazer a transição sobre
+/// o PR de agora (`sobre`): enquanto a consulta roda, o motor mexe no PR (um comentário entregue,
+/// um item de "Esperando você", o Ship ligado), e gravar o PR da consulta perderia isso.
+#[derive(Clone, Debug)]
+pub struct Conferencia {
+    pub novo: Pr,
+    pub eventos: Vec<EventoPr>,
+    pub resumo: ResumoPr,
+    /// O head do resumo é o enviado pelo Vitral ou um ancestral dele (a cópia tem).
+    pub head_conhecido: bool,
+}
+
+impl Conferencia {
+    /// A transição refeita sobre o PR de agora, com o mesmo resumo.
+    pub fn sobre(&self, atual: &Pr, agora: u64) -> (Pr, Vec<EventoPr>) {
+        let (publicado, head, conhecido) = (atual.sha_publicado.as_str(), self.resumo.sha.as_str(), self.head_conhecido);
+        regras::transicao_pr_com(atual, &self.resumo, agora, &|sha| sha == publicado || (sha == head && conhecido))
+    }
+}
+
+/// O resultado da consulta de um PR, ou o erro só dele.
+pub type Conferido = (u64, Result<Conferencia, ErroRemoto>);
 
 /// Todos os PRs acompanhados de um repositório numa consulta (`resumo_prs`) e a transição de cada
 /// um. Um PR que sumiu dá erro só nele.
@@ -231,9 +252,12 @@ pub fn conferir_prs(e: &dyn Executor, pasta: &Path, repo: &str, prs: &[Acompanha
         };
         let (_, r) = resumo.prs.remove(i);
         let r = r.map(|r| {
-            let publicado = a.pr.sha_publicado.clone();
-            let conhecido = |sha: &str| sha == publicado || a.copia.as_deref().is_some_and(|c| git::e_ancestral(c, sha, &publicado));
-            regras::transicao_pr_com(&a.pr, &r, agora, &conhecido)
+            // O `conhecido` da transição só pergunta pelo head do resumo: a resposta vai junto.
+            let publicado = a.pr.sha_publicado.as_str();
+            let head_conhecido = !r.sha.is_empty()
+                && (r.sha == publicado || a.copia.as_deref().is_some_and(|c| git::e_ancestral(c, &r.sha, publicado)));
+            let (novo, eventos) = regras::transicao_pr_com(&a.pr, &r, agora, &|sha| sha == publicado || (sha == r.sha && head_conhecido));
+            Conferencia { novo, eventos, resumo: r, head_conhecido }
         });
         conferidos.push((a.tarefa, r));
     }
@@ -835,7 +859,8 @@ pub mod testes {
         let conferir = |pr: &Pr| -> (Pr, Vec<EventoPr>) {
             let a = [Acompanhado { tarefa: 1, pr: pr.clone(), copia: Some(copia.clone()) }];
             let (mut lista, _) = conferir_prs(&e, &pasta, REPO, &a, agora()).unwrap();
-            lista.pop().unwrap().1.unwrap()
+            let c = lista.pop().unwrap().1.unwrap();
+            (c.novo, c.eventos)
         };
         let (mut pr1, eventos) = conferir(&novo_pr(&p1, &ramo));
         anotar(&format!("   vigia: estado {:?}, mergeStateStatus {}, eventos {eventos:?}", pr1.estado, pr1.mesclavel));
@@ -983,6 +1008,13 @@ pub mod testes {
         anotar("--- fim do aceite: tudo passou");
     }
 
+    fn eventos_do_primeiro(conferidos: &[Conferido]) -> &Vec<EventoPr> {
+        match &conferidos[0] {
+            (_, Ok(c)) => &c.eventos,
+            (_, Err(e)) => panic!("{e:?}"),
+        }
+    }
+
     #[test]
     fn conferir_prs_com_o_executor_falso() {
         let amostra = include_str!("../../../tests/amostras/github/resumo_prs.json");
@@ -996,14 +1028,25 @@ pub mod testes {
         let (conferidos, resumo) = conferir_prs(&gh, Path::new("/"), "cli/cli", &prs, 5000).unwrap();
         assert_eq!(resumo.restantes, Some(4990));
         assert_eq!(conferidos.len(), 3);
-        let (t, Ok((novo, eventos))) = &conferidos[0] else { panic!() };
+        let (t, Ok(Conferencia { novo, eventos, .. })) = &conferidos[0] else { panic!() };
         assert_eq!(*t, 1);
         assert_eq!((novo.estado, novo.mesclavel.as_str(), novo.checks.total), (EstadoPr::Aberto, "BLOCKED", 11));
         assert!(eventos.contains(&EventoPr::ChecksPassaram), "{eventos:?}");
         assert!(!eventos.iter().any(|e| matches!(e, EventoPr::CommitDeFora(_))));
         // O segundo está noutro head: commit de fora.
-        let (_, Ok((_, eventos))) = &conferidos[1] else { panic!() };
+        let (_, Ok(Conferencia { eventos, .. })) = &conferidos[1] else { panic!() };
         assert!(eventos.contains(&EventoPr::CommitDeFora("654d851d8145b2912fe474ceb0a47681854b37e2".into())), "{eventos:?}");
+        // Refeita sobre o PR de agora, a conferência guarda o que o motor fez enquanto ela rodava
+        // (o comentário entregue e o item de "Esperando você", o Ship ligado) e põe o que veio dela.
+        let (_, Ok(c)) = &conferidos[0] else { panic!() };
+        let mut atual = prs[0].pr.clone();
+        atual.comentarios_entregues.push(7);
+        atual.esperando.push(crate::modelo::EsperaPr::Revisao { ids: vec![7], autores: vec!["dono".into()] });
+        atual.ao_ficar_pronto = Some("squash".into());
+        let (refeito, eventos_de_novo) = c.sobre(&atual, 5000);
+        assert_eq!((refeito.comentarios_entregues.as_slice(), refeito.esperando.len(), refeito.ao_ficar_pronto.as_deref()), (&[7][..], 1, Some("squash")));
+        assert_eq!((refeito.mesclavel.as_str(), refeito.checks.total), ("BLOCKED", 11));
+        assert_eq!(&eventos_de_novo, eventos_do_primeiro(&conferidos));
         // O que não existe dá erro só nele.
         assert!(matches!(conferidos[2], (3, Err(ErroRemoto::NaoEncontrado(_)))));
         let chamada = &gh.chamadas()[0];
@@ -1030,7 +1073,7 @@ pub mod testes {
         };
         let prs = [Acompanhado { tarefa: 13, pr: aberto.clone(), copia: None }];
         let (conferidos, _) = conferir_prs(&gh, Path::new("/"), "eita/app", &prs, 9000).unwrap();
-        let (_, Ok((novo, eventos))) = &conferidos[0] else { panic!("{conferidos:?}") };
+        let (_, Ok(Conferencia { novo, eventos, .. })) = &conferidos[0] else { panic!("{conferidos:?}") };
         assert_eq!(eventos, &vec![EventoPr::Mesclado { por: Some("colega-do-time".into()), commit: Some("db08edc2d39b5746981e997fb947d1ce9d84de01".into()) }]);
         assert_eq!(novo.metodo_mesclado, None, "não foi o Vitral");
         let mut t = crate::modelo::Tarefa {
