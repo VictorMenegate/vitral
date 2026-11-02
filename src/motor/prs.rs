@@ -113,6 +113,9 @@ pub enum AndamentoPr {
 pub enum OrigemAcao {
     /// Um botão da interface (ou a confirmação de um cartão).
     Usuario,
+    /// A ferramenta do próprio chat (`abrir_pr`), que a guarda deixou executar: o usuário pediu no
+    /// turno. O chat está parado esperando a resposta, então o processo dele vivo não recusa.
+    Ferramenta,
     /// O `aprovar_tarefa` do Mestre (a atualização de um PR que já existe).
     Mestre,
     /// O Ship: a rodada pelo PR publicou e mescla sozinha.
@@ -249,15 +252,17 @@ impl Motor {
         None
     }
 
-    /// O que falta para o chat estar livre para o PR (publicar, mesclar): o motivo, ou nada.
-    fn ocupado_para_o_pr(&self, t: &Tarefa) -> Option<String> {
+    /// O que falta para o chat estar livre para o PR (publicar, mesclar): o motivo, ou nada. Pela
+    /// ferramenta do próprio chat, o processo dele está vivo (parado na ferramenta) e não conta.
+    fn ocupado_para_o_pr(&self, t: &Tarefa, origem: OrigemAcao) -> Option<String> {
         if self.prs.publicando.contains(&t.id) {
             return Some("publicando".into());
         }
         if self.prs.mesclando.contains(&t.id) {
             return Some("mesclando".into());
         }
-        if self.processos.contains_key(&t.trabalhador) || self.na_fila(&t.trabalhador) > 0 || self.juntando.contains(&t.id) {
+        let rodando = self.processos.contains_key(&t.trabalhador) || self.na_fila(&t.trabalhador) > 0;
+        if (rodando && origem != OrigemAcao::Ferramenta) || self.juntando.contains(&t.id) {
             return Some("Esperando o chat terminar".into());
         }
         None
@@ -885,7 +890,7 @@ impl Motor {
                 }
                 cx.notify();
                 let e = self.executor();
-                let fila = self.fila_do_provedor(Provedor::Github, origem == OrigemAcao::Usuario);
+                let fila = self.fila_do_provedor(Provedor::Github, matches!(origem, OrigemAcao::Usuario | OrigemAcao::Ferramenta));
                 let quando_pronto = pedido.quando_pronto.clone();
                 cx.spawn(async move |motor, cx| {
                     let plano_bg = plano.clone();
@@ -912,7 +917,7 @@ impl Motor {
         if !self.de_projeto(&t.trabalhador) || !t.tem_copia() {
             return Err("Só um chat de projeto com cópia abre PR.".into());
         }
-        if let Some(motivo) = self.ocupado_para_o_pr(t) {
+        if let Some(motivo) = self.ocupado_para_o_pr(t, origem) {
             return Err(if motivo == "publicando" { "O PR já está sendo publicado.".into() } else { motivo });
         }
         if self.prs.criacoes_incertas.contains_key(&id) {
@@ -984,6 +989,7 @@ impl Motor {
             mensagem: mensagem_do_commit(&titulo, t),
             excluir: t.arquivos_copiados.clone(),
             segredos_confirmados: pedido.segredos_confirmados,
+            // Sem o usuário olhando o diff (a ferramenta, o Mestre, o Ship): segredo e .github/ param.
             automatico: origem != OrigemAcao::Usuario,
             sha_publicado: pr.map(|p| p.sha_publicado.clone()).filter(|s| !s.is_empty()),
             pr_aberto: pr.map(|p| p.numero),
@@ -1053,7 +1059,10 @@ impl Motor {
                     }
                 }
                 // A rodada pelo PR que não publicou sozinha espera o usuário.
-                if origem != OrigemAcao::Usuario && t.pr_aberto().is_some() && !matches!(falha, FalhaPublicacao::Incerto { .. }) {
+                if matches!(origem, OrigemAcao::Automatico | OrigemAcao::Mestre)
+                    && t.pr_aberto().is_some()
+                    && !matches!(falha, FalhaPublicacao::Incerto { .. })
+                {
                     if let Some(t) = self.tarefa_mut(id) {
                         t.pronto_para_atualizar = true;
                     }
@@ -1239,6 +1248,19 @@ impl Motor {
             self.encaminhar(r, resposta, cx);
             return;
         }
+        self.primeiro_pr_pelo_mestre(id, autor, resposta, cx);
+    }
+
+    /// O primeiro PR pedido pelo Mestre (seção 8.1): executa se o turno dele tem mensagem do usuário
+    /// sem texto de terceiros; senão, o cartão "Confirmar" para o usuário.
+    // Na junção com o G6: este corpo vira a guarda dele, guarda_do_chat(ID_MESTRE,
+    // &turno_de(ID_MESTRE), &acao, fatos) com o pedir_confirmacao (que grava o RegistroAcao e vê o
+    // texto de terceiros lido no turno); o Executar chama publicar_pr(id, pedido, OrigemAcao::Mestre).
+    fn primeiro_pr_pelo_mestre(&mut self, id: u64, autor: &str, resposta: Sender<Resposta>, cx: &mut Context<Self>) {
+        let Some(t) = self.tarefa(id).cloned() else {
+            let _ = resposta.try_send(Resposta::erro("Tarefa não encontrada."));
+            return;
+        };
         let turno = self.ultima_entrada.get(crate::modelo::ID_MESTRE).map(|(_, l)| l.clone()).unwrap_or_default();
         let do_usuario = autor == crate::modelo::ID_MESTRE && turno.iter().any(Entrada::do_usuario) && !turno.iter().any(|e| e.terceiros);
         if do_usuario {
@@ -1436,7 +1458,7 @@ impl Motor {
         if info.as_ref().is_some_and(|i| !i.pode_escrever()) {
             return respondido(Resposta::erro(format!("Sua conta não pode mesclar em {}", pr.repositorio)));
         }
-        if let Some(motivo) = self.ocupado_para_o_pr(&t) {
+        if let Some(motivo) = self.ocupado_para_o_pr(&t, origem) {
             return respondido(Resposta::erro(motivo));
         }
         let automatico = origem == OrigemAcao::Automatico;
@@ -2151,7 +2173,7 @@ impl Motor {
         };
         let info = self.repo_github(&pr.repositorio).tirar().map(|r| r.info);
         let metodos = info.as_ref().map(super::conexoes::metodos_permitidos).unwrap_or_else(|| vec!["squash"]);
-        let ocupado = self.ocupado_para_o_pr(t);
+        let ocupado = self.ocupado_para_o_pr(t, OrigemAcao::Usuario);
         regras::acoes_possiveis(pr, info.as_ref(), &metodos, self.simulacao(id).as_ref(), ocupado.as_deref())
     }
 
@@ -2463,7 +2485,7 @@ impl Motor {
         let Some(pr) = t.pr_aberto().cloned() else {
             return respondido(Resposta::erro("Este chat não tem PR aberto."));
         };
-        if let Some(motivo) = self.ocupado_para_o_pr(&t) {
+        if let Some(motivo) = self.ocupado_para_o_pr(&t, OrigemAcao::Usuario) {
             return respondido(Resposta::erro(motivo));
         }
         let (Some(copia), Some((remoto, base))) = (t.worktree.clone().filter(|c| c.is_dir()), self.remoto_e_base(&t)) else {
