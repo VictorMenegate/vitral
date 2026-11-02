@@ -1336,7 +1336,19 @@ pub fn esperas_da_tarefa(
         lista.push((format!("Pronto para atualizar o PR #{n}"), Sinal::Pedido, AcaoDaEspera::AtualizarPr, None));
     }
     let arroba = |autores: &[String]| autores.iter().map(|a| format!("@{a}")).collect::<Vec<_>>().join(", ");
-    for item in &pr.esperando {
+    // O mais urgente primeiro (a linha do chat em "Esperando você" mostra só ele): a falha e a
+    // revisão antes do pronto para mesclar, que não se mescla sem ler o que chegou.
+    let urgencia = |e: &EsperaPr| match e {
+        EsperaPr::CiFalhou { .. } => 0,
+        EsperaPr::Revisao { .. } => 1,
+        EsperaPr::Terceiro { .. } => 2,
+        EsperaPr::CommitDeFora { .. } | EsperaPr::MesclaRecusada { .. } => 3,
+        EsperaPr::ChecksParados => 4,
+        EsperaPr::ProntoParaMesclar | EsperaPr::Desconhecido(_) => 5,
+    };
+    let mut itens: Vec<&EsperaPr> = pr.esperando.iter().collect();
+    itens.sort_by_key(|e| urgencia(e));
+    for item in itens {
         let (texto, sinal, acao) = match item {
             // Com a rodada que corrige pronta, a falha já foi tratada: só o Atualizar PR.
             EsperaPr::CiFalhou { .. } if t.pronto_para_atualizar || pr.checks.estado != EstadoChecks::Falhou => continue,
@@ -2642,10 +2654,14 @@ mod testes {
         let esperas = esperas_da_tarefa(&t, agora, false);
         assert_eq!(esperas[0].0, "Revisão no PR #12 (2 comentários de @VictorMenegate)");
         assert_eq!(esperas[0].2, AcaoDaEspera::MandarComentarios(vec![7, 8]));
-        assert_eq!(esperas[1].0, "Comentário de @estranho (sem acesso ao repositório) no PR #12");
-        assert_eq!(esperas[1].2, AcaoDaEspera::MandarComentarios(vec![9]));
-        assert_eq!((esperas[2].0.as_str(), &esperas[2].2), ("Revisão no PR #12: mudanças pedidas por @x", &AcaoDaEspera::Ver));
+        assert_eq!((esperas[1].0.as_str(), &esperas[1].2), ("Revisão no PR #12: mudanças pedidas por @x", &AcaoDaEspera::Ver));
+        assert_eq!(esperas[2].0, "Comentário de @estranho (sem acesso ao repositório) no PR #12");
+        assert_eq!(esperas[2].2, AcaoDaEspera::MandarComentarios(vec![9]));
         assert_eq!(esperas[3].0, "O GitHub não aceitou mesclar o PR #12: Base branch was modified");
+        // O pronto para mesclar que chegou antes fica atrás da revisão (a linha do chat mostra a revisão).
+        t.pr.as_mut().unwrap().esperando.insert(0, EsperaPr::ProntoParaMesclar);
+        let textos_prontos = textos(&t, true);
+        assert_eq!((textos_prontos.first().map(String::as_str), textos_prontos.last().map(String::as_str)), (Some("Revisão no PR #12 (2 comentários de @VictorMenegate)"), Some("PR #12 pronto para mesclar")));
         // Cada item do motor vai junto, para o × tirar só ele.
         assert!(esperas.iter().all(|e| e.3.is_some()));
         // O commit de fora e os checks parados há 2 h, conferidos com o PR de agora.

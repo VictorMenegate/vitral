@@ -42,7 +42,7 @@ use super::{
     menus,
 };
 use crate::{
-    git, issues,
+    git,
     modelo::{EstadoTarefa, Forma, ModoEntrega, Problema, Revisao, Tarefa, Verificacao},
     motor::{FonteDiff, LeituraDiff, Motor, PedidoPr},
     tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio, sombra_elevado, tam},
@@ -580,15 +580,9 @@ impl RevisaoDiff {
         }
         let info = m.destino_do_pr(&origem, &config).and_then(|repo| m.repo_github(&repo).valor().map(|r| r.info.clone()));
         let metodo = super::painel_pr::metodos_do_pr(info.as_ref()).remove(0);
-        let titulo = aberto.as_ref().map(|p| p.titulo.clone()).unwrap_or_else(|| issues::titulo_do_pr(&t.titulo, t.issue.as_ref()));
-        let resumo = t.entrega.as_ref().map(|e| e.resumo.clone()).filter(|r| !r.trim().is_empty()).unwrap_or_else(|| t.objetivo.clone());
-        let como = t.entrega.as_ref().map(|e| e.como_verificou.clone()).unwrap_or_default();
-        let corpo = issues::corpo_do_pr(&issues::DadosDoCorpo {
-            resumo: &resumo,
-            como_verificou: &como,
-            verificacao: t.ultima_verificacao.as_ref().map(|v| (v.comando.as_str(), v.passou)),
-            issue: t.issue.as_ref(),
-        });
+        // Os mesmos que a publicação sem formulário geraria (o motor junta as mensagens do chat).
+        let (titulo_gerado, corpo) = m.titulo_e_corpo_do_pr(id).unwrap_or_default();
+        let titulo = aberto.as_ref().map_or(titulo_gerado, |p| p.titulo.clone());
         let segredos = m.segredos_da_tarefa(id, cx);
         let novos = m.arquivos_novos(id, cx);
         cx.spawn(async move |this, cx| {

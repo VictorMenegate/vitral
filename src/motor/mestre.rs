@@ -2816,6 +2816,10 @@ impl Motor {
         }
         let criterios = criterios_da_entrega(&a["criterios"]);
         let fora: Vec<usize> = criterios.iter().map(|c| c.indice).filter(|i| *i == 0 || *i > t.criterios.len()).collect();
+        if !fora.is_empty() && t.criterios.is_empty() {
+            // Uma rodada sem critérios (o ajuste pedido por um aviso do PR, uma conversa): sem eles.
+            return Resposta::erro("Este pedido não tem critérios: chame entregar_tarefa de novo sem criterios.");
+        }
         if !fora.is_empty() {
             return Resposta::erro(format!(
                 "O pedido tem {} critérios (de 1 a {}); não existe o {}.",

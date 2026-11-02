@@ -418,6 +418,10 @@ fn estado_do_chat(motor: &Motor, chat: &Chat) -> Option<(Lucide, Hsla, String)> 
     match t.estado {
         EstadoTarefa::EmRevisao => Some((Lucide::Eye, Cores::ambar(), "Pronto para revisar".into())),
         EstadoTarefa::Conversa => match t.mudancas.as_ref().filter(|m| m.arquivos > 0) {
+            // No modo PR as mudanças vão para um PR, não para a pasta.
+            Some(m) if motor.config_da_pasta(&t.projeto, &motor.origem_da_tarefa(t)).github.entrega == crate::modelo::ModoEntrega::Pr => {
+                Some((Lucide::GitPullRequest, Cores::tenue(), format!("Para o PR: +{} −{}", m.mais, m.menos)))
+            }
             Some(m) => Some((Lucide::GitMerge, Cores::tenue(), format!("Para juntar: +{} −{}", m.mais, m.menos))),
             None if acabou_de_juntar(chat) => Some((Lucide::Check, Cores::tenue(), "Juntado".into())),
             None => None,

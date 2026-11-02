@@ -2247,6 +2247,11 @@ fn onde_o_chat_trabalha(motor: &Motor, chat: &Chat) -> String {
     let pasta = super::trilho::pasta_curta(&motor.origem_da_tarefa(t));
     match t.forma {
         _ if chat.projeto.is_empty() => "Este chat tem uma pasta só dele: os arquivos que ele criar ficam lá.".into(),
+        crate::modelo::Forma::Copia
+            if motor.config_da_pasta(&t.projeto, &motor.origem_da_tarefa(t)).github.entrega == crate::modelo::ModoEntrega::Pr =>
+        {
+            format!("Este chat trabalha numa cópia de {pasta}. As mudanças vão para o GitHub num PR: use Revisar e abrir PR, ou peça aqui.")
+        }
         crate::modelo::Forma::Copia => {
             format!("Este chat trabalha numa cópia de {pasta}. Quando quiser levar as mudanças para lá, use Juntar.")
         }
@@ -2495,8 +2500,9 @@ enum Situacao {
     /// A pasta de onde o chat trabalha sumiu (o projeto, o índice dela e o caminho).
     OrigemSumiu { projeto: String, indice: usize, pasta: PathBuf },
     Juntando,
-    /// O que a cópia tem para juntar (a tarefa, os arquivos e as linhas).
-    ParaJuntar { tarefa: u64, arquivos: u32, mais: u32, menos: u32 },
+    /// O que a cópia tem para juntar (a tarefa, os arquivos e as linhas); `por_pr`: a pasta entrega
+    /// por PR, e o botão abre o PR.
+    ParaJuntar { tarefa: u64, arquivos: u32, mais: u32, menos: u32, por_pr: bool },
     Fila(usize),
 }
 
@@ -2521,11 +2527,13 @@ fn situacao_do_chat(motor: &Motor, chat: &Chat) -> Option<Situacao> {
         return Some(Situacao::Juntando);
     }
     let mudancas = t.mudancas.as_ref().filter(|m| m.arquivos > 0)?;
+    let por_pr = motor.config_da_pasta(&t.projeto, &origem).github.entrega == crate::modelo::ModoEntrega::Pr;
     (t.tem_copia() && t.estado == EstadoTarefa::Conversa).then(|| Situacao::ParaJuntar {
         tarefa: t.id,
         arquivos: mudancas.arquivos,
         mais: mudancas.mais,
         menos: mudancas.menos,
+        por_pr,
     })
 }
 
@@ -2759,32 +2767,45 @@ impl Janela {
                     .into_any_element(),
                 None,
             ),
-            Situacao::ParaJuntar { tarefa, arquivos, mais, menos } => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(icone_de(Lucide::GitMerge, 14.).text_color(Cores::tenue()))
-                    .child(texto(texto_para_juntar(arquivos, mais, menos)))
-                    .into_any_element(),
-                Some(
+            Situacao::ParaJuntar { tarefa, arquivos, mais, menos, por_pr } => {
+                // No modo PR, aprovar é publicar: o botão abre o PR (título e descrição gerados).
+                let (icone, rotulo, dica_revisar, dica) = if por_pr {
+                    (
+                        Lucide::GitPullRequest,
+                        "Abrir PR",
+                        "Ver as mudanças da cópia antes de abrir o PR",
+                        "Mandar as mudanças da cópia para o GitHub num PR, com o título e a descrição gerados",
+                    )
+                } else {
+                    (Lucide::GitMerge, "Juntar", "Ver as mudanças da cópia antes de juntar", "Levar as mudanças da cópia para a pasta original")
+                };
+                (
                     h_flex()
-                        .flex_none()
-                        .gap(esp::E4)
-                        .child(
-                            botao_fantasma("faixa-revisar", Some(Lucide::Eye.into()), "Revisar", TamanhoBotao::Barra, window, cx)
-                                .tooltip("Ver as mudanças da cópia antes de juntar")
-                                .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx))),
-                        )
-                        .child(
-                            botao_fantasma("faixa-juntar", Some(Lucide::GitMerge.into()), "Juntar", TamanhoBotao::Barra, window, cx)
-                                .custom(variante_tinta(cx))
-                                .tooltip("Levar as mudanças da cópia para a pasta original")
-                                .on_click(cx.listener(move |this, _, window, cx| this.juntar_do_chat(tarefa, window, cx))),
-                        )
+                        .flex_1()
+                        .min_w_0()
+                        .gap(r(8.))
+                        .child(icone_de(icone, 14.).text_color(Cores::tenue()))
+                        .child(texto(texto_para_juntar(arquivos, mais, menos)))
                         .into_any_element(),
-                ),
-            ),
+                    Some(
+                        h_flex()
+                            .flex_none()
+                            .gap(esp::E4)
+                            .child(
+                                botao_fantasma("faixa-revisar", Some(Lucide::Eye.into()), "Revisar", TamanhoBotao::Barra, window, cx)
+                                    .tooltip(dica_revisar)
+                                    .on_click(cx.listener(move |this, _, window, cx| this.dialogo_diff(tarefa, window, cx))),
+                            )
+                            .child(
+                                botao_fantasma("faixa-juntar", Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx)
+                                    .custom(variante_tinta(cx))
+                                    .tooltip(dica)
+                                    .on_click(cx.listener(move |this, _, window, cx| this.juntar_do_chat(tarefa, window, cx))),
+                            )
+                            .into_any_element(),
+                    ),
+                )
+            }
             Situacao::Fila(n) => (
                 h_flex()
                     .flex_1()

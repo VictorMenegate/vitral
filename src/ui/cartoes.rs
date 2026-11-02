@@ -797,6 +797,30 @@ impl Janela {
     }
 }
 
+/// O texto da linha do PR que terminou: quem mesclou e como (o método só quando foi o Vitral), o
+/// ramo apagado e a issue do chat (concluída, quando o PR a moveu).
+pub(super) fn texto_do_pr_recolhido(a: &PrAnterior, issue: Option<&str>) -> String {
+    let mut texto = match (a.estado, &a.mesclado_por) {
+        (crate::github::EstadoPr::Mesclado, Some(login)) => format!("PR #{} mesclado por {login}", a.numero),
+        (crate::github::EstadoPr::Mesclado, None) => format!("PR #{} mesclado", a.numero),
+        _ => format!("PR #{} fechado sem mesclar", a.numero),
+    };
+    if a.estado == crate::github::EstadoPr::Mesclado {
+        if let Some(metodo) = &a.metodo {
+            texto.push_str(&format!(" ({metodo})"));
+        }
+        if a.ramo_apagado {
+            texto.push_str(" · ramo apagado");
+        }
+    }
+    match issue {
+        Some(chave) if a.issue_concluida => texto.push_str(&format!(" · {chave} concluída")),
+        Some(chave) => texto.push_str(&format!(" · issue {chave}")),
+        None => {}
+    }
+    texto
+}
+
 /// "mesclar o PR #12 (squash)", "abrir o PR “Corrige login” como rascunho": o que a confirmação
 /// deixa fazer, sem quem pediu.
 pub(super) fn acao_da_confirmacao(motor: &Motor, c: &Confirmacao) -> String {
@@ -937,18 +961,12 @@ impl Janela {
         }
     }
 
-    /// A linha do PR que terminou: "PR #12 mesclado por x (squash) · ENG-123", Abrir no GitHub e,
-    /// mesclado sem fechar a issue do GitHub do chat, "Fechar a issue #45".
+    /// A linha do PR que terminou: "PR #12 mesclado por x (squash) · ramo apagado · ENG-123
+    /// concluída", Abrir no GitHub e, mesclado sem fechar a issue do GitHub do chat, "Fechar a issue
+    /// #45".
     fn linha_do_pr_recolhida(&self, motor: &Motor, t: &Tarefa, a: &PrAnterior, id: SharedString, window: &Window, cx: &Context<Self>) -> AnyElement {
         let (icone, cor) = painel_pr::icone_do_estado(a.estado);
-        let mut texto = match (a.estado, &a.mesclado_por) {
-            (crate::github::EstadoPr::Mesclado, Some(login)) => format!("PR #{} mesclado por {login}", a.numero),
-            (crate::github::EstadoPr::Mesclado, None) => format!("PR #{} mesclado", a.numero),
-            _ => format!("PR #{} fechado sem mesclar", a.numero),
-        };
-        if let Some(issue) = &t.issue {
-            texto.push_str(&format!(" · issue {}", issue.chave));
-        }
+        let texto = texto_do_pr_recolhido(a, t.issue.as_ref().map(|i| i.chave.as_str()));
         let quando = (a.em > 0).then(|| match super::tempo_relativo(a.em).as_str() {
             "agora" => "agora".to_string(),
             q => format!("há {q}"),
@@ -1060,8 +1078,26 @@ pub(super) fn selo_do_mestre_no_chat(id: SharedString, dica: String, cx: &Contex
 
 #[cfg(test)]
 mod testes {
-    use super::{divisao_terminada, resumos_do_mestre};
-    use crate::modelo::Item;
+    use super::{divisao_terminada, resumos_do_mestre, texto_do_pr_recolhido};
+    use crate::{github::EstadoPr, modelo::{Item, PrAnterior}};
+
+    #[test]
+    fn a_linha_do_pr_que_terminou() {
+        let pelo_vitral = PrAnterior {
+            numero: 12,
+            estado: EstadoPr::Mesclado,
+            mesclado_por: Some("VictorMenegate".into()),
+            metodo: Some("squash".into()),
+            ramo_apagado: true,
+            issue_concluida: true,
+            ..Default::default()
+        };
+        assert_eq!(texto_do_pr_recolhido(&pelo_vitral, Some("ENG-123")), "PR #12 mesclado por VictorMenegate (squash) · ramo apagado · ENG-123 concluída");
+        let por_outro = PrAnterior { metodo: None, ramo_apagado: false, issue_concluida: false, ..pelo_vitral.clone() };
+        assert_eq!(texto_do_pr_recolhido(&por_outro, Some("#45")), "PR #12 mesclado por VictorMenegate · issue #45");
+        let fechado = PrAnterior { estado: EstadoPr::Fechado, ..pelo_vitral };
+        assert_eq!(texto_do_pr_recolhido(&fechado, None), "PR #12 fechado sem mesclar");
+    }
 
     fn entrega(texto: &str) -> Item {
         Item::Entrega { de: "Vitral".into(), texto: texto.into(), ponto: None }
