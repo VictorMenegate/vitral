@@ -3,8 +3,9 @@
 //! vem depois de mesclar. Tudo recebe o `Executor` (o falso nos testes) e bloqueia, menos as
 //! esperas pelas travas, que são assíncronas.
 //!
-//! A ordem das travas é fixa: o commit na vez do projeto (só local), depois o fetch e o push na vez
-//! da rede do repositório (fora da trava do projeto) e, por último, o gh na fila do provedor.
+//! A ordem das travas é fixa: a vez da rede do repositório (fetch e push), a do projeto por dentro
+//! dela só para o que é local (o commit, o merge) e, por último, o gh na fila do provedor. Nenhuma
+//! chamada de rede roda dentro da vez do projeto.
 
 use std::{
     path::{Path, PathBuf},
@@ -117,13 +118,14 @@ impl FalhaPublicacao {
 /// create sem antes o `pr_do_ramo`. `fila`: a vez do gh no provedor (o usuário ou o fundo).
 pub async fn publicar(e: &dyn Executor, p: &Publicacao, fila: Option<Arc<smol::lock::Semaphore>>) -> Result<Publicado, FalhaPublicacao> {
     let git_erro = |erro: anyhow::Error| FalhaPublicacao::Git(format!("{erro:#}"));
-    // 1. O commit, só local, na vez do projeto.
-    git::na_vez_do_projeto(&p.origem, || git::commitar_sem_ganchos(&p.copia, &p.mensagem, &p.excluir)).map_err(git_erro)?;
-    // 2. Fetch, conferências e push, na vez da rede do repositório.
+    // Fetch, conferências, commit e push, na vez da rede do repositório (a do projeto, só para o
+    // commit, por dentro dela: a ordem é sempre rede e depois projeto).
     let sha = {
         let _rede = git::na_vez_da_rede(&p.origem).await;
         git::buscar(e, &p.copia, &p.remoto, &[&p.base]).map_err(FalhaPublicacao::Remoto)?;
         let alvo = format!("{}/{}", p.remoto, p.base);
+        // As conferências olham a cópia como está, antes do commit: o segredo barrado não fica no
+        // histórico (apagado depois, ele iria no push seguinte do mesmo jeito).
         let desde = git::base_da_tarefa(&p.origem, &p.copia, "HEAD", Some(&alvo));
         let achados = git::segredos_no_diff(&p.copia, &desde, &p.excluir);
         if !achados.is_empty() && (p.automatico || !p.segredos_confirmados) {
@@ -135,6 +137,8 @@ pub async fn publicar(e: &dyn Executor, p: &Publicacao, fila: Option<Arc<smol::l
                 return Err(FalhaPublicacao::Workflows);
             }
         }
+        // O commit, só local, na vez do projeto.
+        git::na_vez_do_projeto(&p.origem, || git::commitar_sem_ganchos(&p.copia, &p.mensagem, &p.excluir)).map_err(git_erro)?;
         let conflitos = git::simular_mescla(&p.copia, &alvo).map_err(git_erro)?;
         if !conflitos.is_empty() {
             return Err(FalhaPublicacao::Conflito { alvo, arquivos: conflitos });
@@ -183,6 +187,17 @@ pub async fn publicar(e: &dyn Executor, p: &Publicacao, fila: Option<Arc<smol::l
     match gh.criar_pr(&p.repositorio, &p.cabeca, &p.base, &p.titulo, &corpo, p.rascunho) {
         Ok((numero, url)) => Ok(Publicado { numero, url, titulo: p.titulo.clone(), sha, criado: true, rascunho: p.rascunho, aviso: None }),
         Err(ErroRemoto::TempoEsgotado) => Err(FalhaPublicacao::Incerto { sha }),
+        // O PR existe, mas o GitHub ainda mostrava o head de antes do push: a leitura estrita de
+        // novo, algumas vezes, antes de desistir (nunca outro create).
+        Err(ErroRemoto::Validacao(motivo)) if motivo.contains("already exists") => {
+            for _ in 0..3 {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if let Some(achado) = gh.pr_do_ramo(&p.repositorio, &p.ramo, &p.dono_do_head, &sha).map_err(FalhaPublicacao::Remoto)? {
+                    return Ok(Publicado { numero: achado.numero, url: achado.url, titulo: achado.titulo, sha, criado: false, rascunho: achado.rascunho, aviso: None });
+                }
+            }
+            Err(FalhaPublicacao::Remoto(ErroRemoto::Validacao(motivo)))
+        }
         Err(erro) => Err(FalhaPublicacao::Remoto(erro)),
     }
 }
@@ -550,8 +565,9 @@ pub mod testes {
         // Sozinho, nem com a confirmação.
         let sozinho = Publicacao { automatico: true, segredos_confirmados: true, ..p.clone() };
         assert!(matches!(smol::block_on(publicar(&e, &sozinho, None)), Err(FalhaPublicacao::Segredos(_))));
+        // Barrado antes do commit: o .env não ficou no histórico da cópia.
+        assert_eq!(git(&b.copia, &["rev-parse", "HEAD"]), git(&b.bare, &["rev-parse", "main"]));
         // .github/ sozinho, não.
-        git(&b.copia, &["rm", "-q", "--cached", ".env.local"]);
         std::fs::remove_file(b.copia.join(".env.local")).unwrap();
         std::fs::create_dir_all(b.copia.join(".github/workflows")).unwrap();
         std::fs::write(b.copia.join(".github/workflows/ci.yml"), "on: push\n").unwrap();
@@ -712,6 +728,261 @@ pub mod testes {
         assert_eq!(mudados, vec!["meu.rs".to_string()], "o diff é só o da tarefa");
         // Com a base de antes (sem o modo PR), o trabalho deles apareceria.
         assert!(git::arquivos_mudados(&b.copia, &base_gravada).contains(&"deles.rs".to_string()));
+    }
+
+    // ---------- aceite de escrita (manual) ----------
+
+    /// O aceite de escrita do G4 (passos 1 a 8 da especificação), com o git e o gh de verdade no
+    /// repositório de teste privado `VictorMenegate/vitral-teste` (nunca em outro). Escreve lá: abre,
+    /// comenta, mescla e fecha PRs, cria uma issue e um commit pela API. O clone fica em
+    /// `$VITRAL_TESTE` (padrão ~/.cache/vitral-trabalho/vitral-teste) e o registro em
+    /// ~/.cache/vitral-trabalho/g4-notas/aceite-escrita.log.
+    /// `cargo test -- --ignored integracao_aceite_de_escrita --nocapture` (uns 5 minutos: o Ship
+    /// espera os 90 s dos bots).
+    #[test]
+    #[ignore]
+    fn integracao_aceite_de_escrita_no_vitral_teste() {
+        use crate::{github::{Gh, Mescla}, issues, modelo::agora};
+        const REPO: &str = "VictorMenegate/vitral-teste";
+        let casa = dirs::home_dir().unwrap();
+        let clone = std::env::var_os("VITRAL_TESTE").map(PathBuf::from).unwrap_or_else(|| casa.join(".cache/vitral-trabalho/vitral-teste"));
+        let notas = casa.join(".cache/vitral-trabalho/g4-notas");
+        let pasta = notas.join("pasta-do-gh");
+        std::fs::create_dir_all(&pasta).unwrap();
+        let log = std::sync::Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(notas.join("aceite-escrita.log")).unwrap());
+        let anotar = |texto: &str| {
+            use std::io::Write as _;
+            let linha = format!("{} {texto}\n", agora());
+            print!("{linha}");
+            let _ = log.lock().unwrap().write_all(linha.as_bytes());
+        };
+        let e = Real;
+        let gh = Gh { e: &e, pasta: &pasta };
+        let cru = |args: &[&str], entrada: Option<&str>| -> String {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let ambiente = Ambiente { definir: vec![("GH_PROMPT_DISABLED".into(), "1".into()), ("NO_COLOR".into(), "1".into())], ..Default::default() };
+            let s = e.rodar("gh", &args, &ambiente, &pasta, entrada.map(str::as_bytes), std::time::Duration::from_secs(60)).unwrap();
+            assert_eq!(s.codigo, Some(0), "gh {args:?}: {}", s.erros());
+            s.texto().trim().to_string()
+        };
+        anotar(&format!("--- aceite de escrita do G4 em {REPO}"));
+        let info = gh.info_repo(REPO).unwrap();
+        assert!(info.pode_escrever() && !info.apaga_ramo_ao_mesclar);
+        assert_eq!(gh.workflows(REPO).unwrap(), 0, "sem CI");
+        git(&clone, &["fetch", "-q", "origin"]);
+        git(&clone, &["checkout", "-q", "main"]);
+        git(&clone, &["merge", "-q", "--ff-only", "origin/main"]);
+
+        // Uma issue para o Closes.
+        let carimbo = agora();
+        let url_issue = cru(&["issue", "create", "-R", REPO, "--title", &format!("Aceite G4 {carimbo}: o PR fecha esta issue"), "--body", "Criada pelo teste de aceite do G4."], None);
+        let n_issue: u64 = url_issue.rsplit('/').next().unwrap().parse().unwrap();
+        anotar(&format!("issue #{n_issue} criada ({url_issue})"));
+        let ligada = issues::IssueLigada {
+            fonte: issues::FonteIssue::Github,
+            id: n_issue.to_string(),
+            chave: format!("#{n_issue}"),
+            titulo: "o PR fecha esta issue".into(),
+            repositorio: Some(REPO.into()),
+            ..Default::default()
+        };
+
+        // 1. Revisar e abrir PR: título, descrição e Closes.
+        let ramo = format!("vitral/t9{}-aceite", carimbo % 1000);
+        let copia = notas.join(format!("copia-{carimbo}"));
+        git::criar_worktree_de(&clone, &copia, &ramo, Some("origin/main")).unwrap();
+        std::fs::write(copia.join("aceite-1.txt"), format!("primeiro PR {carimbo}\n")).unwrap();
+        // O .env copiado da origem nunca entra no commit.
+        std::fs::write(copia.join(".env"), "TESTE=1\n").unwrap();
+        let titulo = issues::titulo_do_pr("Aceite do G4", Some(&ligada));
+        let corpo = issues::corpo_do_pr(&issues::DadosDoCorpo { resumo: "O primeiro PR do aceite.", como_verificou: "o teste confere", verificacao: None, issue: Some(&ligada) });
+        let plano = |ramo: &str, titulo: &str, corpo: Option<String>, aberto: Option<u64>| Publicacao {
+            pasta_dados: pasta.clone(),
+            copia: copia.clone(),
+            origem: clone.clone(),
+            remoto: "origin".into(),
+            base: "main".into(),
+            repositorio: REPO.into(),
+            ramo: ramo.into(),
+            cabeca: ramo.into(),
+            dono_do_head: "VictorMenegate".into(),
+            mensagem: titulo.into(),
+            excluir: vec![".env".into()],
+            titulo: titulo.into(),
+            corpo,
+            pr_aberto: aberto,
+            ..Default::default()
+        };
+        let p1 = smol::block_on(publicar(&e, &plano(&ramo, &titulo, Some(corpo), None), None)).unwrap();
+        assert!(p1.criado);
+        anotar(&format!("1. PR #{} aberto ({}), título {titulo:?}", p1.numero, p1.url));
+        let detalhe = gh.detalhe_pr(REPO, p1.numero).unwrap();
+        assert!(detalhe.corpo.contains(&format!("Closes #{n_issue}")) && detalhe.titulo == titulo);
+        assert!(!detalhe.arquivos.iter().any(|a| a.caminho == ".env"), "o .env não foi");
+        let novo_pr = |p: &Publicado, ramo: &str| Pr {
+            repositorio: REPO.into(),
+            numero: p.numero,
+            url: p.url.clone(),
+            titulo: p.titulo.clone(),
+            base: "main".into(),
+            ramo: ramo.into(),
+            cabeca: ramo.into(),
+            dono_do_head: "VictorMenegate".into(),
+            sha: p.sha.clone(),
+            sha_publicado: p.sha.clone(),
+            acompanhando: true,
+            empurrado_em: agora(),
+            ..Default::default()
+        };
+        let conferir = |pr: &Pr| -> (Pr, Vec<EventoPr>) {
+            let a = [Acompanhado { tarefa: 1, pr: pr.clone(), copia: Some(copia.clone()) }];
+            let (mut lista, _) = conferir_prs(&e, &pasta, REPO, &a, agora()).unwrap();
+            lista.pop().unwrap().1.unwrap()
+        };
+        let (mut pr1, eventos) = conferir(&novo_pr(&p1, &ramo));
+        anotar(&format!("   vigia: estado {:?}, mergeStateStatus {}, eventos {eventos:?}", pr1.estado, pr1.mesclavel));
+        assert_eq!(pr1.estado, crate::github::EstadoPr::Aberto);
+
+        // 2. Comentário do dono pelo site chega como revisão; o do Vitral não.
+        cru(&["pr", "comment", &p1.numero.to_string(), "-R", REPO, "--body", "Comentário do dono: troque o texto do arquivo."], None);
+        cru(&["pr", "comment", &p1.numero.to_string(), "-R", REPO, "--body", "Comentário do Vitral (marcado como nosso)."], None);
+        let todos = ler_comentarios(&e, &pasta, &pr1, None).unwrap();
+        let nosso = todos.iter().find(|c| c.corpo.contains("do Vitral")).unwrap().id;
+        pr1.comentarios_nossos.push(nosso);
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let antes = pr1.clone();
+        let (depois, eventos) = conferir(&pr1);
+        pr1 = depois;
+        assert!(eventos.contains(&EventoPr::Novidade), "{eventos:?}");
+        let desde = (!antes.atualizado.is_empty()).then(|| regras::iso_menos(&antes.atualizado, 60)).flatten();
+        let s = regras::separar_comentarios(&pr1, ler_comentarios(&e, &pasta, &pr1, desde.as_deref()).unwrap());
+        assert_eq!(s.confiaveis.len(), 1, "{s:?}");
+        assert!(s.confiaveis[0].corpo.contains("do dono") && s.confiaveis[0].associacao == "OWNER");
+        assert!(s.confiaveis.iter().chain(&s.terceiros).all(|c| c.id != nosso));
+        regras::marcar_entregues(&mut pr1, &s.vistos);
+        let aviso = prompts::revisao_do_pr(pr1.numero, &s.confiaveis, &s.mudancas_pedidas_por);
+        anotar(&format!("2. revisão no PR #{}: {} comentário do dono (OWNER), o do Vitral ficou de fora; aviso: {:?}", pr1.numero, s.confiaveis.len(), aviso.lines().next()));
+
+        // 3. Mesclar (squash, pelo Vitral): o ramo remoto sai, a cópia recomeça de origin/main e a
+        // origem limpa anda.
+        let condicoes = regras::Condicoes { sem_ci: true, ..Default::default() };
+        let espera = regras::ESPERA_DOS_BOTS.saturating_sub(agora().saturating_sub(pr1.empurrado_em));
+        std::thread::sleep(std::time::Duration::from_secs(espera + 2));
+        let (conferido, _) = conferir(&pr1);
+        pr1 = conferido;
+        regras::pronto_para_mesclar(&pr1, agora(), &condicoes).unwrap();
+        assert_eq!(mesclar_conferindo(&e, &pasta, &pr1, "squash", &pr1.sha_publicado).unwrap(), Mescla::Mesclado);
+        pr1.metodo_mesclado = Some("squash".into());
+        let (mesclado, eventos) = conferir(&pr1);
+        assert!(matches!(eventos.as_slice(), [EventoPr::Mesclado { .. }]), "{eventos:?}");
+        let mut t = crate::modelo::Tarefa { id: 9, rodada: 1, pr: Some(mesclado.clone()), estado: crate::modelo::EstadoTarefa::NoPr, ..Default::default() };
+        let saiu = regras::registrar_mescla(&mut t, agora()).unwrap();
+        assert!(super::super::apagar_ramo_depois(t.prs_anteriores.last().unwrap(), &saiu, Some(&info)));
+        let ramo2 = regras::ramo_depois_do_pr(&ramo, &ramo, t.rodada, &|_| false);
+        let d = DepoisDaMescla {
+            copia: Some(copia.clone()),
+            origem: clone.clone(),
+            remoto: "origin".into(),
+            base: "main".into(),
+            numero: saiu.numero,
+            head_final: saiu.sha.clone(),
+            ramo: ramo.clone(),
+            ramo_novo: ramo2.clone(),
+            excluir: vec![".env".into()],
+            grupo: "t9".into(),
+            apagar_ramo: true,
+            recomecar: true,
+        };
+        let r = smol::block_on(depois_da_mescla(&e, &d));
+        assert_eq!(r.ramo_apagado, Some(Ok(())));
+        assert!(matches!(r.recomeco, Some(Ok(git::Recomeco::Feito { .. }))), "{:?}", r.recomeco);
+        assert!(r.origem_andou);
+        assert!(cru(&["api", &format!("repos/{REPO}/branches?per_page=100"), "--jq", ".[].name"], None).lines().all(|l| l != ramo), "o ramo saiu do GitHub");
+        assert_eq!(git(&copia, &["rev-parse", "HEAD"]), git(&clone, &["rev-parse", "origin/main"]));
+        assert_eq!(git(&clone, &["rev-parse", "HEAD"]), git(&clone, &["rev-parse", "origin/main"]));
+        let mut issue = String::new();
+        for _ in 0..10 {
+            issue = cru(&["issue", "view", &n_issue.to_string(), "-R", REPO, "--json", "state", "--jq", ".state"], None);
+            if issue == "CLOSED" {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        anotar(&format!("3. PR #{} mesclado (squash) pelo Vitral; ramo {ramo} apagado; cópia em {ramo2} a partir de origin/main; origem andou; issue #{n_issue} {issue}", saiu.numero));
+        assert_eq!(issue, "CLOSED");
+
+        // 4. O PR seguinte não leva os commits do primeiro.
+        std::fs::write(copia.join("aceite-2.txt"), format!("segundo PR {carimbo}\n")).unwrap();
+        let p2 = smol::block_on(publicar(&e, &plano(&ramo2, "Aceite do G4: segundo PR", Some("## O que muda\nO segundo.\n".into()), None), None)).unwrap();
+        let commits = gh.detalhe_pr(REPO, p2.numero).unwrap().commits;
+        assert_eq!(commits.len(), 1, "{commits:?}");
+        anotar(&format!("4. PR #{} aberto com {} commit (só o novo)", p2.numero, commits.len()));
+
+        // 5. Com o Ship num PR sem CI, ele mescla sozinho depois de 90 s.
+        let mut pr2 = Pr { ao_ficar_pronto: Some("squash".into()), ..novo_pr(&p2, &ramo2) };
+        let sozinho = regras::Condicoes { automatico: true, sem_ci: true, ..Default::default() };
+        let comeco = agora();
+        loop {
+            let (conferido, _) = conferir(&pr2);
+            pr2 = conferido;
+            if regras::pronto_para_mesclar(&pr2, agora(), &sozinho).is_ok() {
+                break;
+            }
+            assert!(agora() - comeco < 240, "não ficou pronto: {:?}", regras::pronto_para_mesclar(&pr2, agora(), &sozinho));
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
+        let esperou = agora() - pr2.empurrado_em;
+        assert!(esperou >= regras::ESPERA_DOS_BOTS);
+        assert_eq!(mesclar_conferindo(&e, &pasta, &pr2, "squash", &pr2.sha_publicado).unwrap(), Mescla::Mesclado);
+        pr2.metodo_mesclado = Some("squash".into());
+        let (mesclado2, _) = conferir(&pr2);
+        assert_eq!(mesclado2.estado, crate::github::EstadoPr::Mesclado);
+        let ramo3 = regras::ramo_depois_do_pr(&ramo, &ramo2, 3, &|r| r == ramo2 || r == ramo);
+        let r = smol::block_on(depois_da_mescla(&e, &DepoisDaMescla { numero: p2.numero, head_final: mesclado2.sha.clone(), ramo: ramo2.clone(), ramo_novo: ramo3.clone(), ..d.clone() }));
+        assert!(matches!(r.recomeco, Some(Ok(git::Recomeco::Feito { .. }))));
+        anotar(&format!("5. Ship: PR #{} mesclado sozinho {esperou} s depois do envio (sem CI); cópia em {ramo3}", p2.numero));
+
+        // 6. Um .env de teste criado na cópia barra a publicação.
+        std::fs::write(copia.join(".env.teste"), "SENHA=teste\n").unwrap();
+        let barrado = smol::block_on(publicar(&e, &plano(&ramo3, "Aceite do G4: com segredo", Some("x".into()), None), None));
+        assert!(matches!(barrado, Err(FalhaPublicacao::Segredos(_))), "{barrado:?}");
+        assert!(cru(&["api", &format!("repos/{REPO}/branches?per_page=100"), "--jq", ".[].name"], None).lines().all(|l| l != ramo3), "nada foi enviado");
+        assert_eq!(git(&copia, &["rev-parse", "HEAD"]), git(&clone, &["rev-parse", "origin/main"]), "nem o commit ficou");
+        std::fs::remove_file(copia.join(".env.teste")).unwrap();
+        anotar(&format!("6. .env.teste na cópia barrou a publicação ({})", barrado.unwrap_err().texto()));
+
+        // 8. Fechar o Vitral no meio e reabrir: o PR é recuperado pelo pr_do_ramo, sem duplicar.
+        std::fs::write(copia.join("aceite-3.txt"), format!("terceiro PR {carimbo}\n")).unwrap();
+        let p3 = smol::block_on(publicar(&e, &plano(&ramo3, "Aceite do G4: terceiro PR", Some("## O que muda\nO terceiro.\n".into()), None), None)).unwrap();
+        std::fs::write(copia.join("aceite-3.txt"), format!("terceiro PR, mais {carimbo}\n")).unwrap();
+        // O estado gravado se perdeu (o Vitral caiu entre o push e o create): publicar de novo acha o PR.
+        let de_novo = smol::block_on(publicar(&e, &plano(&ramo3, "Aceite do G4: terceiro PR", Some("x".into()), None), None)).unwrap();
+        assert_eq!((de_novo.numero, de_novo.criado), (p3.numero, false));
+        let do_ramo = cru(&["pr", "list", "-R", REPO, "--head", &ramo3, "--state", "all", "--json", "number", "--jq", "length"], None);
+        assert_eq!(do_ramo, "1");
+        anotar(&format!("8. reaberto: o PR #{} foi recuperado pelo pr_do_ramo (um PR só no ramo {ramo3})", p3.numero));
+
+        // 7. Um commit pelo site no ramo do PR desarma o Ship e vira "commit de fora".
+        let mut pr3 = Pr { ao_ficar_pronto: Some("squash".into()), ..novo_pr(&de_novo, &ramo3) };
+        let (conferido, _) = conferir(&pr3);
+        pr3 = conferido;
+        let conteudo = "ZG8gc2l0ZQo="; // "do site\n"
+        cru(&["api", "-X", "PUT", &format!("repos/{REPO}/contents/site-{carimbo}.txt"), "-f", "message=commit pelo site", "-f", &format!("content={conteudo}"), "-f", &format!("branch={ramo3}")], None);
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let (conferido, eventos) = conferir(&pr3);
+        pr3 = conferido;
+        assert!(eventos.iter().any(|e| matches!(e, EventoPr::CommitDeFora(_))), "{eventos:?}");
+        assert!(pr3.tem_commit_de_fora());
+        assert!(regras::pronto_para_mesclar(&pr3, agora() + 1000, &sozinho).is_err(), "o Vitral não mescla sozinho");
+        anotar(&format!("7. commit pelo site no PR #{}: commit de fora {:?}; o Ship desarma e o Vitral não mescla sozinho", pr3.numero, pr3.commits_de_fora));
+
+        // E o PR fica fechado (6.9), com o comentário do arquivamento.
+        gh.fechar_pr(REPO, pr3.numero, Some("Fechado pelo Vitral: aceite do G4.")).unwrap();
+        let (_, eventos) = conferir(&pr3);
+        assert_eq!(eventos, vec![EventoPr::Fechado]);
+        anotar(&format!("   PR #{} fechado sem mesclar (o vigia viu: {eventos:?})", pr3.numero));
+        let _ = git::na_vez_do_projeto(&clone, || git::remover_worktree(&clone, &copia, &ramo3));
+        anotar("--- fim do aceite: tudo passou");
     }
 
     #[test]
