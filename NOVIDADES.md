@@ -27,8 +27,9 @@ O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de
   já guarda; o Vitral nunca renova esse login.
 - **Modo foco no ⋯** de cada painel; o botão dele só aparece com ele ligado.
 - **Windows (prévia).** Instalador por usuário (sem administrador), zip portátil e o mesmo visual,
-  com os botões e o acrílico do Windows, notificações, terminal, Lixeira e Git Bash. Ainda sem
-  atualização automática no Windows nem contas extras.
+  com os botões e o acrílico do Windows, notificações, terminal, Lixeira e Git Bash. As versões
+  novas chegam sozinhas, como no Linux (quem instalou a 0.3.0-rc.6 instala esta uma vez pelo
+  instalador). Ainda sem contas extras.
 - **Issues e PRs ao lado do chat.** Configurações › Conexões mostra o login do GitHub (pelo `gh`) e
   conecta o Linear (a chave fica no chaveiro do sistema, nunca em arquivo).
   - **Issues.** O botão do Linear e o do GitHub no cabeçalho do chat abrem a lista (Minhas, do time,
