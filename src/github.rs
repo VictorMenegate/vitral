@@ -136,6 +136,8 @@ impl Gh<'_> {
         let estado = match conta.state.as_str() {
             "success" => EstadoLogin::Ok,
             "timeout" => EstadoLogin::TempoEsgotado,
+            // Sem rede, o gh 2.97 diz `error` com a mensagem da conexão: é falta de rede, não de login.
+            _ if classificar_gh(Some(1), "", &conta.error).transitorio() => EstadoLogin::TempoEsgotado,
             _ => EstadoLogin::Erro(crate::remoto::sem_segredos(&conta.error)),
         };
         let escopos = conta.scopes.split(',').map(|e| e.trim().to_string()).filter(|e| !e.is_empty()).collect();
@@ -1656,6 +1658,8 @@ mod testes {
             saida(0, r#"{"error":"","login":"VictorMenegate","scopes":"gist, read:org, repo, workflow","state":"timeout"}"#, ""),
             saida(0, r#"{"error":null,"login":"VictorMenegate","scopes":"gist, read:org, repo, workflow","state":"success"}"#, ""),
             saida(0, r#"{"error":"token inválido","login":"x","scopes":"","state":"error"}"#, ""),
+            // A saída de verdade com o proxy morto (2026-11-01).
+            saida(0, r#"{"error":"Get \"https://api.github.com/\": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused","state":"error"}"#, ""),
         ]);
         let g = gh(&e, pasta);
         assert_eq!(g.login(), Ok(None));
@@ -1665,6 +1669,7 @@ mod testes {
         assert_eq!(conectado.login, "VictorMenegate");
         assert!(conectado.tem_escopo("repo") && !conectado.tem_escopo("project"));
         assert_eq!(g.login().unwrap().unwrap().estado, EstadoLogin::Erro("token inválido".into()));
+        assert_eq!(g.login().unwrap().unwrap().estado, EstadoLogin::TempoEsgotado, "sem rede não é sem login");
         assert_eq!(
             args(&e, 0),
             ["auth", "status", "--json", "hosts", "--jq", r#"(.hosts["github.com"] // [])[] | select(.active) | {login,state,error,scopes}"#]

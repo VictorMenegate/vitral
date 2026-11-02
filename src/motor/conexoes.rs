@@ -441,7 +441,11 @@ impl Motor {
             move |e| Gh { e, pasta: &pasta }.login(),
             |m, resultado, _| {
                 m.integracao.login_em_voo = false;
-                m.anotar_rede(Provedor::Github, resultado.as_ref().err());
+                // O `auth status` sai com 0 também sem rede (`timeout`, ou `error` com a mensagem da
+                // conexão): isso é rede fora, e não pode tirar o vigia da espera da sonda.
+                let sem_rede = matches!(&resultado, Ok(Some(l)) if l.estado == EstadoLogin::TempoEsgotado)
+                    .then(|| ErroRemoto::SemRede("o gh não alcançou o GitHub (timeout)".into()));
+                m.anotar_rede(Provedor::Github, resultado.as_ref().err().or(sem_rede.as_ref()));
                 m.integracao.github = estado_do_login(resultado);
             },
             cx,

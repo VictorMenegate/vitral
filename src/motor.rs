@@ -36,7 +36,7 @@ pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
 pub use mestre::ResumoVolta;
 #[allow(unused_imports)]
-pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, OrigemAcao, OrigemAjuste, PedidoPr, RodarDeNovo};
+pub use prs::{AcaoPr, AndamentoPr, Confirmado, EventoLinha, FonteDiff, OrigemAcao, OrigemAjuste, PedidoPr, RodarDeNovo};
 use mestre::{Ciclos, MotivoPassagem, Readmes};
 
 use crate::{

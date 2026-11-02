@@ -100,6 +100,14 @@ pub enum EventoLinha {
     Bots { login: String, quantos: u32 },
 }
 
+/// O que o Vitral está fazendo no PR agora (a publicação inclui "Atualizar com main" e "Trazer as
+/// mudanças do GitHub").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndamentoPr {
+    Publicando,
+    Mesclando,
+}
+
 /// Quem pediu a ação no PR (a guarda e os textos mudam com isso).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrigemAcao {
@@ -2192,20 +2200,33 @@ impl Motor {
         }
     }
 
-    /// ⟳ na aba PR (acréscimo à API da 10.1): o detalhe, os checks e a linha do tempo de novo, e a
-    /// consulta do vigia na hora.
-    pub fn atualizar_pr(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(pr) = self.pr_da_tarefa(id).cloned() else {
-            return;
-        };
-        let chave = (pr.repositorio.clone(), pr.numero);
+    /// O ⟳ da aba PR (acréscimo do G5 à 10.1, com a assinatura dele): o detalhe, os checks e a linha
+    /// do tempo do PR que a aba mostra (o atual ou um anterior) de novo, a consulta do vigia na hora
+    /// e, com o PR atual, a simulação com a base.
+    pub fn atualizar_pr(&mut self, id: u64, repo: &str, n: u64, cx: &mut Context<Self>) {
+        let chave = (repo.to_string(), n);
         self.prs.detalhes.remove(&chave);
         self.prs.checks.remove(&chave);
         self.prs.linhas.remove(&chave);
-        self.prs.simulacoes.remove(&id);
-        self.prs.vigia.na_hora(&pr.repositorio);
-        self.simular(id, cx);
+        if comum::repositorio_valido(repo) {
+            self.prs.vigia.na_hora(repo);
+        }
+        if self.pr_da_tarefa(id).is_some_and(|p| p.repositorio == repo && p.numero == n) {
+            self.prs.simulacoes.remove(&id);
+            self.simular(id, cx);
+        }
         cx.notify();
+    }
+
+    /// O Vitral está publicando ou mesclando o PR da tarefa agora (o `Ocupado` da tabela da aba PR).
+    pub fn andamento_do_pr(&self, id: u64) -> Option<AndamentoPr> {
+        if self.prs.publicando.contains(&id) {
+            Some(AndamentoPr::Publicando)
+        } else if self.prs.mesclando.contains(&id) {
+            Some(AndamentoPr::Mesclando)
+        } else {
+            None
+        }
     }
 
     /// Tira um item de "Esperando você" do PR (acréscimo à API da 10.1: o × do item).
