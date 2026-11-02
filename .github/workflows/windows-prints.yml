@@ -37,6 +37,10 @@ on:
         description: "Atualizador: as três versões de teste do ramo (a do instalador, a que ela instala, a que cai)."
         required: false
         default: "0.3.0-rc.7 0.3.0-rc.8 0.3.0-rc.9"
+      pacotes:
+        description: "Atualizador: a rodada deste workflow cujos pacotes de teste reaproveitar (vazio: compila)."
+        required: false
+        default: ""
   # Num push do ramo windows que mexe no roteiro dos prints (ou aqui), só os prints.
   push:
     branches: [windows]
@@ -157,6 +161,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && (inputs.so == 'todos' || inputs.so == 'atualizador')
     runs-on: windows-2025
     timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read # os pacotes de outra rodada
     env:
       PUBLICADA: ${{ inputs.publicada }}
       VERSOES: ${{ inputs.versoes }}
@@ -166,6 +173,7 @@ jobs:
           persist-credentials: false
 
       - name: Rust (versão do rust-toolchain.toml)
+        if: inputs.pacotes == ''
         shell: bash
         run: |
           canal=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
@@ -173,6 +181,7 @@ jobs:
 
       # O cache do release do Windows (o release.yml salva o do ramo windows); só lê.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: inputs.pacotes == ''
         with:
           shared-key: release-windows-x86_64
           save-if: "false"
@@ -190,6 +199,7 @@ jobs:
       # do app e aceitam o VITRAL_ATUALIZACAO_BASE e a VITRAL_ATUALIZACAO_CHAVE. Entre uma e outra só
       # muda a versão embutida (VITRAL_VERSAO), então só o vitral.exe compila de novo.
       - name: Três versões do ramo no canal de teste
+        if: inputs.pacotes == ''
         shell: bash
         env:
           VITRAL_CANAL: teste
@@ -211,6 +221,7 @@ jobs:
           ls -l pacotes
 
       - name: O instalador da primeira (Inno Setup)
+        if: inputs.pacotes == ''
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -221,6 +232,27 @@ jobs:
           & $iscc /Qp "/DVersao=$primeira" "/DOrigem=$((Resolve-Path "pacotes\vitral-$primeira-windows-x86_64").Path)" "/O$((Resolve-Path instaladores).Path)" pacote\windows\vitral.iss
           if ($LASTEXITCODE -ne 0) { throw "o Inno Setup falhou" }
           Get-ChildItem instaladores
+
+      # Compilar as três leva uns 15 minutos: os pacotes ficam para uma rodada que só muda o roteiro.
+      - uses: actions/upload-artifact@v7
+        if: inputs.pacotes == ''
+        with:
+          name: pacotes-atualizador
+          path: |
+            pacotes/*.tar.gz
+            instaladores/
+          retention-days: 7
+
+      - name: Os pacotes de outra rodada
+        if: inputs.pacotes != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RODADA: ${{ inputs.pacotes }}
+        run: |
+          set -euo pipefail
+          gh run download "$RODADA" -R "$GITHUB_REPOSITORY" -n pacotes-atualizador -D .
+          ls -l pacotes instaladores
 
       # A chave de teste nasce aqui (o openssl do Git para Windows) e assina os dois manifestos; o app
       # do canal de teste a aceita pela VITRAL_ATUALIZACAO_CHAVE. Nunca a chave do release.

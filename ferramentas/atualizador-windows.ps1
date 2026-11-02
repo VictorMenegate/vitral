@@ -171,8 +171,15 @@ function AcharReiniciar($p) {
     }
     $imagem.Dispose()
     if ($pontos.Count -lt 12) { Anotar "azul de destaque no alto: $($pontos.Count) pontos"; return $null }
-    $maior = ($pontos | ForEach-Object { $_[0] } | Measure-Object -Maximum).Maximum
-    $direita = @($pontos | Where-Object { $_[0] -ge $maior - 90 })
+    # O grupo de colunas mais à direita, até um vão de 14 px: o "Novidades" (o mesmo azul) fica à
+    # esquerda do botão, na linha do texto.
+    $colunas = @($pontos | ForEach-Object { $_[0] } | Sort-Object -Unique -Descending)
+    $inicio = $colunas[0]
+    foreach ($coluna in $colunas) {
+        if ($inicio - $coluna -gt 14) { break }
+        $inicio = $coluna
+    }
+    $direita = @($pontos | Where-Object { $_[0] -ge $inicio })
     $x = [int](($direita | ForEach-Object { $_[0] } | Measure-Object -Average).Average)
     $y = [int](($direita | ForEach-Object { $_[1] } | Measure-Object -Average).Average)
     Anotar "Reiniciar achado em ($x,$y), $($direita.Count) de $($pontos.Count) pontos"
