@@ -24,13 +24,13 @@ use std::{
 use super::{
     Gaveta, Janela,
     componentes::{
-        Aba, EstadoVazio, Reflexo as _, Simbolo, TamanhoBotao, Tom, TomAba, aviso, botao_fantasma, botao_icone,
+        EstadoVazio, Reflexo as _, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone,
         contagem,
     },
 };
 use crate::{
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, esp, r, raio},
+    tema::{Cores, Lucide, Tipo as _, esp, r, raio},
 };
 
 /// Maior arquivo que abre aqui (o resto fica para o VS Code).
@@ -169,7 +169,7 @@ fn nome_da_linguagem(caminho: &str) -> Option<&'static str> {
 }
 
 /// Ícone da aba: código, texto (markdown e .txt) ou um arquivo qualquer.
-fn icone_do_arquivo(caminho: &str) -> Lucide {
+pub(super) fn icone_do_arquivo(caminho: &str) -> Lucide {
     match nome_da_linguagem(caminho) {
         Some("Markdown" | "Texto") => Lucide::FileText,
         Some(_) => Lucide::FileCode,
@@ -309,17 +309,15 @@ impl Janela {
         };
         let completo = raiz.join(&caminho);
         // Na raiz da pasta, a barra mostra o nome dela (ou o do projeto, se ela é a pasta própria).
-        let (pasta, nome) = match caminho.rsplit_once('/') {
-            Some((d, n)) => (format!("{d}/"), n.to_string()),
-            None => (nome_da_raiz(motor.read(cx), &raiz), caminho.clone()),
+        let pasta = match caminho.rsplit_once('/') {
+            Some((d, _)) => format!("{d}/"),
+            None => nome_da_raiz(motor.read(cx), &raiz),
         };
         let markdown = caminho.ends_with(".md");
         let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, markdown, cx);
         let janela = cx.entity().downgrade();
         let estreita = self.direita_estreita;
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
-        let canto = self.botoes_da_direita(false, window, cx);
-        let arrastavel = self.arrastavel("arrastar-arquivo");
         let medir = self.medir_direita(cx);
 
         let linhas = match &conteudo {
@@ -327,32 +325,7 @@ impl Janela {
             Conteudo::Markdown(_, n) => Some(*n),
             Conteudo::Aviso(_) => None,
         };
-        let j_fechar = janela.clone();
-        let aba = Aba::new("aba-arquivo", nome)
-            .tom(TomAba::Unica)
-            .simbolo(Simbolo::icone_cor(icone_do_arquivo(&caminho), Cores::tenue()))
-            .fechar("Fechar o arquivo", true, move |_, cx| {
-                let _ = j_fechar.update(cx, |this, cx| {
-                    this.arquivo_aberto = None;
-                    cx.notify();
-                });
-            });
-        let dica_aba = SharedString::from(caminho.clone());
-        let cabecalho = arrastavel
-            .flex_none()
-            .h(altura::CABECALHO)
-            .px(esp::E8)
-            .flex()
-            .items_center()
-            .gap(esp::E8)
-            .child(
-                super::sem_arrastar().flex().min_w_0().child(
-                    aba.construir(window, cx)
-                        .tooltip(move |window, cx| Tooltip::new(dica_aba.clone()).build(window, cx)),
-                ),
-            )
-            .child(div().flex_1())
-            .child(canto);
+        let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = barra_do_arquivo(
             janela.clone(),
             &completo,
@@ -564,10 +537,7 @@ fn aviso_do_arquivo(
     let fechar = || {
         botao_fantasma("aviso-fechar", None, "Fechar", TamanhoBotao::Barra, window, cx)
             .on_click(move |_, _, cx| {
-                let _ = janela.update(cx, |this, cx| {
-                    this.arquivo_aberto = None;
-                    cx.notify();
-                });
+                let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
             })
             .into_any_element()
     };

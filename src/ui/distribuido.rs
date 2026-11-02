@@ -146,6 +146,10 @@ impl Janela {
                 lugar(icone(Lucide::CircleCheck, Cores::verde())),
                 Selo::cor("juntado", Cores::verde()).into_any_element(),
             ),
+            (Some("mesclada"), _) => (
+                lugar(icone(Lucide::GitMerge, Cores::violeta())),
+                Selo::cor("mesclado", Cores::violeta()).into_any_element(),
+            ),
             (Some(outro), _) => (lugar(icone(Lucide::Ban, Cores::tenue())), Selo::neutro(outro.to_string()).into_any_element()),
             (None, Some(t)) => {
                 let visual = estado_visual(motor, t);
@@ -167,6 +171,18 @@ impl Janela {
             .simbolo(simbolo)
             .subtitulo(subtitulo)
             .meta(meta);
+        // O chip do PR abre o chat da tarefa na aba PR (o Mestre não tem aba PR).
+        let chip = tarefa.filter(|t| t.estado != crate::modelo::EstadoTarefa::EmRevisao).and_then(|t| {
+            let alvo = criada.chat.clone();
+            let chip = super::painel_pr::chip_do_pr(SharedString::from(format!("distribuido-pr-{}", t.id)), t, super::componentes::TamanhoChip::Pequeno, false)?;
+            Some(chip.on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.abrir_aba_pr(&alvo, window, cx)
+            })))
+        });
+        if let Some(chip) = chip {
+            linha = linha.acao_fixa(chip.construir(window, cx));
+        }
         if let Some(t) = tarefa.filter(|t| t.estado == crate::modelo::EstadoTarefa::EmRevisao) {
             let id = t.id;
             linha = linha.acao_fixa(

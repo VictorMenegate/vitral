@@ -408,7 +408,7 @@ impl Janela {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
             }
-            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, cx)),
+            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, &contexto.referencias, cx)),
             Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
                 Some(tarefa) => self.entrega_de_tarefa(contexto, indice, item, tarefa, window, cx),
                 None => {
@@ -541,17 +541,27 @@ impl Janela {
 
     /// Resposta do assistente: sem balão, na largura da coluna. O último texto de cada turno ganha
     /// o Copiar numa barra que flutua no canto de cima à direita, só no hover.
-    fn texto_assistente(&self, chave: &str, texto: &str, com_acoes: bool, cx: &Context<Self>) -> AnyElement {
+    fn texto_assistente(&self, chave: &str, texto: &str, com_acoes: bool, refs: &super::painel_pr::Referencias, cx: &Context<Self>) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
+        // Os links vivos: "PR #12", "ENG-123" e as URLs do GitHub que existem no projeto viram
+        // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
+        let ligado = super::painel_pr::ligar_referencias(texto, refs);
         v_flex()
             .relative()
             .w_full()
             .group(grupo.clone())
             .child(
-                div()
-                    .corpo()
-                    .text_color(Cores::texto())
-                    .child(markdown(SharedString::from(chave.to_string()), texto.to_string(), cx)),
+                div().corpo().text_color(Cores::texto()).child(
+                    markdown(SharedString::from(chave.to_string()), ligado, cx).on_link_click(|url, _, window, cx| {
+                        if url.starts_with("vitral:") {
+                            if super::painel_pr::link_permitido(url, super::painel_pr::OrigemDoTexto::Assistente) {
+                                window.dispatch_action(Box::new(super::painel_pr::AbrirLinkVitral(url.to_string())), cx);
+                            }
+                        } else {
+                            cx.open_url(url);
+                        }
+                    }),
+                ),
             )
             .when(com_acoes, |s| {
                 s.child(
@@ -1006,6 +1016,8 @@ struct Contexto<'a> {
     ultimas: HashMap<u64, usize>,
     /// Última entrega sobre cada tarefa (só ela pode virar cartão).
     entregas: HashMap<u64, usize>,
+    /// Os PRs e as issues do projeto, para os links vivos do texto do assistente.
+    referencias: super::painel_pr::Referencias,
 }
 
 impl<'a> Contexto<'a> {
@@ -1021,6 +1033,7 @@ impl<'a> Contexto<'a> {
             }),
             ultimas: HashMap::new(),
             entregas: HashMap::new(),
+            referencias: super::painel_pr::referencias_do_chat(motor, chat),
         };
         let (mut ultimas, mut entregas) = (HashMap::new(), HashMap::new());
         for (indice, item) in chat.itens.iter().enumerate() {

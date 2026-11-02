@@ -127,12 +127,18 @@ impl Motor {
         None
     }
 
-    /// As ações da aba PR e por que cada uma não está habilitada.
+    /// As ações da aba PR e por que cada uma não está habilitada: a tabela 4.3, pura, em
+    /// `ui::painel_pr::acoes_do_pr` (G5). Aqui entram o repositório, a simulação e quem ocupa o PR;
+    /// o G4 acrescenta a publicação e a mesclagem em andamento.
     pub fn acoes_do_pr(&self, id: u64) -> Vec<(AcaoPr, Result<(), String>)> {
-        if self.pr_da_tarefa(id).is_none() {
+        let (Some(t), Some(pr)) = (self.tarefa(id), self.pr_da_tarefa(id)) else {
             return Vec::new();
-        }
-        vec![(AcaoPr::MesclarQuandoPronto, Err(AINDA_NAO.into()))]
+        };
+        let info = self.repo_github(&pr.repositorio).tirar().map(|r| r.info);
+        let simulacao = self.simulacao(id);
+        let rodando = self.execucao(&t.trabalhador).rodando() || self.na_fila(&t.trabalhador) > 0;
+        let ocupado = rodando.then_some(crate::ui::painel_pr::Ocupado::Chat);
+        crate::ui::painel_pr::acoes_do_pr(pr, info.as_ref(), simulacao.as_ref(), ocupado)
     }
 
     /// Provisório: nenhum achado. Nada publica até o G4, que confere de verdade antes do push.
@@ -146,6 +152,13 @@ impl Motor {
 
     /// A aba PR ficou visível ou sumiu (o vigia consulta mais com ela aberta).
     pub fn vigiar_aba_pr(&mut self, _id: u64, _visivel: bool, _cx: &mut Context<Self>) {}
+
+    /// O ⟳ da aba PR: lê de novo o resumo, o detalhe, a linha do tempo e os checks do PR que a aba
+    /// mostra (o atual ou um anterior). Acrescentado pelo G5 (a seção 10.1 não tinha o ⟳ do PR);
+    /// provisório, o G4 preenche.
+    pub fn atualizar_pr(&mut self, _id: u64, _repo: &str, _n: u64, cx: &mut Context<Self>) {
+        cx.notify();
+    }
 
     // ---------- ações ----------
 

@@ -2,6 +2,7 @@
 //! equipe (tarefas do coordenador) à direita, em cartões de vidro como na Stained Glass UI.
 
 pub mod componentes;
+mod abas_direita;
 mod abertura;
 mod atualizacao;
 mod caixa_entrada;
@@ -25,6 +26,7 @@ mod projeto;
 mod revisao;
 mod fechar;
 mod painel_arquivo;
+pub(crate) mod painel_pr;
 mod paineis;
 mod popover_issues;
 mod recuperacao;
@@ -524,6 +526,14 @@ pub struct Janela {
     anexos_issue: HashMap<String, Vec<popover_issues::AnexoDeIssue>>,
     /// Os chats em que o "Ligar a ENG-123 a este chat?" já foi perguntado (uma vez por chat).
     ligacoes_perguntadas: HashSet<String>,
+    /// A aba da direita escolhida por último ("Este chat", o PR ou o arquivo) e a de cada chat, que
+    /// fica lembrada no interface.json (`abas_por_chat`).
+    aba_direita: abas_direita::AbaDireita,
+    abas_por_chat: HashMap<String, abas_direita::AbaDireita>,
+    /// A direita está abaixo de 520 px: com mais de uma aba, elas ficam só com o símbolo.
+    direita_compacta: bool,
+    /// O que a aba PR lembra (a sub-aba, o PR anterior à vista, o título em edição).
+    pr: painel_pr::EstadoDoPainel,
 }
 
 /// Redesenhos da janela desde a última conta (o `VITRAL_QUADROS`).
@@ -698,6 +708,10 @@ impl Janela {
             issues_aberto: None,
             anexos_issue: HashMap::new(),
             ligacoes_perguntadas: HashSet::new(),
+            aba_direita: abas_direita::AbaDireita::Chat,
+            abas_por_chat: abas_direita::ler_abas(),
+            direita_compacta: true,
+            pr: Default::default(),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -1160,9 +1174,16 @@ impl Janela {
         )
     }
 
-    /// O painel da direita foi pedido e tem o que mostrar (Equipe, Tarefa ou arquivo).
+    /// O painel da direita foi pedido e tem o que mostrar: a aba do chat ("Este chat" ou o PR)
+    /// pede um chat selecionado; a do arquivo, o arquivo aberto (as outras abas vêm junto).
     fn direita_pedida(&self) -> bool {
-        self.painel && (self.selecionado.is_some() || self.arquivo_aberto.is_some())
+        self.painel
+            && match self.aba_direita {
+                abas_direita::AbaDireita::Arquivo(_) => self.arquivo_aberto.is_some() || self.selecionado.is_some(),
+                abas_direita::AbaDireita::Chat | abas_direita::AbaDireita::Pr => {
+                    self.selecionado.is_some() || self.arquivo_aberto.is_some()
+                }
+            }
     }
 
     /// O painel da direita está na tela, ao lado das conversas (fora da gaveta).
@@ -1184,12 +1205,8 @@ impl Janela {
                 let lista = self.lateral(motor, window, cx);
                 (self.larguras.lista, FAIXA_LISTA.0, div().size_full().child(lista).into_any_element())
             }
-            Gaveta::Direita if self.arquivo_aberto.is_some() => {
-                (self.larguras.direita, FAIXA_DIREITA.0, self.painel_arquivo(motor, window, cx))
-            }
-            Gaveta::Direita => {
-                (self.larguras.direita, FAIXA_DIREITA.0, self.equipe(motor, window, cx).into_any_element())
-            }
+            // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
+            Gaveta::Direita => (self.larguras.direita, FAIXA_DIREITA.0, self.conteudo_da_direita(motor, window, cx)),
         };
         let largura = px(largura_da_gaveta(largura, minima, &self.orcamento));
         // Entra deslizando 24 px da borda, com o véu em fade junto (uma vez por abertura).
@@ -1318,6 +1335,9 @@ impl Render for Janela {
             self.tirar_gaveta(window, cx);
         }
         let gaveta = self.gaveta_por_cima(&motor, window, cx);
+        // O vigia consulta mais com a aba PR à vista (o motor sabe depois do desenho).
+        let pr_a_vista = self.pr_a_vista(motor.read(cx));
+        self.vigiar_pr_a_vista(pr_a_vista, cx);
         let janela = base
             .key_context("Vitral")
             .track_focus(&self.foco)
@@ -1358,6 +1378,7 @@ impl Render for Janela {
                 this.alternar_pop(composer::PopCaixa::Esforco, window, cx)
             }))
             .on_action(cx.listener(|this, _: &IrAoFim, _, cx| this.ir_ao_fim_ativo(cx)))
+            .on_action(cx.listener(|this, acao: &painel_pr::AbrirLinkVitral, window, cx| this.abrir_link_vitral(&acao.0, window, cx)))
             .child(
                 h_flex()
                     .size_full()
@@ -1465,11 +1486,7 @@ impl Janela {
             }
         }
         if painel {
-            let conteudo = if self.arquivo_aberto.is_some() {
-                self.painel_arquivo(motor, window, cx)
-            } else {
-                self.equipe(motor, window, cx).into_any_element()
-            };
+            let conteudo = self.conteudo_da_direita(motor, window, cx);
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
