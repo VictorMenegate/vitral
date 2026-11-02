@@ -91,7 +91,7 @@ impl<T> Carregando<T> {
 }
 
 /// Uma leitura guardada e quando ela mudou de estado.
-type Guardado<T> = (Instant, Carregando<T>);
+pub(super) type Guardado<T> = (Instant, Carregando<T>);
 
 /// Precisa buscar: nunca buscou, o que tem passou da validade, ou o erro já esperou o bastante.
 /// Uma busca em andamento nunca é pedida de novo.
@@ -258,7 +258,6 @@ pub fn estado_do_login(resultado: Result<Option<LoginGh>, ErroRemoto>) -> Estado
 }
 
 /// Os métodos de mesclar que o repositório aceita, com o padrão da conta primeiro.
-#[allow(dead_code)] // Provisório: mesclar (G4) e o menu da aba PR (G5).
 pub fn metodos_permitidos(info: &InfoRepo) -> Vec<&'static str> {
     let mut metodos: Vec<&'static str> = [("squash", info.squash), ("merge", info.merge), ("rebase", info.rebase)]
         .into_iter()
@@ -860,6 +859,21 @@ impl Motor {
         self.integracao.chave_linear.clone()
     }
 
+    /// A fila do provedor: a do usuário ou a do fundo (o vigia).
+    pub(super) fn fila_do_provedor(&self, provedor: Provedor, do_usuario: bool) -> Arc<smol::lock::Semaphore> {
+        self.integracao.fila(provedor, do_usuario)
+    }
+
+    /// O login do gh está ativo.
+    pub(super) fn github_conectado(&self) -> bool {
+        matches!(self.integracao.github, EstadoGithub::Conectado(_))
+    }
+
+    /// O gh não está instalado (a parte de GitHub some do app, e o vigia não roda).
+    pub(super) fn sem_gh(&self) -> bool {
+        self.integracao.github == EstadoGithub::SemGh
+    }
+
     /// Quem roda os programas de rede (o falso, nos testes).
     pub(super) fn executor(&self) -> Arc<dyn Executor> {
         self.integracao.executor.clone()
@@ -874,6 +888,11 @@ impl Motor {
             .flat_map(|d| d.estados.iter())
             .find(|e| e.estado.id == id)
             .map(|e| e.estado.clone())
+    }
+
+    /// A sonda do provedor falhou: a próxima espera mais (30, 60, 120 e 300 s).
+    pub(super) fn integracao_sonda_falhou(&mut self, provedor: Provedor) {
+        self.integracao.rede_mut(provedor).sonda_falhou(Instant::now());
     }
 
     /// O estado da rede do provedor depois de uma chamada.
@@ -916,13 +935,13 @@ impl Motor {
 }
 
 /// A busca de uma leitura guardada começou: fica o valor que havia.
-fn marcar_buscando<K: Eq + std::hash::Hash, T>(mapa: &mut HashMap<K, Guardado<T>>, chave: K, agora: Instant) {
+pub(super) fn marcar_buscando<K: Eq + std::hash::Hash, T>(mapa: &mut HashMap<K, Guardado<T>>, chave: K, agora: Instant) {
     let anterior = mapa.remove(&chave).map_or(Carregando::Nada, |(_, c)| c);
     mapa.insert(chave, (agora, anterior.buscando()));
 }
 
 /// O resultado de uma busca no lugar da leitura (o erro guarda o valor de antes).
-fn guardar<K: Eq + std::hash::Hash, T>(mapa: &mut HashMap<K, Guardado<T>>, chave: K, resultado: Result<T, String>, agora: Instant) {
+pub(super) fn guardar<K: Eq + std::hash::Hash, T>(mapa: &mut HashMap<K, Guardado<T>>, chave: K, resultado: Result<T, String>, agora: Instant) {
     let anterior = mapa.remove(&chave).map_or(Carregando::Nada, |(_, c)| c);
     mapa.insert(chave, (agora, anterior.com(resultado, agora)));
 }

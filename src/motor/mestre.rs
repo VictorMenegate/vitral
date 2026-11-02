@@ -763,7 +763,7 @@ pub fn pode_juntar_sozinho(t: &Tarefa, config: &Config) -> bool {
 /// tem mensagem na fila; `do_dono`: o turno foi aberto pelo dono (ou pelo lembrete).
 pub fn decidir_fim(t: &Tarefa, pendente: bool, do_dono: bool) -> FimDoPedido {
     // O pedido de uma issue ("Iniciar agente") é do usuário, sem dono.
-    if !t.estado.ativa() || (t.dono().is_none() && !t.pedido_da_issue) {
+    if !t.estado.ativa() || (t.dono().is_none() && !t.pedido_sem_dono()) {
         return FimDoPedido::Nada;
     }
     if pendente {
@@ -787,7 +787,8 @@ pub fn aberto_pelo_dono(entradas: &[Entrada], dono: &str) -> bool {
     entradas.iter().any(|e| {
         (!dono.is_empty() && e.remetente.as_deref() == Some(dono))
             || (e.de.as_deref() == Some("Vitral") && e.texto.starts_with(LEMBRETE_ENTREGA))
-            || (dono.is_empty() && (e.do_usuario() || (e.de.as_deref() == Some("Vitral") && e.texto.starts_with(PEDIDO_DA_ISSUE))))
+            || (dono.is_empty()
+                && (e.do_usuario() || (e.de.as_deref() == Some("Vitral") && (e.texto.starts_with(PEDIDO_DA_ISSUE) || e.terceiros))))
     })
 }
 
@@ -1378,7 +1379,7 @@ impl Motor {
         }
     }
 
-    fn novo_cartao(&mut self, tipo: TipoCartao) -> u64 {
+    pub(super) fn novo_cartao(&mut self, tipo: TipoCartao) -> u64 {
         let id = self.proximo_cartao.max(self.cartoes.iter().map(|c| c.id + 1).max().unwrap_or(1)).max(1);
         self.proximo_cartao = id + 1;
         self.cartoes.push(Cartao {
@@ -1398,7 +1399,7 @@ impl Motor {
     }
 
     /// Cartões gravam na hora: o estado e a conversa do Mestre.
-    fn gravar_cartoes(&mut self) {
+    pub(super) fn gravar_cartoes(&mut self) {
         self.salvar();
         if let Some(c) = self.chat(ID_MESTRE) {
             let _ = self.dados.salvar_chat(c);
@@ -1774,7 +1775,10 @@ impl Motor {
         let titulo = self.chat(&t.trabalhador).map_or_else(|| t.titulo.clone(), |c| c.titulo.clone());
         let projeto = self.nome_do_projeto(&t.projeto);
         self.registrar("entrega", &t.trabalhador, &t.trabalhador, &t.projeto, Some(id), &format!("chat {id} \"{titulo}\" entregou"));
-        if !erro && pode_juntar_sozinho(&t, &self.config) && self.recusa_aprovar(id).is_none() {
+        // No modo PR não há junção sozinha: aprovar abre (ou atualiza) o PR, e o primeiro o usuário
+        // confirma.
+        let por_pr = self.entrega_por_pr(&t);
+        if !erro && !por_pr && pode_juntar_sozinho(&t, &self.config) && self.recusa_aprovar(id).is_none() {
             let (envia, recebe) = smol::channel::bounded::<Resposta>(1);
             self.juntar_chat(id, "junção automática: verificação e revisor aprovaram".into(), None, false, "vitral", envia, cx);
             cx.spawn(async move |motor, cx| {
@@ -1794,7 +1798,14 @@ impl Motor {
             .detach();
             return;
         }
-        let texto = relatorio_compacto(&t, &projeto, &titulo, &relatorio, estatistica.as_deref(), erro, None);
+        let mut texto = relatorio_compacto(&t, &projeto, &titulo, &relatorio, estatistica.as_deref(), erro, None);
+        if por_pr {
+            let origem = self.origem_da_tarefa(&t);
+            let config = self.config_da_pasta(&t.projeto, &origem).github;
+            let repositorio = self.destino_do_pr(&origem, &config).unwrap_or_else(|| "o GitHub".into());
+            texto.push('\n');
+            texto.push_str(&crate::prompts::fecho_da_entrega_por_pr(t.pr_aberto().map(|p| p.numero), &repositorio));
+        }
         self.acordar_mestre(texto, cx);
     }
 
@@ -1827,7 +1838,8 @@ impl Motor {
     /// lembrete) conta como entrega sem formulário.
     pub(super) fn fim_do_pedido(&mut self, chat: &Chat, t: &Tarefa, erro: bool, texto: &str, cx: &mut Context<Self>) {
         // O pedido de uma issue é do usuário: o dono fica vazio.
-        let Some(dono) = t.dono().map(str::to_string).or_else(|| t.pedido_da_issue.then(String::new)).filter(|_| t.estado.ativa()) else {
+        // O pedido de uma issue e o ajuste aberto pelo PR também: o dono fica vazio.
+        let Some(dono) = t.dono().map(str::to_string).or_else(|| t.pedido_sem_dono().then(String::new)).filter(|_| t.estado.ativa()) else {
             return;
         };
         if erro {
@@ -2004,6 +2016,8 @@ impl Motor {
         // listas e detalhes de issue na tela contam como abertos de novo.
         self.conexoes_ao_voltar(cx);
         self.issues_ao_voltar();
+        // O vigia consulta na hora os PRs (também os que ninguém acompanha: o merge de outra pessoa).
+        self.vigiar_na_hora();
         let desde = self.visto_em;
         let ate = agora();
         if desde == 0 || ate.saturating_sub(desde) < self.config.minutos_para_resumo * 60 {
@@ -2159,8 +2173,13 @@ impl Motor {
                             (None, Some(t)) => portao_aprovacao(t, forcar, &texto("motivo")),
                             (recusa, _) => Err(recusa.unwrap_or_default()),
                         };
+                        let entrega = match texto("entrega").to_lowercase().as_str() {
+                            "pr" => Some(crate::modelo::ModoEntrega::Pr),
+                            "juntar" => Some(crate::modelo::ModoEntrega::Juntar),
+                            _ => None,
+                        };
                         match portao {
-                            Ok(ressalva) => self.aprovar_tarefa(id, texto("nota"), ressalva, chamada.resposta, ID_MESTRE, cx),
+                            Ok(ressalva) => self.aprovar_tarefa(id, texto("nota"), ressalva, chamada.resposta, ID_MESTRE, entrega, cx),
                             Err(recusa) => {
                                 let _ = chamada.resposta.try_send(Resposta::erro(recusa));
                             }
@@ -2801,7 +2820,11 @@ impl Motor {
             ));
         }
         t.entrega = Some(Entrega { resumo, como_verificou: texto("como_verificou"), criterios, pendencias: texto("pendencias"), rodada: t.rodada, em: agora() });
-        let para = if t.dono().is_none() && t.pedido_da_issue { "mostra ao usuário" } else { "manda ao Mestre" };
+        let para = match () {
+            _ if t.dono().is_none() && t.pr_aberto().is_some() => "atualiza o PR (ou deixa pronto para o usuário atualizar)",
+            _ if t.pedido_sem_dono() => "mostra ao usuário",
+            _ => "manda ao Mestre",
+        };
         Resposta::ok(format!(
             "Entrega da rodada {} registrada. Encerre sua vez: o Vitral confere (verificação e revisor) e {para}.",
             t.rodada

@@ -542,6 +542,19 @@ pub struct EfeitosDaIssue {
     pub feitos: bool,
     /// Não rodaram por falta da chave (o chaveiro trancado): o motivo, para "Destravar e tentar".
     pub pendente: Option<String>,
+    /// Os efeitos do PR no Linear (ligar o PR à issue, concluir ao mesclar) que esperam a chave:
+    /// "Destravar e tentar" roda estes também.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub do_pr: Vec<EfeitoDoPr>,
+}
+
+/// Um efeito do PR na issue do Linear que ficou para depois (o chaveiro trancado).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EfeitoDoPr {
+    /// Ligar o PR aberto à issue.
+    Ligar { url: String, titulo: String },
+    /// Mover a issue para o estado de mesclar (se ela ainda não terminou).
+    Concluir,
 }
 
 /// O PR de uma tarefa, como o Vitral o viu por último. Nada aqui é segredo: `erro` já passou
@@ -599,17 +612,81 @@ pub struct Pr {
     /// A mesclagem automática do GitHub está ligada (pelo site ou pela fila de merge).
     pub auto_github: bool,
     pub mesclado_por: Option<String>,
+    /// O método com que o Vitral mesclou (`None` quando foi outra pessoa, pelo site ou pelo gh).
     pub metodo_mesclado: Option<String>,
     pub commit_mesclado: Option<String>,
     pub erro: Option<String>,
+    /// O que espera o usuário neste PR ("Esperando você"): a falha do CI no Watch, a revisão, o
+    /// comentário de quem não tem acesso, o pronto para mesclar…
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub esperando: Vec<EsperaPr>,
+    /// A rodada de ajuste que um aviso do PR abriu (CI, revisão, ou o "Mandar ao chat" do usuário):
+    /// a entrega dela conta como pedido, e só a de CI ou de revisão confiável publica sozinha.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ajuste: Option<AjustePr>,
 }
 
 impl Pr {
     /// Aberto ou rascunho: o estado em que a tarefa fica em `NoPr`.
-    #[allow(dead_code)] // Provisório: o vigia (G4).
     pub fn aberto(&self) -> bool {
         matches!(self.estado, EstadoPr::Aberto | EstadoPr::Rascunho)
     }
+
+    /// Mesclar quando ficar pronto está ligado (o "Ship").
+    pub fn armado(&self) -> bool {
+        self.ao_ficar_pronto.is_some()
+    }
+
+    /// O head do PR não é o que o Vitral enviou.
+    pub fn tem_commit_de_fora(&self) -> bool {
+        !self.commits_de_fora.is_empty() || (!self.sha.is_empty() && !self.sha_publicado.is_empty() && self.sha != self.sha_publicado)
+    }
+}
+
+/// Uma coisa do PR que espera o usuário, em "Esperando você" e na linha de acompanhamento.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum EsperaPr {
+    /// "CI falhou no PR #12" [Mandar ao chat]: no Watch, ou depois das 3 rodadas automáticas.
+    CiFalhou {
+        /// O sha e os links dos checks falhos (a `falha_avisada`).
+        chave: String,
+        /// Os nomes dos checks que falharam.
+        falhos: Vec<String>,
+    },
+    /// "Revisão no PR #12 (2 de @x)" [Mandar ao chat]: comentários de quem tem acesso.
+    Revisao { ids: Vec<u64>, autores: Vec<String> },
+    /// "Comentário de @y (sem acesso ao repositório) no PR #12" [Ver] [Mandar ao chat]: nunca vai
+    /// sozinho a ninguém.
+    Terceiro { id: u64, autor: String, url: String },
+    /// "PR #12 pronto para mesclar" [Mesclar], no Watch.
+    ProntoParaMesclar,
+    /// "Chegou commit de fora no PR #12" [Ver].
+    CommitDeFora { shas: Vec<String> },
+    /// "Checks parados há 2 h no PR #12".
+    ChecksParados,
+    /// "O GitHub não aceitou mesclar o PR #12: <motivo>" (o Ship foi desarmado).
+    MesclaRecusada { motivo: String },
+    /// Um item de uma versão mais nova, regravado como veio.
+    #[serde(untagged)]
+    Desconhecido(serde_json::Value),
+}
+
+/// O que abriu uma rodada de ajuste pelo PR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GatilhoAjuste {
+    /// O aviso do CI que falhou.
+    Ci,
+    /// Comentários de revisão de quem tem acesso (ou de um bot de revisão).
+    Revisao,
+    /// Um comentário de quem não tem acesso, mandado ao chat pelo usuário: nunca publica sozinho.
+    Terceiro,
+}
+
+/// A rodada de ajuste aberta por um aviso do PR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AjustePr {
+    pub rodada: u32,
+    pub gatilho: GatilhoAjuste,
 }
 
 /// Um PR da tarefa que já foi mesclado ou fechado.
@@ -622,6 +699,20 @@ pub struct PrAnterior {
     pub estado: EstadoPr,
     pub mesclado_por: Option<String>,
     pub em: u64,
+    /// "dono/nome" do destino (para reabrir e fechar a issue depois).
+    pub repositorio: String,
+    /// O head final do PR (o recomeço da cópia parte dele).
+    pub sha: String,
+    /// O método com que o Vitral mesclou; `None` quando foi outra pessoa.
+    pub metodo: Option<String>,
+    /// O Vitral apagou o ramo no GitHub depois de mesclar.
+    pub ramo_apagado: bool,
+    /// A issue ligada foi para Concluída (Linear) ou fechada pelo `Closes` (GitHub).
+    pub issue_concluida: bool,
+    /// Mesclado sem fechar a issue do GitHub (o `closingIssuesReferences` veio vazio): a linha do PR
+    /// oferece "Fechar a issue #45" (o número).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fechar_issue: Option<u64>,
 }
 
 fn sim() -> bool {
@@ -745,6 +836,22 @@ impl Tarefa {
     /// A conferência da entrega ficou no meio (Vitral fechado): refaz ao retomar.
     pub fn conferencia_cortada(&self) -> bool {
         self.estado == EstadoTarefa::EmRevisao && self.entrega_pendente.is_some() && !self.conferindo()
+    }
+
+    /// A rodada atual foi aberta por um aviso do PR (CI, revisão, "Mandar ao chat").
+    pub fn ajuste_do_pr(&self) -> Option<AjustePr> {
+        self.pr.as_ref().and_then(|p| p.ajuste).filter(|a| a.rodada == self.rodada)
+    }
+
+    /// O pedido aberto é do usuário, sem dono, e mesmo assim conta como pedido (a entrega passa pela
+    /// verificação e pelo revisor): o de uma issue ("Iniciar agente") e o ajuste aberto pelo PR.
+    pub fn pedido_sem_dono(&self) -> bool {
+        self.dono().is_none() && (self.pedido_da_issue || self.ajuste_do_pr().is_some())
+    }
+
+    /// O PR aberto da tarefa (aberto ou rascunho).
+    pub fn pr_aberto(&self) -> Option<&Pr> {
+        self.pr.as_ref().filter(|p| p.aberto())
     }
 
     /// A verificação e o parecer guardados são desta rodada: nem o trabalhador está ajustando nem

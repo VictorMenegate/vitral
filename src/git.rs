@@ -383,6 +383,7 @@ pub fn juntar(
     mensagem: &str,
     ramo_alvo: Option<&str>,
     grupo: &str,
+    excluir: &[String],
 ) -> Result<Juntada> {
     if raiz_comum(copia).is_none() || raiz_comum(copia) != raiz_comum(origem) {
         return Ok(Juntada::OutroRepositorio);
@@ -393,7 +394,7 @@ pub fn juntar(
             return Ok(Juntada::RamoTrocado { alvo: alvo.to_string(), atual });
         }
     }
-    let commits = match aprovar(origem, copia, branch, base, mensagem)? {
+    let commits = match aprovar(origem, copia, branch, base, mensagem, excluir)? {
         Juncao::Juntou { commits } => Some(commits),
         Juncao::SemMudancas => None,
         outra => return Ok(Juntada::Falhou(outra)),
@@ -958,17 +959,17 @@ fn falha_do_merge(pasta: &Path, mesclado: &str, alvo: String, erro: anyhow::Erro
     Err(erro)
 }
 
-/// Faz o commit do que sobrou na cópia e junta o branch dela no branch atual do projeto.
+/// Faz o commit do que sobrou na cópia e junta o branch dela no branch atual do projeto. Os arquivos
+/// copiados da origem (`excluir`, o `tarefa.arquivos_copiados`) nunca entram no commit.
 pub fn aprovar(
     projeto: &Path,
     copia: &Path,
     branch: &str,
     base: &str,
     mensagem: &str,
+    excluir: &[String],
 ) -> Result<Juncao> {
-    // Os arquivos copiados da origem (tarefa.arquivos_copiados) entram aqui quando o modelo os
-    // tiver guardados.
-    commitar(copia, mensagem, &[])?;
+    commitar(copia, mensagem, excluir)?;
     let desde = base_efetiva(projeto, copia, base);
     let commits = git(copia, &["log", "--oneline", &format!("{desde}..HEAD")])?;
     if commits.is_empty() {
@@ -1744,12 +1745,12 @@ mod testes {
         let c2 = criar_worktree(&projeto, &projeto.with_extension("c2"), "vitral/t2-conflito").unwrap();
         std::fs::write(c1.caminho.join("a.txt"), "da tarefa 1\n").unwrap();
         std::fs::write(c1.caminho.join("b.txt"), "novo da tarefa 1\n").unwrap();
-        let juncao = aprovar(&projeto, &c1.caminho, &c1.branch, &c1.base, "t1").unwrap();
+        let juncao = aprovar(&projeto, &c1.caminho, &c1.branch, &c1.base, "t1", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         remover_worktree(&projeto, &c1.caminho, &c1.branch);
 
         std::fs::write(c2.caminho.join("a.txt"), "da tarefa 2\n").unwrap();
-        let Juncao::Conflito { alvo, .. } = aprovar(&projeto, &c2.caminho, &c2.branch, &c2.base, "t2").unwrap()
+        let Juncao::Conflito { alvo, .. } = aprovar(&projeto, &c2.caminho, &c2.branch, &c2.base, "t2", &[]).unwrap()
         else {
             panic!("devia dar conflito");
         };
@@ -1768,7 +1769,7 @@ mod testes {
         descartar_arquivo(&c2.caminho, &base, "b.txt").unwrap();
         assert!(c2.caminho.join("b.txt").exists());
 
-        let Juncao::Juntou { commits } = aprovar(&projeto, &c2.caminho, &c2.branch, &c2.base, "t2").unwrap()
+        let Juncao::Juntou { commits } = aprovar(&projeto, &c2.caminho, &c2.branch, &c2.base, "t2", &[]).unwrap()
         else {
             panic!("devia juntar");
         };
@@ -1812,7 +1813,7 @@ mod testes {
         std::fs::write(projeto.join("saida-dos-testes.txt"), "x").unwrap();
         assert!(!criar_worktree(&projeto, &projeto.with_extension("outra"), "vitral/t2-init").unwrap().sujo);
         std::fs::write(copia.caminho.join("novo.py"), "y = 2\n").unwrap();
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         remover_worktree(&projeto, &copia.caminho, &copia.branch);
         remover_worktree(&projeto, &projeto.with_extension("outra"), "vitral/t2-init");
@@ -1870,7 +1871,7 @@ mod testes {
         std::fs::write(projeto.join("docs"), "um arquivo onde a tarefa cria uma pasta\n").unwrap();
         std::fs::write(projeto.join("outro.txt"), "não atrapalha\n").unwrap();
         let Juncao::SoltosNoProjeto { mut arquivos } =
-            aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1").unwrap()
+            aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1", &[]).unwrap()
         else {
             panic!("devia avisar dos arquivos soltos");
         };
@@ -1880,7 +1881,7 @@ mod testes {
         assert_eq!(std::fs::read_to_string(projeto.join("novo.txt")).unwrap(), "do usuário\n");
         std::fs::remove_file(projeto.join("novo.txt")).unwrap();
         std::fs::remove_file(projeto.join("docs")).unwrap();
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "t1", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         remover_worktree(&projeto, &copia.caminho, &copia.branch);
         let _ = std::fs::remove_dir_all(&projeto);
@@ -2147,7 +2148,7 @@ mod testes {
         std::fs::create_dir_all(copia.caminho.join("__pycache__")).unwrap();
         std::fs::write(copia.caminho.join("__pycache__/x.pyc"), "lixo").unwrap();
         assert_eq!(arquivos_mudados(&copia.caminho, &copia.base), vec!["b.txt".to_string()]);
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         assert!(projeto.join("b.txt").exists());
         assert!(!projeto.join("__pycache__").exists());
@@ -2187,10 +2188,10 @@ mod testes {
         // Outro git segurando o índice do projeto: espera, desiste e não chama de conflito.
         let trava = projeto.join(".git/index.lock");
         std::fs::write(&trava, "").unwrap();
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Ocupado { .. }));
         std::fs::remove_file(&trava).unwrap();
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste", &[]).unwrap();
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         remover_worktree(&projeto, &copia.caminho, &copia.branch);
 
@@ -2199,7 +2200,7 @@ mod testes {
         std::fs::write(copia.caminho.join("a.txt"), "da tarefa\n").unwrap();
         std::fs::write(projeto.join("a.txt"), "do projeto\n").unwrap();
         git(&projeto, &["commit", "-q", "-am", "outra tarefa"]).unwrap();
-        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste").unwrap();
+        let juncao = aprovar(&projeto, &copia.caminho, &copia.branch, &copia.base, "teste", &[]).unwrap();
         let Juncao::Conflito { arquivos, alvo, .. } = juncao else {
             panic!("devia ser conflito");
         };
@@ -2265,7 +2266,7 @@ mod testes {
         assert_eq!(contar_mudancas(&copia.caminho, &copia.base).unwrap(), (1, 1, 0));
         let juntar_agora = |base: &str| {
             na_vez_do_projeto(&projeto, || {
-                juntar(&projeto, &copia.caminho, &copia.branch, base, "teste", copia.ramo.as_deref(), "t1")
+                juntar(&projeto, &copia.caminho, &copia.branch, base, "teste", copia.ramo.as_deref(), "t1", &[])
             })
             .unwrap()
         };
@@ -2288,7 +2289,7 @@ mod testes {
         git(&projeto, &["checkout", "-q", "-b", "outro"]).unwrap();
         let ramo = ramo_atual(&copia.caminho).unwrap();
         assert!(matches!(
-            juntar(&projeto, &copia.caminho, &ramo, &base, "x", copia.ramo.as_deref(), "t1").unwrap(),
+            juntar(&projeto, &copia.caminho, &ramo, &base, "x", copia.ramo.as_deref(), "t1", &[]).unwrap(),
             Juntada::RamoTrocado { atual, .. } if atual == "outro"
         ));
         limpar(&projeto, &[&copia.caminho]);
@@ -2458,7 +2459,7 @@ mod testes {
         std::fs::write(pai.caminho.join("do-pai.txt"), "pai de novo\n").unwrap();
         let juncao = na_vez_do_projeto(&pai.caminho, || {
             assert!(checkpoint(&pai.caminho, "Vitral: ponto antes de juntar o ajudante #2").unwrap());
-            aprovar(&pai.caminho, &ajudante.caminho, &ajudante.branch, &ajudante.base, "Ajudante #2").unwrap()
+            aprovar(&pai.caminho, &ajudante.caminho, &ajudante.branch, &ajudante.base, "Ajudante #2", &[]).unwrap()
         });
         assert!(matches!(juncao, Juncao::Juntou { .. }));
         assert_eq!(ramo_atual(&pai.caminho).as_deref(), Some("vitral/t1-pai"));
@@ -2470,7 +2471,7 @@ mod testes {
 
         // O Juntar do pai leva tudo à origem.
         let feita = na_vez_do_projeto(&origem, || {
-            juntar(&origem, &pai.caminho, &pai.branch, &pai.base, "Chat 1", pai.ramo.as_deref(), "t1").unwrap()
+            juntar(&origem, &pai.caminho, &pai.branch, &pai.base, "Chat 1", pai.ramo.as_deref(), "t1", &[]).unwrap()
         });
         assert!(matches!(feita, Juntada::Feita { commits: Some(_), .. }));
         assert!(origem.join("do-ajudante.txt").exists() && origem.join("do-pai.txt").exists());
@@ -2509,8 +2510,6 @@ mod testes_copia {
 
 pub use pr_e_rede::*;
 
-// Provisório: o motor passa a usar este bloco no G4.
-#[allow(dead_code)]
 mod pr_e_rede {
     use super::*;
     use crate::remoto::{self, ErroRemoto, Executor, SaidaBruta};
@@ -2535,10 +2534,27 @@ mod pr_e_rede {
         }
     }
 
+    /// Sem os ganchos do repositório no que o Vitral roda nas cópias do modo PR (push, merge, o
+    /// commit e o rebase do recomeço): o `.git` é de todas as cópias, e o chat isolado alcança ele.
+    /// Um `pre-push` escrito por um agente rodaria fora do isolamento, com as credenciais.
+    pub(crate) const SEM_GANCHOS: [&str; 2] = ["-c", if cfg!(windows) { "core.hooksPath=NUL" } else { "core.hooksPath=/dev/null" }];
+
     fn git_rede(e: &dyn Executor, pasta: &Path, args: &[&str], limite: Duration) -> Result<SaidaBruta, ErroRemoto> {
-        let todos: Vec<String> =
-            CAMINHOS_LONGOS.iter().chain(&["-c", "core.quotePath=false"]).chain(args).map(|a| a.to_string()).collect();
+        let todos: Vec<String> = CAMINHOS_LONGOS
+            .iter()
+            .chain(&["-c", "core.quotePath=false"])
+            .chain(&SEM_GANCHOS)
+            .chain(args)
+            .map(|a| a.to_string())
+            .collect();
         e.rodar("git", &todos, &ambiente_de_rede(), pasta, None, limite)
+    }
+
+    /// O git local de uma cópia do modo PR, sem os ganchos.
+    fn git_sem_ganchos(pasta: &Path, args: &[&str]) -> Result<String> {
+        let mut todos: Vec<&str> = SEM_GANCHOS.to_vec();
+        todos.extend(args);
+        git(pasta, &todos)
     }
 
     /// Um git local que precisa da saída com qualquer código (o `merge-tree` sai com 1 no conflito).
@@ -2605,9 +2621,16 @@ mod pr_e_rede {
         let mut commit = vec!["commit", "-q", "-m", mensagem];
         if sem_ganchos {
             commit.push("--no-verify");
+            git_sem_ganchos(copia, &commit)?;
+        } else {
+            git(copia, &commit)?;
         }
-        git(copia, &commit)?;
         Ok(true)
+    }
+
+    /// O `commitar` do modo PR: sem os ganchos do repositório (ver `SEM_GANCHOS`).
+    pub fn commitar_sem_ganchos(copia: &Path, mensagem: &str, excluir: &[String]) -> Result<bool> {
+        commitar_com(copia, mensagem, excluir, true)
     }
 
     /// Uma cópia nova que parte de `ponto` (`origin/main` no modo PR); sem ponto, do HEAD da origem,
@@ -2742,7 +2765,7 @@ mod pr_e_rede {
     /// Junta `alvo` na cópia (`merge --no-edit`). Conflito: desfaz o merge e devolve os arquivos.
     pub fn trazer(copia: &Path, alvo: &str) -> Result<Juncao> {
         let antes = git(copia, &["rev-parse", "HEAD"])?;
-        if let Err(erro) = git(copia, &["merge", "--no-edit", alvo]) {
+        if let Err(erro) = git_sem_ganchos(copia, &["merge", "--no-edit", alvo]) {
             return falha_do_merge(copia, alvo, alvo.to_string(), erro);
         }
         let depois = git(copia, &["rev-parse", "HEAD"])?;
@@ -2964,7 +2987,7 @@ mod pr_e_rede {
                 Ok(())
             };
             if depois_do_pr > 0 {
-                if let Err(erro) = git(copia, &["rebase", "--onto", &alvo, head_final]) {
+                if let Err(erro) = git_sem_ganchos(copia, &["rebase", "--onto", &alvo, head_final]) {
                     let arquivos: Vec<String> = git(copia, &["diff", "--name-only", "--diff-filter=U"])
                         .unwrap_or_default()
                         .lines()
@@ -2979,10 +3002,10 @@ mod pr_e_rede {
                 }
                 match &antigo {
                     Some(_) => git(copia, &["branch", "-m", ramo_novo])?,
-                    None => git(copia, &["checkout", "-q", "-b", ramo_novo])?,
+                    None => git_sem_ganchos(copia, &["checkout", "-q", "-b", ramo_novo])?,
                 };
             } else {
-                git(copia, &["checkout", "-q", "-B", ramo_novo, &alvo])?;
+                git_sem_ganchos(copia, &["checkout", "-q", "-B", ramo_novo, &alvo])?;
                 // Seguro: o histórico está no PR e no ref de antes do recomeço.
                 if let Some(antigo) = antigo.as_deref().filter(|a| *a != ramo_novo) {
                     let _ = git(copia, &["branch", "-D", antigo]);
@@ -3021,6 +3044,51 @@ mod pr_e_rede {
             return Err(ErroRemoto::Conflito(format!("o ramo {ramo} mudou no GitHub; não foi apagado")));
         }
         Err(remoto::classificar_git(saida.codigo, &saida.erros()))
+    }
+
+    /// Depois do PR mesclado: a origem limpa e no ramo da base anda por fast-forward até
+    /// `<remoto>/<base>` (o fetch já foi feito). Num outro ramo, ou com mudanças, fica como está.
+    /// Diz se andou. Chame dentro da vez do projeto.
+    pub fn avancar_origem(origem: &Path, remoto: &str, base: &str) -> Result<bool> {
+        if conferir_argumento(remoto).is_err() || conferir_argumento(base).is_err() {
+            return Ok(false);
+        }
+        if ramo_atual(origem).as_deref() != Some(base) || !git(origem, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
+            return Ok(false);
+        }
+        let alvo = format!("refs/remotes/{remoto}/{base}");
+        let antes = git(origem, &["rev-parse", "HEAD"])?;
+        if git(origem, &["merge", "--ff-only", "-q", &alvo]).is_err() {
+            return Ok(false);
+        }
+        Ok(git(origem, &["rev-parse", "HEAD"])? != antes)
+    }
+
+    /// `sha` é ancestral de `de` (ou ele mesmo) nesta cópia; um commit que ela não tem não é.
+    pub fn e_ancestral(copia: &Path, sha: &str, de: &str) -> bool {
+        !sha.is_empty() && !de.is_empty() && git(copia, &["merge-base", "--is-ancestor", sha, de]).is_ok()
+    }
+
+    /// Os arquivos que a cópia acrescenta desde a base (o "Arquivos novos" do diálogo), sem os
+    /// copiados da origem, que não entram no commit.
+    pub fn arquivos_acrescentados(copia: &Path, base: &str, excluir: &[String]) -> Vec<String> {
+        let _ = adicionar(copia, "-N");
+        let situacao = git(copia, &["diff", "--name-status", "--no-renames", "-z", base, "--", "."]).unwrap_or_default();
+        separar_nulos(&situacao)
+            .chunks_exact(2)
+            .filter(|par| par[0] == "A" && !excluir.contains(&par[1]))
+            .map(|par| par[1].clone())
+            .collect()
+    }
+
+    /// Os shas curtos de `de..ate` (os commits que vieram do GitHub, por exemplo).
+    pub fn commits_entre(copia: &Path, de: &str, ate: &str) -> Vec<String> {
+        git(copia, &["log", "--format=%h", &format!("{de}..{ate}")])
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty())
+            .collect()
     }
 
     #[cfg(test)]
@@ -3438,7 +3506,9 @@ mod pr_e_rede {
             let esperados: Vec<&str> = CAMINHOS_LONGOS
                 .iter()
                 .copied()
-                .chain(["-c", "core.quotePath=false", "fetch", "--no-tags", "--quiet", "origin", "main", "refs/pull/3/head"])
+                .chain(["-c", "core.quotePath=false"])
+                .chain(SEM_GANCHOS)
+                .chain(["fetch", "--no-tags", "--quiet", "origin", "main", "refs/pull/3/head"])
                 .collect();
             assert_eq!(chamada.args, esperados);
             assert_eq!(chamada.limite, LIMITE_FETCH);

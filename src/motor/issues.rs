@@ -3,8 +3,6 @@
 //! anexar e ligar, o estado de uma issue, os efeitos de iniciar no Linear e no GitHub, as
 //! ferramentas `listar_issues` e `ver_issue` e quem roda isolado. Este módulo é o
 //! `motor::issues`; o dos tipos comuns e das funções puras é o `crate::issues`.
-// Provisório: a interface das issues (G3b) passa a chamar a API pública daqui.
-#![allow(dead_code)]
 
 use std::{
     cell::RefCell,
@@ -25,9 +23,6 @@ use crate::{
     prompts::PorqueIsolado,
     remoto::{self, ErroRemoto},
 };
-
-/// A resposta provisória das ações que ainda não existem.
-pub const AINDA_NAO: &str = "Ainda não disponível nesta versão do Vitral.";
 
 /// Sem ser lida por isso, a próxima leitura de uma lista (ou de um detalhe) conta como abrir.
 const SEM_VER: Duration = Duration::from_secs(10);
@@ -1113,7 +1108,7 @@ impl Motor {
 
     /// `<remoto>/<base>` do modo PR: o remote da pasta e o ramo de destino (o configurado, senão o
     /// padrão do repositório, senão o que o último fetch viu).
-    fn ponto_de_partida(&self, origem: &Path, config: &crate::modelo::ConfigGithub) -> Option<String> {
+    pub(super) fn ponto_de_partida(&self, origem: &Path, config: &crate::modelo::ConfigGithub) -> Option<String> {
         let remotos = remotos_do_github(&git::remotos(origem));
         let remoto = remoto_escolhido(&remotos, config)?;
         let base = Some(config.base.trim().to_string())
@@ -1357,9 +1352,11 @@ impl Motor {
         cx.notify();
     }
 
-    /// "Destravar e tentar" no efeito que encontrou o chaveiro trancado.
+    /// "Destravar e tentar" no efeito que encontrou o chaveiro trancado (também os do PR).
+    #[allow(dead_code)] // Provisório: o item de "Esperando você" (G5).
     pub fn tentar_efeito_pendente(&mut self, tarefa: u64, cx: &mut Context<Self>) -> Receiver<Resposta> {
-        let pendente = self.tarefa(tarefa).and_then(|t| t.efeitos_issue.as_ref()).is_some_and(|e| !e.feitos && e.pendente.is_some());
+        let do_pr = self.tarefa(tarefa).and_then(|t| t.efeitos_issue.as_ref()).is_some_and(|e| !e.do_pr.is_empty());
+        let pendente = do_pr || self.tarefa(tarefa).and_then(|t| t.efeitos_issue.as_ref()).is_some_and(|e| !e.feitos && e.pendente.is_some());
         if !pendente {
             return respondido(Resposta::ok("Nada pendente nesta issue."));
         }
@@ -1372,6 +1369,11 @@ impl Motor {
                     return;
                 }
                 m.rodar_efeitos(tarefa, None, false, cx);
+                // Os do PR (ligar o PR, concluir ao mesclar) que esperavam a chave.
+                m.rodar_efeitos_do_pr(tarefa, cx);
+                if let Some(e) = m.tarefa_mut(tarefa).and_then(|t| t.efeitos_issue.as_mut()) {
+                    e.pendente = None;
+                }
                 let _ = envia.try_send(Resposta::ok("Mexendo na issue agora."));
             })),
             cx,
@@ -1538,7 +1540,8 @@ impl Motor {
             None => "sem verificação".into(),
         };
         let revisor = t.revisao.as_ref().map_or_else(|| "sem revisor".to_string(), |r| format!("revisor: {}", r.veredito));
-        let texto = format!("Pronto para revisar {chave}: {verificacao}, {revisor}. As mudanças estão em Revisar e juntar.");
+        let botao = if self.entrega_por_pr(&t) { "Revisar e abrir PR" } else { "Revisar e juntar" };
+        let texto = format!("Pronto para revisar {chave}: {verificacao}, {revisor}. As mudanças estão em {botao}.");
         self.avisar(&t.trabalhador, &texto, false);
         // Conta como resposta nova (o ponto na lista e o sino).
         if let Some(c) = self.chat_mut(&t.trabalhador) {
