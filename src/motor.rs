@@ -36,7 +36,7 @@ pub use conexoes::{Provedor, RepoGithub, metodos_permitidos};
 pub use issues::{AnexoIssue, EscopoIssues, ModoIssue, OpcoesDaIssue, ResultadoLote, VisaoLista, ligada_de};
 pub use mestre::ResumoVolta;
 #[allow(unused_imports)]
-pub use prs::{AcaoPr, Confirmado, EventoLinha, FonteDiff, PedidoPr, RodarDeNovo};
+pub use prs::{AcaoPr, AndamentoPr, Confirmado, EventoLinha, FonteDiff, OrigemAcao, OrigemAjuste, PedidoPr, RodarDeNovo};
 use mestre::{Ciclos, MotivoPassagem, Readmes};
 
 use crate::{
@@ -496,6 +496,9 @@ pub struct Motor {
     integracao: conexoes::Integracao,
     /// As listas e os detalhes das issues (só na memória).
     cache_issues: issues::Issues,
+    /// O PR das tarefas: o vigia, o que está sendo publicado ou mesclado e o que veio do GitHub
+    /// para a aba PR (só na memória).
+    prs: prs::EstadoPrs,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -687,6 +690,19 @@ impl Motor {
             });
         })
         .detach();
+        // O vigia dos PRs: um laço só, que espera o próximo prazo ou o sinal (o fim de toda consulta e
+        // as ações que mudam alguma coisa). Sem PR para acompanhar, ele só espera o sinal.
+        let (acordar_vigia, acordado_vigia) = smol::channel::unbounded::<()>();
+        cx.spawn(async move |motor, cx| {
+            loop {
+                let Ok(quando) = motor.update(cx, |m, cx| m.volta_do_vigia(cx)) else {
+                    break;
+                };
+                let relogio = cx.background_executor().clone();
+                prs::esperar_vigia(quando, &acordado_vigia, move |espera| relogio.timer(espera)).await;
+            }
+        })
+        .detach();
         let mut motor = Self {
             dados,
             config,
@@ -757,6 +773,7 @@ impl Motor {
             encerrado: Arc::default(),
             integracao: conexoes::Integracao::new(Arc::new(crate::remoto::Real)),
             cache_issues: issues::Issues::default(),
+            prs: prs::EstadoPrs::novo(acordar_vigia),
             servidor,
             sinais,
             _recebedor,
@@ -785,6 +802,8 @@ impl Motor {
         // O pedido de uma issue que não chegou a sair antes de o Vitral fechar.
         if motor.somente_leitura.is_none() {
             motor.retomar_pedidos_de_issue(cx);
+            // O vigia retoma os PRs abertos (e o último fechado de cada chat) na primeira volta.
+            motor.vigiar_na_hora();
         }
         motor
     }
@@ -2169,6 +2188,10 @@ impl Motor {
         if let Some(c) = self.chat_mut(chat) {
             trocar_arquivado(c, agora());
         }
+        // Arquivado, o Ship do PR dele desarma (o PR continua aberto; a interface oferece fechar).
+        if self.chat(chat).is_some_and(|c| c.arquivado) {
+            self.desarmar_ao_arquivar(chat, cx);
+        }
         // A tarefa do chat arquivado solta as portas; a do desarquivado ganha de novo (e o que esperou
         // por ele entra).
         if self.chat(chat).is_some_and(|c| c.arquivado) {
@@ -2943,12 +2966,22 @@ impl Motor {
         let origem = tarefa.map(|t| self.origem_da_tarefa(t)).filter(|o| !o.as_os_str().is_empty()).unwrap_or_else(|| chat.cwd.clone());
         let forma = tarefa.map_or(Forma::Direta, |t| t.forma);
         let avulso = forma == Forma::Direta && chat.cwd.starts_with(self.dados.pasta_avulso(""));
-        let onde = match forma {
+        // No modo PR, o prompt fala do PR (o repositório e a base), e não do Juntar.
+        let destino_pr = tarefa.filter(|t| self.entrega_por_pr(t)).map(|t| {
+            let config = self.config_da_pasta(&t.projeto, &origem).github;
+            let repositorio = self.destino_do_pr(&origem, &config).unwrap_or_else(|| "o GitHub".into());
+            let base = self.remoto_base(t).and_then(|p| p.split_once('/').map(|(_, b)| b.to_string())).unwrap_or_else(|| "a base".into());
+            (repositorio, base)
+        });
+        let onde = match (forma, &destino_pr) {
+            (Forma::Copia, Some((repositorio, base))) => prompts::Onde::CopiaPr { cwd: &chat.cwd, origem: &origem, repositorio, base },
+            _ => match forma {
             Forma::Copia => prompts::Onde::Copia { cwd: &chat.cwd, origem: &origem },
             Forma::DiretaGit => prompts::Onde::DiretaGit { origem: &origem },
             Forma::Direta if chat.importada.is_some() => prompts::Onde::Continuada { cwd: &chat.cwd },
             Forma::Direta if avulso => prompts::Onde::Avulso { cwd: &chat.cwd },
             Forma::Direta => prompts::Onde::Direta { origem: &origem },
+            },
         };
         let outras: Vec<PathBuf> = pastas
             .iter()
@@ -3518,6 +3551,7 @@ impl Motor {
             Sinal::Integracao => {
                 self.atender_pedidos(cx);
                 self.atender_pedidos_de_issues(cx);
+                self.atender_pedidos_de_prs(cx);
             }
         }
         true
@@ -3921,6 +3955,10 @@ impl Motor {
         } else if chat.papel == Papel::Projeto && !self.janela_ativa && !erro {
             self.notificar(&chat, &texto_do_fim(&texto));
         }
+        // O PR mesclou com o chat rodando: a cópia recomeça agora que ele parou.
+        if chat.papel == Papel::Projeto {
+            self.recomeco_pendente(chat_id, cx);
+        }
         self.liberar_vaga(cx);
         self.salvar();
     }
@@ -4093,6 +4131,8 @@ impl Motor {
         let encerrado = self.encerrado.clone();
         // Na cópia de um chat isolado, a verificação e o revisor rodam isolados como ele.
         let isolado = self.modo_isolado_da_tarefa(&tarefa);
+        // No modo PR, a base é o ponto comum com `<remoto>/<base>`: o que entrou no GitHub não conta.
+        let remoto_base = self.remoto_base(&tarefa);
 
         cx.spawn(async move |motor, cx| {
             let tarefa_bg = tarefa.clone();
@@ -4109,7 +4149,7 @@ impl Motor {
                     // Depois de um `git merge` pedido num conflito, a base certa é o que veio do projeto.
                     let base = match (&pasta_diff, &tarefa.base) {
                         (Some(_), Some(b)) if direta => Some(b.clone()),
-                        (Some(p), Some(b)) => Some(git::base_efetiva(&projeto, p, b)),
+                        (Some(p), Some(b)) => Some(git::base_da_tarefa(&projeto, p, b, remoto_base.as_deref())),
                         _ => None,
                     };
                     let (estatistica, meus) = match (&pasta_diff, &base) {
@@ -4189,6 +4229,9 @@ impl Motor {
                         let texto = mestre::relatorio_ao_pai(t, &relatorio, estatistica.as_deref(), erro, falha_revisor.as_deref());
                         motor.entregar(dono, Some("Vitral".into()), texto, cx);
                     }
+                } else if vale && motor.tarefa(id).is_some_and(|t| t.pr_aberto().is_some()) {
+                    // A rodada de um chat com PR aberto: publica sozinha (Ship) ou espera "Atualizar PR".
+                    motor.entrega_do_pr_conferida(id, cx);
                 } else if vale && tarefa.pedido_da_issue {
                     // O pedido de uma issue é do usuário: "Pronto para revisar ENG-123".
                     motor.pronta_para_revisar(id);
@@ -4499,7 +4542,7 @@ impl Motor {
                             (recusa, _) => Err(recusa.unwrap_or_default()),
                         };
                         match portao {
-                            Ok(ressalva) => self.aprovar_tarefa(id, texto("nota"), ressalva, chamada.resposta, &chat.id, cx),
+                            Ok(ressalva) => self.aprovar_tarefa(id, texto("nota"), ressalva, chamada.resposta, &chat.id, None, cx),
                             Err(recusa) => {
                                 let _ = chamada.resposta.try_send(Resposta::erro(recusa));
                             }
@@ -4682,6 +4725,21 @@ impl Motor {
         }
         let caminho_projeto = self.origem_da_tarefa(&tarefa);
         let area = self.dados.pasta_copias(&tarefa.projeto);
+        // O chat de uma pasta que entrega por PR (sem issue, que já planejou) planeja agora, antes da
+        // cópia nascer: o ramo pelo prefixo da pasta e o ponto de partida no GitHub. Fica gravado.
+        let tarefa = if de_projeto && tarefa.branch.is_none() && tarefa.ramo_planejado.is_none() && self.entrega_por_pr(&tarefa) {
+            let config = self.config_da_pasta(&tarefa.projeto, &caminho_projeto).github;
+            let existentes = git::nomes_de_ramos(&caminho_projeto);
+            let ramo = crate::issues::ramo_da_tarefa(id, None, None, &config.prefixo_ramo, &tarefa.titulo, &|nome| existentes.contains(nome));
+            let partir_de = self.ponto_de_partida(&caminho_projeto, &config);
+            if let Some(t) = self.tarefa_mut(id) {
+                t.ramo_planejado = Some(ramo);
+                t.partir_de = partir_de;
+            }
+            self.tarefa(id).cloned().unwrap_or(tarefa)
+        } else {
+            tarefa
+        };
         // O ramo e o ponto de partida escolhidos antes (o do Linear, o prefixo da pasta, o
         // `<remoto>/<base>` do modo PR) valem sempre, também ao refazer: nunca são recalculados.
         let novo_branch = tarefa.ramo_planejado.clone().unwrap_or_else(|| format!("vitral/t{id}-{}", slug(&tarefa.titulo)));
@@ -4871,6 +4929,7 @@ impl Motor {
                     t.branch = Some(copia.branch);
                     t.base = Some(copia.base);
                     t.ramo_alvo = copia.ramo;
+                    t.arquivos_copiados = copiados.clone();
                 }
             }
             Err(erro) => {
@@ -5035,6 +5094,12 @@ impl Motor {
             t.ramo_alvo = copia.ramo;
             t.preparada = true;
             t.copia_limpa = false;
+            // O que veio da origem (o .env) nunca entra no commit: nem no Juntar, nem no PR.
+            for arquivo in &copiados {
+                if !t.arquivos_copiados.contains(arquivo) {
+                    t.arquivos_copiados.push(arquivo.clone());
+                }
+            }
             t.falha_copia = None;
             t.preparacao = preparacao;
             (t.progresso, t.parada) = (None, None);
@@ -5067,6 +5132,7 @@ impl Motor {
             ));
             return;
         }
+        let remoto_base = self.remoto_base(&tarefa);
         let (Some(pasta), Some(base)) = (tarefa.worktree, tarefa.base) else {
             let _ = resposta.try_send(Resposta::ok(
                 "Esta tarefa roda direto na pasta do projeto (sem git): leia os arquivos ou rode `git \
@@ -5075,7 +5141,7 @@ impl Motor {
             return;
         };
         cx.background_spawn(async move {
-            let base = git::base_efetiva(&projeto, &pasta, &base);
+            let base = git::base_da_tarefa(&projeto, &pasta, &base, remoto_base.as_deref());
             let texto = git::diff_para_coordenador(&pasta, &projeto, &base, &arquivos, &apontados, 20_000)
                 .unwrap_or_else(|erro| format!("Não deu para ler o diff: {erro}"));
             let _ = resposta.try_send(Resposta::ok(texto));
@@ -5086,6 +5152,7 @@ impl Motor {
     pub fn diff_da_tarefa(&self, id: u64, cx: &mut Context<Self>) -> Task<Result<String, LeituraDiff>> {
         let tarefa = self.tarefa(id).cloned();
         let projeto = tarefa.as_ref().map(|t| self.origem_da_tarefa(t));
+        let remoto_base = tarefa.as_ref().and_then(|t| self.remoto_base(t));
         cx.background_spawn(async move {
             let (Some(tarefa), Some(projeto)) = (tarefa, projeto) else {
                 return Err(LeituraDiff::SemCopia);
@@ -5096,7 +5163,7 @@ impl Motor {
             if !pasta.is_dir() {
                 return Err(LeituraDiff::SemCopia);
             }
-            git::diff_completo(&pasta, &git::base_efetiva(&projeto, &pasta, &base))
+            git::diff_completo(&pasta, &git::base_da_tarefa(&projeto, &pasta, &base, remoto_base.as_deref()))
                 .map_err(|erro| LeituraDiff::Git(format!("{erro:#}")))
         })
     }
@@ -5113,7 +5180,7 @@ impl Motor {
         let (avisa, aviso) = smol::channel::bounded::<Resposta>(1);
         // Só há a quem avisar com um pedido aberto (no chat de projeto, a junção tira o dono).
         let coordenador = self.tarefa(id).and_then(|t| t.dono()).map(str::to_string);
-        self.aprovar_tarefa(id, "Aprovada pelo usuário no Vitral.".into(), ressalva, avisa, "usuario", cx);
+        self.aprovar_tarefa(id, "Aprovada pelo usuário no Vitral.".into(), ressalva, avisa, "usuario", None, cx);
         cx.spawn(async move |motor, cx| {
             let Ok(resposta) = aviso.recv().await else {
                 return;
@@ -5154,7 +5221,7 @@ impl Motor {
             return Resposta::ok("Os comentários foram para o chat.");
         }
         // Nada vai anexado: no Revisar, o usuário escolhe as sugestões do revisor com "Usar".
-        let resposta = self.pedir_ajuste_de(id, feedback.clone(), "usuário", "", "", cx);
+        let resposta = self.pedir_ajuste_de(id, feedback.clone(), "usuário", "", "", OrigemAjuste::Usuario, None, cx);
         if !resposta.erro
             && let Some(coordenador) = self.tarefa(id).and_then(|t| t.dono()).map(str::to_string)
         {
@@ -5181,13 +5248,16 @@ impl Motor {
     pub fn descartar_arquivo(&self, id: u64, arquivo: String, cx: &mut Context<Self>) -> Task<anyhow::Result<Option<String>>> {
         let tarefa = self.tarefa(id).cloned();
         let projeto = tarefa.as_ref().map(|t| self.origem_da_tarefa(t));
+        let remoto_base = tarefa.as_ref().and_then(|t| self.remoto_base(t));
         cx.background_spawn(async move {
             let tarefa = tarefa.ok_or_else(|| anyhow::anyhow!("o chat não existe mais"))?;
             let (Some(pasta), Some(base), Some(projeto)) = (tarefa.worktree, tarefa.base, projeto) else {
                 anyhow::bail!("este chat não tem cópia isolada");
             };
-            // Volta ao que está no projeto, não à base antiga (que desfaria o que outra tarefa juntou).
-            git::descartar_arquivo(&pasta, &git::base_efetiva(&projeto, &pasta, &base), &arquivo)
+            // Volta ao que está no projeto (no modo PR, ao ponto comum com a base do GitHub), não à
+            // base antiga (que desfaria o que outra tarefa juntou).
+            let base = git::base_da_tarefa(&projeto, &pasta, &base, remoto_base.as_deref());
+            git::descartar_arquivo(&pasta, &base, &arquivo)
         })
     }
 
@@ -5583,9 +5653,13 @@ impl Motor {
         } else {
             format!(" com {}", junto.join(" e "))
         };
-        self.pedir_ajuste_de(id, feedback, quem, &anexo, &junto, cx)
+        self.pedir_ajuste_de(id, feedback, quem, &anexo, &junto, OrigemAjuste::Dono, None, cx)
     }
 
+    /// Uma rodada de ajuste. `origem`: o limite de rodadas do projeto (`max_rodadas`, contado desde o
+    /// começo do ciclo) só vale para o dono; o do PR é `rodadas_automaticas`. `gatilho`: a rodada veio
+    /// de um aviso do PR (CI, revisão), e o texto dele (de terceiros) vai como está, delimitado.
+    #[allow(clippy::too_many_arguments)]
     fn pedir_ajuste_de(
         &mut self,
         id: u64,
@@ -5593,6 +5667,8 @@ impl Motor {
         quem: &str,
         anexo: &str,
         junto: &str,
+        origem: OrigemAjuste,
+        gatilho: Option<crate::modelo::GatilhoAjuste>,
         cx: &mut Context<Self>,
     ) -> Resposta {
         let maximo = self.config.max_rodadas;
@@ -5617,7 +5693,12 @@ impl Motor {
         tarefa.parada = None;
         tarefa.entrega_pendente = None;
         tarefa.entrega = None;
+        tarefa.pronto_para_atualizar = false;
         let rodada = tarefa.rodada;
+        let passou = passou_do_limite(origem, rodada, tarefa.rodada_do_ciclo, maximo);
+        if let Some(pr) = tarefa.pr.as_mut() {
+            pr.ajuste = gatilho.map(|gatilho| crate::modelo::AjustePr { rodada, gatilho });
+        }
         let trabalhador = tarefa.trabalhador.clone();
         let dono = tarefa.coordenador.clone();
         self.tentativas_auto.remove(&trabalhador);
@@ -5638,9 +5719,15 @@ impl Motor {
             (true, _) => (Some(quem.to_string()), Some(dono.clone())),
             (false, _) => (Some(self.chat(&dono).map_or_else(|| quem.to_string(), |c| c.titulo.clone())), Some(dono.clone())),
         };
+        // O aviso do PR (o CI, a revisão) vai como está: ele já é o pedido, e é texto de terceiros.
+        if gatilho.is_some() {
+            let entrada = Entrada { de: Some("Vitral".into()), texto: feedback, terceiros: true, ..Default::default() };
+            self.entregar_entrada(&trabalhador, entrada, cx);
+            return Resposta::ok(format!("Ajuste enviado ao chat {id} (rodada {rodada})."));
+        }
         let mensagem = format!("Ajuste pedido pelo {quem} (rodada {rodada}):\n{feedback}{anexo}\n\n{fecho}");
         self.entregar_entrada(&trabalhador, Entrada { de, texto: mensagem, remetente, ..Default::default() }, cx);
-        if rodada > maximo {
+        if passou {
             Resposta::ok(format!(
                 "Ajuste enviado{junto}, mas esta já é a rodada {rodada} (limite combinado: {maximo}). \
                  Se não resolver, explique o impasse ao usuário."
@@ -5687,6 +5774,8 @@ impl Motor {
     /// sem commit; depois, a cópia do ajudante sai e o chat dele vai para as arquivadas. `ressalva`
     /// é o que se aprovou mesmo assim (verificação falhando, problema grave): vai no commit e aparece
     /// para o usuário. `autor`: quem aprovou ("usuario", "mestre", "vitral" ou o id do pai).
+    /// `entrega`: o `aprovar_tarefa{entrega}` do Mestre; `None` vale o modo da pasta.
+    #[allow(clippy::too_many_arguments)]
     fn aprovar_tarefa(
         &mut self,
         id: u64,
@@ -5694,9 +5783,22 @@ impl Motor {
         ressalva: Option<String>,
         resposta: Sender<Resposta>,
         autor: &str,
+        entrega: Option<crate::modelo::ModoEntrega>,
         cx: &mut Context<Self>,
     ) {
         if self.tarefa(id).is_some_and(|t| self.de_projeto(&t.trabalhador)) {
+            // No modo PR, aprovar é publicar: a junção na pasta só acontece quando o PR mesclar.
+            let por_pr = self.tarefa(id).is_some_and(|t| t.tem_copia() && entrega.map_or(self.entrega_por_pr(t), |e| e == crate::modelo::ModoEntrega::Pr));
+            if por_pr {
+                if let Some(recusa) = self.recusa_aprovar(id) {
+                    let _ = resposta.try_send(Resposta::erro(recusa));
+                } else if self.tarefa(id).is_some_and(|t| !self.entrega_por_pr(t) && t.pr_aberto().is_none()) {
+                    let _ = resposta.try_send(Resposta::erro("A entrega desta pasta é Juntar aqui: aprove sem entrega=\"pr\"."));
+                } else {
+                    self.aprovar_pelo_pr(id, autor, resposta, cx);
+                }
+                return;
+            }
             self.juntar_chat(id, nota, ressalva, false, autor, resposta, cx);
             return;
         }
@@ -5749,6 +5851,7 @@ impl Motor {
         cx.notify();
         let pontos = self.pontos_so_do_chat(&tarefa.trabalhador);
         let grupo = tarefa.grupo();
+        let excluir = tarefa.arquivos_copiados.clone();
         let (ajudante, pai) = (tarefa.trabalhador.clone(), tarefa.coordenador.clone());
         cx.spawn(async move |motor, cx| {
             let alvo = pasta_do_pai.clone();
@@ -5759,7 +5862,7 @@ impl Motor {
                     git::na_vez_do_projeto(&alvo, || {
                         git::checkpoint(&alvo, &ponto)
                             .map_err(|e| e.context(format!("não deu para guardar num commit o que {} tem", alvo.display())))?;
-                        let juncao = git::aprovar(&alvo, &pasta, &branch, &base, &mensagem);
+                        let juncao = git::aprovar(&alvo, &pasta, &branch, &base, &mensagem, &excluir);
                         if matches!(juncao, Ok(git::Juncao::Juntou { .. } | git::Juncao::SemMudancas)) {
                             let _ = git::limpar_copia(&alvo, &pasta, &area, &branch, Some(&grupo), &pontos, false);
                         }
@@ -5885,12 +5988,14 @@ impl Motor {
         cx.notify();
         let grupo = format!("t{id}");
         let autor = autor.to_string();
+        // Os arquivos copiados da origem (o .env) nunca entram no commit.
+        let excluir = t.arquivos_copiados.clone();
         cx.spawn(async move |motor, cx| {
             let origem_bg = origem.clone();
             let resultado = cx
                 .background_spawn(async move {
                     git::na_vez_do_projeto(&origem_bg, || {
-                        git::juntar(&origem_bg, &copia, &branch, &base, &mensagem, ramo.as_deref(), &grupo)
+                        git::juntar(&origem_bg, &copia, &branch, &base, &mensagem, ramo.as_deref(), &grupo, &excluir)
                     })
                 })
                 .await;
@@ -6973,6 +7078,13 @@ fn texto_do_turno(mensagens: &[Entrada]) -> (String, Vec<PathBuf>) {
     (texto, imagens)
 }
 
+/// O ajuste passou do limite combinado de rodadas: só vale para o dono, e conta desde o começo do
+/// ciclo (o PR aberto, o merge), com a primeira rodada dele como 1. Sem ciclo marcado, desde a
+/// primeira. As rodadas do usuário e do vigia do PR não esbarram nele (o do PR são as 3 automáticas).
+fn passou_do_limite(origem: OrigemAjuste, rodada: u32, rodada_do_ciclo: u32, maximo: u32) -> bool {
+    origem == OrigemAjuste::Dono && rodada.saturating_sub(rodada_do_ciclo.saturating_sub(1)) > maximo
+}
+
 /// Até quantos caracteres das últimas mensagens vão na passagem de sessão.
 const PASSAGEM_CARACTERES: usize = 6000;
 
@@ -7671,6 +7783,19 @@ mod testes {
         let (fila, _) = marcar_interrompidas(&mut chats, &mut tarefas, &Filas::new());
         assert_eq!(fila, VecDeque::from([2]));
         assert_eq!(tarefas[0].progresso, None);
+    }
+
+    #[test]
+    fn limite_de_rodadas_so_para_o_dono_e_desde_o_ciclo() {
+        // Sem ciclo (nunca abriu PR): como antes, a 4ª rodada passa do limite de 3.
+        assert!(!passou_do_limite(OrigemAjuste::Dono, 3, 0, 3));
+        assert!(passou_do_limite(OrigemAjuste::Dono, 4, 0, 3));
+        // O ciclo começou na rodada 6 (o PR abriu ali): conta 6 como 1.
+        assert!(!passou_do_limite(OrigemAjuste::Dono, 8, 6, 3));
+        assert!(passou_do_limite(OrigemAjuste::Dono, 9, 6, 3));
+        // O usuário e o vigia do PR nunca esbarram nele.
+        assert!(!passou_do_limite(OrigemAjuste::Usuario, 40, 0, 3));
+        assert!(!passou_do_limite(OrigemAjuste::VigiaPr, 40, 0, 3));
     }
 
     #[test]

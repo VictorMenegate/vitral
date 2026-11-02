@@ -488,6 +488,12 @@ fn definicao(nome: &str, papel: Papel) -> Option<Value> {
                 "nota": { "type": "string", "description": "mensagem do commit (opcional)" },
                 "forcar": { "type": "boolean", "description": "aprovar apesar da verificação falhando ou de problema grave do revisor (exige motivo)" },
                 "motivo": { "type": "string", "description": "por que a falha não vem desta entrega (obrigatório com forcar)" },
+                "entrega": {
+                    "type": "string",
+                    "enum": ["juntar", "pr"],
+                    "description": "juntar na pasta ou abrir/atualizar o pull request no GitHub; sem ela, vale o modo da pasta. \
+                                    O primeiro PR o usuário confirma, a menos que ele tenha pedido nesta conversa",
+                },
             }),
             &["tarefa"],
         ),
