@@ -102,6 +102,13 @@ fn main() {
             None
         }
     };
+    // Só no canal de teste (o aceite do atualizador no runner do Windows): a versão em
+    // VITRAL_TESTE_CAI cai aqui, com a abertura já contada e antes do primeiro quadro, como uma
+    // versão nova quebrada. No release (canal estável) a condição nem existe.
+    if atualizacao::canal() == "teste" && std::env::var("VITRAL_TESTE_CAI").is_ok_and(|v| v == atualizacao::VERSAO) {
+        eprintln!("vitral: a {} cai antes do primeiro quadro (VITRAL_TESTE_CAI)", atualizacao::VERSAO);
+        std::process::exit(3);
+    }
     let pedidos = instancia::ouvir(&dados.arquivo_socket())
         .map_err(|erro| eprintln!("vitral: sem o socket {} ({erro}); outra abertura não chega aqui", dados.arquivo_socket().display()))
         .ok();

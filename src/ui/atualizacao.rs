@@ -151,6 +151,9 @@ pub(super) enum Botao {
     Instalar,
     /// Compilado no PC (ou fora da pasta): baixar e instalar como app.
     InstalarComoApp(String),
+    /// No Windows, a cópia que não é gerenciada (o zip portátil, o build do PC): a página do release,
+    /// com o instalador.
+    Baixar(String),
     Pagina(String),
     Reiniciar,
     Nenhum,
@@ -164,6 +167,7 @@ pub(super) fn botoes(v: &Vista) -> (bool, Botao) {
         Estado::Pronta(_) => (true, Botao::Reiniciar),
         Estado::Disponivel(n) if n.pela_pagina => (false, Botao::Pagina(pagina(n))),
         Estado::Disponivel(_) if v.permissao == Permissao::Sozinha => (true, Botao::Instalar),
+        Estado::Disponivel(n) if !atualizacao::INSTALA_COMO_APP => (true, Botao::Baixar(pagina(n))),
         Estado::Disponivel(n) => (true, Botao::InstalarComoApp(n.versao.clone())),
         Estado::Parado | Estado::EmDia | Estado::Erro(_) => (false, Botao::Procurar { ocupado: false }),
     }
@@ -296,6 +300,10 @@ fn controles(v: &Vista, window: &Window, cx: &App) -> AnyElement {
         Botao::InstalarComoApp(versao) => Some(
             botao_primario("cfg-instalar", Some(Lucide::Download.into()), format!("Instalar a {versao} como app"), TamanhoBotao::Barra, window, cx)
                 .on_click(|_, _, cx| atualizacao::instalar_agora(cx)),
+        ),
+        Botao::Baixar(url) => Some(
+            botao_primario("cfg-baixar", Some(Lucide::Download.into()), "Baixar", TamanhoBotao::Barra, window, cx)
+                .on_click(move |_, _, cx| cx.open_url(&url)),
         ),
         Botao::Pagina(url) => Some(
             botao_fantasma("cfg-pagina", Some(Lucide::ExternalLink.into()), "Abrir a página", TamanhoBotao::Barra, window, cx)
@@ -631,7 +639,12 @@ mod testes {
         let linha = linha_da_versao(&pc, None, None);
         assert_eq!(linha.origem, Some("Compilado no PC · sem atualização automática"));
         assert_eq!(linha.texto, "Há a 0.3.0 no GitHub");
-        assert_eq!(botoes(&pc), (true, Botao::InstalarComoApp("0.3.0".into())));
+        let esperado = if crate::atualizacao::INSTALA_COMO_APP {
+            Botao::InstalarComoApp("0.3.0".into())
+        } else {
+            Botao::Baixar("https://github.com/VictorMenegate/vitral/releases/tag/v0.3.0".into())
+        };
+        assert_eq!(botoes(&pc), (true, esperado));
         let fora = Vista { permissao: Permissao::ForaDaPasta, ..vista(Estado::EmDia) };
         assert!(linha_da_versao(&fora, None, None).origem.is_some_and(|o| o.starts_with("Aberto fora da pasta")));
     }

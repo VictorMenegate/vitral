@@ -1,16 +1,17 @@
 //! Saúde da versão nova (`distribuicao.md`, seção 3.9). A versão que acabou de ser instalada só
 //! fica confirmada depois de abrir direito: 10 s depois do primeiro quadro, ou fechando normalmente.
-//! Até lá, cada abertura fica no `estado.json` com a sessão do PC (o boot id). Na terceira abertura
-//! sem confirmar na mesma sessão, a versão vai para as recusadas e o Vitral volta para a anterior,
-//! se ela abre e lê os dados do disco (`FORMATO_DADOS`). Uma queda de energia muda a sessão: as
-//! aberturas de antes não contam contra a versão.
+//! Até lá, cada abertura fica no `estado.json` com a sessão do PC (o boot id no Linux, a hora do
+//! boot no Windows). Na terceira abertura sem confirmar na mesma sessão, a versão vai para as
+//! recusadas e o Vitral volta para a anterior, se ela abre e lê os dados do disco
+//! (`FORMATO_DADOS`). Uma queda de energia muda a sessão: as aberturas de antes não contam contra a
+//! versão.
 //!
 //! A decisão (`decidir`, `confirmar`, `marcar_volta`) não toca no disco; `ao_abrir`, `confirmar_esta`
 //! e `voltar` leem e gravam o `estado.json` com a trava das instalações (temporário + fsync +
 //! rename: o velho ou o novo, nunca pela metade).
 
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -124,13 +125,28 @@ fn mais_nova(a: &str, b: &str) -> bool {
     matches!((semver::Version::parse(a), semver::Version::parse(b)), (Ok(a), Ok(b)) if a > b)
 }
 
-/// A sessão do PC: muda a cada boot (uma queda de energia é outra sessão). Sem ela (fora do
-/// Linux, por enquanto), todas as aberturas contam como uma sessão só.
+/// A sessão do PC: muda a cada boot (uma queda de energia é outra sessão). No Linux, o boot id.
+#[cfg(target_os = "linux")]
 pub fn sessao() -> String {
-    if !cfg!(target_os = "linux") {
-        return String::new();
-    }
-    fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// No Windows, a hora em que o PC ligou (agora menos o tempo ligado, em milissegundos), no minuto:
+/// o arredondamento só erra se as duas contas caírem nos lados de uma virada de minuto, e aí a
+/// abertura conta como de outra sessão (a volta demora uma tentativa a mais, nunca vem antes).
+#[cfg(windows)]
+pub fn sessao() -> String {
+    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+    let agora = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    // SAFETY: sem argumentos; só lê o relógio desde o boot.
+    let ligado = unsafe { GetTickCount64() };
+    format!("boot-{}", agora.saturating_sub(ligado) / 60_000)
+}
+
+/// Sem o que medir, todas as aberturas contam como uma sessão só.
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn sessao() -> String {
+    String::new()
 }
 
 fn agora() -> u64 {
@@ -165,7 +181,7 @@ fn ao_abrir_em(app: &Path, minha: &str, sessao: &str, agora: u64, formato_disco:
         Decisao::Voltar(para) => match apontar_para(app, &para) {
             Ok(()) => {
                 eprintln!("vitral: a {minha} não abriu duas vezes; voltando para a {para}");
-                AoAbrir::Voltar(app.join(&para).join("vitral"))
+                AoAbrir::Voltar(instalador::binario_da_versao(app, &para))
             }
             Err(erro) => {
                 eprintln!("vitral: não voltei para a {para}: {erro}");
@@ -178,19 +194,14 @@ fn ao_abrir_em(app: &Path, minha: &str, sessao: &str, agora: u64, formato_disco:
 /// A anterior instalada (nunca esta), se o binário dela responde.
 fn anterior_que_abre(app: &Path, minha: &str) -> Option<String> {
     let anterior = instalador::versao_do_link(app, "anterior").filter(|a| a != minha)?;
-    let binario = app.join(&anterior).join("vitral");
+    let binario = instalador::binario_da_versao(app, &anterior);
     pacote::conferir_binario(&binario, &anterior, pacote::PRAZO_CONFERENCIA).ok()?;
     Some(anterior)
 }
 
-/// `atual` passa para `para`; o `anterior` apontava para ela e sobra.
+/// `atual` passa para `para` (no Linux o link, no Windows o `versoes.txt`).
 fn apontar_para(app: &Path, para: &str) -> io::Result<()> {
-    instalador::apontar(app, "atual", para)?;
-    if instalador::versao_do_link(app, "anterior").as_deref() == Some(para) {
-        fs::remove_file(app.join("anterior"))?;
-        fs::File::open(app)?.sync_all()?;
-    }
-    Ok(())
+    instalador::voltar_para(app, para)
 }
 
 /// A versão abriu direito (10 s depois do primeiro quadro, ou ao fechar). Com outro Vitral
@@ -218,7 +229,8 @@ pub fn volta_possivel(app: &Path, minha: &str, formato_disco: u32) -> Option<Vol
     if instalador::versao_atual(app).as_deref() != Some(minha) {
         return None;
     }
-    let para = instalador::versao_do_link(app, "anterior").filter(|a| a != minha && app.join(a).join("vitral").is_file())?;
+    let para =
+        instalador::versao_do_link(app, "anterior").filter(|a| a != minha && instalador::binario_da_versao(app, a).is_file())?;
     let le_o_disco = pode_voltar(&EstadoApp::ler(app), &para, formato_disco);
     Some(VoltaPossivel { para, le_o_disco })
 }
@@ -231,7 +243,7 @@ pub fn voltar(app: &Path, minha: &str, formato_disco: u32) -> Result<String, Str
     let Some(para) = instalador::versao_do_link(app, "anterior").filter(|a| a != minha) else {
         return Err("Não há versão anterior instalada.".into());
     };
-    if pacote::conferir_binario(&app.join(&para).join("vitral"), &para, pacote::PRAZO_CONFERENCIA).is_err() {
+    if pacote::conferir_binario(&instalador::binario_da_versao(app, &para), &para, pacote::PRAZO_CONFERENCIA).is_err() {
         return Err(format!("A {para} não abriu no teste; fico na {minha}."));
     }
     let mut estado = EstadoApp::ler(app);
@@ -245,14 +257,20 @@ pub fn voltar(app: &Path, minha: &str, formato_disco: u32) -> Result<String, Str
     Ok(para)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+// As decisões rodam em todo sistema; os testes no disco usam o layout do Linux, com binários de
+// mentira do sh (o do Windows tem os dele em `windows.rs`, e o caminho inteiro roda no runner).
+#[cfg(test)]
 mod testes {
     use super::*;
+    use crate::atualizacao::estado_app::Confirmar;
+    #[cfg(target_os = "linux")]
     use crate::atualizacao::{
-        linux::{self, Confirmar, Instalada, Origem, testes::layout_com, travar},
+        linux::{self, Instalada, Origem, testes::layout_com, travar},
         pacote::{gravar_atomico, testes::binario_falso},
     };
     use std::collections::BTreeMap;
+    #[cfg(target_os = "linux")]
+    use std::fs;
 
     /// A 0.9.0 instalada agora por cima da 0.8.0, as duas no formato 1.
     fn instalada() -> EstadoApp {
@@ -384,6 +402,7 @@ mod testes {
         assert_eq!(decidir(&mut estado, &contexto, &|| 1), Decisao::Seguir(None));
     }
 
+    #[cfg(target_os = "linux")]
     /// O layout de teste com a 0.8.0 e a 0.9.0 instalada por cima (binários de mentira que
     /// respondem ao `--versao --json`).
     fn layout() -> (PathBuf, PathBuf) {
@@ -396,6 +415,7 @@ mod testes {
         (pasta, app)
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn no_disco_a_terceira_abertura_volta_e_a_anterior_conta() {
         let (pasta, app) = layout();
@@ -421,6 +441,7 @@ mod testes {
         fs::remove_dir_all(&pasta).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn no_disco_confirmada_ou_com_queda_entre_tentativas_fica() {
         let (pasta, app) = layout();
@@ -437,6 +458,7 @@ mod testes {
         fs::remove_dir_all(&pasta).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn no_disco_anterior_que_nao_abre_ou_formato_novo_nao_volta() {
         let (pasta, app) = layout();
@@ -454,6 +476,7 @@ mod testes {
         fs::remove_dir_all(&pasta).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn volta_a_mao_recusa_a_de_agora_e_aponta_para_a_anterior() {
         let (pasta, app) = layout();
@@ -476,6 +499,7 @@ mod testes {
         fs::remove_dir_all(&pasta).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn o_estado_e_gravado_de_uma_vez() {
         let (pasta, app) = layout();

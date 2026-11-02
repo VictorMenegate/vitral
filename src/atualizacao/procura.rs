@@ -21,7 +21,7 @@ use super::{
     config::{self, Config, DESISTE_DEPOIS, Modo},
     instalador::{self, Falha, Origem, Raiz},
     manifesto::{self, LIMITE_ASSINATURA, LIMITE_MANIFESTO, Lido, Publicada},
-    plataforma,
+    pacote, plataforma,
     rede::{self, Baixar, Rede, Resposta},
 };
 
@@ -97,7 +97,7 @@ pub struct Ambiente {
 }
 
 impl Ambiente {
-    /// O do app. Fora do canal estável (compilado no PC ou pré-lançamento), o
+    /// O do app. Fora do canal estável (compilado no PC, o canal de teste ou pré-lançamento), o
     /// `VITRAL_ATUALIZACAO_BASE` aponta para outra pasta de release e aceita pré-lançamento.
     pub fn do_app(raiz: Option<Raiz>, rodando: Option<String>, instala_sozinho: bool) -> Ambiente {
         let versao = Version::parse(VERSAO).unwrap_or(Version::new(0, 0, 0));
@@ -118,14 +118,12 @@ impl Ambiente {
     }
 }
 
-/// As chaves embutidas; no build de desenvolvimento apontado para outro release, também a do
-/// `VITRAL_ATUALIZACAO_CHAVE` (o release falso da bancada).
+/// As chaves embutidas; fora do canal estável (o build do PC na bancada, o canal de teste no
+/// runner) e apontado para outro release, também a do `VITRAL_ATUALIZACAO_CHAVE` (o release falso).
 fn conferir_do_app(outra_base: bool) -> fn(&[u8], &str) -> anyhow::Result<String> {
-    #[cfg(debug_assertions)]
-    if outra_base && std::env::var_os("VITRAL_ATUALIZACAO_CHAVE").is_some() {
+    if outra_base && super::canal() != "estavel" && std::env::var_os("VITRAL_ATUALIZACAO_CHAVE").is_some() {
         return assinatura::conferir_com_a_de_teste;
     }
-    let _ = outra_base;
     assinatura::conferir
 }
 
@@ -180,6 +178,10 @@ fn uma_volta(amb: &Ambiente, config: &mut Config, pedido: Pedido, agora: u64, av
             Estado::Pronta(novidade)
         }
         Err(erro) => {
+            // A frase da interface não leva o detalhe; o stderr leva.
+            if let Erro::Binario { detalhe, .. } | Erro::Instalacao { detalhe, .. } = &erro {
+                eprintln!("vitral: a atualização para a {versao} falhou: {detalhe}");
+            }
             if matches!(erro, Erro::Arquivo { .. } | Erro::Binario { .. } | Erro::Instalacao { .. }) {
                 *config.falhas.entry(versao).or_default() += 1;
             }
@@ -263,8 +265,10 @@ fn baixar_e_instalar(amb: &Ambiente, publicada: &Publicada, avisar: &mut dyn FnM
                 Baixar::Disco(erro) => instalacao(erro.to_string()),
             });
         }
-        fs::rename(&parte, &destino)
-            .and_then(|()| fs::File::open(&baixando)?.sync_all())
+        // O fsync da pasta é do Linux: no Windows uma pasta não abre como arquivo (e a troca já
+        // vai para o disco com o MOVEFILE_WRITE_THROUGH).
+        pacote::trocar_por_cima(&parte, &destino)
+            .and_then(|()| crate::dados::fsync_da_pasta(&baixando))
             .map_err(|e| instalacao(e.to_string()))?;
     }
     avisar(Estado::Instalando { versao: versao.clone() });
@@ -401,8 +405,18 @@ fn baixar_prioridade() {
     }
 }
 
-/// Fora do Linux a procura ainda não roda (`iniciar`).
-#[cfg(not(target_os = "linux"))]
+/// No Windows, o modo de fundo só nesta thread: prioridade de CPU, de disco e de memória baixas
+/// enquanto baixa, abre o pacote e confere o `vitral.exe` novo.
+#[cfg(windows)]
+fn baixar_prioridade() {
+    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN};
+    // SAFETY: o pseudo-handle da própria thread; o pior caso é não mudar a prioridade.
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn baixar_prioridade() {}
 
 fn agora() -> u64 {

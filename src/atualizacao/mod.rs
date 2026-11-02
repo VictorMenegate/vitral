@@ -1,13 +1,10 @@
 //! A versão embutida no binário, os comandos que respondem sem abrir janela e a atualização
 //! automática (especificação em `distribuicao.md`, seção 3): a procura numa thread própria
 //! (`procura.rs`), o manifesto assinado (`manifesto.rs`, `assinatura.rs`), o download (`rede.rs`),
-//! o pacote (`pacote.rs`), a instalação por versão no Linux (`linux.rs`, com o estado dela em
-//! `estado_app.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova, com a volta para
-//! a anterior (`saude.rs`).
-//!
-//! Fora do Linux ainda não há instalação gerenciada (a do Windows é o Lote W4): no lugar do
-//! `linux.rs` entra o `sem_instalacao.rs`, com a mesma API e nada instalado, e a procura fica
-//! desligada (o manifesto ainda não tem pacote de outro sistema).
+//! o pacote (`pacote.rs`), a instalação por versão (`linux.rs`: uma pasta por versão e os links
+//! `atual` e `anterior`; `windows.rs`: as `app-<versão>`, o `versoes.txt` e o lançador; o estado
+//! dela em `estado_app.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova, com a
+//! volta para a anterior (`saude.rs`). Cada sistema usa a sua como `instalador`, com a mesma API.
 //!
 //! A interface (`ui/atualizacao.rs`) lê a `Global` [`Atualizacoes`] e redesenha com
 //! `cx.observe_global::<Atualizacoes>(…)`, que só dispara quando o estado muda. As ações são
@@ -15,8 +12,9 @@
 //! [`voltar_a_mao`] e [`reiniciar`] (depois do `pode_parar_tudo`). Nunca reinicia sozinho.
 //!
 //! De onde veio o binário vem da compilação: `VITRAL_CANAL` ("estavel" só no release do GitHub
-//! Actions; sem ele, compilado no PC), `VITRAL_COMMIT` e, no `ferramentas/instalar-dev.sh`,
-//! `VITRAL_VERSAO` (a versão de desenvolvimento no lugar da do Cargo.toml).
+//! Actions; "teste" no aceite do atualizador no runner do Windows; sem ele, compilado no PC),
+//! `VITRAL_COMMIT` e, no `ferramentas/instalar-dev.sh` e no aceite, `VITRAL_VERSAO` (a versão no
+//! lugar da do Cargo.toml).
 
 pub mod assinatura;
 pub mod config;
@@ -24,20 +22,18 @@ pub mod estado_app;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod manifesto;
-// Abrir o pacote é da instalação, que fora do Linux é o Lote W4.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub mod pacote;
 pub mod procura;
 pub mod rede;
 pub mod saude;
-#[cfg(not(target_os = "linux"))]
-pub mod sem_instalacao;
+// O layout do Windows compila em todo sistema: os testes dele também rodam no Linux.
+pub mod windows;
 
 /// A instalação gerenciada deste sistema.
 #[cfg(target_os = "linux")]
 pub(crate) use linux as instalador;
 #[cfg(not(target_os = "linux"))]
-pub(crate) use sem_instalacao as instalador;
+pub(crate) use windows as instalador;
 
 use std::{
     path::{Path, PathBuf},
@@ -67,7 +63,8 @@ pub const VERSAO: &str = match option_env!("VITRAL_VERSAO") {
     _ => env!("CARGO_PKG_VERSION"),
 };
 
-/// "estavel" no que sai do release; "pc" no que foi compilado no PC.
+/// "estavel" no que sai do release; "teste" no do aceite do atualizador (instala sozinho como o
+/// estável, mas aceita um release falso e a chave de teste); "pc" no que foi compilado no PC.
 pub fn canal() -> &'static str {
     match option_env!("VITRAL_CANAL") {
         Some(canal) if !canal.is_empty() => canal,
@@ -217,14 +214,19 @@ pub enum Permissao {
     /// Release do GitHub rodando da pasta do app: baixa e instala (no modo Automáticas).
     Sozinha,
     /// Compilado no PC (`cargo run`, `target/release`, `instalar-dev.sh`): só avisa, com
-    /// "Instalar como app".
+    /// "Instalar como app" (no Windows, a página do release).
     CompiladoNoPc,
-    /// Release aberto fora da pasta do app (o `.tar.gz` aberto à mão): só avisa.
+    /// Release aberto fora da pasta do app (o `.tar.gz` aberto à mão, o zip portátil): só avisa.
     ForaDaPasta,
 }
 
+/// Uma cópia que não é gerenciada vira app pelo próprio Vitral ("Instalar como app"). Só no Linux:
+/// no Windows, o atalho, o desinstalador e o registro são do instalador, e o botão abre a página do
+/// release ("Baixar").
+pub const INSTALA_COMO_APP: bool = cfg!(target_os = "linux");
+
 fn permissao(canal: &str, gerenciado: bool) -> Permissao {
-    match (canal == "estavel", gerenciado) {
+    match (canal == "estavel" || canal == "teste", gerenciado) {
         (true, true) => Permissao::Sozinha,
         (true, false) => Permissao::ForaDaPasta,
         (false, _) => Permissao::CompiladoNoPc,
@@ -294,7 +296,9 @@ impl Atualizacoes {
         let texto = if novidade.versao == VERSAO {
             Some(NOVIDADES.to_string())
         } else {
-            self.app.as_ref().and_then(|app| std::fs::read_to_string(app.join(&novidade.versao).join("NOVIDADES.md")).ok())
+            self.app
+                .as_ref()
+                .and_then(|app| std::fs::read_to_string(instalador::pasta_da_versao(app, &novidade.versao).join("NOVIDADES.md")).ok())
         };
         texto.and_then(|t| secao_de(&t, &novidade.versao)).unwrap_or_default()
     }
@@ -319,8 +323,8 @@ pub fn secao_de(novidades: &str, versao: &str) -> Option<String> {
 }
 
 /// Liga a atualização: põe a `Global` e abre a thread (nada se ela estiver desligada por
-/// `VITRAL_SEM_ATUALIZACAO=1`, como na bancada, ou fora do Linux). Na versão gerenciada, já aponta
-/// o reinício do GPUI para o link `atual` e confirma a saúde ao fechar. `aviso` é o que o
+/// `VITRAL_SEM_ATUALIZACAO=1`, como na bancada). Na versão gerenciada, já aponta o reinício do GPUI
+/// para o link `atual` (no Windows, o lançador) e confirma a saúde ao fechar. `aviso` é o que o
 /// `saude::ao_abrir` contou e `dados` é a pasta de dados (`Dados::pasta`).
 pub fn iniciar(aviso: Option<saude::Aviso>, dados: PathBuf, cx: &mut App) {
     let raiz = instalador::Raiz::do_usuario();
@@ -343,7 +347,7 @@ pub fn iniciar(aviso: Option<saude::Aviso>, dados: PathBuf, cx: &mut App) {
     let progresso = Arc::new(AtomicBool::new(false));
     let (envia, recebe) = smol::channel::unbounded::<Noticia>();
     let desligada = std::env::var_os("VITRAL_SEM_ATUALIZACAO").is_some_and(|v| v == "1");
-    let comandos = if desligada || !cfg!(target_os = "linux") {
+    let comandos = if desligada {
         None
     } else {
         let ambiente = procura::Ambiente::do_app(raiz, rodando.clone(), permissao == Permissao::Sozinha);
@@ -533,6 +537,8 @@ mod testes {
     #[test]
     fn so_o_release_na_pasta_do_app_instala_sozinho() {
         assert_eq!(permissao("estavel", true), Permissao::Sozinha);
+        assert_eq!(permissao("teste", true), Permissao::Sozinha, "o aceite do runner instala como o release");
+        assert_eq!(permissao("teste", false), Permissao::ForaDaPasta);
         assert_eq!(permissao("estavel", false), Permissao::ForaDaPasta);
         assert_eq!(permissao("pc", true), Permissao::CompiladoNoPc);
         assert_eq!(permissao("pc", false), Permissao::CompiladoNoPc);
