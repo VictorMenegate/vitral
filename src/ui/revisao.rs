@@ -774,7 +774,7 @@ impl RevisaoDiff {
             );
         }
         let ship = Checkbox::new("pr-ship")
-            .label(format!("Mesclar quando ficar pronto ({})", f.metodo))
+            .label(format!("Mesclar quando ficar pronto ({})", super::painel_pr::metodo_em_texto(&f.metodo)))
             .checked(f.ship)
             .tooltip("O Vitral corrige CI e revisão (até 3 rodadas), publica de novo e mescla sozinho quando passar")
             .on_click(mudar(|f, v| f.ship = v));

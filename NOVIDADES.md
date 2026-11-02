@@ -29,9 +29,28 @@ O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de
 - **Windows (prévia).** Instalador por usuário (sem administrador), zip portátil e o mesmo visual,
   com os botões e o acrílico do Windows, notificações, terminal, Lixeira e Git Bash. Ainda sem
   atualização automática no Windows nem contas extras.
-- **Conexões.** Configurações › Conexões mostra o login do GitHub e conecta o Linear (a chave fica no
-  chaveiro do sistema); o editor do projeto mostra o repositório de cada pasta. Issues e PRs ao lado
-  do chat chegam nas próximas versões.
+- **Issues e PRs ao lado do chat.** Configurações › Conexões mostra o login do GitHub (pelo `gh`) e
+  conecta o Linear (a chave fica no chaveiro do sistema, nunca em arquivo).
+  - **Issues.** O botão do Linear e o do GitHub no cabeçalho do chat abrem a lista (Minhas, do time,
+    do ciclo) com o detalhe. **Iniciar agente** cria o chat da issue, com o ramo dela, e no Linear
+    a move para Em andamento com um comentário; **Só a cópia** prepara sem mexer na issue; até 3 de
+    uma vez. Uma issue também se anexa a uma conversa, e o Mestre consulta e divide o trabalho por
+    issue.
+  - **Entregar por PR.** Por pasta, "Ao aprovar: Juntar aqui | Abrir PR". No modo PR, **Revisar e
+    abrir PR** mostra o diff com o formulário do PR (título, descrição com o `Closes` da issue,
+    rascunho), e o Vitral faz o commit, confere segredos e `.github/`, envia o ramo e abre ou
+    atualiza o PR. O chat também abre quando você pede na conversa ("abre o PR e mescla quando
+    passar").
+  - **Watch e Ship.** O PR aparece numa linha de acompanhamento no chat e na aba **PR** à direita
+    (visão geral, arquivos, checks com o log, Mesclar). O CI que falhou e a revisão chegam em
+    Esperando você, com **Mandar ao chat**; com **Mesclar quando ficar pronto**, vão sozinhos ao
+    chat, a correção atualiza o PR e o Vitral mescla quando os checks passam. Depois de mesclar, a
+    cópia recomeça da base, a pasta original anda e a issue vai para Concluída.
+  - **Confirmar.** Mesclar agora, mexer em `.github/` e o que não veio de uma mensagem sua viram um
+    cartão para você decidir; "Tentar de novo" não repete no GitHub o que o turno já fez.
+  - **Chats isolados.** Os chats que leem issues, comentários e logs de CI, e os de uma pasta que
+    entrega por PR, rodam no `bwrap`: sem o chaveiro, o ssh, o login do `gh` nem as credenciais do
+    git, e com o `.git` do repositório só leitura; quem fala com o GitHub é o Vitral.
 - **Parar** pede ao Claude para interromper (ele fecha o turno direito) e só derruba o processo se
   ele não sair em 5 s. As fontes (Inter e JetBrains Mono) vêm dentro do Vitral.
 - **Um Vitral só.** Abrir de novo (pelo menu, `vitral <pasta>` ou `--nova`) entrega o pedido ao que

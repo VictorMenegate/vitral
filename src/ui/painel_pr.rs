@@ -36,6 +36,15 @@ impl Ocupado {
     }
 }
 
+/// O método de mesclar nos textos: "squash" e "rebase" como o GitHub chama, e o "merge" (o commit
+/// de mesclagem) sem a palavra em inglês.
+pub fn metodo_em_texto(metodo: &str) -> &str {
+    match metodo {
+        "merge" => "commit de mesclagem",
+        outro => outro,
+    }
+}
+
 /// O nome da base nos textos ("main"), com o que o PR diz.
 fn nome_da_base(pr: &Pr) -> &str {
     if pr.base.trim().is_empty() { "a base" } else { pr.base.as_str() }
@@ -1577,11 +1586,7 @@ impl Janela {
                     .skip(1)
                     .collect();
                 for (metodo, ok) in outros {
-                    let rotulo = match metodo.as_str() {
-                        "merge" => "Mesclar com commit de merge".to_string(),
-                        "rebase" => "Mesclar com rebase".to_string(),
-                        outro => format!("Mesclar com {outro}"),
-                    };
+                    let rotulo = format!("Mesclar com {}", metodo_em_texto(&metodo));
                     let janela = janela.clone();
                     menu = menu.item(PopupMenuItem::new(rotulo).icon(Lucide::GitMerge).disabled(!ok).on_click(move |_, window, cx| {
                         let metodo = metodo.clone();
@@ -1689,7 +1694,7 @@ impl Janela {
                     texto.push_str(&format!(" {q}"));
                 }
                 if let Some(metodo) = metodo {
-                    texto.push_str(&format!(" ({metodo})"));
+                    texto.push_str(&format!(" ({})", metodo_em_texto(&metodo)));
                 }
                 if let Some(issue) = &t.issue {
                     texto.push_str(&format!(" · issue {}", issue.chave));
@@ -2222,11 +2227,11 @@ impl Janela {
         } else {
             None
         };
-        let rotulo = format!("Mesclar · {metodo}");
+        let rotulo = format!("Mesclar · {}", metodo_em_texto(&metodo));
         let botao = match &mesclar {
             Ok(()) => botao_primario("pr-mesclar", Some(Lucide::GitMerge.into()), rotulo, TamanhoBotao::Barra, window, cx)
                 .tooltip(if confirmacoes_para_mesclar(pr).is_empty() {
-                    format!("Mesclar o PR #{} com {metodo}", pr.numero)
+                    format!("Mesclar o PR #{} com {}", pr.numero, metodo_em_texto(&metodo))
                 } else {
                     "Mesclar (pede confirmação antes)".to_string()
                 })

@@ -599,6 +599,94 @@ de …"). Sem a pasta original à mão, nada é apagado. No **…** do cartão d
 apagar as cópias deles. As cópias que os agentes de um fluxo criam dentro da cópia
 (`.claude/worktrees/`) não entram no commit.
 
+## GitHub e Linear
+
+As issues e os PRs ficam ao lado do chat. Nada é obrigatório: sem conexão, o Vitral junta na pasta
+como sempre.
+
+- **Conectar.** Em Configurações › **Conexões**. O GitHub é o login do `gh` ("Conectado como
+  VictorMenegate · gist, read:org, repo, workflow"; sem login, **Entrar no GitHub** abre o terminal
+  com `gh auth login --web`); o Vitral nunca guarda nem lê o token, quem fala com o GitHub é o `gh`.
+  O Linear pede uma chave pessoal de API (Linear › Configurações › Conta › Segurança e acesso, com
+  Leitura, Escrita e Criar comentários, limitada aos times que você usa): **Conectar…**, colar e
+  **Testar e salvar**. **Testar** confere a chave, **Desconectar** a tira do chaveiro, e
+  "Mostrar o botão do Linear nas conversas" esconde ou mostra o botão. Embaixo,
+  "Isolamento dos chats: ativo" (ou "indisponível", em âmbar, quando o `bwrap` não funciona).
+- **A chave no chaveiro.** A chave do Linear vai para o chaveiro do sistema (Senhas e chaves, item
+  "Vitral · chave do Linear"; `secret-tool lookup application vitral servico linear tipo
+  chave-api`), nunca para arquivo, e só fica na memória do Vitral enquanto ele está aberto. Abrir o
+  Vitral com o chaveiro trancado não pede senha: o Linear aparece como "chaveiro trancado", com
+  **Destravar**, e só o que você pede (abrir as issues do Linear, Testar, Iniciar agente) destrava.
+  Um efeito automático que precisou da chave trancada vira "Não consegui mover a ENG-123" em
+  Esperando você, com **Destravar e tentar**. Outros programas da sua conta conseguem ler o chaveiro
+  destravado: use uma chave só com essas permissões.
+- **Por pasta.** No editor do projeto, a seção **GitHub e Linear** mostra o repositório de cada
+  pasta (o remote do GitHub, com a permissão da sua conta) e **Ao aprovar: Juntar aqui | Abrir
+  PR**. Em **Mais opções**, o ramo de destino, o prefixo dos ramos (com o sugerido pelos seus PRs
+  anteriores), abrir como rascunho, o remote e, num fork, abrir os PRs no repositório original. O
+  Linear é por projeto: o time (e, em Mais opções, para que estado a issue vai ao iniciar um agente
+  e ao mesclar; "Automático" é o primeiro "em andamento" e o primeiro "concluído" do time).
+- **Issues.** O botão do Linear (e o do GitHub, quando a pasta tem issues) no cabeçalho do chat abre
+  a lista: Minhas, Do time ou Ciclo atual (no GitHub, Minhas ou Todas), abertas ou fechadas, um
+  filtro (Enter com 3 letras ou mais busca no servidor) e o detalhe de cada uma, com o popover do
+  estado. **Iniciar agente** cria o chat "ENG-123 · título", com o ramo que o Linear sugere (ou
+  `<prefixo>eng-123-…`), e manda a issue como primeiro pedido; no Linear, a issue vai para "Em
+  andamento", ganha **um** comentário ("Em andamento no Vitral: ramo …") e fica com você se estava
+  sem ninguém. **Só a cópia** cria o chat sem mexer na issue, com ela anexada na caixa. Até 3 de
+  uma vez (uma cópia preparada por vez). **Anexar a esta conversa** põe a issue num chat que já
+  existe (o chip na caixa e na bolha) e pergunta se liga a issue ao chat. O Mestre consulta com
+  `listar_issues` e `ver_issue` e divide o trabalho por issue ("pega a ENG-7 e a ENG-8"). A lista
+  não se atualiza sozinha: ao abrir, ao voltar à janela e no ⟳.
+- **Entregar por PR.** Com **Abrir PR**, aprovar é publicar: **Revisar e abrir PR** (em Este chat e
+  na barra acima da caixa) abre a revisão de sempre com o formulário do PR embaixo do diff (título e
+  descrição gerados, com o que muda, como foi verificado e o `Closes` da issue; **Pedir ao chat uma
+  descrição**; os arquivos novos; rascunho; **Mesclar quando ficar pronto**), e o botão azul vira
+  **Abrir PR** (depois, **Atualizar PR**). O Vitral faz o commit (sem os arquivos copiados da
+  origem), confere os segredos e as mudanças em `.github/`, envia o ramo e abre o PR; se o PR já
+  existe, atualiza. O chat também abre o PR quando você pede na conversa ("abre o PR e mescla
+  quando passar"), pela ferramenta `abrir_pr`.
+- **Watch e Ship.** Todo PR aberto pelo Vitral é acompanhado (Watch): a linha de acompanhamento no
+  chat ("PR #12 · título · 15/41 checks · acompanhando"), a aba **PR #12** à direita (Visão geral
+  com a descrição e a linha do tempo, Arquivos, Checks com o log de cada falha, e o rodapé com o que
+  falta para mesclar e o **Mesclar** pelo método padrão do repositório) e, em Esperando você, o
+  que pede ação: o CI que falhou (**Mandar ao chat**), a revisão de quem tem acesso ao repositório,
+  o comentário de quem não tem (só você decide mandar), o pronto para mesclar e o commit que chegou
+  de fora. **Mesclar quando ficar pronto** (Ship) faz o resto sozinho: a falha do CI e a revisão vão
+  direto ao chat, a rodada que corrige atualiza o PR sozinha (até 3 rodadas, sem `.github/`, segredo
+  nem commit de fora) e, com os checks passando, sem pedido de mudança nem conversa aberta e 90 s
+  depois do último envio (os bots de revisão comentam logo), o Vitral mescla o head que ele enviou.
+  Um commit de fora, a fila de merge que some ou checks parados há um dia desligam o Ship. O vigia
+  consulta um repositório por vez, mais vezes logo depois de um envio e com a aba PR à vista, e
+  para sozinho sem rede (a faixa "sem conexão"), voltando quando a rede volta.
+- **Depois de mesclar** (pelo Vitral ou por qualquer pessoa): o PR vai para os anteriores (‹ 1/2 ›
+  na aba), o ramo remoto sai quando foi o Vitral que mesclou, a cópia recomeça num ramo novo a
+  partir da base (com as mudanças sem commit de volta, sem `git stash`), a pasta original limpa anda
+  por fast-forward e a issue vai para Concluída (no GitHub, pelo `Closes`; sem ele, a linha oferece
+  **Fechar a issue #45**). Fechado sem mesclar, a cópia e o ramo ficam; arquivar um chat com o PR
+  aberto pergunta se fecha o PR ou deixa aberto.
+- **O que pede confirmação.** As ferramentas do PR (`abrir_pr`, `ver_pr`, `mesclar_pr`) não pedem
+  permissão ao Claude Code, então o Vitral decide: o que você pediu na conversa, num turno sem texto
+  de terceiros, roda; mesclar agora, mudança em `.github/` e o que veio de um aviso do Vitral, de
+  outro chat, de uma issue ou de um comentário viram o cartão **Confirmar** no chat (e em Esperando
+  você), com **Confirmar** e **Agora não**. O primeiro PR pedido pelo Mestre também, a menos que você
+  tenha pedido a ele na conversa. "Tentar de novo" (e a troca de conta) refaz o turno sem repetir no
+  GitHub o que ele já fez.
+- **Isolamento.** Os chats que leem texto de terceiros (uma issue anexada, um aviso do PR) e todos
+  os chats de uma pasta que entrega por PR rodam isolados, assim como os ajudantes deles, a
+  verificação, a preparação e o revisor nas cópias deles: o `claude` roda dentro do `bwrap`, sem o
+  barramento de sessão (e com ele o chaveiro e o `secret-tool`), sem o agente ssh, o `~/.ssh`, o
+  login do `gh` e as credenciais do git, sem ver o processo do Vitral (que tem a chave do Linear na
+  memória) e sem os sockets do X11. O `.git` do repositório (a configuração, os ganchos e o `info/`)
+  e a configuração global do git ficam só leitura lá dentro, e o `.git` não pode ser trocado por
+  outro; o git do Vitral nessas pastas roda sem `core.fsmonitor` e sem ganchos. Quem envia o ramo e
+  fala com o GitHub é o Vitral, fora do isolamento.
+- **O que o isolamento não cobre.** Ele protege as credenciais, não os arquivos: o chat isolado
+  continua lendo e gravando no seu HOME como você (um `~/.bashrc`, uma pasta acima da cópia), e a
+  rede continua aberta (só o que pede login fica de fora). **Rodar**, que abre o app com a sua
+  sessão, roda fora dele. Sem o `bwrap` funcionando (ou fora do Linux), os chats "isolados" rodam
+  só com o ambiente limpo e com `git push`, `gh` e `secret-tool` bloqueados nas regras: o aviso em
+  Conexões diz isso, e o diálogo do Linear avisa que um chat conseguiria ler a chave.
+
 ## Contas e uso dos planos
 
 No pé do trilho fica um anel por serviço, o do Claude e o do Codex, com o disco da marca no
@@ -960,6 +1048,7 @@ vitral --nova loja "o que fazer"        # um chat novo no projeto loja, já com 
 vitral --nova mestre "como estão os projetos?"
 cargo test                              # testes (git, motor, revisor, processos, dados e migração, importação, atualização, interface, --instalar, lançador do Windows)
 ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral [pasta]   # teste visual isolado
+AMOSTRA=prs ferramentas/bancada.sh roteiro.txt prints/ ./target/debug/vitral # a bancada com um PR em cada estado, sem rede
 ./target/debug/vitral --vitrine         # todos os componentes da linguagem visual, sem pasta e sem motor
 ./target/debug/vitral --versao [--json] # a versão (e canal, commit, formato dos dados), sem janela
 ferramentas/instalar-dev.sh             # só desenvolvimento: compila e instala no layout do app como <próxima>-dev.<commit>
@@ -1243,6 +1332,15 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/contas.rs` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano que o Claude Code guarda em `.claude.json` |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
 | `src/git.rs` | Cópia isolada (a do chat de projeto, refeita no mesmo caminho, juntada sem ser apagada e em dia com a origem), diff, fotos/volta, o commit de cada vez na pasta própria, junção (uma por vez por repositório, e a cortada conferida ao abrir), o ponto (checkpoint) antes de um ajudante nascer ou ser juntado, religar as cópias de uma origem que mudou de lugar, verificação, limpeza das cópias |
+| `src/motor/conexoes.rs` | As conexões no motor: o login do `gh`, a chave do Linear (lida sem destravar o chaveiro), o teste do isolamento, o repositório de cada pasta e os métodos de mesclar, com cache |
+| `src/motor/issues.rs` | As issues no motor: listas e detalhes em cache, o chat de uma issue (Iniciar agente, Só a cópia, em lote), anexar e ligar, os efeitos no Linear e no GitHub, e quem roda isolado (`roda_isolado`, as pastas que o git do Vitral trata como isoladas) |
+| `src/motor/prs.rs` | A entrega por PR (seção 6 da especificação): publicar, a API da aba PR, CI e revisão no chat, mesclar e o depois; as regras puras em `prs/regras.rs`, o que bloqueia (pelo `Executor`) em `prs/trabalho.rs` e o laço do vigia em `prs/laco.rs` |
+| `src/motor/guarda.rs` | A guarda das ações com efeito fora do Vitral (executar, cartão Confirmar, recusar ou devolver o que o turno já fez) e as ferramentas `abrir_pr`, `ver_pr` e `mesclar_pr` |
+| `src/github.rs`, `src/linear.rs` | O `gh` como subprocesso (sem token no Vitral) e a GraphQL do Linear pelo `curl` (a chave só no stdin), com as amostras reais nos testes |
+| `src/issues.rs`, `src/vigia.rs`, `src/remoto.rs` | Os tipos comuns das issues e as funções puras (ramo da tarefa, título e corpo do PR, confiança no autor), os intervalos do vigia e a execução remota (erros, recuo, segredos tirados do texto) |
+| `src/segredos.rs` | A chave do Linear no chaveiro do sistema (Secret Service), nunca em arquivo |
+| `src/isolamento.rs` | Os chats isolados: o `bwrap` (com o `.git` do repositório só leitura lá dentro, `travas_do_git`), o ambiente sem o barramento nem as credenciais e o escopo do Landlock que corta os sockets abstratos |
+| `src/ui/painel_pr.rs`, `src/ui/abas_direita.rs`, `src/ui/popover_issues.rs`, `src/ui/conexoes.rs` | A aba PR (e as funções puras dela: as ações, o que falta para mesclar, Esperando você), as abas da direita, a lista de issues e o diálogo do Linear |
 | `src/prompts.rs` | Instruções do Mestre, do chat de projeto, do ajudante e o pedido do Mestre a um chat |
 | `src/modelo.rs` | Os tipos do que vai para o disco (projetos, chats, tarefas, cartões, ocorrências e a configuração global, com os nomes antigos como alias) e o `FORMATO_DADOS` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
@@ -1251,6 +1349,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
+| `ferramentas/amostra-prs/` | A amostra de PRs da bancada (`AMOSTRA=prs`): o `preparar.py` grava um projeto em modo PR com um PR em cada estado e as issues, e o `gh` responde o que o GitHub diria, coerente com o estado, sem rede e sem escrever |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`; o instalador de uma rodada do release, pelo `ferramentas/instalador-windows.ps1`; e o atualizador, da versão publicada a três do ramo num release falso, pelo `ferramentas/atualizador-windows.ps1`) e `dependabot.yml` |
 | `build.rs` | No Windows, o ícone e a versão no `vitral.exe` (o manifesto vem do GPUI); fora dele, nada |

@@ -807,7 +807,7 @@ pub(super) fn texto_do_pr_recolhido(a: &PrAnterior, issue: Option<&str>) -> Stri
     };
     if a.estado == crate::github::EstadoPr::Mesclado {
         if let Some(metodo) = &a.metodo {
-            texto.push_str(&format!(" ({metodo})"));
+            texto.push_str(&format!(" ({})", painel_pr::metodo_em_texto(metodo)));
         }
         if a.ramo_apagado {
             texto.push_str(" · ramo apagado");
@@ -833,9 +833,9 @@ pub(super) fn acao_da_confirmacao(motor: &Motor, c: &Confirmacao) -> String {
         }
         AcaoExterna::AtualizarPr { tarefa } => format!("atualizar {}", numero(tarefa)),
         AcaoExterna::Mesclar { tarefa, metodo, quando_pronto: true, .. } => {
-            format!("mesclar {} quando ficar pronto ({metodo})", numero(tarefa))
+            format!("mesclar {} quando ficar pronto ({})", numero(tarefa), painel_pr::metodo_em_texto(metodo))
         }
-        AcaoExterna::Mesclar { tarefa, metodo, .. } => format!("mesclar {} ({metodo})", numero(tarefa)),
+        AcaoExterna::Mesclar { tarefa, metodo, .. } => format!("mesclar {} ({})", numero(tarefa), painel_pr::metodo_em_texto(metodo)),
     }
 }
 
@@ -1093,6 +1093,9 @@ mod testes {
             ..Default::default()
         };
         assert_eq!(texto_do_pr_recolhido(&pelo_vitral, Some("ENG-123")), "PR #12 mesclado por VictorMenegate (squash) · ramo apagado · ENG-123 concluída");
+        // O "merge" sem a palavra em inglês.
+        let com_merge = PrAnterior { metodo: Some("merge".into()), ramo_apagado: false, ..pelo_vitral.clone() };
+        assert_eq!(texto_do_pr_recolhido(&com_merge, None), "PR #12 mesclado por VictorMenegate (commit de mesclagem)");
         let por_outro = PrAnterior { metodo: None, ramo_apagado: false, issue_concluida: false, ..pelo_vitral.clone() };
         assert_eq!(texto_do_pr_recolhido(&por_outro, Some("#45")), "PR #12 mesclado por VictorMenegate · issue #45");
         let fechado = PrAnterior { estado: EstadoPr::Fechado, ..pelo_vitral };

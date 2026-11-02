@@ -1124,7 +1124,7 @@ impl Janela {
             ),
             (false, _) => "O GitHub deixa mesclar assim, mas algum check que não é obrigatório falhou.".to_string(),
         };
-        let metodo_texto = metodo.clone().unwrap_or_else(|| "o método padrão".into());
+        let metodo_texto = metodo.as_deref().map_or("o método padrão", super::painel_pr::metodo_em_texto).to_string();
         confirmar(
             Confirmacao {
                 tom: TomConfirmacao::Atencao,
