@@ -16,7 +16,7 @@ use smol::channel::Receiver;
 
 use super::conexoes::Carregando;
 use super::mestre::ha_quanto;
-use super::prs::{AcaoPr, Confirmado, EventoLinha, PedidoPr};
+use super::prs::{Confirmado, EventoLinha, PedidoPr};
 use super::*;
 use crate::{
     git::Achado,
@@ -570,6 +570,36 @@ pub fn texto_dos_logs(logs: &[(String, Result<String, String>)]) -> String {
     partes.join("\n")
 }
 
+/// O que falta para mesclar agora, pelo PR como o vigia deixou (seção 6.7; a conferência com a rede é
+/// a do mesclar): vazio quando parece pronto. Sem checks pode ser um repositório sem CI, e UNSTABLE o
+/// usuário confirma no cartão.
+pub fn falta_para_mesclar(pr: &Pr) -> Vec<String> {
+    let mut falta = Vec::new();
+    if pr.estado == EstadoPr::Rascunho {
+        falta.push("ele é rascunho".to_string());
+    }
+    match pr.checks.estado {
+        EstadoChecks::Falhou => falta.push(format!("os checks falharam ({})", rotulo_dos_checks(&pr.checks))),
+        EstadoChecks::Pendente => falta.push(format!("os checks ainda rodam ({})", rotulo_dos_checks(&pr.checks))),
+        EstadoChecks::Passou | EstadoChecks::Nenhum => {}
+    }
+    match pr.mesclavel.as_str() {
+        "DIRTY" => falta.push("há conflito com a base".into()),
+        "BEHIND" => falta.push("ele está atrás da base (Atualizar com main)".into()),
+        "BLOCKED" => falta.push("o GitHub bloqueia (falta aprovação ou check obrigatório)".into()),
+        _ => {}
+    }
+    if pr.decisao == "CHANGES_REQUESTED" {
+        falta.push("a revisão pediu mudanças".into());
+    }
+    match pr.conversas_abertas {
+        0 => {}
+        1 => falta.push("há 1 conversa aberta na revisão".into()),
+        n => falta.push(format!("há {n} conversas abertas na revisão")),
+    }
+    falta
+}
+
 /// O PR e a issue de um chat no `listar_chats` e no `estado` do Mestre (seção 8.4): "PR #12 checks
 /// 15/41 (2 falharam)", "PR #10 mesclado" (sem PR aberto) e "issue ENG-123".
 pub fn pr_e_issue_para_o_mestre(t: &Tarefa) -> Vec<String> {
@@ -807,19 +837,15 @@ impl Motor {
             let _ = resposta.try_send(Resposta::ok(format!("O mesclar quando ficar pronto já está ligado no PR #{} ({armado}).", pr.numero)));
             return;
         }
-        if !quando_pronto {
-            let acoes = self.acoes_do_pr(id);
-            // O Mesclar da aba PR pelo método pedido (ou outro método, se este não aparece).
-            let mesclar = acoes
-                .iter()
-                .find(|(acao, _)| matches!(acao, AcaoPr::Mesclar { metodo: m } if *m == metodo))
-                .or_else(|| acoes.iter().find(|(acao, _)| matches!(acao, AcaoPr::Mesclar { .. })));
-            if let Some((_, Err(motivo))) = mesclar {
-                return erro(format!(
-                    "O PR #{} ainda não pode ser mesclado: {motivo}. Para mesclar quando ficar pronto, use quando_pronto=true.",
-                    pr.numero
-                ));
-            }
+        // Pelo PR como o vigia deixou: o `acoes_do_pr` da aba recusaria pelo próprio chat, que está
+        // rodando (esperando esta resposta). A conferência de verdade é a do mesclar, no cartão.
+        let falta = falta_para_mesclar(&pr);
+        if !quando_pronto && !falta.is_empty() {
+            return erro(format!(
+                "O PR #{} ainda não pode ser mesclado: {}. Para mesclar quando ficar pronto, use quando_pronto=true.",
+                pr.numero,
+                falta.join("; ")
+            ));
         }
         let acao = AcaoExterna::Mesclar { tarefa: id, metodo, sha: pr.sha.clone(), quando_pronto };
         let turno = self.turno_de(&chat.id);
@@ -908,7 +934,7 @@ impl Motor {
     fn executar_acao(&mut self, chat_id: &str, turno: &str, acao: AcaoExterna, resposta: Sender<Resposta>, cx: &mut Context<Self>) {
         self.registrar_acao(chat_id, turno, &acao, EM_ANDAMENTO);
         self.substituir_cartoes(chat_id, &acao);
-        let recebe = self.rodar_acao(&acao, cx);
+        let recebe = self.rodar_acao(&acao, true, cx);
         // Respondida na hora: foi recusada antes de qualquer rede, então nada saiu do Vitral e a
         // repetição pode pedir de novo (depois de entrar no GitHub, por exemplo).
         if let Ok(r) = recebe.try_recv() {
@@ -942,16 +968,18 @@ impl Motor {
     }
 
     /// Chama a API do PR (seção 10.1) para a ação. Pela guarda ou pelo cartão, a ação vale como do
-    /// usuário: ele pediu no turno, ou confirmou.
-    // Na junção com o G4: o publicar de uma ferramenta roda com o chat esperando a resposta dela
-    // (o processo está vivo), então precisa de uma origem que não recuse por "o chat está rodando".
-    fn rodar_acao(&mut self, acao: &AcaoExterna, cx: &mut Context<Self>) -> Receiver<Resposta> {
+    /// usuário: ele pediu no turno, ou confirmou. `da_ferramenta`: o chat que pediu está esperando a
+    /// resposta (o processo dele está vivo, parado na ferramenta).
+    fn rodar_acao(&mut self, acao: &AcaoExterna, da_ferramenta: bool, cx: &mut Context<Self>) -> Receiver<Resposta> {
+        let publicar = |m: &mut Motor, tarefa: u64, pedido: PedidoPr, cx: &mut Context<Motor>| {
+            if da_ferramenta { m.publicar_pela_ferramenta(tarefa, pedido, cx) } else { m.publicar_pr_pelo_usuario(tarefa, pedido, cx) }
+        };
         match acao {
             AcaoExterna::AbrirPr { tarefa, .. } => {
                 let pedido = pedido_da_acao(acao, self.pr_da_tarefa(*tarefa).filter(|p| p.aberto()));
-                self.publicar_pr_pelo_usuario(*tarefa, pedido, cx)
+                publicar(self, *tarefa, pedido, cx)
             }
-            AcaoExterna::AtualizarPr { tarefa } => self.publicar_pr_pelo_usuario(*tarefa, PedidoPr::default(), cx),
+            AcaoExterna::AtualizarPr { tarefa } => publicar(self, *tarefa, PedidoPr::default(), cx),
             AcaoExterna::Mesclar { tarefa, metodo, quando_pronto: true, .. } => respondido(self.armar_pela_guarda(*tarefa, metodo, cx)),
             AcaoExterna::Mesclar { tarefa, metodo, sha, quando_pronto: false } => {
                 // O cartão mostrou os commits de fora até este head: confirmar o cartão confirma eles.
@@ -962,14 +990,21 @@ impl Motor {
         }
     }
 
+    /// Publica pedido pela ferramenta do próprio chat, no meio do turno dele. O chat não está
+    /// mexendo nos arquivos (está parado esperando a resposta), então o "o chat está rodando" da
+    /// publicação não vale aqui.
+    // Na junção com o G4: `self.publicar_pr(id, pedido, OrigemAcao::Ferramenta, cx)`, uma origem que
+    // o `ocupado_para_o_pr` não recusa pelo processo vivo do chat (a seção 6.7 já prevê
+    // `Ferramenta{chat}`); com a de Usuario, todo abrir_pr ouviria "Esperando o chat terminar".
+    fn publicar_pela_ferramenta(&mut self, id: u64, pedido: PedidoPr, cx: &mut Context<Self>) -> Receiver<Resposta> {
+        self.publicar_pr_pelo_usuario(id, pedido, cx)
+    }
+
     /// Liga o "mesclar quando ficar pronto" e confere que ligou.
     fn armar_pela_guarda(&mut self, id: u64, metodo: &str, cx: &mut Context<Self>) -> Resposta {
         let Some(numero) = self.pr_da_tarefa(id).filter(|p| p.aberto()).map(|p| p.numero) else {
             return Resposta::erro(format!("O chat {id} não tem PR aberto."));
         };
-        if let Some((_, Err(motivo))) = self.acoes_do_pr(id).into_iter().find(|(acao, _)| *acao == AcaoPr::MesclarQuandoPronto) {
-            return Resposta::erro(format!("Não liguei o mesclar quando ficar pronto no PR #{numero}: {motivo}"));
-        }
         self.armar_mescla(id, true, Some(metodo.to_string()), cx);
         match self.pr_da_tarefa(id).and_then(|p| p.ao_ficar_pronto.clone()) {
             Some(metodo) => Resposta::ok(format!(
@@ -1087,7 +1122,7 @@ impl Motor {
             self.fechar_confirmacao(cartao, &chat_id, &k, texto, cx);
             return;
         }
-        let recebe = self.rodar_acao(&k.acao, cx);
+        let recebe = self.rodar_acao(&k.acao, false, cx);
         match recebe.try_recv() {
             // Recusada na hora, antes de qualquer rede (o chat rodando, o GitHub sem login): nada
             // aconteceu, e o cartão continua aberto para confirmar depois.
@@ -1706,6 +1741,40 @@ mod testes {
         assert!(logs.contains("erro: '''falhou'''") && logs.ends_with("Log de \"lint\": ainda rodando"));
         assert!(logs.chars().count() < LOG_DAS_FALHAS + 200);
         assert_eq!(texto_dos_logs(&[]), "Log das falhas: nenhum check falhou neste head.");
+    }
+
+    #[test]
+    fn o_que_falta_para_mesclar_agora() {
+        let pronto = Pr {
+            numero: 12,
+            checks: ResumoChecks { estado: EstadoChecks::Passou, total: 3, terminados: 3, falhos: 0, pendentes: 0 },
+            mesclavel: "CLEAN".into(),
+            decisao: "APPROVED".into(),
+            ..Default::default()
+        };
+        assert!(falta_para_mesclar(&pronto).is_empty());
+        assert!(falta_para_mesclar(&Pr { checks: ResumoChecks::default(), mesclavel: "UNSTABLE".into(), ..pronto.clone() }).is_empty(), "sem CI, e o UNSTABLE vai ao cartão");
+        assert!(falta_para_mesclar(&Pr { mesclavel: String::new(), ..pronto.clone() }).is_empty(), "o GitHub ainda calculando: o mesclar confere");
+        let longe = Pr {
+            estado: EstadoPr::Rascunho,
+            checks: ResumoChecks { estado: EstadoChecks::Pendente, total: 41, terminados: 15, falhos: 2, pendentes: 26 },
+            mesclavel: "BEHIND".into(),
+            decisao: "CHANGES_REQUESTED".into(),
+            conversas_abertas: 2,
+            ..pronto.clone()
+        };
+        assert_eq!(
+            falta_para_mesclar(&longe),
+            [
+                "ele é rascunho",
+                "os checks ainda rodam (15/41 (2 falharam; 26 rodando))",
+                "ele está atrás da base (Atualizar com main)",
+                "a revisão pediu mudanças",
+                "há 2 conversas abertas na revisão",
+            ]
+        );
+        let falhou = Pr { checks: ResumoChecks { estado: EstadoChecks::Falhou, total: 3, terminados: 3, falhos: 1, pendentes: 0 }, mesclavel: "DIRTY".into(), ..pronto };
+        assert_eq!(falta_para_mesclar(&falhou), ["os checks falharam (3/3 (1 falhou))", "há conflito com a base"]);
     }
 
     #[test]
