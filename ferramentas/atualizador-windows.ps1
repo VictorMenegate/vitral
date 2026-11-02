@@ -273,7 +273,8 @@ Start-Sleep -Seconds 2
 $env:VITRAL_ATUALIZACAO_BASE = 'http://127.0.0.1:18731/r'
 $env:VITRAL_ATUALIZACAO_CHAVE = Join-Path $Falso 'bancada.pub'
 $env:VITRAL_TESTE_CAI = $vC
-Start-Process -FilePath $lancador
+# O stderr do lançador passa para o app que ele abre (o detalhe de uma instalação que falhou).
+Start-Process -FilePath $lancador -RedirectStandardError (Join-Path $Saida 'a-stderr.log')
 $vitral = EsperarJanela (App $vA) 90
 Conferir ($null -ne $vitral) "a $vA abriu pelo lançador, com o release falso"
 $aberta = Get-Date

@@ -21,7 +21,7 @@ use super::{
     config::{self, Config, DESISTE_DEPOIS, Modo},
     instalador::{self, Falha, Origem, Raiz},
     manifesto::{self, LIMITE_ASSINATURA, LIMITE_MANIFESTO, Lido, Publicada},
-    plataforma,
+    pacote, plataforma,
     rede::{self, Baixar, Rede, Resposta},
 };
 
@@ -178,6 +178,10 @@ fn uma_volta(amb: &Ambiente, config: &mut Config, pedido: Pedido, agora: u64, av
             Estado::Pronta(novidade)
         }
         Err(erro) => {
+            // A frase da interface não leva o detalhe; o stderr leva.
+            if let Erro::Binario { detalhe, .. } | Erro::Instalacao { detalhe, .. } = &erro {
+                eprintln!("vitral: a atualização para a {versao} falhou: {detalhe}");
+            }
             if matches!(erro, Erro::Arquivo { .. } | Erro::Binario { .. } | Erro::Instalacao { .. }) {
                 *config.falhas.entry(versao).or_default() += 1;
             }
@@ -261,8 +265,10 @@ fn baixar_e_instalar(amb: &Ambiente, publicada: &Publicada, avisar: &mut dyn FnM
                 Baixar::Disco(erro) => instalacao(erro.to_string()),
             });
         }
-        fs::rename(&parte, &destino)
-            .and_then(|()| fs::File::open(&baixando)?.sync_all())
+        // O fsync da pasta é do Linux: no Windows uma pasta não abre como arquivo (e a troca já
+        // vai para o disco com o MOVEFILE_WRITE_THROUGH).
+        pacote::trocar_por_cima(&parte, &destino)
+            .and_then(|()| crate::dados::fsync_da_pasta(&baixando))
             .map_err(|e| instalacao(e.to_string()))?;
     }
     avisar(Estado::Instalando { versao: versao.clone() });
