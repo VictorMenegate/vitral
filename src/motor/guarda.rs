@@ -570,6 +570,44 @@ pub fn texto_dos_logs(logs: &[(String, Result<String, String>)]) -> String {
     partes.join("\n")
 }
 
+/// O PR e a issue de um chat no `listar_chats` e no `estado` do Mestre (seção 8.4): "PR #12 checks
+/// 15/41 (2 falharam)", "PR #10 mesclado" (sem PR aberto) e "issue ENG-123".
+pub fn pr_e_issue_para_o_mestre(t: &Tarefa) -> Vec<String> {
+    let mut partes = Vec::new();
+    match (&t.pr, t.prs_anteriores.last()) {
+        (Some(pr), _) => {
+            let mut texto = format!("PR #{}", pr.numero);
+            if pr.estado == EstadoPr::Rascunho {
+                texto.push_str(" (rascunho)");
+            }
+            if pr.checks.total == 0 {
+                texto.push_str(", sem checks");
+            } else {
+                texto.push_str(&format!(" checks {}", rotulo_dos_checks(&pr.checks)));
+            }
+            if pr.ao_ficar_pronto.is_some() {
+                texto.push_str(", mescla quando ficar pronto");
+            }
+            if !pr.commits_de_fora.is_empty() {
+                texto.push_str(", com commit de fora");
+            }
+            partes.push(texto);
+        }
+        (None, Some(anterior)) => partes.push(format!("PR #{} {}", anterior.numero, nome_do_estado(anterior.estado))),
+        (None, None) => {}
+    }
+    if let Some(issue) = &t.issue {
+        partes.push(format!("issue {}", issue.chave));
+    }
+    partes
+}
+
+/// O pedido do chat para o Mestre com o PR e a issue no fim.
+pub fn com_pr_e_issue(pedido: String, t: Option<&Tarefa>) -> String {
+    let extra = t.map(pr_e_issue_para_o_mestre).unwrap_or_default();
+    if extra.is_empty() { pedido } else { format!("{pedido}; {}", extra.join("; ")) }
+}
+
 /// Os pedidos de `incluir` que trazem texto de terceiros.
 fn pede_terceiros(incluir: &[String]) -> bool {
     incluir.iter().any(|i| i == "comentarios" || i == "log_falhas")
@@ -1668,6 +1706,23 @@ mod testes {
         assert!(logs.contains("erro: '''falhou'''") && logs.ends_with("Log de \"lint\": ainda rodando"));
         assert!(logs.chars().count() < LOG_DAS_FALHAS + 200);
         assert_eq!(texto_dos_logs(&[]), "Log das falhas: nenhum check falhou neste head.");
+    }
+
+    #[test]
+    fn pr_e_issue_nos_relatorios_ao_mestre() {
+        let checks = ResumoChecks { estado: EstadoChecks::Pendente, total: 41, terminados: 15, falhos: 2, pendentes: 0 };
+        let issue = crate::issues::IssueLigada { chave: "ENG-123".into(), ..Default::default() };
+        let t = Tarefa { pr: Some(Pr { numero: 12, checks, ..Default::default() }), issue: Some(issue), ..Default::default() };
+        assert_eq!(com_pr_e_issue("pedido: rodada 1, PR aberto".into(), Some(&t)), "pedido: rodada 1, PR aberto; PR #12 checks 15/41 (2 falharam); issue ENG-123");
+        let ship = Tarefa {
+            pr: Some(Pr { numero: 12, estado: EstadoPr::Rascunho, ao_ficar_pronto: Some("squash".into()), commits_de_fora: vec!["abc".into()], ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(pr_e_issue_para_o_mestre(&ship), ["PR #12 (rascunho), sem checks, mescla quando ficar pronto, com commit de fora"]);
+        let depois = Tarefa { prs_anteriores: vec![PrAnterior { numero: 10, estado: EstadoPr::Mesclado, ..Default::default() }], ..Default::default() };
+        assert_eq!(com_pr_e_issue("conversa".into(), Some(&depois)), "conversa; PR #10 mesclado");
+        assert_eq!(com_pr_e_issue("conversa".into(), Some(&Tarefa::default())), "conversa");
+        assert_eq!(com_pr_e_issue("-".into(), None), "-");
     }
 
     #[test]

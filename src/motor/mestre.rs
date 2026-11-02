@@ -2212,8 +2212,13 @@ impl Motor {
         }
     }
 
-    /// "conversa", ou "pedido do Mestre: rodada 2, em revisão, verificação passou, revisor aprovaria".
+    /// "conversa", ou "pedido do Mestre: rodada 2, em revisão, verificação passou, revisor aprovaria",
+    /// com o PR e a issue do chat no fim ("; PR #12 checks 15/41 (2 falharam); issue ENG-123").
     fn pedido_para_o_claude(&self, c: &Chat) -> String {
+        super::guarda::com_pr_e_issue(self.so_o_pedido(c), c.tarefa.and_then(|n| self.tarefa(n)))
+    }
+
+    fn so_o_pedido(&self, c: &Chat) -> String {
         let Some(t) = c.tarefa.and_then(|n| self.tarefa(n)) else {
             return if c.papel == Papel::Coordenador { "conversa antiga".into() } else { "-".into() };
         };
