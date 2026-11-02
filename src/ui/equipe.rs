@@ -230,7 +230,12 @@ impl Janela {
             }
             Forma::Copia => {
                 let copia = t.worktree.clone().filter(|w| w.is_dir());
-                linhas.push(texto("Trabalha numa cópia só dele, num branch próprio; Juntar leva as mudanças para a origem.".into()));
+                let por_pr = motor.config_da_pasta(&t.projeto, &origem).github.entrega == crate::modelo::ModoEntrega::Pr;
+                linhas.push(texto(if por_pr {
+                    "Trabalha numa cópia só dele, num branch próprio; as mudanças vão para o GitHub num PR.".into()
+                } else {
+                    "Trabalha numa cópia só dele, num branch próprio; Juntar leva as mudanças para a origem.".into()
+                }));
                 linhas.push(linha_dado(format!("este-chat-origem-{}", t.id), "Origem", curta.clone(), origem.display().to_string(), origem.display().to_string(), 56.).into_any_element());
                 if let Some(branch) = &t.branch {
                     let alvo = t.ramo_alvo.clone().map(|r| format!(" → {r}")).unwrap_or_default();
@@ -251,7 +256,7 @@ impl Janela {
                         if let Some(m) = t.mudancas.as_ref().filter(|m| m.arquivos > 0) {
                             partes.push(format!("{} · +{} −{}", contagem(m.arquivos as usize, "arquivo", "arquivos"), m.mais, m.menos));
                         } else if estado.is_some() {
-                            partes.push("nada para juntar".into());
+                            partes.push(if por_pr { "nada novo para o PR".into() } else { "nada para juntar".into() });
                         }
                         if !partes.is_empty() {
                             linhas.push(div().metadado().text_color(Cores::tenue()).child(partes.join(" · ")).into_any_element());
@@ -629,7 +634,7 @@ impl Janela {
             .gap(esp::E8)
             .h(r(22.))
             .child(pilula)
-            .children(super::painel_pr::chip_do_pr(("chip-pr-tarefa", id as usize), tarefa, super::componentes::TamanhoChip::Pequeno, estreita).map(|chip| {
+            .children(super::painel_pr::chip_do_pr(("chip-pr-tarefa", id as usize), tarefa, super::componentes::TamanhoChip::Pequeno, self.direita_compacta).map(|chip| {
                 let chat = tarefa.trabalhador.clone();
                 sem_arrastar().flex_none().child(
                     chip.on_click(cx.listener(move |this, _, window, cx| {

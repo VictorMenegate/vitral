@@ -114,7 +114,8 @@ struct Rascunho {
 /// O que cada anotação do diff mostra (um retrato do estado, montado a cada quadro).
 #[derive(Clone)]
 enum Cartao {
-    Problema { indice: usize, problema: Problema, usado: bool },
+    /// `so_ler`: o diff do PR no GitHub, onde nada vira comentário (sem o "Usar").
+    Problema { indice: usize, problema: Problema, usado: bool, so_ler: bool },
     Comentario { indice: usize, texto: String, onde: String, gravidade: Option<String> },
     Rascunho { rotulo: String, editando: bool },
 }
@@ -2235,6 +2236,7 @@ impl RevisaoDiff {
             });
             cartoes.insert(id, cartao);
         };
+        let so_ler = matches!(self.fonte, FonteDiff::Pr { .. });
         for (i, p) in problemas.iter().enumerate() {
             if let Some((caminho, linha)) = self.ancorar(&p.arquivo, p.linha) {
                 let usado = self.comentarios.iter().any(|c| c.problema == Some(i));
@@ -2242,6 +2244,7 @@ impl RevisaoDiff {
                     indice: i,
                     problema: p.clone(),
                     usado,
+                    so_ler,
                 };
                 anotar(("problema", i).into(), caminho, linha.map(|l| (DiffSide::Modified, l)), cartao);
             }
@@ -2386,6 +2389,9 @@ impl RevisaoDiff {
 
     /// Spinner e ícone, texto e cor da linha da esquerda do rodapé.
     fn estado_do_rodape(&self, t: Option<&Tarefa>, cx: &App) -> (Option<Lucide>, String) {
+        if let FonteDiff::Pr { numero, .. } = &self.fonte {
+            return (Some(Lucide::Info), format!("O diff do PR #{numero} no GitHub, só para ler."));
+        }
         let Some(t) = t else {
             return (Some(Lucide::Info), "Este chat não existe mais.".into());
         };
@@ -3145,7 +3151,7 @@ fn desenhar_cartao(
     };
     match cartao.clone() {
         // Um comentário em linha da revisão do PR, no molde do apontamento do revisor.
-        Cartao::Problema { indice, problema, usado } if problema.gravidade.starts_with(DA_REVISAO_DO_PR) => {
+        Cartao::Problema { indice, problema, usado, so_ler } if problema.gravidade.starts_with(DA_REVISAO_DO_PR) => {
             let autor = problema.gravidade[DA_REVISAO_DO_PR.len()..].to_string();
             let cor = Cores::destaque();
             let cabecalho = h_flex()
@@ -3163,7 +3169,7 @@ fn desenhar_cartao(
             caixa(Cores::tinta(cor), Some(cor))
                 .child(cabecalho)
                 .child(div().corpo_ui().text_color(Cores::texto()).child(problema.descricao))
-                .child(
+                .when(!so_ler, |s| s.child(
                     h_flex().child(
                         botao_fantasma(("usar-problema", indice), Some(Lucide::Plus.into()), "Usar", TamanhoBotao::Barra, window, cx)
                             .tooltip("Vira seu comentário nesta linha, que vai ao chat com os outros")
@@ -3171,10 +3177,10 @@ fn desenhar_cartao(
                                 let _ = fraca.update(cx, |this, cx| this.usar_problema(indice, false, cx));
                             }),
                     ),
-                )
+                ))
                 .into_any_element()
         }
-        Cartao::Problema { indice, problema, usado } => {
+        Cartao::Problema { indice, problema, usado, .. } => {
             let peso = peso_da_gravidade(&problema.gravidade);
             let cor = cor_da_gravidade(peso);
             let cabecalho = h_flex()

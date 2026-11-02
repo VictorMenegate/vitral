@@ -233,7 +233,7 @@ pub fn rotulo_checks(c: &ResumoChecks) -> RotuloChecks {
     match c.estado {
         _ if c.total == 0 => RotuloChecks { fracao: 0., curto: "sem checks".into(), frase: "Sem checks".into() },
         EstadoChecks::Pendente | EstadoChecks::Nenhum => {
-            let falhas = if c.falhos > 0 { format!(", {} já", falharam(c.falhos)) } else { String::new() };
+            let falhas = if c.falhos > 0 { format!(" ({})", falharam(c.falhos)) } else { String::new() };
             RotuloChecks {
                 fracao,
                 curto: format!("{}/{}", c.terminados, c.total),
@@ -879,7 +879,8 @@ impl Janela {
             return None;
         }
         let t = chat.tarefa.and_then(|t| motor.tarefa(t))?;
-        let so_icone = nivel == LarguraPainel::Estreito;
+        // Só o anel abaixo de 520: o título da conversa e o chip da issue também precisam do lugar.
+        let so_icone = nivel != LarguraPainel::Largo;
         let alvo = chat.id.clone();
         let chip = chip_do_pr(("chip-pr", painel_id as usize), t, TamanhoChip::Medio, so_icone)?
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba_pr(&alvo, window, cx)))
@@ -1326,7 +1327,8 @@ pub fn esperas_da_tarefa(t: &Tarefa, agora: u64, pronto_para_mesclar: bool) -> V
     if t.pronto_para_atualizar {
         lista.push((format!("Pronto para atualizar o PR #{n}"), Sinal::Pedido, AcaoDaEspera::AtualizarPr));
     }
-    if watch && pr.checks.estado == EstadoChecks::Falhou {
+    // Com a rodada que corrige pronta, a falha já foi tratada: só o Atualizar PR.
+    if watch && pr.checks.estado == EstadoChecks::Falhou && !t.pronto_para_atualizar {
         lista.push((format!("CI falhou no PR #{n}"), Sinal::Erro, AcaoDaEspera::MandarFalha));
     }
     if watch && pr.decisao == "CHANGES_REQUESTED" {
@@ -1357,8 +1359,36 @@ pub(super) struct EsperaDoPr {
     pub acao: AcaoDaEspera,
 }
 
-/// O que os PRs (e os "Confirmar" dos chats) esperam de você, num projeto ou em todos.
+/// O que os PRs (e os "Confirmar" dos chats) esperam de você, num projeto ou em todos: uma linha
+/// por chat, com o mais urgente (o "Confirmar" primeiro) e "(+N)" quando há mais.
 pub(super) fn esperas_do_pr(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaDoPr> {
+    // As de um chat vêm juntas, na ordem dos chats; o "Confirmar" passa na frente das outras dele.
+    let mut por_chat: Vec<EsperaDoPr> = Vec::new();
+    let mut quantas: Vec<usize> = Vec::new();
+    for e in esperas_soltas(motor, projeto) {
+        match por_chat.iter().position(|p| p.chat == e.chat) {
+            Some(i) => {
+                quantas[i] += 1;
+                if matches!(e.acao, AcaoDaEspera::Confirmar(_)) {
+                    por_chat[i] = e;
+                }
+            }
+            None => {
+                por_chat.push(e);
+                quantas.push(1);
+            }
+        }
+    }
+    for (e, n) in por_chat.iter_mut().zip(quantas) {
+        if n > 1 {
+            e.texto.push_str(&format!(" (+{})", n - 1));
+        }
+    }
+    por_chat
+}
+
+/// Todas as esperas dos PRs, uma por motivo.
+fn esperas_soltas(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaDoPr> {
     let agora = crate::modelo::agora();
     let mut lista = Vec::new();
     for chat in motor.chats.iter().filter(|c| c.papel == crate::modelo::Papel::Projeto && !motor.arquivada(c)) {
@@ -1390,7 +1420,7 @@ pub(super) fn esperas_do_pr(motor: &Motor, projeto: Option<&str>) -> Vec<EsperaD
                     tarefa: t.id,
                     projeto: chat.projeto.clone(),
                     titulo: chat.titulo.clone(),
-                    texto: format!("Confirmar: {}", minuscula(&super::cartoes::frase_da_confirmacao(motor, conf))),
+                    texto: format!("Confirmar: {}", super::cartoes::acao_da_confirmacao(motor, conf)),
                     sinal: super::componentes::Sinal::Pedido,
                     acao: AcaoDaEspera::Confirmar(c.id),
                 });
@@ -1596,7 +1626,7 @@ impl Janela {
                     texto.push_str(&format!(" ({metodo})"));
                 }
                 if let Some(issue) = &t.issue {
-                    texto.push_str(&format!(" · {}", issue.chave));
+                    texto.push_str(&format!(" · issue {}", issue.chave));
                 }
                 // "Fechar a issue #45": o PR foi mesclado e não fechou a issue do GitHub do chat.
                 let issue_aberta = t.issue.as_ref().filter(|i| i.fonte == FonteIssue::Github).and_then(|i| {
@@ -2070,7 +2100,15 @@ impl Janela {
         let compacta = self.direita_compacta;
         let falta = falta_para_mesclar(pr, simulacao.as_ref());
         let base = nome_da_base(pr).to_string();
-        let linha_falta = if falta.is_empty() {
+        // Sem nada faltando no PR, o que ainda segura o Mesclar (a permissão, o chat que roda, a
+        // publicação) fica no lugar do "Pronto para mesclar".
+        let linha_falta = if let (true, Err(motivo)) = (falta.is_empty(), &mesclar) {
+            h_flex()
+                .gap(esp::E6)
+                .child(Icon::new(Lucide::Clock).size(r(14.)).text_color(Cores::tenue()))
+                .child(div().metadado().text_color(Cores::tenue()).child(motivo.clone()))
+                .into_any_element()
+        } else if falta.is_empty() {
             h_flex()
                 .gap(esp::E6)
                 .child(Icon::new(Lucide::CircleCheck).size(r(14.)).text_color(Cores::verde()))
@@ -2218,22 +2256,22 @@ impl Janela {
                 let id = |s: &str| SharedString::from(format!("espera-{}-{s}", e.chave));
                 let motor_e = self.motor.clone();
                 let botao = match &e.acao {
-                    AcaoDaEspera::MandarFalha => botao_fantasma(id("acao"), None, "Mandar ao chat", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
+                    AcaoDaEspera::MandarFalha => botao_icone(id("acao"), Lucide::MessageSquareQuote, "Mandar a falha ao chat", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         if let Some(motor) = &motor_e {
                             let recebe = motor.update(cx, |m, cx| m.mandar_falha_ao_chat(tarefa, None, cx));
                             responder(recebe, window, cx);
                         }
                     }),
-                    AcaoDaEspera::Mesclar => botao_fantasma(id("acao"), None, "Mesclar", TamanhoBotao::Linha, window, cx).on_click(cx.listener(move |this, _, window, cx| {
+                    AcaoDaEspera::Mesclar => botao_icone(id("acao"), Lucide::GitMerge, "Mesclar", TamanhoBotao::Linha, window, cx).on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.mesclar_pr(tarefa, None, window, cx)
                     })),
-                    AcaoDaEspera::AtualizarPr => botao_fantasma(id("acao"), None, "Atualizar PR", TamanhoBotao::Linha, window, cx).on_click(cx.listener(move |this, _, window, cx| {
+                    AcaoDaEspera::AtualizarPr => botao_icone(id("acao"), Lucide::GitPullRequest, "Atualizar PR", TamanhoBotao::Linha, window, cx).on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.atualizar_pr_do_usuario(tarefa, window, cx)
                     })),
-                    AcaoDaEspera::Destravar => botao_fantasma(id("acao"), None, "Destravar e tentar", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
+                    AcaoDaEspera::Destravar => botao_icone(id("acao"), Lucide::LockKeyholeOpen, "Destravar e tentar", TamanhoBotao::Linha, window, cx).on_click(move |_, window, cx| {
                         cx.stop_propagation();
                         if let Some(motor) = &motor_e {
                             let recebe = motor.update(cx, |m, cx| m.tentar_efeito_pendente(tarefa, cx));
@@ -2480,7 +2518,7 @@ mod testes {
         assert_eq!((r.curto.as_str(), r.frase.as_str()), ("15/41", "15 de 41 checks terminaram"));
         assert!((r.fracao - 15. / 41.).abs() < 1e-6);
         let r = rotulo_checks(&c(EstadoChecks::Pendente, 41, 15, 2, 26));
-        assert_eq!(r.frase, "15 de 41 checks terminaram, 2 checks falharam já");
+        assert_eq!(r.frase, "15 de 41 checks terminaram (2 checks falharam)");
         let r = rotulo_checks(&c(EstadoChecks::Passou, 41, 41, 0, 0));
         assert_eq!((r.curto.as_str(), r.frase.as_str(), r.fracao), ("41/41", "41 checks passaram", 1.));
         assert_eq!(rotulo_checks(&c(EstadoChecks::Passou, 1, 1, 0, 0)).frase, "1 check passou");

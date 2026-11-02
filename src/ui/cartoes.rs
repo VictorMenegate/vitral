@@ -67,6 +67,11 @@ pub(super) fn nome_do_chat(c: &Chat) -> String {
     }
 }
 
+fn maiuscula(texto: &str) -> String {
+    let mut letras = texto.chars();
+    letras.next().map(|c| c.to_uppercase().chain(letras).collect()).unwrap_or_default()
+}
+
 fn uma_linha(texto: &str) -> String {
     let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
     if linha.chars().count() > 120 { format!("{}…", linha.chars().take(120).collect::<String>()) } else { linha.to_string() }
@@ -306,11 +311,12 @@ impl Janela {
                     self.confirmacao_aberta(motor, c.id, confirmacao, window, cx)
                 }
                 (TipoCartao::Confirmar(confirmacao), estado) => {
-                    let frase = frase_da_confirmacao(motor, confirmacao);
-                    let (icone, cor, texto) = match (&confirmacao.resultado, estado) {
-                        (Some(resultado), _) => (Lucide::ShieldCheck, Cores::tenue(), format!("{frase} · {}", uma_linha(resultado))),
-                        (None, EstadoCartao::Aceito) => (Lucide::ShieldCheck, Cores::verde(), format!("{frase} · confirmado")),
-                        (None, _) => (Lucide::X, Cores::tenue(), format!("{frase} · agora não")),
+                    // Decidido: a decisão e o resultado primeiro, porque a linha corta no fim.
+                    let acao = acao_da_confirmacao(motor, confirmacao);
+                    let resultado = confirmacao.resultado.as_deref().map(|r| format!(" · {}", uma_linha(r))).unwrap_or_default();
+                    let (icone, cor, texto) = match estado {
+                        EstadoCartao::Aceito => (Lucide::ShieldCheck, Cores::verde(), format!("Confirmado: {acao}{resultado}")),
+                        _ => (Lucide::X, Cores::tenue(), format!("Agora não: {acao}{resultado}")),
                     };
                     linha_decidida(format!("cartao-{id}").into(), icone, cor, texto, None, None).into_any_element()
                 }
@@ -791,22 +797,21 @@ impl Janela {
     }
 }
 
-/// "O chat “Corrige login” quer mesclar o PR #12 (squash)": o que um chat pediu e espera a sua
-/// confirmação.
-pub(super) fn frase_da_confirmacao(motor: &Motor, c: &Confirmacao) -> String {
-    let quem = motor.chat(&c.pedido_por).map_or_else(|| "Um chat".to_string(), |chat| format!("O chat “{}”", chat.titulo));
+/// "mesclar o PR #12 (squash)", "abrir o PR “Corrige login” como rascunho": o que a confirmação
+/// deixa fazer, sem quem pediu.
+pub(super) fn acao_da_confirmacao(motor: &Motor, c: &Confirmacao) -> String {
     let numero = |tarefa: &u64| motor.pr_da_tarefa(*tarefa).map_or_else(|| "o PR".to_string(), |p| format!("o PR #{}", p.numero));
     match &c.acao {
         AcaoExterna::AbrirPr { titulo, rascunho, quando_pronto, .. } => {
             let rascunho = if *rascunho { " como rascunho" } else { "" };
             let ship = quando_pronto.as_ref().map(|m| format!(" e mesclar quando ficar pronto ({m})")).unwrap_or_default();
-            format!("{quem} quer abrir o PR “{titulo}”{rascunho}{ship}")
+            format!("abrir o PR “{titulo}”{rascunho}{ship}")
         }
-        AcaoExterna::AtualizarPr { tarefa } => format!("{quem} quer atualizar {}", numero(tarefa)),
+        AcaoExterna::AtualizarPr { tarefa } => format!("atualizar {}", numero(tarefa)),
         AcaoExterna::Mesclar { tarefa, metodo, quando_pronto: true, .. } => {
-            format!("{quem} quer mesclar {} quando ficar pronto ({metodo})", numero(tarefa))
+            format!("mesclar {} quando ficar pronto ({metodo})", numero(tarefa))
         }
-        AcaoExterna::Mesclar { tarefa, metodo, .. } => format!("{quem} quer mesclar {} ({metodo})", numero(tarefa)),
+        AcaoExterna::Mesclar { tarefa, metodo, .. } => format!("mesclar {} ({metodo})", numero(tarefa)),
     }
 }
 
@@ -846,9 +851,11 @@ impl Janela {
                 if pr.estado == crate::github::EstadoPr::Rascunho {
                     meta.push("rascunho".into());
                 }
-                meta.push(if pr.acompanhando { "acompanhando".into() } else { "sem acompanhar".into() });
-                if let Some(metodo) = &pr.ao_ficar_pronto {
-                    meta.push(format!("mesclar quando pronto ({metodo})"));
+                // O Ship já diz que acompanha.
+                match &pr.ao_ficar_pronto {
+                    Some(_) => meta.push("mesclar quando pronto".into()),
+                    None if pr.acompanhando => meta.push("acompanhando".into()),
+                    None => meta.push("sem acompanhar".into()),
                 }
                 let ship = pr.ao_ficar_pronto.is_some();
                 let falhou = pr.checks.falhos > 0 && pr.checks.pendentes == 0;
@@ -916,8 +923,10 @@ impl Janela {
                             .min_w_0()
                             .gap(esp::E6)
                             .child(div().flex_none().rotulo().text_color(Cores::forte()).child(format!("PR #{}", pr.numero)))
-                            .child(div().min_w_0().truncate().corpo_ui().text_color(Cores::texto()).child(pr.titulo.clone()))
-                            .child(div().flex_none().metadado().text_color(Cores::tenue()).child(meta.join(" · ")))
+                            // O título e o resumo dividem o que sobra; os dois cortam no fim.
+                            .child(div().flex_shrink(1.).min_w(r(64.)).truncate().corpo_ui().text_color(Cores::texto()).child(pr.titulo.clone()))
+                            .child(div().flex_shrink(1.).min_w_0().truncate().metadado().text_color(Cores::tenue()).child(meta.join(" · ")))
+                            .child(div().flex_1())
                             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
                     )
                     .children(contextual)
@@ -938,7 +947,7 @@ impl Janela {
             _ => format!("PR #{} fechado sem mesclar", a.numero),
         };
         if let Some(issue) = &t.issue {
-            texto.push_str(&format!(" · {}", issue.chave));
+            texto.push_str(&format!(" · issue {}", issue.chave));
         }
         let quando = (a.em > 0).then(|| match super::tempo_relativo(a.em).as_str() {
             "agora" => "agora".to_string(),
@@ -991,7 +1000,11 @@ impl Janela {
     /// O "Confirmar" de um chat (no molde dos outros cartões): o que ele quer fazer, o resumo e
     /// Confirmar / Agora não.
     fn confirmacao_aberta(&self, motor: &Motor, cartao: u64, c: &Confirmacao, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let frase = frase_da_confirmacao(motor, c);
+        // A ação vem no título (o que importa, e o que corta por último); quem pediu e o resumo,
+        // embaixo, em até 3 linhas.
+        let acao = acao_da_confirmacao(motor, c);
+        let titulo = format!("{}?", maiuscula(&acao));
+        let quem = motor.chat(&c.pedido_por).map_or_else(|| "Um chat pediu".to_string(), |chat| format!("Pedido do chat “{}”", chat.titulo));
         let decidir = |aceitar: bool| {
             let motor_e = self.motor.clone();
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -1000,9 +1013,12 @@ impl Janela {
                 }
             }
         };
-        let resumo = (!c.resumo.trim().is_empty()).then(|| uma_linha(&c.resumo));
+        let resumo = c.resumo.trim().to_string();
         moldura(Cores::ambar())
-            .child(cabecalho(Lucide::ShieldQuestionMark, Cores::ambar(), frase, resumo))
+            .child(cabecalho(Lucide::ShieldQuestionMark, Cores::ambar(), titulo, Some(quem)))
+            .when(!resumo.is_empty(), |s| {
+                s.child(div().px(dentro_da_borda(12.)).pt(esp::E12).corpo_ui().text_color(Cores::texto()).line_clamp(3).text_ellipsis().child(resumo))
+            })
             .child(
                 rodape()
                     .child(div().flex_1())

@@ -1033,11 +1033,15 @@ impl Janela {
         let recebe = motor.update(cx, |m, cx| m.log_do_check(&repo, link.clone(), cx));
         let lido: Rc<RefCell<Option<Result<String, String>>>> = Rc::new(RefCell::new(None));
         let guardar = lido.clone();
+        // O log abre no fim, onde costuma estar o erro.
+        let rolagem = ScrollHandle::new();
+        let ao_fim = rolagem.clone();
         window
             .spawn(cx, async move |cx| {
                 let resultado = recebe.recv().await.unwrap_or_else(|_| Err("A leitura do log parou no meio.".into()));
                 let _ = cx.update(|window, _| {
                     *guardar.borrow_mut() = Some(resultado);
+                    ao_fim.scroll_to_bottom();
                     window.refresh();
                 });
             })
@@ -1061,6 +1065,7 @@ impl Janela {
                     .id("log-do-check")
                     .max_h(r(440.))
                     .overflow_y_scroll()
+                    .track_scroll(&rolagem)
                     .child(super::mensagens::markdown("log-do-check".into(), format!("````text\n{}\n````", texto.trim_end()), cx))
                     .into_any_element(),
             };
