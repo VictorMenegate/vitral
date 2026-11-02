@@ -1152,3 +1152,66 @@ fn largura_do_log(window: &Window) -> f32 {
     let escala = window.rem_size().as_f32() / 15.;
     (window.viewport_size().width.as_f32() / escala - 64.).min(720.)
 }
+
+impl Janela {
+    /// Arquivar pelo menu do chat: o chat vazio sai em vez de arquivar; arquivar se desfaz no aviso.
+    pub(super) fn arquivar_do_menu(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        if motor.update(cx, |m, cx| m.arquivar_chat(&chat, cx)) {
+            self.largar_chats(std::slice::from_ref(&chat), true, window, cx);
+            window.push_notification(aviso(Tom::Info, "Chat vazio apagado"), cx);
+            return;
+        }
+        super::lateral::avisar_arquivadas(motor, vec![chat.clone()], "Conversa arquivada".into(), window, cx);
+        // Só pergunta ao arquivar um coordenador parado com cópias sobrando.
+        self.oferecer_limpeza_ao_arquivar(&chat, window, cx)
+    }
+
+    /// Arquivar um chat com o PR aberto (seção 6.9): fechar o PR no GitHub, ou deixar aberto (o
+    /// Vitral para de acompanhar e desliga o mesclar quando ficar pronto). Cancelar não arquiva.
+    pub(super) fn dialogo_arquivar_com_pr(&mut self, chat: String, tarefa: u64, numero: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let janela = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialogo, window, cx| {
+            let cancelar = botao_fantasma("arquivar-pr-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                .on_click(|_, window, cx| window.close_dialog(cx));
+            let deixar = {
+                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
+                botao_fantasma("arquivar-pr-deixar", None, "Deixar aberto", TamanhoBotao::Controle, window, cx)
+                    .tooltip("Arquiva o chat; o PR fica no GitHub e o Vitral para de acompanhar")
+                    .on_click(move |_, window, cx| {
+                        motor.update(cx, |m, cx| {
+                            m.armar_mescla(tarefa, false, None, cx);
+                            m.acompanhar(tarefa, false, cx);
+                        });
+                        window.close_dialog(cx);
+                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
+                    })
+            };
+            let fechar = {
+                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
+                super::componentes::botao_perigo("arquivar-pr-fechar", None, "Fechar o PR", TamanhoBotao::Controle, window, cx)
+                    .tooltip("Fecha o PR no GitHub, com o comentário “Fechado pelo Vitral: chat arquivado.”, e arquiva o chat")
+                    .on_click(move |_, window, cx| {
+                        let recebe = motor.update(cx, |m, cx| m.fechar_pr(tarefa, Some("Fechado pelo Vitral: chat arquivado.".into()), cx));
+                        super::painel_pr::responder(recebe, window, cx);
+                        window.close_dialog(cx);
+                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
+                    })
+            };
+            moldura(dialogo, largura::P, window)
+                .title(topo(cabecalho(format!("O chat tem o PR #{numero} aberto"), Some("Arquivar o chat não mexe no PR sozinho.".into()))))
+                .child(
+                    div()
+                        .corpo_ui()
+                        .text_color(Cores::tenue())
+                        .child("Fechar o PR o fecha no GitHub. Deixar aberto mantém o PR lá, e o Vitral para de acompanhar e desliga o “Mesclar quando ficar pronto”."),
+                )
+                .footer(RodapeDialogo::new().esquerda(cancelar).cancelar(deixar).principal(fechar))
+        });
+    }
+}

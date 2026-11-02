@@ -13,8 +13,8 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Simbolo, Tom, aviso, cabecalho_objeto},
-    icone_projeto, lateral,
+    componentes::{Simbolo, cabecalho_objeto},
+    icone_projeto,
 };
 use crate::{
     modelo::Papel,
@@ -357,15 +357,15 @@ pub(super) fn menu_conversa(
                     m2.update(cx, |m, cx| m.alternar_arquivado(&i4, cx));
                     return;
                 }
-                // O chat vazio sai em vez de arquivar; arquivar se desfaz no aviso.
-                if m2.update(cx, |m, cx| m.arquivar_chat(&i4, cx)) {
-                    this.largar_chats(std::slice::from_ref(&i4), true, window, cx);
-                    window.push_notification(aviso(Tom::Info, "Chat vazio apagado"), cx);
-                    return;
+                // Com o PR aberto, pergunta antes o que fazer com ele (seção 6.9).
+                let pr_aberto = {
+                    let m = m2.read(cx);
+                    m.chat(&i4).and_then(|c| c.tarefa).and_then(|t| m.pr_da_tarefa(t).filter(|p| p.aberto()).map(|p| (t, p.numero)))
+                };
+                match pr_aberto {
+                    Some((tarefa, numero)) => this.dialogo_arquivar_com_pr(i4.clone(), tarefa, numero, window, cx),
+                    None => this.arquivar_do_menu(i4.clone(), window, cx),
                 }
-                lateral::avisar_arquivadas(m2.clone(), vec![i4.clone()], "Conversa arquivada".into(), window, cx);
-                // Só pergunta ao arquivar um coordenador parado com cópias sobrando.
-                this.oferecer_limpeza_ao_arquivar(&i4, window, cx)
             },
         )),
     })
