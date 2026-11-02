@@ -243,7 +243,6 @@ pub struct Chat {
 }
 
 /// Até quantos registros de ação externa um chat guarda (os mais antigos saem).
-#[allow(dead_code)] // Provisório: a guarda das ações externas (G6) poda por este teto.
 pub const MAX_ACOES_EXTERNAS: usize = 50;
 
 /// Uma ação com efeito fora do Vitral (abrir, atualizar ou mesclar um PR) feita num turno.

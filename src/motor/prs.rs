@@ -26,7 +26,7 @@ use crate::{
     issues::{self as comum, Confianca, FonteIssue},
     linear::{Curl, Linear},
     modelo::{
-        AcaoExterna, Confirmacao, EfeitoDoPr, EfeitosDaIssue, EsperaPr, EstadoCartao, GatilhoAjuste, ModoEntrega, Pr,
+        AcaoExterna, EfeitoDoPr, EfeitosDaIssue, EsperaPr, EstadoCartao, GatilhoAjuste, ModoEntrega, Pr,
         PrAnterior,
     },
     remoto::{self, ErroRemoto, sem_segredos},
@@ -1252,37 +1252,27 @@ impl Motor {
         self.primeiro_pr_pelo_mestre(id, autor, resposta, cx);
     }
 
-    /// O primeiro PR pedido pelo Mestre (seção 8.1): executa se o turno dele tem mensagem do usuário
-    /// sem texto de terceiros; senão, o cartão "Confirmar" para o usuário.
-    // Na junção com o G6: este corpo vira a guarda dele, guarda_do_chat(ID_MESTRE,
-    // &turno_de(ID_MESTRE), &acao, fatos) com o pedir_confirmacao (que grava o RegistroAcao e vê o
-    // texto de terceiros lido no turno); o Executar chama publicar_pr(id, pedido, OrigemAcao::Mestre).
+    /// O primeiro PR pedido pelo Mestre (seção 8.1), pela guarda das ações externas no turno de quem
+    /// aprovou: executa (como `OrigemAcao::Mestre`) se o turno tem mensagem do usuário sem texto de
+    /// terceiros, nem lido por uma ferramenta nele; senão, o cartão "Confirmar" na conversa do Mestre.
+    /// O registro do turno faz um "Tentar de novo" devolver o resultado de antes, sem outro PR.
     fn primeiro_pr_pelo_mestre(&mut self, id: u64, autor: &str, resposta: Sender<Resposta>, cx: &mut Context<Self>) {
         let Some(t) = self.tarefa(id).cloned() else {
             let _ = resposta.try_send(Resposta::erro("Tarefa não encontrada."));
             return;
         };
-        let turno = self.ultima_entrada.get(crate::modelo::ID_MESTRE).map(|(_, l)| l.clone()).unwrap_or_default();
-        let do_usuario = autor == crate::modelo::ID_MESTRE && turno.iter().any(Entrada::do_usuario) && !turno.iter().any(|e| e.terceiros);
-        if do_usuario {
-            let r = self.publicar_pr(id, PedidoPr::default(), OrigemAcao::Mestre, cx);
-            self.encaminhar(r, resposta, cx);
-            return;
-        }
         let titulo_chat = self.chat(&t.trabalhador).map_or_else(|| t.titulo.clone(), |c| c.titulo.clone());
-        let titulo = comum::titulo_do_pr(&titulo_chat, t.issue.as_ref());
-        let mensagens = self.chat(&t.trabalhador).map(|c| super::mensagens_desde_a_juncao(&c.itens)).unwrap_or_default();
         let origem = self.origem_da_tarefa(&t);
         let rascunho = self.config_da_pasta(&t.projeto, &origem).github.rascunho;
-        let acao = AcaoExterna::AbrirPr { tarefa: id, titulo: titulo.clone(), descricao: corpo_da_tarefa(&t, &mensagens), rascunho, quando_pronto: None };
-        let ja = self.cartoes.iter().any(|c| c.aberto() && matches!(&c.tipo, TipoCartao::Confirmar(k) if k.acao == acao));
-        if !ja {
-            let resumo = format!("O Mestre quer abrir o PR do chat {id} \"{titulo_chat}\": {titulo}");
-            self.novo_cartao(TipoCartao::Confirmar(Confirmacao { acao, pedido_por: crate::modelo::ID_MESTRE.into(), resumo, resultado: None }));
-            self.gravar_cartoes();
-        }
-        let _ = resposta.try_send(Resposta::ok("O usuário vai confirmar no Vitral; continue sem isso ou encerre sua vez."));
-        cx.notify();
+        // A descrição vazia o Vitral gera na hora de publicar (corpo_do_pr), com as mensagens de então.
+        let acao = AcaoExterna::AbrirPr {
+            tarefa: id,
+            titulo: comum::titulo_do_pr(&titulo_chat, t.issue.as_ref()),
+            descricao: String::new(),
+            rascunho,
+            quando_pronto: None,
+        };
+        self.publicar_pela_guarda(autor, &t, acao, OrigemAcao::Mestre, resposta, cx);
     }
 
     /// Passa a resposta de uma ação (o canal dela) para outro canal.
@@ -2649,72 +2639,6 @@ impl Motor {
             cx,
         );
         recebe
-    }
-
-    // ---------- confirmações ----------
-
-    /// "Confirmar" ou "Agora não" num cartão `Confirmar`: a ação roda como do usuário.
-    pub fn decidir_confirmacao(&mut self, cartao: u64, aceitar: bool, cx: &mut Context<Self>) {
-        let Some(c) = self.cartoes.iter().find(|c| c.id == cartao && c.aberto()).cloned() else {
-            return;
-        };
-        let TipoCartao::Confirmar(confirmacao) = c.tipo else {
-            return;
-        };
-        if let Some(c) = self.cartoes.iter_mut().find(|c| c.id == cartao) {
-            c.estado = if aceitar { EstadoCartao::Aceito } else { EstadoCartao::Recusado };
-            c.decidido_em = agora();
-        }
-        if !aceitar {
-            self.resultado_do_cartao(cartao, "Agora não.".into(), &confirmacao.pedido_por, cx);
-            self.gravar_cartoes();
-            cx.notify();
-            return;
-        }
-        let recebe = match &confirmacao.acao {
-            AcaoExterna::AbrirPr { tarefa, titulo, descricao, rascunho, quando_pronto } => {
-                let pedido = PedidoPr {
-                    titulo: Some(titulo.clone()),
-                    descricao: Some(descricao.clone()),
-                    rascunho: *rascunho,
-                    quando_pronto: quando_pronto.clone(),
-                    segredos_confirmados: false,
-                };
-                self.publicar_pr(*tarefa, pedido, OrigemAcao::Usuario, cx)
-            }
-            AcaoExterna::AtualizarPr { tarefa } => self.publicar_pr(*tarefa, PedidoPr::default(), OrigemAcao::Usuario, cx),
-            AcaoExterna::Mesclar { tarefa, metodo, sha, quando_pronto } => {
-                let confirmado = if sha.is_empty() { Vec::new() } else { vec![Confirmado::CommitsDeFora(sha.clone())] };
-                self.mesclar_pr(*tarefa, Some(metodo.clone()), *quando_pronto, OrigemAcao::Usuario, confirmado, cx)
-            }
-        };
-        let pedido_por = confirmacao.pedido_por.clone();
-        cx.spawn(async move |motor, cx| {
-            let Ok(resposta) = recebe.recv().await else {
-                return;
-            };
-            let _ = motor.update(cx, |m, cx| {
-                m.resultado_do_cartao(cartao, resposta.texto, &pedido_por, cx);
-                m.gravar_cartoes();
-                cx.notify();
-            });
-        })
-        .detach();
-        self.gravar_cartoes();
-        cx.notify();
-    }
-
-    /// O que aconteceu com a confirmação: no cartão e, como nota, para quem pediu.
-    fn resultado_do_cartao(&mut self, cartao: u64, texto: String, pedido_por: &str, cx: &mut Context<Self>) {
-        if let Some(c) = self.cartoes.iter_mut().find(|c| c.id == cartao)
-            && let TipoCartao::Confirmar(k) = &mut c.tipo
-        {
-            k.resultado = Some(texto.clone());
-        }
-        if self.chat(pedido_por).is_some() {
-            let nota = Entrada { de: Some("Vitral".into()), texto: format!("O usuário decidiu o cartão {cartao}: {texto}"), nota: true, ..Default::default() };
-            self.entregar_entrada(pedido_por, nota, cx);
-        }
     }
 }
 

@@ -2495,6 +2495,13 @@ mod testes {
     #[test]
     fn a_linha_do_que_falta() {
         assert!(falta_para_mesclar(&pr(), None).is_empty());
+        // O mesclar_pr pelo chat usa a mesma lista: sem checks (um repositório sem CI), UNSTABLE (o
+        // cartão confirma) e o GitHub ainda calculando não faltam; quem confere é o mesclar.
+        let mut sem_ci = pr();
+        (sem_ci.checks, sem_ci.mesclavel) = (ResumoChecks::default(), "UNSTABLE".into());
+        assert!(falta_para_mesclar(&sem_ci, None).is_empty());
+        sem_ci.mesclavel.clear();
+        assert!(falta_para_mesclar(&sem_ci, None).is_empty());
         let mut p = pr();
         p.checks = ResumoChecks { estado: EstadoChecks::Pendente, total: 41, terminados: 15, falhos: 2, pendentes: 26 };
         p.conversas_abertas = 1;
