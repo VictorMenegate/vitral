@@ -693,15 +693,26 @@ pub(super) fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
 /// O texto das mensagens: parágrafos a 12, títulos de 18, 16 e 15, código sem o azul do kit,
 /// com o conteúdo a 12 da borda e a coluna do Copiar à direita.
 fn estilo_texto(cx: &App) -> TextViewStyle {
+    estilo_com_titulos(cx, [18., 16., 15.])
+}
+
+/// O markdown de texto de terceiros nos painéis estreitos (a descrição de um PR ou de uma issue,
+/// um comentário): os títulos no tamanho do texto, para não passarem do título do PR ou da issue.
+pub(super) fn markdown_compacto(id: SharedString, texto: String, cx: &App) -> TextView {
+    markdown(id, texto, cx).style(estilo_com_titulos(cx, [15., 15., 14.]))
+}
+
+/// O estilo das mensagens com os títulos de nível 1, 2 e dos outros em px a 100%.
+fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
     // O rem do tema já vem com o zoom: os títulos crescem junto.
     let rem = cx.theme().font_size;
     TextViewStyle::default()
         .paragraph_gap(esp::E12)
         .heading_font_size(move |nivel, _| {
             rem * match nivel {
-                1 => 18. / 15.,
-                2 => 16. / 15.,
-                _ => 1.,
+                1 => titulos[0] / 15.,
+                2 => titulos[1] / 15.,
+                _ => titulos[2] / 15.,
             }
         })
         .code_block(

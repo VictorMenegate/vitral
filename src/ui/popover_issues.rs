@@ -1956,7 +1956,7 @@ pub(super) fn texto_de_fora(id: SharedString, texto: &str, linhas: Option<usize>
         .corpo_ui()
         .text_color(Cores::texto())
         .child(
-            super::mensagens::markdown(id, imagens_viram_link(texto), cx)
+            super::mensagens::markdown_compacto(id, imagens_viram_link(texto), cx)
                 .on_link_click(|url, _, window, cx| {
                     if super::painel_pr::link_permitido(url, super::painel_pr::OrigemDoTexto::Terceiros) {
                         cx.open_url(url);
