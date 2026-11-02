@@ -1694,7 +1694,14 @@ mod testes {
         let um = ResumoChecks { estado: EstadoChecks::Falhou, total: 3, terminados: 3, falhos: 1, pendentes: 0 };
         assert_eq!(rotulo_dos_checks(&um), "3/3 (1 falhou)");
 
-        let anterior = PrAnterior { numero: 10, url: "https://github.com/o/r/pull/10".into(), titulo: "Antes".into(), estado: EstadoPr::Mesclado, mesclado_por: Some("victor".into()), em: 1 };
+        let anterior = PrAnterior {
+            numero: 10,
+            url: "https://github.com/o/r/pull/10".into(),
+            titulo: "Antes".into(),
+            estado: EstadoPr::Mesclado,
+            mesclado_por: Some("victor".into()),
+            ..Default::default()
+        };
         assert_eq!(
             texto_do_anterior(&t, &anterior),
             "PR #10 · Antes (chat 13 \"Corrige login\"): mesclado por @victor.\nhttps://github.com/o/r/pull/10\nO chat não tem PR aberto agora."
