@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use smol::channel::{Sender, unbounded};
 
 mod conexoes;
+mod guarda;
 mod importacao;
 mod issues;
 mod mestre;
@@ -396,6 +397,8 @@ pub struct Motor {
     /// repetição (tentar de novo, a troca de conta) é o mesmo turno, e a guarda das ações externas
     /// não repete o que ele já fez.
     ultima_entrada: HashMap<String, (String, Vec<Entrada>)>,
+    /// A guarda das ações com efeito fora do Vitral: os turnos que leram texto de terceiros.
+    guarda: guarda::EstadoGuarda,
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
@@ -709,6 +712,7 @@ impl Motor {
             geracao: 0,
             geracao_atual: HashMap::new(),
             ultima_entrada: HashMap::new(),
+            guarda: Default::default(),
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
             limite_ate: HashMap::new(),
@@ -4392,6 +4396,15 @@ impl Motor {
             let _ = chamada.resposta.try_send(Resposta::erro(erro));
             return;
         }
+        // As ferramentas do PR e a guarda das ações externas (abrir_pr, ver_pr, mesclar_pr).
+        let chamada = match self.ferramenta_de_pr(&chat, chamada, cx) {
+            Ok(()) => {
+                self.salvar();
+                cx.notify();
+                return;
+            }
+            Err(chamada) => chamada,
+        };
         let chamada = match self.ferramenta_de_issue(&chat, chamada, cx) {
             Ok(()) => {
                 self.salvar();

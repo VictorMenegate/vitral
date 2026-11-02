@@ -204,9 +204,4 @@ impl Motor {
     pub fn fechar_issue_do_pr(&mut self, _id: u64, _cx: &mut Context<Self>) -> Receiver<Resposta> {
         ainda_nao()
     }
-
-    // ---------- confirmações ----------
-
-    /// "Confirmar" ou "Agora não" num cartão `Confirmar`.
-    pub fn decidir_confirmacao(&mut self, _cartao: u64, _aceitar: bool, _cx: &mut Context<Self>) {}
 }
