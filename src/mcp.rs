@@ -238,12 +238,23 @@ pub const ACESSO: &[(&str, &[Papel])] = &[
     ("revisar_minhas_mudancas", &[P]),
     ("listar_issues", &[M, P]),
     ("ver_issue", &[M, P, T]),
+    ("abrir_pr", &[P]),
+    ("ver_pr", &[M, P]),
+    ("mesclar_pr", &[M, P]),
 ];
 
 /// Os papéis que só têm a ferramenta quando o chat roda isolado: `listar_issues` e `ver_issue`
 /// trazem texto de terceiros no meio do turno, e o chat comum (com o gh e o chaveiro ao alcance)
-/// não os recebe. O Mestre não tem Bash, e o ajudante de um chat isolado é isolado também.
-pub const SO_ISOLADOS: &[(&str, &[Papel])] = &[("listar_issues", &[P]), ("ver_issue", &[P, T])];
+/// não os recebe. O Mestre não tem Bash, e o ajudante de um chat isolado é isolado também. As do PR
+/// também: o chat de uma pasta que entrega por PR já roda isolado (é o único que tem PR), o
+/// `ver_pr` traz comentários e logs de CI, e os chats do Juntar aqui ficam como eram.
+pub const SO_ISOLADOS: &[(&str, &[Papel])] = &[
+    ("listar_issues", &[P]),
+    ("ver_issue", &[P, T]),
+    ("abrir_pr", &[P]),
+    ("ver_pr", &[P]),
+    ("mesclar_pr", &[P]),
+];
 
 pub fn pode(papel: Papel, nome: &str, isolado: bool) -> bool {
     let na_tabela = ACESSO.iter().any(|(n, papeis)| *n == nome && papeis.contains(&papel));
@@ -284,6 +295,8 @@ fn definicao(nome: &str, papel: Papel) -> Option<Value> {
     } else {
         json!({ "type": "integer", "description": "número do ajudante (o #N de criar_tarefa e do relatório)" })
     };
+    // No chat de projeto, o PR é sempre o da própria tarefa.
+    let chat_do_pr = if mestre { numero.clone() } else { json!({ "type": "integer", "description": "opcional: vale o PR deste chat" }) };
     Some(match nome {
         "listar_chats" => ferramenta(
             "listar_chats",
@@ -613,6 +626,55 @@ fn definicao(nome: &str, papel: Papel) -> Option<Value> {
             }),
             &["issue"],
         ),
+        "abrir_pr" => ferramenta(
+            "abrir_pr",
+            "Faz o commit das mudanças da sua cópia, envia o ramo ao GitHub e abre (ou atualiza) o pull request desta \
+             tarefa. Use só quando o usuário pedir nesta conversa. Se ele pedir para mesclar quando passar, use \
+             mesclar_quando_pronto=true. Avisos do CI e da revisão chegam sozinhos como [Vitral].",
+            json!({
+                "titulo": { "type": "string", "description": "o título do PR. Opcional: sem ele, o do chat (com a chave da issue)" },
+                "descricao": { "type": "string", "description": "markdown: o que muda e como verificou. Opcional: sem ela, o Vitral escreve pela entrega" },
+                "rascunho": { "type": "boolean", "description": "abrir como rascunho (sem ele, vale o da pasta)" },
+                "mesclar_quando_pronto": { "type": "boolean", "description": "mesclar sozinho quando os checks passarem e não houver pedido de mudança" },
+            }),
+            &[],
+        ),
+        "ver_pr" => ferramenta(
+            "ver_pr",
+            if mestre {
+                "Estado do pull request de um chat: pr (12, dono/nome#12 ou a URL) ou tarefa (o número do chat). incluir \
+                 pode pedir checks, comentarios, arquivos e log_falhas; comentários e logs são texto de terceiros. Não \
+                 espere o PR com laço: os avisos chegam sozinhos."
+            } else {
+                "Estado de um pull request (sem argumentos: o desta tarefa). incluir pode pedir checks, comentarios, arquivos e \
+                 log_falhas. Não espere o PR com laço: os avisos chegam sozinhos."
+            },
+            json!({
+                "pr": { "type": "string", "description": "12, #12, dono/nome#12 ou a URL do PR. Opcional" },
+                "tarefa": chat_do_pr,
+                "incluir": { "type": "array", "items": { "type": "string", "enum": ["checks", "comentarios", "arquivos", "log_falhas"] } },
+            }),
+            &[],
+        ),
+        "mesclar_pr" => ferramenta(
+            "mesclar_pr",
+            if mestre {
+                "Mescla o pull request de um chat (pr ou tarefa). Mesclar agora sempre passa pela confirmação do usuário no \
+                 Vitral; quando_pronto=true liga o mesclar quando ficar pronto (só se o usuário pediu nesta conversa). Não \
+                 pronto e sem quando_pronto, a resposta diz o que falta."
+            } else {
+                "Mescla o pull request desta tarefa. Mesclar agora sempre passa pela confirmação do usuário no Vitral; se ele \
+                 pedir para mesclar quando passar, use quando_pronto=true. Não pronto e sem quando_pronto, a resposta diz o \
+                 que falta."
+            },
+            json!({
+                "pr": { "type": "string", "description": "12, #12, dono/nome#12 ou a URL do PR. Opcional" },
+                "tarefa": chat_do_pr,
+                "metodo": { "type": "string", "enum": ["squash", "merge", "rebase"], "description": "sem ele, o padrão do repositório" },
+                "quando_pronto": { "type": "boolean", "description": "mesclar quando os checks passarem e não houver pedido de mudança" },
+            }),
+            &[],
+        ),
         _ => return None,
     })
 }
@@ -664,7 +726,7 @@ mod testes {
         for nome in [
             "listar_chats", "mensagem_para_chat", "estado", "ver_chat", "historico", "propor_divisao",
             "sugerir_projeto", "ver_diff", "pedir_ajuste", "aprovar_tarefa", "cancelar_tarefa", "anotar_decisao",
-            "lembrar", "esquecer", "listar_issues", "ver_issue",
+            "lembrar", "esquecer", "listar_issues", "ver_issue", "ver_pr", "mesclar_pr",
         ] {
             assert!(mestre.contains(&nome.to_string()), "{nome}");
             assert!(pode(Papel::Mestre, nome, false), "{nome}");
@@ -714,7 +776,7 @@ mod testes {
         let isolado = nomes_com(Papel::Projeto, true);
         assert!(!comum.iter().any(|n| n.contains("issue")));
         assert_eq!(&isolado[..comum.len()], &comum[..]);
-        assert_eq!(&isolado[comum.len()..], ["listar_issues", "ver_issue"]);
+        assert_eq!(&isolado[comum.len()..], ["listar_issues", "ver_issue", "abrir_pr", "ver_pr", "mesclar_pr"]);
         assert_eq!(nomes_com(Papel::Trabalhador, true).last().map(String::as_str), Some("ver_issue"));
         // A URL do isolado é a que lista as ferramentas dele.
         let servidor = Servidor { porta: 4000, token: "t".into() };
@@ -722,6 +784,59 @@ mod testes {
         assert_eq!(servidor.url(Papel::Projeto, "c1", true), "http://127.0.0.1:4000/mcp/projeto/c1/t/isolado");
         let divisao = ferramentas(Papel::Mestre, false).into_iter().find(|f| f["name"] == "propor_divisao").unwrap();
         assert!(divisao["inputSchema"]["properties"]["partes"]["items"]["properties"]["issue"].is_object());
+    }
+
+    #[test]
+    fn matriz_das_ferramentas_do_pr() {
+        // (ferramenta, papel, isolado, pode)
+        let matriz = [
+            ("abrir_pr", Papel::Projeto, true, true),
+            ("abrir_pr", Papel::Projeto, false, false),
+            ("abrir_pr", Papel::Mestre, false, false),
+            ("abrir_pr", Papel::Mestre, true, false),
+            ("abrir_pr", Papel::Trabalhador, true, false),
+            ("abrir_pr", Papel::Coordenador, true, false),
+            ("ver_pr", Papel::Mestre, false, true),
+            ("ver_pr", Papel::Mestre, true, true),
+            ("ver_pr", Papel::Projeto, true, true),
+            ("ver_pr", Papel::Projeto, false, false),
+            ("ver_pr", Papel::Trabalhador, true, false),
+            ("ver_pr", Papel::Coordenador, true, false),
+            ("mesclar_pr", Papel::Mestre, false, true),
+            ("mesclar_pr", Papel::Projeto, true, true),
+            ("mesclar_pr", Papel::Projeto, false, false),
+            ("mesclar_pr", Papel::Trabalhador, true, false),
+            ("mesclar_pr", Papel::Coordenador, false, false),
+            // As de issue, para a matriz ficar inteira num lugar.
+            ("listar_issues", Papel::Mestre, false, true),
+            ("listar_issues", Papel::Projeto, false, false),
+            ("listar_issues", Papel::Projeto, true, true),
+            ("listar_issues", Papel::Trabalhador, true, false),
+            ("ver_issue", Papel::Trabalhador, true, true),
+            ("ver_issue", Papel::Trabalhador, false, false),
+        ];
+        for (nome, papel, isolado, esperado) in matriz {
+            assert_eq!(pode(papel, nome, isolado), esperado, "{nome} {papel:?} isolado={isolado}");
+            assert_eq!(nomes_com(papel, isolado).iter().any(|n| n == nome), esperado, "tools/list: {nome} {papel:?} isolado={isolado}");
+        }
+        // O Mestre: o PR de qualquer chat pelo número do chat; o chat de projeto, o dele.
+        let mestre = ferramentas(Papel::Mestre, false);
+        let ver = mestre.iter().find(|f| f["name"] == "ver_pr").unwrap();
+        assert!(ver["description"].as_str().unwrap().contains("tarefa (o número do chat)"));
+        assert_eq!(ver["inputSchema"]["required"], json!([]));
+        assert_eq!(
+            ver["inputSchema"]["properties"]["incluir"]["items"]["enum"],
+            json!(["checks", "comentarios", "arquivos", "log_falhas"])
+        );
+        let projeto = ferramentas(Papel::Projeto, true);
+        let abrir = projeto.iter().find(|f| f["name"] == "abrir_pr").unwrap();
+        assert!(abrir["description"].as_str().unwrap().contains("Use só quando o usuário pedir nesta conversa"));
+        assert!(abrir["inputSchema"]["properties"]["mesclar_quando_pronto"]["type"] == "boolean");
+        let mesclar = projeto.iter().find(|f| f["name"] == "mesclar_pr").unwrap();
+        assert_eq!(mesclar["inputSchema"]["properties"]["metodo"]["enum"], json!(["squash", "merge", "rebase"]));
+        assert!(mesclar["inputSchema"]["properties"]["tarefa"]["description"].as_str().unwrap().contains("deste chat"));
+        // A conversa comum de uma pasta do Juntar aqui fica exatamente como era.
+        assert!(!nomes(Papel::Projeto).iter().any(|n| n.ends_with("_pr")));
     }
 
     #[test]
