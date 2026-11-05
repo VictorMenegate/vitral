@@ -2398,6 +2398,76 @@ impl Motor {
         matches!(self.execucao(chat), Execucao::Erro(_)) && self.ultima_entrada.contains_key(chat)
     }
 
+    /// Tira da conversa a última mensagem do usuário e o que veio depois dela, e devolve o que
+    /// estava nela para a caixa. A sessão do Claude Code não volta atrás: ela é trocada por uma
+    /// nova, e o próximo turno começa com o bloco de passagem do que ficou na tela — senão o
+    /// Claude continuaria lembrando da mensagem que saiu. Os arquivos da pasta não voltam aqui
+    /// (quem volta é o "Voltar os arquivos", com o `ponto` devolvido).
+    pub fn retirar_ultima_mensagem(&mut self, chat_id: &str, cx: &mut Context<Self>) -> Option<Retirada> {
+        if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
+            return None;
+        }
+        let ix = indice_editavel(&self.chat(chat_id)?.itens)?;
+        let c = self.chat_mut(chat_id)?;
+        let mut saindo = c.itens.split_off(ix);
+        let Item::Usuario { texto, anexos, ponto, ultrathink, ultracode, referencias, .. } = saindo.remove(0) else {
+            // O `indice_editavel` já garante que o primeiro é a mensagem; se não for, nada muda.
+            c.itens.append(&mut saindo);
+            return None;
+        };
+        c.atualizado_em = agora();
+        c.turno_aberto = false;
+        // Com sessão criada, o próximo turno abre uma nova com a passagem; sem ela, nada a trocar.
+        if c.sessao_criada {
+            c.sessao = uuid::Uuid::new_v4().to_string();
+            c.sessao_criada = false;
+            c.contexto = None;
+            self.passagens.insert(chat_id.to_string(), MotivoPassagem::Reenvio);
+        }
+        // O turno que saiu não é mais repetível, e o que ele estava escrevendo não tem mais lugar.
+        self.ultima_entrada.remove(chat_id);
+        self.parcial.remove(chat_id);
+        self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+        if let Some(c) = self.chat(chat_id) {
+            let _ = self.dados.salvar_chat(c);
+        }
+        self.salvar();
+        cx.notify();
+        Some(Retirada {
+            texto,
+            anexos,
+            referencias,
+            reforco: Reforco { ultrathink, ultracode },
+            ponto,
+            saiu_depois: saindo.len(),
+        })
+    }
+
+    /// As mensagens esperando na fila deste chat, na ordem em que vão entrar (as notas, que não
+    /// abrem turno sozinhas, ficam de fora como em `na_fila`).
+    pub fn fila_do_chat(&self, chat: &str) -> Vec<(usize, &Entrada)> {
+        self.filas
+            .get(chat)
+            .map(|f| f.iter().enumerate().filter(|(_, e)| !e.nota).collect())
+            .unwrap_or_default()
+    }
+
+    /// Tira da fila a mensagem na posição `indice` (a mesma de `fila_do_chat`): ela não vai mais
+    /// ao Claude. Devolve o texto dela, para a caixa ou para o aviso.
+    pub fn tirar_da_fila(&mut self, chat: &str, indice: usize, cx: &mut Context<Self>) -> Option<String> {
+        let fila = self.filas.get_mut(chat)?;
+        if indice >= fila.len() || fila[indice].nota {
+            return None;
+        }
+        let entrada = fila.remove(indice);
+        if fila.is_empty() {
+            self.filas.remove(chat);
+        }
+        self.salvar();
+        cx.notify();
+        Some(entrada.texto)
+    }
+
     /// Faz andar de novo um chat que parou no meio: refaz a entrega cortada, entrega a fila ou
     /// pede para o Claude continuar de onde parou.
     pub fn retomar(&mut self, chat_id: &str, cx: &mut Context<Self>) {
@@ -2758,7 +2828,7 @@ impl Motor {
             let ja_na_conversa = mensagens.iter().filter(|e| e.registrada).count();
             let tarefa = chat.tarefa.and_then(|t| self.tarefa(t));
             let itens = self.chat(chat_id).map_or(&[][..], |c| c.itens.as_slice());
-            bloco_de_passagem(itens, tarefa, ja_na_conversa)
+            bloco_de_passagem(itens, tarefa, ja_na_conversa, motivo)
         });
 
         // A marca de isolado é avaliada com o lote que vai entrar: o turno que traz texto de terceiros
@@ -7103,10 +7173,39 @@ fn passou_do_limite(origem: OrigemAjuste, rodada: u32, rodada_do_ciclo: u32, max
 /// Até quantos caracteres das últimas mensagens vão na passagem de sessão.
 const PASSAGEM_CARACTERES: usize = 6000;
 
-/// O começo do primeiro turno de uma sessão nova que tomou o lugar de uma que expirou: as últimas
-/// 10 mensagens (até 6000 caracteres, as mais recentes ficam), o pedido em aberto e a cópia. As
+/// O que a mensagem retirada da conversa levava, para a caixa recebê-lo de volta.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Retirada {
+    pub texto: String,
+    pub anexos: Vec<PathBuf>,
+    pub referencias: Vec<String>,
+    pub reforco: Reforco,
+    /// Foto dos arquivos de antes dela, quando havia (para voltar os arquivos a este ponto).
+    pub ponto: Option<String>,
+    /// Quantos blocos saíram junto (a resposta, as ferramentas e os avisos do turno).
+    pub saiu_depois: usize,
+}
+
+/// Onde está a última mensagem do usuário que ainda dá para corrigir: depois dela só pode haver
+/// o que aquele turno produziu (resposta, ferramentas e avisos). Com uma entrega de outro chat
+/// ou um cartão no meio, tirar a mensagem levaria o que eles trouxeram: aí não dá.
+pub fn indice_editavel(itens: &[Item]) -> Option<usize> {
+    let ix = itens.iter().rposition(|i| matches!(i, Item::Usuario { .. }))?;
+    itens[ix..]
+        .iter()
+        .all(|i| {
+            matches!(
+                i,
+                Item::Usuario { .. } | Item::Assistente { .. } | Item::Ferramenta { .. } | Item::Aviso { .. }
+            )
+        })
+        .then_some(ix)
+}
+
+/// O começo do primeiro turno de uma sessão nova que tomou o lugar de outra: as últimas 10
+/// mensagens (até 6000 caracteres, as mais recentes ficam), o pedido em aberto e a cópia. As
 /// `pular` últimas mensagens já vão no próprio turno.
-fn bloco_de_passagem(itens: &[Item], tarefa: Option<&Tarefa>, pular: usize) -> String {
+fn bloco_de_passagem(itens: &[Item], tarefa: Option<&Tarefa>, pular: usize, motivo: MotivoPassagem) -> String {
     let mut falas: Vec<String> = itens
         .iter()
         .rev()
@@ -7135,11 +7234,19 @@ fn bloco_de_passagem(itens: &[Item], tarefa: Option<&Tarefa>, pular: usize) -> S
         }
     }
     cabem.reverse();
-    let mut bloco = String::from(
-        "[Vitral] Passagem de sessão: a sessão anterior do Claude Code desta conversa expirou, e esta é \
-         uma nova. As últimas mensagens, para continuar de onde parou (a conversa inteira continua na \
-         tela do usuário):",
-    );
+    let mut bloco = String::from(match motivo {
+        // O reenvio tirou da conversa a última mensagem e a resposta dela: o que o Claude lembrava
+        // daquele turno não vale mais, e o que ele mexeu nos arquivos continua lá.
+        MotivoPassagem::Reenvio =>
+            "[Vitral] Passagem de sessão: o usuário corrigiu a última mensagem dele, a conversa voltou ao \
+             ponto antes dela e esta é uma sessão nova — a mensagem que saiu e a sua resposta a ela não \
+             contam mais. O que você já tinha mudado nos arquivos continua como estava. As mensagens que \
+             ficaram na tela do usuário:",
+        _ =>
+            "[Vitral] Passagem de sessão: a sessão anterior do Claude Code desta conversa expirou, e esta é \
+             uma nova. As últimas mensagens, para continuar de onde parou (a conversa inteira continua na \
+             tela do usuário):",
+    });
     for fala in cabem {
         bloco.push_str("\n\n");
         bloco.push_str(&fala);
@@ -8451,7 +8558,7 @@ mod testes {
         itens.push(usuario("a de agora"));
         let mut t = tarefa(4, "w", EstadoTarefa::Ajustando);
         (t.titulo, t.branch, t.worktree) = ("Cupons".into(), Some("vitral/t4-cupons".into()), Some("/d/copias/loja/t4".into()));
-        let bloco = bloco_de_passagem(&itens, Some(&t), 1);
+        let bloco = bloco_de_passagem(&itens, Some(&t), 1, MotivoPassagem::Expirou);
         assert!(bloco.starts_with("[Vitral] Passagem de sessão"));
         // As 10 mais recentes, em ordem, sem os avisos e sem a do próprio turno.
         assert!(!bloco.contains("a de agora") && !bloco.contains("primeira") && !bloco.contains("aviso"));
@@ -8460,7 +8567,7 @@ mod testes {
         assert!(bloco.ends_with("Tarefa em aberto: #4 Cupons (ajustando). A cópia é /d/copias/loja/t4, no branch vitral/t4-cupons."));
         // Mensagens longas: as mais recentes ficam, até 6000 caracteres.
         let longas = vec![usuario(&"a".repeat(5000)), Item::Assistente { texto: "b".repeat(5000), em: 0 }];
-        let bloco = bloco_de_passagem(&longas, None, 0);
+        let bloco = bloco_de_passagem(&longas, None, 0, MotivoPassagem::Expirou);
         assert!(bloco.contains(&format!("Você: {}", "b".repeat(5000))));
         assert!(bloco.contains("…") && !bloco.contains(&"a".repeat(1000)));
     }
@@ -8599,7 +8706,7 @@ mod testes {
         let mut t = tarefa(7, "w", EstadoTarefa::Conversa);
         (t.branch, t.worktree) = (Some("vitral/t7-frete".into()), Some("/d/copias/loja/t7".into()));
         t.mudancas = Some(crate::modelo::Mudancas { arquivos: 2, mais: 12, menos: 3, em: 0 });
-        let bloco = bloco_de_passagem(&[], Some(&t), 0);
+        let bloco = bloco_de_passagem(&[], Some(&t), 0, MotivoPassagem::Expirou);
         assert!(!bloco.contains("Tarefa em aberto"), "{bloco}");
         assert!(bloco.ends_with(
             "\n\nA cópia é /d/copias/loja/t7, no branch vitral/t7-frete. Ela tem 2 arquivos mudados que ainda não \

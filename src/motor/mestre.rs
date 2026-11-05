@@ -40,6 +40,9 @@ pub enum MotivoPassagem {
     Expirou,
     /// O contexto do Mestre passou de 70% no fim de um turno.
     ContextoCheio,
+    /// O usuário corrigiu a última mensagem: a conversa voltou ao ponto antes dela, e a sessão
+    /// do Claude Code não volta atrás — a próxima começa numa nova, já sem o que saiu.
+    Reenvio,
 }
 
 /// "Enquanto você esteve fora": só na memória, montado das ocorrências; nunca vai para o disco.
@@ -1232,6 +1235,7 @@ impl Motor {
         let porque = match motivo {
             MotivoPassagem::Expirou => "a sessão anterior do Claude Code expirou",
             MotivoPassagem::ContextoCheio => "o contexto da sessão anterior encheu",
+            MotivoPassagem::Reenvio => "o usuário corrigiu a última mensagem dele e a conversa voltou ao ponto antes dela",
         };
         let mut bloco = format!(
             "[Vitral] Passagem de sessão: {porque}, e esta é uma nova. A conversa continua na tela do \

@@ -441,6 +441,8 @@ impl Janela {
                 self.ultracode.remove(chat);
                 self.familias_abertas.remove(chat);
             }
+            // A conversa saiu do Vitral: o rascunho dela também sai do disco.
+            self.agendar_gravacao(cx);
         }
         cx.notify();
     }

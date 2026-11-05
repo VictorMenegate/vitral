@@ -22,7 +22,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbaLateral, AbrirConfiguracoes, AbrirMenuVitral, AbrirMestre, AlternarLista, Filtro, IrParaProjeto, Janela,
+    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirMestre, AlternarLista, Filtro, IrParaProjeto,
+    Janela,
     NovaConversa, NovoProjeto, ProximaPendencia, Vista,
     componentes::{
         BotaoRedondo, Confirmacao, EventoEscolha, Flutuante as _, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha,
@@ -1071,6 +1072,12 @@ impl Janela {
                 .item(item("Memória do Mestre…", Lucide::Brain, &janela, |this, window, cx| {
                     this.dialogo_memoria(window, cx)
                 }))
+                .item(
+                    PopupMenuItem::new("Atalhos do teclado")
+                        .icon(Lucide::Keyboard)
+                        .action(Box::new(AbrirAtalhos))
+                        .on_click(|_, window, cx| super::atalhos::abrir(window, cx)),
+                )
                 .separator()
                 .item(
                     PopupMenuItem::new("Abrir a pasta de dados")

@@ -34,17 +34,6 @@ use crate::{
 
 actions!(vitral, [BuscarNaConversa, AchadoSeguinte, AchadoAnterior, FecharBuscaConversa]);
 
-/// Atalhos da busca na conversa, ligados no `atalhos` de `mod.rs`.
-pub(super) fn atalhos(cx: &mut App) {
-    cx.bind_keys([
-        // O campo do kit liga o Ctrl+F ao `Search` dele, que ninguém atende: o evento segue para
-        // cá. O `Search` também cai aqui, para o Ctrl+F dentro da caixa de mensagem não se perder.
-        KeyBinding::new("ctrl-f", BuscarNaConversa, None),
-        KeyBinding::new("f3", AchadoSeguinte, None),
-        KeyBinding::new("shift-f3", AchadoAnterior, None),
-        KeyBinding::new("escape", FecharBuscaConversa, Some("BuscaConversa")),
-    ]);
-}
 
 // ------------------------------------------------------------------ achar no texto
 

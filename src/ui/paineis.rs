@@ -304,6 +304,8 @@ impl Janela {
                     // Mestre, que não tem pasta, o "@" cita um chat (o menu da caixa).
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
+                    // O rascunho vai para o disco pouco depois de a digitação parar.
+                    this.agendar_gravacao(cx);
                     let mestre = this.selecionado.as_deref() == Some(modelo::ID_MESTRE);
                     if (texto == "@" || texto.ends_with(" @"))
                         && !mestre
@@ -374,7 +376,7 @@ impl Janela {
     ) {
         let texto = painel.composer.read(cx).value().to_string();
         if let Some(antigo) = antigo {
-            self.rascunhos.insert(antigo, texto);
+            self.guardar_rascunho(antigo, texto, cx);
         }
         let rascunho = novo
             .as_ref()
@@ -562,9 +564,7 @@ impl Janela {
         let painel = self.paineis.remove(ix);
         if let Some(chat) = painel.chat {
             let texto = painel.composer.read(cx).value().to_string();
-            if !texto.trim().is_empty() {
-                self.rascunhos.insert(chat, texto);
-            }
+            self.guardar_rascunho(chat, texto, cx);
         }
         self.ativo = ativo_apos_fechar(self.ativo, ix, self.paineis.len());
         self.selecionado = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
