@@ -7,6 +7,7 @@ use gpui_kit::*;
 
 use super::controles::BotaoCopiar;
 use crate::tema::{Cores, Tipo as _, dentro_da_borda, esp, r, raio};
+use crate::ui::busca_conversa::{Realce, realcar};
 
 /// Quantas linhas do fim aparecem antes de "Mostrar tudo".
 const LINHAS_DO_FIM: usize = 40;
@@ -21,11 +22,21 @@ pub struct CaixaDeCodigo {
     tempo: Option<SharedString>,
     erro: bool,
     raio_chat: bool,
+    /// A busca na conversa achou aqui: as ocorrências ficam em âmbar, como no resto da conversa.
+    realce: Realce,
 }
 
 impl CaixaDeCodigo {
     pub fn new(id: impl Into<ElementId>, texto: SharedString) -> Self {
-        CaixaDeCodigo { id: id.into(), texto, comando: None, tempo: None, erro: false, raio_chat: false }
+        CaixaDeCodigo {
+            id: id.into(),
+            texto,
+            comando: None,
+            tempo: None,
+            erro: false,
+            raio_chat: false,
+            realce: Realce::default(),
+        }
     }
 
     pub fn comando(mut self, c: impl Into<SharedString>) -> Self {
@@ -46,6 +57,12 @@ impl CaixaDeCodigo {
     }
 
     /// Raio 12 dentro do chat (8 nos cartões).
+    /// Realça aqui o que a busca da conversa achou.
+    pub fn realce(mut self, realce: &Realce) -> Self {
+        self.realce = realce.clone();
+        self
+    }
+
     pub fn raio_chat(mut self) -> Self {
         self.raio_chat = true;
         self
@@ -131,7 +148,7 @@ impl RenderOnce for CaixaDeCodigo {
                                 })),
                         )
                     })
-                    .child(corpo),
+                    .child(realcar(corpo, &self.realce)),
             )
     }
 }

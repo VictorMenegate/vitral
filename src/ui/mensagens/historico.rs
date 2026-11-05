@@ -112,9 +112,12 @@ impl Janela {
                 ),
                 None => "Lendo a conversa do Claude Code…".to_string(),
             };
-            let (bloco, elemento) = aviso_do_chat(&chave("lendo"), &texto, false);
+            let (bloco, elemento) = aviso_do_chat(&chave("lendo"), &texto, false, &Realce::default());
             return vec![(bloco, None, elemento)];
         };
+        // O histórico do Claude Code fica fora da busca e da rolagem da conversa: ele é lido do
+        // arquivo sob demanda, e nem todo ele está em memória para ser varrido.
+        let (sem_busca, sem_rolagem) = (busca_conversa::Indice::default(), ScrollHandle::new());
         let contexto = Contexto {
             motor,
             chat,
@@ -126,6 +129,10 @@ impl Janela {
             entregas: HashMap::new(),
             // O histórico trazido do Claude Code não liga referências (não é deste projeto).
             referencias: Default::default(),
+            // A busca da conversa não varre o histórico do Claude Code: ele é lido do arquivo,
+            // sob demanda, e nem todo ele está em memória.
+            busca: &sem_busca,
+            rolagem: &sem_rolagem,
         };
         let inicio = itens.len().saturating_sub(vista.mostrar);
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
@@ -149,7 +156,7 @@ impl Janela {
             blocos.push((Bloco::Log, None, h_flex().w_full().justify_center().child(botao).into_any_element()));
         } else if vista.cortados > 0 {
             let texto = format!("As {} mensagens mais antigas ficaram só no Claude Code.", vista.cortados);
-            let (bloco, elemento) = aviso_do_chat(&chave("cortados"), &texto, false);
+            let (bloco, elemento) = aviso_do_chat(&chave("cortados"), &texto, false, &Realce::default());
             blocos.push((bloco, None, elemento));
         }
         let mostrados: Vec<(usize, &Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + i, item)).collect();

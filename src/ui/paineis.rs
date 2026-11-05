@@ -4,7 +4,7 @@
 
 use gpui_kit::component::{
     WindowExt as _, h_flex,
-    input::{InputEvent, TextareaState},
+    input::{InputEvent, InputState, TextareaState},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -47,6 +47,8 @@ pub struct Painel {
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
     pub busca_modelo: Entity<ListaDeEscolha>,
+    /// A busca dentro desta conversa (Ctrl+F): a barra, o termo e as ocorrências.
+    pub busca: super::busca_conversa::Busca,
     /// Os blocos da conversa daqui em diante podem entrar com fade: o tamanho dela quando abriu
     /// no painel. Trocar de conversa recomeça, e o que já estava lá nunca anima.
     pub base_animacao: usize,
@@ -314,6 +316,21 @@ impl Janela {
                 _ => {}
             },
         ));
+        // A busca dentro da conversa (Ctrl+F): digitar refaz o índice no desenho seguinte, e o
+        // Enter (com Shift, para trás) anda entre os achados sem sair do campo.
+        let busca_na_conversa = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar na conversa"));
+        self._assinaturas.push(cx.subscribe_in(
+            &busca_na_conversa,
+            window,
+            move |this, _, evento, _, cx| match evento {
+                InputEvent::PressEnter { shift, .. } => this.andar_na_busca(if *shift { -1 } else { 1 }, cx),
+                InputEvent::Change => {
+                    this.ativar_painel(id, cx);
+                    cx.notify();
+                }
+                _ => {}
+            },
+        ));
         // A aba alcançada pelo Tab ativa o painel dela: o Ctrl+W e o menu valem para ele.
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
@@ -332,6 +349,7 @@ impl Janela {
             menu_aberto: false,
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
+            busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
             vistos: 0,
             faixa_vista: false,

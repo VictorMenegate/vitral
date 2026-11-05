@@ -419,6 +419,8 @@ pub struct Alerta {
     tom: Tom,
     titulo: Option<SharedString>,
     texto: SharedString,
+    /// O mesmo texto com trechos realçados (o termo do Ctrl+F), quando há.
+    texto_rico: Option<StyledText>,
     acao: Option<AnyElement>,
     fechar: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     compacto: bool,
@@ -426,11 +428,18 @@ pub struct Alerta {
 
 impl Alerta {
     pub fn new(tom: Tom, texto: impl Into<SharedString>) -> Self {
-        Alerta { tom, titulo: None, texto: texto.into(), acao: None, fechar: None, compacto: false }
+        Alerta { tom, titulo: None, texto: texto.into(), texto_rico: None, acao: None, fechar: None, compacto: false }
     }
 
     pub fn titulo(mut self, t: impl Into<SharedString>) -> Self {
         self.titulo = Some(t.into());
+        self
+    }
+
+    /// O texto com trechos em outro fundo (o termo achado na busca da conversa); precisa ser o
+    /// mesmo texto, que continua valendo para a chave do fechar.
+    pub fn texto_rico(mut self, t: StyledText) -> Self {
+        self.texto_rico = Some(t);
         self
     }
 
@@ -470,7 +479,10 @@ impl RenderOnce for Alerta {
                         .text_color(cor)
                         .child(self.tom.icone().with_size(tam(window, 14.))),
                 )
-                .child(div().min_w_0().child(self.texto))
+                .child(match self.texto_rico {
+                    Some(rico) => div().min_w_0().child(rico),
+                    None => div().min_w_0().child(self.texto),
+                })
                 .into_any_element();
         }
         let id_fechar = SharedString::from(format!("alerta-fechar-{}", self.texto));
@@ -519,7 +531,10 @@ impl RenderOnce for Alerta {
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .text_color(Cores::tenue())
-                            .child(self.texto),
+                            .map(|s| match self.texto_rico {
+                                Some(rico) => s.child(rico),
+                                None => s.child(self.texto),
+                            }),
                     )
                     .when_some(self.acao, |s, a| s.child(div().pt(r(6.)).child(a))),
             )
