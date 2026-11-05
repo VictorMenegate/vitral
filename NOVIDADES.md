@@ -3,6 +3,26 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.4.0
+
+A conversa ficou mais fácil de ler, de achar e de corrigir.
+
+- **Hora em cada mensagem** (no hover, ao lado do Copiar) e **separador de dia** entre os turnos:
+  dá para saber quando cada coisa aconteceu numa conversa de dias. As conversas de antes desta
+  versão não têm hora e não mostram nada.
+- **Copiar em qualquer mensagem**, não só na última resposta de cada turno.
+- **Buscar dentro da conversa** com Ctrl+F: contador "3 de 12", F3 e Shift+F3 para andar, realce em
+  âmbar, sem ligar para acento nem maiúscula.
+- **Corrigir a última mensagem**: a seta para cima na caixa vazia traz de volta o que você mandou,
+  para ajustar e mandar de novo (a conversa volta a antes dela).
+- **Lista de atalhos** com `?`, quando o foco não está num campo de texto. Ela é montada da mesma
+  tabela que registra as teclas, então nunca desencontra do que o teclado faz.
+- **Rascunho por chat**: o que você escreveu e não mandou fica guardado ao trocar de conversa.
+- **Fila de mensagens** com o que está esperando e "Entregar agora"; tirar da fila devolve o texto
+  à caixa.
+- **Exportar a conversa em Markdown** e, na bancada, um `claude` de mentira que finge usar
+  ferramentas, para ver a linha do turno sem gastar a API.
+
 ## 0.3.0
 
 O Vitral passa a ter um Mestre e projetos que vivem no app, no lugar da pasta de trabalho.
