@@ -22,7 +22,7 @@ use super::{
         botao_fantasma, botao_icone, botao_primario, cabecalho_objeto, confirmar, cor_da_faixa, formatar_custo,
         sinal_do_chat,
     },
-    composer, equipe, icone_projeto, menus,
+    busca_conversa, composer, equipe, icone_projeto, menus,
     movimento::{self, Curva, De, com_estado, entrada},
     paineis::{ArrastoChat, FormaSoltura, Soltura, motivo_sem_lugar},
     sem_arrastar,
@@ -633,8 +633,17 @@ impl Janela {
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
         let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
+        // Buscar na conversa (Ctrl+F): o índice é refeito aqui, uma vez por quadro e só quando o
+        // termo, a conversa ou o modo foco mudaram (ver `busca_conversa::Indice::atualizar`). A
+        // barra vai dentro das mensagens, por cima delas.
+        if let (Some(chat), Some(ix)) = (chat, ix) {
+            let termo = busca_conversa::normalizar(&self.paineis[ix].busca.campo.read(cx).value());
+            let foco = self.paineis[ix].modo_foco;
+            self.paineis[ix].busca.indice.atualizar(&chat.id, &chat.itens, foco, &termo);
+        }
+        let barra_busca = ix.and_then(|ix| self.barra_de_busca(ix, window, cx));
         let corpo = match (&chat, ix) {
-            (Some(chat), Some(ix)) => self.mensagens(motor, chat, ix, window, cx).into_any_element(),
+            (Some(chat), Some(ix)) => self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element(),
             _ => self.sem_conversa(motor, window, cx).into_any_element(),
         };
 

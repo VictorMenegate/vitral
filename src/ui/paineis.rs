@@ -4,7 +4,7 @@
 
 use gpui_kit::component::{
     WindowExt as _, h_flex,
-    input::{InputEvent, TextareaState},
+    input::{InputEvent, InputState, TextareaState},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -47,6 +47,8 @@ pub struct Painel {
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
     pub busca_modelo: Entity<ListaDeEscolha>,
+    /// A busca dentro desta conversa (Ctrl+F): a barra, o termo e as ocorrências.
+    pub busca: super::busca_conversa::Busca,
     /// Os blocos da conversa daqui em diante podem entrar com fade: o tamanho dela quando abriu
     /// no painel. Trocar de conversa recomeça, e o que já estava lá nunca anima.
     pub base_animacao: usize,
@@ -302,6 +304,8 @@ impl Janela {
                     // Mestre, que não tem pasta, o "@" cita um chat (o menu da caixa).
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
+                    // O rascunho vai para o disco pouco depois de a digitação parar.
+                    this.agendar_gravacao(cx);
                     let mestre = this.selecionado.as_deref() == Some(modelo::ID_MESTRE);
                     if (texto == "@" || texto.ends_with(" @"))
                         && !mestre
@@ -309,6 +313,21 @@ impl Janela {
                     {
                         this.dialogo_arquivos_projeto(chat, window, cx);
                     }
+                    cx.notify();
+                }
+                _ => {}
+            },
+        ));
+        // A busca dentro da conversa (Ctrl+F): digitar refaz o índice no desenho seguinte, e o
+        // Enter (com Shift, para trás) anda entre os achados sem sair do campo.
+        let busca_na_conversa = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar na conversa"));
+        self._assinaturas.push(cx.subscribe_in(
+            &busca_na_conversa,
+            window,
+            move |this, _, evento, _, cx| match evento {
+                InputEvent::PressEnter { shift, .. } => this.andar_na_busca(if *shift { -1 } else { 1 }, cx),
+                InputEvent::Change => {
+                    this.ativar_painel(id, cx);
                     cx.notify();
                 }
                 _ => {}
@@ -332,6 +351,7 @@ impl Janela {
             menu_aberto: false,
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
+            busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
             vistos: 0,
             faixa_vista: false,
@@ -356,7 +376,7 @@ impl Janela {
     ) {
         let texto = painel.composer.read(cx).value().to_string();
         if let Some(antigo) = antigo {
-            self.rascunhos.insert(antigo, texto);
+            self.guardar_rascunho(antigo, texto, cx);
         }
         let rascunho = novo
             .as_ref()
@@ -544,9 +564,7 @@ impl Janela {
         let painel = self.paineis.remove(ix);
         if let Some(chat) = painel.chat {
             let texto = painel.composer.read(cx).value().to_string();
-            if !texto.trim().is_empty() {
-                self.rascunhos.insert(chat, texto);
-            }
+            self.guardar_rascunho(chat, texto, cx);
         }
         self.ativo = ativo_apos_fechar(self.ativo, ix, self.paineis.len());
         self.selecionado = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());

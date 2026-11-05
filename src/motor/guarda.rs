@@ -1049,7 +1049,7 @@ impl Motor {
             resto: Default::default(),
         });
         if let Some(c) = self.chat_mut(chat_id) {
-            c.itens.push(Item::Cartao { id });
+            c.itens.push(Item::Cartao { id, em: agora });
             c.atualizado_em = agora;
         }
         id

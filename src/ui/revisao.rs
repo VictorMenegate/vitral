@@ -389,18 +389,6 @@ fn texto_do_rodape(vistos: usize, total: usize, comentarios: usize) -> String {
 // nas linhas escolhidas abre o rascunho; Ctrl+Enter, o botão azul do rodapé.
 actions!(vitral, [MudancaSeguinte, MudancaAnterior, ArquivoSeguinte, ArquivoAnterior, AbrirRascunho, AcaoPrincipal]);
 
-/// Atalhos da revisão, ligados no `atalhos` de `mod.rs`. Ficam em contextos da revisão: o
-/// Ctrl+PgUp/PgDn ganha do painel vizinho só aqui dentro.
-pub(super) fn atalhos(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("ctrl-pagedown", ArquivoSeguinte, Some("Revisao")),
-        KeyBinding::new("ctrl-pageup", ArquivoAnterior, Some("Revisao")),
-        KeyBinding::new("enter", AbrirRascunho, Some("Revisao > Diff")),
-        KeyBinding::new("c", AbrirRascunho, Some("Revisao > Diff")),
-        KeyBinding::new("ctrl-enter", AcaoPrincipal, Some("Revisao")),
-    ]);
-}
-
 /// Largura da área da janela que o diálogo usa (sem a sombra da janela).
 fn area_da_janela(window: &Window) -> gpui_kit::Size<Pixels> {
     let folga = gpui_kit::component::window_paddings(window);

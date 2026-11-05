@@ -1225,7 +1225,7 @@ fn converter_trabalhador(c: &mut Chat, t: &mut Tarefa) -> bool {
     }
     t.estado = EstadoTarefa::Conversa;
     (t.entrega, t.entrega_pendente, t.progresso, t.parada) = (None, None, None, None);
-    c.itens.push(Item::Aviso { texto: TRABALHADOR_ANTIGO.into(), erro: false });
+    c.itens.push(Item::Aviso { texto: TRABALHADOR_ANTIGO.into(), erro: false, em: agora() });
     true
 }
 
@@ -1261,8 +1261,8 @@ fn mostrar_cartoes(estado: &mut Estado, n: &mut Normalizado) {
         let Some(chat) = estado.chats.iter_mut().find(|c| c.id == cartao.chat) else {
             continue;
         };
-        if !chat.itens.iter().any(|i| matches!(i, Item::Cartao { id } if *id == cartao.id)) {
-            chat.itens.push(Item::Cartao { id: cartao.id });
+        if !chat.itens.iter().any(|i| matches!(i, Item::Cartao { id, .. } if *id == cartao.id)) {
+            chat.itens.push(Item::Cartao { id: cartao.id, em: agora() });
             n.mexeu(&chat.id);
         }
     }
@@ -1282,8 +1282,8 @@ fn podar(estado: &mut Estado, agora: u64, n: &mut Normalizado) {
         let Some(chat) = estado.chats.iter_mut().find(|c| c.id == cartao.chat) else {
             continue;
         };
-        for item in chat.itens.iter_mut().filter(|i| matches!(i, Item::Cartao { id } if *id == cartao.id)) {
-            *item = Item::Aviso { texto: resumo_do_cartao(&cartao), erro: false };
+        for item in chat.itens.iter_mut().filter(|i| matches!(i, Item::Cartao { id, .. } if *id == cartao.id)) {
+            *item = Item::Aviso { texto: resumo_do_cartao(&cartao), erro: false, em: agora };
             n.mexeu(&chat.id);
         }
     }
@@ -1844,7 +1844,7 @@ mod testes {
         assert_eq!(estado.tarefas[0].coordenador, ID_MESTRE);
         assert_eq!(estado.cartoes[0].chat, ID_MESTRE);
         // O cartão aberto ganhou o item no Mestre.
-        assert!(matches!(estado.chats[0].itens.as_slice(), [Item::Cartao { id: 1 }]));
+        assert!(matches!(estado.chats[0].itens.as_slice(), [Item::Cartao { id: 1, .. }]));
     }
 
     #[test]
@@ -1863,7 +1863,7 @@ mod testes {
             resto: Default::default(),
         };
         let mut mestre = chat(ID_MESTRE, Papel::Mestre, "");
-        mestre.itens = vec![Item::Cartao { id: 2 }, Item::Cartao { id: 3 }];
+        mestre.itens = vec![Item::Cartao { id: 2, em: 0 }, Item::Cartao { id: 3, em: 0 }];
         let mut estado = Estado {
             chats: vec![mestre],
             cartoes: vec![
@@ -1880,8 +1880,8 @@ mod testes {
         assert_eq!(estado.cartoes.iter().map(|c| c.id).collect::<Vec<_>>(), [1, 3]);
         let itens = &estado.chats[0].itens;
         assert!(matches!(&itens[0], Item::Aviso { texto, .. } if texto.starts_with("Divisão 2 começada em ") && texto.ends_with(" · 2 partes")), "{itens:?}");
-        assert!(matches!(itens[1], Item::Cartao { id: 3 }));
-        assert!(matches!(itens[2], Item::Cartao { id: 1 }));
+        assert!(matches!(itens[1], Item::Cartao { id: 3, .. }));
+        assert!(matches!(itens[2], Item::Cartao { id: 1, .. }));
         assert_eq!(n.chats_mexidos, [ID_MESTRE]);
         assert_eq!(estado.ocorrencias.len(), MAX_OCORRENCIAS);
         assert_eq!(estado.ocorrencias[0].quando, 5);
@@ -1948,7 +1948,7 @@ mod testes {
         let mut novo = chat("n", Papel::Projeto, "p");
         novo.criado_em = AGORA;
         let mut com_itens = chat("i", Papel::Projeto, "p");
-        com_itens.itens.push(Item::Assistente { texto: "oi".into() });
+        com_itens.itens.push(Item::Assistente { texto: "oi".into(), em: 0 });
         let mut estado = Estado {
             chats: vec![chat("v", Papel::Projeto, "p"), chat("u", Papel::Projeto, "p"), fixado, migrado, novo, com_itens],
             tarefas: vec![tarefa(1, "p", "v"), tarefa(2, "p", "u")],
@@ -1999,7 +1999,7 @@ mod testes {
         assert_eq!((primeiro.estado.versao, primeiro.estado.proxima_tarefa), (VERSAO_ESTADO, 1));
         let mut estado = primeiro.estado;
         let mut c = chat("c1", Papel::Coordenador, "");
-        c.itens = vec![Item::Assistente { texto: "oi".into() }];
+        c.itens = vec![Item::Assistente { texto: "oi".into(), em: 0 }];
         estado.chats.push(c);
         dados.salvar_estado(&estado.por_referencia()).unwrap();
         dados.salvar_chat(&estado.chats[0]).unwrap();
@@ -2090,7 +2090,7 @@ mod testes {
         let dados = Dados::em(Path::new("/d"));
         let com_conversa = {
             let mut c = chat("falou", Papel::Coordenador, "loja");
-            c.itens.push(Item::Assistente { texto: "oi".into() });
+            c.itens.push(Item::Assistente { texto: "oi".into(), em: 0 });
             c
         };
         let com_sessao = Chat { sessao: "s-gravada".into(), ..chat("sessao", Papel::Coordenador, "loja") };
@@ -2152,10 +2152,10 @@ mod testes {
     fn conversas_antigas_ficam_so_leitura_e_os_trabalhadores_viram_chats() {
         let dados = Dados::em(Path::new("/d"));
         let mut antigo = chat("c", Papel::Coordenador, "loja");
-        antigo.itens.push(Item::Assistente { texto: "distribuí as tarefas".into() });
+        antigo.itens.push(Item::Assistente { texto: "distribuí as tarefas".into(), em: 0 });
         // Com mensagens: um chat de projeto vazio e velho seria recolhido.
         let conversou = |mut c: Chat| {
-            c.itens.push(Item::Assistente { texto: "feito".into() });
+            c.itens.push(Item::Assistente { texto: "feito".into(), em: 0 });
             c
         };
         let trabalhador = |id: &str, n: u64| conversou(Chat { pai: Some("c".into()), tarefa: Some(n), ..chat(id, Papel::Trabalhador, "loja") });

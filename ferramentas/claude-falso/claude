@@ -4,6 +4,11 @@
 ou a pasta direta) e responde em stream-json, sem chamar a API. Com "[demora]" na mensagem, leva
 10 s. Os argumentos e o ambiente de cada turno vão para $XDG_STATE_HOME/claude-falso.log.
 
+Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch, Task...), faz de
+conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[ferramenta ... | 8]`) e
+manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
+test…") sem chamar a API.
+
 Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
 vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
 tool_result no stream. E, sem precisar pedir:
@@ -148,6 +153,40 @@ def chamar(nome, argumentos):
     return resultado, erro
 
 
+# `[ferramenta Nome detalhe]` ou `[ferramenta Nome detalhe | 8]` (segundos até o resultado).
+FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
+
+
+def entrada_da_ferramenta(nome, detalhe):
+    """O campo que o Vitral lê para montar o resumo de cada ferramenta."""
+    if nome in ("Read", "Edit", "Write", "NotebookEdit"):
+        return {"file_path": detalhe}
+    if nome in ("Bash", "BashOutput"):
+        return {"command": detalhe}
+    if nome in ("Grep", "Glob"):
+        return {"pattern": detalhe}
+    if nome == "WebFetch":
+        return {"url": detalhe}
+    if nome == "WebSearch":
+        return {"query": detalhe}
+    if nome in ("Task", "Agent", "Workflow"):
+        return {"description": detalhe}
+    return {"detalhe": detalhe}
+
+
+def fingir_ferramentas(texto):
+    """Faz de conta que usa cada ferramenta pedida, uma de cada vez, com a espera entre o
+    tool_use e o tool_result: é nessa janela que a conversa mostra o que ele está fazendo."""
+    for i, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(texto), start=1):
+        detalhe = detalhe.strip()
+        id_ = f"toolu_falso_f{i}"
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
+        time.sleep(int(segundos) if segundos else 4)
+        emitir({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})
+
+
 def diretivas(texto):
     """Os `[mcp nome {json}]` do texto, fora das linhas citadas."""
     proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
@@ -178,6 +217,7 @@ if papel != "mestre":
         notas.write(f"- {nota}\n")
 else:
     arquivo = None
+fingir_ferramentas(texto)
 if url:
     for nome, argumentos in diretivas(texto):
         chamar(nome, argumentos)
