@@ -1072,6 +1072,11 @@ impl Janela {
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel, mestre };
         let conta = estreita.then(|| Rc::new(self.dados_da_conta(motor, chat, cx)));
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
+        // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
+        // Quem já ia pela fila de qualquer jeito (esperando vaga, ou só os agentes do fundo) não
+        // precisa da opção.
+        let dirige = rodando && !motor.esperando_vaga(&chat.id) && !motor.esperando_agentes(&chat.id);
+        let depois = dirige.then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
         let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
@@ -1081,6 +1086,17 @@ impl Janela {
                 let mut menu = menu
                     .min_w(largura)
                     .max_w(largura)
+                    .when_some(depois.clone(), |menu, (janela, vazio)| {
+                        menu.item(
+                            PopupMenuItem::new("Mandar depois, na fila")
+                                .icon(Lucide::ListChecks)
+                                .disabled(vazio)
+                                .on_click(move |_, window, cx| {
+                                    let _ = janela.update(cx, |this, cx| this.enviar_depois(painel, window, cx));
+                                }),
+                        )
+                        .separator()
+                    })
                     .item(item_de_comandos(j1, painel))
                     .item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, window, cx| {
                         let _ = j2.update(cx, |this, cx| this.por_na_caixa(painel, "/compact ", window, cx));

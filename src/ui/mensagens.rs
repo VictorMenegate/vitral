@@ -416,7 +416,7 @@ impl Janela {
             } => {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
-                let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
+                let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
                 let editavel = contexto.editavel == Some(indice);
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, item.em(), realce, editavel, window, cx))
@@ -2626,7 +2626,8 @@ pub(super) struct Explicacao {
 /// O que a faixa do turno mostra: vale a primeira situação que se aplicar.
 #[derive(Debug, PartialEq)]
 enum Situacao {
-    Rodando { desde: u64, fila: usize },
+    /// `dirigidas`: mensagens que o usuário mandou para dentro deste turno.
+    Rodando { desde: u64, fila: usize, dirigidas: usize },
     EsperandoVaga,
     NovaTentativa { em: u64 },
     Parada { motivo: String, atencao: bool },
@@ -2679,11 +2680,41 @@ fn texto_para_juntar(arquivos: u32, mais: u32, menos: u32) -> String {
     format!("{arquivos} na cópia (+{mais} −{menos})")
 }
 
+/// A marca de "dirigido" na faixa do turno: a mensagem que o usuário mandou entrou no turno que
+/// já rodava, sem pará-lo nem abrir outro.
+fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
+    let rotulo = if n == 1 { "dirigido".to_string() } else { format!("dirigido {n}×") };
+    let dica: SharedString = if n == 1 {
+        "A sua mensagem entrou neste turno: ele não parou nem começou de novo".into()
+    } else {
+        "As suas mensagens entraram neste turno: ele não parou nem começou de novo".into()
+    };
+    div()
+        .id(("selo-dirigido", painel as usize))
+        .flex_none()
+        .child(
+            h_flex()
+                .gap(r(4.))
+                .metadado()
+                .text_color(Cores::tenue())
+                .child(icone_de(Lucide::MessageSquarePlus, 12.))
+                .when(!estreita, |s| s.child(rotulo)),
+        )
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .into_any_element()
+}
+
 fn situacao_do_turno(motor: &Motor, chat: &str) -> Option<Situacao> {
     match motor.execucao(chat) {
         // Esperando você: os pedidos de permissão já aparecem logo abaixo.
         Execucao::EsperandoVoce => return None,
-        Execucao::Rodando { desde } => return Some(Situacao::Rodando { desde, fila: motor.na_fila(chat) }),
+        Execucao::Rodando { desde } => {
+            return Some(Situacao::Rodando {
+                desde,
+                fila: motor.na_fila(chat),
+                dirigidas: motor.dirigidas_no_turno(chat),
+            });
+        }
         _ => {}
     }
     if motor.esperando_vaga(chat) {
@@ -2765,7 +2796,7 @@ impl Janela {
                 .into_any_element()
         };
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {
-            Situacao::Rodando { desde, fila } => (
+            Situacao::Rodando { desde, fila, dirigidas } => (
                 h_flex()
                     .flex_1()
                     .min_w_0()
@@ -2784,6 +2815,8 @@ impl Janela {
                     .when(!minima, |s| {
                         s.child(div().flex_none().metadado().text_color(Cores::apagado()).child(duracao(desde)))
                     })
+                    // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
+                    .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
                     // A fila é um controle: o clique abre a lista do que espera, para tirar o
                     // que você não quer mais.
                     .when(fila > 0, |s| {

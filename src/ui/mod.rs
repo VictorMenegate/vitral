@@ -426,6 +426,9 @@ pub struct Janela {
     ultrathink: HashSet<String>,
     /// Conversas com o Ultracode ligado para a próxima mensagem (desligado ao abrir, sempre).
     ultracode: HashSet<String>,
+    /// O próximo envio escolheu "Mandar depois": com o turno rodando, a mensagem espera na fila
+    /// em vez de entrar nele. Vale para um envio só.
+    mandar_depois: bool,
     /// Menu do Vitral aberto (F10 ou o logo).
     menu_aberto: bool,
     /// O número do sino no último quadro (`None` antes do primeiro) e a geração do pulso dele,
@@ -635,6 +638,7 @@ impl Janela {
             confirmando_saida: false,
             ultrathink: HashSet::new(),
             ultracode: HashSet::new(),
+            mandar_depois: false,
             menu_aberto: false,
             sino_numero: Default::default(),
             sino_geracao: Default::default(),
@@ -1023,6 +1027,8 @@ impl Janela {
         let reforco = Reforco {
             ultrathink: composer::gastar_chave(&mut self.ultrathink, &chat, &texto),
             ultracode: composer::gastar_chave(&mut self.ultracode, &chat, &texto) && vale_ultracode,
+            // "Mandar depois": vale só para este envio.
+            depois: std::mem::take(&mut self.mandar_depois),
         };
         motor.update(cx, |m, cx| m.enviar_com_issues(&chat, texto, anexos, reforco, issues, cx));
         composer.update(cx, |c, cx| c.set_value("", window, cx));
@@ -1032,6 +1038,16 @@ impl Janela {
         }
         self.perguntar_ligacao(&motor, &chat, &anexos_issue, window, cx);
         cx.notify();
+    }
+
+    /// "Mandar depois": o mesmo envio, mas a mensagem espera na fila em vez de entrar no turno que
+    /// está rodando.
+    pub(super) fn enviar_depois(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.mandar_depois = true;
+        self.ativar_painel(painel, cx);
+        self.enviar_do_painel(painel, window, cx);
+        // Um envio recusado (caixa vazia, issue sem o bloco) não guarda a escolha para o seguinte.
+        self.mandar_depois = false;
     }
 
     /// `vitral <pasta> --nova <projeto> <mensagem>`: abre uma conversa já com a primeira mensagem.

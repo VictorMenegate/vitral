@@ -319,7 +319,7 @@ enum Envio {
     Enviar,
     /// Chat rodando (ou na fila) com a caixa vazia: o botão vira parar.
     Parar,
-    /// Chat rodando com texto: parar ao lado e enviar, que entra na fila.
+    /// Chat rodando com texto: parar ao lado e enviar, que dirige o turno.
     PararEEnviar,
 }
 
@@ -535,7 +535,15 @@ impl Janela {
                     .when(b.faixa != FaixaCaixa::Media, |s| {
                         s.child(self.botao_mais(motor, chat, b, window, cx))
                     })
-                    .children(self.botoes_de_envio(b, vazio, motor.esperando_vaga(&chat.id), rodada_nova, envios, cx)),
+                    .children(self.botoes_de_envio(
+                        b,
+                        vazio,
+                        motor.esperando_vaga(&chat.id),
+                        motor.esperando_agentes(&chat.id),
+                        rodada_nova,
+                        envios,
+                        cx,
+                    )),
             )
     }
 
@@ -548,6 +556,7 @@ impl Janela {
         b: &Barra,
         vazio: bool,
         na_fila: bool,
+        com_agentes: bool,
         rodada_nova: bool,
         envios: u64,
         cx: &Context<Self>,
@@ -583,6 +592,18 @@ impl Janela {
         } else {
             "Enviar"
         };
+        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
+        // vale para o turno inteiro, a conversa que ainda espera vaga e o turno que já entregou a
+        // resposta e só espera os agentes do fundo é que vão pela fila.
+        let dica_dirigir = if na_fila {
+            "Enviar\nEntra na fila: esta conversa ainda espera vaga"
+        } else if com_agentes {
+            "Enviar\nEntra na fila: este turno já respondeu e só espera os agentes do fundo"
+        } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
+            "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
+        } else {
+            "Enviar\nEntra no turno que está rodando, sem pará-lo\nPara ela esperar a vez, “Mandar depois” no “…”"
+        };
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
             Envio::Enviar => vec![enviar(dica_enviar)],
@@ -599,7 +620,7 @@ impl Janela {
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
-                enviar("Enviar\nEntra na fila deste turno"),
+                enviar(dica_dirigir),
             ],
         }
     }

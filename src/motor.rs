@@ -478,6 +478,13 @@ pub struct Motor {
     /// O `result` que chegou com agentes ainda em segundo plano (texto e custo): o turno só
     /// termina quando eles acabam, ou quando o processo sai.
     fim_adiado: HashMap<String, (String, f64)>,
+    /// As mensagens que o usuário dirigiu ao turno de cada chat e que o Claude Code ainda pode ter
+    /// esperando na fila interna dele (ver `Processo::dirigir`): saem daqui quando ele as absorve
+    /// (a primeira volta de ferramenta) ou quando abre outro turno com elas.
+    dirigidas: HashMap<String, Vec<Entrada>>,
+    /// Quantas mensagens o usuário dirigiu ao turno que está rodando em cada chat, para a faixa
+    /// dizer que ele foi dirigido. Zera a cada turno novo.
+    dirigidos: HashMap<String, usize>,
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
@@ -765,6 +772,8 @@ impl Motor {
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             fim_adiado: HashMap::new(),
+            dirigidas: HashMap::new(),
+            dirigidos: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
             avisos: Arc::default(),
@@ -1698,6 +1707,8 @@ impl Motor {
             self.passagens.remove(id);
             self.fundo.remove(id);
             self.fim_adiado.remove(id);
+            self.dirigidas.remove(id);
+            self.dirigidos.remove(id);
             self.visiveis.remove(id);
         }
         self.espera.retain(|c| !saiu(c));
@@ -1953,6 +1964,18 @@ impl Motor {
             entrada.terceiros = true;
             entrada.referencias = issues.iter().map(|a| a.issue.chave.clone()).collect();
         }
+        // Com o turno rodando, a mensagem do usuário entra nele (o "Mandar depois" é que escolhe a
+        // fila). Só a dele: o que vem de outro chat ou de uma rotina continua esperando a vez.
+        if !reforco.depois {
+            match self.dirigir_turno(chat, &entrada, cx) {
+                Dirigido::Foi => return,
+                Dirigido::NaFila(motivo) => {
+                    if let Some(motivo) = motivo {
+                        self.avisar(chat, motivo, false);
+                    }
+                }
+            }
+        }
         self.entregar_entrada(chat, entrada, cx);
     }
 
@@ -2035,10 +2058,14 @@ impl Motor {
         if esperava || retentava {
             self.marcar_parada(chat, PARADA_VOCE);
         }
+        // Mensagem dirigida ainda engatilhada na fila interna do Claude Code: o `interrupt` não a
+        // descarta (ele a rodaria como turno novo, depois do Parar), então o processo sai inteiro e
+        // ela volta para a fila do Vitral.
+        let dirigida_esperando = self.dirigidas.get(chat).is_some_and(|d| !d.is_empty());
         if let Some(processo) = self.processos.get_mut(chat) {
             // Esperando os agentes em segundo plano, não há turno para interromper: o processo
             // sai com eles (SIGTERM em tudo que ele abriu).
-            if self.fim_adiado.contains_key(chat) {
+            if self.fim_adiado.contains_key(chat) || dirigida_esperando {
                 processo.matar();
             } else {
                 processo.interromper();
@@ -2383,6 +2410,87 @@ impl Motor {
         }
     }
 
+    /// Manda a mensagem do usuário para dentro do turno que já está rodando (o steering do Claude
+    /// Code; ver `Processo::dirigir` para o que foi medido). Não para o turno, não encerra a rodada
+    /// e não abre turno novo pelo Vitral: o texto entra na conversa como mensagem dele e o processo
+    /// a recebe pela entrada. `false` quando não dá para dirigir e a mensagem tem de esperar na
+    /// fila.
+    fn dirigir_turno(&mut self, chat_id: &str, entrada: &Entrada, cx: &mut Context<Self>) -> Dirigido {
+        if self.somente_leitura.is_some() || !self.processos.contains_key(chat_id) {
+            return Dirigido::NaFila(None);
+        }
+        // Esperando os agentes do fundo não há turno a dirigir (a entrada já está fechada), e um
+        // turno sendo parado está indo embora.
+        if self.fim_adiado.contains_key(chat_id) || self.interrompidos.iter().any(|c| c == chat_id) {
+            return Dirigido::NaFila(None);
+        }
+        if !matches!(self.execucao(chat_id), Execucao::Rodando { .. }) {
+            return Dirigido::NaFila(None);
+        }
+        // O que vale para o turno inteiro não cabe no meio dele: o esforço do Ultrathink e do
+        // Ultracode são argumentos do processo, e o texto de terceiros decide se ele roda isolado.
+        // Um comando de barra no meio do turno mexeria na sessão por fora do Vitral.
+        if entrada.ultrathink || entrada.ultracode {
+            return Dirigido::NaFila(Some(
+                "O Ultrathink e o Ultracode valem para o turno inteiro: esta mensagem espera na fila.",
+            ));
+        }
+        if entrada.terceiros {
+            return Dirigido::NaFila(Some("Texto de fora entra num turno próprio, isolado: esta mensagem espera na fila."));
+        }
+        if entrada.texto.starts_with('/') {
+            return Dirigido::NaFila(Some("Um comando de barra espera o turno acabar."));
+        }
+        let (texto, imagens) = texto_do_turno(std::slice::from_ref(entrada));
+        let mensagem = Mensagem { texto: &texto, imagens: &imagens };
+        let Some(processo) = self.processos.get_mut(chat_id) else {
+            return Dirigido::NaFila(None);
+        };
+        if !processo.dirigir(mensagem) {
+            return Dirigido::NaFila(None);
+        }
+        // O Claude Code pode absorver a mensagem neste turno ou abrir outro com ela: nos dois
+        // casos ela já foi, e o fim do turno espera por isso (ver `adiar_o_fim`).
+        self.dirigidas.entry(chat_id.to_string()).or_default().push(entrada.clone());
+        *self.dirigidos.entry(chat_id.to_string()).or_default() += 1;
+        // Ela não entra na repetição do turno ("Tentar de novo", a troca de conta): quando o turno
+        // falha, ela volta para a fila (`devolver_dirigidas`) e iria duas vezes.
+        // Sem ponto de volta próprio: o do turno que roda já pegou os arquivos antes dele.
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.itens.extend(itens_das_entradas(vec![entrada.clone()], None));
+            c.atualizado_em = agora();
+        }
+        if let Some(c) = self.chat(chat_id) {
+            let _ = self.dados.salvar_chat(c);
+        }
+        self.salvar();
+        cx.notify();
+        Dirigido::Foi
+    }
+
+    /// Quantas mensagens o usuário dirigiu ao turno que roda agora neste chat.
+    pub fn dirigidas_no_turno(&self, chat: &str) -> usize {
+        self.dirigidos.get(chat).copied().unwrap_or(0)
+    }
+
+    /// Devolve à fila as mensagens dirigidas que o turno não chegou a receber (ele falhou, ou foi
+    /// parado junto com o processo). Elas já estão na conversa, então voltam marcadas como
+    /// registradas: entram no próximo turno sem aparecer duas vezes. Devolve quantas foram.
+    fn devolver_dirigidas(&mut self, chat_id: &str) -> usize {
+        let Some(dirigidas) = self.dirigidas.remove(chat_id) else {
+            return 0;
+        };
+        let n = dirigidas.len();
+        if n > 0 {
+            self.filas
+                .entry(chat_id.to_string())
+                .or_default()
+                .extend(dirigidas.into_iter().map(|e| Entrada { registrada: true, ..e }));
+            self.salvar();
+        }
+        n
+    }
+
     /// Repete o último turno de um chat que falhou.
     pub fn tentar_de_novo(&mut self, chat: &str, cx: &mut Context<Self>) {
         if self.processos.contains_key(chat) {
@@ -2437,7 +2545,7 @@ impl Motor {
             texto,
             anexos,
             referencias,
-            reforco: Reforco { ultrathink, ultracode },
+            reforco: Reforco { ultrathink, ultracode, depois: false },
             ponto,
             saiu_depois: saindo.len(),
         })
@@ -2917,6 +3025,8 @@ impl Motor {
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
+                self.dirigidas.remove(chat_id);
+                self.dirigidos.remove(chat_id);
                 self.execucao
                     .insert(chat_id.to_string(), Execucao::Rodando { desde: agora() });
                 if let Some(c) = self.chat_mut(chat_id) {
@@ -3635,6 +3745,9 @@ impl Motor {
                 if versao.is_some() {
                     self.versao_claude = versao;
                 }
+                // Turno começando no mesmo processo: a mensagem dirigida saiu da fila interna do
+                // Claude Code e é ela que está rodando agora.
+                self.dirigidas.remove(chat_id);
                 // Os fluxos só contam como desligados num turno que os pediu (no plano Pro eles
                 // começam desligados e só o Ultracode os liga).
                 let ultracode = self.turno_com_ultracode(chat_id);
@@ -3739,6 +3852,9 @@ impl Motor {
             }
             Evento::ResultadoFerramenta { id, conteudo, erro } => {
                 self.chats_sujos.insert(chat_id.to_string());
+                // É aqui que o Claude Code absorve no turno a mensagem dirigida (medido na
+                // 2.1.278): daqui em diante ela não volta mais como turno à parte.
+                self.dirigidas.remove(chat_id);
                 if let Some(c) = self.chat_mut(chat_id) {
                     for item in c.itens.iter_mut().rev() {
                         if let Item::Ferramenta {
@@ -3788,12 +3904,15 @@ impl Motor {
                 janela,
             } => {
                 let interrompido = self.interrompidos.iter().any(|c| c == chat_id);
-                if adiar_o_fim(self.fundo.get(chat_id).copied().unwrap_or(0), erro, interrompido)
+                let agentes = self.fundo.get(chat_id).copied().unwrap_or(0);
+                let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
+                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido)
                     && let Some(processo) = self.processos.get_mut(chat_id)
                 {
                     // O fluxo (ou subagente) segue em segundo plano e o Claude Code abre outro
-                    // turno quando ele acaba. Com a entrada fechada, ele espera os agentes e sai;
-                    // a tarefa só vai para a revisão no último `result`.
+                    // turno quando ele acaba. Com a entrada fechada, ele espera os agentes (ou roda
+                    // a mensagem dirigida que ainda estava engatilhada) e sai; a tarefa só vai para
+                    // a revisão no último `result`.
                     processo.fechar_entrada();
                     let primeiro = self
                         .fim_adiado
@@ -3804,7 +3923,7 @@ impl Motor {
                     {
                         c.janela = janela;
                     }
-                    if primeiro {
+                    if primeiro && agentes > 0 {
                         self.avisar(
                             chat_id,
                             "Os agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem.",
@@ -3818,15 +3937,23 @@ impl Motor {
                     Some((_, antes)) => custo_usd.max(antes),
                     None => custo_usd,
                 };
+                // O turno acabou mesmo: a mensagem que o usuário dirigiu e o Claude Code não
+                // recebeu (turno com erro, ou parado) volta para a fila, e o processo sai inteiro
+                // para ele não abrir um turno à parte com ela.
+                let dirigidas_perdidas = self.devolver_dirigidas(chat_id);
+                self.dirigidos.remove(chat_id);
                 if let Some(mut processo) = self.processos.remove(chat_id) {
                     processo.fechar_entrada();
                     // Turno com erro ou parado e agentes ainda em segundo plano: com a entrada
                     // fechada, o Claude Code seguiria esperando por eles (sem teto no Ultracode),
                     // fora da tela, do Parar e da conta de um Ultracode por vez. Saem juntos.
-                    if self.fundo.remove(chat_id).unwrap_or(0) > 0 {
+                    if self.fundo.remove(chat_id).unwrap_or(0) > 0 || dirigidas_perdidas > 0 {
                         processo.matar();
                     }
                     self.encerrando.push(processo);
+                }
+                if dirigidas_perdidas > 0 {
+                    self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
@@ -3911,6 +4038,10 @@ impl Motor {
                     && self.processos.contains_key(chat_id)
                     && let Some((texto, custo_usd)) = self.fim_adiado.remove(chat_id)
                 {
+                    // Saiu sem abrir outro turno: a mensagem dirigida foi absorvida naquele mesmo
+                    // (ou já rodou, no `Inicio`), e não volta para a fila.
+                    self.dirigidas.remove(chat_id);
+                    self.dirigidos.remove(chat_id);
                     self.processos.remove(chat_id);
                     let restantes = self.fundo.remove(chat_id).unwrap_or(0);
                     if let Some(c) = self.chat_mut(chat_id) {
@@ -3939,8 +4070,14 @@ impl Motor {
                 {
                     c.somar_custo(custo_usd);
                 }
-                // Sem `Fim`: o processo caiu ou foi interrompido no meio do turno.
+                // Sem `Fim`: o processo caiu ou foi interrompido no meio do turno. O que o usuário
+                // dirigiu e o Claude Code não chegou a receber volta para a fila.
+                let dirigidas_perdidas = self.devolver_dirigidas(chat_id);
+                self.dirigidos.remove(chat_id);
                 if self.processos.remove(chat_id).is_some() {
+                    if dirigidas_perdidas > 0 {
+                        self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
+                    }
                     self.parcial.remove(chat_id);
                     let interrompido = self.interrompidos.contains(&chat_id.to_string());
                     self.interrompidos.retain(|c| c != chat_id);
@@ -7437,8 +7574,28 @@ pub fn esforco_do_ultrathink(atual: Option<&str>) -> &'static str {
 
 /// O `result` chegou com agentes em segundo plano: o turno espera por eles, menos com erro ou
 /// parado pelo usuário.
-fn adiar_o_fim(agentes_em_fundo: usize, erro: bool, interrompido: bool) -> bool {
-    agentes_em_fundo > 0 && !erro && !interrompido
+/// O aviso de quando o turno acabou antes de receber o que o usuário mandou nele.
+fn voltou_para_a_fila(n: usize) -> String {
+    if n == 1 {
+        "O turno acabou antes de a sua mensagem entrar nele; ela ficou na fila, para o próximo.".to_string()
+    } else {
+        format!("O turno acabou antes de as suas {n} mensagens entrarem nele; elas ficaram na fila, para o próximo.")
+    }
+}
+
+/// O que aconteceu com a mensagem que o usuário mandou com o turno rodando.
+enum Dirigido {
+    /// Entrou no turno que já roda.
+    Foi,
+    /// Espera na fila; com motivo, ele vira aviso na conversa (a mensagem não cabia no turno).
+    NaFila(Option<&'static str>),
+}
+
+/// O turno não termina neste `result`: os agentes seguem em segundo plano (o Claude Code abre
+/// outro turno quando eles acabam) ou uma mensagem dirigida pode ainda estar na fila interna dele,
+/// e aí o turno seguinte vem na hora, no mesmo processo (ver `Processo::dirigir`).
+fn adiar_o_fim(agentes_em_fundo: usize, dirigida_esperando: bool, erro: bool, interrompido: bool) -> bool {
+    (agentes_em_fundo > 0 || dirigida_esperando) && !erro && !interrompido
 }
 
 /// O modelo tem o esforço Extra (xhigh), sem o qual o Claude Code desliga o Ultracode calado.
@@ -8111,8 +8268,8 @@ mod testes {
         assert_eq!(esforco_do_ultrathink(Some("max")), "max");
     }
 
-    const ULTRATHINK: Reforco = Reforco { ultrathink: true, ultracode: false };
-    const ULTRACODE: Reforco = Reforco { ultrathink: false, ultracode: true };
+    const ULTRATHINK: Reforco = Reforco { ultrathink: true, ultracode: false, depois: false };
+    const ULTRACODE: Reforco = Reforco { ultrathink: false, ultracode: true, depois: false };
 
     #[test]
     fn ultrathink_entra_uma_vez_no_fim_do_turno() {
@@ -8130,7 +8287,7 @@ mod testes {
 
     #[test]
     fn ultracode_vai_pelo_esforco_e_nunca_pela_palavra() {
-        let ambos = Reforco { ultrathink: true, ultracode: true };
+        let ambos = Reforco { ultrathink: true, ultracode: true, depois: false };
         let entrada = entrada_do_usuario("refatore o motor".into(), Vec::new(), ambos);
         assert!(entrada.ultracode && entrada.ultrathink);
         let (texto, _) = texto_do_turno(&[entrada.clone()]);
@@ -8214,10 +8371,18 @@ mod testes {
 
     #[test]
     fn resultado_com_agentes_em_segundo_plano_espera_por_eles() {
-        assert!(adiar_o_fim(1, false, false));
-        assert!(!adiar_o_fim(0, false, false));
-        assert!(!adiar_o_fim(2, true, false), "erro termina o turno");
-        assert!(!adiar_o_fim(2, false, true), "parado pelo usuário termina o turno");
+        assert!(adiar_o_fim(1, false, false, false));
+        assert!(!adiar_o_fim(0, false, false, false));
+        assert!(!adiar_o_fim(2, false, true, false), "erro termina o turno");
+        assert!(!adiar_o_fim(2, false, false, true), "parado pelo usuário termina o turno");
+    }
+
+    #[test]
+    fn resultado_com_mensagem_dirigida_esperando_tambem_espera() {
+        // O Claude Code pode abrir outro turno na hora com ela, no mesmo processo.
+        assert!(adiar_o_fim(0, true, false, false));
+        assert!(!adiar_o_fim(0, true, true, false), "erro termina o turno");
+        assert!(!adiar_o_fim(0, true, false, true), "parado pelo usuário termina o turno");
     }
 
     #[test]
