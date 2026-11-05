@@ -20,8 +20,8 @@ A conversa ficou mais fácil de ler, de achar e de corrigir.
 - **Rascunho por chat**: o que você escreveu e não mandou fica guardado ao trocar de conversa.
 - **Fila de mensagens** com o que está esperando e "Entregar agora"; tirar da fila devolve o texto
   à caixa.
-- **Exportar a conversa em Markdown** e, na bancada, um `claude` de mentira que finge usar
-  ferramentas, para ver a linha do turno sem gastar a API.
+- Na bancada, um `claude` de mentira que finge usar ferramentas, para ver a linha do turno
+  ("Lendo motor.rs…", "Rodando: cargo test…") sem gastar a API.
 
 ## 0.3.0
 
