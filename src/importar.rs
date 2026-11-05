@@ -466,17 +466,20 @@ fn historico_de(leitor: impl BufRead) -> Historico {
     let mut chamadas: HashMap<String, usize> = HashMap::new();
     let mut cortados = 0;
     let mut resposta: Option<String> = None;
-    let aviso = |texto: &str, erro: bool| Item::Aviso { texto: texto.to_string(), erro };
+    // A hora de cada item vem do `timestamp` da linha (a conversa trazida mostra as datas de
+    // verdade); sem ele, o item fica sem hora.
+    let aviso = |texto: &str, erro: bool, em: u64| Item::Aviso { texto: texto.to_string(), erro, em };
     for linha in linhas(leitor) {
         if linha.is_sidechain {
             continue;
         }
+        let em = segundos(&linha.timestamp).unwrap_or(0);
         let Some(mensagem) = linha.message else {
             continue;
         };
         match linha.tipo.as_str() {
             "user" if linha.is_compact_summary => {
-                itens.push(aviso("A conversa foi resumida aqui (o Claude Code compactou o contexto).", false));
+                itens.push(aviso("A conversa foi resumida aqui (o Claude Code compactou o contexto).", false, em));
                 resposta = None;
             }
             "user" if !linha.is_meta => {
@@ -497,16 +500,17 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                         ultrathink: false,
                         ultracode: false,
                         referencias: Vec::new(),
+                        em,
                     }),
-                    Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false)),
-                    Fala::Interrompido => itens.push(aviso("Interrompido pelo usuário.", false)),
+                    Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false, em)),
+                    Fala::Interrompido => itens.push(aviso("Interrompido pelo usuário.", false, em)),
                     Fala::Nada => continue,
                 }
                 resposta = None;
             }
             "assistant" if linha.is_api_error_message => {
                 let texto = mensagem.content.as_array().into_iter().flatten().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n");
-                itens.push(aviso(&format!("Erro do Claude Code: {}", primeira_linha(&texto)), true));
+                itens.push(aviso(&format!("Erro do Claude Code: {}", primeira_linha(&texto)), true, em));
                 resposta = None;
             }
             "assistant" => {
@@ -520,13 +524,13 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                             // Pedaços seguidos da mesma resposta viram um texto só.
                             if let (Some(atual), Some(id)) = (&resposta, &mensagem.id)
                                 && atual == id
-                                && let Some(Item::Assistente { texto: anterior }) = itens.last_mut()
+                                && let Some(Item::Assistente { texto: anterior, .. }) = itens.last_mut()
                             {
                                 anterior.push_str("\n\n");
                                 anterior.push_str(texto);
                                 continue;
                             }
-                            itens.push(Item::Assistente { texto: texto.to_string() });
+                            itens.push(Item::Assistente { texto: texto.to_string(), em });
                             resposta = mensagem.id.clone();
                         }
                         "tool_use" => {
@@ -542,6 +546,7 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                                 resumo: crate::claude::resumo_ferramenta(nome, &bloco["input"]),
                                 resultado: None,
                                 erro: false,
+                                em,
                             });
                             resposta = None;
                         }
@@ -983,7 +988,7 @@ mod testes {
             .iter()
             .map(|i| match i {
                 Item::Usuario { texto, .. } => format!("U:{texto}"),
-                Item::Assistente { texto } => format!("A:{texto}"),
+                Item::Assistente { texto, .. } => format!("A:{texto}"),
                 Item::Ferramenta { resumo, resultado, .. } => format!("F:{resumo}={}", resultado.clone().unwrap_or_default()),
                 Item::Aviso { texto, .. } => format!("V:{texto}"),
                 _ => "?".into(),

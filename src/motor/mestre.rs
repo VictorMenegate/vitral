@@ -1392,7 +1392,7 @@ impl Motor {
             resto: Default::default(),
         });
         if let Some(c) = self.chat_mut(ID_MESTRE) {
-            c.itens.push(Item::Cartao { id });
+            c.itens.push(Item::Cartao { id, em: agora() });
             c.atualizado_em = agora();
         }
         id
@@ -2508,9 +2508,9 @@ impl Motor {
             let linha = match item {
                 Item::Usuario { texto, .. } => format!("Usuário: {}", git::inicio_do_texto(texto.trim(), 1500)),
                 Item::Entrega { de, texto, .. } => format!("[de: {de}] {}", git::inicio_do_texto(texto.trim(), 1500)),
-                Item::Assistente { texto } => format!("{quem}: {}", git::inicio_do_texto(texto.trim(), 1500)),
+                Item::Assistente { texto, .. } => format!("{quem}: {}", git::inicio_do_texto(texto.trim(), 1500)),
                 Item::Ferramenta { resumo, erro, .. } => format!("  · {resumo}{}", if *erro { " (erro)" } else { "" }),
-                Item::Aviso { texto, erro: true } => format!("  [aviso] {}", git::inicio_do_texto(texto.trim(), 300)),
+                Item::Aviso { texto, erro: true, .. } => format!("  [aviso] {}", git::inicio_do_texto(texto.trim(), 300)),
                 _ => continue,
             };
             let conta = matches!(item, Item::Usuario { .. } | Item::Entrega { .. } | Item::Assistente { .. });

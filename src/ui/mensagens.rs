@@ -213,19 +213,19 @@ impl Janela {
             }
             i += 1;
             if Some(indice) == resumo
-                && let Item::Assistente { texto } = item
+                && let Item::Assistente { texto, .. } = item
             {
                 let estados: Vec<EstadoTarefa> = motor.tarefas_do(&chat.id).map(|t| t.estado).collect();
                 let meta = meta_do_resumo(&estados);
                 blocos.push((Bloco::Resumo, Some(indice), cartao_resumo(chat, indice, texto, "Resumo da conversa", meta, cx)));
                 continue;
             }
-            if let (Some(divisao), Item::Assistente { texto }) = (resumos_do_mestre.get(&indice), item) {
+            if let (Some(divisao), Item::Assistente { texto, .. }) = (resumos_do_mestre.get(&indice), item) {
                 let meta = format!("Divisão {divisao}");
                 blocos.push((Bloco::Resumo, Some(indice), cartao_resumo(chat, indice, texto, "Resumo do Mestre", meta, cx)));
                 continue;
             }
-            if let Item::Cartao { id } = item {
+            if let Item::Cartao { id, .. } = item {
                 let elemento = self.cartao_do_mestre(motor, painel_id, &rolagem, *id, window, cx);
                 blocos.push((Bloco::Cartao, Some(indice), elemento));
                 continue;
@@ -399,14 +399,15 @@ impl Janela {
                 ultrathink,
                 ultracode,
                 referencias,
+                ..
             } => {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
             }
-            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, &contexto.referencias, cx)),
-            Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
+            Item::Assistente { texto, .. } => (Bloco::Texto, self.texto_assistente(&chave, texto, &contexto.referencias, cx)),
+            Item::Entrega { de, texto, ponto, .. } => match contexto.tarefa(item) {
                 Some(tarefa) => self.entrega_de_tarefa(contexto, indice, item, tarefa, window, cx),
                 None => {
                     let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
@@ -414,8 +415,8 @@ impl Janela {
                 }
             },
             Item::Ferramenta { .. } => (Bloco::Log, self.ferramentas(contexto, &[(indice, item)], false, window, cx)),
-            Item::Aviso { texto, erro } => aviso_do_chat(&chave, texto, *erro),
-            Item::Cartao { id } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false),
+            Item::Aviso { texto, erro, .. } => aviso_do_chat(&chave, texto, *erro),
+            Item::Cartao { id, .. } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false),
             Item::Desconhecido(_) => aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false),
         }
     }
@@ -3812,6 +3813,7 @@ mod testes {
             resumo: resumo.into(),
             resultado: resultado.map(str::to_string),
             erro,
+            em: 0,
         }
     }
 
@@ -3820,15 +3822,16 @@ mod testes {
             de: de.into(),
             texto: texto.into(),
             ponto: None,
+            em: 0,
         }
     }
 
     fn usuario(texto: &str) -> Item {
-        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() }
+        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new(), em: 0 }
     }
 
     fn assistente(texto: &str) -> Item {
-        Item::Assistente { texto: texto.into() }
+        Item::Assistente { texto: texto.into(), em: 0 }
     }
 
     #[test]

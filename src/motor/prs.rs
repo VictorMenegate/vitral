@@ -1191,7 +1191,7 @@ impl Motor {
             });
             self.chats_sujos.insert(chat.clone());
             if let Some(c) = self.chat_mut(&chat) {
-                c.itens.push(Item::Cartao { id: cartao });
+                c.itens.push(Item::Cartao { id: cartao, em: agora() });
             }
         }
     }

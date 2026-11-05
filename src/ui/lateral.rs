@@ -349,7 +349,7 @@ fn maiuscula(texto: &str) -> String {
 fn ultima_fala(chat: &Chat) -> String {
     for item in chat.itens.iter().rev() {
         match item {
-            Item::Assistente { texto } => return primeira_linha(texto),
+            Item::Assistente { texto, .. } => return primeira_linha(texto),
             Item::Usuario { texto, .. } => return format!("Você: {}", primeira_linha(texto)),
             Item::Entrega { de, texto, .. } => return format!("{de}: {}", primeira_linha(texto)),
             _ => {}
@@ -538,7 +538,7 @@ fn casa_com_a_busca(c: &Chat, busca: &str) -> bool {
     busca.is_empty()
         || c.titulo.to_lowercase().contains(busca)
         || c.itens.iter().any(|i| match i {
-            Item::Usuario { texto, .. } | Item::Assistente { texto } | Item::Entrega { texto, .. } => {
+            Item::Usuario { texto, .. } | Item::Assistente { texto, .. } | Item::Entrega { texto, .. } => {
                 texto.to_lowercase().contains(busca)
             }
             _ => false,
@@ -621,7 +621,7 @@ fn achado_na_familia(chat: &Chat, trabalhadores: &[&Chat], busca: &str) -> Optio
             let (quem, texto) = match item {
                 Item::Usuario { texto, .. } => (Some("Você"), texto),
                 Item::Entrega { de, texto, .. } => (Some(de.as_str()), texto),
-                Item::Assistente { texto } => (None, texto),
+                Item::Assistente { texto, .. } => (None, texto),
                 _ => return None,
             };
             let (pedaco, faixa) = recorte(texto, busca)?;
@@ -2596,7 +2596,7 @@ mod testes {
                 "criado_em": 0, "atualizado_em": 0, "custo_usd": 0.0}}"#
         );
         let mut c: Chat = serde_json::from_str(&json).unwrap();
-        c.itens = falas.iter().map(|t| Item::Assistente { texto: t.to_string() }).collect();
+        c.itens = falas.iter().map(|t| Item::Assistente { texto: t.to_string(), em: 0 }).collect();
         c
     }
 
@@ -2707,6 +2707,7 @@ mod testes {
                 ultrathink: false,
                 ultracode: false,
                 referencias: Vec::new(),
+                em: 0,
             },
         );
         // O termo só numa mensagem: a prévia vira o trecho dela, numa linha, com o termo marcado.

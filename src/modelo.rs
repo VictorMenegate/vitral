@@ -112,6 +112,12 @@ impl Execucao {
     }
 }
 
+/// O item não tem hora: o `em` de uma conversa de antes dela. Não vai para o disco (os arquivos
+/// das conversas antigas continuam iguais).
+fn sem_hora(em: &u64) -> bool {
+    *em == 0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Item {
     Usuario {
@@ -130,6 +136,10 @@ pub enum Item {
         /// Issues anexadas ("ENG-123", "#45"), para o chip na bolha.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         referencias: Vec<String>,
+        /// Quando entrou na conversa (Unix, segundos); 0 nas conversas de antes da hora nas
+        /// mensagens, que não mostram nada.
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     /// Mensagem que o Vitral (ou outro chat) entregou a este chat, no lugar do usuário.
     Entrega {
@@ -137,9 +147,13 @@ pub enum Item {
         texto: String,
         #[serde(default)]
         ponto: Option<String>,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     Assistente {
         texto: String,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     Ferramenta {
         id: String,
@@ -147,18 +161,40 @@ pub enum Item {
         resumo: String,
         resultado: Option<String>,
         erro: bool,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     Aviso {
         texto: String,
         erro: bool,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     /// Cartão interativo; os dados ficam em `Estado.cartoes`.
     Cartao {
         id: u64,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
     },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
+}
+
+impl Item {
+    /// O instante do item, ou 0 quando ele não tem hora (conversa de antes dela, ou item de uma
+    /// versão mais nova).
+    pub fn em(&self) -> u64 {
+        match self {
+            Item::Usuario { em, .. }
+            | Item::Entrega { em, .. }
+            | Item::Assistente { em, .. }
+            | Item::Ferramenta { em, .. }
+            | Item::Aviso { em, .. }
+            | Item::Cartao { em, .. } => *em,
+            Item::Desconhecido(_) => 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1149,6 +1185,53 @@ pub fn data_curta(segundos: u64) -> String {
     format!("{:02}/{:02}", local.day(), local.month())
 }
 
+/// "14:32", no fuso local: a hora de um item da conversa.
+pub fn hora_local(segundos: u64) -> String {
+    use chrono::Timelike as _;
+    let local = no_fuso_local(segundos as i64);
+    format!("{:02}:{:02}", local.hour(), local.minute())
+}
+
+/// O dia de um instante, no fuso local (ano e dia do ano): dois itens com o mesmo par ficam no
+/// mesmo grupo da conversa.
+pub fn dia_local(segundos: u64) -> (i32, u32) {
+    use chrono::Datelike as _;
+    let local = no_fuso_local(segundos as i64);
+    (local.year(), local.ordinal())
+}
+
+const MESES: [&str; 12] = [
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+];
+
+/// O nome do dia no separador de data da conversa: "Hoje", "Ontem", "12 de março" no ano de
+/// `agora` e "12 de março de 2025" nos outros.
+pub fn nome_do_dia(segundos: u64, agora: u64) -> String {
+    use chrono::Datelike as _;
+    let (dia, hoje) = (no_fuso_local(segundos as i64), no_fuso_local(agora as i64));
+    let ontem = hoje.date_naive().pred_opt().unwrap_or(hoje.date_naive());
+    if dia.date_naive() == hoje.date_naive() {
+        "Hoje".to_string()
+    } else if dia.date_naive() == ontem {
+        "Ontem".to_string()
+    } else {
+        let mes = MESES[(dia.month() as usize - 1).min(11)];
+        let texto = format!("{} de {mes}", dia.day());
+        if dia.year() == hoje.year() { texto } else { format!("{texto} de {}", dia.year()) }
+    }
+}
+
 /// "às 15:42", ou "em 03/11 às 15:42" quando não é hoje, no fuso local.
 pub fn quando_local(segundos: u64) -> String {
     use chrono::{Datelike as _, Timelike as _};
@@ -1494,7 +1577,7 @@ mod testes {
             "modelo": "opus", "criado_em": 1, "atualizado_em": 2, "custo_usd": 0.5
         }))
         .unwrap();
-        chat.itens.push(Item::Assistente { texto: "oi".into() });
+        chat.itens.push(Item::Assistente { texto: "oi".into(), em: 0 });
         chat
     }
 
@@ -1574,7 +1657,7 @@ mod testes {
         ]))
         .unwrap();
         assert!(matches!(&itens[1], Item::Desconhecido(v) if *v == item));
-        assert!(matches!(itens[2], Item::Cartao { id: 4 }));
+        assert!(matches!(itens[2], Item::Cartao { id: 4, .. }));
         assert_eq!(serde_json::to_value(&itens).unwrap()[1], item);
 
         let mut chat = serde_json::to_value(chat_de_teste()).unwrap();
@@ -1645,7 +1728,7 @@ mod testes {
         let estado = Estado { chats: vec![chat.clone()], proxima_tarefa: 1, ..Default::default() };
         dados.salvar_estado(&estado.por_referencia()).unwrap();
         dados.salvar_chat(&chat).unwrap();
-        chat.itens.push(Item::Assistente { texto: "tchau".into() });
+        chat.itens.push(Item::Assistente { texto: "tchau".into(), em: 0 });
         dados.salvar_chat(&chat).unwrap();
         dados.esperar_gravacoes();
         let carregado = dados.carregar().unwrap();

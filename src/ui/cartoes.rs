@@ -1103,11 +1103,11 @@ mod testes {
     }
 
     fn entrega(texto: &str) -> Item {
-        Item::Entrega { de: "Vitral".into(), texto: texto.into(), ponto: None }
+        Item::Entrega { de: "Vitral".into(), texto: texto.into(), ponto: None, em: 0 }
     }
 
     fn assistente(texto: &str) -> Item {
-        Item::Assistente { texto: texto.into() }
+        Item::Assistente { texto: texto.into(), em: 0 }
     }
 
     #[test]
@@ -1116,11 +1116,11 @@ mod testes {
         assert_eq!(divisao_terminada("[Vitral] A divisão 12 terminou: x"), Some(12));
         assert_eq!(divisao_terminada("A divisão 3 ainda espera o Começar."), None);
         let itens = vec![
-            Item::Usuario { texto: "faça".into(), anexos: vec![], ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() },
+            Item::Usuario { texto: "faça".into(), anexos: vec![], ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new(), em: 0 },
             assistente("Divisão mostrada."),
             entrega("A divisão 3 terminou: chat 12 juntado."),
             entrega("Chat 12 entregou e foi juntado sozinho."),
-            Item::Ferramenta { id: "t".into(), nome: "mcp__vitral__estado".into(), resumo: "estado".into(), resultado: None, erro: false },
+            Item::Ferramenta { id: "t".into(), nome: "mcp__vitral__estado".into(), resumo: "estado".into(), resultado: None, erro: false, em: 0 },
             assistente("Olhando."),
             assistente("Resumo por projeto: Ninee pronto."),
             entrega("Outra coisa do Vitral."),

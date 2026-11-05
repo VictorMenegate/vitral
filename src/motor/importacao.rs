@@ -149,9 +149,9 @@ impl Motor {
         (chat.criado_em, chat.atualizado_em, chat.lido_em) = (s.primeira, s.ultima, agora);
         (chat.permissao, chat.modelo, chat.conta) = (permissao, modelo, conta);
         let importada = s.importada(agora);
-        chat.itens.push(Item::Aviso { texto: importar::marco(&importada), erro: false });
+        chat.itens.push(Item::Aviso { texto: importar::marco(&importada), erro: false, em: agora });
         if importada.em_uso {
-            chat.itens.push(Item::Aviso { texto: importar::AVISO_EM_USO.into(), erro: false });
+            chat.itens.push(Item::Aviso { texto: importar::AVISO_EM_USO.into(), erro: false, em: agora });
         }
         chat.importada = Some(importada);
         self.chats.push(chat);

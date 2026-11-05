@@ -3644,6 +3644,7 @@ impl Motor {
                 {
                     c.itens.push(Item::Assistente {
                         texto: texto.trim().to_string(),
+                        em: agora(),
                     });
                 }
             }
@@ -3662,6 +3663,7 @@ impl Motor {
                         resumo,
                         resultado: None,
                         erro: false,
+                        em: agora(),
                     });
                 }
             }
@@ -5551,7 +5553,7 @@ impl Motor {
         for item in &chat.itens {
             match item {
                 Item::Usuario { texto: t, .. } => texto.push_str(&format!("## Usuário\n\n{t}\n\n")),
-                Item::Assistente { texto: t } => texto.push_str(&format!("## Claude\n\n{t}\n\n")),
+                Item::Assistente { texto: t, .. } => texto.push_str(&format!("## Claude\n\n{t}\n\n")),
                 Item::Entrega { de, texto: t, .. } => {
                     texto.push_str(&format!("## Mensagem de {de}\n\n{t}\n\n"))
                 }
@@ -6305,6 +6307,7 @@ impl Motor {
             c.itens.push(Item::Aviso {
                 texto: texto.to_string(),
                 erro,
+                em: agora(),
             });
         }
     }
@@ -6629,6 +6632,7 @@ fn marcar_interrompidas(
             chat.itens.push(Item::Aviso {
                 texto: aviso.to_string(),
                 erro: false,
+                em: agora(),
             });
         }
         let ja_avisado = matches!(chat.itens.last(), Some(Item::Aviso { texto, .. }) if texto == cortado);
@@ -6640,6 +6644,7 @@ fn marcar_interrompidas(
             chat.itens.push(Item::Aviso {
                 texto: cortado.into(),
                 erro: false,
+                em: agora(),
             });
         }
     }
@@ -7001,6 +7006,7 @@ fn itens_das_entradas(mensagens: Vec<Entrada>, mut ponto: Option<String>) -> Vec
                     de,
                     texto: entrada.texto,
                     ponto,
+                    em: agora(),
                 },
                 None => Item::Usuario {
                     texto: entrada.texto,
@@ -7009,6 +7015,7 @@ fn itens_das_entradas(mensagens: Vec<Entrada>, mut ponto: Option<String>) -> Vec
                     ultrathink: entrada.ultrathink,
                     ultracode: entrada.ultracode,
                     referencias: entrada.referencias,
+                    em: agora(),
                 },
             }
         })
@@ -7106,7 +7113,7 @@ fn bloco_de_passagem(itens: &[Item], tarefa: Option<&Tarefa>, pular: usize) -> S
         .filter_map(|i| match i {
             Item::Usuario { texto, .. } => Some(format!("Usuário: {}", texto.trim())),
             Item::Entrega { de, texto, .. } => Some(format!("[de: {de}] {}", texto.trim())),
-            Item::Assistente { texto } => Some(format!("Você: {}", texto.trim())),
+            Item::Assistente { texto, .. } => Some(format!("Você: {}", texto.trim())),
             _ => None,
         })
         .skip(pular)
@@ -7664,6 +7671,7 @@ mod testes {
             ultrathink: false,
             ultracode: false,
             referencias: Vec::new(),
+            em: 0,
         });
         let mut chats = vec![chat("c", Papel::Coordenador, None), trabalhador];
         let mut tarefas = vec![tarefa(1, "w", EstadoTarefa::Rodando)];
@@ -7751,6 +7759,7 @@ mod testes {
             de: "coordenador".into(),
             texto: "Tarefa #1".into(),
             ponto: None,
+            em: 0,
         });
         assert!(!precisa_preparar(&tarefas[0], &chats[0], &Filas::new()));
     }
@@ -7962,7 +7971,7 @@ mod testes {
         let mut velha = chat("c", Papel::Coordenador, None);
         velha.atualizado_em = dia;
         velha.lido_em = 2 * dia;
-        velha.itens.push(Item::Assistente { texto: "pronto".into() });
+        velha.itens.push(Item::Assistente { texto: "pronto".into(), em: 0 });
         assert!(candidata_a_arquivar(&velha, limite));
 
         trocar_arquivado(&mut velha, agora);
@@ -7976,7 +7985,7 @@ mod testes {
         nova.arquivado = true;
         nova.atualizado_em = 2 * dia;
         nova.lido_em = dia;
-        nova.itens.push(Item::Assistente { texto: "resposta".into() });
+        nova.itens.push(Item::Assistente { texto: "resposta".into(), em: 0 });
         trocar_arquivado(&mut nova, agora);
         assert!(!nova.arquivado);
         assert_eq!(nova.lido_em, dia);
@@ -8349,7 +8358,7 @@ mod testes {
     #[test]
     fn arquivar_apaga_so_o_chat_de_projeto_que_nunca_rodou() {
         let mut c = Chat::novo("c".into(), Papel::Projeto, "loja", "Nova conversa", "/p/loja".into());
-        c.itens.push(Item::Aviso { texto: "A pasta não usa git: o chat trabalha direto nela.".into(), erro: false });
+        c.itens.push(Item::Aviso { texto: "A pasta não usa git: o chat trabalha direto nela.".into(), erro: false, em: 0 });
         let conversa = Tarefa { id: 1, trabalhador: "c".into(), estado: EstadoTarefa::Conversa, ..Default::default() };
         assert!(nunca_rodou(&c, &[&conversa]));
         let com_copia = Tarefa { worktree: Some("/d/copias/loja/t1".into()), ..conversa.clone() };
@@ -8357,7 +8366,7 @@ mod testes {
         let pedido = Tarefa { estado: EstadoTarefa::Rodando, coordenador: "mestre".into(), ..conversa.clone() };
         assert!(!nunca_rodou(&c, &[&pedido]), "pedido do Mestre aberto");
         let mut falou = c.clone();
-        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() });
+        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new(), em: 0 });
         assert!(!nunca_rodou(&falou, &[&conversa]));
         let mut sessao = c.clone();
         sessao.sessao_criada = true;
@@ -8433,11 +8442,11 @@ mod testes {
 
     #[test]
     fn passagem_de_sessao_leva_as_ultimas_mensagens_e_o_pedido() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new(), em: 0 };
         let mut itens = vec![usuario("primeira")];
         for i in 0..12 {
-            itens.push(Item::Assistente { texto: format!("resposta {i}") });
-            itens.push(Item::Aviso { texto: "aviso".into(), erro: false });
+            itens.push(Item::Assistente { texto: format!("resposta {i}"), em: 0 });
+            itens.push(Item::Aviso { texto: "aviso".into(), erro: false, em: 0 });
         }
         itens.push(usuario("a de agora"));
         let mut t = tarefa(4, "w", EstadoTarefa::Ajustando);
@@ -8450,7 +8459,7 @@ mod testes {
         assert!(bloco.find("resposta 2").unwrap() < bloco.find("resposta 11").unwrap());
         assert!(bloco.ends_with("Tarefa em aberto: #4 Cupons (ajustando). A cópia é /d/copias/loja/t4, no branch vitral/t4-cupons."));
         // Mensagens longas: as mais recentes ficam, até 6000 caracteres.
-        let longas = vec![usuario(&"a".repeat(5000)), Item::Assistente { texto: "b".repeat(5000) }];
+        let longas = vec![usuario(&"a".repeat(5000)), Item::Assistente { texto: "b".repeat(5000), em: 0 }];
         let bloco = bloco_de_passagem(&longas, None, 0);
         assert!(bloco.contains(&format!("Você: {}", "b".repeat(5000))));
         assert!(bloco.contains("…") && !bloco.contains(&"a".repeat(1000)));
@@ -8577,10 +8586,10 @@ mod testes {
 
     #[test]
     fn revisor_sem_pedido_le_as_mensagens_desde_a_juncao() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new() };
-        let mut itens = vec![usuario("antes"), Item::Aviso { texto: format!("{JUNTOU} /p/loja."), erro: false }];
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ponto: None, ultrathink: false, ultracode: false, referencias: Vec::new(), em: 0 };
+        let mut itens = vec![usuario("antes"), Item::Aviso { texto: format!("{JUNTOU} /p/loja."), erro: false, em: 0 }];
         assert_eq!(mensagens_desde_a_juncao(&itens), "(nenhuma mensagem do usuário desde a última junção)");
-        itens.extend([usuario("troque o frete"), Item::Assistente { texto: "feito".into() }, usuario("/compact"), usuario("e o cupom")]);
+        itens.extend([usuario("troque o frete"), Item::Assistente { texto: "feito".into(), em: 0 }, usuario("/compact"), usuario("e o cupom")]);
         assert_eq!(mensagens_desde_a_juncao(&itens), "- troque o frete\n- e o cupom");
         assert_eq!(mensagens_desde_a_juncao(&itens[..1]), "- antes");
     }
