@@ -4,6 +4,7 @@
 pub mod componentes;
 mod abas_direita;
 mod abertura;
+pub mod atalhos;
 mod atualizacao;
 mod caixa_entrada;
 mod cartoes;
@@ -15,6 +16,7 @@ mod conversa;
 mod dialogos;
 mod distribuido;
 mod equipe;
+mod fila;
 pub(crate) mod icone_projeto;
 mod lateral;
 mod limpeza;
@@ -29,7 +31,9 @@ mod painel_arquivo;
 pub(crate) mod painel_pr;
 mod paineis;
 mod popover_issues;
+mod rascunhos;
 mod recuperacao;
+mod reenvio;
 mod rotinas;
 mod seletor_arquivos;
 mod tirar_projeto;
@@ -66,75 +70,14 @@ actions!(vitral, [FecharGaveta, AbrirMestre]);
 actions!(vitral, [AumentarZoom, DiminuirZoom, ZoomPadrao]);
 actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, IrAoFim]);
 actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsquerda, MoverPainelDireita]);
+// A seta para cima na caixa vazia e o "?" fora de um campo de texto.
+actions!(vitral, [EditarUltima, AbrirAtalhos]);
 
 /// Ctrl+1…9: liga o filtro do projeto N do trilho (a partir de 0).
 #[derive(Clone, PartialEq, Debug, serde::Deserialize, Action)]
 #[action(namespace = vitral, no_json)]
 pub struct IrParaProjeto(pub usize);
 
-pub fn atalhos(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("escape", composer::PararTurno, Some("Caixa")),
-        // Do detalhe das issues volta à lista; da lista, fecha (antes do Esc do popover do kit).
-        KeyBinding::new("escape", popover_issues::VoltarIssues, Some("PopoverIssues")),
-        // Registrado depois do shift-tab do campo (recuar a linha), ganha dele dentro da caixa. Só
-        // no campo da mensagem: a busca de um popover da caixa continua recuando.
-        KeyBinding::new("shift-tab", composer::AlternarModo, Some("Composer > Input")),
-        KeyBinding::new("ctrl-n", NovaConversa, None),
-        KeyBinding::new("ctrl-shift-n", NovoProjeto, None),
-        KeyBinding::new("ctrl-k", Buscar, None),
-        KeyBinding::new("ctrl-j", AlternarPainel, None),
-        KeyBinding::new("ctrl-b", AlternarLista, None),
-        KeyBinding::new("alt-1", IrParaPainel1, None),
-        KeyBinding::new("alt-2", IrParaPainel2, None),
-        KeyBinding::new("alt-3", IrParaPainel3, None),
-        KeyBinding::new("alt-4", IrParaPainel4, None),
-        KeyBinding::new("escape", FecharGaveta, Some("Gaveta")),
-        KeyBinding::new("ctrl-=", AumentarZoom, None),
-        KeyBinding::new("ctrl-+", AumentarZoom, None),
-        KeyBinding::new("ctrl-add", AumentarZoom, None),
-        KeyBinding::new("ctrl--", DiminuirZoom, None),
-        KeyBinding::new("ctrl-subtract", DiminuirZoom, None),
-        KeyBinding::new("ctrl-0", ZoomPadrao, None),
-        // Decisão 3 da linguagem visual: o Ctrl+M é do Mestre (o campo do kit não usa).
-        KeyBinding::new("ctrl-m", AbrirMestre, None),
-        KeyBinding::new("f10", AbrirMenuVitral, None),
-        KeyBinding::new("ctrl-,", AbrirConfiguracoes, None),
-        KeyBinding::new("ctrl-g", ProximaPendencia, None),
-        KeyBinding::new("ctrl-w", FecharPainel, None),
-        KeyBinding::new("ctrl-pageup", PainelAnterior, None),
-        KeyBinding::new("ctrl-pagedown", PainelSeguinte, None),
-        KeyBinding::new("ctrl-shift-pageup", MoverPainelEsquerda, None),
-        KeyBinding::new("ctrl-shift-pagedown", MoverPainelDireita, None),
-        KeyBinding::new("ctrl-end", IrAoFim, None),
-        KeyBinding::new("ctrl-1", IrParaProjeto(0), None),
-        KeyBinding::new("ctrl-2", IrParaProjeto(1), None),
-        KeyBinding::new("ctrl-3", IrParaProjeto(2), None),
-        KeyBinding::new("ctrl-4", IrParaProjeto(3), None),
-        KeyBinding::new("ctrl-5", IrParaProjeto(4), None),
-        KeyBinding::new("ctrl-6", IrParaProjeto(5), None),
-        KeyBinding::new("ctrl-7", IrParaProjeto(6), None),
-        KeyBinding::new("ctrl-8", IrParaProjeto(7), None),
-        KeyBinding::new("ctrl-9", IrParaProjeto(8), None),
-        KeyBinding::new("ctrl-shift-m", composer::AbrirModelo, Some("Vitral")),
-        KeyBinding::new("ctrl-e", composer::AbrirEsforco, Some("Vitral")),
-        // Dentro do popover de esforço (Lote 1).
-        KeyBinding::new("left", gpui_kit::base::actions::SelectLeft, Some("Esforco")),
-        KeyBinding::new("right", gpui_kit::base::actions::SelectRight, Some("Esforco")),
-        KeyBinding::new("home", gpui_kit::base::actions::SelectFirst, Some("Esforco")),
-        KeyBinding::new("end", gpui_kit::base::actions::SelectLast, Some("Esforco")),
-        KeyBinding::new("space", composer::AlternarUltrathink, Some("Esforco")),
-        KeyBinding::new("u", composer::AlternarUltracode, Some("Esforco")),
-        KeyBinding::new(
-            "enter",
-            gpui_kit::base::actions::Confirm { secondary: false },
-            Some("Esforco"),
-        ),
-        KeyBinding::new("f7", revisao::MudancaSeguinte, Some("Revisao")),
-        KeyBinding::new("shift-f7", revisao::MudancaAnterior, Some("Revisao")),
-    ]);
-    revisao::atalhos(cx);
-}
 
 /// Seções da lista que começam recolhidas.
 const RECOLHIDAS_DE_INICIO: [&str; 1] = ["Mais antigas"];
@@ -409,7 +352,11 @@ pub struct Janela {
     alvo_arrasto: Option<(u64, paineis::Lado, paineis::Efeito)>,
     /// Painel sob o ponteiro enquanto arquivos de fora são arrastados para a janela.
     arquivos_sobre: Option<u64>,
+    /// O texto não enviado de cada conversa que não está aberta num painel. Os das abertas ficam
+    /// na própria caixa; `rascunhos::gravar` junta os dois no interface.json.
     rascunhos: HashMap<String, String>,
+    /// A gravação dos rascunhos esperando o fim da digitação (ver `rascunhos::agendar`).
+    _gravar_rascunhos: Option<Task<()>>,
     /// Arquivos anexados à próxima mensagem de cada conversa.
     anexos: HashMap<String, Vec<PathBuf>>,
     aba: AbaLateral,
@@ -597,6 +544,9 @@ impl Janela {
         // O GNOME manda o button-layout depois que a janela abre (e quando muda no Ajustes).
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         assinaturas.push(cx.on_app_quit(|this, cx| {
+            // O que você escreveu e não enviou vai para o disco antes de tudo: é o que você
+            // espera encontrar na caixa quando o Vitral abrir de novo.
+            this.gravar_ao_sair(cx);
             if let Some(motor) = &this.motor {
                 motor.update(cx, |m, _| {
                     m.usuario_saiu();
@@ -642,6 +592,7 @@ impl Janela {
             alvo_arrasto: None,
             arquivos_sobre: None,
             rascunhos: HashMap::new(),
+            _gravar_rascunhos: None,
             anexos: HashMap::new(),
             aba: AbaLateral::Conversas,
             vista: Vista::Geral,
@@ -991,6 +942,8 @@ impl Janela {
                 .map(|c| c.id.clone())
         });
         self.ultimo_chat = ultimo;
+        // Os rascunhos antes do `selecionar`: é ele que leva o do chat que abre para a caixa.
+        self.rascunhos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
         self.ultimo_destino = lido("ultimo_destino").map(|d| if d == "avulsos" { String::new() } else { d });
         self.vista = match lido("vista").map(|t| Vista::de_texto(&t)) {
             Some(Vista::Projeto(id)) if m.projeto(&id).is_some_and(|p| !p.arquivado) => Vista::Projeto(id),
@@ -1378,6 +1331,10 @@ impl Render for Janela {
                 this.alternar_pop(composer::PopCaixa::Esforco, window, cx)
             }))
             .on_action(cx.listener(|this, _: &IrAoFim, _, cx| this.ir_ao_fim_ativo(cx)))
+            .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
+                this.foco_antes_do_dialogo(window, cx);
+                atalhos::abrir(window, cx);
+            }))
             .on_action(cx.listener(|this, acao: &painel_pr::AbrirLinkVitral, window, cx| this.abrir_link_vitral(&acao.0, window, cx)))
             .child(
                 h_flex()

@@ -59,7 +59,7 @@ fn main() {
             gpui_kit::component::set_locale("pt-BR");
             tema::aplicar(cx);
             ui::zoom::iniciar(cx);
-            ui::atalhos(cx);
+            ui::atalhos::ligar(cx);
             ui::componentes::vitrine::abrir(cx);
         });
         return;
@@ -147,7 +147,7 @@ fn main() {
             gpui_kit::component::set_locale("pt-BR");
             tema::aplicar(cx);
             ui::zoom::iniciar(cx);
-            ui::atalhos(cx);
+            ui::atalhos::ligar(cx);
             // Procura versão nova em segundo plano; na versão instalada, o reinício vai para o link `atual`.
             atualizacao::iniciar(aviso, dados.pasta.clone(), cx);
             let opcoes = WindowOptions {

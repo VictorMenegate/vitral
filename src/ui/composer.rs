@@ -372,6 +372,7 @@ impl Janela {
         let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty() && issues.is_empty(), window, cx);
         let raio_caixa = if estreita { raio::CARTAO } else { raio::PECA };
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
+        let caixa_vazia = composer.read(cx).value().trim().is_empty();
 
         let caixa = div()
             .relative()
@@ -408,7 +409,9 @@ impl Janela {
                 // do kit) cai na coluna do ícone do primeiro chip.
                 div()
                     .w_full()
-                    .key_context("Composer")
+                    // Com nada escrito, o campo também fica em "Vazia": só aí a seta para cima
+                    // vale como corrigir a última mensagem, e não como mover o cursor.
+                    .key_context(if caixa_vazia { "Composer Vazia" } else { "Composer" })
                     .when(estreita, |s| s.ml(r(-2.)))
                     .child(
                         Textarea::new(&composer)
@@ -462,6 +465,11 @@ impl Janela {
             .on_action(cx.listener({
                 let chat = chat.id.clone();
                 move |this, _: &AlternarModo, _, cx| this.alternar_modo(&chat, cx)
+            }))
+            // Seta para cima na caixa vazia: o texto da última mensagem volta para ela, como num
+            // terminal (o keymap só a manda para cá no contexto "Vazia").
+            .on_action(cx.listener(move |this, _: &super::EditarUltima, window, cx| {
+                this.editar_ultima(painel_id, window, cx)
             }))
             .child(self.menu_comandos(motor, chat, &composer, painel_id, cx))
             .child(caixa)

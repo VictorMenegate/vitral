@@ -170,7 +170,7 @@ impl Janela {
         } else {
             HashMap::new()
         };
-        let contexto = Contexto::novo(motor, chat, nivel);
+        let contexto = Contexto::novo(motor, chat, nivel, painel_id);
         let finais = finais_de_turno(&chat.itens);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
@@ -406,7 +406,8 @@ impl Janela {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
-                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
+                let editavel = contexto.editavel == Some(indice);
+                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, editavel, window, cx))
             }
             Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, &contexto.referencias, cx)),
             Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
@@ -436,6 +437,7 @@ impl Janela {
         referencias: &[String],
         ponto: Option<String>,
         reforco: Reforco,
+        editavel: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -516,6 +518,10 @@ impl Janela {
             }
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
+        // Só na última mensagem: o texto volta para a caixa e a conversa volta a antes dela.
+        if editavel {
+            acoes.push(super::reenvio::botao_editar(chave, contexto.painel, window, cx).into_any_element());
+        }
         if let Some(ponto) = ponto {
             acoes.push(botao_voltar(chave, &contexto.chat.id, ponto, window, cx).into_any_element());
         }
@@ -1019,6 +1025,10 @@ struct Contexto<'a> {
     chat: &'a Chat,
     rodando: bool,
     nivel: LarguraPainel,
+    /// O painel em que esta conversa está desenhada (o "Editar" devolve o texto à caixa dele).
+    painel: u64,
+    /// A última mensagem do usuário, quando ela ainda dá para corrigir (ver `reenvio`).
+    editavel: Option<usize>,
     /// A cópia da tarefa foi apagada: não há arquivos para voltar.
     sem_copia: bool,
     /// Última mensagem ou aviso: chamadas sem resultado antes dele foram interrompidas.
@@ -1032,12 +1042,14 @@ struct Contexto<'a> {
 }
 
 impl<'a> Contexto<'a> {
-    fn novo(motor: &'a Motor, chat: &'a Chat, nivel: LarguraPainel) -> Self {
+    fn novo(motor: &'a Motor, chat: &'a Chat, nivel: LarguraPainel, painel: u64) -> Self {
         let mut contexto = Contexto {
             motor,
             chat,
             rodando: motor.execucao(&chat.id).rodando(),
             nivel,
+            painel,
+            editavel: super::reenvio::indice_editavel(motor, chat),
             sem_copia: motor.copia_apagada(chat),
             marco: chat.itens.iter().rposition(|i| {
                 matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. })
@@ -2454,7 +2466,7 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool) -> (Bloco, AnyElement) {
 }
 
 impl Janela {
-    fn voltar_ao_ponto(&mut self, chat: String, ponto: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn voltar_ao_ponto(&mut self, chat: String, ponto: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
@@ -2648,14 +2660,10 @@ impl Janela {
                     .when(!minima, |s| {
                         s.child(div().flex_none().metadado().text_color(Cores::apagado()).child(duracao(desde)))
                     })
+                    // A fila é um controle: o clique abre a lista do que espera, para tirar o
+                    // que você não quer mais.
                     .when(fila > 0, |s| {
-                        s.child(
-                            h_flex()
-                                .flex_none()
-                                .gap(r(4.))
-                                .child(Selo::contagem(fila))
-                                .child(div().metadado().text_color(Cores::apagado()).child("na fila")),
-                        )
+                        s.child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, fila, true, estreita, window, cx)))
                     })
                     .into_any_element(),
                 Some(esc("para parar", window)),
@@ -2812,7 +2820,7 @@ impl Janela {
                     .min_w_0()
                     .gap(r(8.))
                     .child(icone_de(Lucide::ListChecks, 14.).text_color(Cores::tenue()))
-                    .child(texto(contagem(n, "mensagem esperando na fila", "mensagens esperando na fila")))
+                    .child(self.pilula_da_fila(&chat.id, painel_id, n, false, estreita, window, cx))
                     .into_any_element(),
                 Some(
                     botao_fantasma("faixa-entregar", None, "Entregar agora", TamanhoBotao::Barra, window, cx)

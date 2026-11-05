@@ -120,6 +120,9 @@ impl Janela {
             chat,
             rodando: false,
             nivel,
+            // O histórico trazido do Claude Code é só para ler: nada dele se corrige aqui.
+            painel: 0,
+            editavel: None,
             sem_copia: true,
             marco: None,
             ultimas: HashMap::new(),
