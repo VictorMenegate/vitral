@@ -1,0 +1,29 @@
+# Lote U1, ler a conversa: hora nas mensagens, Copiar em qualquer mensagem, exportar em Markdown,
+# miniatura do anexo e arquivo:linha clicável.
+# Uso (de dentro do worktree, com o binário compilado):
+#   BANCADA=2 XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-u1 RAIZ_SINTETICA=1 CLAUDE_FALSO=1 \
+#       ferramentas/bancada.sh ferramentas/roteiros/u1-conversa.txt \
+#       ~/.cache/vitral-trabalho/prints-u1/100 target/debug/vitral
+# Janela 1440x920 numa tela de 1600x1000: trilho x 109-161, lista x 169-477, conversa x 481-1111.
+
+espera 12                 # a migração roda e o Mestre abre, com o aviso do dia de hoje
+print u00-mestre          # o separador "Hoje" na conversa do Mestre
+
+clique 304 395            # cartão "Carrinho com cupom de desconto" na lista
+espera 3                  # a conversa abre no fim
+print u01-fim-da-conversa # em repouso a hora não ocupa nada
+
+mover 790 600             # ponteiro sobre uma resposta do assistente
+espera 1                  # a barra aparece no hover
+print u02-hora-no-hover   # "14:32" na frente do Copiar, na barra que flutua
+
+rolar 790 500 -10         # sobe até a virada de ontem para hoje
+espera 1                  # o conteúdo para
+print u03-separador-de-data # a linha fina com o dia entre os turnos
+
+rolar 790 500 -25         # sobe até o começo da conversa
+espera 1                  # o conteúdo para
+print u04-comeco          # o primeiro separador e o balão da primeira mensagem
+mover 700 400             # ponteiro sobre um balão seu
+espera 1                  # a barra do balão aparece à esquerda dele
+print u05-hora-no-balao   # hora, voltar os arquivos e Copiar

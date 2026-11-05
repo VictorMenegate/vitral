@@ -219,7 +219,17 @@ def novo_id():
     return uuid.uuid4().hex[:10]
 
 
+def horas_dos_itens(itens, criado, atualizado):
+    """O `em` de cada item (o `Item.em` do Vitral), espalhado entre a criação e o último uso do
+    chat: a conversa mostra a hora de cada mensagem e o separador de data onde o dia muda."""
+    for i, item in enumerate(itens):
+        (campos,) = item.values()
+        passo = 0 if len(itens) < 2 else round((atualizado - criado) * i / (len(itens) - 1))
+        campos["em"] = criado + passo
+
+
 def chat(id, projeto, titulo, papel, cwd, criado, atualizado, itens, **extra):
+    horas_dos_itens(itens, criado, atualizado)
     c = {
         "id": id,
         "projeto": projeto,
@@ -1576,8 +1586,9 @@ class CupomAdmin(admin.ModelAdmin):
             "olhar o diff no **Revisar** antes?"
         ),
     ]
+    # Começou ontem à tarde: a conversa longa atravessa a meia-noite e mostra os separadores de data.
     guardar(chat(C["carrinho"], "loja", "Carrinho com cupom de desconto", "Coordenador", raiz_loja,
-                 hoje(75), hoje(12), c1_itens, custo_usd=1.84, contexto=61420,
+                 dia(1, 16, 20), hoje(12), c1_itens, custo_usd=1.84, contexto=61420,
                  permitidas=["edicoes", "bash:python3 manage.py test produtos"]))
 
     # Trabalhador #3 (aprovada: cópia apagada)
