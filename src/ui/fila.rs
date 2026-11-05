@@ -3,7 +3,7 @@
 //! para a caixa e, com o chat parado, entregar tudo agora.
 
 use gpui_kit::component::{
-    Sizable as _, WindowExt as _,
+    WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, v_flex,
 };
@@ -53,7 +53,7 @@ impl Janela {
         n: usize,
         rodando: bool,
         estreita: bool,
-        window: &Window,
+        _window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let dica: SharedString = if rodando {
