@@ -15,8 +15,8 @@
 use std::ops::Range;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, StyledExt as _, h_flex,
-    input::{Escape, InputEvent, InputState},
+    Disableable as _, ElementExt as _, h_flex,
+    input::{Escape, InputState},
     text::{RangeHighlight, RenderedText, TextView, TextViewState},
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -29,7 +29,7 @@ use super::{
 };
 use crate::{
     modelo::Item,
-    tema::{Cores, Lucide, Tipo as _, altura, esp, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, esp, r, raio},
 };
 
 actions!(vitral, [BuscarNaConversa, AchadoSeguinte, AchadoAnterior, FecharBuscaConversa]);
@@ -266,6 +266,10 @@ impl Indice {
         // Mudou o termo (ou a conversa): volta para a primeira. Só cresceu: fica onde está.
         if !mesma_busca {
             self.atual = 0;
+            // Conta como salto: a conversa precisa rolar até o primeiro achado do termo novo,
+            // mesmo quando ele cai no mesmo lugar do termo anterior (o número é o que faz a
+            // rolagem acontecer uma vez).
+            self.salto += 1;
         }
         self.atual = self.atual.min(self.achados.len().saturating_sub(1));
     }
@@ -728,7 +732,10 @@ impl Janela {
 
 #[cfg(test)]
 mod testes {
-    use super::*;
+    // Sem `use super::*`: o `gpui_kit::*` lá de cima traz um `test` que esconde o `#[test]`
+    // (o mesmo cuidado do ui/mensagens.rs).
+    use super::{Campo, Indice, Realce, andar, chaves_para_abrir, faixas, normalizar, ocorrencias, primeira};
+    use crate::modelo::Item;
 
     fn item_usuario(texto: &str) -> Item {
         Item::Usuario {
@@ -768,11 +775,12 @@ mod testes {
         // Cada faixa recorta a letra inteira, com acento e tudo.
         let texto = "ação e ações";
         let achadas = faixas(texto, "aca");
-        assert_eq!(achadas.len(), 2);
-        assert_eq!(achadas.iter().map(|f| &texto[f.clone()]).collect::<Vec<_>>(), ["açã", "açõ"]);
+        assert_eq!(achadas.iter().map(|f| &texto[f.clone()]).collect::<Vec<_>>(), ["açã"]);
+        // "acoes" acha "ações" inteiro, com os dois acentos no meio.
+        assert_eq!(faixas(texto, "acoes").iter().map(|f| &texto[f.clone()]).collect::<Vec<_>>(), ["ações"]);
         // Ocorrências seguidas não se sobrepõem.
         assert_eq!(faixas("aaaa", "aa"), vec![0..2, 2..4]);
-        assert_eq!(faixas("abc", "abcd"), Vec::new());
+        assert_eq!(faixas("abc", "abcd"), Vec::<std::ops::Range<usize>>::new());
     }
 
     #[test]
