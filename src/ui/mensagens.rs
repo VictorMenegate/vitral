@@ -171,6 +171,7 @@ impl Janela {
             HashMap::new()
         };
         let contexto = Contexto::novo(motor, chat, nivel);
+        let agora = crate::modelo::agora();
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
         // O Mestre ainda sem conversa (só os avisos do Vitral) também abre com o convite.
@@ -197,12 +198,19 @@ impl Janela {
                 _ => true,
             })
             .collect();
+        // O dia de cada turno: o separador entra onde a data muda (pela posição em `visiveis`).
+        let horas: Vec<u64> = visiveis.iter().map(|(_, item)| item.em()).collect();
+        let datas: HashMap<usize, String> = separadores_de_data(&horas, agora).into_iter().collect();
         let mut i = 0;
         while i < visiveis.len() {
             let (indice, item) = visiveis[i];
+            if let Some(dia) = datas.get(&i) {
+                blocos.push((Bloco::Marco, None, separador_de_dia(dia)));
+            }
             if matches!(item, Item::Ferramenta { .. }) {
                 let mut fim = i + 1;
-                while fim < visiveis.len() && matches!(visiveis[fim].1, Item::Ferramenta { .. }) {
+                // Uma trilha que passa da meia-noite se parte: o separador do dia novo entra nela.
+                while fim < visiveis.len() && matches!(visiveis[fim].1, Item::Ferramenta { .. }) && !datas.contains_key(&fim) {
                     fim += 1;
                 }
                 let ao_vivo = contexto.rodando && fim == visiveis.len();
@@ -404,14 +412,16 @@ impl Janela {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
-                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
+                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, item.em(), window, cx))
             }
-            Item::Assistente { texto, .. } => (Bloco::Texto, self.texto_assistente(&chave, texto, &contexto.referencias, cx)),
+            Item::Assistente { texto, .. } => {
+                (Bloco::Texto, self.texto_assistente(&chave, texto, item.em(), &contexto.referencias, cx))
+            }
             Item::Entrega { de, texto, ponto, .. } => match contexto.tarefa(item) {
                 Some(tarefa) => self.entrega_de_tarefa(contexto, indice, item, tarefa, window, cx),
                 None => {
                     let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
-                    (Bloco::Recebida, self.mensagem_recebida(contexto, &chave, de, texto, ponto, window, cx))
+                    (Bloco::Recebida, self.mensagem_recebida(contexto, &chave, de, texto, ponto, item.em(), window, cx))
                 }
             },
             Item::Ferramenta { .. } => (Bloco::Log, self.ferramentas(contexto, &[(indice, item)], false, window, cx)),
@@ -434,6 +444,7 @@ impl Janela {
         referencias: &[String],
         ponto: Option<String>,
         reforco: Reforco,
+        em: u64,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -514,6 +525,7 @@ impl Janela {
             }
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
+        acoes.extend(hora_na_barra(em));
         if let Some(ponto) = ponto {
             acoes.push(botao_voltar(chave, &contexto.chat.id, ponto, window, cx).into_any_element());
         }
@@ -540,7 +552,14 @@ impl Janela {
     /// Resposta do assistente: sem balão, na largura da coluna. Cada texto ganha o Copiar numa
     /// barra que flutua no canto de cima à direita, só no hover (antes só o último do turno tinha,
     /// e copiar um trecho do meio dava trabalho).
-    fn texto_assistente(&self, chave: &str, texto: &str, refs: &super::painel_pr::Referencias, cx: &Context<Self>) -> AnyElement {
+    fn texto_assistente(
+        &self,
+        chave: &str,
+        texto: &str,
+        em: u64,
+        refs: &super::painel_pr::Referencias,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
         // Os links vivos: "PR #12", "ENG-123" e as URLs do GitHub que existem no projeto viram
         // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
@@ -562,13 +581,11 @@ impl Janela {
                     }),
                 ),
             )
-            .child(
-                div()
-                    .absolute()
-                    .top(r(-14.))
-                    .right_0()
-                    .child(barra_de_acoes(grupo, vec![copiar(chave, texto).into_any_element()], cx)),
-            )
+            .child(div().absolute().top(r(-14.)).right_0().child(barra_de_acoes(
+                grupo,
+                hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
+                cx,
+            )))
             .into_any_element()
     }
 
@@ -581,6 +598,7 @@ impl Janela {
         de: &str,
         texto: &str,
         ponto: Option<String>,
+        em: u64,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -598,6 +616,7 @@ impl Janela {
             (None, None) => img(LOGO.clone()).flex_none().size(r(20.)).into_any_element(),
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
+        acoes.extend(hora_na_barra(em));
         if let Some(c) = de_chat {
             let (alvo, numero) = (c.id.clone(), c.tarefa.map(|n| n.to_string()).unwrap_or_default());
             acoes.push(
@@ -782,6 +801,61 @@ fn lugar_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, aberto: Option<bo
                 .group_hover(grupo, |s| s.visible())
                 .children(acoes),
         )
+}
+
+/// A hora da mensagem na barra de ações ("14:32"), na frente dos botões: aparece no hover, junto
+/// com o Copiar, e nada ocupa a tela em repouso. Item sem hora (conversa de antes dela) não tem.
+fn hora_na_barra(em: u64) -> Option<AnyElement> {
+    (em > 0).then(|| {
+        div()
+            .flex_none()
+            .px(esp::E6)
+            .metadado()
+            .text_color(Cores::tenue())
+            .child(crate::modelo::hora_local(em))
+            .into_any_element()
+    })
+}
+
+/// Onde entram os separadores de data, pela posição de cada item visível: o rótulo do dia quando
+/// ele abre um dia diferente do último item que tinha hora. Item sem hora (conversa de antes dela)
+/// não abre dia nem corta o agrupamento.
+fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, String)> {
+    let mut saida = Vec::new();
+    let mut dia_mostrado = None;
+    for (i, &em) in horas.iter().enumerate() {
+        if em == 0 {
+            continue;
+        }
+        let dia = crate::modelo::dia_local(em);
+        if dia_mostrado != Some(dia) {
+            saida.push((i, crate::modelo::nome_do_dia(em, agora)));
+            dia_mostrado = Some(dia);
+        }
+    }
+    saida
+}
+
+/// O dia entre dois turnos, no molde do marco: o nome do dia no meio de uma linha fina.
+fn separador_de_dia(rotulo: &str) -> AnyElement {
+    let traco = || div().flex_1().min_w(r(16.)).h(px(1.)).bg(Cores::linha());
+    h_flex()
+        .w_full()
+        .min_h(r(24.))
+        .gap(r(8.))
+        .child(traco())
+        .child(
+            div()
+                .flex_none()
+                .max_w(relative(0.8))
+                .truncate()
+                .metadado()
+                .font_semibold()
+                .text_color(Cores::tenue())
+                .child(rotulo.to_string()),
+        )
+        .child(traco())
+        .into_any_element()
 }
 
 fn copiar(chave: &str, texto: &str) -> BotaoCopiar {
@@ -3798,7 +3872,8 @@ mod testes {
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, com_maiuscula, comando_de_barra,
         detalhe_da_chamada, entrada_do_bloco, espaco_antes, frase_da_entrega, linhas_da_edicao, meta_curta,
-        meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao, tamanho_curto,
+        meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao,
+        separadores_de_data, tamanho_curto,
         tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
         verbo_da_ferramenta,
     };
@@ -3832,6 +3907,33 @@ mod testes {
 
     fn assistente(texto: &str) -> Item {
         Item::Assistente { texto: texto.into(), em: 0 }
+    }
+
+    /// 12/03/2026 ao meio-dia UTC: ao meio-dia a data local é a mesma em qualquer fuso de verdade.
+    const MEIO_DIA: u64 = 1_773_316_800;
+    const DIA: u64 = 86_400;
+
+    #[test]
+    fn separador_de_data_a_cada_dia_novo() {
+        // Dois itens no mesmo dia, um no dia seguinte e outro bem depois: três separadores.
+        let horas = [MEIO_DIA - DIA, MEIO_DIA - DIA + 60, MEIO_DIA, MEIO_DIA + 10 * DIA];
+        let separadores = separadores_de_data(&horas, MEIO_DIA);
+        assert_eq!(
+            separadores,
+            [(0, "Ontem".to_string()), (2, "Hoje".to_string()), (3, "22 de março".to_string())]
+        );
+    }
+
+    #[test]
+    fn separador_de_data_pula_item_sem_hora() {
+        // Conversa de antes da hora: nenhum separador, e o agrupamento não quebra.
+        assert!(separadores_de_data(&[0, 0, 0], MEIO_DIA).is_empty());
+        // Com um item sem hora no meio do dia, o dia continua o mesmo (um separador só).
+        let horas = [MEIO_DIA, 0, MEIO_DIA + 60];
+        assert_eq!(separadores_de_data(&horas, MEIO_DIA), [(0, "Hoje".to_string())]);
+        // O primeiro item com hora abre o dia, mesmo vindo depois dos sem hora.
+        let horas = [0, MEIO_DIA, MEIO_DIA + 60];
+        assert_eq!(separadores_de_data(&horas, MEIO_DIA), [(1, "Hoje".to_string())]);
     }
 
     #[test]

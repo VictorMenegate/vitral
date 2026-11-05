@@ -1570,6 +1570,58 @@ mod testes {
 
     use super::*;
 
+    /// 12/03/2026 ao meio-dia UTC: ao meio-dia a data local é a mesma em qualquer fuso de verdade,
+    /// e o teste não depende do fuso de quem o roda.
+    const MEIO_DIA: u64 = 1_773_316_800;
+    const DIA: u64 = 86_400;
+
+    #[test]
+    fn nome_do_dia_de_cada_separador() {
+        assert_eq!(nome_do_dia(MEIO_DIA, MEIO_DIA), "Hoje");
+        assert_eq!(nome_do_dia(MEIO_DIA - DIA, MEIO_DIA), "Ontem");
+        assert_eq!(nome_do_dia(MEIO_DIA - 2 * DIA, MEIO_DIA), "10 de março");
+        // Outro ano leva o ano no rótulo (o 12/03/2025 cai 365 dias antes).
+        assert_eq!(nome_do_dia(MEIO_DIA - 365 * DIA, MEIO_DIA), "12 de março de 2025");
+        // Depois de hoje (o relógio do sistema voltou) não é "Ontem" nem "Hoje".
+        assert_eq!(nome_do_dia(MEIO_DIA + DIA, MEIO_DIA), "13 de março");
+    }
+
+    #[test]
+    fn hora_local_no_formato_do_relogio() {
+        let minuto = MEIO_DIA - MEIO_DIA % 60;
+        let hora = hora_local(minuto);
+        assert_eq!(hora.len(), 5, "{hora}");
+        assert_eq!(hora.as_bytes()[2], b':', "{hora}");
+        assert!(hora.bytes().enumerate().all(|(i, c)| i == 2 || c.is_ascii_digit()), "{hora}");
+        // Os segundos não aparecem; o minuto seguinte muda o texto.
+        assert_eq!(hora_local(minuto + 59), hora);
+        assert_ne!(hora_local(minuto + 60), hora);
+    }
+
+    #[test]
+    fn dia_local_agrupa_o_mesmo_dia() {
+        assert_eq!(dia_local(MEIO_DIA), dia_local(MEIO_DIA + 3600));
+        assert_ne!(dia_local(MEIO_DIA), dia_local(MEIO_DIA + DIA));
+        // Fora do alcance do chrono, a virada de 1970 (nunca um pânico).
+        assert!(dia_local(u64::MAX).0 <= 1970, "{:?}", dia_local(u64::MAX));
+    }
+
+    #[test]
+    fn item_sem_hora_nao_vai_para_o_disco() {
+        let sem = Item::Assistente { texto: "oi".into(), em: 0 };
+        assert_eq!(serde_json::to_value(&sem).unwrap(), serde_json::json!({ "Assistente": { "texto": "oi" } }));
+        let com = Item::Assistente { texto: "oi".into(), em: MEIO_DIA };
+        assert_eq!(
+            serde_json::to_value(&com).unwrap(),
+            serde_json::json!({ "Assistente": { "texto": "oi", "em": MEIO_DIA } })
+        );
+        // O item de uma conversa de antes da hora abre sem ela, e não como desconhecido.
+        let lido: Item = serde_json::from_value(serde_json::json!({ "Assistente": { "texto": "oi" } })).unwrap();
+        assert!(matches!(&lido, Item::Assistente { texto, em: 0 } if texto == "oi"));
+        assert_eq!(lido.em(), 0);
+        assert_eq!(Item::Desconhecido(serde_json::json!({ "Coisa": {} })).em(), 0);
+    }
+
     fn chat_de_teste() -> Chat {
         let mut chat: Chat = serde_json::from_value(serde_json::json!({
             "id": "c1", "projeto": "loja", "titulo": "Conversa", "papel": "Trabalhador",

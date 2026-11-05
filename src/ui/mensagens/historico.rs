@@ -153,11 +153,17 @@ impl Janela {
             blocos.push((bloco, None, elemento));
         }
         let mostrados: Vec<(usize, &Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + i, item)).collect();
+        // A conversa trazida tem a hora de cada linha do arquivo dela: os dias também se separam.
+        let horas: Vec<u64> = mostrados.iter().map(|(_, item)| item.em()).collect();
+        let datas: HashMap<usize, String> = super::separadores_de_data(&horas, crate::modelo::agora()).into_iter().collect();
         let mut i = 0;
         while i < mostrados.len() {
+            if let Some(dia) = datas.get(&i) {
+                blocos.push((Bloco::Marco, None, super::separador_de_dia(dia)));
+            }
             if matches!(mostrados[i].1, Item::Ferramenta { .. }) {
                 let mut fim = i + 1;
-                while fim < mostrados.len() && matches!(mostrados[fim].1, Item::Ferramenta { .. }) {
+                while fim < mostrados.len() && matches!(mostrados[fim].1, Item::Ferramenta { .. }) && !datas.contains_key(&fim) {
                     fim += 1;
                 }
                 blocos.push((Bloco::Log, None, self.ferramentas(&contexto, &mostrados[i..fim], false, window, cx)));
