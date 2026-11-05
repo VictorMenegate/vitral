@@ -2576,6 +2576,35 @@ impl Motor {
         Some(entrada.texto)
     }
 
+    /// Troca o texto de uma mensagem da fila (o índice é o de `fila_do_chat`). Texto vazio não
+    /// troca nada: quem tira é o `tirar_da_fila`. `false` quando o índice não existe mais (a fila
+    /// andou enquanto o diálogo estava aberto).
+    pub fn editar_na_fila(&mut self, chat: &str, indice: usize, texto: &str, cx: &mut Context<Self>) -> bool {
+        let Some(fila) = self.filas.get_mut(chat) else {
+            return false;
+        };
+        if !editar_na_lista(fila, indice, texto) {
+            return false;
+        }
+        self.salvar();
+        cx.notify();
+        true
+    }
+
+    /// Troca uma mensagem da fila de lugar com a vizinha (`para_baixo`: a de depois), para mudar a
+    /// ordem em que elas entram. `false` quando ela já está na ponta.
+    pub fn mover_na_fila(&mut self, chat: &str, indice: usize, para_baixo: bool, cx: &mut Context<Self>) -> bool {
+        let Some(fila) = self.filas.get_mut(chat) else {
+            return false;
+        };
+        if !mover_na_lista(fila, indice, para_baixo) {
+            return false;
+        }
+        self.salvar();
+        cx.notify();
+        true
+    }
+
     /// Faz andar de novo um chat que parou no meio: refaz a entrega cortada, entrega a fila ou
     /// pede para o Claude continuar de onde parou.
     pub fn retomar(&mut self, chat_id: &str, cx: &mut Context<Self>) {
@@ -7574,6 +7603,36 @@ pub fn esforco_do_ultrathink(atual: Option<&str>) -> &'static str {
 
 /// O `result` chegou com agentes em segundo plano: o turno espera por eles, menos com erro ou
 /// parado pelo usuário.
+/// Troca o texto de uma mensagem da fila. Texto em branco não troca nada (quem tira da fila é o
+/// `tirar_da_fila`), nem um índice que já não existe ou é de uma nota (ela não aparece na lista).
+fn editar_na_lista(fila: &mut [Entrada], indice: usize, texto: &str) -> bool {
+    let texto = texto.trim();
+    if texto.is_empty() || indice >= fila.len() || fila[indice].nota {
+        return false;
+    }
+    fila[indice].texto = texto.to_string();
+    true
+}
+
+/// Troca uma mensagem da fila de lugar com a vizinha (`para_baixo`: a de depois). As notas não
+/// contam como lugar (não aparecem na lista): a troca é com a próxima mensagem de verdade.
+/// `false` quando ela já está na ponta.
+fn mover_na_lista(fila: &mut [Entrada], indice: usize, para_baixo: bool) -> bool {
+    if indice >= fila.len() || fila[indice].nota {
+        return false;
+    }
+    let vizinha = if para_baixo {
+        (indice + 1..fila.len()).find(|i| !fila[*i].nota)
+    } else {
+        (0..indice).rev().find(|i| !fila[*i].nota)
+    };
+    let Some(vizinha) = vizinha else {
+        return false;
+    };
+    fila.swap(indice, vizinha);
+    true
+}
+
 /// O aviso de quando o turno acabou antes de receber o que o usuário mandou nele.
 fn voltou_para_a_fila(n: usize) -> String {
     if n == 1 {
@@ -8375,6 +8434,44 @@ mod testes {
         assert!(!adiar_o_fim(0, false, false, false));
         assert!(!adiar_o_fim(2, false, true, false), "erro termina o turno");
         assert!(!adiar_o_fim(2, false, false, true), "parado pelo usuário termina o turno");
+    }
+
+    fn textos(fila: &[Entrada]) -> Vec<&str> {
+        fila.iter().map(|e| e.texto.as_str()).collect()
+    }
+
+    #[test]
+    fn mexer_na_fila_sem_perder_as_outras() {
+        let msg = |t: &str| Entrada { texto: t.into(), ..Default::default() };
+        let mut fila = vec![msg("uma"), msg("duas"), msg("tres")];
+        assert!(mover_na_lista(&mut fila, 2, false));
+        assert_eq!(textos(&fila), ["uma", "tres", "duas"]);
+        assert!(mover_na_lista(&mut fila, 0, true));
+        assert_eq!(textos(&fila), ["tres", "uma", "duas"]);
+        // Nas pontas não há para onde ir, e a lista fica como estava.
+        assert!(!mover_na_lista(&mut fila, 0, false));
+        assert!(!mover_na_lista(&mut fila, 2, true));
+        assert_eq!(textos(&fila), ["tres", "uma", "duas"]);
+        assert!(editar_na_lista(&mut fila, 1, "  outra  "));
+        assert_eq!(textos(&fila), ["tres", "outra", "duas"]);
+        // Texto em branco e índice que já saiu não mexem em nada.
+        assert!(!editar_na_lista(&mut fila, 1, "   "));
+        assert!(!editar_na_lista(&mut fila, 9, "nada"));
+        assert_eq!(textos(&fila), ["tres", "outra", "duas"]);
+    }
+
+    #[test]
+    fn a_nota_do_vitral_nao_conta_como_lugar_na_fila() {
+        let msg = |t: &str| Entrada { texto: t.into(), ..Default::default() };
+        let nota = Entrada { texto: "nota".into(), nota: true, ..Default::default() };
+        // A nota fica no começo (é onde o motor a põe) e as mensagens trocam por cima dela.
+        let mut fila = vec![nota, msg("uma"), msg("duas")];
+        assert!(mover_na_lista(&mut fila, 2, false));
+        assert_eq!(textos(&fila), ["nota", "duas", "uma"]);
+        // A própria nota não se move nem se edita: ela não está na lista.
+        assert!(!mover_na_lista(&mut fila, 0, true));
+        assert!(!editar_na_lista(&mut fila, 0, "outra"));
+        assert_eq!(textos(&fila), ["nota", "duas", "uma"]);
     }
 
     #[test]
