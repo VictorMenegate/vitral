@@ -2,7 +2,7 @@
 //! tarefas, entregas de outros chats, pedidos de permissão e plano, a faixa do turno e a rolagem
 //! de cada painel.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
@@ -171,7 +171,6 @@ impl Janela {
             HashMap::new()
         };
         let contexto = Contexto::novo(motor, chat, nivel);
-        let finais = finais_de_turno(&chat.itens);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
         // O Mestre ainda sem conversa (só os avisos do Vitral) também abre com o convite.
@@ -231,7 +230,7 @@ impl Janela {
                 blocos.push((Bloco::Cartao, Some(indice), elemento));
                 continue;
             }
-            let (bloco, elemento) = self.item(&contexto, indice, item, finais.contains(&indice), window, cx);
+            let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
             blocos.push((bloco, Some(indice), elemento));
         }
         let parcial = motor.parcial(&chat.id);
@@ -382,14 +381,12 @@ impl Janela {
         cx.notify();
     }
 
-    /// Um item da conversa e o tipo de bloco dele. `com_acoes`: o texto é o último do turno e
-    /// ganha o Copiar no hover.
+    /// Um item da conversa e o tipo de bloco dele.
     fn item(
         &self,
         contexto: &Contexto,
         indice: usize,
         item: &Item,
-        com_acoes: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> (Bloco, AnyElement) {
@@ -408,7 +405,7 @@ impl Janela {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
             }
-            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, &contexto.referencias, cx)),
+            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, &contexto.referencias, cx)),
             Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
                 Some(tarefa) => self.entrega_de_tarefa(contexto, indice, item, tarefa, window, cx),
                 None => {
@@ -539,9 +536,10 @@ impl Janela {
             .into_any_element()
     }
 
-    /// Resposta do assistente: sem balão, na largura da coluna. O último texto de cada turno ganha
-    /// o Copiar numa barra que flutua no canto de cima à direita, só no hover.
-    fn texto_assistente(&self, chave: &str, texto: &str, com_acoes: bool, refs: &super::painel_pr::Referencias, cx: &Context<Self>) -> AnyElement {
+    /// Resposta do assistente: sem balão, na largura da coluna. Cada texto ganha o Copiar numa
+    /// barra que flutua no canto de cima à direita, só no hover (antes só o último do turno tinha,
+    /// e copiar um trecho do meio dava trabalho).
+    fn texto_assistente(&self, chave: &str, texto: &str, refs: &super::painel_pr::Referencias, cx: &Context<Self>) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
         // Os links vivos: "PR #12", "ENG-123" e as URLs do GitHub que existem no projeto viram
         // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
@@ -563,15 +561,13 @@ impl Janela {
                     }),
                 ),
             )
-            .when(com_acoes, |s| {
-                s.child(
-                    div()
-                        .absolute()
-                        .top(r(-14.))
-                        .right_0()
-                        .child(barra_de_acoes(grupo, vec![copiar(chave, texto).into_any_element()], cx)),
-                )
-            })
+            .child(
+                div()
+                    .absolute()
+                    .top(r(-14.))
+                    .right_0()
+                    .child(barra_de_acoes(grupo, vec![copiar(chave, texto).into_any_element()], cx)),
+            )
             .into_any_element()
     }
 
@@ -1150,23 +1146,6 @@ fn segmentar(tipos: &[Tipo]) -> Vec<(Segmento, std::ops::Range<usize>)> {
         i = fim;
     }
     segmentos
-}
-
-/// O último texto do assistente em cada turno (um turno começa numa mensagem sua ou entregue).
-fn finais_de_turno(itens: &[Item]) -> HashSet<usize> {
-    let mut finais = HashSet::new();
-    let mut visto = false;
-    for (i, item) in itens.iter().enumerate().rev() {
-        match item {
-            Item::Usuario { .. } | Item::Entrega { .. } => visto = false,
-            Item::Assistente { .. } if !visto => {
-                finais.insert(i);
-                visto = true;
-            }
-            _ => {}
-        }
-    }
-    finais
 }
 
 /// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, ícone de 14 a 12 da borda
@@ -3817,7 +3796,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, com_maiuscula, comando_de_barra,
-        detalhe_da_chamada, entrada_do_bloco, espaco_antes, finais_de_turno, frase_da_entrega, linhas_da_edicao, meta_curta,
+        detalhe_da_chamada, entrada_do_bloco, espaco_antes, frase_da_entrega, linhas_da_edicao, meta_curta,
         meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao, tamanho_curto,
         tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
         verbo_da_ferramenta,
@@ -4042,23 +4021,6 @@ mod testes {
         assert_eq!(meta_curta(1, true, None, None), "Rodada 1 com erro");
         assert_eq!(com_maiuscula("terminou a rodada 1"), "Terminou a rodada 1");
         assert_eq!(com_maiuscula(""), "");
-    }
-
-    #[test]
-    fn ultimo_texto_de_cada_turno() {
-        let itens = [
-            usuario("oi"),
-            assistente("vou ler"),
-            ferramenta("Read", "Read · a.rs", Some("ok"), false),
-            assistente("pronto"),
-            entrega("Vitral", "A tarefa #1 \"x\" terminou"),
-            assistente("certo"),
-            usuario("valeu"),
-        ];
-        let finais = finais_de_turno(&itens);
-        assert!(finais.contains(&3) && finais.contains(&5));
-        assert_eq!(finais.len(), 2);
-        assert!(finais_de_turno(&[assistente("só")]).contains(&0));
     }
 
     #[test]

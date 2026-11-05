@@ -165,7 +165,7 @@ impl Janela {
                 continue;
             }
             let (indice, item) = mostrados[i];
-            let (bloco, elemento) = self.item(&contexto, indice, item, false, window, cx);
+            let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
             blocos.push((bloco, None, elemento));
             i += 1;
         }
