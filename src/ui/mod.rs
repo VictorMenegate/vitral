@@ -5,6 +5,7 @@ pub mod componentes;
 mod abas_direita;
 mod abertura;
 mod atualizacao;
+mod busca_conversa;
 mod caixa_entrada;
 mod cartoes;
 mod composer;
@@ -133,6 +134,7 @@ pub fn atalhos(cx: &mut App) {
         KeyBinding::new("f7", revisao::MudancaSeguinte, Some("Revisao")),
         KeyBinding::new("shift-f7", revisao::MudancaAnterior, Some("Revisao")),
     ]);
+    busca_conversa::atalhos(cx);
     revisao::atalhos(cx);
 }
 
@@ -1347,6 +1349,16 @@ impl Render for Janela {
             .on_action(cx.listener(|this, _: &NovoProjeto, window, cx| this.dialogo_criar_projeto(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirMestre, window, cx| this.abrir_mestre(window, cx)))
             .on_action(cx.listener(|this, _: &Buscar, window, cx| this.focar_busca(window, cx)))
+            // Ctrl+F e F3: buscar dentro da conversa aberta. O `Search` é o que o campo do kit
+            // liga ao Ctrl+F; sem atender aqui, o Ctrl+F na caixa de mensagem se perderia.
+            .on_action(cx.listener(|this, _: &busca_conversa::BuscarNaConversa, window, cx| {
+                this.abrir_busca_na_conversa(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| {
+                this.abrir_busca_na_conversa(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &busca_conversa::AchadoSeguinte, _, cx| this.andar_na_busca(1, cx)))
+            .on_action(cx.listener(|this, _: &busca_conversa::AchadoAnterior, _, cx| this.andar_na_busca(-1, cx)))
             .on_action(cx.listener(|this, _: &AlternarPainel, window, cx| {
                 this.alternar_painel(window, cx)
             }))

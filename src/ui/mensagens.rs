@@ -33,6 +33,7 @@ use super::{
         TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_icone, botao_perigo, botao_primario, confirmar,
         EstadoVisual, contagem, estado_visual, icone_do_modo, rotulo_tarefa, teclas, texto_arco_iris,
     },
+    busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
     composer::{self, PararTurno, nome_do_modo},
     duracao,
     equipe::variante_tinta,
@@ -152,11 +153,13 @@ fn entrada_do_bloco(indice: Option<usize>, base: usize, vistos: usize) -> Option
 }
 
 impl Janela {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn mensagens(
         &mut self,
         motor: &Motor,
         chat: &Chat,
         ix: usize,
+        barra_busca: Option<AnyElement>,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -170,7 +173,7 @@ impl Janela {
         } else {
             HashMap::new()
         };
-        let contexto = Contexto::novo(motor, chat, nivel);
+        let contexto = Contexto::novo(motor, chat, nivel, &self.paineis[ix].busca.indice, &rolagem);
         let finais = finais_de_turno(&chat.itens);
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
@@ -311,6 +314,8 @@ impl Janela {
                     .vertical_scrollbar(&rolagem),
             )
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
+            // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
+            .children(barra_busca)
     }
 
     /// Conversa vazia: o chat de projeto diz onde trabalha (e, antes do primeiro turno, deixa
@@ -406,20 +411,30 @@ impl Janela {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
-                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, window, cx))
+                let realce = contexto.busca.realce(indice, Campo::Texto);
+                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, realce, window, cx))
             }
-            Item::Assistente { texto } => (Bloco::Texto, self.texto_assistente(&chave, texto, com_acoes, &contexto.referencias, cx)),
+            Item::Assistente { texto } => {
+                (Bloco::Texto, self.texto_assistente(contexto, indice, &chave, texto, com_acoes, cx))
+            }
             Item::Entrega { de, texto, ponto } => match contexto.tarefa(item) {
                 Some(tarefa) => self.entrega_de_tarefa(contexto, indice, item, tarefa, window, cx),
                 None => {
                     let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
-                    (Bloco::Recebida, self.mensagem_recebida(contexto, &chave, de, texto, ponto, window, cx))
+                    (Bloco::Recebida, self.mensagem_recebida(contexto, indice, &chave, de, texto, ponto, window, cx))
                 }
             },
             Item::Ferramenta { .. } => (Bloco::Log, self.ferramentas(contexto, &[(indice, item)], false, window, cx)),
-            Item::Aviso { texto, erro } => aviso_do_chat(&chave, texto, *erro),
-            Item::Cartao { id } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false),
-            Item::Desconhecido(_) => aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false),
+            Item::Aviso { texto, erro } => {
+                let realce = contexto.busca.realce(indice, Campo::Texto);
+                let (bloco, elemento) = aviso_do_chat(&chave, texto, *erro, &realce);
+                let rolar = RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, elemento);
+                (bloco, rolar.into_any_element())
+            }
+            Item::Cartao { id } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false, &Realce::default()),
+            Item::Desconhecido(_) => {
+                aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false, &Realce::default())
+            }
         }
     }
 
@@ -436,6 +451,7 @@ impl Janela {
         referencias: &[String],
         ponto: Option<String>,
         reforco: Reforco,
+        realce: Realce,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -486,12 +502,10 @@ impl Janela {
                     .border_color(Cores::linha())
                     .reflexo(raio::CARTAO)
                     .when(!texto.trim().is_empty(), |s| {
-                        s.child(
-                            div().corpo().text_color(Cores::texto()).child(
-                                markdown(SharedString::from(chave.to_string()), texto.to_string(), cx)
-                                    .when(longo && !tudo, |t| t.max_lines(12)),
-                            ),
-                        )
+                        s.child(div().corpo().text_color(Cores::texto()).child(
+                            markdown_achado(contexto, chave.to_string().into(), texto.to_string(), realce)
+                                .linhas((longo && !tudo).then_some(12)),
+                        ))
                     })
                     .when_some(mostrar, |s, b| s.child(h_flex().child(b)))
                     .children(issues)
@@ -541,25 +555,36 @@ impl Janela {
 
     /// Resposta do assistente: sem balão, na largura da coluna. O último texto de cada turno ganha
     /// o Copiar numa barra que flutua no canto de cima à direita, só no hover.
-    fn texto_assistente(&self, chave: &str, texto: &str, com_acoes: bool, refs: &super::painel_pr::Referencias, cx: &Context<Self>) -> AnyElement {
+    fn texto_assistente(
+        &self,
+        contexto: &Contexto,
+        indice: usize,
+        chave: &str,
+        texto: &str,
+        com_acoes: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
         // Os links vivos: "PR #12", "ENG-123" e as URLs do GitHub que existem no projeto viram
         // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
-        let ligado = super::painel_pr::ligar_referencias(texto, refs);
+        let ligado = super::painel_pr::ligar_referencias(texto, &contexto.referencias);
+        let realce = contexto.busca.realce(indice, Campo::Texto);
         v_flex()
             .relative()
             .w_full()
             .group(grupo.clone())
             .child(
                 div().corpo().text_color(Cores::texto()).child(
-                    markdown(SharedString::from(chave.to_string()), ligado, cx).on_link_click(|url, _, window, cx| {
-                        if url.starts_with("vitral:") {
-                            if super::painel_pr::link_permitido(url, super::painel_pr::OrigemDoTexto::Assistente) {
-                                window.dispatch_action(Box::new(super::painel_pr::AbrirLinkVitral(url.to_string())), cx);
+                    markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(|vista, cx| {
+                        estilo_das_mensagens(vista, cx).on_link_click(|url, _, window, cx| {
+                            if url.starts_with("vitral:") {
+                                if super::painel_pr::link_permitido(url, super::painel_pr::OrigemDoTexto::Assistente) {
+                                    window.dispatch_action(Box::new(super::painel_pr::AbrirLinkVitral(url.to_string())), cx);
+                                }
+                            } else {
+                                cx.open_url(url);
                             }
-                        } else {
-                            cx.open_url(url);
-                        }
+                        })
                     }),
                 ),
             )
@@ -577,9 +602,11 @@ impl Janela {
 
     /// Mensagem que outro chat (ou o Vitral) entregou: quem mandou e uma prévia; a linha do nome
     /// abre e fecha o texto inteiro.
+    #[allow(clippy::too_many_arguments)]
     fn mensagem_recebida(
         &self,
         contexto: &Contexto,
+        indice: usize,
         chave: &str,
         de: &str,
         texto: &str,
@@ -588,6 +615,7 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let nivel = contexto.nivel;
+        let realce = contexto.busca.realce(indice, Campo::Texto);
         let aberto = self.expandidos.contains(chave);
         let grupo = SharedString::from(format!("msg-{chave}"));
         let (quem, nome) = remetente(contexto.motor, de);
@@ -643,11 +671,12 @@ impl Janela {
             .focus_visible(|s| s.shadow(halo_foco()))
             .on_click(alternar(chave.to_string(), cx));
         let corpo = if aberto {
-            div()
-                .pl(r(32.))
-                .corpo()
-                .text_color(Cores::texto())
-                .child(markdown(SharedString::from(format!("{chave}-t")), texto.to_string(), cx))
+            div().pl(r(32.)).corpo().text_color(Cores::texto()).child(markdown_achado(
+                contexto,
+                format!("{chave}-t").into(),
+                texto.to_string(),
+                realce.clone(),
+            ))
         } else {
             // A prévia termina com reticências na coluna da seta, nunca cortada no meio da letra.
             div()
@@ -658,9 +687,12 @@ impl Janela {
                 .text_color(Cores::tenue())
                 .line_clamp(if larga(nivel) { 2 } else { 1 })
                 .text_ellipsis()
-                .child(previa(texto))
+                .child(busca_conversa::realcar(previa(texto), &realce))
         };
-        v_flex().w_full().group(grupo).child(cabecalho).child(corpo).into_any_element()
+        let corpo = v_flex().w_full().group(grupo).child(cabecalho).child(corpo).into_any_element();
+        // Aberta, o próprio texto pede para aparecer; fechada, quem rola até a prévia é o bloco.
+        let realce = if aberto { Realce::default() } else { realce };
+        RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, corpo).into_any_element()
     }
 }
 
@@ -671,7 +703,13 @@ const COLUNA_DO_COPIAR: Rems = r(40.);
 /// Markdown com o estilo das mensagens; os blocos de código ganham o Copiar, com a linguagem na
 /// dica.
 pub(super) fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
-    TextView::markdown(id, texto)
+    estilo_das_mensagens(TextView::markdown(id, texto), cx)
+}
+
+/// O estilo das mensagens num `TextView`, venha ele de um id (o `markdown`) ou de uma vista
+/// guardada (o realce da busca, em `busca_conversa`).
+fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
+    vista
         .style(estilo_texto(cx))
         .blockquote_style(
             StyleRefinement::default()
@@ -688,6 +726,12 @@ pub(super) fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
             };
             BotaoCopiar::new(Clipboard::new("copiar").value(bloco.code()).tooltip(dica))
         })
+}
+
+/// Ctrl+F: o markdown de uma mensagem com o termo da busca realçado atrás das letras, que rola
+/// a conversa até a ocorrência atual. Sem busca, desenha igual ao `markdown`.
+fn markdown_achado(contexto: &Contexto, chave: SharedString, texto: String, realce: Realce) -> TextoAchado {
+    TextoAchado::novo(chave, texto, realce).rolagem(contexto.rolagem).estilo(estilo_das_mensagens)
 }
 
 /// O texto das mensagens: parágrafos a 12, títulos de 18, 16 e 15, código sem o azul do kit,
@@ -1029,10 +1073,20 @@ struct Contexto<'a> {
     entregas: HashMap<u64, usize>,
     /// Os PRs e as issues do projeto, para os links vivos do texto do assistente.
     referencias: super::painel_pr::Referencias,
+    /// A busca na conversa: de onde sai o realce de cada texto.
+    busca: &'a busca_conversa::Indice,
+    /// A rolagem do painel, para a conversa andar até o achado.
+    rolagem: &'a ScrollHandle,
 }
 
 impl<'a> Contexto<'a> {
-    fn novo(motor: &'a Motor, chat: &'a Chat, nivel: LarguraPainel) -> Self {
+    fn novo(
+        motor: &'a Motor,
+        chat: &'a Chat,
+        nivel: LarguraPainel,
+        busca: &'a busca_conversa::Indice,
+        rolagem: &'a ScrollHandle,
+    ) -> Self {
         let mut contexto = Contexto {
             motor,
             chat,
@@ -1045,6 +1099,8 @@ impl<'a> Contexto<'a> {
             ultimas: HashMap::new(),
             entregas: HashMap::new(),
             referencias: super::painel_pr::referencias_do_chat(motor, chat),
+            busca,
+            rolagem,
         };
         let (mut ultimas, mut entregas) = (HashMap::new(), HashMap::new());
         for (indice, item) in chat.itens.iter().enumerate() {
@@ -1359,6 +1415,9 @@ impl Janela {
         };
         let verbo = verbo_da_ferramenta(nome, pendente);
         let detalhe = sem_marcacao(&detalhe_da_chamada(nome, resumo));
+        // Ctrl+F: o resumo da chamada fica na linha e o resultado dentro do bloco que ela abre.
+        let (no_resumo, no_resultado) =
+            (contexto.busca.realce(indice, Campo::Resumo), contexto.busca.realce(indice, Campo::Resultado));
         let meta = if *erro {
             Some(("falhou", Cores::texto()))
         } else if interrompida {
@@ -1399,27 +1458,33 @@ impl Janela {
                     .truncate()
                     .font_family(FONTE_MONO)
                     .text_color(Cores::tenue())
-                    .child(detalhe),
+                    .child(busca_conversa::realcar(detalhe, &no_resumo)),
             )
             .when_some(meta.filter(|_| !estreita), |s, (meta, cor)| {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
-        v_flex()
+        let bloco = v_flex()
             .relative()
             .w_full()
             .child(linha)
             .when(aberto, |s| {
-                s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(bloco_resultado(
-                    &chave,
-                    resultado.as_deref(),
-                    *erro,
-                    if pendente { "(rodando…)" } else { "(interrompida, sem resultado)" },
-                )))
+                s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                    bloco_resultado(
+                        &chave,
+                        resultado.as_deref(),
+                        *erro,
+                        if pendente { "(rodando…)" } else { "(interrompida, sem resultado)" },
+                    )
+                    .realce(&no_resultado),
+                ))
             })
             .when(com_trilho, |s| s.child(trilho_do_log()))
-            .into_any_element()
+            .into_any_element();
+        // A conversa anda até a chamada quando o achado atual está nela (no resumo ou na saída).
+        let realce = if no_resumo.atual.is_some() { no_resumo } else { no_resultado };
+        RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, bloco).into_any_element()
     }
 
     /// Ajudantes criados em sequência: "Criou 3 ajudantes" e um evento por ajudante, ligados pelo
@@ -1582,10 +1647,14 @@ impl Janela {
         };
         let chave = format!("{}:{indice}", contexto.chat.id);
         let aberto = self.expandidos.contains(&chave);
+        let realce = contexto.busca.realce(indice, Campo::Texto);
         let ultima = contexto.ultimas.get(&tarefa.id) == Some(&indice);
         let frase = sem_marcacao(&frase_da_entrega(texto, tarefa.id, &tarefa.titulo));
         if contexto.entregas.get(&tarefa.id) == Some(&indice) && tarefa.estado == EstadoTarefa::EmRevisao {
-            return (Bloco::Cartao, self.cartao_de_entrega(contexto, &chave, texto, tarefa, frase, ultima, window, cx));
+            return (
+                Bloco::Cartao,
+                self.cartao_de_entrega(contexto, &chave, texto, tarefa, frase, ultima, realce, window, cx),
+            );
         }
         let pilula = ultima.then(|| PilulaCurta::da(contexto.motor, tarefa));
         let falhou = pilula.is_none() && frase.contains("ERRO");
@@ -1628,13 +1697,15 @@ impl Janela {
             .w_full()
             .child(linha)
             .when(aberto, |s| {
-                s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).corpo_ui().text_color(Cores::texto()).child(markdown(
-                    SharedString::from(format!("{chave}-t")),
-                    texto.clone(),
-                    cx,
-                )))
+                s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).corpo_ui().text_color(Cores::texto()).child(
+                    markdown_achado(contexto, format!("{chave}-t").into(), texto.clone(), realce.clone()),
+                ))
             })
             .into_any_element();
+        // Fechado, o relatório não mostra o termo: quem leva a conversa até a linha é o bloco.
+        let fechado = if aberto { Realce::default() } else { realce };
+        let elemento =
+            RolarAoAchado::novo(format!("rolar-{chave}").into(), &fechado, contexto.rolagem, elemento).into_any_element();
         (Bloco::Log, elemento)
     }
 
@@ -1650,6 +1721,7 @@ impl Janela {
         tarefa: &Tarefa,
         frase: String,
         ultima: bool,
+        realce: Realce,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1958,7 +2030,7 @@ const ACOES_DE_TAREFA: [&str; 5] = [
     "cancelar_tarefa",
 ];
 
-fn acao_de_tarefa(nome: &str) -> Option<&str> {
+pub(super) fn acao_de_tarefa(nome: &str) -> Option<&str> {
     nome.strip_prefix("mcp__vitral__")
         .filter(|acao| ACOES_DE_TAREFA.contains(acao))
 }
@@ -2386,7 +2458,7 @@ fn partes_do_erro(texto: &str) -> (Option<String>, String) {
     }
 }
 
-fn aviso_do_chat(chave: &str, texto: &str, erro: bool) -> (Bloco, AnyElement) {
+fn aviso_do_chat(chave: &str, texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement) {
     match tipo_aviso(texto, erro) {
         ClasseAvisoChat::Marco => {
             let (icone, cor, rotulo) = if texto.starts_with("Interrompido") {
@@ -2413,7 +2485,7 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool) -> (Bloco, AnyElement) {
                         .metadado()
                         .text_color(Cores::tenue())
                         .child(icone_de(icone, 12.).text_color(cor))
-                        .child(div().min_w_0().line_clamp(2).text_ellipsis().child(sem_marcacao(&rotulo))),
+                        .child(div().min_w_0().line_clamp(2).text_ellipsis().child(busca_conversa::realcar(sem_marcacao(&rotulo), realce))),
                 )
                 .child(traco())
                 .into_any_element();
@@ -2436,17 +2508,23 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool) -> (Bloco, AnyElement) {
                         .text_size(r(13.))
                         .line_height(r(18.))
                         .text_color(Cores::tenue())
-                        .child(sem_marcacao(texto)),
+                        .child(busca_conversa::realcar(sem_marcacao(texto), realce)),
                 )
                 .into_any_element();
             (Bloco::Log, elemento)
         }
         ClasseAvisoChat::Alerta => {
             let (titulo, detalhe) = partes_do_erro(texto);
+            // No alerta o realce fica no corpo (o título é só o começo da mesma frase).
             let alerta = Alerta::new(Tom::Erro, sem_marcacao(&detalhe)).acao(copiar(chave, texto));
             let alerta = match titulo {
                 Some(t) => alerta.titulo(sem_marcacao(&t)),
                 None => alerta,
+            };
+            let alerta = if realce.vazio() {
+                alerta
+            } else {
+                alerta.texto_rico(busca_conversa::realcar(sem_marcacao(&detalhe), realce))
             };
             (Bloco::Alerta, alerta.into_any_element())
         }
