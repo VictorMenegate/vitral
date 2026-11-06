@@ -3,8 +3,26 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
-## 0.5.1
+## 0.6.0
 
+Um visual mais quieto, a versão exata do modelo e o Claude Code atualizado pelo próprio Vitral.
+
+- **Visual novo.** O fundo desce em degraus de tom, as peças perderam o contorno, os vãos ficaram
+  justos (4 px, canto 14) e o topo das peças ganhou um degradê escuro no lugar do claro.
+- **O lado é uma peça só.** A coluna de ícones saiu: o logo, o Mestre e os projetos viraram a
+  primeira fileira da lista, na horizontal, e rolam de lado quando não cabem (arrastar para
+  reordenar continua valendo). O sino e o uso do Claude desceram para o rodapé da lista; com a
+  lista recolhida, o uso do Claude é a primeira coisa da esquerda. As ações do cabeçalho da
+  conversa ficam apagadas até o ponteiro chegar perto.
+- **A versão exata do modelo.** O seletor de modelo ganhou, embaixo das famílias, as **versões
+  exatas** (Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5 e as anteriores), com a que está
+  rodando marcada, inclusive quando a conversa segue a família: é como se vê qual Opus o "Opus"
+  pega hoje. Num Claude Code anterior ao 2.1.280, que não aceita o 5.5, elas não aparecem e uma
+  linha diz por quê.
+- **Atualizar o Claude Code pelas Configurações.** O grupo **Claude Code** mostra a versão que os
+  turnos abrem e tem o **Atualizar**, que roda `claude update` fora de qualquer turno e mostra o
+  que ele respondeu (em âmbar, se falhar). Ele espera os chats que estão trabalhando ou com
+  mensagem na fila; a versão nova vale no turno seguinte, sem reiniciar o Vitral.
 - **Os agentes em segundo plano deixam de ser cortados no meio.** O Claude Code espera 10 minutos
   por eles e então os encerra, e o turno terminava com "Os agentes em segundo plano não terminaram"
   e "O último turno falhou" — um lote de uma hora morria sempre. O Vitral já pedia a espera sem
