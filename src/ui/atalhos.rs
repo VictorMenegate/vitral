@@ -10,7 +10,7 @@ use gpui_kit::*;
 use super::{
     busca_conversa,
     componentes::{CabecalhoDialogo, RodapeDialogo, TamanhoBotao, botao_primario, desenho_teclas, largura},
-    composer, popover_issues, revisao,
+    composer, popover_issues, revisao, visor_imagem,
 };
 use crate::tema::{Cores, Tipo as _, esp, r, raio};
 
@@ -110,6 +110,9 @@ tabela! {
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
+    // No visor de imagem (o Esc que fecha é o do diálogo).
+    "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
+    "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
 
     // ---------- conversas e projetos ----------
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";

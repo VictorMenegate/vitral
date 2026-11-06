@@ -19,6 +19,7 @@ mod distribuido;
 mod equipe;
 mod fila;
 pub(crate) mod icone_projeto;
+mod imagens;
 mod lateral;
 mod limpeza;
 mod mensagens;
@@ -41,6 +42,7 @@ mod tirar_projeto;
 mod trilho;
 mod uso_plano;
 mod visao_geral;
+mod visor_imagem;
 pub mod zoom;
 
 use std::{

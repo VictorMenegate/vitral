@@ -37,6 +37,7 @@ use super::{
     composer::{self, PararTurno, nome_do_modo},
     duracao,
     equipe::variante_tinta,
+    imagens,
     movimento::{self, De},
     paineis::tamanho_da_conversa,
 };
@@ -58,7 +59,7 @@ static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
 });
 
 /// Ícone no tamanho de desenho (cresce com o zoom), sem precisar da janela.
-fn icone_de(nome: impl Into<Icon>, lado: f32) -> Icon {
+pub(super) fn icone_de(nome: impl Into<Icon>, lado: f32) -> Icon {
     nome.into().size(r(lado)).flex_none()
 }
 
@@ -523,7 +524,7 @@ impl Janela {
                             h_flex()
                                 .flex_wrap()
                                 .gap(esp::E6)
-                                .children(anexos.iter().enumerate().map(|(i, a)| anexo(chave, i, a))),
+                                .children(anexos.iter().enumerate().map(|(i, a)| anexo(chave, i, a, &contexto.chat.id, cx))),
                         )
                     })
                     .when(reforco != Reforco::default(), |s| {
@@ -584,9 +585,16 @@ impl Janela {
         // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
         let ligado = super::painel_pr::ligar_referencias(texto, &contexto.referencias);
         let realce = contexto.busca.realce(indice, Campo::Texto);
+        // As imagens que a resposta aponta em `![](…)`: o kit desenha a imagem do markdown na
+        // altura de uma linha de texto (tamanho de ícone) ou, sozinha num parágrafo, sem teto
+        // nenhum de altura. Nenhum dos dois serve à conversa, então elas ganham aqui a mesma
+        // miniatura dos anexos, que abre no visor.
+        let apontadas = imagens::imagens_do_texto(texto, Some(&contexto.chat.cwd));
+        let chat_id = contexto.chat.id.clone();
         v_flex()
             .relative()
             .w_full()
+            .gap(esp::E8)
             .group(grupo.clone())
             .child(
                 div().corpo().text_color(Cores::texto()).child(
@@ -603,6 +611,23 @@ impl Janela {
                     }),
                 ),
             )
+            .when(!apontadas.is_empty(), |s| {
+                s.child(h_flex().flex_wrap().gap(esp::E6).children(apontadas.iter().enumerate().map(|(i, caminho)| {
+                    let dica = SharedString::from(format!(
+                        "{} · {}\n{}",
+                        imagens::nome_do_arquivo(caminho),
+                        imagens::anexo(caminho).detalhe(),
+                        caminho.display()
+                    ));
+                    miniatura(
+                        format!("resposta-{chave}-{i}"),
+                        caminho,
+                        &chat_id,
+                        move |window, cx| Tooltip::new(dica.clone()).build(window, cx),
+                        cx,
+                    )
+                })))
+            })
             .child(div().absolute().top(r(-14.)).right_0().child(barra_de_acoes(
                 grupo,
                 hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
@@ -987,35 +1012,80 @@ fn selo_ultracode() -> Div {
         .child("Ultracode")
 }
 
-/// Anexo do balão: miniatura de 56 para imagem; chip com o nome e o tamanho para o resto.
-fn anexo(chave: &str, i: usize, caminho: &Path) -> AnyElement {
-    let id = SharedString::from(format!("anexo-{chave}-{i}"));
-    let dica = SharedString::from(caminho.display().to_string());
+/// Miniatura de uma imagem: na proporção dela, com o véu e a lupa no hover, e o clique abre o
+/// visor. Serve ao anexo do balão e às imagens que o markdown da resposta aponta.
+fn miniatura<D: Fn(&mut Window, &mut App) -> AnyView + 'static>(
+    chave: String,
+    caminho: &Path,
+    chat: &str,
+    dica: D,
+    cx: &Context<Janela>,
+) -> impl IntoElement + use<D> {
+    let lido = imagens::anexo(caminho);
+    let (largura, altura) =
+        imagens::medida_da_miniatura(lido.medidas, imagens::ALTURA_MINIATURA, imagens::LARGURA_MAXIMA_MINIATURA);
+    let lado_minimo = imagens::LADO_MINIMO_MINIATURA;
+    let grupo = SharedString::from(format!("mini-{chave}"));
+    let (chat, alvo) = (chat.to_string(), caminho.to_path_buf());
+    div()
+        .id(SharedString::from(chave))
+        .group(grupo.clone())
+        .relative()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(r(largura.max(lado_minimo)))
+        .h(r(altura.max(lado_minimo)))
+        .rounded(raio::CONTROLE)
+        .bg(Cores::preto())
+        .border_1()
+        .border_color(Cores::borda())
+        .overflow_hidden()
+        .cursor_pointer()
+        .child(img(caminho.to_path_buf()).flex_none().w(r(largura)).h(r(altura)))
+        // No hover, o véu com a lupa diz que a imagem abre.
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(Cores::veu())
+                .invisible()
+                .group_hover(grupo, |s| s.visible())
+                .child(icone_de(Lucide::Maximize, 16.).text_color(Cores::forte())),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
+        .tooltip(dica)
+}
+
+/// Anexo do balão: miniatura na proporção da imagem, que o clique abre no visor; chip com o nome
+/// e o tamanho para o resto. O que saiu do disco vira um aviso, e não um vazio mudo.
+fn anexo(chave: &str, i: usize, caminho: &Path, chat: &str, cx: &Context<Janela>) -> AnyElement {
+    let id = format!("anexo-{chave}-{i}");
+    let lido = imagens::anexo(caminho);
+    let nome = imagens::nome_do_arquivo(caminho);
+    let detalhe = lido.detalhe();
+    let imagem = crate::claude::tipo_imagem(caminho).is_some();
+    let dica = SharedString::from(match (lido.existe, detalhe.is_empty()) {
+        (false, _) => format!("Não está mais em {}", caminho.display()),
+        (true, true) => format!("{nome}\n{}", caminho.display()),
+        (true, false) => format!("{nome} · {detalhe}\n{}", caminho.display()),
+    });
     let dica = move |window: &mut Window, cx: &mut App| Tooltip::new(dica.clone()).build(window, cx);
-    if crate::claude::tipo_imagem(caminho).is_some() {
-        return div()
-            .id(id)
-            .flex_none()
-            .size(r(56.))
-            .rounded(raio::CONTROLE)
-            .border_1()
-            .border_color(Cores::borda())
-            .child(
-                img(caminho.to_path_buf())
-                    .size_full()
-                    .rounded(raio::CONTROLE - px(1.))
-                    .object_fit(ObjectFit::Cover),
-            )
-            .tooltip(dica)
-            .into_any_element();
+    if imagem && lido.existe {
+        return miniatura(id, caminho, chat, dica, cx).into_any_element();
     }
-    let nome = caminho
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let tamanho = tamanho_do_anexo(caminho);
+    let (icone, cor) = match (imagem, lido.existe) {
+        (true, false) => (Lucide::ImageOff, Cores::apagado()),
+        (false, false) => (Lucide::FileX, Cores::apagado()),
+        (true, true) => (Lucide::Image, Cores::tenue()),
+        (false, true) => (Lucide::File, Cores::tenue()),
+    };
     h_flex()
-        .id(id)
+        .id(SharedString::from(id))
         .h(r(24.))
         .max_w_full()
         .px(r(8.))
@@ -1023,34 +1093,16 @@ fn anexo(chave: &str, i: usize, caminho: &Path) -> AnyElement {
         .rounded(raio::PILULA)
         .bg(Cores::recuo())
         .metadado()
-        .child(icone_de(Lucide::File, 14.).text_color(Cores::tenue()))
-        .child(div().min_w_0().truncate().text_color(Cores::texto()).child(nome))
-        .when_some(tamanho, |s, t| s.child(div().flex_none().text_color(Cores::tenue()).child(t)))
+        .child(icone_de(icone, 14.).text_color(cor))
+        .child(div().min_w_0().truncate().text_color(if lido.existe { Cores::texto() } else { Cores::tenue() }).child(nome))
+        .child(
+            div()
+                .flex_none()
+                .text_color(Cores::tenue())
+                .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| "sumiu".into())),
+        )
         .tooltip(dica)
         .into_any_element()
-}
-
-thread_local! {
-    /// O tamanho de cada anexo já desenhado: o disco é lido uma vez por arquivo, não a cada quadro.
-    static TAMANHOS: std::cell::RefCell<HashMap<PathBuf, Option<SharedString>>> = Default::default();
-}
-
-fn tamanho_do_anexo(caminho: &Path) -> Option<SharedString> {
-    TAMANHOS.with_borrow_mut(|tamanhos| {
-        tamanhos
-            .entry(caminho.to_path_buf())
-            .or_insert_with(|| std::fs::metadata(caminho).ok().map(|m| tamanho_curto(m.len()).into()))
-            .clone()
-    })
-}
-
-/// "2 KB", "1,4 MB".
-fn tamanho_curto(bytes: u64) -> String {
-    match bytes {
-        0..1024 => format!("{bytes} B"),
-        1024..1_048_576 => format!("{} KB", (bytes as f64 / 1024.).round() as u64),
-        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.).replace('.', ","),
-    }
 }
 
 /// Um comando de barra sozinho ("/compact"), que vira uma pílula em vez do balão.
@@ -3951,7 +4003,7 @@ mod testes {
         Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, com_maiuscula, comando_de_barra,
         detalhe_da_chamada, entrada_do_bloco, espaco_antes, frase_da_entrega, linhas_da_edicao, meta_curta,
         meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao,
-        separadores_de_data, tamanho_curto,
+        separadores_de_data,
         tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
         verbo_da_ferramenta,
     };
@@ -4266,9 +4318,6 @@ mod testes {
         assert_eq!(comando_de_barra(" /compact "), Some("/compact"));
         assert_eq!(comando_de_barra("/clear\nmais"), None);
         assert_eq!(comando_de_barra("não é /comando"), None);
-        assert_eq!(tamanho_curto(512), "512 B");
-        assert_eq!(tamanho_curto(2048), "2 KB");
-        assert_eq!(tamanho_curto(1_468_006), "1,4 MB");
     }
 
     #[test]
