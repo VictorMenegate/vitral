@@ -417,7 +417,7 @@ impl Janela {
             } => {
                 // Sem a cópia da tarefa, não há arquivos para voltar.
                 let ponto = ponto.clone().filter(|_| !contexto.sem_copia);
-                let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode };
+                let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
                 let editavel = contexto.editavel == Some(indice);
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, referencias, ponto, reforco, item.em(), realce, editavel, window, cx))
@@ -1220,9 +1220,7 @@ impl<'a> Contexto<'a> {
             painel,
             editavel: super::reenvio::indice_editavel(motor, chat),
             sem_copia: motor.copia_apagada(chat),
-            marco: chat.itens.iter().rposition(|i| {
-                matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. })
-            }),
+            marco: marco_da_conversa(&chat.itens, motor.dirigidas_no_turno(&chat.id)),
             ultimas: HashMap::new(),
             entregas: HashMap::new(),
             referencias: super::painel_pr::referencias_do_chat(motor, chat),
@@ -2678,7 +2676,8 @@ pub(super) struct Explicacao {
 /// O que a faixa do turno mostra: vale a primeira situação que se aplicar.
 #[derive(Debug, PartialEq)]
 enum Situacao {
-    Rodando { desde: u64, fila: usize },
+    /// `dirigidas`: mensagens que o usuário mandou para dentro deste turno.
+    Rodando { desde: u64, fila: usize, dirigidas: usize },
     EsperandoVaga,
     NovaTentativa { em: u64 },
     Parada { motivo: String, atencao: bool },
@@ -2731,11 +2730,41 @@ fn texto_para_juntar(arquivos: u32, mais: u32, menos: u32) -> String {
     format!("{arquivos} na cópia (+{mais} −{menos})")
 }
 
+/// A marca de "dirigido" na faixa do turno: a mensagem que o usuário mandou entrou no turno que
+/// já rodava, sem pará-lo nem abrir outro.
+fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
+    let rotulo = if n == 1 { "dirigido".to_string() } else { format!("dirigido {n}×") };
+    let dica: SharedString = if n == 1 {
+        "A sua mensagem entrou neste turno: ele não parou nem começou de novo".into()
+    } else {
+        "As suas mensagens entraram neste turno: ele não parou nem começou de novo".into()
+    };
+    div()
+        .id(("selo-dirigido", painel as usize))
+        .flex_none()
+        .child(
+            h_flex()
+                .gap(r(4.))
+                .metadado()
+                .text_color(Cores::tenue())
+                .child(icone_de(Lucide::MessageSquarePlus, 12.))
+                .when(!estreita, |s| s.child(rotulo)),
+        )
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .into_any_element()
+}
+
 fn situacao_do_turno(motor: &Motor, chat: &str) -> Option<Situacao> {
     match motor.execucao(chat) {
         // Esperando você: os pedidos de permissão já aparecem logo abaixo.
         Execucao::EsperandoVoce => return None,
-        Execucao::Rodando { desde } => return Some(Situacao::Rodando { desde, fila: motor.na_fila(chat) }),
+        Execucao::Rodando { desde } => {
+            return Some(Situacao::Rodando {
+                desde,
+                fila: motor.na_fila(chat),
+                dirigidas: motor.dirigidas_no_turno(chat),
+            });
+        }
         _ => {}
     }
     if motor.esperando_vaga(chat) {
@@ -2780,9 +2809,9 @@ impl Janela {
         let margem = tam(window, if caixa_estreita { 12. } else { 16. });
         let (recuo, fim) = (margem + composer::recuo_do_texto(caixa_estreita, window), margem + composer::borda_ao_conteudo(caixa_estreita, window));
         let atividade = match &situacao {
-            Situacao::Rodando { .. } => {
+            Situacao::Rodando { dirigidas, .. } => {
                 let escrevendo = motor.parcial(&chat.id).is_some();
-                let texto = texto_atividade(&chat.itens, escrevendo);
+                let texto = texto_atividade(&chat.itens, escrevendo, *dirigidas);
                 // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
                 if !escrevendo && texto == "Pensando…" && motor.esperando_agentes(&chat.id) {
                     "Agentes trabalhando em segundo plano…".to_string()
@@ -2791,6 +2820,12 @@ impl Janela {
                 }
             }
             _ => String::new(),
+        };
+        // A fila é da conversa, não do turno: depois de um reinício (ou de uma parada, ou de uma
+        // falha) o chat não está mais rodando e ela continua esperando, à vista.
+        let fila_fora = match situacao {
+            Situacao::Fila(_) | Situacao::Rodando { .. } => None,
+            _ => Some(motor.na_fila(&chat.id)).filter(|n| *n > 0),
         };
         let (motor_e, id) = (self.motor.clone(), chat.id.clone());
         let acao = move |f: fn(&mut Motor, &str, &mut Context<Motor>)| {
@@ -2817,7 +2852,7 @@ impl Janela {
                 .into_any_element()
         };
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {
-            Situacao::Rodando { desde, fila } => (
+            Situacao::Rodando { desde, fila, dirigidas } => (
                 h_flex()
                     .flex_1()
                     .min_w_0()
@@ -2836,6 +2871,8 @@ impl Janela {
                     .when(!minima, |s| {
                         s.child(div().flex_none().metadado().text_color(Cores::apagado()).child(duracao(desde)))
                     })
+                    // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
+                    .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
                     // A fila é um controle: o clique abre a lista do que espera, para tirar o
                     // que você não quer mais.
                     .when(fila > 0, |s| {
@@ -3004,6 +3041,16 @@ impl Janela {
                         .into_any_element(),
                 ),
             ),
+        };
+        let esquerda = match fila_fora {
+            Some(n) => h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(r(8.))
+                .child(esquerda)
+                .child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, n, false, estreita, window, cx)))
+                .into_any_element(),
+            None => esquerda,
         };
         Some(
             h_flex()
@@ -3665,13 +3712,39 @@ fn pilula_do_fim(
         .child(movimento::entrada(("entra-pilula-fim", painel_id as usize), nova, De::Baixo, pilula))
 }
 
+/// O marco da conversa: o último item que fecha o que veio antes dele (mensagem, entrega ou
+/// aviso), e a partir do qual uma chamada sem resultado conta como interrompida. As `dirigidas`
+/// últimas mensagens do usuário não fecham nada: elas entraram no turno que já rodava, e a
+/// ferramenta de antes delas continua trabalhando.
+fn marco_da_conversa(itens: &[Item], dirigidas: usize) -> Option<usize> {
+    let mut dirigidas = dirigidas;
+    itens.iter().rposition(|i| match i {
+        Item::Usuario { .. } if dirigidas > 0 => {
+            dirigidas -= 1;
+            false
+        }
+        Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. } => true,
+        _ => false,
+    })
+}
+
 /// O que o agente faz agora, tirado da última chamada ainda sem resultado no turno ("Lendo
-/// motor.rs…"); sem chamada, "Escrevendo…" ou "Pensando…".
-fn texto_atividade(itens: &[Item], escrevendo: bool) -> String {
+/// motor.rs…"); sem chamada, "Escrevendo…" ou "Pensando…". As `dirigidas` últimas mensagens do
+/// usuário entraram neste mesmo turno e não cortam a procura.
+fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String {
+    let mut dirigidas = dirigidas;
     let atual = itens
         .iter()
         .rev()
-        .take_while(|i| !matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. }))
+        .take_while(|i| match i {
+            // A mensagem dirigida não fecha o turno: a chamada antes dela ainda é a de agora.
+            Item::Usuario { .. } if dirigidas > 0 => {
+                dirigidas -= 1;
+                true
+            }
+            Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. } => false,
+            _ => true,
+        })
         .find_map(|i| match i {
             Item::Ferramenta {
                 nome,
@@ -4002,8 +4075,8 @@ mod testes {
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, Segmento, Tipo, com_maiuscula, comando_de_barra,
         detalhe_da_chamada, entrada_do_bloco, espaco_antes, frase_da_entrega, linhas_da_edicao, meta_curta,
-        meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar, sem_marcacao,
-        separadores_de_data,
+        marco_da_conversa, meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar,
+        sem_marcacao, separadores_de_data,
         tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
         verbo_da_ferramenta,
     };
@@ -4340,26 +4413,42 @@ mod testes {
     fn atividade_vem_da_chamada_em_andamento_do_turno() {
         let ler = ferramenta("Read", "Read · motor.rs", None, false);
         let feita = ferramenta("Bash", "Bash · Roda os testes", Some("ok"), false);
-        assert_eq!(texto_atividade(&[usuario("oi"), feita.clone(), ler.clone()], false), "Lendo motor.rs…");
+        assert_eq!(texto_atividade(&[usuario("oi"), feita.clone(), ler.clone()], false, 0), "Lendo motor.rs…");
         // A última sem resultado é a que vale, mesmo com uma terminada depois.
-        assert_eq!(texto_atividade(&[usuario("oi"), ler.clone(), feita.clone()], false), "Lendo motor.rs…");
+        assert_eq!(texto_atividade(&[usuario("oi"), ler.clone(), feita.clone()], false, 0), "Lendo motor.rs…");
         // Sem resultado de um turno anterior não conta: foi interrompida.
-        assert_eq!(texto_atividade(&[ler.clone(), usuario("de novo")], false), "Pensando…");
-        assert_eq!(texto_atividade(&[usuario("oi"), feita], true), "Escrevendo…");
+        assert_eq!(texto_atividade(&[ler.clone(), usuario("de novo")], false, 0), "Pensando…");
+        assert_eq!(texto_atividade(&[usuario("oi"), feita], true, 0), "Escrevendo…");
         let bash = ferramenta("Bash", "Bash · cargo test -p vitral…", None, false);
-        assert_eq!(texto_atividade(&[bash], false), "Rodando: cargo test -p vitral…");
+        assert_eq!(texto_atividade(&[bash], false, 0), "Rodando: cargo test -p vitral…");
         let criar = ferramenta("mcp__vitral__criar_tarefa", "criar_tarefa · Validar entrada", None, false);
-        assert_eq!(texto_atividade(&[criar], false), "Criando o ajudante “Validar entrada”…");
+        assert_eq!(texto_atividade(&[criar], false, 0), "Criando o ajudante “Validar entrada”…");
         let diff = ferramenta("mcp__vitral__ver_diff", "ver_diff · chat 3", None, false);
-        assert_eq!(texto_atividade(&[diff], false), "Olhando as mudanças do chat 3…");
+        assert_eq!(texto_atividade(&[diff], false, 0), "Olhando as mudanças do chat 3…");
         let outro = ferramenta("mcp__github__create_issue", "mcp__github__create_issue", None, false);
-        assert_eq!(texto_atividade(&[outro], false), "Usando create_issue…");
+        assert_eq!(texto_atividade(&[outro], false, 0), "Usando create_issue…");
         let sem_detalhe = ferramenta("Edit", "Edit", None, false);
-        assert_eq!(texto_atividade(&[sem_detalhe], false), "Editando um arquivo…");
+        assert_eq!(texto_atividade(&[sem_detalhe], false, 0), "Editando um arquivo…");
         let gravar = ferramenta("Write", "Write · cupom.rs", None, false);
-        assert_eq!(texto_atividade(&[gravar], false), "Gravando cupom.rs…");
+        assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
-        assert_eq!(texto_atividade(&[passos], false), "Atualizando os passos…");
+        assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn a_mensagem_dirigida_nao_fecha_a_chamada_do_turno() {
+        let ler = ferramenta("Read", "Read · motor.rs", None, false);
+        let itens = [usuario("oi"), ler.clone(), usuario("e olha isto também")];
+        // Sem dirigida, a mensagem fecha o que veio antes: a chamada ficou sem resultado.
+        assert_eq!(texto_atividade(&itens, false, 0), "Pensando…");
+        assert_eq!(marco_da_conversa(&itens, 0), Some(2));
+        // Dirigida ao turno que já rodava: a chamada de antes dela continua sendo a de agora.
+        assert_eq!(texto_atividade(&itens, false, 1), "Lendo motor.rs…");
+        assert_eq!(marco_da_conversa(&itens, 1), Some(0));
+        // Duas dirigidas seguidas.
+        let duas = [usuario("oi"), ler, usuario("mais uma"), usuario("e outra")];
+        assert_eq!(texto_atividade(&duas, false, 2), "Lendo motor.rs…");
+        assert_eq!(marco_da_conversa(&duas, 2), Some(0));
     }
 
     #[test]

@@ -23,7 +23,7 @@ use super::componentes::{
 };
 use super::movimento::{self, Curva, com_estado};
 use crate::{
-    modelo::{Chat, EstadoTarefa, Papel},
+    modelo::{Chat, EstadoTarefa, Execucao, Papel},
     motor::{self, Motor},
     tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_suave, r, raio, tam},
 };
@@ -320,8 +320,17 @@ enum Envio {
     Enviar,
     /// Chat rodando (ou na fila) com a caixa vazia: o botão vira parar.
     Parar,
-    /// Chat rodando com texto: parar ao lado e enviar, que entra na fila.
+    /// Chat rodando com texto: parar ao lado e enviar, que dirige o turno.
     PararEEnviar,
+}
+
+/// O Enviar manda para dentro do turno que está rodando (o steering do `Motor::dirigir_turno`) em
+/// vez de pôr na fila: só com um turno de verdade em andamento — nem esperando vaga, nem parado
+/// num pedido de permissão, nem só esperando os agentes do fundo (aí a entrada já está fechada).
+pub(super) fn dirige_o_turno(motor: &Motor, chat: &str) -> bool {
+    matches!(motor.execucao(chat), Execucao::Rodando { .. })
+        && !motor.esperando_vaga(chat)
+        && !motor.esperando_agentes(chat)
 }
 
 fn envio(rodando: bool, vazio: bool) -> Envio {
@@ -536,7 +545,15 @@ impl Janela {
                     .when(b.faixa != FaixaCaixa::Media, |s| {
                         s.child(self.botao_mais(motor, chat, b, window, cx))
                     })
-                    .children(self.botoes_de_envio(b, vazio, motor.esperando_vaga(&chat.id), rodada_nova, envios, cx)),
+                    .children(self.botoes_de_envio(
+                        b,
+                        vazio,
+                        motor.esperando_vaga(&chat.id),
+                        dirige_o_turno(motor, &chat.id),
+                        rodada_nova,
+                        envios,
+                        cx,
+                    )),
             )
     }
 
@@ -549,6 +566,7 @@ impl Janela {
         b: &Barra,
         vazio: bool,
         na_fila: bool,
+        dirige: bool,
         rodada_nova: bool,
         envios: u64,
         cx: &Context<Self>,
@@ -584,6 +602,17 @@ impl Janela {
         } else {
             "Enviar"
         };
+        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
+        // vale para o turno inteiro, e tudo o que não é um turno em andamento, vai pela fila.
+        let dica_dirigir = if na_fila {
+            "Enviar\nEntra na fila: esta conversa ainda espera vaga"
+        } else if !dirige {
+            "Enviar\nEntra na fila: este turno não recebe mensagem agora"
+        } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
+            "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
+        } else {
+            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
+        };
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
             Envio::Enviar => vec![enviar(dica_enviar)],
@@ -600,7 +629,7 @@ impl Janela {
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
-                enviar("Enviar\nEntra na fila deste turno"),
+                enviar(dica_dirigir),
             ],
         }
     }

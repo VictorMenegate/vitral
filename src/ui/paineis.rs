@@ -294,9 +294,15 @@ impl Janela {
             &composer,
             window,
             move |this, estado, evento, window, cx| match evento {
-                InputEvent::PressEnter { shift: false, .. } => {
+                // Ctrl+Enter (o "secundário" do kit) manda depois: com o turno rodando, a
+                // mensagem espera a vez na fila em vez de entrar nele.
+                InputEvent::PressEnter { shift: false, secondary } => {
                     this.ativar_painel(id, cx);
-                    this.enviar_do_painel(id, window, cx);
+                    if *secondary {
+                        this.enviar_depois(id, window, cx);
+                    } else {
+                        this.enviar_do_painel(id, window, cx);
+                    }
                 }
                 InputEvent::Focus => this.ativar_painel(id, cx),
                 InputEvent::Change => {

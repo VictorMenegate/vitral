@@ -18,7 +18,7 @@ use super::{
     MODELOS, MODOS, PopCaixa, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra, indice_esforco,
     nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, usa_esforco,
 };
-use crate::ui::Janela;
+use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
     AnelDeUso, BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
@@ -1072,6 +1072,10 @@ impl Janela {
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel, mestre };
         let conta = estreita.then(|| Rc::new(self.dados_da_conta(motor, chat, cx)));
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
+        // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
+        // Quem já ia pela fila de qualquer jeito não precisa da opção.
+        let depois = composer::dirige_o_turno(motor, &chat.id)
+            .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
         let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
@@ -1081,6 +1085,17 @@ impl Janela {
                 let mut menu = menu
                     .min_w(largura)
                     .max_w(largura)
+                    .when_some(depois.clone(), |menu, (janela, vazio)| {
+                        menu.item(
+                            PopupMenuItem::new("Mandar depois, na fila")
+                                .icon(Lucide::ListChecks)
+                                .disabled(vazio)
+                                .on_click(move |_, window, cx| {
+                                    let _ = janela.update(cx, |this, cx| this.enviar_depois(painel, window, cx));
+                                }),
+                        )
+                        .separator()
+                    })
                     .item(item_de_comandos(j1, painel))
                     .item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, window, cx| {
                         let _ = j2.update(cx, |this, cx| this.por_na_caixa(painel, "/compact ", window, cx));

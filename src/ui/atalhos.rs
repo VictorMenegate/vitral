@@ -168,9 +168,11 @@ tabela! {
 }
 
 /// Teclas que não são do keymap, mas que todo mundo procura nesta lista: a caixa envia no Enter
-/// (`submit_on_enter`) e quebra a linha no Shift+Enter, e o Ctrl+clique abre ao lado.
-const FIXAS: [(&str, &str, Grupo); 3] = [
+/// (`submit_on_enter`), manda depois no Ctrl+Enter e quebra a linha no Shift+Enter, e o Ctrl+clique
+/// abre ao lado.
+const FIXAS: [(&str, &str, Grupo); 4] = [
     ("Enter", "Enviar a mensagem", Grupo::Conversa),
+    ("Ctrl+Enter", "Mandar depois: com o turno rodando, a mensagem espera na fila", Grupo::Conversa),
     ("Shift+Enter", "Quebrar a linha sem enviar", Grupo::Conversa),
     ("Ctrl+clique", "Abrir a conversa num painel ao lado", Grupo::Lista),
 ];

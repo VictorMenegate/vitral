@@ -1320,6 +1320,8 @@ impl Entrada {
 pub struct Reforco {
     pub ultrathink: bool,
     pub ultracode: bool,
+    /// "Mandar depois": com o turno rodando, a mensagem espera na fila em vez de dirigir o turno.
+    pub depois: bool,
 }
 
 /// Mensagens esperando o chat ficar livre.
