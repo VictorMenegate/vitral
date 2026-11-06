@@ -2413,8 +2413,8 @@ impl Motor {
     /// Manda a mensagem do usuário para dentro do turno que já está rodando (o steering do Claude
     /// Code; ver `Processo::dirigir` para o que foi medido). Não para o turno, não encerra a rodada
     /// e não abre turno novo pelo Vitral: o texto entra na conversa como mensagem dele e o processo
-    /// a recebe pela entrada. `false` quando não dá para dirigir e a mensagem tem de esperar na
-    /// fila.
+    /// a recebe pela entrada. `NaFila` quando não dá para dirigir e ela tem de esperar a vez, com o
+    /// motivo quando ele vale um aviso.
     fn dirigir_turno(&mut self, chat_id: &str, entrada: &Entrada, cx: &mut Context<Self>) -> Dirigido {
         if self.somente_leitura.is_some() || !self.processos.contains_key(chat_id) {
             return Dirigido::NaFila(None);
@@ -2449,13 +2449,17 @@ impl Motor {
         if !processo.dirigir(mensagem) {
             return Dirigido::NaFila(None);
         }
+        // Como qualquer mensagem do usuário, ela também responde a uma pergunta pendente.
+        self.aguardando_resposta.retain(|c| c != chat_id);
         // O Claude Code pode absorver a mensagem neste turno ou abrir outro com ela: nos dois
         // casos ela já foi, e o fim do turno espera por isso (ver `adiar_o_fim`).
         self.dirigidas.entry(chat_id.to_string()).or_default().push(entrada.clone());
         *self.dirigidos.entry(chat_id.to_string()).or_default() += 1;
         // Ela não entra na repetição do turno ("Tentar de novo", a troca de conta): quando o turno
         // falha, ela volta para a fila (`devolver_dirigidas`) e iria duas vezes.
-        // Sem ponto de volta próprio: o do turno que roda já pegou os arquivos antes dele.
+        //
+        // Na conversa ela vai sem ponto de volta próprio: o do turno que roda já pegou os arquivos
+        // como estavam antes dele.
         if let Some(c) = self.chat_mut(chat_id) {
             c.itens.extend(itens_das_entradas(vec![entrada.clone()], None));
             c.atualizado_em = agora();
@@ -7601,8 +7605,6 @@ pub fn esforco_do_ultrathink(atual: Option<&str>) -> &'static str {
     if atual == Some("max") { "max" } else { "xhigh" }
 }
 
-/// O `result` chegou com agentes em segundo plano: o turno espera por eles, menos com erro ou
-/// parado pelo usuário.
 /// Troca o texto de uma mensagem da fila. Texto em branco não troca nada (quem tira da fila é o
 /// `tirar_da_fila`), nem um índice que já não existe ou é de uma nota (ela não aparece na lista).
 fn editar_na_lista(fila: &mut [Entrada], indice: usize, texto: &str) -> bool {

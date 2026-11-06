@@ -23,6 +23,7 @@ use super::{
     dialogos::{cabecalho, moldura, topo},
 };
 use crate::{
+    modelo::Entrada,
     motor::Motor,
     tema::{Cores, Lucide, Tipo as _, esp, r, raio},
 };
@@ -34,7 +35,7 @@ const LETRAS_DA_PREVIA: usize = 140;
 const LETRAS_DA_DICA: usize = 600;
 
 /// A dica de uma linha da lista: o texto inteiro (cortado), com quem mandou e os anexos.
-fn dica_da_linha(e: &crate::modelo::Entrada) -> String {
+fn dica_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
         partes.push(format!("De: {de}"));
@@ -141,9 +142,11 @@ impl Janela {
     }
 }
 
-/// Uma linha da lista, já pronta para desenhar (o índice é o da `fila_do_chat`).
+/// Uma linha da lista, já pronta para desenhar: o índice é o da `fila_do_chat` e a posição é o
+/// lugar na ordem de entrada, de 0.
 struct Linha {
     indice: usize,
+    posicao: usize,
     previa: String,
     dica: String,
     do_usuario: bool,
@@ -170,6 +173,7 @@ fn corpo_da_fila(
         .enumerate()
         .map(|(posicao, (indice, e))| Linha {
             indice,
+            posicao,
             previa: previa(&e.texto),
             dica: dica_da_linha(e),
             do_usuario: e.do_usuario(),
@@ -191,8 +195,7 @@ fn corpo_da_fila(
     }
     let desenhadas: Vec<AnyElement> = linhas
         .into_iter()
-        .enumerate()
-        .map(|(posicao, linha)| linha_da_fila(motor, janela, chat, painel, posicao, linha, window, cx))
+        .map(|linha| linha_da_fila(motor, janela, chat, painel, linha, window, cx))
         .collect();
     let explicacao = if rodando {
         "Entram juntas no próximo turno, quando este terminar."
@@ -222,12 +225,11 @@ fn linha_da_fila(
     janela: &WeakEntity<Janela>,
     chat: &str,
     painel: u64,
-    posicao: usize,
     linha: Linha,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let Linha { indice, previa, dica, do_usuario, primeira, ultima } = linha;
+    let Linha { indice, posicao, previa, dica, do_usuario, primeira, ultima } = linha;
     let dica: SharedString = dica.into();
     let mover = |para_baixo: bool| {
         let (motor, chat) = (motor.clone(), chat.to_string());
@@ -366,8 +368,7 @@ impl Janela {
 
 #[cfg(test)]
 mod testes {
-    use super::{dica_da_linha, previa, rotulo};
-    use crate::modelo::Entrada;
+    use super::{Entrada, dica_da_linha, previa, rotulo};
 
     #[test]
     fn a_previa_e_a_primeira_linha_cortada() {

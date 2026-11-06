@@ -84,7 +84,9 @@ fim_da_entrada = threading.Event()
 
 def ouvir_entrada():
     """O Parar do Vitral: o `interrupt` pela entrada (como no de verdade, 2.1.278) responde, fecha o
-    turno com erro e sai. A entrada fechada (o fim do turno) solta o fim lá embaixo."""
+    turno com erro e sai. Outra mensagem do usuário no meio do turno (o Enviar com ele rodando) é
+    absorvida nele, como no de verdade, e só responde uma linha dizendo que foi dirigida. A entrada
+    fechada (o fim do turno) solta o fim lá embaixo."""
     for pedido in sys.stdin:
         try:
             pedido = json.loads(pedido)
@@ -95,6 +97,16 @@ def ouvir_entrada():
             emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"), "response": {}}})
             emitir({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "", "total_cost_usd": 0.0})
             os._exit(1)
+        if pedido.get("type") == "user":
+            try:
+                partes = pedido["message"]["content"]
+                dirigida = "\n".join(b.get("text", "") for b in partes if b.get("type") == "text").strip()
+            except (KeyError, TypeError):
+                dirigida = ""
+            if dirigida:
+                anotar({"dirigida": dirigida[:200]})
+                emitir({"type": "assistant", "message": {"content": [
+                    {"type": "text", "text": f"(claude falso) dirigido no meio do turno: {dirigida[:120]}"}]}})
     fim_da_entrada.set()
 
 

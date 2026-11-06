@@ -22,7 +22,7 @@ use super::componentes::{
 };
 use super::movimento::{self, Curva, com_estado};
 use crate::{
-    modelo::{Chat, EstadoTarefa, Papel},
+    modelo::{Chat, EstadoTarefa, Execucao, Papel},
     motor::{self, Motor},
     tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_suave, r, raio, tam},
 };
@@ -323,6 +323,15 @@ enum Envio {
     PararEEnviar,
 }
 
+/// O Enviar manda para dentro do turno que está rodando (o steering do `Motor::dirigir_turno`) em
+/// vez de pôr na fila: só com um turno de verdade em andamento — nem esperando vaga, nem parado
+/// num pedido de permissão, nem só esperando os agentes do fundo (aí a entrada já está fechada).
+pub(super) fn dirige_o_turno(motor: &Motor, chat: &str) -> bool {
+    matches!(motor.execucao(chat), Execucao::Rodando { .. })
+        && !motor.esperando_vaga(chat)
+        && !motor.esperando_agentes(chat)
+}
+
 fn envio(rodando: bool, vazio: bool) -> Envio {
     match (rodando, vazio) {
         (false, true) => Envio::Vazio,
@@ -539,7 +548,7 @@ impl Janela {
                         b,
                         vazio,
                         motor.esperando_vaga(&chat.id),
-                        motor.esperando_agentes(&chat.id),
+                        dirige_o_turno(motor, &chat.id),
                         rodada_nova,
                         envios,
                         cx,
@@ -556,7 +565,7 @@ impl Janela {
         b: &Barra,
         vazio: bool,
         na_fila: bool,
-        com_agentes: bool,
+        dirige: bool,
         rodada_nova: bool,
         envios: u64,
         cx: &Context<Self>,
@@ -593,16 +602,15 @@ impl Janela {
             "Enviar"
         };
         // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
-        // vale para o turno inteiro, a conversa que ainda espera vaga e o turno que já entregou a
-        // resposta e só espera os agentes do fundo é que vão pela fila.
+        // vale para o turno inteiro, e tudo o que não é um turno em andamento, vai pela fila.
         let dica_dirigir = if na_fila {
             "Enviar\nEntra na fila: esta conversa ainda espera vaga"
-        } else if com_agentes {
-            "Enviar\nEntra na fila: este turno já respondeu e só espera os agentes do fundo"
+        } else if !dirige {
+            "Enviar\nEntra na fila: este turno não recebe mensagem agora"
         } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
             "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
         } else {
-            "Enviar\nEntra no turno que está rodando, sem pará-lo\nPara ela esperar a vez, “Mandar depois” no “…”"
+            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
         };
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],

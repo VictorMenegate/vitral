@@ -18,7 +18,7 @@ use super::{
     MODELOS, MODOS, PopCaixa, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra, indice_esforco,
     nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, usa_esforco,
 };
-use crate::ui::Janela;
+use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
     AnelDeUso, BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
@@ -1073,10 +1073,9 @@ impl Janela {
         let conta = estreita.then(|| Rc::new(self.dados_da_conta(motor, chat, cx)));
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
         // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
-        // Quem já ia pela fila de qualquer jeito (esperando vaga, ou só os agentes do fundo) não
-        // precisa da opção.
-        let dirige = rodando && !motor.esperando_vaga(&chat.id) && !motor.esperando_agentes(&chat.id);
-        let depois = dirige.then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
+        // Quem já ia pela fila de qualquer jeito não precisa da opção.
+        let depois = composer::dirige_o_turno(motor, &chat.id)
+            .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
         let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
