@@ -604,6 +604,15 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
         )
 }
 
+/// Quanto as ações do cabeçalho (issues, foco, "⋯", painel da direita) ficam apagadas enquanto o
+/// ponteiro não chega nelas. Acende inteiro no hover do grupo, e o teclado não passa por aqui.
+const ACOES_APAGADAS: f32 = 0.55;
+
+/// O grupo de hover das ações de um painel.
+fn grupo_das_acoes(painel_id: u64) -> SharedString {
+    SharedString::from(format!("acoes-cabecalho-{painel_id}"))
+}
+
 impl Janela {
     /// "Juntar" (a barra acima da caixa, a Equipe): leva as mudanças da cópia para a pasta
     /// original. Com a pasta em outro branch, pergunta antes; o resto da recusa vira aviso.
@@ -667,11 +676,11 @@ impl Janela {
             .relative()
             .size_full()
             .min_w_0()
-            .rounded(raio::PECA)
+            .rounded(crate::tema::raio_da_peca())
             .bg(Cores::cartao())
             .overflow_hidden()
             .border(px(1.5))
-            .reflexo(raio::PECA)
+            .reflexo(crate::tema::raio_da_peca())
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
             .capture_any_mouse_down(
@@ -792,11 +801,13 @@ impl Janela {
             // O gradiente do Mestre leva o próprio raio: o `overflow_hidden` do cartão não corta
             // canto arredondado.
             .when(mestre, |s| s.bg(gradiente_destaque()).rounded_t(raio::PECA - px(1.5)))
-            // Com a lista fora da tela, o primeiro painel começa pelo logo compacto.
+            // Com a lista fora da tela, o primeiro painel começa pelo uso do plano e pelo logo
+            // compacto, nessa ordem: recolhida a lista, o uso é a primeira coisa da esquerda, no
+            // lugar onde ele ficava no pé do trilho.
+            .when_some(aneis, |s, aneis| s.child(sem_arrastar().flex_none().child(aneis)))
             .when(!self.orcamento.lista && primeiro, |s| {
                 s.child(self.logo_compacto(if ix.is_some() { "mostrar-lista" } else { "mostrar-lista-vazio" }, window, cx))
             })
-            .when_some(aneis, |s, aneis| s.child(sem_arrastar().flex_none().child(aneis)))
             .child(
                 div()
                     .flex()
@@ -813,13 +824,29 @@ impl Janela {
                     ),
             )
             // O PR do chat (abre a aba PR) e as issues do projeto: o chip da issue do chat e os
-            // botões do Linear e do GitHub.
-            .children(conversa.and_then(|(chat, _)| self.chip_do_pr_no_cabecalho(motor, chat, painel_id, nivel, window, cx)))
-            .children(conversa.and_then(|(chat, _)| self.botoes_de_issues(motor, chat, painel_id, nivel, window, cx)))
-            .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx)))
+            // botões do Linear e do GitHub. Tudo isso é segundo plano: fica apagado enquanto o
+            // ponteiro não chega perto, para o cabeçalho ser o título da conversa, e não uma
+            // fileira de ícones.
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap(esp::E8)
+                    .group(grupo_das_acoes(painel_id))
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap(esp::E8)
+                            .opacity(ACOES_APAGADAS)
+                            .group_hover(grupo_das_acoes(painel_id), |s| s.opacity(1.))
+                            .children(conversa.and_then(|(chat, _)| self.chip_do_pr_no_cabecalho(motor, chat, painel_id, nivel, window, cx)))
+                            .children(conversa.and_then(|(chat, _)| self.botoes_de_issues(motor, chat, painel_id, nivel, window, cx)))
+                            .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx))),
+                    ),
+            )
             .when(mostra_botoes_janela, |s| {
                 // Com ações do painel à esquerda, um traço separa os botões da janela.
-                s.child(if chat.is_some() { self.botoes_janela_separados(cx) } else { self.botoes_janela(cx) })
+                // Sem o traço: o apagado das ações já separa elas dos botões da janela.
+                s.child(self.botoes_janela(cx))
             })
     }
 
