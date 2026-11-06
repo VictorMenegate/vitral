@@ -1,0 +1,9 @@
+# Só o Atualizar do grupo Claude Code, para rodar com cada CLAUDE_FALSO_UPDATE (ver modelos.txt).
+espera 10
+tecla Control_L+comma     # Configurações
+espera 3
+rolar 800 600 25          # desce até o grupo Claude Code
+espera 1
+clique 1031 699           # Atualizar
+espera 4
+print u1-resposta
