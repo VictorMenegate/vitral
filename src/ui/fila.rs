@@ -252,10 +252,10 @@ fn linha_da_fila(
             let _ = janela.update(cx, |this, cx| this.dialogo_editar_da_fila(chat.clone(), indice, window, cx));
         })
     };
-    let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Mandar antes", TamanhoBotao::Linha, window, cx)
+    let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Subir na fila: entra antes da de cima", TamanhoBotao::Linha, window, cx)
         .when(primeira, |b| b.disabled(true).opacity(0.45))
         .on_click(mover(false));
-    let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Mandar depois", TamanhoBotao::Linha, window, cx)
+    let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Descer na fila: entra depois da de baixo", TamanhoBotao::Linha, window, cx)
         .when(ultima, |b| b.disabled(true).opacity(0.45))
         .on_click(mover(true));
     let tirar = {
@@ -330,19 +330,19 @@ impl Janela {
             TextareaState::new(window, cx)
                 .auto_grow(6, 16)
                 .placeholder("A mensagem que vai entrar no próximo turno")
-                .default_value(inicial)
+                .default_value(inicial.clone())
         });
         let foco = campo.read(cx).focus_handle(cx);
         self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
-            let (motor, chat) = (motor.clone(), chat.clone());
+            let (motor, chat, antes) = (motor.clone(), chat.clone(), inicial.clone());
             let (campo, no_botao) = (campo.clone(), campo.clone());
             let vazio = campo.read(cx).value().trim().is_empty();
             let salvar = botao_primario("fila-editar-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
                 .when(vazio, |b| b.disabled(true).opacity(0.45).tooltip("Uma mensagem vazia não vai; tire ela da fila"))
                 .on_click(move |_, window, cx| {
                     let texto = no_botao.read(cx).value().to_string();
-                    let trocou = motor.update(cx, |m, cx| m.editar_na_fila(&chat, indice, &texto, cx));
+                    let trocou = motor.update(cx, |m, cx| m.editar_na_fila(&chat, indice, &antes, &texto, cx));
                     if !trocou {
                         window.push_notification(aviso(Tom::Atencao, "Esta mensagem já saiu da fila; nada foi mudado."), cx);
                     }

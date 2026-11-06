@@ -2581,13 +2581,13 @@ impl Motor {
     }
 
     /// Troca o texto de uma mensagem da fila (o índice é o de `fila_do_chat`). Texto vazio não
-    /// troca nada: quem tira é o `tirar_da_fila`. `false` quando o índice não existe mais (a fila
-    /// andou enquanto o diálogo estava aberto).
-    pub fn editar_na_fila(&mut self, chat: &str, indice: usize, texto: &str, cx: &mut Context<Self>) -> bool {
+    /// troca nada: quem tira é o `tirar_da_fila`. `antes` é o texto que o diálogo abriu: se a fila
+    /// andou enquanto ele estava aberto (uma entrou, outra saiu), nada é trocado e volta `false`.
+    pub fn editar_na_fila(&mut self, chat: &str, indice: usize, antes: &str, texto: &str, cx: &mut Context<Self>) -> bool {
         let Some(fila) = self.filas.get_mut(chat) else {
             return false;
         };
-        if !editar_na_lista(fila, indice, texto) {
+        if !editar_na_lista(fila, indice, antes, texto) {
             return false;
         }
         self.salvar();
@@ -7606,10 +7606,11 @@ pub fn esforco_do_ultrathink(atual: Option<&str>) -> &'static str {
 }
 
 /// Troca o texto de uma mensagem da fila. Texto em branco não troca nada (quem tira da fila é o
-/// `tirar_da_fila`), nem um índice que já não existe ou é de uma nota (ela não aparece na lista).
-fn editar_na_lista(fila: &mut [Entrada], indice: usize, texto: &str) -> bool {
+/// `tirar_da_fila`), nem um índice que já não existe, que é de uma nota (ela não aparece na lista)
+/// ou que não tem mais o texto `antes`, de quando a edição começou.
+fn editar_na_lista(fila: &mut [Entrada], indice: usize, antes: &str, texto: &str) -> bool {
     let texto = texto.trim();
-    if texto.is_empty() || indice >= fila.len() || fila[indice].nota {
+    if texto.is_empty() || indice >= fila.len() || fila[indice].nota || fila[indice].texto != antes {
         return false;
     }
     fila[indice].texto = texto.to_string();
@@ -8454,11 +8455,12 @@ mod testes {
         assert!(!mover_na_lista(&mut fila, 0, false));
         assert!(!mover_na_lista(&mut fila, 2, true));
         assert_eq!(textos(&fila), ["tres", "uma", "duas"]);
-        assert!(editar_na_lista(&mut fila, 1, "  outra  "));
+        assert!(editar_na_lista(&mut fila, 1, "uma", "  outra  "));
         assert_eq!(textos(&fila), ["tres", "outra", "duas"]);
-        // Texto em branco e índice que já saiu não mexem em nada.
-        assert!(!editar_na_lista(&mut fila, 1, "   "));
-        assert!(!editar_na_lista(&mut fila, 9, "nada"));
+        // Texto em branco, índice que já saiu e lugar que mudou de mensagem não mexem em nada.
+        assert!(!editar_na_lista(&mut fila, 1, "outra", "   "));
+        assert!(!editar_na_lista(&mut fila, 9, "nada", "nada"));
+        assert!(!editar_na_lista(&mut fila, 1, "a fila andou", "nada"));
         assert_eq!(textos(&fila), ["tres", "outra", "duas"]);
     }
 
@@ -8472,7 +8474,7 @@ mod testes {
         assert_eq!(textos(&fila), ["nota", "duas", "uma"]);
         // A própria nota não se move nem se edita: ela não está na lista.
         assert!(!mover_na_lista(&mut fila, 0, true));
-        assert!(!editar_na_lista(&mut fila, 0, "outra"));
+        assert!(!editar_na_lista(&mut fila, 0, "nota", "outra"));
         assert_eq!(textos(&fila), ["nota", "duas", "uma"]);
     }
 
