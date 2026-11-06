@@ -220,6 +220,30 @@ impl Processo {
         self.entrada = None;
     }
 
+    /// Dirige o turno que está rodando: escreve outra mensagem do usuário na entrada, que fica
+    /// aberta durante o turno. `false` quando não há mais entrada (o turno já acabou, ou o Parar a
+    /// levou) e a mensagem não foi escrita.
+    ///
+    /// O que o Claude Code 2.1.278 faz com ela, medido aqui (ver `ESPERA_DO_DIRIGIDO`):
+    /// - ela entra numa fila interna dele (o `queued_command` que ele grava na sessão, então o
+    ///   `--resume` do turno seguinte não a perde);
+    /// - na primeira volta de uma ferramenta, ele a absorve no turno que já roda (a sessão anota
+    ///   `queue-operation remove absorbed_mid_turn`) e o modelo muda de rumo na hora, com um
+    ///   `result` só no fim — é o steering;
+    /// - sem nenhuma volta de ferramenta até o fim (um turno que é só texto), ele fecha aquele
+    ///   turno e abre outro na hora, no mesmo processo (uns 30 ms depois do `result`), mesmo com a
+    ///   entrada já fechada;
+    /// - o `interrupt` não a descarta: o turno fecha com erro e ela roda em seguida, como turno
+    ///   novo (por isso o Parar mata o processo quando há mensagem dirigida esperando).
+    ///
+    /// Nada dela aparece na saída: quem põe a mensagem na conversa é o Vitral.
+    pub fn dirigir(&mut self, mensagem: Mensagem) -> bool {
+        let Some(entrada) = self.entrada.as_mut() else {
+            return false;
+        };
+        escrever_mensagem(entrada, mensagem).is_ok()
+    }
+
     /// Para o turno: pede pela entrada o `interrupt` do protocolo do Agent SDK (o mesmo do botão de
     /// parar da extensão; conferido no 2.1.278) e fecha ela. O Claude Code responde, fecha o turno
     /// com um `result` de erro, grava a conversa e sai, com tempo de limpar o que abriu. É o mesmo
@@ -556,9 +580,15 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
 fn conteudo_resultado(conteudo: &Value) -> String {
     match conteudo {
         Value::String(s) => s.clone(),
+        // Um Read de imagem devolve só o bloco "image" (o base64 dela, que não vai para o
+        // histórico): sem a marca, a chamada aberta ficava numa caixa vazia, como se tivesse
+        // sido interrompida.
         Value::Array(partes) => partes
             .iter()
-            .filter_map(|p| p["text"].as_str())
+            .filter_map(|p| match p["type"].as_str() {
+                Some("image") => Some(format!("({})", p["source"]["media_type"].as_str().unwrap_or("imagem"))),
+                _ => p["text"].as_str().map(str::to_string),
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         Value::Null => String::new(),

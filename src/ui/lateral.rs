@@ -372,7 +372,15 @@ fn previa(motor: &Motor, chat: &Chat) -> String {
             if let Some(p) = chat.tarefa.and_then(|t| motor.tarefa(t)).and_then(|t| t.progresso.as_deref()) {
                 return maiuscula(p);
             }
-            if let Some(Item::Ferramenta { resumo, .. }) = chat.itens.last() {
+            // As mensagens que o usuário dirigiu ao turno não mudam o que ele está fazendo: a
+            // chamada de antes delas é a de agora.
+            let mut itens = chat.itens.as_slice();
+            let mut dirigidas = motor.dirigidas_no_turno(&chat.id);
+            while dirigidas > 0 && matches!(itens.last(), Some(Item::Usuario { .. })) {
+                itens = &itens[..itens.len() - 1];
+                dirigidas -= 1;
+            }
+            if let Some(Item::Ferramenta { resumo, .. }) = itens.last() {
                 return resumo.clone();
             }
             return "Pensando…".into();
@@ -1009,6 +1017,8 @@ fn linha_da_arvore(
     let simbolo = match (e_pasta, expandida) {
         (true, true) => Lucide::FolderOpen,
         (true, false) => Lucide::Folder,
+        // Uma imagem se acha na árvore pelo ícone, antes de abrir.
+        _ if crate::claude::tipo_imagem(Path::new(&caminho)).is_some() => Lucide::FileImage,
         _ => Lucide::FileText,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));

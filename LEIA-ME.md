@@ -1,5 +1,9 @@
 # Vitral
 
+> A porta de entrada do projeto é o [README.md](README.md) (o que o Vitral é, como instalar, como
+> conferir o que baixou). Este arquivo é o manual de dentro: como cada parte funciona, o que já foi
+> decidido e as pegadinhas.
+
 Ambiente para trabalhar com o Claude Code em vários projetos ao mesmo tempo: um **Mestre** que
 entende o pedido e o manda para o projeto certo, e **chats de projeto** que fazem o trabalho, cada
 um na sua cópia da pasta. Tem o visual de vidro azul-marinho da Stained Glass UI e a organização do
@@ -391,6 +395,27 @@ num preto quase puro, como as saídas de comando, e têm o próprio Copiar, numa
 nunca cobre o código; a linguagem fica na dica dele ("Copiar código python"). Modo foco (esconde as
 ferramentas, vale por painel).
 
+- **Ler a conversa.** A **hora** de cada mensagem aparece no hover, na mesma barra flutuante do
+  Copiar (`hora_na_barra`), e um **separador de dia** ("Hoje", "Ontem", "22 de março") separa os
+  turnos (`separador_de_dia`): numa conversa de dias dá para saber quando cada coisa aconteceu. As
+  conversas de antes da 0.4.0 não guardaram a hora e não mostram nada. O **Copiar** vale em
+  qualquer mensagem, não só na última resposta de cada turno. **Ctrl+F** busca dentro da conversa
+  aberta (`src/ui/busca_conversa.rs`): a barra flutua no alto do painel, com o contador ("3 de
+  12"), **F3** e **Shift+F3** para andar e realce em âmbar; a busca não liga para maiúscula nem
+  para acento ("codigo" acha "código"), conta também o que está dentro de um bloco fechado (a saída
+  de uma ferramenta, o relatório de um ajudante), que abre ao chegar a vez dele, e **Esc** fecha. O
+  índice só é refeito quando o termo ou o tamanho da conversa muda, e nada disso anima.
+- **Escrever.** Com a caixa vazia, a **seta para cima** traz de volta a sua última mensagem para
+  ajustar e mandar de novo, e a conversa volta a antes dela (`EditarUltima`, só no contexto
+  "Vazia"; com texto escrito a seta continua movendo o cursor). O **rascunho** de cada conversa (o
+  que você escreveu e não enviou) já ficava na memória da janela ao trocar de painel; agora também
+  vai para o `interface.json` 1,2 s depois de você parar de digitar, e volta quando o Vitral abrir
+  de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). A **fila** do que você mandou com
+  o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da faixa do turno: cada
+  mensagem esperando numa linha, com o × que devolve o texto à caixa e, com o chat parado,
+  **Entregar agora** no rodapé. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
+  teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
+  nunca desencontra do que o teclado faz.
 - **Faixa do turno.** Uma linha fixa acima da caixa, alinhada com o texto dela (e, à direita, com o
   enviar), que entra com um fade e 8 px de baixo quando aparece, diz o que o chat está fazendo
   ("Lendo motor.rs…", "Rodando: cargo test…"), há quanto tempo, quantas mensagens esperam na fila e
@@ -1089,8 +1114,11 @@ importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdad
 bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat (o ajudante, em `notas-do-t<N>.md`), antes das ferramentas; leva 10 s com
-`[demora]`; executa os `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ") como
-chamadas de verdade ao MCP do Vitral; faz o revisor (com `--json-schema` devolve "aprovar", ou
+`[demora]`; com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
+Task…) finge usar a ferramenta, mandando o `tool_use`, esperando 4 s (ou os segundos de
+`[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
+motor.rs…", "Rodando: cargo test…") sem gastar a API; executa os `[mcp <nome> <json>]` da mensagem
+(fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; faz o revisor (com `--json-schema` devolve "aprovar", ou
 "ajustar" com `[revisor-ajustar]`); entrega sozinho o pedido do Mestre num chat de projeto
 (`[nao-entregar]` desliga); aprova sozinho o relatório de um ajudante (`[nao-aprovar]` desliga;
 `[ajuste-uma-vez]` pede ajuste na rodada 1); responde a "Pergunta do ajudante #N"; no
@@ -1345,7 +1373,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (projetos, chats, tarefas, cartões, ocorrências e a configuração global, com os nomes antigos como alias) e o `FORMATO_DADOS` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | Trilho (com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
+| `src/ui/` | Trilho (com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
@@ -1356,6 +1384,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `tests/versao.rs` | `--versao` e `--versao --json` sem tela (o binário de verdade, sem DISPLAY nem WAYLAND_DISPLAY) |
 | `tests/hook.rs` | `--hook-verificacao`: código 2 e o fim da saída no stderr quando a verificação falha, 0 na segunda parada seguida |
 | `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
+| `README.md`, `docs/imagens/` | A porta de entrada do GitHub (o que é, instalar, conferir o download, limites) e os prints dela, tirados na bancada com `RAIZ_SINTETICA=1`/`AMOSTRA=prs` e `CLAUDE_FALSO=1`, recortados e com paleta de 256 cores |
 | `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual, os ícones de projeto (`icones/`, Lucide, ISC) e as fontes embutidas (`fontes/`: Inter 4.1 e JetBrains Mono 2.304, só os pesos usados, OFL 1.1 em `fontes/OFL.txt`, que vai no pacote como `OFL-fontes.txt`) |
 
 Ícones do Lucide que não estão entre os do GPUI Kit precisam entrar em `icon_assets!` em

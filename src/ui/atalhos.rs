@@ -10,7 +10,7 @@ use gpui_kit::*;
 use super::{
     busca_conversa,
     componentes::{CabecalhoDialogo, RodapeDialogo, TamanhoBotao, botao_primario, desenho_teclas, largura},
-    composer, popover_issues, revisao,
+    composer, popover_issues, revisao, visor_imagem,
 };
 use crate::tema::{Cores, Tipo as _, esp, r, raio};
 
@@ -110,6 +110,9 @@ tabela! {
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
+    // No visor de imagem (o Esc que fecha é o do diálogo).
+    "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
+    "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
 
     // ---------- conversas e projetos ----------
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";
@@ -165,9 +168,11 @@ tabela! {
 }
 
 /// Teclas que não são do keymap, mas que todo mundo procura nesta lista: a caixa envia no Enter
-/// (`submit_on_enter`) e quebra a linha no Shift+Enter, e o Ctrl+clique abre ao lado.
-const FIXAS: [(&str, &str, Grupo); 3] = [
+/// (`submit_on_enter`), manda depois no Ctrl+Enter e quebra a linha no Shift+Enter, e o Ctrl+clique
+/// abre ao lado.
+const FIXAS: [(&str, &str, Grupo); 4] = [
     ("Enter", "Enviar a mensagem", Grupo::Conversa),
+    ("Ctrl+Enter", "Mandar depois: com o turno rodando, a mensagem espera na fila", Grupo::Conversa),
     ("Shift+Enter", "Quebrar a linha sem enviar", Grupo::Conversa),
     ("Ctrl+clique", "Abrir a conversa num painel ao lado", Grupo::Lista),
 ];

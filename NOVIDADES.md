@@ -3,6 +3,27 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.5.0
+
+As imagens no chat e as mensagens que você manda enquanto ele trabalha.
+
+- **Mandar enquanto ele está trabalhando.** O Enviar com o turno rodando deixa de enfileirar: a
+  mensagem entra na conversa e **no turno**, e o Claude muda de rumo sem perder o que já fez (a
+  faixa do turno diz "dirigido"). Parar continua sendo o Esc. O que não dá para dirigir (Ultrathink,
+  Ultracode, comandos de barra, texto de terceiros) continua pela fila, e a dica do botão diz por
+  quê. **Mandar depois** (no "…" da caixa ou Ctrl+Enter) põe na fila de propósito.
+- **A fila dá para mexer.** O popover mostra cada mensagem esperando, com o texto inteiro na dica,
+  o lápis para editar, as setas para mudar a ordem e o × para tirar (o texto volta para a caixa).
+  Ela sobrevive a fechar o Vitral e agora aparece também quando o chat está parado.
+- **Imagens.** A miniatura entra na proporção certa (uma captura larga parava de virar um quadrado
+  ilegível) e o clique abre um **visor**: a imagem inteira ou em tamanho real com rolagem, o nome,
+  as medidas e o tamanho, **Abrir fora**, ←/→ pelas outras imagens da conversa e Esc para fechar.
+  O que você anexa vira miniatura com o tamanho ainda na caixa; a imagem que o agente põe na
+  resposta aparece; o anexo apagado do disco diz "sumiu"; e um `.png` do projeto é desenhado no
+  painel da direita, no lugar de "arquivo binário".
+- **README no GitHub**, com prints do app, como instalar no Linux e no Windows e como conferir a
+  assinatura do que você baixou.
+
 ## 0.4.0
 
 A conversa ficou mais fácil de ler, de achar e de corrigir.

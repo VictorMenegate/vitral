@@ -312,6 +312,7 @@ gpui_kit::assets::icon_assets!(
         GitPullRequestDraft,
         Hand,
         Image,
+        ImageOff,
         Keyboard,
         LayoutGrid,
         Link,
@@ -359,6 +360,8 @@ gpui_kit::assets::icon_assets!(
         Wrench,
         X,
         Zap,
+        ZoomIn,
+        ZoomOut,
     ]
 );
 
