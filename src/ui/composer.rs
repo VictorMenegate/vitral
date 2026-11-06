@@ -11,6 +11,7 @@ use gpui_kit::component::{
     ElementExt as _,
     button::{Button, ButtonVariants as _},
     input::{Textarea, TextareaState},
+    tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -735,35 +736,75 @@ impl Janela {
             .children(issues)
             .children(anexos.into_iter().enumerate().map(|(i, caminho)| {
                 let chat = chat.to_string();
-                let nome = caminho
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| caminho.display().to_string());
+                let nome = super::imagens::nome_do_arquivo(&caminho);
                 let imagem = crate::claude::tipo_imagem(&caminho).is_some();
+                // Três prints colados têm nomes iguais ("colado-…"): a miniatura, o tamanho e a
+                // dica com o caminho são o que diz qual é qual antes de mandar.
+                let lido = super::imagens::anexo(&caminho);
+                let detalhe = lido.detalhe();
+                let dica = SharedString::from(if detalhe.is_empty() {
+                    caminho.display().to_string()
+                } else {
+                    format!("{detalhe}\n{}", caminho.display())
+                });
+                let (largura_mini, altura_mini) = super::imagens::medida_da_miniatura(
+                    lido.medidas,
+                    super::imagens::ALTURA_CHIP,
+                    super::imagens::LARGURA_MAXIMA_CHIP,
+                );
+                let miniatura = (imagem && lido.existe).then(|| {
+                    let (chat_visor, alvo) = (chat.clone(), caminho.clone());
+                    div()
+                        .id(("mini-anexo", i))
+                        .flex_none()
+                        .w(r(largura_mini))
+                        .h(r(altura_mini))
+                        .rounded(raio::CONTROLE)
+                        .bg(Cores::preto())
+                        .overflow_hidden()
+                        .cursor_pointer()
+                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.abrir_visor(&chat_visor, &alvo, window, cx)
+                        }))
+                });
+                let icone = miniatura.is_none().then(|| {
+                    let (lucide, cor) = match (imagem, lido.existe) {
+                        (true, false) => (Lucide::ImageOff, Cores::apagado()),
+                        (false, false) => (Lucide::FileX, Cores::apagado()),
+                        (true, true) => (Lucide::Image, Cores::tenue()),
+                        (false, true) => (Lucide::File, Cores::tenue()),
+                    };
+                    div().flex_none().text_color(cor).child(super::componentes::icone(lucide, 14., window))
+                });
                 div()
+                    .id(("anexo-pendente", i))
                     .flex()
                     .items_center()
                     .gap(esp::E6)
                     .h(r(28.))
-                    .pl(esp::E8)
+                    .map(|s| if miniatura.is_some() { s.pl(esp::E4) } else { s.pl(esp::E8) })
                     .pr(esp::E2)
                     .rounded(raio::PILULA)
                     .bg(Cores::hover())
                     .border_1()
                     .border_color(Cores::borda())
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(Cores::tenue())
-                            .child(super::componentes::icone(if imagem { Lucide::Image } else { Lucide::File }, 14., window)),
-                    )
+                    .children(icone)
+                    .children(miniatura)
                     .child(
                         div()
                             .max_w(r(220.))
                             .truncate()
                             .metadado()
-                            .text_color(Cores::texto())
+                            .text_color(if lido.existe { Cores::texto() } else { Cores::tenue() })
                             .child(nome),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .metadado()
+                            .text_color(Cores::tenue())
+                            .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| "sumiu".into())),
                     )
                     .child(
                         BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), "Remover o anexo")
@@ -778,6 +819,7 @@ impl Janela {
                                 cx.notify();
                             })),
                     )
+                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             }))
     }
 
