@@ -820,7 +820,7 @@ impl Janela {
             .h_full()
             .pt(esp::E4)
             .pb(esp::E8)
-            .rounded(raio::PECA)
+            .rounded(crate::tema::raio_da_peca())
             .bg(Cores::vidro_leitura())
             .reflexo(raio::PECA)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))

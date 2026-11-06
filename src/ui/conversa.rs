@@ -667,11 +667,11 @@ impl Janela {
             .relative()
             .size_full()
             .min_w_0()
-            .rounded(raio::PECA)
+            .rounded(crate::tema::raio_da_peca())
             .bg(Cores::cartao())
             .overflow_hidden()
             .border(px(1.5))
-            .reflexo(raio::PECA)
+            .reflexo(crate::tema::raio_da_peca())
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
             .capture_any_mouse_down(

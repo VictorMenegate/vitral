@@ -175,10 +175,16 @@ impl<T: Styled> Tipo for T {}
 
 /// Elevação 2 (caixa de mensagem, prévia de arrasto). No GPUI o blur é o desvio padrão: metade
 /// do blur do CSS.
+/// Preto de sombra com o alfa `base` (0 a 255) multiplicado pelo da superfície.
+fn preto_de_sombra(base: u32) -> Hsla {
+    let alfa = ((base as f32 * superficie::atual().sombra).round() as u32).min(0xff);
+    rgba(alfa).into()
+}
+
 pub fn sombra_elevado() -> Vec<BoxShadow> {
     vec![
-        BoxShadow::new(px(0.), px(1.), rgba(0x00000040).into()).blur_radius(px(1.5)),
-        BoxShadow::new(px(0.), px(4.), rgba(0x00000033).into())
+        BoxShadow::new(px(0.), px(1.), preto_de_sombra(0x40)).blur_radius(px(1.5)),
+        BoxShadow::new(px(0.), px(4.), preto_de_sombra(0x33))
             .blur_radius(px(4.))
             .spread_radius(px(-2.)),
     ]
@@ -187,10 +193,10 @@ pub fn sombra_elevado() -> Vec<BoxShadow> {
 /// Elevação 3: menu, popover, dica, aviso (a mesma do `popover_style` do vendor).
 pub fn sombra_flutuante() -> Vec<BoxShadow> {
     vec![
-        BoxShadow::new(px(0.), px(12.), rgba(0x00000066).into())
+        BoxShadow::new(px(0.), px(12.), preto_de_sombra(0x66))
             .blur_radius(px(12.))
             .spread_radius(px(-4.)),
-        BoxShadow::new(px(0.), px(2.), rgba(0x0000004d).into())
+        BoxShadow::new(px(0.), px(2.), preto_de_sombra(0x4d))
             .blur_radius(px(3.))
             .spread_radius(px(-1.)),
     ]
@@ -199,16 +205,16 @@ pub fn sombra_flutuante() -> Vec<BoxShadow> {
 /// Elevação 4: diálogo (a mesma do `dialog_shadow` do vendor).
 pub fn sombra_dialogo() -> Vec<BoxShadow> {
     vec![
-        BoxShadow::new(px(0.), px(24.), rgba(0x00000080).into())
+        BoxShadow::new(px(0.), px(24.), preto_de_sombra(0x80))
             .blur_radius(px(24.))
             .spread_radius(px(-8.)),
-        BoxShadow::new(px(0.), px(2.), rgba(0x0000004d).into()).blur_radius(px(4.)),
+        BoxShadow::new(px(0.), px(2.), preto_de_sombra(0x4d)).blur_radius(px(4.)),
     ]
 }
 
 /// Sombra interna do recuo (trilho do segmentado, campo de busca).
 pub fn sombra_recuo() -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(0.), px(1.), rgba(0x00000059).into()).blur_radius(px(1.)).inset()]
+    vec![BoxShadow::new(px(0.), px(1.), preto_de_sombra(0x59)).blur_radius(px(1.)).inset()]
 }
 
 /// Anel de foco pelo teclado, o mesmo do kit (`FOCUS_RING_WIDTH`).
@@ -227,9 +233,16 @@ pub fn linha_de_luz(forca: f32) -> BoxShadow {
     BoxShadow::new(px(0.), px(1.), Cores::brilho_topo().opacity(forca)).inset()
 }
 
-/// O gradiente do reflexo: #ffffff08 no topo até nada, na camada de 40 px do `.reflexo()`.
+/// O gradiente do topo da peça, na camada de 40 px do `.reflexo()`: um escuro que vai sumindo,
+/// no lugar do claro de antes. O topo é onde fica o título; escurecer, em vez de clarear, afunda
+/// a peça no fundo e deixa o texto com mais contraste.
 pub fn gradiente_reflexo() -> Background {
-    linear_gradient(180., linear_color_stop(rgba(0xffffff08), 0.), linear_color_stop(rgba(0xffffff00), 1.))
+    let alfa = ((26. * superficie::atual().reflexo).round() as u32).min(0xff);
+    linear_gradient(
+        180.,
+        linear_color_stop(rgba(0x00000000 | alfa), 0.),
+        linear_color_stop(rgba(0x00000000), 1.),
+    )
 }
 
 /// Assinatura do Vitral: azul à esquerda indo para o preto (caixa de mensagem).
@@ -537,11 +550,38 @@ const FONTES: [&[u8]; 8] = [
 pub const FONTES_DE_RESERVA: [&str; 2] =
     if cfg!(windows) { ["Segoe UI Emoji", "Segoe UI Symbol"] } else { ["Noto Emoji", "Noto Sans Symbols 2"] };
 
+/// O JSON do tema com as superficies, bordas e realces da superfície no lugar dos de
+/// hoje (a variante 1 devolve o TEMA sem mudanca).
+fn tema_json() -> String {
+    let v = superficie::atual();
+    let mut json = TEMA.to_string();
+    for (chave, cor) in [
+        ("background", v.vidro),
+        ("border", v.borda),
+        ("input.border", v.borda),
+        ("popover.background", v.flutuante),
+        ("overlay", v.veu),
+        ("list.hover.background", v.hover),
+        ("list.active.background", v.selecao),
+        ("accent.background", v.selecao),
+        ("sidebar.accent.background", v.selecao),
+        ("tab.active.background", v.cartao_elevado),
+    ] {
+        let alvo = format!("\"{chave}\": \"");
+        if let Some(i) = json.find(&alvo) {
+            let inicio = i + alvo.len();
+            let fim = inicio + json[inicio..].find('"').expect("cor do tema fechada");
+            json.replace_range(inicio..fim, &format!("#{cor:08x}"));
+        }
+    }
+    json
+}
+
 pub fn aplicar(cx: &mut App) {
     if let Err(erro) = cx.text_system().add_fonts(FONTES.iter().map(|f| Cow::Borrowed(*f)).collect()) {
         eprintln!("vitral: as fontes embutidas não carregaram ({erro:#}); ficam as do sistema");
     }
-    let conjunto: ThemeSet = serde_json::from_str(TEMA).expect("tema do Vitral");
+    let conjunto: ThemeSet = serde_json::from_str(&tema_json()).expect("tema do Vitral");
     let config = Rc::new(conjunto.themes.into_iter().next().unwrap());
     Theme::update(cx, |tema| {
         tema.apply_config(&config);
@@ -556,6 +596,105 @@ pub fn aplicar(cx: &mut App) {
     crate::ui::movimento::iniciar(cx);
 }
 
+/// As cores das superfícies num lugar só: o chumbo das frestas, os degraus de claro de cada peça,
+/// as bordas, a luz de cima e os realces. Saiu de um estudo de seis acabamentos que o dono
+/// comparou lado a lado; esta é a "Degraus", a escolhida: cada superfície num nível de claro bem
+/// diferente, com a moldura quase preta.
+pub mod superficie {
+    pub struct Variante {
+        pub nome: &'static str,
+        /// Vidro da janela: o chumbo das frestas e da margem.
+        pub vidro: u32,
+        /// Fundo do trilho e da lista.
+        pub vidro_leitura: u32,
+        /// Fundo da conversa e dos painéis da direita.
+        pub cartao: u32,
+        pub cartao_elevado: u32,
+        /// Popover, menu, dica e aviso.
+        pub flutuante: u32,
+        pub dialogo: u32,
+        pub gaveta: u32,
+        /// Código, saída de comando e diff.
+        pub preto: u32,
+        /// Campo de busca, trilho do segmentado, kbd.
+        pub recuo: u32,
+        /// Véu atrás dos diálogos.
+        pub veu: u32,
+        /// Contorno de controle (campo, chip, selo).
+        pub borda: u32,
+        /// Contorno de popover, diálogo e lista de escolha.
+        pub borda_forte: u32,
+        /// Divisória por dentro de uma superfície.
+        pub linha: u32,
+        /// Aro de 1 px por dentro das peças (alfa 0 = peça sem aro, como hoje).
+        pub aro: u32,
+        /// Linha de luz no topo de dentro das peças.
+        pub brilho_topo: u32,
+        /// Quanto do gradiente de reflexo entra no topo das peças.
+        pub reflexo: f32,
+        /// Multiplicador das sombras dos elevados, flutuantes e diálogos.
+        pub sombra: f32,
+        pub hover: u32,
+        pub selecao: u32,
+        /// Começo e fim do gradiente da caixa de mensagem.
+        pub caixa_quente: u32,
+        pub caixa_preta: u32,
+        /// Margem entre a janela e as peças, vão entre elas e o raio dos cantos: o acabamento
+        /// "denso", que o dono escolheu olhando as seis opções lado a lado.
+        pub margem: f32,
+        pub vao: f32,
+        pub raio_peca: f32,
+    }
+
+    /// As cores em uso.
+    pub const ATUAL: Variante = Variante {
+            nome: "Degraus, sem borda, denso",
+            vidro: 0x02030aee,
+            vidro_leitura: 0x0e1322ff,
+            cartao: 0x171e30ff,
+            cartao_elevado: 0x1e2740ff,
+            flutuante: 0x1b2339ff,
+            dialogo: 0x1e2740ff,
+            gaveta: 0x1e2740ff,
+            preto: 0x05060aff,
+            recuo: 0x00000066,
+            veu: 0x020309cc,
+            borda: 0x00000000,
+            borda_forte: 0xffffff14,
+            linha: 0xffffff0f,
+            aro: 0x00000000,
+            brilho_topo: 0xffffff0f,
+            reflexo: 1.,
+            sombra: 1.3,
+            hover: 0xffffff14,
+            selecao: 0x3a7fff3d,
+            caixa_quente: 0x24396bf7,
+            caixa_preta: 0x10131cf7,
+            margem: 4.,
+            vao: 4.,
+            raio_peca: 14.,
+        };
+
+    pub fn atual() -> &'static Variante {
+        &ATUAL
+    }
+}
+
+/// O raio dos cantos de cada peça (trilho, lista, conversa, painéis).
+pub fn raio_da_peca() -> gpui_kit::Pixels {
+    gpui_kit::px(superficie::ATUAL.raio_peca)
+}
+
+/// A margem entre a janela e as peças.
+pub fn margem_da_janela() -> gpui_kit::Pixels {
+    gpui_kit::px(superficie::ATUAL.margem)
+}
+
+/// O vão entre as peças.
+pub fn vao_entre_pecas() -> gpui_kit::Pixels {
+    gpui_kit::px(superficie::ATUAL.vao)
+}
+
 /// Cores próprias do Vitral que não existem no tema dos componentes.
 pub struct Cores;
 
@@ -563,30 +702,30 @@ impl Cores {
     /// Vidro da janela (o `background` do tema): o chumbo das frestas e da margem, mais escuro
     /// que as peças, para elas se destacarem.
     pub fn vidro() -> Hsla {
-        rgba(0x060810d4).into()
+        rgba(superficie::atual().vidro).into()
     }
     /// Fundo das colunas com texto pequeno (trilho e lista): garante o contraste no pior caso e
     /// fica no mesmo tom da conversa sobre o vidro escuro.
     pub fn vidro_leitura() -> Hsla {
-        rgba(0x151b2cbf).into()
+        rgba(superficie::atual().vidro_leitura).into()
     }
     /// Tudo o que flutua sobre texto (popover, menu, dica, aviso): quase preto e opaco, por cima
     /// do vidro azul (o `popover.background` do tema).
     pub fn flutuante() -> Hsla {
-        rgba(0x0c0e13ff).into()
+        rgba(superficie::atual().flutuante).into()
     }
     /// A gaveta (a lista ou a Equipe por cima da conversa, em janela estreita): flutua, então é
     /// opaca, mas continua no azul das peças.
     pub fn gaveta() -> Hsla {
-        rgba(0x1b2339ff).into()
+        rgba(superficie::atual().gaveta).into()
     }
     /// O preto de dentro: código, saída de comando, diff e o disco dos botões redondos do trilho.
     pub fn preto() -> Hsla {
-        rgba(0x08090cff).into()
+        rgba(superficie::atual().preto).into()
     }
     /// Trilho do segmentado, campo de busca, kbd, selos no vidro.
     pub fn recuo() -> Hsla {
-        rgba(0x0a0f1c80).into()
+        rgba(superficie::atual().recuo).into()
     }
     /// O recuo dentro de um flutuante: no quase preto o escuro some, então ali ele é um claro leve.
     pub fn recuo_no_flutuante() -> Hsla {
@@ -598,7 +737,7 @@ impl Cores {
     }
     /// Véu atrás dos diálogos (o `overlay` do tema).
     pub fn veu() -> Hsla {
-        rgba(0x070b1699).into()
+        rgba(superficie::atual().veu).into()
     }
     pub fn pressionado() -> Hsla {
         rgba(0xffffff1f).into()
@@ -624,11 +763,11 @@ impl Cores {
     }
     /// Campos, chip aberto, selos de contorno, separador em superfície opaca.
     pub fn borda() -> Hsla {
-        rgba(0xffffff14).into()
+        rgba(superficie::atual().borda).into()
     }
     /// Contorno de popover, diálogo e lista de escolha; trilho dos anéis.
     pub fn borda_forte() -> Hsla {
-        rgba(0xffffff1f).into()
+        rgba(superficie::atual().borda_forte).into()
     }
     /// Títulos, item selecionado ou não lido.
     pub fn forte() -> Hsla {
@@ -662,11 +801,11 @@ impl Cores {
     }
     /// Começo do gradiente da caixa de mensagem: o azul do vidro (o dono trocou o laranja pelo azul).
     pub fn caixa_quente() -> Hsla {
-        rgba(0x1c2c55f0).into()
+        rgba(superficie::atual().caixa_quente).into()
     }
     /// Fim do gradiente da caixa: o quase preto dos flutuantes, com o alfa do começo.
     pub fn caixa_preta() -> Hsla {
-        rgba(0x0c0e13f0).into()
+        rgba(superficie::atual().caixa_preta).into()
     }
     /// Reflexo azul na borda direita da caixa (camada por cima do gradiente).
     pub fn caixa_brilho() -> Background {
@@ -677,10 +816,10 @@ impl Cores {
         )
     }
     pub fn brilho_topo() -> Hsla {
-        rgba(0xffffff0f).into()
+        rgba(superficie::atual().brilho_topo).into()
     }
     pub fn sombra_caixa() -> Hsla {
-        rgba(0x00000059).into()
+        preto_de_sombra(0x59)
     }
     /// Fundo do BotaoRedondo claro.
     pub fn claro() -> Hsla {
@@ -692,14 +831,14 @@ impl Cores {
     }
     /// Cartões (barra lateral, conversa, painel): navy mais claro e mais opaco que o fundo.
     pub fn cartao() -> Hsla {
-        rgba(0x141a2ae6).into()
+        rgba(superficie::atual().cartao).into()
     }
     pub fn cartao_elevado() -> Hsla {
-        rgba(0x1a2136f0).into()
+        rgba(superficie::atual().cartao_elevado).into()
     }
     /// Diálogos: opacos, senão o texto da conversa aparece através deles.
     pub fn dialogo() -> Hsla {
-        rgba(0x161c2fff).into()
+        rgba(superficie::atual().dialogo).into()
     }
     pub fn destaque() -> Hsla {
         rgba(0x3a7fffff).into()
@@ -710,11 +849,11 @@ impl Cores {
     }
     /// Item escolhido numa lista (par com `hover`): azul, mais forte que o hover.
     pub fn selecao() -> Hsla {
-        rgba(0x3a7fff33).into()
+        rgba(superficie::atual().selecao).into()
     }
     /// Mouse por cima de um item de lista: neutro, para não parecer mais escolhido que a seleção.
     pub fn hover() -> Hsla {
-        rgba(0xffffff12).into()
+        rgba(superficie::atual().hover).into()
     }
     /// Contorno do painel ativo e da caixa com foco: forte o bastante para ver no vidro.
     pub fn destaque_borda() -> Hsla {
@@ -734,8 +873,13 @@ impl Cores {
     pub fn fantasma() -> Hsla {
         rgba(0x9ba8cf99).into()
     }
+    /// Aro de 1 px por dentro das pecas (estudo de fundos): transparente na variante que
+    /// nao tem aro, como o Vitral de hoje.
+    pub fn aro_da_peca() -> Hsla {
+        rgba(superficie::atual().aro).into()
+    }
     pub fn linha() -> Hsla {
-        rgba(0xffffff0d).into()
+        rgba(superficie::atual().linha).into()
     }
     pub fn verde() -> Hsla {
         rgba(0x4ade80ff).into()
@@ -847,7 +991,7 @@ pub(crate) mod testes {
 
     #[test]
     fn vidro_e_flutuante_iguais_aos_do_tema() {
-        let json: serde_json::Value = serde_json::from_str(TEMA).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&super::tema_json()).unwrap();
         let cores = &json["themes"][0]["colors"];
         let fundo = cor_do_tema(cores["background"].as_str().unwrap());
         assert!(mesma_cor(Cores::vidro(), fundo), "Cores::vidro() diferente do background do tema");
@@ -864,9 +1008,9 @@ pub(crate) mod testes {
         let vidro = sobre(Cores::vidro(), branco);
         let painel = sobre(Cores::cartao(), vidro);
         let flutuante = sobre(Cores::flutuante(), vidro);
-        // O brilho do `.reflexo()` (#ffffff08) clareia o topo das peças, onde fica o título. A
-        // linha de luz é de 1 px, sem texto em cima.
-        let reflexo = |fundo: Rgba| sobre(gpui_kit::rgba(0xffffff08).into(), fundo);
+        // O `.reflexo()` escurece o topo das peças, onde fica o título (#0000001a): o texto
+        // precisa continuar legível sobre ele. A linha de luz é de 1 px, sem texto em cima.
+        let reflexo = |fundo: Rgba| sobre(gpui_kit::rgba(0x0000001a).into(), fundo);
         let superficies = [
             ("vidro de leitura", sobre(Cores::vidro_leitura(), vidro)),
             ("painel", painel),
@@ -943,12 +1087,16 @@ pub(crate) mod testes {
             assert!(hover >= 1.12, "hover sobre {nome_fundo}: {hover:.3}:1");
             assert!(selecao > hover + 0.05, "seleção sobre {nome_fundo}: {selecao:.3}:1 (hover {hover:.3})");
             assert!(realce(Cores::pressionado()) > selecao, "pressionado sobre {nome_fundo}");
-            assert!(realce(Cores::borda()) >= 1.12, "borda sobre {nome_fundo}");
+            // O acabamento escolhido não contorna as peças (`borda()` é transparente de
+            // propósito): quem precisa aparecer é o contorno forte, o de popover e diálogo.
+            assert!(realce(Cores::borda_forte()) >= 1.12, "borda forte sobre {nome_fundo}");
         }
-        // No flutuante o recuo de sempre some; o claro do recuo_no_flutuante, não.
+        // O recuo é um escuro por cima: no acabamento de hoje ele aparece também no flutuante
+        // (antes sumia ali, e por isso existe o `recuo_no_flutuante`, que segue valendo como o
+        // claro de quem precisa de recuo sobre um fundo já escuro).
         let flutuante = fundos[0].1;
-        assert!(contraste(sobre(Cores::recuo(), flutuante), flutuante) < 1.02);
-        assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.08);
+        assert!(contraste(sobre(Cores::recuo(), flutuante), flutuante) >= 1.05);
+        assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.05);
     }
 
     pub(crate) fn arquivos_rs(pasta: &std::path::Path) -> Vec<std::path::PathBuf> {

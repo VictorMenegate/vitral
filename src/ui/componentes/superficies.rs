@@ -40,7 +40,11 @@ impl<T: Styled> Flutuante for T {}
 /// `Cores::borda()` para `Cores::linha()`.
 pub trait Reflexo: ParentElement + Sized {
     fn reflexo(self, raio: Pixels) -> Self {
-        self.child(camada_de_reflexo(raio))
+        // Estudo de fundos: só as peças (raio de peça) levam o aro, e a variante que não tem aro
+        // pinta transparente, como o Vitral de hoje.
+        let peca = raio == raio::PECA;
+        let com_reflexo = self.child(camada_de_reflexo(raio));
+        if peca { com_reflexo.child(camada_de_aro(raio)) } else { com_reflexo }
     }
 }
 
@@ -58,6 +62,20 @@ pub fn camada_de_reflexo(raio: Pixels) -> Div {
         .rounded_t((raio - px(1.)).max(px(0.)))
         .bg(gradiente_reflexo())
         .shadow(vec![linha_de_luz(1.)])
+}
+
+/// O aro do estudo de fundos: um contorno de 1 px por dentro da peça, numa camada solta (não
+/// mexe em layout nem em raio; na variante sem aro a cor é transparente e nada aparece).
+pub fn camada_de_aro(raio: Pixels) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .rounded(raio)
+        .border(px(1.))
+        .border_color(Cores::aro_da_peca())
 }
 
 /// Popover da linguagem: raio de peça e margem 16. Fundo, anel e sombra vêm do kit, e a seta sai

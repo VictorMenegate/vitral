@@ -1368,8 +1368,8 @@ impl Render for Janela {
             .child(
                 h_flex()
                     .size_full()
-                    .p(esp::E8)
-                    .gap(esp::E8)
+                    .p(crate::tema::margem_da_janela())
+                    .gap(crate::tema::vao_entre_pecas())
                     .items_start()
                     // Ctrl+B esconde o trilho junto com a lista (4d).
                     .when(self.lista, |s| s.child(self.trilho(&motor, window, cx)))

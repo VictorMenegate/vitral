@@ -1206,8 +1206,8 @@ impl Janela {
             .size_full()
             .min_w_0()
             .px(esp::PECA)
-            .rounded(raio::PECA)
-            .when(!na_gaveta, |s| s.bg(Cores::vidro_leitura()).reflexo(raio::PECA))
+            .rounded(crate::tema::raio_da_peca())
+            .when(!na_gaveta, |s| s.bg(Cores::vidro_leitura()).reflexo(crate::tema::raio_da_peca()))
             .on_prepaint(move |limites, window, _| {
                 let nova = limites.size.width.as_f32() / super::escala(window);
                 if (nova - largura_atual).abs() > 0.5 {
