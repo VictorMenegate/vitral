@@ -479,8 +479,11 @@ const LINHAS_DA_ATUALIZACAO: usize = 8;
 /// PATH lembra de acertar o PATH. `NO_COLOR` porque o texto vai para a interface, não para um
 /// terminal.
 pub fn atualizar() -> Atualizacao {
-    let binario = binario_claude();
-    let saida = processos::novo_comando(&binario)
+    atualizar_com(&binario_claude())
+}
+
+fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
+    let saida = processos::novo_comando(binario)
         .arg("update")
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
@@ -982,6 +985,45 @@ mod testes {
         std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
         assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// O `claude update` com um claude de mentira: a saída dele é o que a interface mostra, e o
+    /// código de saída é o que diz se deu certo. Nunca com o claude de verdade, que mexeria na
+    /// instalação de quem está rodando o teste.
+    #[cfg(unix)]
+    #[test]
+    fn a_atualizacao_devolve_o_que_o_claude_disse() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let pasta = std::env::temp_dir().join(format!("vitral-update-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let falso = pasta.join("claude");
+        let escrever = |corpo: &str| {
+            std::fs::write(&falso, format!("#!/bin/sh\n[ \"$1\" = update ] || exit 9\n{corpo}\n")).unwrap();
+            std::fs::set_permissions(&falso, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        escrever("echo 'Current version: 2.1.318'\necho\necho 'Claude Code is up to date (2.1.318)'");
+        let em_dia = atualizar_com(&falso);
+        // As linhas vazias saem, e o resto vai inteiro.
+        assert_eq!(em_dia, Atualizacao {
+            ok: true,
+            linhas: vec!["Current version: 2.1.318".into(), "Claude Code is up to date (2.1.318)".into()],
+        });
+        assert!(!instalou_versao_nova(&em_dia));
+        escrever("echo 'Successfully updated from 2.1.318 to version 2.1.320'");
+        assert!(instalou_versao_nova(&atualizar_com(&falso)));
+        // O que falhou: o texto dele, pelo stderr também, e `ok` falso pelo código de saída.
+        escrever("echo 'Error: Failed to install native update'\necho 'claude doctor' >&2\nexit 1");
+        let erro = atualizar_com(&falso);
+        assert!(!erro.ok && !instalou_versao_nova(&erro));
+        assert_eq!(erro.linhas, ["Error: Failed to install native update", "claude doctor"]);
+        // Calado (um exec que não imprime nada) não deixa a linha vazia.
+        escrever("exit 0");
+        assert_eq!(atualizar_com(&falso).linhas, ["O claude não disse nada."]);
+        // Sem o binário, o erro de abrir é o texto.
+        let faltando = pasta.join("nao-existe");
+        let sem = atualizar_com(&faltando);
+        assert!(!sem.ok && sem.linhas[0].starts_with(&format!("Não deu para abrir o {}", faltando.display())));
+        let _ = std::fs::remove_dir_all(&pasta);
     }
 
     #[test]
