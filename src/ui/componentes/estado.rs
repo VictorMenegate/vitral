@@ -344,7 +344,7 @@ impl RenderOnce for Selo {
                 let (fundo, cor) = match (self.solida, self.tingida) {
                     (Some(c), _) => (c, Cores::sobre_cor()),
                     (None, Some(c)) => (Cores::tinta(c), c),
-                    (None, None) => (Cores::borda(), Cores::tenue()),
+                    (None, None) => (Cores::traco(), Cores::tenue()),
                 };
                 pilula()
                     .min_w(r(18.))

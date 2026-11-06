@@ -461,8 +461,8 @@ pub struct Atualizacao {
     pub linhas: Vec<String>,
 }
 
-/// No máximo tantas linhas da saída (uma instalação por npm imprime algumas); a linha das
-/// Configurações não é um console.
+/// No máximo tantas linhas da saída, as últimas (uma instalação por npm imprime algumas); a linha
+/// das Configurações não é um console.
 const LINHAS_DA_ATUALIZACAO: usize = 8;
 
 /// Roda `claude update` no `claude` que os turnos abrem e devolve o que ele disse. Bloqueia
@@ -483,11 +483,23 @@ pub fn atualizar() -> Atualizacao {
 }
 
 fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
-    let saida = processos::novo_comando(binario)
-        .arg("update")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .output();
+    // Um binário recém-trocado pode dar "Text file busy" por um instante (no Windows, o antivírus
+    // segurando o .exe): tenta de novo, como o atualizador do próprio Vitral.
+    let mut tentativas = 0;
+    let saida = loop {
+        let saida = processos::novo_comando(binario)
+            .arg("update")
+            .env("NO_COLOR", "1")
+            .stdin(Stdio::null())
+            .output();
+        match saida {
+            Err(erro) if crate::atualizacao::pacote::texto_ocupado(&erro) && tentativas < 20 => {
+                tentativas += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            saida => break saida,
+        }
+    };
     let saida = match saida {
         Ok(saida) => saida,
         Err(erro) => {
@@ -504,7 +516,11 @@ fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect();
-    linhas.truncate(LINHAS_DA_ATUALIZACAO);
+    // O fim é o que importa: o resultado ("Successfully updated…") e o erro, que vem pelo stderr,
+    // ficam depois do progresso.
+    if linhas.len() > LINHAS_DA_ATUALIZACAO {
+        linhas.drain(..linhas.len() - LINHAS_DA_ATUALIZACAO);
+    }
     if linhas.is_empty() {
         linhas.push("O claude não disse nada.".into());
     }
@@ -1016,6 +1032,12 @@ mod testes {
         let erro = atualizar_com(&falso);
         assert!(!erro.ok && !instalou_versao_nova(&erro));
         assert_eq!(erro.linhas, ["Error: Failed to install native update", "claude doctor"]);
+        // Muito texto: ficam as últimas linhas, que é onde estão o resultado e o erro.
+        escrever("for i in 1 2 3 4 5 6 7 8 9 10; do echo \"Checking $i\"; done\necho 'Successfully updated from 2.1.318 to version 2.1.320'");
+        let longa = atualizar_com(&falso);
+        assert_eq!(longa.linhas.len(), LINHAS_DA_ATUALIZACAO);
+        assert_eq!(longa.linhas.last().map(String::as_str), Some("Successfully updated from 2.1.318 to version 2.1.320"));
+        assert!(instalou_versao_nova(&longa));
         // Calado (um exec que não imprime nada) não deixa a linha vazia.
         escrever("exit 0");
         assert_eq!(atualizar_com(&falso).linhas, ["O claude não disse nada."]);

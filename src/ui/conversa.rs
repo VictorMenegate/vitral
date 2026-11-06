@@ -797,10 +797,10 @@ impl Janela {
             .pr(esp::E8)
             .gap(esp::E8)
             .border_b_1()
-            .border_color(if rolado { Cores::borda() } else { gpui_kit::transparent_black().into() })
+            .border_color(if rolado { Cores::traco() } else { gpui_kit::transparent_black().into() })
             // O gradiente do Mestre leva o próprio raio: o `overflow_hidden` do cartão não corta
             // canto arredondado.
-            .when(mestre, |s| s.bg(gradiente_destaque()).rounded_t(raio::PECA - px(1.5)))
+            .when(mestre, |s| s.bg(gradiente_destaque()).rounded_t(crate::tema::raio_da_peca() - px(1.5)))
             // Com a lista fora da tela, o primeiro painel começa pelo uso do plano e pelo logo
             // compacto, nessa ordem: recolhida a lista, o uso é a primeira coisa da esquerda, no
             // lugar onde ele ficava no pé do trilho.

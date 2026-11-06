@@ -99,11 +99,6 @@ pub struct Configuracoes {
     _acompanhando: Option<Acompanhando>,
     /// GitHub, Linear e o isolamento dos chats.
     conexoes: Entity<PainelConexoes>,
-    /// O `claude update` que está rodando agora (a tarefa fica aqui para não ser derrubada).
-    _claude: Task<()>,
-    atualizando_claude: bool,
-    /// O que o último `claude update` respondeu, para mostrar na linha.
-    resposta_do_claude: Option<Atualizacao>,
 }
 
 impl Configuracoes {
@@ -129,33 +124,9 @@ impl Configuracoes {
             _observa,
             _atualizacoes,
             _acompanhando,
-            _claude: Task::ready(()),
-            atualizando_claude: false,
-            resposta_do_claude: None,
         };
         este.medir(cx);
         este
-    }
-
-    /// Roda o `claude update` em segundo plano e, no fim, relê a versão: os chips que dependem
-    /// dela (o Ultracode, as versões exatas de modelo) mudam sem reiniciar o app.
-    fn atualizar_claude(&mut self, cx: &mut Context<Self>) {
-        if self.atualizando_claude {
-            return;
-        }
-        self.atualizando_claude = true;
-        self.resposta_do_claude = None;
-        let motor = self.motor.clone();
-        self._claude = cx.spawn(async move |este, cx| {
-            let resposta = cx.background_spawn(async move { claude::atualizar() }).await;
-            let _ = este.update(cx, |este, cx| {
-                este.atualizando_claude = false;
-                este.resposta_do_claude = Some(resposta);
-                cx.notify();
-            });
-            let _ = motor.update(cx, |m, cx| m.reler_versao_claude(cx));
-        });
-        cx.notify();
     }
 
     /// O grupo Claude Code das Configurações: a versão que os turnos abrem e o Atualizar.
@@ -164,8 +135,8 @@ impl Configuracoes {
         let linha = linha_do_claude(
             motor.versao_claude,
             motor.turnos_a_caminho(),
-            self.atualizando_claude,
-            self.resposta_do_claude.as_ref(),
+            motor.atualizando_claude,
+            motor.resposta_do_claude.as_ref(),
         );
         let falhou = linha.falhou;
         let descricao = div()
@@ -186,7 +157,7 @@ impl Configuracoes {
                     .when(falhou, |d| d.text_color(Cores::ambar()))
                     .child(t.clone())
             }));
-        let este = cx.entity();
+        let motor_e = self.motor.clone();
         let botao = botao_fantasma(
             "cfg-claude-atualizar",
             Some(Lucide::RefreshCw.into()),
@@ -196,7 +167,7 @@ impl Configuracoes {
             cx,
         )
         .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
-        .on_click(move |_, _, cx| este.update(cx, |este, cx| este.atualizar_claude(cx)));
+        .on_click(move |_, _, cx| motor_e.update(cx, |m, cx| m.atualizar_claude(cx)));
         let opcao = LinhaDeOpcao::new("cfg-claude", "Versão instalada")
             .info(
                 "O Vitral abre um processo do claude por turno; a versão é a do claude que ele encontra (o do PATH \

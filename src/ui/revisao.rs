@@ -1975,7 +1975,7 @@ impl RevisaoDiff {
                     .when(d.segmentado && pronta, |s| s.child(segmentado).child(div().w(r(8.))))
                     .child(inteiro)
                     .child(quebrar)
-                    .child(div().mx(r(4.)).w(px(1.)).h(r(16.)).bg(Cores::borda()))
+                    .child(div().mx(r(4.)).w(px(1.)).h(r(16.)).bg(Cores::traco()))
                     .child(anterior)
                     .child(proxima),
             ))
@@ -3071,7 +3071,7 @@ fn corpo_ajuste(
                 .child(Textarea::new(recado).appearance(false)),
         )
         .when(dados.nao_usados > 0, |c| {
-            c.child(div().h(px(1.)).bg(Cores::borda())).child(
+            c.child(div().h(px(1.)).bg(Cores::traco())).child(
                 div().mx(r(-12.)).child(
                     LinhaDeOpcao::new("incluir-apontamentos", "Incluir os apontamentos que você não usou")
                         .descricao(descricao)

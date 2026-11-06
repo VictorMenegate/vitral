@@ -178,14 +178,14 @@ fn abrir_sem_tela(binario: &Path) -> Result<std::process::Child> {
 }
 
 #[cfg(unix)]
-fn texto_ocupado(erro: &io::Error) -> bool {
+pub(crate) fn texto_ocupado(erro: &io::Error) -> bool {
     erro.raw_os_error() == Some(libc::ETXTBSY)
 }
 
 /// No Windows, o antivírus lê o .exe recém-gravado e segura o arquivo por um instante
 /// (ERROR_SHARING_VIOLATION).
 #[cfg(not(unix))]
-fn texto_ocupado(erro: &io::Error) -> bool {
+pub(crate) fn texto_ocupado(erro: &io::Error) -> bool {
     erro.raw_os_error() == Some(32)
 }
 

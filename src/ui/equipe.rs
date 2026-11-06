@@ -117,8 +117,8 @@ impl Janela {
             .size_full()
             .flex()
             .flex_col()
-            .rounded(raio::PECA)
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).reflexo(raio::PECA))
+            .rounded(crate::tema::raio_da_peca())
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).reflexo(crate::tema::raio_da_peca()))
             .overflow_hidden()
             .child(cabecalho)
             .child(
@@ -1224,7 +1224,7 @@ impl Janela {
             .when(revisao.problemas.is_empty(), |s| {
                 s.child(div().metadado().text_color(Cores::tenue()).child("Nenhum problema apontado."))
             })
-            .when(!revisao.problemas.is_empty(), |s| s.child(div().h(px(1.)).bg(Cores::borda())))
+            .when(!revisao.problemas.is_empty(), |s| s.child(div().h(px(1.)).bg(Cores::traco())))
             .children(revisao.problemas.iter().enumerate().map(|(i, p)| {
                 let onde = match p.linha {
                     Some(l) => format!("{}:{l}", p.arquivo),
@@ -1524,7 +1524,7 @@ impl Janela {
         // gaveta), troca o de outra tarefa.
         let cheio = !self.cabe_outro_painel()
             || (self.direita_visivel()
-                && empurraria_a_direita(self.paineis.len(), super::util_a_100(window, self.lista), self.lista));
+                && empurraria_a_direita(self.paineis.len(), super::util_a_100(window), self.lista));
         if !aberto
             && cheio
             && let Some(ix) = trocar
@@ -1559,7 +1559,7 @@ impl Janela {
                 .collect()
         };
         fila.sort();
-        let largura = super::util_a_100(window, self.lista);
+        let largura = super::util_a_100(window);
         let mut cabem = quantos_cabem(largura, self.lista, true);
         if cabem < 2 && self.lista && quantos_cabem(largura, false, true) >= 2 {
             self.lista = false;

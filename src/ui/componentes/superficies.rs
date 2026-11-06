@@ -247,7 +247,7 @@ impl RenderOnce for CorpoPopover {
             .children(cabecalho)
             .children(self.corpo)
             .when(tem_rodape, |s| {
-                s.child(div().h(px(1.)).bg(Cores::borda()))
+                s.child(div().h(px(1.)).bg(Cores::traco()))
                     .child(div().flex().flex_col().gap(r(8.)).children(self.rodape))
             })
     }

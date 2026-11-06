@@ -183,7 +183,7 @@ impl Janela {
             .items_center()
             .gap(esp::E4)
             .border_b_1()
-            .border_color(if rolado { Cores::borda() } else { gpui_kit::transparent_black().into() })
+            .border_color(if rolado { Cores::traco() } else { gpui_kit::transparent_black().into() })
             .children(abas)
             .child(div().flex_1().min_w(esp::E8))
             .child(self.botoes_da_direita(false, window, cx))

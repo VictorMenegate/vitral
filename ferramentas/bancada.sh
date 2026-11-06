@@ -127,7 +127,12 @@ $LISO
 [org/gnome/desktop/notifications]
 show-banners=false
 J
-    [ -n "${CLAUDE_FALSO:-}" ] && export PATH="$(dirname "$(realpath "$0")")/claude-falso:$PATH"
+    if [ -n "${CLAUDE_FALSO:-}" ]; then
+        export PATH="$(dirname "$(realpath "$0")")/claude-falso:$PATH"
+        # A versão que um update de mentira anotou vale só nesta rodada: a próxima parte do
+        # CLAUDE_FALSO_VERSAO de novo.
+        rm -f "$B/state$N/claude-falso-versao"
+    fi
     export XDG_CONFIG_HOME=$B/config XDG_DATA_HOME=$B/data XDG_CACHE_HOME=$B/cache XDG_BIN_HOME=$B/bin \
         XDG_STATE_HOME=$B/state$N XDG_RUNTIME_DIR=$RUN GSETTINGS_BACKEND=keyfile DENTRO_DA_BANCADA=1 \
         VITRAL_SEM_ATUALIZACAO=${VITRAL_SEM_ATUALIZACAO:-1}

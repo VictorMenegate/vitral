@@ -557,7 +557,9 @@ fn tema_json() -> String {
     let mut json = TEMA.to_string();
     for (chave, cor) in [
         ("background", v.vidro),
-        ("border", v.borda),
+        // O `border` do kit também pinta os separadores dos menus: fica com a divisória, e só o
+        // contorno dos campos segue a borda transparente.
+        ("border", v.linha),
         ("input.border", v.borda),
         ("popover.background", v.flutuante),
         ("overlay", v.veu),
@@ -602,7 +604,6 @@ pub fn aplicar(cx: &mut App) {
 /// diferente, com a moldura quase preta.
 pub mod superficie {
     pub struct Variante {
-        pub nome: &'static str,
         /// Vidro da janela: o chumbo das frestas e da margem.
         pub vidro: u32,
         /// Fundo do trilho e da lista.
@@ -626,6 +627,9 @@ pub mod superficie {
         pub borda_forte: u32,
         /// Divisória por dentro de uma superfície.
         pub linha: u32,
+        /// O que é traço e não contorno: trilha de barra, linha de árvore, separador e o fundo do
+        /// selo neutro. Fica visível mesmo com `borda` transparente.
+        pub traco: u32,
         /// Aro de 1 px por dentro das peças (alfa 0 = peça sem aro, como hoje).
         pub aro: u32,
         /// Linha de luz no topo de dentro das peças.
@@ -646,9 +650,8 @@ pub mod superficie {
         pub raio_peca: f32,
     }
 
-    /// As cores em uso.
+    /// As cores em uso: "Degraus", sem borda, denso.
     pub const ATUAL: Variante = Variante {
-            nome: "Degraus, sem borda, denso",
             vidro: 0x02030aee,
             vidro_leitura: 0x0e1322ff,
             cartao: 0x171e30ff,
@@ -662,6 +665,7 @@ pub mod superficie {
             borda: 0x00000000,
             borda_forte: 0xffffff14,
             linha: 0xffffff0f,
+            traco: 0xffffff14,
             aro: 0x00000000,
             brilho_topo: 0xffffff0f,
             reflexo: 1.,
@@ -881,6 +885,11 @@ impl Cores {
     pub fn linha() -> Hsla {
         rgba(superficie::atual().linha).into()
     }
+    /// Trilha de barra, linha de árvore, separador e fundo de selo neutro: o traço que continua à
+    /// vista com as peças e os controles sem contorno.
+    pub fn traco() -> Hsla {
+        rgba(superficie::atual().traco).into()
+    }
     pub fn verde() -> Hsla {
         rgba(0x4ade80ff).into()
     }
@@ -1090,13 +1099,17 @@ pub(crate) mod testes {
             // O acabamento escolhido não contorna as peças (`borda()` é transparente de
             // propósito): quem precisa aparecer é o contorno forte, o de popover e diálogo.
             assert!(realce(Cores::borda_forte()) >= 1.12, "borda forte sobre {nome_fundo}");
+            // Mas trilha, linha de árvore, separador e selo neutro não são contorno: continuam
+            // à vista (eles usam o `traco()`, e os separadores do kit, a `linha()`).
+            assert!(realce(Cores::traco()) >= 1.12, "traço sobre {nome_fundo}");
+            assert!(realce(Cores::linha()) >= 1.08, "linha sobre {nome_fundo}");
         }
         // O recuo é um escuro por cima: no acabamento de hoje ele aparece também no flutuante
         // (antes sumia ali, e por isso existe o `recuo_no_flutuante`, que segue valendo como o
         // claro de quem precisa de recuo sobre um fundo já escuro).
         let flutuante = fundos[0].1;
         assert!(contraste(sobre(Cores::recuo(), flutuante), flutuante) >= 1.05);
-        assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.05);
+        assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.08);
     }
 
     pub(crate) fn arquivos_rs(pasta: &std::path::Path) -> Vec<std::path::PathBuf> {

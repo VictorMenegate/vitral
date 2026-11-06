@@ -469,6 +469,11 @@ pub struct Motor {
     pub permissoes: Vec<PedidoPermissao>,
     /// Versão do Claude Code que os turnos abrem (lida ao abrir e a cada início de turno).
     pub versao_claude: Option<Versao>,
+    /// O `claude update` das Configurações está rodando. Mora no motor, e não no diálogo, para
+    /// sobreviver a fechar as Configurações no meio e para reabrir não deixar começar outro.
+    pub atualizando_claude: bool,
+    /// O que o último `claude update` respondeu, para a linha das Configurações.
+    pub resposta_do_claude: Option<claude::Atualizacao>,
     /// Se a conta tem os fluxos de agentes (a ferramenta `Workflow`): `false` só depois de um
     /// turno com Ultracode em que eles não vieram. Não trava a opção (a pessoa pode ter mudado a
     /// configuração da conta): só a avisa em âmbar.
@@ -769,6 +774,8 @@ impl Motor {
             criando_projeto_de: HashSet::new(),
             permissoes: Vec::new(),
             versao_claude: None,
+            atualizando_claude: false,
+            resposta_do_claude: None,
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             fim_adiado: HashMap::new(),
@@ -3289,6 +3296,28 @@ impl Motor {
                     m.versao_claude = versao;
                     cx.notify();
                 }
+            });
+        })
+        .detach();
+    }
+
+    /// Roda o `claude update` em segundo plano e, no fim, guarda a resposta e relê a versão: os
+    /// chips que dependem dela (o Ultracode, as versões exatas de modelo) mudam sem reiniciar o
+    /// app. A tarefa é do motor, então fechar as Configurações no meio não perde o resultado.
+    pub fn atualizar_claude(&mut self, cx: &mut Context<Self>) {
+        if self.atualizando_claude {
+            return;
+        }
+        self.atualizando_claude = true;
+        self.resposta_do_claude = None;
+        cx.notify();
+        cx.spawn(async move |motor, cx| {
+            let resposta = cx.background_spawn(async move { claude::atualizar() }).await;
+            let _ = motor.update(cx, |m, cx| {
+                m.atualizando_claude = false;
+                m.resposta_do_claude = Some(resposta);
+                m.reler_versao_claude(cx);
+                cx.notify();
             });
         })
         .detach();

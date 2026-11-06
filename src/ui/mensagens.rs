@@ -1349,7 +1349,7 @@ fn trilho_do_log() -> Div {
         .top(r(23.))
         .bottom(r(-6.))
         .w(px(1.))
-        .bg(Cores::borda())
+        .bg(Cores::traco())
 }
 
 impl Janela {
@@ -4045,7 +4045,7 @@ fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> 
     caixa_de_codigo(id)
         .children(linhas.iter().take(limite).map(|(marca, texto)| {
             if *marca == MarcaDeLinha::Separador {
-                return div().my(r(4.)).h(px(1.)).bg(Cores::borda()).into_any_element();
+                return div().my(r(4.)).h(px(1.)).bg(Cores::traco()).into_any_element();
             }
             let (sinal, cor, fundo): (&str, Hsla, Option<Hsla>) = match marca {
                 MarcaDeLinha::Sai => ("−", Cores::vermelho(), Some(fundo_sai())),

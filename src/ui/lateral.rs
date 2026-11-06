@@ -1220,8 +1220,9 @@ impl Janela {
                 }
             })
             // O trilho deitado no alto da lista: as duas peças viraram uma só, e o que era a
-            // coluna de ícones à esquerda é a primeira fileira daqui.
-            .when(!na_gaveta, |s| s.child(self.trilho_deitado(motor_entidade, window, cx)))
+            // coluna de ícones à esquerda é a primeira fileira daqui. Também na gaveta, que é o
+            // único lugar do logo (e do menu do Vitral) quando a lista não cabe ao lado.
+            .child(self.trilho_deitado(motor_entidade, window, cx))
             .child(cabecalho)
             .children(topo)
             .children(abas)
@@ -1554,7 +1555,7 @@ impl Janela {
         // O sino e os anéis de uso desceram do trilho para cá: na fileira de cima só cabem o
         // logo, o Mestre e os projetos, e é lá que o olho procura projeto, não aviso.
         let sino = self.botao_sino(super::cartoes::precisa_com_o_mestre(motor), cx);
-        let uso = self.uso_compacto(cx);
+        let uso = self.uso_do_rodape(cx);
         Some(
             h_flex()
                 .flex_none()
@@ -1915,7 +1916,7 @@ impl Janela {
             .left(relative(0.5))
             .w(px(1.))
             .map(|d| if primeira { d.top(r(-13.)).h(r(23.)) } else { d.top(px(-1.)).h(r(10.)) })
-            .bg(Cores::borda());
+            .bg(Cores::traco());
         let coluna = div()
             .relative()
             .flex_none()

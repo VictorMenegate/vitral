@@ -493,7 +493,7 @@ fn coluna_da_arvore(
     window: &Window,
 ) -> AnyElement {
     let (primeiro, ultimo) = ramo;
-    let traco = || div().absolute().left_0().w(px(1.)).bg(Cores::borda());
+    let traco = || div().absolute().left_0().w(px(1.)).bg(Cores::traco());
     let vao = r(if sinal.is_some_and(Sinal::vazado) { 12. } else { 0. });
     let linha = div()
         .absolute()
@@ -503,9 +503,9 @@ fn coluna_da_arvore(
         .bottom(px(-1.))
         .flex()
         .flex_col()
-        .child(div().flex_1().bg(Cores::borda()))
+        .child(div().flex_1().bg(Cores::traco()))
         .child(div().flex_none().h(vao))
-        .child(div().flex_1().when(!ultimo, |d| d.bg(Cores::borda())))
+        .child(div().flex_1().when(!ultimo, |d| d.bg(Cores::traco())))
         .when(!ultimo, |d| d.child(traco().top(relative(1.)).h(esp::E2)))
         .when(primeiro, |d| d.child(traco().bottom(relative(1.)).h(r(13.))));
     let ponto = match (sinal, simbolo) {

@@ -54,19 +54,21 @@ pub(super) fn instalar_codex() {
 }
 
 impl Janela {
-    /// Os botões de uso do Claude (conta padrão) e do Codex no pé do trilho.
-    pub(super) fn uso_plano(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        v_flex().gap(r(8.)).items_center().children(self.botoes_uso(false, cx))
-    }
-
-    /// Os anéis no cabeçalho do 1º painel com o trilho escondido: de 24, lado a lado, centrados
-    /// na linha de 44, e os popovers abrem para baixo.
-    pub(super) fn uso_compacto(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let botoes = self.botoes_uso(true, cx);
+    /// Os anéis no rodapé da lista, na ponta direita: o Codex sempre (o popover dele é onde fica
+    /// o "Entrar"), e os popovers abrem para cima, sem cobrir o anel.
+    pub(super) fn uso_do_rodape(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let botoes = self.botoes_uso(Lugar::Rodape, cx);
         (!botoes.is_empty()).then(|| h_flex().flex_none().gap(esp::E4).children(botoes).into_any_element())
     }
 
-    fn botoes_uso(&self, compacto: bool, cx: &Context<Self>) -> Vec<AnyElement> {
+    /// Os anéis no cabeçalho do 1º painel com a lista recolhida: de 24, lado a lado, centrados
+    /// na linha de 44, e os popovers abrem para baixo.
+    pub(super) fn uso_compacto(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let botoes = self.botoes_uso(Lugar::Cabecalho, cx);
+        (!botoes.is_empty()).then(|| h_flex().flex_none().gap(esp::E4).children(botoes).into_any_element())
+    }
+
+    fn botoes_uso(&self, lugar: Lugar, cx: &Context<Self>) -> Vec<AnyElement> {
         let Some(motor) = self.motor.clone() else {
             return Vec::new();
         };
@@ -86,33 +88,45 @@ impl Janela {
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
             )
         };
-        let mut botoes = vec![popover_uso(Marca::Claude, claude, compacto, motor.clone(), janela.clone()).into_any_element()];
-        // No cabeçalho, o Codex só aparece instalado e com uso lido.
-        if !compacto || codex.em_uso() {
-            botoes.push(popover_uso(Marca::Codex, codex, compacto, motor, janela).into_any_element());
+        let mut botoes = vec![popover_uso(Marca::Claude, claude, lugar, motor.clone(), janela.clone()).into_any_element()];
+        // No cabeçalho, o Codex só aparece instalado e com uso lido; no rodapé, sempre.
+        if lugar == Lugar::Rodape || codex.em_uso() {
+            botoes.push(popover_uso(Marca::Codex, codex, lugar, motor, janela).into_any_element());
         }
         botoes
     }
 }
 
-/// Botão do serviço e o popover com os detalhes: à direita do trilho ou, no modo recolhido,
-/// para baixo do cabeçalho.
+/// Onde ficam os anéis de uso.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lugar {
+    /// No rodapé da lista, na ponta direita: o popover abre para cima.
+    Rodape,
+    /// No cabeçalho do 1º painel, com a lista recolhida: o popover abre para baixo.
+    Cabecalho,
+}
+
+/// Botão do serviço e o popover com os detalhes: para cima do rodapé da lista ou, com a lista
+/// recolhida, para baixo do cabeçalho.
 fn popover_uso(
     marca: Marca,
     leitura: Leitura,
-    compacto: bool,
+    lugar: Lugar,
     motor: Entity<Motor>,
     janela: WeakEntity<Janela>,
 ) -> impl IntoElement + use<> {
-    let id = if compacto { ("uso-popover-recolhido", marca as usize) } else { ("uso-popover", marca as usize) };
+    let (id, ancora) = match lugar {
+        Lugar::Rodape => (("uso-popover", marca as usize), Anchor::BottomRight),
+        Lugar::Cabecalho => (("uso-popover-recolhido", marca as usize), Anchor::TopLeft),
+    };
     popover(id)
-        .anchor(if compacto { Anchor::TopLeft } else { Anchor::LeftCenter })
+        .anchor(ancora)
         .offset(px(8.))
         .arrow(true)
         .trigger(BotaoUso {
             marca,
             leitura,
-            diametro: if compacto { 24. } else { 36. },
+            diametro: 24.,
             aberto: false,
         })
         .content(move |_, window, cx| {
@@ -470,7 +484,7 @@ fn barra(fracao: f64, cor: Hsla) -> Div {
         .h(r(6.))
         .w_full()
         .rounded_full()
-        .bg(Cores::borda())
+        .bg(Cores::traco())
         .child(div().h_full().w(relative(fracao.clamp(0., 1.) as f32)).rounded_full().bg(cor))
 }
 
@@ -790,7 +804,7 @@ fn texto(conteudo: &'static str) -> impl IntoElement + use<> {
 }
 
 fn separador() -> impl IntoElement + use<> {
-    div().h(px(1.)).bg(Cores::borda())
+    div().h(px(1.)).bg(Cores::traco())
 }
 
 /// Porcentagem inteira mostrada (a cor da faixa segue o mesmo número).

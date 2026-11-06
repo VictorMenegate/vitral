@@ -63,7 +63,7 @@ use gpui_kit::*;
 use crate::{
     modelo::{self, Reforco},
     motor::Motor,
-    tema::{Cores, Lucide, esp, r, raio, tam},
+    tema::{Cores, Lucide, esp, r, tam},
 };
 use componentes::{Flutuante as _, TamanhoBotao, botao_icone};
 
@@ -95,7 +95,7 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-const FAIXA_LISTA: (f32, f32) = (240., 560.);
+const FAIXA_LISTA: (f32, f32) = (304., 560.);
 const FAIXA_DIREITA: (f32, f32) = (280., 900.);
 /// O que a gaveta deixa da conversa à mostra, para o clique fora fechá-la.
 const FRESTA_GAVETA: f32 = 40.;
@@ -261,18 +261,18 @@ impl Larguras {
 }
 
 /// Largura da área das partes: a janela menos a sombra e a borda (que somem nos lados
-/// ladrilhados), a margem e, com o trilho à vista, ele e a fresta depois dele.
-fn largura_util(window: &Window, trilho: bool) -> f32 {
+/// ladrilhados) e a margem. O trilho não conta mais: ele é a primeira fileira da lista.
+fn largura_util(window: &Window) -> f32 {
     let sombra = gpui_kit::component::window_paddings(window);
     let lado = |s: Pixels| if s > px(0.) { s.as_f32() + 1. } else { 0. };
     let largura = window.viewport_size().width.as_f32() - lado(sombra.left) - lado(sombra.right);
-    let fresta = tam(window, 8.).as_f32();
-    (largura - 2. * fresta - if trilho { tam(window, 52.).as_f32() + fresta } else { 0. }).max(0.)
+    let margem = tam(window, crate::tema::margem_da_janela().as_f32()).as_f32();
+    (largura - 2. * margem).max(0.)
 }
 
 /// A mesma área medida a 100%, para as contas com as larguras normais das partes.
-fn util_a_100(window: &Window, trilho: bool) -> f32 {
-    largura_util(window, trilho) / escala(window)
+fn util_a_100(window: &Window) -> f32 {
+    largura_util(window) / escala(window)
 }
 
 /// Os arquivos de um projeto na aba Arquivos.
@@ -614,7 +614,7 @@ impl Janela {
             equipe_rolada: None,
             painel: true,
             lista: true,
-            orcamento: orcamento(largura_util(window, true), escala(window), 1, true, false),
+            orcamento: orcamento(largura_util(window), escala(window), 1, true, false),
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
             chave_partes: None,
@@ -1191,7 +1191,7 @@ impl Janela {
                         .id("fundo-gaveta")
                         .absolute()
                         .inset_0()
-                        .rounded(raio::PECA)
+                        .rounded(crate::tema::raio_da_peca())
                         .bg(Cores::veu().opacity(0.5 * t))
                         .occlude()
                         .on_any_mouse_down(
@@ -1216,7 +1216,7 @@ impl Janela {
                         .w(largura)
                         .flutuante(cx)
                         .bg(Cores::gaveta())
-                        .rounded(raio::PECA)
+                        .rounded(crate::tema::raio_da_peca())
                         .occlude()
                         .map(|s| movimento::deslizar_gaveta(s, de, t))
                         .child(conteudo),
@@ -1289,7 +1289,7 @@ impl Render for Janela {
             });
         }
         self.orcamento = orcamento(
-            largura_util(window, self.lista),
+            largura_util(window),
             escala(window),
             self.paineis.len(),
             self.lista,
@@ -1528,7 +1528,7 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
         .items_center()
         .gap(esp::E8)
         .when(separar && !botoes.is_empty(), |s| {
-            s.ml(esp::E4).child(div().w(px(1.)).h(r(16.)).bg(Cores::borda()))
+            s.ml(esp::E4).child(div().w(px(1.)).h(r(16.)).bg(Cores::traco()))
         })
         .children(botoes.into_iter().map(|botao| {
             let (id, icone) = match botao {

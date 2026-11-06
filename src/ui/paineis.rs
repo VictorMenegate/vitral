@@ -230,7 +230,7 @@ impl RenderOnce for FormaSoltura {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(raio::PECA)
+                .rounded(crate::tema::raio_da_peca())
         };
         let metade = |lado: Lado| match lado {
             Lado::Esquerda => base().left_0().w(relative(0.5)),

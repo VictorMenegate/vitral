@@ -2004,7 +2004,7 @@ fn carregando(texto: &'static str, window: &Window) -> AnyElement {
 
 /// Uma barra do esqueleto (a `borda()` a 40%), na fração da largura.
 pub(super) fn barra_esqueleto(fracao: f32) -> Div {
-    div().h(r(10.)).w(relative(fracao)).rounded_full().bg(Cores::borda().opacity(0.4))
+    div().h(r(10.)).w(relative(fracao)).rounded_full().bg(Cores::traco().opacity(0.4))
 }
 
 /// Uma linha de 52 do esqueleto da primeira leitura.
@@ -2014,7 +2014,7 @@ fn esqueleto(i: usize) -> AnyElement {
         .px(esp::E8)
         .gap(esp::E12)
         .child(div().flex_none().size(r(16.)))
-        .child(div().flex_none().size(r(10.)).rounded_full().bg(Cores::borda().opacity(0.4)))
+        .child(div().flex_none().size(r(10.)).rounded_full().bg(Cores::traco().opacity(0.4)))
         .child(
             v_flex()
                 .flex_1()

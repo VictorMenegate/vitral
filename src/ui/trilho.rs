@@ -22,12 +22,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirMestre, AlternarLista, Filtro, IrParaProjeto,
+    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirMestre, AlternarLista, Filtro, Gaveta, IrParaProjeto,
     Janela,
     NovaConversa, NovoProjeto, ProximaPendencia, Vista,
     componentes::{
         BotaoRedondo, Confirmacao, EventoEscolha, Flutuante as _, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha,
-        PreviaArrasto, QuadradoDeProjeto, Reflexo as _, Selo, Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao,
+        PreviaArrasto, QuadradoDeProjeto, Selo, Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao,
         VarianteRedonda, anel_do_pulso, aviso, botao_fantasma, cabecalho_objeto_com_dica, confirmar, contagem,
         rodape_menu_com_dica, sinal_do_projeto,
     },
@@ -68,15 +68,16 @@ fn antes_ou_depois_x(limites: Bounds<Pixels>, x: Pixels) -> bool {
     x < limites.origin.x + limites.size.width / 2.
 }
 
-/// Quanto a área dos projetos rola num movimento do arrasto a menos de `borda` da beirada (para
-/// cima é positivo, como o deslocamento do `ScrollHandle`): mais perto, mais rápido.
-fn rolagem_na_borda(limites: Bounds<Pixels>, y: Pixels, borda: Pixels) -> Pixels {
-    rolagem_na_beirada(limites.origin.y, limites.size.height, y, borda)
-}
-
-/// A mesma conta com o trilho deitado, na largura.
-fn rolagem_na_borda_x(limites: Bounds<Pixels>, x: Pixels, borda: Pixels) -> Pixels {
-    rolagem_na_beirada(limites.origin.x, limites.size.width, x, borda)
+/// Quanto a fileira dos projetos rola num movimento do arrasto a menos de `borda` da beirada
+/// (para a esquerda é positivo, como o deslocamento do `ScrollHandle`): mais perto, mais rápido.
+/// Só conta o arrasto que passa pela altura da fileira: um chat arrastado lá embaixo, na lista,
+/// no mesmo x da beirada, não rola os projetos.
+fn rolagem_na_borda_x(limites: Bounds<Pixels>, posicao: Point<Pixels>, borda: Pixels) -> Pixels {
+    let (topo, base) = (limites.origin.y, limites.origin.y + limites.size.height);
+    if posicao.y < topo || posicao.y >= base {
+        return px(0.);
+    }
+    rolagem_na_beirada(limites.origin.x, limites.size.width, posicao.x, borda)
 }
 
 fn rolagem_na_beirada(inicio: Pixels, tamanho: Pixels, onde: Pixels, borda: Pixels) -> Pixels {
@@ -785,84 +786,6 @@ impl Janela {
         self.sino_geracao.get()
     }
 
-    pub(super) fn trilho(&self, motor: &Entity<Motor>, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let m = motor.read(cx);
-        let projetos: Vec<String> = m.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
-        let atividades = atividades(m);
-        let precisa = super::cartoes::precisa_com_o_mestre(m);
-        let mestre = self.botao_mestre(m, cx);
-        // O projeto do chat do painel ativo ganha o aro a 40%.
-        let do_painel = self
-            .selecionado
-            .as_ref()
-            .and_then(|id| m.chat(id))
-            .filter(|c| c.papel != Papel::Mestre)
-            .map(|c| c.projeto.clone());
-        let atalhos: Vec<AnyElement> = projetos
-            .iter()
-            .enumerate()
-            .map(|(ix, projeto)| {
-                self.atalho_projeto(ix, projeto, motor, atividades.get(projeto), do_painel.as_deref(), false, cx)
-                    .into_any_element()
-            })
-            .collect();
-        let avulsos = atividades.get("");
-        let dica_avulsos = dica_projeto("Avulsos · chats sem projeto", avulsos, self.vista == Vista::Avulsos);
-        let avulsos = AtalhoAvulsos {
-            aberto: self.vista == Vista::Avulsos,
-            do_painel: do_painel.as_deref() == Some("") && self.vista != Vista::Avulsos,
-            sinal: avulsos.and_then(|a| a.sinal),
-            dica: dica_avulsos.into(),
-            janela: cx.entity().downgrade(),
-        };
-        let borda = tam(window, BORDA_DA_ROLAGEM);
-        let (rolagem_p, rolagem_c) = (self.rolagem_trilho.clone(), self.rolagem_trilho.clone());
-        let area = div()
-            .id("trilho-projetos")
-            .flex()
-            .flex_col()
-            .items_center()
-            .flex_shrink(1.)
-            .min_h_0()
-            .w_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.rolagem_trilho)
-            .on_drag_move(move |ev: &DragMoveEvent<ArrastoProjeto>, window, _| {
-                rolar_na_borda(&rolagem_p, ev.bounds, ev.event.position.y, borda, window)
-            })
-            .on_drag_move(move |ev: &DragMoveEvent<ArrastoChat>, window, _| {
-                rolar_na_borda(&rolagem_c, ev.bounds, ev.event.position.y, borda, window)
-            })
-            .children(atalhos);
-
-        self.arrastavel_com_id("arrastar-trilho")
-            .on_mouse_down(MouseButton::Right, |evento, window, _| {
-                window.show_window_menu(evento.position)
-            })
-            .relative()
-            .flex()
-            .flex_col()
-            .items_center()
-            .flex_none()
-            .w(r(LARGURA))
-            .h_full()
-            .pt(esp::E4)
-            .pb(esp::E8)
-            .rounded(crate::tema::raio_da_peca())
-            .bg(Cores::vidro_leitura())
-            .reflexo(raio::PECA)
-            .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
-            .children(mestre.map(|e| div().mt(esp::E8).child(e)))
-            .child(div().flex_none().w(r(20.)).h(px(1.)).mt(esp::E8).mb(esp::E4).bg(Cores::borda()))
-            .child(area)
-            .child(avulsos)
-            .child(self.botao_novo_projeto(projetos.is_empty(), cx))
-            .child(div().flex_1().min_h(r(8.)))
-            .child(sem_a_peca().child(self.botao_sino(precisa, cx)))
-            .child(sem_a_peca().mt(esp::E8).child(self.uso_plano(cx)))
-            .children(self.faixa_mover_para(m, cx))
-    }
-
     /// O mesmo trilho deitado, no alto da lista: a mesma fileira de sempre (logo, Mestre, os
     /// projetos, os Avulsos e o "+"), com o sino e o uso do plano na ponta direita. Rola na
     /// horizontal quando os projetos não cabem, e o arrasto para reordenar usa o x.
@@ -909,10 +832,10 @@ impl Janela {
             .overflow_x_scroll()
             .track_scroll(&self.rolagem_trilho)
             .on_drag_move(move |ev: &DragMoveEvent<ArrastoProjeto>, window, _| {
-                rolar_na_borda_x(&rolagem_p, ev.bounds, ev.event.position.x, borda, window)
+                rolar_na_borda_x(&rolagem_p, ev.bounds, ev.event.position, borda, window)
             })
             .on_drag_move(move |ev: &DragMoveEvent<ArrastoChat>, window, _| {
-                rolar_na_borda_x(&rolagem_c, ev.bounds, ev.event.position.x, borda, window)
+                rolar_na_borda_x(&rolagem_c, ev.bounds, ev.event.position, borda, window)
             })
             .children(atalhos);
 
@@ -930,7 +853,7 @@ impl Janela {
             .gap(esp::E4)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
             .children(mestre)
-            .child(div().flex_none().h(r(20.)).w(px(1.)).mx(esp::E4).bg(Cores::borda()))
+            .child(div().flex_none().h(r(20.)).w(px(1.)).mx(esp::E4).bg(Cores::traco()))
             .child(area)
             .child(avulsos)
             .child(self.botao_novo_projeto(projetos.is_empty(), cx))
@@ -975,10 +898,12 @@ impl Janela {
     fn faixa_mover_para(&self, motor: &Motor, cx: &App) -> Option<AnyElement> {
         let (destino, limites) = self.chat_no_trilho.clone()?;
         let texto = format!("Mover para {}", motor.nome_do_projeto(&destino));
-        let posicao = point(limites.origin.x + limites.size.width + px(8.), limites.origin.y + limites.size.height / 2.);
+        // Embaixo do lugar, por cima do cabeçalho da lista: ao lado, na fileira deitada, ela
+        // cobriria justamente os projetos vizinhos, onde o arrasto ainda pode soltar.
+        let posicao = point(limites.origin.x + limites.size.width / 2., limites.origin.y + limites.size.height + px(8.));
         Some(
             deferred(
-                anchored().anchor(Anchor::LeftCenter).position(posicao).child(
+                anchored().anchor(Anchor::TopCenter).position(posicao).child(
                     h_flex()
                         .gap(esp::E8)
                         .h(r(32.))
@@ -1196,8 +1121,15 @@ impl Janela {
     }
 
     /// F10: abre ou fecha o menu do Vitral (no trilho, ou no logo do modo recolhido).
-    pub(super) fn abrir_menu_vitral(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.menu_aberto = !self.menu_aberto;
+    pub(super) fn abrir_menu_vitral(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // O logo mora na fileira do alto da lista: com a lista na gaveta (ou recolhida sem caber
+        // ao lado), abre a gaveta primeiro, senão o menu não teria onde aparecer.
+        if self.lista && !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
+            self.mostrar_lista(window, cx);
+            self.menu_aberto = true;
+        } else {
+            self.menu_aberto = !self.menu_aberto;
+        }
         cx.notify();
     }
 
@@ -1420,8 +1352,14 @@ fn mover_agora(motor: &Entity<Motor>, chat: &str, destino: &str, nome: &str, win
 
 /// O arrasto perto da beirada da área dos projetos a rola, sem passar do começo nem do fim.
 /// O mesmo com o trilho deitado: rola na horizontal.
-fn rolar_na_borda_x(rolagem: &ScrollHandle, limites: Bounds<Pixels>, x: Pixels, borda: Pixels, window: &mut Window) {
-    let passo = rolagem_na_borda_x(limites, x, borda);
+fn rolar_na_borda_x(
+    rolagem: &ScrollHandle,
+    limites: Bounds<Pixels>,
+    posicao: Point<Pixels>,
+    borda: Pixels,
+    window: &mut Window,
+) {
+    let passo = rolagem_na_borda_x(limites, posicao, borda);
     if passo == px(0.) {
         return;
     }
@@ -1430,20 +1368,6 @@ fn rolar_na_borda_x(rolagem: &ScrollHandle, limites: Bounds<Pixels>, x: Pixels, 
     let novo = (atual.x + passo).clamp(minimo, px(0.));
     if novo != atual.x {
         rolagem.set_offset(point(novo, atual.y));
-        window.refresh();
-    }
-}
-
-fn rolar_na_borda(rolagem: &ScrollHandle, limites: Bounds<Pixels>, y: Pixels, borda: Pixels, window: &mut Window) {
-    let passo = rolagem_na_borda(limites, y, borda);
-    if passo == px(0.) {
-        return;
-    }
-    let atual = rolagem.offset();
-    let minimo = -rolagem.max_offset().y;
-    let novo = (atual.y + passo).clamp(minimo, px(0.));
-    if novo != atual.y {
-        rolagem.set_offset(point(atual.x, novo));
         window.refresh();
     }
 }
@@ -1571,7 +1495,7 @@ impl Janela {
 #[cfg(test)]
 mod testes {
     use super::{
-        Atividade, MarcaDoSino, antes_ou_depois, dica_mestre, dica_projeto, dica_sino, marca_do_sino, rolagem_na_borda,
+        Atividade, MarcaDoSino, antes_ou_depois, dica_mestre, dica_projeto, dica_sino, marca_do_sino, rolagem_na_borda_x,
         selos_do_mestre,
     };
     use crate::modelo::{Cartao, EstadoCartao, TipoCartao};
@@ -1656,16 +1580,21 @@ mod testes {
     }
 
     #[test]
-    fn a_area_rola_so_perto_da_beirada() {
-        let area = Bounds { origin: point(px(0.), px(100.)), size: size(px(52.), px(400.)) };
+    fn a_fileira_rola_so_perto_da_beirada() {
+        // A fileira deitada: 400 de largura a partir de x = 100, 44 de altura a partir de y = 10.
+        let area = Bounds { origin: point(px(100.), px(10.)), size: size(px(400.), px(44.)) };
         let borda = px(24.);
-        assert_eq!(rolagem_na_borda(area, px(300.), borda), px(0.));
-        // Perto de cima rola para cima (deslocamento positivo), mais rápido mais perto.
-        assert_eq!(rolagem_na_borda(area, px(104.), borda), px(10.));
-        assert_eq!(rolagem_na_borda(area, px(100.), borda), px(12.));
-        assert_eq!(rolagem_na_borda(area, px(490.), borda), px(-7.));
+        let em = |x: f32| point(px(x), px(30.));
+        assert_eq!(rolagem_na_borda_x(area, em(300.), borda), px(0.));
+        // Perto da esquerda rola para a esquerda (deslocamento positivo), mais rápido mais perto.
+        assert_eq!(rolagem_na_borda_x(area, em(104.), borda), px(10.));
+        assert_eq!(rolagem_na_borda_x(area, em(100.), borda), px(12.));
+        assert_eq!(rolagem_na_borda_x(area, em(490.), borda), px(-7.));
         // Fora da área, nada.
-        assert_eq!(rolagem_na_borda(area, px(90.), borda), px(0.));
-        assert_eq!(rolagem_na_borda(area, px(510.), borda), px(0.));
+        assert_eq!(rolagem_na_borda_x(area, em(90.), borda), px(0.));
+        assert_eq!(rolagem_na_borda_x(area, em(510.), borda), px(0.));
+        // Na beirada mas fora da altura da fileira (um chat arrastado lá embaixo, na lista), nada.
+        assert_eq!(rolagem_na_borda_x(area, point(px(104.), px(300.)), borda), px(0.));
+        assert_eq!(rolagem_na_borda_x(area, point(px(104.), px(54.)), borda), px(0.));
     }
 }

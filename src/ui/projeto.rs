@@ -668,7 +668,7 @@ impl EditorProjeto {
                 v_flex()
                     .gap(esp::E12)
                     .child(escolha.clone())
-                    .child(div().h(px(1.)).bg(Cores::borda()))
+                    .child(div().h(px(1.)).bg(Cores::traco()))
                     .child(
                         div().flex().child(
                             botao_fantasma("projeto-icone-auto", Some(Lucide::Undo2.into()), "Automático", TamanhoBotao::Barra, window, cx)
