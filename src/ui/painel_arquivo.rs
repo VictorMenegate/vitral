@@ -9,6 +9,7 @@ use gpui_kit::component::{
     scroll::{ScrollableElement as _, ScrollbarAxis},
     text::TextView,
     tooltip::Tooltip,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -36,6 +37,10 @@ use crate::{
 /// Maior arquivo que abre aqui (o resto fica para o VS Code).
 const LIMITE: u64 = 400_000;
 
+/// O limite das imagens é outro: o de texto barraria um print comum, e desenhar uma imagem custa
+/// a memória dela decodificada, não o tamanho do arquivo.
+const LIMITE_IMAGEM: u64 = 20_000_000;
+
 /// Cores de sintaxe de cada linha do código (faixas em bytes dentro da linha).
 type CoresDasLinhas = Rc<Vec<Vec<(Range<usize>, HighlightStyle)>>>;
 
@@ -58,6 +63,8 @@ enum Conteudo {
     Markdown(SharedString, usize),
     /// Linhas do código e o índice da mais longa (dá a largura da rolagem para o lado).
     Codigo(Rc<Vec<SharedString>>, usize),
+    /// Imagem: desenhada, e não "arquivo binário".
+    Imagem,
 }
 
 /// Por que o arquivo não aparece aqui.
@@ -83,6 +90,10 @@ fn ler_arquivo(completo: &Path, markdown: bool) -> Conteudo {
     // O tamanho antes: um arquivo grande não precisa ser lido para dizer que não abre.
     match std::fs::metadata(completo) {
         Ok(m) if m.is_dir() => return Conteudo::Aviso(Aviso::Erro("É uma pasta, não um arquivo.".into())),
+        // Um .png do projeto aparece como imagem; antes caía no "arquivo binário".
+        Ok(m) if crate::claude::tipo_imagem(completo).is_some() => {
+            return if m.len() > LIMITE_IMAGEM { Conteudo::Aviso(Aviso::Grande(m.len())) } else { Conteudo::Imagem };
+        }
         Ok(m) if m.len() > LIMITE => return Conteudo::Aviso(Aviso::Grande(m.len())),
         Ok(_) => {}
         Err(erro) => return Conteudo::Aviso(erro_de_leitura(erro)),
@@ -168,8 +179,11 @@ fn nome_da_linguagem(caminho: &str) -> Option<&'static str> {
     })
 }
 
-/// Ícone da aba: código, texto (markdown e .txt) ou um arquivo qualquer.
+/// Ícone da aba: imagem, código, texto (markdown e .txt) ou um arquivo qualquer.
 pub(super) fn icone_do_arquivo(caminho: &str) -> Lucide {
+    if crate::claude::tipo_imagem(Path::new(caminho)).is_some() {
+        return Lucide::FileImage;
+    }
     match nome_da_linguagem(caminho) {
         Some("Markdown" | "Texto") => Lucide::FileText,
         Some(_) => Lucide::FileCode,
@@ -323,7 +337,7 @@ impl Janela {
         let linhas = match &conteudo {
             Conteudo::Codigo(linhas, _) => Some(linhas.len()),
             Conteudo::Markdown(_, n) => Some(*n),
-            Conteudo::Aviso(_) => None,
+            Conteudo::Aviso(_) | Conteudo::Imagem => None,
         };
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = barra_do_arquivo(
@@ -339,6 +353,39 @@ impl Janela {
         );
         let corpo = match conteudo {
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
+            // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
+            // leva ao visor, com o tamanho real e o "Abrir fora".
+            Conteudo::Imagem => {
+                let lido = super::imagens::anexo(&completo);
+                let alvo = completo.clone();
+                let detalhe = lido.detalhe();
+                v_flex()
+                    .id("imagem-arquivo")
+                    .flex_1()
+                    .min_h_0()
+                    .gap(esp::E8)
+                    .p(esp::E16)
+                    .items_center()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(raio::CARTAO)
+                            .bg(Cores::preto())
+                            .overflow_hidden()
+                            .child(img(completo.clone()).max_w_full().max_h_full().object_fit(ObjectFit::Contain)),
+                    )
+                    .when(!detalhe.is_empty(), |s| {
+                        s.child(div().flex_none().metadado().text_color(Cores::tenue()).child(detalhe))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor("", &alvo, window, cx)))
+                    .into_any_element()
+            }
             Conteudo::Markdown(texto, _) => div()
                 .id("conteudo-arquivo")
                 .flex_1()
@@ -643,7 +690,8 @@ mod testes {
         assert_eq!(nome_da_linguagem("Cargo.lock"), None);
         assert_eq!(icone_do_arquivo("LEIA-ME.md"), Lucide::FileText);
         assert_eq!(icone_do_arquivo("src/main.rs"), Lucide::FileCode);
-        assert_eq!(icone_do_arquivo("logo.png"), Lucide::File);
+        assert_eq!(icone_do_arquivo("logo.png"), Lucide::FileImage);
+        assert_eq!(icone_do_arquivo("Cargo.lock"), Lucide::File);
     }
 
     #[test]

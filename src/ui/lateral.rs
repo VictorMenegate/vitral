@@ -1009,6 +1009,8 @@ fn linha_da_arvore(
     let simbolo = match (e_pasta, expandida) {
         (true, true) => Lucide::FolderOpen,
         (true, false) => Lucide::Folder,
+        // Uma imagem se acha na árvore pelo ícone, antes de abrir.
+        _ if crate::claude::tipo_imagem(Path::new(&caminho)).is_some() => Lucide::FileImage,
         _ => Lucide::FileText,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));
