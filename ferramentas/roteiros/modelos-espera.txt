@@ -1,0 +1,18 @@
+# O Atualizar do grupo Claude Code esperando um turno terminar. Mesmo uso do modelos.txt, com
+# CLAUDE_FALSO=1 (o turno de mentira com "[demora]" leva 10 s).
+
+espera 10
+clique 318 448            # "#4 Aplicar cupom no carrinho"
+espera 3
+tecla Control_L+j         # fecha o painel da direita
+espera 2
+clique 985 867            # foco na caixa
+espera 1
+texto Confere o cupom expirado. [demora]
+tecla Return
+espera 3                  # o turno começa
+tecla Control_L+comma     # Configurações
+espera 3
+rolar 800 600 25          # desce até o grupo Claude Code
+espera 1
+print m07-esperando       # Atualizar desabilitado, com o motivo em âmbar

@@ -1,0 +1,4 @@
+espera 10
+tecla F10
+espera 2
+print n00-menu

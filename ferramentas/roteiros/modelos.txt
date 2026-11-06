@@ -1,0 +1,36 @@
+# As versões exatas no seletor de modelo e o grupo Claude Code das Configurações.
+# Uso (de dentro do worktree, com o binário compilado e a pasta de demonstração recém-gerada):
+#   python3 -I ferramentas/demo_vitral.py ~/.cache/vitral-trabalho/demo-modelos
+#   DADOS_NOVOS=1 XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-modelos BANCADA=3 \
+#     CLAUDE_FALSO=1 CLAUDE_FALSO_UPDATE=demora:nova ferramentas/bancada.sh \
+#     ferramentas/roteiros/modelos.txt ~/.cache/vitral-trabalho/prints-modelos \
+#     target/debug/vitral ~/.cache/vitral-trabalho/demo-modelos
+# CLAUDE_FALSO_VERSAO=2.1.278 mostra a degradação (as versões exatas desabilitadas);
+# CLAUDE_FALSO_UPDATE escolhe a resposta do `claude update` (nova, em-dia, sem-permissao,
+# sem-rede, npm, path, calado), com "demora:" na frente para o spinner aparecer.
+#   janela 1440x920; o DADOS_NOVOS=1 é obrigatório (as coordenadas são as da lista recém-aberta).
+
+espera 10                 # o Vitral abre na conversa mais recente da demonstração
+clique 318 448            # "#4 Aplicar cupom no carrinho": chat de projeto
+espera 3                  # a conversa abre
+tecla Control_L+j         # fecha o painel da direita: a caixa fica larga
+espera 2
+tecla Control_L+Shift_L+m # popover de modelo
+espera 2
+print m01-seletor-modelo  # Padrão, as famílias e o começo das versões exatas
+rolar 965 700 5           # desce dentro do popover
+espera 1
+print m02-versoes-exatas  # as versões exatas, com a que está rodando marcada
+tecla Escape
+espera 1
+tecla Control_L+comma     # Configurações
+espera 3
+print m03-configuracoes   # o diálogo no começo
+rolar 800 600 25          # desce até o fim
+espera 1
+print m04-grupo-claude    # grupo Claude Code, com a versão e o Atualizar
+clique 1031 699           # Atualizar
+espera 2
+print m05-atualizando     # o spinner e o botão esperando
+espera 8                  # o claude falso demora 6 s
+print m06-atualizou       # o que o claude update respondeu

@@ -197,7 +197,7 @@ impl Configuracoes {
         )
         .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
         .on_click(move |_, _, cx| este.update(cx, |este, cx| este.atualizar_claude(cx)));
-        let opcao = LinhaDeOpcao::new("cfg-claude", "Versão")
+        let opcao = LinhaDeOpcao::new("cfg-claude", "Versão instalada")
             .info(
                 "O Vitral abre um processo do claude por turno; a versão é a do claude que ele encontra (o do PATH \
                  ou o de ~/.local/bin). O Atualizar roda `claude update` fora de qualquer turno e mostra o que ele \
