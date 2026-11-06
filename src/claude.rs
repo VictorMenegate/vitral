@@ -556,9 +556,15 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
 fn conteudo_resultado(conteudo: &Value) -> String {
     match conteudo {
         Value::String(s) => s.clone(),
+        // Um Read de imagem devolve só o bloco "image" (o base64 dela, que não vai para o
+        // histórico): sem a marca, a chamada aberta ficava numa caixa vazia, como se tivesse
+        // sido interrompida.
         Value::Array(partes) => partes
             .iter()
-            .filter_map(|p| p["text"].as_str())
+            .filter_map(|p| match p["type"].as_str() {
+                Some("image") => Some(format!("({})", p["source"]["media_type"].as_str().unwrap_or("imagem"))),
+                _ => p["text"].as_str().map(str::to_string),
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         Value::Null => String::new(),
