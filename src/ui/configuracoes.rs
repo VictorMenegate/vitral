@@ -17,7 +17,7 @@ use super::{
     composer::{DESCRICOES_DE_MODELO, MODELOS, MODOS},
     componentes::{
         Chip, Contador, ControleSegmentado, GatilhoChip, GrupoDeOpcoes, LinhaDeOpcao, Marca, Simbolo, TamanhoBotao,
-        TamanhoChip, botao_perigo, icone_do_modo, item_descrito, largura,
+        TamanhoChip, botao_fantasma, botao_perigo, icone_do_modo, item_descrito, largura,
     },
     atualizacao::{Vista, grupo as grupo_de_atualizacoes},
     conexoes::PainelConexoes,
@@ -27,14 +27,64 @@ use super::{
 };
 use crate::{
     atualizacao::{self, Acompanhando, Atualizacoes},
+    claude::{self, Atualizacao, Versao},
     git,
     modelo::Config,
-    motor::Motor,
+    motor::{self, Motor},
     tema::{Cores, Lucide, r, tam},
 };
 
 const PRAZOS_ARQUIVAR: [(u32, &str); 4] = [(0, "Nunca"), (3, "3 dias"), (7, "7 dias"), (30, "30 dias")];
 const PRAZOS_COPIAS: [(u32, &str); 3] = [(0, "Nunca"), (7, "7 dias"), (30, "30 dias")];
+
+/// O que a linha do grupo Claude Code diz, e se o Atualizar dá para clicar.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct LinhaDoClaude {
+    /// A primeira linha: a versão instalada, ou o que está acontecendo agora.
+    pub texto: String,
+    /// O spinner antes do texto.
+    pub andando: bool,
+    /// O que o `claude update` respondeu, linha por linha.
+    pub resposta: Vec<String>,
+    /// A resposta foi de erro: ela vai em âmbar.
+    pub falhou: bool,
+    /// Por que o Atualizar não dá para clicar agora (`None`: dá).
+    pub espera: Option<String>,
+}
+
+/// A linha do Claude Code: a versão que os turnos abrem e o estado do `claude update`. O botão
+/// espera os chats porque a atualização troca o binário no disco (e no Windows ela nem roda com o
+/// `claude.exe` em uso); quem está no meio de um turno continua no processo que já abriu.
+pub(super) fn linha_do_claude(
+    versao: Option<Versao>,
+    a_caminho: usize,
+    andando: bool,
+    resposta: Option<&Atualizacao>,
+) -> LinhaDoClaude {
+    let texto = match (andando, versao) {
+        (true, _) => "Rodando o claude update…".to_string(),
+        (false, Some(v)) => format!("{} · a versão que os turnos abrem", motor::texto_da_versao(v)),
+        // Sem a versão o Atualizar continua valendo: ele abre o mesmo `claude` dos turnos.
+        (false, None) => "Não deu para ler a versão instalada".to_string(),
+    };
+    let mut linhas: Vec<String> = resposta.map(|r| r.linhas.clone()).unwrap_or_default();
+    if resposta.is_some_and(claude::instalou_versao_nova) {
+        linhas.push("A versão nova vale no próximo turno; o Vitral não precisa reiniciar.".into());
+    }
+    let espera = if andando {
+        Some("A atualização está rodando".to_string())
+    } else if a_caminho > 0 {
+        let (quantos, eles) = if a_caminho == 1 {
+            ("1 chat está trabalhando".to_string(), "ele terminar")
+        } else {
+            (format!("{a_caminho} chats estão trabalhando"), "eles terminarem")
+        };
+        Some(format!("{quantos} ou com mensagem na fila: o Atualizar espera {eles}"))
+    } else {
+        None
+    };
+    LinhaDoClaude { texto, andando, resposta: linhas, falhou: resposta.is_some_and(|r| !r.ok), espera }
+}
 
 pub struct Configuracoes {
     motor: Entity<Motor>,
@@ -49,6 +99,11 @@ pub struct Configuracoes {
     _acompanhando: Option<Acompanhando>,
     /// GitHub, Linear e o isolamento dos chats.
     conexoes: Entity<PainelConexoes>,
+    /// O `claude update` que está rodando agora (a tarefa fica aqui para não ser derrubada).
+    _claude: Task<()>,
+    atualizando_claude: bool,
+    /// O que o último `claude update` respondeu, para mostrar na linha.
+    resposta_do_claude: Option<Atualizacao>,
 }
 
 impl Configuracoes {
@@ -62,6 +117,9 @@ impl Configuracoes {
         let _atualizacoes = cx.observe_global::<Atualizacoes>(|_, cx| cx.notify());
         let _acompanhando = atualizacao::acompanhar_progresso(cx);
         let conexoes = cx.new(|cx| PainelConexoes::new(motor.clone(), cx));
+        // A linha do Claude Code mostra a versão instalada: ela pode ter mudado por fora (ou pelo
+        // próprio Atualizar, numa abertura anterior) desde a leitura da abertura do app.
+        motor.update(cx, |m, cx| m.reler_versao_claude(cx));
         let mut este = Self {
             motor,
             conexoes,
@@ -71,9 +129,88 @@ impl Configuracoes {
             _observa,
             _atualizacoes,
             _acompanhando,
+            _claude: Task::ready(()),
+            atualizando_claude: false,
+            resposta_do_claude: None,
         };
         este.medir(cx);
         este
+    }
+
+    /// Roda o `claude update` em segundo plano e, no fim, relê a versão: os chips que dependem
+    /// dela (o Ultracode, as versões exatas de modelo) mudam sem reiniciar o app.
+    fn atualizar_claude(&mut self, cx: &mut Context<Self>) {
+        if self.atualizando_claude {
+            return;
+        }
+        self.atualizando_claude = true;
+        self.resposta_do_claude = None;
+        let motor = self.motor.clone();
+        self._claude = cx.spawn(async move |este, cx| {
+            let resposta = cx.background_spawn(async move { claude::atualizar() }).await;
+            let _ = este.update(cx, |este, cx| {
+                este.atualizando_claude = false;
+                este.resposta_do_claude = Some(resposta);
+                cx.notify();
+            });
+            let _ = motor.update(cx, |m, cx| m.reler_versao_claude(cx));
+        });
+        cx.notify();
+    }
+
+    /// O grupo Claude Code das Configurações: a versão que os turnos abrem e o Atualizar.
+    fn grupo_do_claude(&self, estreito: bool, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
+        let motor = self.motor.read(cx);
+        let linha = linha_do_claude(
+            motor.versao_claude,
+            motor.turnos_a_caminho(),
+            self.atualizando_claude,
+            self.resposta_do_claude.as_ref(),
+        );
+        let falhou = linha.falhou;
+        let descricao = div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(r(6.))
+                    .when(linha.andando, |d| {
+                        d.child(Spinner::new().with_size(Size::Size(tam(window, 12.))).color(Cores::tenue()))
+                    })
+                    .child(linha.texto.clone()),
+            )
+            .children(linha.resposta.iter().map(|t| {
+                div()
+                    .when(falhou, |d| d.text_color(Cores::ambar()))
+                    .child(t.clone())
+            }));
+        let este = cx.entity();
+        let botao = botao_fantasma(
+            "cfg-claude-atualizar",
+            Some(Lucide::RefreshCw.into()),
+            "Atualizar",
+            TamanhoBotao::Barra,
+            window,
+            cx,
+        )
+        .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
+        .on_click(move |_, _, cx| este.update(cx, |este, cx| este.atualizar_claude(cx)));
+        let opcao = LinhaDeOpcao::new("cfg-claude", "Versão instalada")
+            .info(
+                "O Vitral abre um processo do claude por turno; a versão é a do claude que ele encontra (o do PATH \
+                 ou o de ~/.local/bin). O Atualizar roda `claude update` fora de qualquer turno e mostra o que ele \
+                 responder; a versão nova vale no turno seguinte, sem reiniciar o Vitral.",
+            )
+            .descricao(descricao);
+        // O motivo de o botão esperar também fica à vista, em âmbar, sem precisar da dica.
+        let opcao = match linha.espera.filter(|_| !linha.andando) {
+            Some(motivo) => opcao.aviso(motivo),
+            None => opcao,
+        };
+        let opcao = if estreito { opcao.campo(botao) } else { opcao.controle(botao) };
+        GrupoDeOpcoes::new(Some("Claude Code".into())).linha(opcao)
     }
 
     /// Mede as cópias em segundo plano (node_modules tem centenas de milhares de arquivos).
@@ -556,13 +693,14 @@ impl Render for Configuracoes {
             .child(self.conexoes.clone())
             .child(copias)
             .child(interface)
+            .child(self.grupo_do_claude(estreito, window, cx))
             .children(atualizacoes)
     }
 }
 
 #[cfg(test)]
 mod testes {
-    use super::{resumo_das_copias, vizinhos};
+    use super::{Atualizacao, linha_do_claude, resumo_das_copias, vizinhos};
 
     #[test]
     fn contador_anda_pela_lista_e_para_nas_pontas() {
@@ -573,6 +711,50 @@ mod testes {
         // Valor que não está na lista (editado à mão): anda para o vizinho mais perto.
         assert_eq!(vizinhos(&lista, 5), (Some(4), Some(6)));
         assert_eq!(vizinhos(&lista, 20), (Some(8), None));
+    }
+
+    fn resposta(ok: bool, linhas: &[&str]) -> Atualizacao {
+        Atualizacao { ok, linhas: linhas.iter().map(|l| l.to_string()).collect() }
+    }
+
+    #[test]
+    fn a_linha_do_claude_code_diz_a_versao_e_o_que_esta_acontecendo() {
+        let parada = linha_do_claude(Some((2, 1, 318)), 0, false, None);
+        assert_eq!(parada.texto, "2.1.318 · a versão que os turnos abrem");
+        assert!(parada.espera.is_none() && parada.resposta.is_empty() && !parada.falhou);
+        // Sem conseguir ler a versão, o Atualizar continua valendo.
+        assert_eq!(linha_do_claude(None, 0, false, None).texto, "Não deu para ler a versão instalada");
+        assert!(linha_do_claude(None, 0, false, None).espera.is_none());
+        let rodando = linha_do_claude(Some((2, 1, 318)), 0, true, None);
+        assert_eq!(rodando.texto, "Rodando o claude update…");
+        assert!(rodando.andando && rodando.espera.is_some());
+    }
+
+    #[test]
+    fn o_atualizar_espera_os_chats() {
+        let um = linha_do_claude(Some((2, 1, 318)), 1, false, None).espera.unwrap();
+        assert_eq!(um, "1 chat está trabalhando ou com mensagem na fila: o Atualizar espera ele terminar");
+        let tres = linha_do_claude(Some((2, 1, 318)), 3, false, None).espera.unwrap();
+        assert_eq!(tres, "3 chats estão trabalhando ou com mensagem na fila: o Atualizar espera eles terminarem");
+    }
+
+    #[test]
+    fn a_resposta_do_claude_update_vai_inteira_na_linha() {
+        // Em dia: o que ele imprimiu, sem a nota do turno seguinte (nada foi instalado).
+        let em_dia = resposta(true, &["Current version: 2.1.318", "Claude Code is up to date (2.1.318)"]);
+        let linha = linha_do_claude(Some((2, 1, 318)), 0, false, Some(&em_dia));
+        assert_eq!(linha.resposta, em_dia.linhas);
+        assert!(!linha.falhou);
+        // Instalou: a nota entra, porque a versão nova só vale no turno seguinte.
+        let nova = resposta(true, &["Successfully updated from 2.1.318 to version 2.1.320"]);
+        let linha = linha_do_claude(Some((2, 1, 320)), 0, false, Some(&nova));
+        assert_eq!(linha.resposta.len(), 2);
+        assert!(linha.resposta[1].starts_with("A versão nova vale no próximo turno"));
+        assert!(!linha.falhou);
+        // Falhou: o texto dele é o que explica (pasta sem permissão, npm, sem rede), em âmbar.
+        let erro = resposta(false, &["Error: Failed to install native update", "Try running \"claude doctor\""]);
+        let linha = linha_do_claude(Some((2, 1, 318)), 0, false, Some(&erro));
+        assert!(linha.falhou && linha.resposta == erro.linhas && linha.espera.is_none());
     }
 
     #[test]

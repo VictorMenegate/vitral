@@ -65,6 +65,19 @@ pub type Versao = (u32, u32, u32);
 /// e roda no esforço padrão.
 pub const VERSAO_ULTRACODE: Versao = (2, 1, 278);
 
+/// A versão a partir da qual as versões exatas de modelo (`ui::composer::VERSOES_DE_MODELO`)
+/// podem ser pedidas. Não é o Vitral que recusa: quem recusa é o servidor, e o Claude Code velho
+/// deixa o turno falhar. Medido no 2.1.278 com `--model claude-opus-5-5`: o `init` sai com o
+/// modelo pedido e o turno morre com "API Error: 400 Claude Code 2.1.278 does not support this
+/// model; version 2.1.280 or newer is required. Run 'claude update'", código 1. É só o modelo
+/// mais novo que cobra isso (o `claude-sonnet-5-5` e o `claude-haiku-5-5` rodam no 2.1.278), mas
+/// o 5.5 é justamente o que se quer escolher, então o seletor pede a 2.1.280 para todas.
+///
+/// Um nome que o Claude Code nem conhece (`--model bananinha-9`) termina igual: `init` com o nome
+/// cru e o `result` "There's an issue with the selected model (…). It may not exist or you may not
+/// have access to it", com `[claude-code:unrecognized_model]` no stderr.
+pub const VERSAO_MODELOS_EXATOS: Versao = (2, 1, 280);
+
 /// Agentes de um fluxo rodando ao mesmo tempo, em todo turno (o padrão do Claude Code seria 6
 /// neste PC, e a fonte não segura a carga). O limite vale por fluxo.
 pub const AGENTES_DO_ULTRACODE: u32 = 3;
@@ -437,6 +450,71 @@ pub fn versao_instalada() -> Option<Versao> {
         .output()
         .ok()?;
     versao_de(&String::from_utf8_lossy(&saida.stdout))
+}
+
+/// O que o `claude update` respondeu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Atualizacao {
+    /// O comando saiu com 0.
+    pub ok: bool,
+    /// O que ele imprimiu, linha por linha, sem as vazias.
+    pub linhas: Vec<String>,
+}
+
+/// No máximo tantas linhas da saída (uma instalação por npm imprime algumas); a linha das
+/// Configurações não é um console.
+const LINHAS_DA_ATUALIZACAO: usize = 8;
+
+/// Roda `claude update` no `claude` que os turnos abrem e devolve o que ele disse. Bloqueia
+/// enquanto ele baixa e instala, então quem chama põe em segundo plano; e sempre fora de um
+/// turno — no Windows a atualização nem roda com o `claude.exe` em uso ("claude.exe in use
+/// (close other Claude Code sessions, including VS Code)").
+///
+/// O Vitral não decide o caminho da atualização: o próprio comando sabe de cada instalação e
+/// imprime o que fez ("Current version: X", "Claude Code is up to date (X)", "Successfully
+/// updated from X to version Y"). O que ele não resolve também sai no texto dele, que é o que a
+/// interface mostra: a instalação por npm manda rodar o `npm install -g`, a pasta sem permissão
+/// de escrita dá "Error: Failed to install native update" (com "Try running \"claude doctor\""),
+/// sem rede ele avisa que não deu para procurar, e a instalação nativa sem o `~/.local/bin` no
+/// PATH lembra de acertar o PATH. `NO_COLOR` porque o texto vai para a interface, não para um
+/// terminal.
+pub fn atualizar() -> Atualizacao {
+    atualizar_com(&binario_claude())
+}
+
+fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
+    let saida = processos::novo_comando(binario)
+        .arg("update")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output();
+    let saida = match saida {
+        Ok(saida) => saida,
+        Err(erro) => {
+            return Atualizacao {
+                ok: false,
+                linhas: vec![format!("Não deu para abrir o {}: {erro}", binario.display())],
+            };
+        }
+    };
+    let mut texto = String::from_utf8_lossy(&saida.stdout).into_owned();
+    texto.push_str(&String::from_utf8_lossy(&saida.stderr));
+    let mut linhas: Vec<String> = texto
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    linhas.truncate(LINHAS_DA_ATUALIZACAO);
+    if linhas.is_empty() {
+        linhas.push("O claude não disse nada.".into());
+    }
+    Atualizacao { ok: saida.status.success(), linhas }
+}
+
+/// A atualização instalou uma versão nova (não era só "up to date"): é quando vale avisar que ela
+/// vale no turno seguinte.
+pub fn instalou_versao_nova(a: &Atualizacao) -> bool {
+    a.ok && a.linhas.iter().any(|l| l.contains("Successfully updated") || l.contains("Successfully downgraded"))
 }
 
 fn escrever_mensagem(entrada: &mut ChildStdin, mensagem: Mensagem) -> Result<()> {
@@ -907,6 +985,45 @@ mod testes {
         std::fs::write(bin.join(NOME_DO_CLAUDE), "").unwrap();
         assert_eq!(binario_claude_em(path(), casa.clone()), bin.join(NOME_DO_CLAUDE));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// O `claude update` com um claude de mentira: a saída dele é o que a interface mostra, e o
+    /// código de saída é o que diz se deu certo. Nunca com o claude de verdade, que mexeria na
+    /// instalação de quem está rodando o teste.
+    #[cfg(unix)]
+    #[test]
+    fn a_atualizacao_devolve_o_que_o_claude_disse() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let pasta = std::env::temp_dir().join(format!("vitral-update-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let falso = pasta.join("claude");
+        let escrever = |corpo: &str| {
+            std::fs::write(&falso, format!("#!/bin/sh\n[ \"$1\" = update ] || exit 9\n{corpo}\n")).unwrap();
+            std::fs::set_permissions(&falso, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        escrever("echo 'Current version: 2.1.318'\necho\necho 'Claude Code is up to date (2.1.318)'");
+        let em_dia = atualizar_com(&falso);
+        // As linhas vazias saem, e o resto vai inteiro.
+        assert_eq!(em_dia, Atualizacao {
+            ok: true,
+            linhas: vec!["Current version: 2.1.318".into(), "Claude Code is up to date (2.1.318)".into()],
+        });
+        assert!(!instalou_versao_nova(&em_dia));
+        escrever("echo 'Successfully updated from 2.1.318 to version 2.1.320'");
+        assert!(instalou_versao_nova(&atualizar_com(&falso)));
+        // O que falhou: o texto dele, pelo stderr também, e `ok` falso pelo código de saída.
+        escrever("echo 'Error: Failed to install native update'\necho 'claude doctor' >&2\nexit 1");
+        let erro = atualizar_com(&falso);
+        assert!(!erro.ok && !instalou_versao_nova(&erro));
+        assert_eq!(erro.linhas, ["Error: Failed to install native update", "claude doctor"]);
+        // Calado (um exec que não imprime nada) não deixa a linha vazia.
+        escrever("exit 0");
+        assert_eq!(atualizar_com(&falso).linhas, ["O claude não disse nada."]);
+        // Sem o binário, o erro de abrir é o texto.
+        let faltando = pasta.join("nao-existe");
+        let sem = atualizar_com(&faltando);
+        assert!(!sem.ok && sem.linhas[0].starts_with(&format!("Não deu para abrir o {}", faltando.display())));
+        let _ = std::fs::remove_dir_all(&pasta);
     }
 
     #[test]

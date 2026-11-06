@@ -21,6 +21,13 @@ tool_result no stream. E, sem precisar pedir:
 - o Mestre não escreve arquivo nenhum; o ajudante escreve em notas-do-t<N>.md (o nome da cópia dele),
   para dois ajudantes não mexerem no mesmo arquivo. A anotação vem antes das ferramentas: um
   criar_tarefa ou aprovar_tarefa na mesma vez já encontra a pasta com o que ela anotou.
+`claude update` também é de mentira, para ver o Atualizar das Configurações sem mexer na
+instalação de verdade: CLAUDE_FALSO_UPDATE escolhe a resposta (nova, em-dia, sem-permissao,
+sem-rede, npm, path, calado; "demora:" na frente leva 6 s, que é o tempo de ver o spinner) e as
+frases são as do Claude Code 2.1.318. O que instala versão nova anota a 2.1.320 em
+$XDG_STATE_HOME/claude-falso-versao, e o `--version` passa a dizer ela: é assim que se vê o Vitral
+reler a versão sem reiniciar. CLAUDE_FALSO_VERSAO escolhe a versão de antes (o padrão é 2.1.300;
+com 2.1.278 as versões exatas de modelo aparecem desabilitadas).
 Como revisor (--json-schema), devolve o parecer "aprovar" (ou "ajustar", com "[revisor-ajustar]"
 no pedido) sem mexer em nada."""
 import json
@@ -32,11 +39,59 @@ import time
 import urllib.request
 
 args = sys.argv[1:]
+# A versão que ele diz: a do CLAUDE_FALSO_VERSAO ou, depois de um `update` que instalou, a que o
+# update deixou anotada (é assim que se vê o Vitral reler a versão sem reiniciar).
+instalada = os.path.join(os.environ.get("XDG_STATE_HOME", "/nao-existe"), "claude-falso-versao")
+
+
+def versao_falsa():
+    try:
+        with open(instalada) as arquivo:
+            return arquivo.read().strip()
+    except OSError:
+        return os.environ.get("CLAUDE_FALSO_VERSAO", "2.1.300")
+
+
 if "--version" in args:
-    print("2.1.300 (Claude Code)")
+    print(versao_falsa() + " (Claude Code)")
     sys.exit(0)
 if args[:1] == ["auth"]:
     sys.exit(1)
+# `claude update` de mentira, para ver o Atualizar das Configurações sem mexer na instalação de
+# verdade: CLAUDE_FALSO_UPDATE escolhe a resposta (as frases são as do Claude Code 2.1.318).
+# Com "demora:" na frente (ex.: demora:nova), leva 6 s, que é o tempo de ver o spinner.
+if args[:1] == ["update"]:
+    qual = os.environ.get("CLAUDE_FALSO_UPDATE", "nova")
+    if qual.startswith("demora:"):
+        qual = qual[len("demora:"):]
+        time.sleep(6)
+    atual = versao_falsa()
+    print(f"Current version: {atual}")
+    print(f"Checking for updates to stable version...")
+    saidas = {
+        "nova": ([f"Successfully updated from {atual} to version 2.1.320"], 0),
+        "em-dia": ([f"Claude Code is up to date ({atual})"], 0),
+        "sem-permissao": (["Error: Failed to install native update",
+                           'Try running "claude doctor" for diagnostics'], 1),
+        "sem-rede": (["Could not check for updates (network check skipped or unavailable).",
+                      "To update manually, run:", "  npm install -g @anthropic-ai/claude-code"], 1),
+        "npm": ([f"Update available: 2.1.320", "To update, run:",
+                 "  npm install -g @anthropic-ai/claude-code"], 0),
+        "path": ([f"Successfully updated from {atual} to version 2.1.320",
+                  "Warning: ~/.local/bin is not in your PATH",
+                  """Run: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc"""], 0),
+        "calado": ([], 0),
+    }
+    linhas, codigo = saidas.get(qual, saidas["nova"])
+    for linha in linhas:
+        print(linha)
+    if any("Successfully updated" in linha for linha in linhas):
+        try:
+            with open(instalada, "w") as arquivo:
+                arquivo.write("2.1.320")
+        except OSError:
+            pass
+    sys.exit(codigo)
 
 estado = os.environ.get("XDG_STATE_HOME", "/nao-existe")
 registro = os.path.join(estado, "claude-falso.log")

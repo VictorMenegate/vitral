@@ -917,7 +917,20 @@ impl Motor {
     /// Quantos chats fechar o Vitral agora cortaria no meio: turno rodando ou esperando vaga, nova
     /// tentativa marcada, ou a tarefa deles em preparação, verificação ou junção.
     pub fn trabalhando(&self) -> usize {
+        self.ocupados(false)
+    }
+
+    /// Quantos chats uma troca do binário do claude pegaria no meio: os que estão trabalhando e
+    /// também os que têm mensagem esperando a vez, que abre um turno a qualquer momento.
+    pub fn turnos_a_caminho(&self) -> usize {
+        self.ocupados(true)
+    }
+
+    fn ocupados(&self, com_fila: bool) -> usize {
         let mut chats: HashSet<&str> = self.rodando().map(|c| c.id.as_str()).collect();
+        if com_fila {
+            chats.extend(self.chats.iter().map(|c| c.id.as_str()).filter(|id| self.na_fila(id) > 0));
+        }
         chats.extend(self.retentativas.keys().map(String::as_str));
         chats.extend(
             self.tarefas
@@ -3262,6 +3275,23 @@ impl Motor {
             .filter(|t| self.chat(&t.trabalhador).is_some_and(|c| c.papel == Papel::Trabalhador))
             .map(|t| t.id)
             .collect()
+    }
+
+    /// Relê a versão do Claude Code instalada: ao abrir as Configurações, que a mostram, e depois
+    /// de atualizar por lá — os chips que dependem dela (o Ultracode, as versões exatas de modelo)
+    /// precisam acompanhar sem reiniciar o app. O `--version` leva um instante, então vai em
+    /// segundo plano.
+    pub fn reler_versao_claude(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |motor, cx| {
+            let versao = cx.background_spawn(async move { claude::versao_instalada() }).await;
+            let _ = motor.update(cx, |m, cx| {
+                if versao.is_some() && m.versao_claude != versao {
+                    m.versao_claude = versao;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Por que o Ultracode não vale nesta conversa agora (`None`: vale). O de outra conversa
@@ -7684,7 +7714,7 @@ pub fn aceita_ultracode(modelo: &str) -> bool {
     !antigo && !SEM_EXTRA.contains(&nome.as_str())
 }
 
-fn texto_da_versao((a, b, c): Versao) -> String {
+pub fn texto_da_versao((a, b, c): Versao) -> String {
     format!("{a}.{b}.{c}")
 }
 
@@ -7715,6 +7745,17 @@ pub fn motivo_sem_ultracode(papel: Papel, modelo: &str, versao: Option<Versao>) 
     None
 }
 
+/// Por que não dá para fixar a versão exata do modelo (`None`: dá). Só a versão do Claude Code
+/// pesa: o papel da conversa e o modelo não mudam nada aqui.
+pub fn motivo_sem_versao_exata(versao: Option<Versao>) -> Option<String> {
+    let versao = versao.filter(|v| *v < claude::VERSAO_MODELOS_EXATOS)?;
+    Some(format!(
+        "precisa do Claude Code {} ou mais novo (este é o {}); dá para atualizar nas Configurações",
+        texto_da_versao(claude::VERSAO_MODELOS_EXATOS),
+        texto_da_versao(versao)
+    ))
+}
+
 /// Por que os agentes em segundo plano de um turno adiado não terminaram, quando o processo saiu
 /// sem outro `result` (`None`: acabaram e o processo saiu normalmente).
 fn agentes_cortados(restantes: usize, codigo: Option<i32>, stderr: &str) -> Option<String> {
@@ -7740,10 +7781,18 @@ fn agentes_cortados(restantes: usize, codigo: Option<i32>, stderr: &str) -> Opti
 pub fn janela_padrao(modelo: Option<&str>) -> u64 {
     match modelo {
         Some(m) if m.ends_with("[1m]") => 1_000_000,
+        // O Opus 4.7 e o 4.8 também nasceram com 1M (as versões exatas do seletor oferecem os dois).
         Some(m)
-            if ["claude-opus-5", "claude-sonnet-5", "claude-haiku-5", "claude-fable"]
-                .iter()
-                .any(|p| m.starts_with(p)) =>
+            if [
+                "claude-opus-5",
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-sonnet-5",
+                "claude-haiku-5",
+                "claude-fable",
+            ]
+            .iter()
+            .any(|p| m.starts_with(p)) =>
         {
             1_000_000
         }
