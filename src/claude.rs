@@ -65,6 +65,19 @@ pub type Versao = (u32, u32, u32);
 /// e roda no esforço padrão.
 pub const VERSAO_ULTRACODE: Versao = (2, 1, 278);
 
+/// A versão a partir da qual as versões exatas de modelo (`ui::composer::VERSOES_DE_MODELO`)
+/// podem ser pedidas. Não é o Vitral que recusa: quem recusa é o servidor, e o Claude Code velho
+/// deixa o turno falhar. Medido no 2.1.278 com `--model claude-opus-5-5`: o `init` sai com o
+/// modelo pedido e o turno morre com "API Error: 400 Claude Code 2.1.278 does not support this
+/// model; version 2.1.280 or newer is required. Run 'claude update'", código 1. É só o modelo
+/// mais novo que cobra isso (o `claude-sonnet-5-5` e o `claude-haiku-5-5` rodam no 2.1.278), mas
+/// o 5.5 é justamente o que se quer escolher, então o seletor pede a 2.1.280 para todas.
+///
+/// Um nome que o Claude Code nem conhece (`--model bananinha-9`) termina igual: `init` com o nome
+/// cru e o `result` "There's an issue with the selected model (…). It may not exist or you may not
+/// have access to it", com `[claude-code:unrecognized_model]` no stderr.
+pub const VERSAO_MODELOS_EXATOS: Versao = (2, 1, 280);
+
 /// Agentes de um fluxo rodando ao mesmo tempo, em todo turno (o padrão do Claude Code seria 6
 /// neste PC, e a fonte não segura a carga). O limite vale por fluxo.
 pub const AGENTES_DO_ULTRACODE: u32 = 3;

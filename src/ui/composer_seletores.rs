@@ -15,8 +15,9 @@ use gpui_kit::*;
 
 use super::{
     AbrirEsforco, AbrirModelo, AlternarModo, AlternarUltracode, AlternarUltrathink, DESCRICOES_DE_MODELO, ESFORCOS,
-    MODELOS, MODOS, PopCaixa, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra, indice_esforco,
-    nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, usa_esforco,
+    MODELOS, MODOS, PopCaixa, VERSOES_DE_MODELO, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra,
+    indice_esforco, nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, sem_sufixo_de_janela,
+    usa_esforco, versao_exata,
 };
 use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
@@ -28,7 +29,7 @@ use crate::ui::componentes::{
 use crate::{
     contas,
     modelo::{Chat, Papel},
-    motor::{FLUXOS_DESLIGADOS, Motor, Uso},
+    motor::{FLUXOS_DESLIGADOS, Motor, Uso, motivo_sem_versao_exata},
     tema::{Cores, Lucide, Tipo as _, esp, r, tam},
 };
 
@@ -432,6 +433,10 @@ fn item_de_comandos(janela: WeakEntity<Janela>, painel: u64) -> PopupMenuItem {
 
 // ── Modelo ──────────────────────────────────────────────────────────────
 
+/// A chave da linha que só explica por que as versões exatas não dão: ela vai desabilitada, e
+/// escolher não muda modelo nenhum.
+const SEM_VERSOES: &str = "+sem-versoes";
+
 /// Uma linha do seletor de modelo.
 #[derive(Clone, PartialEq, Debug)]
 struct LinhaDeModelo {
@@ -439,12 +444,27 @@ struct LinhaDeModelo {
     titulo: String,
     descricao: String,
     em_uso: bool,
+    /// Por que a linha não dá para escolher (o Claude Code velho não aceita as versões novas).
+    desabilitada: Option<String>,
 }
 
-/// As linhas do seletor: Padrão, as quatro famílias e, numa conversa antiga que guardou o nome
-/// completo, uma sexta com ele. A versão só aparece quando o modelo em uso é daquela família
+impl LinhaDeModelo {
+    fn new(valor: impl Into<String>, titulo: impl Into<String>, descricao: impl Into<String>) -> Self {
+        LinhaDeModelo {
+            valor: valor.into(),
+            titulo: titulo.into(),
+            descricao: descricao.into(),
+            em_uso: false,
+            desabilitada: None,
+        }
+    }
+}
+
+/// As linhas do primeiro grupo: Padrão, as quatro famílias e, numa conversa antiga que guardou o
+/// nome completo, uma sexta com ele. A versão só aparece quando o modelo em uso é daquela família
 /// (nunca inventada) e a conversa segue um apelido. Seguindo o Padrão, é ele que diz qual está
-/// em uso ("Padrão · Opus 5.5"), e a família não ganha o selo.
+/// em uso ("Padrão · Opus 5.5"), e a família não ganha o selo. Uma versão exata escolhida está no
+/// segundo grupo, não aqui: as famílias ficam com o nome seco.
 fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta: &str) -> Vec<LinhaDeModelo> {
     let em_uso = em_uso.filter(|m| !m.is_empty());
     let curto = em_uso.map(nome_curto_modelo);
@@ -458,30 +478,53 @@ fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta:
         (false, Some(m)) => format!("Padrão · {m}"),
         (false, None) => format!("Padrão · {}", rotulo_modelo(padrao_pasta, None)),
     };
-    let mut linhas = vec![LinhaDeModelo {
-        valor: String::new(),
-        titulo: "Padrão".into(),
-        descricao: padrao,
-        em_uso: false,
-    }];
+    let mut linhas = vec![LinhaDeModelo::new("", "Padrão", padrao)];
     for ((valor, familia), descricao) in MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO) {
         let versao = curto.clone().filter(|m| segue_apelido && m.to_lowercase().starts_with(valor));
         linhas.push(LinhaDeModelo {
-            valor: valor.to_string(),
-            titulo: format!("Claude {}", versao.clone().unwrap_or_else(|| familia.to_string())),
-            descricao: descricao.to_string(),
             em_uso: versao.is_some() && !no_padrao,
+            ..LinhaDeModelo::new(
+                *valor,
+                format!("Claude {}", versao.clone().unwrap_or_else(|| familia.to_string())),
+                descricao,
+            )
         });
     }
-    if let Some(antigo) = escolhido.filter(|e| !apelido(e)) {
+    if let Some(antigo) = escolhido.filter(|e| !apelido(e) && !versao_exata(e)) {
         linhas.push(LinhaDeModelo {
-            valor: antigo.to_string(),
-            titulo: com_claude(&nome_curto_modelo(antigo)),
-            descricao: "escolhido antes".into(),
             em_uso: em_uso == Some(antigo),
+            ..LinhaDeModelo::new(antigo, com_claude(&nome_curto_modelo(antigo)), "escolhido antes")
         });
     }
     linhas
+}
+
+/// As linhas do segundo grupo: as versões exatas, por família, com a que está rodando marcada —
+/// inclusive quando a conversa segue a família, que é como se vê qual Opus o apelido pega hoje.
+/// Num Claude Code anterior ao `VERSAO_MODELOS_EXATOS` nenhuma dá para escolher: fica uma linha
+/// só dizendo por quê, mais a que já estava escolhida, se havia (para sair dela, ou deixá-la).
+fn linhas_de_versao(escolhido: Option<&str>, em_uso: Option<&str>, motivo: Option<&str>) -> Vec<LinhaDeModelo> {
+    let rodando = em_uso.filter(|m| !m.is_empty()).map(sem_sufixo_de_janela);
+    if let Some(motivo) = motivo {
+        let mut linhas = vec![LinhaDeModelo {
+            desabilitada: Some(motivo.to_string()),
+            ..LinhaDeModelo::new(SEM_VERSOES, "Sem as versões exatas", com_maiuscula(motivo))
+        }];
+        if let Some(exata) = escolhido.filter(|e| versao_exata(e)) {
+            linhas.push(LinhaDeModelo {
+                em_uso: rodando == Some(exata),
+                ..LinhaDeModelo::new(exata, nome_curto_modelo(exata), "escolhida nesta conversa")
+            });
+        }
+        return linhas;
+    }
+    VERSOES_DE_MODELO
+        .iter()
+        .map(|id| LinhaDeModelo {
+            em_uso: rodando == Some(*id),
+            ..LinhaDeModelo::new(*id, nome_curto_modelo(id), "")
+        })
+        .collect()
 }
 
 fn padrao_da_pasta<'a>(motor: &'a Motor, chat: &Chat) -> &'a str {
@@ -491,18 +534,37 @@ fn padrao_da_pasta<'a>(motor: &'a Motor, chat: &Chat) -> &'a str {
     }
 }
 
-fn grupos_de_modelo(motor: &Motor, chat: &Chat) -> Vec<GrupoDeEscolha> {
-    let linhas = linhas_de_modelo(chat.modelo.as_deref(), chat.modelo_atual.as_deref(), padrao_da_pasta(motor, chat));
-    let itens = linhas
+fn itens_de_modelo(linhas: Vec<LinhaDeModelo>) -> Vec<ItemDeEscolha> {
+    linhas
         .into_iter()
-        .map(|l| ItemDeEscolha {
-            descricao: Some(l.descricao.clone().into()),
-            selos: if l.em_uso { vec![Selo::neutro("em uso")] } else { Vec::new() },
-            termos: Some(format!("{} {}", l.valor, l.descricao).into()),
-            ..ItemDeEscolha::new(l.valor, l.titulo)
+        .map(|l| {
+            let termos = format!("{} {}", l.valor, l.descricao);
+            ItemDeEscolha {
+                descricao: (!l.descricao.is_empty()).then(|| l.descricao.into()),
+                selos: if l.em_uso { vec![Selo::neutro("em uso")] } else { Vec::new() },
+                termos: Some(termos.into()),
+                desabilitado: l.desabilitada.map(Into::into),
+                ..ItemDeEscolha::new(l.valor, l.titulo)
+            }
         })
-        .collect();
-    vec![GrupoDeEscolha { titulo: Some("Claude".into()), itens }]
+        .collect()
+}
+
+/// Os dois grupos do seletor: as famílias, que é o que se usa no dia a dia, e embaixo as versões
+/// exatas, em linhas de uma altura só.
+fn grupos_de_modelo(motor: &Motor, chat: &Chat) -> Vec<GrupoDeEscolha> {
+    let (escolhido, em_uso) = (chat.modelo.as_deref(), chat.modelo_atual.as_deref());
+    let motivo = motivo_sem_versao_exata(motor.versao_claude);
+    vec![
+        GrupoDeEscolha {
+            titulo: Some("Claude".into()),
+            itens: itens_de_modelo(linhas_de_modelo(escolhido, em_uso, padrao_da_pasta(motor, chat))),
+        },
+        GrupoDeEscolha {
+            titulo: Some("Versões exatas".into()),
+            itens: itens_de_modelo(linhas_de_versao(escolhido, em_uso, motivo.as_deref())),
+        },
+    ]
 }
 
 /// Ao abrir o seletor (clique ou Ctrl+Shift+M): as linhas de agora, a busca limpa e o realce no
@@ -888,6 +950,10 @@ impl Janela {
                         app.subscribe(&lista, move |_, evento: &EventoEscolha, cx| {
                             if let EventoEscolha::Escolheu(chave) = evento {
                                 let valor = chave.to_string();
+                                // A linha que só explica não escolhe nada (e nem fecha o popover).
+                                if valor == SEM_VERSOES {
+                                    return;
+                                }
                                 mudar(&motor_e, &chat_id, cx, move |c| c.modelo = Some(valor).filter(|v| !v.is_empty()));
                             }
                             abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
@@ -1143,7 +1209,9 @@ impl Janela {
 
 #[cfg(test)]
 mod testes {
-    use super::{LinhaDeModelo, linhas_de_modelo};
+    use super::{LinhaDeModelo, SEM_VERSOES, linhas_de_modelo, linhas_de_versao};
+    use crate::claude::VERSAO_MODELOS_EXATOS;
+    use crate::motor::motivo_sem_versao_exata;
 
     fn titulos(linhas: &[LinhaDeModelo]) -> Vec<&str> {
         linhas.iter().map(|l| l.titulo.as_str()).collect()
@@ -1189,5 +1257,46 @@ mod testes {
         // O apelido não toma a versão do nome completo.
         assert_eq!(linhas[3].titulo, "Claude Sonnet");
         assert!(!linhas[3].em_uso);
+    }
+
+    #[test]
+    fn versao_exata_escolhida_nao_vira_a_sexta_linha() {
+        // Ela vive no grupo das versões, e as famílias ficam com o nome seco.
+        let linhas = linhas_de_modelo(Some("claude-opus-5-5"), Some("claude-opus-5-5"), "");
+        assert_eq!(titulos(&linhas), ["Padrão", "Claude Fable", "Claude Opus", "Claude Sonnet", "Claude Haiku"]);
+        assert!(linhas.iter().all(|l| !l.em_uso));
+    }
+
+    #[test]
+    fn as_versoes_marcam_a_que_esta_rodando() {
+        let linhas = linhas_de_versao(Some("opus"), Some("claude-opus-5-5"), None);
+        assert_eq!(linhas[0].titulo, "Fable 5.1");
+        assert_eq!(linhas.iter().filter(|l| l.em_uso).map(|l| l.titulo.as_str()).collect::<Vec<_>>(), ["Opus 5.5"]);
+        // Seguindo a família é justamente quando interessa saber qual versão o apelido pega.
+        assert!(linhas.iter().all(|l| l.desabilitada.is_none()));
+        assert!(linhas.iter().all(|l| l.descricao.is_empty()), "linhas de uma altura só");
+        // O sufixo da janela não muda a versão: o 2.1.278 abria os turnos no claude-opus-5[1m].
+        let linhas = linhas_de_versao(None, Some("claude-opus-5[1m]"), None);
+        assert_eq!(linhas.iter().filter(|l| l.em_uso).map(|l| l.titulo.as_str()).collect::<Vec<_>>(), ["Opus 5"]);
+    }
+
+    #[test]
+    fn claude_code_velho_explica_em_vez_de_oferecer() {
+        let antigo = motivo_sem_versao_exata(Some((2, 1, 278)));
+        let linhas = linhas_de_versao(None, Some("claude-opus-5[1m]"), antigo.as_deref());
+        assert_eq!(linhas.len(), 1);
+        assert_eq!(linhas[0].valor, SEM_VERSOES);
+        assert!(linhas[0].descricao.starts_with("Precisa do Claude Code 2.1.280"), "{}", linhas[0].descricao);
+        assert!(linhas[0].desabilitada.is_some());
+        // Com uma versão exata já escolhida, ela continua à vista para dar para sair dela.
+        let linhas = linhas_de_versao(Some("claude-opus-5-5"), Some("claude-opus-5-5"), antigo.as_deref());
+        assert_eq!(titulos(&linhas), ["Sem as versões exatas", "Opus 5.5"]);
+        assert!(linhas[1].em_uso && linhas[1].desabilitada.is_none());
+        // Na versão em que foram conferidas, e em qualquer uma mais nova, não há motivo.
+        assert!(motivo_sem_versao_exata(Some(VERSAO_MODELOS_EXATOS)).is_none());
+        assert!(motivo_sem_versao_exata(Some((2, 1, 318))).is_none());
+        // Sem saber a versão (a leitura ao abrir falhou), o seletor oferece: quem recusa é o
+        // servidor, e o erro do turno diz o que fazer.
+        assert!(motivo_sem_versao_exata(None).is_none());
     }
 }

@@ -7715,6 +7715,17 @@ pub fn motivo_sem_ultracode(papel: Papel, modelo: &str, versao: Option<Versao>) 
     None
 }
 
+/// Por que não dá para fixar a versão exata do modelo (`None`: dá). Só a versão do Claude Code
+/// pesa: o papel da conversa e o modelo não mudam nada aqui.
+pub fn motivo_sem_versao_exata(versao: Option<Versao>) -> Option<String> {
+    let versao = versao.filter(|v| *v < claude::VERSAO_MODELOS_EXATOS)?;
+    Some(format!(
+        "precisa do Claude Code {} ou mais novo (este é o {}); dá para atualizar nas Configurações",
+        texto_da_versao(claude::VERSAO_MODELOS_EXATOS),
+        texto_da_versao(versao)
+    ))
+}
+
 /// Por que os agentes em segundo plano de um turno adiado não terminaram, quando o processo saiu
 /// sem outro `result` (`None`: acabaram e o processo saiu normalmente).
 fn agentes_cortados(restantes: usize, codigo: Option<i32>, stderr: &str) -> Option<String> {
@@ -7740,10 +7751,18 @@ fn agentes_cortados(restantes: usize, codigo: Option<i32>, stderr: &str) -> Opti
 pub fn janela_padrao(modelo: Option<&str>) -> u64 {
     match modelo {
         Some(m) if m.ends_with("[1m]") => 1_000_000,
+        // O Opus 4.7 e o 4.8 também nasceram com 1M (as versões exatas do seletor oferecem os dois).
         Some(m)
-            if ["claude-opus-5", "claude-sonnet-5", "claude-haiku-5", "claude-fable"]
-                .iter()
-                .any(|p| m.starts_with(p)) =>
+            if [
+                "claude-opus-5",
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-sonnet-5",
+                "claude-haiku-5",
+                "claude-fable",
+            ]
+            .iter()
+            .any(|p| m.starts_with(p)) =>
         {
             1_000_000
         }

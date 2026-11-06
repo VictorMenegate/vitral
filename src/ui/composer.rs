@@ -79,6 +79,50 @@ pub const DESCRICOES_DE_MODELO: [&str; 4] = [
     "O mais rápido para respostas curtas",
 ];
 
+/// As versões exatas que o seletor oferece embaixo das famílias, na ordem de `MODELOS` e, dentro
+/// de cada família, da mais nova para a mais antiga. A família manda `--model opus` e quem decide
+/// qual Opus é o Claude Code; estas fixam a versão.
+///
+/// É a lista do próprio seletor do Claude Code (as seções "main" e "overflow" da configuração
+/// assinada que a 2.1.318 traz embutida), menos o Opus 4 e o Opus 4.1: esses dois ele troca
+/// calado pelo Opus da família (o remapeamento que o `CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP`
+/// desliga), então pedir o 4.1 traria o 5.5 — melhor não oferecer que oferecer mentindo. As
+/// outras foram conferidas uma por uma: o `init` do turno devolve o mesmo id que foi pedido.
+///
+/// O id completo, e não o apelido curto (`opus-5-5`), porque o Claude Code devolve no `init` o
+/// que recebeu, sem normalizar: só com o id completo o Vitral sabe o nome legível
+/// (`nome_curto_modelo`), a janela (`motor::janela_padrao`) e se há esforço Extra
+/// (`motor::aceita_ultracode`).
+///
+/// Sem as variantes `[1m]`: da geração 5 em diante a janela de 1M já é a do modelo (pedir
+/// `claude-opus-5[1m]` chega ao `init` como `claude-opus-5`), então seriam linhas repetidas.
+pub const VERSOES_DE_MODELO: [&str; 12] = [
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-5-5",
+    "claude-haiku-4-5",
+];
+
+/// O valor é uma das versões exatas que o seletor oferece (e não um apelido de família nem o
+/// nome completo que uma conversa antiga guardou).
+pub fn versao_exata(valor: &str) -> bool {
+    VERSOES_DE_MODELO.contains(&valor)
+}
+
+/// O modelo sem o sufixo da janela, para comparar com os ids da lista: o Claude Code 2.1.278
+/// abria os turnos no `claude-opus-5[1m]`, que é o `claude-opus-5` da lista.
+pub fn sem_sufixo_de_janela(id: &str) -> &str {
+    id.split('[').next().unwrap_or(id)
+}
+
 /// Os nomes do seletor do Claude Code ("Extra" é o xhigh); os valores gravados não mudam.
 pub const ESFORCOS: [(&str, &str); 6] = [
     ("", "Auto"),
