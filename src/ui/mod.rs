@@ -1127,11 +1127,6 @@ impl Janela {
         grupo_botoes_janela(botoes_do_layout(cx.button_layout()), false)
     }
 
-    /// Os mesmos botões depois das ações do painel, separados delas por um traço.
-    fn botoes_janela_separados(&self, cx: &Context<Self>) -> Div {
-        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true)
-    }
-
     /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das
     /// conversas; na gaveta, o botão de recolhê-la, com o Esc tirado do keymap (os da janela
     /// ficam na última conversa).
@@ -1371,8 +1366,8 @@ impl Render for Janela {
                     .p(crate::tema::margem_da_janela())
                     .gap(crate::tema::vao_entre_pecas())
                     .items_start()
-                    // Ctrl+B esconde o trilho junto com a lista (4d).
-                    .when(self.lista, |s| s.child(self.trilho(&motor, window, cx)))
+                    // O trilho virou a fileira de cima da lista: a coluna de ícones à esquerda
+                    // saiu, e Ctrl+B continua escondendo as duas coisas de uma vez.
                     .child(
                         div()
                             .relative()

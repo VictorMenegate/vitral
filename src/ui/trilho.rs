@@ -63,11 +63,25 @@ fn antes_ou_depois(limites: Bounds<Pixels>, y: Pixels) -> bool {
     y < limites.origin.y + limites.size.height / 2.
 }
 
+/// O mesmo com o trilho deitado: a metade da largura decide se é antes (à esquerda) ou depois.
+fn antes_ou_depois_x(limites: Bounds<Pixels>, x: Pixels) -> bool {
+    x < limites.origin.x + limites.size.width / 2.
+}
+
 /// Quanto a área dos projetos rola num movimento do arrasto a menos de `borda` da beirada (para
 /// cima é positivo, como o deslocamento do `ScrollHandle`): mais perto, mais rápido.
 fn rolagem_na_borda(limites: Bounds<Pixels>, y: Pixels, borda: Pixels) -> Pixels {
-    let de_cima = y - limites.origin.y;
-    let de_baixo = limites.origin.y + limites.size.height - y;
+    rolagem_na_beirada(limites.origin.y, limites.size.height, y, borda)
+}
+
+/// A mesma conta com o trilho deitado, na largura.
+fn rolagem_na_borda_x(limites: Bounds<Pixels>, x: Pixels, borda: Pixels) -> Pixels {
+    rolagem_na_beirada(limites.origin.x, limites.size.width, x, borda)
+}
+
+fn rolagem_na_beirada(inicio: Pixels, tamanho: Pixels, onde: Pixels, borda: Pixels) -> Pixels {
+    let de_cima = onde - inicio;
+    let de_baixo = inicio + tamanho - onde;
     if de_cima >= px(0.) && de_cima < borda {
         (borda - de_cima) / 2.
     } else if de_baixo >= px(0.) && de_baixo < borda {
@@ -448,13 +462,16 @@ struct AtalhoDeProjeto {
     dica: SharedString,
     /// Outro projeto arrastado por cima: a linha antes (`true`) ou depois dele.
     alvo: Option<bool>,
+    /// O trilho está deitado (na horizontal, no alto da lista): a linha do alvo vira vertical e
+    /// quem decide antes ou depois é o x.
+    deitado: bool,
     janela: WeakEntity<Janela>,
     motor: Entity<Motor>,
 }
 
 impl RenderOnce for AtalhoDeProjeto {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let AtalhoDeProjeto { ix, projeto, nome, icone, cor, aberto, do_painel, sinal, dica, alvo, janela, motor } = self;
+        let AtalhoDeProjeto { ix, projeto, nome, icone, cor, aberto, do_painel, sinal, dica, alvo, deitado, janela, motor } = self;
         let id = ElementId::from(SharedString::from(format!("trilho-projeto-{projeto}")));
         let hover = movimento::Hover::de(movimento::chave(&id, "ponteiro"), window, cx);
         let quadrado = QuadradoDeProjeto::new(icone, cor, 32.)
@@ -486,12 +503,17 @@ impl RenderOnce for AtalhoDeProjeto {
                     s.child(
                         div()
                             .absolute()
-                            .left(r(4.))
-                            .right(r(4.))
-                            .h(px(2.))
                             .rounded_full()
                             .bg(Cores::destaque())
-                            .map(|l| if antes { l.top(px(-1.)) } else { l.bottom(px(-1.)) }),
+                            .map(|l| {
+                                if deitado {
+                                    let l = l.top(r(4.)).bottom(r(4.)).w(px(2.));
+                                    if antes { l.left(px(-1.)) } else { l.right(px(-1.)) }
+                                } else {
+                                    let l = l.left(r(4.)).right(r(4.)).h(px(2.));
+                                    if antes { l.top(px(-1.)) } else { l.bottom(px(-1.)) }
+                                }
+                            }),
                     )
                 })
                 .tooltip(move |window, cx| {
@@ -507,7 +529,12 @@ impl RenderOnce for AtalhoDeProjeto {
                 })
                 .on_drag_move(move |ev: &DragMoveEvent<ArrastoProjeto>, _, cx| {
                     let dentro = ev.bounds.contains(&ev.event.position) && ev.drag(cx).id != p_mover;
-                    let alvo = dentro.then(|| (p_mover.clone(), antes_ou_depois(ev.bounds, ev.event.position.y)));
+                    let meio = if deitado {
+                        antes_ou_depois_x(ev.bounds, ev.event.position.x)
+                    } else {
+                        antes_ou_depois(ev.bounds, ev.event.position.y)
+                    };
+                    let alvo = dentro.then(|| (p_mover.clone(), meio));
                     let _ = j_mover.update(cx, |this, cx| {
                         let era_daqui = this.alvo_trilho.as_ref().is_some_and(|(p, _)| *p == p_mover);
                         if (alvo.is_some() || era_daqui) && this.alvo_trilho != alvo {
@@ -775,7 +802,8 @@ impl Janela {
             .iter()
             .enumerate()
             .map(|(ix, projeto)| {
-                self.atalho_projeto(ix, projeto, motor, atividades.get(projeto), do_painel.as_deref(), cx).into_any_element()
+                self.atalho_projeto(ix, projeto, motor, atividades.get(projeto), do_painel.as_deref(), false, cx)
+                    .into_any_element()
             })
             .collect();
         let avulsos = atividades.get("");
@@ -835,8 +863,83 @@ impl Janela {
             .children(self.faixa_mover_para(m, cx))
     }
 
+    /// O mesmo trilho deitado, no alto da lista: a mesma fileira de sempre (logo, Mestre, os
+    /// projetos, os Avulsos e o "+"), com o sino e o uso do plano na ponta direita. Rola na
+    /// horizontal quando os projetos não cabem, e o arrasto para reordenar usa o x.
+    pub(super) fn trilho_deitado(&self, motor: &Entity<Motor>, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let m = motor.read(cx);
+        let projetos: Vec<String> = m.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
+        let atividades = atividades(m);
+        let precisa = super::cartoes::precisa_com_o_mestre(m);
+        let mestre = self.botao_mestre(m, cx);
+        let do_painel = self
+            .selecionado
+            .as_ref()
+            .and_then(|id| m.chat(id))
+            .filter(|c| c.papel != Papel::Mestre)
+            .map(|c| c.projeto.clone());
+        let atalhos: Vec<AnyElement> = projetos
+            .iter()
+            .enumerate()
+            .map(|(ix, projeto)| {
+                self.atalho_projeto(ix, projeto, motor, atividades.get(projeto), do_painel.as_deref(), true, cx)
+                    .into_any_element()
+            })
+            .collect();
+        let avulsos = atividades.get("");
+        let dica_avulsos = dica_projeto("Avulsos · chats sem projeto", avulsos, self.vista == Vista::Avulsos);
+        let avulsos = AtalhoAvulsos {
+            aberto: self.vista == Vista::Avulsos,
+            do_painel: do_painel.as_deref() == Some("") && self.vista != Vista::Avulsos,
+            sinal: avulsos.and_then(|a| a.sinal),
+            dica: dica_avulsos.into(),
+            janela: cx.entity().downgrade(),
+        };
+        let borda = tam(window, BORDA_DA_ROLAGEM);
+        let (rolagem_p, rolagem_c) = (self.rolagem_trilho.clone(), self.rolagem_trilho.clone());
+        let area = div()
+            .id("trilho-projetos-deitado")
+            .flex()
+            .items_center()
+            .gap(esp::E4)
+            // Cresce com o que sobra e encolhe rolando: os projetos ficam entre o Mestre e o "+".
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_x_scroll()
+            .track_scroll(&self.rolagem_trilho)
+            .on_drag_move(move |ev: &DragMoveEvent<ArrastoProjeto>, window, _| {
+                rolar_na_borda_x(&rolagem_p, ev.bounds, ev.event.position.x, borda, window)
+            })
+            .on_drag_move(move |ev: &DragMoveEvent<ArrastoChat>, window, _| {
+                rolar_na_borda_x(&rolagem_c, ev.bounds, ev.event.position.x, borda, window)
+            })
+            .children(atalhos);
+
+        self.arrastavel_com_id("arrastar-trilho-deitado")
+            .on_mouse_down(MouseButton::Right, |evento, window, _| {
+                window.show_window_menu(evento.position)
+            })
+            .relative()
+            .flex()
+            .items_center()
+            .flex_none()
+            .w_full()
+            .h(r(LARGURA))
+            .px(esp::E4)
+            .gap(esp::E4)
+            .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
+            .children(mestre)
+            .child(div().flex_none().h(r(20.)).w(px(1.)).mx(esp::E4).bg(Cores::borda()))
+            .child(area)
+            .child(avulsos)
+            .child(self.botao_novo_projeto(projetos.is_empty(), cx))
+            .children(self.faixa_mover_para(m, cx))
+    }
+
     /// Um lugar de 40 com o quadrado do projeto: abre o projeto na lista (ou volta à visão geral);
     /// o clique direito abre o menu do projeto.
+    #[allow(clippy::too_many_arguments)]
     fn atalho_projeto(
         &self,
         ix: usize,
@@ -844,6 +947,7 @@ impl Janela {
         motor: &Entity<Motor>,
         atividade: Option<&Atividade>,
         do_painel: Option<&str>,
+        deitado: bool,
         cx: &Context<Self>,
     ) -> AtalhoDeProjeto {
         let (icone, cor) = icone_projeto::visual_do(motor.read(cx), projeto);
@@ -860,6 +964,7 @@ impl Janela {
             sinal: atividade.and_then(|a| a.sinal),
             dica: dica_projeto(&nome, atividade, aberto).into(),
             alvo: self.alvo_trilho.as_ref().filter(|(p, _)| p == projeto).map(|(_, antes)| *antes),
+            deitado,
             janela: cx.entity().downgrade(),
             motor: motor.clone(),
         }
@@ -895,7 +1000,7 @@ impl Janela {
 
     /// O sino: o número do que precisa de você (ou um ponto, se só há respostas novas) e o
     /// popover "O que precisa de você".
-    fn botao_sino(&self, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
+    pub(super) fn botao_sino(&self, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
         let botao = BotaoRedondo::new("trilho-sino", Some(Lucide::Bell.into()), dica_sino(&precisa))
             .variante(VarianteRedonda::Plano)
             .diametro(36.)
@@ -1314,6 +1419,21 @@ fn mover_agora(motor: &Entity<Motor>, chat: &str, destino: &str, nome: &str, win
 }
 
 /// O arrasto perto da beirada da área dos projetos a rola, sem passar do começo nem do fim.
+/// O mesmo com o trilho deitado: rola na horizontal.
+fn rolar_na_borda_x(rolagem: &ScrollHandle, limites: Bounds<Pixels>, x: Pixels, borda: Pixels, window: &mut Window) {
+    let passo = rolagem_na_borda_x(limites, x, borda);
+    if passo == px(0.) {
+        return;
+    }
+    let atual = rolagem.offset();
+    let minimo = -rolagem.max_offset().x;
+    let novo = (atual.x + passo).clamp(minimo, px(0.));
+    if novo != atual.x {
+        rolagem.set_offset(point(novo, atual.y));
+        window.refresh();
+    }
+}
+
 fn rolar_na_borda(rolagem: &ScrollHandle, limites: Bounds<Pixels>, y: Pixels, borda: Pixels, window: &mut Window) {
     let passo = rolagem_na_borda(limites, y, borda);
     if passo == px(0.) {
