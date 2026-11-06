@@ -283,8 +283,10 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
   terminaram. Parar continua valendo e, nessa espera, derruba o processo com os agentes. Um turno
   que termina com erro ou parado enquanto há agentes em segundo plano também derruba o processo, em
-  vez de deixá-los rodando fora da tela. No Ultracode, o Claude Code espera os agentes sem o teto
-  de 10 minutos. Em todo turno, cada fluxo roda no máximo 3 agentes ao mesmo tempo
+  vez de deixá-los rodando fora da tela. O Claude Code espera os agentes **sem teto**
+  (`CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`) em todo turno: o padrão dele é cortar em 10 minutos
+  ("Background tasks still running after 600s; terminating"), e um lote de uma hora morria no meio,
+  com o turno marcado como falhado. Quem segura a espera é o dono, pelo Parar. Em todo turno, cada fluxo roda no máximo 3 agentes ao mesmo tempo
   (`CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS=3`; o padrão seria 6 neste PC, e a fonte não segura
   a carga); o limite vale por fluxo, então o turno com Ultracode pede ao Claude um fluxo por vez,
   sem outros agentes junto.
