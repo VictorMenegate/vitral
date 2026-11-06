@@ -452,6 +452,68 @@ pub fn versao_instalada() -> Option<Versao> {
     versao_de(&String::from_utf8_lossy(&saida.stdout))
 }
 
+/// O que o `claude update` respondeu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Atualizacao {
+    /// O comando saiu com 0.
+    pub ok: bool,
+    /// O que ele imprimiu, linha por linha, sem as vazias.
+    pub linhas: Vec<String>,
+}
+
+/// No máximo tantas linhas da saída (uma instalação por npm imprime algumas); a linha das
+/// Configurações não é um console.
+const LINHAS_DA_ATUALIZACAO: usize = 8;
+
+/// Roda `claude update` no `claude` que os turnos abrem e devolve o que ele disse. Bloqueia
+/// enquanto ele baixa e instala, então quem chama põe em segundo plano; e sempre fora de um
+/// turno — no Windows a atualização nem roda com o `claude.exe` em uso ("claude.exe in use
+/// (close other Claude Code sessions, including VS Code)").
+///
+/// O Vitral não decide o caminho da atualização: o próprio comando sabe de cada instalação e
+/// imprime o que fez ("Current version: X", "Claude Code is up to date (X)", "Successfully
+/// updated from X to version Y"). O que ele não resolve também sai no texto dele, que é o que a
+/// interface mostra: a instalação por npm manda rodar o `npm install -g`, a pasta sem permissão
+/// de escrita dá "Error: Failed to install native update" (com "Try running \"claude doctor\""),
+/// sem rede ele avisa que não deu para procurar, e a instalação nativa sem o `~/.local/bin` no
+/// PATH lembra de acertar o PATH. `NO_COLOR` porque o texto vai para a interface, não para um
+/// terminal.
+pub fn atualizar() -> Atualizacao {
+    let binario = binario_claude();
+    let saida = processos::novo_comando(&binario)
+        .arg("update")
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .output();
+    let saida = match saida {
+        Ok(saida) => saida,
+        Err(erro) => {
+            return Atualizacao {
+                ok: false,
+                linhas: vec![format!("Não deu para abrir o {}: {erro}", binario.display())],
+            };
+        }
+    };
+    let mut texto = String::from_utf8_lossy(&saida.stdout).into_owned();
+    texto.push_str(&String::from_utf8_lossy(&saida.stderr));
+    let mut linhas: Vec<String> = texto
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    linhas.truncate(LINHAS_DA_ATUALIZACAO);
+    if linhas.is_empty() {
+        linhas.push("O claude não disse nada.".into());
+    }
+    Atualizacao { ok: saida.status.success(), linhas }
+}
+
+/// A atualização instalou uma versão nova (não era só "up to date"): é quando vale avisar que ela
+/// vale no turno seguinte.
+pub fn instalou_versao_nova(a: &Atualizacao) -> bool {
+    a.ok && a.linhas.iter().any(|l| l.contains("Successfully updated") || l.contains("Successfully downgraded"))
+}
+
 fn escrever_mensagem(entrada: &mut ChildStdin, mensagem: Mensagem) -> Result<()> {
     let mut conteudo = vec![json!({ "type": "text", "text": mensagem.texto })];
     for caminho in mensagem.imagens {
