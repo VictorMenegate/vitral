@@ -402,11 +402,13 @@ fn ambiente(opcoes: &Opcoes) -> Vec<(String, String)> {
     // Em todo turno: um fluxo que escape da opção (num Claude Code que o deixe passar) também
     // fica no limite.
     por("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS", AGENTES_DO_ULTRACODE.to_string());
-    if opcoes.ultracode {
-        // Com a entrada fechada, o Claude Code espera os agentes do fluxo (o padrão corta em 10
-        // min); o Parar do Vitral continua valendo.
-        por("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "0".into());
-    }
+    // Com a entrada fechada, o Claude Code espera os agentes que ficaram em segundo plano e, no
+    // padrão, corta em 10 min: "Background tasks still running after 600s; terminating". Quem
+    // deixa agente em segundo plano não é só o Ultracode — a ferramenta de agente de um turno
+    // comum também —, e um lote de uma hora morria no meio, com o turno marcado como falhado.
+    // Esperar sem teto é o certo aqui: o Vitral mostra "Os agentes seguem trabalhando em segundo
+    // plano", o chat continua contando como rodando e o Parar derruba tudo quando o dono quiser.
+    por("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "0".into());
     ambiente
 }
 
@@ -1222,11 +1224,12 @@ mod testes {
         let args = argumentos(&normal);
         assert_eq!(valor_de(&args, "--effort"), Some("max"));
         assert!(!args.iter().any(|a| a == "--settings"));
-        // Fora do Ultracode: sem fluxos de agentes, com o limite deles e com o teto padrão da espera.
+        // Fora do Ultracode: sem fluxos de agentes, mas com o limite deles e com a espera sem
+        // teto — um turno comum também deixa agente em segundo plano.
         assert_eq!(args.last().map(String::as_str), Some("Workflow"));
         let env = ambiente(&normal);
         assert!(env.contains(&("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS".into(), "3".into())));
-        assert!(!env.iter().any(|(k, _)| k == "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"));
+        assert!(env.contains(&("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS".into(), "0".into())));
 
         let com_hook = Opcoes {
             ultracode: true,

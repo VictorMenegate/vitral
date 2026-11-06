@@ -3,6 +3,14 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.5.1
+
+- **Os agentes em segundo plano deixam de ser cortados no meio.** O Claude Code espera 10 minutos
+  por eles e então os encerra, e o turno terminava com "Os agentes em segundo plano não terminaram"
+  e "O último turno falhou" — um lote de uma hora morria sempre. O Vitral já pedia a espera sem
+  teto nos turnos com Ultracode; agora pede em todos, porque um turno comum também deixa agente
+  em segundo plano. Parar continua derrubando tudo quando você quiser.
+
 ## 0.5.0
 
 As imagens no chat e as mensagens que você manda enquanto ele trabalha.
