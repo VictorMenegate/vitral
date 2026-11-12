@@ -1,7 +1,8 @@
 use gpui::{
-    Action, AsKeystroke, FocusHandle, InteractiveElement as _, IntoElement, KeyBinding,
-    KeyContext, Keystroke, Modifiers, ParentElement as _, RenderOnce, SharedString,
-    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, relative,
+    Action, AsKeystroke, BoxShadow, Div, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, KeyBinding, KeyContext, Keystroke, Modifiers, ParentElement as _, Pixels,
+    RenderOnce, SharedString, StyleRefinement, Styled, Window, div, hsla,
+    prelude::FluentBuilder as _, px, relative, rems,
 };
 
 use crate::{ActiveTheme, StyledExt};
@@ -244,6 +245,48 @@ impl Kbd {
         partes.push(Self::format(&tecla).into());
         partes
     }
+}
+
+/// Vitral: o desenho único de tecla do Vitral, para cada parte de um atalho ("Ctrl", "N"): 18 de
+/// altura, no mínimo 18 de largura, 4 de folga dos lados, sem borda, em relevo (luz de 1 px em
+/// cima e sombra de 1 px embaixo, por dentro) e a letra em mono 10/14. O app (as dicas, as
+/// buscas, os rodapés) e o kit (a dica, o menu) chamam este, com as cores de cada um.
+pub fn desenho_de_teclas(
+    partes: Vec<SharedString>,
+    fundo: Hsla,
+    texto: Hsla,
+    fonte_mono: SharedString,
+    raio: Pixels,
+) -> Div {
+    let z = |v: f32| rems(v / 15.);
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(z(4.))
+        .children(partes.into_iter().map(move |tecla| {
+            div()
+                .flex_none()
+                .h(z(18.))
+                .min_w(z(18.))
+                .px(z(4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(raio)
+                .bg(fundo)
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(1.), hsla(0., 0., 1., 0.16)).inset(),
+                    BoxShadow::new(px(0.), px(-1.), hsla(0., 0., 0., 0.30)).inset(),
+                ])
+                .font_family(fonte_mono.clone())
+                .text_size(z(10.))
+                .line_height(z(14.))
+                .font_weight(FontWeight::NORMAL)
+                .text_color(texto)
+                .whitespace_nowrap()
+                .child(tecla)
+        }))
 }
 
 impl Styled for Kbd {

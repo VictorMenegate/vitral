@@ -6,14 +6,16 @@
 
 Ambiente para trabalhar com o Claude Code em vários projetos ao mesmo tempo: um **Mestre** que
 entende o pedido e o manda para o projeto certo, e **chats de projeto** que fazem o trabalho, cada
-um na sua cópia da pasta. Tem o visual de vidro azul-marinho da Stained Glass UI e a organização do
-Ratoeira (trilho de ícones, seções "Esperando você" e "Rodando agora", abas em pílula). Feito em
-Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
+um na sua cópia da pasta. O fundo é uma chapa de metal líquido azul (ver **Acabamento**; começou
+com o vidro azul-marinho da Stained Glass UI) e a organização vem do Ratoeira (seções "Esperando
+você" e "Rodando agora", abas de chat). Feito em Rust com GPUI (o motor de interface do Zed) e os
+componentes do GPUI Kit.
 
 ## Como funciona
 
-- **Mestre.** Uma conversa só, global, que vê todos os projetos: o círculo com a órbita logo abaixo
-  do logo, Ctrl+M ou **Falar com o Mestre** no menu do Vitral. Ele não edita nada (só lê, com Read,
+- **Mestre.** Uma conversa só, global, que vê todos os projetos: a primeira linha da lista na visão
+  geral (com a fileira de projetos ligada, o círculo com a órbita ao lado do logo), Ctrl+M ou
+  **Falar com o Mestre** no menu do Vitral. Ele não edita nada (só lê, com Read,
   Grep e Glob, nas pastas dos projetos e nas cópias): entende o pedido, responde o que dá (como estão
   os chats, perguntas rápidas sobre o código) e manda o trabalho para os chats de projeto. Roda sem
   perguntar permissão (nada do que ele tem escreve ou roda comando), sem Ultracode e fora da conta
@@ -83,8 +85,13 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   Voltar no tempo). Uma pasta dentro de um repositório (sem ser a raiz) vai direto, com o aviso para
   ligar a raiz. As outras pastas do projeto entram só para leitura. O chat conversa com você como
   uma conversa do Claude Code e recebe os pedidos do Mestre; o número dele é o que você vê ("chat 12").
-  Ctrl+N cria um na vista do projeto (com mais de uma pasta, pergunta **Em qual pasta?**); na visão
-  geral, abre a paleta com os projetos, **Avulsos** e **Novo projeto…**.
+  O "+" e o Ctrl+N criam um na hora, sem perguntar, como o "novo chat" do VS Code
+  (`novo_chat_direto`, em `src/ui/dialogos.rs`): na pasta do chat aberto (a mesma, se é uma das
+  ligadas ao projeto; senão, a principal); com o Mestre ou nada aberto, no último destino; sem
+  nenhum dos dois, a paleta pergunta a pasta. **Novo chat em outra pasta…**, no menu do logo, abre a
+  paleta "Em qual pasta?" (as pastas que já têm chat, **Outra pasta…** e **Sem pasta**). Na vista
+  de um projeto, o botão **Novo chat** da lista cria nele (com mais de uma pasta, pergunta **Em qual
+  pasta?**).
 - **A cópia nasce na primeira mensagem**, não quando o chat é criado: a mensagem espera ("Preparando
   a cópia de ~/Projetos/loja; a mensagem entra quando ela ficar pronta.") e entra quando a cópia fica
   pronta. A cópia recebe os arquivos locais fora do git (`.env*` e `CLAUDE.local.md` por padrão), roda
@@ -123,11 +130,21 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   cria ajudante, entra na conta de vagas e vai junto quando o chat muda de projeto. Pasta sem git e
   avulso não têm ajudantes.
 - **Avulsos.** Chats sem projeto, cada um numa pasta só dele em `~/.local/share/vitral/avulsos/<chat>`,
-  direto (sem cópia). Ficam no atalho **Avulsos** do trilho (o balão), com **Novo chat avulso**.
+  direto (sem cópia). Na visão geral entram na lista corrida, com os outros; com a fileira de
+  projetos ligada, ficam também no atalho **Avulsos** dela (o balão), com **Novo chat avulso**.
 - **Conversas do Claude Code.** Na primeira abertura (junto da migração), o Vitral traz as conversas
   da extensão do VS Code e do terminal (`~/.claude/projects/<pasta>/<sessão>.jsonl`, só lidos: nada lá
-  é mudado). Cada uma vira um chat: no projeto cuja pasta ligada contém a pasta da conversa (a mais
-  funda), senão em Avulsos. O chat mexe direto nessa pasta, como lá (o Claude Code só retoma uma
+  é mudado). Depois disso uma **vigia** (`src/motor/importacao.rs`) olha de novo a cada abertura e a
+  cada 2 minutos e traz as conversas novas sozinha: só abre os arquivos mexidos desde a passada
+  anterior, com 30 s de folga (`Filtro.desde`, em `src/importar.rs`), fica calada quando não há
+  nada e, quando traz, avisa sem escrever na conversa do Mestre. A marca da passada é a hora em
+  que a leitura começou, nunca fica à frente do relógio e só anda até ali se todas as pastas
+  abriram (com uma que falhou, fica no máximo um dia para trás). Quem já usava o Vitral antes de
+  existir a importação não tem registro: para ele a vigia começa de agora, e o histórico inteiro
+  só vem pelo **Importar do Claude Code…**. É o que deixa quem usa o VS Code
+  passar para o Vitral sem importar à mão. Cada uma vira um chat: no projeto cuja pasta ligada
+  contém a pasta da conversa (a mais funda), senão em Avulsos. O chat mexe direto nessa pasta, como
+  lá (o Claude Code só retoma uma
   sessão a partir da pasta dela): sem cópia nem Juntar, e sem commit (só a pasta própria de um projeto
   ganha o commit de cada vez). O título é o que você deu (`/rename`), o resumo do Claude Code ou o
   começo da primeira mensagem; as datas e a ordem na lista são as da conversa. Ficam de fora as vazias
@@ -140,8 +157,9 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   "Trazida do Claude Code (VS Code) em 01/11" antes do que vem no Vitral. A primeira mensagem
   continua numa cópia da conversa (`--resume <id> --fork-session`): a original fica como está e pode
   seguir no VS Code; as seguintes retomam a cópia. A conversa que estava aberta no Claude Code quando
-  foi trazida ganha o aviso disso. **Importar do Claude Code…** (menu do Vitral) traz as novas desde a
-  última vez, sem repetir (nem as de chats apagados depois).
+  foi trazida ganha o aviso disso. **Importar do Claude Code…** (menu do Vitral) olha tudo de novo,
+  não só o que mudou, e sempre responde; nem ele nem a vigia repetem o que já veio (nem as conversas
+  de chats apagados depois).
 - **Conversas do Vitral antigo.** O coordenador que conversou fica só para leitura: no lugar da caixa,
   "Conversa do Vitral antigo, só para leitura." e **Continuar num chat novo**, que abre um chat no
   mesmo projeto com a conversa anexada e "Continuando a conversa “…” (anexada): " na caixa. Os
@@ -173,6 +191,10 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   traz o diff completo só desses. Uma mensagem sua
   direto a um chat em revisão abre uma nova rodada (verificação, revisor e relatório) e avisa quem
   pediu.
+- **Um chat abre outro** (`abrir_chat`): quando você pede ("abre um chat para isso"), o chat de
+  projeto abre um chat novo, à vista na lista, no projeto dele ou no que você citar, já com o pedido
+  enviado; você continua a conversa por lá e nada volta sozinho para quem abriu. Só num turno em que
+  só você falou: o texto de um relatório, de uma issue ou de outro chat não abre chats.
 - **Chats conversam entre si** (`mensagem_para_chat`, `perguntar_coordenador` para quem pediu);
   mensagens que chegam com o chat ocupado esperam na fila. **Freio de ciclo:** depois de 6 mensagens
   automáticas seguidas entre dois chats (o Mestre inclusive) sem você no meio, a próxima fica guardada
@@ -318,30 +340,40 @@ Rust com GPUI (o motor de interface do Zed) e os componentes do GPUI Kit.
   o ponteiro entrar num botão redondo, chegar dado novo), duram de 120 a 240 ms e redesenham no
   máximo 60 vezes por segundo; parado, nada se mexe. Com as animações do GNOME desligadas, com
   **Animações: Desligadas** nas Configurações (ou `VITRAL_SEM_ANIMACAO=1`), tudo aparece direto no
-  estado final e o spinner fica parado. Com a janela visível mas sem foco, os spinners e o brilho
-  da faixa do turno param (1 redesenho por segundo, o do relógio, em vez de 12); texto chegando
+  estado final e o spinner fica parado. Com a janela visível mas sem foco, os spinners, os anéis que
+  giram, o metal e o brilho da linha de estado param (1 redesenho por segundo, o do relógio, em vez
+  de 12); texto chegando
   numa conversa que nenhum painel mostra não redesenha a janela; e a barra de rolagem aparece e
   some sem fade (o fade pedia quadros no ritmo do monitor a cada mudança de tamanho, como o Ctrl+B).
 
 ## Opções da conversa (como na extensão do Claude Code)
 
-Na caixa de mensagem (cantos de 20, 14 na Estreita; gradiente azul indo para o preto; com o foco ou um
-popover dela aberto, a borda fica azul e um halo azul suave acende em volta, em 180 ms), a barra de
-baixo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo cheio, e
-Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar e, sem
+A caixa de mensagem é uma moldura dupla (`caixa_mensagem`, em `src/ui/composer.rs`): por fora, uma
+moldura preta de canto 20 (14 na Estreita); dentro dela, com 4 de folga, o campo opaco, com o texto
+e os chips; embaixo do campo, ainda na moldura, a **linha de estado**, em mono 11. Com o foco, um
+aro de metal de 2 px acende em volta da moldura (180 ms; apaga em 120), sem azul nem halo. A barra
+de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo
+cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar e, sem
 cópia isolada, o chip inteiro em vermelho), **modelo** (o logo do Claude e o que vale, como "Claude
 Opus 5.5"), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
-uso de 5 h). O que segue o padrão da pasta fica em tom tênue. À direita ficam o anel do contexto (a
-porcentagem no meio; âmbar a 70%, vermelho a 90%; o clique abre o uso da conversa: em cima o
+uso de 5 h; só com mais de uma conta). O que segue o padrão da pasta fica em tom tênue. À direita
+ficam o anel do contexto (com a fenda embaixo e a porcentagem ao lado, "24%", em mono; âmbar a
+70%, vermelho a 90%; na caixa estreita, só o anel; o clique abre o uso da conversa: em cima o
 contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta, os tokens e, na
 conversa do Vitral antigo, o custo com os ajudantes, e no rodapé **Compactar a conversa**, que prepara o
 `/compact`), o clipe de anexar (arquivo ou imagem, arquivo do projeto, conversa anterior e comandos
-de barra), o **…** (comandos de barra, compactar, sessão nova e fixar) e o botão redondo de enviar,
-apagado com a caixa vazia, que acende quando ela ganha texto e dá um pulso claro a cada envio (o
-pulso fica no botão também quando ele já virou o parar). Clicar em qualquer ponto vazio da caixa
-(o vão entre o texto e os chips, a margem, o espaço entre os chips) mantém o cursor nela. Com a
-conversa rodando, ele vira o parar (o
-quadrado); com texto escrito, ficam os dois, e o enviar entra na fila. Vazia, a caixa diz "Peça ao
+de barra), o **…** (comandos de barra, compactar, sessão nova e fixar) e o enviar, uma tecla de
+metal (`VarianteRedonda::Metal`, o par do "+" da lista), apagado com a caixa vazia, que acende
+quando ela ganha texto e dá um pulso claro a cada envio (o pulso fica no botão também quando ele já
+virou o parar). Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
+o espaço entre os chips, a linha de estado) mantém o cursor nela. Com a conversa rodando, ele vira
+o parar (o quadrado, com um anel girando em volta); com texto escrito, ficam os dois, e o enviar
+entra na fila. A linha de estado, com o chat parado, mostra as teclas: à esquerda "/" comandos e,
+com a caixa vazia, "↑" última (no Mestre, "#" projeto e "@" chat); à direita "Enter" envia e, com
+texto escrito, "Shift Enter" quebra a linha (na caixa estreita, só a direita). Com o chat
+trabalhando, ela diz o que ele faz (ver **Faixa do turno**, abaixo). Na última conversa estreita (o
+cartão com menos de 1000 px e a direita fechada), a caixa encolhe 32 à direita para os anéis de uso
+do canto da janela caberem ao lado dela. Vazia, a caixa diz "Peça ao
 Mestre… (#projeto, @chat)" no Mestre, "Mensagem para este chat…" no chat de projeto, "Mensagem…" no
 avulso e "Mensagem direta para este ajudante…" no ajudante ("Sem cópia: fale com o chat dele" e
 "Cópia removida: fale com o chat dele" quando não dá); num chat em revisão, a dica do enviar diz
@@ -350,8 +382,8 @@ modo de permissão fica o chip **Divisão: Mostrar antes | Começar direto**, e 
 para um projeto…" (#), "Falar de um chat…" (@) e "Arquivo do computador…". **Shift+Tab** troca o
 modo. O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
-segmentado (←/→, Home e End mudam na hora; o nível fica só na pílula do segmentado, sem repetir no
-cabeçalho), com uma linha curta sobre cada nível (Auto: "Usa o
+segmentado (←/→, Home e End mudam na hora; o nível escolhido fica na ficha do escolhido, a mesma
+dos menus, sem repetir no cabeçalho), com uma linha curta sobre cada nível (Auto: "Usa o
 padrão do modelo."), e a chave **Ultrathink**, em arco-íris (Espaço liga; a descrição diz "Só na
 próxima mensagem"): vale só para a próxima mensagem, sobe o esforço dela para Extra (o Máximo
 continua Máximo) e deixa o chip em arco-íris até enviar. Um comando de barra não a consome. Embaixo
@@ -380,7 +412,22 @@ a tem). O **modelo** abre um seletor com busca: Padrão (o do projeto, ou o das 
 com a versão quando o modelo em uso é daquela família; o logo do Claude fica só no rótulo do grupo e
 o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está em uso ("Padrão · Opus
 5.5"); só uma família escolhida na conversa ganha o selo "em uso". Uma conversa antiga que
-guardou o nome completo do modelo ganha a linha dele. Fora da caixa estreita, os popovers de esforço
+guardou o nome completo do modelo ganha a linha dele. Quando a família não é a que está em uso, a
+linha dela diz a versão que ela é hoje ("Para os desafios mais difíceis · hoje, Fable 5.1"). Embaixo
+das famílias vêm as **versões exatas** (Fable 5.2, Fable 5.1, Opus 5.5 e as outras), com a que está
+rodando marcada, inclusive quando a conversa segue a família. A lista vem do Claude Code instalado:
+ao abrir o app e quando a versão dele muda, o Vitral faz o pedido `initialize` do protocolo do
+Agent SDK (o mesmo da extensão do VS Code ao abrir), sem mandar mensagem e sem gastar uso, numa
+pasta vazia e só do dono dentro do cache do Vitral (`perguntas`), só com as configurações do
+usuário, sem servidor MCP nenhum e com os hooks desligados (`claude::atualizar_modelos_oferecidos`,
+com prazo de 12 s; no fim o processo e o que ele abriu são encerrados), e o seletor mostra cada
+modelo que ele listou e o que cada apelido resolve, uma vez
+só, por família e da mais nova para a mais antiga (`versoes_de_modelo`, em `src/ui/composer.rs`).
+Modelo novo aparece quando o Claude Code se atualiza, sem versão nova do Vitral. Sem resposta
+(nenhum Claude Code, ou o `claude` de mentira da bancada), vale a lista fixa `VERSOES_DE_MODELO`,
+que é só a reserva. Uma versão que a conversa tinha escolhido e que o Claude Code deixou de
+oferecer continua à vista, como "escolhido antes". Num Claude Code anterior ao 2.1.280 (`VERSAO_MODELOS_EXATOS`), as versões
+exatas não aparecem e uma linha diz por quê. Fora da caixa estreita, os popovers de esforço
 e de modelo terminam num rodapé com as teclas que aceitam, no desenho de tecla da paleta: **← →**
 nível, **Espaço** Ultrathink, **U** Ultracode, **Enter** fecha; no de modelo, **↑ ↓** escolher,
 **Enter** usa. Com a caixa média, as setas e o "Claude " do modelo saem, e a conta fica só com o
@@ -398,8 +445,10 @@ nunca cobre o código; a linguagem fica na dica dele ("Copiar código python"). 
 ferramentas, vale por painel).
 
 - **Ler a conversa.** A **hora** de cada mensagem aparece no hover, na mesma barra flutuante do
-  Copiar (`hora_na_barra`), e um **separador de dia** ("Hoje", "Ontem", "22 de março") separa os
-  turnos (`separador_de_dia`): numa conversa de dias dá para saber quando cada coisa aconteceu. As
+  Copiar (`hora_na_barra`; a barra é uma tecla em relevo, opaca, com fio claro e a luz em cima, sem
+  o anel azul dos flutuantes, em `barra_de_acoes`), e um **separador de dia** ("Hoje", "Ontem",
+  "22 de março") separa os turnos (`separador_de_dia`): numa conversa de dias dá para saber quando
+  cada coisa aconteceu. As
   conversas de antes da 0.4.0 não guardaram a hora e não mostram nada. O **Copiar** vale em
   qualquer mensagem, não só na última resposta de cada turno. **Ctrl+F** busca dentro da conversa
   aberta (`src/ui/busca_conversa.rs`): a barra flutua no alto do painel, com o contador ("3 de
@@ -413,42 +462,68 @@ ferramentas, vale por painel).
   que você escreveu e não enviou) já ficava na memória da janela ao trocar de painel; agora também
   vai para o `interface.json` 1,2 s depois de você parar de digitar, e volta quando o Vitral abrir
   de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). A **fila** do que você mandou com
-  o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da faixa do turno: cada
+  o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da fila (na linha de
+  estado da caixa, com o chat trabalhando, ou na faixa acima dela): cada
   mensagem esperando numa linha, com o × que devolve o texto à caixa e, com o chat parado,
   **Entregar agora** no rodapé. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
-- **Faixa do turno.** Uma linha fixa acima da caixa, alinhada com o texto dela (e, à direita, com o
-  enviar), que entra com um fade e 8 px de baixo quando aparece, diz o que o chat está fazendo
-  ("Lendo motor.rs…", "Rodando: cargo test…"), há quanto tempo, quantas mensagens esperam na fila e
-  lembra que **Esc** para o turno. Com a resposta já dada e os agentes de um fluxo ainda rodando,
-  ela diz "Agentes trabalhando em segundo plano…". Quando nada roda, ela diz por que parou e dá a
-  ação: na fila esperando vaga (Esc tira da fila), "Caiu; tentando de novo em 8 s", **Parada** com
-  **Retomar** (âmbar quando foi o Vitral que parou), **O último turno falhou** com **Tentar de
-  novo** e mensagens esperando com **Entregar agora**. Esperando você, ela some (o pedido está logo
-  abaixo).
+- **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
+  (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
+  fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
+  "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
+  Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
+  segundo plano…". Também vão ali a espera por vaga ("Na fila: começa quando outro chat terminar",
+  Esc tira da fila), "Caiu; tentando de novo em 8 s" e "Juntando…". Nas larguras menores saem o
+  "ação N", o rótulo do Esc e, na mínima, o relógio. Acima da caixa (`faixa_atividade`), alinhada
+  com o texto dela e, à direita, com o enviar, que entra com um fade e 8 px de baixo, só fica o que
+  pede um botão seu: **Parada** com **Retomar** (âmbar quando foi o Vitral que parou), **O último
+  turno falhou** com **Tentar de novo**, mensagens esperando com **Entregar agora** e o que o chat
+  de projeto tem a dizer (o que falta juntar, a cópia que não foi preparada). Esperando você, ela
+  some (o pedido está logo abaixo).
 - **Planejar.** O plano aparece num cartão com a faixa âmbar em cima e o modo em que a conversa
   fica depois de aprovar ("Depois de aprovar: Aceitar edições"). **Aprovar e executar**
   sai do Planejar e volta ao modo de antes (sem modo anterior, o padrão da pasta; se também for
   Planejar, Aceitar edições); a seta ao lado aprova em outro modo (**Aprovar e aceitar edições** ou
   **Aprovar e perguntar antes**). O campo embaixo leva o que mudar: Enter (ou
   **Enviar mudanças**) devolve o plano com o comentário.
-- **Pedidos de permissão** num cartão com a faixa âmbar em cima e o título do que vai acontecer
-  ("Rodar este comando?", "Editar cupom.rs?", "Abrir docs.rs?"), com a descrição ou o caminho
-  embaixo. O corpo mostra o comando inteiro, um mini-diff no Edit, as primeiras linhas no Write;
-  o caminho fora da pasta do chat leva "fora da pasta" em âmbar. Com um trecho arriscado no
-  comando (`rm -rf`, `sudo`, `--force`, `| sh`...), o cartão fica vermelho, o trecho aparece em
-  vermelho, o botão vira **Permitir mesmo assim** e o "permitir sempre" some. Além de Permitir e
-  Negar: **Negar e explicar…** (o texto vai ao Claude) e **Permitir edições nesta conversa** /
-  **Sempre permitir este comando** / **Sempre permitir X**, que valem já no turno em andamento.
-  Com vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo
-  (clique no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir ali mesmo).
+- **Pedidos de permissão** num cartão de moldura dupla (`cartao_de_pedido`, em
+  `src/ui/mensagens.rs`; `moldura_dupla`, em `src/ui/componentes/controles.rs`): por fora, a
+  moldura de canto 20; dentro, com 4 de folga, o cartão opaco. No pedido aberto que espera você, a
+  moldura de fora é metal (o aro de 4 px); no perigoso, vermelha; no recolhido, preta. O cabeçalho
+  tem o azulejo de 28 com o ícone da ferramenta, o título afirmativo ("Rodar um comando", "Editar
+  views.py", "Gravar notas.md", "Abrir docs.rs", "Pesquisar na web") e a ferramenta em mono
+  ("bash", "edit", o servidor do MCP); o "fora da pasta" em âmbar, quando o caminho fica fora da
+  pasta do chat, aparece em qualquer largura. O corpo mostra o comando inteiro numa caixa cavada,
+  com "$" na frente, um mini-diff no Edit e as primeiras linhas no Write; o motivo (a descrição do
+  comando, o caminho) vai embaixo. A caixa do comando mostra umas 11 linhas e rola: com mais que
+  isso (ou mais de 900 caracteres), o cartão avisa "Comando comprido: role a caixa para ler tudo
+  antes de permitir.". No rodapé, **Negar e explicar…** (o ícone; o texto vai ao Claude),
+  **Negar** e **Permitir**, e à esquerda a caixa de marcar **Não perguntar de novo: edições nesta
+  conversa** (ou "este comando", ou o nome da ferramenta): marcada, o Permitir grava a regra, que
+  vale já no turno em andamento (`permitir_sempre`); desmarcada, permite só esta vez. Com um
+  trecho arriscado no comando (`rm -rf`, `sudo`, `--force`, `| sh`...), o trecho aparece em
+  vermelho, um aviso explica, a caixa de marcar some e o botão é **Segure para permitir**
+  (`BotaoDeSegurar`, em `src/ui/componentes/controles.rs`, com o `Segurar` de
+  `src/ui/movimento.rs`): só confirma depois de 0,9 s apertado, enchendo da esquerda para a
+  direita, e soltar ou sair com o ponteiro cancela. Pelo teclado, o primeiro Enter arma ("Enter de
+  novo para permitir", por 3 s) e o segundo confirma; a repetição da tecla segurada e um Enter
+  colado no primeiro (menos de 250 ms) não contam. Vale igual com as animações desligadas. Com
+  vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
+  no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
+  perigoso, o segurar).
 - **Ferramentas.** Chamadas seguidas viram uma trilha calma, uma linha de 28 por chamada, coladas e
-  ligadas por um traço fino: o ícone do tipo (em cor só quando falhou), o verbo ("Leu", "Editou",
+  ligadas por um traço fino: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
+  girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
   "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. A partir de 4 a trilha começa recolhida
   ("6 ações · leu 3 · rodou 2", com "1 falhou" em vermelho); o cabeçalho entra no Tab. O clique numa
-  chamada mostra o resultado (as últimas 40 linhas, com Copiar e Mostrar tudo). O que um chat faz
+  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
+  pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
+  lado ficam guardadas na conversa; as chamadas de antes disto não têm). Embaixo, o resultado (as
+  últimas 40 linhas, com Copiar e Mostrar tudo); o de uma edição que deu certo é só "o arquivo foi
+  atualizado" e fica de fora. No hover, a linha que leu ou mudou um arquivo que ainda está no disco
+  ganha na ponta o ícone **Abrir o arquivo ao lado**. O que um chat faz
   com os ajudantes (e o Mestre com os chats) aparece como evento ("Criou o ajudante #2 …", "Pediu
   ajuste em", "Aprovou e juntou", "Criou 3 ajudantes"), com a pílula do estado na última menção de
   cada um (só a palavra, "em revisão"; o detalhe e a explicação na dica). As ferramentas do Mestre
@@ -497,7 +572,229 @@ passe o mouse na sua mensagem e use ↶, na barra que aparece à esquerda do bal
 arquivos àquele ponto (o botão vermelho da confirmação é o que volta). A resposta diz quantos
 voltaram e quais não. Com a cópia apagada, o ↶ some.
 
+## O que fica à vista
+
+O padrão é o mínimo, e o resto aparece quando faz falta:
+
+- **O alto da lista é uma linha só**: o logo (o menu do Vitral) e as abas **Conversas | Arquivos**,
+  na mesma altura (40), num segmentado de largura toda (`topo_enxuto`, em `src/ui/trilho.rs`). Na
+  visão geral, Arquivos mostra a pasta do chat aberto (a do projeto dele e a cópia do chat, ou a
+  pasta do chat sem projeto).
+- **A busca e o "+" moram no pé da lista**, embaixo das Arquivadas, dos agentes rodando e do sino,
+  também na altura de 40. Isso vale na lista enxuta (`lista_enxuta`: a visão geral com a fileira de
+  projetos escondida); na vista de um projeto, ou com a fileira ligada, a busca e o Novo chat ficam
+  em cima, como antes.
+- **O Mestre é a primeira linha da lista**, sempre, com o ponto dele quando roda ou espera você
+  (saiu da fileira de ícones). O recolher da lista (Ctrl+B) mora no menu do logo, **Recolher a
+  lista**; com a fileira de projetos ligada, também na ponta dela.
+- **Na visão geral a lista é corrida**, sem o título "Visão geral" nem os das seções: o que espera
+  você, o que roda, as fixadas (com o alfinete) e as recentes, nessa ordem. Cada chat é uma linha
+  só de 32 (o quadrado da pasta, neutro, o título e a hora em mono); a linha de baixo volta na
+  busca que achou no texto, e o resultado da busca usa o mesmo quadrado pequeno (18) das outras
+  linhas. Na vista de um projeto, tudo como era.
+- **Novo chat não pergunta nada.** O "+" e o Ctrl+N abrem um chat na hora, na pasta do chat aberto
+  (ver **Chat de projeto**, em **Como funciona**). Escolher a pasta fica no menu do logo, **Novo chat
+  em outra pasta…**: as pastas que já têm chat (com o caminho embaixo do nome), **Outra pasta…**, que
+  escolhe uma no disco, e **Sem pasta**. A pasta nova ganha um projeto com o nome dela, sem
+  formulário (dá para editar depois); a que já é de um projeto usa o dele. **Novo projeto…**
+  continua no menu do Vitral.
+- **A fileira dos projetos fica escondida.** **Mostrar os projetos no alto da lista**, em
+  Configurações > Chats (`Config.fileira_de_projetos`), traz de volta os quadrados, os Avulsos e o
+  "+" (e o alto da lista em duas linhas, com o Mestre nela); com a lista filtrada num projeto eles
+  aparecem de qualquer jeito. Escondida, o ícone de projeto sai neutro (o cinza-azulado dos
+  Avulsos, `icone_projeto::COR_NEUTRA`) na lista, na busca, nos cabeçalhos, nos menus da conversa
+  e nos cartões (`icone_projeto::visual_do`): a cor de cada projeto, repetida em quinze linhas,
+  virava um arco-íris solto. As listas que escolhem um projeto (mover chat, os arquivados, os
+  projetos do menu recolhido) e o Editar projeto continuam com a cor.
+- **Os anéis de uso** flutuam no canto de baixo, à direita, da janela, um em cima do outro, sem
+  cápsula atrás (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex
+  quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
+  Configurações > Chats
+  (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
+- **O cabeçalho da conversa tem pouca coisa:** as abas, o selo "do Mestre ↩" quando cabe, o modo
+  foco (só ligado) e o **⋯**. Abrir e fechar o painel da direita mora no **⋯** do último painel,
+  com o número do que ele espera no canto do **⋯**.
+- **O botão do Linear** só aparece com a conta do Linear ligada, e **o chip da conta**, na caixa, só
+  com mais de uma conta.
+- **O × do canto é o da janela.** Com o painel da direita aberto, o cabeçalho dele tem o botão de
+  fechar o painel (o ícone de recolher), um traço e então os botões da janela; o × acende em
+  vermelho e a dica diz "Fechar o Vitral".
+
+## Acabamento
+
+O acabamento em uso é o **Grafite** (`superficie::GRAFITE`, em `src/tema.rs`), de 12/11/2026; o
+azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volta a ele.
+
+- **Cor.** Um quase preto frio, em degraus (a base, a conversa, o que é elevado), e um destaque
+  só, azul cheio (`#2B63FF`): os links, o texto do que roda e, bem leve, a ficha do escolhido. O
+  "+" e o enviar são teclas de metal, não azul chapado. Seleção, hover e anel de foco são neutros.
+  Os ícones dos chips da caixa (modo, esforço) são neutros; a cor fica para o que pede cuidado (o
+  "Sem perguntar").
+- **Metal líquido: a chapa e as duas camadas.** Atrás de tudo há uma chapa de metal líquido. A
+  chapa é a receita "Mesh drift" que o dono montou na 21st.dev e colou em 12/11/2026 ("tenta focar
+  em vez de glass esse metal líquido"): cinco bolhas (uma quase preta e quatro azuis) derivando,
+  com grão de filme e uma luz que segue o ponteiro (só com o metal andando). Ela é opaca: o papel de
+  parede saiu de cena (o vidro que deixava vê-lo acabou). Por cima dela o app tem **duas camadas**.
+  A **base** é a janela inteira: a chapa debaixo de um véu azul-escuro (`vidro_leitura` do Grafite,
+  #0A1533 a 0xE3: 11% do metal passa, e o escuro fica de um azul fundo que muda de lugar, mais
+  claro onde passa uma bolha). A lista mora direto na base, sem cartão, fundo nem aresta próprios
+  (na gaveta, a superfície é a da gaveta). Por cima flutuam os **cartões**, a conversa e os painéis
+  da direita (Este chat, o arquivo aberto, o PR), com a sombra dos flutuantes (`sombra_flutuante`)
+  e quase opacos (5% do metal passa). Margem da janela e vão entre os cartões: 8; canto dos
+  cartões: 16 (`margem`, `vao` e `raio_peca` da variante). Menus e popovers são praticamente
+  opacos. Texto nunca vai no metal cru: os alfas
+  saem da conta de contraste contra a cor mais clara que a chapa entrega (`TETO_DO_METAL`,
+  #ACD9FF, a bolha clara com a luz em cima), e o teste `contraste_dos_tokens_no_pior_caso` roda
+  contra ela (0xE0 é o mínimo da lista). Para o que vier por cima do metal há dois véus:
+  `Cores::veu_de_placa()` (preto a 56%, debaixo de `forte` e `texto`) e `Cores::veu_de_botao()`
+  (preto a 36%, debaixo de ícone branco).
+- **O motor do metal** (`src/ui/componentes/metal.rs`). A conta do shader roda em Rust numa grade
+  de 1 ponto a cada 8 px da janela (uns 20 mil pontos, 2 ms no binário de debug), vira uma imagem
+  pequena (um BMP montado à mão, que o `image` do GPUI já sabe ler: nenhuma dependência nova) e a
+  placa de vídeo a estica com filtro linear; o grão, que é por pixel, vai por cima num ladrilho
+  fixo de 256 px. Uma chapa só por janela: o `metal::fundo` (o primeiro filho da Janela e da
+  vitrine) faz o quadro e o guarda; cada `metal::abertura` pinta um recorte da mesma imagem, sem
+  conta nova (`Encaixe::Continuo` mostra o pedaço da chapa que está atrás; `Encaixe::Cobrir`
+  encolhe a chapa inteira até cobrir a caixa, para botões e placas), e o `metal::aro_de_metal` é
+  uma abertura de 2 a 4 px em volta de um miolo opaco. O teste `metal_so_pelo_motor` barra
+  `paint_image(` e `drop_image(` no resto do `src/ui`. Nenhuma abertura dentro de view com
+  `.cached()` (a dica do kit usa): a textura troca a cada batida. No Windows o renderizador do
+  GPUI (Direct3D) amostra o sprite com filtro linear e devolve o espaço do atlas ao soltar a
+  imagem, como o do Linux (lido no fonte; falta ver rodando lá).
+- **Quando o metal anda.** É a exceção ao "nada anima em repouso", com custo medido. Cada batida do
+  laço redesenha a Janela inteira, e no binário de debug isso custa uns 35 ms de processador: a 8
+  quadros por segundo em repouso o app gastava 30% de um núcleo (bancada, chat parado aberto,
+  ponteiro parado na janela, 30 s; o limite era 8%), e o metal em si era o de menos (com o campo
+  congelado, 28%). Por isso a política é: **em repouso o metal fica parado e nada redesenha** (0%
+  medido); ele **anda a 20 quadros por segundo só com um chat à vista trabalhando** (um chat de um
+  painel aberto; o que roda em segundo plano não o acorda), e só então a luz segue o ponteiro. O
+  ponteiro mexendo **não** acorda o metal: acordava, e cada movimento redesenhava a janela inteira
+  20 vezes por segundo, o que engasgava a rolagem (dono, 12/11/2026). A exceção é o botão do logo,
+  que anima com o ponteiro em cima ou com o menu aberto (ver **Botão do menu**). Com a janela sem
+  foco ou o movimento reduzido (GNOME sem animações, Animações desligadas nas Configurações,
+  `VITRAL_SEM_ANIMACAO=1`) fica parado, na fase inicial e sem a luz. Andando, o debug mede de 15 a
+  18 quadros por segundo e de 52% a 62% de um núcleo (o redesenho da Janela, não o metal). O ritmo
+  de repouso é uma constante só, `movimento::QPS_EM_REPOUSO` (hoje 0; com 8 volta a animar em
+  repouso), e o `movimento::laco_a(window, cx, qps)` é a porta: guarda a fase em `f64` e a hora da
+  próxima batida por janela, no compasso (o tempo do desenho não se soma ao intervalo). Quem decide
+  o ritmo da chapa é o `metal::fundo(trabalhando, …)`, chamado no `render` da Janela.
+  `VITRAL_QUADROS=1` mostra os quadros e o tempo do campo.
+- **Três materiais.** Tudo é feito só de luz e sombra de 1 px por dentro (`src/tema.rs`): **vidro**
+  nos cartões (`aresta_de_vidro`: fio claro de 1 px nos lados, luz na própria quina de cima, sombra
+  de 1 px na base e um brilho de 3% que entra uns 40 px pelo topo; o brilho fica em 3% porque com
+  5% o apagado sobre a lista reprova no contraste), **tecla** no que é elevado e escolhido
+  (`aresta_de_tecla`: a pílula escolhida do segmentado, as teclas de atalho) e **poço** no que é
+  cavado (`aresta_de_poco`: o Buscar, o trilho do segmentado, os contadores). A aresta das peças
+  mora numa camada à parte, o último filho da peça (`camada_de_aresta`, ou `.aresta_de_vidro(raio)`
+  depois dos filhos), porque a sombra interna pinta antes dos filhos; e a peça não pode ter
+  `border`, que empurra a camada para dentro e faz a luz cair na segunda fileira de pixels (era o
+  caso da conversa, com a borda de 1,5). Cada lado é uma sombra deslocada 1 px, não um anel: o anel
+  passava também pela base, e o claro dele com a sombra por cima dava o tom do fundo. Tecla só no
+  que está escolhido, nunca em cada linha de lista.
+- **Sem halo; o metal diz "é aqui".** Sem degradê, sem halo azul e sem borda azul. O "é aqui" é
+  sempre um pedaço do metal: o **aro de metal** de 2 px (`metal::aro_de_metal`, em volta de um miolo
+  opaco) na caixa de mensagem e na busca com o foco e na aba sob o ponteiro; o aro de 4 px na
+  moldura do pedido de permissão que espera você; e, no painel selecionado, a **luz de baixo** (a
+  doca, abaixo). As cantoneiras azuis e o pontilhado animado saíram (as `cantoneiras` ainda moram
+  em `superficies.rs` e no kit, `cantoneira` em `vendor/gpui-component/src/styled.rs`, e só a
+  vitrine as usa).
+- **A doca (a luz de baixo).** O pé de todo cartão de conversa é uma abertura por onde se vê o
+  metal, com a caixa de mensagem pousada nela (`src/ui/conversa.rs`). Só o painel ativo a acende
+  (180 ms; apaga em 120): o campo inteiro do metal encolhido para cobrir a doca, com 20% do azul do
+  destaque por cima e o grão leve (`metal::abertura_lisa`), e o escuro do cartão sumindo devagar de
+  cima para baixo (`tema::gradiente_da_doca`, em duas camadas), como uma luz que vem de baixo. Nos
+  outros painéis o pé fica escuro. Na conversa vazia a doca é alta (172 px acima da caixa, ou 56
+  numa janela com menos de 640 de altura); no resto, rente à caixa. Ela está no fluxo: as
+  mensagens terminam onde ela começa, e nenhum texto fica por cima do metal.
+- **Retícula.** Uma textura só, no padrão do próprio shader, um quad por uso: a **trama** (xadrez de
+  2 px numa cor, o resto transparente), o **fio de pontos** (o xadrez numa fileira só, "2 aceso, 2
+  apagado", no lugar de toda linha cheia: entre as linhas dos grupos das Configurações, recuado 12,
+  em cima dos rodapés de teclas dos popovers da caixa, do Novo chat e do corpo de popover, nos
+  separadores dos menus e ao lado da etiqueta de topo dos popovers de escolha) e a
+  **hachura** diagonal (para o que saiu). O lado é medido em pixel do aparelho e arredondado
+  (`lado_da_trama`), senão o xadrez borra em 125%. O desenho mora no kit (`trama`, `fio_de_pontos`,
+  `fio_de_pontos_em_pe`) e o app passa por `ui/componentes/graficos.rs` (`trama`, `fio_de_pontos`,
+  `hachura`); o teste `reticula_so_pelos_graficos` barra `checkerboard(` e `pattern_slash(` no resto
+  do `src/ui`. Os dois renderizadores têm os padrões (o `shaders.wgsl` do Linux e o `shaders.hlsl`
+  do Windows, casos 2 e 3), então não há queda para o liso.
+- **Cantos.** Um padrão só nos controles: `raio::de(altura)`, em `src/tema.rs`, 45% da altura do
+  controle (16 num botão de 36, 14 num de 32, 9 num chip de 20): bem arredondado, nunca redondo. É
+  o desenho do logo em escala. Botões, chips, abas, a busca, selos e os itens de menu usam ele; só
+  ponto, barra fina e anel continuam redondos. As peças e as caixas grandes seguem nos tokens: 16
+  nos cartões da janela, 20 na moldura da caixa, nos popovers e nos menus, 14 nos cartões de
+  dentro, 10 nas linhas.
+- **Anéis.** Todo anel tem uma fenda de 60° embaixo e pontas redondas (`pintar_arco`, `Anel` e
+  `AnelGirando`, em `src/ui/componentes/graficos.rs`): vai das 7 às 5 horas, com o trilho escuro e o
+  arco da fração por cima. O `AnelGirando` é o "carregando" do app: o mesmo anel, aberto, dando uma
+  volta a cada 1,2 s no laço de 20 quadros por segundo (parado, com a fenda embaixo, no movimento
+  reduzido); ele substitui o spinner do kit nas linhas de ferramenta, na linha de estado da caixa e
+  no parar. O anel de uso (`AnelDeUso`) é um só por serviço e mostra a janela mais apertada das
+  duas (5 h ou semana): eram dois, um dentro do outro, e com a fenda eles liam como "duas barras".
+- **A ficha do escolhido.** O item escolhido (num menu ou popover de escolha, a aba escolhida do
+  alto da lista, o nível de esforço) vai numa ficha azul leve, com um fio do mesmo azul e o relevo
+  de tecla, no canto dos controles (`ficha_do_escolhido` e `ficha_de_metal`, em
+  `src/ui/componentes/superficies.rs`). Já foi um recorte de metal debaixo de um véu; num retângulo
+  comprido ficava preto de um lado e azul chuviscado do outro. O nome `ficha_de_metal` ficou.
+- **Menus e popovers.** O menu do logo e os menus com cabeçalho de objeto (o "…" de um chat, de um
+  projeto) começam numa **placa de metal** (`placa_de_metal`, `cabecalho_objeto`: o recorte da
+  chapa debaixo do véu de placa, 52 de altura, com o símbolo, o nome em branco e o detalhe em
+  mono). Os atalhos saem em teclas desenhadas, os separadores são o fio de pontos, o item sob o
+  ponteiro (ou o teclado) ganha o relevo de tecla, no canto `raio::de` da altura dele, e o rodapé é
+  uma faixa escura com a linha técnica em mono (no menu do logo, a versão e o commit). O contorno
+  perdeu o anel azul. Nos popovers de escolha (modo de permissão, divisão, conta, modelo, esforço),
+  o ícone de cada item vai num azulejo de 28 (`azulejo_de_escolha`) e a etiqueta do topo ganha o
+  fio de pontos até a borda.
+- **Letra, em duas vozes.** Inter no texto. A segunda voz é a JetBrains Mono miúda, de aparelho de
+  medição: no código, nas horas da lista, nas teclas, na `etiqueta()` (mono 11/14, dos fatos e
+  medidas; o componente `Etiqueta`, uma pílula de fio com ícone, tom, `baixa` e `fundo`, mora ao
+  lado do `Selo`) e nos rótulos de seção, que saem em mono 11 apagado, em caixa alta e com um
+  tracinho de 8 por 1 na frente ("MESTRE", "OBJETIVO", "PASTAS"). A caixa alta é só do
+  desenho (`etiqueta_de_secao`, `CabecalhoDeSecao`, o título do `GrupoDeOpcoes` e o rótulo de grupo
+  da lista com busca do kit); o dado continua "Pastas", "Hoje". Fica em 11: o GPUI não tem
+  espaçamento entre letras e 10 em caixa alta aperta. Todo número pequeno (`metadado`, `micro`,
+  `numero`) usa dígitos de largura igual (`tabular`, o `tnum` da Inter), e o tempo que corre não
+  faz a coluna andar. O título da tela vazia tem um tamanho próprio, `titulo_heroi` (28/34).
+- **Teclas.** Um desenho só em todo o app (`desenho_de_teclas`, em `vendor/gpui-component/src/kbd.rs`,
+  que a dica do kit e o `desenho_teclas` do app chamam): 18 de altura, no mínimo 18 de largura, sem
+  borda, fundo claro a 8% em relevo (luz em cima, sombra embaixo) e a letra em mono 10. A busca da
+  lista mostra "Ctrl" "K" à direita enquanto está vazia e sem foco, com a lista a partir de 276 px.
+- **Logo.** O V do dono (uma gota à esquerda, ligada por um pescoço fino à perna grossa da
+  direita), em branco, sobre um quadrado de metal líquido de cantos 45% (o mesmo `raio::de`). É o
+  mesmo em todo lugar: o botão do menu, o cabeçalho do menu do Vitral, as mensagens do Vitral na
+  conversa, a tela de recuperação e o ícone do app (os PNGs, o `.ico` e os dois SVG). Os arquivos
+  saem de `ferramentas/logo/`: o `rasterizar.py` tira o V de `v-do-dono.png` (a forma escura num
+  fundo branco) e grava o `assets/vitral-v.png` (256 px, o V branco com a cópia escura deslocada
+  por baixo, para continuar legível sobre a bolha clara); o `icones.py` pinta o metal parado na
+  fase do botão do menu, põe o V por cima, recorta o canto e grava os `assets/vitral-*.png` (48 a
+  256), o `vitral.ico` (16 a 256) e os dois SVG, `vitral.svg` e `vitral-pequeno.svg`, cada um com o
+  PNG embutido (o metal tem grão e não se descreve em vetor); o `previa.py` é a conta do metal em
+  Python, que o `icones.py` importa. Os três precisam do Pillow. Uso: `python3 -I
+  ferramentas/logo/rasterizar.py ferramentas/logo/v-do-dono.png assets/vitral-v.png` e `python3 -I
+  ferramentas/logo/icones.py ferramentas/logo assets/vitral-v.png assets [folha.png]` (a folha com
+  todos os tamanhos lado a lado, para conferir).
+- **Botão do menu.** No alto da lista, o quadrado do logo é metal líquido: a malha viva
+  (`malha_viva`, em `ui/componentes/malha.rs`, a mesma receita calculada ponto a ponto, um
+  quadrado por pixel do botão, com o grão exato) e o V por cima (`assets/vitral-v.png`, o
+  `LOGO_V` de `src/ui/trilho.rs`). Com o ponteiro em cima ou o menu aberto a malha anda a 20
+  quadros por segundo e a luz segue o ponteiro; fora disso acompanha a fase do metal da janela
+  (parada em repouso).
+
 ## Painel da direita (Ctrl+J)
+
+Começa fechado, para a conversa ficar com a largura toda. Abre e fecha pelo Ctrl+J ou pelo item do
+**⋯** do último painel (**Mostrar Este chat**, **Mostrar o Distribuído**, **Mostrar o arquivo
+aberto**…, marcado quando ele está aberto, com o número do que ele espera); aberto ao lado, o
+cabeçalho dele tem o próprio botão de fechar (o ícone de recolher). O que você escolheu fica
+lembrado (`painel` no `interface.json`). Ele também abre sozinho quando você clica num arquivo
+citado na conversa, sem mudar essa escolha.
+
+**Arquivos citados** (`src/ui/links_arquivo.rs`). Na resposta do assistente, o arquivo que está no
+disco vira link: `produtos/views.py`, `src/motor.rs:120` entre crases, o link do markdown para um
+caminho
+(`[a janela](src/ui/mod.rs#L120)`) e, no texto corrido, a palavra com barra e extensão. O clique
+abre o arquivo aqui, rolado até a linha, que fica marcada; uma imagem abre no visor. O caminho
+relativo parte da pasta do chat. Só abre o que está numa pasta que o Vitral conhece (as dos
+projetos, as dos chats e as cópias); o resto avisa e fica para o VS Code.
 
 O que ele mostra depende do chat aberto: o **Distribuído** no Mestre, **Este chat** num chat de
 projeto, **Ajudantes** num ajudante (os do chat dele, com o seu em destaque) e **Esta conversa**
@@ -716,20 +1013,25 @@ como sempre.
 
 ## Contas e uso dos planos
 
-No pé do trilho fica um anel por serviço, o do Claude e o do Codex, com o disco da marca no
-meio: o anel de fora é a janela de 5 h e o de dentro, mais fino, a semana, na cor do serviço
-até 69%, âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel de fora fica cheio em
-vermelho. Com mais de uma conta, o do Claude leva a inicial da conta em uso. Sem o Codex
-instalado, o botão dele fica apagado (cinza), e o painel dele oferece **Instalar e entrar**,
-que abre o terminal com o instalador oficial e o login (também no menu do logo, **Instalar o
-Codex…**). O clique abre o painel de detalhes, à direita do trilho: o plano, as duas janelas
-com a hora em que renovam ("renova em 2 h 13 min · 15:59"; uma janela sem leitura fica só com o
-rótulo e "sem dado", sem a barra), os limites semanais por modelo, os
+No canto de baixo, à direita, da janela flutua um anel de 30 por serviço, um em cima do outro
+(`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
+instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (com a fenda
+embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,
+âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel fica cheio em vermelho. As duas
+porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
+conta em uso. **Mostrar o uso do plano no canto da janela**, em Configurações > Chats
+(`Config.uso_no_canto`, ligada por padrão), esconde os anéis; o uso continua em **Contas do
+Claude**. Sem o Codex instalado, o anel dele não aparece: **Instalar o Codex…**, no menu do logo,
+abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
+para cima, alinhado à direita: o plano, as duas janelas, cada uma com um anel de 44 que enche ao
+abrir, a porcentagem no meio (em âmbar ou vermelho a partir de 70%) e, ao lado, o rótulo e a hora
+em que renova ("renova em 2 h 13 min · 15:59"; uma janela sem leitura fica só com o rótulo e "sem
+dado", sem o anel), os limites semanais por modelo, os
 créditos extras do mês e, no rodapé, quando o número foi lido, com **Atualizar** (e, discreto,
 "não deu para atualizar" embaixo quando a última busca não trouxe número). O uso do Claude se
 atualiza sozinho, direto da Anthropic, com o mesmo pedido que o Claude Code faz para o `/usage` e o
 login de cada conta: logo ao abrir o painel e a cada minuto com ele aberto, a cada 5 min com ele
-fechado (os anéis do trilho também mostram), a cada 15 min com a janela sem foco há mais de 15 min
+fechado (os anéis do canto também mostram), a cada 15 min com a janela sem foco há mais de 15 min
 (30 min depois de 2 h fora) e na hora com **Atualizar**. O token é lido do `.credentials.json` da
 conta a cada busca e só vai para `https://api.anthropic.com`; vencido ou recusado, o Vitral não o
 renova (quem renova é o Claude Code) e espera, e a falta de rede e o excesso de pedidos fazem
@@ -738,14 +1040,14 @@ guardam no disco (relido a cada 30 s) e os avisos de limite durante os turnos; o
 esses dois caminhos.
 
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
-linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e os
-dois anéis, como no trilho (5 h por fora, a semana por dentro), o e-mail inteiro em cima e o uso
+linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
+anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso
 embaixo, "5 h 7% · semana 38%", sem a janela que ainda não foi lida) a torna a padrão, e o check
 fica nela; **Entrar com outra conta…** conecta uma nova e o **…** de uma conta extra tem
 **Desconectar…**. **Contas…**, no rodapé, abre o diálogo das contas (também no menu do logo,
 **Contas do Claude**, ou em **Gerenciar contas…**, no chip da conta na caixa de mensagem). Ele
 repete o seletor do popover, maior: em **Conta padrão**, a Automática e uma linha por conta com o
-mesmo anel do trilho (5 h por fora, a semana por dentro), o login e o plano, o uso ("5 h 23% ·
+mesmo anel do canto (a janela mais apertada), o login e o plano, o uso ("5 h 23% ·
 semana 41%", com a hora de renovar na dica, ou "no limite · volta às 14:30") e o check na padrão; o
 clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como padrão**,
 **Copiar o e-mail** e, nas extras, **Desconectar…**. **Entrar com outra conta…** mostra dois passos:
@@ -763,21 +1065,28 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 
 ## Organização
 
-- Trilho à esquerda, numa peça de vidro própria (a área vazia arrasta a janela, o clique duplo
-  maximiza e o clique direito abre o menu da janela), de cima para baixo: o logo (clique ou F10 para
-  o **menu do Vitral**, que abre à direita: no cabeçalho, "Vitral" e quantos projetos há, com a pasta
-  de dados na dica; depois **Falar com o Mestre**, **Novo chat…**, **Novo projeto…**, **Rotinas** e
-  **Importar do Claude Code…**; os **Projetos arquivados**, quando há, cada um com o quadrado apagado e
-  **Desarquivar**; **Contas do Claude**, **Instalar o Codex…** quando ele falta, **Configurações** e
-  **Memória do Mestre…**; **Abrir a pasta de dados** ↗; com os atalhos de cada um; no rodapé, a
-  versão em tênue, "Vitral 0.3.0-rc.1", com o commit na dica ("Compilado no PC" no que não veio do
-  GitHub); com uma versão nova pronta, um ponto azul de 8 no canto do logo, a versão na dica e
-  **Reiniciar para a 0.3.0** logo acima das Configurações). Logo abaixo, o **Mestre**: o círculo com a
+- **O alto da lista** (a área vazia arrasta a janela, o clique duplo maximiza e o clique direito
+  abre o menu da janela): o logo, no quadrado de metal (clique ou F10 para o **menu do Vitral**, que
+  abre à direita: no topo, a placa de metal com o logo, "Vitral" e quantos projetos há, com a pasta
+  de dados na dica; depois **Recolher a lista** (Ctrl+B), **Falar com o Mestre**, **Novo chat**,
+  **Novo chat em outra pasta…**, **Novo projeto…**, **Rotinas** e **Importar do Claude Code…**; os
+  **Projetos arquivados**, quando há, cada um com o quadrado apagado e **Desarquivar**; **Contas do
+  Claude**, **Instalar o Codex…** quando ele falta, **Configurações**, **Memória do Mestre…** e
+  **Atalhos do teclado**; **Abrir a pasta de dados** ↗; com os atalhos de cada um em teclas; no
+  rodapé, a faixa escura com a linha técnica em mono, "Vitral 0.7.0 · a1b2c3d" (a versão e o commit
+  curto, ou o canal no compilado no PC), e a origem na dica; com uma versão nova pronta, um ponto
+  azul de 8 no canto do logo, a versão na dica e **Reiniciar para a 0.3.0** logo acima das
+  Configurações). Ao lado do logo, as abas **Conversas | Arquivos** (ver **O que fica à vista**).
+- **A fileira de projetos** (o trilho de antes, deitado no alto da lista), só com **Mostrar os
+  projetos no alto da lista** ligada ou com a lista filtrada num projeto (`trilho_deitado`, em
+  `src/ui/trilho.rs`): o logo, o **Mestre**, os projetos, **Avulsos** e o "+", numa linha que rola de
+  lado quando os projetos não cabem, e, na visão geral, o recolher da lista na ponta. O **Mestre**:
+  o círculo com a
   órbita (Ctrl+M) abre o Mestre no painel ativo, sem mudar a lista; aberto no painel ativo, fica na
   seleção com o aro azul; o número âmbar no canto conta os cartões que esperam você (e um a mais se o
   Mestre parou ou deu erro, em vermelho no erro); sem isso, um ponto azul é resposta nova que você
   não leu e, rodando, o ponto vazado. Depois, os **projetos**, numa área que rola, na ordem que você
-  der: arraste um quadrado para cima ou para baixo (uma linha azul mostra se ele vai antes ou depois;
+  der: arraste um quadrado para o lado (uma linha azul mostra se ele vai antes ou depois;
   perto da borda, a área rola; a ordem fica). O clique num projeto abre a lista dele; clicar de novo
   volta à **Visão geral**. O quadrado do projeto em que está o chat aberto ganha um aro fraco; o do
   projeto aberto na lista, o aro inteiro; o ponteiro em cima acende o quadrado suave; um ponto mostra
@@ -785,10 +1094,11 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   um chat (da lista ou a aba de um painel) num projeto, ou em Avulsos, o move para lá: enquanto ele
   está por cima, uma faixa diz "Mover para X"; quando há algo a dizer (a cópia continua ligada à
   pasta de antes), pergunta antes; a recusa (o chat está trabalhando, o projeto está arquivado) vira
-  aviso. O clique direito num projeto abre o menu dele. Embaixo deles, fixos, **Avulsos** (o balão;
+  aviso. O clique direito num projeto abre o menu dele. Depois deles, fixos, **Avulsos** (o balão;
   no clique direito, **Novo chat avulso** e **Projetos arquivados…**) e o **+** do projeto novo.
-  No pé, o sino do que precisa de você e os anéis de uso do Claude e do Codex (o logo e os anéis
-  ficam sobre um disco preto, que clareia com o ponteiro em cima). O número do sino é o mesmo de
+- **O pé da lista:** as **Arquivadas**, os agentes rodando e o sino do que precisa de você e, na
+  lista enxuta, embaixo deles, a busca e o "+" (os anéis de uso ficam no canto da janela; ver
+  **Contas e uso dos planos**). O número do sino é o mesmo de
   "Esperando você" (pedidos, erros, paradas que pedem Retomar e os cartões do Mestre), em vermelho se
   algo falhou e âmbar nos outros casos; só com respostas novas, um ponto azul. Quando o número aumenta
   (um pedido, uma parada ou um erro novo), o sino pulsa uma vez com um anel âmbar (vermelho se algo
@@ -797,18 +1107,20 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   embaixo, a mesma frase e o mesmo sinal da prévia da lista (o ponto na cor e o rótulo: "Permissão ·
   Bash · npm test", "Plano para aprovar", "Parada · Vitral fechou", "Erro · …"): a seção **Do Mestre**
   (os cartões que esperam você e os pares de chats parados no freio de ciclo), os pedidos (com Negar e
-  Permitir, ou **Permitir mesmo assim** em vermelho quando o comando tem um trecho arriscado; um plano
-  abre a conversa para ler antes), as paradas (Retomar), os erros (Tentar de novo) e as respostas
+  Permitir; o comando com um trecho arriscado, ou comprido demais para a caixinha daqui, mais de 2
+  linhas ou 160 caracteres, não se aprova pelo sino: o botão é **Ver o comando perigoso** ou **Ver o
+  comando inteiro** e leva à conversa, onde o cartão mostra tudo e o perigoso pede o segurar; um
+  plano abre a conversa para ler antes), as paradas (Retomar), os erros (Tentar de novo) e as respostas
   novas (marcar como lida), com o número do painel quando a conversa está aberta; clicar numa linha
   abre a conversa (Ctrl+clique, ao lado). No rodapé, os botões **Marcar tudo como lido** e **Ver na
   lista** (volta à visão geral, sem busca e sem arquivadas, e mostra a seção); cabeçalho, seções,
   linhas e o ícone do rodapé ficam na mesma guia, a 16 da borda. Ctrl+G vai direto à próxima
   pendência (sem outra, ao primeiro cartão aberto do Mestre).
-- **Ctrl+B recolhido.** A lista e o trilho somem e a conversa vai até a borda. No lugar deles ficam
-  o logo, no começo das abas do 1º painel, com o selo do sino (o número ou o ponto, que pulsa como
-  o sino), e os anéis de uso, de 24, no cabeçalho do 1º painel, logo depois do logo (o do Codex só
-  quando está instalado e tem uso lido; os popovers abrem para baixo). O menu do logo ganha, em
-  cima, **Mostrar a lista**, **O que precisa de você** (abre a mesma caixa do sino) e os projetos
+- **Ctrl+B recolhido** (ou **Recolher a lista**, no menu do logo). A lista some e a conversa vai
+  até a borda. No lugar dela fica o logo, no começo das abas do 1º painel, com o selo do sino (o
+  número ou o ponto, que pulsa como o sino); os anéis de uso continuam no canto da janela. O menu
+  do logo troca o Recolher por, em cima, **Mostrar a lista**, **O que precisa de você** (abre a
+  mesma caixa do sino) e os projetos
   (até 9, com Ctrl+1…9, e **Todos os projetos…**); escolher um projeto abre a vista dele e traz a
   lista de volta. Ctrl+B de novo volta tudo.
 - **Ícone e cor do projeto.** Cada projeto tem um ícone do Lucide e uma cor. Sem escolha, o ícone
@@ -817,44 +1129,63 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   as cores de estado. Para trocar, o chip do ícone em **Editar projeto** (também pelo **Ícone e
   cor…**), que abre a prévia, a busca de ícone pelo nome ("loja", "banco"), 60 ícones e 8 cores, com
   o escolhido na cor do projeto, e **Automático**, que volta ao palpite. A escolha fica no projeto e
-  vale no trilho, na lista, nos diálogos e em Arquivos.
-- **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista (ou a aba de
-  um painel) para a borda esquerda ou direita de um painel para abrir ao lado, ou para o meio para
-  trocar. A forma diz o que vai acontecer: meio painel em azul para "Abrir ao lado", uma barra na
-  borda para "Mover para cá" e o painel inteiro para "Trocar a conversa" (com "Já há 4 lado a lado"
-  quando não cabe outro); a aba que você arrasta fica apagada e tracejada. Também dá com Ctrl+clique
-  ou o botão "abrir ao lado" no cartão. O painel que abre ao lado entra com um fade (a largura não
-  anima). Com vários painéis, cada um tem um número em forma de tecla (na aba, na lista e na
-  direita), Alt+1…4 vai para ele, e o ativo tem a aba azul e a borda e um halo azuis, que acendem
-  suave (180 ms; apagam em 120); clicar na aba (ou em qualquer parte do painel) ativa o painel e põe
-  o cursor na caixa dele. O × fica dentro da aba, no lugar do ponto de estado (azul rodando, âmbar
-  pedido ou parada, vermelho erro): aparece no hover, no foco e sempre no painel ativo; o clique do
-  meio na aba também fecha; fechar pelo × ou pelo clique do meio põe o cursor na caixa do painel
-  que fica, como o Ctrl+W. A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10
-  abre o menu. As divisórias não têm linha fixa: o indicador aparece ao passar o mouse, e é só
-  arrastar para redimensionar. A lista da esquerda recolhe no botão ao lado das abas (ou Ctrl+B, que
-  esconde o trilho junto). Ctrl+W fecha o painel ativo (e o cursor vai para a caixa do que fica),
-  Ctrl+PgUp/PgDn vão para o vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
-- **Cabeçalho do painel.** Uma linha só (44): a aba e os botões, modo foco, **⋯** (**Mais opções da
-  conversa**, o mesmo menu do clique direito na aba, como diz a dica) e, no último painel, o da
-  direita, com a dica do que ela mostra (**Distribuído**, **Este chat**, **Ajudantes**, **Esta
-  conversa** ou **Arquivo aberto**) e o Ctrl+J. Com a direita fora da vista (fechada, ou a gaveta
-  dela fechada) e chats que pedem você, o botão leva no canto um selo com o número, âmbar, ou
-  vermelho se um caiu, e a dica diz quais ("1 em revisão, 1 parada"; também "pedindo permissão" e
-  "com erro"). Quando o botão vai para o **⋯**, o item vira **Mostrar Este chat** (ou **Mostrar o
-  arquivo aberto**, **Mostrar os ajudantes**…), com o mesmo número tingido. Ligados, ficam num cinza
-  mais claro, nunca azul. No chat de projeto e na conversa antiga, o quadrado do projeto na aba abre
-  o menu do projeto; no avulso, fica o balão; no ajudante, o ↰ que abre o chat dele; no Mestre, a
+  vale na fileira de projetos, na lista, nos diálogos e em Arquivos. Com a fileira escondida (o
+  padrão), o ícone aparece neutro, sem a cor (ver **O que fica à vista**).
+- **Abas de chat.** Cada painel guarda abas no cabeçalho (`Painel.abas`, em `src/ui/paineis.rs`),
+  na ordem em que abriram: clicar num chat da lista abre uma aba no painel ativo e as anteriores
+  ficam, até 8 (`MAX_ABAS`; passou disso, sai a mais antiga que não está à vista). Clicar numa aba
+  troca o chat do painel (`abrir_aba`); o × ou o clique do meio fecha a aba (`fechar_aba`; a conversa
+  continua na lista), e o painel passa a mostrar a vizinha de antes (sem ela, a de depois); fechar a
+  última fecha o painel. O Ctrl+W fecha a aba à vista e, na última, o painel. A cada desenho,
+  `acertar_abas` põe o chat à vista entre as abas e tira as de chats que sumiram. Um chat só aparece
+  num lugar por vez: a vizinha que já está à vista noutro painel não entra. A aba à vista é a
+  completa; as outras são compactas (até 180 de largura), com o título e o caminho na dica. Toda
+  aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
+  vista. As abas não são lembradas ao fechar o app.
+- **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer
+  aba de um painel, como no VS Code: solta no **meio** de outro painel, ela vira mais uma aba dele
+  ("Abrir aqui, como aba"; sai do painel de origem, que fecha se era a única aba); solta na
+  **borda** esquerda ou direita de um painel, abre ao lado. A aba que sai de um painel com outras
+  abas, solta na borda de qualquer painel (até do próprio), vira um painel novo daquele lado e
+  deixa as outras no de origem; a única aba de um painel, solta na borda de outro, muda o painel de
+  lugar ("Mover para cá"). A lógica é a `efeito_de`, em `src/ui/paineis.rs`, com teste. A forma diz
+  o que vai acontecer: meio painel em azul para "Abrir ao lado", uma barra na borda para "Mover para
+  cá" e o painel inteiro para a aba (com "Já há 4 lado a lado" quando não cabe outro); a aba que
+  você arrasta fica apagada e tracejada. Também dá com Ctrl+clique ou o botão "abrir ao lado" no
+  cartão. O painel que abre ao lado entra com um fade (a largura não anima). Com vários painéis,
+  cada um tem um número em forma de tecla (na aba, na lista e na direita), Alt+1…4 vai para ele, e
+  o selecionado é marcado pela **luz de baixo** (a doca de metal no pé do cartão, ver
+  **Acabamento**), que acende suave (180 ms; apaga em 120); clicar na aba (ou em qualquer parte do
+  painel) ativa o painel e põe o cursor na caixa dele. O × fica dentro da aba, no lugar do ponto de
+  estado (azul rodando, âmbar pedido ou parada, vermelho erro): aparece no hover, no foco e sempre
+  no painel ativo; fechar pelo × ou pelo clique do meio põe o cursor na caixa do painel que fica,
+  como o Ctrl+W. A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10 abre o menu.
+  As divisórias não têm linha fixa: o indicador aparece ao passar o mouse, e é só arrastar para
+  redimensionar; **dois cliques** na divisória entre duas conversas deixam todas com a mesma
+  largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
+  (**Recolher a lista**) ou pelo Ctrl+B, e no arrasto vai de 200 a 560 px (`FAIXA_LISTA`).
+  Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
+- **Cabeçalho do painel.** Uma linha só (44): as abas, o selo "do Mestre ↩", o modo foco (só
+  ligado) e o **⋯** (**Mais opções da conversa**, o mesmo menu do clique direito na aba, como diz a
+  dica). O botão da direita saiu do cabeçalho: no último painel, abrir e fechar a direita é o item
+  do **⋯**, **Mostrar Este chat** (ou **Mostrar o Distribuído**, **Mostrar o arquivo aberto**,
+  **Mostrar os ajudantes**…), marcado quando ela está aberta, com o Ctrl+J. Com a direita fora da
+  vista (fechada, ou a gaveta dela fechada) e chats que pedem você, o **⋯** leva no canto um selo
+  com o número, âmbar, ou vermelho se um caiu, e o item mostra o mesmo número tingido. Ligados,
+  ficam num cinza mais claro, nunca azul. No chat de projeto e na conversa antiga, o quadrado do
+  projeto na aba abre o menu do projeto; no avulso, fica o balão; no ajudante, o ↰ que abre o chat
+  dele; no Mestre, a
   órbita. A dica da aba diz onde o chat está ("Chat 12 · loja · site · cópia t12", "· direto", "Avulso
   · chat 3", "Ajudante de “Checkout”"). O chat que veio do Mestre leva, no cabeçalho, o selo "do
-  Mestre ↩", que abre o Mestre. O **⋯** tem **Nova conversa ao lado**, **Mover para a
-  esquerda/direita**, **Fechar os outros painéis**, **Fechar este painel**, o menu da conversa
-  (renomear, fixar, mover para projeto, arquivar, abrir a pasta fora do app) e, embaixo, o que a aba
-  não mostra: **Cópia t2**, **Projeto loja** quando o quadrado não está na aba e **Abrir o chat**
-  quando o ↰ não está. O custo ("US$ 0,42") está no anel do contexto da caixa. Uma linha separa o
-  cabeçalho das mensagens só quando há mensagens roladas por baixo dele. Em painel estreito o modo
-  foco e depois o painel da direita vão para o **⋯**; no mais estreito, com vários painéis, o número
-  toma o lugar do símbolo da aba. Nenhum texto é cortado no meio.
+  Mestre ↩", que abre o Mestre. O **⋯** tem **Modo foco**, o item da direita (no último painel),
+  **Nova conversa ao lado**, **Mover para a esquerda/direita**, **Fechar os outros painéis**,
+  **Fechar este painel**, o menu da conversa (renomear, mover para projeto, fixar, arquivar; o
+  "Abrir no VS Code" e o "Abrir no terminal" saíram dele) e, embaixo, o que a aba não mostra:
+  **Cópia t2** (onde ficam o terminal e o VS Code da cópia), **Projeto loja** quando o quadrado não
+  está na aba e **Abrir o chat** quando o ↰ não está. O custo ("US$ 0,42") está no anel do contexto
+  da caixa. Não há linha entre o cabeçalho e as mensagens, nem com a conversa rolada. Em painel
+  estreito o modo foco vai para o **⋯**; no mais estreito, com vários painéis, o número toma o
+  lugar do símbolo da aba. Nenhum texto é cortado no meio.
 - **Painel sem conversa:** "Fale com o Mestre" com **Abrir o Mestre**, **Novo chat** e **Novo
   projeto**; dá para soltar ali uma conversa arrastada da lista.
 - **Zoom:** Ctrl + roda do mouse (ou do touchpad), Ctrl+= / Ctrl+- e Ctrl+0 (volta a 100%)
@@ -865,28 +1196,29 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   estreita. O que você arrastou nas divisórias fica guardado a 100% e acompanha o zoom (a lista
   de 240 a 100% vira 360 a 150%, e a divisão entre as conversas se mantém). Vale para o app todo
   e fica guardado em `~/.config/vitral/interface.json`.
-- **Visual:** o fundo é um vidro fosco, mais opaco, em que o papel de parede aparece apagado atrás
-  do trilho e da lista; nas frestas entre as peças e na margem ele fica num chumbo azulado escuro, e
-  as peças ficam mais claras que o fundo, para se destacarem. O trilho, a lista, os painéis, o
-  seu balão e os cartões da direita e de entrega têm o reflexo do vidro (a linha de luz e o brilho no
-  topo). O vidro azul-marinho fica no fundo (trilho, lista, painéis, diálogos e as gavetas); o
-  preto entra no que vai por cima e por dentro, para dar profundidade: popovers, menus, dicas, avisos
-  e a barra de ações das mensagens são quase pretos (#0c0e13, opacos, com a borda clara fina e a
-  linha de luz no topo); os blocos de código, as saídas de comando, o comando da verificação e o
-  diff do Revisar ficam num preto mais fundo (#08090c), com a mesma cor de sintaxe; a caixa de
-  mensagem vai do azul, à esquerda, ao preto; e o logo e os anéis de uso do trilho ficam sobre um
-  disco preto, para a cor de cada marca saltar. Dentro de um popover, o que no vidro é um recuo
-  escuro (o trilho do segmentado do esforço, o recado do Pedir ajuste) vira um claro leve. O
-  logo é um vitral redondo: o completo (`assets/vitral.svg` e PNGs de 64 a 256 px) no menu de
-  aplicativos e na tela de recuperação, o pequeno (`assets/vitral-pequeno.svg`, feito para 16 a 32
-  px, e o PNG de 48) no trilho e nos ícones pequenos. Popovers e menus entram com um fade e 6 px
+- **Visual:** o fundo é a chapa de metal líquido (ver **Acabamento**), opaca: o papel de parede não
+  aparece mais. A janela inteira é a base, com a chapa debaixo de um véu azul-escuro, e a lista
+  mora direto nela; a conversa e os painéis da direita são cartões que flutuam por cima, com
+  sombra e a aresta de vidro (fio nos lados, luz na quina de cima, sombra na base e o brilho do
+  topo); o seu balão e os cartões da direita e de entrega, a linha de luz no topo. Os diálogos e as
+  gavetas são opacos; o preto entra no que vai por cima e por dentro, para dar profundidade:
+  popovers, menus, dicas e avisos são quase pretos e opacos (`flutuante`, com a borda clara fina e
+  a linha de luz no topo); os blocos de código, as saídas de comando, o comando da verificação, o
+  diff do Revisar e a moldura da caixa de mensagem ficam num preto mais fundo (#08090c), com a
+  mesma cor de sintaxe; e os anéis de uso ficam sobre um disco preto, para a cor de cada marca
+  saltar. Dentro de um popover, o que no vidro é um recuo escuro (o trilho do segmentado do
+  esforço, o recado do Pedir ajuste) vira um claro leve. O logo (o V sobre o quadrado de metal; ver
+  **Acabamento**) vai no tamanho completo (`assets/vitral.svg` e os PNGs de 64 a 256 px) no menu de
+  aplicativos e na tela de recuperação, e no pequeno (`assets/vitral-pequeno.svg`, declarado em 32
+  px, e o PNG de 48) nos ícones pequenos. Popovers e menus entram com um fade e 6 px
   vindos do lado do botão que os abriu, e todos os flutuantes têm uma linha de luz de 1 px no topo,
   como o reflexo de um vidro; as gavetas da lista e da direita entram deslizando 24 px da borda, em
   180 ms, com o véu em fade junto, e fecham secas. O véu dos diálogos cobre só a janela, não a
   margem da sombra. A pílula do segmentado (Conversas · Arquivos, o esforço) desliza até a
   opção nova; os botões redondos (enviar, +, sino) acendem suave com o ponteiro em cima; os anéis de
   uso e de contexto deslizam até o valor novo; o sino pulsa quando chega algo que precisa de você;
-  e o ponto de "rodando" respira enquanto um spinner gira. Listas, menus e cartões continuam com o
+  e o ponto de "rodando" respira enquanto o compasso dos spinners e do texto com brilho (o da
+  linha de estado) bate. Listas, menus e cartões continuam com o
   hover seco. "Em revisão" fica no azul do rodando (a pílula, o ponto e a parte da barra da direita);
   o âmbar é só do que precisa de você. Com o ponteiro fora da janela, nada fica em hover nem com a
   dica aberta. Na direita tudo começa na mesma coluna, a
@@ -897,18 +1229,20 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   abrem por cima, como gaveta (Ctrl+J, Ctrl+B, Ctrl+K e os botões de sempre); Esc ou um clique
   fora fecham. A gaveta entra deslizando da borda dela, com o fundo escurecendo junto; fecha seca.
   Os botões de janela seguem o layout do GNOME (no Fedora, só o ×).
-- **Lista** numa peça de vidro própria, em três vistas, lembradas ao reabrir (com o último chat
-  aberto): a **Visão geral** ("Esperando você", "Rodando agora", "Fixadas" e os 15 **Recentes** de
-  todos os projetos, com o nome do projeto antes da prévia; na busca, todos os que casam), um
+- **Lista**, direto na base da janela (sem cartão próprio), em três vistas, lembradas ao reabrir
+  (com o último chat aberto): a **Visão geral** (a lista corrida de **O que fica à vista**: o
+  Mestre, o que espera você, o que roda, as fixadas e os 15 recentes de todos os projetos, uma
+  linha por chat; na busca, todos os que casam), um
   **projeto** (o cabeçalho com o quadrado, o nome, a descrição numa linha, ou o começo do README em
   itálico, o **…** com o menu e um chip por pasta ligada; as abas **Conversas · Arquivos** num
   segmentado; as faixas Recentes e Mais antigas) e os **Avulsos**. Fora da visão geral, "← Visão
   geral" no topo e, quando outro projeto espera você, o "+N" âmbar que leva de volta a ela. O chip de
   uma pasta que sumiu fica em vermelho ("não encontrada") e o clique abre **Localizar pasta…**; o de
   uma que existe abre os arquivos dela. A lista vazia de um projeto diz "Comece um chat aqui, ou peça
-  ao Mestre com #chave", com **Pedir ao Mestre** (abre o Mestre com `#chave ` na caixa). Em cima, a
-  busca (Ctrl+K; acha também no texto das mensagens e nas conversas arquivadas) e o **+ Novo chat**,
-  que faz o mesmo que o Ctrl+N. Um ponto âmbar em Conversas avisa, de dentro de Arquivos, que algo
+  ao Mestre com #chave", com **Pedir ao Mestre** (abre o Mestre com `#chave ` na caixa). A busca
+  (Ctrl+K; acha também no texto das mensagens e nas conversas arquivadas) e o **+** ficam no pé da
+  lista na visão geral enxuta e em cima na vista de um projeto (lá, o **+ Novo chat** cria no
+  projeto). Um ponto âmbar em Conversas avisa, de dentro de Arquivos, que algo
   espera você. Tudo na lista começa a 16 px da borda da peça (o texto dos cabeçalhos de seção, o
   quadrado do projeto, a lupa da busca e o primeiro ícone do rodapé); a seta das seções fica à
   esquerda dessa guia. A busca diz só "Buscar"; o que ela acha e o Ctrl+K ficam na dica do campo
@@ -924,7 +1258,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   só "Buscar" e **Retomar tudo** e **Arquivar estas** ficam só com o ícone. Os horários continuam à
   vista. A barra de rolagem é fina, colada na borda da peça, não cobre os cartões e aparece e some
   sem fade, 1,2 s depois de rolar.
-- Seções, cada uma com o próprio cabeçalho: **Esperando você** (o número é o mesmo do sino:
+- Seções, cada uma com o próprio cabeçalho, na vista de um projeto e nos Avulsos (na visão geral a
+  lista é corrida, na mesma ordem e sem os títulos): **Esperando você** (o número é o mesmo do sino:
   pedidos, erros e paradas; respostas novas não contam, viram ponto; na visão geral, ela começa
   pelas linhas do Mestre, uma por cartão aberto, "Divisão 3 espera Começar (2 partes)", "Criar o
   projeto Receitas?", "Quer lembrar: …", e uma por par de chats parado no freio de ciclo, cada uma
@@ -938,8 +1273,11 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   arquiva na hora e mostra "3 conversas arquivadas" com **Desfazer** (que devolve só as que ela
   arquivou). O **Arquivar** do menu do chat também mostra "Conversa arquivada" com Desfazer (um chat
   de projeto que nunca rodou sai do Vitral: "Chat vazio apagado"); desarquivar não avisa.
-- **Cartão de conversa**: o quadrado do projeto (ícone e cor dele; o balão no avulso) com o ponto
-  do estado da família no canto (vermelho erro, âmbar pedido ou parada, azul resposta nova, aro azul
+- **Cartão de conversa** (na visão geral, uma linha só de 32: o quadrado neutro de 18, o título, a
+  hora em mono, o alfinete da fixada, o número do painel e o ponto de não lido; a prévia volta só
+  na busca que achou no texto; o desenho completo abaixo vale na vista de um projeto): o quadrado
+  do projeto (ícone e cor dele; o balão no avulso) com o ponto do estado da família no canto
+  (vermelho erro, âmbar pedido ou parada, azul resposta nova, aro azul
   rodando; a dica diz "loja · chat 12"), o título, a prévia com o motivo no ponto do sinal e no
   rótulo ("Permissão · Bash · npm test", "Plano para aprovar", "Parada · Vitral fechou", "Erro · …";
   quando é um ajudante, "#5 parada · Vitral fechou"; a mesma frase do sino; parado, o estado do
@@ -952,9 +1290,10 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   órbita pequena (a dica diz a parte e a divisão). No hover, o horário dá lugar a duas ações:
   **Abrir ao lado** (ou Ver o pedido do ajudante, ou Retomar) e **…**; fora do hover, o título usa o
   lugar delas, e só o cartão sob o ponteiro (ou realçado pelo teclado) corta o título para
-  mostrá-las. O clique direito ou o **…** abrem o menu do chat: abrir ao lado, renomear, fixar,
-  **Mover para projeto…** (os projetos e Avulsos), arquivar e abrir a pasta no VS Code ou no
-  terminal. Clique duplo também renomeia; Ctrl+clique ou o clique do meio abrem ao lado.
+  mostrá-las. O clique direito ou o **…** abrem o menu do chat: abrir ao lado, renomear, **Mover
+  para projeto…** (os projetos e Avulsos), fixar e arquivar (abrir a pasta no VS Code ou no terminal
+  saiu do menu do chat; fica no menu do projeto e no da cópia). O clique simples abre o chat numa
+  aba do painel ativo; clique duplo também renomeia; Ctrl+clique ou o clique do meio abrem ao lado.
 - **Ajudantes** embaixo do chat, numa árvore: um traço fino sai do centro do quadrado do pai e
   passa por um ponto de 8 por ajudante, na cor do estado (o sinal quando roda, pede, falhou ou parou
   e pede Retomar; o aro de quem roda fica solto, com o traço parando antes dele); "#2 título" fica na
@@ -1013,15 +1352,21 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   em chips com **Dias úteis** e **Todo dia**. O que falta aparece no campo, e o **Criar rotina** diz
   na dica o que falta; a seta volta à lista. Sem rotinas, **Usar exemplo** preenche uma.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os projetos e chats (o caminho do
-  `config.json` fica na dica do subtítulo), em sete grupos: **Mestre** (o modelo, **Mostrar a
+  `config.json` fica na dica do subtítulo), em nove grupos: **Mestre** (o modelo, **Mostrar a
   divisão antes de começar**, **Juntar sozinho quando a verificação e o revisor aprovarem** e
-  **Resumo ao voltar depois de**), **Chats** (o modo de permissão padrão, o modelo dos chats e
+  **Resumo ao voltar depois de**), **Chats** (**Mostrar os projetos no alto da lista**, desligada
+  por padrão, e **Mostrar o uso do plano no canto da janela**, ligada por padrão; o modo de
+  permissão padrão, o modelo dos chats e
   **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os chats já lidos e não
   fixados, sem fila, sem pedido aberto e sem nada para juntar), **Trabalho** (chats trabalhando ao
   mesmo tempo, ajudantes por chat, rodadas de ajuste antes de chamar você e os servidores MCP do seu
-  Claude Code), **Revisão** (o revisor independente e o modelo dele), **Cópias dos chats**,
-  **Interface** e **Atualizações**. Em Interface, **Animações** (Seguir o GNOME ou Desligadas) vale
-  para o app todo e muda na hora; seguindo um GNOME sem animações, a linha diz isso.
+  Claude Code), **Revisão** (o revisor independente e o modelo dele), **Conexões** (ver **GitHub e
+  Linear**), **Cópias dos chats**, **Interface**, **Claude Code** (a versão instalada, a que os
+  turnos abrem, e **Atualizar**, que roda `claude update` fora de qualquer turno, espera os chats
+  que estão trabalhando ou com mensagem na fila e mostra o que ele respondeu, em âmbar se falhar; a
+  versão nova vale no turno seguinte, sem reiniciar o Vitral) e **Atualizações**. Em Interface,
+  **Animações** (Seguir o GNOME ou Desligadas) vale para o app todo e muda na hora; seguindo um
+  GNOME sem animações, a linha diz isso.
   **Atualizações** também vale para o app todo: o modo (**Automáticas**, o padrão, **Só avisar** ou
   **Desligadas**), a **Versão** ("0.3.0 · procurada hoje às 14:02", "Procurando…", "Baixando 0.3.1 ·
   12 de 21 MB", "é a mais nova", "A 0.3.1 está pronta; vale quando reiniciar") com o botão do
@@ -1047,11 +1392,12 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   pronto). Uma notificação nova do mesmo chat substitui a anterior em vez de empilhar. A permissão se
   responde dentro do app, nunca na notificação.
 
-Atalhos: `Ctrl+M` o Mestre, `Ctrl+N` novo chat (na vista do projeto, nele; na visão geral, a
-paleta), `Ctrl+Shift+N` novo projeto, `Ctrl+K` buscar (`↓` entra na lista; nela, `Enter` abre,
-`Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita, `Ctrl+B` lista e trilho,
-`Alt+1…4` painel N, `Ctrl+1…9` abre o projeto N do trilho, `F10` menu do Vitral, `Ctrl+,`
-configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha o painel, `Ctrl+PgUp/PgDn` painel vizinho,
+Atalhos: `Ctrl+M` o Mestre, `Ctrl+N` novo chat (na hora, na pasta do chat aberto),
+`Ctrl+Shift+N` novo projeto, `Ctrl+K` buscar (`↓` entra na lista; nela, `Enter` abre,
+`Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita, `Ctrl+B` recolhe ou mostra
+a lista, `Alt+1…4` painel N, `Ctrl+1…9` filtra a lista pelo projeto N (na ordem da fileira), `F10`
+menu do Vitral, `Ctrl+,` configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha a aba à vista
+(na última, o painel), `Ctrl+PgUp/PgDn` painel vizinho,
 `Ctrl+Shift+PgUp/PgDn` muda o painel de lugar (na aba: `Enter` vai para a caixa, `Delete` fecha,
 `Shift+F10` abre o menu), `Ctrl+End` vai ao fim da conversa, `F7`/`Shift+F7` próxima e anterior
 mudança na revisão (nela, `Ctrl+PgUp/PgDn` vão ao arquivo anterior e ao seguinte, e `C` ou `Enter`
@@ -1104,7 +1450,8 @@ antigo aberto adia sem gravar nada.
 
 Bancada: o comando é o Vitral com uma pasta opcional, que ele importa (no primeiro uso, uma pasta do
 Vitral antigo) ou liga (depois, abre o Novo projeto com ela). `FUNDO=branco` (ou `FUNDO=<imagem>`)
-troca o papel de parede e `ZOOM=1.5` abre com esse zoom. `DADOS_NOVOS=1` abre como primeiro uso
+troca o papel de parede (com o metal opaco, ele só aparece fora da janela) e `ZOOM=1.5` abre com
+esse zoom. `DADOS_NOVOS=1` abre como primeiro uso
 (afasta para `$B/afastados/<hora>` os dados, a configuração e o `interface.json` da bancada; o `app/`
 que a atualização da bancada instalou fica) e `RAIZ_SINTETICA=1` é a migração de ponta a ponta: gera
 com o `demo_vitral.py` uma pasta do Vitral antigo dentro da bancada (com os `cwd` dentro dela e
@@ -1117,7 +1464,8 @@ bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat (o ajudante, em `notas-do-t<N>.md`), antes das ferramentas; leva 10 s com
 `[demora]`; com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
-Task…) finge usar a ferramenta, mandando o `tool_use`, esperando 4 s (ou os segundos de
+Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um trecho de mentira,
+para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os segundos de
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; executa os `[mcp <nome> <json>]` da mensagem
 (fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; faz o revisor (com `--json-schema` devolve "aprovar", ou
@@ -1156,8 +1504,10 @@ na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reinicia
 (o "mesmo assim" deixa um aviso, para conferir que o Enter não o aciona).
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
-(nada em repouso): é a conferência do custo dos efeitos. `VITRAL_SEM_ANIMACAO=1` abre como se as
-animações do GNOME estivessem desligadas. A vitrine (`--vitrine`) ganhou as seções **Movimento**
+(nada em repouso): é a conferência do custo dos efeitos. Quando o metal refez o campo nesse
+segundo, a linha leva o tempo médio de um campo: "quadros/s: 18 · campo: 2,1 ms".
+`VITRAL_SEM_ANIMACAO=1` abre como se as animações do GNOME estivessem desligadas (o metal fica
+parado na fase inicial, igual em toda máquina: é como se tiram as capturas). A vitrine (`--vitrine`) ganhou as seções **Movimento**
 (um botão para cada efeito) e **Espaçamento** (a escala e as guias da lista, da direita e da
 conversa).
 
@@ -1172,7 +1522,8 @@ das Rotinas (o `TimeField` do kit); já vinha no `Cargo.lock` pelo vendor.
 `%USERPROFILE%\.local\bin`); o que faltar aparece como aviso no Mestre, e uma pasta de projeto
 dentro do OneDrive também. Os dados ficam em `%LOCALAPPDATA%\vitral` (o cache em `cache\` dentro
 dela) e a configuração em `%APPDATA%\vitral`. As fontes vão dentro do binário nos dois sistemas. A
-janela tem o fundo acrílico do sistema (`VITRAL_FUNDO=mica`, `transparente` ou `opaco` troca), e o
+janela pede o fundo acrílico do sistema (`VITRAL_FUNDO=mica`, `transparente` ou `opaco` troca), mas
+ele fica debaixo da chapa de metal, que é opaca, e não aparece mais; o
 arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Windows. Os avisos saem como
 notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
 entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
@@ -1349,12 +1700,12 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | --- | --- |
 | `src/motor.rs` | Chats, projetos (a API deles: criar, mudar, arquivar, apagar, reordenar, localizar pasta, mover chat), os pedidos de cada chat (as tarefas), turnos, fila, vagas e trabalho pesado, contas, rotinas, retomadas e novas tentativas, Ultracode e agentes em segundo plano, a cópia na primeira mensagem, a junção, os ajudantes e a revisão |
 | `src/motor/mestre.rs` | O Mestre no motor: o turno dele (prompt, catálogo, referências, fila com o usuário primeiro, passagem de sessão), as ferramentas que só ele tem, os cartões (divisão, sugestão de projeto, memória), a entrega dos chats de projeto, a junção sozinha das entregas verdes, o freio de ciclo e o resumo ao voltar |
-| `src/motor/importacao.rs` | A importação no motor: um chat por conversa do Claude Code, a da primeira abertura, o menu e a marca de quando ela continua no Vitral |
+| `src/motor/importacao.rs` | A importação no motor: um chat por conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior`, as notas e a memória, a `normalizar`, a pasta própria dos projetos (criada com git, atômica), a chave do nome de um projeto, o `formato` dos dados e a `DADOS_GLOBAIS` |
 | `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
 | `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova`) e a reexecução da tela de recuperação |
-| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta, o histórico como itens da conversa, o projeto de destino e o registro do que já veio |
-| `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code e conferência da sessão |
+| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa, o projeto de destino e o registro do que já veio |
+| `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral, as rotas por papel e a tabela de quem pode cada ferramenta (com a regra do dono) |
 | `src/revisor.rs` | Revisor independente e o hook que roda os testes quando o chat para (no Linux, um script do bash; no Windows, o próprio Vitral com `--hook-verificacao`, em exec form) |
 | `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`) |
@@ -1375,10 +1726,11 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (projetos, chats, tarefas, cartões, ocorrências e a configuração global, com os nomes antigos como alias) e o `FORMATO_DADOS` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | Trilho (com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: aba, cabeçalho, menu do painel e popover de uso; `mensagens.rs` o que vai dentro, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado e a soltura), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (anéis e painel de uso, também no modo recolhido), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições) |
-| `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, anéis, abas, diálogos, caixa de código), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo e o menu do Vitral, o alto da lista enxuta e a fileira de projetos, com o Mestre, os projetos que rolam e se reordenam, Avulsos e o +), lista, painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), caixa de mensagem, a direita, revisão, gavetas e diálogos; `lateral.rs` (a lista), `visao_geral.rs` (o topo da lista em cada vista e os Recentes), `composer.rs` (a caixa de mensagem e o menu de `#` e `@` do Mestre) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (os menus do projeto, da cópia e da conversa, iguais em todo lugar), `equipe.rs` (a direita: Este chat, os ajudantes e a conversa antiga), `distribuido.rs` (a direita do Mestre), `cartoes.rs` (os cartões do Mestre: divisão, sugestão de projeto, memória; as linhas do que ele espera de você, o Resumo do Mestre e o Enquanto você esteve fora), `projeto.rs` (Novo e Editar projeto), `config_projeto.rs` (a configuração de uma pasta, no Avançado de Editar projeto), `painel_arquivo.rs` (o arquivo aberto à direita), `revisao.rs` (o Revisar: diff, comentários, pedir ajuste e juntar), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `icone_projeto.rs` (ícone e cor dos projetos), `tirar_projeto.rs` (arquivar e apagar projetos: a pergunta, os avisos e o que a janela esquece), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (sinal de cada chat e projeto, estado visual do pedido de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
+| `ferramentas/logo/` | O logo: `v-do-dono.png` (o V que o dono mandou), `rasterizar.py` (tira o V dele e grava o `assets/vitral-v.png`), `icones.py` (o metal com o V por cima: os `assets/vitral-*.png`, o `vitral.ico` e os dois SVG com o PNG embutido) e `previa.py` (a conta do metal em Python, que o `icones.py` usa); ver **Logo**, em **Acabamento** |
 | `ferramentas/amostra-prs/` | A amostra de PRs da bancada (`AMOSTRA=prs`): o `preparar.py` grava um projeto em modo PR com um PR em cada estado e as issues, e o `gh` responde o que o GitHub diria, coerente com o estado, sem rede e sem escrever |
 | `ferramentas/instalar-dev.sh` | Só desenvolvimento: compila e instala no layout do app como `<próxima>-dev.<commit>` |
 | `.github/` | `workflows/ci.yml`, `workflows/release.yml`, `workflows/windows-prints.yml` (à mão: prints num Windows de verdade, pelo `ferramentas/prints-windows.ps1`; o instalador de uma rodada do release, pelo `ferramentas/instalador-windows.ps1`; e o atualizador, da versão publicada a três do ramo num release falso, pelo `ferramentas/atualizador-windows.ps1`) e `dependabot.yml` |
@@ -1387,7 +1739,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `tests/hook.rs` | `--hook-verificacao`: código 2 e o fim da saída no stderr quando a verificação falha, 0 na segunda parada seguida |
 | `tests/instalar.rs` | `--instalar` com o binário de verdade num HOME temporário em `target/tmp`: o layout, o link, o `.desktop`, o `~/.local/bin` e reinstalar sem duplicar |
 | `README.md`, `docs/imagens/` | A porta de entrada do GitHub (o que é, instalar, conferir o download, limites) e os prints dela, tirados na bancada com `RAIZ_SINTETICA=1`/`AMOSTRA=prs` e `CLAUDE_FALSO=1`, recortados e com paleta de 256 cores |
-| `assets/` | Logo completo e pequeno, PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual, os ícones de projeto (`icones/`, Lucide, ISC) e as fontes embutidas (`fontes/`: Inter 4.1 e JetBrains Mono 2.304, só os pesos usados, OFL 1.1 em `fontes/OFL.txt`, que vai no pacote como `OFL-fontes.txt`) |
+| `assets/` | Logo completo e pequeno (SVG com o PNG embutido), PNGs de 48 a 256 px, `vitral.ico` (16 a 256 px, para o Windows), todos gerados pelo `ferramentas/logo/icones.py`, `vitral-v.png` (o V branco de 256 px do botão do menu, gerado pelo `rasterizar.py`), logos do Claude e do Codex (e os discos coloridos em `marcas/`), o escudo cheio do modo Manual, os ícones de projeto (`icones/`, Lucide, ISC) e as fontes embutidas (`fontes/`: Inter 4.1 e JetBrains Mono 2.304, só os pesos usados, OFL 1.1 em `fontes/OFL.txt`, que vai no pacote como `OFL-fontes.txt`) |
 
 Ícones do Lucide que não estão entre os do GPUI Kit precisam entrar em `icon_assets!` em
 `src/tema.rs`, senão saem em branco (um teste confere). Os textos dos componentes do Kit saem em
@@ -1402,8 +1754,9 @@ o que o arrasto deixou, a 100%, e `em_px` dá as larguras do quadro. O estado da
 guardadas; a gaveta usa a largura guardada no zoom atual. Na lista, `Aperto::de(largura a 100%)`
 decide o que sai, e o texto da busca é trocado em `lateral()` (`dica_da_busca`). A largura que
 decide o `Aperto` fica guardada a 100% (o estado `largura-da-lista`), e assim a troca de zoom não
-dá um quadro com a conta da escala anterior. A busca da lista é o `componentes::campo_de_busca`
-sem o atalho (a lupa a 8 da borda dele, que na peça de 8 cai na guia de 16), com a dica por cima
+dá um quadro com a conta da escala anterior. A busca da lista é o `componentes::campo_de_busca_de`
+na altura de 40, a do logo e a do "+" (a lupa a 8 da borda dele, que na peça de 8 cai na guia de
+16), com o "Ctrl" "K" à direita só na aba Conversas e fora da lista estreita, e a dica por cima
 (`campo_da_lista`). Os ajudantes vão no nível 1 do `CartaoDeLista`: o `.sinal()` e, sem sinal,
 um ponto de 8 na cor do estado como símbolo, com a palavra do estado em `.dica_do_ponto()`; o traço
 da árvore conta com os 2 em cima de todo cartão da lista (`esp::E2`) e para a 2 do aro de rodando.
@@ -1419,18 +1772,25 @@ Espaços só na escala 2, 4, 6, 8, 12, 16, 24 e 32 (`tema::esp`, com os nomes po
 quem tem contorno de 1 px usa `dentro_da_borda(12.)` para o conteúdo ficar a 12 da borda de fora. Os
 atalhos do Tailwind (`gap_2()`, `p_3()`) medem em rem e, com 1 rem = 15 px, saem fora da grade (7,5
 e 11,25). O teste `espacos_na_escala` barra os dois casos em todo o `src/ui`, sem exceção, e o
-`movimento_com_teto` barra animação feita fora de `src/ui/movimento.rs`.
+`movimento_com_teto` barra animação feita fora de `src/ui/movimento.rs`. O `metal_so_pelo_motor`
+barra `paint_image(` e `drop_image(` fora de `src/ui/componentes/metal.rs`.
 
-Raios só três e a pílula (`tema::raio`, em Pixels fixos): `PECA` 20 nas peças (trilho, lista,
-conversa, direita, arquivo aberto, gavetas, popovers, menus, diálogos, avisos, a caixa de mensagem e
-a tela cheia); `CARTAO` 14 no que vai dentro delas (cartões da direita e da conversa, balão,
+Raios (`tema::raio`, em Pixels fixos): nos controles, um padrão só, `raio::de(altura)`, 45% da
+altura (16 num botão de 36, 14 num de 32, 9 num chip de 20; bem arredondado, nunca redondo, o
+desenho do logo em escala), em botões (o `BotaoRedondo` inclusive), chips, abas, a busca, o
+segmentado, selos, o realce dos itens de menu e as teclas; nas peças, os tokens: o
+`raio_da_peca()` da variante (16 no Grafite) nos cartões da janela (a conversa, os painéis da
+direita, o arquivo aberto) e no miolo das molduras duplas; `PECA` 20 nas gavetas, popovers, menus,
+diálogos, avisos, na moldura da caixa de mensagem e na dos pedidos, e na tela cheia; `CARTAO` 14
+no que vai dentro delas (cartões da direita e da conversa, balão,
 cartão de lista de duas linhas, blocos de código e tabelas do chat, diff do Revisar, anotação,
 grupos de opções, alertas, a caixa na Estreita e a dica); `CONTROLE` 10 em campos, linhas (de uma
-linha na lista, item de menu, árvore, log e listas do Revisar), teclas, blocos dentro de cartão
-(código, verificação, ressalva) e miniaturas; e `PILULA` (o `rounded_full()`, ou o `raio::PILULA`
-onde a API só aceita Pixels) em botões, chips, abas, segmentado, selos, contadores, pontos, anéis e
-barras. Dentro de quem tem padding p, o raio é max(raio de fora − p, `CONTROLE`), para os cantos
-ficarem concêntricos: o lugar de 40 do trilho tem 14 (20 − 6) e o quadrado de 32 dentro dele, 10
+linha na lista, árvore, log e listas do Revisar), blocos dentro de cartão (código, verificação,
+ressalva), o azulejo e miniaturas; e `PILULA` (o `rounded_full()`, ou o `raio::PILULA` onde a API
+só aceita Pixels) só no que continua redondo: pontos, anéis, barras finas, o disco dos anéis de
+uso e o "Segure para permitir". Dentro de quem tem padding p, o raio é max(raio de fora − p,
+`CONTROLE`), para os cantos ficarem concêntricos: o lugar de 40 do trilho tem 14 (20 − 6) e o
+quadrado de 32 dentro dele, 10
 (14 − 4); os menus têm margem 8 para os itens de 10 caberem no menu de 20; o popover do modelo,
 6 mais os 4 da lista. Onde a conta não fecha, vale o token a até 2 do exato (concêntrico a olho)
 ou o canto de dentro mais redondo (a caixa de mensagem fica com 20 dentro da conversa); para não
@@ -1441,13 +1801,18 @@ outros lados em escala. O tema do kit acompanha (`radius` 10, `radius.lg` 20) e 
 `raios_na_escala` barra em todo o `src/ui` raio solto (`rounded(px(..))`, `rounded(r(..))`, número),
 atalho do Tailwind (`rounded_md()`) e `ButtonRounded`, sem exceção.
 
-Superfícies: o fundo da janela e o `Cores::vidro` são o chumbo das frestas (#060810d4);
-`vidro_leitura` (#151b2cbf, trilho e lista) e `cartao` (#141a2ae6) são o azul das peças; `dialogo` e
-`gaveta`, o azul opaco do que cobre a conversa sem ser um flutuante; `flutuante` (#0c0e13, igual ao
+Superfícies (no Grafite): atrás de tudo fica a chapa de metal (`componentes/metal.rs`, o
+`metal::fundo`, primeiro filho da Janela); o `Cores::vidro` (#0d0f13, opaco) é só a reserva
+debaixo dela e o que a raiz do kit pinta; `vidro_leitura` (#0a1533e3) é o véu azul-escuro da base,
+que a Janela pinta por cima da chapa na janela inteira (a lista não tem fundo próprio), e `cartao`
+(#14161df2) o da conversa e dos painéis, com a `sombra_flutuante`; `dialogo` e
+`gaveta`, o opaco do que cobre a conversa sem ser um flutuante; `flutuante` (#171a23f7, igual ao
 `popover.background` do tema, que o kit usa nos menus, popovers, dicas e avisos) é o quase preto do
-que flutua; `preto` (#08090c) é o de dentro (código, saída de comando, diff e os discos do trilho);
-e `caixa_preta` é o fim do gradiente da caixa. O `recuo` escuro some no quase preto: dentro de um
-popover vale o `recuo_no_flutuante` (no segmentado, `.no_flutuante(true)`). Os testes de `tema.rs`
+que flutua; `cartao_elevado` é o miolo das molduras duplas; `preto` (#08090c) é o de dentro
+(código, saída de comando, diff, a moldura da caixa e o disco dos anéis de uso); e `caixa_quente`
+e `caixa_preta` são o campo da caixa, hoje o mesmo cinza opaco (sem gradiente). O `recuo` escuro
+some no quase preto: dentro de um popover vale o `recuo_no_flutuante` (no segmentado,
+`.no_flutuante(true)`). Os testes de `tema.rs`
 conferem o contraste do texto em todas elas, a sintaxe a 4,5:1 no preto (também nas linhas que
 entraram e saíram do diff) e que o hover e a seleção continuam à vista no preto. O `BotaoRedondo`,
 como o logo e os anéis, não mostra a dica com o popover dele aberto.
@@ -1459,15 +1824,19 @@ montagem não anima); `disparo` para um efeito que toca quando uma chave muda; `
 ponteiro num controle solto; `abertura(id)` e `deslizar_gaveta(el, De::Esquerda | De::Direita, t)`
 para a gaveta (24 px em `MOVER`, com o véu a 0,5·t; a `Janela.geracao_gaveta` sobe em cada
 abertura, e fechar é seco). Tudo no relógio de 60 qps por janela, e a última batida já pousa no
-alvo. `tema::aplicar` chama `movimento::iniciar`, que lê o `enable-animations` do GNOME uma vez e a
+alvo. O que anda sem parar (o metal) passa pelo `laco_a(window, cx, qps)`: a fase em `f64`, uma
+batida marcada por janela (um pedido mais rápido marca outra, mais cedo; a velha, ao chegar, não
+vale), `anima` (movimento ligado e janela em primeiro plano) e `laco_agendado`; com `qps` 0 ele
+devolve a fase sem andar nem pedir quadro. `tema::aplicar` chama `movimento::iniciar`, que lê o `enable-animations` do GNOME uma vez e a
 escolha das Configurações (`"animacoes": "desligadas"` no `interface.json`, gravado pelo
 `zoom::gravar_na_interface` sem perder o zoom) e liga o `set_reduce_motion`;
 `movimento::escolher_animacoes` troca na hora e, voltando a Seguir o GNOME, devolve o controle ao
 kit, que acompanha o sistema. O
 contador do `VITRAL_QUADROS` fica em `src/ui/mod.rs` (`contar_quadro`, chamado no `render` da
 Janela e da vitrine). Na conversa, `movimento::com_estado` deixa quem só tem o `&Context` da Janela
-usar o estado guardado (o halo da caixa e do painel, as entradas), e `movimento::entrada` faz o fade
-com deslize de algo que acabou de aparecer: `nova` só no primeiro quadro, então um remonte (outro
+usar o estado guardado (o aro de metal da caixa, a luz e a altura da doca, as entradas), e
+`movimento::entrada` faz o fade com deslize de algo que acabou de aparecer: `nova` só no primeiro
+quadro, então um remonte (outro
 painel abriu, a lista recolheu) não repete nada nem redesenha. Os blocos usam `Painel.base_animacao`
 (o tamanho da conversa quando ela abriu no painel) e `Painel.vistos` (`entrada_do_bloco`, com
 teste). O pulso do enviar sobe com `Painel.envios`, em `paineis::enviar_do_painel` (o Enter e o
@@ -1616,11 +1985,17 @@ original desenha um contorno cinza fixo); menus, popovers e avisos têm o raio d
 `src/popover.rs`), a dica 14 e as teclas, os campos de hora e o anel de foco do check e do rádio o
 de controle (`src/tooltip.rs`, `src/kbd.rs`, `src/time/time_field.rs`, `src/checkbox.rs`,
 `src/radio.rs`, `src/input/group.rs`), e o botão sai em pílula por padrão (`src/button/button.rs`);
-os menus têm margem 8 e itens de raio 10, medidas em rem (crescem com o zoom), item perigoso, item externo, linha fixa de cabeçalho e rodapé fora do teclado, check à
-direita, separador de borda a borda, desabilitado a 0,45, o atalho também no item de elemento e
+os menus têm margem 8 e itens de raio 10, medidas em rem (crescem com o zoom), item perigoso, item
+externo, linha fixa de cabeçalho e rodapé fora do teclado e de borda a borda (a placa de metal do
+topo e a faixa do pé encostam na casca), check à direita, o separador no fio de pontos claro,
+recuado até a coluna dos ícones (e escondido colado
+na placa ou na faixa), o rótulo de seção em mono 11, o realce do item como tecla em relevo no
+canto `raio::de` da altura dele (`realce_de_tecla`), uma camada por baixo do item para a ficha do
+escolhido, desabilitado a 0,45, o atalho em teclas separadas também no item de elemento e
 o ↓ sem nada realçado indo ao primeiro item navegável, não à linha fixa
-(`src/menu/popup_menu.rs`, `src/menu/menu_item.rs`); menus, popovers e avisos têm o anel a 12% e a
-sombra flutuante do Vitral, e os diálogos a sombra própria (`src/styled.rs`,
+(`src/menu/popup_menu.rs`, `src/menu/menu_item.rs`); menus, popovers e avisos têm o contorno de
+casca (o anel claro e neutro, sem o azul de antes, o fio preto de 2 por fora e a aresta de vidro
+por dentro) e a sombra flutuante do Vitral, e os diálogos a sombra própria (`src/styled.rs`,
 `src/dialog/dialog.rs`); a dica é opaca, com as teclas separadas e "título\ndetalhe"
 (`src/tooltip.rs`); o aviso tem o ícone na linha, o × sempre visível e entrada mais curta
 (`src/notification.rs`); o `Kbd` escreve Super no lugar de Win e dá as teclas separadas
@@ -1640,6 +2015,9 @@ a no máximo 60 quadros por segundo (`src/popover.rs`, `entrada_flutuante`, e
 animam a no máximo 60 quadros por segundo (`src/notification.rs`); o compasso dos spinners diz se
 está batendo, para o ponto de "rodando" respirar de carona (`src/spinner.rs`, `compasso_recente`); a
 lista com busca tem o rótulo de grupo de 24 com um símbolo antes e a linha sem margem vertical
-(`src/command`, `label_prefix`); e a margem do lado do campo de texto cresce com o zoom (`com_zoom`
+(`src/command`, `label_prefix`), em mono 11 caixa alta com o tracinho (`heading_row`); a
+retícula (`trama`, `fio_de_pontos`, `fio_de_pontos_em_pe`, `lado_da_trama`) e a `cantoneira`
+moram em `src/styled.rs`; o desenho único de tecla é o `desenho_de_teclas` de `src/kbd.rs`, que a
+dica também usa; e a margem do lado do campo de texto cresce com o zoom (`com_zoom`
 em `src/sizing.rs`, usada pelo `Input` e pelo grupo de campo em `src/input`). Ao atualizar o
 gpui-kit, refazer essas mudanças na versão nova.

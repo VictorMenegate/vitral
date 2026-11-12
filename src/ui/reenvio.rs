@@ -258,7 +258,7 @@ mod testes {
             usuario("primeira"),
             Item::Assistente { em: 0, texto: "resposta".into() },
             usuario("segunda"),
-            Item::Ferramenta { em: 0, id: "1".into(), nome: "Read".into(), resumo: "x".into(), resultado: None, erro: false },
+            Item::Ferramenta { em: 0, id: "1".into(), nome: "Read".into(), resumo: "x".into(), resultado: None, erro: false, detalhe: None, arquivo: None },
             Item::Assistente { em: 0, texto: "pronto".into() },
         ];
         assert_eq!(indice_editavel(&turno), Some(2));

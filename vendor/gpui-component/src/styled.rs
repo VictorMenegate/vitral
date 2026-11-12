@@ -34,13 +34,13 @@ const POPOVER_RING_INK: f32 = 0.12;
 /// (`oklch(1 0 0 / 10%)`), so it follows the foreground rather than the border
 /// token: a fixed black ring would all but vanish on a dark surface.
 ///
-pub(crate) fn popover_ring(cx: &App) -> Hsla {
-    // Vitral: o dono pediu bordas azuis nos popups; o anel usa o azul de destaque do tema.
-    cx.theme().primary.alpha(POPOVER_RING_AZUL)
+pub(crate) fn popover_ring(_cx: &App) -> Hsla {
+    // Vitral: o anel é claro e neutro (branco a 14%): o azul do menu é a placa de metal do topo.
+    hsla(0., 0., 1., POPOVER_RING_CLARO)
 }
 
-/// Vitral: alfa do anel azul dos popups e menus (#3a7fff a 55%).
-const POPOVER_RING_AZUL: f32 = 0.55;
+/// Vitral: alfa do anel claro dos popups e menus.
+const POPOVER_RING_CLARO: f32 = 0.14;
 
 /// Vitral: o anel claro de antes, para dicas e avisos, que ficariam azuis demais.
 pub(crate) fn anel_neutro(cx: &App) -> Hsla {
@@ -68,25 +68,33 @@ pub(crate) fn anel_neutro(cx: &App) -> Hsla {
 /// animation can hold it across frames, where no `App` is in hand.
 pub(crate) fn popover_shadow(ring: Hsla, strength: f32) -> Vec<BoxShadow> {
     let strength = strength.clamp(0., 1.);
-    // Vitral: a sombra do shadcn (preto a 10%) some no vidro azul-marinho; esta é a
-    // `sombra_flutuante` do Vitral, depois do anel.
-    let mut camadas = vec![
+    let preto = |a: f32| hsla(0., 0., 0., a * strength);
+    let branco = |a: f32| hsla(0., 0., 1., a * strength);
+    // Vitral: o contorno de casca, de trás para a frente: a sombra funda e a curta (desfoque em
+    // sigma, metade do CSS), o fio preto de 2 por fora, o anel claro de 1 colado na peça e, por
+    // dentro, a luz no topo, a sombra na base e o brilho de 3% que entra pelo topo.
+    vec![
+        BoxShadow::new(px(0.), px(20.), preto(0.55))
+            .blur_radius(px(10.))
+            .spread_radius(px(-8.)),
+        BoxShadow::new(px(0.), px(4.), preto(0.35))
+            .blur_radius(px(2.5))
+            .spread_radius(px(-1.)),
+        BoxShadow::new(px(0.), px(0.), preto(0.60))
+            .blur_radius(px(0.))
+            .spread_radius(px(2.)),
         // The ring, sitting in the 1px band outside the surface. No blur, so it
         // takes the shader's crisp path rather than the gaussian one.
         BoxShadow::new(px(0.), px(0.), ring.alpha(ring.a * strength))
             .blur_radius(px(0.))
             .spread_radius(px(1.)),
-    ];
-    camadas.extend(sombra_flutuante(strength));
-    // Vitral: a linha de luz do vidro, 1 px claro no topo de dentro (#ffffff0f).
-    camadas.push(BoxShadow::new(px(0.), px(1.), hsla(0., 0., 1., 0.06 * strength)).inset());
-    // Vitral: brilho azul para dentro, a partir da borda (pedido do dono), na cor do anel.
-    camadas.push(
-        BoxShadow::new(px(0.), px(0.), ring.alpha(0.22 * strength))
-            .blur_radius(px(14.))
+        BoxShadow::new(px(0.), px(1.), branco(0.16)).inset(),
+        BoxShadow::new(px(0.), px(-1.), preto(0.40)).inset(),
+        BoxShadow::new(px(0.), px(28.), branco(0.03))
+            .blur_radius(px(12.))
+            .spread_radius(px(-12.))
             .inset(),
-    );
-    camadas
+    ]
 }
 
 /// The elevation a toast is lifted to, at `strength` of its full ink.
@@ -135,6 +143,87 @@ pub(crate) fn raised_shadow() -> Vec<BoxShadow> {
             .blur_radius(px(1.))
             .spread_radius(px(-1.)),
     ]
+}
+
+/// Vitral: um canto de uma peça, para a [`cantoneira`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Canto {
+    CimaEsquerda,
+    CimaDireita,
+    BaixoEsquerda,
+    BaixoDireita,
+}
+
+/// Vitral: a cantoneira do "é aqui" (painel ativo, foco da caixa, diálogo aberto): um colchete
+/// de 2 px que acompanha o canto arredondado da peça e corre `braco` px por cada lado. É um quad
+/// só, com borda em dois lados e raio num canto, absoluto, sem id nem ouvinte (não pega clique):
+/// vai como filho da peça, depois do conteúdo. Dois e não 1,5: 1,5 borra em escala 1.
+pub fn cantoneira(canto: Canto, raio: Pixels, braco: Pixels, cor: Hsla) -> gpui::Div {
+    let espessura = px(2.);
+    let base = div().absolute().flex_none().size(raio + braco).border_color(cor);
+    match canto {
+        Canto::CimaEsquerda => base
+            .top_0()
+            .left_0()
+            .rounded_tl(raio)
+            .border_t(espessura)
+            .border_l(espessura),
+        Canto::CimaDireita => base
+            .top_0()
+            .right_0()
+            .rounded_tr(raio)
+            .border_t(espessura)
+            .border_r(espessura),
+        Canto::BaixoEsquerda => base
+            .bottom_0()
+            .left_0()
+            .rounded_bl(raio)
+            .border_b(espessura)
+            .border_l(espessura),
+        Canto::BaixoDireita => base
+            .bottom_0()
+            .right_0()
+            .rounded_br(raio)
+            .border_b(espessura)
+            .border_r(espessura),
+    }
+}
+
+/// Vitral: o lado do quadradinho da retícula, em pixel do aparelho. O `checkerboard` do shader
+/// mede em pixel do aparelho e o lado tem de ser inteiro, senão o xadrez borra (em 125%, 2 px
+/// lógicos dariam 2,5). Conferido nos dois renderizadores: o caso 3 do `shaders.wgsl` do
+/// gpui-pre-wgpu (Linux) e do `shaders.hlsl` do gpui-pre-windows 0.3.10 (DirectX).
+pub fn lado_da_trama(window: &Window) -> f32 {
+    (2. * window.scale_factor()).round().max(1.)
+}
+
+/// Vitral: a trama fina, um xadrez de 2 px numa cor só (o outro quadradinho fica transparente),
+/// num quad só. Fundo de placa de cabeçalho, vidro da lista, véu dos diálogos e desmanche da
+/// rolagem.
+pub fn trama(cor: Hsla, window: &Window) -> gpui::Background {
+    gpui::checkerboard(cor, lado_da_trama(window))
+}
+
+/// Vitral: o fio de pontos, separador e trilho no lugar da linha cheia: o xadrez numa fileira só
+/// (a altura igual ao lado), que sai exatamente "2 aceso, 2 apagado", num quad só. Ocupa a
+/// largura do pai; `.w(..)` ou `.mx(..)` encurtam.
+pub fn fio_de_pontos(cor: Hsla, window: &Window) -> gpui::Div {
+    let lado = lado_da_trama(window);
+    div()
+        .flex_none()
+        .w_full()
+        .h(px(lado / window.scale_factor()))
+        .bg(gpui::checkerboard(cor, lado))
+}
+
+/// Vitral: o mesmo fio de pontos, em pé (uma coluna só, na altura do pai).
+pub fn fio_de_pontos_em_pe(cor: Hsla, window: &Window) -> gpui::Div {
+    let lado = lado_da_trama(window);
+    div()
+        .flex_none()
+        .h_full()
+        .w(px(lado / window.scale_factor()))
+        .bg(gpui::checkerboard(cor, lado))
 }
 
 /// Finished styles that read the theme.

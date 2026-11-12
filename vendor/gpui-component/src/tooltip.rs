@@ -8,8 +8,8 @@ use std::{
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext, Bounds, Context, ElementId, GlobalElementId,
     IntoElement, MouseButton, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
-    rgba,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, div, hsla,
+    prelude::FluentBuilder, px,
 };
 pub use gpui_base::TooltipDefaults;
 use gpui_base::{
@@ -18,9 +18,9 @@ use gpui_base::{
 };
 
 use crate::{
-    ActiveTheme, Placement, StyledExt, h_flex,
+    ActiveTheme, Placement, StyledExt,
     animation::{EffectTransition, ease_in_out_cubic, ease_out_cubic},
-    kbd::Kbd,
+    kbd::{Kbd, desenho_de_teclas},
     styled::{anel_neutro, toast_shadow},
     text::Text,
 };
@@ -118,24 +118,16 @@ impl Render for Tooltip {
         let z = move |v: f32| rem * (v / 15.);
         let muted = cx.theme().muted_foreground;
         let duas_linhas = matches!(&self.content, TooltipContext::Text(Text::String(t)) if t.contains('\n'));
+        // Vitral: as teclas no desenho único de tecla do Vitral (em relevo, mono 10), com o fundo
+        // branco a 8% (o `hover` do app) e o raio de controle do tema.
         let teclas = key_binding.map(|kbd| {
-            h_flex().flex_none().gap(z(3.)).children(kbd.partes().into_iter().map(|tecla| {
-                div()
-                    .h(z(18.))
-                    .px(z(5.))
-                    .flex()
-                    .items_center()
-                    // Vitral: a tecla com o raio de controle do tema.
-                    .rounded(cx.theme().radius)
-                    .bg(rgba(0x0a0f1c80))
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .text_size(z(11.))
-                    .line_height(z(14.))
-                    .font_semibold()
-                    .text_color(muted)
-                    .child(tecla)
-            }))
+            desenho_de_teclas(
+                kbd.partes(),
+                hsla(0., 0., 1., 0.08),
+                muted,
+                cx.theme().mono_font_family.clone(),
+                cx.theme().radius,
+            )
         });
 
         div().child(

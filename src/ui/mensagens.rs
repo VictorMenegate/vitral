@@ -9,15 +9,15 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Sizable as _, StyledExt as _, WindowExt as _,
+    ActiveTheme as _, Icon, StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     clipboard::Clipboard,
     h_flex,
     input::{Enter, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     shimmer::ShimmerText,
-    spinner::Spinner,
     text::{TextView, TextViewStyle},
     tooltip::Tooltip,
     v_flex,
@@ -28,14 +28,14 @@ use gpui_kit::*;
 use super::{
     IrAoFim, Janela,
     componentes::{
-        Alerta, BotaoCopiar, CabecalhoDeSecao, CaixaDeCodigo, Chip, Confirmacao, EstadoVazio, FaixaCaixa, Flutuante as _,
+        Alerta, AnelGirando, BotaoCopiar, BotaoDeSegurar, CabecalhoDeSecao, EstadoDaMoldura, Etiqueta, azulejo,
+        botao_claro, miolo_da_moldura, moldura_dupla, CaixaDeCodigo, Chip, Confirmacao, EstadoVazio, FaixaCaixa, Flutuante as _,
         LarguraPainel, Papel as Quem, PilulaDeEstado, Reflexo as _, Selo, TamanhoBotao, TamanhoChip, Tom,
-        TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_icone, botao_perigo, botao_primario, confirmar,
+        TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_icone, botao_primario, confirmar, relogio,
         EstadoVisual, contagem, estado_visual, icone_do_modo, rotulo_tarefa, teclas, texto_arco_iris,
     },
     busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
     composer::{self, PararTurno, nome_do_modo},
-    duracao,
     equipe::variante_tinta,
     imagens,
     movimento::{self, De},
@@ -45,7 +45,7 @@ use crate::{
     modelo::{Chat, EstadoTarefa, Execucao, Item, Papel, Reforco, Tarefa},
     motor::Motor,
     tema::{
-        Cores, FONTE_MONO, Lucide, Tipo as _, dentro_da_borda, esp, gradiente_destaque, halo_foco, r, raio,
+        Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, gradiente_destaque, halo_foco, r, raio,
         sombra_elevado, tam,
     },
 };
@@ -54,8 +54,8 @@ pub(super) mod historico;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
-    let svg = include_bytes!("../../assets/vitral-pequeno.svg");
-    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+    let png = include_bytes!("../../assets/vitral-64.png");
+    Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec()))
 });
 
 /// Ícone no tamanho de desenho (cresce com o zoom), sem precisar da janela.
@@ -583,7 +583,10 @@ impl Janela {
         let grupo = SharedString::from(format!("msg-{chave}"));
         // Os links vivos: "PR #12", "ENG-123" e as URLs do GitHub que existem no projeto viram
         // `vitral:`, que abre a aba PR ou a issue; o resto abre como sempre.
-        let ligado = super::painel_pr::ligar_referencias(texto, &contexto.referencias);
+        // Antes deles, os arquivos citados que estão no disco: abrem no painel da direita.
+        let cwd = &contexto.chat.cwd;
+        let com_arquivos = super::links_arquivo::ligar_arquivos(texto, &mut |c| super::links_arquivo::resolver(cwd, c));
+        let ligado = super::painel_pr::ligar_referencias(&com_arquivos, &contexto.referencias);
         let realce = contexto.busca.realce(indice, Campo::Texto);
         // As imagens que a resposta aponta em `![](…)`: o kit desenha a imagem do markdown na
         // altura de uma linha de texto (tamanho de ícone) ou, sozinha num parágrafo, sem teto
@@ -816,13 +819,17 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
 /// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
 /// hover da mensagem, sem reservar altura. Quem chama a posiciona. Um fade aqui viraria animação
 /// em cadeia ao passar o ponteiro pela conversa.
-fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, cx: &App) -> Div {
+fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
     h_flex()
         .h(r(28.))
         .p(esp::E2)
         .gap(esp::E2)
-        .flutuante(cx)
-        .rounded(raio::PILULA)
+        // Uma tecla em relevo, sem o anel azul do flutuante: opaca, com fio claro e a luz em cima.
+        .bg(Cores::cartao_elevado())
+        .border_1()
+        .border_color(Cores::borda_forte())
+        .shadow([crate::tema::aresta_de_tecla(), crate::tema::sombra_elevado()].concat())
+        .rounded(raio::de(28.))
         .invisible()
         .group_hover(grupo, |s| s.visible())
         .children(acoes)
@@ -990,7 +997,7 @@ fn selo_ultrathink() -> Div {
         .px(r(6.))
         .flex()
         .items_center()
-        .rounded(raio::PILULA)
+        .rounded(raio::de(20.))
         .bg(Cores::grupo())
         .micro()
         .child(texto_arco_iris("Ultrathink"))
@@ -1004,7 +1011,7 @@ fn selo_ultracode() -> Div {
         .flex()
         .items_center()
         .gap(r(4.))
-        .rounded(raio::PILULA)
+        .rounded(raio::de(20.))
         .bg(Cores::grupo())
         .micro()
         .text_color(Cores::violeta())
@@ -1090,7 +1097,7 @@ fn anexo(chave: &str, i: usize, caminho: &Path, chat: &str, cx: &Context<Janela>
         .max_w_full()
         .px(r(8.))
         .gap(r(6.))
-        .rounded(raio::PILULA)
+        .rounded(raio::de(24.))
         .bg(Cores::recuo())
         .metadado()
         .child(icone_de(icone, 14.).text_color(cor))
@@ -1468,7 +1475,7 @@ impl Janela {
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(Spinner::new().small().color(Cores::destaque())))
+                .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque())))
                 .on_click(alternar(chave.clone(), cx))
         });
         let ultima = mostradas.len().saturating_sub(1);
@@ -1499,6 +1506,8 @@ impl Janela {
             resumo,
             resultado,
             erro,
+            detalhe: pedido,
+            arquivo,
             ..
         } = item
         else {
@@ -1507,10 +1516,17 @@ impl Janela {
         let chave = format!("{}:{indice}", contexto.chat.id);
         let aberto = self.expandidos.contains(&chave);
         let pendente = contexto.pendente(indice, item);
+        // O arquivo que a chamada leu ou mudou, se ainda está no disco: abre ao lado pelo ícone
+        // que aparece no hover da linha.
+        let abrir = arquivo
+            .as_deref()
+            .and_then(|a| super::links_arquivo::resolver(&contexto.chat.cwd, a))
+            .map(|inteiro| super::links_arquivo::link_de(&inteiro, None));
+        let grupo = SharedString::from(format!("chamada-{chave}"));
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
         let icone = if pendente {
-            Spinner::new().small().color(Cores::destaque()).into_any_element()
+            AnelGirando::new(14.).cor(Cores::destaque()).into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -1571,22 +1587,59 @@ impl Janela {
             .when_some(meta.filter(|_| !estreita), |s, (meta, cor)| {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
+            .group(grupo.clone())
+            .when_some(abrir, |s, alvo| {
+                s.child(
+                    div()
+                        .id(SharedString::from(format!("abrir-arquivo-{chave}")))
+                        .flex_none()
+                        .size(r(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(raio::CONTROLE)
+                        .text_color(Cores::tenue())
+                        .opacity(0.)
+                        .group_hover(grupo.clone(), |s| s.opacity(1.))
+                        .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
+                        .child(icone_de(Lucide::PanelRight, 13.))
+                        .tooltip(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
+                        .on_click(move |_, window, cx| {
+                            // Não abre nem fecha o detalhe da linha.
+                            cx.stop_propagation();
+                            window.dispatch_action(Box::new(super::painel_pr::AbrirLinkVitral(alvo.clone())), cx);
+                        }),
+                )
+            })
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
+        // Aberta, a linha mostra primeiro o que a chamada pediu (o diff, o que gravou). O resultado
+        // de uma edição que deu certo é só "o arquivo foi atualizado": fica de fora.
+        let so_o_pedido = pedido.is_some() && !*erro && resultado.is_some() && matches!(nome.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
+        let comando = pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).filter(|_| nome == "Bash");
         let bloco = v_flex()
             .relative()
             .w_full()
             .child(linha)
             .when(aberto, |s| {
-                s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
-                    bloco_resultado(
-                        &chave,
-                        resultado.as_deref(),
-                        *erro,
-                        if pendente { "(rodando…)" } else { "(interrompida, sem resultado)" },
-                    )
-                    .realce(&no_resultado),
-                ))
+                s.when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
+                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(bloco_do_pedido(pedido)))
+                })
+                .when_some(comando, |s, comando| {
+                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(bloco_do_pedido(&format!("$ {comando}"))))
+                })
+                .when(!so_o_pedido, |s| {
+                    s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                        bloco_resultado(
+                            &chave,
+                            resultado.as_deref(),
+                            *erro,
+                            if pendente { "(rodando…)" } else { "(interrompida, sem resultado)" },
+                        )
+                        .realce(&no_resultado),
+                    ))
+                })
+                .when(so_o_pedido, |s| s.pb(esp::E4))
             })
             .when(com_trilho, |s| s.child(trilho_do_log()))
             .into_any_element();
@@ -1666,7 +1719,7 @@ impl Janela {
             .filter(|t| contexto.ultimas.get(&t.id) == Some(&indice))
             .map(|t| PilulaCurta::da(contexto.motor, t));
         let simbolo = if resultado.is_none() {
-            Spinner::new().small().color(Cores::destaque()).into_any_element()
+            AnelGirando::new(14.).cor(Cores::destaque()).into_any_element()
         } else if *erro {
             icone_de(Lucide::CircleX, 14.).text_color(Cores::vermelho()).into_any_element()
         } else {
@@ -2119,6 +2172,42 @@ pub(super) fn alternar(
         }
         cx.notify();
     })
+}
+
+/// Quantas linhas do pedido de uma chamada aparecem; o resto vira "… mais N linhas".
+const LINHAS_DO_PEDIDO: usize = 80;
+
+/// O que a chamada pediu (`Item::Ferramenta::detalhe`): o que saiu em vermelho, o que entrou em
+/// verde, o comando e o resto no tom do texto, em mono, numa caixa que rola de lado.
+fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
+    let total = pedido.lines().count();
+    let linhas = pedido.lines().take(LINHAS_DO_PEDIDO).map(|linha| {
+        let (cor, fundo) = match linha.as_bytes().first() {
+            Some(b'+') => (Cores::verde(), Some(fundo_entra())),
+            Some(b'-') => (Cores::vermelho(), Some(fundo_sai())),
+            Some(b'$') => (Cores::texto(), None),
+            _ => (Cores::tenue(), None),
+        };
+        div()
+            .px(esp::E12)
+            .whitespace_nowrap()
+            .text_color(cor)
+            .when_some(fundo, |s, fundo| s.bg(fundo))
+            // A linha vazia mantém a altura.
+            .child(if linha.is_empty() { SharedString::from(" ") } else { SharedString::from(linha.to_string()) })
+    });
+    div()
+        .id("pedido-da-chamada")
+        .w_full()
+        .py(esp::E8)
+        .rounded(raio::CONTROLE)
+        .bg(Cores::hover())
+        .mono_pequeno()
+        .overflow_x_scroll()
+        .children(linhas)
+        .when(total > LINHAS_DO_PEDIDO, |s| {
+            s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
+        })
 }
 
 /// O resultado de uma chamada aberta, na caixa de código do chat (as últimas 40 linhas).
@@ -2784,6 +2873,142 @@ fn situacao_do_turno(motor: &Motor, chat: &str) -> Option<Situacao> {
 }
 
 impl Janela {
+    /// A linha de estado viva da caixa (dentro da moldura, embaixo do campo): o que o turno em
+    /// andamento faz agora, à esquerda, e a tecla que o para, à direita. `None` quando o chat não
+    /// está num turno em andamento: a caixa mostra as teclas.
+    pub(super) fn linha_de_estado(
+        &self,
+        motor: &Motor,
+        chat: &Chat,
+        painel_id: u64,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<(Option<AnyElement>, Option<AnyElement>)> {
+        let situacao = match situacao_do_turno(motor, &chat.id) {
+            Some(s @ (Situacao::Rodando { .. } | Situacao::EsperandoVaga | Situacao::NovaTentativa { .. })) => s,
+            Some(Situacao::Fila(_)) | None => situacao_do_chat(motor, chat).filter(|s| *s == Situacao::Juntando)?,
+            Some(_) => return None,
+        };
+        let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
+        let (estreita, minima) = (!larga(medida.nivel), minima(medida.nivel));
+        let esc = move |rotulo: &'static str, window: &Window| {
+            h_flex()
+                .flex_none()
+                .gap(esp::E6)
+                .children(teclas(&PararTurno, Some("Caixa"), window))
+                .when(!estreita, |s| s.child(rotulo))
+                .into_any_element()
+        };
+        // O que o chat faz vai na voz que conversa (a Inter 12); relógio, contagem e teclas, na mono
+        // da linha.
+        let fonte = cx.theme().font_family.clone();
+        let texto = |t: String| div().min_w_0().truncate().font_family(fonte.clone()).metadado().child(t);
+        // A fila é da conversa, não do turno: fora do `Rodando` (que a mostra como "dirigida"),
+        // ela continua à vista ao lado do que o chat faz.
+        let fila_fora = match situacao {
+            Situacao::Rodando { .. } => None,
+            _ => Some(motor.na_fila(&chat.id)).filter(|n| *n > 0),
+        };
+        let (esquerda, direita) = match situacao {
+            Situacao::Rodando { desde, fila, dirigidas } => {
+                let escrevendo = motor.parcial(&chat.id).is_some();
+                let atividade = texto_atividade(&chat.itens, escrevendo, dirigidas);
+                // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
+                let atividade = if !escrevendo && atividade == "Pensando…" && motor.esperando_agentes(&chat.id) {
+                    "Agentes trabalhando em segundo plano…".to_string()
+                } else {
+                    sem_marcacao(&atividade)
+                };
+                let (acoes, _) = numeros_do_turno(&chat.itens);
+                (
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(esp::E8)
+                        .child(AnelGirando::new(12.).cor(Cores::destaque_texto()))
+                        .child(
+                            // Passada mais lenta: a 12 quadros por segundo, o brilho anda em
+                            // passos menores.
+                            ShimmerText::new(atividade)
+                                .id(("atividade", painel_id as usize))
+                                .duration(Duration::from_secs(3))
+                                .highlight_color(Cores::forte())
+                                .font_family(fonte.clone())
+                                .metadado()
+                                .min_w_0()
+                                .truncate(),
+                        )
+                        .when(!minima, |s| {
+                            s.child(
+                                div()
+                                    .flex_none()
+                                    .etiqueta()
+                                    .text_color(Cores::apagado())
+                                    .child(relogio(crate::modelo::agora().saturating_sub(desde))),
+                            )
+                        })
+                        .when(!estreita && acoes > 0, |s| {
+                            s.child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(format!("ação {acoes}")))
+                        })
+                        // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
+                        .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
+                        // A fila é um controle: o clique abre a lista do que espera, para tirar o
+                        // que você não quer mais.
+                        .when(fila > 0, |s| {
+                            s.child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, fila, true, estreita, window, cx)))
+                        })
+                        .into_any_element(),
+                    Some(esc("para parar", window)),
+                )
+            }
+            Situacao::EsperandoVaga => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E8)
+                    .child(icone_de(Lucide::Clock, 12.).text_color(Cores::tenue()))
+                    .child(texto("Na fila: começa quando outro chat terminar".into()))
+                    .into_any_element(),
+                Some(esc("tirar da fila", window)),
+            ),
+            Situacao::NovaTentativa { em } => {
+                let faltam = em.saturating_sub(crate::modelo::agora());
+                (
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(esp::E8)
+                        .child(icone_de(Lucide::RotateCw, 12.).text_color(Cores::ambar()))
+                        .child(texto(format!("Caiu; tentando de novo em {faltam} s")))
+                        .into_any_element(),
+                    None,
+                )
+            }
+            // Só sobra a junção (o filtro de cima).
+            _ => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E8)
+                    .child(AnelGirando::new(12.).cor(Cores::destaque_texto()))
+                    .child(texto("Juntando…".into()))
+                    .into_any_element(),
+                None,
+            ),
+        };
+        let esquerda = match fila_fora {
+            Some(n) => h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(esp::E8)
+                .child(esquerda)
+                .child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, n, false, estreita, window, cx)))
+                .into_any_element(),
+            None => esquerda,
+        };
+        Some((Some(esquerda), direita))
+    }
+
     /// Faixa do turno, acima da caixa e sempre à vista: o que o chat faz agora (ou por que parou)
     /// e a ação que cabe. Some sem deixar buraco quando não há nada.
     pub(super) fn faixa_atividade(
@@ -2801,30 +3026,25 @@ impl Janela {
             Some(s) => s,
             None => situacao_do_chat(motor, chat)?,
         };
+        // O turno em andamento (e a junção) mora na linha de estado da caixa, dentro da moldura
+        // (`linha_de_estado`): acima da caixa só fica o que pede um botão seu.
+        if matches!(
+            situacao,
+            Situacao::Rodando { .. } | Situacao::EsperandoVaga | Situacao::NovaTentativa { .. } | Situacao::Juntando
+        ) {
+            return None;
+        }
         let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
-        let (estreita, minima) = (!larga(medida.nivel), minima(medida.nivel));
+        let estreita = !larga(medida.nivel);
         // Alinha com o texto da caixa (a margem da coluna mais o recuo do texto nela) e, à direita,
         // com o enviar.
         let caixa_estreita = medida.faixa == FaixaCaixa::Estreita;
         let margem = tam(window, if caixa_estreita { 12. } else { 16. });
         let (recuo, fim) = (margem + composer::recuo_do_texto(caixa_estreita, window), margem + composer::borda_ao_conteudo(caixa_estreita, window));
-        let atividade = match &situacao {
-            Situacao::Rodando { dirigidas, .. } => {
-                let escrevendo = motor.parcial(&chat.id).is_some();
-                let texto = texto_atividade(&chat.itens, escrevendo, *dirigidas);
-                // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
-                if !escrevendo && texto == "Pensando…" && motor.esperando_agentes(&chat.id) {
-                    "Agentes trabalhando em segundo plano…".to_string()
-                } else {
-                    sem_marcacao(&texto)
-                }
-            }
-            _ => String::new(),
-        };
         // A fila é da conversa, não do turno: depois de um reinício (ou de uma parada, ou de uma
         // falha) o chat não está mais rodando e ela continua esperando, à vista.
         let fila_fora = match situacao {
-            Situacao::Fila(_) | Situacao::Rodando { .. } => None,
+            Situacao::Fila(_) => None,
             _ => Some(motor.na_fila(&chat.id)).filter(|n| *n > 0),
         };
         let (motor_e, id) = (self.motor.clone(), chat.id.clone());
@@ -2842,67 +3062,10 @@ impl Janela {
             acao(|m, id, cx| m.entregar_fila(id, cx)),
         );
         let texto = |t: String| div().min_w_0().truncate().text_size(r(13.)).line_height(r(18.)).child(t);
-        let esc = move |rotulo: &'static str, window: &Window| {
-            h_flex()
-                .flex_none()
-                .gap(r(6.))
-                .metadado()
-                .children(teclas(&PararTurno, Some("Caixa"), window))
-                .when(!estreita, |s| s.child(rotulo))
-                .into_any_element()
-        };
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {
-            Situacao::Rodando { desde, fila, dirigidas } => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(
-                        // Passada mais lenta: a 12 quadros por segundo, o brilho anda em
-                        // passos menores.
-                        ShimmerText::new(atividade)
-                            .id(("atividade", painel_id as usize))
-                            .duration(Duration::from_secs(3))
-                            .highlight_color(Cores::forte())
-                            .rotulo()
-                            .min_w_0()
-                            .truncate(),
-                    )
-                    .when(!minima, |s| {
-                        s.child(div().flex_none().metadado().text_color(Cores::apagado()).child(duracao(desde)))
-                    })
-                    // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
-                    .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
-                    // A fila é um controle: o clique abre a lista do que espera, para tirar o
-                    // que você não quer mais.
-                    .when(fila > 0, |s| {
-                        s.child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, fila, true, estreita, window, cx)))
-                    })
-                    .into_any_element(),
-                Some(esc("para parar", window)),
-            ),
-            Situacao::EsperandoVaga => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(icone_de(Lucide::Clock, 14.).text_color(Cores::tenue()))
-                    .child(texto("Na fila: começa quando outro chat terminar".into()))
-                    .into_any_element(),
-                Some(esc("tirar da fila", window)),
-            ),
-            Situacao::NovaTentativa { em } => {
-                let faltam = em.saturating_sub(crate::modelo::agora());
-                (
-                    h_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(r(8.))
-                        .child(icone_de(Lucide::RotateCw, 14.).text_color(Cores::ambar()))
-                        .child(texto(format!("Caiu; tentando de novo em {faltam} s")))
-                        .into_any_element(),
-                    None,
-                )
+            // Na linha de estado da caixa (o `return` de cima).
+            Situacao::Rodando { .. } | Situacao::EsperandoVaga | Situacao::NovaTentativa { .. } | Situacao::Juntando => {
+                return None;
             }
             Situacao::Parada { motivo, atencao } => (
                 h_flex()
@@ -2977,16 +3140,6 @@ impl Janela {
                         .on_click(cx.listener(move |this, _, window, cx| this.localizar_pasta(projeto.clone(), indice, window, cx)))
                         .into_any_element(),
                 ),
-            ),
-            Situacao::Juntando => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(icone_de(Lucide::GitMerge, 14.).text_color(Cores::destaque_texto()))
-                    .child(texto("Juntando…".into()))
-                    .into_any_element(),
-                None,
             ),
             Situacao::ParaJuntar { tarefa, arquivos, mais, menos, por_pr } => {
                 // No modo PR, aprovar é publicar: o botão abre o PR (título e descrição gerados).
@@ -3162,9 +3315,10 @@ impl Janela {
             }))
     }
 
-    /// Um pedido de permissão: o que exatamente vai ser feito (o comando inteiro, o trecho que
-    /// muda, o começo do arquivo) e as respostas. Âmbar no cabeçalho; vermelho, e sem "permitir
-    /// sempre", quando o comando tem um trecho perigoso.
+    /// Um pedido de permissão (o desenho é o `cartao_de_pedido`): as respostas daqui mexem no
+    /// motor. O "Permitir" com a caixa "Não perguntar de novo" marcada passa a regra
+    /// (`permitir_sempre`); desmarcada, permite só esta vez. O perigoso nunca vira regra e só se
+    /// permite segurando (ou com dois Enter).
     #[allow(clippy::too_many_arguments)]
     fn cartao_permissao(
         &self,
@@ -3179,26 +3333,7 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let id_texto = |nome: &str| SharedString::from(format!("{nome}-{id}"));
-        let perigoso = ferramenta == "Bash"
-            && !trechos_perigosos(entrada["command"].as_str().unwrap_or_default()).is_empty();
-        let tom = if perigoso { Cores::vermelho() } else { Cores::ambar() };
-        let (titulo, subtitulo) = titulo_do_pedido(ferramenta, entrada, &chat.cwd);
-        let caminho_no_subtitulo = matches!(ferramenta, "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
-        let fora = entrada["file_path"]
-            .as_str()
-            .or(entrada["notebook_path"].as_str())
-            .is_some_and(|c| caminho_no_chat(c, &chat.cwd).1);
-        let regra = crate::modelo::regra_de_permissao(ferramenta, entrada, &chat.cwd)
-            .filter(|_| !perigoso)
-            .map(|regra| rotulo_da_regra(&regra, manual));
-        let explicando = self
-            .explicacao
-            .as_ref()
-            .filter(|e| e.pedido == id)
-            .map(|e| e.campo.clone());
-        let corpo = corpo_aberto.then(|| corpo_permissao(id, ferramenta, entrada));
-        let (estreita, minima) = (!larga(nivel), minima(nivel));
+        let explicando = self.explicacao.as_ref().filter(|e| e.pedido == id).map(|e| e.campo.clone());
         let responder = |permitir: bool| {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
@@ -3208,14 +3343,42 @@ impl Janela {
                 }
             })
         };
-        let (negar, permitir) = (responder(false), responder(true));
-        let sempre = {
+        // A regra só existe fora do perigoso: o mesmo filtro do desenho.
+        let com_regra = regra_do_pedido(ferramenta, entrada, &chat.cwd, manual).is_some();
+        let permitir = {
             let id = id.to_string();
-            Rc::new(cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
+            cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                let sempre = com_regra && this.sempre_marcado.contains(&id);
                 if let Some(m) = &this.motor {
-                    m.update(cx, |m, cx| m.permitir_sempre(&id, cx));
+                    m.update(cx, |m, cx| {
+                        if sempre {
+                            m.permitir_sempre(&id, cx)
+                        } else {
+                            m.responder_permissao(&id, true, None, cx)
+                        }
+                    });
                 }
-            }))
+            })
+        };
+        let uma_vez = {
+            let (motor, id) = (self.motor.clone(), id.to_string());
+            move |cx: &mut App| {
+                if let Some(m) = &motor {
+                    m.update(cx, |m, cx| m.responder_permissao(&id, true, None, cx));
+                }
+            }
+        };
+        let marcar = {
+            let id = id.to_string();
+            cx.listener(move |this: &mut Janela, marcado: &bool, _, cx| {
+                if *marcado {
+                    this.sempre_marcado.insert(id.clone());
+                } else {
+                    this.sempre_marcado.remove(&id);
+                }
+                cx.notify();
+            })
         };
         let explicar = {
             let id = id.to_string();
@@ -3225,7 +3388,6 @@ impl Janela {
             this.explicacao = None;
             cx.notify();
         });
-        let enviar_explicacao = cx.listener(|this, _: &ClickEvent, _, cx| this.negar_explicando(cx));
         let abrir = {
             let id = id.to_string();
             cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -3233,182 +3395,29 @@ impl Janela {
                 cx.notify();
             })
         };
-        let ids = [
-            "cab", "negar", "permitir", "explicar", "sempre", "mais", "cancelar-explicacao", "negar-explicando",
-        ]
-        .map(id_texto);
-        let [id_cab, id_negar, id_permitir, id_explicar, id_sempre, id_mais, id_cancelar, id_enviar] = ids;
-        let principal = |id: SharedString, window: &Window, cx: &App| {
-            if perigoso {
-                botao_perigo(id, None, "Permitir mesmo assim", TamanhoBotao::Controle, window, cx)
-            } else {
-                botao_primario(id, None, "Permitir", TamanhoBotao::Controle, window, cx)
-            }
+        let pedido = Pedido {
+            id: id.to_string(),
+            ferramenta: ferramenta.to_string(),
+            entrada: entrada.clone(),
+            pasta: chat.cwd.clone(),
+            aberto: corpo_aberto,
+            posicao,
+            nivel,
+            manual,
+            marcado: self.sempre_marcado.contains(id),
+            explicando,
         };
-        let cabecalho = h_flex()
-            .id(id_cab)
-            .flex_none()
-            .h(r(44.))
-            .px(dentro_da_borda(12.))
-            .gap(esp::E8)
-            .bg(Cores::tinta(tom))
-            .map(|s| {
-                if corpo_aberto {
-                    s.rounded_t(raio::CARTAO - px(1.))
-                } else {
-                    s.rounded(raio::CARTAO - px(1.))
-                }
-            })
-            .child(icone_de(Lucide::ShieldQuestionMark, 16.).text_color(tom))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(div().titulo_cartao().text_color(Cores::forte()).truncate().child(titulo))
-                    .when_some(subtitulo, |s, t| {
-                        s.child(
-                            div()
-                                .metadado()
-                                .text_color(Cores::tenue())
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .map(|s| if caminho_no_subtitulo { s.text_ellipsis_start() } else { s.text_ellipsis() })
-                                .child(sem_marcacao(&t)),
-                        )
-                    }),
-            )
-            .when(fora && !minima, |s| {
-                s.child(div().flex_none().metadado().text_color(Cores::ambar()).child("fora da pasta"))
-            })
-            .when_some(posicao, |s, (k, n)| {
-                s.child(div().flex_none().metadado().text_color(Cores::tenue()).child(format!("{k} de {n}")))
-            });
-        let mut cartao = v_flex()
-            .w_full()
-            .rounded(raio::CARTAO)
-            .bg(Cores::cartao_elevado())
-            .border_1()
-            .border_color(Cores::tinta_borda(tom))
-            .shadow(sombra_elevado());
-        let Some(corpo) = corpo else {
-            // Recolhido (há outro pedido aberto): só o cabeçalho, com Negar e Permitir.
-            let negar = botao_fantasma(id_negar, None, "Negar", TamanhoBotao::Barra, window, cx).on_click(negar);
-            let permitir = if perigoso {
-                botao_perigo(id_permitir, None, "Permitir mesmo assim", TamanhoBotao::Barra, window, cx)
-            } else {
-                botao_primario(id_permitir, None, "Permitir", TamanhoBotao::Barra, window, cx)
-            }
-            .on_click(permitir);
-            return cartao.child(
-                cabecalho
-                    .cursor_pointer()
-                    .on_click(abrir)
-                    .child(h_flex().flex_none().gap(r(6.)).child(negar).child(permitir)),
-            )
-            .into_any_element();
+        let respostas = RespostasDoPedido {
+            negar: Rc::new(responder(false)),
+            permitir: Rc::new(permitir),
+            uma_vez: Rc::new(uma_vez),
+            marcar: Rc::new(marcar),
+            explicar: Rc::new(explicar),
+            cancelar_explicacao: Rc::new(cancelar_explicacao),
+            enviar_explicacao: Rc::new(cx.listener(|this, _: &ClickEvent, _, cx| this.negar_explicando(cx))),
+            abrir: Rc::new(abrir),
         };
-        cartao = cartao.child(cabecalho);
-        let rodape = match explicando {
-            Some(campo) => h_flex()
-                .gap(r(8.))
-                .child(div().flex_1().min_w_0().child(Input::new(&campo)))
-                .child(
-                    botao_fantasma(id_cancelar, None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                        .on_click(cancelar_explicacao),
-                )
-                .child(
-                    botao_primario(id_enviar, None, "Negar e enviar", TamanhoBotao::Controle, window, cx)
-                        .on_click(enviar_explicacao),
-                )
-                .into_any_element(),
-            None => {
-                let icone_explicar = Lucide::MessageSquareQuote;
-                let dica_explicar = "Nega e diz ao Claude o que fazer em vez disso";
-                let explicar = if estreita {
-                    botao_icone(id_explicar, icone_explicar, "Negar e explicar…", TamanhoBotao::Controle, window, cx)
-                } else {
-                    botao_fantasma(
-                        id_explicar,
-                        Some(icone_explicar.into()),
-                        "Negar e explicar…",
-                        TamanhoBotao::Controle,
-                        window,
-                        cx,
-                    )
-                    .tooltip(dica_explicar)
-                }
-                .on_click(explicar);
-                let negar = botao_fantasma(id_negar, None, "Negar", TamanhoBotao::Controle, window, cx).on_click(negar);
-                let principal = principal(id_permitir, window, cx).on_click(permitir);
-                if minima {
-                    // "Permitir sempre" vai para o "…"; o Permitir ocupa a largura toda.
-                    let mais = regra.map(|(rotulo, dica)| {
-                        let sempre = sempre.clone();
-                        botao_icone(id_mais, Lucide::Ellipsis, "Mais respostas", TamanhoBotao::Controle, window, cx)
-                            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-                                let sempre = sempre.clone();
-                                menu.item(
-                                    PopupMenuItem::new(rotulo.clone())
-                                        .on_click(move |e, window, cx| sempre(e, window, cx)),
-                                )
-                                .item(PopupMenuItem::static_element({
-                                    let dica = dica.clone();
-                                    move |_, _| {
-                                        div()
-                                            .max_w(r(260.))
-                                            .metadado()
-                                            .text_color(Cores::tenue())
-                                            .child(dica.clone())
-                                    }
-                                }))
-                            })
-                    });
-                    v_flex()
-                        .gap(r(8.))
-                        .child(h_flex().gap(r(8.)).child(explicar).child(negar).child(div().flex_1()).children(mais))
-                        .child(principal.w_full())
-                        .into_any_element()
-                } else {
-                    let sempre = regra.map(|(rotulo, dica)| {
-                        botao_fantasma(id_sempre, None, rotulo, TamanhoBotao::Controle, window, cx)
-                            .tooltip(dica)
-                            .on_click(move |e, window, cx| sempre(e, window, cx))
-                    });
-                    h_flex()
-                        .flex_wrap()
-                        .justify_end()
-                        .gap(r(8.))
-                        .child(explicar)
-                        .child(div().flex_1())
-                        .child(h_flex().gap(r(8.)).child(negar).children(sempre).child(principal))
-                        .into_any_element()
-                }
-            }
-        };
-        cartao.child(
-            v_flex()
-                .p(dentro_da_borda(12.))
-                .gap(esp::E12)
-                .child(corpo)
-                .when(perigoso, |s| {
-                    s.child(
-                        h_flex()
-                            .items_start()
-                            .gap(esp::E6)
-                            .child(div().flex_none().pt(esp::E2).child(
-                                icone_de(Lucide::TriangleAlert, 14.).text_color(Cores::vermelho()),
-                            ))
-                            .child(
-                                div()
-                                    .metadado()
-                                    .text_color(Cores::texto())
-                                    .child("O trecho em vermelho apaga, força ou roda algo difícil de desfazer."),
-                            ),
-                    )
-                })
-                .child(rodape),
-        )
-        .into_any_element()
+        cartao_de_pedido(pedido, respostas, window, cx)
     }
 
     /// Abre, embaixo do pedido, o campo para negar dizendo o que fazer em vez disso.
@@ -3526,21 +3535,14 @@ impl Janela {
         let ids = ["cab-plano", "rolagem-plano", "aprovar-plano", "mais-plano", "mudar-plano", "copiar-plano"]
             .map(|nome| SharedString::from(format!("{nome}-{id}")));
         let [id_cab, id_rolagem, id_aprovar, id_mais, id_mudar, id_copiar] = ids;
+        // O cabeçalho de azulejo, sem a faixa tingida: o âmbar vai no ícone.
         let cabecalho = h_flex()
             .id(id_cab)
             .flex_none()
             .h(r(44.))
             .px(dentro_da_borda(12.))
             .gap(esp::E8)
-            .bg(Cores::tinta(Cores::ambar()))
-            .map(|s| {
-                if corpo_aberto {
-                    s.rounded_t(raio::CARTAO - px(1.))
-                } else {
-                    s.rounded(raio::CARTAO - px(1.))
-                }
-            })
-            .child(icone_de(Lucide::Map, 16.).text_color(Cores::ambar()))
+            .child(azulejo(Lucide::Map, Cores::ambar()))
             .child(
                 v_flex()
                     .flex_1()
@@ -3556,19 +3558,16 @@ impl Janela {
                             .child(div().min_w_0().truncate().child(nome_modo)),
                     ),
             );
-        let cartao = v_flex()
-            .w_full()
-            .rounded(raio::CARTAO)
-            .bg(Cores::cartao_elevado())
-            .border_1()
-            .border_color(Cores::tinta_borda(Cores::ambar()))
-            .shadow(sombra_elevado());
+        // A moldura dupla: o cartão de raio 16 dentro da moldura de raio 20.
+        let cartao = miolo_da_moldura();
         if !corpo_aberto {
             // Recolhido (há outro pedido aberto): só o cabeçalho, com Aprovar.
             let aprovar =
                 botao_primario(id_aprovar, Some(Lucide::Check.into()), "Aprovar", TamanhoBotao::Barra, window, cx)
                     .on_click(aprovar);
-            return cartao.child(cabecalho.cursor_pointer().on_click(abrir).child(aprovar)).into_any_element();
+            return moldura_dupla(EstadoDaMoldura::Recolhida)
+                .child(cartao.child(cabecalho.cursor_pointer().on_click(abrir).child(aprovar)))
+                .into_any_element();
         }
         let copiar_plano =
             BotaoCopiar::new(Clipboard::new(id_copiar).value(SharedString::from(plano)).tooltip("Copiar o plano"));
@@ -3580,7 +3579,7 @@ impl Janela {
             .icon(Icon::new(Lucide::ChevronDown).size(r(14.)))
             .h(r(32.))
             .w(r(28.))
-            .rounded(raio::PILULA)
+            .rounded(raio::de(32.))
             .tooltip("Aprovar em outro modo")
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
                 let (editando, perguntando) = (aprovar_editando.clone(), aprovar_perguntando.clone());
@@ -3610,7 +3609,7 @@ impl Janela {
         } else {
             h_flex().gap(r(8.)).child(mudar).child(div().flex_1()).child(par).into_any_element()
         };
-        cartao
+        let cartao = cartao
             .max_h(r(520.))
             // Quando falta altura, é o texto que encolhe e rola; cabeçalho, campo e botões ficam.
             .min_h(MINIMO_PLANO)
@@ -3643,8 +3642,8 @@ impl Janela {
                     ),
                 )
             })
-            .child(div().flex_none().px(dentro_da_borda(12.)).pt(esp::E12).pb(dentro_da_borda(12.)).child(rodape))
-        .into_any_element()
+            .child(div().flex_none().px(dentro_da_borda(12.)).pt(esp::E12).pb(dentro_da_borda(12.)).child(rodape));
+        moldura_dupla(EstadoDaMoldura::Esperando).min_h_0().child(cartao.flex_1().min_h_0()).into_any_element()
     }
 }
 
@@ -3691,7 +3690,7 @@ fn pilula_do_fim(
         .gap(esp::E6)
         .justify_center()
         .flutuante(cx)
-        .rounded_full()
+        .rounded(raio::de(28.))
         .map(|s| if novidade { s.px(if com_rotulo { esp::E12 } else { esp::E8 }) } else { s.w(r(28.)) })
         .text_color(Cores::texto())
         .cursor_pointer()
@@ -3726,6 +3725,27 @@ fn marco_da_conversa(itens: &[Item], dirigidas: usize) -> Option<usize> {
         Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. } => true,
         _ => false,
     })
+}
+
+/// Os números do turno que está aberto (desde a última mensagem sua ou entrega): quantas ações
+/// (chamadas de ferramenta) e quantos arquivos distintos ele editou ou gravou.
+fn numeros_do_turno(itens: &[Item]) -> (usize, usize) {
+    let mut arquivos: Vec<&str> = Vec::new();
+    let mut acoes = 0;
+    for item in itens.iter().rev() {
+        match item {
+            Item::Usuario { .. } | Item::Entrega { .. } => break,
+            Item::Ferramenta { nome, arquivo, .. } if nome != "ToolSearch" => {
+                acoes += 1;
+                let edita = matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
+                if let Some(a) = arquivo.as_deref().filter(|a| edita && !arquivos.contains(a)) {
+                    arquivos.push(a);
+                }
+            }
+            _ => {}
+        }
+    }
+    (acoes, arquivos.len())
 }
 
 /// O que o agente faz agora, tirado da última chamada ainda sem resultado no turno ("Lendo
@@ -3894,7 +3914,265 @@ fn caminho_no_chat(caminho: &str, pasta: &std::path::Path) -> (String, bool) {
     }
 }
 
-/// Título e subtítulo do pedido de permissão ("Rodar este comando?" e a descrição dele).
+/// Um pedido de permissão na tela: o que o `cartao_de_pedido` desenha (o da conversa e a amostra
+/// da vitrine).
+pub(super) struct Pedido {
+    pub id: String,
+    pub ferramenta: String,
+    pub entrada: serde_json::Value,
+    /// A pasta do chat (caminhos relativos, "fora da pasta", a regra).
+    pub pasta: PathBuf,
+    /// Com o corpo aberto; recolhido, só o cabeçalho numa linha.
+    pub aberto: bool,
+    /// "2 de 3", com vários pedidos.
+    pub posicao: Option<(usize, usize)>,
+    pub nivel: LarguraPainel,
+    pub manual: bool,
+    /// A caixa "Não perguntar de novo" marcada.
+    pub marcado: bool,
+    /// O campo de "negar e explicar" aberto.
+    pub explicando: Option<Entity<InputState>>,
+}
+
+type AoClicar = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// As respostas de um pedido. `permitir` é o "Permitir" do pedido aberto e não perigoso (quem
+/// monta decide se a caixa marcada vira regra); `uma_vez` é o do recolhido e o do segurar.
+pub(super) struct RespostasDoPedido {
+    pub negar: AoClicar,
+    pub permitir: AoClicar,
+    pub uma_vez: Rc<dyn Fn(&mut App)>,
+    pub marcar: Rc<dyn Fn(&bool, &mut Window, &mut App)>,
+    pub explicar: AoClicar,
+    pub cancelar_explicacao: AoClicar,
+    pub enviar_explicacao: AoClicar,
+    pub abrir: AoClicar,
+}
+
+impl RespostasDoPedido {
+}
+
+/// O que a caixa "Não perguntar de novo" passaria a permitir (o objeto e a dica); `None` sem
+/// regra possível e sempre no comando perigoso, que nunca vira regra.
+fn regra_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path, manual: bool) -> Option<(String, String)> {
+    if pedido_perigoso(ferramenta, entrada) {
+        return None;
+    }
+    crate::modelo::regra_de_permissao(ferramenta, entrada, pasta).map(|regra| rotulo_da_regra(&regra, manual))
+}
+
+/// O comando tem um trecho que apaga, força ou roda algo difícil de desfazer.
+fn pedido_perigoso(ferramenta: &str, entrada: &serde_json::Value) -> bool {
+    ferramenta == "Bash" && !trechos_perigosos(entrada["command"].as_str().unwrap_or_default()).is_empty()
+}
+
+/// O cartão de um pedido de permissão (base AI Tool Approval), em moldura dupla: por fora, a
+/// moldura de raio 20 (a que espera você; vermelha no perigoso; preta no recolhido); dentro, com 4
+/// de folga, o cartão opaco de raio 16. No cartão: o azulejo com o ícone da ferramenta, o título
+/// afirmativo, a etiqueta da ferramenta em mono, o comando cavado com "$", o motivo embaixo e o
+/// rodapé com a caixa "Não perguntar de novo", "Negar" fantasma e "Permitir" claro. O perigoso não
+/// tem a caixa e o botão é "Segure para permitir".
+pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window, cx: &App) -> AnyElement {
+    let id = p.id.as_str();
+    let id_texto = |nome: &str| SharedString::from(format!("{nome}-{id}"));
+    let entrada = &p.entrada;
+    let perigoso = pedido_perigoso(&p.ferramenta, entrada);
+    let (titulo, motivo) = titulo_do_pedido(&p.ferramenta, entrada, &p.pasta);
+    let caminho_no_motivo = matches!(p.ferramenta.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
+    let fora = entrada["file_path"]
+        .as_str()
+        .or(entrada["notebook_path"].as_str())
+        .is_some_and(|c| caminho_no_chat(c, &p.pasta).1);
+    let regra = regra_do_pedido(&p.ferramenta, entrada, &p.pasta, p.manual);
+    let minima = minima(p.nivel);
+    let cabecalho = h_flex()
+        .id(id_texto("cab"))
+        .w_full()
+        .gap(esp::E8)
+        .child(azulejo(
+            icone_da_ferramenta(&p.ferramenta),
+            if perigoso { Cores::vermelho() } else { Cores::texto() },
+        ))
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(esp::E8)
+                .child(div().min_w_0().truncate().titulo_cartao().text_color(Cores::forte()).child(titulo))
+                .child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(etiqueta_da_ferramenta(&p.ferramenta))),
+        )
+        // Em qualquer largura: sem o aviso, um arquivo de fora da pasta parecia do projeto.
+        .when(fora, |s| s.child(Etiqueta::new("fora da pasta").tom(Cores::ambar())))
+        .when_some(p.posicao, |s, (k, n)| {
+            s.child(div().flex_none().etiqueta().text_color(Cores::tenue()).child(format!("{k} de {n}")))
+        });
+    let uma_vez = r_.uma_vez.clone();
+    let segurar = |id: SharedString, t: TamanhoBotao| {
+        let uma_vez = uma_vez.clone();
+        BotaoDeSegurar::new(id, "Segure para permitir").tamanho(t).ao_completar(move |cx| uma_vez(cx))
+    };
+    let estado = if perigoso {
+        EstadoDaMoldura::Perigo
+    } else if p.aberto {
+        EstadoDaMoldura::Esperando
+    } else {
+        EstadoDaMoldura::Recolhida
+    };
+    if !p.aberto {
+        // Recolhido (há outro pedido aberto): o cabeçalho numa linha, com Negar e Permitir (só
+        // esta vez; no perigoso, segurando). O clique no resto abre o corpo.
+        let negar = r_.negar.clone();
+        let negar = botao_fantasma(id_texto("negar"), None, "Negar", TamanhoBotao::Barra, window, cx)
+            .on_click(move |e, window, cx| negar(e, window, cx));
+        let permitir = if perigoso {
+            segurar(id_texto("segurar"), TamanhoBotao::Barra).into_any_element()
+        } else {
+            botao_claro(id_texto("permitir"), None, "Permitir", TamanhoBotao::Barra, window, cx)
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    uma_vez(cx)
+                })
+                .into_any_element()
+        };
+        let abrir = r_.abrir.clone();
+        return moldura_dupla(estado)
+            .child(
+                miolo_da_moldura().py(esp::E8).px(esp::E12).child(
+                    cabecalho
+                        .cursor_pointer()
+                        .on_click(move |e, window, cx| abrir(e, window, cx))
+                        .child(h_flex().flex_none().gap(esp::E6).child(negar).child(permitir)),
+                ),
+            )
+            .into_any_element();
+    }
+    let botao = |f: &AoClicar| {
+        let f = f.clone();
+        move |e: &ClickEvent, window: &mut Window, cx: &mut App| f(e, window, cx)
+    };
+    let rodape = match p.explicando {
+        Some(campo) => h_flex()
+            .gap(esp::E8)
+            .child(div().flex_1().min_w_0().child(Input::new(&campo)))
+            .child(
+                botao_fantasma(id_texto("cancelar-explicacao"), None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                    .on_click(botao(&r_.cancelar_explicacao)),
+            )
+            .child(
+                botao_primario(id_texto("negar-explicando"), None, "Negar e enviar", TamanhoBotao::Controle, window, cx)
+                    .on_click(botao(&r_.enviar_explicacao)),
+            )
+            .into_any_element(),
+        None => {
+            let explicar = botao_icone(
+                id_texto("explicar"),
+                Lucide::MessageSquareQuote,
+                "Negar e explicar…\nNega e diz ao Claude o que fazer em vez disso",
+                TamanhoBotao::Controle,
+                window,
+                cx,
+            )
+            .on_click(botao(&r_.explicar));
+            let negar =
+                botao_fantasma(id_texto("negar"), None, "Negar", TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
+            // A caixa "Não perguntar de novo: ..." só existe fora do perigoso e quando há regra.
+            let caixa = regra.map(|(objeto, dica)| {
+                let marcar = r_.marcar.clone();
+                Checkbox::new(id_texto("sempre"))
+                    .label(format!("Não perguntar de novo: {objeto}"))
+                    .checked(p.marcado)
+                    .tooltip(dica)
+                    .on_click(move |marcado, window, cx| marcar(marcado, window, cx))
+                    .text_color(Cores::tenue())
+                    .metadado()
+            });
+            let principal = if perigoso {
+                segurar(id_texto("segurar"), TamanhoBotao::Controle).map(|b| if minima { b.largo() } else { b }).into_any_element()
+            } else {
+                botao_claro(id_texto("permitir"), None, "Permitir", TamanhoBotao::Controle, window, cx)
+                    .when(minima, |b| b.w_full())
+                    .on_click(botao(&r_.permitir))
+                    .into_any_element()
+            };
+            if minima {
+                // Na largura mínima, a caixa vai em cima e o Permitir ocupa a largura.
+                v_flex()
+                    .gap(esp::E8)
+                    .children(caixa)
+                    .child(h_flex().gap(esp::E8).child(explicar).child(negar))
+                    .child(principal)
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .gap(esp::E8)
+                    .child(div().flex_1().min_w_0().children(caixa))
+                    .child(explicar)
+                    .child(negar)
+                    .child(principal)
+                    .into_any_element()
+            }
+        }
+    };
+    moldura_dupla(estado)
+        .child(
+            miolo_da_moldura()
+                .p(esp::E12)
+                .gap(esp::E12)
+                .child(cabecalho)
+                .child(
+                    v_flex()
+                        .gap(esp::E6)
+                        .child(corpo_permissao(id, &p.ferramenta, entrada))
+                        // O que era subtítulo vira o motivo, embaixo do comando.
+                        .when_some(motivo, |s, m| {
+                            s.child(
+                                div()
+                                    .metadado()
+                                    .text_color(Cores::tenue())
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .map(|s| if caminho_no_motivo { s.text_ellipsis_start() } else { s.text_ellipsis() })
+                                    .child(sem_marcacao(&m)),
+                            )
+                        }),
+                )
+                .when(perigoso, |s| {
+                    s.child(
+                        h_flex()
+                            .items_start()
+                            .gap(esp::E6)
+                            .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::TriangleAlert, 14.).text_color(Cores::vermelho())))
+                            .child(
+                                div()
+                                    .metadado()
+                                    .text_color(Cores::texto())
+                                    .child("O trecho em vermelho apaga, força ou roda algo difícil de desfazer."),
+                            ),
+                    )
+                })
+                .child(rodape),
+        )
+        .into_any_element()
+}
+
+/// A etiqueta da ferramenta no cabeçalho do pedido, em mono: "bash", "edit", "write", "web" ou o
+/// servidor do MCP.
+fn etiqueta_da_ferramenta(ferramenta: &str) -> String {
+    if let Some((servidor, _)) = ferramenta.strip_prefix("mcp__").and_then(|n| n.split_once("__")) {
+        return servidor.to_string();
+    }
+    match nome_curto(ferramenta) {
+        "Bash" => "bash".into(),
+        "Edit" | "MultiEdit" => "edit".into(),
+        "Write" => "write".into(),
+        "NotebookEdit" => "notebook".into(),
+        "WebFetch" | "WebSearch" => "web".into(),
+        outro => outro.to_lowercase(),
+    }
+}
+
+/// Título afirmativo do pedido de permissão ("Rodar um comando", "Editar views.py") e o motivo,
+/// que vai embaixo do comando (a descrição dele, o caminho, a consulta).
 fn titulo_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path) -> (String, Option<String>) {
     let campo = |chave: &str| entrada[chave].as_str().filter(|s| !s.is_empty());
     let caminho = campo("file_path").or(campo("notebook_path"));
@@ -3904,36 +4182,38 @@ fn titulo_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path)
         .unwrap_or_else(|| "o arquivo".into());
     let relativo = caminho.map(|c| caminho_no_chat(c, pasta).0);
     match ferramenta {
-        "Bash" => ("Rodar este comando?".into(), campo("description").map(str::to_string)),
-        "Edit" => (format!("Editar {arquivo}?"), relativo),
+        "Bash" => ("Rodar um comando".into(), campo("description").map(str::to_string)),
+        "Edit" => (format!("Editar {arquivo}"), relativo),
         "MultiEdit" => {
             let trechos = entrada["edits"].as_array().map_or(0, Vec::len);
             let detalhe = contagem(trechos, "trecho", "trechos");
-            (format!("Editar {arquivo}?"), Some(relativo.map_or(detalhe.clone(), |c| format!("{c} · {detalhe}"))))
+            (format!("Editar {arquivo}"), Some(relativo.map_or(detalhe.clone(), |c| format!("{c} · {detalhe}"))))
         }
         "Write" => {
             let linhas = contagem(campo("content").map_or(0, |c| c.lines().count()), "linha", "linhas");
-            (format!("Gravar {arquivo}?"), Some(relativo.map_or(linhas.clone(), |c| format!("{c} · {linhas}"))))
+            (format!("Gravar {arquivo}"), Some(relativo.map_or(linhas.clone(), |c| format!("{c} · {linhas}"))))
         }
-        "NotebookEdit" if campo("edit_mode") == Some("delete") => (format!("Apagar uma célula de {arquivo}?"), relativo),
-        "NotebookEdit" => (format!("Editar uma célula de {arquivo}?"), relativo),
+        "NotebookEdit" if campo("edit_mode") == Some("delete") => (format!("Apagar uma célula de {arquivo}"), relativo),
+        "NotebookEdit" => (format!("Editar uma célula de {arquivo}"), relativo),
         "WebFetch" => {
             let url = campo("url").unwrap_or_default();
             let dominio = url.split("://").last().unwrap_or(url).split('/').next().unwrap_or_default();
-            (format!("Abrir {dominio}?"), Some(url.to_string()).filter(|u| !u.is_empty()))
+            (format!("Abrir {dominio}"), Some(url.to_string()).filter(|u| !u.is_empty()))
         }
-        "WebSearch" => ("Pesquisar na web?".into(), campo("query").map(str::to_string)),
+        "WebSearch" => ("Pesquisar na web".into(), campo("query").map(str::to_string)),
         _ => {
             let resumo = Some(crate::claude::resumo_ferramenta(ferramenta, entrada));
+            // O servidor do MCP vai na etiqueta da ferramenta, ao lado do título.
             match ferramenta.strip_prefix("mcp__").and_then(|n| n.split_once("__")) {
-                Some((servidor, nome)) => (format!("Usar {nome} ({servidor})?"), resumo),
-                None => (format!("Usar {}?", nome_curto(ferramenta)), resumo),
+                Some((_, nome)) => (format!("Usar {nome}"), resumo),
+                None => (format!("Usar {}", nome_curto(ferramenta)), resumo),
             }
         }
     }
 }
 
-/// Rótulo e dica do botão de "permitir sempre": o que passa a valer sem perguntar.
+/// O objeto da caixa "Não perguntar de novo: ..." ("edições nesta conversa", "este comando", o nome
+/// da ferramenta) e a dica dela: o que passa a valer sem perguntar.
 fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
     const DESFAZER: &str = "Para desfazer, use o menu do modo, embaixo da caixa de mensagem.";
     if regra == "edicoes" {
@@ -3943,7 +4223,7 @@ fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
             ""
         };
         return (
-            "Permitir edições nesta conversa".into(),
+            "edições nesta conversa".into(),
             format!(
                 "As edições de arquivos passam sem perguntar nesta conversa, já neste turno.{modo} \
                  {DESFAZER}"
@@ -3952,13 +4232,13 @@ fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
     }
     if regra.starts_with("bash:") {
         return (
-            "Sempre permitir este comando".into(),
+            "este comando".into(),
             format!("Este comando, exatamente igual, passa sem perguntar nesta conversa. {DESFAZER}"),
         );
     }
     let nome = nome_curto(regra.strip_prefix("ferramenta:").unwrap_or(regra));
     (
-        format!("Sempre permitir {nome}"),
+        nome.to_string(),
         format!("{nome} passa sem perguntar nesta conversa. {DESFAZER}"),
     )
 }
@@ -3977,9 +4257,26 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
                 font_weight: Some(FontWeight::SEMIBOLD),
                 ..Default::default()
             };
-            caixa_de_codigo(id)
-                .text_color(Cores::texto())
-                .child(StyledText::new(comando).with_highlights(perigosos.iter().map(|t| (t.clone(), vermelho))))
+            // A caixa mostra umas 11 linhas e rola: com o comando maior que isso, o cartão avisa
+            // (sem o aviso, o que ficou abaixo da dobra parecia não existir).
+            let linhas = comando.lines().count();
+            let longo = linhas > 11 || comando.chars().count() > 900;
+            // Cavado, com o "$" na frente, como numa linha de terminal.
+            let caixa = caixa_de_codigo(id).shadow(aresta_de_poco()).text_color(Cores::texto()).child(
+                h_flex()
+                    .items_start()
+                    .gap(esp::E8)
+                    .child(div().flex_none().text_color(Cores::fantasma()).child("$"))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            StyledText::new(comando).with_highlights(perigosos.iter().map(|t| (t.clone(), vermelho))),
+                        ),
+                    ),
+            );
+            v_flex()
+                .gap(r(6.))
+                .child(caixa)
+                .when(longo, |s| s.child(nota("Comando comprido: role a caixa para ler tudo antes de permitir.")))
                 .into_any_element()
         }
         "Edit" => v_flex()
@@ -4077,7 +4374,8 @@ mod testes {
         detalhe_da_chamada, entrada_do_bloco, espaco_antes, frase_da_entrega, linhas_da_edicao, meta_curta,
         marco_da_conversa, meta_do_resumo, nome_e_id, partes_do_erro, previa, resumo_da_trilha, segmentar,
         sem_marcacao, separadores_de_data,
-        tarefa_do_item, texto_atividade, tipo_aviso, titulo_do_pedido, trechos_perigosos, verbo_da_acao,
+        etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, tarefa_do_item, texto_atividade, tipo_aviso,
+        titulo_do_pedido, trechos_perigosos, verbo_da_acao,
         verbo_da_ferramenta,
     };
     use crate::modelo::{Chat, EstadoTarefa, Item, regra_de_permissao};
@@ -4092,6 +4390,8 @@ mod testes {
             resultado: resultado.map(str::to_string),
             erro,
             em: 0,
+            detalhe: None,
+            arquivo: None,
         }
     }
 
@@ -4356,32 +4656,56 @@ mod testes {
         let titulo = |f: &str, e: serde_json::Value| titulo_do_pedido(f, &e, pasta);
         assert_eq!(
             titulo("Bash", json!({"command": "cargo test", "description": "Roda os testes"})),
-            ("Rodar este comando?".into(), Some("Roda os testes".into()))
+            ("Rodar um comando".into(), Some("Roda os testes".into()))
         );
-        assert_eq!(titulo("Bash", json!({"command": "ls"})), ("Rodar este comando?".into(), None));
+        assert_eq!(titulo("Bash", json!({"command": "ls"})), ("Rodar um comando".into(), None));
         assert_eq!(
             titulo("Edit", json!({"file_path": "/home/v/loja/src/cupom.rs"})),
-            ("Editar cupom.rs?".into(), Some("src/cupom.rs".into()))
+            ("Editar cupom.rs".into(), Some("src/cupom.rs".into()))
         );
         assert_eq!(
             titulo("MultiEdit", json!({"file_path": "/home/v/loja/a.rs", "edits": [{}, {}, {}]})),
-            ("Editar a.rs?".into(), Some("a.rs · 3 trechos".into()))
+            ("Editar a.rs".into(), Some("a.rs · 3 trechos".into()))
         );
         assert_eq!(
             titulo("Write", json!({"file_path": "/etc/hosts", "content": "a\nb"})),
-            ("Gravar hosts?".into(), Some("/etc/hosts · 2 linhas".into()))
+            ("Gravar hosts".into(), Some("/etc/hosts · 2 linhas".into()))
         );
         assert_eq!(
             titulo("NotebookEdit", json!({"notebook_path": "/home/v/loja/n.ipynb", "edit_mode": "delete"})).0,
-            "Apagar uma célula de n.ipynb?"
+            "Apagar uma célula de n.ipynb"
         );
         assert_eq!(
             titulo("WebFetch", json!({"url": "https://docs.rs/gpui/latest"})),
-            ("Abrir docs.rs?".into(), Some("https://docs.rs/gpui/latest".into()))
+            ("Abrir docs.rs".into(), Some("https://docs.rs/gpui/latest".into()))
         );
-        assert_eq!(titulo("WebSearch", json!({"query": "gpui"})).0, "Pesquisar na web?");
-        assert_eq!(titulo("mcp__github__create_issue", json!({})).0, "Usar create_issue (github)?");
-        assert_eq!(titulo("Agente", json!({})).0, "Usar Agente?");
+        assert_eq!(titulo("WebSearch", json!({"query": "gpui"})).0, "Pesquisar na web");
+        assert_eq!(titulo("mcp__github__create_issue", json!({})).0, "Usar create_issue");
+        assert_eq!(titulo("Agente", json!({})).0, "Usar Agente");
+        // Título afirmativo: nenhum termina em pergunta.
+        for f in ["Bash", "Edit", "Write", "WebFetch", "WebSearch", "mcp__github__create_issue", "Agente"] {
+            assert!(!titulo(f, json!({"command": "ls", "file_path": "/home/v/loja/a.rs"})).0.ends_with('?'), "{f}");
+        }
+    }
+
+    #[test]
+    fn etiqueta_da_ferramenta_no_cabecalho_do_pedido() {
+        assert_eq!(etiqueta_da_ferramenta("Bash"), "bash");
+        assert_eq!(etiqueta_da_ferramenta("MultiEdit"), "edit");
+        assert_eq!(etiqueta_da_ferramenta("Write"), "write");
+        assert_eq!(etiqueta_da_ferramenta("WebSearch"), "web");
+        assert_eq!(etiqueta_da_ferramenta("mcp__github__create_issue"), "github");
+        assert_eq!(etiqueta_da_ferramenta("Agente"), "agente");
+    }
+
+    /// O comando perigoso nunca vira regra (nem com a caixa marcada); o comum vira "este comando".
+    #[test]
+    fn perigoso_nunca_vira_regra() {
+        let pasta = Path::new("/home/v/loja");
+        assert_eq!(regra_do_pedido("Bash", &json!({"command": "rm -rf build"}), pasta, true), None);
+        assert_eq!(regra_do_pedido("Bash", &json!({"command": "git push --force"}), pasta, true), None);
+        let comum = regra_do_pedido("Bash", &json!({"command": "cargo test"}), pasta, true);
+        assert_eq!(comum.map(|(objeto, _)| objeto), Some("este comando".to_string()));
     }
 
     #[test]
@@ -4433,6 +4757,20 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn numeros_do_turno_contam_so_o_turno_aberto() {
+        let mut editar = ferramenta("Edit", "Edit · views.py", Some("ok"), false);
+        if let crate::modelo::Item::Ferramenta { arquivo, .. } = &mut editar {
+            *arquivo = Some("produtos/views.py".into());
+        }
+        let ler = ferramenta("Read", "Read · views.py", Some("ok"), false);
+        let rodar = ferramenta("Bash", "Bash · python3 manage.py test", None, false);
+        // O turno de antes não conta; duas edições do mesmo arquivo são um arquivo.
+        let itens = [ler.clone(), usuario("ajusta"), ler, editar.clone(), editar, rodar];
+        assert_eq!(numeros_do_turno(&itens), (4, 1));
+        assert_eq!(numeros_do_turno(&[usuario("oi")]), (0, 0));
     }
 
     #[test]

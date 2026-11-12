@@ -8,35 +8,37 @@
 # O DADOS_NOVOS=1 é obrigatório: as coordenadas abaixo são as da lista recém-aberta.
 # Nada de Esc com o turno rodando (ele é o Parar da caixa): os menus fecham com um clique no vazio.
 #   janela 1440x920; conversa x 481-1491 depois do Ctrl+J; caixa: anel 1200, clipe 1236,
-#   "…" 1272, parar 1308 e enviar 1346, todos em y 909.
+#   "…" 1272, parar 1308 e enviar 1346, todos em y 880 (a caixa é uma moldura dupla desde o
+#   plano visual v2: a linha de estado, em y 917, fica embaixo dos chips, dentro da moldura).
+#   As coordenadas em y foram recalculadas pela moldura (29 px acima) e ainda não foram rodadas.
 
 espera 10                 # o Vitral abre na conversa mais recente da demonstração
 clique 318 448            # "#4 Aplicar cupom no carrinho": chat de projeto com cópia pronta
 espera 3                  # a conversa abre
 tecla Control_L+j         # fecha o painel da direita: a caixa fica larga (com o "…")
 espera 2
-clique 985 867            # foco na caixa
+clique 985 838            # foco na caixa
 espera 1
 texto Confere o cupom expirado e arruma o teste. [demora] [ferramenta Edit produtos/cupons.py | 150]
 tecla Return              # o turno começa: 10 s de "pensando" e uma edição de 150 s
 espera 6
-print 01-turno-rodando    # faixa: "Editando cupons.py… Ns" e o Esc para parar; caixa vazia com o botão de parar
+print 01-turno-rodando    # linha de estado da caixa: anel girando, "Editando cupons.py…", o relógio e o Esc para parar; caixa vazia com o parar girando
 
 texto E olha tambem o arredondamento do desconto.
 espera 2
 print 02-caixa-no-turno   # com texto e o turno rodando: o parar pequeno ao lado do enviar
 tecla Return              # Enviar com o turno rodando: dirige o turno
 espera 3
-print 03-dirigido         # a mensagem entrou na conversa, o claude falso respondeu dentro do mesmo turno e a faixa diz "dirigido"
+print 03-dirigido         # a mensagem entrou na conversa, o claude falso respondeu dentro do mesmo turno e a linha de estado diz "dirigido"
 
 texto Depois do turno, roda os testes todos.
 espera 1
-clique 1272 909           # "…" da caixa
+clique 1272 880           # "…" da caixa
 espera 2
 print 04-menu-mandar-depois # o menu abre com "Mandar depois, na fila" em cima
 clique 1105 707           # o item: a mensagem vai para a fila em vez de entrar no turno
 espera 2
-print 05-uma-na-fila      # faixa: "dirigido" e a pílula "1 na fila"
+print 05-uma-na-fila      # linha de estado: "dirigido" e a pílula "1 na fila"
 
 texto E me manda um resumo no fim.
 espera 1
@@ -44,7 +46,7 @@ tecla Control_L+Return    # Ctrl+Enter: o mesmo "mandar depois", sem o menu
 espera 2
 print 06-duas-na-fila
 
-clique 890 823            # a pílula "2 na fila", na faixa do turno
+clique 890 917            # a pílula "2 na fila", na linha de estado da caixa (x a conferir)
 espera 2
 print 07-fila-aberta      # a lista: cada mensagem com o lugar, a prévia e os botões de editar, subir, descer e tirar
 
@@ -56,7 +58,7 @@ texto Depois do turno, roda so os testes do carrinho.
 espera 1
 clique 1023 430           # Salvar
 espera 2
-clique 890 823            # abre a fila de novo
+clique 890 917            # abre a fila de novo
 espera 2
 print 09-fila-editada     # a primeira mensagem com o texto novo
 clique 1208 858           # a seta para baixo da primeira: ela passa a entrar depois da outra
@@ -66,6 +68,6 @@ print 10-fila-reordenada  # as duas trocaram de lugar, sem perder nenhuma
 reabre                    # fecha o Vitral no meio do turno e abre de novo
 espera 12
 print 11-depois-de-reabrir # o chat parado ("O Vitral foi fechado no meio deste turno") e a fila com as duas
-clique 870 823            # a pílula da fila, agora na faixa do chat parado
+clique 870 789            # a pílula da fila, agora na faixa acima da caixa (o chat parado pede o Retomar)
 espera 2
 print 12-fila-sobreviveu  # as duas mensagens continuam lá, na ordem em que ficaram, com o "Entregar agora"

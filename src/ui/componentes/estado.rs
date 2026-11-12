@@ -212,7 +212,7 @@ impl RenderOnce for PilulaDeEstado {
             .flex()
             .items_center()
             .gap(r(6.))
-            .rounded_full()
+            .rounded(raio::de(22.))
             .bg(cor.map(Cores::tinta).unwrap_or_else(Cores::hover))
             .child(ponto)
             .child(
@@ -333,7 +333,7 @@ impl Selo {
 
 impl RenderOnce for Selo {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        let pilula = || div().flex_none().flex().items_center().rounded_full().micro().whitespace_nowrap();
+        let pilula = || div().flex_none().flex().items_center().rounded(raio::de(20.)).micro().whitespace_nowrap();
         let corpo = match self.tipo {
             TipoSelo::Ponto(cor) => {
                 let ponto = div().flex_none().size(r(self.lado)).rounded_full();
@@ -410,6 +410,76 @@ impl RenderOnce for Selo {
     }
 }
 
+/// Etiqueta de fio: a segunda voz do Vitral, um fato curto em mono 11 numa pílula de contorno (a
+/// pasta, o ramo, "revisar", "saída", o relógio). Não é botão nem selo de contagem: é o que um
+/// aparelho escreveria do lado do mostrador. 20 de altura (16 na `baixa`).
+#[derive(IntoElement)]
+pub struct Etiqueta {
+    texto: SharedString,
+    icone: Option<Icon>,
+    tom: Option<Hsla>,
+    baixa: bool,
+    fundo: bool,
+}
+
+impl Etiqueta {
+    pub fn new(texto: impl Into<SharedString>) -> Self {
+        Etiqueta { texto: texto.into(), icone: None, tom: None, baixa: false, fundo: false }
+    }
+
+    /// Ícone de 11 antes do texto, apagado.
+    pub fn icone(mut self, i: impl Into<Icon>) -> Self {
+        self.icone = Some(i.into());
+        self
+    }
+
+    /// O fio na tinta da cor e o texto na cor ("direto" em âmbar, "revisar").
+    pub fn tom(mut self, cor: Hsla) -> Self {
+        self.tom = Some(cor);
+        self
+    }
+
+    /// 16 de altura, para caber numa linha de lista.
+    pub fn baixa(mut self) -> Self {
+        self.baixa = true;
+        self
+    }
+
+    /// Com o fundo cavado (`recuo`), para quem fica por cima de texto ou de pontilhado.
+    pub fn fundo(mut self) -> Self {
+        self.fundo = true;
+        self
+    }
+}
+
+impl RenderOnce for Etiqueta {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+        let (fio, cor) = match self.tom {
+            Some(c) => (Cores::tinta_borda(c), c),
+            None => (Cores::borda_forte(), Cores::tenue()),
+        };
+        div()
+            .flex_none()
+            .h(r(if self.baixa { 16. } else { 20. }))
+            .px(esp::E6)
+            .gap(esp::E4)
+            .flex()
+            .items_center()
+            .rounded(raio::de(if self.baixa { 16. } else { 20. }))
+            .border_1()
+            .border_color(fio)
+            .when(self.fundo, |s| s.bg(Cores::recuo()))
+            .etiqueta()
+            .tabular()
+            .whitespace_nowrap()
+            .text_color(cor)
+            .when_some(self.icone, |s, icone| {
+                s.child(icone.with_size(tam(window, 11.)).text_color(Cores::apagado()))
+            })
+            .child(self.texto)
+    }
+}
+
 /// Gravidade de um problema do revisor, em minúsculas.
 pub fn selo_gravidade(gravidade: &str) -> Selo {
     match gravidade.trim().to_lowercase().as_str() {
@@ -427,16 +497,21 @@ pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(raio::PILULA)
+        .rounded(raio::de(18.))
         .micro()
+        .relative()
         .map(|s| {
             if ativo {
-                s.bg(Cores::destaque()).text_color(Cores::sobre_cor())
+                // O número do painel ativo é uma tecla de metal azul, como o "+" e o enviar.
+                let cantos = gpui_kit::Corners::all(raio::de(18.));
+                s.text_color(Cores::sobre_destaque())
+                    .child(super::metal::abertura(super::metal::Encaixe::Cobrir, Some(Cores::destaque().opacity(0.6)), cantos))
+                    .child(div().absolute().inset_0().rounded(raio::de(18.)).shadow(crate::tema::aresta_de_tecla()))
             } else {
                 s.bg(Cores::recuo()).border_1().border_color(Cores::borda()).text_color(Cores::tenue())
             }
         })
-        .child(n.to_string())
+        .child(div().relative().child(n.to_string()))
 }
 
 /// O que um chat tem para o sinal, já filtrado (arquivado não espera nada).

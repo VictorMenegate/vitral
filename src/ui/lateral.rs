@@ -29,8 +29,8 @@ use super::{
     AbaLateral, AlternarLista, Buscar, Filtro, Gaveta, Janela, NovaConversa, Vista,
     componentes::{
         BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, barra_de_rolagem, ControleSegmentado, EstadoVazio,
-        PreviaArrasto, QuadradoDeProjeto, Reflexo as _, Segmento, Selo, Simbolo, Sinal, TamanhoBotao, Tom,
-        VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca,
+        PreviaArrasto, QuadradoDeProjeto, Segmento, Selo, Simbolo, Sinal, TamanhoBotao, Tom,
+        VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
         contagem, estado_visual, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
     duracao, icone_projeto, menus,
@@ -800,11 +800,20 @@ struct Navegavel {
 struct Montagem {
     itens: Vec<AnyElement>,
     navegaveis: Vec<Navegavel>,
+    /// A visão geral é uma lista corrida: o que espera você, o que roda, as fixadas e as recentes,
+    /// nessa ordem, sem o título de cada seção (o ponto do cartão e o alfinete já dizem qual é).
+    corrida: bool,
 }
 
 impl Montagem {
     /// A primeira seção visível fica com 4 em cima.
     fn cabecalho(&mut self, c: CabecalhoDeSecao) {
+        if self.corrida {
+            if self.itens.is_empty() {
+                self.itens.push(div().flex_none().h(esp::E4).into_any_element());
+            }
+            return;
+        }
         let item = c.primeira(self.itens.is_empty()).into_any_element();
         self.itens.push(item);
     }
@@ -837,6 +846,11 @@ fn linha_meta(altura: f32) -> Div {
     div().h(r(altura)).flex().items_center().justify_end().gap(esp::E4)
 }
 
+/// A hora de um cartão ("12 min", "3 d"): em mono de 11, para os números ficarem numa coluna só.
+fn hora_do_cartao() -> Div {
+    linha_meta(20.).font_family(crate::tema::FONTE_MONO).text_size(r(11.))
+}
+
 /// A prévia: o motivo (o ponto do sinal e o rótulo em texto) e o texto tênue cortado, separados
 /// por " · ". Na lista estreita o rótulo fica curto: o número do trabalhador e o "(+N)"; o do
 /// próprio coordenador sai, porque o sinal basta. O sino usa a mesma.
@@ -865,10 +879,14 @@ pub(super) fn previa_elemento(motivo: Option<&MotivoDaPrevia>, texto: String, es
 
 /// A busca da lista: o `campo_de_busca` sem o atalho e com o texto curto; o que ela acha e o
 /// Ctrl+K ficam na dica.
-fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, window: &Window, cx: &App) -> Stateful<Div> {
+fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, window: &Window, cx: &App) -> Stateful<Div> {
     let focado = estado.read(cx).focus_handle(cx).is_focused(window);
     let conversas = aba == AbaLateral::Conversas;
-    campo_de_busca("busca-lista", estado, None, window, cx)
+    // O atalho ("Ctrl" "K") à direita, com o campo vazio e sem foco; abaixo de 276 de lista, nada.
+    // Só na aba Conversas: o Ctrl+K leva a ela, então na busca de arquivos ele enganaria.
+    let atalho: Option<Box<dyn Action>> = (!estreita && conversas).then(|| Box::new(Buscar) as Box<dyn Action>);
+    // No alto da lista, o logo, a busca e o "+" têm a mesma altura (40).
+    campo_de_busca_de("busca-lista", estado, atalho, 40., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
             s.tooltip(move |window, cx| {
@@ -910,7 +928,7 @@ fn botao_de_secao(
         .custom(variante_fantasma(cx).foreground(Cores::tenue()))
         .h(r(20.))
         .px(esp::E6)
-        .rounded(raio::PILULA)
+        .rounded(raio::de(20.))
         .child(div().metadado().font_weight(FontWeight::MEDIUM).child(rotulo))
 }
 
@@ -1151,11 +1169,11 @@ impl Janela {
             self.busca.update(cx, |b, cx| b.set_placeholder(dica, window, cx));
         }
         let busca = self.busca.read(cx).value().to_lowercase();
-        // A aba Arquivos só existe na vista de um projeto.
-        let conversas = self.aba == AbaLateral::Conversas || self.vista.projeto().is_none();
+        // A aba Arquivos existe na vista de um projeto e na visão geral (onde mostra a pasta do chat
+        // aberto); nos Avulsos, não.
+        let sem_arquivos = self.vista == Vista::Avulsos;
+        let conversas = self.aba == AbaLateral::Conversas || sem_arquivos;
         let arquivos = (!conversas).then(|| self.preparar_arquivos(motor_entidade, &busca, window, cx));
-        // Na gaveta a lista flutua sobre a conversa: o fundo opaco é da gaveta.
-        let na_gaveta = !self.orcamento.lista;
         let teclado = self.foco_lista.is_focused(window) && window.last_input_was_keyboard();
         let motor = motor_entidade.read(cx);
         let ctx = Contexto {
@@ -1172,12 +1190,11 @@ impl Janela {
             Vista::Projeto(p) => Some(self.cabecalho_projeto(motor_entidade, p, window, cx)),
             Vista::Avulsos => Some(self.cabecalho_avulsos(window)),
         };
-        let abas = self.vista.projeto().map(|_| self.abas_da_lista(motor, &ctx, conversas));
+        let abas = (!sem_arquivos).then(|| self.abas_da_lista(motor, &ctx, conversas));
         let montagem = if conversas { self.lista_conversas(motor, &ctx, window, cx) } else { Montagem::default() };
         let linha_busca = self.linha_da_busca(&montagem, &ctx, window, cx);
         let escopo = self.linha_escopo(motor, arquivos.as_ref(), &ctx, window, cx);
         let rodape = self.rodape(motor, arquivos.as_ref(), window, cx);
-        let rolada = conversas && self.rolagem_lista.offset().y < px(0.);
         let conteudo = match &arquivos {
             Some(a) => self.conteudo_arquivos(a, &ctx, window, cx),
             None => {
@@ -1202,12 +1219,13 @@ impl Janela {
             }
         };
 
+        let enxuta = self.lista_enxuta(motor);
+        let (linha_busca, busca_no_pe) = if enxuta { (None, Some(linha_busca)) } else { (Some(linha_busca), None) };
         v_flex()
             .size_full()
             .min_w_0()
             .px(esp::PECA)
             .rounded(crate::tema::raio_da_peca())
-            .when(!na_gaveta, |s| s.bg(Cores::vidro_leitura()).reflexo(crate::tema::raio_da_peca()))
             .on_prepaint(move |limites, window, _| {
                 let nova = limites.size.width.as_f32() / super::escala(window);
                 if (nova - largura_atual).abs() > 0.5 {
@@ -1222,15 +1240,27 @@ impl Janela {
             // O trilho deitado no alto da lista: as duas peças viraram uma só, e o que era a
             // coluna de ícones à esquerda é a primeira fileira daqui. Também na gaveta, que é o
             // único lugar do logo (e do menu do Vitral) quando a lista não cabe ao lado.
-            .child(self.trilho_deitado(motor_entidade, window, cx))
-            .child(cabecalho)
-            .children(topo)
-            .children(abas)
-            .child(linha_busca)
+            .map(|s| {
+                if enxuta {
+                    // Uma linha só no alto: o logo e as abas. A busca e o "+" moram no pé da
+                    // lista (pedido do dono, 12/11/2026).
+                    s.child(self.topo_enxuto(motor_entidade, abas, cx)).child(div().flex_none().h(esp::E4))
+                } else {
+                    s.child(self.trilho_deitado(motor_entidade, window, cx))
+                        // Na visão geral não há título: o recolher fica na ponta da fileira de cima.
+                        .when(self.vista != Vista::Geral, |s| s.child(cabecalho))
+                        .children(topo)
+                        .children(abas)
+                        .children(linha_busca)
+                }
+            })
             .children(escopo)
-            .when(rolada, |s| s.child(div().flex_none().h(px(1.)).mx(r(-8.)).bg(Cores::linha())))
             .child(conteudo)
             .children(rodape)
+            // Na lista enxuta, a busca e o "+" fecham a lista, embaixo de tudo.
+            .children(busca_no_pe.map(|b| b.mt(esp::E4).mb(esp::E8)))
+            // Sem fundo nem aresta: a lista é a própria base da janela (duas camadas: a base com
+            // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
 
     /// Cabeçalho de 44, no topo da peça (o centro fica em 22, como o logo e as abas): o título
@@ -1322,8 +1352,12 @@ impl Janela {
                 });
             },
         )
+        // Largura total, com as duas abas do mesmo tamanho e o rótulo no meio de cada uma.
+        .solto(true)
         .largura_total(true)
         .so_icone(ctx.aperto.estreita);
+        // 40 de altura, a do logo: os dois dividem a fileira do alto.
+        let abas = gpui_kit::component::Sizable::with_size(abas, gpui_kit::component::Size::Size(px(40.)));
         div().flex_none().mb(esp::E8).child(abas)
     }
 
@@ -1345,21 +1379,21 @@ impl Janela {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| this.esc_na_busca(window, cx)))
-            .child(campo_da_lista(&self.busca, self.aba, window, cx));
-        // Na visão geral, o + pergunta onde (a paleta do Ctrl+N); num projeto e nos Avulsos, o
-        // "Novo chat" cria direto ali (com duas pastas, pergunta qual).
+            .child(campo_da_lista(&self.busca, self.aba, ctx.aperto.estreita, window, cx));
+        // O + abre um chat novo na hora, na pasta do chat aberto (como no VS Code); num projeto e
+        // nos Avulsos, cria direto ali (com duas pastas, pergunta qual).
         let nova = conversas.then(|| match self.vista.filtro().map(str::to_string) {
             None => BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
                 .dica_acao(Box::new(NovaConversa), None)
-                .variante(VarianteRedonda::Primario)
-                .diametro(32.)
-                .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx)))
+                .variante(VarianteRedonda::Metal)
+                .diametro(40.)
+                .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx)))
                 .into_any_element(),
             Some(projeto) if ctx.aperto.estreita => {
                 BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
                     .dica_acao(Box::new(NovaConversa), None)
-                    .variante(VarianteRedonda::Primario)
-                    .diametro(32.)
+                    .variante(VarianteRedonda::Metal)
+                    .diametro(40.)
                     .on_click(cx.listener(move |this, _, window, cx| this.novo_chat_em(&projeto, window, cx)))
                     .into_any_element()
             }
@@ -1384,7 +1418,7 @@ impl Janela {
     ) -> Option<AnyElement> {
         if let Some(a) = arquivos {
             let pasta = a.pasta.clone()?;
-            let projeto = self.vista.projeto()?.to_string();
+            let projeto = self.projeto_dos_arquivos(motor)?;
             let recarregar = {
                 let pasta = pasta.clone();
                 botao_icone("escopo-recarregar", Lucide::RefreshCw, "Recarregar a lista de arquivos", TamanhoBotao::Linha, window, cx)
@@ -1454,7 +1488,7 @@ impl Janela {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_full()
+            .rounded(raio::de(24.))
             .bg(Cores::recuo())
             .text_color(Cores::tenue())
             .child(icone(Lucide::Archive, 14., window));
@@ -1529,7 +1563,7 @@ impl Janela {
                     .flex_none()
                     .px(esp::E8)
                     .gap(esp::E6)
-                    .rounded(raio::PILULA)
+                    .rounded(raio::de(28.))
                     .selected(vendo)
                     .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
                     .when(n > 0, |b| b.child(Selo::contagem(n)))
@@ -1552,10 +1586,8 @@ impl Janela {
                 .child(format!("{} {palavra}", milhar(a.lista.len())))
         });
         let arquivadas = arquivadas.flatten();
-        // O sino e os anéis de uso desceram do trilho para cá: na fileira de cima só cabem o
-        // logo, o Mestre e os projetos, e é lá que o olho procura projeto, não aviso.
+        // O sino desceu do trilho para cá; os anéis de uso ficam no cabeçalho da conversa.
         let sino = self.botao_sino(super::cartoes::precisa_com_o_mestre(motor), cx);
-        let uso = self.uso_do_rodape(cx);
         Some(
             h_flex()
                 .flex_none()
@@ -1563,14 +1595,11 @@ impl Janela {
                 .mx(r(-8.))
                 .px(esp::PECA)
                 .gap(esp::E4)
-                .border_t_1()
-                .border_color(Cores::linha())
                 .children(arquivadas)
                 .children(agentes)
                 .child(div().flex_1())
                 .children(total)
-                .child(sino)
-                .children(uso),
+                .child(sino),
         )
     }
 
@@ -1591,10 +1620,12 @@ impl Janela {
         let mestre_a_vista = |c: &Chat| {
             geral && c.papel == Papel::Mestre && (rodando(c) || motor.espera_do_chat(c).is_some_and(|e| e != Motivo::Nova))
         };
+        // Na lista enxuta o Mestre é a primeira linha, sempre: ele saiu da fileira de cima.
+        let mestre_fixo = geral && busca.is_empty() && self.lista_enxuta(motor);
         let mut coordenadores: Vec<&Chat> = motor
             .chats
             .iter()
-            .filter(|c| c.papel.na_lista() || mestre_a_vista(c))
+            .filter(|c| c.papel.na_lista() || mestre_a_vista(c) || (mestre_fixo && c.papel == Papel::Mestre))
             .filter(|c| motor.arquivada(c) == mostrar_arquivados)
             .filter(|c| do_filtro(c))
             .filter(|c| combina(c) || ajudantes_de(motor, &c.id).iter().any(|t| combina(t)))
@@ -1619,8 +1650,13 @@ impl Janela {
                 Secao::Conversas
             }
         };
-        let da_secao = |secao: Secao| familias.iter().filter(|f| secao_de(f) == secao).collect::<Vec<_>>();
-        let mut m = Montagem::default();
+        let e_o_mestre = |f: &Familia| mestre_fixo && f.0.papel == Papel::Mestre;
+        let da_secao = |secao: Secao| familias.iter().filter(|f| !e_o_mestre(f) && secao_de(f) == secao).collect::<Vec<_>>();
+        let mut m = Montagem { corrida: geral, ..Montagem::default() };
+        if let Some(f) = familias.iter().find(|f| e_o_mestre(f)) {
+            m.itens.push(div().flex_none().h(esp::E4).into_any_element());
+            self.familia(&mut m, motor, f, false, ctx, window, cx);
+        }
 
         // "Enquanto você esteve fora", no topo da visão geral.
         if geral && busca.is_empty()
@@ -1690,7 +1726,8 @@ impl Janela {
 
         let fixadas = da_secao(Secao::Fixadas);
         if !fixadas.is_empty() {
-            let recolhida = busca.is_empty() && self.secoes_recolhidas.contains("Fixadas");
+            // Na lista corrida não há título para abrir a seção de novo: as fixadas ficam à vista.
+            let recolhida = !m.corrida && busca.is_empty() && self.secoes_recolhidas.contains("Fixadas");
             let mut cabecalho = CabecalhoDeSecao::new("Fixadas").contagem(fixadas.len());
             if busca.is_empty() {
                 cabecalho = cabecalho.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), "Fixadas"));
@@ -1834,7 +1871,7 @@ impl Janela {
                 .texto("Abra um projeto no trilho ou comece um chat novo.")
                 .acao(
                     botao_primario("vazio-nova", None, "Novo chat", TamanhoBotao::Controle, window, cx)
-                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx))),
                 )
         };
         div().px(esp::E8).child(vazio).into_any_element()
@@ -2083,6 +2120,9 @@ impl Janela {
             None
         };
         let estado = pendencia.is_none().then(|| estado_do_chat(motor, chat)).flatten();
+        // Na visão geral o cartão é uma linha só (o quadrado da pasta, o título e a hora); a de
+        // baixo volta na busca que achou no texto, para mostrar onde.
+        let enxuta = self.vista == Vista::Geral && achado.is_none();
         let subtitulo = match (achado, estado) {
             (Some((achado, faixa)), _) => div()
                 .min_w_0()
@@ -2109,10 +2149,10 @@ impl Janela {
             subtitulo
         };
         let quando = match motor.execucao(&chat.id) {
-            Execucao::Rodando { desde } => linha_meta(20.)
+            Execucao::Rodando { desde } => hora_do_cartao()
                 .text_color(if selecionado { Cores::texto() } else { Cores::destaque_texto() })
                 .child(duracao(desde)),
-            _ => linha_meta(20.)
+            _ => hora_do_cartao()
                 .text_color(if selecionado { Cores::tenue() } else { Cores::apagado() })
                 .child(tempo_relativo(chat.atualizado_em)),
         };
@@ -2123,7 +2163,12 @@ impl Janela {
         let indicadores = linha_meta(16.)
             .children(do_mestre)
             .children(em_painel.map(|(n, ativo)| numero_painel(n, ativo)))
-            .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)));
+            .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
+            // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
+            .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))));
+        // Na visão geral o quadrado é sempre o pequeno, também no resultado da busca (que tem duas
+        // linhas): com uns de 18 e outros de 30 a coluna dos ícones ficava torta.
+        let lado_avatar = if self.vista == Vista::Geral { 18. } else { 30. };
         let projeto = match chat.tarefa.filter(|_| chat.papel == Papel::Projeto) {
             Some(n) => SharedString::from(format!("{} · chat {n}", motor.nome_do_projeto(&chat.projeto))),
             None => SharedString::from(motor.nome_do_projeto(&chat.projeto)),
@@ -2132,20 +2177,27 @@ impl Janela {
             .id(SharedString::from(format!("avatar-{}", chat.id)))
             .map(|d| {
                 if mestre {
-                    d.child(super::componentes::Papel::Mestre.circulo(30.))
+                    d.child(super::componentes::Papel::Mestre.circulo(lado_avatar))
                 } else {
-                    d.child(QuadradoDeProjeto::new(icone_p, cor_p, 30.))
+                    // Na lista de uma linha o quadrado é neutro: a cor de cada projeto, repetida em
+                    // quinze linhas, virava um arco-íris ao lado dos títulos.
+                    d.child(QuadradoDeProjeto::new(icone_p, if enxuta { 0x9ba8cf } else { cor_p }, lado_avatar))
                 }
             })
             .tooltip(move |window, cx| Tooltip::new(if mestre { SharedString::from("Mestre") } else { projeto.clone() }).build(window, cx));
         let id = chat.id.clone();
         let tem_pendencia = pendencia.is_some();
-        let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), chat.titulo.clone())
+        let titulo_do_cartao: SharedString = if mestre { "Mestre".into() } else { chat.titulo.clone().into() };
+        let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), titulo_do_cartao)
             .simbolo(Simbolo::Elemento(avatar.into_any_element()))
             .sinal(sinal)
-            .subtitulo(subtitulo)
-            .meta(quando)
-            .meta_inferior(indicadores)
+            .map(|c| {
+                if enxuta {
+                    c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).child(quando))
+                } else {
+                    c.subtitulo(subtitulo).meta(quando).meta_inferior(indicadores)
+                }
+            })
             .acao(self.acao_do_cartao(motor, chat, pendencia, window, cx))
             .acao(self.botao_menu(&chat.id, ctx, window, cx))
             .selecionado(selecionado)
@@ -2336,7 +2388,11 @@ impl Janela {
         avisar_arquivadas(motor, ids, texto, window, cx);
     }
 
-    fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
+        // A marca de linha é do link que a pediu: outro arquivo (ou o mesmo, pela árvore) abre sem ela.
+        if self.arquivo_linha.get().is_none() {
+            self.arquivo_marcada.set(None);
+        }
         self.arquivo_aberto = Some((pasta, caminho));
         self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
         self.mostrar_direita(window, cx);
@@ -2375,6 +2431,19 @@ impl Janela {
         fontes
     }
 
+    /// De qual projeto a aba Arquivos mostra as pastas: o da vista ou, na visão geral, o do chat
+    /// aberto no painel ativo.
+    fn projeto_dos_arquivos(&self, motor: &Motor) -> Option<String> {
+        if let Some(p) = self.vista.projeto() {
+            return Some(p.to_string());
+        }
+        if self.vista != Vista::Geral {
+            return None;
+        }
+        let chat = self.selecionado.as_ref().and_then(|id| motor.chat(id))?;
+        (!chat.projeto.is_empty()).then(|| chat.projeto.clone())
+    }
+
     /// A pasta da aba Arquivos (a escolhida, ou a primeira), os arquivos dela e a árvore, ou os
     /// que casam com a busca.
     fn preparar_arquivos(
@@ -2389,11 +2458,19 @@ impl Janela {
             .read(cx)
             .clone();
         let motor = motor_entidade.read(cx);
-        let fontes = match self.vista.projeto() {
+        let projeto = self.projeto_dos_arquivos(motor);
+        let fontes = match &projeto {
             Some(p) => self.fontes_dos_arquivos(motor, p),
-            None => Vec::new(),
+            // Na visão geral, o chat sem projeto mostra a pasta dele.
+            None => self
+                .selecionado
+                .as_ref()
+                .and_then(|id| motor.chat(id))
+                .filter(|c| self.vista == Vista::Geral && c.papel != Papel::Mestre && c.cwd.is_dir())
+                .map(|c| vec![(SharedString::from("Pasta do chat"), c.cwd.clone())])
+                .unwrap_or_default(),
         };
-        let escolhida = self.vista.projeto().and_then(|p| self.pasta_arquivos.get(p));
+        let escolhida = projeto.as_ref().and_then(|p| self.pasta_arquivos.get(p));
         let pasta = escolhida
             .filter(|e| fontes.iter().any(|(_, p)| p == *e))
             .cloned()
@@ -2461,8 +2538,12 @@ impl Janela {
     /// Aba Arquivos: a árvore da pasta escolhida ou os resultados da busca.
     fn conteudo_arquivos(&self, a: &Arquivos, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> AnyElement {
         let Some(pasta) = a.pasta.clone() else {
-            let vazio = EstadoVazio::new(Lucide::FolderX, "Nenhuma pasta à mão")
-                .texto("As pastas deste projeto não foram encontradas. Localize-as no cabeçalho, ou em Editar projeto.");
+            let texto = if self.vista == Vista::Geral {
+                "Abra um chat para ver os arquivos da pasta dele."
+            } else {
+                "As pastas deste projeto não foram encontradas. Localize-as no cabeçalho, ou em Editar projeto."
+            };
+            let vazio = EstadoVazio::new(Lucide::FolderX, "Nenhuma pasta à mão").texto(texto);
             return div().flex_1().px(esp::E8).child(vazio).into_any_element();
         };
         if a.lista.is_empty() {

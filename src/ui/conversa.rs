@@ -19,7 +19,9 @@ use super::{
     componentes::{
         Aba, Anel, CabecalhoPopover, Confirmacao, CorpoPopover, EstadoVazio, LarguraPainel, LarguraPopover, Papel,
         PreviaArrasto, QuadradoDeProjeto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom, TomAba, TomConfirmacao, aviso,
-        botao_fantasma, botao_icone, botao_primario, cabecalho_objeto, confirmar, cor_da_faixa, formatar_custo,
+        botao_fantasma, botao_icone, botao_primario, cabecalho_objeto, confirmar, cor_da_faixa,
+        formatar_custo,
+        metal::{Encaixe, abertura_lisa},
         sinal_do_chat,
     },
     busca_conversa, composer, equipe, icone_projeto, menus,
@@ -31,7 +33,7 @@ use crate::{
     contas,
     modelo::{Chat, Papel as PapelDoChat},
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, gradiente_destaque, halo_suave, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam},
 };
 
 /// A resposta do Juntar: o aviso do que entrou, a pergunta da troca de branch (que junta no branch
@@ -333,7 +335,6 @@ fn menu_do_painel(
     struct Dados {
         chat: String,
         projeto: String,
-        nivel: LarguraPainel,
         foco: bool,
         primeiro: bool,
         ultimo: bool,
@@ -378,7 +379,6 @@ fn menu_do_painel(
             pai_no_menu: pai.filter(|_| !simbolo_a_vista).map(|p| (p.id.clone(), p.titulo.clone())),
             chat: chat.id.clone(),
             projeto: chat.projeto.clone(),
-            nivel,
             foco: painel.modo_foco,
             primeiro: ix == 0,
             ultimo: ix + 1 == j.paineis.len(),
@@ -393,7 +393,6 @@ fn menu_do_painel(
     let Some(d) = dados else {
         return menu;
     };
-    let minimo = d.nivel == LarguraPainel::Minimo;
     let mut menu = menu.min_w(tam(window, 300.)).max_w(tam(window, 360.));
     if let Some(rotulo) = d.rotulo {
         menu = menu.label(rotulo).separator();
@@ -410,9 +409,9 @@ fn menu_do_painel(
                     cx.notify();
                 })),
         );
-    if minimo && d.ultimo {
-        // O botão da direita saiu do cabeçalho: o número do que ela espera vem para cá, tingido
-        // porque fica na linha.
+    if d.ultimo {
+        // O botão da direita saiu do cabeçalho (pedido do dono, 12/11/2026): abrir e fechar o
+        // painel fica aqui, com o número do que ele espera, tingido porque fica na linha.
         let (direita, pedidos) = d.direita;
         let rotulo = direita.no_menu();
         menu = menu.item(
@@ -637,7 +636,6 @@ impl Janela {
         let chat = ix
             .and_then(|ix| self.paineis[ix].chat.clone())
             .and_then(|id| motor.chat(&id));
-        let varios = self.paineis.len() > 1;
         let ativo = ix == Some(self.ativo);
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
@@ -671,6 +669,20 @@ impl Janela {
             None => (false, false),
         };
         let faixa = faixa.map(|f| entrada(("entra-faixa", painel_id as usize), faixa_nova, De::Baixo, div().child(f)));
+        // O pé de toda conversa é a doca: uma abertura no cartão por onde se vê o metal, com a
+        // caixa de mensagem pousada nela. Alta na conversa ainda vazia, rente à caixa no resto do
+        // tempo (com o chat trabalhando, quem mostra é o metal, que corre).
+        let vazia = chat.is_none_or(|c| {
+            c.itens.is_empty()
+                || (c.papel == PapelDoChat::Mestre && c.itens.iter().all(|i| matches!(i, crate::modelo::Item::Aviso { .. })))
+        });
+        // Fora da conversa vazia a doca não tem folga em cima: a faixa "N arquivos mudados" fica
+        // colada na caixa (com 24 de folga ela parecia solta, longe).
+        let topo_da_doca: f32 = if vazia {
+            if window.viewport_size().height >= px(640.) { 172. } else { 56. }
+        } else {
+            4.
+        };
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
@@ -678,9 +690,9 @@ impl Janela {
             .min_w_0()
             .rounded(crate::tema::raio_da_peca())
             .bg(Cores::cartao())
+            // O cartão flutua sobre a base.
+            .shadow(crate::tema::sombra_flutuante())
             .overflow_hidden()
-            .border(px(1.5))
-            .reflexo(crate::tema::raio_da_peca())
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
             .capture_any_mouse_down(
@@ -732,22 +744,79 @@ impl Janela {
                 } else {
                     self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element()
                 };
-                s.child(self.permissoes(motor, chat, window, cx)).children(resumo).child(caixa)
+                // A doca está no fluxo: as mensagens terminam onde ela começa, e nenhum texto fica
+                // por cima do metal. O `overflow_hidden` do cartão corta reto, então a abertura leva
+                // o raio dos cantos de baixo.
+                let raio_doca = crate::tema::raio_da_peca();
+                // Na última conversa, estreita, a caixa deixa uma folga à direita para os anéis
+                // de uso do canto da janela.
+                let folga_do_uso = if self.uso_ao_lado_da_caixa(ix, cx) { super::uso_plano::FOLGA_DO_USO } else { 0. };
+                let doca = com_estado(move |window, cx| {
+                    let topo = movimento::valor(
+                        ("doca", painel_id as usize),
+                        topo_da_doca,
+                        movimento::ENCHER,
+                        Curva::Mover,
+                        window,
+                        cx,
+                    );
+                    // A luz de baixo é a marca do painel SELECIONADO (pedido do dono, 12/11/2026):
+                    // só o painel ativo a tem; nos outros o pé fica escuro. Acende em 180 ms e
+                    // apaga em 120.
+                    let (alvo, duracao) = if ativo { (1f32, movimento::MOVER) } else { (0f32, movimento::COR) };
+                    let luz = movimento::valor(("doca-ativa", painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
+                    div()
+                        .relative()
+                        .flex_none()
+                        .w_full()
+                        .pt(r(topo))
+                        .pr(r(folga_do_uso))
+                        .when(luz > 0., |s| {
+                            s.child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .left_0()
+                                    .size_full()
+                                    .opacity(luz)
+                                    // O campo INTEIRO do metal encolhido para cobrir a doca (as
+                                    // bolhas clara, azul e escura lado a lado), com um pouco do
+                                    // azul do destaque por cima (a bolha clara fica azul-céu, não
+                                    // cinza) e o grão leve.
+                                    .child(abertura_lisa(
+                                        Encaixe::Cobrir,
+                                        Some(Cores::destaque().opacity(0.2)),
+                                        Corners { bottom_left: raio_doca, bottom_right: raio_doca, ..Default::default() },
+                                    ))
+                                    // O escuro do cartão some devagar, da beirada de cima até o pé
+                                    // (duas camadas de degradê dão a curva): o metal é uma luz que
+                                    // vem de baixo, não uma faixa. Foi o desenho que o dono aprovou
+                                    // (12/11/2026), depois de reprovar a faixa cheia.
+                                    .child(div().absolute().top_0().left_0().size_full().bg(crate::tema::gradiente_da_doca()))
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .right_0()
+                                            .h(relative(0.5))
+                                            .bg(crate::tema::gradiente_da_doca()),
+                                    ),
+                            )
+                        })
+                        .child(caixa)
+                        .into_any_element()
+                });
+                s.child(self.permissoes(motor, chat, window, cx)).children(resumo).child(doca)
             })
             .when(arquivos_sobre, |s| {
                 s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
-            });
-        // Com vários painéis, o ativo acende a borda e o halo azul (180 ms; apaga em 120). O que
-        // acabou de abrir ao lado entra só com o fade: a largura não anima.
-        let halo = varios && ativo;
+            })
+            // O vidro da peça (fio, luz na quina de cima, sombra na base), por cima de tudo.
+            .aresta_de_vidro(crate::tema::raio_da_peca());
+        // O painel ativo é marcado pela luz de baixo da doca (acima), não por borda nem cantoneira.
+        // O que acabou de abrir ao lado entra só com o fade: a largura não anima.
         com_estado(move |window, cx| {
-            let (alvo, duracao) = if halo {
-                ((Cores::destaque_borda(), 1f32), movimento::MOVER)
-            } else {
-                ((Cores::destaque_borda().opacity(0.), 0.), movimento::COR)
-            };
-            let (borda, forca) =
-                movimento::valor(("halo-painel", painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
             let opacidade = movimento::valor_desde(
                 ("entra-painel", painel_id as usize),
                 if painel_novo { 0. } else { 1. },
@@ -757,11 +826,7 @@ impl Janela {
                 window,
                 cx,
             );
-            cartao
-                .border_color(borda)
-                .when(forca > 0., |s| s.shadow(vec![halo_suave(forca)]))
-                .when(opacidade < 1., |s| s.opacity(opacidade))
-                .into_any_element()
+            cartao.when(opacidade < 1., |s| s.opacity(opacidade)).into_any_element()
         })
     }
 
@@ -783,11 +848,8 @@ impl Janela {
         // direita estiver fechado ou em gaveta.
         let ultimo = ix.is_none_or(|ix| ix + 1 == self.paineis.len());
         let mostra_botoes_janela = ultimo && !self.direita_visivel();
-        let rolado = chat.is_some() && ix.is_some_and(|ix| self.paineis[ix].rolagem.offset().y < px(0.));
-        let mestre = chat.is_some_and(|c| papel_da_conversa(c) == Papel::Mestre);
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
-        let aneis = (!self.lista && primeiro).then(|| self.uso_compacto(cx)).flatten();
         self.arrastavel_com_id(SharedString::from(format!("arrastar-conversa-{painel_id}")))
             .flex_none()
             .flex()
@@ -796,15 +858,11 @@ impl Janela {
             .pl(esp::E8)
             .pr(esp::E8)
             .gap(esp::E8)
-            .border_b_1()
-            .border_color(if rolado { Cores::traco() } else { gpui_kit::transparent_black().into() })
+            // Sem a linha embaixo do cabeçalho com a conversa rolada (pedido do dono, 12/11/2026).
             // O gradiente do Mestre leva o próprio raio: o `overflow_hidden` do cartão não corta
             // canto arredondado.
-            .when(mestre, |s| s.bg(gradiente_destaque()).rounded_t(crate::tema::raio_da_peca() - px(1.5)))
-            // Com a lista fora da tela, o primeiro painel começa pelo uso do plano e pelo logo
-            // compacto, nessa ordem: recolhida a lista, o uso é a primeira coisa da esquerda, no
-            // lugar onde ele ficava no pé do trilho.
-            .when_some(aneis, |s, aneis| s.child(sem_arrastar().flex_none().child(aneis)))
+            // O recolher da lista mora no menu do logo (pedido do dono, 12/11/2026).
+            // Com a lista fora da tela, o primeiro painel começa pelo logo compacto.
             .when(!self.orcamento.lista && primeiro, |s| {
                 s.child(self.logo_compacto(if ix.is_some() { "mostrar-lista" } else { "mostrar-lista-vazio" }, window, cx))
             })
@@ -815,7 +873,7 @@ impl Janela {
                     .min_w_0()
                     .items_center()
                     .gap(esp::E8)
-                    .children(conversa.map(|(chat, ix)| self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx)))
+                    .children(conversa.map(|(chat, ix)| self.abas_do_painel(motor_entidade, motor, chat, ix, nivel, window, cx)).unwrap_or_default())
                     // O chat que o Mestre criou leva o selo de volta a ele (fora da largura mínima).
                     .children(
                         chat.filter(|_| nivel != LarguraPainel::Minimo)
@@ -850,6 +908,60 @@ impl Janela {
             })
     }
 
+    /// As abas do painel, na ordem em que abriram: a do chat à vista (a aba completa, abaixo) e as
+    /// outras, compactas, que trocam o chat do painel no clique e fecham no × ou no clique do meio.
+    #[allow(clippy::too_many_arguments)]
+    fn abas_do_painel(
+        &self,
+        motor_entidade: &Entity<Motor>,
+        motor: &Motor,
+        chat: &Chat,
+        ix: usize,
+        nivel: LarguraPainel,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Vec<AnyElement> {
+        let painel = &self.paineis[ix];
+        let painel_id = painel.id;
+        // Na largura mínima só cabe a aba à vista.
+        if nivel == LarguraPainel::Minimo || painel.abas.len() <= 1 {
+            return vec![self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx)];
+        }
+        painel
+            .abas
+            .iter()
+            .filter_map(|id| {
+                if *id == chat.id {
+                    return Some(self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx));
+                }
+                let outro = motor.chat(id)?;
+                let fechar = cx.entity().downgrade();
+                let (id_abrir, id_fechar) = (id.clone(), id.clone());
+                let dica = SharedString::from(format!("{}\n{}", outro.titulo, caminho_em_texto(motor, outro)));
+                // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
+                // (vira um painel novo daquele lado).
+                let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
+                let previa = simbolo_da_conversa(motor, outro);
+                let aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
+                    .tom(TomAba::Normal)
+                    .simbolo(simbolo_da_conversa(motor, outro))
+                    .estado(sinal_do_chat(motor, outro))
+                    .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
+                        let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
+                    })
+                    .construir(window, cx)
+                    .max_w(r(180.))
+                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
+                    .on_drag(arrasto, move |arrasto, _, _, cx| {
+                        let simbolo = previa.copia().unwrap_or(Simbolo::Papel(Papel::Coordenador));
+                        cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
+                    });
+                Some(sem_arrastar().flex().min_w_0().child(aba).into_any_element())
+            })
+            .collect()
+    }
+
     /// A aba da conversa: símbolo por papel, número do painel com vários, o ponto do estado no
     /// lugar do × e o tom (única, ativa ou inativa). O clique põe o foco na caixa do painel; no
     /// Tab, Enter faz o mesmo, Delete fecha e Shift+F10 abre o menu.
@@ -870,6 +982,8 @@ impl Janela {
         let ativo = ix == self.ativo;
         let minimo = nivel == LarguraPainel::Minimo;
         let tom = match (varios, ativo) {
+            // Com outras abas ao lado, a que está à vista leva o fundo mais claro.
+            (false, _) if painel.abas.len() > 1 => TomAba::Ativa,
             (false, _) => TomAba::Unica,
             (true, true) => TomAba::Ativa,
             (true, false) => TomAba::Inativa,
@@ -883,9 +997,20 @@ impl Janela {
         let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}")), chat.titulo.clone())
             .tom(tom)
             .estado(sinal_do_chat(motor, chat))
-            .fechar("Fechar este painel (a conversa continua na lista)", varios && ativo, move |window, cx| {
-                let _ = fechar.update(cx, |this, cx| this.fechar_painel_clicado(painel_id, window, cx));
-            })
+            .fechar(
+                if painel.abas.len() > 1 {
+                    "Fechar a aba (a conversa continua na lista)"
+                } else {
+                    "Fechar este painel (a conversa continua na lista)"
+                },
+                varios && ativo,
+                {
+                    let id_do_chat = chat.id.clone();
+                    move |window, cx| {
+                        let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_do_chat, window, cx));
+                    }
+                },
+            )
             .foco(&painel.foco_aba)
             .arrastando(arrastando);
         // No Mínimo, com vários painéis, o número fica no lugar do símbolo (e o que ele dava vai
@@ -911,7 +1036,12 @@ impl Janela {
                 let teclas = &evento.keystroke;
                 match teclas.key.as_str() {
                     "enter" if !teclas.modifiers.modified() => this.focar_painel(ix, window, cx),
-                    "delete" if !teclas.modifiers.modified() => this.fechar_e_focar(painel_id, window, cx),
+                    "delete" if !teclas.modifiers.modified() => {
+                        // Como o × e o Ctrl+W: fecha a aba à vista e, na última, o painel.
+                        let _ = ix;
+                        this.ativar_painel(painel_id, cx);
+                        this.fechar_painel_ativo(window, cx);
+                    }
                     "f10" if teclas.modifiers.shift => this.abrir_menu_do_painel(painel_id, cx),
                     "menu" => this.abrir_menu_do_painel(painel_id, cx),
                     _ => return,
@@ -1059,7 +1189,6 @@ impl Janela {
         let painel = &self.paineis[ix];
         let (painel_id, foco) = (painel.id, painel.modo_foco);
         let ultimo = ix + 1 == self.paineis.len();
-        let direita_aberta = self.direita_visivel() || self.gaveta == Some(Gaveta::Direita);
         let mostra_foco = foco && matches!(nivel, LarguraPainel::Medio | LarguraPainel::Largo);
         let mostra_direita = ultimo && nivel != LarguraPainel::Minimo;
         h_flex()
@@ -1082,37 +1211,17 @@ impl Janela {
                         })),
                 ))
             })
-            .child(sem_arrastar().child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx)))
-            .when(mostra_direita, |s| {
-                // Com a direita fora da vista, o número do que ela espera fica no canto do botão
-                // (vermelho se um chat caiu), e o resumo, na dica.
-                let (direita, pedidos) = self.o_que_a_direita_mostra(motor_entidade.read(cx));
-                let nome = direita.nome();
-                let dica: SharedString = match &pedidos {
-                    Some((_, _, resumo)) => format!("{nome}\n{resumo}").into(),
-                    None => nome.into(),
-                };
-                let selo = pedidos.map(|(n, erro, _)| {
-                    Selo::contagem(n).solida(if erro { Cores::vermelho() } else { Cores::ambar() })
-                });
-                s.child(
-                    sem_arrastar()
-                        .relative()
-                        .child(
-                            botao_icone(
-                                ("alternar-painel", painel_id as usize),
-                                Lucide::PanelRight,
-                                dica.clone(),
-                                TamanhoBotao::Barra,
-                                window,
-                                cx,
-                            )
-                            .tooltip_with_action(dica, &AlternarPainel, None)
-                            .selected(direita_aberta)
-                            .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
-                        )
-                        .when_some(selo, |s, selo| s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo))),
-                )
+            // O "..." leva tudo do painel, inclusive abrir e fechar a direita. Com a direita fora da
+            // vista, o número do que ela espera fica no canto dele (vermelho se um chat caiu).
+            .child({
+                let selo = mostra_direita
+                    .then(|| self.o_que_a_direita_mostra(motor_entidade.read(cx)).1)
+                    .flatten()
+                    .map(|(n, erro, _)| Selo::contagem(n).solida(if erro { Cores::vermelho() } else { Cores::ambar() }));
+                sem_arrastar()
+                    .relative()
+                    .child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx))
+                    .when_some(selo, |s, selo| s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo)))
             })
     }
 
@@ -1338,18 +1447,6 @@ pub(super) enum Direita {
 }
 
 impl Direita {
-    /// O nome da aba dela, na dica do botão.
-    fn nome(self) -> &'static str {
-        match self {
-            Direita::Arquivo => "Arquivo aberto",
-            Direita::Pr => "O PR do chat",
-            Direita::Distribuido => "Distribuído",
-            Direita::EsteChat => "Este chat",
-            Direita::ConversaAntiga => "Esta conversa",
-            Direita::Ajudantes => "Ajudantes",
-        }
-    }
-
     /// O item do "⋯" quando o botão sai do cabeçalho.
     fn no_menu(self) -> &'static str {
         match self {

@@ -1,8 +1,8 @@
 use crate::{ActiveTheme, Disableable, StyledExt, h_flex};
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, prelude::FluentBuilder as _,
+    AnyElement, App, BoxShadow, ClickEvent, Corners, ElementId, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, Window, canvas, div, fill, hsla, prelude::FluentBuilder as _, px,
 };
 use gpui_base::TestSupportExt as _;
 use smallvec::SmallVec;
@@ -16,6 +16,8 @@ pub(crate) struct MenuItemElement {
     selected: bool,
     /// Vitral: item perigoso (vermelho, realce em vermelho a 14%).
     danger: bool,
+    /// Vitral: uma camada debaixo do item inteiro (a ficha de metal do escolhido).
+    fundo: Option<AnyElement>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -32,6 +34,7 @@ impl MenuItemElement {
             disabled: false,
             selected: false,
             danger: false,
+            fundo: None,
             on_click: None,
             on_hover: None,
             children: SmallVec::new(),
@@ -47,6 +50,12 @@ impl MenuItemElement {
     /// Vitral: pinta o item como perigoso.
     pub(crate) fn danger(mut self, danger: bool) -> Self {
         self.danger = danger;
+        self
+    }
+
+    /// Vitral: a camada que enche o item por baixo do conteúdo; o realce vai por cima dela.
+    pub(crate) fn fundo(mut self, fundo: AnyElement) -> Self {
+        self.fundo = Some(fundo);
         self
     }
 
@@ -98,6 +107,33 @@ impl ParentElement for MenuItemElement {
     }
 }
 
+/// Vitral: o realce do item sob o ponteiro (ou o teclado): a tecla em relevo, com o canto no
+/// padrão dos controles do app, 45% da altura de verdade do item (o `raio::de` do Vitral, sem
+/// crescer com o zoom: 14 num item de 32, 22 num de 48). Medido no quadro, por isso um `canvas`.
+fn realce_de_tecla(cor: gpui::Hsla) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |limites, _, window, _| {
+            let base = window.rem_size().as_f32() / 15.;
+            let raio = px((limites.size.height.as_f32() / base * 0.45).round());
+            let cantos = Corners::all(raio).clamp_radii_for_quad_size(limites.size);
+            window.paint_quad(fill(limites, cor).corner_radii(cantos));
+            window.paint_inset_shadows(
+                limites,
+                cantos,
+                &[
+                    BoxShadow::new(px(0.), px(1.), hsla(0., 0., 1., 0.16)).inset(),
+                    BoxShadow::new(px(0.), px(-1.), hsla(0., 0., 0., 0.30)).inset(),
+                ],
+            );
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 impl RenderOnce for MenuItemElement {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         // Vitral: o perigoso fica vermelho também no realce, sobre vermelho a 14%.
@@ -106,6 +142,7 @@ impl RenderOnce for MenuItemElement {
         } else {
             (cx.theme().tokens.accent.into(), cx.theme().accent_foreground)
         };
+        let aceso = self.selected && !self.disabled;
         h_flex()
             .id(self.id)
             .test_support()
@@ -129,8 +166,10 @@ impl RenderOnce for MenuItemElement {
                 // Not `group_hover` on the item's own group: GPUI styles an
                 // element before registering its group, and that fallback keeps
                 // the pointer's item lit after a key moves the highlight away.
-                this.hover(|this| this.bg(realce).text_color(texto_realce))
-                    .when(self.selected, |this| this.bg(realce).text_color(texto_realce))
+                // Vitral: o fundo do realce é a tecla do `realce_de_tecla`, um filho; aqui só a cor
+                // do texto.
+                this.hover(|this| this.text_color(texto_realce))
+                    .when(self.selected, |this| this.text_color(texto_realce))
                 .when_some(self.on_click, |this, on_click| {
                     this.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
@@ -138,7 +177,10 @@ impl RenderOnce for MenuItemElement {
                     .on_click(on_click)
                 })
             })
-            // Vitral: o desabilitado esmaece pela opacidade, no popup_menu.rs.
+            // Vitral: o desabilitado esmaece pela opacidade, no popup_menu.rs. Por baixo do
+            // conteúdo, a ficha (se houver) e, por cima dela, o realce.
+            .children(self.fundo.map(|fundo| div().absolute().top_0().left_0().size_full().child(fundo)))
+            .when(aceso, |this| this.child(realce_de_tecla(realce)))
             .children(self.children)
     }
 }

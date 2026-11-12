@@ -14,7 +14,7 @@ use super::{
     Janela, ProximaPendencia,
     componentes::{
         CabecalhoDeSecao, CartaoDeLista, CorpoPopover, EstadoVazio, LarguraPopover, QuadradoDeProjeto,
-        Selo, Simbolo, TamanhoBotao, botao_fantasma, botao_icone, botao_perigo, botao_primario, numero_painel,
+        Selo, Simbolo, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, numero_painel,
         popover, teclas,
     },
     icone_projeto,
@@ -410,16 +410,20 @@ fn linha_de_pedido(
             let (m1, m2, p1, p2) = (motor.clone(), motor.clone(), pedido.clone(), pedido.clone());
             let negar = botao_fantasma(id("caixa-negar", chave), None, "Negar", TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| m1.update(cx, |m, cx| m.responder_permissao(&p1, false, None, cx)));
-            // Comando com trecho que apaga, força ou roda algo difícil de desfazer: o botão avisa.
+            // Comando com trecho que apaga, força ou roda algo difícil de desfazer, ou comprido
+            // demais para a caixinha daqui (que corta em duas linhas): não se aprova pelo sino.
+            // O botão leva à conversa, onde o cartão mostra o comando inteiro e o perigoso pede
+            // o "segure para permitir". Aprovar daqui com um clique furava as duas garantias.
             let perigoso = ferramenta == "Bash"
                 && comando.as_deref().is_some_and(|c| !trechos_perigosos(c).is_empty());
-            let segundo = if perigoso {
-                botao_perigo(id("caixa-permitir", chave), None, "Permitir mesmo assim", TamanhoBotao::Barra, window, cx)
+            let comprido = comando.as_deref().is_some_and(|c| c.lines().count() > 2 || c.chars().count() > 160);
+            let segundo = if perigoso || comprido {
+                ver(if perigoso { "Ver o comando perigoso" } else { "Ver o comando inteiro" }).into_any_element()
             } else {
                 botao_primario(id("caixa-permitir", chave), None, "Permitir", TamanhoBotao::Barra, window, cx)
-            }
-            .on_click(move |_, _, cx| m2.update(cx, |m, cx| m.responder_permissao(&p2, true, None, cx)))
-            .into_any_element();
+                    .on_click(move |_, _, cx| m2.update(cx, |m, cx| m.responder_permissao(&p2, true, None, cx)))
+                    .into_any_element()
+            };
             (comando.clone(), vec![negar.into_any_element(), segundo])
         }
         _ => (None, vec![ver("Ver plano").into_any_element()]),

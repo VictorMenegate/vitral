@@ -21,7 +21,7 @@ use super::{
     componentes::{
         Alerta, BarraSegmentada, BotaoCopiar, CabecalhoDeSecao, CaixaDeCodigo, CartaoDeLista, Estado, EstadoVazio,
         EstadoVisual, PilulaDeEstado, PreviaArrasto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom,
-        botao_fantasma, botao_icone, botao_perigo, botao_primario, contagem, estado_visual, numero_painel,
+        botao_fantasma, botao_icone, botao_perigo, botao_primario, contagem, estado_visual, etiqueta_de_secao, numero_painel,
         pilula_da_tarefa, rotulo_tarefa, selo_gravidade, variante_perigo,
     },
     menus,
@@ -118,7 +118,7 @@ impl Janela {
             .flex()
             .flex_col()
             .rounded(crate::tema::raio_da_peca())
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).reflexo(crate::tema::raio_da_peca()))
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).shadow(crate::tema::sombra_flutuante()))
             .overflow_hidden()
             .child(cabecalho)
             .child(
@@ -136,6 +136,7 @@ impl Janela {
                     .child(div().flex_none().h(esp::E16))
                     .vertical_scrollbar(&self.rolagem_equipe),
             )
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.aresta_de_vidro(crate::tema::raio_da_peca()))
             .on_prepaint(self.medir_direita(cx))
     }
 
@@ -561,7 +562,7 @@ impl Janela {
                     .flex_none()
                     .items_center()
                     .gap(esp::E6)
-                    .child(div().rotulo_secao().whitespace_nowrap().child("Chats"))
+                    .child(etiqueta_de_secao("Chats").flex_none().whitespace_nowrap())
                     .child(Selo::contagem(tarefas.len())),
             )
             .child(div().flex_1().min_w_0().px(esp::E4).child(BarraSegmentada::new(conta.partes()).fina()))
@@ -1207,7 +1208,7 @@ impl Janela {
                     .items_center()
                     .gap(esp::E6)
                     .child(div().text_color(Cores::tenue()).child(icone_em(Lucide::Eye, 14., window)))
-                    .child(div().rotulo_secao().child("Revisor"))
+                    .child(etiqueta_de_secao("Revisor"))
                     .child(pilula),
             )
             .when(!revisao.resumo.trim().is_empty(), |s| {
@@ -1279,7 +1280,7 @@ impl Janela {
     fn detalhe_tarefa(&self, motor: &Motor, tarefa: &Tarefa) -> impl IntoElement + use<> {
         let id = tarefa.id;
         let largura_rotulo = if self.direita_estreita { 56. } else { 64. };
-        let secao = |titulo: &'static str| div().rotulo_secao().child(titulo);
+        let secao = |titulo: &'static str| etiqueta_de_secao(titulo);
         let markdown = |chave: String, texto: String| {
             div()
                 .corpo_ui()

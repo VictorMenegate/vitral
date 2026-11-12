@@ -1,4 +1,29 @@
-//! Formatadores de texto únicos: o mesmo número sai escrito igual em todo lugar.
+//! Formatadores de texto únicos: o mesmo número sai escrito igual em todo lugar. E o rótulo de
+//! seção da segunda voz (mono, caixa alta, com o tracinho), que é texto desenhado.
+
+use gpui_kit::{Div, ParentElement as _, SharedString, Styled as _, div, px};
+
+use crate::tema::{Cores, Tipo as _, esp, r};
+
+/// O tracinho de 8 por 1 que vai na frente de todo rótulo de seção, como a marca de uma régua.
+pub fn tracinho_de_secao() -> Div {
+    div().flex_none().w(r(8.)).h(px(1.)).bg(Cores::fio())
+}
+
+/// Rótulo de seção na segunda voz: "— OBJETIVO", em mono 11 apagado. A caixa alta é só do
+/// desenho (o dado continua "Objetivo"). Fica em 11: o GPUI não tem espaçamento entre letras, e
+/// 10 em caixa alta aperta. Corta com reticências se faltar lugar.
+pub fn etiqueta_de_secao(texto: impl Into<SharedString>) -> Div {
+    let texto: SharedString = texto.into();
+    div()
+        .flex()
+        .items_center()
+        .gap(esp::E6)
+        .min_w_0()
+        .rotulo_secao()
+        .child(tracinho_de_secao())
+        .child(div().min_w_0().truncate().child(SharedString::from(texto.to_uppercase())))
+}
 
 /// "1 tarefa", "3 tarefas": o número com a palavra no singular ou no plural.
 pub fn contagem(n: usize, singular: &str, plural: &str) -> String {
@@ -30,6 +55,15 @@ pub fn duracao_curta(s: u64) -> String {
         0..60 => format!("{s} s"),
         60..3600 => format!("{} min {:02} s", s / 60, s % 60),
         _ => format!("{} h {:02} min", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// "00:04", "12:37", "1:02:05": o relógio do turno que roda, em mono, com largura fixa até a
+/// primeira hora.
+pub fn relogio(s: u64) -> String {
+    match s {
+        0..3600 => format!("{:02}:{:02}", s / 60, s % 60),
+        _ => format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60),
     }
 }
 
@@ -132,6 +166,15 @@ mod testes {
         assert_eq!(duracao_curta(3599), "59 min 59 s");
         assert_eq!(duracao_curta(3900), "1 h 05 min");
         assert_eq!(duracao_curta(26 * 3600), "26 h 00 min");
+    }
+
+    #[test]
+    fn relogio_do_turno_em_minutos_e_segundos() {
+        assert_eq!(relogio(0), "00:00");
+        assert_eq!(relogio(4), "00:04");
+        assert_eq!(relogio(133), "02:13");
+        assert_eq!(relogio(3599), "59:59");
+        assert_eq!(relogio(3725), "1:02:05");
     }
 
     #[test]

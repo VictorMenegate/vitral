@@ -465,7 +465,23 @@ impl Render for Configuracoes {
                 .into_any_element(),
             ));
 
+        let (fileira, alternar_fileira) = (config.fileira_de_projetos, m());
+        let (uso_no_canto, alternar_uso) = (config.uso_no_canto, m());
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
+            .linha(
+                LinhaDeOpcao::new("cfg-fileira-projetos", "Mostrar os projetos no alto da lista")
+                    .descricao("Desligado, a lista é uma só e o Novo chat abre na pasta do chat aberto.")
+                    .interruptor(fileira, move |ligado, _, cx| {
+                        alternar_fileira.update(cx, |m, cx| m.mudar_config(|c| c.fileira_de_projetos = ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
+                    .descricao("Os anéis de uso ficam flutuando embaixo, à direita. Desligado, somem; o uso continua em Contas do Claude.")
+                    .interruptor(uso_no_canto, move |ligado, _, cx| {
+                        alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
+                    }),
+            )
             .linha(com(
                 LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
                     .info("“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.")

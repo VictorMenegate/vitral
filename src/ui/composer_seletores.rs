@@ -15,16 +15,16 @@ use gpui_kit::*;
 
 use super::{
     AbrirEsforco, AbrirModelo, AlternarModo, AlternarUltracode, AlternarUltrathink, DESCRICOES_DE_MODELO, ESFORCOS,
-    MODELOS, MODOS, PopCaixa, VERSOES_DE_MODELO, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra,
+    MODELOS, MODOS, PopCaixa, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra,
     indice_esforco, nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, sem_sufixo_de_janela,
-    usa_esforco, versao_exata,
+    usa_esforco, versao_da_familia, versao_exata, versoes_de_modelo,
 };
 use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
     AnelDeUso, BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
-    Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, botao_icone, cabecalho_escolha, cor_da_faixa,
-    desenho_teclas, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
+    Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, azulejo_de_escolha, botao_icone, cabecalho_escolha, cor_da_faixa,
+    desenho_teclas, escolhido_em_ficha, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
 };
 use crate::{
     contas,
@@ -113,7 +113,7 @@ fn rotulo_com_gatilho(rotulo: &'static str, gatilho: &'static str) -> Div {
 }
 
 /// Uma tecla (ou um par) e o que ela faz, no desenho das teclas, como no rodapé da paleta.
-fn dica_de_tecla(teclas: &[&'static str], texto: &'static str) -> Div {
+pub(super) fn dica_de_tecla(teclas: &[&'static str], texto: &'static str) -> Div {
     div()
         .flex()
         .flex_none()
@@ -123,11 +123,11 @@ fn dica_de_tecla(teclas: &[&'static str], texto: &'static str) -> Div {
         .child(texto)
 }
 
-/// O rodapé de teclas dos popovers da caixa (28, 12 tênue), com a linha em cima: as teclas que
-/// o popover aceita. Se não couber numa linha, quebra em vez de cortar.
-fn rodape_de_teclas(dicas: impl IntoIterator<Item = Div>) -> [AnyElement; 2] {
+/// O rodapé de teclas dos popovers da caixa (28, 12 tênue), com o fio de pontos em cima: as
+/// teclas que o popover aceita. Se não couber numa linha, quebra em vez de cortar.
+fn rodape_de_teclas(dicas: impl IntoIterator<Item = Div>, window: &Window) -> [AnyElement; 2] {
     [
-        div().h(px(1.)).bg(Cores::linha()).into_any_element(),
+        fio_de_pontos(Cores::fio(), window).into_any_element(),
         div()
             .flex()
             .flex_wrap()
@@ -142,16 +142,16 @@ fn rodape_de_teclas(dicas: impl IntoIterator<Item = Div>) -> [AnyElement; 2] {
     ]
 }
 
-/// Linha de duas (48) com o símbolo de 20: as contas e a Automática (o texto em 28, como nos
-/// itens descritos).
-fn linha_de_duas(simbolo: AnyElement, titulo: SharedString, descricao: SharedString) -> Div {
+/// Linha de duas (48) com o símbolo de 20 no azulejo de 28: as contas e a Automática, no desenho
+/// dos itens descritos (a escolhida na ficha de metal, com a descrição em `texto`).
+fn linha_de_duas(simbolo: AnyElement, titulo: SharedString, descricao: SharedString, escolhida: bool) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(esp::E8)
+        .gap(esp::E12)
         .h(r(48.))
         .min_w_0()
-        .child(div().flex_none().size(r(20.)).flex().items_center().justify_center().child(simbolo))
+        .child(azulejo_de_escolha(simbolo, escolhida))
         .child(
             div()
                 .flex()
@@ -163,9 +163,16 @@ fn linha_de_duas(simbolo: AnyElement, titulo: SharedString, descricao: SharedStr
                         .text_size(r(14.))
                         .line_height(r(20.))
                         .font_weight(FontWeight::MEDIUM)
+                        .text_color(Cores::forte())
                         .child(titulo),
                 )
-                .child(div().truncate().metadado().text_color(Cores::tenue()).child(descricao)),
+                .child(
+                    div()
+                        .truncate()
+                        .metadado()
+                        .text_color(if escolhida { Cores::texto() } else { Cores::tenue() })
+                        .child(descricao),
+                ),
         )
 }
 
@@ -222,7 +229,8 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
 }
 
 fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    let largura = tam(window, 400.);
+    // 420: com o azulejo e o visto, a descrição do escolhido ainda cabe inteira.
+    let largura = tam(window, 420.);
     menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha(
         "Modo de permissão",
         Some((Box::new(AlternarModo), OndeAtalho::Foco(d.foco_caixa.clone()), "troca")),
@@ -325,32 +333,29 @@ fn itens_da_conta(mut menu: PopupMenu, d: &Rc<DadosConta>, window: &mut Window) 
     for (id, nome, uso) in &d.contas {
         let (titulo, uso, chave): (SharedString, Uso, SharedString) =
             (nome.clone().into(), *uso, format!("uso-conta-{id}").into());
-        menu = menu.item(
-            PopupMenuItem::element(move |_, _| {
-                let anel = AnelDeUso::new(chave.clone(), Marca::Claude, cinco_h(&uso))
-                    .diametro(20.)
-                    .bloqueado(uso.bloqueado);
-                linha_de_duas(anel.into_any_element(), titulo.clone(), descricao_da_conta(&uso).into())
-            })
-            .checked(*id == d.escolha)
-            .on_click(trocar(id.clone())),
-        );
+        let escolhida = *id == d.escolha;
+        let item = PopupMenuItem::element(move |_, _| {
+            let anel = AnelDeUso::new(chave.clone(), Marca::Claude, cinco_h(&uso))
+                .diametro(20.)
+                .bloqueado(uso.bloqueado);
+            linha_de_duas(anel.into_any_element(), titulo.clone(), descricao_da_conta(&uso).into(), escolhida)
+        });
+        menu = menu.item(escolhido_em_ficha(item, escolhida, 48.).on_click(trocar(id.clone())));
     }
     let janela = d.janela.clone();
-    menu.item(
-        PopupMenuItem::element(|window, _| {
-            linha_de_duas(
-                div()
-                    .text_color(Cores::tenue())
-                    .child(Icon::new(Lucide::Shuffle).with_size(tam(window, 16.)))
-                    .into_any_element(),
-                "Automática".into(),
-                "A conta com mais folga no plano".into(),
-            )
-        })
-        .checked(d.automatica())
-        .on_click(trocar(contas::AUTOMATICA.to_string())),
-    )
+    let automatica = d.automatica();
+    let item = PopupMenuItem::element(move |window, _| {
+        linha_de_duas(
+            div()
+                .text_color(if automatica { Cores::texto() } else { Cores::tenue() })
+                .child(Icon::new(Lucide::Shuffle).with_size(tam(window, 16.)))
+                .into_any_element(),
+            "Automática".into(),
+            "A conta com mais folga no plano".into(),
+            automatica,
+        )
+    });
+    menu.item(escolhido_em_ficha(item, automatica, 48.).on_click(trocar(contas::AUTOMATICA.to_string())))
     .separator()
     .item(item_com_icone(Lucide::Settings, "Gerenciar contas…").on_click(move |_, window, cx| {
         let _ = janela.update(cx, |this, cx| this.dialogo_contas(window, cx));
@@ -481,6 +486,12 @@ fn linhas_de_modelo(escolhido: Option<&str>, em_uso: Option<&str>, padrao_pasta:
     let mut linhas = vec![LinhaDeModelo::new("", "Padrão", padrao)];
     for ((valor, familia), descricao) in MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO) {
         let versao = curto.clone().filter(|m| segue_apelido && m.to_lowercase().starts_with(valor));
+        // A versão que a família é hoje no Claude Code instalado ("Fable 5.1"), quando ele já
+        // disse: sem isso não dá para saber que o Fable 5.2 é outra linha, nas versões exatas.
+        let descricao = match versao_da_familia(valor) {
+            Some(hoje) if versao.is_none() => format!("{descricao} · hoje, {hoje}"),
+            _ => descricao.to_string(),
+        };
         linhas.push(LinhaDeModelo {
             em_uso: versao.is_some() && !no_padrao,
             ..LinhaDeModelo::new(
@@ -518,11 +529,11 @@ fn linhas_de_versao(escolhido: Option<&str>, em_uso: Option<&str>, motivo: Optio
         }
         return linhas;
     }
-    VERSOES_DE_MODELO
+    versoes_de_modelo()
         .iter()
         .map(|id| LinhaDeModelo {
-            em_uso: rodando == Some(*id),
-            ..LinhaDeModelo::new(*id, nome_curto_modelo(id), "")
+            em_uso: rodando == Some(id.as_str()),
+            ..LinhaDeModelo::new(id.as_str(), nome_curto_modelo(id), "")
         })
         .collect()
 }
@@ -586,6 +597,7 @@ pub(super) fn preparar_modelos(
     lista.update(cx, |l, cx| {
         // O logo fica só no rótulo do grupo; os itens vão sem símbolo.
         l.simbolo_do_grupo("Claude", Simbolo::Marca(Marca::Claude));
+        l.ficha_no_escolhido(true);
         l.definir(grupos, Some(escolhido.into()), cx);
         l.abrir(window, cx);
     });
@@ -716,7 +728,7 @@ fn linha_ultracode(d: &Rc<DadosEsforco>) -> AnyElement {
     }
 }
 
-fn corpo_do_esforco(d: &Rc<DadosEsforco>) -> impl IntoElement + use<> {
+fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement + use<> {
     let atual = d.atual;
     let simbolo = if d.armado {
         barras_arco_iris()
@@ -772,6 +784,8 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>) -> impl IntoElement + use<> {
                             .largura_total(true)
                             .compacto(true)
                             .no_flutuante(true)
+                            // O nível escolhido é a ficha de metal, como o escolhido dos menus.
+                            .solto(true)
                             .large()
                         })
                         .child(div().metadado().text_color(Cores::tenue()).child(descricao_do_esforco(atual))),
@@ -797,7 +811,7 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>) -> impl IntoElement + use<> {
                         dica_de_tecla(&["Espaço"], "Ultrathink"),
                         dica_de_tecla(&["U"], "Ultracode"),
                         dica_de_tecla(&["Enter"], "fecha"),
-                    ]);
+                    ], window);
                     c.rodape(linha).rodape(teclas)
                 }),
         )
@@ -967,7 +981,7 @@ impl Janela {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolher"),
                         dica_de_tecla(&["Enter"], "usa"),
-                    ]);
+                    ], window);
                     s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E8).child(teclas))
                 })
             })
@@ -1019,7 +1033,7 @@ impl Janela {
                 .simbolo(Simbolo::Sinal { nivel: atual as u8, total: 5 })
                 .seta(b.larga())
                 .so_icone(b.estreita());
-            if atual == 0 { chip.mudado(false) } else { chip.cor_rotulo(Cores::ciano()) }
+            chip.mudado(atual != 0)
         };
         let mut chip = base.tamanho(b.tamanho()).aberto(aberto);
         if !tem_esforco {
@@ -1056,7 +1070,7 @@ impl Janela {
             .on_open_change(move |abriu, _, cx| abrir_ou_fechar(&janela, painel, PopCaixa::Esforco, *abriu, cx))
             .track_focus(&dados.foco)
             .trigger(botao)
-            .content(move |_, _, _| corpo_do_esforco(&dados))
+            .content(move |_, window, _| corpo_do_esforco(&dados, window))
             .into_any_element()
     }
 
@@ -1270,7 +1284,7 @@ mod testes {
     #[test]
     fn as_versoes_marcam_a_que_esta_rodando() {
         let linhas = linhas_de_versao(Some("opus"), Some("claude-opus-5-5"), None);
-        assert_eq!(linhas[0].titulo, "Fable 5.1");
+        assert_eq!(linhas[0].titulo, "Fable 5.2");
         assert_eq!(linhas.iter().filter(|l| l.em_uso).map(|l| l.titulo.as_str()).collect::<Vec<_>>(), ["Opus 5.5"]);
         // Seguindo a família é justamente quando interessa saber qual versão o apelido pega.
         assert!(linhas.iter().all(|l| l.desabilitada.is_none()));

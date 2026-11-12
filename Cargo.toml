@@ -98,6 +98,9 @@ lto = "thin"
 # último uso (src/theme/mod.rs, `SCROLLBAR_*`, e `scrollbar_motion` pública para o teste do tema).
 # O véu dos diálogos cobre só o quadro da janela, sem a margem da sombra (src/dialog/dialog.rs);
 # a dica não reabre com o ponteiro fora da janela (src/tooltip.rs); e, com a janela sem foco, o
-# compasso não bate e devolve a fase parada (src/spinner.rs).
+# compasso não bate e devolve a fase parada (src/spinner.rs). Do plano visual: a cantoneira azul, a
+# trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`, `fio_de_pontos`), o desenho único
+# de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
+# em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }

@@ -1,4 +1,5 @@
-//! Anéis, barrinhas de sinal e a barra segmentada.
+//! Anéis, barrinhas de sinal, a barra segmentada e a retícula comum (trama, fio de
+//! pontos e hachura).
 
 use std::f32::consts::TAU;
 
@@ -11,6 +12,38 @@ use super::base::Marca;
 use crate::tema::{ARCO_IRIS, Cores, esp, r, raio};
 use crate::ui::movimento::{self, Curva};
 
+// A retícula comum do Vitral: um padrão do shader (`checkerboard`, `pattern_slash`) por quad, no
+// lugar de dezenas de quads ou de um `canvas`. Todo uso no app passa por aqui (o teste
+// `reticula_so_pelos_graficos` barra o resto), e o desenho mora no kit (`trama`,
+// `fio_de_pontos`), que os diálogos e menus do kit também usam: se um renderizador perder o
+// padrão, a queda para o liso é uma edição num lugar só.
+
+/// A trama fina (xadrez de 2 px na `cor`, o resto transparente): placa de cabeçalho, vidro da
+/// lista, véu dos diálogos, desmanche da rolagem.
+pub fn trama(cor: Hsla, window: &Window) -> Background {
+    gpui_kit::component::trama(cor, window)
+}
+
+/// O fio de pontos (ponto de 2 a cada 4), deitado: todo separador e todo trilho, no lugar da
+/// linha cheia. Ocupa a largura do pai; para recuar, ponha dentro de um `div` com `px(..)`.
+pub fn fio_de_pontos(cor: Hsla, window: &Window) -> Div {
+    gpui_kit::component::fio_de_pontos(cor, window)
+}
+
+/// O fio de pontos em pé, na altura do pai.
+pub fn fio_de_pontos_em_pe(cor: Hsla, window: &Window) -> Div {
+    gpui_kit::component::fio_de_pontos_em_pe(cor, window)
+}
+
+/// A hachura diagonal do que saiu ou parou (a linha removida do diff). O shader repete a hachura
+/// na vertical a cada `largura + intervalo` px do aparelho: com meio período por linha, os riscos
+/// de linhas vizinhas emendam. Largura sempre 1 (os dois números vão empacotados num `f32`, e
+/// 1,5 perde exatidão); o risco sai com uns 0,7 px, por isso a cor pede alfa mais alto (0,24).
+pub fn hachura(cor: Hsla, altura_da_linha: Pixels, window: &Window) -> Background {
+    let periodo = (altura_da_linha.as_f32() * window.scale_factor() / 2.).round().max(2.);
+    pattern_slash(cor, 1., periodo - 1.)
+}
+
 /// Cor de um uso: a base até 69%, âmbar de 70% a 89%, vermelho a partir de 90%. Usa a
 /// porcentagem inteira, a mesma que o texto mostra.
 pub fn cor_da_faixa(fracao: f32, base: Hsla) -> Hsla {
@@ -21,8 +54,34 @@ pub fn cor_da_faixa(fracao: f32, base: Hsla) -> Hsla {
     }
 }
 
-/// Trilho inteiro e, por cima, o arco da fração (do topo, no sentido horário) com as pontas
-/// redondas.
+/// A fenda de todo anel do app: 60° abertos embaixo (o anel vai das 7 às 5 horas).
+const FENDA: f32 = TAU / 6.;
+
+/// Um arco de `de` a `ate` (radianos, 0 no topo, sentido horário; podem ser negativos) com uma
+/// tampa redonda em cada ponta: o traço do anel com fenda e do anel que gira.
+pub fn pintar_arco(
+    bounds: Bounds<Pixels>,
+    raio_fora: f32,
+    espessura: f32,
+    de: f32,
+    ate: f32,
+    cor: Hsla,
+    window: &mut Window,
+) {
+    let arco = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
+    arco.paint(&ArcData::new(&(), 0, 1., de, ate), cor, &bounds, window);
+    let centro = bounds.center();
+    let meio = raio_fora - espessura / 2.;
+    for angulo in [de, ate] {
+        let ponto = point(centro.x + px(meio * angulo.sin()), centro.y - px(meio * angulo.cos()));
+        let lado = px(espessura);
+        let caixa = Bounds::centered_at(ponto, size(lado, lado));
+        window.paint_quad(fill(caixa, cor).corner_radii(lado / 2.));
+    }
+}
+
+/// O trilho escuro com a fenda embaixo e, por cima, o arco da fração (da ponta das 7 horas, no
+/// sentido horário) com as pontas redondas. Abaixo de 2% sobra só a tampa da ponta de saída.
 fn pintar_anel(
     bounds: Bounds<Pixels>,
     raio_fora: f32,
@@ -31,25 +90,12 @@ fn pintar_anel(
     cor: Hsla,
     window: &mut Window,
 ) {
-    let arco = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
-    arco.paint(&ArcData::new(&(), 0, 1., 0., TAU), Cores::borda_forte(), &bounds, window);
+    let (de, ate) = (-(TAU - FENDA) / 2., (TAU - FENDA) / 2.);
+    pintar_arco(bounds, raio_fora, espessura, de, ate, Cores::borda_forte(), window);
     let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) else {
         return;
     };
-    arco.paint(&ArcData::new(&(), 1, f, 0., f * TAU), cor, &bounds, window);
-    if f < 1. {
-        let centro = bounds.center();
-        let meio = raio_fora - espessura / 2.;
-        for angulo in [0., f * TAU] {
-            let ponto = point(
-                centro.x + px(meio * angulo.sin()),
-                centro.y - px(meio * angulo.cos()),
-            );
-            let lado = px(espessura);
-            let caixa = Bounds::centered_at(ponto, size(lado, lado));
-            window.paint_quad(fill(caixa, cor).corner_radii(lado / 2.));
-        }
-    }
+    pintar_arco(bounds, raio_fora, espessura, de, de + f * (ate - de), cor, window);
 }
 
 /// Anel de progresso: contexto, uso da conta, progresso da Equipe. O arco desliza até a fração
@@ -150,7 +196,8 @@ fn fracao_animada(
 impl RenderOnce for Anel {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let diametro = self.diametro;
-        let espessura = self.espessura.unwrap_or(if diametro <= 22. { 2.5 } else { 3. });
+        // Grosso, como o Circular Progress: 3 até 22, 4,7 no de 36, 5,7 no de 44.
+        let espessura = self.espessura.unwrap_or((diametro * 0.13).max(3.));
         let alvo = self.fracao.clamp(0., 1.);
         let cor = self.cor.unwrap_or_else(|| cor_da_faixa(alvo, Cores::destaque()));
         let fracao = fracao_animada(&self.id, alvo, self.movimento, window, cx);
@@ -183,15 +230,62 @@ impl RenderOnce for Anel {
     }
 }
 
-/// Uso de um serviço no trilho: o disco da marca com o anel de 5 h por fora e, no padrão
-/// (o dono pediu as duas porcentagens), o da semana por dentro, mais fino.
+/// O "carregando" do app: o mesmo anel com fenda, aberto, girando (uma volta a cada 1,2 s, no
+/// laço de 20 qps). Sem trilho. Com o movimento reduzido fica parado, com a fenda embaixo.
+#[derive(IntoElement)]
+pub struct AnelGirando {
+    lado: f32,
+    cor: Hsla,
+}
+
+impl AnelGirando {
+    /// 12 no nó da ferramenta e na linha de estado, 14 no lugar do spinner pequeno do kit.
+    pub fn new(lado: f32) -> Self {
+        AnelGirando { lado, cor: Cores::destaque() }
+    }
+
+    pub fn cor(mut self, cor: Hsla) -> Self {
+        self.cor = cor;
+        self
+    }
+}
+
+impl RenderOnce for AnelGirando {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (lado, cor) = (self.lado, self.cor);
+        // O arco cobre 72% da volta; parado, a fenda de 28% fica centrada embaixo.
+        let parado = std::f32::consts::PI + TAU * 0.14;
+        let giro = if cx.reduce_motion() {
+            parado
+        } else {
+            let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
+            parado + ((fase / 1.2).fract() as f32) * TAU
+        };
+        div().flex_none().size(r(lado)).child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let escala = bounds.size.width.as_f32() / lado;
+                    let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
+                    let espessura = (lado * 0.16).max(1.5) * escala;
+                    pintar_arco(bounds, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window);
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+/// Uso de um serviço no trilho: o disco da marca com UM anel em volta, que mostra a janela mais
+/// apertada das duas (5 h ou semana). Eram dois anéis, um dentro do outro; com a fenda e o trilho
+/// eles liam como "duas barras" (dono, 12/11/2026). As duas porcentagens seguem na dica e no
+/// popover de uso.
 #[derive(IntoElement)]
 pub struct AnelDeUso {
     id: ElementId,
     marca: Marca,
     cinco_h: Option<f32>,
     semana: Option<f32>,
-    duplo: bool,
     diametro: f32,
     bloqueado: bool,
     apagado: bool,
@@ -205,7 +299,6 @@ impl AnelDeUso {
             marca,
             cinco_h,
             semana: None,
-            duplo: true,
             diametro: 36.,
             bloqueado: false,
             apagado: false,
@@ -224,9 +317,8 @@ impl AnelDeUso {
         self
     }
 
-    /// Só o anel de 5 h (a semana fica na dica e no popover).
-    pub fn unico(mut self) -> Self {
-        self.duplo = false;
+    /// O anel já é um só; fica pelo nome, para quem o chamava.
+    pub fn unico(self) -> Self {
         self
     }
 
@@ -253,26 +345,29 @@ impl RenderOnce for AnelDeUso {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let diametro = self.diametro;
         let base = self.marca.cor();
-        let (fora, dentro) = if self.apagado {
-            (None, None)
+        // A janela mais apertada das duas é a que o anel mostra.
+        let apertada = match (self.cinco_h, self.semana) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        let fora = if self.apagado {
+            None
         } else if self.bloqueado {
-            (Some(1.), self.semana)
+            Some(1.)
         } else {
-            (self.cinco_h, self.semana)
+            apertada
         };
         let cor_fora = if self.bloqueado { Cores::vermelho() } else { cor_da_faixa(fora.unwrap_or(0.), base) };
-        let cor_dentro = cor_da_faixa(dentro.unwrap_or(0.), base);
-        // Os dois arcos andam juntos; sem número, sem arco.
-        let alvo = (fora.unwrap_or(0.).clamp(0., 1.), dentro.unwrap_or(0.).clamp(0., 1.));
+        // Sem número, sem arco.
+        let alvo = fora.unwrap_or(0.).clamp(0., 1.);
         let chave = movimento::chave(&self.id, "arcos");
-        let (f, d) = if self.encher {
-            movimento::valor_desde(chave, (0., 0.), alvo, movimento::ENCHER, Curva::Mover, window, cx)
+        let f = if self.encher {
+            movimento::valor_desde(chave, 0., alvo, movimento::ENCHER, Curva::Mover, window, cx)
         } else {
             movimento::valor(chave, alvo, movimento::ENCHER, Curva::Mover, window, cx)
         };
-        let (fora, dentro) = (fora.map(|_| f), dentro.map(|_| d));
-        let duplo = self.duplo && diametro >= 28.;
-        let disco = diametro - if duplo { 14. } else { 12. };
+        let fora = fora.map(|_| f);
+        let disco = diametro - 12.;
         div()
             .id(self.id)
             .relative()
@@ -287,11 +382,8 @@ impl RenderOnce for AnelDeUso {
                     move |bounds, _, window, _| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
-                        pintar_anel(bounds, raio_fora, 2.5 * escala, fora, cor_fora, window);
-                        if duplo {
-                            let raio_dentro = raio_fora - 3.5 * escala;
-                            pintar_anel(bounds, raio_dentro, 1.5 * escala, dentro, cor_dentro, window);
-                        }
+                        // Um anel só, de 3, com a fenda embaixo.
+                        pintar_anel(bounds, raio_fora, 3. * escala, fora, cor_fora, window);
                     },
                 )
                 .absolute()

@@ -4,6 +4,14 @@
 //! repouso, e com o movimento reduzido (o GNOME sem animações ou `VITRAL_SEM_ANIMACAO=1`) tudo
 //! aparece direto no estado final.
 //!
+//! A exceção é o `laco_a` (12/11/2026, o dono pediu "mais shader" e depois "tenta focar em vez de
+//! glass esse metal líquido"): o metal (a chapa atrás da janela, as aberturas e a malha do botão do
+//! menu) anda sem parar, devagar, e só com a janela em primeiro plano e o movimento ligado. Quem
+//! pede diz o ritmo: `QPS_DO_LACO` (20 por segundo) com um chat da tela trabalhando,
+//! `QPS_EM_REPOUSO` no resto do tempo (hoje 0: em repouso o metal fica parado e nada redesenha;
+//! o porquê está na constante). O ponteiro mexendo na janela não acorda o metal. Continua sendo a
+//! única outra porta.
+//!
 //! Duas formas:
 //! - `entrar` (e `animacao`, para quem precisa do `with_animation`): toca uma vez quando o
 //!   elemento aparece e não repete enquanto ele fica na tela. `entrada` só toca para o que é
@@ -11,6 +19,9 @@
 //! - `valor`, `valor_desde` e `disparo`: o elemento fica igual e só o valor anda até o alvo
 //!   quando ele muda (a pílula do segmentado, a cor do hover, o anel). Na montagem não anima.
 //!   A `abertura` da gaveta é um `valor_desde` de 0 a 1, com o id levando a geração.
+//!
+//! A outra exceção é de duração: o `Segurar` (no fim do arquivo), o "Segure para permitir" do
+//! pedido perigoso, leva 900 ms apertado, com ou sem movimento reduzido.
 
 use std::{
     cell::Cell,
@@ -432,6 +443,128 @@ fn pedir_quadro(animando: Rc<Cell<bool>>, window: &mut Window, cx: &mut App) {
     .detach();
 }
 
+/// Quantas vezes por segundo um laço vivo redesenha a janela (um chat da tela trabalhando, o
+/// ponteiro em cima do botão do menu): o metal não precisa de mais.
+pub const QPS_DO_LACO: f32 = 20.;
+/// O ritmo do metal em repouso (ninguém trabalhando na tela). Uma constante só, para o fundo da
+/// janela e para o botão do menu. Em `0.` o metal fica PARADO em repouso e nada redesenha; ele
+/// anda só com um chat da tela trabalhando ou com o ponteiro em cima do botão do menu. O ponteiro
+/// mexendo na janela já acordou o metal, e saiu: redesenhava a janela inteira 20 vezes por
+/// segundo a cada movimento, e a rolagem engasgava (dono, 12/11/2026).
+///
+/// É a política B do portão de custo, medida em 12/11/2026 no binário de debug, na bancada, com
+/// um chat parado aberto e o ponteiro parado na janela, 30 s: a 8 por segundo o app gastava 30%
+/// de um núcleo (o limite era 8%). O custo não é o metal (o campo leva de 2 a 4 ms; com ele
+/// congelado, 28%): cada batida redesenha a Janela inteira, e isso custa uns 35 ms de
+/// processador no debug. Parado: 0%. Para voltar a animar em repouso (por exemplo se o release
+/// medir bem menos), é só pôr 8 aqui.
+pub const QPS_EM_REPOUSO: f32 = 0.;
+
+/// Mais que isto sem ninguém pedir a fase é uma pausa (a janela ficou sem foco, o metal dormiu em
+/// repouso): na volta a fase continua de onde estava, sem salto.
+const PAUSA_DO_LACO: Duration = Duration::from_millis(300);
+
+/// O relógio dos laços: a fase (uma só para o app, em `f64`: em `f32` ela anda em degraus depois
+/// de um dia) só anda enquanto alguém a pede com a janela em primeiro plano. `proxima` guarda, por
+/// janela, a hora da batida marcada; `bateu_em`, a da última que valeu.
+#[derive(Default)]
+struct Lacos {
+    fase: f64,
+    ultimo: Option<Instant>,
+    proxima: HashMap<WindowId, Instant>,
+    bateu_em: HashMap<WindowId, Instant>,
+}
+
+impl Global for Lacos {}
+
+impl Lacos {
+    /// Anda a fase até `agora` e a devolve. O que passou desde a última leitura entra inteiro, a
+    /// não ser depois de uma pausa: aí a fase continua de onde estava.
+    fn andar(&mut self, agora: Instant) -> f64 {
+        let passo = self.ultimo.map_or(Duration::ZERO, |u| agora.saturating_duration_since(u));
+        if passo <= PAUSA_DO_LACO {
+            self.fase += passo.as_secs_f64();
+        }
+        self.ultimo = Some(agora);
+        self.fase
+    }
+
+    /// A hora da próxima batida de `janela` no ritmo de `intervalo`: no compasso da última (o
+    /// tempo do desenho não se soma ao intervalo, senão 20 por segundo viravam 13), mas sempre com
+    /// meia batida de folga depois de agora, para um desenho pesado não emendar no seguinte.
+    fn quando(&self, janela: WindowId, agora: Instant, intervalo: Duration) -> Instant {
+        match self.bateu_em.get(&janela) {
+            Some(bateu) if agora.saturating_duration_since(*bateu) < intervalo => {
+                (*bateu + intervalo).max(agora + intervalo / 2)
+            }
+            _ => agora + intervalo,
+        }
+    }
+
+    /// Marca a batida de `janela` para `quando`, se não houver uma marcada para antes (ou quase
+    /// junto): diz se é preciso armar o timer. Um pedido mais rápido que o já marcado marca outra
+    /// batida, mais cedo, e a velha, ao chegar, não é mais a marcada.
+    fn marcar(&mut self, janela: WindowId, quando: Instant) -> bool {
+        let cedo = self.proxima.get(&janela).is_none_or(|marcada| quando + MESMO_QUADRO < *marcada);
+        if cedo {
+            self.proxima.insert(janela, quando);
+        }
+        cedo
+    }
+
+    /// A batida de `quando` chegou: vale só se ainda é a marcada.
+    fn bateu(&mut self, janela: WindowId, quando: Instant) -> bool {
+        let vale = self.proxima.get(&janela) == Some(&quando);
+        if vale {
+            self.proxima.remove(&janela);
+            self.bateu_em.insert(janela, quando);
+        }
+        vale
+    }
+}
+
+/// Movimento ligado e janela em primeiro plano: só assim um laço anda.
+pub fn anima(window: &Window, cx: &App) -> bool {
+    !cx.reduce_motion() && window.is_window_active()
+}
+
+/// Há uma batida de laço marcada para esta janela.
+pub fn laco_agendado(window: &Window, cx: &App) -> bool {
+    let janela = window.window_handle().window_id();
+    cx.try_global::<Lacos>().is_some_and(|l| l.proxima.contains_key(&janela))
+}
+
+/// A fase (em segundos) de um efeito que anda sem parar enquanto está na tela, e o pedido do
+/// próximo quadro a `qps` por segundo. Quem desenha chama a cada quadro: com o movimento ligado e
+/// a janela em primeiro plano, a fase avança e o próximo quadro é pedido; senão ela fica onde
+/// parou e nada é pedido (o efeito congela, sem salto). Com `qps <= 0.` devolve a fase sem andar
+/// nem pedir nada (o repouso da política B). Sem ninguém chamando, nada redesenha.
+pub fn laco_a(window: &mut Window, cx: &mut App, qps: f32) -> f64 {
+    let anima = anima(window, cx) && qps > 0.;
+    let agora = cx.background_executor().now();
+    let janela = window.window_handle().window_id();
+    let view = window.current_view();
+    let lacos = cx.default_global::<Lacos>();
+    if !anima {
+        return lacos.fase;
+    }
+    let fase = lacos.andar(agora);
+    let quando = lacos.quando(janela, agora, Duration::from_secs_f32(1. / qps.min(QPS)));
+    if lacos.marcar(janela, quando) {
+        let espera = quando.saturating_duration_since(agora);
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(espera).await;
+            cx.update(|cx| {
+                if cx.default_global::<Lacos>().bateu(janela, quando) {
+                    cx.notify(view);
+                }
+            });
+        })
+        .detach();
+    }
+    fase
+}
+
 /// As Animações das Configurações: seguir o GNOME (o padrão) ou desligadas no app todo. Ficam em
 /// `interface.json` (`"animacoes": "desligadas"`), junto do zoom.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -532,7 +665,7 @@ fn reduzido_no_sistema(cx: &App) -> bool {
 
 #[cfg(test)]
 mod testes {
-    use super::{Animacoes, Curva, Disparo, Interpolavel, MESMO_QUADRO, QPS, Transicao};
+    use super::{Animacoes, Curva, Disparo, Interpolavel, Lacos, MESMO_QUADRO, PAUSA_DO_LACO, QPS, Transicao};
     use gpui_kit::{Hsla, Rgba, rgba};
     use std::{
         cell::Cell,
@@ -642,6 +775,51 @@ mod testes {
         assert_eq!(gpui_kit::component::popover::ENTRADA_QPS, QPS);
     }
 
+    /// O laço: a fase anda com o tempo e não salta depois de uma pausa; a batida mais cedo
+    /// substitui a marcada, e a velha, ao chegar, não vale mais.
+    #[test]
+    fn laco_anda_sem_salto_e_a_batida_mais_cedo_vence() {
+        let t0 = Instant::now();
+        let mut lacos = Lacos::default();
+        assert_eq!(lacos.andar(t0), 0.);
+        let fase = lacos.andar(t0 + Duration::from_millis(125));
+        assert!((fase - 0.125).abs() < 1e-9, "{fase}");
+        // Dois pedidos no mesmo quadro (o fundo e o botão do menu) não andam a fase duas vezes.
+        assert_eq!(lacos.andar(t0 + Duration::from_millis(125)), fase);
+        // Depois de uma pausa, continua de onde estava.
+        let volta = t0 + Duration::from_millis(125) + PAUSA_DO_LACO + Duration::from_secs(40);
+        assert_eq!(lacos.andar(volta), fase);
+        assert!(lacos.andar(volta + Duration::from_millis(50)) > fase);
+        // Um dia aberto e a fase ainda anda de 50 em 50 ms (em f32 andaria em degraus).
+        lacos.fase = 86_400.;
+        let antes = lacos.andar(volta + Duration::from_millis(100));
+        assert!((lacos.andar(volta + Duration::from_millis(150)) - antes - 0.05).abs() < 1e-6);
+
+        let janela = gpui_kit::WindowId::from(7u64);
+        let (devagar, rapido) = (t0 + Duration::from_millis(125), t0 + Duration::from_millis(50));
+        assert!(lacos.marcar(janela, devagar));
+        // Outro pedido no mesmo ritmo, ou mais lento, espera a batida marcada.
+        assert!(!lacos.marcar(janela, devagar + MESMO_QUADRO / 2));
+        assert!(!lacos.marcar(janela, devagar + Duration::from_millis(80)));
+        // O mais rápido marca outra, mais cedo; a velha não vale ao chegar.
+        assert!(lacos.marcar(janela, rapido));
+        assert!(!lacos.bateu(janela, devagar));
+        assert!(lacos.bateu(janela, rapido));
+        assert!(!lacos.bateu(janela, rapido));
+        assert!(lacos.marcar(janela, devagar));
+
+        // O compasso: a batida seguinte conta da última, não do fim do desenho; com o desenho
+        // pesado, meia batida de folga; depois de uma pausa, um intervalo inteiro.
+        let passo = Duration::from_millis(50);
+        let desenhou = rapido + Duration::from_millis(20);
+        assert_eq!(lacos.quando(janela, desenhou, passo), rapido + passo);
+        let pesado = rapido + Duration::from_millis(45);
+        assert_eq!(lacos.quando(janela, pesado, passo), pesado + passo / 2);
+        let depois = rapido + Duration::from_secs(3);
+        assert_eq!(lacos.quando(janela, depois, passo), depois + passo);
+        assert_eq!(lacos.quando(gpui_kit::WindowId::from(8u64), t0, passo), t0 + passo);
+    }
+
     #[test]
     fn animacoes_guardadas_e_quando_reduzem() {
         let ler = |texto: &str| {
@@ -658,5 +836,244 @@ mod testes {
         assert!(!Animacoes::SeguirGnome.reduz(false));
         assert!(Animacoes::SeguirGnome.reduz(true));
         assert!(Animacoes::Desligadas.reduz(false));
+    }
+}
+
+// O segurar para confirmar (12/11/2026, a base AI Tool Approval): o "Segure para permitir" do
+// pedido perigoso só confirma depois de `SEGURAR` apertado. É a exceção à duração curta do resto
+// do arquivo: não é um efeito, é o gesto que confirma, e por isso vale igual com o movimento
+// reduzido (só o enchimento não é desenhado). Pelo teclado, o primeiro Enter arma e o segundo,
+// em até `ARMADO`, confirma.
+
+/// Quanto o "Segure para permitir" precisa ficar apertado.
+pub const SEGURAR: Duration = Duration::from_millis(900);
+/// O mínimo entre o Enter que arma o botão de segurar e o que confirma.
+const ENTRE_ENTERS: Duration = Duration::from_millis(250);
+/// Quanto o primeiro Enter fica armado esperando o segundo.
+pub const ARMADO: Duration = Duration::from_secs(3);
+
+/// O estado de um botão de segurar, sem janela (os testes andam o relógio à mão).
+#[derive(Default)]
+struct EstadoDoSegurar {
+    /// Quando o aperto de agora começou.
+    apertado: Option<Instant>,
+    /// Quando o primeiro Enter armou.
+    armado: Option<Instant>,
+    animando: Rc<Cell<bool>>,
+}
+
+impl EstadoDoSegurar {
+    fn apertar(&mut self, agora: Instant) {
+        self.apertado = Some(agora);
+    }
+
+    fn soltar(&mut self) {
+        self.apertado = None;
+        self.animando.set(false);
+    }
+
+    /// A batida do timer do aperto que começou em `marca`: completa só se o botão segue apertado
+    /// desde ela (soltar e apertar de novo marca outro aperto) e o tempo inteiro já passou.
+    fn completou(&mut self, marca: Instant, agora: Instant) -> bool {
+        let vale = self.apertado == Some(marca) && agora.saturating_duration_since(marca) >= SEGURAR;
+        if vale {
+            self.soltar();
+        }
+        vale
+    }
+
+    /// De 0 a 1 enquanto apertado.
+    fn progresso(&self, agora: Instant) -> Option<f32> {
+        self.apertado
+            .map(|m| (agora.saturating_duration_since(m).as_secs_f32() / SEGURAR.as_secs_f32()).min(1.))
+    }
+
+    fn armado(&self, agora: Instant) -> bool {
+        self.armado.is_some_and(|a| agora.saturating_duration_since(a) < ARMADO)
+    }
+
+    /// Um Enter: o primeiro arma; o segundo, com o primeiro ainda armado, confirma. Um segundo
+    /// Enter colado no primeiro (menos de `ENTRE_ENTERS`) não confirma nem rearma: é o mesmo
+    /// gesto (um toque duplo sem querer, ou a repetição de um teclado que não avisa que é
+    /// repetição).
+    fn enter(&mut self, agora: Instant) -> bool {
+        if let Some(armou) = self.armado
+            && agora.saturating_duration_since(armou) < ENTRE_ENTERS
+        {
+            return false;
+        }
+        if self.armado(agora) {
+            self.armado = None;
+            return true;
+        }
+        self.armado = Some(agora);
+        false
+    }
+}
+
+/// Um botão de segurar, guardado entre quadros pelo `id`.
+#[derive(Clone)]
+pub struct Segurar(Entity<EstadoDoSegurar>);
+
+impl Segurar {
+    pub fn de(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> Self {
+        Segurar(window.use_keyed_state(id.into(), cx, |_, _| EstadoDoSegurar::default()))
+    }
+
+    /// Marca o aperto e um timer de `SEGURAR`: ao bater, se o botão segue apertado desde então,
+    /// solta e chama `ao_completar`. Soltar antes (ou sair com o ponteiro) cancela.
+    pub fn apertar(&self, ao_completar: impl FnOnce(&mut App) + 'static, cx: &mut App) {
+        let marca = cx.background_executor().now();
+        self.0.update(cx, |e, cx| {
+            e.apertar(marca);
+            cx.notify();
+        });
+        let estado = self.0.downgrade();
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(SEGURAR).await;
+            cx.update(|cx| {
+                let agora = cx.background_executor().now();
+                let Some(estado) = estado.upgrade() else {
+                    return;
+                };
+                let completou = estado.update(cx, |e, cx| {
+                    cx.notify();
+                    e.completou(marca, agora)
+                });
+                if completou {
+                    ao_completar(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub fn soltar(&self, cx: &mut App) {
+        self.0.update(cx, |e, cx| {
+            if e.apertado.is_some() {
+                e.soltar();
+                cx.notify();
+            }
+        });
+    }
+
+    /// O enchimento (0 a 1) enquanto apertado, pedindo quadro no relógio de 60 qps; `None` solto
+    /// ou com o movimento reduzido (o tempo vale igual, só não se desenha).
+    pub fn progresso(&self, window: &mut Window, cx: &mut App) -> Option<f32> {
+        let agora = cx.background_executor().now();
+        let (progresso, sinal) = {
+            let e = self.0.read(cx);
+            (e.progresso(agora), e.animando.clone())
+        };
+        let progresso = progresso.filter(|_| !cx.reduce_motion());
+        sinal.set(progresso.is_some());
+        if progresso.is_some() {
+            pedir_quadro(sinal, window, cx);
+        }
+        progresso
+    }
+
+    /// O primeiro Enter armado, esperando o segundo.
+    pub fn armado(&self, cx: &App) -> bool {
+        self.0.read(cx).armado(cx.background_executor().now())
+    }
+
+    /// Um Enter no botão: o primeiro arma (e desarma sozinho em `ARMADO`); o segundo confirma.
+    pub fn enter(&self, ao_confirmar: impl FnOnce(&mut App), cx: &mut App) {
+        let agora = cx.background_executor().now();
+        let confirma = self.0.update(cx, |e, cx| {
+            cx.notify();
+            e.enter(agora)
+        });
+        if confirma {
+            ao_confirmar(cx);
+            return;
+        }
+        let estado = self.0.downgrade();
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(ARMADO).await;
+            cx.update(|cx| {
+                if let Some(estado) = estado.upgrade() {
+                    estado.update(cx, |_, cx| cx.notify());
+                }
+            });
+        })
+        .detach();
+    }
+}
+
+#[cfg(test)]
+mod testes_do_segurar {
+    use super::{ARMADO, EstadoDoSegurar, SEGURAR};
+    use std::time::{Duration, Instant};
+
+    /// Um clique curto nunca permite: soltar antes do tempo cancela, e o timer daquele aperto,
+    /// ao bater, não completa nada.
+    #[test]
+    fn aperta_e_solta_antes_do_tempo_nao_completa() {
+        let t0 = Instant::now();
+        let mut e = EstadoDoSegurar::default();
+        e.apertar(t0);
+        e.soltar();
+        assert!(!e.completou(t0, t0 + SEGURAR));
+        assert_eq!(e.progresso(t0 + SEGURAR), None);
+        // Apertar de novo marca outro aperto: o timer do primeiro não vale para ele.
+        let t1 = t0 + Duration::from_millis(400);
+        e.apertar(t1);
+        assert!(!e.completou(t0, t0 + SEGURAR));
+        // E o timer do aperto certo, se bater cedo, também não.
+        assert!(!e.completou(t1, t1 + SEGURAR - Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn segurando_o_tempo_inteiro_completa_uma_vez() {
+        let t0 = Instant::now();
+        let mut e = EstadoDoSegurar::default();
+        e.apertar(t0);
+        let meio = e.progresso(t0 + SEGURAR / 2).unwrap();
+        assert!((meio - 0.5).abs() < 0.01, "{meio}");
+        assert!(e.completou(t0, t0 + SEGURAR));
+        // Completou e soltou: a mesma batida não confirma duas vezes.
+        assert!(!e.completou(t0, t0 + SEGURAR));
+        assert_eq!(e.progresso(t0 + SEGURAR), None);
+    }
+
+    #[test]
+    fn enter_arma_e_o_segundo_confirma_dentro_do_prazo() {
+        let t0 = Instant::now();
+        let mut e = EstadoDoSegurar::default();
+        assert!(!e.enter(t0));
+        assert!(e.armado(t0 + Duration::from_secs(1)));
+        assert!(e.enter(t0 + Duration::from_secs(1)));
+        // Confirmado, desarma: o próximo Enter arma de novo.
+        assert!(!e.armado(t0 + Duration::from_secs(1)));
+        // Passado o prazo, o segundo Enter só arma outra vez.
+        let t1 = t0 + Duration::from_secs(10);
+        assert!(!e.enter(t1));
+        assert!(!e.enter(t1 + ARMADO));
+        assert!(e.armado(t1 + ARMADO));
+    }
+}
+
+#[cfg(test)]
+mod testes_do_enter_duplo {
+    use super::{ARMADO, ENTRE_ENTERS, EstadoDoSegurar};
+    use std::time::{Duration, Instant};
+
+    /// O perigoso pelo teclado pede dois Enters de verdade: um segundo colado no primeiro (a
+    /// repetição da tecla segurada, um toque duplo sem querer) não confirma; passado o intervalo
+    /// mínimo, confirma; e o armado expira.
+    #[test]
+    fn segundo_enter_colado_nao_confirma() {
+        let t0 = Instant::now();
+        let mut estado = EstadoDoSegurar::default();
+        assert!(!estado.enter(t0), "o primeiro só arma");
+        assert!(!estado.enter(t0 + Duration::from_millis(40)), "a repetição da tecla não confirma");
+        assert!(!estado.enter(t0 + ENTRE_ENTERS - Duration::from_millis(1)));
+        assert!(estado.enter(t0 + ENTRE_ENTERS + Duration::from_millis(10)), "o segundo Enter de verdade confirma");
+        // Confirmado, desarma: o próximo Enter arma de novo.
+        assert!(!estado.enter(t0 + Duration::from_secs(1)));
+        // E o armado expira sozinho: o Enter seguinte só arma outra vez.
+        assert!(!estado.enter(t0 + Duration::from_secs(1) + ARMADO + Duration::from_millis(10)));
     }
 }

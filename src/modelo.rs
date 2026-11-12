@@ -163,6 +163,14 @@ pub enum Item {
         erro: bool,
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
+        /// O que a chamada pediu, para ler ao abrir a linha: o diff de um Edit ("- " e "+ "), o
+        /// começo do que um Write gravou, o comando inteiro de um Bash. As chamadas de antes
+        /// disto não têm.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detalhe: Option<String>,
+        /// O arquivo que a chamada leu ou mudou (o caminho como ela o deu), para abrir pelo clique.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        arquivo: Option<String>,
     },
     Aviso {
         texto: String,
@@ -1126,6 +1134,13 @@ pub struct Config {
     pub conexoes: Conexoes,
     /// "Agora não" no popover das issues: o botão do Linear some das conversas.
     pub esconder_botao_linear: bool,
+    /// Os quadrados dos projetos (e os Avulsos e o "+") no alto da lista. Desligado, a lista é uma
+    /// só e o Novo chat abre na pasta do chat aberto; os projetos continuam por baixo (menu do
+    /// Vitral).
+    pub fileira_de_projetos: bool,
+    /// Os anéis de uso do plano flutuando no canto de baixo, à direita, da janela. Desligado,
+    /// somem da tela (o uso continua em Contas do Claude).
+    pub uso_no_canto: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1265,6 +1280,8 @@ impl Default for Config {
             minutos_para_resumo: 15,
             conexoes: Conexoes::default(),
             esconder_botao_linear: false,
+            fileira_de_projetos: false,
+            uso_no_canto: true,
         }
     }
 }

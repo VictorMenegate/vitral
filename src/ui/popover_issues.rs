@@ -2045,7 +2045,9 @@ impl Janela {
         if !(mestre || chat.papel == PapelDoChat::Projeto) || nivel == LarguraPainel::Minimo {
             return None;
         }
-        let linear = !motor.config.esconder_botao_linear;
+        // O botão do Linear só com a conta dele ligada: sem ela era um convite a conectar em todo
+        // cabeçalho (o Conectar fica em Configurações > Conexões).
+        let linear = !motor.config.esconder_botao_linear && motor.config.conexoes.linear.is_some();
         let github = if mestre {
             motor.projetos_visiveis().iter().any(|p| tem_github(motor, &p.id))
         } else {

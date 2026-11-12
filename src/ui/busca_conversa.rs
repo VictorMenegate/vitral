@@ -746,6 +746,8 @@ mod testes {
             resumo: resumo.into(),
             resultado: resultado.map(str::to_string),
             erro: false,
+            detalhe: None,
+            arquivo: None,
         }
     }
 

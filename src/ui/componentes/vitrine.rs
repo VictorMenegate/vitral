@@ -16,8 +16,8 @@ use gpui_kit::*;
 use super::*;
 use crate::tema::{
     CORES_PROJETO, Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, gradiente_destaque, gradiente_quente,
-    halo_foco, halo_suave, linha_de_luz,
-    r, raio, sombra_dialogo, sombra_elevado, sombra_flutuante, sombra_recuo, tam,
+    aresta_de_poco, aresta_de_tecla, halo_foco, linha_de_luz,
+    r, raio, sombra_dialogo, sombra_elevado, sombra_flutuante, tam,
 };
 use crate::atualizacao::saude::Aviso;
 use crate::ui::atualizacao as atualizacao_ui;
@@ -253,6 +253,93 @@ fn legenda(texto: impl Into<SharedString>) -> Div {
 }
 
 impl Vitrine {
+    /// O metal líquido: o campo inteiro, o recorte contínuo, as aberturas que cobrem (sem véu, com
+    /// o véu de botão e com o de placa) e o aro em volta de um miolo opaco.
+    fn metal(&self, window: &Window, cx: &App) -> Div {
+        let rotulo = |nome: &'static str| div().flex().flex_col().gap(r(4.)).metadado().text_color(Cores::tenue()).child(nome);
+        // O ritmo de agora: em repouso o metal fica parado e nada redesenha.
+        let ritmo = if !movimento::anima(window, cx) {
+            "Metal parado: movimento reduzido ou janela sem foco."
+        } else if movimento::laco_agendado(window, cx) {
+            "Metal andando: um chat à vista está trabalhando (ou o ponteiro está no botão do menu)."
+        } else {
+            "Metal em repouso: parado, nada redesenha. Ele anda quando um chat à vista trabalha."
+        };
+        let peca = Corners::all(raio::PECA);
+        let cartao = Corners::all(raio::CARTAO);
+        let disco = Corners::all(raio::PILULA);
+        let placa = |veu: Option<Hsla>| div().relative().w(r(300.)).h(r(52.)).child(metal::abertura(metal::Encaixe::Cobrir, veu, cartao));
+        let gota = |veu: Option<Hsla>| div().relative().flex_none().size(r(36.)).child(metal::abertura(metal::Encaixe::Cobrir, veu, disco));
+        let por_cima = || div().absolute().top_0().left_0().size_full().flex().items_center();
+        let campo = rotulo("campo (cobrir, sem véu)")
+            .child(div().relative().w(r(480.)).h(r(270.)).child(metal::abertura(metal::Encaixe::Cobrir, None, peca)));
+        let continuo = rotulo("recorte contínuo: o pedaço da chapa que está atrás")
+            .child(div().relative().w(r(480.)).h(r(64.)).child(metal::abertura(metal::Encaixe::Continuo, None, cartao)));
+        let placas = div()
+            .flex()
+            .flex_col()
+            .gap(r(12.))
+            .child(rotulo("placa sem véu: nada escrito").child(placa(None)))
+            .child(
+                rotulo("placa com o véu de botão: só ícone branco").child(
+                    placa(Some(Cores::veu_de_botao()))
+                        .child(por_cima().px(r(16.)).child(Icon::new(Lucide::Plus).size(r(16.)).text_color(Cores::sobre_destaque()))),
+                ),
+            )
+            .child(
+                rotulo("placa com o véu de placa: forte e texto").child(
+                    placa(Some(Cores::veu_de_placa())).child(
+                        por_cima()
+                            .px(r(16.))
+                            .gap(r(8.))
+                            .child(div().titulo_cartao().text_color(Cores::forte()).child("Vitral"))
+                            .child(div().metadado().text_color(Cores::texto()).child("4 projetos")),
+                    ),
+                ),
+            );
+        let gotas = rotulo("gotas: sem véu, véu de botão, véu de placa").child(
+            fileira()
+                .gap(r(12.))
+                .child(gota(None))
+                .child(
+                    gota(Some(Cores::veu_de_botao()))
+                        .child(por_cima().justify_center().child(Icon::new(Lucide::ArrowUp).size(r(16.)).text_color(Cores::sobre_destaque()))),
+                )
+                .child(gota(Some(Cores::veu_de_placa()))),
+        );
+        let aro = rotulo("aro de metal (2 px) em volta de um miolo opaco").child(
+            div().p(r(4.)).child(
+                div()
+                    .relative()
+                    .w(r(300.))
+                    .h(r(64.))
+                    .child(metal::aro_de_metal(raio::PECA, px(2.), 1.))
+                    .child(
+                        div()
+                            .relative()
+                            .size_full()
+                            .rounded(raio::PECA)
+                            .bg(Cores::cartao_elevado())
+                            .flex()
+                            .items_center()
+                            .px(r(16.))
+                            .text_color(Cores::tenue())
+                            .child("é aqui"),
+                    ),
+            ),
+        );
+        secao("Metal líquido").child(legenda(ritmo)).child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_start()
+                .gap(r(24.))
+                .child(div().flex().flex_col().gap(r(12.)).child(campo).child(continuo))
+                .child(placas)
+                .child(div().flex().flex_col().gap(r(16.)).child(gotas).child(aro)),
+        )
+    }
+
     fn tipografia(&self, window: &mut Window, cx: &mut App) -> Div {
         quatro("tipo", "Texto e cores", window, cx, |_, _, _| {
             let niveis = [
@@ -277,7 +364,9 @@ impl Vitrine {
                 .gap(r(4.))
                 .child(div().titulo_tela().child("Título de tela 18/600"))
                 .child(div().titulo_cartao().child("Título de cartão 15/600"))
-                .child(div().rotulo_secao().child("Rótulo de seção 12/600"))
+                .child(etiqueta_de_secao("Rótulo de seção, mono 11"))
+                .child(div().etiqueta().text_color(Cores::tenue()).child("etiqueta mono 11/14 · 0123456789"))
+                .child(div().titulo_heroi().child("Título herói 28/34"))
                 .child(div().corpo().child("Corpo 15/23 da conversa"))
                 .child(div().corpo_ui().child("Corpo da interface 14/20"))
                 .child(div().rotulo().child("Rótulo 13/500"))
@@ -455,14 +544,17 @@ impl Vitrine {
                     .px(esp::FLUTUANTE)
                     .flex()
                     .items_center()
+                    .relative()
                     .rounded(raio::PECA)
                     .bg(gradiente_quente())
                     .border_1()
                     .border_color(borda)
-                    .shadow(vec![linha_de_luz(1.), halo_suave(forca)])
+                    .shadow(vec![linha_de_luz(1.)])
                     .corpo_ui()
                     .text_color(Cores::tenue())
-                    .child("Mensagem para este chat…"),
+                    .child("Mensagem para este chat…")
+                    // O foco são as cantoneiras azuis, sem halo.
+                    .when(forca > 0., |s| s.child(cantoneiras(raio::PECA, 12., Cantos::Diagonal, forca))),
             )
             .child(botao("mov-foco", "Focar / tirar o foco", window, cx).on_click(mudar(|v| v.focada = !v.focada)))
             .child(
@@ -583,7 +675,6 @@ impl Vitrine {
             .p(esp::E12)
             .rounded(raio::PECA)
             .bg(Cores::cartao())
-            .reflexo(raio::PECA)
             .child(cartao_equipe("#4 Mostrar o desconto", "12 da borda ao título, 8 entre as linhas"))
             .child(div().mt(esp::E8).child(cartao_equipe("#5 Validar o cupom", "8 entre os cartões")))
             .child(
@@ -605,7 +696,8 @@ impl Vitrine {
                     .mt(r(-6.))
                     .child(CabecalhoDeSecao::new("Decisões").recolhivel(false, |_, _| {}).recuo(12.).respiro(4.)),
             )
-            .child(guia(esp::GUIA_EQUIPE, Cores::destaque().opacity(0.6)));
+            .child(guia(esp::GUIA_EQUIPE, Cores::destaque().opacity(0.6)))
+            .aresta_de_vidro(raio::PECA);
         let bloco = |nome: &'static str, fundo: bool| {
             div()
                 .p(dentro_da_borda(12.))
@@ -1230,6 +1322,15 @@ impl Vitrine {
                             (Lucide::Zap.into(), Cores::tenue(), "modo rápido"),
                         ])),
                 )
+                // A etiqueta de fio, a segunda voz.
+                .child(
+                    fileira()
+                        .child(Etiqueta::new("loja").icone(Lucide::Folder))
+                        .child(Etiqueta::new("t4-aplicar-cupom").icone(Lucide::GitBranch))
+                        .child(Etiqueta::new("direto").tom(Cores::ambar()))
+                        .child(Etiqueta::new("revisar").tom(Cores::ambar()).baixa())
+                        .child(Etiqueta::new("00:04").fundo()),
+                )
                 .child(
                     fileira()
                         .child(selo_gravidade("alta"))
@@ -1260,11 +1361,11 @@ impl Vitrine {
                         .child(Anel::new(id("anel-cor", 1), 0.6).cor(Marca::Codex.cor()).diametro(28.).espessura(2.))
                         .child(legenda(format!("{} e {}", Marca::Claude.nome(), Marca::Codex.nome()))),
                 )
-                .child(fileira().children([20., 22., 28., 36.].iter().enumerate().map(|(i, d)| {
+                .child(fileira().children([20., 28., 36., 44.].iter().enumerate().map(|(i, d)| {
                     Anel::new(id("anel-d", i), 0.42)
                         .diametro(*d)
-                        .when(*d >= 28., |a| a.centro(div().micro().child("42")))
-                })))
+                        .when(*d >= 36., |a| a.centro(div().micro().child("42%")))
+                })).child(AnelGirando::new(12.)).child(AnelGirando::new(20.).cor(Cores::texto())))
                 .child(
                     fileira()
                         .child(AnelDeUso::new(id("uso", 0), Marca::Claude, Some(0.23)).semana(Some(0.41)))
@@ -1470,7 +1571,7 @@ impl Vitrine {
         um("Diálogos", cx, div().flex().flex_col().gap(r(16.)).child(estatico).child(botoes).child(tela))
     }
 
-    fn medidas(&self, cx: &mut App) -> Div {
+    fn medidas(&self, window: &mut Window, cx: &mut App) -> Div {
         let alturas = [
             ("mini", altura::MINI),
             ("ação de linha", altura::ACAO_LINHA),
@@ -1503,7 +1604,9 @@ impl Vitrine {
             .child(amostra("flutuante").bg(Cores::flutuante()).shadow(sombra_flutuante()))
             .child(amostra("diálogo").bg(Cores::dialogo()).shadow(sombra_dialogo()))
             .child(amostra("preto").bg(Cores::preto()).border_1().border_color(Cores::borda()))
-            .child(amostra("recuo").bg(Cores::recuo()).shadow(sombra_recuo()))
+            .child(amostra("vidro (aresta)").relative().bg(Cores::cartao()).child(camada_de_aresta(raio::CARTAO)))
+            .child(amostra("tecla").bg(Cores::hover()).shadow(aresta_de_tecla()))
+            .child(amostra("poço").bg(Cores::recuo()).shadow(aresta_de_poco()))
             .child(amostra("grupo").bg(Cores::grupo()).border_1().border_color(Cores::borda()))
             .child(amostra("véu").bg(Cores::veu()))
             .child(
@@ -1516,6 +1619,35 @@ impl Vitrine {
                     .shadow(vec![BoxShadow::new(px(0.), px(6.), Cores::sombra_caixa()).blur_radius(px(10.))])
                     .child(div().absolute().top_0().left_0().size_full().rounded(raio::PECA - px(1.)).bg(Cores::caixa_brilho())),
             );
+        // A retícula comum: trama, fio de pontos (deitado e em pé) e hachura.
+        let textura = |nome: &'static str| {
+            div().flex().flex_col().gap(r(4.)).child(nome).metadado().text_color(Cores::tenue())
+        };
+        let texturas = fileira()
+            .gap(r(16.))
+            .items_start()
+            .child(textura("trama fina").child(div().size(r(96.)).rounded(raio::CARTAO).bg(Cores::cartao()).child(div().size_full().rounded(raio::CARTAO).bg(trama(Cores::pontilhado_fino(), window)))))
+            .child(textura("trama escura").child(div().size(r(96.)).rounded(raio::CARTAO).bg(trama(Cores::preto_puro().opacity(0.28), window))))
+            .child(
+                textura("fio de pontos").child(
+                    div()
+                        .w(r(160.))
+                        .h(r(96.))
+                        .flex()
+                        .gap(r(16.))
+                        .child(div().w(r(96.)).flex().flex_col().justify_center().child(fio_de_pontos(Cores::fio(), window)))
+                        .child(fio_de_pontos_em_pe(Cores::fio(), window)),
+                ),
+            )
+            .child(
+                textura("hachura").child(
+                    div()
+                        .w(r(160.))
+                        .flex()
+                        .flex_col()
+                        .children((0..4).map(|_| div().h(r(20.)).bg(hachura(Cores::vermelho().opacity(0.24), tam(window, 20.), window)))),
+                ),
+            );
         let conteudo = div()
             .flex()
             .flex_col()
@@ -1525,6 +1657,7 @@ impl Vitrine {
             })))
             .child(fileira().children(espacos.map(|e| div().w(e).h(r(16.)).bg(Cores::destaque()))))
             .child(superficies)
+            .child(texturas)
             .child(legenda(format!(
                 "{} · {} · {} · {} · {}",
                 formatar_custo(0.42),
@@ -1560,6 +1693,8 @@ impl Vitrine {
 impl Render for Vitrine {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::ui::contar_quadro();
+        // Antes de tudo: é aqui que o tempo do metal anda e a próxima batida é marcada.
+        let chapa = metal::fundo(false, Corners::default(), window, cx);
         let tema = cx.theme();
         let fonte = tema.font_family.clone();
         let cor = tema.foreground;
@@ -1597,6 +1732,7 @@ impl Render for Vitrine {
             .flex()
             .flex_col()
             .gap(r(32.))
+            .child(self.metal(window, cx))
             .child(self.atualizacoes(window, cx))
             .child(self.tipografia(window, cx))
             .child(self.chips(window, cx))
@@ -1617,17 +1753,29 @@ impl Render for Vitrine {
             .child(self.base(window, cx))
             .child(self.paineis(window, cx))
             .child(self.dialogos(window, cx))
-            .child(self.medidas(cx))
+            .child(self.medidas(window, cx))
             .child(self.codigo(cx));
+        // A vitrine é uma peça só sobre a chapa de metal, como a lista do app: a fresta em volta
+        // mostra o metal cru, e o "vidro" das amostras é o fumê da lista.
         div()
             .size_full()
-            .flex()
-            .flex_col()
             .font_family(fonte)
             .text_color(cor)
+            .child(chapa)
             .child(zoom::captura_roda())
             .children(zoom::pilula(cx))
-            .child(topo)
-            .child(corpo)
+            .child(
+                div().size_full().p(crate::tema::margem_da_janela()).child(
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .rounded(crate::tema::raio_da_peca())
+                        .bg(Cores::vidro_leitura())
+                        .overflow_hidden()
+                        .child(topo)
+                        .child(corpo),
+                ),
+            )
     }
 }

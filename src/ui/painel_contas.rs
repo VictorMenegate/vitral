@@ -349,7 +349,7 @@ fn passo(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
+        .rounded(crate::tema::raio::de(22.))
         .text_size(r(12.))
         .font_semibold()
         .map(|c| match estado {
@@ -437,7 +437,7 @@ impl Render for PainelContas {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_full()
+                        .rounded(crate::tema::raio::de(36.))
                         .bg(Cores::hover())
                         .text_color(Cores::tenue())
                         .child(icone(Lucide::Shuffle, 18., window))

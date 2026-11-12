@@ -697,6 +697,8 @@ impl Motor {
                     m.versao_claude = versao;
                     cx.notify();
                 }
+                // E os modelos que ele oferece: o seletor acompanha o Claude Code sozinho.
+                m.reler_modelos_do_claude(cx);
             });
         })
         .detach();
@@ -3294,9 +3296,25 @@ impl Motor {
             let _ = motor.update(cx, |m, cx| {
                 if versao.is_some() && m.versao_claude != versao {
                     m.versao_claude = versao;
+                    // Versão nova do Claude Code pode trazer modelo novo.
+                    m.reler_modelos_do_claude(cx);
                     cx.notify();
                 }
             });
+        })
+        .detach();
+    }
+
+    /// Pergunta de novo ao Claude Code quais modelos ele oferece (em segundo plano, cerca de 1 s) e
+    /// redesenha se a lista mudou: ao abrir o app e quando a versão dele muda.
+    pub fn reler_modelos_do_claude(&self, cx: &mut Context<Self>) {
+        // A pergunta roda numa pasta vazia do cache do Vitral, e não na temporária do sistema.
+        let pasta = self.dados.cache.join("perguntas");
+        cx.spawn(async move |motor, cx| {
+            let mudou = cx.background_spawn(async move { claude::atualizar_modelos_oferecidos(&pasta) }).await;
+            if mudou {
+                let _ = motor.update(cx, |_, cx| cx.notify());
+            }
         })
         .detach();
     }
@@ -3930,6 +3948,7 @@ impl Motor {
                     return;
                 }
                 let resumo = claude::resumo_ferramenta(&nome, &entrada);
+                let (detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
                 self.chats_sujos.insert(chat_id.to_string());
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.itens.push(Item::Ferramenta {
@@ -3939,6 +3958,8 @@ impl Motor {
                         resultado: None,
                         erro: false,
                         em: agora(),
+                        detalhe,
+                        arquivo,
                     });
                 }
             }

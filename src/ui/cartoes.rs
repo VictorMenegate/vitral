@@ -10,8 +10,8 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        CartaoDeLista, Papel as Quem, QuadradoDeProjeto, Selo, Sinal, Simbolo, TamanhoBotao, Tom, aviso, botao_fantasma,
-        botao_icone, botao_primario, contagem, pilula_da_tarefa,
+        CartaoDeLista, EstadoDaMoldura, Papel as Quem, QuadradoDeProjeto, Selo, Sinal, Simbolo, TamanhoBotao, Tom, aviso,
+        azulejo, botao_fantasma, botao_icone, botao_primario, contagem, miolo_da_moldura, moldura_dupla, pilula_da_tarefa,
     },
     icone_projeto, painel_pr,
 };
@@ -21,7 +21,7 @@ use crate::{
         SugestaoProjeto, Tarefa, TipoCartao,
     },
     motor::{Motor, PrecisaDeVoce},
-    tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio, sombra_elevado},
+    tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
 };
 
 /// Uma linha do que o Mestre espera de você: um cartão aberto ou um par de chats parado no freio
@@ -203,18 +203,19 @@ fn simbolo_do_projeto(motor: &Motor, projeto: &str, lado: f32) -> AnyElement {
     QuadradoDeProjeto::new(icone, cor, lado).into_any_element()
 }
 
-/// A moldura de um cartão aberto: o elevado com a borda na tinta da cor.
-fn moldura(cor: Hsla) -> Div {
-    v_flex()
-        .w_full()
-        .rounded(raio::CARTAO)
-        .bg(Cores::cartao_elevado())
-        .border_1()
-        .border_color(Cores::tinta_borda(cor))
-        .shadow(sombra_elevado())
+/// O cartão aberto, esperando decisão, em moldura dupla (a mesma dos pedidos de permissão): este é
+/// o miolo de raio 16; a moldura de fora entra pelo `emoldurar`, no fim da montagem. A cor vai no
+/// ícone do azulejo do `cabecalho`.
+fn moldura(_cor: Hsla) -> Div {
+    miolo_da_moldura()
 }
 
-/// O cabeçalho tingido: o ícone na cor, o título e, embaixo, o detalhe.
+/// A moldura de fora do cartão aberto que espera você (metal na integração, ver `moldura_dupla`).
+fn emoldurar(cartao: Div) -> Div {
+    moldura_dupla(EstadoDaMoldura::Esperando).child(cartao)
+}
+
+/// O cabeçalho de azulejo, sem a faixa tingida: o ícone na cor, o título e, embaixo, o detalhe.
 fn cabecalho(icone: Lucide, cor: Hsla, titulo: impl Into<SharedString>, detalhe: Option<String>) -> Div {
     h_flex()
         .flex_none()
@@ -222,9 +223,7 @@ fn cabecalho(icone: Lucide, cor: Hsla, titulo: impl Into<SharedString>, detalhe:
         .px(dentro_da_borda(12.))
         .py(esp::E6)
         .gap(esp::E8)
-        .bg(Cores::tinta(cor))
-        .rounded_t(raio::CARTAO - px(1.))
-        .child(Icon::new(icone).size(r(16.)).flex_none().text_color(if cor == Cores::destaque() { Cores::destaque_texto() } else { cor }))
+        .child(azulejo(icone, if cor == Cores::destaque() { Cores::destaque_texto() } else { cor }))
         .child(
             v_flex()
                 .flex_1()
@@ -425,6 +424,7 @@ impl Janela {
             .child(v_flex().gap(esp::E4).px(dentro_da_borda(8.)).pt(esp::E8).children(partes))
             .children(perguntas)
             .child(rodape().child(descartar).child(div().flex_1()).child(ajustar).child(comecar))
+            .map(emoldurar)
             .into_any_element()
     }
 
@@ -629,6 +629,7 @@ impl Janela {
                     .child(div().metadado().text_color(Cores::tenue()).child(format!("Pastas: {pastas}"))),
             )
             .child(rodape().child(div().flex_1()).child(agora_nao).child(criar))
+            .map(emoldurar)
             .into_any_element()
     }
 
@@ -663,6 +664,7 @@ impl Janela {
                     .child(texto.trim().to_string()),
             )
             .child(rodape().child(div().flex_1()).child(nao).child(lembrar))
+            .map(emoldurar)
             .into_any_element()
     }
 
@@ -1043,6 +1045,7 @@ impl Janela {
                     .child(botao_fantasma(("confirmar-nao", cartao as usize), None, "Agora não", TamanhoBotao::Barra, window, cx).on_click(decidir(false)))
                     .child(botao_primario(("confirmar-sim", cartao as usize), None, "Confirmar", TamanhoBotao::Barra, window, cx).on_click(decidir(true))),
             )
+            .map(emoldurar)
             .into_any_element()
     }
 }
@@ -1065,7 +1068,7 @@ pub(super) fn selo_do_mestre_no_chat(id: SharedString, dica: String, cx: &Contex
         .id(id)
         .flex_none()
         .cursor_pointer()
-        .rounded_full()
+        .rounded(raio::de(20.))
         .hover(|s| s.bg(Cores::hover()))
         .child(Selo::cor("do Mestre ↩", Cores::destaque_texto()).icone(Lucide::Orbit, Cores::destaque_texto()))
         .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
@@ -1120,7 +1123,7 @@ mod testes {
             assistente("Divisão mostrada."),
             entrega("A divisão 3 terminou: chat 12 juntado."),
             entrega("Chat 12 entregou e foi juntado sozinho."),
-            Item::Ferramenta { id: "t".into(), nome: "mcp__vitral__estado".into(), resumo: "estado".into(), resultado: None, erro: false, em: 0 },
+            Item::Ferramenta { id: "t".into(), nome: "mcp__vitral__estado".into(), resumo: "estado".into(), resultado: None, erro: false, em: 0, detalhe: None, arquivo: None },
             assistente("Olhando."),
             assistente("Resumo por projeto: Ninee pronto."),
             entrega("Outra coisa do Vitral."),

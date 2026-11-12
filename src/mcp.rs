@@ -225,6 +225,7 @@ pub const ACESSO: &[(&str, &[Papel])] = &[
     ("propor_divisao", &[M]),
     ("sugerir_projeto", &[M]),
     ("criar_tarefa", &[P]),
+    ("abrir_chat", &[P]),
     ("ver_diff", &[M, P]),
     ("pedir_ajuste", &[M, P]),
     ("aprovar_tarefa", &[M, P]),
@@ -427,6 +428,19 @@ fn definicao(nome: &str, papel: Papel) -> Option<Value> {
                 "modelo": { "type": "string", "description": "modelo do ajudante (fable, opus, sonnet, haiku). Opcional." },
             }),
             &["titulo", "objetivo", "criterios"],
+        ),
+        "abrir_chat" => ferramenta(
+            "abrir_chat",
+            "Abre um chat novo, à vista do usuário, para um assunto que não é o desta conversa, já com o pedido \
+             enviado. Só quando o usuário pedir (\"abre um chat para isso\"). Ele trabalha sozinho, na cópia \
+             dele, e o usuário continua a conversa por lá; nada volta para você sozinho (para combinar algo, \
+             use mensagem_para_chat com o número devolvido). Para dividir o SEU pedido em partes, use criar_tarefa.",
+            json!({
+                "titulo": { "type": "string", "description": "curto, vira o título do chat" },
+                "pedido": { "type": "string", "description": "o pedido completo, com todo o contexto (o chat novo não vê esta conversa)" },
+                "projeto": { "type": "string", "description": "nome, #chave ou id de outro projeto. Opcional: sem ele, o chat nasce no seu projeto." },
+            }),
+            &["titulo", "pedido"],
         ),
         "ver_diff" if mestre => ferramenta(
             "ver_diff",
@@ -710,8 +724,8 @@ mod testes {
         assert_eq!(
             nomes(Papel::Projeto),
             [
-                "listar_chats", "mensagem_para_chat", "permissao", "criar_tarefa", "ver_diff", "pedir_ajuste",
-                "aprovar_tarefa", "cancelar_tarefa", "anotar_decisao", "informar_progresso", "entregar_tarefa",
+                "listar_chats", "mensagem_para_chat", "permissao", "criar_tarefa", "abrir_chat", "ver_diff",
+                "pedir_ajuste", "aprovar_tarefa", "cancelar_tarefa", "anotar_decisao", "informar_progresso", "entregar_tarefa",
                 "perguntar_coordenador", "revisar_minhas_mudancas"
             ]
         );
@@ -737,7 +751,7 @@ mod testes {
             assert!(mestre.contains(&nome.to_string()), "{nome}");
             assert!(pode(Papel::Mestre, nome, false), "{nome}");
         }
-        for nome in ["permissao", "criar_tarefa", "listar_tarefas", "entregar_tarefa", "informar_progresso", "revisar_minhas_mudancas"] {
+        for nome in ["permissao", "criar_tarefa", "abrir_chat", "listar_tarefas", "entregar_tarefa", "informar_progresso", "revisar_minhas_mudancas"] {
             assert!(!pode(Papel::Mestre, nome, false), "{nome}");
         }
         assert!(!pode(Papel::Projeto, "propor_divisao", false) && pode(Papel::Projeto, "aprovar_tarefa", false));

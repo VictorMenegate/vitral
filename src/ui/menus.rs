@@ -262,8 +262,9 @@ pub(super) fn itens_da_copia(
     })
 }
 
-/// A parte mínima do menu da conversa (F33): abrir ao lado, renomear, fixar, arquivar e abrir a
-/// pasta dela fora do app. Exportar e continuar no terminal entram com o F33 inteiro. Sem
+/// A parte mínima do menu da conversa (F33): abrir ao lado, renomear, mover para projeto, fixar
+/// e arquivar. Abrir a pasta no VS Code e no terminal saíram daqui a pedido do dono (12/11/2026).
+/// Exportar e continuar no terminal entram com o F33 inteiro. Sem
 /// `ao_lado` (o "⋯" do próprio painel, que já tem "Nova conversa ao lado"), começa no renomear.
 pub(super) fn menu_conversa(
     menu: PopupMenu,
@@ -296,15 +297,10 @@ pub(super) fn menu_conversa(
             })
             .item(acao("Memória do Mestre…", Lucide::Brain, &janela, |this, window, cx| this.dialogo_memoria(window, cx)));
     }
-    let (fixado, arquivado, pasta) = (c.fixado, c.arquivado, c.cwd.clone());
+    let (fixado, arquivado) = (c.fixado, c.arquivado);
     // Arquivada com o projeto: quem volta é o projeto.
     let do_arquivado = (!arquivado && motor.read(cx).projeto_arquivado(&c.projeto))
         .then(|| (c.projeto.clone(), motor.read(cx).nome_do_projeto(&c.projeto)));
-    let porta = c
-        .tarefa
-        .filter(|_| c.papel == Papel::Trabalhador)
-        .and_then(|t| motor.read(cx).tarefa(t))
-        .map(crate::motor::porta_de);
     let cabe = janela
         .upgrade()
         .map(|j| {
@@ -369,6 +365,4 @@ pub(super) fn menu_conversa(
             },
         )),
     })
-    .separator()
-    .map(|menu| itens_fora_do_app(menu, pasta, porta, false))
 }

@@ -8,6 +8,7 @@ use gpui_kit::*;
 
 use super::base::Simbolo;
 use super::estado::{Sinal, numero_painel};
+use super::metal::aro_de_metal;
 use super::superficies::Flutuante as _;
 use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam};
 
@@ -124,12 +125,14 @@ impl Aba {
     }
 
     pub fn construir(self, window: &Window, _: &App) -> Stateful<Div> {
+        // A aba do chat tem fundo sempre (pedido do dono, 12/11/2026), e opaco: é o miolo do aro
+        // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem.
         let (fundo, texto, borda) = match self.tom {
-            TomAba::Unica => (Cores::linha(), Cores::texto(), transparent_black()),
-            TomAba::Ativa => (Cores::selecao(), Cores::forte(), transparent_black()),
-            TomAba::Inativa => (transparent_black(), Cores::tenue(), transparent_black()),
+            TomAba::Unica => (Cores::tinta_solida(Cores::forte(), 0.08), Cores::forte(), transparent_black()),
+            TomAba::Ativa => (Cores::tinta_solida(Cores::forte(), 0.11), Cores::forte(), transparent_black()),
+            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
             TomAba::Selecionada => (Cores::cartao_elevado(), Cores::forte(), Cores::borda()),
-            TomAba::Normal => (transparent_black(), Cores::tenue(), transparent_black()),
+            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
         };
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
@@ -143,7 +146,7 @@ impl Aba {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(raio::PILULA)
+                .rounded(raio::de(20.))
                 .text_color(Cores::tenue())
                 .cursor_pointer()
                 .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
@@ -185,19 +188,21 @@ impl Aba {
             .max_w(r(400.))
             .min_w_0()
             .px(r(8.))
-            .rounded(raio::PILULA)
-            .bg(fundo)
+            .relative()
+            .rounded(raio::de(32.))
             .border_1()
             .border_color(borda)
             .text_color(texto)
             .map(|s| match self.tom {
-                TomAba::Unica => s.hover(|s| s.bg(Cores::hover())),
-                TomAba::Inativa | TomAba::Normal => s.hover(|s| s.bg(Cores::hover()).text_color(Cores::texto())),
-                TomAba::Ativa | TomAba::Selecionada => s,
+                TomAba::Inativa | TomAba::Normal => s.hover(|s| s.text_color(Cores::texto())),
+                TomAba::Unica | TomAba::Ativa | TomAba::Selecionada => s,
             })
-            .when(self.arrastando, |s| {
-                s.opacity(0.45).bg(transparent_black()).border_dashed().border_color(Cores::borda_forte())
+            // O aro de metal (só com o ponteiro em cima) e, por cima dele, o miolo opaco da aba.
+            .when(!self.arrastando, |s| {
+                s.child(aro_de_metal(raio::de(32.), px(2.), 1.).invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
+                    .child(div().absolute().inset_0().rounded(raio::de(32.)).bg(fundo))
             })
+            .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
                 s.track_focus(&foco)
                     .tab_index(0)

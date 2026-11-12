@@ -122,7 +122,7 @@ impl RenderOnce for CirculoDePapel {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_full()
+            .rounded(raio::de(self.lado))
             .bg(if mestre { Cores::tinta(Cores::destaque()) } else { Cores::hover() })
             .text_color(if mestre { Cores::destaque_texto() } else { Cores::tenue() })
             .child(icone(self.papel.icone(), (self.lado * 0.5).max(12.), window))

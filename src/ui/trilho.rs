@@ -28,8 +28,8 @@ use super::{
     componentes::{
         BotaoRedondo, Confirmacao, EventoEscolha, Flutuante as _, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha,
         PreviaArrasto, QuadradoDeProjeto, Selo, Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao,
-        VarianteRedonda, anel_do_pulso, aviso, botao_fantasma, cabecalho_objeto_com_dica, confirmar, contagem,
-        rodape_menu_com_dica, sinal_do_projeto,
+        FASE_INICIAL_DA_MALHA, VarianteRedonda, anel_do_pulso, aviso, botao_fantasma, cabecalho_objeto_com_dica, confirmar,
+        contagem, malha_viva, rodape_menu_com_dica, sinal_do_projeto,
     },
     icone_projeto,
     menus::itens_do_projeto,
@@ -44,12 +44,21 @@ use crate::{
     tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam},
 };
 
-/// O logo pequeno, desenhado para 16 a 32 px. Ele declara 32 px: o GPUI rasteriza o SVG no dobro
-/// do tamanho declarado e reduz na placa de vídeo sem mipmaps, e de 256 para 32 px o chumbo fino
-/// sairia serrilhado. Guardado uma vez só (o trilho redesenha a cada quadro).
+/// O logo pequeno (16 a 32 px na tela): o quadrado de metal líquido com o V, parado. É o PNG de
+/// 64 (o metal tem grão e não se descreve em vetor; os arquivos saem de `ferramentas/logo`).
+/// Guardado uma vez só (o trilho redesenha a cada quadro).
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
-    let svg = include_bytes!("../../assets/vitral-pequeno.svg");
-    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+    let png = include_bytes!("../../assets/vitral-64.png");
+    Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec()))
+});
+
+/// Só o V do logo (com uma sombra escura embaixo), para ir por cima da malha viva do botão do
+/// menu: lá o quadrado azul do logo é a própria malha. O V é o desenho que o dono mandou (uma gota
+/// à esquerda ligada por um pescoço fino à perna grossa da direita), tirado da imagem dele por
+/// `ferramentas/logo/rasterizar.py` (por isso PNG, de 256, e não SVG).
+static LOGO_V: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let png = include_bytes!("../../assets/vitral-v.png");
+    Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec()))
 });
 
 /// Medidas da peça a 100% (crescem com o zoom): largura e lugar de um projeto.
@@ -285,6 +294,15 @@ fn cabecalho_vitral(dados: &Path, projetos: usize) -> PopupMenuItem {
     cabecalho_objeto_com_dica(Simbolo::Imagem(LOGO.clone()), "Vitral", Some(quantos.into()), pasta_curta(dados))
 }
 
+/// A linha técnica do pé do menu do Vitral: a versão e o commit curto (ou o canal, no compilado
+/// no PC); a frase inteira fica na dica.
+fn linha_tecnica() -> String {
+    let commit = atualizacao::commit();
+    let curto = commit.get(..7).unwrap_or(commit);
+    let origem = if curto.is_empty() { atualizacao::canal() } else { curto };
+    format!("{} · {origem}", atualizacao::rotulo())
+}
+
 /// Um projeto no menu do modo recolhido.
 struct ProjetoNoMenu {
     id: String,
@@ -306,9 +324,11 @@ struct ProjetoArquivado {
 
 type ConstruirMenu = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
-/// O logo redondo: o medalhão ocupa o botão inteiro (sem disco atrás); no hover e com o menu
-/// aberto ganha um aro. No modo recolhido ele leva o selo do
-/// sino, que some junto com o trilho. Com uma versão nova pronta, um ponto azul de 8 embaixo.
+/// O botão do menu: o medalhão é a malha viva (o metal líquido da receita do dono) com o V branco
+/// por cima, e ocupa o botão inteiro (sem disco atrás); no hover e com o menu aberto ganha um aro,
+/// a malha passa do ritmo de repouso para o vivo e a luz dela segue o ponteiro. No modo recolhido
+/// ele leva o selo do sino, que some junto com o trilho. Com uma versão nova pronta, um ponto azul
+/// de 8 embaixo.
 #[derive(IntoElement)]
 struct BotaoLogo {
     lado: f32,
@@ -339,15 +359,23 @@ impl RenderOnce for BotaoLogo {
             let t = movimento::disparo(movimento::chave(&id, "pulso"), geracao, movimento::ENCHER, Curva::Sair, window, cx);
             t.map(|t| anel_do_pulso(cor, t))
         });
+        // A malha anda devagar em repouso e lisa com o ponteiro em cima ou o menu aberto.
+        let pairando = movimento::Hover::de(movimento::chave(&id, "pairando"), window, cx);
+        let vivo = pairando.ativo(cx) || self.aberto;
+        let ritmo = if vivo { movimento::QPS_DO_LACO } else { movimento::QPS_EM_REPOUSO };
+        let fase = movimento::laco_a(window, cx, ritmo) + FASE_INICIAL_DA_MALHA;
         div()
             .id(id)
             .relative()
             .flex_none()
             .size(r(self.lado))
+            .on_hover(pairando.ouvinte())
             .flex()
             .items_center()
             .justify_center()
-            .rounded_full()
+            // O logo é um quadrado de cantos bem arredondados (o padrão `raio::de`): o aro do
+            // hover acompanha.
+            .rounded(raio::de(self.medalhao) + px(2.))
             .cursor_pointer()
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
@@ -362,7 +390,20 @@ impl RenderOnce for BotaoLogo {
                     Tooltip::new(dica.clone()).action(&AbrirMenuVitral, None).build(window, cx)
                 })
             })
-            .child(img(LOGO.clone()).flex_none().size(r(self.medalhao)))
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .size(r(self.medalhao))
+                    .child(div().absolute().top_0().left_0().size_full().child(malha_viva(
+                        fase,
+                        raio::de(self.medalhao),
+                        vivo && movimento::anima(window, cx),
+                    )))
+                    .child(img(LOGO_V.clone()).absolute().top_0().left_0().size_full())
+                    // A aresta de luz da tecla: o logo e o "+" são um par.
+                    .child(div().absolute().inset_0().rounded(raio::de(self.medalhao)).shadow(crate::tema::aresta_de_tecla())),
+            )
             .children(pulso)
             .when_some(self.selo, |s, selo| {
                 s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo))
@@ -801,9 +842,13 @@ impl Janela {
             .and_then(|id| m.chat(id))
             .filter(|c| c.papel != Papel::Mestre)
             .map(|c| c.projeto.clone());
+        // Os projetos só aparecem se a opção pede, ou enquanto a lista está filtrada num deles (é
+        // por aqui que se volta à visão geral).
+        let com_projetos = m.config.fileira_de_projetos || self.vista != Vista::Geral;
         let atalhos: Vec<AnyElement> = projetos
             .iter()
             .enumerate()
+            .filter(|_| com_projetos)
             .map(|(ix, projeto)| {
                 self.atalho_projeto(ix, projeto, motor, atividades.get(projeto), do_painel.as_deref(), true, cx)
                     .into_any_element()
@@ -853,11 +898,45 @@ impl Janela {
             .gap(esp::E4)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
             .children(mestre)
-            .child(div().flex_none().h(r(20.)).w(px(1.)).mx(esp::E4).bg(Cores::traco()))
+            .when(com_projetos, |s| s.child(div().flex_none().h(r(20.)).w(px(1.)).mx(esp::E4).bg(Cores::traco())))
             .child(area)
-            .child(avulsos)
-            .child(self.botao_novo_projeto(projetos.is_empty(), cx))
+            .when(com_projetos, |s| s.child(avulsos).child(self.botao_novo_projeto(projetos.is_empty(), cx)))
+            // Na visão geral a lista não tem linha de título: o recolher fica aqui, na ponta.
+            .when(self.vista == Vista::Geral, |s| {
+                s.child(
+                    super::sem_arrastar().flex_none().child(
+                        super::componentes::botao_icone("recolher-lista", Lucide::PanelLeftClose, "Recolher a lista", super::componentes::TamanhoBotao::Barra, window, cx)
+                            .tooltip_with_action("Recolher a lista", &super::AlternarLista, None)
+                            .on_click(cx.listener(|this, _, window, cx| this.alternar_lista(window, cx))),
+                    ),
+                )
+            })
             .children(self.faixa_mover_para(m, cx))
+    }
+
+    /// A lista está no modo enxuto: a visão geral, sem a fileira dos projetos. O alto dela é uma
+    /// linha só (o logo e as abas Conversas e Arquivos), a busca e o "+" ficam no pé, o Mestre é a
+    /// primeira linha da lista e o recolher mora no menu do logo.
+    pub(super) fn lista_enxuta(&self, motor: &Motor) -> bool {
+        self.vista == Vista::Geral && !motor.config.fileira_de_projetos
+    }
+
+    /// O alto da lista enxuta: o logo (o menu do Vitral) e, ao lado, as abas Conversas e Arquivos.
+    pub(super) fn topo_enxuto(&self, motor: &Entity<Motor>, abas: Option<Div>, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let m = motor.read(cx);
+        let precisa = super::cartoes::precisa_com_o_mestre(m);
+        self.arrastavel_com_id("arrastar-trilho-deitado")
+            .on_mouse_down(MouseButton::Right, |evento, window, _| window.show_window_menu(evento.position))
+            .relative()
+            .flex()
+            .items_center()
+            .flex_none()
+            .w_full()
+            .h(r(LARGURA))
+            .px(esp::E4)
+            .gap(esp::E8)
+            .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
+            .children(abas.map(|abas| super::sem_arrastar().flex().flex_1().min_w_0().child(abas.flex_1().mb(r(0.)))))
     }
 
     /// Um lugar de 40 com o quadrado do projeto: abre o projeto na lista (ou volta à visão geral);
@@ -945,8 +1024,15 @@ impl Janela {
     fn botao_logo(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
         let construir = self.itens_menu(motor, compacto, precisa, cx);
         let janela = cx.entity().downgrade();
-        // O medalhão enche o botão; sobra só o aro de 2 do hover.
-        let (lado, medalhao) = if compacto { (32., 28.) } else { (44., 40.) };
+        // O logo enche o botão; sobra só o aro de 2 do hover. Na lista enxuta ele divide a linha
+        // com a busca e o "+", e os três têm a mesma altura à vista (36).
+        let (lado, medalhao) = if compacto {
+            (32., 28.)
+        } else if self.lista_enxuta(motor) {
+            (44., 40.)
+        } else {
+            (44., 40.)
+        };
         Popover::new("menu-vitral")
             .appearance(false)
             .overlay_closable(false)
@@ -1048,16 +1134,28 @@ impl Janela {
                 .item(cabecalho_vitral(&raiz, total))
                 .separator()
                 .when(compacto, |menu| itens_recolhido(menu, &janela, &precisa, &projetos, total))
+                // Com a lista à vista, recolhê-la é daqui (o "Mostrar a lista" é do menu recolhido).
+                .when(!compacto, |menu| {
+                    menu.item(
+                        item("Recolher a lista", Lucide::PanelLeftClose, &janela, |this, window, cx| {
+                            this.alternar_lista(window, cx)
+                        })
+                        .action(Box::new(AlternarLista)),
+                    )
+                })
                 .item(
                     item("Falar com o Mestre", Lucide::Orbit, &janela, |this, window, cx| this.abrir_mestre(window, cx))
                         .action(Box::new(AbrirMestre)),
                 )
                 .item(
-                    item("Novo chat…", Lucide::MessageSquarePlus, &janela, |this, window, cx| {
-                        this.dialogo_nova_conversa(window, cx)
+                    item("Novo chat", Lucide::MessageSquarePlus, &janela, |this, window, cx| {
+                        this.novo_chat_direto(window, cx)
                     })
                     .action(Box::new(NovaConversa)),
                 )
+                .item(item("Novo chat em outra pasta…", Lucide::FolderOpen, &janela, |this, window, cx| {
+                    this.dialogo_nova_conversa(window, cx)
+                }))
                 .item(
                     item("Novo projeto…", Lucide::FolderPlus, &janela, |this, window, cx| {
                         this.dialogo_criar_projeto(window, cx)
@@ -1116,7 +1214,7 @@ impl Janela {
                         .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&gerenciador, cx)),
                 )
                 .separator()
-                .item(rodape_menu_com_dica(atualizacao::rotulo(), atualizacao::origem()))
+                .item(rodape_menu_com_dica(linha_tecnica(), atualizacao::origem()))
         })
     }
 

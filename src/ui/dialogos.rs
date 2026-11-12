@@ -5,7 +5,7 @@
 use std::{cell::RefCell, path::{Path, PathBuf}, rc::Rc};
 
 use gpui_kit::component::{
-    Disableable as _, WindowExt as _,
+    Disableable as _, WindowExt as _, v_flex,
     dialog::Dialog,
     input::{Input, InputState, Textarea, TextareaState},
     tooltip::Tooltip,
@@ -17,7 +17,7 @@ use super::{
     Janela, Vista,
     componentes::{
         CabecalhoDialogo, Confirmacao, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, RodapeDialogo, Selo,
-        Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_primario, confirmar, contagem, desenho_teclas, largura,
+        Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_primario, confirmar, contagem, desenho_teclas, fio_de_pontos, largura,
         sinal_do_chat,
     },
     configuracoes::Configuracoes,
@@ -93,6 +93,8 @@ fn contas_conectadas(n: usize) -> String {
 const NOVO_PROJETO: &str = "\0novo";
 const CRIAR_PROJETO: &str = "\0criar:";
 const AVULSOS: &str = "\0avulsos";
+/// "Outra pasta…" na paleta do Novo chat: escolhe a pasta no disco e o chat nasce nela.
+const OUTRA_PASTA: &str = "\0outra-pasta";
 
 /// Para onde vai o Ctrl+N.
 #[derive(Clone, Debug, PartialEq)]
@@ -123,6 +125,17 @@ pub(super) fn alvo_do_ctrl_n(vista: &Vista, chat_ativo: Option<&str>, ultimo_des
     AlvoCtrlN::Paleta(marcado)
 }
 
+/// O nome do projeto que nasce de uma pasta: o dela e, se já existe (ou não serve), "loja 2",
+/// "loja 3"…
+fn nome_livre(base: &str, serve: impl Fn(&str) -> bool) -> String {
+    let base = base.trim();
+    let base = if base.is_empty() { "pasta" } else { base };
+    if serve(base) {
+        return base.to_string();
+    }
+    (2..100).map(|n| format!("{base} {n}")).find(|nome| serve(nome)).unwrap_or_else(|| format!("{base} {}", crate::modelo::novo_id()))
+}
+
 /// Um projeto na paleta de Nova conversa.
 struct ProjetoNaPaleta {
     id: String,
@@ -145,15 +158,21 @@ fn descricao_do_projeto(conversas: usize, ultima: Option<u64>) -> String {
     }
 }
 
-/// Os projetos que têm a busca no nome (ou na descrição), Avulsos e, no fim, "Novo projeto…"
-/// (ou, sem nenhum, "Criar o projeto “x”"), que o teclado também alcança.
+/// As pastas que já têm chat (os projetos, com a busca no nome ou na descrição), "Outra pasta…",
+/// que escolhe uma no disco, e "Sem pasta". Sem nada que bata com a busca, "Criar o projeto “x”".
+/// Quem quer um projeto montado à mão (várias pastas, ícone, instruções) usa o Novo projeto do menu.
 fn grupos_da_paleta(projetos: &[ProjetoNaPaleta], busca: &str) -> Vec<GrupoDeEscolha> {
     let busca = busca.trim();
     let termo = busca.to_lowercase();
-    let avulsos = "avulsos chat sem projeto".contains(&termo).then(|| ItemDeEscolha {
+    let avulsos = "sem pasta avulsos chat sem projeto".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
-        descricao: Some("Um chat sem projeto, numa pasta só dele".into()),
-        ..ItemDeEscolha::new(AVULSOS, "Avulsos")
+        descricao: Some("Só conversar: o chat ganha uma pasta vazia só dele".into()),
+        ..ItemDeEscolha::new(AVULSOS, "Sem pasta")
+    });
+    let outra = "outra pasta abrir escolher".contains(&termo).then(|| ItemDeEscolha {
+        simbolo: Some(Simbolo::icone(Lucide::FolderOpen)),
+        descricao: Some("Escolher uma pasta do computador".into()),
+        ..ItemDeEscolha::new(OUTRA_PASTA, "Outra pasta…")
     });
     let itens: Vec<ItemDeEscolha> = projetos
         .iter()
@@ -165,23 +184,61 @@ fn grupos_da_paleta(projetos: &[ProjetoNaPaleta], busca: &str) -> Vec<GrupoDeEsc
             ..ItemDeEscolha::new(p.id.clone(), p.nome.clone())
         })
         .collect();
-    let novo = if itens.is_empty() && avulsos.is_none() && !busca.is_empty() {
-        ItemDeEscolha::new(format!("{CRIAR_PROJETO}{busca}"), format!("Criar o projeto “{busca}”"))
-    } else {
-        ItemDeEscolha::new(NOVO_PROJETO, "Novo projeto…")
-    };
-    let novo = ItemDeEscolha { simbolo: Some(Simbolo::icone(Lucide::FolderPlus)), ..novo };
+    let criar = (itens.is_empty() && avulsos.is_none() && outra.is_none() && !busca.is_empty()).then(|| ItemDeEscolha {
+        simbolo: Some(Simbolo::icone(Lucide::FolderPlus)),
+        ..ItemDeEscolha::new(format!("{CRIAR_PROJETO}{busca}"), format!("Criar o projeto “{busca}”"))
+    });
     let mut grupos = Vec::new();
     if !itens.is_empty() {
-        grupos.push(GrupoDeEscolha { titulo: Some("Projetos".into()), itens });
+        grupos.push(GrupoDeEscolha { titulo: Some("Pastas".into()), itens });
     }
-    grupos.push(GrupoDeEscolha { titulo: None, itens: avulsos.into_iter().chain([novo]).collect() });
+    let resto: Vec<ItemDeEscolha> = outra.into_iter().chain(avulsos).chain(criar).collect();
+    if !resto.is_empty() {
+        grupos.push(GrupoDeEscolha { titulo: None, itens: resto });
+    }
     grupos
 }
 
 impl Janela {
     /// Ctrl+N: direto na vista de um projeto (com duas pastas, pergunta qual) e nos Avulsos; na
     /// visão geral, a paleta dos projetos, de Avulsos e do projeto novo.
+    /// O "+" e o Ctrl+N: um chat novo na hora, sem perguntar nada, como o "novo chat" do VS Code
+    /// (pedido do dono, 12/11/2026). Nasce na pasta do chat aberto (a mesma, se ela é uma das
+    /// ligadas ao projeto; senão, a principal do projeto); com o Mestre ou nada aberto, no último
+    /// destino. Só sem nenhum dos dois a paleta pergunta a pasta. Escolher outra pasta fica no
+    /// menu do logo ("Novo chat em outra pasta…").
+    pub(super) fn novo_chat_direto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let destino = {
+            let m = motor.read(cx);
+            let visiveis: Vec<String> = m.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
+            let existe = |p: &str| p.is_empty() || visiveis.iter().any(|x| x == p);
+            let aberto = self
+                .selecionado
+                .as_ref()
+                .and_then(|id| m.chat(id))
+                .filter(|c| c.id != crate::modelo::ID_MESTRE && existe(&c.projeto));
+            match aberto {
+                Some(c) => {
+                    let pasta =
+                        m.pastas_do(&c.projeto).iter().find(|p| !p.propria && p.caminho == c.cwd).map(|p| p.caminho.clone());
+                    Some((c.projeto.clone(), pasta))
+                }
+                None => self.ultimo_destino.clone().filter(|d| existe(d)).map(|d| (d, None)),
+            }
+        };
+        match destino {
+            Some((projeto, pasta)) => {
+                // O próximo chat novo, com o Mestre aberto, vai para onde este foi.
+                self.lembrar_destino(&projeto, cx);
+                self.nova_conversa_na_pasta(&projeto, pasta, window, cx);
+            }
+            None => self.dialogo_nova_conversa(window, cx),
+        }
+    }
+
     pub(super) fn dialogo_nova_conversa(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
@@ -205,10 +262,12 @@ impl Janela {
                 .map(|c| c.atualizado_em)
                 .collect();
             let (icone, cor) = icone_projeto::visual_do(m, id);
-            let descricao = m
-                .projeto(id)
-                .map(|p| p.descricao.lines().next().unwrap_or_default().trim().to_string())
-                .filter(|d| !d.is_empty())
+            // A pasta primeiro (é por ela que se escolhe); sem pasta ligada, a descrição ou as conversas.
+            let pasta = m.pastas_do(id).iter().find(|p| !p.propria).map(|p| com_til(&p.caminho));
+            let descricao = pasta
+                .or_else(|| {
+                    m.projeto(id).map(|p| p.descricao.lines().next().unwrap_or_default().trim().to_string()).filter(|d| !d.is_empty())
+                })
                 .unwrap_or_else(|| descricao_do_projeto(conversas.len(), conversas.iter().max().copied()));
             dados.push(ProjetoNaPaleta {
                 id: id.clone(),
@@ -223,21 +282,28 @@ impl Janela {
         let dados = Rc::new(dados);
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
+            let mut lista = ListaDeEscolha::new("Buscar pasta…", window, cx);
             lista.definir(grupos_da_paleta(&dados, ""), realce, cx);
             let filtro = dados.clone();
             lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, busca));
             lista.rodape(move |window, _| {
                 let largo = tam(window, 420.) < window.viewport_size().width - px(32.);
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(r(12.))
+                // O fio de pontos em cima das teclas, como no rodapé dos popovers da caixa.
+                v_flex()
                     .w_full()
-                    .child(div().flex_1())
-                    .when(largo, |s| {
-                        s.child(dica_teclas(&["↑", "↓"], "escolher")).child(dica_teclas(&["Enter"], "abrir"))
-                    })
+                    .gap(r(6.))
+                    .when(largo, |s| s.child(fio_de_pontos(Cores::fio(), window)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(r(12.))
+                            .w_full()
+                            .child(div().flex_1())
+                            .when(largo, |s| {
+                                s.child(dica_teclas(&["↑", "↓"], "escolher")).child(dica_teclas(&["Enter"], "abrir"))
+                            }),
+                    )
                     .into_any_element()
             });
             lista
@@ -249,6 +315,8 @@ impl Janela {
             window.close_dialog(cx);
             if chave.as_ref() == NOVO_PROJETO {
                 this.dialogo_criar_projeto(window, cx);
+            } else if chave.as_ref() == OUTRA_PASTA {
+                this.novo_chat_noutra_pasta(window, cx);
             } else if let Some(nome) = chave.strip_prefix(CRIAR_PROJETO) {
                 this.dialogo_projeto_novo(nome.to_string(), None, window, cx);
             } else {
@@ -262,7 +330,7 @@ impl Janela {
         window.open_dialog(cx, move |dialogo, window, _| {
             let fechou = janela.clone();
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Novo chat", Some("Em qual projeto?".into()))))
+                .title(topo(cabecalho("Novo chat", Some("Em qual pasta?".into()))))
                 .child(vista.clone())
                 .on_ok(|_, _, _| false)
                 // Fechado sem escolher (Esc, clique fora), "Nova conversa ao lado" não vale mais.
@@ -325,6 +393,48 @@ impl Janela {
                 .on_ok(|_, _, _| false)
         });
         lista.update(cx, |l, cx| l.abrir(window, cx));
+    }
+
+    /// "Outra pasta…": escolhe a pasta no disco e abre o chat nela. A pasta que já é de um projeto
+    /// usa esse projeto; a nova ganha um, com o nome dela, sem formulário (dá para editar depois).
+    fn novo_chat_noutra_pasta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let escolha = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Abrir o chat nesta pasta".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(caminhos))) = escolha.await else {
+                return;
+            };
+            let Some(pasta) = caminhos.into_iter().next() else {
+                return;
+            };
+            let existente = motor.read_with(cx, |m, _| m.projeto_da_pasta(&pasta).filter(|id| !m.projeto_arquivado(id)));
+            let projeto: Result<String, String> = match existente {
+                Some(id) => Ok(id),
+                None => {
+                    let criando = motor.update(cx, |m, cx| {
+                        let base = pasta.file_name().map_or_else(|| "pasta".to_string(), |n| n.to_string_lossy().to_string());
+                        let nome = nome_livre(&base, |nome| m.validar_nome(nome, None).is_ok());
+                        m.criar_projeto(crate::motor::NovoProjeto { nome, pastas: vec![pasta.clone()], ..Default::default() }, cx)
+                    });
+                    criando.await.map_err(|e| format!("{e:#}"))
+                }
+            };
+            let _ = this.update_in(cx, |this, window, cx| match projeto {
+                Ok(id) => {
+                    this.lembrar_destino(&id, cx);
+                    this.novo_chat_em(&id, window, cx);
+                }
+                Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Não deu para abrir o chat em {}: {erro}", com_til(&pasta))), cx),
+            });
+        })
+        .detach();
     }
 
     /// Grava o destino do último chat criado pela paleta (a próxima já vem marcada nele).
@@ -949,7 +1059,7 @@ mod testes {
     // Só o que é preciso: o `use gpui_kit::*` lá de cima traz um `test` que troca o da std.
     use super::{
         AVULSOS, AlvoCtrlN, CRIAR_PROJETO, NOVO_PROJETO, ProjetoNaPaleta, alvo_do_ctrl_n, com_til, contas_conectadas,
-        descricao_do_projeto, grupos_da_paleta,
+        OUTRA_PASTA, descricao_do_projeto, grupos_da_paleta, nome_livre,
     };
     use crate::ui::Vista;
     use crate::{modelo::agora, ui::icone_projeto::ICONES};
@@ -989,10 +1099,13 @@ mod testes {
                 .flat_map(|g| g.itens.iter().map(|i| i.chave.to_string()))
                 .collect()
         };
-        assert_eq!(chaves(""), ["loja-api", "site-ninee", AVULSOS, NOVO_PROJETO]);
-        assert_eq!(chaves("NINEE"), ["site-ninee", NOVO_PROJETO]);
-        assert_eq!(chaves("avul"), [AVULSOS, NOVO_PROJETO]);
+        assert_eq!(chaves(""), ["loja-api", "site-ninee", OUTRA_PASTA, AVULSOS]);
+        assert_eq!(chaves("NINEE"), ["site-ninee"]);
+        assert_eq!(chaves("avul"), [AVULSOS]);
+        assert_eq!(chaves("sem pasta"), [AVULSOS]);
+        assert_eq!(chaves("outra"), [OUTRA_PASTA]);
         assert_eq!(chaves(" ops "), [format!("{CRIAR_PROJETO}ops")]);
+        assert_eq!(grupos_da_paleta(&projetos, "")[0].titulo.as_deref(), Some("Pastas"));
         let titulo = &grupos_da_paleta(&projetos, "ops")[0].itens[0].titulo;
         assert_eq!(titulo.as_ref(), "Criar o projeto “ops”");
     }
@@ -1013,6 +1126,15 @@ mod testes {
         assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some("loja"), Some("velho"), &projetos), AlvoCtrlN::Paleta(Some("loja".into())));
         assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, Some(""), &projetos), AlvoCtrlN::Paleta(Some(String::new())));
         assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, None, &projetos), AlvoCtrlN::Paleta(None));
+    }
+
+    #[test]
+    fn nome_do_projeto_que_nasce_da_pasta() {
+        let usados = ["loja", "loja 2"];
+        let serve = |nome: &str| !usados.contains(&nome);
+        assert_eq!(nome_livre("site", serve), "site");
+        assert_eq!(nome_livre("loja", serve), "loja 3");
+        assert_eq!(nome_livre("  ", serve), "pasta");
     }
 
     #[test]

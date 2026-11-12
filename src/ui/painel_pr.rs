@@ -288,9 +288,12 @@ pub enum LinkVitral {
     Pr { repositorio: String, numero: u64 },
     IssueLinear(String),
     IssueGithub { repositorio: String, numero: u64 },
+    /// Um arquivo citado na resposta (`links_arquivo`): o caminho inteiro e a linha.
+    Arquivo { caminho: String, linha: Option<u32> },
 }
 
-/// `vitral:pr/O/R/12`, `vitral:issue/linear/ENG-123` e `vitral:issue/github/O/R/45`.
+/// `vitral:pr/O/R/12`, `vitral:issue/linear/ENG-123`, `vitral:issue/github/O/R/45` e
+/// `vitral:arquivo/<linha>/<caminho em %XX>`.
 pub fn ler_link_vitral(url: &str) -> Option<LinkVitral> {
     let resto = url.trim().strip_prefix("vitral:")?;
     let partes: Vec<&str> = resto.split('/').collect();
@@ -300,8 +303,26 @@ pub fn ler_link_vitral(url: &str) -> Option<LinkVitral> {
         ["pr", o, r, n] => Some(LinkVitral::Pr { repositorio: repo(o, r)?, numero: numero(n)? }),
         ["issue", "linear", chave] if chave_linear(chave) => Some(LinkVitral::IssueLinear(chave.to_string())),
         ["issue", "github", o, r, n] => Some(LinkVitral::IssueGithub { repositorio: repo(o, r)?, numero: numero(n)? }),
+        ["arquivo", linha, caminho] => Some(LinkVitral::Arquivo {
+            caminho: super::links_arquivo::caminho_do_link(caminho)?,
+            linha: linha.parse::<u32>().ok().filter(|n| *n > 0),
+        }),
         _ => None,
     }
+}
+
+/// A pasta conhecida mais funda que contém o arquivo, e o caminho dele dentro dela (com "/").
+pub fn raiz_do_arquivo(arquivo: &std::path::Path, pastas: impl Iterator<Item = std::path::PathBuf>) -> Option<(std::path::PathBuf, String)> {
+    pastas
+        .filter(|p| !p.as_os_str().is_empty())
+        .filter_map(|p| dunce::canonicalize(&p).ok())
+        .filter(|p| arquivo.starts_with(p) && arquivo != p)
+        .max_by_key(|p| p.components().count())
+        .and_then(|raiz| {
+            let relativo = arquivo.strip_prefix(&raiz).ok()?;
+            let relativo = relativo.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+            Some((raiz, relativo))
+        })
 }
 
 /// "ENG-123": de 2 a 10 letras maiúsculas ou dígitos (começando por letra), o hífen e o número.
@@ -928,8 +949,41 @@ impl Janela {
                     cx,
                 )
             }
+            Some(LinkVitral::Arquivo { caminho, linha }) => self.abrir_arquivo_citado(&motor, std::path::Path::new(&caminho), linha, window, cx),
             None => {}
         }
+    }
+
+    /// O arquivo de um link da conversa: a imagem abre no visor; o resto, no painel da direita, na
+    /// linha. Só abre o que está numa pasta que o Vitral conhece (as ligadas aos projetos, a dos
+    /// chats e as cópias): o link vem do texto do assistente, e um caminho qualquer do disco não é
+    /// assunto da conversa.
+    fn abrir_arquivo_citado(&mut self, motor: &Entity<Motor>, caminho: &std::path::Path, linha: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
+        let Ok(inteiro) = dunce::canonicalize(caminho) else {
+            window.push_notification(aviso(Tom::Erro, format!("{} não existe mais", caminho.display())), cx);
+            return;
+        };
+        let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
+        if crate::claude::tipo_imagem(&inteiro).is_some()
+            && let Some(chat) = &chat
+        {
+            self.abrir_visor(chat, &inteiro, window, cx);
+            return;
+        }
+        let raiz = {
+            let m = motor.read(cx);
+            let pastas = m.projetos.iter().flat_map(|p| m.pastas_do(&p.id).iter().map(|l| l.caminho.clone()).collect::<Vec<_>>());
+            let dos_chats = m.chats.iter().map(|c| c.cwd.clone());
+            let copias = m.tarefas.iter().filter_map(|t| t.worktree.clone());
+            raiz_do_arquivo(&inteiro, pastas.chain(dos_chats).chain(copias))
+        };
+        let Some((raiz, relativo)) = raiz else {
+            window.push_notification(aviso(Tom::Atencao, "Esse arquivo fica fora das pastas dos projetos; abra pelo VS Code."), cx);
+            return;
+        };
+        self.arquivo_linha.set(linha);
+        self.arquivo_marcada.set(linha);
+        self.abrir_arquivo(raiz, relativo, window, cx);
     }
 
     /// A issue de um link vivo: a do chat do painel ativo abre no popover dele; outra, no navegador.
@@ -1003,10 +1057,11 @@ impl Janela {
             .flex()
             .flex_col()
             .rounded(crate::tema::raio_da_peca())
-            .when(!na_gaveta, |s| s.bg(Cores::cartao()).reflexo(crate::tema::raio_da_peca()))
+            .when(!na_gaveta, |s| s.bg(Cores::cartao()).shadow(crate::tema::sombra_flutuante()))
             .overflow_hidden()
             .child(barra)
             .child(corpo)
+            .when(!na_gaveta, |s| s.aresta_de_vidro(crate::tema::raio_da_peca()))
             .on_prepaint(self.medir_direita(cx))
             .into_any_element()
     }
@@ -2695,6 +2750,14 @@ mod testes {
         assert!(link_permitido("vitral:pr/o/r/12", Assistente));
         assert!(link_permitido("vitral:issue/linear/ENG-123", Assistente));
         assert!(!link_permitido("vitral:qualquer/coisa", Assistente));
+        assert!(link_permitido("vitral:arquivo/12/%2Fp%2Fa.rs", Assistente));
+        assert!(!link_permitido("vitral:arquivo/12/%2Fp%2Fa.rs", Terceiros));
+        assert!(!link_permitido("vitral:arquivo/12/", Assistente));
+        assert_eq!(
+            ler_link_vitral("vitral:arquivo/12/%2Fp%2Fa.rs"),
+            Some(LinkVitral::Arquivo { caminho: "/p/a.rs".into(), linha: Some(12) })
+        );
+        assert_eq!(ler_link_vitral("vitral:arquivo/0/a.rs"), Some(LinkVitral::Arquivo { caminho: "a.rs".into(), linha: None }));
         assert!(!link_permitido("https://", Terceiros));
         assert_eq!(ler_link_vitral("vitral:pr/o/r/12"), Some(LinkVitral::Pr { repositorio: "o/r".into(), numero: 12 }));
         assert_eq!(

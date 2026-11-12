@@ -17,8 +17,10 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
+use super::graficos::AnelGirando;
+use super::metal::{Encaixe, abertura, aro_de_metal};
 use super::superficies::desenho_teclas;
-use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, sombra_recuo, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
 
 /// O Copiar do kit (troca para o check por 2 s) em 24, crescendo com o zoom: o tamanho só se
@@ -50,10 +52,11 @@ const QUADRADO_PARAR: &[u8] =
 /// perguntar, e vermelho sem perguntar fora de uma cópia isolada.
 pub fn icone_do_modo(valor: &str, sem_copia: bool) -> (Icon, Hsla) {
     match valor {
-        "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::verde()),
-        "plan" => (Lucide::Map.into(), Cores::verde()),
-        "acceptEdits" => (Lucide::FilePen.into(), Cores::violeta()),
-        "auto" => (Lucide::WandSparkles.into(), Cores::violeta()),
+        // Os modos comuns são neutros; a cor fica para o que pede cuidado (o "Sem perguntar").
+        "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::tenue()),
+        "plan" => (Lucide::Map.into(), Cores::tenue()),
+        "acceptEdits" => (Lucide::FilePen.into(), Cores::tenue()),
+        "auto" => (Lucide::WandSparkles.into(), Cores::tenue()),
         _ if sem_copia => (Lucide::ShieldOff.into(), Cores::vermelho()),
         _ => (Lucide::ShieldOff.into(), Cores::ambar()),
     }
@@ -236,7 +239,7 @@ impl Chip {
         let mut botao = Button::new(self.id)
             .custom(variante)
             .h(r(altura))
-            .rounded(raio::PILULA)
+            .rounded(raio::de(altura))
             .border_1()
             .border_color(transparent_black())
             .map(|b| if self.so_icone { b.w(r(altura)).px_0() } else { b.px(r(8.)) })
@@ -399,7 +402,7 @@ fn montar(
     let so_icone = rotulo.is_none();
     botao
         .h(r(t.altura()))
-        .rounded(raio::PILULA)
+        .rounded(raio::de(t.altura()))
         .map(|b| {
             if so_icone {
                 b.w(r(t.altura())).px_0()
@@ -469,6 +472,24 @@ pub fn botao_primario(
     montar(Button::new(id).primary(), icone, Some(rotulo.into()), t, false, window)
 }
 
+/// Claro: o "Permitir" do pedido de permissão (base AI Tool Approval). Fundo claro e texto
+/// escuro, para o azul chapado não disputar com a moldura do pedido.
+pub fn botao_claro(
+    id: impl Into<ElementId>,
+    icone: Option<Icon>,
+    rotulo: impl Into<SharedString>,
+    t: TamanhoBotao,
+    window: &Window,
+    cx: &App,
+) -> Button {
+    let variante = ButtonCustomVariant::new(cx)
+        .color(Cores::claro())
+        .foreground(Cores::sobre_cor())
+        .hover(Cores::forte())
+        .active(Cores::texto());
+    montar(Button::new(id).custom(variante), icone, Some(rotulo.into()), t, false, window)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VarianteRedonda {
     /// Destaque com ícone branco (nova conversa).
@@ -480,6 +501,9 @@ pub enum VarianteRedonda {
     /// Sem fundo em repouso.
     Plano,
     Perigo,
+    /// Metal líquido debaixo de um véu, com o ícone branco: uma tecla em relevo (novo chat,
+    /// enviar). O par do logo.
+    Metal,
 }
 
 /// Botão redondo só com ícone (ou o quadrado de parar), sempre com dica. O fundo segue o ponteiro
@@ -502,6 +526,7 @@ pub struct BotaoRedondo {
     desabilitado: bool,
     selecionado: bool,
     ao_clicar: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    girando: bool,
 }
 
 impl BotaoRedondo {
@@ -523,7 +548,15 @@ impl BotaoRedondo {
             desabilitado: false,
             selecionado: false,
             ao_clicar: None,
+            girando: false,
         }
+    }
+
+    /// O anel com fenda girando por cima do disco: o parar do chat que trabalha (o "carregando"
+    /// do enviar, da base AI Input With Loading).
+    pub fn girando(mut self, sim: bool) -> Self {
+        self.girando = sim;
+        self
     }
 
     pub fn variante(mut self, v: VarianteRedonda) -> Self {
@@ -610,9 +643,9 @@ impl RenderOnce for BotaoRedondo {
         let (fundo, hover, ativo, cor) = match self.variante {
             VarianteRedonda::Primario => (
                 Cores::destaque(),
-                rgb(0x3374f0).into(),
-                rgb(0x2a64d6).into(),
-                Cores::forte(),
+                Cores::destaque_hover(),
+                Cores::destaque_ativo(),
+                Cores::sobre_destaque(),
             ),
             VarianteRedonda::Claro => (Cores::claro(), Cores::forte(), Cores::texto(), Cores::sobre_cor()),
             VarianteRedonda::Neutro => (Cores::hover(), Cores::pressionado(), Cores::borda_forte(), Cores::texto()),
@@ -623,7 +656,17 @@ impl RenderOnce for BotaoRedondo {
                 Cores::vermelho().opacity(0.28),
                 Cores::vermelho(),
             ),
+            // O fundo é a abertura de metal (um filho, abaixo): aqui só a cor do ícone.
+            VarianteRedonda::Metal => (
+                transparent_black(),
+                transparent_black(),
+                transparent_black(),
+                Cores::sobre_destaque(),
+            ),
         };
+        // Em metal: o véu fica como está (o contraste do ícone depende dele); o ponteiro acende
+        // o fio da tecla e o aperto a escurece.
+        let de_metal = self.variante == VarianteRedonda::Metal && !self.vazio;
         let interativo = !self.desabilitado;
         let ponteiro = movimento::Hover::de(movimento::chave(&self.id, "hover"), window, cx);
         let com_ponteiro = interativo && ponteiro.ativo(cx);
@@ -636,8 +679,13 @@ impl RenderOnce for BotaoRedondo {
         } else {
             fundo
         };
-        let (alvo_icone, alvo_borda) =
-            if self.vazio { (Cores::apagado(), Cores::borda()) } else { (cor, Cores::borda().opacity(0.)) };
+        let (alvo_icone, alvo_borda) = if self.vazio {
+            (Cores::apagado(), Cores::borda())
+        } else if de_metal {
+            (cor, Cores::forte().opacity(if com_ponteiro { 0.55 } else { 0.16 }))
+        } else {
+            (cor, Cores::borda().opacity(0.))
+        };
         let ((fundo, cor), borda) = movimento::valor(
             movimento::chave(&self.id, "cores"),
             ((alvo_fundo, alvo_icone), alvo_borda),
@@ -652,6 +700,23 @@ impl RenderOnce for BotaoRedondo {
         let cor_pulso = self.pulso_cor.unwrap_or_else(Cores::claro);
         let lado_icone = if self.diametro <= 24. { 14. } else { 16. };
         let (dica, acao) = (self.dica, self.acao);
+        // O anel que gira: claro sobre o metal; sobre o disco claro, no azul do destaque (o claro
+        // sumiria nele).
+        let giro = self.girando.then(|| {
+            let cor_giro = match self.variante {
+                VarianteRedonda::Claro => Cores::destaque(),
+                _ => Cores::forte().opacity(0.85),
+            };
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(AnelGirando::new(self.diametro - 2.).cor(cor_giro))
+        });
         div()
             .id(self.id)
             .relative()
@@ -660,21 +725,33 @@ impl RenderOnce for BotaoRedondo {
             .flex()
             .items_center()
             .justify_center()
-            .rounded_full()
+            .rounded(raio::de(self.diametro))
             .bg(fundo)
             .text_color(cor)
             .border_1()
             .border_color(borda)
+            // A tecla de metal: a chapa debaixo do véu, uma sombra curta que a solta da base e,
+            // por cima, a aresta de luz (a sombra interna do próprio botão ficaria atrás da chapa).
+            .when(de_metal, |s| {
+                let cantos = Corners::all(raio::de(self.diametro));
+                s.shadow(crate::tema::sombra_elevado())
+                    // O véu é o azul do destaque, não preto: o botão continua sendo "o azul" da
+                    // tela, com o metal vivo por baixo (a 60% o ícone branco fica acima de 3:1
+                    // mesmo com a bolha mais clara atrás).
+                    .child(abertura(Encaixe::Cobrir, Some(Cores::destaque().opacity(0.6)), cantos))
+                    .child(div().absolute().inset_0().rounded(raio::de(self.diametro)).shadow(aresta_de_tecla()))
+            })
             .map(|s| match (self.marca, self.icone) {
                 (Some(marca), _) => s.child(marca.disco(lado_icone)),
                 (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
                 (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
+            .children(giro)
             .when(interativo, |s| {
                 s.cursor_pointer()
                     .on_hover(ponteiro.ouvinte())
-                    .active(move |s| s.bg(ativo))
+                    .active(move |s| if de_metal { s.opacity(0.82) } else { s.bg(ativo) })
                     .when_some(self.ao_clicar, |s, f| s.on_click(move |ev, window, cx| f(ev, window, cx)))
             })
             .when(self.focavel && interativo, |s| s.tab_index(0).focus_visible(|s| s.shadow(halo_foco())))
@@ -697,7 +774,7 @@ pub fn anel_do_pulso(cor: Hsla, t: f32) -> Div {
     div()
         .absolute()
         .inset_0()
-        .rounded_full()
+        .rounded(raio::de(36.))
         .shadow(vec![BoxShadow::new(px(0.), px(0.), cor.opacity(0.4 * (1. - t))).spread_radius(px(6. * t))])
 }
 
@@ -759,6 +836,7 @@ pub struct ControleSegmentado {
     so_icone: bool,
     compacto: bool,
     no_flutuante: bool,
+    solto: bool,
     desabilitado: bool,
     ao_mudar: Rc<dyn Fn(usize, &mut Window, &mut App)>,
 }
@@ -780,9 +858,17 @@ impl ControleSegmentado {
             so_icone: false,
             compacto: false,
             no_flutuante: false,
+            solto: false,
             desabilitado: false,
             ao_mudar: Rc::new(ao_mudar),
         }
+    }
+
+    /// O segmentado do alto da lista: o trilho é um poço sem fio (o mesmo desenho da busca) e a
+    /// escolhida é uma ficha de metal em relevo que desliza de uma aba para a outra.
+    pub fn solto(mut self, sim: bool) -> Self {
+        self.solto = sim;
+        self
     }
 
     pub fn cor(mut self, cor: Hsla) -> Self {
@@ -882,14 +968,22 @@ impl RenderOnce for ControleSegmentado {
         let altura = match self.tamanho {
             Size::Small | Size::XSmall => 28.,
             Size::Large => 36.,
+            // Uma altura sob medida (as abas do alto da lista têm a do logo).
+            Size::Size(altura) => altura.as_f32(),
             _ => 32.,
         };
         let cor = self.cor;
-        let cor_texto = if cor == Cores::destaque() { Cores::destaque_texto() } else { cor };
+        // O segmentado comum é neutro (um vidro mais claro com um fio em volta); só o de outra
+        // cor (um estado, um aviso) pinta a escolha.
+        let neutro = cor == Cores::destaque();
+        let cor_texto = if neutro { Cores::forte() } else { cor };
+        let (fundo_escolhido, borda_escolhida) =
+            if neutro { (Cores::selecao(), Cores::borda_forte()) } else { (Cores::selecao_de(cor), Cores::tinta_borda(cor)) };
         let (atual, n) = (self.atual, self.opcoes.len());
         let ao_mudar = self.ao_mudar.clone();
         let ativo = !self.desabilitado;
         let no_flutuante = self.no_flutuante;
+        let solto = self.solto;
         let bloqueados: Vec<bool> = self.opcoes.iter().map(|s| s.desabilitado).collect();
         let rem = window.rem_size();
         let medidas = window
@@ -920,10 +1014,17 @@ impl RenderOnce for ControleSegmentado {
                 .bottom(esp::E2)
                 .left(px(esquerda))
                 .w(px(largura))
-                .rounded_full()
-                .bg(Cores::selecao_de(cor))
-                .border_1()
-                .border_color(Cores::tinta_borda(cor))
+                .rounded(raio::de(altura) - px(2.))
+                .map(|s| {
+                    if solto {
+                        // No alto da lista (e no esforço), a escolhida vai na ficha do escolhido:
+                        // o azul leve do destaque com a aresta de tecla.
+                        s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
+                    } else {
+                        // A pílula escolhida fica em relevo (tecla) dentro do trilho cavado (poço).
+                        s.border_1().border_color(borda_escolhida).bg(fundo_escolhido).shadow(aresta_de_tecla())
+                    }
+                })
         });
         let tem_pilula = pilula.is_some();
         let caixa = medidas.clone();
@@ -937,10 +1038,16 @@ impl RenderOnce for ControleSegmentado {
             .gap(esp::E2)
             .p(esp::E2)
             .h(r(altura))
-            .rounded_full()
-            .map(|s| if no_flutuante { s.bg(Cores::recuo_no_flutuante()) } else { s.bg(Cores::recuo()).shadow(sombra_recuo()) })
+            .rounded(raio::de(altura))
+            .map(|s| {
+                if no_flutuante {
+                    s.bg(Cores::recuo_no_flutuante())
+                } else {
+                    s.bg(Cores::recuo()).shadow(aresta_de_poco())
+                }
+            })
             .border_1()
-            .border_color(transparent_black())
+            .border_color(if solto { transparent_black() } else { Cores::borda() })
             .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             .when(self.largura_total, |s| s.w_full())
             .when(ativo, |s| {
@@ -975,11 +1082,11 @@ impl RenderOnce for ControleSegmentado {
                     } else {
                         esp::E12
                     })
-                    .rounded_full()
+                    .rounded(raio::de(altura) - px(2.))
                     .when(self.largura_total, |s| s.flex_1())
                     .border_1()
-                    .border_color(if escolhido && !tem_pilula { Cores::tinta_borda(cor) } else { transparent_black() })
-                    .when(escolhido && !tem_pilula, |s| s.bg(Cores::selecao_de(cor)))
+                    .border_color(if escolhido && !tem_pilula { borda_escolhida } else { transparent_black() })
+                    .when(escolhido && !tem_pilula, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
                     .text_size(r(13.))
                     .whitespace_nowrap()
                     .font_weight(if escolhido { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
@@ -1051,8 +1158,10 @@ impl RenderOnce for Contador {
             .gap(r(2.))
             .h(r(28.))
             .px(r(2.))
-            .rounded_full()
+            .rounded(raio::de(28.))
+            // Cavado: o número mora num poço.
             .bg(Cores::recuo())
+            .shadow(aresta_de_poco())
             .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
             .child(
                 div()
@@ -1142,24 +1251,43 @@ pub fn campo_de_busca(
     window: &Window,
     cx: &App,
 ) -> Stateful<Div> {
+    campo_de_busca_de(id, estado, atalho, 32., window, cx)
+}
+
+/// O campo de busca com a altura dada (o do alto da lista tem a do logo e a do "+").
+pub fn campo_de_busca_de(
+    id: impl Into<ElementId>,
+    estado: &Entity<InputState>,
+    atalho: Option<Box<dyn Action>>,
+    altura: f32,
+    window: &Window,
+    cx: &App,
+) -> Stateful<Div> {
     let focado = estado.read(cx).focus_handle(cx).is_focused(window);
     let vazio = estado.read(cx).value().is_empty();
     let teclas = atalho
         .filter(|_| vazio && !focado)
         .and_then(|acao| Kbd::binding_for_action(acao.as_ref(), None, window))
         .map(|kbd| desenho_teclas(kbd.partes()));
+    let canto = raio::de(altura);
     div()
         .id(id)
+        .relative()
         .flex()
         .items_center()
-        .h(r(32.))
-        .pl(esp::E6)
-        .pr(esp::E4)
-        .rounded(raio::CONTROLE)
+        .h(r(altura))
+        .pl(esp::E8)
+        .pr(esp::E6)
+        // Um poço de canto arredondado, sem fio: quem o desenha é a sombra que cai de cima para
+        // dentro e o 1 px de luz na quina de baixo. Com o foco, um aro de metal de 2 px em volta
+        // de um miolo opaco ("é aqui"), sem azul chapado nem halo.
+        .rounded(canto)
         .bg(Cores::recuo())
-        .border_1()
-        .border_color(transparent_black())
-        .when(focado, |s| s.border_color(Cores::destaque_borda()).shadow(halo_foco()))
+        .shadow(aresta_de_poco())
+        .when(focado, |s| {
+            s.child(aro_de_metal(canto, px(2.), 1.))
+                .child(div().absolute().inset_0().rounded(canto).bg(Cores::preto()).shadow(aresta_de_poco()))
+        })
         .child(
             Input::new(estado)
                 .appearance(false)
@@ -1201,6 +1329,157 @@ pub fn campo_de_busca_plano(
                 )
                 .text_size(r(14.)),
         )
+}
+
+// A moldura dupla (base AI Tool Approval): o pedido que espera você é um cartão de raio 16 dentro
+// de uma moldura de raio 20, com 4 px de folga. Serve aos pedidos de permissão, ao plano e aos
+// cartões do Mestre.
+
+/// O que a moldura de fora diz.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EstadoDaMoldura {
+    /// Aberto, esperando a sua decisão.
+    Esperando,
+    /// O comando perigoso: vermelho, nunca metal.
+    Perigo,
+    /// Recolhido (há outro pedido aberto).
+    Recolhida,
+}
+
+/// A moldura de fora, de raio 20 e 4 de folga; o miolo (`miolo_da_moldura`) vai dentro.
+pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
+    let moldura = div().flex().flex_col().w_full().p(esp::E4).rounded(raio::PECA);
+    match estado {
+        // Aberta e não perigosa, a moldura de fora é metal vivo: o aro de 4 px do que espera você
+        // (o miolo opaco, por cima, deixa só o aro à vista).
+        EstadoDaMoldura::Esperando => moldura
+            .relative()
+            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::PECA)))),
+        EstadoDaMoldura::Perigo => moldura.bg(Cores::tinta_solida(Cores::vermelho(), 0.35)),
+        EstadoDaMoldura::Recolhida => moldura.bg(Cores::preto()).border_1().border_color(Cores::borda()),
+    }
+}
+
+/// O miolo da moldura dupla: opaco, de raio 16 (é ele que deixa só o aro de fora à vista).
+pub fn miolo_da_moldura() -> Div {
+    div().flex().flex_col().w_full().rounded(crate::tema::raio_da_peca()).bg(Cores::cartao_elevado())
+}
+
+/// O azulejo de 28 com o ícone de 14 do cabeçalho de um pedido (a ferramenta, o plano, o cartão
+/// do Mestre).
+pub fn azulejo(icone: Lucide, cor: Hsla) -> Div {
+    div()
+        .flex_none()
+        .size(r(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(raio::CONTROLE)
+        .bg(Cores::hover())
+        .child(Icon::new(icone).size(r(14.)).text_color(cor))
+}
+
+/// "Segure para permitir": o botão do pedido perigoso. Só confirma depois de `SEGURAR` (900 ms)
+/// apertado, enchendo da esquerda para a direita; soltar ou sair com o ponteiro cancela, e um
+/// clique curto não faz nada. Pelo teclado, o primeiro Enter arma ("Enter de novo para
+/// permitir", 3 s) e o segundo confirma.
+#[derive(IntoElement)]
+pub struct BotaoDeSegurar {
+    id: ElementId,
+    rotulo: SharedString,
+    ao_completar: Option<Rc<dyn Fn(&mut App)>>,
+    tamanho: TamanhoBotao,
+    largo: bool,
+}
+
+impl BotaoDeSegurar {
+    pub fn new(id: impl Into<ElementId>, rotulo: impl Into<SharedString>) -> Self {
+        BotaoDeSegurar { id: id.into(), rotulo: rotulo.into(), ao_completar: None, tamanho: TamanhoBotao::Controle, largo: false }
+    }
+
+    pub fn ao_completar(mut self, f: impl Fn(&mut App) + 'static) -> Self {
+        self.ao_completar = Some(Rc::new(f));
+        self
+    }
+
+    pub fn tamanho(mut self, t: TamanhoBotao) -> Self {
+        self.tamanho = t;
+        self
+    }
+
+    /// Ocupa a largura (o pedido na largura mínima).
+    pub fn largo(mut self) -> Self {
+        self.largo = true;
+        self
+    }
+}
+
+impl RenderOnce for BotaoDeSegurar {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let segurar = movimento::Segurar::de(movimento::chave(&self.id, "segurar"), window, cx);
+        let enchido = segurar.progresso(window, cx);
+        let rotulo = if segurar.armado(cx) { "Enter de novo para permitir".into() } else { self.rotulo };
+        let completar = self.ao_completar;
+        let (apertar, soltar, soltar_fora, sair, teclar) =
+            (segurar.clone(), segurar.clone(), segurar.clone(), segurar.clone(), segurar);
+        let (ao_apertar, ao_teclar) = (completar.clone(), completar);
+        div()
+            .id(self.id)
+            .relative()
+            .flex_none()
+            .when(self.largo, |s| s.w_full())
+            .h(r(self.tamanho.altura()))
+            .px(esp::E12)
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(raio::PILULA)
+            .bg(Cores::tinta(Cores::vermelho()))
+            .border_1()
+            .border_color(Cores::tinta_borda(Cores::vermelho()))
+            .text_color(Cores::vermelho())
+            .cursor_pointer()
+            .tab_index(0)
+            .focus_visible(|s| s.shadow(halo_foco()))
+            .when_some(enchido, |s, t| {
+                s.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .w(relative(t))
+                        .rounded(raio::PILULA)
+                        .bg(Cores::vermelho().opacity(0.35)),
+                )
+            })
+            .child(div().relative().min_w_0().truncate().rotulo().child(rotulo))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+                if let Some(f) = ao_apertar.clone() {
+                    apertar.apertar(move |cx| f(cx), cx);
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| soltar.soltar(cx))
+            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| soltar_fora.soltar(cx))
+            .on_hover(move |dentro, _, cx| {
+                if !*dentro {
+                    sair.soltar(cx);
+                }
+            })
+            .on_key_down(move |evento, _, cx| {
+                // Só o Enter solto e sozinho: a repetição da tecla segurada mandaria o segundo
+                // Enter (o que confirma) sem o usuário soltar o primeiro, e Ctrl ou Shift com
+                // Enter são outros gestos.
+                if evento.keystroke.key == "enter" && !evento.is_held && !evento.keystroke.modifiers.modified() {
+                    cx.stop_propagation();
+                    if let Some(f) = ao_teclar.clone() {
+                        teclar.enter(move |cx| f(cx), cx);
+                    }
+                }
+            })
+            .tooltip(|window, cx| Tooltip::new("Segure por 1 segundo (ou Enter duas vezes)").build(window, cx))
+    }
 }
 
 #[cfg(test)]

@@ -114,7 +114,7 @@ pub fn pilula(cx: &App) -> Option<impl IntoElement + use<>> {
                     div()
                         .px(esp::E12)
                         .py(esp::E2)
-                        .rounded_full()
+                        .rounded(crate::tema::raio::de(24.))
                         .bg(Cores::dialogo())
                         .border_1()
                         .border_color(Cores::linha())

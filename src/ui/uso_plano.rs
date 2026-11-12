@@ -18,7 +18,7 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        Alerta, AnelDeUso, CabecalhoDeSecao, CabecalhoPopover, CartaoDeLista, CorpoPopover, EstadoVazio, GRUPO_DO_CARTAO,
+        Alerta, Anel, AnelDeUso, CabecalhoDeSecao, CabecalhoPopover, CartaoDeLista, CorpoPopover, EstadoVazio, GRUPO_DO_CARTAO,
         LarguraPopover, Marca, Selo, Simbolo, TamanhoBotao, Tom, botao_fantasma, botao_icone, botao_primario,
         cor_da_faixa, icone, popover, resumo_uso,
     },
@@ -54,21 +54,40 @@ pub(super) fn instalar_codex() {
 }
 
 impl Janela {
-    /// Os anéis no rodapé da lista, na ponta direita: o Codex sempre (o popover dele é onde fica
-    /// o "Entrar"), e os popovers abrem para cima, sem cobrir o anel.
-    pub(super) fn uso_do_rodape(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let botoes = self.botoes_uso(Lugar::Rodape, cx);
-        (!botoes.is_empty()).then(|| h_flex().flex_none().gap(esp::E4).children(botoes).into_any_element())
+    /// Os anéis de uso flutuando no canto de baixo, à direita, da janela (pedido do dono,
+    /// 12/11/2026; antes ficavam no cabeçalho da última conversa): os anéis de 30 um em cima do
+    /// outro, quase colados embaixo, sem fundo. Os popovers abrem para cima. Some com a opção
+    /// "Mostrar o uso do plano no canto da janela" desligada.
+    pub(super) fn uso_no_canto(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let motor = self.motor.as_ref()?;
+        if !motor.read(cx).config.uso_no_canto {
+            return None;
+        }
+        let botoes = self.botoes_uso(cx);
+        if botoes.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .absolute()
+                .right(r(USO_DA_BORDA))
+                .bottom(r(USO_DA_BORDA))
+                .child(v_flex().gap(esp::E6).children(botoes))
+                .into_any_element(),
+        )
     }
 
-    /// Os anéis no cabeçalho do 1º painel com a lista recolhida: de 24, lado a lado, centrados
-    /// na linha de 44, e os popovers abrem para baixo.
-    pub(super) fn uso_compacto(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let botoes = self.botoes_uso(Lugar::Cabecalho, cx);
-        (!botoes.is_empty()).then(|| h_flex().flex_none().gap(esp::E4).children(botoes).into_any_element())
+    /// Os anéis do canto ficam ao lado da caixa de mensagem da última conversa quando ela é
+    /// estreita (a coluna da caixa tem até uns 780 de largura, centrada: com menos de 1000 no
+    /// cartão a caixa chegaria debaixo deles). Aí a caixa encolhe `FOLGA_DO_USO` à direita.
+    pub(super) fn uso_ao_lado_da_caixa(&self, ix: usize, cx: &Context<Self>) -> bool {
+        ix + 1 == self.paineis.len()
+            && !self.direita_visivel()
+            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
+            && self.paineis[ix].medida.rem * 15. < 1000.
     }
 
-    fn botoes_uso(&self, lugar: Lugar, cx: &Context<Self>) -> Vec<AnyElement> {
+    fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
         let Some(motor) = self.motor.clone() else {
             return Vec::new();
         };
@@ -88,45 +107,33 @@ impl Janela {
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
             )
         };
-        let mut botoes = vec![popover_uso(Marca::Claude, claude, lugar, motor.clone(), janela.clone()).into_any_element()];
-        // No cabeçalho, o Codex só aparece instalado e com uso lido; no rodapé, sempre.
-        if lugar == Lugar::Rodape || codex.em_uso() {
-            botoes.push(popover_uso(Marca::Codex, codex, lugar, motor, janela).into_any_element());
+        let mut botoes = vec![popover_uso(Marca::Claude, claude, motor.clone(), janela.clone()).into_any_element()];
+        // O Codex só aparece instalado e com uso lido (o "Instalar o Codex…" fica no menu do logo).
+        if codex.em_uso() {
+            botoes.push(popover_uso(Marca::Codex, codex, motor, janela).into_any_element());
         }
         botoes
     }
 }
 
-/// Onde ficam os anéis de uso.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lugar {
-    /// No rodapé da lista, na ponta direita: o popover abre para cima.
-    Rodape,
-    /// No cabeçalho do 1º painel, com a lista recolhida: o popover abre para baixo.
-    Cabecalho,
-}
+/// O diâmetro dos anéis no canto da janela.
+const DIAMETRO_NO_CABECALHO: f32 = 30.;
+/// A distância dos anéis do canto até as bordas de baixo e da direita da janela.
+const USO_DA_BORDA: f32 = 14.;
+/// O quanto a caixa de mensagem encolhe à direita para os anéis do canto caberem ao lado dela.
+pub(super) const FOLGA_DO_USO: f32 = 32.;
 
-/// Botão do serviço e o popover com os detalhes: para cima do rodapé da lista ou, com a lista
-/// recolhida, para baixo do cabeçalho.
-fn popover_uso(
-    marca: Marca,
-    leitura: Leitura,
-    lugar: Lugar,
-    motor: Entity<Motor>,
-    janela: WeakEntity<Janela>,
-) -> impl IntoElement + use<> {
-    let (id, ancora) = match lugar {
-        Lugar::Rodape => (("uso-popover", marca as usize), Anchor::BottomRight),
-        Lugar::Cabecalho => (("uso-popover-recolhido", marca as usize), Anchor::TopLeft),
-    };
-    popover(id)
-        .anchor(ancora)
+/// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
+/// à direita do botão.
+fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
+    popover(("uso-popover", marca as usize))
+        .anchor(Anchor::BottomRight)
         .offset(px(8.))
         .arrow(true)
         .trigger(BotaoUso {
             marca,
             leitura,
-            diametro: 24.,
+            diametro: DIAMETRO_NO_CABECALHO,
             aberto: false,
         })
         .content(move |_, window, cx| {
@@ -488,8 +495,9 @@ fn barra(fracao: f64, cor: Hsla) -> Div {
         .child(div().h_full().w(relative(fracao.clamp(0., 1.) as f32)).rounded_full().bg(cor))
 }
 
-/// Uma janela no popover: rótulo e porcentagem (em âmbar ou vermelho a partir de 70%), a barra
-/// e quando renova.
+/// Uma janela no popover: o anel com fenda de 44 (enche de 0 ao abrir) com a porcentagem no
+/// meio (em âmbar ou vermelho a partir de 70%, como o arco) e, à direita, o rótulo e quando
+/// renova. Sem dado, só o rótulo e "sem dado": o anel vazio diria 0%.
 fn linha_janela(
     rotulo: SharedString,
     fracao: Option<f64>,
@@ -498,28 +506,36 @@ fn linha_janela(
     agora: i64,
 ) -> impl IntoElement + use<> {
     let cor = cor_da_faixa(fracao.unwrap_or(0.) as f32, base);
-    v_flex()
-        .gap(r(4.))
+    let anel = fracao.map(|f| {
+        let p = porcentagem(f);
+        Anel::new(SharedString::from(format!("uso-janela-{rotulo}")), f as f32)
+            .diametro(44.)
+            .cor(cor)
+            .encher()
+            .centro(
+                div()
+                    .text_size(r(12.))
+                    .line_height(r(14.))
+                    .font_semibold()
+                    .tabular()
+                    .text_color(if p >= 70 { cor } else { Cores::forte() })
+                    .child(format!("{p}%")),
+            )
+    });
+    h_flex()
+        .gap(esp::E12)
+        .children(anel)
         .child(
-            h_flex()
-                .justify_between()
-                .items_baseline()
-                .gap(r(8.))
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(esp::E2)
                 .child(div().rotulo().text_color(Cores::texto()).child(rotulo))
-                .child(match fracao.map(porcentagem) {
-                    Some(p) => div()
-                        .text_size(r(13.))
-                        .font_semibold()
-                        .text_color(if p >= 70 { cor } else { Cores::forte() })
-                        .child(format!("{p}%")),
-                    None => div().metadado().text_color(Cores::apagado()).child("sem dado"),
+                .when(fracao.is_none(), |s| s.child(div().metadado().text_color(Cores::apagado()).child("sem dado")))
+                .when_some(texto_renovacao(renova, agora), |s, t| {
+                    s.child(div().metadado().text_color(Cores::tenue()).child(t))
                 }),
         )
-        // Sem dado, só o rótulo: a barra vazia diria 0%.
-        .when_some(fracao, |s, f| s.child(barra(f, cor)))
-        .when_some(texto_renovacao(renova, agora), |s, t| {
-            s.child(div().metadado().text_color(Cores::tenue()).child(t))
-        })
 }
 
 /// Créditos extras usados no mês, com a barra quando há limite; esgotados (limite do mês
@@ -635,7 +651,7 @@ fn circulo_automatica(window: &Window) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded_full()
+        .rounded(crate::tema::raio::de(30.))
         .bg(Cores::hover())
         .text_color(Cores::tenue())
         .child(icone(Lucide::Shuffle, 15., window))

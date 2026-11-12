@@ -7,7 +7,7 @@
 use std::{
     collections::VecDeque,
     io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Stdio},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -452,6 +452,146 @@ pub fn versao_instalada() -> Option<Versao> {
     versao_de(&String::from_utf8_lossy(&saida.stdout))
 }
 
+/// Um modelo que o Claude Code instalado oferece no seletor dele.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeloOferecido {
+    /// O que vai no `--model`: o apelido de uma família (`opus`) ou o id completo.
+    pub valor: String,
+    /// O id que o valor resolve hoje (`opus` é o `claude-opus-5-5`).
+    pub resolvido: String,
+    /// O nome que o Claude Code mostra ("Fable 5.2").
+    pub nome: String,
+}
+
+/// Os modelos que o Claude Code instalado ofereceu da última vez que respondeu (vazio até lá, e
+/// para sempre se ele não respondeu: aí vale a lista fixa do seletor).
+static MODELOS_OFERECIDOS: Mutex<Vec<ModeloOferecido>> = Mutex::new(Vec::new());
+
+/// Os modelos oferecidos pelo Claude Code instalado, como ele respondeu da última vez.
+pub fn modelos_oferecidos() -> Vec<ModeloOferecido> {
+    MODELOS_OFERECIDOS.lock().map(|m| m.clone()).unwrap_or_default()
+}
+
+/// Quanto esperar pela resposta do `initialize` (ela costuma vir em menos de 1 s).
+const PRAZO_DOS_MODELOS: Duration = Duration::from_secs(12);
+
+/// Pergunta ao Claude Code instalado quais modelos ele oferece e guarda a resposta: é o pedido
+/// `initialize` do protocolo do Agent SDK (o que a extensão do VS Code faz ao abrir), sem mensagem
+/// nenhuma, então não gasta uso. É assim que o seletor de modelo acompanha o Claude Code sozinho:
+/// modelo novo aparece quando o Claude Code se atualiza, sem versão nova do Vitral. Roda sem os
+/// hooks do usuário (`disableAllHooks`), sem servidor MCP nenhum (`--strict-mcp-config`), só com
+/// as configurações do usuário, e não cria conversa. `pasta` é onde o processo roda: uma pasta
+/// vazia e só do Vitral (a temporária do sistema é de todo mundo, e um `.claude` ou `.mcp.json`
+/// plantado lá seria lido). Bloqueia até a resposta ou o prazo: chamar em segundo plano. Devolve
+/// `true` se a lista mudou.
+pub fn atualizar_modelos_oferecidos(pasta: &Path) -> bool {
+    // Com o claude de mentira da bancada não há a quem perguntar.
+    if std::env::var_os("CLAUDE_FALSO").is_some() {
+        return false;
+    }
+    let Some(novos) = perguntar_modelos(pasta) else {
+        return false;
+    };
+    let Ok(mut guardados) = MODELOS_OFERECIDOS.lock() else {
+        return false;
+    };
+    if *guardados == novos {
+        return false;
+    }
+    *guardados = novos;
+    true
+}
+
+/// Cria a pasta (e as de cima) só para o dono.
+fn pasta_so_do_dono(pasta: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(pasta)?;
+        // Já existindo, fica só para o dono também.
+        std::fs::set_permissions(pasta, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(pasta)
+}
+
+fn perguntar_modelos(pasta: &Path) -> Option<Vec<ModeloOferecido>> {
+    pasta_so_do_dono(pasta).ok()?;
+    // Com grupo próprio, para o fim derrubar também o que o claude tiver aberto.
+    let mut comando = processos::comando_leve(binario_claude(), "modelos");
+    comando
+        .args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
+        .args(["--settings", r#"{"disableAllHooks":true}"#])
+        .args(["--setting-sources", "user", "--strict-mcp-config"])
+        .current_dir(pasta)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    // Aberto de dentro de outra sessão do Claude Code, o filho herdaria a marca dela.
+    for variavel in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] {
+        comando.env_remove(variavel);
+    }
+    let (mut filho, escopo) = processos::abrir(comando).ok()?;
+    let (Some(mut entrada), Some(saida)) = (filho.stdin.take(), filho.stdout.take()) else {
+        escopo.matar();
+        let _ = filho.wait();
+        return None;
+    };
+    let pedido = json!({
+        "type": "control_request",
+        "request_id": format!("vitral-modelos-{}", uuid::Uuid::new_v4()),
+        "request": { "subtype": "initialize" },
+    });
+    let escrito = writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok();
+    // A leitura vai noutra thread para o prazo valer mesmo se o processo não disser nada.
+    let (envia, recebe) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // Em bytes, e não com `lines()`: uma linha que não é UTF-8 (um aviso com o nome de uma
+        // pasta, por exemplo) encerraria a leitura antes da resposta.
+        let mut leitor = BufReader::new(saida);
+        let mut linha = Vec::new();
+        loop {
+            linha.clear();
+            match leitor.read_until(b'\n', &mut linha) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            let texto = String::from_utf8_lossy(&linha);
+            if let Some(modelos) = serde_json::from_str::<Value>(texto.trim()).ok().as_ref().and_then(modelos_da_resposta) {
+                let _ = envia.send(modelos);
+                return;
+            }
+        }
+    });
+    let resposta = if escrito { recebe.recv_timeout(PRAZO_DOS_MODELOS).ok() } else { None };
+    // A entrada fica aberta até aqui: fechada antes, o Claude Code sairia sem responder.
+    drop(entrada);
+    // O grupo inteiro, antes de colher: só o filho deixaria órfão o que ele abriu.
+    escopo.matar();
+    let _ = filho.wait();
+    resposta.filter(|m| !m.is_empty())
+}
+
+/// Os modelos de uma linha da saída, se ela é a resposta do `initialize`. Só os modelos: a
+/// resposta traz também a conta, que não interessa aqui e não é guardada.
+fn modelos_da_resposta(valor: &Value) -> Option<Vec<ModeloOferecido>> {
+    if valor["type"] != "control_response" {
+        return None;
+    }
+    let modelos = valor["response"]["response"]["models"].as_array()?;
+    Some(
+        modelos
+            .iter()
+            .filter_map(|m| {
+                let valor = m["value"].as_str()?.trim().to_string();
+                let resolvido = m["resolvedModel"].as_str().unwrap_or(&valor).trim().to_string();
+                let nome = m["displayName"].as_str().unwrap_or_default().trim().to_string();
+                (!valor.is_empty()).then_some(ModeloOferecido { valor, resolvido, nome })
+            })
+            .collect(),
+    )
+}
+
 /// O que o `claude update` respondeu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atualizacao {
@@ -807,6 +947,64 @@ fn nome_do_projeto(caminho: &str) -> String {
     }
     base36.reverse();
     format!("{}-{}", &nome[..200], String::from_utf8_lossy(&base36))
+}
+
+/// Quantas linhas de cada lado de uma troca (e de um arquivo gravado) ficam guardadas na conversa.
+const LINHAS_DO_DETALHE: usize = 60;
+/// O teto do detalhe inteiro: um Write de um arquivo enorme não engorda o chat no disco.
+const MAX_DETALHE: usize = 8_000;
+
+/// O que a chamada pediu, para a conversa mostrar ao abrir a linha, e o arquivo dela: o diff de um
+/// Edit (o que saiu com "- ", o que entrou com "+ "), o começo do que um Write gravou e o comando
+/// inteiro de um Bash, quando a linha da conversa só mostra a descrição ou o começo dele.
+pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Option<String>) {
+    let campo = |chave: &str| entrada[chave].as_str().filter(|t| !t.is_empty());
+    let arquivo = campo("file_path").or_else(|| campo("notebook_path")).map(str::to_string);
+    let detalhe = match nome {
+        "Edit" => Some(troca(campo("old_string").unwrap_or_default(), campo("new_string").unwrap_or_default())),
+        "MultiEdit" => entrada["edits"].as_array().map(|trocas| {
+            trocas
+                .iter()
+                .map(|t| troca(t["old_string"].as_str().unwrap_or_default(), t["new_string"].as_str().unwrap_or_default()))
+                .collect::<Vec<_>>()
+                .join("\n…\n")
+        }),
+        "Write" => campo("content").map(|c| com_prefixo(c, "+ ")),
+        "NotebookEdit" => campo("new_source").map(|c| com_prefixo(c, "+ ")),
+        "Bash" => campo("command")
+            .filter(|c| campo("description").is_some() || c.lines().count() > 1 || c.chars().count() > 90)
+            .map(|c| format!("$ {c}")),
+        _ => None,
+    };
+    let detalhe = detalhe.filter(|d| !d.trim().is_empty()).map(|d| {
+        if d.len() <= MAX_DETALHE {
+            return d;
+        }
+        let mut fim = MAX_DETALHE;
+        while !d.is_char_boundary(fim) {
+            fim -= 1;
+        }
+        format!("{}\n… (cortado)", &d[..fim])
+    });
+    (detalhe, arquivo)
+}
+
+/// O que saiu e o que entrou numa troca, cada linha com o seu sinal.
+fn troca(antes: &str, depois: &str) -> String {
+    match (antes.is_empty(), depois.is_empty()) {
+        (true, _) => com_prefixo(depois, "+ "),
+        (_, true) => com_prefixo(antes, "- "),
+        _ => format!("{}\n{}", com_prefixo(antes, "- "), com_prefixo(depois, "+ ")),
+    }
+}
+
+fn com_prefixo(texto: &str, prefixo: &str) -> String {
+    let total = texto.lines().count();
+    let mut linhas: Vec<String> = texto.lines().take(LINHAS_DO_DETALHE).map(|l| format!("{prefixo}{l}")).collect();
+    if total > LINHAS_DO_DETALHE {
+        linhas.push(format!("… mais {} linhas", total - LINHAS_DO_DETALHE));
+    }
+    linhas.join("\n")
 }
 
 /// Uma linha curta que descreve a chamada de ferramenta, no estilo do painel do Claude Code.
@@ -1575,5 +1773,86 @@ mod testes {
         assert!(*bloqueado);
         assert_eq!(*bloqueado_ate, Some(1_790_000_000));
         assert_eq!(*uso_5h, Some(1.0));
+    }
+    #[test]
+    fn detalhe_do_que_a_chamada_pediu() {
+        let edit = json!({ "file_path": "/p/a.rs", "old_string": "a\nb", "new_string": "c" });
+        assert_eq!(detalhe_ferramenta("Edit", &edit), (Some("- a\n- b\n+ c".into()), Some("/p/a.rs".into())));
+        // Só entrou, só saiu.
+        assert_eq!(detalhe_ferramenta("Edit", &json!({ "file_path": "a", "old_string": "", "new_string": "x" })).0.as_deref(), Some("+ x"));
+        assert_eq!(detalhe_ferramenta("Edit", &json!({ "file_path": "a", "old_string": "x", "new_string": "" })).0.as_deref(), Some("- x"));
+        let varias = json!({ "file_path": "a", "edits": [{ "old_string": "a", "new_string": "b" }, { "old_string": "c", "new_string": "d" }] });
+        assert_eq!(detalhe_ferramenta("MultiEdit", &varias).0.as_deref(), Some("- a\n+ b\n…\n- c\n+ d"));
+        assert_eq!(detalhe_ferramenta("Write", &json!({ "file_path": "n.txt", "content": "um\ndois\n" })), (Some("+ um\n+ dois".into()), Some("n.txt".into())));
+        // O Read só diz o arquivo; o Bash curto e sem descrição já está inteiro na linha.
+        assert_eq!(detalhe_ferramenta("Read", &json!({ "file_path": "a.rs" })), (None, Some("a.rs".into())));
+        assert_eq!(detalhe_ferramenta("Bash", &json!({ "command": "ls" })), (None, None));
+        assert_eq!(detalhe_ferramenta("Bash", &json!({ "command": "ls -la", "description": "Lista" })).0.as_deref(), Some("$ ls -la"));
+        assert_eq!(detalhe_ferramenta("Bash", &json!({ "command": "a\nb" })).0.as_deref(), Some("$ a\nb"));
+        assert_eq!(detalhe_ferramenta("Grep", &json!({ "pattern": "x" })), (None, None));
+        // Um arquivo enorme fica com o começo e a conta do que faltou; o total tem teto.
+        let longo = (0..200).map(|i| format!("linha {i}")).collect::<Vec<_>>().join("\n");
+        let gravado = detalhe_ferramenta("Write", &json!({ "file_path": "a", "content": longo })).0.unwrap();
+        assert_eq!(gravado.lines().count(), 61);
+        assert!(gravado.ends_with("… mais 140 linhas"));
+        let largo = "ç".repeat(20_000);
+        let cortado = detalhe_ferramenta("Write", &json!({ "file_path": "a", "content": largo })).0.unwrap();
+        assert!(cortado.len() < 8_100 && cortado.ends_with("… (cortado)"));
+    }
+
+}
+
+#[cfg(test)]
+mod testes_dos_modelos {
+    use super::{ModeloOferecido, modelos_da_resposta};
+    use serde_json::json;
+
+    /// Da resposta do `initialize` saem só os modelos (a conta que vem junto não é lida), com o
+    /// que cada apelido resolve; qualquer outra linha da saída não é resposta.
+    #[test]
+    fn modelos_saem_da_resposta_do_initialize() {
+        let resposta = json!({
+            "type": "control_response",
+            "response": { "subtype": "success", "request_id": "x", "response": {
+                "account": { "email": "alguem@exemplo.com" },
+                "models": [
+                    { "value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus 5.5" },
+                    { "value": "claude-fable-5-2", "resolvedModel": "claude-fable-5-2", "displayName": "Fable 5.2" },
+                    { "value": "", "displayName": "sem valor" },
+                    { "value": "claude-opus-5" },
+                ],
+            } },
+        });
+        assert_eq!(
+            modelos_da_resposta(&resposta),
+            Some(vec![
+                ModeloOferecido { valor: "opus".into(), resolvido: "claude-opus-5-5".into(), nome: "Opus 5.5".into() },
+                ModeloOferecido {
+                    valor: "claude-fable-5-2".into(),
+                    resolvido: "claude-fable-5-2".into(),
+                    nome: "Fable 5.2".into()
+                },
+                ModeloOferecido { valor: "claude-opus-5".into(), resolvido: "claude-opus-5".into(), nome: String::new() },
+            ])
+        );
+        assert_eq!(modelos_da_resposta(&json!({ "type": "system", "subtype": "init" })), None);
+        // Uma resposta de controle sem a lista (um Claude Code antigo) não vale.
+        assert_eq!(modelos_da_resposta(&json!({ "type": "control_response", "response": { "response": {} } })), None);
+    }
+
+    /// Manual, com o Claude Code instalado (`cargo test -- --ignored integracao_modelos`): a
+    /// pergunta de verdade, numa pasta vazia. Não manda mensagem, então não gasta uso; a pasta
+    /// continua vazia e só do dono depois dela.
+    #[test]
+    #[ignore]
+    #[cfg(unix)]
+    fn integracao_modelos_do_claude_de_verdade() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let pasta = std::env::temp_dir().join(format!("vitral-modelos-{}", crate::modelo::novo_id())).join("perguntas");
+        let modelos = super::perguntar_modelos(&pasta).expect("o Claude Code instalado não respondeu");
+        assert!(modelos.iter().any(|m| m.resolvido.starts_with("claude-")), "{modelos:?}");
+        assert_eq!(std::fs::metadata(&pasta).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::read_dir(&pasta).unwrap().count(), 0, "a pergunta deixou arquivo na pasta");
+        let _ = std::fs::remove_dir_all(pasta.parent().unwrap());
     }
 }

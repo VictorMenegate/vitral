@@ -36,7 +36,7 @@ use super::{
         Confirmacao, ControleSegmentado, CorpoPopover, EstadoVazio, EventoEscolha, GrupoDeEscolha,
         ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Segmento, Selo, Simbolo, TamanhoBotao,
         TamanhoChip, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_icone, botao_primario,
-        campo_de_busca, confirmar, contagem, desenho_teclas, icone, pilula_da_tarefa, popover,
+        campo_de_busca, confirmar, contagem, desenho_teclas, etiqueta_de_secao, icone, pilula_da_tarefa, popover,
         quadrado_do_projeto, selo_gravidade, variante_perigo_calma,
     },
     menus,
@@ -2057,7 +2057,7 @@ impl RevisaoDiff {
                             .custom(variante_perigo_calma(cx))
                             .h(r(24.))
                             .w(r(24.))
-                            .rounded(raio::PILULA)
+                            .rounded(raio::de(24.))
                             .disabled(self.enviando)
                             .child(icone(Lucide::Undo2, 14., window))
                             .tooltip("Descartar as mudanças deste arquivo")
@@ -2331,7 +2331,7 @@ impl RevisaoDiff {
                         let botao = Button::new("descartar-arquivo")
                             .custom(variante_perigo_calma(cx))
                             .h(r(24.))
-                            .rounded(raio::PILULA)
+                            .rounded(raio::de(24.))
                             .gap(r(6.))
                             .disabled(enviando)
                             .child(icone(Lucide::Undo2, 14., window))
@@ -2987,7 +2987,7 @@ fn corpo_revisor(dados: &DadosRevisor, fraca: &WeakEntity<RevisaoDiff>, window: 
                     s.child(
                         h_flex()
                             .gap(r(6.))
-                            .child(div().rotulo_secao().child("Apontamentos"))
+                            .child(etiqueta_de_secao("Apontamentos"))
                             .child(Selo::contagem(parecer.problemas.len())),
                     )
                     .child(v_flex().mx(r(-8.)).children(linhas))
@@ -3056,7 +3056,7 @@ fn corpo_ajuste(
             c.child(
                 v_flex()
                     .gap(r(2.))
-                    .child(div().rotulo_secao().pb(r(2.)).child("Vão junto"))
+                    .child(etiqueta_de_secao("Vão junto").pb(r(2.)))
                     .child(v_flex().mx(r(-8.)).children(linhas)),
             )
         })
@@ -3139,7 +3139,7 @@ fn desenhar_cartao(
             let cabecalho = h_flex()
                 .gap(r(6.))
                 .child(div().text_color(if usado { Cores::tenue() } else { Cores::destaque_texto() }).child(icone(Lucide::GitPullRequest, 14., window)))
-                .child(div().rotulo_secao().child("A revisão do PR apontou"))
+                .child(etiqueta_de_secao("A revisão do PR apontou"))
                 .child(div().metadado().text_color(Cores::tenue()).child(format!("@{autor}")));
             if usado {
                 return cabecalho
@@ -3168,7 +3168,7 @@ fn desenhar_cartao(
             let cabecalho = h_flex()
                 .gap(r(6.))
                 .child(div().text_color(if usado { Cores::tenue() } else { cor }).child(icone(Lucide::Eye, 14., window)))
-                .child(div().rotulo_secao().child("Revisor"))
+                .child(etiqueta_de_secao("Revisor"))
                 .child(selo_gravidade(&problema.gravidade));
             if usado {
                 return cabecalho

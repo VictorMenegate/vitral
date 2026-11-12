@@ -271,7 +271,7 @@ pub fn confirmar(
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_full()
+                    .rounded(raio::de(40.))
                     .bg(Cores::tinta(cor))
                     .text_color(cor)
                     .child(c.icone.clone().with_size(tam(window, 20.))),

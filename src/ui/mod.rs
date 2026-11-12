@@ -21,6 +21,7 @@ mod fila;
 pub(crate) mod icone_projeto;
 mod imagens;
 mod lateral;
+mod links_arquivo;
 mod limpeza;
 mod mensagens;
 mod menus;
@@ -65,7 +66,7 @@ use crate::{
     motor::Motor,
     tema::{Cores, Lucide, esp, r, tam},
 };
-use componentes::{Flutuante as _, TamanhoBotao, botao_icone};
+use componentes::{Flutuante as _, TamanhoBotao, botao_icone, metal};
 
 actions!(vitral, [NovaConversa, NovoProjeto, Buscar, AlternarPainel, AlternarLista]);
 actions!(vitral, [IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4]);
@@ -95,7 +96,7 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-const FAIXA_LISTA: (f32, f32) = (304., 560.);
+const FAIXA_LISTA: (f32, f32) = (200., 560.);
 const FAIXA_DIREITA: (f32, f32) = (280., 900.);
 /// O que a gaveta deixa da conversa à mostra, para o clique fora fechá-la.
 const FRESTA_GAVETA: f32 = 40.;
@@ -370,6 +371,9 @@ pub struct Janela {
     secoes_recolhidas: HashSet<&'static str>,
     /// Arquivo aberto no painel da direita (a pasta e o caminho relativo a ela).
     arquivo_aberto: Option<(PathBuf, String)>,
+    /// A linha que um link da conversa pediu: o painel rola até ela ao abrir e a deixa marcada.
+    arquivo_linha: std::cell::Cell<Option<u32>>,
+    arquivo_marcada: std::cell::Cell<Option<u32>>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
@@ -443,6 +447,9 @@ pub struct Janela {
     revisoes: HashMap<u64, Entity<revisao::RevisaoDiff>>,
     /// Pedido de permissão com o corpo aberto, quando há vários (id do pedido).
     pedido_aberto: Option<String>,
+    /// Pedidos de permissão com a caixa "Não perguntar de novo" marcada (o "Permitir" passa a
+    /// regra); some com o pedido.
+    sempre_marcado: HashSet<String>,
     /// "Nova conversa ao lado": a próxima conversa criada abre num painel novo.
     nova_ao_lado: bool,
     /// Painel cuja aba está sendo arrastada.
@@ -498,8 +505,9 @@ pub fn contar_quadro() {
 }
 
 /// Com `VITRAL_QUADROS=1`, escreve "quadros/s: N" no stderr a cada segundo em que a janela
-/// redesenhou: a conferência do orçamento de movimento. O timer só lê o contador, não redesenha
-/// nada.
+/// redesenhou: a conferência do orçamento de movimento. Quando o metal refez o campo nesse
+/// segundo, a linha leva o tempo médio de um campo (conta, BMP e decodificação):
+/// "quadros/s: 8 · campo: 2,1 ms". O timer só lê os contadores, não redesenha nada.
 pub fn iniciar_contador_de_quadros(cx: &mut App) {
     static INICIADO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if std::env::var("VITRAL_QUADROS").as_deref() != Ok("1") {
@@ -512,12 +520,25 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
         loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let n = QUADROS.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let campo = metal::custo_do_campo();
             if n > 0 {
-                eprintln!("quadros/s: {n}");
+                eprintln!("{}", linha_dos_quadros(n, campo));
             }
         }
     })
     .detach();
+}
+
+/// A linha do `VITRAL_QUADROS`: os redesenhos do segundo e, se o metal refez o campo, o tempo
+/// médio de um campo, com vírgula.
+fn linha_dos_quadros(quadros: u32, campo: Option<(u32, Duration)>) -> String {
+    match campo {
+        Some((_, tempo)) => {
+            let decimos = (tempo.as_secs_f64() * 10_000.).round() as u64;
+            format!("quadros/s: {quadros} · campo: {},{} ms", decimos / 10, decimos % 10)
+        }
+        None => format!("quadros/s: {quadros}"),
+    }
 }
 
 impl Janela {
@@ -547,6 +568,9 @@ impl Janela {
                 cx.notify();
             }
         }));
+        // O metal desta janela sai do mapa quando ela fecha.
+        let id_da_janela = window.window_handle().window_id();
+        assinaturas.push(cx.on_release(move |_, cx| metal::esquecer_janela(id_da_janela, cx)));
         // O GNOME manda o button-layout depois que a janela abre (e quando muda no Ajustes).
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         assinaturas.push(cx.on_app_quit(|this, cx| {
@@ -605,6 +629,8 @@ impl Janela {
             rolagem_lista: ScrollHandle::new(),
             secoes_recolhidas: HashSet::from(RECOLHIDAS_DE_INICIO),
             arquivo_aberto: None,
+            arquivo_linha: Default::default(),
+            arquivo_marcada: Default::default(),
             cache_arquivos: Default::default(),
             arquivo_lido: Default::default(),
             feedback_plano: HashMap::new(),
@@ -612,7 +638,9 @@ impl Janela {
             explicacao: None,
             rolagem_equipe: ScrollHandle::new(),
             equipe_rolada: None,
-            painel: true,
+            // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
+            // largura toda. O que você escolheu fica lembrado no interface.json.
+            painel: false,
             lista: true,
             orcamento: orcamento(largura_util(window), escala(window), 1, true, false),
             larguras: Larguras::default(),
@@ -647,6 +675,7 @@ impl Janela {
             caixa_aberta: false,
             revisoes: HashMap::new(),
             pedido_aberto: None,
+            sempre_marcado: HashSet::new(),
             nova_ao_lado: false,
             arrastando_aba: None,
             familias_abertas: HashSet::new(),
@@ -709,6 +738,8 @@ impl Janela {
             Direita::Fechada if self.painel => self.painel = false,
             Direita::Fechada => self.mostrar_direita(window, cx),
         }
+        // Só o que você pediu aqui fica lembrado: o painel que um link abriu não muda a preferência.
+        gravar_interface("painel", serde_json::Value::Bool(self.painel), cx);
         cx.notify();
     }
 
@@ -949,6 +980,7 @@ impl Janela {
                 .map(|c| c.id.clone())
         });
         self.ultimo_chat = ultimo;
+        self.painel = interface.as_ref().and_then(|i| i.get("painel")?.as_bool()).unwrap_or(false);
         // Os rascunhos antes do `selecionar`: é ele que leva o do chat que abre para a caixa.
         self.rascunhos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
         self.ultimo_destino = lido("ultimo_destino").map(|d| if d == "avulsos" { String::new() } else { d });
@@ -1132,7 +1164,23 @@ impl Janela {
     /// ficam na última conversa).
     fn botoes_da_direita(&self, separar: bool, window: &Window, cx: &Context<Self>) -> Div {
         if self.gaveta != Some(Gaveta::Direita) {
-            return grupo_botoes_janela(botoes_do_layout(cx.button_layout()), separar);
+            // O × daqui é o da JANELA, e ao lado do título do painel ele parecia fechar só o
+            // painel. Por isso o painel ganha o botão dele (o ícone de recolher) e um traço o
+            // separa dos botões da janela.
+            let _ = separar;
+            return div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(esp::E4)
+                .child(
+                    sem_arrastar().flex_none().child(
+                        botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Barra, window, cx)
+                            .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
+                            .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
+                    ),
+                )
+                .child(grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true));
         }
         sem_arrastar().flex_none().child(
             botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Barra, window, cx)
@@ -1228,11 +1276,22 @@ impl Janela {
 impl Render for Janela {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         contar_quadro();
+        // A chapa de metal atrás de tudo: corre quando um chat dos painéis abertos está
+        // trabalhando (o que roda em segundo plano não a acelera).
+        let trabalhando = self.motor.as_ref().is_some_and(|motor| {
+            let motor = motor.read(cx);
+            self.paineis.iter().filter_map(|p| p.chat.as_deref()).any(|chat| motor.execucao(chat).rodando())
+        });
+        let chapa = metal::fundo(trabalhando, Corners::default(), window, cx);
         let tema = cx.theme();
         let mut base = div()
             .size_full()
             .font_family(tema.font_family.clone())
             .text_color(tema.foreground)
+            .child(chapa)
+            // O véu da base: a janela inteira é uma camada só (a lista mora direto nela, junto
+            // com a borda), e os cartões flutuam por cima.
+            .child(div().absolute().top_0().left_0().size_full().bg(Cores::vidro_leitura()))
             .child(zoom::captura_roda())
             .children(zoom::pilula(cx));
         base.text_style().font_fallbacks =
@@ -1258,6 +1317,12 @@ impl Render for Janela {
         }
         // Antes da lista, para ela já mostrar como lida a conversa que voltou ao fim.
         self.acompanhar_rolagem(cx);
+        // As abas de cada painel acompanham o chat à vista (e perdem os chats que sumiram).
+        {
+            let motor = motor.clone();
+            let motor = motor.read(cx);
+            self.acertar_abas(motor);
+        }
         // A conversa selecionada pode ter sumido (ex.: troca de pasta).
         if let Some(id) = &self.selecionado
             && motor.read(cx).chat(id).is_none()
@@ -1281,6 +1346,8 @@ impl Render for Janela {
             .map(|p| p.id.clone())
             .collect();
         self.feedback_plano.retain(|id, _| planos.contains(id));
+        let pedidos: HashSet<String> = motor.read(cx).permissoes.iter().map(|p| p.id.clone()).collect();
+        self.sempre_marcado.retain(|id| pedidos.contains(id));
         for id in planos {
             self.feedback_plano.entry(id).or_insert_with(|| {
                 cx.new(|cx| {
@@ -1308,9 +1375,7 @@ impl Render for Janela {
         let janela = base
             .key_context("Vitral")
             .track_focus(&self.foco)
-            .on_action(cx.listener(|this, _: &NovaConversa, window, cx| {
-                this.dialogo_nova_conversa(window, cx)
-            }))
+            .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             .on_action(cx.listener(|this, _: &NovoProjeto, window, cx| this.dialogo_criar_projeto(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirMestre, window, cx| this.abrir_mestre(window, cx)))
             .on_action(cx.listener(|this, _: &Buscar, window, cx| this.focar_busca(window, cx)))
@@ -1374,11 +1439,49 @@ impl Render for Janela {
                             .flex_1()
                             .min_w_0()
                             .h_full()
+                            // Dois cliques na divisória entre duas conversas deixam todas com a
+                            // mesma largura. O ouvinte é da janela, na captura: a alça do kit
+                            // fica por cima de tudo e não deixa o clique chegar a quem está em
+                            // volta. O `canvas` só serve para saber onde as partes começam.
+                            .child(
+                                canvas(|_, _, _| {}, {
+                                    let janela = cx.entity().downgrade();
+                                    move |limites, _, window, _| {
+                                        let (janela, origem) = (janela.clone(), limites.origin.x);
+                                        window.on_mouse_event(move |evento: &MouseDownEvent, fase, window, cx| {
+                                            // Só dentro da área das partes, e nunca com um diálogo
+                                            // ou uma gaveta por cima (o clique duplo é deles).
+                                            if fase != DispatchPhase::Capture
+                                                || evento.button != MouseButton::Left
+                                                || evento.click_count != 2
+                                                || !limites.contains(&evento.position)
+                                                || window.has_active_dialog(cx)
+                                            {
+                                                return;
+                                            }
+                                            let _ = janela.update(cx, |this, cx| {
+                                                if this.gaveta.is_none()
+                                                    && this.na_divisoria_de_conversas(evento.position.x - origem, cx)
+                                                {
+                                                    this.igualar_conversas(cx);
+                                                    cx.stop_propagation();
+                                                }
+                                            });
+                                        });
+                                    }
+                                })
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full(),
+                            )
                             .child(self.partes(&motor, window, cx))
                             .children(gaveta),
                     ),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
+            // O uso do plano flutua no canto de baixo, à direita.
+            .children(self.uso_no_canto(cx))
             .children(fora)
             .into_any_element();
         self.consultar_git(cx);
@@ -1480,6 +1583,40 @@ impl Janela {
     }
 }
 
+impl Janela {
+    /// Se `x` (medido do começo das partes) cai numa divisória entre duas conversas lado a lado,
+    /// com 6 px de folga.
+    fn na_divisoria_de_conversas(&self, x: Pixels, cx: &Context<Self>) -> bool {
+        let n = self.paineis.len();
+        if n < 2 {
+            return false;
+        }
+        let o = self.orcamento;
+        let medidos: Vec<f32> = self.estado_partes.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
+        let larguras = self.larguras.em_px(&o, n);
+        let antes = usize::from(o.lista);
+        // As larguras de agora (as do arrasto, se houve) ou, sem medida, as guardadas.
+        let (lista, conversas): (f32, Vec<f32>) = if medidos.len() >= antes + n {
+            (medidos[..antes].iter().sum(), medidos[antes..antes + n].to_vec())
+        } else {
+            (larguras.lista.unwrap_or(0.), larguras.conversas.clone())
+        };
+        let mut borda = lista;
+        conversas[..n - 1].iter().any(|largura| {
+            borda += largura;
+            (x.as_f32() - borda).abs() <= 6.
+        })
+    }
+
+    /// As conversas lado a lado voltam a dividir o espaço por igual.
+    fn igualar_conversas(&mut self, cx: &mut Context<Self>) {
+        self.larguras.conversas.clear();
+        // As divisórias recomeçam das larguras guardadas.
+        self.chave_partes = None;
+        cx.notify();
+    }
+}
+
 /// Largura da gaveta, em px: a guardada no zoom atual, sem tapar a conversa inteira.
 fn largura_da_gaveta(guardada: f32, minima: f32, o: &Orcamento) -> f32 {
     let u = |medida: f32| medida * o.escala;
@@ -1542,10 +1679,22 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_full()
-                .bg(rgba(0xffffff14))
-                .hover(|s| s.bg(rgba(0xffffff26)))
+                .rounded(crate::tema::raio::de(24.))
+                // Sem disco em repouso: o botão só ganha fundo com o ponteiro em cima.
+                // O fechar acende em vermelho e diz o que fecha: é o Vitral inteiro.
+                .map(|b| match botao {
+                    WindowButton::Close => b.hover(|s| s.bg(Cores::vermelho().opacity(0.55))),
+                    _ => b.hover(|s| s.bg(rgba(0xffffff26))),
+                })
                 .active(|s| s.bg(rgba(0xffffff40)))
+                .when(!cfg!(windows), |b| {
+                    let dica = match botao {
+                        WindowButton::Minimize => "Minimizar",
+                        WindowButton::Maximize => "Maximizar",
+                        WindowButton::Close => "Fechar o Vitral",
+                    };
+                    b.tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(dica).build(window, cx))
+                })
                 .child(Icon::new(icone).size(r(14.)).text_color(Cores::tenue()))
                 .map(|b| {
                     if cfg!(windows) {
@@ -1579,6 +1728,19 @@ pub fn tempo_relativo(instante: u64) -> String {
 /// Há quanto tempo (o turno, a tarefa): "19 s", "2 min 13 s", "1 h 05 min".
 pub fn duracao(desde: u64) -> String {
     componentes::duracao_curta(modelo::agora().saturating_sub(desde))
+}
+
+#[cfg(test)]
+mod testes_quadros {
+    use super::linha_dos_quadros;
+    use std::time::Duration;
+
+    #[test]
+    fn linha_do_contador_com_e_sem_o_campo() {
+        assert_eq!(linha_dos_quadros(8, None), "quadros/s: 8");
+        assert_eq!(linha_dos_quadros(8, Some((8, Duration::from_micros(2_140)))), "quadros/s: 8 · campo: 2,1 ms");
+        assert_eq!(linha_dos_quadros(20, Some((20, Duration::from_micros(960)))), "quadros/s: 20 · campo: 1,0 ms");
+    }
 }
 
 // O `button-layout` (e o `WindowButtonLayout::parse`) é do Linux.

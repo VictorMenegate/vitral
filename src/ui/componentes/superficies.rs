@@ -4,9 +4,10 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    Icon, Sizable as _, StyledExt as _, ThemeStyled as _, WindowExt as _,
+    Canto, Icon, Sizable as _, StyledExt as _, ThemeStyled as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
-    kbd::Kbd,
+    cantoneira,
+    kbd::{Kbd, desenho_de_teclas},
     menu::PopupMenuItem,
     notification::{Notification, NotificationType},
     popover::Popover,
@@ -19,9 +20,12 @@ use super::base::Simbolo;
 use super::controles::{TamanhoBotao, botao_fantasma, botao_primario, variante_fantasma};
 use super::dialogo::{RodapeDialogo, largura::ALERTA};
 use super::estado::Selo;
+use super::graficos::fio_de_pontos;
+use super::metal::{Encaixe, abertura};
+use super::textos::etiqueta_de_secao;
 use crate::tema::{
-    Cores, Lucide, Tipo as _, dentro_da_borda, esp, gradiente_quente_em, gradiente_reflexo, linha_de_luz, r, raio,
-    tam,
+    Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, aresta_de_vidro, dentro_da_borda, esp,
+    gradiente_reflexo, linha_de_luz, r, raio, tam,
 };
 
 /// Superfície desenhada à mão que flutua sobre texto: a mesma do `popover_style` do kit
@@ -34,23 +38,25 @@ pub trait Flutuante: Styled + Sized {
 
 impl<T: Styled> Flutuante for T {}
 
-/// O reflexo do vidro numa peça ou cartão: a linha de luz de 1 px no topo de dentro e o brilho de
-/// #ffffff08 que some nos primeiros 40 px, numa camada por baixo do conteúdo (chame antes dos
-/// filhos) com o raio de fora da peça. Nada anima. Nos cartões com reflexo o contorno desce de
-/// `Cores::borda()` para `Cores::linha()`.
+/// O reflexo do vidro num cartão: a linha de luz de 1 px no topo de dentro, numa camada por baixo
+/// do conteúdo (chame antes dos filhos) com o raio de fora do cartão. Nada anima. Nos cartões com
+/// reflexo o contorno desce de `Cores::borda()` para `Cores::linha()`. As peças (lista,
+/// conversa, painéis) usam a `aresta_de_vidro` inteira, pela `camada_de_aresta`.
 pub trait Reflexo: ParentElement + Sized {
     fn reflexo(self, raio: Pixels) -> Self {
-        // Estudo de fundos: só as peças (raio de peça) levam o aro, e a variante que não tem aro
-        // pinta transparente, como o Vitral de hoje.
-        let peca = raio == raio::PECA;
-        let com_reflexo = self.child(camada_de_reflexo(raio));
-        if peca { com_reflexo.child(camada_de_aro(raio)) } else { com_reflexo }
+        self.child(camada_de_reflexo(raio))
+    }
+
+    /// O vidro de uma peça: a `camada_de_aresta`. Chame DEPOIS dos filhos (a sombra interna pinta
+    /// antes deles; como primeira camada, o pontilhado do pé passaria por cima do fio).
+    fn aresta_de_vidro(self, raio: Pixels) -> Self {
+        self.child(camada_de_aresta(raio))
     }
 }
 
 impl<T: ParentElement> Reflexo for T {}
 
-/// A camada do `.reflexo()`, para quem monta a peça à mão.
+/// A camada do `.reflexo()`, para quem monta o cartão à mão.
 pub fn camada_de_reflexo(raio: Pixels) -> Div {
     div()
         .absolute()
@@ -64,18 +70,39 @@ pub fn camada_de_reflexo(raio: Pixels) -> Div {
         .shadow(vec![linha_de_luz(1.)])
 }
 
-/// O aro do estudo de fundos: um contorno de 1 px por dentro da peça, numa camada solta (não
-/// mexe em layout nem em raio; na variante sem aro a cor é transparente e nada aparece).
-pub fn camada_de_aro(raio: Pixels) -> Div {
+/// O material de vidro de uma peça, numa camada por cima de tudo: o fio claro de 1 px na volta
+/// toda, a luz na própria quina de cima, a sombra de 1 px na base e o brilho de 3% que entra uns
+/// 40 px pelo topo (`aresta_de_vidro` do tema). Só sombra interna, sem id nem ouvinte: não pega
+/// clique nem rolagem. Vai como ÚLTIMO filho da peça, que não pode ter `border` (a borda empurra
+/// a camada para dentro e a luz cai na segunda fileira de pixels).
+pub fn camada_de_aresta(raio: Pixels) -> Div {
+    div().absolute().top_0().left_0().right_0().bottom_0().rounded(raio).shadow(aresta_de_vidro())
+}
+
+/// Quais cantos levam a cantoneira.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cantos {
+    /// Cima à esquerda e baixo à direita: a caixa com foco e o diálogo.
+    Diagonal,
+}
+
+/// As cantoneiras azuis do "é aqui", com `t` de 0 (apagadas) a 1: o braço e a opacidade crescem
+/// juntos. O desenho mora no kit (`cantoneira`), para o diálogo do kit usar o mesmo. Absolutas,
+/// sem id nem ouvinte: vão como filhos da peça, depois do conteúdo.
+pub fn cantoneiras(raio: Pixels, braco: f32, cantos: Cantos, t: f32) -> Div {
+    let t = t.clamp(0., 1.);
+    let cor = Cores::destaque().opacity(t);
+    let braco = px(braco * t);
+    let lista: &[Canto] = match cantos {
+        Cantos::Diagonal => &[Canto::CimaEsquerda, Canto::BaixoDireita],
+    };
     div()
         .absolute()
         .top_0()
         .left_0()
         .right_0()
         .bottom_0()
-        .rounded(raio)
-        .border(px(1.))
-        .border_color(Cores::aro_da_peca())
+        .children(lista.iter().map(|canto| cantoneira(*canto, raio, braco, cor)))
 }
 
 /// Popover da linguagem: raio de peça e margem 16. Fundo, anel e sombra vêm do kit, e a seta sai
@@ -123,10 +150,13 @@ pub enum CabecalhoPopover {
     },
 }
 
+/// Símbolo, nome e detalhe. `sobre_placa`: em cima do véu da placa de metal só vão `forte` e
+/// `texto`, e o detalhe passa à etiqueta mono.
 fn linha_objeto(
     simbolo: Option<AnyElement>,
     nome: SharedString,
     detalhe: Option<SharedString>,
+    sobre_placa: bool,
 ) -> Div {
     div()
         .flex()
@@ -145,7 +175,7 @@ fn linha_objeto(
                         .text_size(r(14.))
                         .line_height(r(20.))
                         .font_semibold()
-                        .text_color(Cores::texto())
+                        .text_color(if sobre_placa { Cores::forte() } else { Cores::texto() })
                         .child(nome),
                 )
                 // Caminho e branch: o começo e o fim é que dizem qual é.
@@ -155,19 +185,21 @@ fn linha_objeto(
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle()
-                            .metadado()
-                            .text_color(Cores::tenue())
+                            .map(|d| if sobre_placa { d.etiqueta().text_color(Cores::texto()) } else { d.metadado().text_color(Cores::tenue()) })
                             .child(d),
                     )
                 }),
         )
 }
 
+/// O rótulo de seção de um popover de escolha, com o fio de pontos dele até a borda (ou até o que
+/// vai à direita: as teclas do atalho).
 fn linha_escolha(
     simbolo: Option<AnyElement>,
     titulo: SharedString,
     valor: Option<(SharedString, Hsla)>,
     direita: Option<AnyElement>,
+    window: &Window,
 ) -> Div {
     div()
         .flex()
@@ -175,7 +207,7 @@ fn linha_escolha(
         .gap(r(8.))
         .min_h(r(20.))
         .children(simbolo)
-        .child(div().rotulo_secao().child(titulo))
+        .child(etiqueta_de_secao(titulo))
         .when_some(valor, |s, (valor, cor)| {
             s.child(
                 div()
@@ -185,7 +217,7 @@ fn linha_escolha(
                     .child(valor),
             )
         })
-        .child(div().flex_1())
+        .child(div().flex_1().min_w(esp::E8).flex().items_center().child(fio_de_pontos(Cores::fio(), window)))
         .children(direita)
 }
 
@@ -231,9 +263,10 @@ impl RenderOnce for CorpoPopover {
                 titulo,
                 valor,
                 dica.map(|d| div().metadado().text_color(Cores::tenue()).child(d).into_any_element()),
+                window,
             ),
             CabecalhoPopover::Objeto { simbolo, nome, detalhe, selo } => {
-                linha_objeto(Some(simbolo.desenhar(20., window)), nome, detalhe)
+                linha_objeto(Some(simbolo.desenhar(20., window)), nome, detalhe, false)
                     .child(div().flex_1())
                     .children(selo)
             }
@@ -247,14 +280,43 @@ impl RenderOnce for CorpoPopover {
             .children(cabecalho)
             .children(self.corpo)
             .when(tem_rodape, |s| {
-                s.child(div().h(px(1.)).bg(Cores::traco()))
+                s.child(fio_de_pontos(Cores::fio(), window))
                     .child(div().flex().flex_col().gap(r(8.)).children(self.rodape))
             })
     }
 }
 
-/// Cabeçalho de objeto no topo do menu (logo e todo "…"): símbolo 20, nome e detalhe. Linha
-/// fixa de 44, fora do teclado; o separador vem logo depois.
+/// A placa de metal: um recorte da chapa enchendo o pai (`relative`), debaixo do véu de placa
+/// (em cima dele só `forte` e `texto`), com a aresta de tecla por cima (luz em cima, sombra
+/// embaixo: a placa fica em relevo, sem linha divisória). `raio_de_cima`: os cantos de cima, os
+/// da peça onde ela encosta; os de baixo ficam retos. Vai como primeiro filho.
+pub fn placa_de_metal(raio_de_cima: Pixels) -> Div {
+    let cantos = Corners { top_left: raio_de_cima, top_right: raio_de_cima, ..Corners::default() };
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), cantos))
+        .child(div().absolute().top_0().left_0().size_full().rounded_t(raio_de_cima).shadow(aresta_de_tecla()))
+}
+
+/// O cabeçalho de objeto na placa de metal: 52 de altura e 16 dos lados, colado no topo e nas
+/// laterais do menu (o `Static` do kit sangra até a casca), com os cantos de cima do menu.
+fn placa_de_cabecalho(simbolo: Option<AnyElement>, nome: SharedString, detalhe: Option<SharedString>) -> Div {
+    div()
+        .relative()
+        .flex()
+        .items_center()
+        .h(r(52.))
+        .px(esp::E16)
+        .child(placa_de_metal(raio::PECA - px(1.)))
+        .child(linha_objeto(simbolo, nome, detalhe, true))
+}
+
+/// Cabeçalho de objeto no topo do menu (logo e todo "…"): a placa de metal com o símbolo 20, o
+/// nome em branco e o detalhe em mono. Linha fixa, fora do teclado; o separador que vier logo
+/// depois não aparece (a placa já separa).
 pub fn cabecalho_objeto(
     simbolo: Simbolo,
     nome: impl Into<SharedString>,
@@ -262,8 +324,7 @@ pub fn cabecalho_objeto(
 ) -> PopupMenuItem {
     let nome = nome.into();
     PopupMenuItem::static_element(move |window, _| {
-        linha_objeto(simbolo.copia().map(|s| s.desenhar(20., window)), nome.clone(), detalhe.clone())
-            .h(r(44.))
+        placa_de_cabecalho(simbolo.copia().map(|s| s.desenhar(20., window)), nome.clone(), detalhe.clone())
     })
 }
 
@@ -277,9 +338,8 @@ pub fn cabecalho_objeto_com_dica(
     let (nome, dica) = (nome.into(), dica.into());
     PopupMenuItem::static_element(move |window, _| {
         let dica = dica.clone();
-        linha_objeto(simbolo.copia().map(|s| s.desenhar(20., window)), nome.clone(), detalhe.clone())
+        placa_de_cabecalho(simbolo.copia().map(|s| s.desenhar(20., window)), nome.clone(), detalhe.clone())
             .id("cabecalho-objeto")
-            .h(r(44.))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
 }
@@ -292,7 +352,7 @@ pub enum OndeAtalho {
     Foco(FocusHandle),
 }
 
-/// Cabeçalho de escolha (modo, conta): título 12/600 e, à direita, as teclas do atalho do keymap
+/// Cabeçalho de escolha (modo, conta): o rótulo de seção (mono 11 em caixa alta) e, à direita, as teclas do atalho do keymap
 /// (no desenho de teclas do sino e das dicas) seguidas de um texto ("Shift Tab troca").
 pub fn cabecalho_escolha(
     titulo: impl Into<SharedString>,
@@ -317,12 +377,63 @@ pub fn cabecalho_escolha(
                     .into_any_element(),
             )
         });
-        linha_escolha(None, titulo.clone(), None, direita).h(r(28.))
+        // A linha fixa vai de borda a borda (o `Static` do kit sangra): a margem é daqui.
+        div().pt(esp::E8).px(esp::E16).child(linha_escolha(None, titulo.clone(), None, direita, window).h(r(28.)))
     })
 }
 
-/// Item de duas linhas (48): título 14/500 e descrição 12 tênue, com o check à direita quando
-/// escolhido. Sem `.icon()`, para não reservar coluna vazia nos outros itens.
+/// O azulejo de 28 do ícone de um item de escolha: uma tecla em relevo; no escolhido (sobre a
+/// ficha de metal), um poço escuro, para a cor do ícone continuar à vista.
+pub fn azulejo_de_escolha(conteudo: AnyElement, sobre_placa: bool) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(r(28.))
+        .rounded(raio::de(28.))
+        .map(|s| {
+            if sobre_placa {
+                s.bg(Cores::preto_puro().opacity(0.35)).shadow(aresta_de_poco())
+            } else {
+                s.bg(Cores::recuo_no_flutuante()).shadow(aresta_de_tecla())
+            }
+        })
+        .child(conteudo)
+}
+
+/// A ficha do escolhido (o item marcado numa lista de escolha, a aba escolhida de um segmentado
+/// do alto da lista): o azul do destaque bem leve, com um fio do mesmo azul e a aresta de tecla,
+/// no canto dos controles para a `altura` do item. Absoluta, enche o item (o `fundo` do item do
+/// menu). Já foi um recorte de metal debaixo de um véu; num retângulo comprido ele ficava com um
+/// fundo esquisito, preto de um lado e azul chuviscado do outro (dono, 12/11/2026). O nome ficou.
+pub fn ficha_de_metal(altura: f32) -> Div {
+    ficha_do_escolhido(raio::de(altura))
+}
+
+/// A mesma ficha com o raio dado.
+pub fn ficha_do_escolhido(raio: Pixels) -> Div {
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .rounded(raio)
+        .bg(Cores::selecao_de(Cores::destaque()))
+        .border_1()
+        .border_color(Cores::tinta_borda(Cores::destaque()))
+        .shadow(aresta_de_tecla())
+}
+
+/// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal
+/// debaixo dele.
+pub fn escolhido_em_ficha(item: PopupMenuItem, escolhido: bool, altura: f32) -> PopupMenuItem {
+    item.checked(escolhido).when(escolhido, |item| item.fundo(move |_, _| ficha_de_metal(altura)))
+}
+
+/// Item de duas linhas (48): o ícone num azulejo de 28, título 14/500 em branco e descrição 12
+/// tênue; o escolhido vai na ficha de metal (a descrição passa a `texto`), com o visto à direita.
+/// Sem `.icon()`, para não reservar coluna vazia nos outros itens.
 pub fn item_descrito(
     simbolo: Option<Simbolo>,
     titulo: impl Into<SharedString>,
@@ -330,14 +441,14 @@ pub fn item_descrito(
     escolhido: bool,
 ) -> PopupMenuItem {
     let (titulo, descricao) = (titulo.into(), descricao.into());
-    PopupMenuItem::element(move |window, _| {
+    let item = PopupMenuItem::element(move |window, _| {
         div()
             .flex()
             .items_center()
             .gap(esp::E12)
             .h(r(48.))
             .min_w_0()
-            .children(simbolo.as_ref().and_then(Simbolo::copia).map(|s| s.desenhar(16., window)))
+            .children(simbolo.as_ref().and_then(Simbolo::copia).map(|s| azulejo_de_escolha(s.desenhar(16., window), escolhido)))
             .child(
                 div()
                     .flex()
@@ -349,21 +460,37 @@ pub fn item_descrito(
                             .text_size(r(14.))
                             .line_height(r(20.))
                             .font_weight(FontWeight::MEDIUM)
+                            .text_color(Cores::forte())
                             .child(titulo.clone()),
                     )
                     .child(
                         div()
                             .truncate()
                             .metadado()
-                            .text_color(Cores::tenue())
+                            .text_color(if escolhido { Cores::texto() } else { Cores::tenue() })
                             .child(descricao.clone()),
                     ),
             )
-    })
-    .checked(escolhido)
+    });
+    escolhido_em_ficha(item, escolhido, 48.)
 }
 
-/// Rodapé de dica do menu (28, 12 tênue) com o atalho à direita; vai depois de um separador.
+/// A faixa do pé do menu: 32 de altura, de borda a borda (o `Static` do kit sangra até a
+/// casca), um poço escuro com os cantos de baixo do menu. A letra é de quem usa.
+fn faixa_do_pe() -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(esp::E12)
+        .h(r(32.))
+        .px(esp::E16)
+        .rounded_b(raio::PECA - px(1.))
+        .bg(Cores::preto().opacity(0.45))
+        .shadow(aresta_de_poco())
+}
+
+/// Rodapé de dica do menu (a faixa do pé) com o atalho à direita, em teclas; o separador que vier
+/// antes não aparece (a faixa já separa).
 pub fn rodape_menu(
     texto: impl Into<SharedString>,
     atalho: Option<(Box<dyn Action>, Option<&'static str>)>,
@@ -373,11 +500,7 @@ pub fn rodape_menu(
         let teclas = atalho
             .as_ref()
             .and_then(|(acao, contexto)| teclas(acao.as_ref(), *contexto, window));
-        div()
-            .flex()
-            .items_center()
-            .gap(r(12.))
-            .h(r(28.))
+        faixa_do_pe()
             .metadado()
             .text_color(Cores::tenue())
             .child(div().flex_1().min_w_0().truncate().child(texto.clone()))
@@ -385,18 +508,16 @@ pub fn rodape_menu(
     })
 }
 
-/// Rodapé de texto (28, 12 tênue) com uma dica: a versão no menu do logo, com o commit na dica.
+/// Rodapé de texto (a faixa do pé) com uma dica: a linha técnica do menu do logo, em mono
+/// apagado, com a origem do binário na dica.
 pub fn rodape_menu_com_dica(texto: impl Into<SharedString>, dica: impl Into<SharedString>) -> PopupMenuItem {
     let (texto, dica) = (texto.into(), dica.into());
     PopupMenuItem::static_element(move |_, _| {
         let dica = dica.clone();
-        div()
+        faixa_do_pe()
+            .etiqueta()
+            .text_color(Cores::apagado())
             .id("rodape-menu")
-            .flex()
-            .items_center()
-            .h(r(28.))
-            .metadado()
-            .text_color(Cores::tenue())
             .child(div().flex_1().min_w_0().truncate().child(texto.clone()))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
@@ -562,7 +683,7 @@ impl RenderOnce for Alerta {
                         .custom(variante_fantasma(cx).foreground(Cores::tenue()))
                         .icon(Lucide::X)
                         .xsmall()
-                        .rounded(raio::PILULA)
+                        .rounded(raio::de(20.))
                         .tooltip("Fechar")
                         .on_click(move |_, window, cx| f(window, cx)),
                 )
@@ -619,7 +740,7 @@ pub fn botao_do_aviso(rotulo: &'static str, cx: &App) -> Button {
         .custom(variante_fantasma(cx).foreground(Cores::destaque_texto()))
         .h(r(28.))
         .px(esp::E12)
-        .rounded(raio::PILULA)
+        .rounded(raio::de(28.))
         .child(div().text_size(r(13.)).font_semibold().child(rotulo))
 }
 
@@ -701,21 +822,9 @@ impl EstadoVazio {
 impl RenderOnce for EstadoVazio {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         let amplo = self.amplo;
-        let circulo = if amplo {
-            div()
-                .size(r(64.))
-                .rounded_full()
-                .bg(gradiente_quente_em(135.))
-                .text_color(Cores::forte())
-                .child(self.icone.with_size(tam(window, 28.)))
-        } else {
-            div()
-                .size(r(40.))
-                .rounded_full()
-                .bg(Cores::linha())
-                .text_color(Cores::tenue())
-                .child(self.icone.with_size(tam(window, 20.)))
-        };
+        // Sem o disco em volta do ícone: no amplo (a tela inteira de uma conversa vazia) só o
+        // título e o texto; no pequeno, o ícone solto, tênue.
+        let icone = (!amplo).then(|| div().flex_none().text_color(Cores::apagado()).child(self.icone.with_size(tam(window, 20.))));
         div()
             .flex()
             .flex_col()
@@ -723,7 +832,7 @@ impl RenderOnce for EstadoVazio {
             .text_center()
             .gap(r(8.))
             .py(r(24.))
-            .child(circulo.flex().flex_none().items_center().justify_center())
+            .children(icone)
             .child(
                 div()
                     .map(|s| if amplo { s.titulo_tela() } else { s.text_size(r(14.)).line_height(r(20.)).font_semibold() })
@@ -745,27 +854,10 @@ impl RenderOnce for EstadoVazio {
     }
 }
 
-/// Teclas separadas de uma combinação, cada uma no seu desenho de tecla.
+/// Teclas separadas de uma combinação, cada uma no desenho único de tecla (o do kit, que a dica e
+/// o menu também usam): em relevo, mono 10, sem borda.
 pub fn desenho_teclas(partes: Vec<SharedString>) -> AnyElement {
-    div()
-        .flex()
-        .flex_none()
-        .gap(esp::E4)
-        .children(partes.into_iter().map(|tecla| {
-            div()
-                .h(r(18.))
-                .px(esp::E4)
-                .flex()
-                .items_center()
-                .rounded(raio::CONTROLE)
-                .bg(Cores::recuo())
-                .border_1()
-                .border_color(Cores::borda())
-                .micro()
-                .text_color(Cores::tenue())
-                .child(tecla)
-        }))
-        .into_any_element()
+    desenho_de_teclas(partes, Cores::hover(), Cores::tenue(), FONTE_MONO.into(), raio::de(18.)).into_any_element()
 }
 
 /// O atalho de uma ação, tirado do keymap, em teclas separadas (rodapés de dica).

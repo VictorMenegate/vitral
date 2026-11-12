@@ -22,9 +22,16 @@ use crate::{
 /// Mais que isso fica apertado na tela (com a janela estreita, cabem menos).
 pub const MAX_PAINEIS: usize = 4;
 
+/// Quantas abas um painel guarda no cabeçalho.
+pub const MAX_ABAS: usize = 8;
+
 pub struct Painel {
     pub id: u64,
     pub chat: Option<String>,
+    /// As abas do painel, na ordem em que abriram: os chats que ficam no cabeçalho dele, a um
+    /// clique. O `chat` é a aba à vista. Clicar num chat da lista abre uma aba aqui (o `render` da
+    /// Janela é quem põe o chat à vista na lista e tira os que sumiram).
+    pub abas: Vec<String>,
     pub composer: Entity<TextareaState>,
     /// Máximo de linhas da caixa, que diminui em janela baixa.
     pub linhas_caixa: usize,
@@ -93,8 +100,9 @@ pub enum Efeito {
     /// Sem nenhum painel: abre no lugar vazio.
     Abrir,
     AbrirAoLado(Lado),
-    /// Troca a conversa do painel (fechando o painel de origem, se havia). `cheio` quando veio
-    /// da borda, mas não cabe outro painel ao lado.
+    /// A conversa abre neste painel, como mais uma aba dele (saindo do painel de origem, se havia,
+    /// que fecha quando era a única aba dele). `cheio` quando veio da borda, mas não cabe outro
+    /// painel ao lado.
     Trocar { origem: Option<u64>, cheio: bool },
     /// Muda de lugar o painel em que a conversa já está.
     Mover { origem: u64, lado: Lado },
@@ -107,7 +115,7 @@ impl Efeito {
             Efeito::Abrir => (Lucide::Plus, "Abrir aqui"),
             Efeito::AbrirAoLado(Lado::Esquerda) => (Lucide::PanelLeft, "Abrir ao lado"),
             Efeito::AbrirAoLado(_) => (Lucide::PanelRight, "Abrir ao lado"),
-            Efeito::Trocar { .. } => (Lucide::Replace, "Trocar a conversa"),
+            Efeito::Trocar { .. } => (Lucide::Plus, "Abrir aqui, como aba"),
             Efeito::Mover { lado: Lado::Esquerda, .. } => (Lucide::ArrowLeft, "Mover para cá"),
             Efeito::Mover { .. } => (Lucide::ArrowRight, "Mover para cá"),
             Efeito::Nenhum => return None,
@@ -116,12 +124,29 @@ impl Efeito {
 }
 
 /// Efeito de soltar no `lado` do painel `painel`, com os painéis na ordem `ids`. `origem` é o
-/// painel em que a conversa já está aberta (a aba arrastada ou a conversa da lista).
-fn efeito_de(ids: &[u64], origem: Option<u64>, painel: u64, lado: Lado, cabe_mais: bool) -> Efeito {
+/// painel em que a conversa já está aberta (a aba arrastada ou a conversa da lista);
+/// `origem_com_outras_abas`, se esse painel tem mais abas além dela.
+fn efeito_de(
+    ids: &[u64],
+    origem: Option<u64>,
+    painel: u64,
+    lado: Lado,
+    cabe_mais: bool,
+    origem_com_outras_abas: bool,
+) -> Efeito {
     if ids.is_empty() {
         return Efeito::Abrir;
     }
     let origem = origem.filter(|o| ids.contains(o));
+    // Como no VS Code: uma aba que sai de um painel com outras abas, solta na borda de um painel
+    // (até do próprio), vira um painel novo daquele lado; o de origem fica com as outras abas.
+    if origem.is_some() && origem_com_outras_abas && lado != Lado::Centro {
+        return match (cabe_mais, origem == Some(painel)) {
+            (true, _) => Efeito::AbrirAoLado(lado),
+            (false, true) => Efeito::Nenhum,
+            (false, false) => Efeito::Trocar { origem, cheio: true },
+        };
+    }
     if origem == Some(painel) {
         return Efeito::Nenhum;
     }
@@ -212,7 +237,7 @@ impl RenderOnce for FormaSoltura {
                 if duas {
                     s.rounded(raio::CARTAO).py(r(8.)).px(r(12.)).gap(r(2.))
                 } else {
-                    s.rounded_full().h(r(32.)).justify_center().px(r(12.))
+                    s.rounded(raio::de(32.)).h(r(32.)).justify_center().px(r(12.))
                 }
             })
             .child(
@@ -345,6 +370,7 @@ impl Janela {
         let mut painel = Painel {
             id,
             chat: None,
+            abas: Vec::new(),
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
             rolagem: ScrollHandle::new(),
@@ -577,11 +603,83 @@ impl Janela {
         cx.notify();
     }
 
-    /// Ctrl+W: fecha o painel ativo (a conversa continua na lista) e põe o cursor na caixa do
-    /// que fica ativo.
+    /// Ctrl+W: fecha a aba à vista do painel ativo; na última aba, fecha o painel (a conversa
+    /// continua na lista) e põe o cursor na caixa do que fica ativo.
     pub(super) fn fechar_painel_ativo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.paineis.get(self.ativo).map(|p| p.id) {
-            self.fechar_e_focar(id, window, cx);
+        let Some(painel) = self.paineis.get(self.ativo) else {
+            return;
+        };
+        let id = painel.id;
+        let chat = painel.chat.clone().filter(|_| painel.abas.len() > 1);
+        // Pelo teclado não há "painel ativo antes do clique" para voltar.
+        self.ativo_antes_do_clique = None;
+        match chat {
+            Some(chat) => self.fechar_aba(id, &chat, window, cx),
+            None => self.fechar_e_focar(id, window, cx),
+        }
+    }
+
+    /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.
+    pub(super) fn abrir_aba(&mut self, painel_id: u64, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.ativar_painel(painel_id, cx);
+        self.selecionar(Some(chat), window, cx);
+    }
+
+    /// Fecha uma aba do painel (a conversa continua na lista). Se era a que estava à vista, o
+    /// painel mostra a vizinha (a de antes; sem ela, a de depois); se era a última, o painel fecha.
+    pub(super) fn fechar_aba(&mut self, painel_id: u64, chat: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(painel) = self.paineis.iter_mut().find(|p| p.id == painel_id) else {
+            return;
+        };
+        let a_vista = painel.chat.as_deref() == Some(chat);
+        let lugar = painel.abas.iter().position(|a| a == chat);
+        painel.abas.retain(|a| a != chat);
+        if !a_vista {
+            cx.notify();
+            return;
+        }
+        // A vizinha que passa a aparecer: a de antes ou, sem ela, a primeira; nunca um chat que já
+        // está à vista noutro painel (um chat só aparece num lugar).
+        let restantes = painel.abas.clone();
+        let a_vista_noutro =
+            |id: &String| self.paineis.iter().any(|p| p.id != painel_id && p.chat.as_ref() == Some(id));
+        let vizinha = lugar
+            .and_then(|i| restantes.get(i.saturating_sub(1)))
+            .filter(|id| !a_vista_noutro(id))
+            .or_else(|| restantes.iter().find(|id| !a_vista_noutro(id)))
+            .cloned();
+        match vizinha {
+            Some(vizinha) => self.abrir_aba(painel_id, vizinha, window, cx),
+            None => self.fechar_painel_clicado(painel_id, window, cx),
+        }
+    }
+
+    /// Chamado a cada `render`: cada painel tem o chat à vista entre as abas, sem aba de chat que
+    /// sumiu, e no máximo `MAX_ABAS` (a mais antiga que não está à vista sai primeiro).
+    pub(super) fn acertar_abas(&mut self, motor: &crate::motor::Motor) {
+        // O que cada painel mostra agora: um chat à vista num painel não fica como aba de fundo
+        // em outro (a aba não abriria: um chat só aparece num lugar por vez).
+        let a_vista: Vec<(u64, String)> = self.paineis.iter().filter_map(|p| Some((p.id, p.chat.clone()?))).collect();
+        for painel in &mut self.paineis {
+            let id_do_painel = painel.id;
+            painel.abas.retain(|id| {
+                motor.chat(id).is_some() && !a_vista.iter().any(|(outro, chat)| *outro != id_do_painel && chat == id)
+            });
+            // Sem chat à vista (o painel vazio que sobra quando o último chat sai), sem abas.
+            if painel.chat.is_none() {
+                painel.abas.clear();
+            }
+            if let Some(chat) = &painel.chat
+                && !painel.abas.contains(chat)
+            {
+                painel.abas.push(chat.clone());
+            }
+            while painel.abas.len() > MAX_ABAS {
+                let Some(velha) = painel.abas.iter().position(|a| Some(a) != painel.chat.as_ref()) else {
+                    break;
+                };
+                painel.abas.remove(velha);
+            }
         }
     }
 
@@ -709,14 +807,29 @@ impl Janela {
     /// O que soltar a conversa no `lado` do painel faria agora.
     pub(super) fn efeito_soltura(&self, arrasto: &ArrastoChat, painel: u64, lado: Lado) -> Efeito {
         // Da lista, uma conversa já aberta noutro painel se comporta como a aba dele.
-        let origem = arrasto.de_painel.or_else(|| {
-            self.paineis
-                .iter()
-                .find(|p| p.chat.as_deref() == Some(arrasto.chat.as_str()))
-                .map(|p| p.id)
-        });
+        let origem = self.origem_do_arrasto(arrasto);
         let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
-        efeito_de(&ids, origem, painel, lado, self.cabe_outro_painel())
+        let com_outras_abas =
+            origem.and_then(|o| self.paineis.iter().find(|p| p.id == o)).is_some_and(|p| p.abas.len() > 1);
+        efeito_de(&ids, origem, painel, lado, self.cabe_outro_painel(), com_outras_abas)
+    }
+
+    /// O painel em que a conversa arrastada já está: o da aba arrastada ou, vinda da lista, o que
+    /// a mostra agora. A faixa da soltura e a soltura usam a mesma conta (com contas diferentes, a
+    /// conversa da lista que estava à vista num painel de várias abas fechava o painel inteiro).
+    fn origem_do_arrasto(&self, arrasto: &ArrastoChat) -> Option<u64> {
+        arrasto.de_painel.filter(|id| self.paineis.iter().any(|p| p.id == *id)).or_else(|| {
+            self.paineis.iter().find(|p| p.chat.as_deref() == Some(arrasto.chat.as_str())).map(|p| p.id)
+        })
+    }
+
+    /// O painel de origem da conversa arrastada, se ele tem outras abas além dela.
+    fn painel_com_outras_abas(&self, arrasto: &ArrastoChat) -> Option<u64> {
+        let origem = self.origem_do_arrasto(arrasto)?;
+        self.paineis
+            .iter()
+            .find(|p| p.id == origem && p.abas.len() > 1 && p.abas.contains(&arrasto.chat))
+            .map(|p| p.id)
     }
 
     /// Solta uma conversa arrastada num painel fazendo o que a faixa mostrou.
@@ -733,6 +846,11 @@ impl Janela {
             Efeito::Nenhum => cx.notify(),
             Efeito::Abrir => self.selecionar(Some(arrasto.chat.clone()), window, cx),
             Efeito::AbrirAoLado(lado) => {
+                // A aba que sai de um painel com outras abas: ele fica com as outras, e ela abre
+                // num painel novo.
+                if let Some(origem) = self.painel_com_outras_abas(arrasto) {
+                    self.fechar_aba(origem, &arrasto.chat, window, cx);
+                }
                 self.abrir_ao_lado(arrasto.chat.clone(), Some((painel, lado)), window, cx)
             }
             // O painel inteiro muda de lugar.
@@ -751,13 +869,18 @@ impl Janela {
                 cx.notify();
             }
             Efeito::Trocar { origem, .. } => {
-                // Fecha a origem antes: os índices andam, e o destino é achado de novo pelo id.
+                // A conversa sai da origem antes (a aba, se o painel tem outras; senão o painel
+                // inteiro): os índices andam, e o destino é achado de novo pelo id.
                 if let Some(origem) = origem {
-                    self.fechar_painel(origem, cx);
+                    match self.painel_com_outras_abas(arrasto) {
+                        Some(com_abas) if com_abas == origem => self.fechar_aba(origem, &arrasto.chat, window, cx),
+                        _ => self.fechar_painel(origem, cx),
+                    }
                 }
                 if let Some(ix) = self.paineis.iter().position(|p| p.id == painel) {
                     self.ativo = ix;
                 }
+                // Abre como mais uma aba do painel (as que já estavam ficam).
                 self.selecionar(Some(arrasto.chat.clone()), window, cx);
             }
         }
@@ -781,8 +904,12 @@ impl Janela {
             .size_full()
             .child(conteudo)
             .on_drag_move(cx.listener(move |this, evento: &DragMoveEvent<ArrastoChat>, _, cx| {
-                // A aba de origem fica marcada enquanto o arrasto dura.
-                let origem = evento.drag(cx).de_painel;
+                // A aba de origem fica marcada enquanto o arrasto dura (só a que está à vista: uma
+                // aba compacta arrastada não traceja a vizinha).
+                let arrasto = evento.drag(cx);
+                let origem = arrasto
+                    .de_painel
+                    .filter(|id| this.paineis.iter().any(|p| p.id == *id && p.chat.as_deref() == Some(arrasto.chat.as_str())));
                 if this.arrastando_aba != origem {
                     this.arrastando_aba = origem;
                     cx.notify();
@@ -837,13 +964,13 @@ mod testes_soltura {
 
     #[test]
     fn sem_paineis_abre_no_lugar_vazio() {
-        assert_eq!(efeito_de(&[], None, 0, Lado::Esquerda, true), Efeito::Abrir);
+        assert_eq!(efeito_de(&[], None, 0, Lado::Esquerda, true, false), Efeito::Abrir);
     }
 
     #[test]
     fn aba_no_meio_de_outro_painel_troca_e_fecha_a_origem() {
         assert_eq!(
-            efeito_de(&[A, B, C], Some(A), B, Lado::Centro, true),
+            efeito_de(&[A, B, C], Some(A), B, Lado::Centro, true, false),
             Efeito::Trocar { origem: Some(A), cheio: false }
         );
     }
@@ -851,22 +978,22 @@ mod testes_soltura {
     #[test]
     fn soltar_no_proprio_painel_ou_onde_ja_esta_nao_faz_nada() {
         for lado in [Lado::Esquerda, Lado::Centro, Lado::Direita] {
-            assert_eq!(efeito_de(&[A, B], Some(A), A, lado, true), Efeito::Nenhum);
+            assert_eq!(efeito_de(&[A, B], Some(A), A, lado, true, false), Efeito::Nenhum);
         }
         // A já encosta na esquerda de B, e C na direita.
-        assert_eq!(efeito_de(&[A, B, C], Some(A), B, Lado::Esquerda, true), Efeito::Nenhum);
-        assert_eq!(efeito_de(&[A, B, C], Some(C), B, Lado::Direita, true), Efeito::Nenhum);
+        assert_eq!(efeito_de(&[A, B, C], Some(A), B, Lado::Esquerda, true, false), Efeito::Nenhum);
+        assert_eq!(efeito_de(&[A, B, C], Some(C), B, Lado::Direita, true, false), Efeito::Nenhum);
     }
 
     #[test]
     fn aba_na_borda_move_o_painel() {
         assert_eq!(
-            efeito_de(&[A, B, C], Some(A), B, Lado::Direita, true),
+            efeito_de(&[A, B, C], Some(A), B, Lado::Direita, true, false),
             Efeito::Mover { origem: A, lado: Lado::Direita }
         );
         // Com 4 painéis mover continua valendo: não abre painel novo.
         assert_eq!(
-            efeito_de(&[A, B, C, D], Some(D), A, Lado::Esquerda, false),
+            efeito_de(&[A, B, C, D], Some(D), A, Lado::Esquerda, false, false),
             Efeito::Mover { origem: D, lado: Lado::Esquerda }
         );
     }
@@ -874,20 +1001,20 @@ mod testes_soltura {
     #[test]
     fn da_lista_abre_ao_lado_ou_troca_quando_nao_cabe() {
         assert_eq!(
-            efeito_de(&[A, B], None, B, Lado::Direita, true),
+            efeito_de(&[A, B], None, B, Lado::Direita, true, false),
             Efeito::AbrirAoLado(Lado::Direita)
         );
         assert_eq!(
-            efeito_de(&[A, B, C, D], None, B, Lado::Direita, false),
+            efeito_de(&[A, B, C, D], None, B, Lado::Direita, false, false),
             Efeito::Trocar { origem: None, cheio: true }
         );
         assert_eq!(
-            efeito_de(&[A, B, C, D], None, B, Lado::Centro, false),
+            efeito_de(&[A, B, C, D], None, B, Lado::Centro, false, false),
             Efeito::Trocar { origem: None, cheio: false }
         );
         // Origem que não está mais na tela conta como conversa da lista.
         assert_eq!(
-            efeito_de(&[A, B], Some(9), A, Lado::Esquerda, true),
+            efeito_de(&[A, B], Some(9), A, Lado::Esquerda, true, false),
             Efeito::AbrirAoLado(Lado::Esquerda)
         );
     }
@@ -924,5 +1051,24 @@ mod testes_soltura {
         assert_eq!(ativo_apos_fechar(2, 2, 2), 1);
         assert_eq!(ativo_apos_fechar(1, 2, 2), 1);
         assert_eq!(ativo_apos_fechar(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn aba_de_painel_com_outras_abas_vira_painel_novo_na_borda() {
+        // Na borda de outro painel e na do próprio, se couber mais um.
+        assert_eq!(efeito_de(&[A, B], Some(A), B, Lado::Direita, true, true), Efeito::AbrirAoLado(Lado::Direita));
+        assert_eq!(efeito_de(&[A, B], Some(A), A, Lado::Esquerda, true, true), Efeito::AbrirAoLado(Lado::Esquerda));
+        // No meio de outro painel entra como aba dele; no meio do próprio, nada.
+        assert_eq!(efeito_de(&[A, B], Some(A), B, Lado::Centro, true, true), Efeito::Trocar { origem: Some(A), cheio: false });
+        assert_eq!(efeito_de(&[A, B], Some(A), A, Lado::Centro, true, true), Efeito::Nenhum);
+    }
+
+    #[test]
+    fn aba_de_painel_com_outras_abas_sem_lugar_para_mais_um() {
+        assert_eq!(efeito_de(&[A, B, C, D], Some(A), A, Lado::Direita, false, true), Efeito::Nenhum);
+        assert_eq!(
+            efeito_de(&[A, B, C, D], Some(A), B, Lado::Direita, false, true),
+            Efeito::Trocar { origem: Some(A), cheio: true }
+        );
     }
 }

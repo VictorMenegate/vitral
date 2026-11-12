@@ -228,6 +228,7 @@ fn linha_de_codigo(
     texto: SharedString,
     cores: Vec<(Range<usize>, HighlightStyle)>,
     largura_numero: Rems,
+    marcada: bool,
 ) -> impl IntoElement + use<> {
     // Uma faixa fora da linha derrubaria o desenho do texto.
     let cores: Vec<_> = cores
@@ -242,13 +243,15 @@ fn linha_de_codigo(
         .gap(esp::E16)
         .mono()
         .whitespace_nowrap()
+        // A linha que o link da conversa pediu.
+        .when(marcada, |s| s.bg(Cores::destaque().opacity(0.16)))
         .child(
             div()
                 .w(largura_numero)
                 .flex_none()
                 .flex()
                 .justify_end()
-                .text_color(Cores::apagado())
+                .text_color(if marcada { Cores::texto() } else { Cores::apagado() })
                 .child(numero.to_string()),
         )
         .child(
@@ -410,6 +413,13 @@ impl Janela {
                 let digitos = linhas.len().max(1).to_string().len().max(2);
                 // Dígitos × 0,6 em do mono de 13, mais 4.
                 let largura_numero = r(digitos as f32 * 7.8 + 4.);
+                // O link da conversa pediu uma linha: rola até ela uma vez (com folga em cima) e
+                // a deixa marcada enquanto o arquivo estiver aberto.
+                if let Some(linha) = self.arquivo_linha.take() {
+                    let alvo = (linha as usize).saturating_sub(1).min(linhas.len().saturating_sub(1));
+                    rolagem_codigo.scroll_to_item(alvo.saturating_sub(4), ScrollStrategy::Top);
+                }
+                let marcada = self.arquivo_marcada.get().map(|l| l as usize);
                 div()
                     .relative()
                     .flex_1()
@@ -423,7 +433,7 @@ impl Janela {
                                     .map(|i| {
                                         let cores_linha =
                                             cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
-                                        linha_de_codigo(i + 1, linhas[i].clone(), cores_linha, largura_numero)
+                                        linha_de_codigo(i + 1, linhas[i].clone(), cores_linha, largura_numero, marcada == Some(i + 1))
                                     })
                                     .collect()
                             },
@@ -445,11 +455,12 @@ impl Janela {
             .flex()
             .flex_col()
             .rounded(crate::tema::raio_da_peca())
-            .when(!na_gaveta, |s| s.bg(Cores::cartao()).reflexo(crate::tema::raio_da_peca()))
+            .when(!na_gaveta, |s| s.bg(Cores::cartao()).shadow(crate::tema::sombra_flutuante()))
             .overflow_hidden()
             .child(cabecalho)
             .child(barra)
             .child(corpo)
+            .when(!na_gaveta, |s| s.aresta_de_vidro(crate::tema::raio_da_peca()))
             .on_prepaint(medir)
             .into_any_element()
     }

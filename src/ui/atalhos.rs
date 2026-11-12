@@ -138,7 +138,7 @@ tabela! {
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";
     "alt-4", super::IrParaPainel4, None, Grupo::Paineis, "", "";
     "escape", super::FecharGaveta, Some("Gaveta"), Grupo::Paineis, "Recolher a gaveta", "";
-    "ctrl-w", super::FecharPainel, None, Grupo::Paineis, "Fechar o painel (a conversa fica na lista)", "";
+    "ctrl-w", super::FecharPainel, None, Grupo::Paineis, "Fechar a aba à vista e, na última, o painel (a conversa fica na lista)", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";

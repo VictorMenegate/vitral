@@ -15,10 +15,12 @@ use gpui_kit::*;
 
 use super::base::{Simbolo, texto_arco_iris};
 use super::estado::{Selo, Sinal};
-use super::superficies::EstadoVazio;
+use super::graficos::fio_de_pontos;
+use super::superficies::{EstadoVazio, ficha_de_metal};
+use super::textos::{etiqueta_de_secao, tracinho_de_secao};
 use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam};
 
-/// Rótulo de seção (24, 12/600 tênue), com contagem, ação e recolher: 16 de respiro em cima (4
+/// Rótulo de seção (24, mono 11 apagado em caixa alta, com o tracinho), com contagem, ação e recolher: 16 de respiro em cima (4
 /// na primeira, ou o `respiro`) e 4 embaixo. O texto fica no `recuo` (8 por padrão: na lista, com a peça de 8,
 /// cai na guia de 16; na Equipe, `.recuo(12.)` põe na guia de 24) e o chevron, à esquerda dele.
 #[derive(IntoElement)]
@@ -135,7 +137,14 @@ impl RenderOnce for CabecalhoDeSecao {
             .pr(esp::E8)
             .rotulo_secao()
             .children(seta)
-            .child(div().when(clicavel, |d| d.group_hover(GRUPO, |s| s.text_color(Cores::texto()))).child(self.titulo))
+            // A segunda voz: o tracinho e o título em caixa alta, só no desenho (o dado e o id
+            // continuam "Pastas", "Hoje").
+            .child(tracinho_de_secao())
+            .child(
+                div()
+                    .when(clicavel, |d| d.group_hover(GRUPO, |s| s.text_color(Cores::texto())))
+                    .child(SharedString::from(self.titulo.to_uppercase())),
+            )
             .children(contagem)
             .child(div().flex_1())
             .children(self.acao);
@@ -763,13 +772,21 @@ impl GrupoDeOpcoes {
 }
 
 impl RenderOnce for GrupoDeOpcoes {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         let n = self.linhas.len();
+        let mut filhos: Vec<AnyElement> = Vec::with_capacity(n * 2);
+        for (i, linha) in self.linhas.into_iter().enumerate() {
+            filhos.push(linha);
+            // Entre as linhas, um fio de pontos recuado 12 dos dois lados (não uma linha cheia).
+            if i + 1 < n {
+                filhos.push(div().px(esp::E12).child(fio_de_pontos(Cores::fio(), window)).into_any_element());
+            }
+        }
         div()
             .flex()
             .flex_col()
             .gap(r(6.))
-            .when_some(self.titulo, |d, t| d.child(div().px(r(4.)).rotulo_secao().child(t)))
+            .when_some(self.titulo, |d, t| d.child(etiqueta_de_secao(t).px(r(4.))))
             .child(
                 div()
                     .flex()
@@ -778,11 +795,7 @@ impl RenderOnce for GrupoDeOpcoes {
                     .bg(Cores::grupo())
                     .border_1()
                     .border_color(Cores::borda())
-                    .children(self.linhas.into_iter().enumerate().map(|(i, linha)| {
-                        div()
-                            .when(i + 1 < n, |d| d.border_b_1().border_color(Cores::linha()))
-                            .child(linha)
-                    })),
+                    .children(filhos),
             )
     }
 }
@@ -834,6 +847,8 @@ pub struct ListaDeEscolha {
     filtro: Option<Rc<dyn Fn(&str) -> Vec<GrupoDeEscolha>>>,
     rodape: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     simbolos_dos_grupos: Vec<(SharedString, Rc<Simbolo>)>,
+    /// O escolhido vai na ficha de metal, como nos popovers de escolha (o seletor de modelo).
+    ficha_no_escolhido: bool,
 }
 
 impl EventEmitter<EventoEscolha> for ListaDeEscolha {}
@@ -855,7 +870,13 @@ impl ListaDeEscolha {
             filtro: None,
             rodape: None,
             simbolos_dos_grupos: Vec::new(),
+            ficha_no_escolhido: false,
         }
+    }
+
+    /// O escolhido na ficha de metal (o visto continua), como nos popovers de escolha.
+    pub fn ficha_no_escolhido(&mut self, sim: bool) {
+        self.ficha_no_escolhido = sim;
     }
 
     /// Símbolo 16 antes do rótulo do grupo de título `titulo` (o logo do Claude no grupo
@@ -903,10 +924,19 @@ fn posicao(grupos: &[GrupoDeEscolha], chave: &str) -> Option<IndexPath> {
     })
 }
 
-/// Passo de 48 com descrição e 32 sem; o check fica à direita, na coluna dos selos.
-fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, window: &Window) -> Div {
+/// Passo de 48 com descrição e 32 sem; o check fica à direita, na coluna dos selos. Com `ficha`,
+/// o escolhido vai na ficha de metal, que sangra pela margem de 8 da linha do `Command` até a
+/// borda dela (em cima do véu, só `forte` e `texto`).
+fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: &Window) -> Div {
     let descrito = item.descricao.is_some();
+    let na_ficha = ficha && escolhido;
+    let sangria = tam(window, 8.);
     div()
+        .relative()
+        .when(na_ficha, |d| {
+            let lado = if descrito { 48. } else { 32. };
+            d.child(div().absolute().top_0().bottom_0().left(-sangria).right(-sangria).child(ficha_de_metal(lado)))
+        })
         .flex()
         .items_center()
         .gap(if descrito { esp::E12 } else { esp::E8 })
@@ -930,7 +960,13 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, window: &Window) -> D
                         .child(item.titulo.clone()),
                 )
                 .when_some(item.descricao.clone(), |d, t| {
-                    d.child(div().truncate().metadado().text_color(Cores::tenue()).child(t))
+                    d.child(
+                        div()
+                            .truncate()
+                            .metadado()
+                            .text_color(if na_ficha { Cores::texto() } else { Cores::tenue() })
+                            .child(t),
+                    )
                 }),
         )
         .child(
@@ -943,7 +979,7 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, window: &Window) -> D
                 .when(escolhido, |d| {
                     d.child(
                         div()
-                            .text_color(Cores::destaque_texto())
+                            .text_color(if na_ficha { Cores::forte() } else { Cores::destaque_texto() })
                             .child(Icon::new(Lucide::Check).with_size(tam(window, 16.))),
                     )
                 }),
@@ -955,6 +991,7 @@ impl Render for ListaDeEscolha {
         let lista = cx.entity().downgrade();
         let grupos = self.filtrados.clone().unwrap_or_else(|| self.grupos.clone());
         let escolhido = self.escolhido.clone();
+        let ficha = self.ficha_no_escolhido;
         let mut comando = Command::new(&self.estado)
             .placeholder(self.placeholder.clone())
             .bordered(false)
@@ -980,7 +1017,7 @@ impl Render for ListaDeEscolha {
                 let mut linha = CommandItem::new()
                     .label(item.titulo.clone())
                     .disabled(item.desabilitado.is_some())
-                    .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, window));
+                    .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, ficha, window));
                 if let Some(termos) = &item.termos {
                     linha = linha.keywords([termos.clone()]);
                 }

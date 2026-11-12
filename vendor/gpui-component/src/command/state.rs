@@ -747,6 +747,10 @@ impl CommandState {
             CommandEntry::Group(group) if group.heading() == Some(&heading) => group.heading_prefix.clone(),
             _ => None,
         });
+        // Vitral: na segunda voz do Vitral, como o rótulo de seção do app: mono 11 regular em caixa
+        // alta (só no desenho; o grupo continua "Pastas") e, sem símbolo, o tracinho de 8 por 1
+        // na frente. A altura não muda (o `measure_rows` mede com esta função).
+        let sem_simbolo = prefix.is_none();
         div()
             .w_full()
             .h(rem * (24. / 15.))
@@ -754,11 +758,21 @@ impl CommandState {
             .items_center()
             .gap(rem * (6. / 15.))
             .px(rem * (8. / 15.))
-            .text_size(rem * (12. / 15.))
-            .font_semibold()
+            .font_family(cx.theme().mono_font_family.clone())
+            .text_size(rem * (11. / 15.))
+            .font_weight(gpui::FontWeight::NORMAL)
             .text_color(cx.theme().muted_foreground)
+            .when(sem_simbolo, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .w(rem * (8. / 15.))
+                        .h(px(1.))
+                        .bg(gpui::hsla(0., 0., 1., 0.14)),
+                )
+            })
             .when_some(prefix, |this, prefix| this.child(prefix(window, cx)))
-            .child(heading)
+            .child(SharedString::from(heading.to_uppercase()))
     }
 
     fn render_row(&self, row_ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

@@ -540,6 +540,7 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                             }
                             let id = bloco["id"].as_str().unwrap_or_default().to_string();
                             chamadas.insert(id.clone(), cortados + itens.len());
+                            let (detalhe, arquivo) = crate::claude::detalhe_ferramenta(nome, &bloco["input"]);
                             itens.push(Item::Ferramenta {
                                 id,
                                 nome: nome.to_string(),
@@ -547,6 +548,8 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                                 resultado: None,
                                 erro: false,
                                 em,
+                                detalhe,
+                                arquivo,
                             });
                             resposta = None;
                         }
@@ -672,6 +675,10 @@ pub struct Filtro<'a> {
     pub de_fora: &'a [PathBuf],
     pub abertas: &'a HashSet<String>,
     pub agora: u64,
+    /// Só os arquivos mexidos de `desde` (segundos Unix) para cá: os mais velhos já foram
+    /// olhados numa passada anterior. É o que deixa a vigia barata (ela roda a cada poucos
+    /// minutos e, sem isso, releria milhares de sessões que nunca vão entrar). `None` olha tudo.
+    pub desde: Option<u64>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -685,14 +692,22 @@ pub struct Listagem {
     pub de_teste: usize,
     /// A pasta da conversa não existe mais (ou o disco não está montado).
     pub sem_pasta: usize,
+    /// Alguma pasta não abriu (sem permissão, disco que saiu no meio): a leitura não viu tudo, e
+    /// a vigia não pode dar por visto o que mudou até aqui.
+    pub incompleta: bool,
 }
 
 /// As sessões de todas as pastas `projects` (cada id uma vez), com os filtros.
 pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
     let mut l = Listagem::default();
     let mut vistas: HashSet<String> = HashSet::new();
+    let falhou = std::cell::Cell::new(false);
     let filhos = |p: &Path| -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        let Ok(entradas) = fs::read_dir(p) else {
+            falhou.set(true);
+            return Vec::new();
+        };
+        let mut v: Vec<PathBuf> = entradas.flatten().map(|e| e.path()).collect();
         v.sort();
         v
     };
@@ -714,6 +729,15 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
                     l.de_teste += 1;
                     continue;
                 }
+                let mudou = fs::metadata(&arquivo)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs());
+                // Na vigia, o que não mudou desde a última passada nem é aberto.
+                if filtro.desde.is_some_and(|desde| mudou < desde) {
+                    continue;
+                }
                 let Ok(lida) = ler_sessao(&arquivo) else {
                     l.vazias += 1;
                     continue;
@@ -732,11 +756,6 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
                     l.sem_pasta += 1;
                     continue;
                 }
-                let mudou = fs::metadata(&arquivo)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                    .map_or(0, |d| d.as_secs());
                 let em_uso = filtro.abertas.contains(&id) || filtro.agora.saturating_sub(mudou) < EM_USO_SEGUNDOS;
                 l.novas.push(Sessao {
                     id,
@@ -754,6 +773,7 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
         }
     }
     l.novas.sort_by(|a, b| (a.primeira, &a.id).cmp(&(b.primeira, &b.id)));
+    l.incompleta = falhou.get();
     l
 }
 
@@ -1083,7 +1103,8 @@ mod testes {
         let abertas: HashSet<String> = [S2.to_string()].into();
         let de_fora = [teste.clone(), dados.clone()];
         let agora = crate::modelo::agora();
-        let filtro = Filtro { trazidas: &nenhuma, do_vitral: &nenhuma, de_fora: &de_fora, abertas: &abertas, agora: agora + 3600 };
+        let filtro =
+            Filtro { trazidas: &nenhuma, do_vitral: &nenhuma, de_fora: &de_fora, abertas: &abertas, agora: agora + 3600, desde: None };
         let l = listar(&pastas, &filtro);
         let ids: Vec<&str> = l.novas.iter().map(|s| s.id.as_str()).collect();
         // A antiga (setembro) antes da de hoje (outubro).
@@ -1095,6 +1116,10 @@ mod testes {
         assert!(l.novas[0].em_uso && !hoje.em_uso);
         let agora_mesmo = Filtro { agora, ..filtro };
         assert!(listar(&pastas, &agora_mesmo).novas.iter().all(|s| s.em_uso));
+        // A vigia só abre o que mudou desde a passada anterior: com a passada no futuro, nada; com
+        // ela antes de tudo, o mesmo que olhar tudo.
+        assert!(listar(&pastas, &Filtro { desde: Some(agora + 3600), ..filtro }).novas.is_empty());
+        assert_eq!(listar(&pastas, &Filtro { desde: Some(0), ..filtro }).novas.len(), l.novas.len());
         // A segunda vez não traz de novo o que já veio, nem a sessão de um chat do Vitral.
         let trazidas: HashSet<String> = [S1.to_string()].into();
         let do_vitral: HashSet<String> = [S2.to_string()].into();
@@ -1114,7 +1139,8 @@ mod testes {
         gravar(&projects, &cwd, S2, "não é json\n{}\n");
         gravar(&projects, &cwd, S3, &so_clear(&cwd));
         let nenhuma = HashSet::new();
-        let filtro = Filtro { trazidas: &nenhuma, do_vitral: &nenhuma, de_fora: &[], abertas: &HashSet::new(), agora: 0 };
+        let filtro =
+            Filtro { trazidas: &nenhuma, do_vitral: &nenhuma, de_fora: &[], abertas: &HashSet::new(), agora: 0, desde: None };
         let l = listar(&[projects], &filtro);
         assert!(l.novas.is_empty());
         assert_eq!(l.vazias, 3);

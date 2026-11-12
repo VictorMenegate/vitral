@@ -4,13 +4,14 @@ use crate::actions::{SelectLeft, SelectRight};
 use crate::menu::menu_item::MenuItemElement;
 use crate::scroll::ScrollableElement;
 use crate::{ActiveTheme, ElementExt, Icon, IconName, Sizable as _, StyledExt as _, h_flex, v_flex};
-use crate::{Side, Size, kbd::Kbd};
+use crate::{Side, Size, fio_de_pontos, kbd::{Kbd, desenho_de_teclas}};
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext, Bounds, Context, DismissEvent, Edges, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
     ParentElement, Pixels, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder, px,
 };
+use gpui::{FontWeight, hsla};
 use gpui::{ClickEvent, MouseDownEvent, OwnedMenuItem, Point, Subscription};
 use gpui_base::TestSupportExt as _;
 
@@ -57,6 +58,8 @@ pub enum PopupMenuItem {
         danger: bool,
         action: Option<Box<dyn Action>>,
         render: Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>,
+        /// Vitral: a camada que enche o item por baixo do conteúdo (a ficha do escolhido).
+        fundo: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
         handler: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     },
     /// Vitral: uma linha fixa (cabeçalho ou rodapé): fora do teclado, sem realce e sem esmaecer.
@@ -103,6 +106,7 @@ impl PopupMenuItem {
             danger: false,
             action: None,
             render: Box::new(move |window, cx| builder(window, cx).into_any_element()),
+            fundo: None,
             handler: None,
         }
     }
@@ -221,6 +225,21 @@ impl PopupMenuItem {
                 *danger = sim;
             }
             _ => {}
+        }
+        self
+    }
+
+    /// Vitral: uma camada que enche o item inteiro por baixo do conteúdo (a ficha de metal do
+    /// escolhido numa lista de escolha); o realce do ponteiro vai por cima dela.
+    ///
+    /// Only works for [`PopupMenuItem::ElementItem`].
+    pub fn fundo<F, E>(mut self, builder: F) -> Self
+    where
+        F: Fn(&mut Window, &mut App) -> E + 'static,
+        E: IntoElement,
+    {
+        if let PopupMenuItem::ElementItem { fundo, .. } = &mut self {
+            *fundo = Some(Box::new(move |window, cx| builder(window, cx).into_any_element()));
         }
         self
     }
@@ -1389,16 +1408,17 @@ impl PopupMenu {
             .when_some(item.a11y_label(), |this, label| this.aria_label(label));
 
         match item {
-            // Vitral: 1 px na cor da borda, de borda a borda, com 4 em cima e embaixo.
+            // Vitral: sem linha cheia: o fio de pontos claro a 14%, recuado até a coluna dos
+            // ícones, com 6 em cima e embaixo.
             PopupMenuItem::Separator => this
-                .h(px(1.))
                 .p_0()
-                .my(z(4.))
-                .mx(-z(8.))
+                .my(z(6.))
+                .mx(z(10.))
                 .rounded(px(0.))
-                .bg(cx.theme().border)
-                .disabled(true),
-            // Vitral: rótulo de seção de 28, 12/600 tênue, alinhado com os rótulos.
+                .disabled(true)
+                .child(fio_de_pontos(hsla(0., 0., 1., 0.14), window)),
+            // Vitral: rótulo de seção de 28 na segunda voz do app (mono 11 regular, tênue),
+            // alinhado com os rótulos.
             PopupMenuItem::Label(label) => this.disabled(true).cursor_default().child(
                 h_flex()
                     .h(z(28.))
@@ -1406,8 +1426,9 @@ impl PopupMenu {
                     .cursor_default()
                     .items_center()
                     .gap_x(z(10.))
-                    .text_size(z(12.))
-                    .font_semibold()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(z(11.))
+                    .font_weight(FontWeight::NORMAL)
                     .text_color(muted)
                     .children(Self::render_icon(
                         has_left_icon,
@@ -1419,16 +1440,29 @@ impl PopupMenu {
                     ))
                     .child(div().flex_1().min_w_0().truncate().child(label.clone())),
             ),
-            PopupMenuItem::Static { render } => this
-                .disabled(true)
-                .cursor_default()
-                .child(div().w_full().min_w_0().child((render)(window, cx))),
+            // Vitral: a linha fixa vai de borda a borda do menu, sem a margem do item nem a do
+            // menu: a placa de metal do topo e a faixa do pé encostam na casca (quem desenha a
+            // linha põe a própria margem). Entre ela e os itens, 6.
+            PopupMenuItem::Static { render } => {
+                let primeira = ix == 0;
+                let ultima = ix + 1 == self.menu_items.len();
+                this.disabled(true)
+                    .cursor_default()
+                    .px_0()
+                    .mx(-z(8.))
+                    .when(primeira, |this| this.mt(-z(8.)))
+                    .when(ultima, |this| this.mb(-z(8.)))
+                    .when(primeira && !ultima, |this| this.mb(z(6.)))
+                    .when(ultima && !primeira, |this| this.mt(z(6.)))
+                    .child(div().w_full().min_w_0().child((render)(window, cx)))
+            }
             PopupMenuItem::ElementItem {
                 render,
                 icon,
                 disabled,
                 danger,
                 action,
+                fundo,
                 ..
             } => {
                 let key = if item.mostra_atalho() {
@@ -1445,6 +1479,7 @@ impl PopupMenu {
                 .disabled(*disabled)
                 .danger(*danger)
                 .when(*disabled, |this| this.opacity(0.45))
+                .when_some(fundo.as_ref(), |this, fundo| this.fundo((fundo)(window, cx)))
                 .child(
                     h_flex()
                         .flex_1()
@@ -1461,7 +1496,7 @@ impl PopupMenu {
                             cx,
                         ))
                         .child(div().flex_1().min_w_0().child((render)(window, cx)))
-                        .children(key.map(|key| key.text_size(z(12.)).ml(z(24.)).flex_none()))
+                        .children(key.map(|key| teclas_do_item(key, cx).ml(z(24.))))
                         .children(right_check_icon),
                 )
             }
@@ -1512,7 +1547,7 @@ impl PopupMenu {
                                     .text_color(muted),
                             )
                         })
-                        .children(key.map(|key| key.text_size(z(12.)).ml(z(24.)).flex_none()))
+                        .children(key.map(|key| teclas_do_item(key, cx).ml(z(24.))))
                         .children(right_check_icon),
                 )
             }
@@ -1581,6 +1616,20 @@ impl PopupMenu {
                 }),
         }
     }
+}
+
+/// Vitral: o atalho do item em teclas separadas ("Ctrl" "M"), no desenho único de tecla (fundo
+/// branco a 8%, o `hover` do app; letra tênue; canto de 8, o `raio::de(18.)` do app), com o mesmo
+/// `debug_selector` "kbd:…" do `Kbd`, que os testes procuram.
+fn teclas_do_item(kbd: Kbd, cx: &App) -> gpui::Div {
+    let atalho = kbd.keystroke().unparse(cx.platform_info().os);
+    div().flex_none().debug_selector(move || format!("kbd:{atalho}")).child(desenho_de_teclas(
+        kbd.partes(),
+        hsla(0., 0., 1., 0.08),
+        cx.theme().muted_foreground,
+        cx.theme().mono_font_family.clone(),
+        px(8.),
+    ))
 }
 
 impl FluentBuilder for PopupMenu {}
@@ -1680,6 +1729,16 @@ impl Render for PopupMenu {
                             .enumerate()
                             // Ignore last separator
                             .filter(|(ix, item)| !(*ix + 1 == items_count && item.is_separator()))
+                            // Vitral: nem o colado na placa do topo ou na faixa do pé: elas já
+                            // separam.
+                            .filter(|(ix, item)| {
+                                let fixa = |i: usize| {
+                                    matches!(self.menu_items.get(i), Some(PopupMenuItem::Static { .. }))
+                                };
+                                !(item.is_separator()
+                                    && ((*ix == 1 && fixa(0))
+                                        || (*ix + 2 == items_count && fixa(items_count - 1))))
+                            })
                             .map(|(ix, item)| self.render_item(ix, item, options, window, cx)),
                     )
                     .on_prepaint(move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds)),

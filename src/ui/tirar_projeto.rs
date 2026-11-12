@@ -419,8 +419,21 @@ impl Janela {
             .filter(|p| p.chat.as_ref().is_some_and(|c| chats.contains(c)))
             .map(|p| p.id)
             .collect();
+        // As abas de fundo dessas conversas saem primeiro, em todos os painéis.
+        for painel in &mut self.paineis {
+            let a_vista = painel.chat.clone();
+            painel.abas.retain(|a| Some(a) == a_vista.as_ref() || !chats.contains(a));
+        }
         for id in fechar {
-            if self.paineis.len() > 1 {
+            let (com_outras_abas, a_vista) = self
+                .paineis
+                .iter()
+                .find(|p| p.id == id)
+                .map_or((false, None), |p| (p.abas.len() > 1, p.chat.clone()));
+            if let (true, Some(chat)) = (com_outras_abas, a_vista) {
+                // O painel fica com as outras abas: só a da conversa que saiu fecha.
+                self.fechar_aba(id, &chat, window, cx);
+            } else if self.paineis.len() > 1 {
                 self.fechar_painel(id, cx);
             } else if let Some(ix) = self.paineis.iter().position(|p| p.id == id) {
                 self.ativo = ix;

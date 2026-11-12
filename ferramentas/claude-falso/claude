@@ -226,7 +226,14 @@ FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\
 
 def entrada_da_ferramenta(nome, detalhe):
     """O campo que o Vitral lê para montar o resumo de cada ferramenta."""
-    if nome in ("Read", "Edit", "Write", "NotebookEdit"):
+    # O Edit e o Write levam o que mudou: é o que a conversa mostra ao abrir a linha.
+    if nome == "Edit":
+        return {"file_path": detalhe,
+                "old_string": "    total = subtotal\n    return total",
+                "new_string": "    desconto = aplicar_cupom(cupom, subtotal)\n    total = subtotal - desconto\n    return total"}
+    if nome == "Write":
+        return {"file_path": detalhe, "content": "# criado pelo claude falso\nprint('ola')\n"}
+    if nome in ("Read", "NotebookEdit"):
         return {"file_path": detalhe}
     if nome in ("Bash", "BashOutput"):
         return {"command": detalhe}

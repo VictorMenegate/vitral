@@ -1,14 +1,17 @@
-//! Tema "vidro azul-marinho", tirado da Stained Glass UI do VS Code: janela translúcida com tom
-//! navy, peças arredondadas de 20 px, sem contornos, destaque azul #3A7FFF. O vidro fica no fundo
-//! (trilho, lista, painéis); o preto entra no que vai por cima (popovers, menus, dicas, avisos) e
-//! por dentro (código, saída de comando, diff, o fim da caixa de mensagem e os discos do trilho).
+//! Tema do Vitral. Nasceu como "vidro azul-marinho", tirado da Stained Glass UI do VS Code (janela
+//! translúcida com tom navy, peças de 20 px, destaque azul #3A7FFF). Em 12/11/2026 o dono pediu
+//! "mais moderno e com menos cara de IA", e o acabamento em uso passou a ser o "Grafite": as mesmas
+//! peças em degraus, num cinza frio quase sem cor, chapado (sem gradiente, reflexo nem halo) e com
+//! um destaque só, o azul. Os cantos continuam bem arredondados (10, 14 e 20, pílula nos botões e
+//! chips): o dono viu a versão de cantos curtos e disse que prefere assim. O marinho de antes
+//! continua em `superficie::MARINHO`: trocar o `ATUAL` volta a ele.
 
 use std::{borrow::Cow, rc::Rc};
 
 use gpui_kit::component::{Theme, ThemeSet};
 use gpui_kit::{
-    Anchor, App, AssetSource, Background, BoxShadow, FontWeight, Hsla, Pixels, Rems, SharedString,
-    Styled, Window, linear_color_stop, linear_gradient, px, rems, rgb, rgba,
+    Anchor, App, AssetSource, Background, BoxShadow, FontFeatures, FontWeight, Hsla, Pixels, Rems, SharedString,
+    Styled, Window, linear_color_stop, linear_gradient, px, rems, rgba,
 };
 
 /// Medida de desenho a 100% (1 rem = 15 px); cresce com o zoom.
@@ -37,6 +40,13 @@ pub mod raio {
     /// Cheio (o GPUI corta o raio na metade do lado menor): o `rounded_full()` de quem só aceita
     /// Pixels. Botões, chips, abas, segmentado, selos, avatares, pontos, anéis e barras.
     pub const PILULA: Pixels = px(999.);
+
+    /// O padrão de canto dos controles (botões, campos, abas, chips, selos): bem arredondado,
+    /// nunca redondo. É o desenho do logo em escala: 45% da altura (16 num controle de 36, 14 num
+    /// de 32, 9 num chip de 20; redondo seria 50%). Só ponto, barra fina e anel continuam redondos.
+    pub fn de(altura: f32) -> Pixels {
+        px((altura * 0.45).round())
+    }
 
     /// O quadrado do projeto é um ícone: o de 32 (o do trilho) tem o raio de controle, e os
     /// outros lados levam o mesmo desenho em escala.
@@ -131,19 +141,41 @@ pub const CORES_PROJETO: [(u32, &str); 8] = [
     (0xc8b98f, "Areia"),
 ];
 
-/// Tipografia da linguagem, em rem (cresce com o zoom).
+/// Dígitos de largura igual (`tnum` do OpenType; a Inter embutida tem a tabela): o número que muda
+/// ("4 s", "5 s", "24%") não faz a coluna andar. Um `Arc` só, clonado a cada uso.
+static TABULAR: std::sync::LazyLock<FontFeatures> =
+    std::sync::LazyLock::new(|| FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
+
+/// Tipografia da linguagem, em rem (cresce com o zoom). Duas vozes: a Inter, que conversa, e a
+/// JetBrains Mono miúda (`etiqueta`, `rotulo_secao`, as teclas), que põe à vista os fatos e as
+/// medidas, como num aparelho de medição.
 pub trait Tipo: Styled + Sized {
+    /// Dígitos de largura igual (já vem no `metadado`, no `micro` e no `numero`).
+    fn tabular(self) -> Self {
+        self.font_features(TABULAR.clone())
+    }
+    /// O título grande da tela vazia (28/34).
+    fn titulo_heroi(self) -> Self {
+        self.text_size(r(28.)).line_height(r(34.)).font_weight(FontWeight::SEMIBOLD)
+    }
     fn titulo_tela(self) -> Self {
         self.text_size(r(18.)).line_height(r(24.)).font_weight(FontWeight::SEMIBOLD)
     }
     fn titulo_cartao(self) -> Self {
         self.text_size(r(15.)).line_height(r(20.)).font_weight(FontWeight::SEMIBOLD)
     }
+    /// Rótulo de seção: mono de 11 apagado, como etiqueta técnica. A caixa alta e o tracinho na
+    /// frente ficam no desenho (`etiqueta_de_secao`, `CabecalhoDeSecao`), nunca no dado.
     fn rotulo_secao(self) -> Self {
-        self.text_size(r(12.))
+        self.font_family(FONTE_MONO)
+            .text_size(r(11.))
             .line_height(r(16.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(Cores::tenue())
+            .font_weight(FontWeight::NORMAL)
+            .text_color(Cores::apagado())
+    }
+    /// A segunda voz: mono 11/14 regular, das etiquetas de fio, numerais e medidas.
+    fn etiqueta(self) -> Self {
+        self.font_family(FONTE_MONO).text_size(r(11.)).line_height(r(14.)).font_weight(FontWeight::NORMAL)
     }
     fn corpo(self) -> Self {
         self.text_size(r(15.)).line_height(r(23.))
@@ -155,10 +187,10 @@ pub trait Tipo: Styled + Sized {
         self.text_size(r(13.)).line_height(r(18.)).font_weight(FontWeight::MEDIUM)
     }
     fn metadado(self) -> Self {
-        self.text_size(r(12.)).line_height(r(16.))
+        self.text_size(r(12.)).line_height(r(16.)).tabular()
     }
     fn micro(self) -> Self {
-        self.text_size(r(11.)).line_height(r(14.)).font_weight(FontWeight::SEMIBOLD)
+        self.text_size(r(11.)).line_height(r(14.)).font_weight(FontWeight::SEMIBOLD).tabular()
     }
     fn mono(self) -> Self {
         self.font_family(FONTE_MONO).text_size(r(13.)).line_height(r(20.))
@@ -167,7 +199,7 @@ pub trait Tipo: Styled + Sized {
         self.font_family(FONTE_MONO).text_size(r(12.)).line_height(r(16.))
     }
     fn numero(self) -> Self {
-        self.text_size(r(20.)).line_height(r(24.)).font_weight(FontWeight::SEMIBOLD)
+        self.text_size(r(20.)).line_height(r(24.)).font_weight(FontWeight::SEMIBOLD).tabular()
     }
 }
 
@@ -212,20 +244,56 @@ pub fn sombra_dialogo() -> Vec<BoxShadow> {
     ]
 }
 
-/// Sombra interna do recuo (trilho do segmentado, campo de busca).
-pub fn sombra_recuo() -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(0.), px(1.), preto_de_sombra(0x59)).blur_radius(px(1.)).inset()]
+/// Os três materiais do Vitral, feitos só de luz e sombra de 1 px por dentro (nada vaza para fora
+/// da peça, que é translúcida e escureceria o que está atrás).
+///
+/// Vidro, nas peças (lista, conversa, painéis da direita): um fio claro de 1 px na volta toda,
+/// luz na própria quina de cima, sombra de 1 px na base e um brilho que entra uns 40 px pelo topo.
+/// Vai na camada do `camada_de_aresta`, o último filho da peça: a sombra interna pinta antes dos
+/// filhos, e o que viesse depois (o pontilhado do pé) passaria por cima do fio.
+pub fn aresta_de_vidro() -> Vec<BoxShadow> {
+    // Cada lado é uma sombra interna deslocada 1 px (o furo anda 1 px e sobra uma tira de 1 px
+    // daquele lado, que acompanha o arco dos cantos). Um anel só (`spread_radius(1)`) passaria
+    // também pela base, e o claro dele com a sombra por cima dava o tom do fundo: a base sumia.
+    let lado = |x: f32, y: f32, cor: Hsla| BoxShadow::new(px(x), px(y), cor).inset();
+    vec![
+        // O brilho primeiro, para o fio e a luz pintarem por cima dele.
+        BoxShadow::new(px(0.), px(28.), Cores::brilho_de_dentro())
+            .blur_radius(px(12.))
+            .spread_radius(px(-12.))
+            .inset(),
+        // O fio claro nos dois lados e em cima.
+        lado(1., 0., Cores::aro_da_peca()),
+        lado(-1., 0., Cores::aro_da_peca()),
+        lado(0., 1., Cores::aro_da_peca()),
+        // A luz na própria quina de cima, por cima do fio.
+        lado(0., 1., Cores::brilho_topo()),
+        // A sombra na base.
+        lado(0., -1., Cores::sombra_de_baixo()),
+    ]
+}
+
+/// Tecla, no que está em relevo e escolhido (a pílula do segmentado, a tecla de atalho): luz de
+/// 1 px em cima e sombra de 1 px embaixo, por dentro. Nunca em cada linha de uma lista.
+pub fn aresta_de_tecla() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(1.), Cores::forte().opacity(0.16)).inset(),
+        BoxShadow::new(px(0.), px(-1.), Cores::preto_puro().opacity(0.30)).inset(),
+    ]
+}
+
+/// Poço, no que é cavado (o trilho do segmentado, o campo de busca, o contador): a sombra cai
+/// de cima para dentro e a quina de baixo pega 1 px de luz.
+pub fn aresta_de_poco() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(2.), Cores::preto_puro().opacity(0.55)).blur_radius(px(3.)).inset(),
+        BoxShadow::new(px(0.), px(-1.), Cores::forte().opacity(0.07)).inset(),
+    ]
 }
 
 /// Anel de foco pelo teclado, o mesmo do kit (`FOCUS_RING_WIDTH`).
 pub fn halo_foco() -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(0.), px(0.), rgba(0x3a7fff80).into()).spread_radius(px(3.))]
-}
-
-/// Halo do foco da caixa e do painel ativo (E3): o destaque desfocado em volta, com `forca` de 0
-/// (sem halo) a 1 (alfa 0,22). Vai junto das sombras que a peça já tem.
-pub fn halo_suave(forca: f32) -> BoxShadow {
-    BoxShadow::new(px(0.), px(0.), Cores::destaque().opacity(0.22 * forca.clamp(0., 1.))).blur_radius(px(12.))
+    vec![BoxShadow::new(px(0.), px(0.), Cores::destaque().opacity(0.5)).spread_radius(px(3.))]
 }
 
 /// Linha de luz de 1 px no topo de dentro da peça (o reflexo do vidro), a `forca` de 0 a 1.
@@ -243,6 +311,11 @@ pub fn gradiente_reflexo() -> Background {
         linear_color_stop(rgba(0x00000000 | alfa), 0.),
         linear_color_stop(rgba(0x00000000), 1.),
     )
+}
+
+/// A beirada de cima da doca (o metal no pé da conversa): o escuro do cartão some para baixo.
+pub fn gradiente_da_doca() -> Background {
+    linear_gradient(180., linear_color_stop(Cores::cartao(), 0.), linear_color_stop(Cores::cartao().opacity(0.), 1.))
 }
 
 /// Assinatura do Vitral: azul à esquerda indo para o preto (caixa de mensagem).
@@ -263,8 +336,9 @@ pub fn gradiente_quente_em(angulo: f32) -> Background {
 pub fn gradiente_destaque() -> Background {
     linear_gradient(
         90.,
-        linear_color_stop(rgba(0x3a7fff29), 0.),
-        linear_color_stop(rgba(0x3a7fff00), 0.6),
+        // Um tom só, de ponta a ponta: o azul marca o cartão sem virar degradê.
+        linear_color_stop(Cores::destaque().opacity(0.08), 0.),
+        linear_color_stop(Cores::destaque().opacity(0.08), 1.),
     )
 }
 
@@ -568,6 +642,11 @@ fn tema_json() -> String {
         ("accent.background", v.selecao),
         ("sidebar.accent.background", v.selecao),
         ("tab.active.background", v.cartao_elevado),
+        // O anel de foco do kit (menus, campos) é neutro: o azul fica para a ação.
+        ("ring", 0xffffff40),
+        ("primary.foreground", v.sobre_destaque),
+        ("button.primary.foreground", v.sobre_destaque),
+        ("sidebar.primary.foreground", v.sobre_destaque),
     ] {
         let alvo = format!("\"{chave}\": \"");
         if let Some(i) = json.find(&alvo) {
@@ -575,6 +654,23 @@ fn tema_json() -> String {
             let fim = inicio + json[inicio..].find('"').expect("cor do tema fechada");
             json.replace_range(inicio..fim, &format!("#{cor:08x}"));
         }
+    }
+    // Os textos do kit (o corpo, o tênue e o dos comentários) seguem os da variante: no JSON eles
+    // estão com os do marinho, em várias chaves.
+    let m = &superficie::MARINHO;
+    for (antes, depois) in [(m.texto, v.texto), (m.tenue, v.tenue), (m.apagado, v.apagado)] {
+        json = json.replace(&format!("#{:06x}", antes >> 8), &format!("#{:06x}", depois >> 8));
+    }
+    // O destaque e as variações dele (o foco, a seleção de texto, o botão primário, os links).
+    for (antes, depois) in [
+        (0x3a7fff, v.destaque >> 8),
+        (0x2f6fe8, v.destaque >> 8),
+        (0x3374f0, v.destaque_hover >> 8),
+        (0x2a64d6, v.destaque_hover >> 8),
+        (0x2458c0, v.destaque_ativo >> 8),
+        (0x8fc0ff, v.destaque_texto >> 8),
+    ] {
+        json = json.replace(&format!("#{antes:06x}"), &format!("#{depois:06x}"));
     }
     json
 }
@@ -604,7 +700,8 @@ pub fn aplicar(cx: &mut App) {
 /// diferente, com a moldura quase preta.
 pub mod superficie {
     pub struct Variante {
-        /// Vidro da janela: o chumbo das frestas e da margem.
+        /// Fundo da janela (o `background` do tema). No Grafite é opaco e fica debaixo da chapa de
+        /// metal: só aparece se o metal não puder ser pintado.
         pub vidro: u32,
         /// Fundo do trilho e da lista.
         pub vidro_leitura: u32,
@@ -621,6 +718,12 @@ pub mod superficie {
         pub recuo: u32,
         /// Véu atrás dos diálogos.
         pub veu: u32,
+        /// O escuro por cima do metal numa placa de cabeçalho (56%): com ele, `forte` e `texto`
+        /// passam de 4,5:1 mesmo com a bolha mais clara atrás (o mínimo é 0x84).
+        pub veu_de_placa: u32,
+        /// O escuro por cima do metal num botão de ação ou numa gota (36%): o ícone branco passa
+        /// de 3:1 (o mínimo é 0x4c).
+        pub veu_de_botao: u32,
         /// Contorno de controle (campo, chip, selo).
         pub borda: u32,
         /// Contorno de popover, diálogo e lista de escolha.
@@ -634,6 +737,15 @@ pub mod superficie {
         pub aro: u32,
         /// Linha de luz no topo de dentro das peças.
         pub brilho_topo: u32,
+        /// Sombra de 1 px na base de dentro das peças (a `aresta_de_vidro`).
+        pub sombra_de_baixo: u32,
+        /// O brilho que entra uns 40 px pelo topo das peças. Travado em 3%: com 5% o apagado
+        /// sobre a lista reprova no contraste.
+        pub brilho_de_dentro: u32,
+        /// Fio de pontos: separador e trilho, no lugar da linha cheia.
+        pub fio: u32,
+        /// A trama fina de fundo (placa de cabeçalho, cabeçalho de código).
+        pub pontilhado_fino: u32,
         /// Quanto do gradiente de reflexo entra no topo das peças.
         pub reflexo: f32,
         /// Multiplicador das sombras dos elevados, flutuantes e diálogos.
@@ -648,36 +760,147 @@ pub mod superficie {
         pub margem: f32,
         pub vao: f32,
         pub raio_peca: f32,
+        /// Corpo (o `foreground` do tema), o tênue, o dos metadados e o decorativo.
+        pub texto: u32,
+        pub tenue: u32,
+        pub apagado: u32,
+        pub fantasma: u32,
+        /// Código em linha no texto.
+        pub codigo: u32,
+        /// A base (opaca) onde a cor do projeto é misturada, no quadrado dele.
+        pub base_da_tinta: u32,
+        /// O destaque (o único da tela): o cheio, o do ponteiro em cima, o apertado, o de texto
+        /// pequeno (que precisa de 4,5:1 nas peças) e o que vai escrito por cima do cheio.
+        pub destaque: u32,
+        pub destaque_hover: u32,
+        pub destaque_ativo: u32,
+        pub destaque_texto: u32,
+        pub sobre_destaque: u32,
     }
 
-    /// As cores em uso: "Degraus", sem borda, denso.
-    pub const ATUAL: Variante = Variante {
-            vidro: 0x02030aee,
-            vidro_leitura: 0x0e1322ff,
-            cartao: 0x171e30ff,
-            cartao_elevado: 0x1e2740ff,
-            flutuante: 0x1b2339ff,
-            dialogo: 0x1e2740ff,
-            gaveta: 0x1e2740ff,
-            preto: 0x05060aff,
-            recuo: 0x00000066,
-            veu: 0x020309cc,
-            borda: 0x00000000,
-            borda_forte: 0xffffff14,
-            linha: 0xffffff0f,
-            traco: 0xffffff14,
-            aro: 0x00000000,
-            brilho_topo: 0xffffff0f,
-            reflexo: 1.,
-            sombra: 1.3,
-            hover: 0xffffff14,
-            selecao: 0x3a7fff3d,
-            caixa_quente: 0x24396bf7,
-            caixa_preta: 0x10131cf7,
-            margem: 4.,
-            vao: 4.,
-            raio_peca: 14.,
-        };
+    /// O acabamento de antes de 12/11/2026: "Degraus" no azul-marinho da Stained Glass UI, com o
+    /// reflexo no topo das peças, o gradiente na caixa de mensagem e a moldura quase preta.
+    pub const MARINHO: Variante = Variante {
+        vidro: 0x02030aee,
+        vidro_leitura: 0x0e1322ff,
+        cartao: 0x171e30ff,
+        cartao_elevado: 0x1e2740ff,
+        flutuante: 0x1b2339ff,
+        dialogo: 0x1e2740ff,
+        gaveta: 0x1e2740ff,
+        preto: 0x05060aff,
+        recuo: 0x00000066,
+        veu: 0x020309cc,
+        veu_de_placa: 0x0000008f,
+        veu_de_botao: 0x0000005c,
+        borda: 0x00000000,
+        borda_forte: 0xffffff14,
+        linha: 0xffffff0f,
+        traco: 0xffffff14,
+        aro: 0x00000000,
+        brilho_topo: 0xffffff0f,
+        // O marinho não tem a aresta: sem sombra embaixo nem brilho por dentro.
+        sombra_de_baixo: 0x00000000,
+        brilho_de_dentro: 0x00000000,
+        fio: 0xffffff14,
+        pontilhado_fino: 0xffffff0a,
+        reflexo: 1.,
+        sombra: 1.3,
+        hover: 0xffffff14,
+        selecao: 0x3a7fff3d,
+        caixa_quente: 0x24396bf7,
+        caixa_preta: 0x10131cf7,
+        margem: 4.,
+        vao: 4.,
+        raio_peca: 14.,
+        texto: 0xdfe6fbff,
+        tenue: 0x9ba8cfff,
+        apagado: 0x8a97bfff,
+        fantasma: 0x9ba8cf99,
+        codigo: 0x9ccbffff,
+        base_da_tinta: 0x121726ff,
+        destaque: 0x3a7fffff,
+        destaque_hover: 0x3374f0ff,
+        destaque_ativo: 0x2a64d6ff,
+        destaque_texto: 0x6b9bffff,
+        sobre_destaque: 0xffffffff,
+    };
+
+    /// "Grafite" (12/11/2026, o dono quis "mais moderno e com menos cara de IA" e apontou o
+    /// recent.design e o dithercn.dev como referência): os mesmos degraus de claro, num quase preto
+    /// frio e sem cor, com um destaque só, lavanda. Chapado: sem a linha de luz nem o reflexo no topo das
+    /// peças, sem gradiente na caixa e sem halo; o que separa as peças é o degrau de tom e o que
+    /// marca o foco é a borda. A moldura tem a cor da lista (antes era um chumbo quase preto e a
+    /// janela parecia ter uma borda preta em volta do menu). A seleção é neutra: o azul fica para
+    /// o que é ação (o "+", o enviar, os links, o foco), um destaque só por tela. Depois ele pediu
+    /// "partes transparentes e bordas estilizadas": o vidro voltou (a moldura e a lista translúcidas,
+    /// a caixa de mensagem também), com um fio de contorno e a linha de luz no topo. No plano
+    /// visual de 12/11 ("muito básico"), as peças ganharam a aresta de vidro inteira (fio nos
+    /// lados, luz na quina, sombra na base, brilho de 3%), o painel ativo trocou a borda azul pelas
+    /// cantoneiras e as linhas cheias viraram fio de pontos. Ele ainda achou "muito básico", colou
+    /// a receita do metal líquido e pediu "tenta focar em vez de glass esse metal líquido": atrás
+    /// de tudo passou a haver uma chapa de metal opaca (`componentes/metal.rs`), e o papel de
+    /// parede saiu de cena. O app é a casca escura por cima dela.
+    pub const GRAFITE: Variante = Variante {
+        // O `vidro` é opaco: é a reserva debaixo do metal e o que a raiz do kit pinta. São duas
+        // camadas: a BASE é a janela inteira, com a lista direto nela (sem cartão próprio), e é o
+        // metal debaixo do `vidro_leitura`, um véu azul-escuro que deixa passar 11% dele; por cima
+        // flutuam os cartões (a conversa, os painéis da direita), grafite e quase opacos (5%). O
+        // que flutua sobre texto (menus, popovers) é praticamente opaco. Os alfas saem da conta
+        // de contraste contra a cor mais clara do metal (`TETO_DO_METAL`).
+        vidro: 0x0d0f13ff,
+        vidro_leitura: 0x0a1533e3,
+        cartao: 0x14161df2,
+        cartao_elevado: 0x1c1f29ff,
+        flutuante: 0x171a23f7,
+        dialogo: 0x1c1f29fa,
+        gaveta: 0x1c1f29fa,
+        preto: 0x08090cff,
+        recuo: 0x00000066,
+        veu: 0x05060899,
+        veu_de_placa: 0x0000008f,
+        veu_de_botao: 0x0000005c,
+        // As bordas são um fio claro: nos controles, nas peças (o aro) e, mais forte, no que flutua.
+        // No topo das peças e da caixa, uma linha de luz, como a quina de um vidro.
+        borda: 0xffffff12,
+        borda_forte: 0xffffff1f,
+        linha: 0xffffff0f,
+        traco: 0xffffff14,
+        // A aresta de vidro das peças: o fio em volta, a luz na quina de cima, a sombra na base e
+        // o brilho de 3% que entra pelo topo (ver `aresta_de_vidro`).
+        aro: 0xffffff14,
+        brilho_topo: 0xffffff24,
+        sombra_de_baixo: 0x00000073,
+        brilho_de_dentro: 0xffffff08,
+        fio: 0xffffff24,
+        pontilhado_fino: 0xffffff0a,
+        reflexo: 0.,
+        sombra: 1.2,
+        hover: 0xffffff14,
+        selecao: 0xffffff1c,
+        // O campo da caixa de mensagem é opaco: é o miolo da moldura dupla (e do aro de metal).
+        caixa_quente: 0x1c1f29ff,
+        caixa_preta: 0x1c1f29ff,
+        // A base aparece em volta dos cartões: 8 px dão a ela largura de camada, não de fresta.
+        margem: 8.,
+        vao: 8.,
+        raio_peca: 16.,
+        texto: 0xe2e5ecff,
+        tenue: 0x9da3b3ff,
+        apagado: 0x8e94a5ff,
+        fantasma: 0x9da3b399,
+        codigo: 0xc8cfe0ff,
+        base_da_tinta: 0x14161dff,
+        // Um azul cheio (o dono pediu "um azul mais azul"), com branco por cima.
+        destaque: 0x2b63ffff,
+        destaque_hover: 0x4a7bffff,
+        destaque_ativo: 0x1f52e6ff,
+        destaque_texto: 0x7c9dffff,
+        sobre_destaque: 0xffffffff,
+    };
+
+    /// O acabamento em uso.
+    pub const ATUAL: Variante = GRAFITE;
 
     pub fn atual() -> &'static Variante {
         &ATUAL
@@ -703,13 +926,13 @@ pub fn vao_entre_pecas() -> gpui_kit::Pixels {
 pub struct Cores;
 
 impl Cores {
-    /// Vidro da janela (o `background` do tema): o chumbo das frestas e da margem, mais escuro
-    /// que as peças, para elas se destacarem.
+    /// Fundo da janela (o `background` do tema), que a raiz do kit pinta. Fica debaixo da chapa
+    /// de metal (`componentes::metal::fundo`), que é quem aparece nas frestas e na margem.
     pub fn vidro() -> Hsla {
         rgba(superficie::atual().vidro).into()
     }
-    /// Fundo das colunas com texto pequeno (trilho e lista): garante o contraste no pior caso e
-    /// fica no mesmo tom da conversa sobre o vidro escuro.
+    /// Fundo das colunas com texto pequeno (trilho e lista): fumê sobre a chapa de metal, que o
+    /// tinge de azul. Garante o contraste no pior caso (a bolha mais clara atrás).
     pub fn vidro_leitura() -> Hsla {
         rgba(superficie::atual().vidro_leitura).into()
     }
@@ -743,6 +966,14 @@ impl Cores {
     pub fn veu() -> Hsla {
         rgba(superficie::atual().veu).into()
     }
+    /// O escuro por cima do metal numa placa de cabeçalho: em cima dele só `forte` e `texto`.
+    pub fn veu_de_placa() -> Hsla {
+        rgba(superficie::atual().veu_de_placa).into()
+    }
+    /// O escuro por cima do metal num botão de ação ou numa gota: em cima dele só ícone branco.
+    pub fn veu_de_botao() -> Hsla {
+        rgba(superficie::atual().veu_de_botao).into()
+    }
     pub fn pressionado() -> Hsla {
         rgba(0xffffff1f).into()
     }
@@ -759,7 +990,7 @@ impl Cores {
     }
     /// A cor misturada ao marinho, opaca: fundo do quadrado do projeto.
     pub fn tinta_solida(cor: Hsla, alfa: f32) -> Hsla {
-        Hsla::from(rgb(0x121726)).blend(cor.opacity(alfa))
+        Hsla::from(rgba(superficie::atual().base_da_tinta)).blend(cor.opacity(alfa))
     }
     /// Hover e realce de item perigoso.
     pub fn perigo_hover() -> Hsla {
@@ -779,15 +1010,16 @@ impl Cores {
     }
     /// Corpo (o `foreground` do tema).
     pub fn texto() -> Hsla {
-        rgba(0xdfe6fbff).into()
+        rgba(superficie::atual().texto).into()
     }
     /// Texto sobre selo sólido de cor.
     pub fn sobre_cor() -> Hsla {
         rgba(0x0f1422ff).into()
     }
-    /// Só o esforço.
+    /// Só o esforço. Era um ciano (#67E7F9); no acabamento chapado as barrinhas e o rótulo do
+    /// esforço são neutros, como os outros chips da caixa: o destaque da tela é um só.
     pub fn ciano() -> Hsla {
-        rgba(0x67e7f9ff).into()
+        Self::texto()
     }
     /// Automação e IA.
     pub fn violeta() -> Hsla {
@@ -816,7 +1048,7 @@ impl Cores {
         linear_gradient(
             90.,
             linear_color_stop(rgba(0x3a7fff00), 0.78),
-            linear_color_stop(rgba(0x3a7fff14), 1.),
+            linear_color_stop(rgba(0x3a7fff00), 1.),
         )
     }
     pub fn brilho_topo() -> Hsla {
@@ -845,11 +1077,21 @@ impl Cores {
         rgba(superficie::atual().dialogo).into()
     }
     pub fn destaque() -> Hsla {
-        rgba(0x3a7fffff).into()
+        rgba(superficie::atual().destaque).into()
     }
-    /// Azul para texto pequeno: o #3A7FFF fica abaixo de 4,5:1 no vidro.
+    pub fn destaque_hover() -> Hsla {
+        rgba(superficie::atual().destaque_hover).into()
+    }
+    pub fn destaque_ativo() -> Hsla {
+        rgba(superficie::atual().destaque_ativo).into()
+    }
+    /// O destaque para texto pequeno: o cheio pode ficar abaixo de 4,5:1 nas peças.
     pub fn destaque_texto() -> Hsla {
-        rgba(0x6b9bffff).into()
+        rgba(superficie::atual().destaque_texto).into()
+    }
+    /// Texto e ícone por cima do destaque cheio (o "+", o botão primário).
+    pub fn sobre_destaque() -> Hsla {
+        rgba(superficie::atual().sobre_destaque).into()
     }
     /// Item escolhido numa lista (par com `hover`): azul, mais forte que o hover.
     pub fn selecao() -> Hsla {
@@ -861,26 +1103,46 @@ impl Cores {
     }
     /// Contorno do painel ativo e da caixa com foco: forte o bastante para ver no vidro.
     pub fn destaque_borda() -> Hsla {
-        rgba(0x3a7fff99).into()
+        Self::destaque().opacity(0.6)
     }
     pub fn codigo() -> Hsla {
-        rgba(0x9ccbffff).into()
+        rgba(superficie::atual().codigo).into()
     }
     pub fn tenue() -> Hsla {
-        rgba(0x9ba8cfff).into()
+        rgba(superficie::atual().tenue).into()
     }
     /// Metadados (horário, estados vazios, avisos): opaco para dar 4,5:1 até sobre a neblina.
     pub fn apagado() -> Hsla {
-        rgba(0x8a97bfff).into()
+        rgba(superficie::atual().apagado).into()
     }
     /// Só para o que é decorativo (separadores, ícone da busca): pode sumir no fundo.
     pub fn fantasma() -> Hsla {
-        rgba(0x9ba8cf99).into()
+        rgba(superficie::atual().fantasma).into()
     }
-    /// Aro de 1 px por dentro das pecas (estudo de fundos): transparente na variante que
-    /// nao tem aro, como o Vitral de hoje.
+    /// Aro de 1 px por dentro das peças (o fio da `aresta_de_vidro`): transparente na variante
+    /// que não tem aro.
     pub fn aro_da_peca() -> Hsla {
         rgba(superficie::atual().aro).into()
+    }
+    /// A sombra de 1 px na base de dentro das peças.
+    pub fn sombra_de_baixo() -> Hsla {
+        rgba(superficie::atual().sombra_de_baixo).into()
+    }
+    /// O brilho de 3% que entra pelo topo das peças.
+    pub fn brilho_de_dentro() -> Hsla {
+        rgba(superficie::atual().brilho_de_dentro).into()
+    }
+    /// O fio de pontos (separador e trilho) e o tracinho dos rótulos de seção.
+    pub fn fio() -> Hsla {
+        rgba(superficie::atual().fio).into()
+    }
+    /// A trama fina de fundo (placa de cabeçalho, cabeçalho de código).
+    pub fn pontilhado_fino() -> Hsla {
+        rgba(superficie::atual().pontilhado_fino).into()
+    }
+    /// Preto puro, só como base das sombras de 1 px (a opacidade vem de quem usa).
+    pub fn preto_puro() -> Hsla {
+        rgba(0x000000ff).into()
     }
     pub fn linha() -> Hsla {
         rgba(superficie::atual().linha).into()
@@ -1009,23 +1271,29 @@ pub(crate) mod testes {
         assert!(mesma_cor(Cores::flutuante(), popover), "Cores::flutuante() diferente do popover.background");
     }
 
-    /// Texto e cores semânticas passam de 4,5:1 nas superfícies de leitura, com papel de parede
-    /// branco atrás da janela (o pior caso).
+    /// Texto e cores semânticas passam de 4,5:1 nas superfícies de leitura, com a cor mais clara
+    /// que a chapa de metal entrega atrás delas (o pior caso: a janela é opaca, o que fica atrás
+    /// do texto é o metal, não o papel de parede).
     #[test]
     fn contraste_dos_tokens_no_pior_caso() {
-        let branco = Rgba { r: 1., g: 1., b: 1., a: 1. };
-        let vidro = sobre(Cores::vidro(), branco);
-        let painel = sobre(Cores::cartao(), vidro);
-        let flutuante = sobre(Cores::flutuante(), vidro);
+        let atras = Rgba::from(rgb(crate::ui::componentes::metal::TETO_DO_METAL));
+        let painel = sobre(Cores::cartao(), atras);
+        let flutuante = sobre(Cores::flutuante(), atras);
         // O `.reflexo()` escurece o topo das peças, onde fica o título (#0000001a): o texto
         // precisa continuar legível sobre ele. A linha de luz é de 1 px, sem texto em cima.
         let reflexo = |fundo: Rgba| sobre(gpui_kit::rgba(0x0000001a).into(), fundo);
+        // A `aresta_de_vidro` clareia o topo das peças com o brilho de dentro: os títulos ficam
+        // em cima dele. Travado em 3% (com 5% o apagado sobre a lista reprova).
+        let brilho = |fundo: Rgba| sobre(Cores::brilho_de_dentro(), fundo);
+        let leitura = sobre(Cores::vidro_leitura(), atras);
         let superficies = [
-            ("vidro de leitura", sobre(Cores::vidro_leitura(), vidro)),
+            // A base (a lista mora nela) não tem a aresta de vidro: sem brilho por cima.
+            ("vidro de leitura", leitura),
             ("painel", painel),
+            ("painel com brilho", brilho(painel)),
             ("flutuante", flutuante),
-            ("diálogo", sobre(Cores::dialogo(), vidro)),
-            ("gaveta", sobre(Cores::gaveta(), vidro)),
+            ("diálogo", sobre(Cores::dialogo(), atras)),
+            ("gaveta", sobre(Cores::gaveta(), atras)),
             ("painel com reflexo", reflexo(painel)),
             ("flutuante com reflexo", reflexo(flutuante)),
             ("cartão elevado com reflexo", reflexo(sobre(Cores::cartao_elevado(), painel))),
@@ -1053,6 +1321,16 @@ pub(crate) mod testes {
                 assert!(c >= 4.5, "{nome} sobre {nome_fundo}: {c:.2}:1");
             }
         }
+        // Sobre o metal com véu: na placa de cabeçalho só vão `forte` e `texto` (4,5:1); no botão
+        // de ação e na gota, só o ícone branco (3:1). No metal cru, nada.
+        let placa = sobre(Cores::veu_de_placa(), atras);
+        for (nome, cor) in [("forte", Cores::forte()), ("texto", Cores::texto())] {
+            let c = contraste(sobre(cor, placa), placa);
+            assert!(c >= 4.5, "{nome} sobre placa de metal: {c:.2}:1");
+        }
+        let botao = sobre(Cores::veu_de_botao(), atras);
+        let c = contraste(sobre(Cores::sobre_destaque(), botao), botao);
+        assert!(c >= 3., "ícone sobre botão de metal: {c:.2}:1");
     }
 
     /// As cores de sintaxe do tema passam de 4,5:1 no preto dos blocos de código e do diff (as
@@ -1087,9 +1365,8 @@ pub(crate) mod testes {
     /// código, e a seleção segue mais forte que o hover.
     #[test]
     fn realces_visiveis_no_preto() {
-        let branco = Rgba { r: 1., g: 1., b: 1., a: 1. };
-        let vidro = sobre(Cores::vidro(), branco);
-        let fundos = [("flutuante", sobre(Cores::flutuante(), vidro)), ("preto", Rgba::from(Cores::preto()))];
+        let atras = Rgba::from(rgb(crate::ui::componentes::metal::TETO_DO_METAL));
+        let fundos = [("flutuante", sobre(Cores::flutuante(), atras)), ("preto", Rgba::from(Cores::preto()))];
         for (nome_fundo, fundo) in fundos {
             let realce = |cor: Hsla| contraste(sobre(cor, fundo), fundo);
             let (hover, selecao) = (realce(Cores::hover()), realce(Cores::selecao()));
@@ -1279,6 +1556,50 @@ pub(crate) mod testes {
             }
         }
         assert!(erros.is_empty(), "animação fora de ui/movimento.rs:\n{}", erros.join("\n"));
+    }
+
+    /// A retícula (o xadrez e a hachura do shader) só sai pelos invólucros de
+    /// `componentes/graficos.rs` (`trama`, `fio_de_pontos`, `hachura`): o lado inteiro em pixel do
+    /// aparelho fica num lugar só, e a queda para o liso, se um renderizador perder o padrão, é
+    /// uma edição só.
+    #[test]
+    fn reticula_so_pelos_graficos() {
+        let proibidos = [concat!("checkerboard", "("), concat!("pattern_slash", "(")];
+        let raiz = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui"));
+        let mut erros = Vec::new();
+        for caminho in arquivos_rs(raiz) {
+            if caminho.ends_with("componentes/graficos.rs") {
+                continue;
+            }
+            let texto = std::fs::read_to_string(&caminho).unwrap();
+            for proibido in proibidos {
+                if texto.contains(proibido) {
+                    erros.push(format!("{}: {proibido}", caminho.strip_prefix(raiz).unwrap().display()));
+                }
+            }
+        }
+        assert!(erros.is_empty(), "retícula fora de componentes/graficos.rs:\n{}", erros.join("\n"));
+    }
+
+    /// O metal (a chapa da janela e os recortes dela) só sai por `componentes/metal.rs`: a
+    /// textura troca a cada batida, e a ordem "pinta a nova, solta a velha" fica num lugar só.
+    #[test]
+    fn metal_so_pelo_motor() {
+        let proibidos = [concat!("paint_", "image("), concat!("drop_", "image(")];
+        let raiz = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui"));
+        let mut erros = Vec::new();
+        for caminho in arquivos_rs(raiz) {
+            if caminho.ends_with("componentes/metal.rs") {
+                continue;
+            }
+            let texto = std::fs::read_to_string(&caminho).unwrap();
+            for proibido in proibidos {
+                if texto.contains(proibido) {
+                    erros.push(format!("{}: {proibido}", caminho.strip_prefix(raiz).unwrap().display()));
+                }
+            }
+        }
+        assert!(erros.is_empty(), "metal fora de componentes/metal.rs:\n{}", erros.join("\n"));
     }
 
     /// A barra de rolagem aparece e some seca: o fade do kit pedia quadros no ritmo do monitor

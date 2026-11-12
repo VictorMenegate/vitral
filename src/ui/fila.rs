@@ -95,7 +95,7 @@ impl Janela {
             .custom(variante_fantasma(cx))
             .h(r(22.))
             .px(r(6.))
-            .rounded(raio::PILULA)
+            .rounded(raio::de(22.))
             .tooltip(dica)
             .child(
                 h_flex()

@@ -652,6 +652,22 @@ pub fn pedido_de(t: &Tarefa, quem: &str) -> Result<(), String> {
     })
 }
 
+/// O título do chat que outro chat abriu: o que ele deu, numa linha e com no máximo 60 letras; sem
+/// título, a primeira linha do pedido.
+pub fn titulo_do_chat_aberto(titulo: &str, pedido: &str) -> String {
+    let linha = |t: &str| t.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default().to_string();
+    let base = match linha(titulo) {
+        t if t.is_empty() => linha(pedido),
+        t => t,
+    };
+    if base.chars().count() <= 60 {
+        return base;
+    }
+    let mut curto: String = base.chars().take(59).collect();
+    curto.push('…');
+    curto
+}
+
 /// Se a divisão começa direto (a opção, a rotina ou o destino citado) ou mostra o cartão.
 pub fn como_comecar(config: &Config, entradas: &[Entrada], partes: &[Parte], perguntas: &[String], unicas: &[Destino]) -> Comeco {
     if config.comecar_sem_perguntar || entradas.iter().any(|e| e.rotina.is_some()) {
@@ -2208,6 +2224,7 @@ impl Motor {
                     _ => self.cancelar_pedido(id, texto("motivo"), cx),
                 }
             }
+            "abrir_chat" if chat.papel == Papel::Projeto => self.abrir_chat_irmao(chat, &texto("titulo"), texto("pedido"), &texto("projeto"), cx),
             "entregar_tarefa" if chat.papel == Papel::Projeto => self.entregar_tarefa(chat, &a),
             "perguntar_coordenador" if chat.papel == Papel::Projeto => self.perguntar_ao_dono(chat, &texto("pergunta"), cx),
             _ => return Err(chamada),
@@ -2373,6 +2390,54 @@ impl Motor {
             ));
         }
         Resposta::ok("Mensagem entregue (ou na fila, se o chat estiver ocupado).")
+    }
+
+    /// `abrir_chat`: um chat novo à vista do usuário, no projeto de quem pediu (ou no citado), já com o
+    /// pedido. Só num turno em que só o usuário falou: o texto de um relatório, de uma issue ou de
+    /// outro chat não abre chats sozinho (nem um chat aberto assim abre outro em cadeia).
+    fn abrir_chat_irmao(&mut self, chat: &Chat, titulo: &str, pedido: String, projeto: &str, cx: &mut Context<Self>) -> Resposta {
+        if pedido.is_empty() {
+            return Resposta::erro("Escreva o pedido do chat novo.");
+        }
+        let entradas = self.ultima_entrada.get(&chat.id).map(|(_, m)| m.clone()).unwrap_or_default();
+        if !turno_so_do_usuario(&entradas) {
+            return Resposta::erro(
+                "Só abro outro chat quando o usuário pede neste turno. Diga a ele o que você abriria e encerre sua vez.",
+            );
+        }
+        let destino = if projeto.is_empty() {
+            chat.projeto.clone()
+        } else {
+            match resolver_projeto(&self.projetos, projeto) {
+                Resolucao::Um(id) => id,
+                Resolucao::Varios(_) => return Resposta::erro(format!("Há mais de um projeto \"{projeto}\"; use o id.")),
+                Resolucao::Nenhum => return Resposta::erro(format!("Não há projeto \"{projeto}\".")),
+            }
+        };
+        if self.projeto_arquivado(&destino) {
+            return Resposta::erro(format!("O projeto {} está arquivado.", self.nome_do_projeto(&destino)));
+        }
+        let id = match self.novo_chat(&destino, None, &format!("chat:{}", chat.id), cx) {
+            Ok(id) => id,
+            Err(erro) => return Resposta::erro(format!("Não abriu o chat: {erro}")),
+        };
+        let titulo = titulo_do_chat_aberto(titulo, &pedido);
+        if let Some(c) = self.chat_mut(&id) {
+            c.titulo = titulo.clone();
+        }
+        if let Some(t) = self.chat(&id).and_then(|c| c.tarefa).and_then(|t| self.tarefa_mut(t)) {
+            t.titulo = titulo.clone();
+        }
+        let de = format!("chat {} \"{}\"", numero_do_chat(chat), chat.titulo);
+        self.entregar_entrada(&id, Entrada { de: Some(de), texto: pedido, remetente: Some(chat.id.clone()), ..Default::default() }, cx);
+        let numero = self.chat(&id).map(numero_do_chat).unwrap_or(id);
+        let texto = format!("Abriu o chat {numero} \"{titulo}\"");
+        self.registrar("chat", &chat.id, &chat.id, &destino, None, &texto);
+        Resposta::ok(format!(
+            "Chat {numero} \"{titulo}\" aberto em {}, já com o pedido. O usuário o vê na lista e continua por lá; conte a \
+             ele o número. Nada volta para você sozinho.",
+            self.nome_do_projeto(&destino)
+        ))
     }
 
     /// Conta mais uma mensagem automática entre os dois chats e diz se ela vai como nota (passou do
@@ -3092,6 +3157,15 @@ mod testes {
             comecada.texto(),
             "chat novo 13 \"Pix\" (Ninee). Parte removida: \"Tirada\". Parte que não começou: \"Doc\" (o chat 7 já tem um pedido aberto)."
         );
+    }
+
+    #[test]
+    fn titulo_do_chat_aberto_por_outro() {
+        assert_eq!(titulo_do_chat_aberto("  Cupom no carrinho \n", "pedido"), "Cupom no carrinho");
+        assert_eq!(titulo_do_chat_aberto("", "\n  Arruma o rodapé\nmais contexto"), "Arruma o rodapé");
+        let longo = titulo_do_chat_aberto(&"a".repeat(80), "");
+        assert_eq!(longo.chars().count(), 60);
+        assert!(longo.ends_with('…'));
     }
 
     #[test]

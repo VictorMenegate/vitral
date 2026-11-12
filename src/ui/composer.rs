@@ -10,8 +10,10 @@ use std::{
 use gpui_kit::component::{
     ElementExt as _,
     button::{Button, ButtonVariants as _},
+    h_flex,
     input::{Textarea, TextareaState},
     tooltip::Tooltip,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -25,7 +27,7 @@ use super::movimento::{self, Curva, com_estado};
 use crate::{
     modelo::{Chat, EstadoTarefa, Execucao, Papel},
     motor::{self, Motor},
-    tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_suave, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, r, raio, tam},
 };
 
 #[path = "composer_seletores.rs"]
@@ -96,7 +98,13 @@ pub const DESCRICOES_DE_MODELO: [&str; 4] = [
 ///
 /// Sem as variantes `[1m]`: da geração 5 em diante a janela de 1M já é a do modelo (pedir
 /// `claude-opus-5[1m]` chega ao `init` como `claude-opus-5`), então seriam linhas repetidas.
-pub const VERSOES_DE_MODELO: [&str; 12] = [
+///
+/// Esta lista é só a RESERVA: assim que o Claude Code instalado responde quais modelos oferece
+/// (`claude::atualizar_modelos_oferecidos`, ao abrir o app), quem vale é a resposta dele
+/// (`versoes_de_modelo`). Foi por depender só desta lista que o Fable 5.2 ficou de fora do seletor
+/// até alguém lembrar de acrescentá-lo aqui.
+pub const VERSOES_DE_MODELO: [&str; 13] = [
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5-5",
@@ -111,10 +119,76 @@ pub const VERSOES_DE_MODELO: [&str; 12] = [
     "claude-haiku-4-5",
 ];
 
-/// O valor é uma das versões exatas que o seletor oferece (e não um apelido de família nem o
-/// nome completo que uma conversa antiga guardou).
+/// As versões exatas que o seletor oferece agora: as que o Claude Code instalado disse que tem
+/// (cada modelo que ele lista e o que cada apelido de família resolve), por família na ordem de
+/// `MODELOS` e, dentro dela, da mais nova para a mais antiga; sem resposta dele, a lista fixa.
+pub fn versoes_de_modelo() -> Vec<String> {
+    versoes_dos_oferecidos(&crate::claude::modelos_oferecidos())
+}
+
+fn versoes_dos_oferecidos(oferecidos: &[crate::claude::ModeloOferecido]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for modelo in oferecidos {
+        for id in [&modelo.valor, &modelo.resolvido] {
+            if id.starts_with("claude-") && !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+    }
+    if ids.is_empty() {
+        return VERSOES_DE_MODELO.iter().map(|v| v.to_string()).collect();
+    }
+    // A mesma versão com e sem a data no fim (o `claude-haiku-4-5-20251001` e o `claude-haiku-4-5`)
+    // é uma linha só: fica a que o Claude Code listou primeiro. A chave leva o nome da família, e
+    // não o lugar dela: duas famílias que o Vitral ainda não conhece caem no mesmo lugar (o fim),
+    // e uma esconderia a outra.
+    let mut vistas: Vec<(&str, Vec<u32>)> = Vec::new();
+    let mut unicas: Vec<String> = Vec::new();
+    for id in &ids {
+        let chave = (familia_da_versao(id), ordem_da_versao(id).1);
+        if !vistas.contains(&chave) {
+            vistas.push(chave);
+            unicas.push(id.clone());
+        }
+    }
+    unicas.sort_by(|a, b| {
+        let ((fa, va), (fb, vb)) = (ordem_da_versao(a), ordem_da_versao(b));
+        fa.cmp(&fb).then_with(|| familia_da_versao(a).cmp(familia_da_versao(b))).then(vb.cmp(&va))
+    });
+    unicas
+}
+
+/// A família de uma versão: `opus` no `claude-opus-5-5`.
+fn familia_da_versao(id: &str) -> &str {
+    let resto = sem_sufixo_de_janela(id).strip_prefix("claude-").unwrap_or(id);
+    resto.split('-').next().unwrap_or_default()
+}
+
+/// A posição da família em `MODELOS` (as desconhecidas, no fim) e os números da versão, sem a
+/// data: `claude-opus-5-5` é (2, [5, 5]).
+fn ordem_da_versao(id: &str) -> (usize, Vec<u32>) {
+    let resto = sem_sufixo_de_janela(id).strip_prefix("claude-").unwrap_or(id);
+    let familia = familia_da_versao(id);
+    let lugar = MODELOS.iter().position(|(m, _)| *m == familia).unwrap_or(MODELOS.len());
+    let versao = resto.split('-').skip(1).filter(|p| p.len() < 6).filter_map(|p| p.parse().ok()).collect();
+    (lugar, versao)
+}
+
+/// O nome da versão que um apelido de família resolve hoje no Claude Code instalado ("Fable 5.1"
+/// para o `fable`), se ele já respondeu.
+pub fn versao_da_familia(apelido: &str) -> Option<String> {
+    crate::claude::modelos_oferecidos()
+        .into_iter()
+        .find(|m| m.valor == apelido)
+        .map(|m| nome_curto_modelo(&m.resolvido))
+}
+
+/// O valor é uma das versões exatas que o seletor oferece agora (e não um apelido de família nem
+/// o nome completo que uma conversa antiga guardou). Só a lista que está valendo: uma versão da
+/// lista fixa que o Claude Code instalado deixou de oferecer aparece como "escolhido antes", em
+/// vez de sumir do seletor.
 pub fn versao_exata(valor: &str) -> bool {
-    VERSOES_DE_MODELO.contains(&valor)
+    versoes_de_modelo().iter().any(|v| v == valor)
 }
 
 /// O modelo sem o sufixo da janela, para comparar com os ids da lista: o Claude Code 2.1.278
@@ -344,16 +418,40 @@ fn tokens(n: u64) -> String {
     if quantia.ends_with("mil") { format!("{quantia} tokens") } else { format!("{quantia} de tokens") }
 }
 
-/// Onde começa o texto da caixa, da borda de fora dela: 1 de borda, a margem (8; na estreita, 6
-/// com o campo 2 para a esquerda) e os 10 do campo do kit, que crescem com o zoom como o resto.
-/// Cai na coluna do ícone do primeiro chip, e a faixa do turno se alinha por aqui.
+/// Onde começa o texto da caixa, da borda de fora dela: a moldura (1 de borda e 4 de folga), a
+/// borda do campo (1), a margem (8; na estreita, 6 com o campo 2 para a esquerda) e os 10 do
+/// campo do kit, que crescem com o zoom como o resto. Cai na coluna do ícone do primeiro chip, e
+/// a faixa do turno se alinha por aqui.
 pub(super) fn recuo_do_texto(estreita: bool, window: &Window) -> Pixels {
-    tam(window, if estreita { 15. } else { 19. })
+    tam(window, if estreita { 20. } else { 24. })
 }
 
-/// Da borda de fora da caixa ao conteúdo (o enviar, à direita).
+/// Da borda de fora da caixa ao conteúdo (o enviar, à direita): a moldura, a borda do campo e a
+/// margem.
 pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
-    tam(window, if estreita { 7. } else { 9. })
+    tam(window, if estreita { 12. } else { 14. })
+}
+
+/// A linha de estado da caixa parada: à esquerda, as teclas úteis (no Mestre, "#" projeto e "@"
+/// chat; nos outros, "/" comandos e, com a caixa vazia, "↑" última); à direita, o que o Enter faz
+/// (com texto escrito, também o Shift+Enter). Na caixa estreita, só a direita.
+fn teclas_da_caixa(mestre: bool, escrito: bool, estreita: bool) -> (Option<AnyElement>, Option<AnyElement>) {
+    let esquerda = (!estreita).then(|| {
+        let dicas = if mestre {
+            vec![seletores::dica_de_tecla(&["#"], "projeto"), seletores::dica_de_tecla(&["@"], "chat")]
+        } else if escrito {
+            vec![seletores::dica_de_tecla(&["/"], "comandos")]
+        } else {
+            vec![seletores::dica_de_tecla(&["/"], "comandos"), seletores::dica_de_tecla(&["↑"], "última")]
+        };
+        h_flex().gap(esp::E12).children(dicas).into_any_element()
+    });
+    let direita = h_flex()
+        .gap(esp::E12)
+        .when(escrito && !estreita, |s| s.child(seletores::dica_de_tecla(&["Shift", "Enter"], "quebra a linha")))
+        .child(seletores::dica_de_tecla(&["Enter"], "envia"))
+        .into_any_element();
+    (esquerda, Some(direita))
 }
 
 /// O que o botão redondo da direita faz agora.
@@ -387,8 +485,10 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
 }
 
 impl Janela {
-    /// A caixa de mensagem do painel: 96 de altura vazia, o texto na coluna do ícone do primeiro
-    /// chip, e a borda e o halo azul que acendem com o foco (180 ms; apagam em 120).
+    /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
+    /// uma moldura preta de raio 20; dentro, com 4 de folga, o campo opaco de raio 16 com o texto
+    /// (na coluna do ícone do primeiro chip) e os chips; embaixo do campo, ainda na moldura, a
+    /// linha de estado em mono 11. O foco acende a moldura (180 ms; apaga em 120).
     pub(super) fn caixa_mensagem(
         &mut self,
         motor: &Motor,
@@ -427,35 +527,24 @@ impl Janela {
         let raio_caixa = if estreita { raio::CARTAO } else { raio::PECA };
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
+        let raio_miolo = if estreita { raio::CONTROLE } else { crate::tema::raio_da_peca() };
+        // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
+        let (estado_esquerda, estado_direita) = self
+            .linha_de_estado(motor, chat, painel_id, window, cx)
+            .unwrap_or_else(|| teclas_da_caixa(chat.papel == Papel::Mestre, !caixa_vazia, estreita));
 
-        let caixa = div()
+        // O miolo: o campo opaco, um degrau mais claro que a moldura, com a linha de luz no topo.
+        let miolo = div()
             .relative()
             .flex()
             .flex_col()
             .min_w_0()
-            .rounded(raio_caixa)
+            .rounded(raio_miolo)
             .border_1()
+            .border_color(Cores::borda())
             .bg(gradiente_quente())
-            // O vão entre o texto e os chips, a margem e o espaço entre os chips são da caixa: o
-            // clique ali não leva o foco para a janela. O campo e os botões tratam o deles antes.
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                if !window.default_prevented() {
-                    window.focus(&foco_da_caixa, cx);
-                    window.prevent_default();
-                }
-            })
+            .shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])
             .map(|s| if estreita { s.pt(esp::E8).pb(esp::E6).px(esp::E6) } else { s.pt(esp::E12).pb(esp::E8).px(esp::E8) })
-            // Por baixo de tudo, o reflexo quente da direita, com o próprio raio (o recorte do pai
-            // não arredonda).
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .rounded(raio_caixa - px(1.))
-                    .bg(Cores::caixa_brilho()),
-            )
             .when(!anexos.is_empty() || !issues.is_empty(), |s| s.child(self.anexos_pendentes(&chat.id, issues, anexos, window, cx)))
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
@@ -487,23 +576,51 @@ impl Janela {
             )
             .child(div().h(esp::E8))
             .child(barra);
-        // Borda e halo andam juntos, conservando o brilho de cima e a sombra da caixa.
+        let linha_de_estado = h_flex()
+            .h(r(24.))
+            .px(esp::E12)
+            .gap(esp::E8)
+            .justify_between()
+            .etiqueta()
+            .text_color(Cores::tenue())
+            .child(h_flex().flex_1().min_w_0().gap(esp::E12).overflow_hidden().children(estado_esquerda))
+            .child(h_flex().flex_none().gap(esp::E12).children(estado_direita));
+        // A moldura preta: o campo e a linha de estado. O vão entre as peças, a folga e a linha
+        // são da caixa: o clique ali não leva o foco para a janela. O campo e os botões tratam o
+        // deles antes.
+        let moldura = v_flex()
+            .min_w_0()
+            .rounded(raio_caixa)
+            .bg(Cores::preto())
+            .border_1()
+            .p(esp::E4)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !window.default_prevented() {
+                    window.focus(&foco_da_caixa, cx);
+                    window.prevent_default();
+                }
+            })
+            .child(miolo)
+            .child(linha_de_estado);
+        // O foco: `t` vai a 1 em 180 ms com a caixa focada e volta a 0 em 120. Sem halo, sem
+        // cantoneira e sem azul.
         let caixa = com_estado(move |window, cx| {
-            let (alvo, duracao) = if focada {
-                ((Cores::destaque_borda(), 1f32), movimento::MOVER)
-            } else {
-                ((Cores::borda(), 0.), movimento::COR)
-            };
-            let (borda, forca) =
-                movimento::valor(("halo-caixa", painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
-            let mut sombras = vec![
-                BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset(),
-                BoxShadow::new(px(0.), px(6.), Cores::sombra_caixa()).blur_radius(px(10.)),
-            ];
-            if forca > 0. {
-                sombras.push(halo_suave(forca));
-            }
-            caixa.border_color(borda).shadow(sombras).into_any_element()
+            let t = movimento::valor(
+                ("aro-caixa", painel_id as usize),
+                if focada { 1f32 } else { 0. },
+                if focada { movimento::MOVER } else { movimento::COR },
+                Curva::Mover,
+                window,
+                cx,
+            );
+            // Com o foco, o aro de 2 px de metal em volta da moldura ("é aqui"), o mesmo da busca:
+            // acende por `t`, e a moldura opaca por cima deixa só o aro à vista.
+            div()
+                .relative()
+                .min_w_0()
+                .child(super::componentes::metal::aro_de_metal(raio_caixa, px(2.), t))
+                .child(moldura)
+                .into_any_element()
         });
 
         div()
@@ -575,7 +692,9 @@ impl Janela {
                     .child(div().h(r(altura)))
                     .child(grupo(self.chip_modelo(motor, chat, ix, b, window, cx)))
                     .child(grupo(self.chip_esforco(motor, chat, ix, b, window, cx)))
-                    .when(!estreita, |s| s.child(grupo(self.chip_conta(motor, chat, b, window, cx)))),
+                    // A conta só com mais de uma: com uma só não há o que escolher (o uso dela está
+                    // nos anéis do cabeçalho).
+                    .when(!estreita && motor.contas.len() > 1, |s| s.child(grupo(self.chip_conta(motor, chat, b, window, cx)))),
             )
             .child(
                 div()
@@ -628,8 +747,9 @@ impl Janela {
         };
         let dica_parar = if na_fila { "Tirar da fila" } else { "Parar esta conversa" };
         let principal = |icone: Option<Lucide>, dica: &'static str| {
+            // O enviar (e o parar) é uma tecla de metal, o par do "+" da lista.
             BotaoRedondo::new(("enviar", painel as usize), icone.map(Into::into), dica)
-                .variante(VarianteRedonda::Claro)
+                .variante(VarianteRedonda::Metal)
                 .diametro(grande)
                 .pulso(envios)
         };
@@ -662,6 +782,7 @@ impl Janela {
             Envio::Enviar => vec![enviar(dica_enviar)],
             Envio::Parar => vec![
                 principal(None, dica_parar)
+                    .girando(true)
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
@@ -670,6 +791,7 @@ impl Janela {
                 BotaoRedondo::new(("parar", painel as usize), None, dica_parar)
                     .variante(VarianteRedonda::Neutro)
                     .diametro(pequeno)
+                    .girando(true)
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
@@ -684,10 +806,12 @@ impl Janela {
         let usados = chat.contexto?;
         let (fracao, numero, janela) = uso_do_contexto(usados, chat.janela, chat.modelo_atual.as_deref());
         let estreita = b.faixa == FaixaCaixa::Estreita;
-        let anel = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(if estreita { 20. } else { 22. });
-        // O número acompanha o arco quando ele sai do destaque (âmbar a 70%, vermelho a 90%).
+        // O anel com fenda, sem número dentro (lia como selo de notificação): a porcentagem vai
+        // ao lado, em mono, e acompanha o arco quando ele sai do destaque (âmbar a 70%, vermelho
+        // a 90%). Na caixa estreita, só o anel.
+        let anel = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(20.);
         let cor_arco = cor_da_faixa(fracao, Cores::destaque());
-        let cor_numero = if cor_arco == Cores::destaque() { Cores::texto() } else { cor_arco };
+        let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
         let dica: SharedString = format!(
             "Contexto: {} de {}\nO custo, o modelo e o Compactar",
             milhares(usados),
@@ -697,19 +821,15 @@ impl Janela {
         let lado = if estreita { 28. } else { 32. };
         let gatilho = Button::new(("contexto", b.painel as usize))
             .custom(variante_fantasma(cx))
-            .size(r(lado))
-            .px_0()
-            .rounded(raio::PILULA)
+            .h(r(lado))
+            .map(|s| if estreita { s.w(r(lado)).px_0() } else { s.px(esp::E8) })
+            .rounded(raio::de(lado))
             .tooltip(dica)
             .child(
-                anel.centro(
-                    div()
-                        .text_size(r(if estreita { 9. } else { 10. }))
-                        .line_height(r(12.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cor_numero)
-                        .child(numero.to_string()),
-                ),
+                h_flex()
+                    .gap(esp::E6)
+                    .child(anel)
+                    .when(!estreita, |s| s.child(div().etiqueta().text_color(cor_numero).child(format!("{numero}%")))),
             );
         let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
         Some(
@@ -858,7 +978,7 @@ impl Janela {
                     .h(r(28.))
                     .map(|s| if miniatura.is_some() { s.pl(esp::E4) } else { s.pl(esp::E8) })
                     .pr(esp::E2)
-                    .rounded(raio::PILULA)
+                    .rounded(raio::de(28.))
                     .bg(Cores::hover())
                     .border_1()
                     .border_color(Cores::borda())
@@ -1531,5 +1651,71 @@ mod testes_nome_modelo {
         assert_eq!(nome_curto_modelo("gpt-5"), "gpt-5");
         assert_eq!(nome_curto_modelo("claude-"), "claude-");
         assert_eq!(nome_curto_modelo("claude-opus-mais-5"), "claude-opus-mais-5");
+    }
+}
+
+#[cfg(test)]
+mod testes_das_versoes {
+    use super::{VERSOES_DE_MODELO, versoes_dos_oferecidos};
+    use crate::claude::ModeloOferecido;
+
+    fn oferecido(valor: &str, resolvido: &str) -> ModeloOferecido {
+        ModeloOferecido { valor: valor.into(), resolvido: resolvido.into(), nome: String::new() }
+    }
+
+    /// As versões exatas vêm do que o Claude Code instalado oferece: cada modelo que ele lista e o
+    /// que cada apelido resolve, uma vez só, por família (Fable, Opus, Sonnet, Haiku) e da mais nova
+    /// para a mais antiga. É o que faz um modelo novo aparecer sem versão nova do Vitral.
+    #[test]
+    fn versoes_seguem_o_claude_code_instalado() {
+        let oferecidos = [
+            oferecido("default", "claude-opus-5-5"),
+            oferecido("opus", "claude-opus-5-5"),
+            oferecido("claude-fable-5-2", "claude-fable-5-2"),
+            oferecido("sonnet", "claude-sonnet-5-5"),
+            oferecido("haiku", "claude-haiku-5-5"),
+            oferecido("fable", "claude-fable-5-1"),
+            oferecido("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+            oferecido("claude-opus-5", "claude-opus-5"),
+            oferecido("claude-nova-9", "claude-nova-9"),
+        ];
+        assert_eq!(
+            versoes_dos_oferecidos(&oferecidos),
+            [
+                "claude-fable-5-2",
+                "claude-fable-5-1",
+                "claude-opus-5-5",
+                "claude-opus-5",
+                "claude-sonnet-5-5",
+                "claude-haiku-5-5",
+                "claude-haiku-4-5-20251001",
+                // Uma família que o Vitral ainda não conhece vai no fim, mas aparece.
+                "claude-nova-9",
+            ]
+        );
+    }
+
+    /// Sem resposta do Claude Code (ainda não respondeu, não está instalado), vale a lista fixa.
+    #[test]
+    fn sem_resposta_vale_a_lista_fixa() {
+        assert_eq!(versoes_dos_oferecidos(&[]), VERSOES_DE_MODELO);
+        // Só apelidos sem versão resolvida também não dão lista.
+        assert_eq!(versoes_dos_oferecidos(&[oferecido("opus", "opus")]), VERSOES_DE_MODELO);
+    }
+
+    /// Duas famílias que o Vitral ainda não conhece, na mesma versão, são duas linhas (uma não
+    /// esconde a outra), no fim da lista e cada família junta.
+    #[test]
+    fn familias_desconhecidas_nao_se_escondem() {
+        let oferecidos = [
+            oferecido("claude-zeta-6", "claude-zeta-6"),
+            oferecido("claude-alfa-6", "claude-alfa-6"),
+            oferecido("claude-opus-5-5", "claude-opus-5-5"),
+            oferecido("claude-alfa-6-1", "claude-alfa-6-1"),
+        ];
+        assert_eq!(
+            versoes_dos_oferecidos(&oferecidos),
+            ["claude-opus-5-5", "claude-alfa-6-1", "claude-alfa-6", "claude-zeta-6"]
+        );
     }
 }

@@ -19,7 +19,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::componentes::{EstadoVazio, QuadradoDeProjeto, campo_de_busca};
+use super::componentes::{EstadoVazio, QuadradoDeProjeto, campo_de_busca, etiqueta_de_secao};
 use crate::{
     modelo::Projeto,
     motor::Motor,
@@ -245,11 +245,19 @@ pub fn visual_do(motor: &Motor, projeto: &str) -> (&'static Icone, u32) {
     if projeto.is_empty() {
         return avulsos();
     }
-    match motor.projeto(projeto) {
+    let (icone, cor) = match motor.projeto(projeto) {
         Some(p) => visual(p),
         None => escolha("", "", projeto, None),
-    }
+    };
+    // Com a fileira de projetos escondida, o ícone do projeto é neutro em todo lugar (lista,
+    // busca, cabeçalho, menus, cartões): a cor de cada projeto não diz nada a quem não os vê lado
+    // a lado, e vira um arco-íris solto (pedido do dono, 12/11/2026). Quem edita o projeto vê a
+    // cor de verdade, que vem do `visual`.
+    (icone, if motor.config.fileira_de_projetos { cor } else { COR_NEUTRA })
 }
+
+/// A cor do ícone de projeto quando a cor dele não entra: o cinza-azulado dos Avulsos.
+pub const COR_NEUTRA: u32 = 0x9ba8cf;
 
 /// Desenha direto dos bytes embutidos (o GPUI guarda o resultado pelo hash), sem precisar
 /// registrar os SVGs no AssetSource do app. O tamanho é de desenho, em rem: cresce com o zoom.
@@ -421,14 +429,14 @@ impl Render for EscolhaIconeCor {
                 .id(SharedString::from(format!("cor-projeto-{valor:06x}")))
                 .size(r(32.))
                 .p(r(2.))
-                .rounded_full()
+                .rounded(raio::de(32.))
                 .cursor_pointer()
                 .border_2()
                 .border_color(if escolhida { rgb(valor).into() } else { transparent_black() })
                 .when(!escolhida, |s| s.hover(|s| s.border_color(Cores::borda_forte())))
                 .tab_index(0)
                 .focus_visible(|s| s.shadow(halo_foco()))
-                .child(div().size_full().rounded_full().bg(rgb(valor)))
+                .child(div().size_full().rounded(raio::de(32.) - px(4.)).bg(rgb(valor)))
                 .tooltip(move |window, cx| Tooltip::new(nome).build(window, cx))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.cor = Some(valor);
@@ -445,12 +453,12 @@ impl Render for EscolhaIconeCor {
                     .child(
                         h_flex()
                             .gap(r(8.))
-                            .child(div().flex_1().rotulo_secao().child("Ícone"))
+                            .child(etiqueta_de_secao("Ícone").flex_1())
                             .child(div().w(r(200.)).child(campo_de_busca("busca-icone", &busca, None, window, cx))),
                     )
                     .child(grade),
             )
-            .child(v_flex().gap(r(8.)).child(div().rotulo_secao().child("Cor")).child(cores))
+            .child(v_flex().gap(r(8.)).child(etiqueta_de_secao("Cor")).child(cores))
     }
 }
 
