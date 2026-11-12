@@ -3,6 +3,57 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.7.0
+
+O metal líquido, abas de chat, o novo chat na hora e pedidos de permissão mais seguros.
+
+- **Metal líquido.** O fundo do app virou um campo azul de metal líquido, com bolhas que derivam
+  devagar e um grão fino; o papel de parede não aparece mais através da janela. A lista mora direto
+  nesse fundo, e a conversa e os painéis da direita flutuam por cima, como cartões. Parado, o metal
+  fica quieto: ele só anda enquanto um chat à vista está trabalhando.
+- **Abas de chat.** Clicar num chat da lista abre uma aba no painel, e as anteriores ficam (até 8).
+  O × ou o clique do meio fecha a aba; o Ctrl+W fecha a que está à vista e, na última, o painel.
+  As abas se arrastam como no VS Code: soltas no meio de outro painel, viram aba dele; na borda de
+  um painel, viram um painel novo daquele lado. Dois cliques na divisória entre duas conversas
+  deixam todas com a mesma largura.
+- **Novo chat na hora.** O "+" e o Ctrl+N abrem um chat novo sem perguntar nada, na pasta do chat
+  aberto (com o Mestre aberto, no último lugar usado). Para escolher a pasta, **Novo chat em outra
+  pasta…**, no menu do logo.
+- **A lista mais limpa.** No alto ficam só o logo e as abas Conversas e Arquivos; a busca (Ctrl+K)
+  e o "+" desceram para o pé da lista. A lista é uma só, uma linha por chat, com o Mestre na
+  primeira; os projetos ficam escondidos e com o ícone neutro (**Mostrar os projetos no alto da
+  lista**, nas Configurações, traz de volta). Arrastando a borda, a lista encolhe até 200 px, e o
+  recolher (Ctrl+B) mora no menu do logo.
+- **Caixa de mensagem com linha de estado.** Embaixo do campo, com o chat parado, aparecem as
+  teclas úteis; com ele trabalhando, o que está fazendo, o relógio, o número de ações e o Esc para
+  parar (a faixa "Rodando" saiu de cima da caixa). Com o foco, a caixa ganha um aro de metal, e o
+  enviar e o parar são uma tecla de metal. O anel do contexto mostra a porcentagem ao lado.
+- **Pedidos de permissão mais seguros.** O cartão diz o que vai acontecer ("Rodar um comando",
+  "Editar views.py") e mostra o comando numa caixa com "$". O "Não perguntar de novo" virou uma
+  caixa de marcar ao lado do Permitir. O comando perigoso fica em vermelho e só passa com **Segure
+  para permitir** (ou Enter duas vezes). Pelo sino não se aprova mais comando perigoso nem
+  comprido: o botão leva à conversa. Comando com mais de 11 linhas avisa para rolar a caixa antes.
+- **Uso do plano no canto.** Os anéis de uso saíram do cabeçalho e flutuam no canto de baixo, à
+  direita, da janela: um anel por serviço, com a janela mais apertada (5 h ou semana). O popover
+  abre para cima, com a porcentagem dentro de cada anel. Dá para esconder nas Configurações.
+- **Modelo novo sem esperar o Vitral.** As versões exatas do seletor de modelo vêm do próprio
+  Claude Code instalado, que o Vitral consulta ao abrir, sem gastar uso: um modelo novo aparece
+  quando o Claude Code se atualiza. Cada família diz qual versão ela é hoje ("hoje, Fable 5.1").
+- **As conversas do VS Code aparecem sozinhas.** A cada abertura e a cada 2 minutos, o Vitral olha
+  se há conversa nova do Claude Code (do terminal ou da extensão do VS Code) e a traz para a lista,
+  sem precisar importar à mão. Quem já usava o Vitral recebe as conversas daqui para a frente; o
+  histórico inteiro continua vindo pelo **Importar do Claude Code…**, no menu do logo.
+- **Arquivos citados viram links.** O caminho de um arquivo na resposta abre o arquivo no painel da
+  direita, na linha citada. A linha de uma ferramenta, aberta, mostra o que ela pediu (o diff do
+  Edit, o que o Write gravou, o comando do Bash) e tem o botão de abrir o arquivo. O painel da
+  direita começa fechado e abre pelo "…" da conversa ou pelo Ctrl+J.
+- **Um chat abre outro.** Quando você pede ("abre um chat para isso"), o chat de projeto abre um
+  chat novo já com o pedido, e você continua por lá.
+- **Acabamento.** O painel selecionado tem uma luz de metal no pé; os cantos seguem um padrão só;
+  o escolhido nos menus vai numa ficha azul; os menus ganharam o cabeçalho de metal e as teclas
+  desenhadas; os anéis têm uma fenda embaixo. O logo novo (o V sobre o metal) vale em todo lugar,
+  inclusive no ícone do app. O cabeçalho da conversa ficou com menos botões.
+
 ## 0.6.0
 
 Um visual mais quieto, a versão exata do modelo e o Claude Code atualizado pelo próprio Vitral.
