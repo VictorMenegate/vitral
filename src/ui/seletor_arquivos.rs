@@ -1,4 +1,4 @@
-//! Arquivos do projeto para mencionar com "@": a lista (do git ou varrendo a pasta), o filtro
+//! Arquivos da pasta do chat para mencionar com "@": a lista (do git ou varrendo a pasta), o filtro
 //! (o nome antes da pasta) e as linhas da lista de escolha.
 
 use std::path::Path;
@@ -74,8 +74,8 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
     vec![GrupoDeEscolha { titulo: None, itens }]
 }
 
-/// Arquivos do projeto: o que o git conhece (respeita o .gitignore); sem git, uma varredura que
-/// pula pastas ocultas e de dependências. Lista vazia do git (repositório novo, ou projeto que o
+/// Arquivos da pasta: o que o git conhece (respeita o .gitignore); sem git, uma varredura que pula
+/// pastas ocultas e de dependências. Lista vazia do git (repositório novo, ou pasta que o
 /// repositório de cima ignora) também cai na varredura.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
     // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.

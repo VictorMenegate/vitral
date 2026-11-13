@@ -49,15 +49,15 @@ const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."
 /// Abre o terminal do usuário com a instalação (se faltar) e o login do Codex.
 pub(super) fn instalar_codex() {
     if let Some(casa) = dirs::home_dir() {
-        sistema::abrir_terminal(&casa, None, Some(INSTALAR_CODEX));
+        sistema::abrir_terminal(&casa, Some(INSTALAR_CODEX));
     }
 }
 
 impl Janela {
-    /// Os anéis de uso flutuando no canto de baixo, à direita, da janela (pedido do dono,
-    /// 12/11/2026; antes ficavam no cabeçalho da última conversa): os anéis de 30 um em cima do
-    /// outro, quase colados embaixo, sem fundo. Os popovers abrem para cima. Some com a opção
-    /// "Mostrar o uso do plano no canto da janela" desligada.
+    /// Os anéis de uso flutuando no canto de CIMA, à direita, da janela, logo abaixo do × de
+    /// fechar (dono, 13/11/2026; em 12/11 ele os tinha pedido embaixo): os anéis de 30 um em cima
+    /// do outro, sem fundo. Os popovers abrem para baixo. Some com a opção "Mostrar o uso do plano
+    /// no canto da janela" desligada.
     pub(super) fn uso_no_canto(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let motor = self.motor.as_ref()?;
         if !motor.read(cx).config.uso_no_canto {
@@ -71,16 +71,17 @@ impl Janela {
             div()
                 .absolute()
                 .right(r(USO_DA_BORDA))
-                .bottom(r(USO_DA_BORDA))
+                .top(r(USO_DO_TOPO))
                 .child(v_flex().gap(esp::E6).children(botoes))
                 .into_any_element(),
         )
     }
 
-    /// Os anéis do canto ficam ao lado da caixa de mensagem da última conversa quando ela é
-    /// estreita (a coluna da caixa tem até uns 780 de largura, centrada: com menos de 1000 no
-    /// cartão a caixa chegaria debaixo deles). Aí a caixa encolhe `FOLGA_DO_USO` à direita.
-    pub(super) fn uso_ao_lado_da_caixa(&self, ix: usize, cx: &Context<Self>) -> bool {
+    /// Os anéis moram no canto de cima, à direita, por cima da última conversa. Quando ela é
+    /// estreita (a coluna das mensagens tem até uns 780 de largura, centrada: com menos de 1000
+    /// no cartão o texto chegaria debaixo deles), as mensagens dela ganham `FOLGA_DO_USO` à
+    /// direita. A 150% de zoom, com três painéis, o texto passava por baixo dos anéis.
+    pub(super) fn uso_sobre_as_mensagens(&self, ix: usize, cx: &Context<Self>) -> bool {
         ix + 1 == self.paineis.len()
             && !self.direita_visivel()
             && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
@@ -120,14 +121,16 @@ impl Janela {
 const DIAMETRO_NO_CABECALHO: f32 = 30.;
 /// A distância dos anéis do canto até as bordas de baixo e da direita da janela.
 const USO_DA_BORDA: f32 = 14.;
+/// A distância do topo da janela: a margem, o cabeçalho da conversa (onde fica o ×) e um respiro.
+const USO_DO_TOPO: f32 = 60.;
 /// O quanto a caixa de mensagem encolhe à direita para os anéis do canto caberem ao lado dela.
-pub(super) const FOLGA_DO_USO: f32 = 32.;
+pub(super) const FOLGA_DO_USO: f32 = 40.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.
 fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
     popover(("uso-popover", marca as usize))
-        .anchor(Anchor::BottomRight)
+        .anchor(Anchor::TopRight)
         .offset(px(8.))
         .arrow(true)
         .trigger(BotaoUso {

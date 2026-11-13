@@ -2,31 +2,25 @@
 // que o Vitral escreve no stderr).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod agente_codex;
 mod atualizacao;
 mod claude;
 mod codex;
 mod contas;
 mod dados;
 mod git;
-mod github;
 mod importar;
 mod instancia;
-mod isolamento;
-mod issues;
-mod linear;
 mod mcp;
+mod memoria_equipe;
 mod migracao;
 mod modelo;
 mod motor;
 mod processos;
 mod prompts;
-mod remoto;
-mod revisor;
-mod segredos;
 mod sistema;
 mod tema;
 mod ui;
-mod vigia;
 
 use std::{
     path::{Path, PathBuf},
@@ -37,13 +31,9 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 fn main() {
-    // `vitral` abre o app; `vitral <pasta>` liga ou abre o projeto da pasta; `vitral --nova
-    // <projeto> [mensagem]` já começa uma conversa. Com o Vitral aberto, o pedido vai para ele.
+    // `vitral` abre o app; `vitral <pasta>` abre o chat da pasta (ou um novo nela); `vitral --nova
+    // <pasta> [mensagem]` já começa uma conversa nela. Com o Vitral aberto, o pedido vai para ele.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
-    // O hook Stop dos ajudantes no Windows (exec form, sem shell): responde e sai, sem tocar em nada.
-    if argumentos.first().is_some_and(|a| a == "--hook-verificacao") {
-        std::process::exit(revisor::rodar_hook_verificacao());
-    }
     // `vitral --versao [--json]` e `vitral --instalar` respondem sem janela (o release e o
     // atualizador conferem o binário), antes de tocar nos dados.
     if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
@@ -151,8 +141,9 @@ fn main() {
             // Procura versão nova em segundo plano; na versão instalada, o reinício vai para o link `atual`.
             atualizacao::iniciar(aviso, dados.pasta.clone(), cx);
             let opcoes = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(920.)), cx)),
-                window_min_size: Some(size(px(960.), px(600.))),
+                // O tamanho de quando fechou (e maximizada, se estava); na primeira vez, 1440 por 920.
+                window_bounds: Some(ui::arranjo::limites_da_janela(cx)),
+                window_min_size: Some(size(px(ui::arranjo::TAMANHO_MINIMO.0), px(ui::arranjo::TAMANHO_MINIMO.1))),
                 window_background: fundo_da_janela(),
                 window_decorations: Some(WindowDecorations::Client),
                 app_id: Some("vitral".into()),

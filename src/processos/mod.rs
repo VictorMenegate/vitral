@@ -1,5 +1,5 @@
-//! Processos que o Vitral abre. Os que ele precisa conseguir parar por inteiro (claude,
-//! verificação, revisor) saem de [`comando`] e rodam com [`abrir`], que devolve o processo e o
+//! Processos que o Vitral abre. Os que ele precisa conseguir parar por inteiro (o claude) saem de
+//! [`comando`] e rodam com [`abrir`], que devolve o processo e o
 //! [`Escopo`] dele: parar o escopo derruba também o que ele abriu, até os shells que o claude separa
 //! (servidores, testes, cargo), e tudo morre se o Vitral morrer.
 //!
@@ -14,7 +14,11 @@
 use std::{
     ffi::OsStr,
     ops::{Deref, DerefMut},
-    process::{Child, Command, ExitStatus},
+    process::Command,
+};
+#[cfg(test)]
+use std::{
+    process::{Child, ExitStatus},
     time::{Duration, Instant},
 };
 
@@ -28,10 +32,6 @@ mod windows;
 use windows as plataforma;
 
 pub use plataforma::{Escopo, abrir, codigo_de_saida, colher, comando, comando_leve, encerrar_todos, limpar_sobras};
-#[cfg(test)]
-pub use plataforma::morre_logo;
-#[cfg(all(test, unix))]
-pub use plataforma::usa_systemd;
 
 /// Um processo pronto para [`abrir`]: argumentos, pasta, ambiente e pipes vão no `Command` de
 /// dentro (pelo `DerefMut`), como num `Command` comum. Só o `abrir` põe para rodar.
@@ -78,7 +78,9 @@ pub fn novo_comando(programa: impl AsRef<OsStr>) -> Command {
 }
 
 /// Espera o processo terminar até o prazo; estourado, para tudo e dá 2 s antes de matar. No fim
-/// derruba o que ficou rodando em segundo plano e colhe. None quando estourou o prazo.
+/// derruba o que ficou rodando em segundo plano e colhe. None quando estourou o prazo. Só os testes
+/// do `parar` esperam assim.
+#[cfg(test)]
 pub fn esperar(filho: &mut Child, escopo: &Escopo, prazo: Duration) -> Option<ExitStatus> {
     let limite = Instant::now() + prazo;
     let mut estourou = false;

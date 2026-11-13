@@ -25,7 +25,7 @@ pub fn abrir_no_editor(pasta: &Path) {
 }
 
 /// Abre um terminal na pasta; com `comando`, roda ele e deixa o shell aberto depois.
-pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
+pub fn abrir_terminal(pasta: &Path, comando: Option<&str>) {
     let mut terminal = novo_comando("ptyxis");
     match comando {
         Some(comando) => {
@@ -36,33 +36,5 @@ pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
             terminal.arg("--new-window").arg("--working-directory").arg(pasta);
         }
     }
-    if let Some(porta) = porta {
-        terminal.env("VITRAL_PORT", porta.to_string());
-    }
     soltar(&mut terminal);
-}
-
-/// Manda o arquivo ou a pasta para a Lixeira do GNOME (`gio trash`, que dá para restaurar no
-/// Arquivos). Nunca apaga: se a lixeira não aceita, devolve o erro e tudo fica no lugar.
-pub fn para_a_lixeira(caminho: &Path) -> anyhow::Result<()> {
-    let saida = novo_comando("gio")
-        .arg("trash")
-        .arg("--")
-        .arg(caminho)
-        .output()
-        .map_err(|erro| anyhow::anyhow!("o gio não abriu: {erro}"))?;
-    if saida.status.success() && caminho.symlink_metadata().is_err() {
-        return Ok(());
-    }
-    let motivo = String::from_utf8_lossy(&saida.stderr).trim().to_string();
-    let motivo = motivo.strip_prefix("gio: ").unwrap_or(&motivo).to_string();
-    if motivo.is_empty() {
-        anyhow::bail!("a lixeira não aceitou {}", caminho.display());
-    }
-    anyhow::bail!("{motivo}")
-}
-
-/// A Lixeira no Arquivos do GNOME.
-pub fn abrir_lixeira() {
-    soltar(novo_comando("gio").args(["open", "trash:///"]));
 }

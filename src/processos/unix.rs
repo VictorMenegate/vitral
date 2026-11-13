@@ -95,11 +95,6 @@ fn nome_unidade(tipo: &str) -> String {
     format!("vitral-{}-{tipo}-{numero}.scope", std::process::id())
 }
 
-#[cfg(test)]
-pub fn usa_systemd() -> bool {
-    systemd().is_some()
-}
-
 /// Comando que roda `programa` num escopo novo (ou num grupo próprio, sem systemd). Quem chama
 /// acrescenta argumentos, ambiente e pastas normalmente e abre com `abrir`.
 pub fn comando(programa: impl AsRef<OsStr>, tipo: &str) -> Comando {
@@ -180,6 +175,7 @@ impl Escopo {
     }
 
     /// O processo principal terminou? Não colhe (WNOWAIT), então o número do grupo continua dele.
+    #[cfg(test)]
     pub fn terminou(&self) -> bool {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let opcoes = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;

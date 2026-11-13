@@ -93,6 +93,7 @@ impl PainelContas {
                         this.estado = EstadoLogin::EsperandoCodigo { endereco, login };
                         let foco = this.codigo.read(cx).focus_handle(cx);
                         window.focus(&foco, cx);
+                        this.vigiar_login(window, cx);
                     }
                     Err(erro) => {
                         this.estado = EstadoLogin::Parado;
@@ -116,33 +117,74 @@ impl PainelContas {
         };
         cx.notify();
         let id = login.id.clone();
-        let quantas = self.motor.read(cx).contas.len();
         let tarefa = cx.background_spawn(async move { login.concluir(&codigo) });
         cx.spawn_in(window, async move |this, cx| {
             let resultado = tarefa.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.estado = EstadoLogin::Parado;
-                this.codigo.update(cx, |c, cx| c.set_value("", window, cx));
-                match resultado {
-                    Ok((email, plano)) => {
-                        let nome = email
-                            .split('@')
-                            .next()
-                            .filter(|n| !n.is_empty())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| format!("Conta {}", quantas + 1));
-                        let conta = Conta { id, nome, email: email.clone(), plano };
-                        this.motor.update(cx, |m, cx| m.adicionar_conta(conta, cx));
-                        this.lista_recolhida = false;
-                        window.push_notification(aviso(Tom::Pronto, format!("Conta {email} conectada")), cx);
-                    }
-                    Err(erro) => {
-                        contas::apagar_pasta(&id);
-                        this.erro = Some(format!("{erro:#}"));
-                    }
+            let _ = this.update_in(cx, |this, window, cx| this.terminar(id, resultado, window, cx));
+        })
+        .detach();
+    }
+
+    /// O fim do login, pelo código colado ou sozinho: a conta entra na lista, ou o erro aparece.
+    fn terminar(&mut self, id: String, resultado: anyhow::Result<(String, String)>, window: &mut Window, cx: &mut Context<Self>) {
+        let quantas = self.motor.read(cx).contas.len();
+        self.estado = EstadoLogin::Parado;
+        self.codigo.update(cx, |c, cx| c.set_value("", window, cx));
+        match resultado {
+            Ok((email, plano)) => {
+                let nome = email
+                    .split('@')
+                    .next()
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("Conta {}", quantas + 1));
+                let conta = Conta { id, nome, email: email.clone(), plano };
+                self.motor.update(cx, |m, cx| m.adicionar_conta(conta, cx));
+                self.lista_recolhida = false;
+                window.push_notification(aviso(Tom::Pronto, format!("Conta {email} conectada")), cx);
+            }
+            Err(erro) => {
+                contas::apagar_pasta(&id);
+                self.erro = Some(format!("{erro:#}"));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Enquanto o login espera, olha se o Claude Code já terminou sozinho: hoje, ao clicar em
+    /// "Autorizar" no navegador, a página volta direto para ele e não mostra código nenhum. Antes
+    /// disto o Vitral ficava esperando um código que nunca vinha, e a conta não entrava (dono,
+    /// 13/11/2026: "clico em autorizar e não aparece código… no Vitral muda nada").
+    fn vigiar_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(700)).await;
+                let terminado = this.update_in(cx, |this, _, _| match &mut this.estado {
+                    EstadoLogin::EsperandoCodigo { login, .. } => Some(login.terminou()),
+                    _ => None,
+                });
+                match terminado {
+                    Ok(Some(false)) => continue,
+                    Ok(Some(true)) => {}
+                    // O login saiu de cena (cancelado, ou concluído pelo código): nada a vigiar.
+                    _ => return,
                 }
-                cx.notify();
-            });
+                let login = this.update_in(cx, |this, _, cx| {
+                    let EstadoLogin::EsperandoCodigo { login, .. } = std::mem::replace(&mut this.estado, EstadoLogin::Concluindo)
+                    else {
+                        return None;
+                    };
+                    cx.notify();
+                    Some(login)
+                });
+                let Ok(Some(login)) = login else {
+                    return;
+                };
+                let id = login.id.clone();
+                let resultado = cx.background_spawn(async move { login.resultado() }).await;
+                let _ = this.update_in(cx, |this, window, cx| this.terminar(id, resultado, window, cx));
+                return;
+            }
         })
         .detach();
     }
@@ -315,8 +357,8 @@ impl PainelContas {
             .linha(passo(
                 2,
                 segundo,
-                "Cole o código do fim da página",
-                "Depois de autorizar, a página mostra um código para colar aqui.",
+                "Autorize na página",
+                "Ao clicar em Autorizar, a conta entra aqui sozinha. Se a página mostrar um código, cole aqui.",
                 (segundo != EstadoPasso::Esperando).then(|| campo.into_any_element()),
                 window,
             ))

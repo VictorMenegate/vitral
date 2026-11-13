@@ -13,12 +13,12 @@ default-members = [".", "lancador"]
 
 [dependencies]
 anyhow = "1.0.104"
-# chrono: a hora das Rotinas no TimeField do kit (que já depende dele).
+# chrono: as datas no fuso local (o kit já depende dele).
 chrono = "0.4.45"
 dirs = "7.0.0"
 # dunce: o canonicalize sem o `\\?\C:\…` do Windows (no Linux é o próprio fs::canonicalize).
 dunce = "1.0.5"
-# syntect: cor de sintaxe no chat, no painel de arquivo e no Revisar (o realce leve; o tree-sitter custa dezenas de MB).
+# syntect: cor de sintaxe no chat e no painel de arquivo (o realce leve; o tree-sitter custa dezenas de MB).
 gpui-kit = { version = "0.8.1", features = ["syntect"] }
 # minisign-verify: confere a assinatura das versões novas (sem dependências, do autor do minisign).
 minisign-verify = "0.3.0"
@@ -34,13 +34,6 @@ serde_json = "1.0.154"
 smol = "2.0.2"
 tiny_http = "0.12.0"
 uuid = { version = "1.29.0", features = ["v4"] }
-# zeroize: a chave do Linear some da memória quando sai de uso (já vinha com o oo7).
-zeroize = "1"
-
-# oo7: a chave do Linear no chaveiro do sistema (Secret Service). As mesmas features do
-# gpui-pre-linux, que já o compila: com outras, o cargo puxaria o tokio.
-[target.'cfg(target_os = "linux")'.dependencies]
-oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
 
 [target.'cfg(unix)'.dependencies]
 # libc: grupos de processos, sinais e o waitid (src/processos/unix.rs) e o renameat2 e o statvfs do
@@ -48,7 +41,7 @@ oo7 = { version = "0.6", default-features = false, features = ["async-std", "nat
 libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
-# windows-sys: Job Objects e threads (src/processos/windows.rs), a Lixeira (src/sistema/windows.rs) e,
+# windows-sys: Job Objects e threads (src/processos/windows.rs), o shell (src/sistema/windows.rs) e,
 # no atualizador, o MoveFileExW, o espaço livre e o relógio desde o boot (src/atualizacao). Já vinha
 # no Cargo.lock pelo GPUI.
 windows-sys = { version = "0.61.2", features = [

@@ -1,7 +1,8 @@
 //! A fila de mensagens de uma conversa: o que escolheu esperar o turno acabar ("Mandar depois"),
 //! o que chegou de outro chat com este ocupado e o que o turno não chegou a receber. A pílula da
 //! faixa do turno abre esta lista, que mostra cada mensagem esperando e deixa editar uma, mudar a
-//! ordem, tirar uma de volta para a caixa e, com o chat parado, entregar tudo agora.
+//! ordem, tirar uma de volta para a caixa, mandar uma agora para dentro do turno que está rodando
+//! e, com o chat parado, entregar tudo agora.
 
 use gpui_kit::component::{
     Disableable as _, WindowExt as _,
@@ -39,8 +40,6 @@ fn dica_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
         partes.push(format!("De: {de}"));
-    } else if let Some(rotina) = &e.rotina {
-        partes.push(format!("Rotina: {rotina}"));
     }
     if !e.anexos.is_empty() {
         partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
@@ -149,9 +148,25 @@ struct Linha {
     posicao: usize,
     previa: String,
     dica: String,
+    /// "De: loja · 2 anexos": o que a mensagem leva além do texto.
+    meta: String,
     do_usuario: bool,
     primeira: bool,
     ultima: bool,
+    /// O turno que roda recebe mensagem: a linha ganha o "Mandar agora".
+    agora: bool,
+}
+
+/// O que a mensagem leva além do texto, numa linha curta: quem mandou e quantos anexos.
+fn meta_da_linha(e: &Entrada) -> String {
+    let mut partes = Vec::new();
+    if let Some(de) = &e.de {
+        partes.push(format!("De: {de}"));
+    }
+    if !e.anexos.is_empty() {
+        partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
+    }
+    partes.join(" · ")
 }
 
 /// A lista da fila: uma linha por mensagem, na ordem em que vão entrar, com editar, mudar de lugar
@@ -168,6 +183,8 @@ fn corpo_da_fila(
     let m = motor.read(cx);
     let fila = m.fila_do_chat(chat);
     let total = fila.len();
+    // Com o turno rodando e recebendo mensagem, cada uma pode entrar nele agora.
+    let agora = rodando && m.turno_recebe_mensagem(chat);
     let linhas: Vec<Linha> = fila
         .into_iter()
         .enumerate()
@@ -176,9 +193,11 @@ fn corpo_da_fila(
             posicao,
             previa: previa(&e.texto),
             dica: dica_da_linha(e),
+            meta: meta_da_linha(e),
             do_usuario: e.do_usuario(),
             primeira: posicao == 0,
             ultima: posicao + 1 == total,
+            agora,
         })
         .collect();
     let cabecalho = |valor: Option<SharedString>| CabecalhoPopover::Escolha {
@@ -197,28 +216,53 @@ fn corpo_da_fila(
         .into_iter()
         .map(|linha| linha_da_fila(motor, janela, chat, painel, linha, window, cx))
         .collect();
-    let explicacao = if rodando {
+    let explicacao = if agora {
+        "Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo."
+    } else if rodando {
         "Entram juntas no próximo turno, quando este terminar."
     } else {
         "Entram juntas na próxima mensagem, ou agora, no botão abaixo."
     };
-    let entregar = (!rodando).then(|| {
+    let entregar = if agora && total > 1 {
+        // Uma por uma, na ordem da fila: cada mandada tira a primeira, e a seguinte vira a primeira.
         let (motor, chat) = (motor.clone(), chat.to_string());
-        botao_fantasma("fila-entregar", Some(Lucide::Play.into()), "Entregar agora", TamanhoBotao::Barra, window, cx)
-            .on_click(move |_, _, cx| {
-                motor.update(cx, |m, cx| m.entregar_fila(&chat, cx));
-            })
-    });
+        Some(
+            botao_fantasma("fila-mandar-todas", Some(Lucide::ArrowUp.into()), "Mandar todas agora", TamanhoBotao::Barra, window, cx).on_click(
+                move |_, window, cx| {
+                    let resultado = motor.update(cx, |m, cx| {
+                        while let Some(indice) = m.fila_do_chat(&chat).first().map(|(i, _)| *i) {
+                            m.mandar_da_fila_agora(&chat, indice, cx)?;
+                        }
+                        Ok::<(), &'static str>(())
+                    });
+                    if let Err(motivo) = resultado {
+                        window.push_notification(aviso(Tom::Atencao, motivo), cx);
+                    }
+                },
+            ),
+        )
+    } else if !rodando {
+        let (motor, chat) = (motor.clone(), chat.to_string());
+        Some(
+            botao_fantasma("fila-entregar", Some(Lucide::Play.into()), "Entregar agora", TamanhoBotao::Barra, window, cx)
+                .on_click(move |_, _, cx| {
+                    motor.update(cx, |m, cx| m.entregar_fila(&chat, cx));
+                }),
+        )
+    } else {
+        None
+    };
     CorpoPopover::new(LarguraPopover::P400)
         .cabecalho(cabecalho(Some(contagem(total, "mensagem", "mensagens").into())))
-        .child(v_flex().gap(esp::E4).children(desenhadas))
+        .child(v_flex().gap(esp::E6).children(desenhadas))
         .child(div().metadado().text_color(Cores::tenue()).child(explicacao))
         .when_some(entregar, |c, b| c.rodape(h_flex().justify_end().child(b)))
         .into_any_element()
 }
 
-/// Uma linha: o lugar na ordem, a primeira linha do texto (o resto na dica) e, à direita, editar,
-/// subir, descer e tirar.
+/// Uma mensagem da fila, num cartão de dois andares: em cima o lugar na ordem e o começo do texto
+/// (até duas linhas; o resto na dica); embaixo o que ela leva junto e as ações. Com as ações todas
+/// ao lado do texto sobravam umas vinte letras dele (dono, 13/11/2026: "melhora essa parte").
 #[allow(clippy::too_many_arguments)]
 fn linha_da_fila(
     motor: &Entity<Motor>,
@@ -229,7 +273,7 @@ fn linha_da_fila(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let Linha { indice, posicao, previa, dica, do_usuario, primeira, ultima } = linha;
+    let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora } = linha;
     let dica: SharedString = dica.into();
     let mover = |para_baixo: bool| {
         let (motor, chat) = (motor.clone(), chat.to_string());
@@ -237,6 +281,16 @@ fn linha_da_fila(
             motor.update(cx, |m, cx| m.mover_na_fila(&chat, indice, para_baixo, cx));
         }
     };
+    let mandar = agora.then(|| {
+        let (motor, chat) = (motor.clone(), chat.to_string());
+        botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), "Mandar agora", TamanhoBotao::Linha, window, cx)
+            .tooltip("Entra no turno que está rodando, sem pará-lo")
+            .on_click(move |_, window, cx| {
+                if let Err(motivo) = motor.update(cx, |m, cx| m.mandar_da_fila_agora(&chat, indice, cx)) {
+                    window.push_notification(aviso(Tom::Atencao, motivo), cx);
+                }
+            })
+    });
     let editar = {
         let (janela, chat) = (janela.clone(), chat.to_string());
         botao_icone(
@@ -252,12 +306,16 @@ fn linha_da_fila(
             let _ = janela.update(cx, |this, cx| this.dialogo_editar_da_fila(chat.clone(), indice, window, cx));
         })
     };
-    let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Subir na fila: entra antes da de cima", TamanhoBotao::Linha, window, cx)
-        .when(primeira, |b| b.disabled(true).opacity(0.45))
-        .on_click(mover(false));
-    let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Descer na fila: entra depois da de baixo", TamanhoBotao::Linha, window, cx)
-        .when(ultima, |b| b.disabled(true).opacity(0.45))
-        .on_click(mover(true));
+    // Com uma mensagem só não há ordem para mudar.
+    let ordem = (!(primeira && ultima)).then(|| {
+        let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Subir na fila: entra antes da de cima", TamanhoBotao::Linha, window, cx)
+            .when(primeira, |b| b.disabled(true).opacity(0.45))
+            .on_click(mover(false));
+        let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Descer na fila: entra depois da de baixo", TamanhoBotao::Linha, window, cx)
+            .when(ultima, |b| b.disabled(true).opacity(0.45))
+            .on_click(mover(true));
+        h_flex().child(subir).child(descer)
+    });
     let tirar = {
         let (janela, chat) = (janela.clone(), chat.to_string());
         botao_icone(
@@ -272,34 +330,54 @@ fn linha_da_fila(
             let _ = janela.update(cx, |this, cx| this.tirar_da_fila(chat.clone(), indice, painel, window, cx));
         })
     };
-    h_flex()
+    v_flex()
         .id(("linha-da-fila", indice))
-        .gap(esp::E8)
-        .min_h(r(28.))
+        .gap(esp::E4)
+        .px(esp::E8)
+        .pt(esp::E8)
+        .pb(esp::E4)
+        .rounded(raio::CONTROLE)
+        .bg(Cores::recuo())
         .child(
-            div()
-                .flex_none()
-                .size(r(18.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(raio::CONTROLE)
-                .bg(Cores::recuo())
-                .micro()
-                .text_color(Cores::tenue())
-                .child((posicao + 1).to_string()),
+            h_flex()
+                .items_start()
+                .gap(esp::E8)
+                .child(
+                    div()
+                        .flex_none()
+                        .size(r(16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(raio::CONTROLE)
+                        .bg(Cores::hover())
+                        .micro()
+                        .text_color(Cores::tenue())
+                        .child((posicao + 1).to_string()),
+                )
+                .child(
+                    div()
+                        .id(("texto-da-fila", indice))
+                        .flex_1()
+                        .min_w_0()
+                        .line_clamp(2)
+                        .corpo_ui()
+                        .text_color(if do_usuario { Cores::texto() } else { Cores::tenue() })
+                        .child(previa)
+                        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                ),
         )
         .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .corpo_ui()
-                .text_color(if do_usuario { Cores::texto() } else { Cores::tenue() })
-                .child(previa),
+            h_flex()
+                .gap(esp::E4)
+                // Na coluna do texto, depois do número.
+                .pl(esp::E24)
+                .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(meta))
+                .children(mandar)
+                .child(editar)
+                .children(ordem)
+                .child(tirar),
         )
-        .child(h_flex().flex_none().child(editar).child(subir).child(descer).child(tirar))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 

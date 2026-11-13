@@ -17,7 +17,6 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
-use super::graficos::AnelGirando;
 use super::metal::{Encaixe, abertura, aro_de_metal};
 use super::superficies::desenho_teclas;
 use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
@@ -45,19 +44,18 @@ const ESCUDO_CHEIO: &[u8] = include_bytes!("../../../assets/escudo-cheio.svg");
 
 /// O quadrado cheio do Parar: um desenho, como os ícones, e não um canto da escala.
 const QUADRADO_PARAR: &[u8] =
-    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" rx="2"/></svg>"#;
+    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" rx="2.6"/></svg>"#;
 
 /// Ícone e cor de cada modo de permissão: a tabela única que a caixa, o menu do modo e as
 /// Configurações leem. Verde quando nada muda sem você, violeta para automação, âmbar sem
 /// perguntar, e vermelho sem perguntar fora de uma cópia isolada.
-pub fn icone_do_modo(valor: &str, sem_copia: bool) -> (Icon, Hsla) {
+pub fn icone_do_modo(valor: &str) -> (Icon, Hsla) {
     match valor {
         // Os modos comuns são neutros; a cor fica para o que pede cuidado (o "Sem perguntar").
         "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::tenue()),
         "plan" => (Lucide::Map.into(), Cores::tenue()),
         "acceptEdits" => (Lucide::FilePen.into(), Cores::tenue()),
         "auto" => (Lucide::WandSparkles.into(), Cores::tenue()),
-        _ if sem_copia => (Lucide::ShieldOff.into(), Cores::vermelho()),
         _ => (Lucide::ShieldOff.into(), Cores::ambar()),
     }
 }
@@ -145,12 +143,6 @@ impl Chip {
     /// Ciano no esforço.
     pub fn cor_rotulo(mut self, cor: Hsla) -> Self {
         self.cor_rotulo = Some(cor);
-        self
-    }
-
-    /// Selo depois do rótulo, antes da seta ("Arquivos ⁽³⁾"); some com o rótulo no `so_icone`.
-    pub fn selo(mut self, s: Selo) -> Self {
-        self.selo = Some(s);
         self
     }
 
@@ -359,15 +351,6 @@ pub fn variante_perigo(cx: &App) -> ButtonCustomVariant {
         .active(Cores::vermelho().opacity(0.18))
 }
 
-/// Perigo calmo (Descartar em cada arquivo do diff): tênue em repouso e a tinta vermelha no
-/// hover, para a lista não ficar vermelha.
-pub fn variante_perigo_calma(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .foreground(Cores::tenue())
-        .hover(Cores::perigo_hover())
-        .active(Cores::vermelho().opacity(0.18))
-}
-
 /// Altura do botão: Linha 24 (ícone 14), Barra 28 (ícone 16), Controle 32.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TamanhoBotao {
@@ -526,7 +509,6 @@ pub struct BotaoRedondo {
     desabilitado: bool,
     selecionado: bool,
     ao_clicar: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
-    girando: bool,
 }
 
 impl BotaoRedondo {
@@ -548,25 +530,11 @@ impl BotaoRedondo {
             desabilitado: false,
             selecionado: false,
             ao_clicar: None,
-            girando: false,
         }
-    }
-
-    /// O anel com fenda girando por cima do disco: o parar do chat que trabalha (o "carregando"
-    /// do enviar, da base AI Input With Loading).
-    pub fn girando(mut self, sim: bool) -> Self {
-        self.girando = sim;
-        self
     }
 
     pub fn variante(mut self, v: VarianteRedonda) -> Self {
         self.variante = v;
-        self
-    }
-
-    /// O disco colorido da marca no lugar do ícone (o botão do Linear no cabeçalho da conversa).
-    pub fn marca(mut self, m: Marca) -> Self {
-        self.marca = Some(m);
         self
     }
 
@@ -700,23 +668,6 @@ impl RenderOnce for BotaoRedondo {
         let cor_pulso = self.pulso_cor.unwrap_or_else(Cores::claro);
         let lado_icone = if self.diametro <= 24. { 14. } else { 16. };
         let (dica, acao) = (self.dica, self.acao);
-        // O anel que gira: claro sobre o metal; sobre o disco claro, no azul do destaque (o claro
-        // sumiria nele).
-        let giro = self.girando.then(|| {
-            let cor_giro = match self.variante {
-                VarianteRedonda::Claro => Cores::destaque(),
-                _ => Cores::forte().opacity(0.85),
-            };
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(AnelGirando::new(self.diametro - 2.).cor(cor_giro))
-        });
         div()
             .id(self.id)
             .relative()
@@ -744,10 +695,11 @@ impl RenderOnce for BotaoRedondo {
             .map(|s| match (self.marca, self.icone) {
                 (Some(marca), _) => s.child(marca.disco(lado_icone)),
                 (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
+                // Só o quadrado, sem anel girando em volta: quem diz que o chat trabalha é a
+                // conversa e a linha de estado (dono, 13/11/2026: "já tem nos outros lugares").
                 (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
-            .children(giro)
             .when(interativo, |s| {
                 s.cursor_pointer()
                     .on_hover(ponteiro.ouvinte())
@@ -790,13 +742,6 @@ pub struct Segmento {
 impl Segmento {
     pub fn new(rotulo: impl Into<SharedString>) -> Self {
         Segmento { rotulo: rotulo.into(), icone: None, dica: None, ponto: None, desabilitado: false }
-    }
-
-    /// A 0,45, sem hover e fora do clique e das setas, com o motivo na dica.
-    pub fn desabilitado(mut self, motivo: impl Into<SharedString>) -> Self {
-        self.desabilitado = true;
-        self.dica = Some(motivo.into());
-        self
     }
 
     pub fn icone(mut self, i: impl Into<Icon>) -> Self {
@@ -1332,8 +1277,7 @@ pub fn campo_de_busca_plano(
 }
 
 // A moldura dupla (base AI Tool Approval): o pedido que espera você é um cartão de raio 16 dentro
-// de uma moldura de raio 20, com 4 px de folga. Serve aos pedidos de permissão, ao plano e aos
-// cartões do Mestre.
+// de uma moldura de raio 20, com 4 px de folga. Serve aos pedidos de permissão e ao plano.
 
 /// O que a moldura de fora diz.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1354,7 +1298,7 @@ pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
         // (o miolo opaco, por cima, deixa só o aro à vista).
         EstadoDaMoldura::Esperando => moldura
             .relative()
-            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::PECA)))),
+            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::peca())))),
         EstadoDaMoldura::Perigo => moldura.bg(Cores::tinta_solida(Cores::vermelho(), 0.35)),
         EstadoDaMoldura::Recolhida => moldura.bg(Cores::preto()).border_1().border_color(Cores::borda()),
     }
@@ -1362,11 +1306,10 @@ pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
 
 /// O miolo da moldura dupla: opaco, de raio 16 (é ele que deixa só o aro de fora à vista).
 pub fn miolo_da_moldura() -> Div {
-    div().flex().flex_col().w_full().rounded(crate::tema::raio_da_peca()).bg(Cores::cartao_elevado())
+    div().flex().flex_col().w_full().rounded(raio::peca() - px(4.)).bg(Cores::cartao_elevado())
 }
 
-/// O azulejo de 28 com o ícone de 14 do cabeçalho de um pedido (a ferramenta, o plano, o cartão
-/// do Mestre).
+/// O azulejo de 28 com o ícone de 14 do cabeçalho de um pedido (a ferramenta, o plano).
 pub fn azulejo(icone: Lucide, cor: Hsla) -> Div {
     div()
         .flex_none()

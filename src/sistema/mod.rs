@@ -1,5 +1,5 @@
-//! Abrir coisas fora do Vitral (editor, terminal, gerenciador de arquivos, Lixeira), o shell que
-//! roda os comandos escritos para o bash e o que precisa estar instalado.
+//! Abrir coisas fora do Vitral (editor, terminal, gerenciador de arquivos, Lixeira), o bash dos
+//! comandos de Rodar e o que precisa estar instalado.
 //!
 //! - No Linux (`linux.rs`): o VS Code, o Ptyxis, o `gio` e o bash do sistema.
 //! - No Windows (`windows.rs`): o VS Code, um console novo (PowerShell, ou o Git Bash para rodar um
@@ -19,14 +19,15 @@ mod windows;
 #[cfg(windows)]
 use windows as plataforma;
 
-pub use plataforma::{abrir_lixeira, abrir_no_editor, abrir_terminal, para_a_lixeira};
+pub use plataforma::{abrir_no_editor, abrir_terminal};
 
 /// As marcas de uma sessão do Claude Code que um programa aberto pelo Vitral não deve herdar (ele
 /// pode ter sido aberto de dentro de uma).
 const MARCAS_DO_CLAUDE: [&str; 3] = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"];
 
 /// Sem o Git Bash, o comando escrito para o bash vai para o PowerShell, com este aviso.
-pub const SEM_GIT_BASH: &str =
+#[cfg(windows)]
+const SEM_GIT_BASH: &str =
     "(Sem o Git Bash, rodei no PowerShell um comando escrito para o bash. Instale o Git para Windows: git-scm.com.)";
 
 /// Abre a pasta (ou o arquivo) no gerenciador de arquivos. No Linux pelo `file://` (o portal do
@@ -38,8 +39,8 @@ pub fn abrir_pasta(caminho: &Path, cx: &gpui_kit::App) {
     cx.open_url(&format!("file://{}", caminho.display()));
 }
 
-/// O bash dos comandos de verificação, preparação e do hook. No Linux, o do sistema. No Windows, o
-/// do Git para Windows, por caminho absoluto (`bash_do_git`); None sem ele.
+/// O bash dos comandos de Rodar. No Linux, o do sistema. No Windows, o do Git para Windows, por
+/// caminho absoluto (`bash_do_git`); None sem ele.
 pub fn bash() -> Option<PathBuf> {
     if cfg!(windows) {
         let pasta = |variavel: &str| std::env::var_os(variavel).filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -73,45 +74,6 @@ fn bash_do_git(variavel: Option<PathBuf>, instalacoes: &[PathBuf], path: Option<
         .find(|candidato| candidato.is_file())
 }
 
-/// Um comando escrito para o bash (verificação, preparação, hook), pronto para rodar: o programa,
-/// os argumentos e, sem o Git Bash no Windows, o aviso que vai junto da saída.
-pub struct ComandoBash {
-    pub programa: PathBuf,
-    args: Vec<String>,
-    git_bash: bool,
-    pub aviso: Option<&'static str>,
-}
-
-impl ComandoBash {
-    /// Põe os argumentos (e, no Git Bash, o `CHERE_INVOKING`, para o login não ir para a pasta
-    /// pessoal) no `Command` que roda `programa`.
-    pub fn preparar(&self, comando: &mut std::process::Command) {
-        comando.args(&self.args);
-        if self.git_bash {
-            comando.env("CHERE_INVOKING", "1");
-        }
-    }
-}
-
-/// `bash -lc <comando>`: o login carrega o PATH do usuário (nvm, cargo, pyenv). No Windows sem o
-/// Git Bash, o PowerShell, com o aviso.
-pub fn comando_bash(comando: &str) -> ComandoBash {
-    match bash() {
-        Some(programa) => ComandoBash {
-            programa,
-            args: vec!["-lc".into(), comando.into()],
-            git_bash: cfg!(windows),
-            aviso: None,
-        },
-        None => ComandoBash {
-            programa: PathBuf::from("powershell.exe"),
-            args: ["-NoProfile", "-NonInteractive", "-Command", comando].map(String::from).to_vec(),
-            git_bash: false,
-            aviso: Some(SEM_GIT_BASH),
-        },
-    }
-}
-
 /// O programa no PATH (no Windows, o `.exe`).
 fn no_path(nome: &str) -> Option<PathBuf> {
     let nome = if cfg!(windows) { format!("{nome}.exe") } else { nome.to_string() };
@@ -119,24 +81,24 @@ fn no_path(nome: &str) -> Option<PathBuf> {
 }
 
 /// O que falta instalar para o Vitral funcionar (o git, o Claude Code e, no Windows, o Git Bash) e
-/// as pastas de projeto no OneDrive, como avisos para a conversa do Mestre.
+/// as pastas de chat no OneDrive, como avisos na janela.
 pub fn avisos_de_instalacao(pastas: &[PathBuf]) -> Vec<String> {
     let mut avisos = Vec::new();
     let git = no_path("git").is_some();
     if !git {
         avisos.push(if cfg!(windows) {
-            "Falta o Git para Windows: sem ele não há cópias isoladas, verificação nem Revisar e juntar. Instale pelo \
+            "Falta o Git para Windows: o Claude Code usa o Git Bash dele para rodar comandos. Instale pelo \
              git-scm.com (ou, no PowerShell, winget install Git.Git) e abra o Vitral de novo."
                 .to_string()
         } else {
-            "Falta o git: sem ele não há cópias isoladas, verificação nem Revisar e juntar. Instale pelo gerenciador \
-             de pacotes do sistema e abra o Vitral de novo."
+            "Falta o git: o Vitral mostra o estado dos repositórios com ele. Instale pelo gerenciador de pacotes do \
+             sistema e abra o Vitral de novo."
                 .to_string()
         });
     } else if bash().is_none() {
         avisos.push(
-            "Achei o git, mas não o Git Bash: a verificação e o hook dos ajudantes vão rodar no PowerShell, e um \
-             comando escrito para o bash pode falhar. Instale o Git para Windows completo (git-scm.com)."
+            "Achei o git, mas não o Git Bash: os comandos de Rodar vão para o PowerShell, e um comando escrito \
+             para o bash pode falhar. Instale o Git para Windows completo (git-scm.com)."
                 .to_string(),
         );
     }
@@ -157,8 +119,8 @@ pub fn avisos_de_instalacao(pastas: &[PathBuf]) -> Vec<String> {
             .collect();
         for pasta in pastas.iter().filter(|p| no_onedrive(p, &nuvens)) {
             avisos.push(format!(
-                "A pasta {} está no OneDrive: as cópias de cada conversa (com node_modules e builds) iriam para a nuvem, \
-                 e a sincronização segura arquivos no meio do git. Prefira uma pasta fora dele, como C:\\Projetos.",
+                "A pasta {} está no OneDrive: o node_modules e os builds iriam para a nuvem, e a sincronização segura \
+                 arquivos no meio do git. Prefira uma pasta fora dele, como C:\\Projetos.",
                 pasta.display()
             ));
         }

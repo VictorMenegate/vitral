@@ -25,7 +25,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use smol::channel::{Receiver, Sender, unbounded};
 
-/// O que pedir ao abrir: uma pasta (`vitral <pasta>`) e um chat novo (`--nova destino [mensagem]`).
+/// O que pedir ao abrir: uma pasta (`vitral <pasta>`) e um chat novo (`--nova <pasta> [mensagem]`).
 /// É a mesma coisa que vai pelo canal, numa linha de JSON.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Abertura {
@@ -35,7 +35,8 @@ pub struct Abertura {
 
 impl Abertura {
     /// Dos argumentos (sem o binário): a primeira palavra que não é opção é a pasta (relativa a
-    /// `atual`; inválida, só avisa e fica de fora) e `--nova` leva o destino e, se vier, a mensagem.
+    /// `atual`; inválida, só avisa e fica de fora) e `--nova` leva a pasta do chat novo (também
+    /// relativa a `atual`; a que não existe vai como veio, e a janela avisa) e, se vier, a mensagem.
     pub fn de_args(args: &[String], atual: &Path) -> Abertura {
         let nova_em = args.iter().position(|a| a == "--nova");
         let antes = &args[..nova_em.unwrap_or(args.len())];
@@ -51,6 +52,10 @@ impl Abertura {
         });
         let nova = nova_em.and_then(|i| {
             let destino = args.get(i + 1)?.trim().to_string();
+            let destino = match dunce::canonicalize(atual.join(&destino)) {
+                Ok(c) if !destino.is_empty() && c.is_dir() => c.display().to_string(),
+                _ => destino,
+            };
             (!destino.is_empty()).then(|| (destino, args.get(i + 2).cloned().filter(|m| !m.trim().is_empty())))
         });
         Abertura { pasta, nova }
@@ -309,13 +314,15 @@ mod testes {
             Abertura::de_args(&args(&["--nova", "site", "faça o rodapé"]), &pasta),
             Abertura { pasta: None, nova: Some(("site".into(), Some("faça o rodapé".into()))) }
         );
-        assert_eq!(Abertura::de_args(&args(&["--nova", "mestre"]), &pasta).nova, Some(("mestre".into(), None)));
+        // A pasta do `--nova` vale como a do argumento: relativa a `atual` e canônica.
+        let loja = Abertura::de_args(&args(&["--nova", "loja"]), &pasta).nova;
+        assert_eq!(loja, Some((caminho.clone(), None)));
         assert_eq!(Abertura::de_args(&args(&["--nova"]), &pasta).nova, None);
         let os_dois = Abertura::de_args(&args(&["loja", "--nova", "loja", "oi"]), &pasta);
-        assert_eq!(os_dois, Abertura { pasta: Some(canonica), nova: Some(("loja".into(), Some("oi".into()))) });
+        assert_eq!(os_dois, Abertura { pasta: Some(canonica), nova: Some((caminho.clone(), Some("oi".into()))) });
         // A linha que vai pelo canal.
         let linha = serde_json::to_value(&os_dois).unwrap();
-        assert_eq!(linha["nova"], serde_json::json!(["loja", "oi"]));
+        assert_eq!(linha["nova"], serde_json::json!([caminho, "oi"]));
         let so_destino = serde_json::to_value(Abertura { pasta: None, nova: Some(("x".into(), None)) }).unwrap();
         assert_eq!(so_destino, serde_json::json!({"pasta": null, "nova": ["x", null]}));
         let _ = fs::remove_dir_all(&pasta);

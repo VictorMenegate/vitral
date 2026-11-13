@@ -117,8 +117,6 @@ pub enum LarguraPopover {
     P320,
     P360,
     P400,
-    /// O das issues, que tem lista e detalhe (a largura P dos diálogos).
-    P440,
     P560,
 }
 
@@ -128,13 +126,12 @@ impl LarguraPopover {
             LarguraPopover::P320 => 320.,
             LarguraPopover::P360 => 360.,
             LarguraPopover::P400 => 400.,
-            LarguraPopover::P440 => 440.,
             LarguraPopover::P560 => 560.,
         }
     }
 }
 
-/// Cabeçalho de popover: de escolha (esforço, modelo) ou de objeto (conta, projeto).
+/// Cabeçalho de popover: de escolha (esforço, modelo) ou de objeto (conta).
 pub enum CabecalhoPopover {
     Escolha {
         simbolo: Option<Simbolo>,
@@ -310,7 +307,7 @@ fn placa_de_cabecalho(simbolo: Option<AnyElement>, nome: SharedString, detalhe: 
         .items_center()
         .h(r(52.))
         .px(esp::E16)
-        .child(placa_de_metal(raio::PECA - px(1.)))
+        .child(placa_de_metal(raio::peca() - px(1.)))
         .child(linha_objeto(simbolo, nome, detalhe, true))
 }
 
@@ -403,10 +400,12 @@ pub fn azulejo_de_escolha(conteudo: AnyElement, sobre_placa: bool) -> Div {
 }
 
 /// A ficha do escolhido (o item marcado numa lista de escolha, a aba escolhida de um segmentado
-/// do alto da lista): o azul do destaque bem leve, com um fio do mesmo azul e a aresta de tecla,
-/// no canto dos controles para a `altura` do item. Absoluta, enche o item (o `fundo` do item do
-/// menu). Já foi um recorte de metal debaixo de um véu; num retângulo comprido ele ficava com um
-/// fundo esquisito, preto de um lado e azul chuviscado do outro (dono, 12/11/2026). O nome ficou.
+/// do alto da lista): um recorte da chapa de metal debaixo do véu de placa (em cima dele só
+/// `forte` e `texto`), com uma sombra curta e a aresta de tecla, no canto dos controles para a
+/// `altura` do item. Absoluta, enche o item (o `fundo` do item do menu). Passou um dia como azul
+/// liso: o "fundo esquisito" que o dono viu (12/11/2026) era o realce claro do ponteiro por cima
+/// do metal, e não o metal. O metal voltou (13/11/2026) e o item escolhido não ganha mais o
+/// realce (`sem_realce` no item do `Command`, e o item de menu com `fundo`).
 pub fn ficha_de_metal(altura: f32) -> Div {
     ficha_do_escolhido(raio::de(altura))
 }
@@ -419,10 +418,9 @@ pub fn ficha_do_escolhido(raio: Pixels) -> Div {
         .left_0()
         .size_full()
         .rounded(raio)
-        .bg(Cores::selecao_de(Cores::destaque()))
-        .border_1()
-        .border_color(Cores::tinta_borda(Cores::destaque()))
-        .shadow(aresta_de_tecla())
+        .shadow(crate::tema::sombra_elevado())
+        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), Corners::all(raio)))
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(aresta_de_tecla()))
 }
 
 /// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal
@@ -484,7 +482,7 @@ fn faixa_do_pe() -> Div {
         .gap(esp::E12)
         .h(r(32.))
         .px(esp::E16)
-        .rounded_b(raio::PECA - px(1.))
+        .rounded_b(raio::peca() - px(1.))
         .bg(Cores::preto().opacity(0.45))
         .shadow(aresta_de_poco())
 }

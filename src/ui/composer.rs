@@ -25,7 +25,7 @@ use super::componentes::{
 };
 use super::movimento::{self, Curva, com_estado};
 use crate::{
-    modelo::{Chat, EstadoTarefa, Execucao, Papel},
+    modelo::Chat,
     motor::{self, Motor},
     tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, r, raio, tam},
 };
@@ -177,10 +177,7 @@ fn ordem_da_versao(id: &str) -> (usize, Vec<u32>) {
 /// O nome da versão que um apelido de família resolve hoje no Claude Code instalado ("Fable 5.1"
 /// para o `fable`), se ele já respondeu.
 pub fn versao_da_familia(apelido: &str) -> Option<String> {
-    crate::claude::modelos_oferecidos()
-        .into_iter()
-        .find(|m| m.valor == apelido)
-        .map(|m| nome_curto_modelo(&m.resolvido))
+    crate::claude::mais_nova_da_familia(&crate::claude::modelos_oferecidos(), apelido).map(|id| nome_curto_modelo(&id))
 }
 
 /// O valor é uma das versões exatas que o seletor oferece agora (e não um apelido de família nem
@@ -240,21 +237,19 @@ pub const LINHAS_CAIXA: usize = 12;
 /// No máximo tantas sugestões no menu da caixa.
 const MAX_SUGESTOES: usize = 8;
 
-/// Uma sugestão do menu da caixa: um comando de barra, um projeto (`#`) ou um chat (`@`).
+/// Uma sugestão do menu da caixa: um comando de barra.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Sugestao {
     /// O que entra no lugar do token ("/compact", "#ninee", "@12").
     pub valor: String,
     pub titulo: String,
     pub detalhe: Option<String>,
-    /// O começo que casa primeiro (o nome do comando, a chave do projeto, o número do chat).
+    /// O começo que casa primeiro (o nome do comando).
     pub chave: String,
     /// Onde a busca olha, sem acento.
     pub busca: String,
-    /// A ordem entre as que casam igual (o tamanho do comando, a ordem do trilho, a do mais recente).
+    /// A ordem entre as que casam igual (o tamanho do comando).
     pub peso: usize,
-    /// O projeto da sugestão, para o quadrado (`Some("")` é Avulsos).
-    pub projeto: Option<String>,
 }
 
 /// O que a última palavra da caixa pede: o sinal, o que veio depois dele e onde a palavra começa.
@@ -432,26 +427,16 @@ pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
     tam(window, if estreita { 12. } else { 14. })
 }
 
-/// A linha de estado da caixa parada: à esquerda, as teclas úteis (no Mestre, "#" projeto e "@"
-/// chat; nos outros, "/" comandos e, com a caixa vazia, "↑" última); à direita, o que o Enter faz
-/// (com texto escrito, também o Shift+Enter). Na caixa estreita, só a direita.
-fn teclas_da_caixa(mestre: bool, escrito: bool, estreita: bool) -> (Option<AnyElement>, Option<AnyElement>) {
-    let esquerda = (!estreita).then(|| {
-        let dicas = if mestre {
-            vec![seletores::dica_de_tecla(&["#"], "projeto"), seletores::dica_de_tecla(&["@"], "chat")]
-        } else if escrito {
-            vec![seletores::dica_de_tecla(&["/"], "comandos")]
-        } else {
-            vec![seletores::dica_de_tecla(&["/"], "comandos"), seletores::dica_de_tecla(&["↑"], "última")]
-        };
-        h_flex().gap(esp::E12).children(dicas).into_any_element()
-    });
-    let direita = h_flex()
-        .gap(esp::E12)
-        .when(escrito && !estreita, |s| s.child(seletores::dica_de_tecla(&["Shift", "Enter"], "quebra a linha")))
-        .child(seletores::dica_de_tecla(&["Enter"], "envia"))
-        .into_any_element();
-    (esquerda, Some(direita))
+/// O máximo de letras de um trecho citado (uma seleção enorme não vira a mensagem).
+const MAX_DA_CITACAO: usize = 4_000;
+
+/// A mensagem com o trecho citado na frente: cada linha do trecho com "> ", uma linha em branco
+/// e a resposta.
+pub(super) fn com_citacao(trecho: &str, resposta: &str) -> String {
+    let cortado: String = trecho.trim().chars().take(MAX_DA_CITACAO).collect();
+    let citado: Vec<String> =
+        cortado.lines().map(|l| if l.trim().is_empty() { ">".to_string() } else { format!("> {}", l.trim_end()) }).collect();
+    format!("{}\n\n{}", citado.join("\n"), resposta.trim_start())
 }
 
 /// O que o botão redondo da direita faz agora.
@@ -460,19 +445,17 @@ enum Envio {
     /// Caixa vazia e chat parado: o botão só mostra que existe.
     Vazio,
     Enviar,
-    /// Chat rodando (ou na fila) com a caixa vazia: o botão vira parar.
+    /// Chat rodando com a caixa vazia: o botão vira parar.
     Parar,
     /// Chat rodando com texto: parar ao lado e enviar, que dirige o turno.
     PararEEnviar,
 }
 
 /// O Enviar manda para dentro do turno que está rodando (o steering do `Motor::dirigir_turno`) em
-/// vez de pôr na fila: só com um turno de verdade em andamento — nem esperando vaga, nem parado
-/// num pedido de permissão, nem só esperando os agentes do fundo (aí a entrada já está fechada).
+/// vez de pôr na fila: só com um turno de verdade em andamento, nem parado num pedido de
+/// permissão, nem só esperando os agentes do fundo (aí a entrada já está fechada).
 pub(super) fn dirige_o_turno(motor: &Motor, chat: &str) -> bool {
-    matches!(motor.execucao(chat), Execucao::Rodando { .. })
-        && !motor.esperando_vaga(chat)
-        && !motor.esperando_agentes(chat)
+    motor.turno_recebe_mensagem(chat)
 }
 
 fn envio(rodando: bool, vazio: bool) -> Envio {
@@ -497,11 +480,6 @@ impl Janela {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        // Sem cópia isolada, o "Sem perguntar" mexe direto na pasta do projeto.
-        let sem_copia = match chat.papel {
-            Papel::Trabalhador | Papel::Projeto => motor.pasta_do_chat(chat).is_some_and(|p| p == chat.cwd),
-            Papel::Coordenador | Papel::Mestre => !self.usa_git(motor, &chat.projeto),
-        };
         let painel = &self.paineis[ix];
         let (painel_id, faixa, linhas) = (painel.id, painel.medida.faixa, painel.linhas_caixa);
         let composer = painel.composer.clone();
@@ -511,7 +489,6 @@ impl Janela {
         let focada = composer.read(cx).focus_handle(cx).contains_focused(window, cx)
             || self.pop_caixa.is_some_and(|(p, _)| p == painel_id);
         let anexos = self.anexos.get(&chat.id).cloned().unwrap_or_default();
-        let issues = self.chips_de_issues_na_caixa(&chat.id, window, cx);
         let janela = cx.entity().downgrade();
         let (colar, chat_colar) = (janela.clone(), chat.id.clone());
         let pasta_anexos = motor.dados.pasta_anexos();
@@ -519,20 +496,25 @@ impl Janela {
             painel: painel_id,
             chat: chat.id.clone(),
             faixa,
-            sem_copia,
             composer: composer.clone(),
-            rodando: motor.execucao(&chat.id).rodando() || motor.esperando_vaga(&chat.id),
+            rodando: motor.execucao(&chat.id).rodando(),
         };
-        let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty() && issues.is_empty(), window, cx);
-        let raio_caixa = if estreita { raio::CARTAO } else { raio::PECA };
+        let barra = self.barra_da_caixa(motor, chat, ix, &barra, anexos.is_empty(), window, cx);
+        // O mesmo canto na caixa larga e na estreita (dono, 13/11/2026: a estreita estava menos
+        // redonda que o resto).
+        let raio_caixa = raio::peca();
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
-        let raio_miolo = if estreita { raio::CONTROLE } else { crate::tema::raio_da_peca() };
+        // O miolo é concêntrico com a moldura de 20 e 4 de folga, não com o cartão da conversa.
+        let raio_miolo = raio::peca() - px(4.);
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
-        let (estado_esquerda, estado_direita) = self
-            .linha_de_estado(motor, chat, painel_id, window, cx)
-            .unwrap_or_else(|| teclas_da_caixa(chat.papel == Papel::Mestre, !caixa_vazia, estreita));
+        // A linha de baixo só existe com o chat trabalhando (o que ele faz agora e o Esc). Parada,
+        // a caixa não tem mais a linha das teclas (dono, 13/11/2026: "tira essa parte de baixo").
+        let estado = self.linha_de_estado(motor, chat, painel_id, window, cx);
 
+        let citacao = self.citacoes.get(&chat.id).map(|trecho| self.cartao_da_citacao(&chat.id, trecho, window, cx).into_any_element());
+        let tem_anexos = !anexos.is_empty();
+        let pilulas = self.anexos_pendentes(&chat.id, anexos, window, cx);
         // O miolo: o campo opaco, um degrau mais claro que a moldura, com a linha de luz no topo.
         let miolo = div()
             .relative()
@@ -545,7 +527,6 @@ impl Janela {
             .bg(gradiente_quente())
             .shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])
             .map(|s| if estreita { s.pt(esp::E8).pb(esp::E6).px(esp::E6) } else { s.pt(esp::E12).pb(esp::E8).px(esp::E8) })
-            .when(!anexos.is_empty() || !issues.is_empty(), |s| s.child(self.anexos_pendentes(&chat.id, issues, anexos, window, cx)))
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
                 // na busca de um popover da caixa. Sem margem própria, o texto (com os 10 do campo
@@ -576,15 +557,19 @@ impl Janela {
             )
             .child(div().h(esp::E8))
             .child(barra);
-        let linha_de_estado = h_flex()
-            .h(r(24.))
-            .px(esp::E12)
-            .gap(esp::E8)
-            .justify_between()
-            .etiqueta()
-            .text_color(Cores::tenue())
-            .child(h_flex().flex_1().min_w_0().gap(esp::E12).overflow_hidden().children(estado_esquerda))
-            .child(h_flex().flex_none().gap(esp::E12).children(estado_direita));
+        // Na altura, os 4 de cima igualam a folga de baixo da moldura.
+        let linha_de_estado = estado.map(|(estado_esquerda, estado_direita)| {
+            h_flex()
+                .h(r(24.))
+                .pt(esp::E4)
+                .px(esp::E12)
+                .gap(esp::E8)
+                .justify_between()
+                .etiqueta()
+                .text_color(Cores::tenue())
+                .child(h_flex().flex_1().min_w_0().gap(esp::E12).overflow_hidden().children(estado_esquerda))
+                .child(h_flex().flex_none().gap(esp::E12).children(estado_direita))
+        });
         // A moldura preta: o campo e a linha de estado. O vão entre as peças, a folga e a linha
         // são da caixa: o clique ali não leva o foco para a janela. O campo e os botões tratam o
         // deles antes.
@@ -600,8 +585,12 @@ impl Janela {
                     window.prevent_default();
                 }
             })
+            // Os anexos moram na casca, em cima do campo (a referência do dono, 13/11/2026: a
+            // "prompt box" da 21st.dev): pílulas com a miniatura, e a imagem abre na ilha.
+            .children(citacao.map(|cartao| div().px(esp::E2).pt(esp::E2).pb(esp::E6).child(cartao)))
+            .children(tem_anexos.then(|| div().px(esp::E4).pt(esp::E2).child(pilulas)))
             .child(miolo)
-            .child(linha_de_estado);
+            .children(linha_de_estado);
         // O foco: `t` vai a 1 em 180 ms com a caixa focada e volta a 0 em 120. Sem halo, sem
         // cantoneira e sem azul.
         let caixa = com_estado(move |window, cx| {
@@ -643,6 +632,7 @@ impl Janela {
                 this.editar_ultima(painel_id, window, cx)
             }))
             .child(self.menu_comandos(motor, chat, &composer, painel_id, cx))
+            .child(self.ilha_do_anexo(&chat.id, cx))
             .child(caixa)
     }
 
@@ -664,19 +654,12 @@ impl Janela {
         let altura = if estreita { 28. } else { 32. };
         let vazio = sem_anexos && b.composer.read(cx).value().trim().is_empty();
         let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
-        // Mensagem direta a uma tarefa em revisão abre uma rodada nova: quem avisa é o enviar.
-        let rodada_nova = chat.papel == Papel::Trabalhador
-            && chat.tarefa.and_then(|t| motor.tarefa(t)).is_some_and(|t| t.estado == EstadoTarefa::EmRevisao);
         let envios = self.paineis[ix].envios;
         div()
             .flex()
             .items_center()
             .h(r(altura))
-            .child(div().flex_none().child(if chat.papel == Papel::Mestre {
-                self.chip_divisao(motor, b, window, cx)
-            } else {
-                self.chip_modo(motor, chat, b, window, cx)
-            }))
+            .child(div().flex_none().child(self.chip_modo(motor, chat, b, window, cx)))
             .child(
                 div()
                     .flex()
@@ -694,7 +677,7 @@ impl Janela {
                     .child(grupo(self.chip_esforco(motor, chat, ix, b, window, cx)))
                     // A conta só com mais de uma: com uma só não há o que escolher (o uso dela está
                     // nos anéis do cabeçalho).
-                    .when(!estreita && motor.contas.len() > 1, |s| s.child(grupo(self.chip_conta(motor, chat, b, window, cx)))),
+                    .when(!estreita && motor.contas.len() > 1 && chat.agente == crate::modelo::Agente::Claude, |s| s.child(grupo(self.chip_conta(motor, chat, b, window, cx)))),
             )
             .child(
                 div()
@@ -708,29 +691,18 @@ impl Janela {
                     .when(b.faixa != FaixaCaixa::Media, |s| {
                         s.child(self.botao_mais(motor, chat, b, window, cx))
                     })
-                    .children(self.botoes_de_envio(
-                        b,
-                        vazio,
-                        motor.esperando_vaga(&chat.id),
-                        dirige_o_turno(motor, &chat.id),
-                        rodada_nova,
-                        envios,
-                        cx,
-                    )),
+                    .children(self.botoes_de_envio(b, vazio, dirige_o_turno(motor, &chat.id), envios, cx)),
             )
     }
 
     /// O enviar claro (apagado com a caixa vazia) e, com o chat rodando, o parar. O botão grande
     /// guarda o mesmo id como enviar e como parar: o pulso do envio (`envios`) toca nele mesmo
     /// quando o chat já começou a rodar e ele virou o parar.
-    #[allow(clippy::too_many_arguments)]
     fn botoes_de_envio(
         &self,
         b: &Barra,
         vazio: bool,
-        na_fila: bool,
         dirige: bool,
-        rodada_nova: bool,
         envios: u64,
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
@@ -745,7 +717,7 @@ impl Janela {
                 }
             }
         };
-        let dica_parar = if na_fila { "Tirar da fila" } else { "Parar esta conversa" };
+        let dica_parar = "Parar esta conversa";
         let principal = |icone: Option<Lucide>, dica: &'static str| {
             // O enviar (e o parar) é uma tecla de metal, o par do "+" da lista.
             BotaoRedondo::new(("enviar", painel as usize), icone.map(Into::into), dica)
@@ -761,16 +733,9 @@ impl Janela {
                 }))
                 .into_any_element()
         };
-        let dica_enviar = if rodada_nova {
-            "Enviar\nAbre uma nova rodada de ajuste, com verificação e revisor"
-        } else {
-            "Enviar"
-        };
         // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
         // vale para o turno inteiro, e tudo o que não é um turno em andamento, vai pela fila.
-        let dica_dirigir = if na_fila {
-            "Enviar\nEntra na fila: esta conversa ainda espera vaga"
-        } else if !dirige {
+        let dica_dirigir = if !dirige {
             "Enviar\nEntra na fila: este turno não recebe mensagem agora"
         } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
             "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
@@ -779,10 +744,9 @@ impl Janela {
         };
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
-            Envio::Enviar => vec![enviar(dica_enviar)],
+            Envio::Enviar => vec![enviar("Enviar")],
             Envio::Parar => vec![
                 principal(None, dica_parar)
-                    .girando(true)
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
@@ -791,7 +755,6 @@ impl Janela {
                 BotaoRedondo::new(("parar", painel as usize), None, dica_parar)
                     .variante(VarianteRedonda::Neutro)
                     .diametro(pequeno)
-                    .girando(true)
                     .dica_acao(Box::new(PararTurno), Some("Caixa"))
                     .on_click(parar())
                     .into_any_element(),
@@ -867,6 +830,66 @@ impl Janela {
     }
 
     /// Escreve na caixa do painel e põe o foco nela (quem envia é você, com Enter).
+    /// Guarda o trecho selecionado como a citação da próxima mensagem do chat do painel (o cartão
+    /// em cima do campo) e põe o cursor na caixa, pronto para a resposta.
+    pub(super) fn responder_ao_trecho(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(trecho), Some(p)) = (self.trecho.take(), self.paineis.iter().find(|p| p.id == painel)) else {
+            return;
+        };
+        let (Some(chat), foco) = (p.chat.clone(), p.composer.read(cx).focus_handle(cx)) else {
+            return;
+        };
+        self.citacoes.insert(chat, trecho.trim().to_string());
+        gpui_kit::base::TextSelection::clear(window, cx);
+        window.focus(&foco, cx);
+        cx.notify();
+    }
+
+    /// O cartão do trecho citado, na casca da caixa, em cima das pílulas dos anexos. É da família
+    /// das pílulas (a mesma superfície, o mesmo fio, a mesma luz de tecla), e o azul fica só no
+    /// que diz "isto é uma citação": a barra arredondada, as aspas e o rótulo. O trecho vai em
+    /// até duas linhas, um degrau mais baixo que o texto que você escreve (dono, 13/11/2026:
+    /// "melhora o de responder e coloca aí também" e "melhora um pouco o design").
+    fn cartao_da_citacao(&self, chat: &str, trecho: &str, _: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let chat = chat.to_string();
+        h_flex()
+            .relative()
+            .items_center()
+            .gap(esp::E8)
+            .pl(esp::E24)
+            .pr(esp::E6)
+            .py(esp::E8)
+            .rounded(raio::CARTAO)
+            .bg(Cores::cartao_elevado())
+            .border_1()
+            .border_color(Cores::borda_forte())
+            .shadow(crate::tema::aresta_de_tecla())
+            // A barra da citação: solta da beirada, arredondada, na altura do texto.
+            .child(div().absolute().left(esp::E8).top(esp::E8).bottom(esp::E8).w(px(3.)).rounded_full().bg(Cores::destaque()))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E2)
+                    .child(
+                        h_flex()
+                            .gap(esp::E4)
+                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 11.).text_color(Cores::destaque_texto()))
+                            .child(div().etiqueta().text_color(Cores::destaque_texto()).child("Respondendo a")),
+                    )
+                    .child(div().min_w_0().line_clamp(2).text_ellipsis().corpo_ui().text_color(Cores::tenue()).child(trecho.to_string())),
+            )
+            .child(
+                BotaoRedondo::new(SharedString::from(format!("tirar-citacao-{chat}")), Some(Lucide::X.into()), "Tirar a citação")
+                    .variante(VarianteRedonda::Plano)
+                    .diametro(24.)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.citacoes.remove(&chat);
+                        cx.notify();
+                    })),
+            )
+    }
+
     fn por_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
             return;
@@ -903,7 +926,8 @@ impl Janela {
             return;
         }
         if qual == PopCaixa::Modelo {
-            seletores::preparar_modelos(&lista, &motor, &chat, window, cx);
+            self.aba_do_modelo = None;
+            seletores::preparar_modelos(&lista, &motor, &chat, None, window, cx);
         }
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
@@ -911,12 +935,94 @@ impl Janela {
         cx.notify();
     }
 
-    /// Os anexos da próxima mensagem, em chips acima do texto, alinhados com o primeiro chip: as
-    /// issues anexadas primeiro, depois os arquivos.
+    /// A ilha: a imagem anexada aberta em tamanho de ver, flutuando em cima da caixa, sem tirar
+    /// a caixa do lugar. O clique na imagem abre o visor (com zoom); os dois botões do canto
+    /// recolhem a ilha e tiram o anexo; o clique fora a fecha.
+    fn ilha_do_anexo(&self, chat: &str, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let aberta = self.ilha.as_ref().filter(|(c, _)| c == chat).map(|(_, p)| p.clone());
+        div().relative().when_some(aberta, |s, caminho| {
+            let lido = super::imagens::anexo(&caminho);
+            let (largura, altura) = super::imagens::medida_da_miniatura(lido.medidas, 300., 560.);
+            let (chat_visor, alvo, fechado, tirado) = (chat.to_string(), caminho.clone(), caminho.clone(), caminho.clone());
+            let chat_tirar = chat.to_string();
+            let vidro = |id: &'static str, icone: Lucide| {
+                div()
+                    .id(id)
+                    .size(r(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(gpui_kit::rgba(0x00000099))
+                    .border_1()
+                    .border_color(gpui_kit::rgba(0xffffff26))
+                    .text_color(gpui_kit::white())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(gpui_kit::rgba(0x000000cc)))
+                    .child(super::mensagens::icone_de(icone, 14.))
+            };
+            s.child(
+                div()
+                    .id("ilha-do-anexo")
+                    .absolute()
+                    .bottom(esp::E8)
+                    .left_0()
+                    .p(esp::E6)
+                    .rounded(raio::PECA)
+                    .bg(Cores::flutuante())
+                    .border_1()
+                    .border_color(Cores::borda_forte())
+                    .shadow(crate::tema::sombra_flutuante())
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                        this.ilha = None;
+                        this.ilha_fechada = Some((fechado.clone(), std::time::Instant::now()));
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .id("ilha-imagem")
+                            .relative()
+                            .w(r(largura))
+                            .h(r(altura))
+                            .rounded(raio::CARTAO)
+                            .bg(Cores::preto())
+                            .overflow_hidden()
+                            .cursor_pointer()
+                            .child(img(caminho).size_full().object_fit(ObjectFit::Contain))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.ilha = None;
+                                this.abrir_visor(&chat_visor, &alvo, window, cx);
+                            }))
+                            .child(
+                                h_flex()
+                                    .absolute()
+                                    .top(esp::E8)
+                                    .right(esp::E8)
+                                    .gap(esp::E4)
+                                    .child(vidro("ilha-recolher", Lucide::Minimize).on_click(cx.listener(|this, _, _, cx| {
+                                        this.ilha = None;
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    })))
+                                    .child(vidro("ilha-tirar", Lucide::X).on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(lista) = this.anexos.get_mut(&chat_tirar) {
+                                            lista.retain(|a| *a != tirado);
+                                        }
+                                        this.ilha = None;
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    }))),
+                            ),
+                    ),
+            )
+        })
+    }
+
+    /// Os anexos da próxima mensagem, em pílulas na casca da caixa, acima do campo.
     fn anexos_pendentes(
         &self,
         chat: &str,
-        issues: Vec<AnyElement>,
         anexos: Vec<PathBuf>,
         window: &Window,
         cx: &Context<Self>,
@@ -925,8 +1031,7 @@ impl Janela {
             .flex()
             .flex_wrap()
             .gap(esp::E6)
-            .pb(esp::E8)
-            .children(issues)
+            .pb(esp::E6)
             .children(anexos.into_iter().enumerate().map(|(i, caminho)| {
                 let chat = chat.to_string();
                 let nome = super::imagens::nome_do_arquivo(&caminho);
@@ -945,8 +1050,8 @@ impl Janela {
                     super::imagens::ALTURA_CHIP,
                     super::imagens::LARGURA_MAXIMA_CHIP,
                 );
+                let aberta = self.ilha.as_ref().is_some_and(|(c, p)| *c == chat && *p == caminho);
                 let miniatura = (imagem && lido.existe).then(|| {
-                    let (chat_visor, alvo) = (chat.clone(), caminho.clone());
                     div()
                         .id(("mini-anexo", i))
                         .flex_none()
@@ -955,12 +1060,12 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .bg(Cores::preto())
                         .overflow_hidden()
-                        .cursor_pointer()
                         .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.abrir_visor(&chat_visor, &alvo, window, cx)
-                        }))
                 });
+                // O clique na pílula de uma imagem abre a ilha em cima da caixa (e fecha, se é a
+                // dela que está aberta).
+                let abre_ilha = imagem && lido.existe;
+                let (chat_ilha, alvo_ilha) = (chat.clone(), caminho.clone());
                 let icone = miniatura.is_none().then(|| {
                     let (lucide, cor) = match (imagem, lido.existe) {
                         (true, false) => (Lucide::ImageOff, Cores::apagado()),
@@ -979,9 +1084,27 @@ impl Janela {
                     .map(|s| if miniatura.is_some() { s.pl(esp::E4) } else { s.pl(esp::E8) })
                     .pr(esp::E2)
                     .rounded(raio::de(28.))
-                    .bg(Cores::hover())
                     .border_1()
-                    .border_color(Cores::borda())
+                    // A pílula da imagem aberta inverte: é ela que está em cima.
+                    .map(|s| {
+                        if aberta {
+                            s.bg(Cores::forte()).border_color(Cores::forte())
+                        } else {
+                            s.bg(Cores::cartao_elevado()).border_color(Cores::borda_forte())
+                        }
+                    })
+                    .when(abre_ilha, |s| {
+                        s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| {
+                            // O apertar fora da ilha já a fechou: o clique na própria pílula não
+                            // a reabre.
+                            let fechou_agora = this
+                                .ilha_fechada
+                                .take()
+                                .is_some_and(|(p, quando)| p == alvo_ilha && quando.elapsed() < std::time::Duration::from_millis(500));
+                            this.ilha = (!fechou_agora).then(|| (chat_ilha.clone(), alvo_ilha.clone()));
+                            cx.notify();
+                        }))
+                    })
                     .children(icone)
                     .children(miniatura)
                     .child(
@@ -989,7 +1112,13 @@ impl Janela {
                             .max_w(r(220.))
                             .truncate()
                             .metadado()
-                            .text_color(if lido.existe { Cores::texto() } else { Cores::tenue() })
+                            .text_color(if aberta {
+                                Cores::preto()
+                            } else if lido.existe {
+                                Cores::texto()
+                            } else {
+                                Cores::tenue()
+                            })
                             .child(nome),
                     )
                     .child(
@@ -1009,21 +1138,19 @@ impl Janela {
                                 {
                                     lista.remove(i);
                                 }
+                                this.ilha = None;
                                 cx.notify();
+                                // Não é um clique na pílula (que abriria a ilha).
+                                cx.stop_propagation();
                             })),
                     )
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             }))
     }
 
-    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/") e,
-    /// no Mestre, os projetos (`#`) e os chats (`@`). Fechado com Esc, o menu fica fechado até o
-    /// texto mudar.
-    pub(super) fn sugestoes_da_caixa(&self, motor: &Motor, chat: &Chat, painel: u64, texto: &str) -> Option<(char, usize, Vec<Sugestao>)> {
+    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/").
+    pub(super) fn sugestoes_da_caixa(&self, chat: &Chat, texto: &str) -> Option<(char, usize, Vec<Sugestao>)> {
         let (sinal, digitado, inicio) = gatilho(texto)?;
-        if sinal != '/' && self.sugestao_fechada.as_ref().is_some_and(|(p, t)| *p == painel && t == texto) {
-            return None;
-        }
         let itens: Vec<Sugestao> = match sinal {
             '/' => self
                 .comandos_de(chat)
@@ -1031,15 +1158,12 @@ impl Janela {
                 .map(|c| Sugestao {
                     valor: format!("/{c}"),
                     titulo: format!("/{c}"),
-                    detalhe: descricao_comando(&c).map(str::to_string),
+                    detalhe: descricao_comando(&c).map(str::to_string).or_else(|| crate::claude::descricao_do_comando(&c)),
                     busca: c.clone(),
                     peso: c.len(),
                     chave: c,
-                    projeto: None,
                 })
                 .collect(),
-            '#' if chat.papel == Papel::Mestre => sugestoes_de_projetos(motor),
-            '@' if chat.papel == Papel::Mestre => sugestoes_de_chats(motor),
             _ => return None,
         };
         let lista = menu_sugestoes(itens, digitado);
@@ -1050,14 +1174,14 @@ impl Janela {
     /// do lado da caixa. A primeira está marcada (o Enter a escolhe).
     fn menu_comandos(
         &self,
-        motor: &Motor,
+        _motor: &Motor,
         chat: &Chat,
         composer: &Entity<TextareaState>,
         painel: u64,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let texto = composer.read(cx).value().to_string();
-        let sugestoes = self.sugestoes_da_caixa(motor, chat, painel, &texto);
+        let sugestoes = self.sugestoes_da_caixa(chat, &texto);
         div().relative().when_some(sugestoes, |s, (sinal, inicio, lista)| {
             let menu = div()
                 .flex()
@@ -1067,20 +1191,6 @@ impl Janela {
                 .p(esp::E8)
                 .flutuante(cx)
                 .children(lista.into_iter().enumerate().map(|(i, sugestao)| {
-                    let simbolo = sugestao.projeto.as_ref().map(|p| {
-                        if p.is_empty() {
-                            div()
-                                .flex_none()
-                                .size(r(16.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(svg().path(Lucide::MessageCircle.path()).size(r(14.)).text_color(Cores::tenue()))
-                                .into_any_element()
-                        } else {
-                            super::componentes::quadrado_do_projeto(motor, p, 18.).into_any_element()
-                        }
-                    });
                     let valor = sugestao.valor.clone();
                     div()
                         .id(("sugestao-caixa", i))
@@ -1093,7 +1203,6 @@ impl Janela {
                         .cursor_pointer()
                         .when(i == 0, |s| s.bg(Cores::selecao()))
                         .when(i != 0, |s| s.hover(|s| s.bg(Cores::hover())))
-                        .children(simbolo)
                         .child(
                             div()
                                 .flex_shrink_0()
@@ -1132,45 +1241,21 @@ impl Janela {
         cx.notify();
     }
 
-    /// O Enter com o menu de `#`/`@` aberto no painel ativo: escolhe a primeira sugestão.
-    pub(super) fn completar_citacao(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let (Some(motor), Some(painel)) = (self.motor.clone(), self.paineis.get(self.ativo)) else {
-            return false;
-        };
-        let (id, texto) = (painel.id, painel.composer.read(cx).value().to_string());
-        let escolha = {
-            let m = motor.read(cx);
-            let Some(chat) = painel.chat.as_deref().and_then(|c| m.chat(c)) else {
-                return false;
-            };
-            self.sugestoes_da_caixa(m, chat, id, &texto).filter(|(sinal, ..)| *sinal != '/').map(|(_, inicio, lista)| (inicio, lista[0].valor.clone()))
-        };
-        match escolha {
-            Some((inicio, valor)) => {
-                self.escolher_sugestao(id, inicio, &valor, window, cx);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// "Mandar para um projeto…" e "Falar de um chat…" do clipe: o sinal no fim da caixa, depois
-    /// de um espaço, com o menu aberto.
-    pub(super) fn acrescentar_gatilho(&mut self, painel: u64, sinal: char, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
-            return;
-        };
-        let antes = composer.read(cx).value().to_string();
-        let texto = if antes.is_empty() || antes.ends_with(char::is_whitespace) { format!("{antes}{sinal}") } else { format!("{antes} {sinal}") };
-        self.sugestao_fechada = None;
-        self.por_na_caixa(painel, &texto, window, cx);
-    }
-
     pub(super) fn comandos_de(&self, chat: &Chat) -> Vec<String> {
-        let mut lista: Vec<String> = if chat.comandos.is_empty() {
-            COMANDOS_INICIAIS.iter().map(|c| c.to_string()).collect()
-        } else {
+        // Os comandos de barra e as skills são do Claude Code; no Codex fica só o `/clear`, que é
+        // do Vitral.
+        if chat.agente == crate::modelo::Agente::Codex {
+            return vec!["clear".into()];
+        }
+        // Antes do primeiro turno do chat no Vitral, vale o que o Claude Code disse que oferece
+        // naquela pasta (comandos e skills, perguntados quando o chat abre); sem resposta dele,
+        // os fixos.
+        let mut lista: Vec<String> = if !chat.comandos.is_empty() {
             chat.comandos.clone()
+        } else if let Some(da_pasta) = crate::claude::comandos_da_pasta(&chat.cwd) {
+            da_pasta
+        } else {
+            COMANDOS_INICIAIS.iter().map(|c| c.to_string()).collect()
         };
         if !lista.iter().any(|c| c == "clear") {
             lista.insert(0, "clear".into());
@@ -1193,8 +1278,7 @@ impl Janela {
         cx.notify();
     }
 
-    /// Esc na caixa: com o menu "/" aberto, fecha o menu; com o chat trabalhando (ou na fila),
-    /// para. Fora disso, a tecla segue adiante.
+    /// Esc na caixa: com o menu "/" aberto, fecha o menu; com o chat trabalhando, para. Fora disso, a tecla segue adiante.
     fn esc_na_caixa(
         &mut self,
         chat: &str,
@@ -1206,25 +1290,15 @@ impl Janela {
             cx.propagate();
             return;
         };
-        let texto = composer.read(cx).value().to_string();
-        let painel = self.paineis.iter().find(|p| p.composer == *composer).map(|p| p.id);
-        let (menu_aberto, citacao, ocupado) = {
+        let (menu_aberto, ocupado) = {
             let m = motor.read(cx);
             let menu = match (prefixo_de(composer, cx), m.chat(chat)) {
                 (Some(f), Some(c)) => self.comandos_de(c).iter().any(|x| x.contains(f.as_str())),
                 _ => false,
             };
-            let citacao = match (painel, m.chat(chat)) {
-                (Some(p), Some(c)) => self.sugestoes_da_caixa(m, c, p, &texto).is_some_and(|(sinal, ..)| sinal != '/'),
-                _ => false,
-            };
-            (menu, citacao, m.execucao(chat).rodando() || m.esperando_vaga(chat))
+            (menu, m.execucao(chat).rodando())
         };
-        if citacao {
-            // O menu de # e @ fecha sem apagar o que foi escrito.
-            self.sugestao_fechada = painel.map(|p| (p, texto));
-            cx.notify();
-        } else if menu_aberto {
+        if menu_aberto {
             composer.update(cx, |c, cx| c.set_value("", window, cx));
             cx.notify();
         } else if ocupado {
@@ -1286,72 +1360,6 @@ fn descricao_comando(comando: &str) -> Option<&'static str> {
         "verify" => "Verifica o trabalho",
         _ => return None,
     })
-}
-
-/// Os projetos para o `#` do Mestre (na ordem do trilho) e Avulsos no fim.
-fn sugestoes_de_projetos(motor: &Motor) -> Vec<Sugestao> {
-    let mut lista: Vec<Sugestao> = motor
-        .projetos_visiveis()
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let descricao = p.descricao.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string);
-            Sugestao {
-                valor: format!("#{}", p.chave()),
-                titulo: p.nome.clone(),
-                busca: crate::dados::chave(&format!("{} {}", p.nome, descricao.clone().unwrap_or_default())),
-                detalhe: descricao,
-                chave: p.chave(),
-                peso: i,
-                projeto: Some(p.id.clone()),
-            }
-        })
-        .collect();
-    lista.push(Sugestao {
-        valor: "#avulsos".into(),
-        titulo: "Avulsos".into(),
-        detalhe: Some("chats sem projeto".into()),
-        chave: "avulsos".into(),
-        busca: "avulsos sem projeto".into(),
-        peso: lista.len(),
-        projeto: Some(String::new()),
-    });
-    lista
-}
-
-/// Os chats para o `@` do Mestre: "chat 12 · título", com o projeto e o estado, o mais recente
-/// primeiro.
-fn sugestoes_de_chats(motor: &Motor) -> Vec<Sugestao> {
-    let mut chats: Vec<&Chat> = motor
-        .chats
-        .iter()
-        .filter(|c| matches!(c.papel, Papel::Projeto | Papel::Trabalhador) && c.tarefa.is_some() && !motor.arquivada(c))
-        .collect();
-    chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
-    chats
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let n = c.tarefa.unwrap_or_default();
-            let estado = if motor.execucao(&c.id).rodando() {
-                "rodando".to_string()
-            } else if motor.espera_do_chat(c).is_some_and(|e| e != motor::Espera::Nova) {
-                "esperando você".to_string()
-            } else {
-                super::tempo_relativo(c.atualizado_em)
-            };
-            let projeto = motor.nome_do_projeto(&c.projeto);
-            Sugestao {
-                valor: format!("@{n}"),
-                titulo: format!("chat {n} · {}", c.titulo),
-                detalhe: Some(format!("{projeto} · {estado}")),
-                chave: n.to_string(),
-                busca: crate::dados::chave(&format!("{} {projeto}", c.titulo)),
-                peso: i,
-                projeto: Some(c.projeto.clone()),
-            }
-        })
-        .collect()
 }
 
 /// Uma regra de "permitir sempre" como aparece no menu do modo.
@@ -1476,7 +1484,6 @@ mod testes_sugestoes {
             chave: chave.into(),
             busca: busca.into(),
             peso,
-            projeto: None,
         }
     }
 
@@ -1651,6 +1658,17 @@ mod testes_nome_modelo {
         assert_eq!(nome_curto_modelo("gpt-5"), "gpt-5");
         assert_eq!(nome_curto_modelo("claude-"), "claude-");
         assert_eq!(nome_curto_modelo("claude-opus-mais-5"), "claude-opus-mais-5");
+    }
+}
+
+#[cfg(test)]
+mod testes_da_citacao {
+    use super::com_citacao;
+
+    #[test]
+    fn o_trecho_vai_citado_na_frente_da_resposta() {
+        assert_eq!(com_citacao("uma linha", "concordo"), "> uma linha\n\nconcordo");
+        assert_eq!(com_citacao("  a\n\nb  \n", "\nmuda o b"), "> a\n>\n> b\n\nmuda o b");
     }
 }
 

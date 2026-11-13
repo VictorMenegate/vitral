@@ -1016,7 +1016,11 @@ impl PopupMenu {
     fn set_selected_index(&mut self, ix: usize, cx: &mut Context<Self>) {
         if self.selected_index != Some(ix) {
             self.selected_index = Some(ix);
-            self.scroll_handle.scroll_to_item(ix);
+            // Vitral: a posição entre os itens que rolam (as linhas fixas e os separadores que
+            // não são desenhados não contam).
+            if let Some(lugar) = self.itens_do_meio().iter().position(|i| *i == ix) {
+                self.scroll_handle.scroll_to_item(lugar);
+            }
             cx.notify();
         }
     }
@@ -1670,7 +1674,6 @@ impl Render for PopupMenu {
         }
 
         let view = cx.entity().clone();
-        let items_count = self.menu_items.len();
 
         let max_height = self.max_height.unwrap_or_else(|| {
             let window_half_height = window.window_bounds().get_bounds().size.height * 0.5;
@@ -1708,44 +1711,89 @@ impl Render for PopupMenu {
             .text_color(cx.theme().popover_foreground)
             .relative()
             .occlude()
-            .child(
+            .child({
                 // Vitral: margem 8 (os itens de raio 10 ficam concêntricos com o menu de 20), 2
                 // entre itens e no mínimo 220, em rem.
-                v_flex()
+                let margem = rem * (8. / 15.);
+                let entre = rem * (2. / 15.);
+                // Vitral: num menu que rola, a linha fixa do topo e a do pé (a placa de metal e a
+                // faixa da versão) ficam fora da área de rolagem: só os itens rolam. Dentro dela,
+                // a margem negativa com que a linha fixa encosta na casca dava 16 px de rolagem
+                // fantasma num menu em que tudo cabia, e o cabeçalho saía de vista.
+                let (topo, pe) = self.linhas_fixas();
+                let itens = v_flex()
                     .id("items")
-                    .p(rem * (8. / 15.))
-                    .gap_y(rem * (2. / 15.))
+                    .px(margem)
+                    .pt(if topo.is_some() { entre } else { margem })
+                    .pb(if pe.is_some() { entre } else { margem })
+                    .gap_y(entre)
+                    .when(self.scrollable, |this| {
+                        this.min_h_0().overflow_y_scroll().track_scroll(&self.scroll_handle)
+                    })
+                    .children(
+                        self.itens_do_meio()
+                            .into_iter()
+                            .map(|ix| self.render_item(ix, &self.menu_items[ix], options, window, cx)),
+                    );
+                v_flex()
                     .min_w(rem * (220. / 15.))
                     .when_some(self.min_width, |this, min_width| this.min_w(min_width))
                     .max_w(max_width)
-                    .when(self.scrollable, |this| {
-                        this.max_h(max_height)
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll_handle)
-                    })
-                    .children(
-                        self.menu_items
-                            .iter()
-                            .enumerate()
-                            // Ignore last separator
-                            .filter(|(ix, item)| !(*ix + 1 == items_count && item.is_separator()))
-                            // Vitral: nem o colado na placa do topo ou na faixa do pé: elas já
-                            // separam.
-                            .filter(|(ix, item)| {
-                                let fixa = |i: usize| {
-                                    matches!(self.menu_items.get(i), Some(PopupMenuItem::Static { .. }))
-                                };
-                                !(item.is_separator()
-                                    && ((*ix == 1 && fixa(0))
-                                        || (*ix + 2 == items_count && fixa(items_count - 1))))
-                            })
-                            .map(|(ix, item)| self.render_item(ix, item, options, window, cx)),
+                    .when(self.scrollable, |this| this.max_h(max_height))
+                    .children(topo.map(|ix| {
+                        div()
+                            .flex_none()
+                            .px(margem)
+                            .pt(margem)
+                            .child(self.render_item(ix, &self.menu_items[ix], options, window, cx))
+                    }))
+                    .child(
+                        // A barra de rolagem é só da área que rola.
+                        v_flex().relative().min_h_0().child(itens).when(self.scrollable, |this| {
+                            this.vertical_scrollbar(&self.scroll_handle)
+                        }),
                     )
-                    .on_prepaint(move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds)),
-            )
-            .when(self.scrollable, |this| {
-                this.vertical_scrollbar(&self.scroll_handle)
+                    .children(pe.map(|ix| {
+                        div()
+                            .flex_none()
+                            .px(margem)
+                            .pb(margem)
+                            .child(self.render_item(ix, &self.menu_items[ix], options, window, cx))
+                    }))
+                    .on_prepaint(move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds))
             })
+    }
+}
+
+impl PopupMenu {
+    /// Vitral: a linha fixa do topo e a do pé (`Static` no começo e no fim) que, num menu que
+    /// rola, ficam fora da área de rolagem. Num menu que não rola, nenhuma: vão com os itens.
+    fn linhas_fixas(&self) -> (Option<usize>, Option<usize>) {
+        let n = self.menu_items.len();
+        let fixa = |i: usize| matches!(self.menu_items.get(i), Some(PopupMenuItem::Static { .. }));
+        let topo = (self.scrollable && n > 0 && fixa(0)).then_some(0);
+        let pe = (self.scrollable && n > 1 && fixa(n - 1)).then_some(n - 1);
+        (topo, pe)
+    }
+
+    /// Vitral: os itens desenhados na área do meio, na ordem: todos menos as linhas fixas que
+    /// ficam fora dela, o separador do fim e o que está colado numa linha fixa (a placa do topo
+    /// e a faixa do pé já separam).
+    fn itens_do_meio(&self) -> Vec<usize> {
+        let n = self.menu_items.len();
+        let fixa = |i: usize| matches!(self.menu_items.get(i), Some(PopupMenuItem::Static { .. }));
+        let (topo, pe) = self.linhas_fixas();
+        self.menu_items
+            .iter()
+            .enumerate()
+            .filter(|(ix, _)| Some(*ix) != topo && Some(*ix) != pe)
+            // Ignore last separator
+            .filter(|(ix, item)| !(*ix + 1 == n && item.is_separator()))
+            .filter(|(ix, item)| {
+                !(item.is_separator() && ((*ix == 1 && fixa(0)) || (*ix + 2 == n && fixa(n - 1))))
+            })
+            .map(|(ix, _)| ix)
+            .collect()
     }
 }
 

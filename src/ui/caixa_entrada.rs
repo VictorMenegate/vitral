@@ -13,11 +13,10 @@ use gpui_kit::*;
 use super::{
     Janela, ProximaPendencia,
     componentes::{
-        CabecalhoDeSecao, CartaoDeLista, CorpoPopover, EstadoVazio, LarguraPopover, QuadradoDeProjeto,
-        Selo, Simbolo, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, numero_painel,
-        popover, teclas,
+        CabecalhoDeSecao, CartaoDeLista, CorpoPopover, EstadoVazio, LarguraPopover, Selo, Simbolo,
+        TamanhoBotao, botao_fantasma, botao_icone, botao_primario, numero_painel, popover, simbolo_do_chat,
+        teclas,
     },
-    icone_projeto,
     lateral::{Causa, MotivoDaPrevia, previa_elemento},
     mensagens::trechos_perigosos,
     tempo_relativo,
@@ -45,8 +44,6 @@ struct Linha {
     /// O sinal e o rótulo, os mesmos da prévia da lista (a resposta nova não tem).
     motivo: Option<MotivoDaPrevia>,
     detalhe: String,
-    icone: &'static icone_projeto::Icone,
-    cor: u32,
     /// Número do painel em que a conversa está aberta (e se é o ativo).
     painel: Option<(usize, bool)>,
     quando: u64,
@@ -68,7 +65,6 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
         let Some(chat) = motor.chat(p.chat()) else {
             continue;
         };
-        let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
         // A mesma conversa pode ter mais de um pedido, ou estar parada e com erro.
         let chave = match &p {
             Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } => pedido.clone(),
@@ -76,13 +72,13 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             Pendencia::Erro { chat, .. } => format!("erro-{chat}"),
             Pendencia::Nova { chat } => format!("nova-{chat}"),
         };
-        // A frase da lista: a linha já é da conversa que pede, então sem o número da tarefa.
+        // A frase da lista.
         let (motivo, detalhe) = match Causa::da_pendencia(&p) {
             Some(causa) => {
-                let (motivo, detalhe) = MotivoDaPrevia::de(&causa, None, 0);
+                let (motivo, detalhe) = MotivoDaPrevia::de(&causa);
                 (Some(motivo), detalhe)
             }
-            None => (None, format!("Resposta nova em {}", motor.nome_do_projeto(&chat.projeto))),
+            None => (None, "Resposta nova".to_string()),
         };
         let pedido = match p {
             Pendencia::Permissao { pedido, ferramenta, .. } => {
@@ -104,8 +100,6 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             titulo: chat.titulo.clone(),
             motivo,
             detalhe,
-            icone,
-            cor,
             painel: janela.painel_da_conversa(&chat.id),
             quando: chat.atualizado_em,
             pedido,
@@ -165,9 +159,9 @@ impl Janela {
             .or(pendencias.first())
             .map(|p| p.chat().to_string())
         else {
-            // Sem outra pendência, o primeiro cartão aberto do Mestre (ou o par travado no freio).
-            if let Some(e) = super::cartoes::esperas_do_mestre(motor.read(cx)).into_iter().next() {
-                self.ver_cartao(e.cartao, &e.chat, window, cx);
+            // Sem outra pendência, o primeiro par travado no freio de ciclo.
+            if let Some(e) = super::resumo::esperas_de_ciclo(motor.read(cx)).into_iter().next() {
+                self.selecionar(Some(e.chat), window, cx);
             }
             return;
         };
@@ -208,15 +202,15 @@ fn caixa_do_sino(
     let Some(motor) = j.read(cx).motor.clone() else {
         return div().into_any_element();
     };
-    let (secoes, precisa, do_mestre) = {
+    let (secoes, precisa, de_ciclo) = {
         let m = motor.read(cx);
-        (ler_secoes(j.read(cx), m), super::cartoes::precisa_com_o_mestre(m), super::cartoes::esperas_do_mestre(m))
+        (ler_secoes(j.read(cx), m), super::resumo::precisa_em_tudo(m), super::resumo::esperas_de_ciclo(m))
     };
     let popover = popover.downgrade();
     let numero = precisa.numero();
-    let cor = if precisa.erro { Cores::vermelho() } else { Cores::ambar() };
+    let cor = if precisa.erro { Cores::vermelho() } else { Cores::espera() };
     let novas: Vec<String> = secoes.novas.iter().map(|l| l.chat.clone()).collect();
-    let vazia = do_mestre.is_empty()
+    let vazia = de_ciclo.is_empty()
         && secoes.pedidos.is_empty()
         && secoes.paradas.is_empty()
         && secoes.erros.is_empty()
@@ -255,29 +249,30 @@ fn caixa_do_sino(
         );
     }
     // A primeira seção encosta no título (4 em cima, e não os 16 de respiro).
-    let primeira = if do_mestre.is_empty() {
+    let primeira = if de_ciclo.is_empty() {
         [&secoes.pedidos, &secoes.paradas, &secoes.erros, &secoes.novas].iter().position(|l| !l.is_empty())
     } else {
         Some(usize::MAX)
     };
-    if !do_mestre.is_empty() {
-        corpo = corpo.child(CabecalhoDeSecao::new("Do Mestre").contagem(do_mestre.len()).tingida(Cores::ambar()).primeira(true));
-        for e in do_mestre {
-            let (cartao, chat, chave) = (e.cartao, e.chat.clone(), e.chave.clone());
+    if !de_ciclo.is_empty() {
+        corpo = corpo.child(CabecalhoDeSecao::new("Mensagens seguidas").contagem(de_ciclo.len()).tingida(Cores::espera()).primeira(true));
+        for e in de_ciclo {
+            let (chat, chave) = (e.chat.clone(), e.chave.clone());
             let (janela_v, popover_v) = (janela.clone(), popover.clone());
             let abrir = move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let _ = popover_v.update(cx, |p, cx| p.dismiss(window, cx));
-                let _ = janela_v.update(cx, |this, cx| this.ver_cartao(cartao, &chat, window, cx));
+                let _ = janela_v.update(cx, |this, cx| this.selecionar(Some(chat.clone()), window, cx));
             };
             let abrir = std::rc::Rc::new(abrir);
             let (a1, a2) = (abrir.clone(), abrir);
             let subtitulo = previa_elemento(None, e.texto, false);
+            let titulo = motor.read(cx).chat(&e.chat).map(|c| c.titulo.clone()).unwrap_or_default();
             corpo = corpo.child(
-                CartaoDeLista::new(id("caixa-mestre", &chave), "Mestre")
-                    .simbolo(Simbolo::Papel(super::componentes::Papel::Mestre))
+                CartaoDeLista::new(id("caixa-ciclo", &chave), titulo)
+                    .simbolo(Simbolo::icone_cor(Lucide::MessageSquare, Cores::espera()))
                     .subtitulo(subtitulo)
                     .acao_fixa(
-                        botao_fantasma(id("caixa-mestre-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
+                        botao_fantasma(id("caixa-ciclo-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
                             .on_click(move |ev, window, cx| a1(ev, window, cx)),
                     )
                     .on_click(move |ev, window, cx| a2(ev, window, cx)),
@@ -294,9 +289,9 @@ fn caixa_do_sino(
         })
     };
     corpo = corpo
-        .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::ambar())))
+        .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::espera())))
         .children(secoes.pedidos.into_iter().map(|l| linha_de_pedido(l, janela, &popover, &motor, window, cx)))
-        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::ambar())))
+        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::espera())))
         .children(secoes.paradas.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
         .children(secao(2, "Erros", &secoes.erros, Some(Cores::vermelho())))
         .children(secoes.erros.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
@@ -330,13 +325,13 @@ fn caixa_do_sino(
         .into_any_element()
 }
 
-/// Onde o texto da linha começa (8 do cartão, o quadrado de 24 e 12): o comando e os botões do
+/// Onde o texto da linha começa (8 do cartão, o balão de 24 e 12): o comando e os botões do
 /// pedido ficam nessa coluna.
 const TEXTO_DA_LINHA: f32 = 44.;
 
-/// O quadrado do projeto de 24 à esquerda da linha.
-fn simbolo(l: &Linha) -> Simbolo {
-    Simbolo::Elemento(QuadradoDeProjeto::new(l.icone, l.cor, 24.).into_any_element())
+/// O balão de 24 à esquerda da linha.
+fn simbolo() -> Simbolo {
+    Simbolo::Elemento(simbolo_do_chat(24.).into_any_element())
 }
 
 /// À direita: o número do painel em que a conversa está aberta, ou há quanto tempo mudou.
@@ -374,7 +369,7 @@ fn linha(
         _ => None,
     };
     let cartao = CartaoDeLista::new(id("caixa-linha", &l.chave), l.titulo.clone())
-        .simbolo(simbolo(&l))
+        .simbolo(simbolo())
         .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
@@ -397,7 +392,7 @@ fn linha_de_pedido(
 ) -> AnyElement {
     let chave = l.chave.as_str();
     let cartao = CartaoDeLista::new(id("caixa-pedido", chave), l.titulo.clone())
-        .simbolo(simbolo(&l))
+        .simbolo(simbolo())
         .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));

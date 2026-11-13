@@ -464,7 +464,7 @@ impl RenderOnce for BarrinhasDeSinal {
     }
 }
 
-/// Proporção de estados numa barra fina (tarefas da Equipe), com dica por segmento.
+/// Proporção de estados numa barra fina, com dica por segmento.
 #[derive(IntoElement)]
 pub struct BarraSegmentada {
     partes: Vec<(usize, Hsla, SharedString)>,

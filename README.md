@@ -1,49 +1,41 @@
 # Vitral
 
-Vários chats do **Claude Code** trabalhando no mesmo pedido, ao mesmo tempo, sem tropeçar um no
-outro. Um **Mestre** entende o que você pediu, mostra como vai dividir e manda cada parte para o
-projeto certo. Cada chat trabalha numa **cópia só dele** da pasta e nada entra no seu código antes
-de passar pela verificação, pelo revisor independente e pelo **Revisar e juntar**.
+Vários chats do **Claude Code e do Codex** abertos ao mesmo tempo, lado a lado, cada um trabalhando
+direto numa pasta do seu computador. Uma lista com todos os
+chats, o que espera você em cima, e as conversas em painéis e abas.
 
 Feito em Rust com GPUI, o motor de interface do Zed. Linux, com o Windows em prévia. Licença MIT.
 
-![O chat de um projeto: a conversa, a barra "4 arquivos mudados na cópia" com Revisar e Juntar, e o painel Este chat com a origem, o branch, os critérios e a verificação](docs/imagens/chat-do-projeto.png)
+![A janela do Vitral: a lista de chats à esquerda, com o que espera você em cima, e uma conversa aberta com o plano, um bloco de código e a caixa de mensagem](docs/imagens/conversa.png)
 
 ## O que ele faz
 
-- **Um Mestre que distribui.** Uma conversa só, que vê todos os projetos. Ele não edita nada: ouve o
-  pedido e mostra o cartão **"Vou dividir assim"** (uma parte por chat, com os critérios e o
-  comando de verificação), que espera o seu **Começar** — ou vai direto, quando você pediu assim ou
-  citou o destino.
-- **Um chat por pedido, cada um na sua cópia.** Cada chat de projeto trabalha num `git worktree` só
-  dele, com portas próprias. A sua pasta fica como está até você (ou o Mestre) juntar.
-- **Verificação, revisor e portão.** Quando o chat para, os testes rodam; depois o Vitral roda a
-  verificação de novo e um revisor independente (sessão nova, só de leitura) aponta os problemas com
-  arquivo e linha. Com a verificação vermelha ou um problema grave, juntar sozinho é recusado.
-- **Revisar e juntar.** O diff com cor de sintaxe, os apontamentos do revisor na própria linha, os
-  seus comentários, **Pedir ajuste** e **Juntar**.
-- **GitHub e Linear ao lado do chat.** Issues viram chats; o PR abre, acompanha os checks e mescla
-  quando tudo passa, numa aba ao lado da conversa.
+- **Uma lista de chats.** Todos os chats numa lista só, uma linha cada: o que precisa de você
+  (permissão, plano, parada, erro, resposta nova) e o que está rodando em cima, depois as fixadas e
+  o resto, do mais recente ao mais antigo. Ctrl+K busca no título, nas mensagens e no nome da pasta.
+- **Cada chat direto numa pasta.** O agente roda na pasta, como no terminal: sem cópia e sem
+  passo de juntar. O "+" e o Ctrl+N abrem um chat novo na hora, na pasta de trabalho escolhida no
+  primeiro uso (ou na pasta do chat aberto, se não houver uma escolhida); **Novo chat
+  em outra pasta…** oferece as pastas que já têm chat, uma pasta qualquer do computador ou **Sem
+  pasta**, só para conversar.
+- **Lado a lado.** Até 4 conversas em painéis, cada painel com abas; arraste uma conversa da lista
+  ou uma aba para o meio de um painel (vira aba) ou para a borda (abre ao lado).
 - **As suas conversas do Claude Code entram.** As da extensão do VS Code e do terminal viram chats,
-  com o histórico, no projeto da pasta delas. A conversa original fica como está e pode seguir no
-  VS Code: o Vitral continua numa cópia dela.
+  com o histórico, direto na pasta delas. A conversa original fica como está e pode seguir no VS
+  Code: o Vitral continua numa cópia dela.
+- **Permissões à vista.** Cada pedido de permissão vira um cartão com o comando inteiro; o que tem
+  um trecho arriscado (`rm -rf`, `sudo`, `| sh`) pede para segurar o botão antes de permitir.
 - **Nada se perde numa queda.** Se o Vitral fecha ou o PC desliga, o que estava rodando fica parado,
   com **Retomar**, e as conversas voltam como estavam.
+- **Claude ou Codex.** Escolha quem responde em cada chat ou envie a mesma pergunta aos dois,
+  em painéis lado a lado. Cada um usa seu próprio login e plano.
+- **Memória da equipe.** Conecte um servidor ai-memory com o endereço e sua chave, já no primeiro
+  uso ou depois nas Configurações. Os agentes compartilham aprendizados, e você pode buscar e ler
+  as páginas dentro do Vitral. Não precisa instalar o ai-memory no seu computador.
 
-### O Mestre divide antes de começar
+### Um chat novo em qualquer pasta
 
-Todo trabalho vira uma divisão, com o pedido inteiro, os critérios e a verificação de cada parte.
-O **×** tira uma parte, **Ajustar** devolve a palavra a você e **Começar** cria os chats.
-
-![O cartão "Vou dividir assim": duas partes, uma para o projeto loja e outra para o site, cada uma com o pedido, os critérios e a verificação, e os botões Descartar, Ajustar e Começar](docs/imagens/mestre-divide.png)
-
-### Nada entra sem passar pelo Revisar
-
-![O diálogo Revisar e juntar: os chips "Verificação falhou" e "Revisor pede ajustes", o diff com cor de sintaxe, um apontamento de gravidade alta na própria linha com "Usar como comentário", e os botões Pedir ajuste e Juntar](docs/imagens/revisar-e-juntar.png)
-
-### O pull request ao lado da conversa
-
-![A aba PR: a descrição, a linha do tempo com os comentários da revisão, os checks que faltam e o botão "Mesclar quando ficar pronto"](docs/imagens/aba-pr.png)
+![A paleta "Novo chat · Em qual pasta?": as pastas que já têm chat, com o caminho embaixo do nome, Outra pasta… e Sem pasta](docs/imagens/novo-chat-em-outra-pasta.png)
 
 ### Achar o que foi dito na conversa
 
@@ -56,12 +48,12 @@ acento nem maiúscula.
 
 ### O que você precisa ter antes
 
-- **Claude Code** instalado e com a sessão iniciada. O Vitral usa o login que o próprio Claude Code
-  guarda: **ele não pede chave de API** e nunca renova esse login por conta própria.
+- **Claude Code ou Codex CLI** instalado e com a sessão iniciada. O Vitral usa o login que o
+  próprio agente guarda: **ele não pede chave de API do modelo**.
 - **Git.**
-- Uma **assinatura do Claude** que aguente vários chats ao mesmo tempo. O Vitral mostra os anéis de
-  uso de 5 h e da semana, mas quem cobra é a Anthropic.
-- O que faltar aparece como aviso na conversa do Mestre.
+- Um **plano do agente escolhido** que aguente vários chats ao mesmo tempo. Para o Claude, o
+  Vitral mostra os anéis de uso de 5 h e da semana.
+- O que faltar aparece como aviso na janela.
 
 ### Linux (x86_64)
 
@@ -99,8 +91,8 @@ só para o seu usuário, **sem administrador**.
 - O app fica em `%LOCALAPPDATA%\Programs\Vitral`, com o atalho no Menu Iniciar; os dados em
   `%LOCALAPPDATA%\vitral` e a configuração em `%APPDATA%\vitral`. Desinstalar (em Aplicativos
   instalados) tira só o programa: os dados e a configuração ficam.
-- Além do Claude Code, precisa do **Git para Windows**: as cópias, a verificação e o hook rodam no
-  Git Bash dele. O Claude Code é o nativo
+- Além do Claude Code, precisa do **Git para Windows**: o Claude Code roda os comandos no Git Bash
+  dele. O Claude Code é o nativo
   (`irm https://claude.ai/install.ps1 | iex`, o `claude.exe` em `%USERPROFILE%\.local\bin`).
 - **A atualização automática vale a partir da 0.3.0.** Quem instalou a 0.3.0-rc.6 passa para a
   seguinte pelo instalador dela, uma vez; daí em diante é como no Linux.
@@ -128,42 +120,21 @@ assinatura, o `vitral-versao.json.minisig`.
 ```
 você
  │
- └─ Mestre ─── uma conversa só, vê todos os projetos, não edita nada
-     │         "Vou dividir assim": uma parte por chat, com critérios
-     │
-     ├─ chat do projeto A ─── a cópia dele (git worktree, portas próprias)
-     │      │
-     │      └─ ajudante #1, ajudante #2 ─── cada um numa cópia da cópia
-     │
-     └─ chat do projeto B ─── a cópia dele (git worktree, portas próprias)
-
-em toda entrega:
-    verificação ─► revisor ─► portão ─► Revisar e juntar ─► a sua pasta
+ ├─ chat "Cupom no carrinho" ─── direto em ~/Projetos/loja
+ ├─ chat "Rodapé novo"       ─── direto em ~/Projetos/site
+ ├─ chat "Ideias"            ─── Sem pasta (uma pasta vazia só dele)
+ └─ ...
 ```
 
-- **Mestre → chats de projeto → ajudantes.** O Mestre lê, decide e distribui, mas não escreve
-  arquivo nenhum. Um chat de projeto que recebeu um pedido grande pode dividi-lo em até 3
-  **ajudantes**, cada um numa cópia da cópia dele, e junta o trabalho deles antes de entregar.
-- **Uma cópia por chat.** Na primeira mensagem, o Vitral prepara um `git worktree` só daquele chat,
-  leva os arquivos locais fora do git (`.env*`, `CLAUDE.local.md`), roda o script de preparação da
-  pasta e dá dez portas próprias ao chat. A pasta original fica bloqueada para escrita dele.
-- **Verificação, revisor e portão.** Um hook roda os testes quando o chat para (e, se falharem, ele
-  continua sozinho); depois o Vitral roda a verificação de novo e um revisor independente confere os
-  critérios. Quem pediu só junta uma entrega cujo relatório já saiu; com a verificação falhando ou
-  um problema de gravidade alta, o Vitral recusa, e juntar mesmo assim exige um motivo, que fica no
-  commit. Você, pelo **Revisar**, junta sem o portão: com algo vermelho ele pergunta antes, e o que
-  estava vermelho vai como ressalva no commit.
-- **Juntar.** As mudanças da cópia entram na pasta original e a cópia continua, em dia com ela.
-  Pasta suja, outro branch ou conflito: nada entra, e o aviso diz o que fazer.
-- **GitHub e Linear ao lado do chat.** Issues (minhas, do time, do ciclo) viram chats, com o ramo da
-  issue; por pasta dá para escolher entre juntar ali mesmo ou **abrir PR**. O PR aparece numa aba
-  com a visão geral, os arquivos e os checks; o CI que falhou e a revisão chegam em "Esperando
-  você", e com **Mesclar quando ficar pronto** vão sozinhos ao chat, que corrige até os checks
-  passarem.
-- **Chats isolados.** Os chats que leem issues, comentários e logs de CI (coisa escrita por
-  terceiros), e os de uma pasta que entrega por PR, rodam no `bwrap`: sem o chaveiro, sem o ssh, sem
-  o login do `gh` nem as credenciais do git, e com o `.git` do repositório só para leitura. Quem
-  fala com o GitHub é o Vitral, não o chat.
+- **Um chat, uma pasta.** Cada chat roda o agente direto na pasta dele, com a sessão daquela
+  pasta: o que ele muda está na sua pasta na hora, como no terminal. O modo de permissão, o modelo,
+  o esforço e a conta são escolhidos por chat, na caixa de mensagem.
+- **Chats que conversam.** Um chat pode abrir outro na mesma pasta ou mandar uma mensagem a outro
+  chat (pelo servidor MCP local do Vitral); depois de 6 mensagens automáticas seguidas entre dois
+  chats sem você no meio, o Vitral segura a próxima e espera você.
+- **Os dados ficam com você.** As conversas e o estado ficam em `~/.local/share/vitral`, gravados de
+  um jeito que aguenta queda de energia; quem chama o modelo é o agente, com o login dele.
+  Com a memória da equipe ligada, os aprendizados registrados vão para o servidor escolhido.
 
 ## O que o Vitral não é
 
@@ -171,14 +142,13 @@ em toda entrega:
   pedido ao que já está aberto, em vez de abrir outra janela.
 - **Foi feito para Linux.** O Windows chegou na 0.3.0, ainda é recente e não tem tudo (contas extras
   do Claude, por exemplo).
-- **Precisa de uma assinatura do Claude.** O Vitral não tem modelo próprio nem chave de API: ele usa
-  o login do Claude Code e gasta o plano dele. Vários chats ao mesmo tempo gastam mais.
+- **Usa o plano do agente.** O Vitral não tem modelo próprio: ele usa o login do Claude Code ou do
+  Codex e gasta o plano dele. Vários chats ao mesmo tempo gastam mais.
 - **Não roda com o app fechado.** Não há serviço em segundo plano: fechando a janela, o que estava
   trabalhando fica parado, com Retomar na próxima abertura.
-- **O visual foi feito para o GNOME com Wayland** (o vidro, as animações que seguem as do GNOME, as
-  notificações, a Lixeira). Fora dali deve funcionar, mas não é onde ele é medido.
-- **Não é um editor.** O Vitral conversa, prepara as cópias, confere e junta; quem escreve o código
-  é o Claude Code.
+- **O visual foi feito para o GNOME com Wayland** (o metal, as animações que seguem as do GNOME, as
+  notificações). Fora dali deve funcionar, mas não é onde ele é medido.
+- **Não é um editor.** O Vitral organiza as conversas; quem escreve o código é o agente escolhido.
 
 ## Para desenvolver
 
@@ -186,8 +156,8 @@ em toda entrega:
 git clone https://github.com/VictorMenegate/vitral.git
 cd vitral
 cargo build                     # o rust-toolchain.toml fixa o Rust em 1.99.1
-cargo test                      # git, motor, revisor, processos, dados, migração, importação,
-                                # atualização, interface e o lançador do Windows
+cargo test                      # motor, processos, dados, migração, importação, atualização,
+                                # interface e o lançador do Windows
 ./target/debug/vitral           # abre o app
 ./target/debug/vitral --vitrine # os componentes da linguagem visual, sem pasta e sem motor
 ./target/debug/vitral --versao  # a versão, o canal e o commit, sem janela
@@ -203,9 +173,8 @@ seu dconf nem nos seus dados), segue um roteiro de cliques e teclas e tira print
 ferramentas/bancada.sh ferramentas/roteiros/4c-antes.txt prints/ ./target/debug/vitral
 ```
 
-`CLAUDE_FALSO=1` troca o `claude` por um de mentira, que não chama a API; `RAIZ_SINTETICA=1` gera
-uma pasta de demonstração e `AMOSTRA=prs` monta um PR em cada estado, sem rede. As imagens deste
-README saíram daí. O cabeçalho do `ferramentas/bancada.sh` explica o resto.
+`CLAUDE_FALSO=1` troca o `claude` por um de mentira, que não chama a API, e `RAIZ_SINTETICA=1` gera
+uma pasta de demonstração. As imagens deste README saíram daí. O cabeçalho do `ferramentas/bancada.sh` explica o resto.
 
 O manual completo é o **[LEIA-ME.md](LEIA-ME.md)**: como cada parte funciona, o que já foi decidido
 e as pegadinhas. O que entrou em cada versão fica no **[NOVIDADES.md](NOVIDADES.md)**.
@@ -218,7 +187,7 @@ O Vitral é MIT — veja o [LICENSE](LICENSE).
 - **[GPUI Kit](https://github.com/longbridge/gpui-component)**, os componentes de desktop
   (Apache-2.0). Vai em `vendor/gpui-component`, com poucas mudanças, todas marcadas com "Vitral:"
   no código.
-- **[Lucide](https://lucide.dev)**, os ícones dos projetos (ISC).
+- **[Lucide](https://lucide.dev)**, os ícones (ISC).
 - **[Inter](https://github.com/rsms/inter)** e
   **[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)**, as fontes, embutidas no app sem
   modificação sob a SIL Open Font License 1.1 ([`assets/fontes/OFL.txt`](assets/fontes/OFL.txt)).

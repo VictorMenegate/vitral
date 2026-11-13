@@ -14,10 +14,7 @@ use super::{
     componentes::{Flutuante as _, ListaDeEscolha, MedidaPainel, icone},
     movimento,
 };
-use crate::{
-    modelo,
-    tema::{Cores, Lucide, Tipo as _, r, raio},
-};
+use crate::tema::{Cores, Lucide, Tipo as _, r, raio};
 
 /// Mais que isso fica apertado na tela (com a janela estreita, cabem menos).
 pub const MAX_PAINEIS: usize = 4;
@@ -38,6 +35,13 @@ pub struct Painel {
     pub rolagem: ScrollHandle,
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
+    /// Quantos itens da conversa o painel desenha (os últimos; ver `mensagens::ITENS_NA_TELA`).
+    /// "Mostrar anteriores" aumenta; trocar de conversa volta ao começo.
+    pub mostrar: usize,
+    /// A roda do mouse anda em degraus: aqui fica para onde a conversa está deslizando (o
+    /// deslocamento alvo) e a geração do gesto, que dá um estado de animação novo a cada deslize.
+    pub rolagem_suave: Option<f32>,
+    pub geracao_rolagem: u64,
     /// Um bloco desta conversa acabou de abrir: no próximo desenho o painel fica onde está, em
     /// vez de pular para o fim do que abriu.
     pub manter_lugar: bool,
@@ -77,13 +81,6 @@ pub struct ArrastoChat {
     pub titulo: SharedString,
     /// Painel de onde a aba saiu (para mover em vez de abrir de novo).
     pub de_painel: Option<u64>,
-}
-
-/// Um projeto arrastado no trilho, para mudar de lugar.
-#[derive(Clone)]
-pub struct ArrastoProjeto {
-    pub id: String,
-    pub nome: SharedString,
 }
 
 /// Onde a conversa arrastada cai num painel.
@@ -331,18 +328,15 @@ impl Janela {
                 }
                 InputEvent::Focus => this.ativar_painel(id, cx),
                 InputEvent::Change => {
-                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos; no
-                    // Mestre, que não tem pasta, o "@" cita um chat (o menu da caixa).
+                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos.
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
                     // O rascunho vai para o disco pouco depois de a digitação parar.
                     this.agendar_gravacao(cx);
-                    let mestre = this.selecionado.as_deref() == Some(modelo::ID_MESTRE);
                     if (texto == "@" || texto.ends_with(" @"))
-                        && !mestre
                         && let Some(chat) = this.selecionado.clone()
                     {
-                        this.dialogo_arquivos_projeto(chat, window, cx);
+                        this.dialogo_mencionar_arquivo(chat, window, cx);
                     }
                     cx.notify();
                 }
@@ -390,6 +384,9 @@ impl Janela {
             pilula_vista: false,
             entra: false,
             envios: 0,
+            mostrar: super::mensagens::ITENS_NA_TELA,
+            rolagem_suave: None,
+            geracao_rolagem: 0,
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
@@ -414,34 +411,16 @@ impl Janela {
             .as_ref()
             .and_then(|c| self.rascunhos.remove(c))
             .unwrap_or_default();
-        let (papel, tamanho) = novo
+        // Com pasta, "Mensagem para este chat…"; sem pasta (ou sem chat), só "Mensagem…".
+        let (com_pasta, tamanho) = novo
             .as_ref()
             .and_then(|id| {
                 let m = self.motor.as_ref()?.read(cx);
                 let chat = m.chat(id)?;
-                Some((Some(chat.papel), tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some())))
+                Some((!m.sem_pasta(chat), tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some())))
             })
-            .unwrap_or((None, 0));
-        let (avulso, ajudante) = novo
-            .as_ref()
-            .and_then(|id| {
-                let m = self.motor.as_ref()?.read(cx);
-                let c = m.chat(id)?;
-                let pai = c.pai.as_deref().and_then(|p| m.chat(p));
-                Some((c.projeto.is_empty(), pai.is_some_and(|p| p.papel == modelo::Papel::Projeto)))
-            })
-            .unwrap_or_default();
-        let dica = match papel {
-            Some(modelo::Papel::Mestre) => "Peça ao Mestre… (#projeto, @chat)",
-            Some(modelo::Papel::Trabalhador) if ajudante => "Mensagem direta para este ajudante…",
-            Some(modelo::Papel::Trabalhador) => novo
-                .as_ref()
-                .and_then(|id| Some(self.motor.as_ref()?.read(cx).dica_do_trabalhador(id)))
-                .unwrap_or("Mensagem direta para este ajudante…"),
-            Some(modelo::Papel::Projeto) if avulso => "Mensagem…",
-            Some(modelo::Papel::Projeto) => "Mensagem para este chat…",
-            _ => "Mensagem…",
-        };
+            .unwrap_or((false, 0));
+        let dica = if com_pasta { "Mensagem para este chat…" } else { "Mensagem…" };
         painel.composer.update(cx, |c, cx| {
             c.set_value(rascunho, window, cx);
             c.set_placeholder(dica, window, cx);
@@ -450,6 +429,8 @@ impl Janela {
             motor.update(cx, |m, _| m.marcar_lido(id));
         }
         painel.chat = novo;
+        painel.mostrar = super::mensagens::ITENS_NA_TELA;
+        painel.rolagem_suave = None;
         painel.seguindo = true;
         painel.rolagem.scroll_to_bottom();
         painel.base_animacao = tamanho;
@@ -466,7 +447,7 @@ impl Janela {
         };
         let chat = self.selecionado.clone();
         let anexos = |this: &Self| {
-            chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()) || this.tem_issue_anexada(c))
+            chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()))
         };
         let tinha = !composer.read(cx).value().trim().is_empty() || anexos(self);
         self.enviar(window, cx);
@@ -589,6 +570,44 @@ impl Janela {
         cx.notify();
     }
 
+    /// "Perguntar também ao Codex" (ou ao Claude): a mensagem da caixa vai para este chat e para um
+    /// chat novo do outro agente, na mesma pasta, aberto num painel ao lado. São duas raias com o
+    /// mesmo pedido, para comparar as respostas (referência do dono: 21st.dev, "Agent Lanes"). A
+    /// raia nova só lê (ver `Motor::abrir_raia`).
+    pub(super) fn enviar_aos_dois(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.ativar_painel(painel, cx);
+        let (Some(motor), Some(chat), Some(composer)) = (self.motor.clone(), self.selecionado.clone(), self.composer_ativo()) else {
+            return;
+        };
+        let texto = composer.read(cx).value().to_string();
+        // Comando de barra é de um agente só.
+        if texto.trim().is_empty() || texto.trim_start().starts_with('/') {
+            return;
+        }
+        if !self.cabe_outro_painel() {
+            window.push_notification("Não cabe outro painel para a segunda resposta. Aumente a janela ou feche um painel.", cx);
+            return;
+        }
+        let raia = match motor.update(cx, |m, cx| m.abrir_raia(&chat, &texto, cx)) {
+            Ok(id) => id,
+            Err(erro) => {
+                window.push_notification(super::componentes::aviso(super::componentes::Tom::Erro, format!("Não abriu a segunda resposta: {erro}")), cx);
+                return;
+            }
+        };
+        // O mesmo que este chat vai receber: os anexos e o trecho citado, que o `enviar` gasta.
+        let anexos = self.anexos.get(&chat).cloned().unwrap_or_default();
+        let pedido = match self.citacoes.get(&chat) {
+            Some(trecho) => super::composer::com_citacao(trecho, &texto),
+            None => texto,
+        };
+        self.enviar(window, cx);
+        motor.update(cx, |m, cx| m.enviar_do_usuario(&raia, pedido, anexos, crate::modelo::Reforco::default(), cx));
+        self.abrir_ao_lado(raia, Some((painel, Lado::Direita)), window, cx);
+        // O foco fica onde o usuário estava escrevendo.
+        self.ativar_painel(painel, cx);
+    }
+
     pub(super) fn fechar_painel(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(ix) = self.paineis.iter().position(|p| p.id == id) else {
             return;
@@ -691,24 +710,13 @@ impl Janela {
         }
     }
 
-    /// Fecha todos os painéis menos este, que fica ativo.
-    pub(super) fn fechar_outros(&mut self, id: u64, cx: &mut Context<Self>) {
-        let outros: Vec<u64> = self.paineis.iter().map(|p| p.id).filter(|p| *p != id).collect();
-        for outro in outros {
-            self.fechar_painel(outro, cx);
-        }
-        if let Some(ix) = self.paineis.iter().position(|p| p.id == id) {
-            self.ativo = ix;
-            self.selecionado = self.paineis[ix].chat.clone();
-        }
-        cx.notify();
-    }
-
-    /// "Nova conversa ao lado": o diálogo de sempre, e a conversa criada abre num painel novo
-    /// (`selecionar` consome a marca). Fechado o diálogo sem criar nada, a marca cai.
+    /// "Nova conversa ao lado": um chat novo na hora, como o "+" (na pasta do chat deste painel),
+    /// aberto num painel novo (`selecionar` consome a marca). O dono viu a paleta de pastas aqui
+    /// e disse "tá o antigo ainda" (13/11/2026). Só sem ter de onde tirar a pasta a paleta
+    /// pergunta; fechada sem criar nada, a marca cai.
     pub(super) fn nova_conversa_ao_lado(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.nova_ao_lado = true;
-        self.dialogo_nova_conversa(window, cx);
+        self.novo_chat_direto(window, cx);
         if !self.nova_ao_lado {
             return;
         }

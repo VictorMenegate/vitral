@@ -3,6 +3,73 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.8.0
+
+Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
+
+- **Mais simples.** Saíram os projetos, o Mestre, as rotinas, as issues e PRs e as cópias isoladas.
+  Ficou o essencial: uma lista de chats, e cada chat trabalha direto na pasta dele, como o Claude
+  Code no terminal ou no VS Code. Os dados antigos ficam guardados em `estado.versao-2.json`.
+- **Claude ou Codex.** O seletor de modelo ganhou as abas **Claude** e **Codex**; a do Codex
+  mostra os modelos que o Codex instalado oferece. Nas famílias do Claude, a versão de hoje
+  aparece num selo ao lado (Fable 5.2, Opus 5.5). Escolher um deles passa o chat para o Codex; escolher um do Claude traz de
+  volta. Na troca, a conversa segue numa sessão nova do outro, com as últimas mensagens. O Codex
+  usa o login e o plano dele, e o modo de permissão vira o sandbox dele (Planejar só lê, Sem
+  perguntar roda sem sandbox, os outros escrevem só na pasta). Nas Configurações dá para escolher
+  quem responde nos chats novos.
+- **A mesma pergunta para os dois.** No "…" da caixa, **Perguntar também ao Codex** (ou ao Claude)
+  manda a mensagem para o chat e para um chat novo do outro agente, aberto ao lado, para comparar
+  as respostas. O chat novo só lê, para os dois não mexerem nos mesmos arquivos ao mesmo tempo.
+- **Raciocínio e subagentes na conversa.** Quando o modelo pensa, a trilha mostra "Pensou por 9,8 s",
+  e abrir a linha mostra o raciocínio quando o Claude Code o entrega. O subagente virou um cartão
+  com o que ele está fazendo agora, quantas ferramentas já usou e o relógio; aberto, lista os passos.
+- **Mapa de agentes.** Com subagentes trabalhando, a linha da caixa mostra quantos são; o clique
+  abre o mapa: a conversa de um lado e, ligados a ela, os agentes, cada um com o estado, o tempo e
+  as ferramentas usadas. Clicar num agente mostra os passos e o resultado dele. O mapa também
+  abre pelo "…" da caixa (**Agentes desta conversa**).
+- **Mandar mensagem com o chat trabalhando.** A mensagem enviada durante um turno entra nele sem
+  pará-lo, também nos turnos que começaram por uma mensagem assim (antes, essas iam para a fila).
+  Na fila, **Mandar agora** põe uma mensagem que esperava dentro do turno que está rodando.
+- **"Pensando…" na conversa.** Enquanto o modelo pensa, a linha viva aparece no fim da conversa,
+  onde a resposta vai chegar. A linha embaixo da caixa ficou só com o relógio, as ações e a fila.
+- **Suas mensagens.** O balão ficou azul e do tamanho do texto, e as imagens anexadas ficam fora
+  dele, em cima.
+- **Esforço automático.** No **Auto**, o seletor de esforço diz qual nível o modelo está usando.
+- **Primeira abertura.** Uma tela de boas-vindas apresenta o app, pede a pasta de trabalho (como
+  abrir uma pasta no VS Code) e pergunta o básico: permissões, modelo e se traz as conversas que já
+  existem. O último passo permite conectar a memória da equipe. O "+" cria os chats nessa pasta;
+  **Pasta de trabalho…**, no menu do logo, troca.
+- **Memória da equipe.** Conecte o Vitral ao servidor ai-memory da empresa com seu endereço e sua
+  chave. Claude e Codex consultam e registram decisões, procedimentos e aprendizados na mesma
+  memória. **Consultar memória** busca e abre as páginas dentro do app, sem gastar o plano dos
+  agentes. Não precisa instalar o ai-memory no computador, e o histórico dos chats não é enviado
+  automaticamente. A conexão também pode ser configurada depois no menu do logo e nas Configurações.
+- **Revisão da memória.** Depois de uma sessão que editou arquivos, o Vitral pede ao agente que
+  avalie o que vale guardar. Pode ser desligada nas Configurações.
+- **A janela volta como estava.** Ao abrir, o Vitral recoloca os painéis, as abas, a largura da
+  lista e o tamanho da janela de quando foi fechado.
+- **Imagens à vista.** As imagens que o agente lê ou gera aparecem na conversa, em grade quando são
+  várias. O visor ganhou zoom pela roda do mouse, arrasto e os botões de aproximar e afastar.
+- **Responder a um trecho.** Selecione um pedaço de uma resposta e clique em **Responder a este
+  trecho**: ele vai citado junto com a sua mensagem.
+- **Skills no "/".** A barra mostra os comandos e as skills da pasta já antes da primeira mensagem.
+- **Modelos sempre em dia.** O seletor pergunta ao Claude Code instalado quais modelos existem, e a
+  família (Fable, Opus, Sonnet, Haiku) usa sempre a versão mais nova que ele oferece.
+- **Outra conta sem código.** Ao entrar numa conta extra, basta autorizar no navegador: o Vitral
+  percebe sozinho e a conta aparece.
+- **Servidores MCP.** `/mcp` na caixa (ou **Servidores MCP**, no menu do logo) mostra os servidores
+  do chat, se estão ligados e quantas ferramentas cada um dá, sem precisar do terminal.
+- **Qualquer arquivo abre no Vitral.** O link de um arquivo de fora das pastas dos chats abre no
+  painel da direita, como os outros.
+- **Mais leve.** Cada painel desenha só as últimas 60 mensagens (**Mostrar anteriores** traz o
+  resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
+  trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
+  rolagem respondem melhor.
+- **Acabamento.** Cantos mais redondos, que acompanham o zoom; o uso do plano foi para o canto de
+  cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
+  erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
+  transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+
 ## 0.7.0
 
 O metal líquido, abas de chat, o novo chat na hora e pedidos de permissão mais seguros.

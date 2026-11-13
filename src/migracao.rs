@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     dados::{self, Dados},
-    modelo::{CHAVES_RESERVADAS, Config, ConfigProjeto, Forma, PastaLigada, Projeto, VERSAO_ESTADO},
+    modelo::{Config, Forma},
 };
 
 /// Uma pasta de trabalho do Vitral antigo, lida sem escrever nada nela.
@@ -49,7 +49,6 @@ pub struct Plano {
     /// A configuração global; `None` deixa a padrão.
     pub config: Option<Value>,
     pub chats: Vec<(String, Vec<u8>)>,
-    pub notas: Vec<(String, String)>,
     pub registro: Registro,
 }
 
@@ -70,8 +69,6 @@ pub struct RaizMigrada {
     pub raiz: PathBuf,
     pub mtime_estado: u64,
     pub tamanho_estado: u64,
-    /// Nome antigo do projeto → id.
-    pub projetos: BTreeMap<String, String>,
     /// Só as renumeradas: número antigo → novo.
     pub tarefas: BTreeMap<String, String>,
     pub chats: usize,
@@ -82,8 +79,6 @@ pub struct RaizMigrada {
 #[serde(default)]
 pub struct Relatorio {
     pub raizes: Vec<PathBuf>,
-    /// Nomes dos projetos, na ordem.
-    pub projetos: Vec<String>,
     pub chats: usize,
     pub tarefas: usize,
     /// (antigo, novo).
@@ -237,7 +232,7 @@ pub fn ler_raiz(raiz: &Path) -> Result<RaizAntiga> {
         Antigo::Lido(estado) if forma_de_estado(&estado) => Some(estado),
         _ => {
             lida.avisos.push(format!(
-                "O estado antigo de {} está ilegível; trouxe só as pastas.",
+                "O estado antigo de {} está ilegível; as conversas dele não vieram.",
                 raiz.display()
             ));
             None
@@ -289,6 +284,20 @@ pub fn ler_raiz(raiz: &Path) -> Result<RaizAntiga> {
         lida.caminhos.insert(nome, caminho);
     }
     Ok(lida)
+}
+
+/// Os projetos do Vitral antigo (as subpastas da raiz e os citados no estado), em ordem alfabética:
+/// é deles que sai a pasta de cada chat.
+fn nomes_de_projeto(raiz: &RaizAntiga) -> Vec<String> {
+    let mut nomes: BTreeSet<String> = raiz.subpastas.iter().map(|(n, _)| n.clone()).collect();
+    let citados = lista(raiz.estado.as_ref(), "chats")
+        .chain(lista(raiz.estado.as_ref(), "tarefas"))
+        .filter_map(|item| item.get("projeto")?.as_str())
+        .filter(|p| !p.is_empty());
+    nomes.extend(citados.map(str::to_string));
+    let mut nomes: Vec<String> = nomes.into_iter().collect();
+    nomes.sort_by(|a, b| ordem_alfabetica(a, b));
+    nomes
 }
 
 /// Com a regra da lista de projetos do Vitral antigo: pastas de verdade (links simbólicos ficam
@@ -356,20 +365,6 @@ fn lista<'a>(valor: Option<&'a Value>, campo: &str) -> impl Iterator<Item = &'a 
         .flatten()
 }
 
-/// Os projetos de uma pasta antiga: as subpastas e os citados por chats, tarefas e rotinas.
-fn nomes_de_projeto(raiz: &RaizAntiga) -> Vec<String> {
-    let mut nomes: BTreeSet<String> = raiz.subpastas.iter().map(|(n, _)| n.clone()).collect();
-    let citados = lista(raiz.estado.as_ref(), "chats")
-        .chain(lista(raiz.estado.as_ref(), "tarefas"))
-        .chain(lista(raiz.config.as_ref(), "rotinas"))
-        .filter_map(|item| item.get("projeto")?.as_str())
-        .filter(|p| !p.is_empty());
-    nomes.extend(citados.map(str::to_string));
-    let mut nomes: Vec<String> = nomes.into_iter().collect();
-    nomes.sort_by(|a, b| ordem_alfabetica(a, b));
-    nomes
-}
-
 /// `base` ou `base-2`, `base-3`…: o primeiro que `serve` e ainda não está em `usados` (e passa a
 /// estar).
 fn livre(base: &str, usados: &mut HashSet<String>, serve: impl Fn(&str) -> bool) -> String {
@@ -379,66 +374,6 @@ fn livre(base: &str, usados: &mut HashSet<String>, serve: impl Fn(&str) -> bool)
         .expect("sempre há um sufixo livre");
     usados.insert(id.clone());
     id
-}
-
-fn id_de_projeto(nome: &str) -> bool {
-    nome_de_arquivo(nome) && !CHAVES_RESERVADAS.contains(&dados::chave(nome).as_str())
-}
-
-/// O id de cada projeto, em duas passadas: o nome fica como id se ainda está livre (a raiz mais
-/// recente primeiro); os repetidos e os que não servem ganham sufixo depois.
-fn ids_de_projeto(nomes: &[Vec<String>]) -> Vec<HashMap<String, String>> {
-    let mut usados = HashSet::new();
-    let mut ids = vec![HashMap::new(); nomes.len()];
-    for (r, da_raiz) in nomes.iter().enumerate() {
-        for nome in da_raiz {
-            if id_de_projeto(nome) && usados.insert(nome.clone()) {
-                ids[r].insert(nome.clone(), nome.clone());
-            }
-        }
-    }
-    for (r, da_raiz) in nomes.iter().enumerate() {
-        for nome in da_raiz {
-            if ids[r].contains_key(nome) {
-                continue;
-            }
-            let base = match nome_de_arquivo(nome) {
-                true => nome.clone(),
-                false => Some(dados::slug(nome))
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "projeto".into()),
-            };
-            let id = livre(&base, &mut usados, id_de_projeto);
-            ids[r].insert(nome.clone(), id);
-        }
-    }
-    ids
-}
-
-/// O nome da pasta, ou "nome (pasta antiga)" quando a chave já foi tomada (ou é reservada).
-fn nome_de_exibicao(nome: &str, raiz: &Path, chaves: &mut HashSet<String>) -> String {
-    let de = raiz.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    std::iter::once(nome.to_string())
-        .chain(std::iter::once(format!("{nome} ({de})")))
-        .chain((2..).map(|n| format!("{nome} ({de}) {n}")))
-        .find(|candidato| {
-            let chave = dados::chave(candidato);
-            !chave.is_empty() && !CHAVES_RESERVADAS.contains(&chave.as_str()) && chaves.insert(chave)
-        })
-        .expect("sempre há um nome livre")
-}
-
-fn config_da_pasta(raiz: &RaizAntiga, nome: &str, avisos: &mut Vec<String>) -> ConfigProjeto {
-    let Some(valor) = raiz.config.as_ref().and_then(|c| c.get("projetos")?.get(nome)) else {
-        return ConfigProjeto::default();
-    };
-    serde_json::from_value(valor.clone()).unwrap_or_else(|_| {
-        avisos.push(format!(
-            "A configuração de {nome} em {} está ilegível; ficou a padrão.",
-            raiz.raiz.display()
-        ));
-        ConfigProjeto::default()
-    })
 }
 
 /// Troca o texto do campo pelo do mapa, quando ele está lá.
@@ -476,7 +411,7 @@ fn config_global(raizes: &[RaizAntiga], avisos: &mut Vec<String>) -> Option<Valu
         Some(serde_json::from_value(dados::config_sem_legado(valor.clone())).map_err(|_| ()))
     };
     let escolhas = |c: &Config| {
-        [&c.permissao, &c.modelo_mestre, &c.modelo_chats, &c.modelo_revisor, &c.conta]
+        [&c.permissao, &c.modelo_chats, &c.conta]
             .map(String::clone)
     };
     let primeira = raizes.first()?;
@@ -512,44 +447,15 @@ fn config_global(raizes: &[RaizAntiga], avisos: &mut Vec<String>) -> Option<Valu
 /// primeiro). Pura: a mesma entrada dá a mesma saída.
 pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
     let mut avisos: Vec<Vec<String>> = raizes.iter().map(|r| r.avisos.clone()).collect();
-    let nomes: Vec<Vec<String>> = raizes.iter().map(nomes_de_projeto).collect();
-    let ids_projeto = ids_de_projeto(&nomes);
-
-    let mut projetos: Vec<Projeto> = Vec::new();
-    let mut chaves = HashSet::new();
+    // As notas dos projetos não vêm (os chats não têm mais projeto): ficam no .vitral antigo.
     for (r, raiz) in raizes.iter().enumerate() {
-        for nome in &nomes[r] {
-            let antiga = config_da_pasta(raiz, nome, &mut avisos[r]);
-            let pastas: Vec<PastaLigada> = raiz
-                .caminhos
-                .get(nome)
-                .map(|caminho| PastaLigada { caminho: caminho.clone(), propria: false, config: antiga.clone() })
-                .into_iter()
-                .collect();
-            // O ícone, a cor e a marca de arquivado eram da pasta e passam a ser do projeto.
-            let da_pasta = raiz.config.as_ref().and_then(|c| c.get("projetos")?.get(nome));
-            let texto = |campo: &str| {
-                da_pasta.and_then(|p| p.get(campo)?.as_str()).unwrap_or_default().to_string()
-            };
-            projetos.push(Projeto {
-                id: ids_projeto[r][nome].clone(),
-                nome: nome_de_exibicao(nome, &raiz.raiz, &mut chaves),
-                icone: texto("icone"),
-                cor: texto("cor"),
-                arquivado: da_pasta.and_then(|p| p.get("arquivado")?.as_bool()).unwrap_or(false),
-                provisorio: pastas.is_empty(),
-                pastas,
-                ordem: projetos.len() as u32,
-                criado_em: quando,
-                importado_de: Some(raiz.raiz.clone()),
-                ..Default::default()
-            });
+        if !raiz.notas.is_empty() {
+            avisos[r].push(format!(
+                "As decisões anotadas nos projetos ficaram em {}.",
+                raiz.raiz.join(".vitral").join("notas").display()
+            ));
         }
     }
-    let origens: HashMap<&str, &Path> = projetos
-        .iter()
-        .filter_map(|p| Some((p.id.as_str(), p.principal()?.caminho.as_path())))
-        .collect();
 
     // Chats: o id fica; um repetido entre pastas (uma pasta copiada com o .vitral junto) ganha
     // sufixo, na pasta mais antiga.
@@ -616,7 +522,12 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
             };
             trocar(&mut chat, "id", &ids_chat[r]);
             trocar(&mut chat, "pai", &ids_chat[r]);
-            trocar(&mut chat, "projeto", &ids_projeto[r]);
+            // O projeto arquivado (a marca era da pasta) leva as conversas dele para as arquivadas.
+            let projeto = chat.get("projeto").and_then(Value::as_str).unwrap_or_default();
+            let arquivado = raiz.config.as_ref().and_then(|c| c.get("projetos")?.get(projeto)?.get("arquivado")?.as_bool());
+            if arquivado == Some(true) {
+                chat.insert("arquivado".into(), json!(true));
+            }
             if let Some(n) = chat.get("tarefa").and_then(Value::as_u64)
                 && let Some(novo) = ids_tarefa[r].get(&n)
             {
@@ -635,11 +546,11 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
             };
             let novo = ids_tarefa[r][&n];
             tarefa.insert("id".into(), json!(novo));
-            trocar(&mut tarefa, "projeto", &ids_projeto[r]);
             trocar(&mut tarefa, "coordenador", &ids_chat[r]);
             trocar(&mut tarefa, "trabalhador", &ids_chat[r]);
-            let origem = tarefa.get("projeto").and_then(Value::as_str).and_then(|p| origens.get(p));
-            tarefa.insert("origem".into(), json!(origem.copied().unwrap_or(Path::new(""))));
+            // A pasta do projeto da tarefa: de onde a cópia saiu (a carga põe o chat nela).
+            let origem = tarefa.get("projeto").and_then(Value::as_str).and_then(|p| raiz.caminhos.get(p));
+            tarefa.insert("origem".into(), json!(origem.cloned().unwrap_or_default()));
             tarefa.insert("forma".into(), json!(forma_antiga(&tarefa)));
             if novo != n
                 && let Some(trabalhador) = tarefa.get("trabalhador").and_then(Value::as_str)
@@ -694,45 +605,17 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
         }
     }
 
-    let mut rotinas = Vec::new();
-    let mut rotinas_usadas = HashSet::new();
-    for (r, raiz) in raizes.iter().enumerate() {
-        for rotina in lista(raiz.config.as_ref(), "rotinas") {
-            let Some(mut rotina) = rotina.as_object().cloned() else {
-                continue;
-            };
-            let id = rotina.get("id").and_then(Value::as_str).filter(|i| !i.is_empty()).unwrap_or("rotina");
-            let id = livre(id, &mut rotinas_usadas, |_| true);
-            rotina.insert("id".into(), json!(id));
-            trocar(&mut rotina, "projeto", &ids_projeto[r]);
-            rotinas.push(Value::Object(rotina));
-        }
-    }
-
-    let mut notas = Vec::new();
-    for (r, raiz) in raizes.iter().enumerate() {
-        for (nome, texto) in &raiz.notas {
-            match ids_projeto[r].get(nome) {
-                Some(id) => notas.push((id.clone(), texto.clone())),
-                None => avisos[r].push(format!(
-                    "As notas de {nome} ficaram só em {}: o projeto não existe mais.",
-                    raiz.raiz.join(".vitral").join("notas").display()
-                )),
-            }
-        }
-    }
-
     let mut gerais = Vec::new();
     let config = config_global(raizes, &mut gerais);
 
+    // Os chats e as tarefas como vieram: a carga põe cada chat direto na pasta dele e larga as
+    // tarefas, como faz com os dados das versões com tarefas.
     let mut estado = Map::new();
-    estado.insert("versao".into(), json!(VERSAO_ESTADO));
-    estado.insert("projetos".into(), json!(projetos));
+    estado.insert("versao".into(), json!(crate::modelo::VERSAO_ESTADO));
     estado.insert("chats".into(), Value::Array(chats));
     estado.insert("tarefas".into(), Value::Array(tarefas));
     estado.insert("proxima_tarefa".into(), json!(proxima));
     estado.insert("filas".into(), Value::Object(filas));
-    estado.insert("rotinas".into(), Value::Array(rotinas));
     // Campos que o antigo tinha e esta versão não conhece passam como vieram (o da pasta mais
     // recente vence).
     for antigo in raizes.iter().filter_map(|r| r.estado.as_ref()?.as_object()) {
@@ -750,7 +633,6 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
             raiz: raiz.raiz.clone(),
             mtime_estado: raiz.mtime_estado,
             tamanho_estado: raiz.tamanho_estado,
-            projetos: nomes[r].iter().map(|n| (n.clone(), ids_projeto[r][n].clone())).collect(),
             tarefas: renumeradas[r].iter().map(|(a, n)| (a.to_string(), n.to_string())).collect(),
             chats: lista(raiz.estado.as_ref(), "chats").count(),
             avisos: avisos[r].clone(),
@@ -758,7 +640,6 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
         .collect();
     let relatorio = Relatorio {
         raizes: raizes.iter().map(|r| r.raiz.clone()).collect(),
-        projetos: projetos.iter().map(|p| p.nome.clone()).collect(),
         chats: estado["chats"].as_array().map_or(0, Vec::len),
         tarefas: estado["tarefas"].as_array().map_or(0, Vec::len),
         renumeradas: renumeradas.into_iter().flatten().collect(),
@@ -768,7 +649,6 @@ pub fn planejar(raizes: &[RaizAntiga], quando: u64) -> Plano {
         estado: Value::Object(estado),
         config,
         chats: arquivos_de_chat,
-        notas,
         registro: Registro { concluida_em: quando, raizes: raizes_migradas, relatorio },
     }
 }
@@ -792,15 +672,9 @@ pub fn aplicar(dados: &Dados, plano: &Plano) -> Result<()> {
 /// Tudo menos o `estado.json`. Uma queda aqui no meio deixa restos que a próxima vez grava por cima.
 fn gravar_antes_do_estado(dados: &Dados, plano: &Plano) -> Result<()> {
     let chats = dados.pasta.join("chats");
-    let notas = dados.pasta.join("notas");
-    for pasta in [&chats, &notas] {
-        fs::create_dir_all(pasta).with_context(|| pasta.display().to_string())?;
-    }
+    fs::create_dir_all(&chats).with_context(|| chats.display().to_string())?;
     for (id, bytes) in &plano.chats {
         dados::gravar_seguro(&dados.arquivo_chat(id), bytes, false)?;
-    }
-    for (projeto, texto) in &plano.notas {
-        dados::gravar_texto(&dados.arquivo_notas(projeto), texto)?;
     }
     dados::gravar_json_seguro(&dados.arquivo_migracao(), &plano.registro, false)?;
     if let Some(config) = &plano.config
@@ -812,7 +686,7 @@ fn gravar_antes_do_estado(dados: &Dados, plano: &Plano) -> Result<()> {
         }
     }
     // As pastas novas no disco antes do estado.json, que aponta para o que está nelas.
-    for pasta in [&chats, &notas, &dados.pasta] {
+    for pasta in [&chats, &dados.pasta] {
         dados::sincronizar_pasta(pasta)?;
     }
     if let Some(mae) = dados.pasta.parent() {
@@ -822,7 +696,7 @@ fn gravar_antes_do_estado(dados: &Dados, plano: &Plano) -> Result<()> {
 }
 
 impl Relatorio {
-    /// O aviso da migração: "Trouxe 6 projetos de ~/Projetos: a, b… Os 2 chats foram junto."
+    /// O aviso da migração: "Trouxe 2 conversas do Vitral antigo de ~/Projetos."
     pub fn texto(&self, casa: Option<&Path>) -> String {
         let curto = |p: &Path| match casa.and_then(|c| p.strip_prefix(c).ok()) {
             Some(resto) if resto.as_os_str().is_empty() => "~".to_string(),
@@ -830,20 +704,11 @@ impl Relatorio {
             None => p.display().to_string(),
         };
         let raizes = juntar(&self.raizes.iter().map(|r| curto(r)).collect::<Vec<_>>());
-        let mut nomes: Vec<String> = self.projetos.iter().take(8).cloned().collect();
-        if self.projetos.len() > 8 {
-            nomes.push(format!("mais {}", self.projetos.len() - 8));
-        }
-        let mut partes = vec![match self.projetos.len() {
-            0 => format!("Não havia projetos em {raizes}."),
-            1 => format!("Trouxe 1 projeto de {raizes}: {}.", juntar(&nomes)),
-            n => format!("Trouxe {n} projetos de {raizes}: {}.", juntar(&nomes)),
+        let mut partes = vec![match self.chats {
+            0 => format!("Não havia conversas do Vitral antigo em {raizes}."),
+            1 => format!("Trouxe 1 conversa do Vitral antigo de {raizes}."),
+            n => format!("Trouxe {n} conversas do Vitral antigo de {raizes}."),
         }];
-        match self.chats {
-            0 => {}
-            1 => partes.push("O chat foi junto.".into()),
-            n => partes.push(format!("Os {n} chats foram junto.")),
-        }
         match self.renumeradas.len() {
             0 => {}
             1 => partes.push("Um chat mudou de número (o aviso está nele).".into()),
@@ -872,7 +737,10 @@ mod testes {
     use std::time::SystemTime;
 
     use super::*;
-    use crate::{dados::ErroCarga, modelo::novo_id};
+    use crate::{
+        dados::{ErroCarga, NoDisco},
+        modelo::{Estado, VERSAO_ESTADO, novo_id},
+    };
 
     fn pasta_de_teste(nome: &str) -> PathBuf {
         let pasta = std::env::temp_dir().join(format!("vitral-migracao-{nome}-{}", novo_id()));
@@ -975,6 +843,13 @@ mod testes {
         estado["tarefas"].as_array().unwrap().iter().find(|t| t["id"] == id).unwrap()
     }
 
+    /// O estado como o Motor o abre: carregado e normalizado (sem gravar).
+    fn aberto(dados: &Dados) -> Estado {
+        let mut carregado = dados.carregar().unwrap();
+        dados::normalizar(&mut carregado.estado, dados, &NoDisco, 1_793_100_000);
+        carregado.estado
+    }
+
     fn migrou(resultado: Resultado) -> Relatorio {
         match resultado {
             Resultado::Migrou(relatorio) => relatorio,
@@ -1001,31 +876,9 @@ mod testes {
         let dados = Dados::em(&base.join("novo"));
 
         let relatorio = migrou(migrar(&dados, &[raiz.clone()], &proc_vazio(&base), 1, false, 1000));
-        let (lido, avisos) = dados.ler_estado().unwrap().unwrap();
-        assert!(avisos.is_empty());
-        let ids: Vec<&str> = lido.projetos.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["Agenda", "ninee-loja", "repos-baixados", "site", "verificacao-leads-apoio", "vitral"]
-        );
-        for (i, projeto) in lido.projetos.iter().enumerate() {
-            assert_eq!(projeto.nome, projeto.id);
-            assert_eq!(projeto.ordem, i as u32);
-            assert_eq!(projeto.pastas.len(), 1);
-            assert_eq!(projeto.pastas[0].caminho, raiz.join(&projeto.id));
-            assert!(!projeto.provisorio && !projeto.pastas[0].propria);
-            assert_eq!(projeto.importado_de.as_deref(), Some(raiz.as_path()));
-            assert_eq!(projeto.criado_em, 1000);
-        }
-        let vitral = lido.chats.iter().find(|c| c.id == "a1b2c3d4e5").unwrap();
-        assert_eq!(vitral.projeto, "vitral");
-        assert_eq!(vitral.cwd, raiz.join("vitral"));
-        assert!(!vitral.sessao_criada);
-        assert_eq!(vitral.sessao, "sessao-a1b2c3d4e5");
-        let ninee = lido.chats.iter().find(|c| c.id == "f6a7b8c9d0").unwrap();
-        assert_eq!((ninee.projeto.as_str(), ninee.cwd.clone()), ("ninee-loja", raiz.join("ninee-loja")));
         let gravado = estado_gravado(&dados);
         assert_eq!(gravado["versao"], VERSAO_ESTADO);
+        assert!(gravado.get("projetos").is_none(), "as pastas não viram projeto");
         // O formato novo fica gravado: o atualizador não volta para uma versão que só lê o antigo.
         assert_eq!(dados.formato_no_disco(), crate::modelo::FORMATO_DADOS);
         assert!(dados.arquivo_formato().is_file());
@@ -1034,14 +887,21 @@ mod testes {
         assert!(dados::nao_existe(&dados.arquivo_config()));
         let registro: Registro = dados::ler_json_r(&dados.arquivo_migracao()).unwrap().unwrap();
         assert_eq!(registro.relatorio, relatorio);
-        assert_eq!(registro.raizes[0].projetos["vitral"], "vitral");
-        assert_eq!((relatorio.projetos.len(), relatorio.chats, relatorio.tarefas), (6, 2, 0));
+        assert_eq!((relatorio.chats, relatorio.tarefas), (2, 0));
+        assert_eq!(registro.raizes[0].chats, 2);
         assert!(registro.raizes[0].tamanho_estado > 0 && registro.raizes[0].mtime_estado > 0);
+        // Aberto como o Motor abre: cada conversa é um chat direto na pasta dela, com a sessão de lá.
+        let lido = aberto(&dados);
+        let pastas: Vec<(&str, PathBuf)> = lido.chats.iter().map(|c| (c.id.as_str(), c.cwd.clone())).collect();
+        assert_eq!(pastas, [("a1b2c3d4e5", raiz.join("vitral")), ("f6a7b8c9d0", raiz.join("ninee-loja"))]);
+        let vitral = &lido.chats[0];
+        assert!(!vitral.sessao_criada);
+        assert_eq!(vitral.sessao, "sessao-a1b2c3d4e5");
         let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn configuracao_da_pasta_e_rotina_vao_para_o_projeto_e_o_estado() {
+    fn configuracao_global_vem_e_a_pasta_arquivada_arquiva_as_conversas() {
         let base = pasta_de_teste("config");
         let raiz = base.join("Projetos");
         let config = json!({
@@ -1052,38 +912,33 @@ mod testes {
             "rotinas": [{"id": "r1", "projeto": "loja", "texto": "Rode os testes", "hora": 540,
                 "dias": [1, 3], "ativa": true, "ultima": "2026-10-30"}]
         });
-        let estado = json!({"chats": [], "tarefas": [], "proxima_tarefa": 1});
+        let estado = json!({
+            "chats": [
+                chat_antigo("cl", "loja", "Coordenador", &raiz.join("loja"), None, None),
+                chat_antigo("cb", "blog", "Coordenador", &raiz.join("blog"), None, None),
+            ],
+            "tarefas": [], "proxima_tarefa": 1, "rotinas": [{"id": "r2"}]
+        });
         let arquivos = [("estado.json", estado.to_string()), ("config.json", config.to_string())];
         raiz_antiga(&raiz, &["loja", "blog"], &arquivos);
         let dados = Dados::em(&base.join("novo"));
         migrou(migrar(&dados, &[raiz.clone()], &proc_vazio(&base), 1, false, 7));
 
-        let (lido, _) = dados.ler_estado().unwrap().unwrap();
-        let loja = lido.projetos.iter().find(|p| p.id == "loja").unwrap();
-        assert_eq!((loja.icone.as_str(), loja.cor.as_str()), ("shopping-bag", "#f49ac1"));
-        let pasta = &loja.pastas[0].config;
-        assert_eq!(pasta.preparacao, "pip install -r requirements.txt");
-        assert_eq!(pasta.rodar, "make run");
-        assert_eq!(pasta.copiar, [".env*"]);
-        assert!(!loja.arquivado);
-        let blog = lido.projetos.iter().find(|p| p.id == "blog").unwrap();
-        assert!(blog.icone.is_empty() && blog.pastas[0].config.preparacao.is_empty());
-        assert!(blog.arquivado, "a marca de arquivado da pasta passa ao projeto");
-        assert_eq!(lido.rotinas.len(), 1);
-        assert_eq!(lido.rotinas[0].ultima, "2026-10-30");
-        assert_eq!((lido.rotinas[0].projeto.as_str(), lido.rotinas[0].hora), ("loja", 540));
-        // Na pasta ligada, o ícone e a cor não aparecem (ficam no projeto).
+        // A marca de arquivado era da pasta: as conversas dela vão para as arquivadas.
         let gravado = estado_gravado(&dados);
-        let pasta_gravada = &gravado["projetos"][1]["pastas"][0];
-        assert!(pasta_gravada.get("icone").is_none() && pasta_gravada.get("cor").is_none());
-        assert!(pasta_gravada.get("arquivado").is_none());
+        assert_eq!(chat(&gravado, "cb")["arquivado"], true);
+        assert_eq!(chat(&gravado, "cl")["arquivado"], false);
+        // Só a configuração global: as das pastas e as rotinas não vêm.
         let global = dados::ler_valor_sem_escrever(&dados.arquivo_config()).unwrap().unwrap();
         assert_eq!(global, json!({"permissao": "auto"}));
+        let lido = aberto(&dados);
+        assert!(!lido.resto.contains_key("rotinas"), "as rotinas não vêm mais");
+        assert_eq!(lido.chats.iter().map(|c| (c.id.as_str(), c.arquivado)).collect::<Vec<_>>(), [("cl", false), ("cb", true)]);
         let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn chat_orfao_ganha_projeto_com_a_pasta_que_sumiu() {
+    fn chat_da_pasta_que_sumiu_fica_com_ela() {
         let base = pasta_de_teste("orfao");
         let raiz = base.join("Projetos");
         let estado = json!({
@@ -1093,13 +948,10 @@ mod testes {
         raiz_antiga(&raiz, &["loja"], &[("estado.json", estado.to_string())]);
         let dados = Dados::em(&base.join("novo"));
         migrou(migrar(&dados, &[raiz.clone()], &proc_vazio(&base), 1, false, 1));
-        let (lido, _) = dados.ler_estado().unwrap().unwrap();
-        let sumiu = lido.projetos.iter().find(|p| p.id == "sumiu").unwrap();
-        assert_eq!(sumiu.pastas[0].caminho, raiz.join("sumiu"));
-        // "Não encontrada" na interface: a pasta não existe.
-        assert!(!sumiu.pastas[0].caminho.exists());
-        assert!(!sumiu.provisorio);
-        assert_eq!(lido.chats[0].projeto, "sumiu");
+        // "Não encontrada" na conversa: a pasta não existe, e o chat continua apontando para ela.
+        let lido = aberto(&dados);
+        assert_eq!(lido.chats[0].cwd, raiz.join("sumiu"));
+        assert!(!lido.chats[0].cwd.exists());
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1159,13 +1011,7 @@ mod testes {
         assert_eq!(chat(&gravado, "wa1")["tarefa"], 1);
         assert_eq!(gravado["proxima_tarefa"], 6);
         assert_eq!(relatorio.renumeradas, [(1, 5)]);
-        // O segundo "site" é outro projeto, com outro id e o nome com a pasta de onde veio.
-        let projetos = gravado["projetos"].as_array().unwrap();
-        let resumo: Vec<(&str, &str)> =
-            projetos.iter().map(|p| (p["id"].as_str().unwrap(), p["nome"].as_str().unwrap())).collect();
-        assert_eq!(resumo, [("site", "site"), ("blog", "blog"), ("site-2", "site (B)")]);
-        assert_eq!(chat(&gravado, "cb")["projeto"], "site-2");
-        assert_eq!(tarefa(&gravado, 5)["projeto"], "site-2");
+        // A origem de cada tarefa é a pasta do projeto dela, na raiz de onde veio.
         assert_eq!(tarefa(&gravado, 5)["origem"], json!(b.join("site")));
         assert_eq!(tarefa(&gravado, 1)["origem"], json!(a.join("site")));
         assert_eq!(tarefa(&gravado, 4)["origem"], json!(b.join("blog")));
@@ -1180,10 +1026,18 @@ mod testes {
         assert_eq!(itens[1]["Aviso"]["texto"], "Na importação, este chat passou de #1 para chat 5.");
         let registro: Registro = dados::ler_json_r(&dados.arquivo_migracao()).unwrap().unwrap();
         assert_eq!(registro.raizes[1].tarefas, BTreeMap::from([("1".into(), "5".into())]));
-        assert_eq!(registro.raizes[1].projetos["site"], "site-2");
         let (lido, _) = dados.ler_estado().unwrap().unwrap();
         assert_eq!(lido.chats.len(), 7);
         assert_eq!(lido.tarefas.len(), 5);
+        // Aberto: os trabalhadores das cópias (que não existem mais) mexem direto na origem, e todo
+        // chat tem uma pasta de verdade.
+        let lido = aberto(&dados);
+        assert_eq!(lido.chats.len(), 7);
+        for c in &lido.chats {
+            assert!(c.cwd.is_dir(), "{} em {}", c.id, c.cwd.display());
+        }
+        let wb1 = lido.chats.iter().find(|c| c.id == "wb1").unwrap();
+        assert_eq!(wb1.cwd, b.join("site"));
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1236,10 +1090,7 @@ mod testes {
         let global = dados::ler_valor_sem_escrever(&dados.arquivo_config()).unwrap().unwrap();
         assert_eq!(
             global,
-            json!({
-                "modelo_mestre": "sonnet", "modelo_chats": "haiku", "permissao": "auto",
-                "max_rodadas": 5, "de_uma_faixa": 7
-            })
+            json!({ "modelo_chats": "haiku", "permissao": "auto", "de_uma_faixa": 7 })
         );
         // A outra pasta escolhia outra permissão: fica a da mais recente, com aviso.
         let de_b = b.display().to_string();
@@ -1281,7 +1132,10 @@ mod testes {
         migrou(migrar(&limpa, &[raiz.clone()], &proc, 1, false, 50));
         assert_eq!(conteudo(&dados.pasta), conteudo(&limpa.pasta));
         assert_eq!(conteudo(&dados.config), conteudo(&limpa.config));
-        assert_eq!(fs::read_to_string(dados.arquivo_notas("loja")).unwrap(), "- usar Decimal para preços\n");
+        // As notas ficam no .vitral antigo, e o relatório diz onde.
+        assert!(dados::nao_existe(&dados.pasta.join("notas")));
+        let registro: Registro = dados::ler_json_r(&dados.arquivo_migracao()).unwrap().unwrap();
+        assert!(registro.relatorio.avisos.iter().any(|a| a.contains(".vitral/notas")), "{:?}", registro.relatorio.avisos);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1323,10 +1177,11 @@ mod testes {
         let antes = foto(&raiz);
         let relatorio = migrou(migrar(&Dados::em(&base.join("novo")), &[raiz.clone()], &proc, 1, false, 1));
         assert_eq!(foto(&raiz), antes);
-        // A configuração da pasta estava estragada: aviso, e a padrão.
-        assert!(relatorio.avisos.iter().any(|a| a.contains("loja")), "{:?}", relatorio.avisos);
+        // A configuração da pasta (estragada) não vem mais: nada a avisar dela. As notas ficam lá.
+        assert_eq!(relatorio.avisos.len(), 1, "{:?}", relatorio.avisos);
+        assert!(relatorio.avisos[0].starts_with("As decisões anotadas nos projetos ficaram em"), "{:?}", relatorio.avisos);
 
-        // Com o estado antigo ilegível: só as pastas, e nada escrito, nem a cópia `.ilegivel`.
+        // Com o estado antigo ilegível: nada vem, e nada é escrito nela, nem a cópia `.ilegivel`.
         let estragada = base.join("Estragada");
         raiz_antiga(&estragada, &["blog", "loja"], &[("estado.json", "{\"chats\": [".into())]);
         let antes = foto(&estragada);
@@ -1334,9 +1189,8 @@ mod testes {
         let relatorio = migrou(migrar(&dados, &[estragada.clone()], &proc, 1, false, 1));
         assert_eq!(foto(&estragada), antes);
         assert!(!antes.keys().any(|c| c.to_string_lossy().contains("ilegivel")));
-        assert_eq!(relatorio.projetos, ["blog", "loja"]);
         assert_eq!(relatorio.chats, 0);
-        assert!(relatorio.avisos[0].contains("ilegível; trouxe só as pastas"), "{:?}", relatorio.avisos);
+        assert!(relatorio.avisos[0].contains("ilegível; as conversas dele não vieram"), "{:?}", relatorio.avisos);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1428,8 +1282,9 @@ mod testes {
         fs::write(raiz.join("solto.txt"), "x").unwrap();
         let nomes: Vec<String> = subpastas_antigas(&raiz).unwrap().into_iter().map(|(n, _)| n).collect();
         assert_eq!(nomes, ["A", "b"]);
-        let dados = Dados::em(&base.join("novo"));
-        assert_eq!(migrou(migrar(&dados, &[raiz], &proc_vazio(&base), 1, false, 1)).projetos, ["A", "b"]);
+        // As mesmas subpastas dão a pasta de origem das tarefas.
+        let caminhos: Vec<String> = ler_raiz(&raiz).unwrap().caminhos.into_keys().collect();
+        assert_eq!(caminhos, ["A", "b"]);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -1448,22 +1303,6 @@ mod testes {
         assert!(matches!(migrar(&dados, &[], &proc_vazio(&base), 1, false, 1), Resultado::SemRaizes));
         assert!(dados::nao_existe(&dados.pasta));
         let _ = fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn nomes_reservados_e_que_nao_servem_de_pasta() {
-        let nomes = vec![vec!["Mestre".to_string(), "avulsos".into(), "a/b".into(), "loja".into()]];
-        let ids = ids_de_projeto(&nomes);
-        assert_eq!(ids[0]["Mestre"], "Mestre-2");
-        assert_eq!(ids[0]["avulsos"], "avulsos-2");
-        assert_eq!(ids[0]["a/b"], "a-b");
-        assert_eq!(ids[0]["loja"], "loja");
-        let mut chaves = HashSet::new();
-        let raiz = Path::new("/home/x/Projetos");
-        assert_eq!(nome_de_exibicao("Mestre", raiz, &mut chaves), "Mestre (Projetos)");
-        assert_eq!(nome_de_exibicao("Loja", raiz, &mut chaves), "Loja");
-        assert_eq!(nome_de_exibicao("loja", raiz, &mut chaves), "loja (Projetos)");
-        assert_eq!(nome_de_exibicao("LOJA", raiz, &mut chaves), "LOJA (Projetos) 2");
     }
 
     /// Conferência à mão numa cópia dos dados de um usuário, nunca nos de verdade:
@@ -1504,46 +1343,31 @@ mod testes {
         let n = crate::dados::normalizar(&mut carregado.estado, &dados, &crate::dados::NoDisco, quando);
         println!("avisos ao carregar: {:?}\nnormalização: {n:?}", carregado.avisos);
         let e = &carregado.estado;
-        println!("versão {} · próxima tarefa {} · formato {}", e.versao, e.proxima_tarefa, crate::dados::formato_em(&dados.pasta));
-        for p in &e.projetos {
-            let pastas: Vec<String> = p.pastas.iter().map(|l| format!("{} (existe: {})", l.caminho.display(), l.caminho.is_dir())).collect();
-            println!("projeto {} \"{}\" ordem {} provisório {} arquivado {} pastas {pastas:?}", p.id, p.nome, p.ordem, p.provisorio, p.arquivado);
-        }
+        println!("versão {} · formato {}", e.versao, crate::dados::formato_em(&dados.pasta));
         for c in &e.chats {
             println!(
-                "chat {} {:?} projeto {:?} \"{}\" tarefa {:?} criado_por {:?} itens {} sessão_criada {} arquivado {} cwd {}",
-                c.id, c.papel, c.projeto, c.titulo, c.tarefa, c.criado_por, c.itens.len(), c.sessao_criada, c.arquivado, c.cwd.display()
+                "chat {} \"{}\" criado_por {:?} itens {} sessão_criada {} arquivado {} cwd {} (existe: {})",
+                c.id, c.titulo, c.criado_por, c.itens.len(), c.sessao_criada, c.arquivado, c.cwd.display(), c.cwd.is_dir()
             );
-        }
-        for t in &e.tarefas {
-            println!("tarefa {} {:?} {:?} chat {} origem {} preparada {}", t.id, t.estado, t.forma, t.trabalhador, t.origem.display(), t.preparada);
         }
     }
 
     #[test]
     fn texto_do_relatorio() {
-        let mut relatorio = Relatorio {
-            raizes: vec!["/home/x/Projetos".into()],
-            projetos: ["api", "blog", "loja", "site", "vitral", "docs"].map(String::from).to_vec(),
-            chats: 2,
-            ..Default::default()
-        };
+        let mut relatorio = Relatorio { raizes: vec!["/home/x/Projetos".into()], chats: 2, ..Default::default() };
         let casa = Some(Path::new("/home/x"));
-        assert_eq!(
-            relatorio.texto(casa),
-            "Trouxe 6 projetos de ~/Projetos: api, blog, loja, site, vitral e docs. Os 2 chats foram junto."
-        );
+        assert_eq!(relatorio.texto(casa), "Trouxe 2 conversas do Vitral antigo de ~/Projetos.");
         relatorio.raizes.push("/srv/outra".into());
-        relatorio.projetos = (1..=10).map(|n| format!("p{n}")).collect();
         relatorio.chats = 1;
         relatorio.renumeradas = vec![(1, 5)];
         assert_eq!(
             relatorio.texto(casa),
-            "Trouxe 10 projetos de ~/Projetos e /srv/outra: p1, p2, p3, p4, p5, p6, p7, p8 e mais 2. \
-             O chat foi junto. Um chat mudou de número (o aviso está nele)."
+            "Trouxe 1 conversa do Vitral antigo de ~/Projetos e /srv/outra. Um chat mudou de número (o aviso está nele)."
         );
         relatorio.renumeradas.clear();
-        relatorio.avisos = vec!["O estado antigo de /home/x/Velho está ilegível; trouxe só as pastas.".into()];
-        assert!(relatorio.texto(casa).ends_with("O chat foi junto. O estado antigo de ~/Velho está ilegível; trouxe só as pastas."));
+        relatorio.avisos = vec!["O estado antigo de /home/x/Velho está ilegível; as conversas dele não vieram.".into()];
+        assert!(relatorio.texto(casa).ends_with("/srv/outra. O estado antigo de ~/Velho está ilegível; as conversas dele não vieram."));
+        relatorio.chats = 0;
+        assert!(relatorio.texto(casa).starts_with("Não havia conversas do Vitral antigo em ~/Projetos e /srv/outra."));
     }
 }

@@ -140,10 +140,10 @@ pub struct Ocorrencia {
     pub faixa: Range<usize>,
 }
 
-/// A chamada de ferramenta aparece na conversa (as buscas de ferramenta nunca; no modo foco, só
-/// as ações sobre tarefas). Segue o filtro de `mensagens::mensagens`.
+/// A chamada de ferramenta aparece na conversa (as buscas de ferramenta nunca; no modo foco,
+/// nenhuma). Segue o filtro de `mensagens::mensagens`.
 fn ferramenta_visivel(nome: &str, foco: bool) -> bool {
-    nome != "ToolSearch" && (!foco || super::mensagens::acao_de_tarefa(nome).is_some())
+    nome != "ToolSearch" && !foco
 }
 
 /// Todas as ocorrências de `termo` nos itens, na ordem da conversa. `foco` é o modo foco do
@@ -731,10 +731,8 @@ mod testes {
             em: 0,
             texto: texto.into(),
             anexos: Vec::new(),
-            ponto: None,
             ultrathink: false,
             ultracode: false,
-            referencias: Vec::new(),
         }
     }
 
@@ -748,6 +746,7 @@ mod testes {
             erro: false,
             detalhe: None,
             arquivo: None,
+            sub: None,
         }
     }
 
