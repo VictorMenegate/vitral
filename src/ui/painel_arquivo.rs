@@ -1,4 +1,4 @@
-//! Painel da direita com um arquivo do projeto aberto: aba com o nome, a barra do arquivo (pasta,
+//! Painel da direita com um arquivo da pasta aberto: aba com o nome, a barra do arquivo (pasta,
 //! linhas e linguagem, mencionar, VS Code), markdown renderizado ou código com número de linha,
 //! e o aviso de quando não dá para mostrar.
 
@@ -90,7 +90,7 @@ fn ler_arquivo(completo: &Path, markdown: bool) -> Conteudo {
     // O tamanho antes: um arquivo grande não precisa ser lido para dizer que não abre.
     match std::fs::metadata(completo) {
         Ok(m) if m.is_dir() => return Conteudo::Aviso(Aviso::Erro("É uma pasta, não um arquivo.".into())),
-        // Um .png do projeto aparece como imagem; antes caía no "arquivo binário".
+        // Um .png da pasta aparece como imagem; antes caía no "arquivo binário".
         Ok(m) if crate::claude::tipo_imagem(completo).is_some() => {
             return if m.len() > LIMITE_IMAGEM { Conteudo::Aviso(Aviso::Grande(m.len())) } else { Conteudo::Imagem };
         }
@@ -262,13 +262,13 @@ fn linha_de_codigo(
         )
 }
 
-/// O nome que a barra do arquivo mostra para a pasta: o do projeto na pasta própria, senão o da
-/// pasta.
+/// O nome que a barra do arquivo mostra para a pasta: "Sem pasta" na pasta vazia de um chat, senão
+/// o da pasta.
 fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
-    match motor.projeto_da_pasta(raiz) {
-        Some(p) if motor.pastas_do(&p).iter().any(|l| l.propria && l.caminho == raiz) => motor.nome_do_projeto(&p),
-        _ => raiz.file_name().map_or_else(|| raiz.display().to_string(), |n| n.to_string_lossy().to_string()),
+    if raiz.starts_with(motor.dados.pasta_avulso("")) {
+        return "Sem pasta".into();
     }
+    super::dialogos::nome_da_pasta(raiz)
 }
 
 impl Janela {
@@ -325,7 +325,7 @@ impl Janela {
             return div().into_any_element();
         };
         let completo = raiz.join(&caminho);
-        // Na raiz da pasta, a barra mostra o nome dela (ou o do projeto, se ela é a pasta própria).
+        // Na raiz da pasta, a barra mostra o nome dela ("Sem pasta" na pasta vazia de um chat).
         let pasta = match caminho.rsplit_once('/') {
             Some((d, _)) => format!("{d}/"),
             None => nome_da_raiz(motor.read(cx), &raiz),

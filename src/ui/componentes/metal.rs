@@ -504,6 +504,30 @@ pub fn abertura_lisa(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>
     abertura_com_grao(encaixe, veu, raios, true)
 }
 
+/// O fosco: o grão leve do metal e um véu leitoso bem leve, enchendo o pai (absoluto, sem
+/// clique). Vai por cima de um fundo meio transparente, para ele ler como vidro fosco e não como
+/// um buraco na janela: sem desfoque do sistema, é o grão que diz que ali há uma superfície
+/// (dono, 13/11/2026: "deixa um transparente fosco pra não ficar assim igual tá faltando"). Só
+/// na base: o grão cheio, e o grão debaixo de texto corrido, viram chuvisco.
+pub fn fosco(raios: Corners<Pixels>) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |limites, _, window, cx| {
+            if limites.size.width < px(1.) || limites.size.height < px(1.) {
+                return;
+            }
+            let raios = raios.clamp_radii_for_quad_size(limites.size);
+            window.paint_quad(fill(limites, gpui_kit::rgba(0xffffff0a)).corner_radii(raios));
+            let grao = cx.try_global::<Metal>().and_then(|metal| metal.grao_leve.clone());
+            pintar_o_grao(limites, raios, grao.as_ref(), window);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>, leve: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},

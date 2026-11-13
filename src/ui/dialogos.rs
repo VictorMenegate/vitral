@@ -1,33 +1,31 @@
-//! Diálogos: novo chat (escolher o projeto, ou Avulsos, e a pasta), mover para projeto, projetos
-//! arquivados, localizar pasta, ativar git, renomear, contas, arquivos do projeto, conversa como
-//! contexto e rotinas, todos na mesma moldura. Novo e Editar projeto ficam em `projeto.rs`.
+//! Diálogos: novo chat (em qual pasta), renomear, contas, configurações, mencionar arquivo e
+//! conversa como contexto, todos na mesma moldura.
 
 use std::{cell::RefCell, path::{Path, PathBuf}, rc::Rc};
 
 use gpui_kit::component::{
     Disableable as _, WindowExt as _, v_flex,
     dialog::Dialog,
-    input::{Input, InputState, Textarea, TextareaState},
+    input::{Input, InputState},
     tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    Janela, Vista,
+    Janela,
     componentes::{
-        CabecalhoDialogo, Confirmacao, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, RodapeDialogo, Selo,
-        Simbolo, Sinal, TamanhoBotao, Tom, TomConfirmacao, aviso, aviso_erro, botao_fantasma, botao_primario, confirmar, contagem, desenho_teclas, fio_de_pontos, largura,
-        sinal_do_chat,
+        CabecalhoDialogo, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, RodapeDialogo, Selo, Simbolo,
+        Sinal, TamanhoBotao, Tom, aviso, aviso_erro, botao_fantasma, botao_primario, contagem, desenho_teclas,
+        fio_de_pontos, largura, sinal_do_chat,
     },
     configuracoes::Configuracoes,
-    icone_projeto,
     painel_contas::PainelContas,
     seletor_arquivos,
     tempo_relativo,
 };
 use crate::{
-    modelo::{Item, Papel},
+    modelo::Item,
     motor::Motor,
     tema::{Cores, Lucide, Tipo as _, r, raio, tam},
 };
@@ -73,6 +71,11 @@ pub(super) fn com_til(caminho: &Path) -> String {
     }
 }
 
+/// O nome da pasta (a última parte do caminho), o que a lista e as dicas mostram de um chat.
+pub(super) fn nome_da_pasta(pasta: &Path) -> String {
+    pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().to_string())
+}
+
 /// "↑ ↓ escolher": teclas fixas da lista e o que fazem, no rodapé.
 fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement {
     div()
@@ -89,202 +92,171 @@ fn contas_conectadas(n: usize) -> String {
     contagem(n, "conta conectada", "contas conectadas")
 }
 
-/// Chaves da paleta que não são projetos (nenhum id de projeto tem o "\0").
-const NOVO_PROJETO: &str = "\0novo";
-const CRIAR_PROJETO: &str = "\0criar:";
-const AVULSOS: &str = "\0avulsos";
+/// Chaves da paleta que não são pastas (nenhum caminho tem o "\0").
+const SEM_PASTA: &str = "\0sem-pasta";
 /// "Outra pasta…" na paleta do Novo chat: escolhe a pasta no disco e o chat nasce nela.
 const OUTRA_PASTA: &str = "\0outra-pasta";
 
-/// Para onde vai o Ctrl+N.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum AlvoCtrlN {
-    /// Cria direto no projeto (`""`: avulso).
-    Direto(String),
-    /// A paleta, com este destino marcado (`Some("")`: Avulsos).
-    Paleta(Option<String>),
-}
-
-/// O Ctrl+N cria direto na vista de um projeto e nos Avulsos. Na visão geral abre a paleta,
-/// marcando Avulsos quando o chat aberto não tem projeto; senão, o último destino (ou o projeto do
-/// chat aberto). `chat_ativo` é o projeto do chat aberto.
-pub(super) fn alvo_do_ctrl_n(vista: &Vista, chat_ativo: Option<&str>, ultimo_destino: Option<&str>, projetos: &[String]) -> AlvoCtrlN {
-    let existe = |p: &str| p.is_empty() || projetos.iter().any(|x| x == p);
-    match vista {
-        Vista::Projeto(id) if existe(id) => return AlvoCtrlN::Direto(id.clone()),
-        Vista::Avulsos => return AlvoCtrlN::Direto(String::new()),
-        _ => {}
-    }
-    let marcado = match chat_ativo {
-        Some("") => Some(String::new()),
-        _ => ultimo_destino
-            .filter(|d| existe(d))
-            .or(chat_ativo.filter(|p| existe(p)))
-            .map(str::to_string),
-    };
-    AlvoCtrlN::Paleta(marcado)
-}
-
-/// O nome do projeto que nasce de uma pasta: o dela e, se já existe (ou não serve), "loja 2",
-/// "loja 3"…
-fn nome_livre(base: &str, serve: impl Fn(&str) -> bool) -> String {
-    let base = base.trim();
-    let base = if base.is_empty() { "pasta" } else { base };
-    if serve(base) {
-        return base.to_string();
-    }
-    (2..100).map(|n| format!("{base} {n}")).find(|nome| serve(nome)).unwrap_or_else(|| format!("{base} {}", crate::modelo::novo_id()))
-}
-
-/// Um projeto na paleta de Nova conversa.
-struct ProjetoNaPaleta {
-    id: String,
+/// Uma pasta na paleta de Novo chat.
+struct PastaNaPaleta {
+    caminho: PathBuf,
     nome: String,
-    icone: &'static icone_projeto::Icone,
-    cor: u32,
     descricao: String,
-    selo: Option<&'static str>,
+    atual: bool,
 }
 
-/// "3 conversas · última há 2 h" ou "Nenhuma conversa ainda".
-fn descricao_do_projeto(conversas: usize, ultima: Option<u64>) -> String {
-    match ultima.filter(|_| conversas > 0) {
-        None => "Nenhuma conversa ainda".into(),
-        Some(instante) => {
-            let quando = tempo_relativo(instante);
-            let quando = if quando == "agora" { quando } else { format!("há {quando}") };
-            format!("{} · última {quando}", contagem(conversas, "conversa", "conversas"))
-        }
+impl PastaNaPaleta {
+    fn new(caminho: PathBuf, atual: bool) -> Self {
+        Self { descricao: com_til(&caminho), nome: nome_da_pasta(&caminho), caminho, atual }
     }
 }
 
-/// As pastas que já têm chat (os projetos, com a busca no nome ou na descrição), "Outra pasta…",
-/// que escolhe uma no disco, e "Sem pasta". Sem nada que bata com a busca, "Criar o projeto “x”".
-/// Quem quer um projeto montado à mão (várias pastas, ícone, instruções) usa o Novo projeto do menu.
-fn grupos_da_paleta(projetos: &[ProjetoNaPaleta], busca: &str) -> Vec<GrupoDeEscolha> {
-    let busca = busca.trim();
-    let termo = busca.to_lowercase();
-    let avulsos = "sem pasta avulsos chat sem projeto".contains(&termo).then(|| ItemDeEscolha {
+/// As pastas que já têm chat (as mais recentes primeiro, com a busca no nome ou no caminho),
+/// "Outra pasta…", que escolhe uma no disco, e "Sem pasta".
+fn grupos_da_paleta(pastas: &[PastaNaPaleta], busca: &str) -> Vec<GrupoDeEscolha> {
+    let termo = busca.trim().to_lowercase();
+    let sem_pasta = "sem pasta avulso só conversar".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
         descricao: Some("Só conversar: o chat ganha uma pasta vazia só dele".into()),
-        ..ItemDeEscolha::new(AVULSOS, "Sem pasta")
+        ..ItemDeEscolha::new(SEM_PASTA, "Sem pasta")
     });
     let outra = "outra pasta abrir escolher".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::FolderOpen)),
         descricao: Some("Escolher uma pasta do computador".into()),
         ..ItemDeEscolha::new(OUTRA_PASTA, "Outra pasta…")
     });
-    let itens: Vec<ItemDeEscolha> = projetos
+    let itens: Vec<ItemDeEscolha> = pastas
         .iter()
         .filter(|p| p.nome.to_lowercase().contains(&termo) || p.descricao.to_lowercase().contains(&termo))
         .map(|p| ItemDeEscolha {
-            simbolo: Some(Simbolo::Projeto(p.icone, p.cor)),
+            simbolo: Some(Simbolo::icone(Lucide::Folder)),
             descricao: Some(p.descricao.clone().into()),
-            selos: p.selo.map(Selo::neutro).into_iter().collect(),
-            ..ItemDeEscolha::new(p.id.clone(), p.nome.clone())
+            selos: p.atual.then(|| Selo::neutro("atual")).into_iter().collect(),
+            ..ItemDeEscolha::new(p.caminho.display().to_string(), p.nome.clone())
         })
         .collect();
-    let criar = (itens.is_empty() && avulsos.is_none() && outra.is_none() && !busca.is_empty()).then(|| ItemDeEscolha {
-        simbolo: Some(Simbolo::icone(Lucide::FolderPlus)),
-        ..ItemDeEscolha::new(format!("{CRIAR_PROJETO}{busca}"), format!("Criar o projeto “{busca}”"))
-    });
     let mut grupos = Vec::new();
     if !itens.is_empty() {
         grupos.push(GrupoDeEscolha { titulo: Some("Pastas".into()), itens });
     }
-    let resto: Vec<ItemDeEscolha> = outra.into_iter().chain(avulsos).chain(criar).collect();
+    let resto: Vec<ItemDeEscolha> = outra.into_iter().chain(sem_pasta).collect();
     if !resto.is_empty() {
         grupos.push(GrupoDeEscolha { titulo: None, itens: resto });
     }
     grupos
 }
 
+/// Onde nasce o chat do "+" e do Ctrl+N.
+#[derive(Clone, Debug, PartialEq)]
+enum Destino {
+    /// Numa pasta.
+    Pasta(PathBuf),
+    /// Numa pasta vazia só dele.
+    SemPasta,
+    /// Não há pasta à mão: a paleta pergunta.
+    Perguntar,
+}
+
+/// Com pasta de trabalho, é nela, sempre (como a pasta aberta no VS Code). Sem ela: na pasta do
+/// chat aberto (o chat Sem pasta abre outro Sem pasta: a pasta dele é só dele); sem chat aberto,
+/// na última pasta usada; sem nenhuma, pergunta. Pasta que sumiu do disco não vale.
+fn destino_do_novo_chat(
+    de_trabalho: Option<&Path>,
+    aberto: Option<(&Path, bool)>,
+    ultima: Option<&Path>,
+    existe: impl Fn(&Path) -> bool,
+) -> Destino {
+    if let Some(pasta) = de_trabalho.filter(|p| existe(p)) {
+        return Destino::Pasta(pasta.to_path_buf());
+    }
+    match aberto {
+        Some((_, true)) => Destino::SemPasta,
+        Some((pasta, false)) if existe(pasta) => Destino::Pasta(pasta.to_path_buf()),
+        _ => match ultima.filter(|p| existe(p)) {
+            Some(pasta) => Destino::Pasta(pasta.to_path_buf()),
+            None => Destino::Perguntar,
+        },
+    }
+}
+
 impl Janela {
-    /// Ctrl+N: direto na vista de um projeto (com duas pastas, pergunta qual) e nos Avulsos; na
-    /// visão geral, a paleta dos projetos, de Avulsos e do projeto novo.
     /// O "+" e o Ctrl+N: um chat novo na hora, sem perguntar nada, como o "novo chat" do VS Code
-    /// (pedido do dono, 12/11/2026). Nasce na pasta do chat aberto (a mesma, se ela é uma das
-    /// ligadas ao projeto; senão, a principal do projeto); com o Mestre ou nada aberto, no último
-    /// destino. Só sem nenhum dos dois a paleta pergunta a pasta. Escolher outra pasta fica no
-    /// menu do logo ("Novo chat em outra pasta…").
+    /// (pedido do dono, 12/11/2026). Escolher outra pasta fica no menu do logo ("Novo chat em outra
+    /// pasta…").
     pub(super) fn novo_chat_direto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
         let destino = {
             let m = motor.read(cx);
-            let visiveis: Vec<String> = m.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
-            let existe = |p: &str| p.is_empty() || visiveis.iter().any(|x| x == p);
-            let aberto = self
-                .selecionado
-                .as_ref()
-                .and_then(|id| m.chat(id))
-                .filter(|c| c.id != crate::modelo::ID_MESTRE && existe(&c.projeto));
-            match aberto {
-                Some(c) => {
-                    let pasta =
-                        m.pastas_do(&c.projeto).iter().find(|p| !p.propria && p.caminho == c.cwd).map(|p| p.caminho.clone());
-                    Some((c.projeto.clone(), pasta))
-                }
-                None => self.ultimo_destino.clone().filter(|d| existe(d)).map(|d| (d, None)),
-            }
+            let aberto = self.selecionado.as_ref().and_then(|id| m.chat(id)).map(|c| (c.cwd.as_path(), m.sem_pasta(c)));
+            // A última pasta usada: a do último chat criado; sem ela, a do chat mexido por último.
+            let ultima = self.ultimo_destino.clone().or_else(|| m.pastas_dos_chats().into_iter().next());
+            destino_do_novo_chat(m.config.pasta_de_trabalho.as_deref(), aberto, ultima.as_deref(), Path::is_dir)
         };
         match destino {
-            Some((projeto, pasta)) => {
-                // O próximo chat novo, com o Mestre aberto, vai para onde este foi.
-                self.lembrar_destino(&projeto, cx);
-                self.nova_conversa_na_pasta(&projeto, pasta, window, cx);
+            Destino::Pasta(pasta) => {
+                self.lembrar_destino(&pasta, cx);
+                self.nova_conversa_na_pasta(Some(pasta), window, cx);
             }
-            None => self.dialogo_nova_conversa(window, cx),
+            Destino::SemPasta => self.nova_conversa_na_pasta(None, window, cx),
+            Destino::Perguntar => self.dialogo_nova_conversa(window, cx),
         }
     }
 
+    /// "Trocar a pasta de trabalho…": o seletor do sistema; os chats novos passam a nascer nela (os
+    /// que já existem ficam onde estão).
+    pub(super) fn trocar_pasta_de_trabalho(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let escolha = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Usar esta pasta".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(caminhos))) = escolha.await else {
+                return;
+            };
+            let Some(pasta) = caminhos.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let pasta = dunce::canonicalize(&pasta).unwrap_or(pasta);
+                this.lembrar_destino(&pasta, cx);
+                motor.update(cx, |m, cx| m.mudar_config(|c| c.pasta_de_trabalho = Some(pasta), cx));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "Novo chat em outra pasta…": as pastas que já têm chat, "Outra pasta…" e "Sem pasta". Nada
+    /// de projeto por baixo: o chat nasce direto na pasta escolhida.
     pub(super) fn dialogo_nova_conversa(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let projetos: Vec<String> = motor.read(cx).projetos_visiveis().iter().map(|p| p.id.clone()).collect();
         let m = motor.read(cx);
-        let ativo = self.selecionado.as_ref().and_then(|id| m.chat(id)).map(|c| c.projeto.clone());
-        let marcado = match alvo_do_ctrl_n(&self.vista, ativo.as_deref(), self.ultimo_destino.as_deref(), &projetos) {
-            AlvoCtrlN::Direto(projeto) => {
-                self.novo_chat_em(&projeto, window, cx);
-                return;
-            }
-            AlvoCtrlN::Paleta(marcado) => marcado,
-        };
-        let mut dados = Vec::new();
-        for id in &projetos {
-            let conversas: Vec<u64> = m
-                .chats
-                .iter()
-                .filter(|c| c.projeto == *id && c.papel.na_lista() && !m.arquivada(c))
-                .map(|c| c.atualizado_em)
-                .collect();
-            let (icone, cor) = icone_projeto::visual_do(m, id);
-            // A pasta primeiro (é por ela que se escolhe); sem pasta ligada, a descrição ou as conversas.
-            let pasta = m.pastas_do(id).iter().find(|p| !p.propria).map(|p| com_til(&p.caminho));
-            let descricao = pasta
-                .or_else(|| {
-                    m.projeto(id).map(|p| p.descricao.lines().next().unwrap_or_default().trim().to_string()).filter(|d| !d.is_empty())
-                })
-                .unwrap_or_else(|| descricao_do_projeto(conversas.len(), conversas.iter().max().copied()));
-            dados.push(ProjetoNaPaleta {
-                id: id.clone(),
-                nome: m.nome_do_projeto(id),
-                icone,
-                cor,
-                descricao,
-                selo: (ativo.as_deref() == Some(id.as_str())).then_some("atual"),
-            });
-        }
-        let realce = marcado.map(|d| if d.is_empty() { SharedString::from(AVULSOS) } else { SharedString::from(d) });
-        let dados = Rc::new(dados);
+        let aberta = self.selecionado.as_ref().and_then(|id| m.chat(id)).filter(|c| !m.sem_pasta(c)).map(|c| c.cwd.clone());
+        let pastas: Vec<PastaNaPaleta> = m
+            .pastas_dos_chats()
+            .into_iter()
+            .filter(|p| p.is_dir())
+            .map(|p| {
+                let atual = aberta.as_ref() == Some(&p);
+                PastaNaPaleta::new(p, atual)
+            })
+            .collect();
+        let realce = aberta.or_else(|| self.ultimo_destino.clone()).map(|p| SharedString::from(p.display().to_string()));
+        let pastas = Rc::new(pastas);
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar pasta…", window, cx);
-            lista.definir(grupos_da_paleta(&dados, ""), realce, cx);
-            let filtro = dados.clone();
+            lista.definir(grupos_da_paleta(&pastas, ""), realce, cx);
+            let filtro = pastas.clone();
             lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, busca));
             lista.rodape(move |window, _| {
                 let largo = tam(window, 420.) < window.viewport_size().width - px(32.);
@@ -313,16 +285,14 @@ impl Janela {
                 return;
             };
             window.close_dialog(cx);
-            if chave.as_ref() == NOVO_PROJETO {
-                this.dialogo_criar_projeto(window, cx);
-            } else if chave.as_ref() == OUTRA_PASTA {
-                this.novo_chat_noutra_pasta(window, cx);
-            } else if let Some(nome) = chave.strip_prefix(CRIAR_PROJETO) {
-                this.dialogo_projeto_novo(nome.to_string(), None, window, cx);
-            } else {
-                let projeto = if chave.as_ref() == AVULSOS { String::new() } else { chave.to_string() };
-                this.lembrar_destino(&projeto, cx);
-                this.novo_chat_em(&projeto, window, cx);
+            match chave.as_ref() {
+                OUTRA_PASTA => this.novo_chat_noutra_pasta(window, cx),
+                SEM_PASTA => this.nova_conversa_na_pasta(None, window, cx),
+                pasta => {
+                    let pasta = PathBuf::from(pasta);
+                    this.lembrar_destino(&pasta, cx);
+                    this.nova_conversa_na_pasta(Some(pasta), window, cx);
+                }
             }
         }));
         self.foco_antes_do_dialogo(window, cx);
@@ -341,66 +311,8 @@ impl Janela {
         lista.update(cx, |l, cx| l.abrir(window, cx));
     }
 
-    /// Um chat novo no projeto (`""`: avulso). Com mais de uma pasta à mão, pergunta em qual.
-    pub(super) fn novo_chat_em(&mut self, projeto: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let pastas: Vec<(PathBuf, bool)> =
-            motor.read(cx).pastas_do(projeto).iter().map(|p| (p.caminho.clone(), p.propria)).filter(|(p, _)| p.is_dir()).collect();
-        if pastas.len() < 2 {
-            self.nova_conversa(projeto, window, cx);
-            return;
-        }
-        let itens: Vec<ItemDeEscolha> = pastas
-            .iter()
-            .enumerate()
-            .map(|(i, (caminho, propria))| {
-                let nome = if *propria {
-                    "Pasta própria".to_string()
-                } else {
-                    caminho.file_name().map_or_else(|| caminho.display().to_string(), |n| n.to_string_lossy().to_string())
-                };
-                let descricao = if i == 0 { format!("principal · {}", com_til(caminho)) } else { com_til(caminho) };
-                ItemDeEscolha {
-                    simbolo: Some(Simbolo::icone(Lucide::Folder)),
-                    descricao: Some(descricao.into()),
-                    ..ItemDeEscolha::new(caminho.display().to_string(), nome)
-                }
-            })
-            .collect();
-        let primeira = itens.first().map(|i| i.chave.clone());
-        let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar pasta…", window, cx);
-            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], primeira, cx);
-            lista
-        });
-        let alvo = projeto.to_string();
-        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, move |this, _, evento: &EventoEscolha, window, cx| {
-            let EventoEscolha::Escolheu(pasta) = evento else {
-                return;
-            };
-            window.close_dialog(cx);
-            this.nova_conversa_na_pasta(&alvo, Some(PathBuf::from(pasta.as_ref())), window, cx);
-        }));
-        self.foco_antes_do_dialogo(window, cx);
-        let vista = lista.clone();
-        let nome = motor.read(cx).nome_do_projeto(projeto);
-        window.open_dialog(cx, move |dialogo, window, _| {
-            moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Em qual pasta?", Some(format!("O chat novo de {nome} trabalha numa pasta só.")))))
-                .child(vista.clone())
-                .on_ok(|_, _, _| false)
-        });
-        lista.update(cx, |l, cx| l.abrir(window, cx));
-    }
-
-    /// "Outra pasta…": escolhe a pasta no disco e abre o chat nela. A pasta que já é de um projeto
-    /// usa esse projeto; a nova ganha um, com o nome dela, sem formulário (dá para editar depois).
+    /// "Outra pasta…": escolhe a pasta no disco e abre o chat nela.
     fn novo_chat_noutra_pasta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
         let escolha = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -414,132 +326,18 @@ impl Janela {
             let Some(pasta) = caminhos.into_iter().next() else {
                 return;
             };
-            let existente = motor.read_with(cx, |m, _| m.projeto_da_pasta(&pasta).filter(|id| !m.projeto_arquivado(id)));
-            let projeto: Result<String, String> = match existente {
-                Some(id) => Ok(id),
-                None => {
-                    let criando = motor.update(cx, |m, cx| {
-                        let base = pasta.file_name().map_or_else(|| "pasta".to_string(), |n| n.to_string_lossy().to_string());
-                        let nome = nome_livre(&base, |nome| m.validar_nome(nome, None).is_ok());
-                        m.criar_projeto(crate::motor::NovoProjeto { nome, pastas: vec![pasta.clone()], ..Default::default() }, cx)
-                    });
-                    criando.await.map_err(|e| format!("{e:#}"))
-                }
-            };
-            let _ = this.update_in(cx, |this, window, cx| match projeto {
-                Ok(id) => {
-                    this.lembrar_destino(&id, cx);
-                    this.novo_chat_em(&id, window, cx);
-                }
-                Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Não deu para abrir o chat em {}: {erro}", com_til(&pasta))), cx),
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.lembrar_destino(&pasta, cx);
+                this.nova_conversa_na_pasta(Some(pasta), window, cx);
             });
         })
         .detach();
     }
 
-    /// Grava o destino do último chat criado pela paleta (a próxima já vem marcada nele).
-    fn lembrar_destino(&mut self, projeto: &str, cx: &mut Context<Self>) {
-        self.ultimo_destino = Some(projeto.to_string());
-        let valor = if projeto.is_empty() { "avulsos".to_string() } else { projeto.to_string() };
-        super::gravar_interface("ultimo_destino", serde_json::Value::String(valor), cx);
-    }
-
-    /// "Mover para projeto…" do menu do chat: os projetos e Avulsos; mover pergunta quando o motor
-    /// avisa de algo, e a recusa vira aviso.
-    pub(super) fn dialogo_mover_chat(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let m = motor.read(cx);
-        let Some(atual) = m.chat(&chat).map(|c| c.projeto.clone()) else {
-            return;
-        };
-        let mut itens: Vec<ItemDeEscolha> = m
-            .projetos_visiveis()
-            .into_iter()
-            .filter(|p| p.id != atual)
-            .map(|p| {
-                let (icone, cor) = icone_projeto::visual(p);
-                ItemDeEscolha { simbolo: Some(Simbolo::Projeto(icone, cor)), ..ItemDeEscolha::new(p.id.clone(), p.nome.clone()) }
-            })
-            .collect();
-        if !atual.is_empty() {
-            itens.push(ItemDeEscolha {
-                simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
-                descricao: Some("Sem projeto".into()),
-                ..ItemDeEscolha::new(AVULSOS, "Avulsos")
-            });
-        }
-        let titulo = m.chat(&chat).map(|c| c.titulo.clone()).unwrap_or_default();
-        let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
-            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], None, cx);
-            lista
-        });
-        let id = chat.clone();
-        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, move |this, _, evento: &EventoEscolha, window, cx| {
-            let EventoEscolha::Escolheu(destino) = evento else {
-                return;
-            };
-            window.close_dialog(cx);
-            let destino = if destino.as_ref() == AVULSOS { String::new() } else { destino.to_string() };
-            this.soltar_chat(&id, &destino, window, cx);
-        }));
-        self.foco_antes_do_dialogo(window, cx);
-        let vista = lista.clone();
-        window.open_dialog(cx, move |dialogo, window, _| {
-            moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Mover para projeto", Some(titulo.clone()))))
-                .child(vista.clone())
-                .on_ok(|_, _, _| false)
-        });
-        lista.update(cx, |l, cx| l.abrir(window, cx));
-    }
-
-    /// "Projetos arquivados…": cada um com o quadrado; escolher desarquiva e abre o projeto.
-    pub(super) fn dialogo_projetos_arquivados(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let itens: Vec<ItemDeEscolha> = motor
-            .read(cx)
-            .projetos_arquivados()
-            .into_iter()
-            .map(|p| {
-                let (icone, cor) = icone_projeto::visual(p);
-                ItemDeEscolha {
-                    simbolo: Some(Simbolo::Projeto(icone, cor)),
-                    descricao: Some("Escolher desarquiva".into()),
-                    ..ItemDeEscolha::new(p.id.clone(), p.nome.clone())
-                }
-            })
-            .collect();
-        if itens.is_empty() {
-            window.push_notification(aviso(Tom::Info, "Nenhum projeto arquivado"), cx);
-            return;
-        }
-        let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar projeto…", window, cx);
-            lista.definir(vec![GrupoDeEscolha { titulo: None, itens }], None, cx);
-            lista
-        });
-        self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, |this, _, evento: &EventoEscolha, window, cx| {
-            let EventoEscolha::Escolheu(projeto) = evento else {
-                return;
-            };
-            window.close_dialog(cx);
-            this.desarquivar_projeto(projeto.to_string(), cx);
-            this.abrir_vista(super::Vista::Projeto(projeto.to_string()), window, cx);
-        }));
-        self.foco_antes_do_dialogo(window, cx);
-        let vista = lista.clone();
-        window.open_dialog(cx, move |dialogo, window, _| {
-            moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Projetos arquivados", None)))
-                .child(vista.clone())
-                .on_ok(|_, _, _| false)
-        });
-        lista.update(cx, |l, cx| l.abrir(window, cx));
+    /// Grava a pasta do último chat criado: o próximo, sem chat aberto, nasce nela.
+    fn lembrar_destino(&mut self, pasta: &Path, cx: &mut Context<Self>) {
+        self.ultimo_destino = Some(pasta.to_path_buf());
+        super::gravar_interface("ultimo_destino", serde_json::Value::String(pasta.to_string_lossy().to_string()), cx);
     }
 
     pub(super) fn abrir_configuracoes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -555,7 +353,7 @@ impl Janela {
             let subtitulo = div()
                 .id("configuracoes-pasta")
                 .font_weight(FontWeight::NORMAL)
-                .child("Valem para todos os projetos e chats")
+                .child("Valem para todos os chats")
                 .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
             moldura(dialogo, largura::G, window)
                 .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
@@ -565,103 +363,6 @@ impl Janela {
 }
 
 impl Janela {
-    /// "Localizar pasta…": uma pasta do projeto não está mais lá (renomeada, disco em outro lugar);
-    /// a escolhida passa a ser ela, e as tarefas que trabalhavam nela vão junto.
-    pub(super) fn localizar_pasta(&mut self, projeto: String, indice: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let escolha = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Usar esta pasta".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(caminhos))) = escolha.await else {
-                return;
-            };
-            let Some(pasta) = caminhos.into_iter().next() else {
-                return;
-            };
-            let Ok(Some(tarefa)) = this.update(cx, |this, cx| {
-                this.motor.clone().map(|motor| motor.update(cx, |m, cx| m.localizar_pasta(&projeto, indice, &pasta, cx)))
-            }) else {
-                return;
-            };
-            let resultado = tarefa.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                let nota = match resultado {
-                    Ok(None) => aviso(Tom::Pronto, format!("Pasta localizada: {}", com_til(&pasta))),
-                    Ok(Some(atencao)) => aviso(Tom::Atencao, format!("Pasta localizada. {atencao}")),
-                    Err(erro) => aviso(Tom::Erro, format!("A pasta não mudou: {erro}")),
-                };
-                window.push_notification(nota, cx);
-                this.git_pastas.clear();
-                this.readmes.borrow_mut().clear();
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// "Ativar git em “pasta”?": o repositório nasce com um commit dos arquivos atuais.
-    pub(super) fn confirmar_git_na_pasta(&mut self, pasta: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let nome = pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().to_string());
-        let sem_gitignore = !pasta.join(".gitignore").exists();
-        let detalhes = if sem_gitignore {
-            vec![(Lucide::FileText.into(), "Cria um .gitignore sem .env, ambientes e builds".into(), false)]
-        } else {
-            Vec::new()
-        };
-        let janela = cx.entity().downgrade();
-        let alvo = pasta.clone();
-        confirmar(
-            Confirmacao {
-                tom: TomConfirmacao::Neutro,
-                icone: Lucide::GitBranch.into(),
-                titulo: format!("Ativar git em “{nome}”?").into(),
-                texto: "Cria um repositório com um commit dos arquivos atuais. Nada é apagado nem enviado.".into(),
-                detalhes,
-                ok: "Ativar git".into(),
-                cancelar: "Cancelar".into(),
-                ok_perigo: false,
-            },
-            move |window, cx| {
-                let pasta = alvo.clone();
-                let _ = janela.update(cx, |this, cx| this.ativar_git(pasta, window, cx));
-            },
-            None,
-            window,
-            cx,
-        );
-    }
-
-    fn ativar_git(&mut self, pasta: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let nome = pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().to_string());
-        let tarefa = motor.update(cx, |m, cx| m.ativar_git(pasta.clone(), cx));
-        cx.spawn_in(window, async move |this, cx| {
-            let resultado = tarefa.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                match resultado {
-                    Ok(novo) => {
-                        // O repositório nasce com o commit: o aviso de sem git sai já.
-                        this.git_pastas.insert(pasta.clone(), true);
-                        let resumo = novo.resumo(&nome);
-                        let resumo = resumo.strip_suffix('.').unwrap_or(&resumo).to_string();
-                        window.push_notification(aviso(Tom::Pronto, resumo), cx);
-                    }
-                    Err(erro) => {
-                        this.git_pastas.remove(&pasta);
-                        window.push_notification(aviso_erro("Não deu para ativar o git", &erro), cx);
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
     pub(super) fn dialogo_renomear(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
@@ -713,147 +414,7 @@ impl Janela {
     }
 }
 
-/// O que a memória ganhou no disco desde que o diálogo abriu: as linhas que não estavam lá nem
-/// estão no texto editado (o Mestre lembrou algo com o diálogo aberto).
-pub(super) fn linhas_novas_da_memoria(inicial: &str, no_disco: &str, editado: &str) -> Vec<String> {
-    let antes: std::collections::HashSet<&str> = inicial.lines().map(str::trim).collect();
-    let agora: std::collections::HashSet<&str> = editado.lines().map(str::trim).collect();
-    no_disco
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !antes.contains(l) && !agora.contains(l))
-        .map(str::to_string)
-        .collect()
-}
-
 impl Janela {
-    /// "Memória do Mestre": o texto que entra no prompt dele a cada turno, editável (até 6000
-    /// caracteres), com Esquecer tudo, Cancelar e Salvar. Se o Mestre lembrou algo com o diálogo
-    /// aberto, o Salvar traz as linhas novas para o fim e pede para conferir.
-    pub(super) fn dialogo_memoria(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const LIMITE: usize = 6000;
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let inicial = motor.read(cx).memoria_do_mestre();
-        let campo = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(8, 18)
-                .placeholder("Nada lembrado ainda. Ex.: pagamentos vão para a Ninee; os textos da loja em português.")
-                .default_value(inicial.clone())
-        });
-        // O que estava no disco da última vez que o diálogo olhou.
-        let visto = Rc::new(RefCell::new(inicial));
-        let salvar = {
-            let (campo, motor, visto) = (campo.clone(), motor.clone(), visto.clone());
-            Rc::new(move |window: &mut Window, cx: &mut App| -> bool {
-                let editado = campo.read(cx).value().to_string();
-                let no_disco = motor.read(cx).memoria_do_mestre();
-                if no_disco != *visto.borrow() {
-                    let novas = linhas_novas_da_memoria(&visto.borrow(), &no_disco, &editado);
-                    *visto.borrow_mut() = no_disco;
-                    if !novas.is_empty() {
-                        let junto = format!("{}\n{}", editado.trim_end(), novas.join("\n"));
-                        campo.update(cx, |c, cx| c.set_value(junto, window, cx));
-                        let texto = format!(
-                            "O Mestre lembrou {} enquanto você editava; {} no fim. Confira e salve de novo.",
-                            contagem(novas.len(), "linha nova", "linhas novas"),
-                            if novas.len() == 1 { "ela entrou" } else { "elas entraram" }
-                        );
-                        window.push_notification(aviso(Tom::Atencao, texto), cx);
-                        return false;
-                    }
-                }
-                if editado.chars().count() > LIMITE {
-                    window.push_notification(aviso(Tom::Atencao, format!("A memória passa de {LIMITE} caracteres: junte ou tire itens.")), cx);
-                    return false;
-                }
-                match motor.read(cx).gravar_memoria_do_mestre(&editado) {
-                    Ok(()) => {
-                        window.push_notification(aviso(Tom::Pronto, "Memória do Mestre salva"), cx);
-                        true
-                    }
-                    Err(erro) => {
-                        window.push_notification(aviso_erro("Não deu para salvar a memória", &erro), cx);
-                        false
-                    }
-                }
-            })
-        };
-        let foco = campo.read(cx).focus_handle(cx);
-        self.foco_antes_do_dialogo(window, cx);
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let texto = campo.read(cx).value().to_string();
-            let n = texto.chars().count();
-            let no_botao = salvar.clone();
-            let (m, c) = (motor.clone(), campo.clone());
-            let esquecer = botao_fantasma("memoria-esquecer", Some(Lucide::Trash.into()), "Esquecer tudo", TamanhoBotao::Controle, window, cx)
-                .when(texto.trim().is_empty(), |b| b.disabled(true).opacity(0.45))
-                .on_click(move |_, window, cx| {
-                    let (m, c) = (m.clone(), c.clone());
-                    confirmar(
-                        Confirmacao {
-                            tom: TomConfirmacao::Perigo,
-                            icone: Lucide::Brain.into(),
-                            titulo: "Esquecer tudo o que o Mestre lembra?".into(),
-                            texto: "A memória fica vazia: o Mestre deixa de saber as preferências que você disse.".into(),
-                            detalhes: Vec::new(),
-                            ok: "Esquecer tudo".into(),
-                            cancelar: "Cancelar".into(),
-                            ok_perigo: true,
-                        },
-                        move |window, cx| match m.read(cx).gravar_memoria_do_mestre("") {
-                            Ok(()) => {
-                                c.update(cx, |c, cx| c.set_value("", window, cx));
-                                window.push_notification(aviso(Tom::Pronto, "Memória do Mestre esvaziada"), cx);
-                            }
-                            Err(erro) => window.push_notification(aviso_erro("Não deu para esvaziar a memória", &erro), cx),
-                        },
-                        None,
-                        window,
-                        cx,
-                    );
-                });
-            let principal = botao_primario("memoria-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
-                .when(n > LIMITE, |b| b.disabled(true).opacity(0.45).tooltip(format!("Passa de {LIMITE} caracteres")))
-                .on_click(move |_, window, cx| {
-                    if no_botao(window, cx) {
-                        window.close_dialog(cx);
-                    }
-                });
-            let cor = if n > LIMITE { Cores::vermelho() } else { Cores::tenue() };
-            moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Memória do Mestre", Some("Entra no começo de cada conversa dele; você pode editar".into()))))
-                .child(Textarea::new(&campo))
-                .child(
-                    div()
-                        .pt(r(8.))
-                        .flex()
-                        .gap(r(8.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .metadado()
-                                .text_color(Cores::tenue())
-                                .child("Uma preferência por linha. O Mestre só grava sozinho o que você mesmo disse; o resto pede confirmação."),
-                        )
-                        .child(div().flex_none().metadado().text_color(cor).child(format!("{} de {LIMITE}", super::lateral::milhar(n)))),
-                )
-                .footer(
-                    RodapeDialogo::new()
-                        .esquerda(esquecer)
-                        .cancelar(
-                            botao_fantasma("memoria-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .principal(principal),
-                )
-                // O Enter quebra a linha no campo; quem salva é o botão.
-                .on_ok(|_, _, _| false)
-        });
-        window.focus(&foco, cx);
-    }
 
     pub(super) fn dialogo_contas(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.abrir_contas(false, window, cx);
@@ -886,7 +447,7 @@ impl Janela {
 
     /// Arquivos da pasta da conversa, lidos em segundo plano; o escolhido entra na mensagem como
     /// "@caminho".
-    pub(super) fn dialogo_arquivos_projeto(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn dialogo_mencionar_arquivo(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pasta) = self.motor.as_ref().and_then(|m| m.read(cx).chat(&chat).map(|c| c.cwd.clone())) else {
             return;
         };
@@ -948,50 +509,40 @@ impl Janela {
     }
 }
 
-/// As outras conversas com mensagens, por projeto (as mais recentes primeiro): coordenador ou
-/// trabalhador, quando falou e quantas mensagens.
+/// As outras conversas com mensagens (as mais recentes primeiro): quando falou, quantas mensagens e
+/// a pasta, que também vale na busca.
 fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
     let mut conversas: Vec<_> = motor.chats.iter().filter(|c| c.id != chat && !c.itens.is_empty()).collect();
     conversas.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
-    let mut grupos: Vec<GrupoDeEscolha> = Vec::new();
-    let mut projetos: Vec<String> = motor.projetos_visiveis().iter().map(|p| p.id.clone()).collect();
-    projetos.push(String::new());
-    for projeto in projetos {
-        let nome = motor.nome_do_projeto(&projeto);
-        let itens: Vec<ItemDeEscolha> = conversas
-            .iter()
-            .filter(|c| c.projeto == projeto && c.papel != Papel::Mestre)
-            .map(|c| {
-                let mensagens = c
-                    .itens
-                    .iter()
-                    .filter(|i| matches!(i, Item::Usuario { .. } | Item::Assistente { .. } | Item::Entrega { .. }))
-                    .count();
-                let quando = tempo_relativo(c.atualizado_em);
-                let quando = if quando == "agora" { quando } else { format!("há {quando}") };
-                let icone = if c.papel == Papel::Trabalhador { Lucide::Wrench } else { Lucide::MessagesSquare };
-                let rodando = sinal_do_chat(motor, c).filter(|s| *s == Sinal::Rodando);
-                ItemDeEscolha {
-                    simbolo: Some(Simbolo::icone(icone)),
-                    descricao: Some(format!("{quando} · {}", contagem(mensagens, "mensagem", "mensagens")).into()),
-                    selos: rodando.map(|s| Selo::ponto(s.cor()).vazado()).into_iter().collect(),
-                    termos: Some(nome.clone().into()),
-                    ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
-                }
-            })
-            .collect();
-        if !itens.is_empty() {
-            grupos.push(GrupoDeEscolha { titulo: Some(nome.into()), itens });
-        }
-    }
-    if grupos.is_empty() {
+    let itens: Vec<ItemDeEscolha> = conversas
+        .iter()
+        .map(|c| {
+            let mensagens = c
+                .itens
+                .iter()
+                .filter(|i| matches!(i, Item::Usuario { .. } | Item::Assistente { .. } | Item::Entrega { .. }))
+                .count();
+            let quando = tempo_relativo(c.atualizado_em);
+            let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+            let pasta = if motor.sem_pasta(c) { "sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+            let rodando = sinal_do_chat(motor, c).filter(|s| *s == Sinal::Rodando);
+            ItemDeEscolha {
+                simbolo: Some(Simbolo::icone(Lucide::MessagesSquare)),
+                descricao: Some(format!("{quando} · {} · {pasta}", contagem(mensagens, "mensagem", "mensagens")).into()),
+                selos: rodando.map(|s| Selo::ponto(s.cor()).vazado()).into_iter().collect(),
+                termos: Some(com_til(&c.cwd).into()),
+                ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
+            }
+        })
+        .collect();
+    if itens.is_empty() {
         let vazio = "Nenhuma outra conversa com mensagens";
-        grupos.push(GrupoDeEscolha {
+        return vec![GrupoDeEscolha {
             titulo: None,
             itens: vec![ItemDeEscolha { desabilitado: Some(vazio.into()), ..ItemDeEscolha::new("", vazio) }],
-        });
+        }];
     }
-    grupos
+    vec![GrupoDeEscolha { titulo: None, itens }]
 }
 
 impl Janela {
@@ -1030,39 +581,12 @@ impl Janela {
     }
 }
 
-impl Janela {
-    /// Lista e formulário no mesmo diálogo: o cabeçalho e o rodapé seguem a página.
-    pub(super) fn dialogo_rotinas(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let (janela, projeto) = (cx.entity().downgrade(), self.vista.projeto().map(str::to_string));
-        let vista = cx.new(|cx| super::rotinas::Rotinas::new(motor, janela, projeto, window, cx));
-        self.foco_antes_do_dialogo(window, cx);
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let enter = vista.clone();
-            moldura(dialogo, largura::G, window)
-                .title(topo(super::rotinas::Rotinas::cabecalho(&vista, cx)))
-                .child(vista.clone())
-                .footer(super::rotinas::Rotinas::rodape(&vista, window, cx))
-                // Enter no pedido salva (Shift+Enter quebra a linha); o diálogo continua aberto.
-                .on_ok(move |_, window, cx| {
-                    enter.update(cx, |v, cx| v.enter(window, cx));
-                    false
-                })
-        });
-    }
-}
-
 #[cfg(test)]
 mod testes {
     // Só o que é preciso: o `use gpui_kit::*` lá de cima traz um `test` que troca o da std.
-    use super::{
-        AVULSOS, AlvoCtrlN, CRIAR_PROJETO, NOVO_PROJETO, ProjetoNaPaleta, alvo_do_ctrl_n, com_til, contas_conectadas,
-        OUTRA_PASTA, descricao_do_projeto, grupos_da_paleta, nome_livre,
-    };
-    use crate::ui::Vista;
-    use crate::{modelo::agora, ui::icone_projeto::ICONES};
+    use std::path::{Path, PathBuf};
+
+    use super::{Destino, OUTRA_PASTA, PastaNaPaleta, SEM_PASTA, com_til, contas_conectadas, destino_do_novo_chat, grupos_da_paleta};
 
     #[test]
     fn contagem_de_contas() {
@@ -1079,203 +603,94 @@ mod testes {
         assert_eq!(com_til(std::path::Path::new("/etc/vitral")), "/etc/vitral");
     }
 
-    fn projeto(nome: &str) -> ProjetoNaPaleta {
-        ProjetoNaPaleta {
-            id: nome.into(),
-            nome: nome.into(),
-            icone: &ICONES[0],
-            cor: 0x8fb6ff,
-            descricao: descricao_do_projeto(0, None),
-            selo: None,
-        }
-    }
-
     #[test]
-    fn paleta_filtra_pelo_nome_e_oferece_criar() {
-        let projetos = [projeto("loja-api"), projeto("site-ninee")];
+    fn paleta_mostra_as_pastas_outra_e_sem_pasta() {
+        let pastas = [PastaNaPaleta::new(PathBuf::from("/p/loja-api"), true), PastaNaPaleta::new(PathBuf::from("/p/site-ninee"), false)];
         let chaves = |busca: &str| -> Vec<String> {
-            grupos_da_paleta(&projetos, busca)
-                .iter()
-                .flat_map(|g| g.itens.iter().map(|i| i.chave.to_string()))
-                .collect()
+            grupos_da_paleta(&pastas, busca).iter().flat_map(|g| g.itens.iter().map(|i| i.chave.to_string())).collect()
         };
-        assert_eq!(chaves(""), ["loja-api", "site-ninee", OUTRA_PASTA, AVULSOS]);
-        assert_eq!(chaves("NINEE"), ["site-ninee"]);
-        assert_eq!(chaves("avul"), [AVULSOS]);
-        assert_eq!(chaves("sem pasta"), [AVULSOS]);
+        assert_eq!(chaves(""), ["/p/loja-api", "/p/site-ninee", OUTRA_PASTA, SEM_PASTA]);
+        assert_eq!(chaves("NINEE"), ["/p/site-ninee"]);
+        assert_eq!(chaves("/p/"), ["/p/loja-api", "/p/site-ninee"]);
+        assert_eq!(chaves("sem pasta"), [SEM_PASTA]);
         assert_eq!(chaves("outra"), [OUTRA_PASTA]);
-        assert_eq!(chaves(" ops "), [format!("{CRIAR_PROJETO}ops")]);
-        assert_eq!(grupos_da_paleta(&projetos, "")[0].titulo.as_deref(), Some("Pastas"));
-        let titulo = &grupos_da_paleta(&projetos, "ops")[0].itens[0].titulo;
-        assert_eq!(titulo.as_ref(), "Criar o projeto “ops”");
+        // Nada de criar projeto: sem pasta que bata, a lista fica vazia.
+        assert!(chaves(" ops ").is_empty());
+        let grupos = grupos_da_paleta(&pastas, "");
+        assert_eq!(grupos[0].titulo.as_deref(), Some("Pastas"));
+        assert_eq!(grupos[0].itens[0].titulo.as_ref(), "loja-api");
+        assert_eq!(grupos[0].itens[0].selos.len(), 1, "a pasta do chat aberto vem marcada");
+        assert!(grupos[0].itens[1].selos.is_empty());
     }
 
     #[test]
-    fn ctrl_n_direto_no_projeto_e_nos_avulsos_e_marcado_na_visao_geral() {
-        let projetos = vec!["loja".to_string(), "site".to_string()];
-        let projeto = Vista::Projeto("loja".into());
-        assert_eq!(alvo_do_ctrl_n(&projeto, Some("site"), None, &projetos), AlvoCtrlN::Direto("loja".into()));
-        assert_eq!(alvo_do_ctrl_n(&Vista::Avulsos, Some("loja"), None, &projetos), AlvoCtrlN::Direto(String::new()));
-        // Um projeto que sumiu da vista cai na paleta.
-        let sumiu = Vista::Projeto("velho".into());
-        assert!(matches!(alvo_do_ctrl_n(&sumiu, None, None, &projetos), AlvoCtrlN::Paleta(_)));
-        // Na visão geral: o chat aberto sem projeto (o Mestre, um avulso) marca Avulsos.
-        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some(""), Some("site"), &projetos), AlvoCtrlN::Paleta(Some(String::new())));
-        // Senão, o último destino; sem ele (ou se sumiu), o projeto do chat aberto.
-        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some("loja"), Some("site"), &projetos), AlvoCtrlN::Paleta(Some("site".into())));
-        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, Some("loja"), Some("velho"), &projetos), AlvoCtrlN::Paleta(Some("loja".into())));
-        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, Some(""), &projetos), AlvoCtrlN::Paleta(Some(String::new())));
-        assert_eq!(alvo_do_ctrl_n(&Vista::Geral, None, None, &projetos), AlvoCtrlN::Paleta(None));
-    }
-
-    #[test]
-    fn nome_do_projeto_que_nasce_da_pasta() {
-        let usados = ["loja", "loja 2"];
-        let serve = |nome: &str| !usados.contains(&nome);
-        assert_eq!(nome_livre("site", serve), "site");
-        assert_eq!(nome_livre("loja", serve), "loja 3");
-        assert_eq!(nome_livre("  ", serve), "pasta");
-    }
-
-    #[test]
-    fn descricao_do_projeto_na_paleta() {
-        assert_eq!(descricao_do_projeto(0, None), "Nenhuma conversa ainda");
-        assert_eq!(descricao_do_projeto(1, Some(agora())), "1 conversa · última agora");
-        assert_eq!(descricao_do_projeto(3, Some(agora() - 7200)), "3 conversas · última há 2 h");
+    fn novo_chat_na_pasta_do_aberto_senao_na_ultima_senao_pergunta() {
+        let existe = |p: &Path| p != Path::new("/sumiu");
+        let (loja, site) = (Path::new("/p/loja"), Path::new("/p/site"));
+        assert_eq!(destino_do_novo_chat(None, Some((loja, false)), Some(site), existe), Destino::Pasta(loja.into()));
+        // O chat Sem pasta abre outro Sem pasta, não a pasta só dele.
+        assert_eq!(destino_do_novo_chat(None, Some((Path::new("/d/avulsos/a"), true)), Some(site), existe), Destino::SemPasta);
+        assert_eq!(destino_do_novo_chat(None, None, Some(site), existe), Destino::Pasta(site.into()));
+        // A pasta do chat aberto sumiu do disco: vale a última usada.
+        assert_eq!(destino_do_novo_chat(None, Some((Path::new("/sumiu"), false)), Some(site), existe), Destino::Pasta(site.into()));
+        assert_eq!(destino_do_novo_chat(None, None, Some(Path::new("/sumiu")), existe), Destino::Perguntar);
+        assert_eq!(destino_do_novo_chat(None, None, None, existe), Destino::Perguntar);
+        // A pasta de trabalho vence o chat aberto e a última usada; sumida do disco, não vale.
+        assert_eq!(destino_do_novo_chat(Some(site), Some((loja, false)), None, existe), Destino::Pasta(site.into()));
+        assert_eq!(destino_do_novo_chat(Some(Path::new("/sumiu")), Some((loja, false)), None, existe), Destino::Pasta(loja.into()));
     }
 }
 
 impl Janela {
-    /// "Ver log" de um check que falhou (720): o fim do log (o motor já recorta) em código, "Log
-    /// completo no GitHub" e "Mandar ao chat".
-    pub(super) fn dialogo_log(&mut self, tarefa: u64, repo: String, nome: String, link: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let recebe = motor.update(cx, |m, cx| m.log_do_check(&repo, link.clone(), cx));
-        let lido: Rc<RefCell<Option<Result<String, String>>>> = Rc::new(RefCell::new(None));
-        let guardar = lido.clone();
-        // O log abre no fim, onde costuma estar o erro.
-        let rolagem = ScrollHandle::new();
-        let ao_fim = rolagem.clone();
-        window
-            .spawn(cx, async move |cx| {
-                let resultado = recebe.recv().await.unwrap_or_else(|_| Err("A leitura do log parou no meio.".into()));
-                let _ = cx.update(|window, _| {
-                    *guardar.borrow_mut() = Some(resultado);
-                    ao_fim.scroll_to_bottom();
-                    window.refresh();
-                });
-            })
-            .detach();
-        let largura_log = largura_do_log(window);
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let corpo: AnyElement = match &*lido.borrow() {
-                None => div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(r(8.))
-                    .py(r(32.))
-                    .corpo_ui()
-                    .text_color(Cores::tenue())
-                    .child(super::popover_issues::spinner(14., window))
-                    .child("Lendo o log no GitHub…")
-                    .into_any_element(),
-                Some(Err(erro)) => super::componentes::Alerta::new(Tom::Atencao, format!("Não consegui ler o log: {erro}")).into_any_element(),
-                Some(Ok(texto)) => div()
-                    .id("log-do-check")
-                    .max_h(r(440.))
-                    .overflow_y_scroll()
-                    .track_scroll(&rolagem)
-                    .child(super::mensagens::markdown("log-do-check".into(), format!("````text\n{}\n````", texto.trim_end()), cx))
-                    .into_any_element(),
-            };
-            let abrir = super::painel_pr::link_permitido(&link, super::painel_pr::OrigemDoTexto::Terceiros).then(|| {
-                let url = link.clone();
-                botao_fantasma("log-no-github", Some(Lucide::ExternalLink.into()), "Log completo no GitHub", TamanhoBotao::Controle, window, cx)
-                    .on_click(move |_, _, cx| cx.open_url(&url))
-            });
-            let (motor, link) = (motor.clone(), link.clone());
-            let mandar = botao_primario("log-mandar", Some(Lucide::MessageSquareQuote.into()), "Mandar ao chat", TamanhoBotao::Controle, window, cx)
-                .tooltip("Mandar esta falha ao chat (com o log), para ele corrigir")
-                .on_click(move |_, window, cx| {
-                    let recebe = motor.update(cx, |m, cx| m.mandar_falha_ao_chat(tarefa, Some(link.clone()), cx));
-                    super::painel_pr::responder(recebe, window, cx);
-                    window.close_dialog(cx);
-                });
-            let mut rodape = RodapeDialogo::new();
-            if let Some(abrir) = abrir {
-                rodape = rodape.esquerda(abrir);
-            }
-            moldura(dialogo, largura_log, window)
-                .title(topo(cabecalho(format!("Log de {nome}"), Some("O fim do log, onde costuma estar o erro.".into())).uma_linha()))
-                .child(corpo)
-                .footer(rodape.principal(mandar))
-        });
-    }
-
-    /// Mesclar com o que pede confirmação: os commits que não vieram do Vitral (o PR mescla
-    /// exatamente o head que está na tela) e os checks não obrigatórios que falharam (`UNSTABLE`).
-    pub(super) fn confirmar_mescla(
-        &mut self,
-        tarefa: u64,
-        pr: &crate::modelo::Pr,
-        metodo: Option<String>,
-        confirmados: Vec<crate::motor::Confirmado>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let de_fora = confirmados.iter().any(|c| matches!(c, crate::motor::Confirmado::CommitsDeFora(_)));
-        let instavel = confirmados.contains(&crate::motor::Confirmado::Instavel);
-        let mut detalhes: Vec<(gpui_kit::component::Icon, SharedString, bool)> = pr
-            .commits_de_fora
+    /// Fecha os painéis das conversas (o último fica vazio) e tira a seleção delas; com `sairam`
+    /// (saíram do Vitral), esquece também os rascunhos e os anexos.
+    pub(super) fn largar_chats(&mut self, chats: &[String], sairam: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let fechar: Vec<u64> = self
+            .paineis
             .iter()
-            .map(|sha| (Lucide::GitCommitHorizontal.into(), SharedString::from(format!("{sha}, de fora do Vitral")), true))
+            .filter(|p| p.chat.as_ref().is_some_and(|c| chats.contains(c)))
+            .map(|p| p.id)
             .collect();
-        if instavel {
-            detalhes.push((Lucide::TriangleAlert.into(), "Checks que não são obrigatórios falharam".into(), true));
+        // As abas de fundo dessas conversas saem primeiro, em todos os painéis.
+        for painel in &mut self.paineis {
+            let a_vista = painel.chat.clone();
+            painel.abas.retain(|a| Some(a) == a_vista.as_ref() || !chats.contains(a));
         }
-        let head: String = pr.sha.chars().take(7).collect();
-        let texto = match (de_fora, instavel) {
-            (true, _) => format!(
-                "Chegaram commits que não vieram do Vitral. O PR mescla exatamente o head que você vê agora ({head}); se chegar outro, o GitHub recusa."
-            ),
-            (false, _) => "O GitHub deixa mesclar assim, mas algum check que não é obrigatório falhou.".to_string(),
-        };
-        let metodo_texto = metodo.as_deref().map_or("o método padrão", super::painel_pr::metodo_em_texto).to_string();
-        confirmar(
-            Confirmacao {
-                tom: TomConfirmacao::Atencao,
-                icone: Lucide::GitMerge.into(),
-                titulo: format!("Mesclar o PR #{} mesmo assim?", pr.numero).into(),
-                texto: texto.into(),
-                detalhes,
-                ok: format!("Mesclar ({metodo_texto})").into(),
-                cancelar: "Agora não".into(),
-                ok_perigo: false,
-            },
-            move |window, cx| {
-                let recebe = motor.update(cx, |m, cx| m.mesclar_pelo_usuario(tarefa, metodo.clone(), confirmados.clone(), cx));
-                super::painel_pr::responder(recebe, window, cx);
-            },
-            None,
-            window,
-            cx,
-        );
+        for id in fechar {
+            let (com_outras_abas, a_vista) = self
+                .paineis
+                .iter()
+                .find(|p| p.id == id)
+                .map_or((false, None), |p| (p.abas.len() > 1, p.chat.clone()));
+            if let (true, Some(chat)) = (com_outras_abas, a_vista) {
+                // O painel fica com as outras abas: só a da conversa que saiu fecha.
+                self.fechar_aba(id, &chat, window, cx);
+            } else if self.paineis.len() > 1 {
+                self.fechar_painel(id, cx);
+            } else if let Some(ix) = self.paineis.iter().position(|p| p.id == id) {
+                self.ativo = ix;
+                self.selecionar(None, window, cx);
+            }
+        }
+        if self.selecionado.as_ref().is_some_and(|c| chats.contains(c)) {
+            self.selecionado = None;
+        }
+        if self.realce_lista.as_ref().is_some_and(|c| chats.contains(c)) {
+            self.realce_lista = None;
+        }
+        if sairam {
+            for chat in chats {
+                self.rascunhos.remove(chat);
+                self.anexos.remove(chat);
+                self.ultrathink.remove(chat);
+                self.ultracode.remove(chat);
+            }
+            // A conversa saiu do Vitral: o rascunho dela também sai do disco.
+            self.agendar_gravacao(cx);
+        }
+        cx.notify();
     }
-}
 
-/// O diálogo do log tem 720 a 100%, sem passar da janela.
-fn largura_do_log(window: &Window) -> f32 {
-    let escala = window.rem_size().as_f32() / 15.;
-    (window.viewport_size().width.as_f32() / escala - 64.).min(720.)
-}
-
-impl Janela {
     /// Arquivar pelo menu do chat: o chat vazio sai em vez de arquivar; arquivar se desfaz no aviso.
     pub(super) fn arquivar_do_menu(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
@@ -1286,54 +701,6 @@ impl Janela {
             window.push_notification(aviso(Tom::Info, "Chat vazio apagado"), cx);
             return;
         }
-        super::lateral::avisar_arquivadas(motor, vec![chat.clone()], "Conversa arquivada".into(), window, cx);
-        // Só pergunta ao arquivar um coordenador parado com cópias sobrando.
-        self.oferecer_limpeza_ao_arquivar(&chat, window, cx)
-    }
-
-    /// Arquivar um chat com o PR aberto (seção 6.9): fechar o PR no GitHub, ou deixar aberto (o
-    /// Vitral para de acompanhar e desliga o mesclar quando ficar pronto). Cancelar não arquiva.
-    pub(super) fn dialogo_arquivar_com_pr(&mut self, chat: String, tarefa: u64, numero: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let janela = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialogo, window, cx| {
-            let cancelar = botao_fantasma("arquivar-pr-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
-                .on_click(|_, window, cx| window.close_dialog(cx));
-            let deixar = {
-                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
-                botao_fantasma("arquivar-pr-deixar", None, "Deixar aberto", TamanhoBotao::Controle, window, cx)
-                    .tooltip("Arquiva o chat; o PR fica no GitHub e o Vitral para de acompanhar")
-                    .on_click(move |_, window, cx| {
-                        motor.update(cx, |m, cx| {
-                            m.armar_mescla(tarefa, false, None, cx);
-                            m.acompanhar(tarefa, false, cx);
-                        });
-                        window.close_dialog(cx);
-                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
-                    })
-            };
-            let fechar = {
-                let (motor, janela, chat) = (motor.clone(), janela.clone(), chat.clone());
-                super::componentes::botao_perigo("arquivar-pr-fechar", None, "Fechar o PR", TamanhoBotao::Controle, window, cx)
-                    .tooltip("Fecha o PR no GitHub, com o comentário “Fechado pelo Vitral: chat arquivado.”, e arquiva o chat")
-                    .on_click(move |_, window, cx| {
-                        let recebe = motor.update(cx, |m, cx| m.fechar_pr(tarefa, Some("Fechado pelo Vitral: chat arquivado.".into()), cx));
-                        super::painel_pr::responder(recebe, window, cx);
-                        window.close_dialog(cx);
-                        let _ = janela.update(cx, |this, cx| this.arquivar_do_menu(chat.clone(), window, cx));
-                    })
-            };
-            moldura(dialogo, largura::P, window)
-                .title(topo(cabecalho(format!("O chat tem o PR #{numero} aberto"), Some("Arquivar o chat não mexe no PR sozinho.".into()))))
-                .child(
-                    div()
-                        .corpo_ui()
-                        .text_color(Cores::tenue())
-                        .child("Fechar o PR o fecha no GitHub. Deixar aberto mantém o PR lá, e o Vitral para de acompanhar e desliga o “Mesclar quando ficar pronto”."),
-                )
-                .footer(RodapeDialogo::new().esquerda(cancelar).cancelar(deixar).principal(fechar))
-        });
+        super::lateral::avisar_arquivadas(motor, vec![chat], "Conversa arquivada".into(), window, cx);
     }
 }

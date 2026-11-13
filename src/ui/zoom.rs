@@ -133,9 +133,14 @@ pub fn pilula(cx: &App) -> Option<impl IntoElement + use<>> {
 fn aplicar(cx: &mut App) {
     let zoom = cx.global::<Zoom>();
     let (texto, mono, fator) = (zoom.texto * zoom.fator, zoom.mono * zoom.fator, zoom.fator);
+    // Os raios em px acompanham o zoom (ver `tema::definir_zoom_dos_raios`).
+    crate::tema::definir_zoom_dos_raios(fator);
     Theme::update(cx, |tema| {
         tema.font_size = texto;
         tema.mono_font_size = mono;
+        // Os raios que o kit usa nos componentes dele (botões, campos, menus) crescem junto.
+        tema.radius = crate::tema::raio::controle();
+        tema.radius_lg = crate::tema::raio::peca();
         tema.notification.width = px(LARGURA_AVISO * fator);
     });
 }

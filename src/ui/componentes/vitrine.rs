@@ -15,14 +15,13 @@ use gpui_kit::*;
 
 use super::*;
 use crate::tema::{
-    CORES_PROJETO, Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, gradiente_destaque, gradiente_quente,
+    Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, gradiente_quente,
     aresta_de_poco, aresta_de_tecla, halo_foco, linha_de_luz,
     r, raio, sombra_dialogo, sombra_elevado, sombra_flutuante, tam,
 };
 use crate::atualizacao::saude::Aviso;
 use crate::ui::atualizacao as atualizacao_ui;
 use crate::ui::fechar::{Parar, confirmacao_de_parar};
-use crate::ui::icone_projeto::ICONES;
 use crate::ui::movimento::{self, Curva, De};
 use crate::ui::{NovaConversa, zoom};
 
@@ -126,7 +125,7 @@ impl Vitrine {
         });
         let previa = cx.new(|_| PreviaArrasto {
             titulo: "Cupons de desconto na API".into(),
-            simbolo: Simbolo::Papel(Papel::Coordenador),
+            simbolo: Simbolo::Papel(Papel::Avulso),
         });
         let _escolha = cx.subscribe(&lista, |vitrine, _, evento, cx| {
             vitrine.escolhido = match evento {
@@ -265,8 +264,8 @@ impl Vitrine {
         } else {
             "Metal em repouso: parado, nada redesenha. Ele anda quando um chat à vista trabalha."
         };
-        let peca = Corners::all(raio::PECA);
-        let cartao = Corners::all(raio::CARTAO);
+        let peca = Corners::all(raio::peca());
+        let cartao = Corners::all(raio::cartao());
         let disco = Corners::all(raio::PILULA);
         let placa = |veu: Option<Hsla>| div().relative().w(r(300.)).h(r(52.)).child(metal::abertura(metal::Encaixe::Cobrir, veu, cartao));
         let gota = |veu: Option<Hsla>| div().relative().flex_none().size(r(36.)).child(metal::abertura(metal::Encaixe::Cobrir, veu, disco));
@@ -293,7 +292,7 @@ impl Vitrine {
                             .px(r(16.))
                             .gap(r(8.))
                             .child(div().titulo_cartao().text_color(Cores::forte()).child("Vitral"))
-                            .child(div().metadado().text_color(Cores::texto()).child("4 projetos")),
+                            .child(div().metadado().text_color(Cores::texto()).child("17 chats")),
                     ),
                 ),
             );
@@ -313,7 +312,7 @@ impl Vitrine {
                     .relative()
                     .w(r(300.))
                     .h(r(64.))
-                    .child(metal::aro_de_metal(raio::PECA, px(2.), 1.))
+                    .child(metal::aro_de_metal(raio::peca(), px(2.), 1.))
                     .child(
                         div()
                             .relative()
@@ -383,8 +382,8 @@ impl Vitrine {
     fn chips(&self, window: &mut Window, cx: &mut App) -> Div {
         quatro("chips", "Chip", window, cx, |fundo, window, cx| {
             let id = |nome: &str| SharedString::from(format!("{nome}-{}", fundo as usize));
-            let modo = |valor: &str, sem_copia: bool| {
-                let (icone, cor) = icone_do_modo(valor, sem_copia);
+            let modo = |valor: &str| {
+                let (icone, cor) = icone_do_modo(valor);
                 Simbolo::Icone(icone, Some(cor))
             };
             div()
@@ -399,8 +398,8 @@ impl Vitrine {
                     .child(Chip::new(id("foco"), "foco").seta(true).construir(window, cx).border_color(Cores::destaque()).shadow(halo_foco())))
                 .child(fileira()
                     .child(Chip::new(id("esforco"), "Médio").simbolo(Simbolo::Sinal { nivel: 3, total: 5 }).cor_rotulo(Cores::ciano()).seta(true).construir(window, cx))
-                    .child(Chip::new(id("modo"), "Sem perguntar").simbolo(modo("bypassPermissions", false)).seta(true).construir(window, cx))
-                    .child(Chip::new(id("alerta"), "Sem perguntar").simbolo(modo("bypassPermissions", true)).alerta(Cores::vermelho()).seta(true).construir(window, cx))
+                    .child(Chip::new(id("modo"), "Sem perguntar").simbolo(modo("bypassPermissions")).seta(true).construir(window, cx))
+                    .child(Chip::new(id("alerta"), "Sem perguntar").simbolo(modo("bypassPermissions")).alerta(Cores::vermelho()).seta(true).construir(window, cx))
                     .child(Chip::new(id("icone"), "Modelo").simbolo(Simbolo::Marca(Marca::Claude)).so_icone(true).dica("Modelo: Opus 5.5").construir(window, cx))
                     .child(Chip::new(id("desab"), "Conta").seta(true).desabilitado("Pare a conversa para trocar de conta").construir(window, cx)))
                 .child(fileira()
@@ -422,9 +421,9 @@ impl Vitrine {
                 .flex_col()
                 .gap(r(8.))
                 .child(fileira()
-                    .child(botao_fantasma(id("f24"), Some(Lucide::Eye.into()), "Revisar", TamanhoBotao::Linha, window, cx))
+                    .child(botao_fantasma(id("f24"), Some(Lucide::Eye.into()), "Ver o pedido", TamanhoBotao::Linha, window, cx))
                     .child(botao_fantasma(id("f28"), Some(Lucide::CodeXml.into()), "Abrir no VS Code", TamanhoBotao::Barra, window, cx))
-                    .child(botao_fantasma(id("f32"), None, "Mestre", TamanhoBotao::Controle, window, cx))
+                    .child(botao_fantasma(id("f32"), None, "Em outra pasta…", TamanhoBotao::Controle, window, cx))
                     .child(botao_fantasma(id("fsel"), Some(Lucide::Focus.into()), "Modo foco", TamanhoBotao::Barra, window, cx).selected(true))
                     .child(botao_fantasma(id("fdes"), Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Barra, window, cx).disabled(true).tooltip("Já está rodando")))
                 .child(fileira()
@@ -432,8 +431,8 @@ impl Vitrine {
                     .child(botao_icone(id("i28"), Lucide::PanelRight, "Painel da direita", TamanhoBotao::Barra, window, cx))
                     .child(botao_icone(id("i28h"), Lucide::Ellipsis, "Mais", TamanhoBotao::Barra, window, cx).bg(Cores::hover()))
                     .child(botao_icone(id("i28s"), Lucide::PanelRight, "Painel da direita", TamanhoBotao::Barra, window, cx).selected(true))
-                    .child(botao_perigo(id("perigo"), Some(Lucide::Trash.into()), "Apagar a cópia…", TamanhoBotao::Barra, window, cx))
-                    .child(botao_primario(id("prim"), Some(Lucide::GitMerge.into()), "Juntar", TamanhoBotao::Controle, window, cx)))
+                    .child(botao_perigo(id("perigo"), Some(Lucide::Unplug.into()), "Desconectar…", TamanhoBotao::Barra, window, cx))
+                    .child(botao_primario(id("prim"), Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)))
                 .child(fileira()
                     .child(BotaoRedondo::new(id("r-prim"), Some(Lucide::Plus.into()), "Nova conversa").variante(VarianteRedonda::Primario).diametro(28.))
                     .child(BotaoRedondo::new(id("r-claro"), Some(Lucide::ArrowUp.into()), "Enviar").variante(VarianteRedonda::Claro))
@@ -473,7 +472,7 @@ impl Vitrine {
                 .bg(Cores::cartao_elevado())
                 .border_1()
                 .border_color(Cores::linha())
-                .reflexo(raio::CARTAO)
+                .reflexo(raio::cartao())
                 .corpo_ui()
                 .child(nome)
         };
@@ -488,22 +487,6 @@ impl Vitrine {
                     d.w(r(120. * t)).h(r(4.)).rounded_full().bg(Cores::destaque())
                 }),
             );
-        let ponteiro = movimento::Hover::de("mov-quadrado-hover", window, cx);
-        let lugar = div()
-            .id("mov-quadrado")
-            .size(r(40.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(raio::CARTAO)
-            .cursor_pointer()
-            .on_hover(ponteiro.ouvinte())
-            .child(
-                QuadradoDeProjeto::new(&ICONES[3], CORES_PROJETO[2].0, 32.)
-                    .realcado(ponteiro.ativo(cx) || self.focada)
-                    .ativo(self.focada)
-                    .suave("mov-quadrado-suave"),
-            );
         let controles = fileira()
             .child(
                 BotaoRedondo::new("mov-enviar", Some(Lucide::ArrowUp.into()), "Enviar (pulsa)")
@@ -515,7 +498,6 @@ impl Vitrine {
             .child(botao("mov-vazio", "Com texto / vazia", window, cx).on_click(mudar(|v| v.vazio = !v.vazio)))
             .child(BotaoRedondo::new("mov-mais", Some(Lucide::Plus.into()), "Hover suave").variante(VarianteRedonda::Primario))
             .child(BotaoRedondo::new("mov-sino", Some(Lucide::Bell.into()), "Hover suave"))
-            .child(lugar)
             .child(legenda("hover suave só em controle solto (120 ms); nunca em lista, menu ou cartão"));
         let fracao = if self.fracao_alta { 0.86 } else { 0.32 };
         let aneis = fileira()
@@ -554,7 +536,7 @@ impl Vitrine {
                     .text_color(Cores::tenue())
                     .child("Mensagem para este chat…")
                     // O foco são as cantoneiras azuis, sem halo.
-                    .when(forca > 0., |s| s.child(cantoneiras(raio::PECA, 12., Cantos::Diagonal, forca))),
+                    .when(forca > 0., |s| s.child(cantoneiras(raio::peca(), 12., Cantos::Diagonal, forca))),
             )
             .child(botao("mov-foco", "Focar / tirar o foco", window, cx).on_click(mudar(|v| v.focada = !v.focada)))
             .child(
@@ -567,7 +549,7 @@ impl Vitrine {
                     .bg(Cores::ambar().opacity(0.12 + 0.12 * realce))
                     .metadado()
                     .text_color(Cores::ambar())
-                    .child("em revisão"),
+                    .child("esperando você"),
             )
             .child(legenda("a pílula realça a cada Enviar (movimento::disparo)"));
         let compasso = fileira()
@@ -633,18 +615,18 @@ impl Vitrine {
             .child(CabecalhoDeSecao::new("Recentes").recolhivel(true, |_, _| {}).primeira(true))
             .child(
                 CartaoDeLista::new("esp-pai", "Cupons de desconto na API")
-                    .simbolo(Simbolo::Projeto(&ICONES[1], CORES_PROJETO[0].0))
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
                     .subtitulo("loja · 2 chats")
                     .meta("4 h"),
             )
             .child(
-                CartaoDeLista::new("esp-filho", "#2 Aplicar cupom no checkout")
+                CartaoDeLista::new("esp-filho", "Aplicar cupom no checkout")
                     .nivel(1)
                     .ramo(true, true)
                     .simbolo(Simbolo::Elemento(
                         div().flex_none().size(r(6.)).rounded_full().bg(Cores::ambar()).into_any_element(),
                     ))
-                    .dica_do_ponto("em revisão"),
+                    .dica_do_ponto("rodando"),
             )
             .child(guia(esp::GUIA_LISTA, Cores::destaque().opacity(0.6)))
             .child(guia(r(31.), Cores::verde().opacity(0.6)))
@@ -663,7 +645,7 @@ impl Vitrine {
                 .bg(Cores::cartao_elevado())
                 .border_1()
                 .border_color(Cores::linha())
-                .reflexo(raio::CARTAO)
+                .reflexo(raio::cartao())
                 .child(div().line_height(r(18.)).child(titulo))
                 .child(legenda(linha))
         };
@@ -697,12 +679,12 @@ impl Vitrine {
                     .child(CabecalhoDeSecao::new("Decisões").recolhivel(false, |_, _| {}).recuo(12.).respiro(4.)),
             )
             .child(guia(esp::GUIA_EQUIPE, Cores::destaque().opacity(0.6)))
-            .aresta_de_vidro(raio::PECA);
+            .aresta_de_vidro(raio::peca());
         let bloco = |nome: &'static str, fundo: bool| {
             div()
                 .p(dentro_da_borda(12.))
                 .rounded(raio::CARTAO)
-                .when(fundo, |d| d.bg(Cores::cartao_elevado()).border_1().border_color(Cores::linha()).reflexo(raio::CARTAO))
+                .when(fundo, |d| d.bg(Cores::cartao_elevado()).border_1().border_color(Cores::linha()).reflexo(raio::cartao()))
                 .when(!fundo, |d| d.border_1().border_color(transparent_black()))
                 .corpo_ui()
                 .child(nome)
@@ -786,7 +768,7 @@ impl Vitrine {
                 )
                 .child(
                     ControleSegmentado::new(
-                        id("revisao"),
+                        id("vista-diff"),
                         [
                             Segmento::new("Unificado").icone(Lucide::Rows3).dica("Unificado"),
                             Segmento::new("Lado a lado").icone(Lucide::Columns2).dica("Lado a lado"),
@@ -826,13 +808,13 @@ impl Vitrine {
                     .child(campo_de_busca_plano("busca-plana", &self.busca, window, cx)),
             )
             .child(
-                Campo::new("Nome do projeto", gpui_kit::component::input::Input::new(&self.campo))
-                    .ajuda("Vira a pasta própria do projeto"),
+                Campo::new("Título da conversa", gpui_kit::component::input::Input::new(&self.campo))
+                    .ajuda("Aparece na lista e na aba"),
             )
             .child(
-                Campo::new("Comando de verificação", gpui_kit::component::input::Input::new(&self.campo))
+                Campo::new("Código da página de login", gpui_kit::component::input::Input::new(&self.campo))
                     .opcional()
-                    .erro(Some("Já existe um projeto com esse nome".into())),
+                    .erro(Some("Esse código não serve mais; peça outro".into())),
             )
             .child(fileira().child(legenda("Ao mesmo tempo")).child(Contador::new(
                 "contador",
@@ -967,24 +949,24 @@ impl Vitrine {
             .construir(window, cx)
             .dropdown_menu_with_anchor(Anchor::TopLeft, |menu, window, _| {
                 menu.min_w(tam(window, 300.))
-                    .item(cabecalho_objeto(Simbolo::icone(Lucide::Folder), "Vitral", Some("~/Projetos".into())))
+                    .item(cabecalho_objeto(Simbolo::icone(Lucide::Folder), "Vitral", Some("17 chats".into())))
                     .separator()
                     .item(PopupMenuItem::new("Nova conversa").icon(Lucide::MessageSquarePlus).action(Box::new(NovaConversa)))
-                    .item(PopupMenuItem::new("Novo projeto…").icon(Lucide::FolderPlus))
+                    .item(PopupMenuItem::new("Novo chat em outra pasta…").icon(Lucide::FolderOpen))
                     .separator()
-                    .label("Projetos")
-                    .item(PopupMenuItem::new("Rotinas").icon(Lucide::CalendarClock).checked(true))
+                    .label("Chats")
+                    .item(PopupMenuItem::new("Fixada").icon(Lucide::Pin).checked(true))
                     .item(PopupMenuItem::new("Desabilitado").icon(Lucide::Activity).disabled(true))
                     .separator()
                     .item(PopupMenuItem::new("Abrir no gerenciador de arquivos").icon(Lucide::FolderOpen).external())
                     .separator()
-                    .item(PopupMenuItem::new("Apagar a cópia…").icon(Lucide::Trash).danger(true))
+                    .item(PopupMenuItem::new("Desconectar…").icon(Lucide::Unplug).danger(true))
                     .separator()
                     .item(rodape_menu("Cole imagens direto na caixa", Some((Box::new(NovaConversa), None))))
             });
         let modo = Chip::new("menu-modo", "Manual")
             .simbolo({
-                let (icone, cor) = icone_do_modo("manual", false);
+                let (icone, cor) = icone_do_modo("manual");
                 Simbolo::Icone(icone, Some(cor))
             })
             .seta(true)
@@ -1001,19 +983,15 @@ impl Vitrine {
                     .min_w(tam(window, 400.))
                     .item(cabecalho_escolha("Modo de permissão", Some((Box::new(NovaConversa), OndeAtalho::Contexto(None), "troca"))));
                 for (valor, nome, descricao) in modos {
-                    let (icone, cor) = icone_do_modo(valor, false);
+                    let (icone, cor) = icone_do_modo(valor);
                     menu = menu.item(item_descrito(Some(Simbolo::Icone(icone, Some(cor))), nome, descricao, valor == "manual"));
                 }
                 menu
             });
         let modos = fileira().children(["manual", "acceptEdits", "plan", "auto", "bypassPermissions"].map(|valor| {
-            let (icone, cor) = icone_do_modo(valor, false);
+            let (icone, cor) = icone_do_modo(valor);
             div().flex().items_center().gap(r(4.)).child(icone.with_size(tam(window, 16.)).text_color(cor)).child(legenda(valor))
-        }))
-        .child({
-            let (icone, cor) = icone_do_modo("bypassPermissions", true);
-            div().flex().items_center().gap(r(4.)).child(icone.with_size(tam(window, 16.)).text_color(cor)).child(legenda("sem cópia"))
-        });
+        }));
         um(
             "Menus e modos",
             cx,
@@ -1029,28 +1007,28 @@ impl Vitrine {
             .gap(r(8.))
             .w(r(520.))
             .child(
-                Alerta::new(Tom::Atencao, "Sem git, os chats mexem direto na pasta.")
-                    .titulo("Projeto sem git")
-                    .acao(botao_fantasma("alerta-git", Some(Lucide::GitBranch.into()), "Ativar git neste projeto", TamanhoBotao::Barra, window, cx)),
+                Alerta::new(Tom::Atencao, "A pasta deste chat não foi encontrada no disco.")
+                    .titulo("Pasta não encontrada")
+                    .acao(botao_fantasma("alerta-pasta", Some(Lucide::FolderOpen.into()), "Abrir a pasta de dados", TamanhoBotao::Barra, window, cx)),
             )
             .children(tons.map(|tom| Alerta::new(tom, format!("Alerta no tom {tom:?}")).fechar(|_, _| {})))
-            .children(tons.map(|tom| Alerta::new(tom, "Aprovada com ressalva: verificação vermelha").compacto()));
+            .children(tons.map(|tom| Alerta::new(tom, "A conta chegou ao limite do plano").compacto()));
         let avisos = fileira()
             .children(tons.map(|tom| {
                 Button::new(("aviso", tom as usize))
                     .outline()
                     .label(format!("Aviso {tom:?}"))
-                    .on_click(move |_, window, cx| window.push_notification(aviso(tom, "Chat 2 juntado"), cx))
+                    .on_click(move |_, window, cx| window.push_notification(aviso(tom, "Conversa arquivada"), cx))
             }))
             .child(Button::new("aviso-acao").outline().label("Com Desfazer").on_click(|_, window, cx| {
                 window.push_notification(
-                    aviso_com_acao(Tom::Info, "Rotina apagada", "Desfazer", |_, _| {}).chave("rotina"),
+                    aviso_com_acao(Tom::Info, "Conversa arquivada", "Desfazer", |_, _| {}).chave("arquivada"),
                     cx,
                 )
             }))
             .child(Button::new("aviso-erro").outline().label("Erro com Detalhes").on_click(|_, window, cx| {
-                let erro = anyhow::anyhow!("fatal: a pasta já tem um .git\ncaminho: ~/Projetos/loja/.git");
-                window.push_notification(aviso_erro("Não deu para ativar o git", &erro), cx)
+                let erro = anyhow::anyhow!("Permission denied (os error 13)\ncaminho: ~/.local/share/vitral/anexos");
+                window.push_notification(aviso_erro("Não deu para anexar a conversa", &erro), cx)
             }))
             .child(Button::new("aviso-texto").outline().label("Texto simples").on_click(|_, window, cx| {
                 window.push_notification(Notification::new().message("Caminho copiado").chave("copiado"), cx)
@@ -1065,15 +1043,15 @@ impl Vitrine {
             .gap(r(16.))
             .child(
                 div().w(r(360.)).child(
-                    EstadoVazio::new(Lucide::ListChecks, "Nada aberto aqui")
-                        .texto("Os pedidos que esta conversa abriu viraram chats do projeto.")
-                        .acao(Button::new("vazio-acao").outline().label("Pedir ao Mestre")),
+                    EstadoVazio::new(Lucide::Archive, "Nada arquivado")
+                        .texto("As conversas arquivadas aparecem aqui.")
+                        .acao(Button::new("vazio-acao").outline().label("Voltar às conversas")),
                 ),
             )
             .child(
                 div().flex_1().child(
-                    EstadoVazio::new(Lucide::MessageSquarePlus, "Comece uma conversa")
-                        .texto("Diga o que quer fazer; o Mestre manda para o projeto certo.")
+                    EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
+                        .texto("Cada chat trabalha direto numa pasta do seu computador, como o Claude Code.")
                         .amplo(),
                 ),
             );
@@ -1084,7 +1062,7 @@ impl Vitrine {
         let acoes = |id: &'static str, window: &Window, cx: &App| {
             botao_icone(id, Lucide::Columns2, "Abrir ao lado", TamanhoBotao::Linha, window, cx)
         };
-        let projeto = Simbolo::Projeto(&ICONES[1], CORES_PROJETO[0].0);
+        let balao = Simbolo::Papel(Papel::Avulso);
         // Como na lista: em "Esperando você" o cartão é neutro e o âmbar fica no ícone do motivo.
         let previa = |nome: Lucide, rotulo: &'static str, texto: &'static str, window: &Window| {
             div()
@@ -1107,7 +1085,7 @@ impl Vitrine {
             .child(CabecalhoDeSecao::new("Esperando você").contagem(2).tingida(Cores::ambar()))
             .child(
                 CartaoDeLista::new("c-ambar", "Rodar os testes da loja")
-                    .simbolo(Simbolo::Projeto(&ICONES[2], CORES_PROJETO[3].0))
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
                     .sinal(Some(Sinal::Pedido))
                     .subtitulo(previa(Lucide::ShieldQuestionMark, "Permissão", "· Bash · cargo test", window))
                     .meta("1 min")
@@ -1115,7 +1093,7 @@ impl Vitrine {
             )
             .child(
                 CartaoDeLista::new("c-ambar-sel", "Cupons de desconto na API")
-                    .simbolo(Simbolo::Projeto(&ICONES[4], CORES_PROJETO[5].0))
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
                     .sinal(Some(Sinal::Pedido))
                     .subtitulo(previa(Lucide::Map, "#2 pede", "· aprovar o plano", window))
                     .meta("3 min")
@@ -1124,18 +1102,18 @@ impl Vitrine {
             .child(CabecalhoDeSecao::new("Rodando agora").contagem(1).tingida(Cores::destaque()))
             .child(
                 CartaoDeLista::new("c-sel", "Cupons de desconto na API")
-                    .simbolo(projeto.copia().unwrap())
+                    .simbolo(balao.copia().unwrap())
                     .sinal(Some(Sinal::Rodando))
-                    .subtitulo("loja-api · 1 ajudante rodando")
+                    .subtitulo("loja-api · Editando carrinho.py…")
                     .meta("agora")
                     .meta_inferior(PilulaDeEstado::new(Estado::Rodando).compacta())
                     .selecionado(true)
                     .acao(acoes("c-sel-a", window, cx)),
             )
             .children([
-                ("c-trab-1", "#1 Validar o cupom na API", Estado::Pronto, None, (true, false)),
-                ("c-trab-2", "#2 Aplicar cupom no checkout", Estado::Rodando, Some(Sinal::Rodando), (false, false)),
-                ("c-trab-3", "#3 Mostrar o desconto no carrinho", Estado::EmRevisao, None, (false, true)),
+                ("c-trab-1", "Validar o cupom na API", Estado::Pronto, None, (true, false)),
+                ("c-trab-2", "Aplicar cupom no checkout", Estado::Rodando, Some(Sinal::Rodando), (false, false)),
+                ("c-trab-3", "Mostrar o desconto no carrinho", Estado::EsperandoVoce, None, (false, true)),
             ]
             .map(|(id, titulo, estado, sinal, (primeiro, ultimo))| {
                 // Como na lista: o ponto de 8 na cor do estado (ou o sinal, quando há) e a palavra
@@ -1154,16 +1132,16 @@ impl Vitrine {
             .child(CabecalhoDeSecao::new("Recentes"))
             .child(
                 CartaoDeLista::new("c-nl", "Resposta nova esperando leitura")
-                    .simbolo(Simbolo::Projeto(&ICONES[10], CORES_PROJETO[1].0))
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
                     .sinal(Some(Sinal::Nova))
-                    .subtitulo("site · terminou: 3 ajudantes aprovados")
+                    .subtitulo("site · Pronto: o rodapé novo está no ar")
                     .meta("10:42")
                     .nao_lido(true)
                     .acao(acoes("c-nl-a", window, cx)),
             )
             .child(
                 CartaoDeLista::new("c-realce", "Realce do teclado mostra as ações")
-                    .simbolo(Simbolo::Projeto(&ICONES[20], CORES_PROJETO[7].0))
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
                     .subtitulo("loja · ontem")
                     .meta("ontem")
                     .realce(true)
@@ -1183,8 +1161,8 @@ impl Vitrine {
             )
             .child(
                 CartaoDeLista::new("c-outro", "Aberta em outro painel")
-                    .simbolo(Simbolo::Papel(Papel::Coordenador))
-                    .subtitulo("vitral · chat 12")
+                    .simbolo(Simbolo::Papel(Papel::Avulso))
+                    .subtitulo("vitral · ~/Projetos/vitral")
                     .meta("seg.")
                     .aberto_em_outro(true),
             )
@@ -1196,12 +1174,11 @@ impl Vitrine {
                     .meta("+42 −3"),
             )
             .child(
-                CartaoDeLista::new("c-rotina", "Revisar dependências")
-                    .simbolo(Simbolo::icone(Lucide::CalendarClock))
+                CartaoDeLista::new("c-chave", "Servidores MCP do Claude Code")
+                    .simbolo(Simbolo::icone(Lucide::Activity))
                     .uma_linha()
-                    .acao_fixa(gpui_kit::component::switch::Switch::new("rotina-switch").checked(true)),
-            )
-            .child(div().pt(r(8.)).child(rotulo_tarefa(2, "Aplicar cupom no checkout", true)));
+                    .acao_fixa(gpui_kit::component::switch::Switch::new("chave-switch").checked(true)),
+            );
         um("Listas", cx, conteudo)
     }
 
@@ -1219,14 +1196,14 @@ impl Vitrine {
         };
         let grupo = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(
-                LinhaDeOpcao::new("op-revisor", "Revisor independente")
-                    .descricao("Confere os critérios antes de juntar")
-                    .info("Roda numa sessão nova, só de leitura, e pode ser outro modelo.")
+                LinhaDeOpcao::new("op-resumo", "Resumo ao voltar")
+                    .descricao("O que aconteceu enquanto você esteve fora")
+                    .info("Aparece no topo da lista ao voltar à janela.")
                     .interruptor(ligado, mudar_ligado.clone()),
             )
             .linha(
-                LinhaDeOpcao::new("op-modelo", "Modelo do revisor")
-                    .descricao("Padrão: o mesmo dos chats")
+                LinhaDeOpcao::new("op-modelo", "Modelo dos chats")
+                    .descricao("Cada chat pode trocar o seu na caixa")
                     .controle(ControleSegmentado::new("op-seg", ["Padrão", "Opus", "Sonnet"], segmento.min(2), {
                         let eu = eu.clone();
                         move |i, _, cx| {
@@ -1238,14 +1215,14 @@ impl Vitrine {
                     }).with_size(Size::Small)),
             )
             .linha(
-                LinhaDeOpcao::new("op-campo", "Comando de verificação")
-                    .descricao("Roda quando o chat para")
+                LinhaDeOpcao::new("op-campo", "Comando")
+                    .descricao("Um campo em mono, embaixo do texto")
                     .campo(div().h(r(32.)).px(esp::E12).flex().items_center().rounded(raio::CONTROLE).bg(Cores::recuo()).mono_pequeno().child("cargo test")),
             )
             .linha(
                 LinhaDeOpcao::new("op-desab", "Arquivar conversas paradas")
                     .interruptor(false, |_, _, _| {})
-                    .desabilitada("Ligue o revisor para escolher"),
+                    .desabilitada("Ligue o resumo para escolher"),
             )
             .linha(
                 LinhaDeOpcao::new("op-ultra", "Ultrathink")
@@ -1259,7 +1236,7 @@ impl Vitrine {
                     .descricao("Vários agentes em paralelo, só na próxima mensagem")
                     .aviso("Gasta bem mais do plano e roda no esforço Extra")
                     .interruptor(false, |_, _, _| {})
-                    .desabilitada("Só nos chats de projeto"),
+                    .desabilitada("Pede o Claude Code 2.1.278"),
             );
         um("Opções", cx, div().w(r(560.)).child(grupo))
     }
@@ -1297,8 +1274,8 @@ impl Vitrine {
                 .child(
                     fileira()
                         .child(PilulaDeEstado::new(Estado::Rodando).detalhe("2 min 13 s"))
-                        .child(PilulaDeEstado::new(Estado::Pronto).rotulo("aprovada"))
-                        .child(PilulaDeEstado::new(Estado::EmRevisao).detalhe("rodada 2"))
+                        .child(PilulaDeEstado::new(Estado::Pronto).rotulo("pronto"))
+                        .child(PilulaDeEstado::new(Estado::Erro).rotulo("no limite"))
                         .children(Estado::TODOS.map(|e| PilulaDeEstado::new(e).compacta())),
                 )
                 .child(
@@ -1326,16 +1303,13 @@ impl Vitrine {
                 .child(
                     fileira()
                         .child(Etiqueta::new("loja").icone(Lucide::Folder))
-                        .child(Etiqueta::new("t4-aplicar-cupom").icone(Lucide::GitBranch))
+                        .child(Etiqueta::new("main").icone(Lucide::GitBranch))
                         .child(Etiqueta::new("direto").tom(Cores::ambar()))
-                        .child(Etiqueta::new("revisar").tom(Cores::ambar()).baixa())
+                        .child(Etiqueta::new("fora da pasta").tom(Cores::ambar()).baixa())
                         .child(Etiqueta::new("00:04").fundo()),
                 )
                 .child(
                     fileira()
-                        .child(selo_gravidade("alta"))
-                        .child(selo_gravidade("média"))
-                        .child(selo_gravidade("baixa"))
                         .child(numero_painel(1, true))
                         .child(numero_painel(2, false))
                         .child(Icon::new(Lucide::Orbit).with_size(tam(window, 16.)).text_color(Cores::destaque_texto())),
@@ -1386,24 +1360,16 @@ impl Vitrine {
                 )
                 .child(BarraSegmentada::new(vec![
                     (1, Cores::destaque(), "1 rodando".into()),
-                    (1, Cores::ambar(), "1 em revisão".into()),
-                    (2, Cores::verde(), "2 aprovadas".into()),
-                    (1, Cores::tenue(), "1 parada".into()),
+                    (1, Cores::ambar(), "1 esperando você".into()),
+                    (2, Cores::verde(), "2 prontos".into()),
+                    (1, Cores::tenue(), "1 parado".into()),
                 ]))
-                .child(BarraSegmentada::new(vec![(3, Cores::verde(), "3 aprovadas".into()), (1, Cores::vermelho(), "1 falhou".into())]).fina())
+                .child(BarraSegmentada::new(vec![(3, Cores::verde(), "3 prontos".into()), (1, Cores::vermelho(), "1 falhou".into())]).fina())
                 .into_any_element()
         })
     }
 
     fn base(&self, window: &mut Window, cx: &mut App) -> Div {
-        let quadrados = div().flex().flex_col().gap(esp::E12).children(CORES_PROJETO.iter().enumerate().map(|(i, (cor, nome))| {
-            fileira()
-                .child(div().w(r(80.)).child(legenda(*nome)))
-                .children(LADOS_DO_QUADRADO.map(|lado| QuadradoDeProjeto::new(&ICONES[i * 7 % ICONES.len()], *cor, lado)))
-                .child(QuadradoDeProjeto::new(&ICONES[i], *cor, 32.).ativo(true))
-                .child(QuadradoDeProjeto::new(&ICONES[i], *cor, 32.).realcado(true))
-                .child(QuadradoDeProjeto::new(&ICONES[i], *cor, 32.).sinal(Some([Sinal::Erro, Sinal::Pedido, Sinal::Nova, Sinal::Rodando][i % 4])))
-        }));
         let papeis = fileira()
             .children([Papel::Coordenador, Papel::Trabalhador, Papel::Mestre, Papel::Avulso].map(|p| p.circulo(30.)))
             .child(Marca::Claude.disco(24.))
@@ -1413,12 +1379,12 @@ impl Vitrine {
             .child(icone(Lucide::Github, 24., window))
             .child(div().text_size(r(14.)).font_semibold().child(texto_arco_iris("Ultrathink")))
             .child(icone(Lucide::Sparkles, 16., window));
-        um("Projetos, papéis e marcas", cx, div().flex().flex_col().gap(r(16.)).child(quadrados).child(papeis))
+        um("Papéis e marcas", cx, div().flex().flex_col().gap(r(16.)).child(papeis))
     }
 
     fn paineis(&self, window: &mut Window, cx: &mut App) -> Div {
         let abas = fileira()
-            .child(Aba::new("aba-unica", "Cupons de desconto").tom(TomAba::Unica).simbolo(Simbolo::Papel(Papel::Coordenador)).construir(window, cx))
+            .child(Aba::new("aba-unica", "Cupons de desconto").tom(TomAba::Unica).simbolo(Simbolo::Papel(Papel::Avulso)).construir(window, cx))
             .child(Aba::new("aba-ativa", "Cupons de desconto").tom(TomAba::Ativa).numero(1, true).estado(Some(Sinal::Rodando)).fechar("Fechar o painel", true, |_, _| {}).construir(window, cx))
             .child(Aba::new("aba-inativa", "#2 Aplicar cupom").tom(TomAba::Inativa).numero(2, false).estado(Some(Sinal::Pedido)).fechar("Fechar o painel", false, |_, _| {}).construir(window, cx))
             .child(Aba::new("aba-sel", "motor.rs").tom(TomAba::Selecionada).simbolo(Simbolo::icone(Lucide::FileCode)).detalhe("src/", true).construir(window, cx))
@@ -1451,7 +1417,7 @@ impl Vitrine {
     /// aberto; o "mesmo assim" deixa um aviso). Os botões têm 200 de largura: o roteiro da bancada
     /// clica pela posição.
     fn atualizacoes(&self, window: &mut Window, cx: &mut App) -> Div {
-        const NOTAS: &str = "- **Conversas que se lembram.** O Mestre guarda o que importa entre as conversas.\n\
+        const NOTAS: &str = "- **Um chat por pasta.** Cada chat trabalha direto numa pasta, como o Claude Code.\n\
                              - **Mais rápido ao abrir.** A lista aparece antes do motor terminar de ler os chats.";
         let pagina = || crate::atualizacao::pagina("0.3.0");
         let botoes = fileira()
@@ -1508,7 +1474,7 @@ impl Vitrine {
             .border_1()
             .border_color(Cores::borda_forte())
             .shadow(sombra_elevado())
-            .child(CabecalhoDialogo::new("Novo projeto").subtitulo("Cria uma pasta em ~/Projetos").voltar(|_, _| {}))
+            .child(CabecalhoDialogo::new("Novo chat").subtitulo("Em qual pasta?").voltar(|_, _| {}))
             .child(
                 CabecalhoDialogo::new("Contas do Claude")
                     .simbolo(Marca::Claude.disco(32.))
@@ -1521,14 +1487,14 @@ impl Vitrine {
             .child(Campo::new("Nome", legenda("(campo)")))
             .child(
                 RodapeDialogo::new()
-                    .esquerda(botao_fantasma("d-git", Some(Lucide::GitBranch.into()), "Ativar git", TamanhoBotao::Controle, window, cx))
+                    .esquerda(botao_fantasma("d-outra", Some(Lucide::FolderOpen.into()), "Outra pasta…", TamanhoBotao::Controle, window, cx))
                     .cancelar(botao_fantasma("d-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx))
-                    .principal(botao_primario("d-ok", None, "Criar projeto", TamanhoBotao::Controle, window, cx)),
+                    .principal(botao_primario("d-ok", None, "Salvar", TamanhoBotao::Controle, window, cx)),
             );
         let tons = [
-            (TomConfirmacao::Neutro, Lucide::GitBranch, "Ativar git em “loja”?", false),
+            (TomConfirmacao::Neutro, Lucide::RefreshCw, "Reiniciar na 0.3.0?", false),
             (TomConfirmacao::Atencao, Lucide::TriangleAlert, "2 conversas estão trabalhando", false),
-            (TomConfirmacao::Perigo, Lucide::Trash, "Apagar a cópia do chat 2?", true),
+            (TomConfirmacao::Perigo, Lucide::Unplug, "Desconectar “Trabalho”?", true),
         ];
         let botoes = fileira().children(tons.map(|(tom, icone, titulo, perigo)| {
             Button::new(SharedString::from(format!("conf-{titulo}")))
@@ -1540,12 +1506,12 @@ impl Vitrine {
                             tom,
                             icone: icone.into(),
                             titulo: titulo.into(),
-                            texto: "O que já estiver na cópia fica no branch até você apagar.".into(),
+                            texto: "O login sai do Vitral; as conversas ficam como estão.".into(),
                             detalhes: vec![
-                                (Lucide::GitBranch.into(), "vitral/t2-cupom".into(), false),
-                                (Lucide::TriangleAlert.into(), "1,2 GB em node_modules".into(), true),
+                                (Lucide::CircleUserRound.into(), "voce@exemplo.com".into(), false),
+                                (Lucide::TriangleAlert.into(), "2 chats usam esta conta".into(), true),
                             ],
-                            ok: if perigo { "Apagar a cópia".into() } else { "Continuar".into() },
+                            ok: if perigo { "Desconectar".into() } else { "Continuar".into() },
                             cancelar: "Cancelar".into(),
                             ok_perigo: perigo,
                         },
@@ -1565,7 +1531,7 @@ impl Vitrine {
             .child(
                 TelaCheia::new("Vitral")
                     .simbolo(Marca::Claude.disco(40.))
-                    .texto("Ligue uma pasta ao projeto ou deixe o Vitral criar uma.")
+                    .texto("Escolha a pasta do primeiro chat, ou comece sem pasta.")
                     .child(botao_primario("tela-ok", Some(Lucide::FolderOpen.into()), "Escolher pasta…", TamanhoBotao::Controle, window, cx)),
             );
         um("Diálogos", cx, div().flex().flex_col().gap(r(16.)).child(estatico).child(botoes).child(tela))
@@ -1604,7 +1570,7 @@ impl Vitrine {
             .child(amostra("flutuante").bg(Cores::flutuante()).shadow(sombra_flutuante()))
             .child(amostra("diálogo").bg(Cores::dialogo()).shadow(sombra_dialogo()))
             .child(amostra("preto").bg(Cores::preto()).border_1().border_color(Cores::borda()))
-            .child(amostra("vidro (aresta)").relative().bg(Cores::cartao()).child(camada_de_aresta(raio::CARTAO)))
+            .child(amostra("vidro (aresta)").relative().bg(Cores::cartao()).child(camada_de_aresta(raio::cartao())))
             .child(amostra("tecla").bg(Cores::hover()).shadow(aresta_de_tecla()))
             .child(amostra("poço").bg(Cores::recuo()).shadow(aresta_de_poco()))
             .child(amostra("grupo").bg(Cores::grupo()).border_1().border_color(Cores::borda()))
@@ -1617,7 +1583,7 @@ impl Vitrine {
                     .border_1()
                     .border_color(Cores::brilho_topo())
                     .shadow(vec![BoxShadow::new(px(0.), px(6.), Cores::sombra_caixa()).blur_radius(px(10.))])
-                    .child(div().absolute().top_0().left_0().size_full().rounded(raio::PECA - px(1.)).bg(Cores::caixa_brilho())),
+                    .child(div().absolute().top_0().left_0().size_full().rounded(raio::peca() - px(1.)).bg(Cores::caixa_brilho())),
             );
         // A retícula comum: trama, fio de pontos (deitado e em pé) e hachura.
         let textura = |nome: &'static str| {
@@ -1684,9 +1650,8 @@ impl Vitrine {
                     .tempo("FALHOU em 3 s")
                     .erro(true)
                     .raio_chat(),
-            )
-            .child(div().h(r(40.)).rounded(raio::CARTAO).bg(gradiente_destaque()));
-        um("Código e gradientes", cx, conteudo)
+            );
+        um("Código", cx, conteudo)
     }
 }
 

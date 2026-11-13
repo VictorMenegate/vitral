@@ -54,11 +54,10 @@ pub fn abrir_no_editor(pasta: &Path) {
 }
 
 /// Abre um console na pasta: sem `comando`, o PowerShell; com, o Git Bash roda ele e fica aberto
-/// depois (os comandos dos projetos são escritos para o bash). Sem o Git Bash, o PowerShell tenta
+/// depois (os comandos, como o instalador do Codex, são escritos para o bash). Sem o Git Bash, o PowerShell tenta
 /// assim mesmo, com um aviso. O comando não passa pelo `wt.exe`, que trata `;` como separador de
-/// abas, e o console é filho do Vitral: o `VITRAL_PORT` chega nele (uma aba nova do Terminal já
-/// aberto teria o ambiente do Terminal).
-pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
+/// abas.
+pub fn abrir_terminal(pasta: &Path, comando: Option<&str>) {
     let mut terminal = match (comando, super::bash()) {
         (Some(comando), Some(bash)) => {
             let mut terminal = novo_comando(bash);
@@ -78,9 +77,6 @@ pub fn abrir_terminal(pasta: &Path, porta: Option<u64>, comando: Option<&str>) {
         }
     };
     terminal.current_dir(pasta);
-    if let Some(porta) = porta {
-        terminal.env("VITRAL_PORT", porta.to_string());
-    }
     soltar(&mut terminal, true);
 }
 

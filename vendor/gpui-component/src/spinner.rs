@@ -7,8 +7,9 @@ use gpui::{
 };
 use instant::{Duration, Instant};
 
-/// Vitral: batidas por segundo do compasso que move spinners e brilhos.
-const BATIDAS_POR_SEGUNDO: u32 = 12;
+/// Vitral: batidas por segundo do compasso que move spinners e brilhos (e, de carona, os laços
+/// do app: o metal e o anel girando).
+pub const BATIDAS_POR_SEGUNDO: u32 = 12;
 
 /// Vitral: um compasso só para todos os spinners (e o brilho do texto) da janela. Com uma
 /// animação limitada por spinner, cada um agendava o próprio redesenho, e spinners que surgiam em
@@ -31,7 +32,7 @@ impl Global for Compasso {}
 /// ainda não houver) e devolve o tempo do compasso, para todos ficarem na mesma fase. Com a janela
 /// sem foco, não agenda nada e devolve a fase parada: quem está ao lado do editor não redesenha
 /// 12 vezes por segundo o turno inteiro.
-pub(crate) fn compasso(window: &mut Window, cx: &mut App) -> Duration {
+pub fn compasso(window: &mut Window, cx: &mut App) -> Duration {
     let agora = cx.background_executor().now();
     if !cx.has_global::<Compasso>() {
         cx.set_global(Compasso {

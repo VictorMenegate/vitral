@@ -4,7 +4,8 @@
 ou a pasta direta) e responde em stream-json, sem chamar a API. Com "[demora]" na mensagem, leva
 10 s. Os argumentos e o ambiente de cada turno vão para $XDG_STATE_HOME/claude-falso.log.
 
-Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch, Task...), faz de
+Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch, Task, e o Pensa,
+que encena um bloco de raciocínio), faz de
 conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[ferramenta ... | 8]`) e
 manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
 test…") sem chamar a API.
@@ -254,8 +255,27 @@ def fingir_ferramentas(texto):
     for i, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(texto), start=1):
         detalhe = detalhe.strip()
         id_ = f"toolu_falso_f{i}"
+        # `[ferramenta Pensa texto | 2]` não é ferramenta: é um bloco de raciocínio, que começa
+        # (o evento parcial), dura os segundos pedidos e chega inteiro na mensagem.
+        if nome == "Pensa":
+            emitir({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "thinking"}}})
+            time.sleep(int(segundos) if segundos else 2)
+            emitir({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": detalhe}]}})
+            continue
         emitir({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
+        # O subagente trabalha lá dentro: três ferramentas e uma frase, presas à chamada dele.
+        if nome in ("Task", "Agent"):
+            espera = (int(segundos) if segundos else 8) / 4
+            for passo in ({"type": "tool_use", "id": id_ + "a", "name": "Grep", "input": {"pattern": "cupom"}},
+                          {"type": "tool_use", "id": id_ + "b", "name": "Read", "input": {"file_path": "produtos/views.py"}},
+                          {"type": "text", "text": "Conferindo os testes do carrinho."},
+                          {"type": "tool_use", "id": id_ + "c", "name": "Bash", "input": {"command": "python3 manage.py test"}}):
+                time.sleep(espera)
+                emitir({"type": "assistant", "parent_tool_use_id": id_, "message": {"content": [passo]}})
+            emitir({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {detalhe}: dois lugares mexem no cupom."}]}})
+            continue
         time.sleep(int(segundos) if segundos else 4)
         emitir({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})

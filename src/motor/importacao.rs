@@ -1,9 +1,8 @@
-//! As conversas do Claude Code no motor: um chat por sessão nova, no projeto cuja pasta ligada
-//! contém a dela (senão em Avulsos), trabalhando direto nessa pasta (o Claude Code só retoma a
-//! sessão a partir dela); o registro do que já veio, a importação da primeira abertura e a marca de
-//! quando a conversa sai do Claude Code e continua no Vitral.
+//! As conversas do Claude Code no motor: um chat por sessão nova, trabalhando direto na pasta dela
+//! (o Claude Code só retoma a sessão a partir dela); o registro do que já veio, a importação da
+//! primeira abertura e a marca de quando a conversa sai do Claude Code e continua no Vitral.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use super::*;
@@ -54,7 +53,7 @@ fn marca_da_vigia(anterior: u64, inicio: u64, incompleta: bool) -> u64 {
 /// Quem pediu a importação.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Pedido {
-    /// A primeira abertura do Vitral: traz tudo e conta ao Mestre.
+    /// A primeira abertura do Vitral: traz tudo e avisa na janela.
     PrimeiraAbertura,
     /// O "Importar do Claude Code…" do menu: olha tudo de novo e sempre responde.
     Menu,
@@ -131,8 +130,13 @@ impl Motor {
         let agora = agora();
         // A vigia só olha o que mudou desde a passada anterior (com uma folga); sem passada
         // anterior, olha tudo.
+        // Com regra nova desde a última passada, ela também olha tudo, uma vez.
         let desde = (pedido == Pedido::Vigia)
-            .then(|| Registro::de(&self.resto_estado).and_then(|r| desde_da_vigia(r.ultima_vez, agora)))
+            .then(|| {
+                Registro::de(&self.resto_estado)
+                    .filter(|r| r.regras >= importar::REGRAS)
+                    .and_then(|r| desde_da_vigia(r.ultima_vez, agora))
+            })
             .flatten();
         cx.spawn(async move |motor, cx| {
             // A vez vai junto para a leitura e volta com ela: um pânico lá dentro também a solta.
@@ -178,8 +182,8 @@ impl Motor {
         let mut relatorio = Relatorio { ja_trazidas: listagem.ja_trazidas, ..Default::default() };
         let mut criados = Vec::new();
         for sessao in listagem.novas.iter().filter(|s| !trazidas.contains(&s.id) && !do_vitral.contains(&s.id)) {
-            let (id, destino) = self.criar_chat_importado(sessao);
-            relatorio.contar(&destino, sessao.em_uso);
+            let id = self.criar_chat_importado(sessao);
+            relatorio.contar(sessao.em_uso);
             registro.importadas.push(sessao.id.clone());
             criados.push(id);
         }
@@ -187,6 +191,9 @@ impl Motor {
             registro.pendente = false;
         }
         registro.ultima_vez = marca_da_vigia(registro.ultima_vez, inicio, listagem.incompleta);
+        if !listagem.incompleta {
+            registro.regras = importar::REGRAS;
+        }
         registro.gravar(&mut self.resto_estado);
         self.salvar();
         for id in &criados {
@@ -195,12 +202,7 @@ impl Motor {
             }
         }
         if let Some(texto) = relatorio.texto(automatica) {
-            // A da primeira abertura fica também na conversa do Mestre, como a da migração; a
-            // vigia só registra (uma linha no Mestre a cada conversa nova seria ruído).
-            self.registrar("importacao", "vitral", "", "", None, &texto);
-            if pedido == Pedido::PrimeiraAbertura {
-                self.avisar_no_mestre(&texto);
-            }
+            self.registrar("importacao", "vitral", "", &texto);
             if pedido != Pedido::Vigia || !criados.is_empty() {
                 self.avisos_ao_abrir.push(texto);
             }
@@ -208,40 +210,14 @@ impl Motor {
         cx.notify();
     }
 
-    /// O chat de uma sessão, com a tarefa em conversa, na pasta dela e sem as mensagens (que vêm
-    /// do arquivo quando o chat abre): só o marco de onde ela continua. Devolve o id e o nome do
-    /// destino.
-    fn criar_chat_importado(&mut self, s: &Sessao) -> (String, String) {
-        let canonica = dunce::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone());
-        let destino = importar::destino(&canonica, &self.projetos);
-        let projeto = destino.map_or_else(String::new, |(p, _)| p.id.clone());
-        let forma = importar::forma(&canonica, destino.map(|(_, l)| l));
-        let (permissao, modelo, conta) =
-            destino.map_or((None, None, None), |(p, _)| (p.permissao.clone(), p.modelo.clone(), p.conta.clone()));
+    /// O chat de uma sessão, direto na pasta dela e sem as mensagens (que vêm do arquivo quando o
+    /// chat abre): só o marco de onde ela continua. Devolve o id.
+    fn criar_chat_importado(&mut self, s: &Sessao) -> String {
         let id = novo_id();
-        let n = self.proxima_tarefa;
-        self.proxima_tarefa += 1;
-        let porta = dados::porta_livre(&self.tarefas).unwrap_or(0);
-        self.tarefas.push(Tarefa {
-            id: n,
-            projeto: projeto.clone(),
-            trabalhador: id.clone(),
-            titulo: s.titulo.clone(),
-            estado: EstadoTarefa::Conversa,
-            forma,
-            origem: s.cwd.clone(),
-            porta,
-            preparada: true,
-            criada_em: s.primeira,
-            atualizada_em: s.ultima,
-            ..Default::default()
-        });
         let agora = agora();
-        let mut chat = Chat::novo(id.clone(), Papel::Projeto, &projeto, &s.titulo, s.cwd.clone());
-        chat.tarefa = Some(n);
+        let mut chat = Chat::novo(id.clone(), &s.titulo, s.cwd.clone());
         chat.criado_por = importar::CRIADO_POR.into();
         (chat.criado_em, chat.atualizado_em, chat.lido_em) = (s.primeira, s.ultima, agora);
-        (chat.permissao, chat.modelo, chat.conta) = (permissao, modelo, conta);
         let importada = s.importada(agora);
         chat.itens.push(Item::Aviso { texto: importar::marco(&importada), erro: false, em: agora });
         if importada.em_uso {
@@ -249,7 +225,7 @@ impl Motor {
         }
         chat.importada = Some(importada);
         self.chats.push(chat);
-        (id, self.nome_do_projeto(&projeto))
+        id
     }
 
     /// A primeira vez no Vitral de uma conversa trazida abriu a sessão: o histórico para onde a

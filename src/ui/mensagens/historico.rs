@@ -126,12 +126,7 @@ impl Janela {
             // O histórico trazido do Claude Code é só para ler: nada dele se corrige aqui.
             painel: 0,
             editavel: None,
-            sem_copia: true,
             marco: None,
-            ultimas: HashMap::new(),
-            entregas: HashMap::new(),
-            // O histórico trazido do Claude Code não liga referências (não é deste projeto).
-            referencias: Default::default(),
             // A busca da conversa não varre o histórico do Claude Code: ele é lido do arquivo,
             // sob demanda, e nem todo ele está em memória.
             busca: &sem_busca,
@@ -176,7 +171,7 @@ impl Janela {
                 while fim < mostrados.len() && matches!(mostrados[fim].1, Item::Ferramenta { .. }) && !datas.contains_key(&fim) {
                     fim += 1;
                 }
-                blocos.push((Bloco::Log, None, self.ferramentas(&contexto, &mostrados[i..fim], false, window, cx)));
+                blocos.push((Bloco::Log, None, self.trilha(&contexto, &mostrados[i..fim], false, cx)));
                 i = fim;
                 continue;
             }

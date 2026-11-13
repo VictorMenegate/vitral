@@ -203,6 +203,7 @@ impl Escopo {
     }
 
     /// O processo principal terminou?
+    #[cfg(test)]
     pub fn terminou(&self) -> bool {
         // SAFETY: o handle do processo vive enquanto o escopo existe.
         unsafe { WaitForSingleObject(self.handle(), 0) == WAIT_OBJECT_0 }

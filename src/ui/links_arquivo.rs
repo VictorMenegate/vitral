@@ -1,5 +1,5 @@
 //! Arquivos citados na resposta do assistente viram links: `produtos/views.py`, `src/motor.rs:120`
-//! e `[o teste](tests/hook.rs#L40)` abrem no painel da direita, na linha; uma imagem abre no visor.
+//! e `[o teste](tests/versao.rs#L40)` abrem no painel da direita, na linha; uma imagem abre no visor.
 //!
 //! Só vira link o que está no disco (a pasta do chat é a base dos caminhos relativos), então
 //! "1.5", "e.g." e um nome que o assistente só imaginou ficam como texto. O link carrega o caminho
@@ -264,6 +264,83 @@ pub fn resolver(base: &Path, escrito: &str) -> Option<String> {
     existe.then(|| caminho.to_string_lossy().into_owned())
 }
 
+/// Um link `vitral:arquivo/…` clicado no texto do assistente (a janela abre o arquivo).
+#[derive(Clone, PartialEq, Debug, serde::Deserialize, gpui_kit::Action)]
+#[action(namespace = vitral, no_json)]
+pub struct AbrirLinkVitral(pub String);
+
+/// O link pode abrir: `http(s)` sempre; `vitral:arquivo/…` só no texto do assistente (é ele que
+/// `ligar_arquivos` gera); o resto (`file://`, `javascript:`, caminhos soltos) nunca.
+pub fn link_permitido(url: &str, do_assistente: bool) -> bool {
+    let url = url.trim();
+    let comeca = |p: &str| url.len() > p.len() && url[..p.len()].eq_ignore_ascii_case(p);
+    if comeca("http://") || comeca("https://") {
+        return true;
+    }
+    do_assistente && comeca("vitral:") && ler_link(url).is_some()
+}
+
+/// O caminho inteiro e a linha de um `vitral:arquivo/<linha>/<caminho em %XX>`.
+pub fn ler_link(url: &str) -> Option<(String, Option<u32>)> {
+    let resto = url.trim().strip_prefix("vitral:arquivo/")?;
+    let (linha, caminho) = resto.split_once('/')?;
+    Some((caminho_do_link(caminho)?, linha.parse::<u32>().ok().filter(|n| *n > 0)))
+}
+
+/// A pasta conhecida mais funda que contém o arquivo, e o caminho dele dentro dela (com "/").
+pub fn raiz_do_arquivo(arquivo: &Path, pastas: impl Iterator<Item = PathBuf>) -> Option<(PathBuf, String)> {
+    pastas
+        .filter(|p| !p.as_os_str().is_empty())
+        .filter_map(|p| dunce::canonicalize(&p).ok())
+        .filter(|p| arquivo.starts_with(p) && arquivo != p)
+        .max_by_key(|p| p.components().count())
+        .and_then(|raiz| {
+            let relativo = arquivo.strip_prefix(&raiz).ok()?;
+            let relativo = relativo.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+            Some((raiz, relativo))
+        })
+}
+
+impl super::Janela {
+    /// Um link `vitral:arquivo/…` do texto do assistente: a imagem abre no visor; o resto, no painel
+    /// da direita, na linha. O que está na pasta de um chat abre com ela como raiz; o que está fora,
+    /// com a pasta do próprio arquivo.
+    pub(super) fn abrir_link_vitral(&mut self, url: &str, window: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<Self>) {
+        use super::componentes::{Tom, aviso};
+        use gpui_kit::component::WindowExt as _;
+        let Some(motor) = self.motor.clone() else { return };
+        let Some((caminho, linha)) = ler_link(url) else { return };
+        let Ok(inteiro) = dunce::canonicalize(&caminho) else {
+            window.push_notification(aviso(Tom::Erro, format!("{caminho} não existe mais")), cx);
+            return;
+        };
+        let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
+        if crate::claude::tipo_imagem(&inteiro).is_some()
+            && let Some(chat) = &chat
+        {
+            self.abrir_visor(chat, &inteiro, window, cx);
+            return;
+        }
+        let raiz = {
+            let m = motor.read(cx);
+            raiz_do_arquivo(&inteiro, m.chats.iter().map(|c| c.cwd.clone()))
+        };
+        // Fora das pastas dos chats, abre do mesmo jeito, com a pasta do próprio arquivo como raiz
+        // (dono, 13/11/2026: "tem que nada ter que abrir no VS Code").
+        let de_fora = || {
+            let pasta = inteiro.parent()?.to_path_buf();
+            Some((pasta, inteiro.file_name()?.to_string_lossy().into_owned()))
+        };
+        let Some((raiz, relativo)) = raiz.or_else(de_fora) else {
+            window.push_notification(aviso(Tom::Atencao, format!("Não deu para abrir {caminho}.")), cx);
+            return;
+        };
+        self.arquivo_linha.set(linha);
+        self.arquivo_marcada.set(linha);
+        self.abrir_arquivo(raiz, relativo, window, cx);
+    }
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -366,5 +443,22 @@ mod testes {
         assert_eq!(resolver(&pasta, "src"), None, "pasta não é arquivo");
         assert_eq!(resolver(&pasta, "src/nao.rs"), None);
         let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn link_permitido_pela_origem() {
+        assert!(link_permitido("https://github.com/o/r/pull/1", false));
+        assert!(link_permitido("HTTP://exemplo.com", false));
+        assert!(!link_permitido("file:///etc/passwd", false));
+        assert!(!link_permitido("file:///etc/passwd", true));
+        assert!(!link_permitido("javascript:alert(1)", true));
+        assert!(!link_permitido("/home/victor/.ssh/id_ed25519", false));
+        assert!(!link_permitido("vitral:qualquer/coisa", true));
+        assert!(link_permitido("vitral:arquivo/12/%2Fp%2Fa.rs", true));
+        assert!(!link_permitido("vitral:arquivo/12/%2Fp%2Fa.rs", false));
+        assert!(!link_permitido("vitral:arquivo/12/", true));
+        assert!(!link_permitido("https://", false));
+        assert_eq!(ler_link("vitral:arquivo/12/%2Fp%2Fa.rs"), Some(("/p/a.rs".into(), Some(12))));
+        assert_eq!(ler_link("vitral:arquivo/0/a.rs"), Some(("a.rs".into(), None)));
     }
 }

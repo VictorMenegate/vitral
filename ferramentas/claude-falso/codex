@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Codex de mentira para a bancada (vai no PATH junto com o claude falso, com CLAUDE_FALSO=1).
+
+Fala o formato do `codex exec --json` (conferido no Codex 0.169.0): lê o pedido da entrada padrão,
+escreve `thread.started`, os itens e `turn.completed`, e não chama ninguém. Os argumentos de cada
+chamada ficam em $XDG_STATE_HOME/codex-falso.log.
+
+No pedido, `[ferramenta <Nome> <detalhe> | <segundos>]` encena um item: Bash vira um comando, Edit e
+Write uma mudança de arquivo, Pensa um raciocínio. `[falha]` termina o turno com erro.
+`codex debug models` devolve um catálogo pequeno.
+"""
+import json
+import os
+import re
+import sys
+import time
+import uuid
+
+FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
+
+
+def emitir(evento):
+    print(json.dumps(evento, ensure_ascii=False), flush=True)
+
+
+def anotar(args):
+    estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    try:
+        os.makedirs(estado, exist_ok=True)
+        with open(os.path.join(estado, "codex-falso.log"), "a", encoding="utf-8") as log:
+            log.write(json.dumps({"cwd": os.getcwd(), "args": args}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def catalogo():
+    modelo = lambda slug, nome, descricao, visivel="list": {
+        "slug": slug, "display_name": nome, "description": descricao, "visibility": visivel}
+    print(json.dumps({"models": [
+        modelo("gpt-falso-sol", "GPT-Falso-Sol", "O modelo de trabalho do codex de mentira."),
+        modelo("gpt-falso-luna", "GPT-Falso-Luna", "Rápido, para tarefas fáceis."),
+        modelo("codex-auto-review", "Codex Auto Review", "Não aparece no seletor.", "hide"),
+    ]}))
+
+
+def valor_de(args, chave):
+    return next((args[i + 1] for i, a in enumerate(args[:-1]) if a == chave), None)
+
+
+def main():
+    args = sys.argv[1:]
+    anotar(args)
+    if args[:2] == ["debug", "models"]:
+        return catalogo()
+    if not args or args[0] != "exec":
+        print("codex falso: só sei `exec` e `debug models`", file=sys.stderr)
+        return 2
+    retomada = args[2] if len(args) > 2 and args[1] == "resume" else None
+    pedido = sys.stdin.read()
+    emitir({"type": "thread.started", "thread_id": retomada or str(uuid.uuid4())})
+    emitir({"type": "turn.started"})
+    if "[falha]" in pedido:
+        erro = "(codex falso) o turno falhou de propósito."
+        emitir({"type": "error", "message": erro})
+        emitir({"type": "turn.failed", "error": {"message": erro}})
+        return 1
+    n = 0
+    for nome, detalhe, segundos in FERRAMENTA.findall(pedido):
+        detalhe, espera = detalhe.strip(), int(segundos) if segundos else 3
+        id_ = f"item_{n}"
+        n += 1
+        if nome == "Pensa":
+            emitir({"type": "item.started", "item": {"id": id_, "type": "reasoning", "text": ""}})
+            time.sleep(espera)
+            emitir({"type": "item.completed", "item": {"id": id_, "type": "reasoning", "text": detalhe}})
+        elif nome in ("Edit", "Write"):
+            mudanca = [{"path": os.path.join(os.getcwd(), detalhe), "kind": "add" if nome == "Write" else "update"}]
+            emitir({"type": "item.started", "item": {"id": id_, "type": "file_change", "changes": mudanca, "status": "in_progress"}})
+            time.sleep(espera)
+            emitir({"type": "item.completed", "item": {"id": id_, "type": "file_change", "changes": mudanca, "status": "completed"}})
+        else:
+            comando = f'/bin/bash -lc "{detalhe}"'
+            emitir({"type": "item.started", "item": {"id": id_, "type": "command_execution", "command": comando,
+                                                     "aggregated_output": "", "exit_code": None, "status": "in_progress"}})
+            time.sleep(espera)
+            emitir({"type": "item.completed", "item": {"id": id_, "type": "command_execution", "command": comando,
+                                                       "aggregated_output": f"(codex falso) saída de: {detalhe}\n",
+                                                       "exit_code": 0, "status": "completed"}})
+    modelo = valor_de(args, "-m") or "o padrão"
+    sandbox = next((a for a in args if a.startswith("sandbox_mode=")), "sandbox_mode=?")
+    como = "retomei a conversa" if retomada else "conversa nova"
+    emitir({"type": "item.completed", "item": {"id": f"item_{n}", "type": "agent_message", "text":
+            f"(codex falso) {como}, modelo {modelo}, {sandbox}. Li: {pedido.strip()[:200]}"}})
+    emitir({"type": "turn.completed", "usage": {"input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 20}})
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

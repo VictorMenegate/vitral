@@ -31,6 +31,7 @@ use std::{
 };
 
 use gpui_kit::base::animation::{cubic_bezier, ease_out_cubic};
+use gpui_kit::component::spinner;
 use gpui_kit::*;
 
 use crate::tema::r;
@@ -443,8 +444,9 @@ fn pedir_quadro(animando: Rc<Cell<bool>>, window: &mut Window, cx: &mut App) {
     .detach();
 }
 
-/// Quantas vezes por segundo um laço vivo redesenha a janela (um chat da tela trabalhando, o
-/// ponteiro em cima do botão do menu): o metal não precisa de mais.
+/// Quantas vezes por segundo um laço vivo pede para redesenhar a janela (um chat da tela
+/// trabalhando, o ponteiro em cima do botão do menu). Está acima do compasso dos spinners, então
+/// na prática o laço bate junto com ele, a 12 por segundo (ver `laco_a`).
 pub const QPS_DO_LACO: f32 = 20.;
 /// O ritmo do metal em repouso (ninguém trabalhando na tela). Uma constante só, para o fundo da
 /// janela e para o botão do menu. Em `0.` o metal fica PARADO em repouso e nada redesenha; ele
@@ -549,6 +551,16 @@ pub fn laco_a(window: &mut Window, cx: &mut App, qps: f32) -> f64 {
         return lacos.fase;
     }
     let fase = lacos.andar(agora);
+    // No ritmo do compasso dos spinners (12 por segundo) ou acima dele, o laço não arma batida
+    // própria: entra na do compasso. Cada batida redesenha a janela inteira (uns 20 a 30 ms de
+    // processador no release, medido em 13/11/2026), e as duas grades somadas davam até 28
+    // redesenhos por segundo com um chat trabalhando: metade da thread da interface, com a
+    // digitação e a rolagem esperando atrás (dono: "tá bem travado"). Numa grade só são 12.
+    if qps >= spinner::BATIDAS_POR_SEGUNDO as f32 {
+        spinner::compasso(window, cx);
+        return fase;
+    }
+    let lacos = cx.default_global::<Lacos>();
     let quando = lacos.quando(janela, agora, Duration::from_secs_f32(1. / qps.min(QPS)));
     if lacos.marcar(janela, quando) {
         let espera = quando.saturating_duration_since(agora);

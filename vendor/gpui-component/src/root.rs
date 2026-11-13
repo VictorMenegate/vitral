@@ -717,10 +717,12 @@ impl gpui_base::RootPlugin for WindowState {
 
     fn style(&self, surface: &mut gpui::Stateful<gpui::Div>, _window: &mut Window, cx: &mut App) {
         use gpui::Refineable as _;
+        // Vitral: a raiz não pinta o fundo. Quem pinta é a Janela (a chapa de metal e o véu, meio
+        // transparentes): com o `background` opaco do tema aqui embaixo, nenhuma transparência
+        // dos fundos chegava ao que está atrás da janela.
         surface.style().refine(
             &gpui::StyleRefinement::default()
                 .font_family(cx.theme().font_family.clone())
-                .bg(cx.theme().tokens.background)
                 .text_color(cx.theme().foreground),
         );
     }
