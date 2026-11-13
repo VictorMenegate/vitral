@@ -78,7 +78,7 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                     .child(
                         h_flex().items_start().gap(esp::E12).p(esp::E12).rounded(raio::CARTAO).bg(Cores::preto())
                             .child(super::mensagens::icone_de(Lucide::Brain, 20.).text_color(Cores::destaque_texto()))
-                            .child(v_flex().gap(esp::E4)
+                            .child(v_flex().flex_1().min_w_0().gap(esp::E4)
                                 .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(if ligada_agora { "Conectada à equipe" } else { "Conecte a memória da sua equipe" }))
                                 .child(div().corpo_ui().text_color(Cores::tenue()).child("Decisões, procedimentos e aprendizados compartilhados entre o Claude e o Codex. Não precisa instalar o ai-memory neste computador."))),
                     )
