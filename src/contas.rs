@@ -157,7 +157,10 @@ pub fn apagar_pasta(id: &str) {
     }
 }
 
-/// Um `claude auth login` em andamento: mostra o endereço de login e espera o código.
+/// Um `claude auth login` em andamento: mostra o endereço de login e espera. O Claude Code de
+/// hoje termina sozinho quando você autoriza no navegador (a página volta para ele e diz "Tudo
+/// pronto para usar Claude Code", sem código nenhum); o código colado continua valendo para
+/// quando o navegador não consegue voltar (outra máquina, por exemplo).
 pub struct Login {
     pub id: String,
     pub pasta: PathBuf,
@@ -210,14 +213,7 @@ impl Login {
         drop(entrada);
         let fim = std::time::Instant::now() + Duration::from_secs(60);
         loop {
-            if let Some(estado) = self.filho.try_wait()? {
-                if !estado.success() {
-                    let mut erro = String::new();
-                    if let Some(mut stderr) = self.filho.stderr.take() {
-                        let _ = std::io::Read::read_to_string(&mut stderr, &mut erro);
-                    }
-                    bail!("o login falhou: {}", erro.trim());
-                }
+            if self.terminou() {
                 break;
             }
             if std::time::Instant::now() > fim {
@@ -225,6 +221,25 @@ impl Login {
                 bail!("o login não respondeu");
             }
             std::thread::sleep(Duration::from_millis(200));
+        }
+        self.resultado()
+    }
+
+    /// O Claude Code já encerrou o login (sozinho, depois do "Autorizar" no navegador, ou com
+    /// erro). Não bloqueia.
+    pub fn terminou(&mut self) -> bool {
+        !matches!(self.filho.try_wait(), Ok(None))
+    }
+
+    /// Com o login encerrado: o e-mail e o plano da conta, ou o erro que ele deu.
+    pub fn resultado(mut self) -> Result<(String, String)> {
+        let estado = self.filho.wait()?;
+        if !estado.success() {
+            let mut erro = String::new();
+            if let Some(mut stderr) = self.filho.stderr.take() {
+                let _ = std::io::Read::read_to_string(&mut stderr, &mut erro);
+            }
+            bail!("o login falhou: {}", erro.trim());
         }
         status(Some(&self.pasta))
     }

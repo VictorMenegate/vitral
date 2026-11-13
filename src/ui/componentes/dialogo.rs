@@ -61,12 +61,6 @@ impl CabecalhoDialogo {
         self
     }
 
-    /// O título numa linha só, cortado no fim, com ele inteiro na dica (o título da tarefa na
-    /// Revisão, que pode ser longo).
-    pub fn uma_linha(mut self) -> Self {
-        self.uma_linha = true;
-        self
-    }
 }
 
 impl RenderOnce for CabecalhoDialogo {
@@ -128,7 +122,7 @@ impl RodapeDialogo {
         Self::default()
     }
 
-    /// Mais uma ação à esquerda (Editar projeto tem Arquivar e Apagar).
+    /// Mais uma ação à esquerda (como o "Outra pasta…").
     pub fn esquerda(mut self, b: Button) -> Self {
         self.esquerda.push(b);
         self
@@ -292,7 +286,7 @@ pub fn confirmar(
     });
 }
 
-/// Tela inteira centrada num cartão (boas-vindas e, depois, a recuperação do Mestre).
+/// Tela inteira centrada num cartão (a recuperação dos dados).
 #[derive(IntoElement)]
 pub struct TelaCheia {
     simbolo: Option<AnyElement>,

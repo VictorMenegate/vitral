@@ -869,7 +869,8 @@ impl CommandState {
                 .into_any_element(),
         };
 
-        self.item_row(selected, window, cx)
+        // Vitral: o item com marca própria (`sem_realce`) não ganha o fundo de realce.
+        self.item_row(selected && !item.sem_realce, window, cx)
             .id(self.matched[matched_ix].index_path)
             .test_support()
             .role(Role::ListBoxOption)

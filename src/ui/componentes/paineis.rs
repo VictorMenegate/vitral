@@ -10,7 +10,7 @@ use super::base::Simbolo;
 use super::estado::{Sinal, numero_painel};
 use super::metal::aro_de_metal;
 use super::superficies::Flutuante as _;
-use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_foco, r, raio, tam};
 
 /// Grupo de hover da aba: no hover, o × aparece e o ponto do estado some.
 pub const GRUPO_DA_ABA: &str = "aba";
@@ -25,6 +25,9 @@ pub enum TomAba {
     Selecionada,
     #[default]
     Normal,
+    /// A aba à vista de um painel sem o foco que tem outras abas ao lado: um degrau mais claro
+    /// que elas (que são `Inativa`), para dar para ver qual está aberta.
+    InativaAVista,
 }
 
 /// Aba de painel ou de arquivo: 32 em pílula, título 13/500, até 400; encolhe com o painel.
@@ -59,12 +62,6 @@ impl Aba {
             fim: None,
             so_simbolo: false,
         }
-    }
-
-    /// Um elemento depois do título, antes do × (o anel dos checks na aba do PR).
-    pub fn fim(mut self, e: impl IntoElement) -> Self {
-        self.fim = Some(e.into_any_element());
-        self
     }
 
     /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
@@ -126,13 +123,18 @@ impl Aba {
 
     pub fn construir(self, window: &Window, _: &App) -> Stateful<Div> {
         // A aba do chat tem fundo sempre (pedido do dono, 12/11/2026), e opaco: é o miolo do aro
-        // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem.
-        let (fundo, texto, borda) = match self.tom {
-            TomAba::Unica => (Cores::tinta_solida(Cores::forte(), 0.08), Cores::forte(), transparent_black()),
-            TomAba::Ativa => (Cores::tinta_solida(Cores::forte(), 0.11), Cores::forte(), transparent_black()),
-            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
-            TomAba::Selecionada => (Cores::cartao_elevado(), Cores::forte(), Cores::borda()),
-            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
+        // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem. As
+        // aba à vista do painel com o foco mora numa casca preta (`casca_da_aba`) e é o campo dela,
+        // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
+        // parecido com a que digito aqui"); as outras são lisas, só com o contorno.
+        let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
+        let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
+            TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::borda()),
+            // A aba de um painel sem o foco: lisa, quase da cor do painel, só com o contorno.
+            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::borda()),
+            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::borda()),
+            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
+            TomAba::InativaAVista => (Cores::tinta_solida(Cores::forte(), 0.10).into(), Cores::texto(), transparent_black()),
         };
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
@@ -172,7 +174,7 @@ impl Aba {
         });
         let fim = (fechar.is_some() || ponto.is_some())
             .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar));
-        // Ícone solto em 16; quadrado do projeto e círculo do papel em 18.
+        // Ícone solto em 16; o círculo do chat em 18.
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
             s.desenhar(lado, window)
@@ -183,11 +185,14 @@ impl Aba {
             .flex()
             .flex_shrink(1.)
             .items_center()
-            .gap(r(6.))
+            // O símbolo e o título com mais ar, e mais folga do lado do símbolo que do lado do ×
+            // (que já tem a área de clique dele).
+            .gap(esp::E8)
             .h(r(32.))
             .max_w(r(400.))
             .min_w_0()
-            .px(r(8.))
+            .pl(esp::E12)
+            .pr(esp::E8)
             .relative()
             .rounded(raio::de(32.))
             .border_1()
@@ -195,12 +200,20 @@ impl Aba {
             .text_color(texto)
             .map(|s| match self.tom {
                 TomAba::Inativa | TomAba::Normal => s.hover(|s| s.text_color(Cores::texto())),
-                TomAba::Unica | TomAba::Ativa | TomAba::Selecionada => s,
+                TomAba::Unica | TomAba::Ativa | TomAba::Selecionada | TomAba::InativaAVista => s,
             })
             // O aro de metal (só com o ponteiro em cima) e, por cima dele, o miolo opaco da aba.
             .when(!self.arrastando, |s| {
                 s.child(aro_de_metal(raio::de(32.), px(2.), 1.).invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
-                    .child(div().absolute().inset_0().rounded(raio::de(32.)).bg(fundo))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(raio::de(32.))
+                            .bg(fundo)
+                            // O brilho de cima do campo da caixa de mensagem.
+                            .when(campo, |s| s.shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])),
+                    )
             })
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
@@ -208,7 +221,6 @@ impl Aba {
                     .tab_index(0)
                     .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             })
-            .children(self.numero.map(|(n, ativo)| numero_painel(n, ativo)))
             .children(simbolo)
             .when(!self.so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
             .children(self.detalhe.filter(|_| !self.so_simbolo).map(|(t, mono)| {
@@ -220,6 +232,8 @@ impl Aba {
                     .map(|d| if mono { d.mono_pequeno() } else { d.metadado() })
                     .child(t)
             }))
+            // O número do painel fica à direita, antes do × (dono, 13/11/2026).
+            .children(self.numero.map(|(n, ativo)| numero_painel(n, ativo)))
             .children(self.fim)
             .children(fim)
             .when_some(fechar_meio, |s, f| {
@@ -230,6 +244,15 @@ impl Aba {
                 })
             })
     }
+}
+
+/// A casca da aba à vista no painel com o foco: o preto da caixa de mensagem em volta dela,
+/// reduzido a um fio (1 px de folga mais 1 px de borda), com a aba fazendo de campo. O dono viu a
+/// casca com 4 e com 2 de folga e pediu mais fina, e entre as abas todas num trilho só e cada aba
+/// uma peça, ficou com as peças separadas (13/11/2026): só esta leva a casca, e as outras abas e
+/// as dos painéis sem o foco são lisas, com o contorno.
+pub fn casca_da_aba() -> Div {
+    div().flex().items_center().min_w_0().p(px(1.)).rounded(raio::de(34.)).border_1().border_color(Cores::preto()).bg(Cores::preto())
 }
 
 /// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280.

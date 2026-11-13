@@ -175,6 +175,10 @@ pub fn barra_de_rolagem<H: ScrollbarHandle + Clone>(id: impl Into<ElementId>, ro
 /// Grupo de hover do `CartaoDeLista`, para o que aparece com o ponteiro no cartão.
 pub const GRUPO_DO_CARTAO: &str = "cartao-de-lista";
 
+/// A altura, a 100%, da linha de chat da lista corrida (uma linha, fora da árvore). A lista usa
+/// a mesma medida no espaço que guarda o lugar dos cartões fora da vista.
+pub const ALTURA_DA_LINHA_DE_CHAT: f32 = 36.;
+
 /// Cartão de uma lista (conversas, trabalhadores, arquivos, contas, rotinas): 52 com duas
 /// linhas ou 32 com uma. O conteúdo fica a 8 da borda (o símbolo de uma lista com a peça de 8
 /// cai na guia de 16) e o título, a 12 do símbolo de 30 (8 do de 16, numa linha). As ações
@@ -348,8 +352,14 @@ impl RenderOnce for CartaoDeLista {
         const GRUPO: &str = GRUPO_DO_CARTAO;
         let arvore = self.nivel > 0;
         let uma_linha = self.uma_linha || arvore;
-        let (altura, raio_cartao, lado_simbolo) =
-            if uma_linha { (32., raio::CONTROLE, 16.) } else { (52., raio::CARTAO, 30.) };
+        // A linha de chat da lista corrida (uma linha, fora da árvore) é um pouco maior que a da
+        // árvore: 36 de altura e título 15 (dono, 13/11/2026: "deixa esses chats um pouco maior").
+        let folgada = self.uma_linha && !arvore;
+        let (altura, raio_cartao, lado_simbolo) = match (uma_linha, folgada) {
+            (true, true) => (ALTURA_DA_LINHA_DE_CHAT, raio::CONTROLE, 16.),
+            (true, false) => (32., raio::CONTROLE, 16.),
+            _ => (52., raio::CARTAO, 30.),
+        };
         let vao = if uma_linha && !arvore { esp::E8 } else { esp::E12 };
         let forte = self.nao_lido || self.selecionado;
         let cor_barra = Cores::destaque();
@@ -377,7 +387,6 @@ impl RenderOnce for CartaoDeLista {
                     .into_any_element()
             })
         };
-        // No nível 1, 13/500 como o rotulo_tarefa.
         let titulo = div()
             .min_w_0()
             .map(|d| {
@@ -387,7 +396,13 @@ impl RenderOnce for CartaoDeLista {
                     d.truncate()
                 }
             })
-            .text_size(r(if self.nivel > 0 { 13. } else { 14. }))
+            .text_size(r(if self.nivel > 0 {
+                13.
+            } else if folgada {
+                15.
+            } else {
+                14.
+            }))
             .line_height(r(20.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(if forte { Cores::forte() } else { Cores::texto() })
@@ -550,18 +565,6 @@ fn coluna_da_arvore(
         .into_any_element()
 }
 
-/// "#2 Aplicar cupom": o número em tênue e o título 13/500 (14/500 em cartão).
-pub fn rotulo_tarefa(n: u64, titulo: &str, grande: bool) -> impl IntoElement {
-    div()
-        .flex()
-        .min_w_0()
-        .gap(r(6.))
-        .text_size(r(if grande { 14. } else { 13. }))
-        .font_weight(FontWeight::MEDIUM)
-        .child(div().flex_none().text_color(Cores::tenue()).child(format!("#{n}")))
-        .child(div().min_w_0().truncate().text_color(Cores::texto()).child(titulo.to_string()))
-}
-
 /// O que vai à direita de uma linha de opção.
 pub enum Controle {
     Interruptor { ligado: bool, ao_mudar: Rc<dyn Fn(bool, &mut Window, &mut App)> },
@@ -628,12 +631,6 @@ impl LinhaDeOpcao {
         self
     }
 
-    /// No diálogo estreito: o controle (menu, botões) desce para baixo do texto.
-    pub fn embaixo(mut self, sim: bool) -> Self {
-        self.embaixo = sim;
-        self
-    }
-
     /// Campo embaixo do título (linha vertical).
     pub fn campo(mut self, e: impl IntoElement) -> Self {
         self.campo = Some(e.into_any_element());
@@ -649,12 +646,6 @@ impl LinhaDeOpcao {
     /// Ícone antes do título, com o título na mesma cor (o Ultracode, em violeta).
     pub fn simbolo(mut self, icone: Lucide, cor: Hsla) -> Self {
         self.simbolo = Some((icone, cor));
-        self
-    }
-
-    /// O logo do serviço (16) antes do título, que fica na cor de sempre (GitHub, Linear).
-    pub fn marca(mut self, s: Simbolo) -> Self {
-        self.marca = Some(s);
         self
     }
 
@@ -1017,6 +1008,9 @@ impl Render for ListaDeEscolha {
                 let mut linha = CommandItem::new()
                     .label(item.titulo.clone())
                     .disabled(item.desabilitado.is_some())
+                    // O escolhido já tem a ficha de metal: o realce claro do ponteiro não vai
+                    // por baixo dela (sobrava nos cantos e lavava o metal).
+                    .sem_realce(marcado && ficha)
                     .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, ficha, window));
                 if let Some(termos) = &item.termos {
                     linha = linha.keywords([termos.clone()]);

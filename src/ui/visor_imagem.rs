@@ -1,14 +1,14 @@
 //! O visor: uma imagem do chat em tamanho cheio, por cima da conversa. Abre pela miniatura da
-//! bolha ou pelo chip da caixa; Esc fecha, as setas andam pelas outras imagens da conversa, e um
-//! botão troca entre caber na janela e o tamanho real (com rolagem).
+//! bolha, pela imagem de uma chamada ou pelo chip da caixa; Esc fecha e as setas andam pelas
+//! outras imagens da conversa. Dá para mexer direto na imagem (dono, 13/11/2026: "dar zoom e
+//! mexer direto na parte de ver"): a roda aproxima e afasta em volta do ponteiro, arrastar move,
+//! dois cliques trocam entre caber na janela e o tamanho real, e a barra tem os mesmos passos.
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::{
-    Disableable as _, WindowExt as _,
-    scroll::{ScrollableElement as _, ScrollbarAxis},
-    h_flex, v_flex,
-};
+use std::{cell::Cell, rc::Rc};
+
+use gpui_kit::component::{Disableable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -30,19 +30,84 @@ const FOLGA: f32 = 24.;
 /// Altura da barra de cima (nome, medidas e botões), que sai da área da imagem.
 const BARRA: f32 = 44.;
 
+/// Até quanto se afasta e se aproxima, em vezes o tamanho que cabe na janela.
+const ZOOM_MINIMO: f32 = 0.25;
+const ZOOM_MAXIMO: f32 = 24.;
+/// Um passo dos botões de zoom.
+const PASSO_DO_ZOOM: f32 = 1.25;
+
 pub(super) struct VisorImagem {
     /// Todas as imagens da conversa, na ordem em que foram mandadas.
     imagens: Vec<PathBuf>,
     atual: usize,
-    /// Em vez de caber na janela, a imagem fica no tamanho dela e a área rola.
-    tamanho_real: bool,
+    /// Quantas vezes o tamanho que cabe na janela (1 é caber).
+    zoom: f32,
+    /// O quanto a imagem saiu do centro da área, arrastada ou pelo zoom em volta do ponteiro.
+    desloc: Point<Pixels>,
+    /// Um arrasto em curso: onde o ponteiro estava e onde a imagem estava quando ele começou.
+    arrasto: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// A área da imagem no último desenho (para o zoom saber onde está o ponteiro dentro dela).
+    area: Rc<Cell<Bounds<Pixels>>>,
     foco: FocusHandle,
-    rolagem: ScrollHandle,
+}
+
+/// Quanto a imagem encolhe para caber na área (nunca cresce: imagem pequena fica no tamanho dela).
+fn encaixe(medidas: (u32, u32), area: Size<Pixels>) -> f32 {
+    let (largura, altura) = (medidas.0.max(1) as f32, medidas.1.max(1) as f32);
+    (area.width.as_f32() / largura).min(area.height.as_f32() / altura).min(1.)
+}
+
+/// Até onde a imagem pode sair do centro num eixo: só o que passa da área (cabendo, fica no meio).
+fn limite(tamanho: f32, area: f32) -> f32 {
+    ((tamanho - area) / 2.).max(0.)
+}
+
+/// O deslocamento novo para o zoom mudar em volta do ponteiro: o ponto debaixo dele (a `p` do
+/// centro da área) continua debaixo dele.
+fn desloc_no_zoom(p: Point<Pixels>, desloc: Point<Pixels>, de: f32, para: f32) -> Point<Pixels> {
+    let razao = para / de;
+    point(p.x - (p.x - desloc.x) * razao, p.y - (p.y - desloc.y) * razao)
 }
 
 impl VisorImagem {
     fn new(imagens: Vec<PathBuf>, atual: usize, cx: &mut Context<Self>) -> Self {
-        VisorImagem { imagens, atual, tamanho_real: false, foco: cx.focus_handle(), rolagem: ScrollHandle::new() }
+        VisorImagem {
+            imagens,
+            atual,
+            zoom: 1.,
+            desloc: Point::default(),
+            arrasto: None,
+            area: Rc::new(Cell::new(Bounds::default())),
+            foco: cx.focus_handle(),
+        }
+    }
+
+    /// Volta a caber na janela, no meio.
+    fn caber(&mut self, cx: &mut Context<Self>) {
+        self.zoom = 1.;
+        self.desloc = Point::default();
+        cx.notify();
+    }
+
+    /// Muda o zoom em volta de um ponto da tela (o ponteiro) ou, sem ele, do centro da área.
+    fn aproximar(&mut self, para: f32, em_volta: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let para = para.clamp(ZOOM_MINIMO, ZOOM_MAXIMO);
+        // Perto de caber, encaixa em caber: é o ponto de descanso.
+        let para = if (para - 1.).abs() < 0.03 { 1. } else { para };
+        let centro = self.area.get().center();
+        let p = em_volta.map_or(Point::default(), |ponto| point(ponto.x - centro.x, ponto.y - centro.y));
+        self.desloc = desloc_no_zoom(p, self.desloc, self.zoom, para);
+        self.zoom = para;
+        cx.notify();
+    }
+
+    /// O zoom que mostra a imagem no tamanho real dela.
+    fn zoom_real(&self) -> f32 {
+        let area = self.area.get().size;
+        match imagens::anexo(self.caminho()).medidas {
+            Some(medidas) if area.width > px(0.) => (1. / encaixe(medidas, area)).clamp(ZOOM_MINIMO, ZOOM_MAXIMO),
+            _ => 1.,
+        }
     }
 
     fn caminho(&self) -> &Path {
@@ -54,9 +119,8 @@ impl VisorImagem {
         let proximo = if adiante { self.atual + 1 } else { self.atual.wrapping_sub(1) };
         if proximo < self.imagens.len() {
             self.atual = proximo;
-            self.tamanho_real = false;
-            self.rolagem.set_offset(point(px(0.), px(0.)));
-            cx.notify();
+            self.arrasto = None;
+            self.caber(cx);
         }
     }
 
@@ -66,11 +130,14 @@ impl VisorImagem {
         let detalhe = anexo.detalhe();
         let caminho = self.caminho().to_path_buf();
         let varias = self.imagens.len() > 1;
-        let (rotulo, icone) = if self.tamanho_real {
-            ("Ajustar à janela", Lucide::ZoomOut)
-        } else {
-            ("Tamanho real", Lucide::ZoomIn)
-        };
+        let cabendo = self.zoom == 1. && self.desloc == Point::default();
+        let (rotulo, icone) = if cabendo { ("Tamanho real", Lucide::Maximize) } else { ("Ajustar à janela", Lucide::Minimize) };
+        // A porcentagem é a do tamanho real da imagem, não a do "caber".
+        let area = self.area.get().size;
+        let porcento = anexo
+            .medidas
+            .filter(|_| area.width > px(0.))
+            .map(|medidas| format!("{:.0}%", encaixe(medidas, area) * self.zoom * 100.));
         h_flex()
             .h(r(BARRA))
             .w_full()
@@ -117,11 +184,30 @@ impl VisorImagem {
                 )
             })
             .child(
+                h_flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(esp::E4)
+                    .child(
+                        botao_icone("visor-menos", Lucide::ZoomOut, "Afastar", TamanhoBotao::Barra, window, cx)
+                            .disabled(self.zoom <= ZOOM_MINIMO)
+                            .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom / PASSO_DO_ZOOM, None, cx))),
+                    )
+                    .children(porcento.map(|p| div().min_w(r(40.)).text_center().metadado().text_color(Cores::tenue()).child(p)))
+                    .child(
+                        botao_icone("visor-mais", Lucide::ZoomIn, "Aproximar", TamanhoBotao::Barra, window, cx)
+                            .disabled(self.zoom >= ZOOM_MAXIMO)
+                            .on_click(cx.listener(|this, _, _, cx| this.aproximar(this.zoom * PASSO_DO_ZOOM, None, cx))),
+                    ),
+            )
+            .child(
                 botao_fantasma("visor-zoom", Some(icone.into()), rotulo, TamanhoBotao::Barra, window, cx)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.tamanho_real = !this.tamanho_real;
-                        this.rolagem.set_offset(point(px(0.), px(0.)));
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if cabendo {
+                            this.aproximar(this.zoom_real(), None, cx);
+                        } else {
+                            this.caber(cx);
+                        }
                     })),
             )
             .child({
@@ -156,29 +242,71 @@ impl Render for VisorImagem {
                 .child(div().corpo_ui().text_color(Cores::tenue()).child("Esta imagem não está mais no disco."))
                 .child(div().metadado().text_color(Cores::apagado()).child(caminho.display().to_string()))
                 .into_any_element()
-        } else if self.tamanho_real {
-            // No tamanho real a imagem pode passar da janela dos dois lados: a área rola.
-            let (largura, altura) = anexo.medidas.unwrap_or((0, 0));
-            div()
-                .id("visor-rolagem")
-                .size_full()
-                .overflow_scroll()
-                .track_scroll(&self.rolagem)
-                .child(
-                    img(caminho)
-                        .flex_none()
-                        .when(largura > 0, |s| s.w(px(largura as f32)))
-                        .when(altura > 0, |s| s.h(px(altura as f32))),
-                )
-                .scrollbar(&self.rolagem, ScrollbarAxis::Both)
-                .into_any_element()
         } else {
+            // A imagem no tamanho que cabe, vezes o zoom, no meio da área mais o deslocamento
+            // (que só vale no que passa da área: cabendo, ela fica no meio).
+            let medidas = anexo.medidas.unwrap_or((area.width.as_f32() as u32, area.height.as_f32() as u32));
+            let escala = encaixe(medidas, area) * self.zoom;
+            let (largura, altura) = (medidas.0 as f32 * escala, medidas.1 as f32 * escala);
+            let (lim_x, lim_y) = (limite(largura, area.width.as_f32()), limite(altura, area.height.as_f32()));
+            self.desloc = point(
+                px(self.desloc.x.as_f32().clamp(-lim_x, lim_x)),
+                px(self.desloc.y.as_f32().clamp(-lim_y, lim_y)),
+            );
+            let esquerda = (area.width.as_f32() - largura) / 2. + self.desloc.x.as_f32();
+            let topo = (area.height.as_f32() - altura) / 2. + self.desloc.y.as_f32();
+            let onde = self.area.clone();
             div()
+                .id("visor-area")
+                .relative()
                 .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(img(caminho).max_w(area.width).max_h(area.height).object_fit(ObjectFit::Contain))
+                .overflow_hidden()
+                .cursor(if self.arrasto.is_some() { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
+                // Só para saber onde a área está na tela (o zoom em volta do ponteiro).
+                .child(canvas(move |limites, _, _| onde.set(limites), |_, _, _, _| {}).absolute().size_full())
+                .child(img(caminho).absolute().left(px(esquerda)).top(px(topo)).w(px(largura)).h(px(altura)))
+                .on_scroll(cx.listener(|this, evento: &ScrollEvent, window, cx| {
+                    let passo = evento.delta.pixel_delta(window.line_height()).y.as_f32();
+                    if passo != 0. {
+                        this.aproximar(this.zoom * (passo * 0.004).exp(), Some(evento.position), cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, evento: &MouseDownEvent, _, cx| {
+                        if evento.click_count >= 2 {
+                            // Dois cliques: do "caber" para o tamanho real naquele ponto, e de volta.
+                            this.arrasto = None;
+                            if this.zoom == 1. {
+                                this.aproximar(this.zoom_real().max(2.), Some(evento.position), cx);
+                            } else {
+                                this.caber(cx);
+                            }
+                        } else {
+                            this.arrasto = Some((evento.position, this.desloc));
+                            cx.notify();
+                        }
+                    }),
+                )
+                .on_mouse_move(cx.listener(|this, evento: &MouseMoveEvent, _, cx| {
+                    let Some((de, antes)) = this.arrasto else {
+                        return;
+                    };
+                    if evento.pressed_button != Some(MouseButton::Left) {
+                        this.arrasto = None;
+                    } else {
+                        this.desloc = point(antes.x + evento.position.x - de.x, antes.y + evento.position.y - de.y);
+                    }
+                    cx.notify();
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.arrasto = None;
+                        cx.notify();
+                    }),
+                )
                 .into_any_element()
         };
         v_flex()
@@ -275,10 +403,48 @@ fn imagens_dos_itens(itens: &[Item], base: &Path) -> Vec<PathBuf> {
                     juntar(caminho);
                 }
             }
+            // As que uma chamada leu ou gravou (a captura de tela que o chat foi olhar).
+            Item::Ferramenta { arquivo: Some(arquivo), erro: false, .. } => {
+                if let Some(inteiro) = super::links_arquivo::resolver(base, arquivo).map(PathBuf::from)
+                    && crate::claude::tipo_imagem(&inteiro).is_some()
+                {
+                    juntar(inteiro);
+                }
+            }
             _ => {}
         }
     }
     lista
+}
+
+#[cfg(test)]
+mod testes_do_zoom {
+    use super::{desloc_no_zoom, encaixe, limite};
+    use gpui_kit::{point, px, size};
+
+    #[test]
+    fn a_imagem_grande_encolhe_para_caber_e_a_pequena_fica_como_e() {
+        let area = size(px(1000.), px(500.));
+        assert_eq!(encaixe((2000, 500), area), 0.5);
+        assert_eq!(encaixe((500, 2000), area), 0.25);
+        assert_eq!(encaixe((100, 50), area), 1.);
+    }
+
+    #[test]
+    fn so_sai_do_centro_o_que_passa_da_area() {
+        assert_eq!(limite(800., 1000.), 0.);
+        assert_eq!(limite(1400., 1000.), 200.);
+    }
+
+    #[test]
+    fn o_zoom_gira_em_volta_do_ponteiro() {
+        // O ponto debaixo do ponteiro (100 à direita do centro) continua debaixo dele.
+        let p = point(px(100.), px(0.));
+        let novo = desloc_no_zoom(p, point(px(0.), px(0.)), 1., 2.);
+        assert_eq!(novo, point(px(-100.), px(0.)));
+        // No centro, o zoom não desloca nada.
+        assert_eq!(desloc_no_zoom(point(px(0.), px(0.)), point(px(0.), px(0.)), 1., 3.), point(px(0.), px(0.)));
+    }
 }
 
 #[cfg(test)]
@@ -291,10 +457,8 @@ mod testes {
         Item::Usuario {
             texto: String::new(),
             anexos: anexos.iter().map(PathBuf::from).collect(),
-            ponto: None,
             ultrathink: false,
             ultracode: false,
-            referencias: Vec::new(),
             em: 0,
         }
     }

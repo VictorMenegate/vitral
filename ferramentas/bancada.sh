@@ -33,15 +33,6 @@
 # antigo dentro da bancada ($B/raiz-sintetica, com os cwd dentro dela e sessões novas), põe ela no
 # recentes.json da bancada, abre como primeiro uso e, no fim, confere que os arquivos do .vitral
 # antigo ficaram iguais (os hashes vão para <pasta_dos_prints>/hashes-antes.txt e -depois.txt).
-# AMOSTRA=prs abre a amostra de PRs, sem rede: o ferramentas/amostra-prs/preparar.py grava nos
-# dados da bancada o projeto top-bar-app-color (um repositório local, com o remote do GitHub levado a
-# um bare ao lado) com a pasta em modo PR, um chat para cada estado do PR (checks com falhas e
-# mudanças pedidas, Ship, conflito, atrás de main, rascunho, bloqueado, commit de fora com o
-# "Confirmar", sem permissão, pronto para mesclar, mesclado, fechado, pronto para atualizar e a cópia
-# antes do PR), os itens de "Esperando você" e as issues do GitHub; o ferramentas/amostra-prs/gh
-# entra no PATH e responde o que o GitHub diria, coerente com o estado (o vigia consulta e nada
-# muda), sem escrever nada (as chamadas vão para $XDG_STATE_HOME/gh-amostra.log). AMOSTRA_CHAT=<id>
-# escolhe o chat que abre (a1000000001 a a1000000013).
 # A atualização fica desligada; VITRAL_SEM_ATUALIZACAO=0 com VITRAL_ATUALIZACAO_BASE (e, no build de
 # desenvolvimento, VITRAL_ATUALIZACAO_CHAVE) procura num release falso. O que ela instala vai para a
 # pasta de dados da bancada, e o link do ~/.local/bin para o $B/bin.
@@ -104,10 +95,6 @@ J
     if [ -n "${ZOOM:-}" ]; then
         mkdir -p "$B/config/vitral"
         echo "{\"zoom\": $ZOOM}" > "$B/config/vitral/interface.json"
-    fi
-    if [ "${AMOSTRA:-}" = prs ]; then
-        python3 -I "$(dirname "$(realpath "$0")")/amostra-prs/preparar.py" "$B" || exit 1
-        export PATH="$(dirname "$(realpath "$0")")/amostra-prs:$PATH" AMOSTRA_GITHUB="$B/amostra/github.json"
     fi
     cat > "$B/config/glib-2.0/settings/keyfile" <<J
 [org/gnome/shell]

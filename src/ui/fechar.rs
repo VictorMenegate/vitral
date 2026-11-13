@@ -88,8 +88,8 @@ impl Janela {
         self.pode_parar_tudo(Parar::Fechar, |window, _| window.remove_window(), window, cx)
     }
 
-    /// Reinicia na versão nova (ou na atual), perguntando antes se há conversa trabalhando. As
-    /// tarefas cortadas ficam paradas, com Retomar, como numa queda.
+    /// Reinicia na versão nova (ou na atual), perguntando antes se há conversa trabalhando. Os
+    /// turnos cortados ficam parados, com Retomar, como numa queda.
     pub(super) fn reiniciar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pode_parar_tudo(Parar::Reiniciar, |_, cx| atualizacao::reiniciar(cx), window, cx) {
             atualizacao::reiniciar(cx);

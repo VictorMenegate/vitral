@@ -142,7 +142,8 @@ impl RenderOnce for MenuItemElement {
         } else {
             (cx.theme().tokens.accent.into(), cx.theme().accent_foreground)
         };
-        let aceso = self.selected && !self.disabled;
+        // Vitral: o item com ficha própria (o escolhido) não ganha o realce por cima dela.
+        let aceso = self.selected && !self.disabled && self.fundo.is_none();
         h_flex()
             .id(self.id)
             .test_support()
@@ -178,7 +179,7 @@ impl RenderOnce for MenuItemElement {
                 })
             })
             // Vitral: o desabilitado esmaece pela opacidade, no popup_menu.rs. Por baixo do
-            // conteúdo, a ficha (se houver) e, por cima dela, o realce.
+            // conteúdo, a ficha (se houver) ou o realce: nunca os dois.
             .children(self.fundo.map(|fundo| div().absolute().top_0().left_0().size_full().child(fundo)))
             .when(aceso, |this| this.child(realce_de_tecla(realce)))
             .children(self.children)

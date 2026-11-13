@@ -332,7 +332,7 @@ fn confirmar_volta(de: String, para: String, trabalhando: usize, window: &mut Wi
             tom: TomConfirmacao::Atencao,
             icone: Lucide::RotateCcw.into(),
             titulo: format!("Voltar para a {para}?").into(),
-            texto: format!("O Vitral reinicia na {para}. Os chats e os projetos ficam como estão.").into(),
+            texto: format!("O Vitral reinicia na {para}. Os chats ficam como estão.").into(),
             detalhes,
             ok: format!("Voltar para a {para}").into(),
             cancelar: "Cancelar".into(),
@@ -540,7 +540,7 @@ pub(super) fn vistas_de_exemplo(agora: u64) -> Vec<(&'static str, Vista)> {
     };
     let nova = Novidade {
         versao: "0.3.0".into(),
-        notas: "- **Conversas que se lembram.** O Mestre guarda o que importa entre as conversas.\n\
+        notas: "- **Um chat por pasta.** Cada chat trabalha direto numa pasta, como o Claude Code.\n\
                 - **Mais rápido ao abrir.** A lista aparece antes do motor terminar de ler os chats."
             .into(),
         pagina: atualizacao::pagina("0.3.0"),

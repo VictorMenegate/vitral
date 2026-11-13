@@ -15,12 +15,16 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::modelo::{Forma, Item, PastaLigada, Projeto};
+use crate::modelo::Item;
 
 /// Arquivo mudado há menos que isso conta como conversa aberta no Claude Code.
 pub const EM_USO_SEGUNDOS: u64 = 300;
-/// Quantos itens do histórico aparecem de cada vez ("Carregar mais" traz outros tantos).
-pub const ITENS_POR_VEZ: usize = 300;
+/// Quantos itens do histórico aparecem de cada vez ("Carregar mais" traz outros tantos). Eram
+/// 300: a conversa não é virtualizada (cada redesenho da janela monta todos os blocos de todos os
+/// painéis), e com três conversas trazidas lado a lado eram 900 blocos por quadro. O dono achou o
+/// app "o que tá mais travado no meu computador" (13/11/2026). Até a conversa desenhar só o que
+/// está à vista, o histórico entra de 60 em 60.
+pub const ITENS_POR_VEZ: usize = 60;
 /// O histórico guarda no máximo isso de itens, os mais novos.
 const MAX_ITENS: usize = 6000;
 /// O resultado de uma ferramenta no histórico fica até aqui.
@@ -367,6 +371,15 @@ pub fn ler_sessao(arquivo: &Path) -> std::io::Result<Lida> {
     let mut respostas: HashSet<String> = HashSet::new();
     let mut sem_id = 0;
     let mut usuario = 0;
+    // A pasta da conversa: a sessão anda de pasta em pasta (um worktree, a pasta de rascunho) e
+    // pode ter começado numa que nem existe mais (o projeto mudou de lugar). O Claude Code a
+    // guarda, e só a retoma, na pasta de projeto onde o arquivo mora: entre as pastas por onde
+    // ela passou, vale a que tem esse nome.
+    let pasta_do_arquivo = arquivo.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+    let do_arquivo = |pasta: &Path| {
+        pasta_do_arquivo.as_deref() == Some(crate::claude::nome_do_projeto(&pasta.to_string_lossy()).as_str())
+    };
+    let (mut da_pasta, mut ultima_cwd): (Option<PathBuf>, Option<PathBuf>) = (None, None);
     let marcar = |l: &Linha, lida: &mut Lida| {
         if let Some(s) = segundos(&l.timestamp) {
             if lida.primeira == 0 || s < lida.primeira {
@@ -386,8 +399,16 @@ pub fn ler_sessao(arquivo: &Path) -> std::io::Result<Lida> {
         if linha.is_sidechain || !matches!(linha.tipo.as_str(), "user" | "assistant") {
             continue;
         }
-        if lida.cwd.is_none() {
-            lida.cwd = linha.cwd.clone().filter(|c| !c.as_os_str().is_empty());
+        if let Some(cwd) = linha.cwd.as_ref().filter(|c| !c.as_os_str().is_empty()) {
+            if lida.cwd.is_none() {
+                lida.cwd = Some(cwd.clone());
+            }
+            if ultima_cwd.as_ref() != Some(cwd) {
+                if do_arquivo(cwd) {
+                    da_pasta = Some(cwd.clone());
+                }
+                ultima_cwd = Some(cwd.clone());
+            }
         }
         if lida.entrada.is_empty()
             && let Some(e) = &linha.entrypoint
@@ -429,6 +450,14 @@ pub fn ler_sessao(arquivo: &Path) -> std::io::Result<Lida> {
         }
         lida.ultima_fala = primeira_linha(texto.last().unwrap_or(&""));
         marcar(&linha, &mut lida);
+    }
+    // Nenhuma das pastas tem o nome da pasta do arquivo: pode ser uma de cima da última (a
+    // conversa entrou num worktree e nunca voltou). Sem achar, fica a primeira, como antes.
+    let da_pasta = da_pasta
+        .or_else(|| ultima_cwd.as_ref().and_then(|u| u.ancestors().find(|a| do_arquivo(a)).map(Path::to_path_buf)))
+        .filter(|p| p.is_dir());
+    if da_pasta.is_some() {
+        lida.cwd = da_pasta;
     }
     lida.mensagens = usuario + respostas.len() + sem_id;
     lida.titulo = proprio
@@ -496,10 +525,8 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                     Fala::Mensagem(texto) => itens.push(Item::Usuario {
                         texto,
                         anexos: Vec::new(),
-                        ponto: None,
                         ultrathink: false,
                         ultracode: false,
-                        referencias: Vec::new(),
                         em,
                     }),
                     Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false, em)),
@@ -533,6 +560,14 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                             itens.push(Item::Assistente { texto: texto.to_string(), em });
                             resposta = mensagem.id.clone();
                         }
+                        // O raciocínio que o arquivo guardou (sem a duração, que só se mede ao vivo).
+                        "thinking" => {
+                            let texto = bloco["thinking"].as_str().unwrap_or_default().trim();
+                            if !texto.is_empty() {
+                                itens.push(Item::Raciocinio { texto: texto.to_string(), milis: 0, em });
+                                resposta = None;
+                            }
+                        }
                         "tool_use" => {
                             let nome = bloco["name"].as_str().unwrap_or_default();
                             if nome.is_empty() || nome == "ToolSearch" || nome == "mcp__vitral__permissao" {
@@ -550,6 +585,7 @@ fn historico_de(leitor: impl BufRead) -> Historico {
                                 em,
                                 detalhe,
                                 arquivo,
+                                sub: None,
                             });
                             resposta = None;
                         }
@@ -611,6 +647,60 @@ pub fn pastas_de_projects(raizes: &[PathBuf]) -> Vec<PathBuf> {
         .filter_map(|r| dunce::canonicalize(r.join("projects")).ok())
         .filter(|p| p.is_dir() && vistas.insert(p.clone()))
         .collect()
+}
+
+/// As pastas em que o Claude Code já tem conversas, com quantas, da que tem mais para a que tem
+/// menos: as sugestões de pasta de trabalho da primeira abertura. A pasta de cada grupo sai do
+/// começo da conversa mais recente dele (só as primeiras linhas: é barato mesmo com arquivos
+/// enormes); a que não existe mais, ou as de teste, ficam de fora.
+pub fn pastas_usadas(pastas_de_projects: &[PathBuf]) -> Vec<(PathBuf, usize)> {
+    use std::io::BufRead as _;
+    let mut achadas: Vec<(PathBuf, usize)> = Vec::new();
+    for projects in pastas_de_projects {
+        for grupo in fs::read_dir(projects).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+            let Some(nome) = grupo.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            let mut sessoes: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(&grupo)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|a| {
+                    a.extension().is_some_and(|e| e == "jsonl")
+                        && a.file_stem().and_then(|s| s.to_str()).is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+                })
+                .filter_map(|a| Some((fs::metadata(&a).and_then(|m| m.modified()).ok()?, a)))
+                .collect();
+            if sessoes.is_empty() {
+                continue;
+            }
+            sessoes.sort();
+            let do_grupo = |pasta: &Path| crate::claude::nome_do_projeto(&pasta.to_string_lossy()) == nome;
+            // A pasta: a primeira das linhas do começo que tem o nome do grupo (ou uma de cima dela).
+            let pasta = sessoes.iter().rev().take(3).find_map(|(_, arquivo)| {
+                let leitor = BufReader::new(fs::File::open(arquivo).ok()?);
+                leitor.lines().map_while(Result::ok).take(60).find_map(|linha| {
+                    let valor: Value = serde_json::from_str(&linha).ok()?;
+                    let cwd = PathBuf::from(valor.get("cwd")?.as_str()?);
+                    cwd.ancestors().find(|a| do_grupo(a)).map(Path::to_path_buf)
+                })
+            });
+            let Some(pasta) = pasta.filter(|p| p.is_dir()) else {
+                continue;
+            };
+            let de_teste = [Path::new("/tmp"), Path::new("/var/tmp")].iter().any(|t| pasta.starts_with(t)) || pasta.starts_with(std::env::temp_dir());
+            if de_teste {
+                continue;
+            }
+            match achadas.iter_mut().find(|(p, _)| *p == pasta) {
+                Some((_, n)) => *n += sessoes.len(),
+                None => achadas.push((pasta, sessoes.len())),
+            }
+        }
+    }
+    achadas.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    achadas
 }
 
 /// As pastas onde o que roda não é conversa do usuário: as temporárias (testes) e a de dados do
@@ -777,25 +867,6 @@ pub fn listar(pastas: &[PathBuf], filtro: &Filtro) -> Listagem {
     l
 }
 
-/// O projeto (e a pasta ligada) que contém a pasta da conversa: a ligada mais funda; empatadas, a
-/// de um projeto que não está arquivado. `None` é Avulsos.
-pub fn destino<'a>(cwd: &Path, projetos: &'a [Projeto]) -> Option<(&'a Projeto, &'a PastaLigada)> {
-    projetos
-        .iter()
-        .flat_map(|p| p.pastas.iter().map(move |l| (p, l)))
-        .filter(|(_, l)| !l.caminho.as_os_str().is_empty() && cwd.starts_with(&l.caminho))
-        .max_by_key(|(p, l)| (l.caminho.components().count(), !p.arquivado))
-}
-
-/// O chat trazido trabalha direto na pasta da conversa (o Claude Code só retoma a sessão dela): com
-/// um commit por vez quando ela é a pasta própria do projeto; nas outras, sem mexer no git.
-pub fn forma(cwd: &Path, pasta: Option<&PastaLigada>) -> Forma {
-    match pasta {
-        Some(l) if l.propria && l.caminho == cwd => Forma::DiretaGit,
-        _ => Forma::Direta,
-    }
-}
-
 /// O que já foi trazido, guardado no `estado.json`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -804,7 +875,14 @@ pub struct Registro {
     /// A importação da primeira abertura ainda não terminou (uma queda no meio a refaz).
     pub pendente: bool,
     pub ultima_vez: u64,
+    /// A versão das regras de importação com que a última passada rodou (`REGRAS`): quando elas
+    /// mudam, a vigia olha tudo de novo uma vez, para trazer o que a regra antiga deixou de fora.
+    pub regras: u32,
 }
+
+/// As regras de importação de agora. 1: a pasta da conversa é a da pasta de projeto onde o
+/// arquivo mora (antes, a primeira por onde ela passou, que podia não existir mais).
+pub const REGRAS: u32 = 1;
 
 impl Registro {
     pub fn de(resto: &Map<String, Value>) -> Option<Registro> {
@@ -822,23 +900,17 @@ impl Registro {
 #[derive(Debug, Default, PartialEq)]
 pub struct Relatorio {
     pub trazidas: usize,
-    /// (nome do destino, quantas), na ordem em que apareceram.
-    pub por_destino: Vec<(String, usize)>,
     pub abertas: usize,
     pub ja_trazidas: usize,
 }
 
 impl Relatorio {
-    pub fn contar(&mut self, destino: &str, aberta: bool) {
+    pub fn contar(&mut self, aberta: bool) {
         self.trazidas += 1;
         self.abertas += usize::from(aberta);
-        match self.por_destino.iter_mut().find(|(d, _)| d == destino) {
-            Some((_, n)) => *n += 1,
-            None => self.por_destino.push((destino.to_string(), 1)),
-        }
     }
 
-    /// "42 conversas do Claude Code importadas · 39 em Avulsos · 3 em loja". Sem nada novo, a
+    /// "42 conversas do Claude Code importadas · 3 abertas agora no Claude Code". Sem nada novo, a
     /// importação da abertura fica calada e a do menu diz que não havia.
     pub fn texto(&self, automatica: bool) -> Option<String> {
         if self.trazidas == 0 {
@@ -852,9 +924,6 @@ impl Relatorio {
             1 => "1 conversa do Claude Code importada".to_string(),
             n => format!("{n} conversas do Claude Code importadas"),
         }];
-        let mut destinos = self.por_destino.clone();
-        destinos.sort_by(|a, b| b.1.cmp(&a.1));
-        partes.extend(destinos.iter().map(|(nome, n)| format!("{n} em {nome}")));
         match self.abertas {
             0 => {}
             1 => partes.push("1 aberta agora no Claude Code".into()),
@@ -888,7 +957,7 @@ pub fn descricao(i: &Importada, pasta: &str) -> String {
     };
     let mensagens = if i.mensagens == 1 { "1 mensagem".to_string() } else { format!("{} mensagens", i.mensagens) };
     let mut texto = format!(
-        "Continua uma conversa {de} {datas}, com {mensagens}. Mexe direto em {pasta}, como lá: sem cópia nem Juntar."
+        "Continua uma conversa {de} {datas}, com {mensagens}. Mexe direto em {pasta}, como lá."
     );
     if !i.continuada {
         texto.push_str(" A primeira mensagem daqui continua numa cópia da sessão; a original segue no Claude Code como está.");
@@ -929,6 +998,42 @@ mod testes {
             "timestamp": quando, "message": {"id": id, "role": "assistant", "content": blocos}
         })
         .to_string()
+    }
+
+    /// A pasta da conversa é a da pasta de projeto onde o arquivo mora, mesmo que ela tenha
+    /// começado numa pasta que não existe mais e andado por outras (o chat "WMS" do dono nasceu
+    /// em `~/Documents/Central…`, que mudou de lugar, e ficava de fora por "pasta sumiu").
+    #[test]
+    fn a_pasta_da_conversa_e_a_do_projeto_onde_o_arquivo_mora() {
+        let raiz = std::env::temp_dir().join(format!("vitral-importar-pasta-{}", novo_id()));
+        let real = raiz.join("eita");
+        fs::create_dir_all(real.join("central")).unwrap();
+        let real = dunce::canonicalize(&real).unwrap();
+        let antiga = raiz.join("Documents").join("Central Antiga");
+        let projeto = raiz.join("projects").join(crate::claude::nome_do_projeto(&real.to_string_lossy()));
+        fs::create_dir_all(&projeto).unwrap();
+        let pergunta = |cwd: &Path, quando: &str| usuario(cwd, quando, serde_json::json!("faz o WMS"));
+        // Começou na pasta antiga, passou pela do projeto e terminou num worktree.
+        let arquivo = projeto.join("11111111-1111-4111-8111-111111111111.jsonl");
+        let linhas = [
+            pergunta(&antiga, "2026-10-19T03:46:00.000Z"),
+            pergunta(&real, "2026-10-19T03:47:00.000Z"),
+            pergunta(&real.join("central"), "2026-10-19T03:48:00.000Z"),
+        ];
+        fs::write(&arquivo, linhas.join("\n")).unwrap();
+        assert_eq!(ler_sessao(&arquivo).unwrap().cwd, Some(real.clone()));
+        // Nunca esteve na pasta do projeto, só numa de dentro dela: vale a de cima.
+        let arquivo = projeto.join("22222222-2222-4222-8222-222222222222.jsonl");
+        fs::write(&arquivo, [pergunta(&antiga, "2026-10-19T03:46:00.000Z"), pergunta(&real.join("central"), "2026-10-19T03:48:00.000Z")].join("\n"))
+            .unwrap();
+        assert_eq!(ler_sessao(&arquivo).unwrap().cwd, Some(real.clone()));
+        // Sem nenhuma pista da pasta do arquivo, fica a primeira, como antes.
+        let outro = raiz.join("projects").join("-outro-lugar");
+        fs::create_dir_all(&outro).unwrap();
+        let arquivo = outro.join("33333333-3333-4333-8333-333333333333.jsonl");
+        fs::write(&arquivo, pergunta(&antiga, "2026-10-19T03:46:00.000Z")).unwrap();
+        assert_eq!(ler_sessao(&arquivo).unwrap().cwd, Some(antiga));
+        let _ = fs::remove_dir_all(&raiz);
     }
 
     /// Uma sessão do formato de hoje: título gerado, comando, imagem, ferramenta com resultado,
@@ -1011,6 +1116,7 @@ mod testes {
                 Item::Assistente { texto, .. } => format!("A:{texto}"),
                 Item::Ferramenta { resumo, resultado, .. } => format!("F:{resumo}={}", resultado.clone().unwrap_or_default()),
                 Item::Aviso { texto, .. } => format!("V:{texto}"),
+                Item::Raciocinio { texto, .. } => format!("R:{texto}"),
                 _ => "?".into(),
             })
             .collect();
@@ -1019,6 +1125,7 @@ mod testes {
             [
                 "V:Comando /clear",
                 "U:Arruma o <b>botão</b> da barra\nque está torto\n\n(1 imagem)",
+                "R:hm",
                 "A:Vou olhar.",
                 "F:Read · a.rs=fn main() {}",
                 "A:Pronto, está reto.\n\nMais alguma coisa?",
@@ -1168,40 +1275,11 @@ mod testes {
     }
 
     #[test]
-    fn destino_e_a_pasta_ligada_mais_funda() {
-        let pasta = |c: &str, propria: bool| PastaLigada { caminho: PathBuf::from(c), propria, ..Default::default() };
-        let projeto = |id: &str, pastas: Vec<PastaLigada>, arquivado: bool| Projeto {
-            id: id.into(),
-            nome: id.into(),
-            pastas,
-            arquivado,
-            ..Default::default()
-        };
-        let projetos = vec![
-            projeto("tudo", vec![pasta("/home/v/Projetos", false)], false),
-            projeto("loja", vec![pasta("/home/v/Projetos/loja", false), pasta("/home/v/docs", false)], false),
-            projeto("velho", vec![pasta("/home/v/Projetos/loja", false)], true),
-            projeto("propria", vec![pasta("/dados/projetos/receitas", true)], false),
-        ];
-        let id = |cwd: &str| destino(Path::new(cwd), &projetos).map(|(p, _)| p.id.as_str());
-        assert_eq!(id("/home/v/Projetos/loja/backend"), Some("loja"));
-        assert_eq!(id("/home/v/Projetos/loja"), Some("loja"));
-        assert_eq!(id("/home/v/Projetos/outro"), Some("tudo"));
-        assert_eq!(id("/home/v/docs"), Some("loja"));
-        assert_eq!(id("/home/v/Projetos-2"), None);
-        assert_eq!(id("/home/v"), None);
-        let (_, l) = destino(Path::new("/dados/projetos/receitas"), &projetos).unwrap();
-        assert_eq!(forma(Path::new("/dados/projetos/receitas"), Some(l)), Forma::DiretaGit);
-        assert_eq!(forma(Path::new("/dados/projetos/receitas/sub"), Some(l)), Forma::Direta);
-        assert_eq!(forma(Path::new("/home/v"), None), Forma::Direta);
-    }
-
-    #[test]
     fn registro_no_resto_do_estado() {
         let mut resto = Map::new();
         resto.insert("outro".into(), Value::from(1));
         assert_eq!(Registro::de(&resto), None);
-        let r = Registro { importadas: vec![S1.into()], pendente: true, ultima_vez: 9 };
+        let r = Registro { importadas: vec![S1.into()], pendente: true, ultima_vez: 9, regras: REGRAS };
         r.gravar(&mut resto);
         assert_eq!(Registro::de(&resto), Some(r));
         assert_eq!(resto["outro"], 1);
@@ -1214,19 +1292,18 @@ mod testes {
         assert_eq!(r.texto(false).as_deref(), Some("Nenhuma conversa do Claude Code para trazer."));
         r.ja_trazidas = 40;
         assert_eq!(r.texto(false).as_deref(), Some("Nenhuma conversa nova do Claude Code (40 já estão no Vitral)."));
-        r.contar("loja", false);
-        for _ in 0..39 {
-            r.contar("Avulsos", false);
+        for _ in 0..40 {
+            r.contar(false);
         }
-        r.contar("Avulsos", true);
-        r.contar("Avulsos", true);
+        r.contar(true);
+        r.contar(true);
         assert_eq!(
             r.texto(true).as_deref(),
-            Some("42 conversas do Claude Code importadas · 41 em Avulsos · 1 em loja · 2 abertas agora no Claude Code")
+            Some("42 conversas do Claude Code importadas · 2 abertas agora no Claude Code")
         );
         let mut um = Relatorio::default();
-        um.contar("Avulsos", false);
-        assert_eq!(um.texto(false).as_deref(), Some("1 conversa do Claude Code importada · 1 em Avulsos"));
+        um.contar(true);
+        assert_eq!(um.texto(false).as_deref(), Some("1 conversa do Claude Code importada · 1 aberta agora no Claude Code"));
     }
 
     #[test]
