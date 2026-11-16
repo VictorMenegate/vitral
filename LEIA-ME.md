@@ -437,7 +437,12 @@ ferramentas, vale por painel).
   "Vazia"; com texto escrito a seta continua movendo o cursor). O **rascunho** de cada conversa (o
   que você escreveu e não enviou) já ficava na memória da janela ao trocar de painel; agora também
   vai para o `interface.json` 1,2 s depois de você parar de digitar, e volta quando o Vitral abrir
-  de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). A **fila** do que você mandou com
+  de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). O texto que o Vitral põe na caixa
+  (a correção, um comando completado, a menção de um arquivo) entra por `composer::por_texto`, que
+  guarda o desfazer (o Ctrl+Z traz de volta o que estava escrito), rola a caixa até o cursor, no
+  fim, e conta como digitação para o rascunho; a mensagem corrigida, que já saiu da conversa, vai
+  para o disco na hora. Corrigir com algo escrito na caixa sempre pergunta antes, e a pergunta diz
+  que o texto da caixa sai dela. A **fila** do que você mandou com
   o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da fila (na linha de
   estado da caixa, com o chat trabalhando, ou na faixa acima dela), dentro do painel e acima da
   caixa de mensagem: cada

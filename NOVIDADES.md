@@ -137,6 +137,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   chat troca.
 - **Ultracode desligado legível.** O motivo de ele não valer no chat aparece claro (só a chave fica
   apagada) e diz "Só no Claude Code", certo também com Claude e Codex juntos.
+- **Corrigir uma mensagem não perde o que está na caixa.** Com algo escrito, o Vitral pergunta
+  antes, e o Ctrl+Z traz o texto de volta. A mensagem corrigida fica guardada como rascunho na hora,
+  mesmo se o Vitral cair logo depois, e a caixa mostra o fim dela, com o cursor. O aviso de depois
+  cabe inteiro.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

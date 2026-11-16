@@ -1,6 +1,6 @@
 //! Corrigir e mandar de novo a última mensagem: o "Editar" do balão e a seta para cima na caixa
 //! vazia trazem o texto (com os anexos e o reforço) de volta para a caixa, e a conversa volta ao
-//! ponto antes dela. O que o turno já fez nos arquivos não volta: o aviso de depois diz isso.
+//! ponto antes dela. O que o turno já fez nos arquivos não volta: a pergunta e o aviso dizem isso.
 
 use gpui_kit::component::{WindowExt as _, button::Button};
 use gpui_kit::*;
@@ -37,23 +37,35 @@ pub(super) fn blocos_depois(itens: &[Item], ix: usize) -> usize {
     itens.len().saturating_sub(ix + 1)
 }
 
+/// Corrigir sem perguntar só quando não há nada a perder: a mensagem é o último bloco, nada roda
+/// e a caixa está vazia. Com algo escrito na caixa, a correção troca o texto dela, e isso a pessoa
+/// precisa saber antes (teste de usabilidade, 16/11/2026: o rascunho sumia sem aviso).
+pub(super) fn precisa_perguntar(depois: usize, rodando: bool, caixa_com_texto: bool) -> bool {
+    depois > 0 || rodando || caixa_com_texto
+}
+
 /// A pergunta antes de corrigir, montada com o que de fato vai acontecer nesta conversa.
-pub(super) fn pergunta(depois: usize, rodando: bool, tem_sessao: bool) -> Confirmacao {
+pub(super) fn pergunta(depois: usize, rodando: bool, tem_sessao: bool, caixa_com_texto: bool) -> Confirmacao {
     let mut detalhes = Vec::new();
     if rodando {
         detalhes.push((Lucide::Square.into(), "O turno que está rodando para agora".into(), true));
     }
+    if caixa_com_texto {
+        detalhes.push((
+            Lucide::TextCursorInput.into(),
+            "O que está escrito na caixa sai dela (Ctrl+Z traz de volta)".into(),
+            true,
+        ));
+    }
     if depois > 0 {
+        let verbo = if depois == 1 { "sai" } else { "saem" };
         detalhes.push((
             Lucide::Eraser.into(),
-            format!("{} saem da conversa", contagem(depois, "bloco da resposta", "blocos da resposta")).into(),
+            format!("{} {verbo} da conversa", contagem(depois, "bloco da resposta", "blocos da resposta")).into(),
         false));
     }
-    detalhes.push((
-        Lucide::FolderOpen.into(),
-        "Os arquivos da pasta não voltam sozinhos (o aviso oferece isso depois)".into(),
-        false,
-    ));
+    // O aviso de depois não tem como voltar os arquivos: a pergunta não promete isso.
+    detalhes.push((Lucide::FolderOpen.into(), "Os arquivos da pasta não voltam sozinhos".into(), false));
     if tem_sessao {
         detalhes.push((
             Lucide::RefreshCw.into(),
@@ -110,6 +122,12 @@ impl Janela {
         let Some(chat) = self.paineis.iter().find(|p| p.id == painel).and_then(|p| p.chat.clone()) else {
             return;
         };
+        // O que está escrito na caixa deste painel: a correção vai trocá-lo.
+        let caixa_com_texto = self
+            .paineis
+            .iter()
+            .find(|p| p.id == painel)
+            .is_some_and(|p| !p.composer.read(cx).value().trim().is_empty());
         let (ix, rodando, tem_sessao) = {
             let m = motor.read(cx);
             let Some(c) = m.chat(&chat) else {
@@ -138,15 +156,15 @@ impl Janela {
             };
             blocos_depois(&c.itens, ix)
         };
-        // Nada a perder (a mensagem é o último bloco e nada roda): vai direto para a caixa.
-        if depois == 0 && !rodando {
+        // Nada a perder (a mensagem é o último bloco, nada roda e a caixa está vazia): vai direto.
+        if !precisa_perguntar(depois, rodando, caixa_com_texto) {
             self.aplicar_correcao(painel, chat, ix, window, cx);
             return;
         }
         let janela = cx.entity().downgrade();
         let (motor_e, id) = (motor, chat);
         confirmar(
-            pergunta(depois, rodando, tem_sessao),
+            pergunta(depois, rodando, tem_sessao, caixa_com_texto),
             move |window, cx| {
                 let (janela, motor_e, id) = (janela.clone(), motor_e.clone(), id.clone());
                 if rodando {
@@ -187,7 +205,12 @@ impl Janela {
             self.ultracode.insert(chat.clone());
         }
         self.escrever_na_caixa(painel, &retirada.texto, window, cx);
-        let aviso_final = aviso(Tom::Info, "A conversa voltou ao ponto antes da mensagem. Os arquivos da pasta ficaram como estão.");
+        // A mensagem já saiu do disco da conversa: o rascunho com ela vai para o disco agora, e
+        // não daqui a pouco, para uma queda logo depois não levar as duas (teste de usabilidade,
+        // 16/11/2026).
+        self.gravar_agora(cx);
+        // Curto, para caber nas duas linhas do aviso (o mais longo saía cortado no meio).
+        let aviso_final = aviso(Tom::Info, "A conversa voltou a antes da mensagem. Os arquivos não mudaram.");
         window.push_notification(aviso_final, cx);
         cx.notify();
     }
@@ -227,7 +250,7 @@ fn esperar_e_corrigir(
 
 #[cfg(test)]
 mod testes {
-    use super::{blocos_depois, pergunta};
+    use super::{blocos_depois, pergunta, precisa_perguntar};
     use crate::modelo::Item;
     use crate::motor::{editavel, indice_editavel};
 
@@ -285,21 +308,32 @@ mod testes {
 
     #[test]
     fn a_pergunta_so_fala_do_que_vai_acontecer() {
-        let nada = pergunta(0, false, false);
+        let nada = pergunta(0, false, false, false);
         let textos = |c: &crate::ui::componentes::Confirmacao| {
             c.detalhes.iter().map(|(_, t, _)| t.to_string()).collect::<Vec<_>>()
         };
-        assert_eq!(textos(&nada).len(), 1, "sobrou detalhe: {:?}", textos(&nada));
-        assert!(textos(&nada)[0].contains("não voltam sozinhos"));
-        let tudo = pergunta(3, true, true);
+        assert_eq!(textos(&nada), ["Os arquivos da pasta não voltam sozinhos"]);
+        let tudo = pergunta(3, true, true, true);
         let d = textos(&tudo);
-        assert_eq!(d.len(), 4, "{d:?}");
+        assert_eq!(d.len(), 5, "{d:?}");
         assert!(d[0].contains("para agora"));
-        assert!(d[1].contains("3 blocos da resposta"), "{:?}", d[1]);
-        assert!(d[3].contains("sessão nova"));
+        assert_eq!(d[1], "O que está escrito na caixa sai dela (Ctrl+Z traz de volta)");
+        assert_eq!(d[2], "3 blocos da resposta saem da conversa");
+        assert!(d[4].contains("sessão nova"));
         // O Enter confirma: o texto volta para a caixa, nada se perde de vez.
         assert!(!tudo.ok_perigo);
-        let uma = pergunta(1, false, false);
-        assert!(textos(&uma)[0].contains("1 bloco da resposta"), "{:?}", textos(&uma));
+        // A concordância: um bloco sai, vários saem.
+        let uma = pergunta(1, false, false, false);
+        assert_eq!(textos(&uma)[0], "1 bloco da resposta sai da conversa");
+    }
+
+    /// A caixa com rascunho sempre pergunta, mesmo sem nada depois da mensagem e sem turno: era aí
+    /// que o rascunho sumia sem aviso.
+    #[test]
+    fn com_rascunho_na_caixa_sempre_pergunta() {
+        assert!(!precisa_perguntar(0, false, false));
+        assert!(precisa_perguntar(0, false, true));
+        assert!(precisa_perguntar(2, false, false));
+        assert!(precisa_perguntar(0, true, false));
     }
 }

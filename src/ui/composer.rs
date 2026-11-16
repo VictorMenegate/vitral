@@ -278,10 +278,16 @@ pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugest
 }
 
 /// Troca o texto da caixa e deixa o cursor no fim (o `set_value` do kit o põe no começo).
+/// Põe `texto` na caixa, com o cursor no fim e a caixa rolada até ele. Pelo `replace_all`, e não
+/// pelo `set_value`: ele guarda o desfazer (o Ctrl+Z traz de volta o que estava escrito) e avisa a
+/// mudança, que agenda a gravação do rascunho (teste de usabilidade, 16/11/2026: o `set_value`
+/// apagava o desfazer e não gravava o rascunho). O `replace_all` põe a seleção em 0..0 e a
+/// rolagem no começo: o cursor vai para o fim e a rolagem vai até ele (o kit limita o valor).
 pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Window, cx: &mut Context<TextareaState>) {
     let fim = texto.len();
-    c.set_value(texto, window, cx);
+    c.replace_all(texto, window, cx);
     c.set_selected_range(fim..fim, cx);
+    c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
 }
 
 /// O texto com a última palavra trocada pela escolhida e um espaço depois.

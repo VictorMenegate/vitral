@@ -438,6 +438,7 @@ gpui_kit::assets::icon_assets!(
         SquareSlash,
         Tag,
         Terminal,
+        TextCursorInput,
         TextSearch,
         TextWrap,
         Trash,
