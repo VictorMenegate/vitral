@@ -1121,8 +1121,6 @@ impl Janela {
                             .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
                     ),
                 )
-                // Os anéis de uso ficam ao lado dos botões da janela (dono, 16/11/2026).
-                .children(self.uso_no_cabecalho(cx))
                 .child(grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true));
         }
         sem_arrastar().flex_none().child(
@@ -1520,6 +1518,8 @@ impl Render for Janela {
                     ),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
+            // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026).
+            .children(self.uso_no_canto(cx))
             .children(fora)
             .into_any_element();
         self.lembrar_ultimo_chat(cx);

@@ -54,13 +54,14 @@ pub(super) fn instalar_codex() {
 }
 
 impl Janela {
-    /// Os anéis de uso na fileira do cabeçalho, ao lado dos botões da janela (no último painel, ou
-    /// no painel da direita quando ele está ao lado): dois anéis de 22, lado a lado, com o mesmo
-    /// clique, dica e popover (dono, 16/11/2026: "não precisa ter esse espaço na direita, que era
-    /// por conta do uso"). Antes eles flutuavam por cima da conversa, abaixo do ×, e a conversa, a
-    /// caixa e as faixas do último painel guardavam uma folga para eles. Somem com a opção "Mostrar
-    /// o uso do plano no cabeçalho" desligada.
-    pub(super) fn uso_no_cabecalho(&self, cx: &Context<Self>) -> Option<AnyElement> {
+    /// Os anéis de uso flutuando no canto de CIMA, à direita, da janela, logo abaixo do × de
+    /// fechar, um em cima do outro (dono, 13/11/2026; em 12/11 ele os tinha pedido embaixo). Em
+    /// 16/11/2026 eles foram para o cabeçalho e voltaram no mesmo dia ("o de uso tem que ficar
+    /// onde eu tinha falado, embaixo do ×"), sem a folga que a conversa guardava para eles: cada
+    /// anel tem o disco opaco da peça, com o fio de 1 px e uma sombra curta, como um botão
+    /// flutuante, para não sumir no texto que passa por baixo. Os popovers abrem para baixo. Somem
+    /// com a opção "Mostrar o uso do plano no canto da janela" desligada.
+    pub(super) fn uso_no_canto(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let motor = self.motor.as_ref()?;
         if !motor.read(cx).config.uso_no_canto {
             return None;
@@ -69,7 +70,14 @@ impl Janela {
         if botoes.is_empty() {
             return None;
         }
-        Some(super::sem_arrastar().flex().flex_none().items_center().gap(esp::E4).children(botoes).into_any_element())
+        Some(
+            div()
+                .absolute()
+                .right(r(USO_DA_BORDA))
+                .top(r(USO_DO_TOPO))
+                .child(v_flex().gap(esp::E6).children(botoes))
+                .into_any_element(),
+        )
     }
 
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -101,8 +109,12 @@ impl Janela {
     }
 }
 
-/// O diâmetro dos anéis no cabeçalho.
-const DIAMETRO_NO_CABECALHO: f32 = 22.;
+/// O diâmetro dos anéis no canto da janela.
+const DIAMETRO_NO_CANTO: f32 = 30.;
+/// A distância dos anéis do canto até a borda da direita da janela.
+const USO_DA_BORDA: f32 = 14.;
+/// A distância do topo da janela: a margem, o cabeçalho da conversa (onde fica o ×) e um respiro.
+const USO_DO_TOPO: f32 = 60.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.
@@ -114,7 +126,7 @@ fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: Wea
         .trigger(BotaoUso {
             marca,
             leitura,
-            diametro: DIAMETRO_NO_CABECALHO,
+            diametro: DIAMETRO_NO_CANTO,
             aberto: false,
         })
         .content(move |_, window, cx| {
@@ -177,10 +189,15 @@ impl RenderOnce for BotaoUso {
             .cursor_pointer()
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            .bg(Cores::preto())
-            .when(self.aberto, |s| s.bg(Cores::preto().blend(Cores::pressionado())))
+            // O disco opaco da peça, com o fio de 1 px e uma sombra curta: flutua por cima da
+            // conversa sem sumir no texto (dono, 16/11/2026).
+            .bg(Cores::cartao_opaco())
+            .border_1()
+            .border_color(Cores::borda())
+            .shadow(crate::tema::sombra_elevado())
+            .when(self.aberto, |s| s.bg(Cores::cartao_opaco().blend(Cores::pressionado())))
             .when(!self.aberto, |s| {
-                s.hover(|s| s.bg(Cores::preto().blend(Cores::hover())))
+                s.hover(|s| s.bg(Cores::cartao_opaco().blend(Cores::hover())))
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(

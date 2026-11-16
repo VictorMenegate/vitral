@@ -114,9 +114,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Sem o "⋯" no cabeçalho.** O menu do painel (modo foco, mostrar o painel da direita, nova
   conversa ao lado, renomear, fixar, arquivar) abre com o botão direito no cabeçalho ou numa aba
   (na aba, vale para aquele chat), e com Shift+F10 ou a tecla Menu.
-- **Os anéis de uso no cabeçalho.** Os anéis do Claude e do Codex foram para a fileira do
-  cabeçalho, ao lado do × da janela, menores e lado a lado: não ficam mais por cima do texto, e a
-  conversa, a caixa e as faixas do último painel vão até a borda, sem a folga que guardavam para
+- **Os anéis de uso num disco, sem folga na conversa.** Os anéis do Claude e do Codex continuam
+  embaixo do × da janela, agora cada um num disco opaco com sombra curta, como um botão flutuante;
+  a conversa, a caixa e as faixas do último painel vão até a borda, sem a folga que guardavam para
   eles.
 - **Menos texto cortado.** O título "Enquanto você esteve fora" quebra em duas linhas na lista
   estreita, em vez de virar "Enquanto voc…". A faixa de cima da caixa diz "Parada · Vitral

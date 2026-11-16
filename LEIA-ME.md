@@ -360,8 +360,8 @@ entra na fila. A linha de estado, com o chat parado, mostra as teclas: à esquer
 com a caixa vazia, "↑" última; à direita "Enter" envia e, com
 texto escrito, "Shift Enter" quebra a linha (na caixa estreita, só a direita). Com o chat
 trabalhando, ela diz o que ele faz (ver **Faixa do turno**, abaixo). As mensagens, a fila, a faixa
-do turno e a caixa vão até a mesma borda em todos os painéis: os anéis de uso moram no cabeçalho, e
-nada guarda folga para eles. Vazia, a caixa diz "Mensagem para este chat…" no chat
+do turno e a caixa vão até a mesma borda em todos os painéis: os anéis de uso flutuam no canto,
+num disco opaco, e nada guarda folga para eles. Vazia, a caixa diz "Mensagem para este chat…" no chat
 com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. Na caixa estreita, em que os
 chips são só ícones, trocar o modo pelo Shift+Tab ou escolher um modelo mostra um aviso curto
 ("Modo: Manual", "Modelo: Claude Fable 5.2", `avisar_na_estreita`). O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
@@ -606,11 +606,12 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   (ver **Chat novo**, em **Como funciona**). Escolher a pasta fica no menu do logo, **Novo chat em
   outra pasta…**: as pastas que já têm chat (com o caminho embaixo do nome), **Outra pasta…**, que
   escolhe uma no disco, e **Sem pasta**.
-- **Os anéis de uso** ficam na fileira do cabeçalho, à direita, logo antes dos botões da janela (no
-  último painel, ou no painel da direita quando ele está ao lado), dois de 22 lado a lado
-  (`uso_no_cabecalho`, em `src/ui/uso_plano.rs`; dono, 16/11/2026: "não precisa ter esse espaço na
-  direita, que era por conta do uso"): o do Claude sempre e o do Codex
-  quando ele está instalado e tem uso lido. **Mostrar o uso do plano no cabeçalho**, em
+- **Os anéis de uso** flutuam no canto de cima, à direita, da janela, logo abaixo do ×, um em cima
+  do outro (`uso_no_canto`, em `src/ui/uso_plano.rs`), cada um no disco opaco da peça, com o fio de
+  1 px e uma sombra curta, como um botão flutuante: a conversa vai até a borda por baixo deles, sem
+  folga (dono, 16/11/2026: eles passaram pelo cabeçalho e voltaram no mesmo dia, "o de uso tem que
+  ficar onde eu tinha falado, embaixo do ×"): o do Claude sempre e o do Codex
+  quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
 - **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado) e o **+** (novo
@@ -820,13 +821,13 @@ lista).
 
 ## Contas e uso dos planos
 
-Na fileira do cabeçalho, à direita, antes dos botões da janela, fica um anel de 22 por serviço, lado a lado
-(`uso_no_cabecalho`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
+No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
+outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
 instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (com a fenda
 embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,
 âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel fica cheio em vermelho. As duas
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
-conta em uso. **Mostrar o uso do plano no cabeçalho**, em Configurações > Chats
+conta em uso. **Mostrar o uso do plano no canto da janela**, em Configurações > Chats
 (`Config.uso_no_canto`, ligada por padrão), esconde os anéis; o uso continua em **Contas do
 Claude**. Sem o Codex instalado, o anel dele não aparece: **Instalar o Codex…**, no menu do logo,
 abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
@@ -884,7 +885,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   acima das Configurações). Ao lado do logo, as abas **Conversas | Arquivos** (ver **O que fica à
   vista**).
 - **O pé da lista:** as **Arquivadas**, os agentes rodando e o sino do que precisa de você e,
-  embaixo deles, a busca e o "+" (os anéis de uso ficam no cabeçalho, ao lado do ×; ver **Contas e uso dos
+  embaixo deles, a busca e o "+" (os anéis de uso ficam no canto da janela; ver **Contas e uso dos
   planos**). O número do sino é o mesmo de "Esperando você" (pedidos, erros, paradas que pedem
   Retomar e os pares de chats parados no freio de ciclo), em vermelho se
   algo falhou e âmbar nos outros casos; só com respostas novas, um ponto azul. Quando o número aumenta
@@ -903,7 +904,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   rodapé ficam na mesma guia, a 16 da borda. Ctrl+G vai direto à próxima pendência.
 - **Ctrl+B recolhido** (ou **Recolher a lista**, no menu do logo). A lista some e a conversa vai
   até a borda. No lugar dela fica o logo, no começo das abas do 1º painel, com o selo do sino (o
-  número ou o ponto, que pulsa como o sino); os anéis de uso continuam no cabeçalho. O menu
+  número ou o ponto, que pulsa como o sino); os anéis de uso continuam no canto da janela. O menu
   do logo troca o Recolher por, em cima, **Mostrar a lista** e **O que precisa de você** (abre a
   mesma caixa do sino). Ctrl+B de novo volta tudo.
 - **Abas de chat.** Cada painel guarda abas no cabeçalho (`Painel.abas`, em `src/ui/paineis.rs`),
@@ -990,7 +991,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   popovers, menus, dicas e avisos são quase pretos e opacos (`flutuante`, com a borda clara fina e
   a linha de luz no topo); os blocos de código, as saídas de comando e a
   moldura da caixa de mensagem ficam num preto mais fundo (#08090c), com a
-  mesma cor de sintaxe; e os anéis de uso ficam sobre um disco preto, para a cor de cada marca
+  mesma cor de sintaxe; e os anéis de uso ficam sobre o disco opaco da peça, para a cor de cada marca
   saltar. Dentro de um popover, o que no vidro é um recuo escuro (o trilho do segmentado do
   esforço) vira um claro leve. O logo (o V sobre o quadrado de metal; ver
   **Acabamento**) vai no tamanho completo (`assets/vitral.svg` e os PNGs de 64 a 256 px) no menu de
@@ -1072,7 +1073,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   em segundo plano, sem travar a tela.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
   `config.json` fica na dica do subtítulo), em quatro grupos: **Chats** (**Resumo ao voltar depois
-  de**, **Mostrar o uso do plano no cabeçalho**, ligada por padrão, o modo de permissão
+  de**, **Mostrar o uso do plano no canto da janela**, ligada por padrão, o modo de permissão
   padrão, o modelo dos chats, **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os
   chats já lidos e não fixados e sem fila, e **Servidores MCP do Claude Code**, os do seu Claude
   Code nos chats), **Interface**, **Claude Code** (a versão instalada, a que os turnos abrem, e
@@ -1429,7 +1430,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no cabeçalho e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

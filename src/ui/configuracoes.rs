@@ -364,9 +364,10 @@ impl Render for Configuracoes {
                 .into_any_element(),
             ))
             .linha(
-                LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no cabeçalho")
-                    // Os anéis foram para o cabeçalho, ao lado do × (dono, 16/11/2026).
-                    .descricao("Os anéis ficam no alto, à direita, ao lado do × da janela. Desligado, o uso fica só em Contas do Claude.")
+                LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
+                    // Os anéis voltaram para baixo do × no mesmo dia em que foram ao cabeçalho
+                    // (dono, 16/11/2026).
+                    .descricao("Os anéis ficam no canto de cima, à direita, embaixo do ×. Desligado, o uso fica só em Contas do Claude.")
                     .interruptor(uso_no_canto, move |ligado, _, cx| {
                         alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
                     }),

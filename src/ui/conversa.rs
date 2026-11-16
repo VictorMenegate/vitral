@@ -807,8 +807,7 @@ impl Janela {
                         .children(abas.into_iter().flatten()),
                 )
                     .child(acoes)
-                    // Os anéis de uso ficam ao lado dos botões da janela (dono, 16/11/2026).
-                    .when(mostra_botoes_janela, |s| s.children(self.uso_no_cabecalho(cx)).child(self.botoes_janela_separados(cx)))
+                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
             });
         match menu_do_cabecalho {
             Some((janela, motor)) => cabecalho
