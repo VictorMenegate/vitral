@@ -593,10 +593,7 @@ fn chapa_do_miolo(abertura: Bounds<Pixels>, onde: Bounds<Pixels>) -> Bounds<Pixe
 /// O aro de metal: "é aqui" (a caixa com foco) e "espera você" (o pedido pendente). Vai como
 /// PRIMEIRO filho de um `div().relative()`; o miolo, OPACO, vem depois, por cima, e o que sobra à
 /// vista é a moldura de `espessura` em volta dele. `raio` é o do miolo; `t`, de 0 a 1, o quanto
-/// o aro aparece (a opacidade vai no `div`: o `canvas` sozinho a ignora). O recorte é o miolo do
-/// campo, com o grão leve: com o `Cobrir` a fita pegava a beirada da caixa, onde ficam a vinheta e
-/// a bolha escura, e saía azul em cima e cinza escuro nos lados (relatório de aparência,
-/// 16/11/2026, V5).
+/// o aro aparece (a opacidade vai no `div`: o `canvas` sozinho a ignora).
 pub fn aro_de_metal(raio: Pixels, espessura: Pixels, t: f32) -> Div {
     div()
         .absolute()
@@ -605,7 +602,7 @@ pub fn aro_de_metal(raio: Pixels, espessura: Pixels, t: f32) -> Div {
         .right(-espessura)
         .bottom(-espessura)
         .opacity(t.clamp(0., 1.))
-        .child(abertura_lisa(Encaixe::Miolo, None, Corners::all(raio + espessura)))
+        .child(abertura(Encaixe::Cobrir, None, Corners::all(raio + espessura)))
 }
 
 #[cfg(test)]
