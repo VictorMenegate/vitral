@@ -83,13 +83,18 @@ macro_rules! tabela {
 
 tabela! {
     // ---------- na conversa ----------
-    "escape", composer::PararTurno, Some("Caixa"), Grupo::Conversa, "Parar o turno (ou fechar o menu “/”)", "";
+    "escape", composer::PararTurno, Some("Caixa"), Grupo::Conversa, "Parar o turno (ou fechar o menu “/”, sem apagar o que foi escrito)", "";
     // Registrado depois do shift-tab do campo (recuar a linha), ganha dele dentro da caixa. Só
     // no campo da mensagem: a busca de um popover da caixa continua recuando.
     "shift-tab", composer::AlternarModo, Some("Composer > Input"), Grupo::Conversa, "Passar para o próximo modo de permissão", "";
     // Só com a caixa vazia (o "Vazia" sai do contexto quando há texto): a seta continua movendo
     // o cursor enquanto se escreve.
     "up", super::EditarUltima, Some("Vazia > Input"), Grupo::Conversa, "Corrigir a última mensagem (caixa vazia)", "↑";
+    // Com o menu "/" à vista (o "Menu" só existe aí): as setas andam nele e o Tab completa. Fora
+    // dele, as setas movem o cursor e o Tab segue o caminho de sempre.
+    "up", composer::MenuAcima, Some("Menu > Input"), Grupo::Conversa, "Andar pelo menu “/”", "↑+↓";
+    "down", composer::MenuAbaixo, Some("Menu > Input"), Grupo::Conversa, "", "";
+    "tab", composer::MenuEscolher, Some("Menu > Input"), Grupo::Conversa, "Completar o comando marcado no menu “/” (ou Enter)", "";
     // O campo do kit liga o Ctrl+F ao `Search` dele, que ninguém atende: o evento segue para cá.
     "ctrl-f", busca_conversa::BuscarNaConversa, None, Grupo::Conversa, "Buscar nesta conversa", "";
     "f3", busca_conversa::AchadoSeguinte, None, Grupo::Conversa, "Ir ao achado seguinte", "";

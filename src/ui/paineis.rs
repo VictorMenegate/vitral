@@ -55,6 +55,10 @@ pub struct Painel {
     pub foco_aba: FocusHandle,
     /// O menu "⋯" do painel está aberto (o Shift+F10 na aba abre o mesmo).
     pub menu_aberto: bool,
+    /// O item marcado no menu "/" da caixa (as setas andam, o Enter e o Tab o escolhem) e o menu
+    /// fechado pelo Esc. Os dois voltam ao começo a cada mudança no texto.
+    pub indice_menu: usize,
+    pub menu_dispensado: bool,
     /// O popover de esforço da caixa (as teclas ←/→, Espaço e Enter vão para ele).
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
@@ -334,6 +338,11 @@ impl Janela {
                     // "@" digitado no começo ou depois de um espaço abre a lista de arquivos.
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
+                    // O menu "/" recomeça do primeiro item e volta a aparecer.
+                    if let Some(p) = this.paineis.iter_mut().find(|p| p.id == id) {
+                        p.indice_menu = 0;
+                        p.menu_dispensado = false;
+                    }
                     // O rascunho vai para o disco pouco depois de a digitação parar.
                     this.agendar_gravacao(cx);
                     if (texto == "@" || texto.ends_with(" @"))
@@ -387,6 +396,8 @@ impl Janela {
             medida: MedidaPainel::default(),
             foco_aba,
             menu_aberto: false,
+            indice_menu: 0,
+            menu_dispensado: false,
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
             busca_historico,

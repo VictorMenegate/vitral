@@ -942,16 +942,20 @@ impl Janela {
         else {
             return;
         };
-        // Enter com um comando pela metade completa o comando em vez de enviar.
-        if let Some(prefixo) = self.prefixo_comando(cx)
-            && let Some(c) = motor.read(cx).chat(&chat)
-        {
-            let comandos = self.comandos_de(c);
-            if !comandos.iter().any(|x| *x == prefixo)
-                && let Some(primeiro) = comandos.iter().find(|x| x.contains(prefixo.as_str()))
-            {
-                let primeiro = primeiro.clone();
-                self.completar_comando(&primeiro, window, cx);
+        // Enter com um comando pela metade e o menu "/" à vista completa o item marcado no menu
+        // (o mesmo que o Tab), em vez de enviar. Com o nome exato de um comando, ou com o menu
+        // fechado pelo Esc, envia como está.
+        if let Some(prefixo) = self.prefixo_comando(cx) {
+            let ix = self.ativo;
+            let escolha = motor.read(cx).chat(&chat).and_then(|c| {
+                let (_, inicio, lista) = self.menu_da_caixa(ix, c, cx)?;
+                let marcado = self.paineis.get(ix)?.indice_menu;
+                let i = composer::escolha_do_enter(&self.comandos_de(c), &prefixo, lista.len(), marcado)?;
+                Some((inicio, lista[i].valor.clone()))
+            });
+            if let Some((inicio, valor)) = escolha {
+                let painel = self.paineis[ix].id;
+                self.escolher_sugestao(painel, inicio, &valor, window, cx);
                 return;
             }
         }

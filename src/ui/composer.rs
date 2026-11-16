@@ -223,6 +223,8 @@ actions!(vitral, [AlternarModo]);
 // Ctrl+Shift+M e Ctrl+E abrem os popovers de modelo e de esforço; dentro do de esforço, Espaço
 // liga o Ultrathink e U, o Ultracode.
 actions!(vitral, [AbrirModelo, AbrirEsforco, AlternarUltrathink, AlternarUltracode]);
+// No menu "/" da caixa: as setas andam e o Tab completa o marcado (o Enter também, pelo enviar).
+actions!(vitral, [MenuAcima, MenuAbaixo, MenuEscolher]);
 
 /// Popover da caixa (um por vez em toda a janela, guardado em `Janela.pop_caixa`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -277,7 +279,6 @@ pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugest
     lista
 }
 
-/// Troca o texto da caixa e deixa o cursor no fim (o `set_value` do kit o põe no começo).
 /// Põe `texto` na caixa, com o cursor no fim e a caixa rolada até ele. Pelo `replace_all`, e não
 /// pelo `set_value`: ele guarda o desfazer (o Ctrl+Z traz de volta o que estava escrito) e avisa a
 /// mudança, que agenda a gravação do rascunho (teste de usabilidade, 16/11/2026: o `set_value`
@@ -288,6 +289,17 @@ pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Windo
     c.replace_all(texto, window, cx);
     c.set_selected_range(fim..fim, cx);
     c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
+}
+
+/// O que o Enter faz com o menu "/" aberto: com o nome exato de um comando, nada (ele vai como
+/// está); fora disso, completa o item marcado, o mesmo que o menu mostra. Antes ele procurava na
+/// lista crua e completava outro ("/s" virava "/usage", e "/" virava "/clear") (teste de
+/// usabilidade, 16/11/2026).
+pub(super) fn escolha_do_enter(comandos: &[String], prefixo: &str, tamanho_do_menu: usize, marcado: usize) -> Option<usize> {
+    if tamanho_do_menu == 0 || comandos.iter().any(|c| c == prefixo) {
+        return None;
+    }
+    Some(marcado.min(tamanho_do_menu - 1))
 }
 
 /// O texto com a última palavra trocada pela escolhida e um espaço depois.
@@ -511,6 +523,7 @@ impl Janela {
         let raio_caixa = raio::peca();
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
+        let com_menu = self.menu_da_caixa(ix, chat, cx).is_some();
         // O miolo é concêntrico com a moldura de 20 e 4 de folga, não com o cartão da conversa.
         let raio_miolo = raio::peca() - px(4.);
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
@@ -540,8 +553,15 @@ impl Janela {
                 div()
                     .w_full()
                     // Com nada escrito, o campo também fica em "Vazia": só aí a seta para cima
-                    // vale como corrigir a última mensagem, e não como mover o cursor.
-                    .key_context(if caixa_vazia { "Composer Vazia" } else { "Composer" })
+                    // vale como corrigir a última mensagem, e não como mover o cursor. Com o menu
+                    // "/" à vista, em "Menu": as setas andam nele e o Tab completa.
+                    .key_context(if caixa_vazia {
+                        "Composer Vazia"
+                    } else if com_menu {
+                        "Composer Menu"
+                    } else {
+                        "Composer"
+                    })
                     .when(estreita, |s| s.ml(r(-2.)))
                     .child(
                         Textarea::new(&composer)
@@ -628,19 +648,24 @@ impl Janela {
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")
             .on_action(cx.listener({
-                let (chat, composer) = (chat.id.clone(), composer.clone());
-                move |this, _: &PararTurno, window, cx| this.esc_na_caixa(&chat, &composer, window, cx)
+                let chat = chat.id.clone();
+                move |this, _: &PararTurno, _, cx| this.esc_na_caixa(&chat, painel_id, cx)
             }))
             .on_action(cx.listener({
                 let chat = chat.id.clone();
                 move |this, _: &AlternarModo, _, cx| this.alternar_modo(&chat, cx)
+            }))
+            .on_action(cx.listener(move |this, _: &MenuAcima, _, cx| this.andar_no_menu(painel_id, -1, cx)))
+            .on_action(cx.listener(move |this, _: &MenuAbaixo, _, cx| this.andar_no_menu(painel_id, 1, cx)))
+            .on_action(cx.listener(move |this, _: &MenuEscolher, window, cx| {
+                this.escolher_no_menu(painel_id, window, cx);
             }))
             // Seta para cima na caixa vazia: o texto da última mensagem volta para ela, como num
             // terminal (o keymap só a manda para cá no contexto "Vazia").
             .on_action(cx.listener(move |this, _: &super::EditarUltima, window, cx| {
                 this.editar_ultima(painel_id, window, cx)
             }))
-            .child(self.menu_comandos(motor, chat, &composer, painel_id, cx))
+            .child(self.menu_comandos(chat, ix, cx))
             .child(self.ilha_do_anexo(&chat.id, cx))
             .child(caixa)
     }
@@ -1179,19 +1204,60 @@ impl Janela {
         (!lista.is_empty()).then_some((sinal, inicio, lista))
     }
 
+    /// O menu "/" do painel `ix`, se está à vista: há sugestões e o Esc não o fechou.
+    pub(super) fn menu_da_caixa(&self, ix: usize, chat: &Chat, cx: &App) -> Option<(char, usize, Vec<Sugestao>)> {
+        let painel = self.paineis.get(ix)?;
+        if painel.menu_dispensado {
+            return None;
+        }
+        let texto = painel.composer.read(cx).value().to_string();
+        self.sugestoes_da_caixa(chat, &texto)
+    }
+
+    /// ↑/↓ com o menu "/" à vista: o item marcado anda, sem passar das pontas.
+    fn andar_no_menu(&mut self, painel: u64, passo: isize, cx: &mut Context<Self>) {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel) else {
+            return;
+        };
+        let Some(n) = self.menu_do_painel_ix(ix, cx).map(|(_, _, lista)| lista.len()) else {
+            cx.propagate();
+            return;
+        };
+        let atual = self.paineis[ix].indice_menu.min(n - 1);
+        self.paineis[ix].indice_menu = atual.saturating_add_signed(passo).min(n - 1);
+        cx.notify();
+    }
+
+    /// O menu "/" à vista no painel `ix`, lido do chat dele.
+    fn menu_do_painel_ix(&self, ix: usize, cx: &App) -> Option<(char, usize, Vec<Sugestao>)> {
+        let id = self.paineis.get(ix)?.chat.clone()?;
+        let motor = self.motor.as_ref()?.read(cx);
+        self.menu_da_caixa(ix, motor.chat(&id)?, cx)
+    }
+
+    /// Tab com o menu "/" à vista: completa o item marcado.
+    fn escolher_no_menu(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel) else {
+            return;
+        };
+        let Some((_, inicio, lista)) = self.menu_do_painel_ix(ix, cx) else {
+            cx.propagate();
+            return;
+        };
+        let marcado = self.paineis[ix].indice_menu.min(lista.len() - 1);
+        let valor = lista[marcado].valor.clone();
+        self.escolher_sugestao(painel, inicio, &valor, window, cx);
+    }
+
     /// O menu das sugestões, acima da caixa. Entra como os popovers: fade e 6 px vindos de baixo,
-    /// do lado da caixa. A primeira está marcada (o Enter a escolhe).
-    fn menu_comandos(
-        &self,
-        _motor: &Motor,
-        chat: &Chat,
-        composer: &Entity<TextareaState>,
-        painel: u64,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let texto = composer.read(cx).value().to_string();
-        let sugestoes = self.sugestoes_da_caixa(chat, &texto);
+    /// do lado da caixa. O marcado (o primeiro, até as setas andarem) é o que o Enter e o Tab
+    /// escolhem.
+    fn menu_comandos(&self, chat: &Chat, ix: usize, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let painel = self.paineis[ix].id;
+        let sugestoes = self.menu_da_caixa(ix, chat, cx);
+        let marcado = self.paineis[ix].indice_menu;
         div().relative().when_some(sugestoes, |s, (sinal, inicio, lista)| {
+            let marcado = marcado.min(lista.len().saturating_sub(1));
             let menu = div()
                 .flex()
                 .flex_col()
@@ -1210,8 +1276,8 @@ impl Janela {
                         .gap(esp::E8)
                         .rounded(raio::CONTROLE)
                         .cursor_pointer()
-                        .when(i == 0, |s| s.bg(Cores::selecao()))
-                        .when(i != 0, |s| s.hover(|s| s.bg(Cores::hover())))
+                        .when(i == marcado, |s| s.bg(Cores::selecao()))
+                        .when(i != marcado, |s| s.hover(|s| s.bg(Cores::hover())))
                         .child(
                             div()
                                 .flex_shrink_0()
@@ -1277,38 +1343,25 @@ impl Janela {
         prefixo_de(&self.composer_ativo()?, cx)
     }
 
-    pub(super) fn completar_comando(&mut self, comando: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(composer) = self.composer_ativo() else {
+    /// Esc na caixa: com o menu "/" aberto, fecha o menu e deixa o que foi digitado (antes apagava
+    /// a caixa, embora os atalhos prometessem só fechar o menu: teste de usabilidade, 16/11/2026);
+    /// com o chat trabalhando, para. Fora disso, a tecla segue adiante.
+    fn esc_na_caixa(&mut self, chat: &str, painel: u64, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            cx.propagate();
             return;
         };
-        composer.update(cx, |c, cx| por_texto(c, format!("/{comando} "), window, cx));
-        let foco = composer.read(cx).focus_handle(cx);
-        window.focus(&foco, cx);
-        cx.notify();
-    }
-
-    /// Esc na caixa: com o menu "/" aberto, fecha o menu; com o chat trabalhando, para. Fora disso, a tecla segue adiante.
-    fn esc_na_caixa(
-        &mut self,
-        chat: &str,
-        composer: &Entity<TextareaState>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(motor) = self.motor.clone() else {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel) else {
             cx.propagate();
             return;
         };
         let (menu_aberto, ocupado) = {
             let m = motor.read(cx);
-            let menu = match (prefixo_de(composer, cx), m.chat(chat)) {
-                (Some(f), Some(c)) => self.comandos_de(c).iter().any(|x| x.contains(f.as_str())),
-                _ => false,
-            };
+            let menu = m.chat(chat).is_some_and(|c| self.menu_da_caixa(ix, c, cx).is_some());
             (menu, m.execucao(chat).rodando())
         };
         if menu_aberto {
-            composer.update(cx, |c, cx| c.set_value("", window, cx));
+            self.paineis[ix].menu_dispensado = true;
             cx.notify();
         } else if ocupado {
             motor.update(cx, |m, cx| m.parar(chat, cx));
@@ -1483,7 +1536,7 @@ fn prefixo_de(composer: &Entity<TextareaState>, cx: &App) -> Option<String> {
 
 #[cfg(test)]
 mod testes_sugestoes {
-    use super::{Sugestao, completar, gatilho, menu_sugestoes};
+    use super::{Sugestao, completar, escolha_do_enter, gatilho, menu_sugestoes};
 
     fn sugestao(valor: &str, chave: &str, busca: &str, peso: usize) -> Sugestao {
         Sugestao {
@@ -1494,6 +1547,29 @@ mod testes_sugestoes {
             busca: busca.into(),
             peso,
         }
+    }
+
+    /// O Enter completa o que o menu marca, e não o primeiro da lista crua que contém o digitado:
+    /// "/s" virava "/usage" com "/simplify" marcado, e "/" virava "/clear" (teste de usabilidade,
+    /// 16/11/2026).
+    #[test]
+    fn o_enter_completa_o_item_marcado_do_menu() {
+        let comandos: Vec<String> = ["clear", "usage", "init", "simplify", "compact"].map(String::from).to_vec();
+        let itens = |c: &[String]| -> Vec<Sugestao> { c.iter().map(|c| sugestao(&format!("/{c}"), c, c, c.len())).collect() };
+        // "/s": o menu põe primeiro quem começa com "s".
+        let menu = menu_sugestoes(itens(&comandos), "s");
+        let i = escolha_do_enter(&comandos, "s", menu.len(), 0).unwrap();
+        assert_eq!(menu[i].valor, "/simplify");
+        // Só "/": o marcado é o mais curto, nunca o /clear por estar primeiro na lista.
+        let menu = menu_sugestoes(itens(&comandos), "");
+        let i = escolha_do_enter(&comandos, "", menu.len(), 0).unwrap();
+        assert_eq!(menu[i].valor, "/init");
+        // As setas andaram: vale o marcado, sem passar do fim.
+        assert_eq!(escolha_do_enter(&comandos, "", menu.len(), 2), Some(2));
+        assert_eq!(escolha_do_enter(&comandos, "", menu.len(), 99), Some(menu.len() - 1));
+        // O nome exato de um comando vai como está; sem menu, nada a completar.
+        assert_eq!(escolha_do_enter(&comandos, "clear", 1, 0), None);
+        assert_eq!(escolha_do_enter(&comandos, "xyz", 0, 0), None);
     }
 
     #[test]

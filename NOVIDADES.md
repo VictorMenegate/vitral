@@ -141,6 +141,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   antes, e o Ctrl+Z traz o texto de volta. A mensagem corrigida fica guardada como rascunho na hora,
   mesmo se o Vitral cair logo depois, e a caixa mostra o fim dela, com o cursor. O aviso de depois
   cabe inteiro.
+- **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
+  outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
+  apagar o que foi escrito.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

@@ -413,7 +413,9 @@ conta vão para o **…**. Nenhum texto é cortado no meio: o que não cabe some
 primeiro. Mencionar arquivo da pasta (`@`, ou digite `@`) e anexar outra conversa como contexto.
 Colar (Ctrl+V) imagem ou arquivos copiados, ou arrastar arquivos do gerenciador para a conversa,
 vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` para sessão nova e
-`/compact`). Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante, à esquerda do seu balão, na altura da última linha
+`/compact`), num menu acima da caixa: ↑/↓ andam pelo menu (o campo fica no contexto "Menu" só
+enquanto ele está à vista), Tab ou Enter completam o item marcado (o Enter com o nome exato de um
+comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante, à esquerda do seu balão, na altura da última linha
 (no canto de cima dele, no painel mínimo), e no canto de cima à direita da resposta; nada fica
 reservado nem à vista sem o ponteiro, e nada se mexe quando ela aparece. Os blocos de código ficam
 num preto quase puro, como as saídas de comando, e têm o próprio Copiar, numa coluna à direita que
