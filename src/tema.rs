@@ -970,8 +970,10 @@ fn zoom_dos_raios() -> f32 {
 /// transparência ficou como escolha das Configurações. Só o nível 1 tem o contraste conferido em
 /// teste; nos de cima, quem escolhe troca leitura por vidro.
 /// Os três níveis transparentes já foram mais fortes; o dono pediu menos em todos (13/11/2026).
+// O "Leve" ficou menos transparente em 16/11/2026 (dono: "tenta diminuir a transparência só"):
+// o véu da base foi de 0xc8 para 0xdc e o do cartão de 0xe6 para 0xee.
 pub const NIVEIS_DE_TRANSPARENCIA: [(u32, u32, f32); 4] =
-    [(0xe3, 0xf2, 1.), (0xc8, 0xe6, 0.5), (0xa6, 0xcc, 0.35), (0x80, 0xa6, 0.3)];
+    [(0xe3, 0xf2, 1.), (0xdc, 0xee, 0.5), (0xa6, 0xcc, 0.35), (0x80, 0xa6, 0.3)];
 /// Os nomes dos níveis, na ordem.
 pub const NOMES_DA_TRANSPARENCIA: [&str; 4] = ["Opaco", "Leve", "Média", "Forte"];
 /// O nível com que o Vitral abre.
