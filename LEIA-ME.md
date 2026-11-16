@@ -1051,8 +1051,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   ponto do balão e no da prévia. O **Arquivar** do menu do chat mostra "Conversa arquivada" com
   **Desfazer** (um chat que nunca rodou sai do Vitral: "Chat vazio apagado"); desarquivar não avisa.
 - **Cartão de conversa**: uma linha só de 32 (o balão de 20 com o ponto do estado no canto, o
-  título, a hora, o alfinete da fixada, o ponto de não lido e o número do painel; a pasta na dica do
-  balão); a linha de baixo, com a prévia, volta só na busca que achou no texto. A hora sai em
+  título, em 400, a hora, o alfinete da fixada, o ponto de não lido e o número do painel; a pasta
+  na dica do balão; o não lido sai em 600, dois degraus acima); a linha de baixo, com a prévia, volta só na busca que achou no texto. A hora sai em
   metadado tênue de dígitos iguais ("3 min", "5 d", com espaço fino que não quebra), clara na linha
   selecionada. Chat aberto num painel mostra só o número do painel, sempre na mesma coluna, e a hora
   vai para a dica do balão, junto da pasta: com três painéis a lista fica estreita e o título precisa

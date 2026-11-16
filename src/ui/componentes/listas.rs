@@ -404,7 +404,10 @@ impl RenderOnce for CartaoDeLista {
                 14.
             }))
             .line_height(r(20.))
-            .font_weight(FontWeight::MEDIUM)
+            // A linha de chat da lista corrida em 400: a lista pesava mais que a conversa, e o não
+            // lido (600, do `titulo_rico`) era só um degrau acima. A árvore fica em 500
+            // (relatório de aparência, 16/11/2026, V8).
+            .font_weight(if folgada { FontWeight::NORMAL } else { FontWeight::MEDIUM })
             .text_color(if forte { Cores::forte() } else { Cores::texto() })
             .map(|d| match self.titulo_rico {
                 Some(rico) => d.child(rico),
