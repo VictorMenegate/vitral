@@ -153,6 +153,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **O escolhido em metal azul de verdade.** A ficha do item escolhido nos menus e a placa do menu
   do logo usam o miolo do metal, o mesmo azul do "+" e do enviar, sem a ponta cinza nem o chuvisco
   debaixo do texto, e nas listas de escolha têm o canto das outras linhas.
+- **Painéis de fundo mais calmos.** Na caixa dos painéis que não estão ativos, os chips e botões
+  recuam até o ponteiro chegar ou o painel ser ativado; o painel ativo fica com tudo aceso.
 - **Hora e copiar no pé da resposta.** A barra que aparece no hover de uma resposta fica embaixo
   dela, e não mais por cima da primeira linha.
 - **Turnos mais separados.** Mais espaço entre um turno e outro e menos entre a sua mensagem e a

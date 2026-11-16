@@ -712,7 +712,7 @@ impl RenderOnce for LinhaDeOpcao {
         };
         // Desabilitada, só o título e o controle apagam: com a linha inteira a 0,45, o motivo dava
         // 2,45:1 e não se lia. Ele vai em `apagado` cheio (relatório de design, 16/11/2026).
-        let apagar = |d: Div| d.when(desabilitada, |d| d.opacity(0.45));
+        let apagar = |d: Div| d.when(desabilitada, |d| d.opacity(crate::tema::opacidade::DESABILITADO));
         let titulo = apagar(div().child(titulo));
         div()
             .id(self.id)

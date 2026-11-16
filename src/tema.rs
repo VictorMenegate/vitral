@@ -66,6 +66,15 @@ pub mod raio {
 /// Espaços da grade, em rem: só 2, 4, 6, 8, 12, 16, 24 e 32 (o teste `espacos_na_escala` barra
 /// o resto nos `gap`, `p*` e `m*`). Os atalhos do Tailwind (`gap_2()`, `p_3()`) medem em rem e,
 /// com 1 rem = 15 px, saem fora da grade.
+/// Opacidades com nome: o que está em segundo plano e o que está desabilitado. O repouso nunca
+/// desce abaixo de 0,55, para não ler como desabilitado (0,45).
+pub mod opacidade {
+    /// O que recua até o ponteiro chegar (as ações do cabeçalho, os controles da caixa dos painéis
+    /// de fundo).
+    pub const EM_REPOUSO: f32 = 0.55;
+    pub const DESABILITADO: f32 = 0.45;
+}
+
 pub mod esp {
     use super::r;
     use gpui_kit::Rems;

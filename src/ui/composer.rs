@@ -302,6 +302,11 @@ pub(super) fn escolha_do_enter(comandos: &[String], prefixo: &str, tamanho_do_me
     Some(marcado.min(tamanho_do_menu - 1))
 }
 
+/// O grupo de hover da caixa de um painel (a moldura), que acende os controles em repouso.
+fn grupo_da_caixa(painel: u64) -> SharedString {
+    SharedString::from(format!("caixa-{painel}"))
+}
+
 /// O texto com a última palavra trocada pela escolhida e um espaço depois.
 pub(super) fn completar(texto: &str, inicio: usize, valor: &str) -> String {
     let inicio = if texto.is_char_boundary(inicio) { inicio } else { texto.len() };
@@ -615,6 +620,8 @@ impl Janela {
         // deles antes.
         let moldura = v_flex()
             .min_w_0()
+            // O hover da caixa acende os controles que recuam nos painéis de fundo.
+            .group(grupo_da_caixa(painel_id))
             .rounded(raio_caixa)
             .bg(Cores::preto())
             .border_1()
@@ -698,13 +705,39 @@ impl Janela {
         let estreita = b.faixa == FaixaCaixa::Estreita;
         let altura = if estreita { 28. } else { 32. };
         let vazio = sem_anexos && b.composer.read(cx).value().trim().is_empty();
-        let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
         let envios = self.paineis[ix].envios;
+        // Nos painéis de fundo, a caixa recua: o modelo, o esforço, o clipe, o "⋯" e o modo (menos
+        // o "Sem perguntar", que é aviso de segurança) ficam a 0,55, e acendem com o ponteiro na
+        // caixa e ao ativar o painel. O campo, a moldura, o anel com a porcentagem e o parar ficam
+        // sempre acesos. Com três caixas iguais e acesas no pé da janela, nada dizia qual painel
+        // estava ativo além da luz azul (relatório de aparência, 16/11/2026, V2).
+        let ativo = ix == self.ativo;
+        let painel_id = b.painel;
+        let grupo_da_caixa = grupo_da_caixa(painel_id);
+        let em_repouso = move |nome: &'static str, e: AnyElement| -> AnyElement {
+            let grupo = grupo_da_caixa.clone();
+            com_estado(move |window, cx| {
+                let (alvo, duracao) = if ativo { (1f32, movimento::MOVER) } else { (0f32, movimento::COR) };
+                let luz = movimento::valor((nome, painel_id as usize), alvo, duracao, Curva::Mover, window, cx);
+                let repouso = crate::tema::opacidade::EM_REPOUSO;
+                div()
+                    .flex_none()
+                    .opacity(repouso + (1. - repouso) * luz)
+                    .group_hover(grupo, |s| s.opacity(1.))
+                    .child(e)
+                    .into_any_element()
+            })
+            .into_any_element()
+        };
+        let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
+        let sem_perguntar = motor.permissao_de(chat) == "bypassPermissions";
+        let modo = self.chip_modo(motor, chat, b, window, cx);
+        let modo = if sem_perguntar { modo } else { em_repouso("repouso-modo", modo) };
         div()
             .flex()
             .items_center()
             .h(r(altura))
-            .child(div().flex_none().child(self.chip_modo(motor, chat, b, window, cx)))
+            .child(div().flex_none().child(modo))
             .child(
                 div()
                     .flex()
@@ -718,8 +751,8 @@ impl Janela {
                     // não coubesse ficaria nela, cortada. Com a altura da linha, a segunda começa
                     // abaixo do recorte.
                     .child(div().h(r(altura)))
-                    .child(grupo(self.chip_modelo(motor, chat, ix, b, window, cx)))
-                    .child(grupo(self.chip_esforco(motor, chat, ix, b, window, cx))),
+                    .child(grupo(em_repouso("repouso-modelo", self.chip_modelo(motor, chat, ix, b, window, cx))))
+                    .child(grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, window, cx)))),
             )
             .child(
                 div()
@@ -729,9 +762,9 @@ impl Janela {
                     .gap(r(4.))
                     .ml(r(8.))
                     .children(self.anel_do_contexto(chat, b, cx))
-                    .when(!estreita, |s| s.child(self.botao_anexar(b, window, cx)))
+                    .when(!estreita, |s| s.child(em_repouso("repouso-anexar", self.botao_anexar(b, window, cx).into_any_element())))
                     .when(b.faixa != FaixaCaixa::Media, |s| {
-                        s.child(self.botao_mais(motor, chat, b, window, cx))
+                        s.child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     })
                     .children(self.botoes_de_envio(b, vazio, dirige_o_turno(motor, &chat.id), envios, cx)),
             )

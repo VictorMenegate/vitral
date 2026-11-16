@@ -433,7 +433,7 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
 
 /// Quanto as ações do cabeçalho (foco, "⋯", painel da direita) ficam apagadas enquanto o
 /// ponteiro não chega nelas. Acende inteiro no hover do grupo, e o teclado não passa por aqui.
-const ACOES_APAGADAS: f32 = 0.55;
+const ACOES_APAGADAS: f32 = crate::tema::opacidade::EM_REPOUSO;
 
 /// O grupo de hover das ações de um painel.
 fn grupo_das_acoes(painel_id: u64) -> SharedString {

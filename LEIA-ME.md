@@ -341,7 +341,10 @@ e os chips; embaixo do campo, ainda na moldura, a **linha de estado**, em mono 1
 aro de metal de 2 px acende em volta da moldura (180 ms; apaga em 120), sem azul nem halo; ele
 recorta o miolo do campo (`Encaixe::Miolo`, com o grão leve), para a fita ser contínua nos quatro
 lados, e não azul em cima e cinza nos lados (o mesmo na busca, na aba sob o ponteiro e na moldura
-do pedido que espera você). A barra
+do pedido que espera você). Nos painéis de fundo, a caixa recua: o modelo, o esforço, o clipe, o
+**…** e o modo (menos o "Sem perguntar", que é aviso) ficam a 0,55 (`opacidade::EM_REPOUSO`) e
+acendem com o ponteiro na caixa e ao ativar o painel; o campo, a moldura, o anel com a
+porcentagem e o parar ficam sempre acesos (relatório de aparência, 16/11/2026, V2). A barra
 de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo
 cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar),
 **modelo** (o logo do Claude e o que vale, como "Claude
