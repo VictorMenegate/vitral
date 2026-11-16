@@ -299,7 +299,9 @@ componentes do GPUI Kit.
   **Entrar de novo** (ou **Entrar no Codex**) no login perdido; **Instalar o Codex**; **Compactar**
   na conversa longa demais. O Continuar troca quem responde e repete o turno; na dupla (o Claude e
   o Codex no mesmo chat), passa a vez ao outro. O **Tentar de novo** fica só na faixa. O limite do
-  plano com outra conta livre continua trocando de conta sozinho, sem cartão. Quando o Claude Code manda o erro também como
+  plano com outra conta livre continua trocando de conta sozinho, sem cartão. O login perdido sem
+  outra conta e todas as contas no limite, que saíam em dois avisos seguidos (o do Vitral e o do
+  agente), são um cartão só, também nas conversas já gravadas; o Copiar leva os dois textos. Quando o Claude Code manda o erro também como
   resposta, ela fica gravada mas não é desenhada nem contada pela busca: aparece só o cartão do erro
   (`resposta_repete_o_erro`, em `src/ui/mensagens.rs`).
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)

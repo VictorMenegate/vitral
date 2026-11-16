@@ -239,6 +239,22 @@ impl Janela {
                 i = fim;
                 continue;
             }
+            // Dois avisos do mesmo problema viram um cartão: o do Vitral (o login perdido sem outra
+            // conta, todas as contas no limite) dá o título e a frase, e o erro do turno logo depois
+            // dá o texto do agente. A dobra é na tela: vale para as conversas já gravadas e não
+            // perde o texto cru (balão e cartão de erro, 16/11/2026).
+            if let Item::Aviso { texto: antes, .. } = item
+                && erros::precede_o_erro(antes)
+                && let Some(&(indice_erro, Item::Aviso { texto, erro: true, .. })) = visiveis.get(i + 1)
+                && texto.starts_with(erros::PREFIXO_DO_TURNO)
+                && !datas.contains_key(&(i + 1))
+            {
+                let chave = format!("{}:{indice_erro}", chat.id);
+                let elemento = self.cartao_de_erro(&contexto, &chave, indice_erro, texto, Some((indice, antes.as_str())), window, cx);
+                blocos.push((Bloco::Alerta, Some(indice), elemento));
+                i += 2;
+                continue;
+            }
             i += 1;
             let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
             blocos.push((bloco, Some(indice), elemento));

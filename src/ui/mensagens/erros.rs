@@ -510,7 +510,6 @@ pub(super) fn erro_vivo(itens: &[Item], indice: usize) -> bool {
 
 /// O aviso do Vitral que vem colado no erro do turno e diz o mesmo problema: o login perdido sem
 /// outra conta e todas as contas no limite.
-#[allow(dead_code)] // a dobra na conversa entra no commit seguinte
 pub(super) fn precede_o_erro(texto: &str) -> bool {
     conta_sem_login(texto).is_some() || texto.starts_with(&format!("{TODAS_NO_LIMITE}; {PRIMEIRA_VOLTA}"))
 }
