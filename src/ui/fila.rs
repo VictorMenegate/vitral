@@ -8,7 +8,7 @@ use gpui_kit::component::{
     Disableable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Textarea, TextareaState},
+    input::{Enter, Textarea, TextareaState},
     scroll::ScrollableElement as _,
     tooltip::Tooltip,
     v_flex,
@@ -192,6 +192,9 @@ impl Janela {
             return;
         };
         let campo = cx.new(|cx| TextareaState::new(window, cx).auto_grow(2, 8).default_value(antes.clone()));
+        // O cursor no fim do texto, como na caixa: o que se digita continua a mensagem.
+        let fim = antes.len();
+        campo.update(cx, |c, cx| c.set_selected_range(fim..fim, cx));
         let foco = campo.read(cx).focus_handle(cx);
         self.editando_fila = Some(EdicaoNaFila { chat, indice, antes, campo });
         window.focus(&foco, cx);
@@ -493,17 +496,19 @@ fn linha_da_fila(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
-                                let m = &ev.keystroke.modifiers;
-                                let acao = match ev.keystroke.key.as_str() {
-                                    "enter" if m.control => Some(true),
-                                    "escape" => Some(false),
-                                    _ => None,
-                                };
-                                if let Some(salvar_agora) = acao {
+                            // O Ctrl+Enter do campo vira a ação Enter{secondary} do kit, que é
+                            // despachada antes das teclas e quebraria a linha: ela é pega aqui, na
+                            // captura, antes do campo (conferência na bancada, 16/11/2026).
+                            .capture_action(move |acao: &Enter, window, cx| {
+                                if acao.secondary {
                                     cx.stop_propagation();
-                                    let alvo = if salvar_agora { salvar.clone() } else { desistir.clone() };
-                                    let _ = alvo.update(cx, |this, cx| this.fechar_edicao_da_fila(salvar_agora, window, cx));
+                                    let _ = salvar.update(cx, |this, cx| this.fechar_edicao_da_fila(true, window, cx));
+                                }
+                            })
+                            .capture_key_down(move |ev: &KeyDownEvent, window, cx| {
+                                if ev.keystroke.key == "escape" {
+                                    cx.stop_propagation();
+                                    let _ = desistir.update(cx, |this, cx| this.fechar_edicao_da_fila(false, window, cx));
                                 }
                             })
                             .child(Textarea::new(&campo))

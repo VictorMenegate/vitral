@@ -517,7 +517,15 @@ pub fn fosco(raios: Corners<Pixels>) -> impl IntoElement {
                 return;
             }
             let raios = raios.clamp_radii_for_quad_size(limites.size);
-            window.paint_quad(fill(limites, gpui_kit::rgba(0xffffff0a)).corner_radii(raios));
+            // O leitoso cresce com a transparência: quanto mais o fundo aparece, mais ele precisa
+            // ser apagado para ler como vidro fosco e não como janela aberta (dono, 16/11/2026:
+            // "deixa o transparente fosco"). O grão continua o leve: o cheio vira chuvisco.
+            let leitoso = match crate::tema::transparencia() {
+                0 | 1 => 0xffffff16,
+                2 => 0xffffff1a,
+                _ => 0xffffff1e,
+            };
+            window.paint_quad(fill(limites, gpui_kit::rgba(leitoso)).corner_radii(raios));
             let grao = cx.try_global::<Metal>().and_then(|metal| metal.grao_leve.clone());
             pintar_o_grao(limites, raios, grao.as_ref(), window);
         },

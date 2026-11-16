@@ -227,6 +227,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.
+- **Fundo mais fosco.** Com a transparência ligada, o véu leitoso por cima do fundo ficou mais forte
+  (mais ainda nos níveis mais transparentes): o que está atrás da janela aparece esmaecido, como
+  vidro fosco, e não nítido como janela aberta.
+- **Editar na fila salva com Ctrl+Enter.** O lápis de uma mensagem da fila abre com o cursor no fim,
+  e o Ctrl+Enter salva (antes quebrava a linha).
 - **O metal do escolhido e do aro de foco continua o de antes.** A rodada de aparência tinha
   trocado o metal vivo da ficha do escolhido e do aro de foco por um recorte mais liso; o dono
   preferiu o metal de antes ("por que tirou os shaders?"), e ele voltou.
