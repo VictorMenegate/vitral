@@ -44,6 +44,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   motor.rs") quando são até dois. Quando o turno muda arquivos, a faixa colada na caixa diz "3
   arquivos mudados · +40 −12", e **Ver mudanças** abre "Este chat" com a lista: neste turno e
   antes, com o +N −M de cada um e o selo "novo" no que foi criado. O clique abre o arquivo à direita.
+- **Toda lista diz o que o chat respondeu.** O sino mostra a primeira frase da resposta nova e o que
+  o turno fez ("3 editados · 12 comandos"); o histórico do "+" diz o estado e o começo da última
+  fala; a dica da aba de fundo também; e o "Enquanto você esteve fora" deixa o título curto, com a
+  frase ao lado.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

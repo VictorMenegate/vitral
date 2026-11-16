@@ -60,6 +60,21 @@ pub(super) fn precisa_em_tudo(motor: &Motor) -> PrecisaDeVoce {
     conta
 }
 
+/// Uma linha do "Enquanto você esteve fora": o título do chat vira rótulo, curto, e a frase fica
+/// ao lado. Na lista estreita, o título comia o espaço ("WMS: (claude falso…"; rodada de uso,
+/// item 3.3). Sem o chat (ou um texto que não começa pelo título), a linha como veio.
+fn rotulo_e_frase(motor: &Motor, chat: &str, texto: &str) -> Vec<AnyElement> {
+    let titulo = motor.chat(chat).map(|c| c.titulo.as_str());
+    let frase = titulo.and_then(|t| texto.strip_prefix(t)).and_then(|r| r.strip_prefix(": "));
+    match (titulo, frase) {
+        (Some(titulo), Some(frase)) => vec![
+            div().flex_none().max_w(relative(0.45)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
+            div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(super::falas::primeira_frase(frase)).into_any_element(),
+        ],
+        _ => vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()],
+    }
+}
+
 impl Janela {
     /// As linhas dos pares travados em "Esperando você": o que espera e Ver.
     pub(super) fn linhas_de_ciclo(&self, motor: &Motor, esperas: Vec<EsperaDeCiclo>, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -121,7 +136,7 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .when(chat.is_some(), |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
                         .child(div().flex_none().child(simbolo_do_chat(16.)))
-                        .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(&l.texto)))
+                        .children(rotulo_e_frase(motor, &l.chat, &l.texto))
                         .when_some(chat, |s, chat| {
                             s.on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                 if ev.modifiers().control {

@@ -44,6 +44,8 @@ struct Linha {
     /// O sinal e o rótulo, os mesmos da prévia da lista (a resposta nova não tem).
     motivo: Option<MotivoDaPrevia>,
     detalhe: String,
+    /// O que o último turno fez ("3 editados · 12 comandos"), na linha de baixo da resposta nova.
+    feito: String,
     /// Número do painel em que a conversa está aberta (e se é o ativo).
     painel: Option<(usize, bool)>,
     quando: u64,
@@ -78,8 +80,11 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
                 let (motivo, detalhe) = MotivoDaPrevia::de(&causa);
                 (Some(motivo), detalhe)
             }
-            None => (None, "Resposta nova".to_string()),
+            // A resposta nova diz o que o chat respondeu (a primeira frase, sem markdown) em vez de
+            // "Resposta nova" em toda linha (rodada de uso, item 3.3).
+            None => (None, super::falas::ultima_fala(chat).unwrap_or_else(|| "Resposta nova".to_string())),
         };
+        let feito = if matches!(p, Pendencia::Nova { .. }) { super::falas::o_que_o_turno_fez(&chat.itens) } else { String::new() };
         let pedido = match p {
             Pendencia::Permissao { pedido, ferramenta, .. } => {
                 let comando = motor
@@ -100,6 +105,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             titulo: chat.titulo.clone(),
             motivo,
             detalhe,
+            feito,
             painel: janela.painel_da_conversa(&chat.id),
             quando: chat.atualizado_em,
             pedido,
@@ -371,9 +377,15 @@ fn linha(
         ),
         _ => None,
     };
+    // Embaixo da frase, o que o turno fez: dá para separar o chat que mexeu em arquivos do que só
+    // respondeu sem abrir nenhum.
+    let subtitulo = v_flex()
+        .min_w_0()
+        .child(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
+        .when(!l.feito.is_empty(), |s| s.child(div().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(l.feito.clone())));
     let cartao = CartaoDeLista::new(id("caixa-linha", &l.chave), l.titulo.clone())
         .simbolo(simbolo())
-        .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
+        .subtitulo(subtitulo)
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
     // O botão com texto ("Tentar de novo", "Retomar") fica no fluxo, sempre à vista, e o título

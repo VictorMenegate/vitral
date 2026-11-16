@@ -205,7 +205,16 @@ componentes do GPUI Kit.
   depois de**), ou ao abrir o Vitral, o topo da lista mostra o que terminou, o que precisa de você e
   o que falhou ou parou desde que você saiu, cada linha abrindo o chat (Ctrl+clique, ao lado), com
   o ×. Na lista estreita o título quebra em duas linhas, sem cortar a palavra. Fica só na memória:
-  a próxima volta troca, e nada entra no histórico.
+  a próxima volta troca, e nada entra no histórico. Em cada linha, o título do chat vira um rótulo
+  curto e a frase (a primeira da resposta, sem markdown) fica ao lado.
+- **Toda lista diz o que o chat respondeu** (`src/ui/falas.rs`, rodada de uso, item 3.3). No sino,
+  a resposta nova mostra a primeira frase da última resposta, sem markdown e cortada na frase, e
+  embaixo o que o turno fez ("3 editados · 12 comandos"), contado na hora a partir dos itens. No
+  histórico do "+", a segunda linha diz o estado e o começo da última fala ("Permissão · Bash ·
+  npm test", "Terminou · Pronto, mandei as duas…"), com "há N min"; a pasta só aparece quando é
+  outra que a do chat do painel. A dica da aba de fundo tem o título e, na segunda linha, o
+  estado com quando e o começo da última fala. A notificação do sistema continua com a primeira
+  linha.
 
 ## Primeira abertura, dados e linha de comando
 

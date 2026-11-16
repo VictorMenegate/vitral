@@ -16,6 +16,7 @@ mod configuracoes;
 mod conversa;
 mod dialogos;
 mod este_chat;
+mod falas;
 mod fila;
 mod imagens;
 mod lateral;

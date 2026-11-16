@@ -47,18 +47,33 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
     // O "+N" da faixa das abas mostra só as que saíram dela.
     let mut chats: Vec<&Chat> = motor.chats_da_lista().filter(|c| so.is_none_or(|so| so.contains(&c.id))).collect();
     chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+    // A pasta só aparece quando é outra que a do chat deste painel: com todos os chats em ~/eita,
+    // o "· eita" em toda linha não dizia nada (rodada de uso, item 3.3).
+    let pasta_do_painel = a_vista.and_then(|id| motor.chat(id)).map(|c| c.cwd.clone());
     let item = |c: &Chat| {
         let quando = super::tempo_relativo(c.atualizado_em);
         let quando = if quando == "agora" { quando } else { format!("há {quando}") };
-        let pasta = if motor.sem_pasta(c) { "sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+        let pasta = if motor.sem_pasta(c) {
+            Some("sem pasta".to_string())
+        } else {
+            (pasta_do_painel.as_ref() != Some(&c.cwd)).then(|| nome_da_pasta(&c.cwd))
+        };
         let onde = if a_vista == Some(c.id.as_str()) {
             "à vista neste painel · ".to_string()
         } else {
             noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default()
         };
+        // O estado e o começo da última fala ("Terminou · Pronto, mandei as duas…"), com o quando.
+        let fala = super::falas::estado_e_fala(motor, c);
+        let mut partes: Vec<String> = Vec::new();
+        if !fala.is_empty() {
+            partes.push(fala);
+        }
+        partes.push(quando);
+        partes.extend(pasta);
         ItemDeEscolha {
             simbolo: Some(Simbolo::Estado(sinal_do_chat(motor, c))),
-            descricao: Some(format!("{onde}{quando} · {pasta}").into()),
+            descricao: Some(format!("{onde}{}", partes.join(" · ")).into()),
             termos: Some(com_til(&c.cwd).into()),
             ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
         }
@@ -72,6 +87,22 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
             itens: chats.into_iter().map(item).collect(),
         })
         .collect()
+}
+
+/// A dica da aba de fundo, em até duas linhas: o título; e o estado com quando ("Terminou há 3
+/// min") e o começo da última fala, ou a pasta quando não há o que dizer.
+fn dica_da_aba(motor: &Motor, chat: &Chat) -> String {
+    let quando = super::tempo_relativo(chat.atualizado_em);
+    let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+    let estado = super::falas::estado_do_chat(motor, chat);
+    let fala = super::falas::ultima_fala(chat).unwrap_or_default();
+    let segunda = match (estado.is_empty(), fala.is_empty()) {
+        (true, true) => format!("{quando} · {}", pasta_em_texto(motor, chat)),
+        (true, false) => format!("{quando} · {fala}"),
+        (false, true) => format!("{estado} {quando}"),
+        (false, false) => format!("{estado} {quando} · {fala}"),
+    };
+    format!("{}\n{segunda}", chat.titulo)
 }
 
 /// O símbolo da conversa: o balão, o mesmo em todo chat.
@@ -882,7 +913,9 @@ impl Janela {
                 let outro = motor.chat(id)?;
                 let fechar = cx.entity().downgrade();
                 let (id_abrir, id_fechar) = (id.clone(), id.clone());
-                let dica = SharedString::from(format!("{}\n{}", outro.titulo, pasta_em_texto(motor, outro)));
+                // O título e, na segunda linha, o estado com quando e o começo da última fala: dá
+                // para decidir se vale trocar de aba sem trocar (rodada de uso, item 3.3).
+                let dica = SharedString::from(dica_da_aba(motor, outro));
                 // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
