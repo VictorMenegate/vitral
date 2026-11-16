@@ -31,6 +31,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Entrar de novo na conta que perdeu o login.** Nas Contas do Claude, a conta sem login mostra
   "sem login" e o botão **Entrar de novo**, que refaz o login nela mesma, sem criar uma conta
   duplicada.
+- **Revisão da memória sem prender o chat.** O "Terminou" sai assim que o turno de trabalho acaba;
+  a revisão da memória roda por baixo e vira uma linha na conversa ("Memória revista · nada a
+  guardar"). Uma mensagem sua no meio dela corta a revisão (se ela ainda não escreveu nada) e
+  começa o seu turno.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

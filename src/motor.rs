@@ -329,6 +329,9 @@ pub struct Motor {
     /// Quantas mensagens o usuário dirigiu ao turno que está rodando em cada chat, para a faixa
     /// dizer que ele foi dirigido. Zera a cada turno novo.
     dirigidos: HashMap<String, usize>,
+    /// Os chats cujo turno de agora é a revisão da memória (rodada de uso, item 6.1): por fora eles
+    /// contam como parados (o "Terminou" sai na hora), por dentro ainda trabalham.
+    revisando: HashMap<String, Revisao>,
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
@@ -546,6 +549,7 @@ impl Motor {
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             dirigidos: HashMap::new(),
+            revisando: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
             avisos: Arc::default(),
@@ -633,8 +637,23 @@ impl Motor {
         self.chats.iter_mut().find(|c| c.id == id)
     }
 
+    /// A execução como a tela a vê: a revisão da memória conta como parada (o turno de trabalho já
+    /// terminou, e o "Terminou" sai na hora; rodada de uso, item 6.1).
     pub fn execucao(&self, chat: &str) -> Execucao {
+        match self.execucao_real(chat) {
+            Execucao::Rodando { .. } if self.revisando.contains_key(chat) => Execucao::Parado,
+            outra => outra,
+        }
+    }
+
+    /// A execução de verdade: a revisão da memória ainda é trabalho (o fechar e o Reiniciar contam).
+    fn execucao_real(&self, chat: &str) -> Execucao {
         self.execucao.get(chat).cloned().unwrap_or(Execucao::Parado)
+    }
+
+    /// O chat está revendo a memória agora (a linha de estado diz, discreta).
+    pub fn revendo_memoria(&self, chat: &str) -> bool {
+        self.revisando.contains_key(chat) && self.execucao_real(chat).rodando()
     }
 
     pub fn parcial(&self, chat: &str) -> Option<&str> {
@@ -649,12 +668,6 @@ impl Motor {
         self.filas.get(chat).map_or(0, |f| f.iter().filter(|e| !e.nota).count())
     }
 
-    pub fn rodando(&self) -> impl Iterator<Item = &Chat> {
-        self.chats
-            .iter()
-            .filter(|c| self.execucao(&c.id).rodando())
-    }
-
     /// Quantos chats fechar o Vitral agora cortaria no meio: turno rodando ou nova tentativa marcada.
     pub fn trabalhando(&self) -> usize {
         self.ocupados(false)
@@ -667,7 +680,9 @@ impl Motor {
     }
 
     fn ocupados(&self, com_fila: bool) -> usize {
-        let mut chats: HashSet<&str> = self.rodando().map(|c| c.id.as_str()).collect();
+        // A revisão da memória também conta: fechar agora a cortaria.
+        let mut chats: HashSet<&str> =
+            self.chats.iter().filter(|c| self.execucao_real(&c.id).rodando()).map(|c| c.id.as_str()).collect();
         if com_fila {
             chats.extend(self.chats.iter().map(|c| c.id.as_str()).filter(|id| self.na_fila(id) > 0));
         }
@@ -766,7 +781,7 @@ impl Motor {
 
     /// Nada roda no chat: nem turno, nem nova tentativa.
     fn chat_livre(&self, id: &str) -> bool {
-        !self.execucao(id).rodando() && !self.processos.contains_key(id)
+        !self.execucao_real(id).rodando() && !self.processos.contains_key(id)
     }
 
     /// Esquece o que o motor guarda em memória das conversas que saíram do estado. Um
@@ -789,6 +804,7 @@ impl Motor {
             self.fim_adiado.remove(id);
             self.dirigidas.remove(id);
             self.dirigidos.remove(id);
+            self.revisando.remove(id);
             self.visiveis.remove(id);
         }
         self.interrompidos.retain(|c| !saiu(c));
@@ -889,6 +905,23 @@ impl Motor {
         // O usuário falou: os ciclos de mensagens automáticas desse chat recomeçam.
         self.ciclos.zerar(chat);
         let entrada = entrada_do_usuario(texto, anexos, reforco);
+        // Mensagem durante a revisão da memória (item 6.1): ela nunca dirige a revisão. Se a
+        // revisão ainda não escreveu nada, ela é cortada e a mensagem abre um turno normal (a
+        // revisão volta a ser pedida no próximo fim); se já escreveu, a mensagem espera na fila,
+        // para não cortar um arquivo pela metade.
+        if self.revisando.contains_key(chat) && self.processos.contains_key(chat) {
+            let escreveu = self.chat(chat).is_some_and(|c| {
+                let desde = self.revisando.get(chat).map_or(c.itens.len(), |r| r.desde_item);
+                revisao_escreveu(&c.itens[desde.min(c.itens.len())..])
+            });
+            self.filas.entry(chat.to_string()).or_default().push(entrada);
+            if !escreveu {
+                self.parar(chat, cx);
+            }
+            self.salvar();
+            cx.notify();
+            return;
+        }
         // Com o turno rodando, a mensagem do usuário entra nele (o "Mandar depois" é que escolhe a
         // fila). Só a dele: o que vem de outro chat continua esperando a vez.
         if !reforco.depois {
@@ -1205,7 +1238,7 @@ impl Motor {
         if self.fim_adiado.contains_key(chat_id) || self.interrompidos.iter().any(|c| c == chat_id) {
             return Dirigido::NaFila(None);
         }
-        if !matches!(self.execucao(chat_id), Execucao::Rodando { .. }) {
+        if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
             return Dirigido::NaFila(None);
         }
         // O que vale para o turno inteiro não cabe no meio dele: o esforço do Ultrathink e do
@@ -2919,8 +2952,20 @@ impl Motor {
                     self.interrompidos.retain(|c| c != chat_id);
                     self.rodadas.remove(chat_id);
                     self.parcial.remove(chat_id);
-                    self.avisar(chat_id, "Interrompido.", false);
+                    let revisao = self.revisando.remove(chat_id);
                     self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+                    match revisao {
+                        // A revisão cortada por uma mensagem sua (item 6.1): sem "Interrompido",
+                        // pedida de novo no próximo fim, e a mensagem abre o turno dela.
+                        Some(revisao) => {
+                            if let Some(c) = self.chat_mut(chat_id) {
+                                c.memoria_da_sessao = None;
+                                c.atualizado_em = c.atualizado_em.min(revisao.atualizado_antes.max(c.lido_em));
+                            }
+                            self.entregar_fila(chat_id, cx);
+                        }
+                        None => self.avisar(chat_id, "Interrompido.", false),
+                    }
                     if let Some(c) = self.chat(chat_id) {
                         let _ = self.dados.salvar_chat(c);
                     }
@@ -3013,7 +3058,19 @@ impl Motor {
                     if let Some(c) = self.chat_mut(chat_id) {
                         c.turno_aberto = false;
                     }
-                    if interrompido {
+                    let revisao = self.revisando.remove(chat_id);
+                    if let Some(revisao) = revisao {
+                        // A revisão da memória caiu ou foi cortada: o chat fica parado como estava
+                        // depois do turno de trabalho, e o que esperava na fila entra (item 6.1).
+                        self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+                        if let Some(c) = self.chat_mut(chat_id) {
+                            if interrompido {
+                                c.memoria_da_sessao = None;
+                            }
+                            c.atualizado_em = c.atualizado_em.min(revisao.atualizado_antes.max(c.lido_em));
+                        }
+                        self.entregar_fila(chat_id, cx);
+                    } else if interrompido {
                         self.avisar(chat_id, "Interrompido.", false);
                         self.execucao.insert(chat_id.to_string(), Execucao::Parado);
                     } else if self.consertar_sessao(chat_id, &stderr, cx) {
@@ -3043,6 +3100,31 @@ impl Motor {
         if !erro {
             self.repetidos_sessao.remove(chat_id);
         }
+        // O fim da revisão da memória não é um "Terminou" novo: o do turno de trabalho já saiu.
+        // Sem notificação, sem registro e sem deixar o chat como não lido outra vez; um erro dela
+        // vira só uma linha (item 6.1).
+        if let Some(revisao) = self.revisando.remove(chat_id) {
+            if erro {
+                self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+                let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default().to_string();
+                self.avisar(chat_id, &format!("A revisão da memória não terminou: {linha}"), false);
+            }
+            if let Some(c) = self.chat_mut(chat_id)
+                && c.lido_em >= revisao.atualizado_antes
+            {
+                c.lido_em = c.lido_em.max(c.atualizado_em);
+            }
+            if let Some(c) = self.chat(chat_id) {
+                let _ = self.dados.salvar_chat(c);
+            }
+            if self.na_fila(chat_id) > 0
+                && let Some(fila) = self.filas.remove(chat_id)
+            {
+                self.comecar_turno(chat_id, fila, cx);
+            }
+            self.salvar();
+            return;
+        }
         if let Some(c) = self.chat(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
@@ -3065,7 +3147,11 @@ impl Motor {
         } else if !erro && self.passar_a_vez(chat_id, cx) {
             // O outro agente da dupla revisa o que este fez; o aviso de "terminou" vem no fim.
         } else if !erro && self.pedir_revisao_da_memoria(chat_id, cx) {
-            // O turno da memória já abriu; o aviso de "terminou" vem no fim dele.
+            // O turno da memória abriu por baixo; o "Terminou" do turno de trabalho sai agora, sem
+            // esperar a revisão (item 6.1).
+            if !self.janela_ativa {
+                self.notificar(&chat, &texto_do_fim(&texto), false);
+            }
         } else if !self.janela_ativa && !erro {
             self.notificar(&chat, &texto_do_fim(&texto), false);
         } else if !self.janela_ativa && erro {
@@ -3138,13 +3224,19 @@ impl Motor {
             return false;
         }
         (c.memoria_da_sessao, c.memoria_pedida_em) = (Some(c.sessao.clone()), agora());
+        let revisao = Revisao { desde_item: c.itens.len(), atualizado_antes: c.atualizado_em };
         let entrada = Entrada {
             de: Some("Vitral".into()),
-            texto: "Antes de encerrar: reveja o que desta sessão vale guardar na memória e nas instruções.".into(),
+            texto: PEDIDO_DE_REVISAO.into(),
             extra: CRIVO_DA_MEMORIA.into(),
             ..Entrada::default()
         };
+        self.revisando.insert(chat_id.to_string(), revisao);
         self.entregar_entrada(chat_id, entrada, cx);
+        // Não abriu (a pasta sumiu, por exemplo): nada a rever.
+        if !self.processos.contains_key(chat_id) {
+            self.revisando.remove(chat_id);
+        }
         true
     }
 
@@ -3394,6 +3486,35 @@ impl Motor {
 
 /// O que o agente recebe junto com o pedido de revisão da memória: o mesmo crivo do hook `Stop`
 /// do dono (`eita/.claude/hooks/lembrar-instrucoes.js`), sem o que é só daquele workspace.
+/// A revisão da memória em andamento num chat (item 6.1).
+#[derive(Clone, Copy, Debug)]
+struct Revisao {
+    /// Onde ela começa na conversa (a linha do Vitral que a pede).
+    desde_item: usize,
+    /// Quando o chat tinha mudado antes dela: o fim dela não o deixa como não lido de novo.
+    atualizado_antes: u64,
+}
+
+/// A linha que o Vitral põe na conversa ao pedir a revisão da memória (o crivo vai por baixo).
+pub const PEDIDO_DE_REVISAO: &str = "Antes de encerrar: reveja o que desta sessão vale guardar na memória e nas instruções.";
+
+/// O item é o pedido da revisão da memória.
+pub fn e_revisao_da_memoria(item: &Item) -> bool {
+    matches!(item, Item::Entrega { de, texto, .. } if de == "Vitral" && texto == PEDIDO_DE_REVISAO)
+}
+
+/// A ferramenta grava algo: o critério da revisão que já escreveu (e não se corta mais) e da
+/// linha "Memória: editou …" (item 6.1). Pela ferramenta, não pelo texto.
+pub fn ferramenta_de_escrita(nome: &str) -> bool {
+    let curto = nome.rsplit("__").next().unwrap_or(nome);
+    matches!(curto, "Edit" | "Write" | "MultiEdit" | "NotebookEdit") || curto.to_ascii_lowercase().contains("write")
+}
+
+/// A revisão (os itens dela) já usou alguma ferramenta de escrita.
+fn revisao_escreveu(itens: &[Item]) -> bool {
+    itens.iter().any(|i| matches!(i, Item::Ferramenta { nome, .. } if ferramenta_de_escrita(nome)))
+}
+
 const CRIVO_DA_MEMORIA: &str = "\
 Passe esta sessão por este crivo. Se o projeto ou o usuário têm uma instrução ou skill sobre como \
 manter as instruções (por exemplo uma skill `manter-instrucoes`), siga-a e leia-a antes, se ainda \
@@ -4201,6 +4322,29 @@ mod testes {
         // Depois do pedido das 12, só uma edição mais nova conta.
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 12, false)], 12));
         assert!(editou_arquivo_desde(&[ferramenta("Edit", 12, false), ferramenta("NotebookEdit", 13, false)], 12));
+    }
+
+    #[test]
+    fn revisao_da_memoria_que_ja_escreveu_nao_se_corta() {
+        let ferramenta = |nome: &str| Item::Ferramenta {
+            id: "f".into(),
+            nome: nome.into(),
+            resumo: String::new(),
+            resultado: None,
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+        };
+        assert!(ferramenta_de_escrita("Edit") && ferramenta_de_escrita("Write") && ferramenta_de_escrita("MultiEdit"));
+        assert!(ferramenta_de_escrita("mcp__ai-memory__memory_write_page"));
+        assert!(!ferramenta_de_escrita("Read") && !ferramenta_de_escrita("Bash") && !ferramenta_de_escrita("Grep"));
+        assert!(!revisao_escreveu(&[ferramenta("Read"), ferramenta("Grep")]));
+        assert!(revisao_escreveu(&[ferramenta("Read"), ferramenta("Edit")]));
+        let pedido = Item::Entrega { de: "Vitral".into(), texto: PEDIDO_DE_REVISAO.into(), em: 0 };
+        assert!(e_revisao_da_memoria(&pedido));
+        assert!(!e_revisao_da_memoria(&Item::Entrega { de: "loja (x)".into(), texto: PEDIDO_DE_REVISAO.into(), em: 0 }));
     }
 
     #[test]

@@ -152,6 +152,17 @@ componentes do GPUI Kit.
   ai-memory no computador de cada pessoa. O prompt orienta os agentes a consultar antes de
   trabalhar e a usar o dono e o nome do repositório como workspace e projeto, para o caminho local
   de cada computador não dividir a memória da equipe.
+- **Revisão da memória ao terminar** (Configurações, **Rever a memória ao terminar**). Quando um
+  turno que mexeu em arquivo termina, uma vez por sessão, o Vitral pede ao agente para rever o que
+  vale guardar na memória e nas instruções. O turno de trabalho conta como terminado na hora: o
+  "Terminou", o sino, a lista e a notificação saem sem esperar a revisão, que roda por baixo, com
+  "Revendo a memória…" discreto na linha de estado e sem notificar de novo (ela continua contando
+  como trabalho para o fechar e o Reiniciar). Uma mensagem sua durante a revisão nunca entra nela:
+  se a revisão ainda não usou ferramenta de escrita, ela é cortada e a mensagem abre um turno
+  normal (a revisão volta a ser pedida no próximo fim); se já escreveu, a mensagem espera na fila.
+  Na conversa, a revisão vira uma linha recolhida: "Memória revista · nada a guardar" ou "Memória:
+  editou AGENTS.md", com o ícone que abre o arquivo; o clique mostra o que ela fez. O critério é
+  a ferramenta usada, não o texto da resposta.
 - **Conversas do Claude Code.** Na primeira abertura (junto da migração), o Vitral traz as conversas
   da extensão do VS Code e do terminal (`~/.claude/projects/<pasta>/<sessão>.jsonl`, só lidos: nada lá
   é mudado). Depois disso uma **vigia** (`src/motor/importacao.rs`) olha de novo a cada abertura e a

@@ -326,6 +326,23 @@ impl Janela {
             if let Some(dia) = datas.get(&i) {
                 blocos.push((Bloco::Dia, None, separador_de_dia(dia)));
             }
+            // A revisão da memória vira uma linha: "Revendo a memória…" enquanto roda, e depois
+            // "Memória revista · nada a guardar" ou "Memória: editou AGENTS.md" (item 6.1).
+            if crate::motor::e_revisao_da_memoria(item) {
+                let fim_item = chat.itens[indice + 1..]
+                    .iter()
+                    .position(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. }))
+                    .map_or(chat.itens.len(), |p| indice + 1 + p);
+                let chave = format!("{}:{indice}:memoria", chat.id);
+                let aberta = self.expandidos.contains(&chave);
+                let rodando = fim_item == chat.itens.len() && motor.revendo_memoria(&chat.id);
+                sem_entrada.insert(blocos.len());
+                blocos.push((Bloco::Log, Some(indice), self.linha_da_memoria(&contexto, &chave, &chat.itens[indice..fim_item], rodando, aberta, window, cx)));
+                if !aberta {
+                    i = visiveis[i..].iter().position(|(k, _)| *k >= fim_item).map_or(visiveis.len(), |p| i + p);
+                    continue;
+                }
+            }
             if let Some(turno) = turnos.iter().copied().find(|t| t.contem(indice)).filter(|t| turno_posto != Some(t.mensagem)) {
                 turno_posto = Some(turno.mensagem);
                 let aberto = self.expandidos.contains(&turno.chave(&chat.id));
@@ -2032,7 +2049,8 @@ pub(super) fn turnos_recolhiveis(itens: &[Item], rodando: bool) -> Vec<TurnoReco
     let mut saida = Vec::new();
     for (n, &mensagem) in marcos.iter().enumerate() {
         let fim = marcos.get(n + 1).copied().unwrap_or(itens.len());
-        if rodando && fim == itens.len() {
+        // A revisão da memória tem a linha dela (item 6.1).
+        if (rodando && fim == itens.len()) || crate::motor::e_revisao_da_memoria(&itens[mensagem]) {
             continue;
         }
         let Some(resposta) = itens[mensagem + 1..fim].iter().rposition(|i| matches!(i, Item::Assistente { .. })).map(|k| mensagem + 1 + k)
@@ -2057,6 +2075,30 @@ pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
         Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
         _ => false,
     }
+}
+
+/// A linha recolhida da revisão da memória (item 6.1), pela ferramenta usada e não pelo texto:
+/// "Memória revista · nada a guardar", "Memória: editou AGENTS.md". Também os arquivos que ela
+/// editou, para abrir pelo clique.
+pub(super) fn resumo_da_revisao(itens: &[Item]) -> (String, Vec<String>) {
+    let escritas: Vec<&Item> =
+        itens.iter().filter(|i| matches!(i, Item::Ferramenta { nome, .. } if crate::motor::ferramenta_de_escrita(nome))).collect();
+    let nomes = editados_nas_chamadas(escritas.iter().copied());
+    let caminhos = escritas
+        .iter()
+        .filter_map(|i| match i {
+            Item::Ferramenta { arquivo: Some(a), .. } => Some(a.clone()),
+            _ => None,
+        })
+        .collect();
+    let texto = if !nomes.is_empty() {
+        format!("Memória: {}", editou(&nomes))
+    } else if !escritas.is_empty() {
+        "Memória: guardou o que valia".to_string()
+    } else {
+        "Memória revista · nada a guardar".to_string()
+    };
+    (texto, caminhos)
 }
 
 /// Quanto o turno levou: "45 s", "6 min 12 s", "1 h 3 min".
@@ -2312,6 +2354,57 @@ impl Janela {
             varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
         };
         v_flex().w_full().child(linha).children(fileira).into_any_element()
+    }
+
+    /// A linha da revisão da memória (item 6.1): recolhida por padrão; o clique mostra o que ela
+    /// fez. Com um arquivo editado, o ícone ao lado o abre à direita.
+    #[allow(clippy::too_many_arguments)]
+    fn linha_da_memoria(
+        &self,
+        contexto: &Contexto,
+        chave: &str,
+        itens: &[Item],
+        rodando: bool,
+        aberta: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let (texto, caminhos) = if rodando { ("Revendo a memória…".to_string(), Vec::new()) } else { resumo_da_revisao(itens) };
+        let abrir = caminhos
+            .first()
+            .and_then(|a| super::links_arquivo::resolver(&contexto.chat.cwd, a))
+            .map(|inteiro| super::links_arquivo::link_de(&inteiro, None));
+        h_flex()
+            .id(SharedString::from(format!("memoria-{chave}")))
+            .h(ALTURA_DO_LOG)
+            .px(esp::E12)
+            .gap(esp::E8)
+            .rounded(raio::CONTROLE)
+            .metadado()
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::hover()))
+            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(if rodando {
+                AnelGirando::new(14.).cor(Cores::tenue()).into_any_element()
+            } else {
+                icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
+            }))
+            .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(texto))
+            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .when_some(abrir, |s, alvo| {
+                s.child(
+                    botao_so_icone(
+                        SharedString::from(format!("memoria-abrir-{chave}")),
+                        Lucide::PanelRight,
+                        "Abrir o arquivo ao lado",
+                        TamanhoBotao::Linha,
+                        move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx),
+                        window,
+                        cx,
+                    ),
+                )
+            })
+            .on_click(alternar(chave.to_string(), cx))
+            .into_any_element()
     }
 
     /// Um bloco de raciocínio na trilha: "Pensou" e quanto durou; o clique mostra o texto, quando
@@ -3090,6 +3183,17 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<(Option<AnyElement>, Option<AnyElement>)> {
+        // A revisão da memória roda por baixo, depois do "Terminou": só uma linha discreta, sem o
+        // Esc (item 6.1). Uma mensagem sua a corta (ou espera, se ela já escreveu).
+        if motor.revendo_memoria(&chat.id) {
+            let linha = h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap(esp::E8)
+                .child(AnelGirando::new(12.).cor(Cores::tenue()))
+                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child("Revendo a memória…"));
+            return Some((Some(linha.into_any_element()), None));
+        }
         let Some(situacao @ Situacao::Rodando { .. }) = situacao_do_turno(motor, &chat.id) else {
             return None;
         };
@@ -5195,5 +5299,33 @@ mod testes {
         ];
         let turnos: Vec<(usize, usize)> = turnos_recolhiveis(&itens, false).iter().map(|t| (t.mensagem, t.resposta)).collect();
         assert_eq!(turnos, [(1, 4), (5, 8)]);
+    }
+
+    #[test]
+    fn revisao_da_memoria_vira_uma_linha_pela_ferramenta() {
+        use super::{Item, resumo_da_revisao, turnos_recolhiveis};
+        let editar = |arquivo: &str| Item::Ferramenta {
+            id: "e".into(),
+            nome: "Edit".into(),
+            resumo: arquivo.into(),
+            resultado: Some("ok".into()),
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: Some(arquivo.into()),
+            sub: None,
+        };
+        let pedido = Item::Entrega { de: "Vitral".into(), texto: crate::motor::PEDIDO_DE_REVISAO.into(), em: 0 };
+        let nada = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), assistente("Não há nada a registrar.")];
+        assert_eq!(resumo_da_revisao(&nada).0, "Memória revista · nada a guardar");
+        let com = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), editar("/x/AGENTS.md"), assistente("Anotei.")];
+        let (texto, caminhos) = resumo_da_revisao(&com);
+        assert_eq!(texto, "Memória: editou AGENTS.md");
+        assert_eq!(caminhos, ["/x/AGENTS.md"]);
+        // A revisão não entra no "Trabalhou…" (ela tem a linha dela).
+        let mut itens = vec![usuario("faz"), assistente("a"), ferramenta("Bash", "ls", Some("ok"), false), assistente("pronto")];
+        itens.extend(vec![pedido, ferramenta("Read", "x", Some("ok"), false), assistente("olhei"), editar("AGENTS.md"), assistente("Anotei.")]);
+        let turnos: Vec<usize> = turnos_recolhiveis(&itens, false).iter().map(|t| t.mensagem).collect();
+        assert_eq!(turnos, [0]);
     }
 }
