@@ -21,7 +21,7 @@ use super::controles::{TamanhoBotao, botao_fantasma, botao_primario, variante_fa
 use super::dialogo::{RodapeDialogo, largura::ALERTA};
 use super::estado::Selo;
 use super::graficos::fio_de_pontos;
-use super::metal::{Encaixe, abertura};
+use super::metal::{Encaixe, abertura_lisa};
 use super::textos::etiqueta_de_secao;
 use crate::tema::{
     Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, aresta_de_vidro, dentro_da_borda, esp,
@@ -294,8 +294,9 @@ pub fn placa_de_metal(raio_de_cima: Pixels) -> Div {
         .top_0()
         .left_0()
         .size_full()
-        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), cantos))
-        .child(div().absolute().top_0().left_0().size_full().rounded_t(raio_de_cima).shadow(aresta_de_tecla()))
+        // O miolo do metal, com o grão leve (V1 do relatório de aparência, 16/11/2026).
+        .child(abertura_lisa(Encaixe::Miolo, Some(Cores::veu_de_placa()), cantos))
+        .child(div().absolute().top_0().left_0().size_full().rounded_t(raio_de_cima).shadow(crate::tema::aresta_de_ficha()))
 }
 
 /// O cabeçalho de objeto na placa de metal: 52 de altura e 16 dos lados, colado no topo e nas
@@ -405,12 +406,11 @@ pub fn azulejo_de_escolha(conteudo: AnyElement, sobre_placa: bool) -> Div {
 /// `altura` do item. Absoluta, enche o item (o `fundo` do item do menu). Passou um dia como azul
 /// liso: o "fundo esquisito" que o dono viu (12/11/2026) era o realce claro do ponteiro por cima
 /// do metal, e não o metal. O metal voltou (13/11/2026) e o item escolhido não ganha mais o
-/// realce (`sem_realce` no item do `Command`, e o item de menu com `fundo`).
-pub fn ficha_de_metal(altura: f32) -> Div {
-    ficha_do_escolhido(raio::de(altura))
-}
-
-/// A mesma ficha com o raio dado.
+/// realce (`sem_realce` no item do `Command`, e o item de menu com `fundo`). Desde 16/11/2026 (V1
+/// do relatório de aparência): o miolo do metal azul, a família do "+" e do enviar, com o véu
+/// marinho e o grão leve, sem a ponta cinza nem chuvisco debaixo do texto; nas listas de escolha,
+/// no canto dos controles (o do realce do ponteiro e do teclado nas mesmas linhas), e não em
+/// pílula.
 pub fn ficha_do_escolhido(raio: Pixels) -> Div {
     div()
         .absolute()
@@ -419,14 +419,14 @@ pub fn ficha_do_escolhido(raio: Pixels) -> Div {
         .size_full()
         .rounded(raio)
         .shadow(crate::tema::sombra_elevado())
-        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), Corners::all(raio)))
-        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(aresta_de_tecla()))
+        .child(abertura_lisa(Encaixe::Miolo, Some(Cores::veu_de_placa()), Corners::all(raio)))
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(crate::tema::aresta_de_ficha()))
 }
 
-/// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal
-/// debaixo dele.
-pub fn escolhido_em_ficha(item: PopupMenuItem, escolhido: bool, altura: f32) -> PopupMenuItem {
-    item.checked(escolhido).when(escolhido, |item| item.fundo(move |_, _| ficha_de_metal(altura)))
+/// Marca o item como escolhido (o visto à direita) e, se for, põe a ficha de metal debaixo dele,
+/// no canto dos controles. `altura` ficou para quem chama: o canto já não depende dela.
+pub fn escolhido_em_ficha(item: PopupMenuItem, escolhido: bool, _altura: f32) -> PopupMenuItem {
+    item.checked(escolhido).when(escolhido, |item| item.fundo(move |_, _| ficha_do_escolhido(raio::controle())))
 }
 
 /// Item de duas linhas (48): o ícone num azulejo de 28, título 14/500 em branco e descrição 12

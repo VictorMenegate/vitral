@@ -275,6 +275,15 @@ pub fn aresta_de_tecla() -> Vec<BoxShadow> {
     ]
 }
 
+/// Ficha de metal (o escolhido, a placa do cabeçalho do menu): a aresta de tecla com a luz de cima
+/// mais forte, a 0,22, para o metal polido ler em relevo (relatório de aparência, 16/11/2026, V1).
+pub fn aresta_de_ficha() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow::new(px(0.), px(1.), Cores::forte().opacity(0.22)).inset(),
+        BoxShadow::new(px(0.), px(-1.), Cores::preto_puro().opacity(0.30)).inset(),
+    ]
+}
+
 /// Poço, no que é cavado (o trilho do segmentado, o campo de busca, o contador): a sombra cai
 /// de cima para dentro e a quina de baixo pega 1 px de luz.
 pub fn aresta_de_poco() -> Vec<BoxShadow> {
@@ -861,7 +870,9 @@ pub mod superficie {
         preto: 0x08090cff,
         recuo: 0x00000066,
         veu: 0x05060899,
-        veu_de_placa: 0x0000008f,
+        // O véu da ficha e da placa é marinho a 64%, e não preto: o preto apagava o azul do
+        // metal (relatório de aparência, 16/11/2026, V1).
+        veu_de_placa: 0x0a1a4aa3,
         veu_de_botao: 0x0000005c,
         // As bordas são um fio claro: nos controles, nas peças (o aro) e, mais forte, no que flutua.
         // No topo das peças e da caixa, uma linha de luz, como a quina de um vidro.

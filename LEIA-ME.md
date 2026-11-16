@@ -653,7 +653,7 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   saem da conta de contraste contra a cor mais clara que a chapa entrega (`TETO_DO_METAL`,
   #ACD9FF, a bolha clara com a luz em cima), e o teste `contraste_dos_tokens_no_pior_caso` roda
   contra ela (0xE0 é o mínimo da lista). Para o que vier por cima do metal há dois véus:
-  `Cores::veu_de_placa()` (preto a 56%, debaixo de `forte` e `texto`) e `Cores::veu_de_botao()`
+  `Cores::veu_de_placa()` (marinho a 64%, debaixo de `forte` e `texto`) e `Cores::veu_de_botao()`
   (preto a 36%, debaixo de ícone branco).
 - **O motor do metal** (`src/ui/componentes/metal.rs`). A conta do shader roda em Rust numa grade
   de 1 ponto a cada 8 px da janela (uns 20 mil pontos, 2 ms no binário de debug), vira uma imagem
@@ -738,12 +738,16 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   no parar. O anel de uso (`AnelDeUso`) é um só por serviço e mostra a janela mais apertada das
   duas (5 h ou semana): eram dois, um dentro do outro, e com a fenda eles liam como "duas barras".
 - **A ficha do escolhido.** O item escolhido (num menu ou popover de escolha, a aba escolhida do
-  alto da lista, o nível de esforço) vai numa ficha azul leve, com um fio do mesmo azul e o relevo
-  de tecla, no canto dos controles (`ficha_do_escolhido` e `ficha_de_metal`, em
-  `src/ui/componentes/superficies.rs`). Já foi um recorte de metal debaixo de um véu; num retângulo
-  comprido ficava preto de um lado e azul chuviscado do outro. O nome `ficha_de_metal` ficou.
+  alto da lista, o nível de esforço) vai numa ficha de metal azul, a família do "+" e do enviar
+  (`ficha_do_escolhido`, em `src/ui/componentes/superficies.rs`): o **miolo** do campo
+  (`Encaixe::Miolo`, o recorte do `Cobrir` aumentado 2,5 vezes em volta do centro, sem a vinheta
+  das pontas), com o grão leve, o véu marinho a 64% e a aresta de ficha (`aresta_de_ficha`, a luz
+  de cima a 0,22). Nas listas de escolha ela tem o canto dos controles, o mesmo do realce do
+  ponteiro e do teclado nas mesmas linhas, e não é pílula. Antes era o `Cobrir` debaixo de um véu
+  preto: numa pílula larga ia de cinza-ardósia a quase preto de ponta a ponta, com chuvisco
+  debaixo do texto (relatório de aparência, 16/11/2026, V1).
 - **Menus e popovers.** O menu do logo e os menus com cabeçalho de objeto começam numa **placa de metal** (`placa_de_metal`, `cabecalho_objeto`: o recorte da
-  chapa debaixo do véu de placa, 52 de altura, com o símbolo, o nome em branco e o detalhe em
+  chapa, o mesmo miolo da ficha, debaixo do véu de placa, 52 de altura, com o símbolo, o nome em branco e o detalhe em
   mono). Os atalhos saem em teclas desenhadas, os separadores são o fio de pontos, o item sob o
   ponteiro (ou o teclado) ganha o relevo de tecla, no canto `raio::de` da altura dele, e o rodapé é
   uma faixa escura com a linha técnica em mono (no menu do logo, a versão e o commit). O contorno

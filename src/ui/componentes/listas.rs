@@ -16,7 +16,7 @@ use gpui_kit::*;
 use super::base::{Simbolo, texto_arco_iris};
 use super::estado::{Selo, Sinal};
 use super::graficos::fio_de_pontos;
-use super::superficies::{EstadoVazio, ficha_de_metal};
+use super::superficies::{EstadoVazio, ficha_do_escolhido};
 use super::textos::{etiqueta_de_secao, tracinho_de_secao};
 use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam};
 
@@ -927,9 +927,9 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
     let sangria = tam(window, 8.);
     div()
         .relative()
+        // No canto dos controles, o mesmo do realce do ponteiro e do teclado nestas linhas (V1).
         .when(na_ficha, |d| {
-            let lado = if descrito { 48. } else { 32. };
-            d.child(div().absolute().top_0().bottom_0().left(-sangria).right(-sangria).child(ficha_de_metal(lado)))
+            d.child(div().absolute().top_0().bottom_0().left(-sangria).right(-sangria).child(ficha_do_escolhido(raio::controle())))
         })
         .flex()
         .items_center()
