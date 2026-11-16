@@ -878,9 +878,9 @@ impl Janela {
                 // A escolha chega por evento; a assinatura vive só enquanto o popover está aberto.
                 let assinar = {
                     let (lista, motor_e, janela, chat_id) = (lista.clone(), motor_e.clone(), janela.clone(), chat_id.clone());
-                    move |_: &mut Window, cx: &mut Context<Subscription>| {
+                    move |window: &mut Window, cx: &mut Context<Subscription>| {
                         let app: &mut App = cx;
-                        app.subscribe(&lista, move |_, evento: &EventoEscolha, cx| {
+                        window.subscribe(&lista, app, move |_, evento: &EventoEscolha, window, cx| {
                             if let EventoEscolha::Escolheu(chave) = evento {
                                 let valor = chave.to_string();
                                 // A linha que só explica não escolhe nada (e nem fecha o popover).
@@ -900,9 +900,15 @@ impl Janela {
                                     Some(slug) => (Agente::Codex, slug.to_string()),
                                     None => (Agente::Claude, valor),
                                 };
+                                let nome = match agente {
+                                    Agente::Codex if modelo.is_empty() => "Codex".to_string(),
+                                    Agente::Codex => agente_codex::nome_do_modelo(&modelo),
+                                    Agente::Claude => com_claude(&rotulo_modelo(&modelo, None)),
+                                };
                                 if let Some(m) = &motor_e {
                                     m.update(cx, |m, cx| m.definir_agente(&chat_id, agente, Some(modelo).filter(|v| !v.is_empty()), cx));
                                 }
+                                let _ = janela.update(cx, |this, cx| this.avisar_na_estreita(painel, format!("Modelo: {nome}"), window, cx));
                             }
                             abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
                         })

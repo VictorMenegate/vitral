@@ -653,7 +653,7 @@ impl Janela {
             }))
             .on_action(cx.listener({
                 let chat = chat.id.clone();
-                move |this, _: &AlternarModo, _, cx| this.alternar_modo(&chat, cx)
+                move |this, _: &AlternarModo, window, cx| this.alternar_modo(&chat, painel_id, window, cx)
             }))
             .on_action(cx.listener(move |this, _: &MenuAcima, _, cx| this.andar_no_menu(painel_id, -1, cx)))
             .on_action(cx.listener(move |this, _: &MenuAbaixo, _, cx| this.andar_no_menu(painel_id, 1, cx)))
@@ -1372,7 +1372,7 @@ impl Janela {
 
     /// Shift+Tab na caixa: o próximo modo de permissão, na ordem do menu. Vale a partir do
     /// próximo turno, como no menu.
-    fn alternar_modo(&mut self, chat: &str, cx: &mut Context<Self>) {
+    fn alternar_modo(&mut self, chat: &str, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
@@ -1383,6 +1383,17 @@ impl Janela {
         if let Some(atual) = atual {
             let proximo = proximo_modo(&atual);
             motor.update(cx, |m, cx| m.mudar_chat(chat, |c| c.permissao = Some(proximo.into()), cx));
+            self.avisar_na_estreita(painel, format!("Modo: {}", nome_do_modo(proximo)), window, cx);
+        }
+    }
+
+    /// Na caixa estreita os chips são só ícones: a troca de modo ou de modelo pelo teclado quase
+    /// não dava sinal (o Fable escolhido continuava com o logo do Claude). Lá, um aviso curto diz o
+    /// que ficou (teste de usabilidade, 16/11/2026).
+    pub(super) fn avisar_na_estreita(&self, painel: u64, texto: String, window: &mut Window, cx: &mut App) {
+        let estreita = self.paineis.iter().any(|p| p.id == painel && p.medida.faixa == FaixaCaixa::Estreita);
+        if estreita {
+            gpui_kit::component::WindowExt::push_notification(window, super::componentes::aviso(super::componentes::Tom::Info, texto), cx);
         }
     }
 

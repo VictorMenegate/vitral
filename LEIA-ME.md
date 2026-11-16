@@ -361,7 +361,9 @@ cartão com menos de 1000 px e a direita fechada), as mensagens, a fila, a faixa
 terminam 40 antes da borda (`FOLGA_DO_USO`), todas na mesma linha, para os anéis de uso do canto
 da janela caberem ao lado delas. Com a direita aberta (ao lado ou em gaveta), quem ganha a folga é
 o conteúdo dela, abaixo das abas. Vazia, a caixa diz "Mensagem para este chat…" no chat
-com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
+com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. Na caixa estreita, em que os
+chips são só ícones, trocar o modo pelo Shift+Tab ou escolher um modelo mostra um aviso curto
+("Modo: Manual", "Modelo: Claude Fable 5.2", `avisar_na_estreita`). O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
 segmentado (←/→, Home e End mudam na hora; o nível escolhido fica na ficha do escolhido, a mesma
 dos menus, sem repetir no cabeçalho), com uma linha curta sobre cada nível (Auto: "Usa o
