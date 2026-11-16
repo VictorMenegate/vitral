@@ -102,6 +102,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
   erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
   transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+- **Lista mais legível.** Com o chat aberto num painel, a linha mostra só o número do painel, e o
+  título ganha o lugar da hora (ela vai para a dica do ícone, junto da pasta). A hora ficou mais
+  clara, e o número do painel ativo deixou de parecer um aviso de não lidas. O número das
+  Arquivadas foi para a dica.
 
 ## 0.7.0
 

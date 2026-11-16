@@ -506,8 +506,15 @@ impl RenderOnce for Etiqueta {
     }
 }
 
-/// Número do painel (Alt+1…4): destaque cheio no ativo, recuo com borda nos outros.
+/// Número do painel (Alt+1…4): uma tecla no recuo, com borda. O ativo leva a borda e o algarismo
+/// em azul, sem o metal: o disco cheio azul com algarismo branco é o desenho dos avisos (sino,
+/// logo), e "Nova conversa 1" se lia como "1 não lida" (relatório de design, 16/11/2026).
 pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
+    let (borda, cor) = if ativo {
+        (Cores::tinta_borda(Cores::destaque()), Cores::destaque_texto())
+    } else {
+        (Cores::borda(), Cores::tenue())
+    };
     div()
         .flex_none()
         .size(r(18.))
@@ -516,19 +523,11 @@ pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
         .justify_center()
         .rounded(raio::de(18.))
         .micro()
-        .relative()
-        .map(|s| {
-            if ativo {
-                // O número do painel ativo é uma tecla de metal azul, como o "+" e o enviar.
-                let cantos = gpui_kit::Corners::all(raio::de(18.));
-                s.text_color(Cores::sobre_destaque())
-                    .child(super::metal::abertura(super::metal::Encaixe::Cobrir, Some(Cores::destaque().opacity(0.6)), cantos))
-                    .child(div().absolute().inset_0().rounded(raio::de(18.)).shadow(crate::tema::aresta_de_tecla()))
-            } else {
-                s.bg(Cores::recuo()).border_1().border_color(Cores::borda()).text_color(Cores::tenue())
-            }
-        })
-        .child(div().relative().child(n.to_string()))
+        .bg(Cores::recuo())
+        .border_1()
+        .border_color(borda)
+        .text_color(cor)
+        .child(n.to_string())
 }
 
 /// O que um chat tem para o sinal, já filtrado (arquivado não espera nada).

@@ -28,7 +28,7 @@ use super::{
     AbaLateral, Buscar, Filtro, Gaveta, Janela, NovaConversa,
     componentes::{
         BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, barra_de_rolagem, ControleSegmentado, EstadoVazio,
-        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Selo, Simbolo, Sinal, TamanhoBotao, Tom,
+        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Simbolo, Sinal, TamanhoBotao, Tom,
         VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
         contagem, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
@@ -527,9 +527,11 @@ fn linha_meta(altura: f32) -> Div {
     div().h(r(altura)).flex().items_center().justify_end().gap(esp::E4)
 }
 
-/// A hora de um cartão ("12 min", "3 d"): em mono de 11, para os números ficarem numa coluna só.
+/// A hora de um cartão ("12 min", "3 d"): metadado com dígitos tabulares, para os números ficarem
+/// numa coluna só. Era mono de 11 apagado, que dava 2,6 a 3,4:1 e um espaço largo em "5  d"
+/// (relatório de design, 16/11/2026).
 fn hora_do_cartao() -> Div {
-    linha_meta(20.).font_family(crate::tema::FONTE_MONO).text_size(r(11.))
+    linha_meta(20.).metadado()
 }
 
 /// A prévia: o motivo (o ponto do sinal e o rótulo em texto) e o texto tênue cortado, separados
@@ -1109,8 +1111,9 @@ impl Janela {
                     .rounded(raio::de(28.))
                     .selected(vendo)
                     .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
-                    .when(n > 0, |b| b.child(Selo::contagem(n)))
-                    .tooltip(if vendo { "Voltar às conversas" } else { "Arquivadas" })
+                    // O número vai na dica: o "99+" em pílula era a terceira forma de contagem na
+                    // tela, e se lia como não lidas (relatório de design, 16/11/2026).
+                    .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.filtro = if vendo { Filtro::Todos } else { Filtro::Arquivados };
                         this.rolagem_lista.set_offset(point(px(0.), px(0.)));
@@ -1475,24 +1478,38 @@ impl Janela {
                 .child(div().flex_none().child("·"))
                 .child(div().flex_1().min_w_0().child(onde))
         });
-        let quando = match motor.execucao(&chat.id) {
-            Execucao::Rodando { desde } => hora_do_cartao()
-                .text_color(if selecionado { Cores::texto() } else { Cores::destaque_texto() })
-                .child(duracao(desde)),
-            _ => hora_do_cartao()
-                .text_color(if selecionado { Cores::tenue() } else { Cores::apagado() })
-                .child(tempo_relativo(chat.atualizado_em)),
+        let (hora, hora_na_dica) = match motor.execucao(&chat.id) {
+            Execucao::Rodando { desde } => (
+                hora_do_cartao()
+                    .text_color(if selecionado { Cores::texto() } else { Cores::destaque_texto() })
+                    .child(duracao(desde)),
+                format!("Rodando há {}", duracao(desde)),
+            ),
+            _ => {
+                let quando = tempo_relativo(chat.atualizado_em);
+                let dica = if quando == "agora" { "Atualizado agora".to_string() } else { format!("Atualizado há {quando}") };
+                // Tênue em repouso e texto na selecionada: o apagado ficava abaixo de 3:1
+                // (relatório de design, 16/11/2026).
+                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { Cores::tenue() }).child(quando), dica)
+            }
         };
+        // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a
+        // lista fica no mínimo, e número mais hora comiam uns 80 px do título ("Nova co…")
+        // (relatório de design, 16/11/2026).
+        let quando = em_painel.is_none().then_some(hora);
         let sinal = sinal_do_chat(motor, chat);
         // A resposta nova já está no ponto do avatar: aqui o azul só entra quando lá vale outro.
+        // O número do painel vem por último, para ficar sempre na mesma coluna, encostado na borda.
         let indicadores = linha_meta(16.)
-            .children(em_painel.map(|(n, ativo)| numero_painel(n, ativo)))
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
-            .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))));
+            .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))))
+            .children(em_painel.map(|(n, ativo)| numero_painel(n, ativo)));
         // O balão é sempre o pequeno, também no resultado da busca (que tem duas linhas): com uns de
-        // 18 e outros de 30 a coluna dos ícones ficava torta. A pasta vai na dica.
-        let onde = SharedString::from(if motor.sem_pasta(chat) { "Sem pasta".to_string() } else { com_til(&chat.cwd) });
+        // 18 e outros de 30 a coluna dos ícones ficava torta. A pasta vai na dica, e a hora junto
+        // quando ela saiu da linha.
+        let pasta = if motor.sem_pasta(chat) { "Sem pasta".to_string() } else { com_til(&chat.cwd) };
+        let onde = SharedString::from(if em_painel.is_some() { format!("{pasta}\n{hora_na_dica}") } else { pasta });
         let avatar = div()
             .id(SharedString::from(format!("avatar-{}", chat.id)))
             // O ícone do chat é o estado dele (anel girando, disco âmbar, azul ou vermelho, balão
@@ -1507,8 +1524,11 @@ impl Janela {
             // O ícone já é o estado: sem o ponto no canto.
             .sinal(sinal.filter(|_| !enxuta))
             .map(|c| match subtitulo {
-                None => c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).child(quando)),
-                Some(subtitulo) => c.subtitulo(subtitulo).meta(quando).meta_inferior(indicadores),
+                None => c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).children(quando)),
+                Some(subtitulo) => match quando {
+                    Some(quando) => c.subtitulo(subtitulo).meta(quando).meta_inferior(indicadores),
+                    None => c.subtitulo(subtitulo).meta_inferior(indicadores),
+                },
             })
             .acao(self.acao_do_cartao(chat, pendencia, window, cx))
             .acao(self.botao_menu(&chat.id, ctx, window, cx))

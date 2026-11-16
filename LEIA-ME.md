@@ -541,7 +541,7 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   também na altura de 40. O recolher da lista (Ctrl+B) mora no menu do logo, **Recolher a lista**.
 - **A lista é corrida**, sem título nem os das seções: o que espera você, o que roda, as fixadas
   (com o alfinete) e todos os outros, nessa ordem. Cada chat é uma linha só de 32 (o balão neutro, o
-  título e a hora em mono; a pasta vai na dica do balão); a linha de baixo volta na busca que achou
+  título e a hora; a pasta vai na dica do balão); a linha de baixo volta na busca que achou
   no texto, com o nome da pasta na frente, e o resultado da busca usa o mesmo balão pequeno das
   outras linhas.
 - **Novo chat não pergunta nada.** O "+" e o Ctrl+N abrem um chat na hora, na pasta do chat aberto
@@ -684,7 +684,7 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   o ícone de cada item vai num azulejo de 28 (`azulejo_de_escolha`) e a etiqueta do topo ganha o
   fio de pontos até a borda.
 - **Letra, em duas vozes.** Inter no texto. A segunda voz é a JetBrains Mono miúda, de aparelho de
-  medição: no código, nas horas da lista, nas teclas, na `etiqueta()` (mono 11/14, dos fatos e
+  medição: no código, nas teclas, na `etiqueta()` (mono 11/14, dos fatos e
   medidas; o componente `Etiqueta`, uma pílula de fio com ícone, tom, `baixa` e `fundo`, mora ao
   lado do `Selo`) e nos rótulos de seção, que saem em mono 11 apagado, em caixa alta e com um
   tracinho de 8 por 1 na frente ("PASTAS", "CHATS"). A caixa alta é só do
@@ -946,8 +946,13 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   ponto do balão e no da prévia. O **Arquivar** do menu do chat mostra "Conversa arquivada" com
   **Desfazer** (um chat que nunca rodou sai do Vitral: "Chat vazio apagado"); desarquivar não avisa.
 - **Cartão de conversa**: uma linha só de 32 (o balão de 20 com o ponto do estado no canto, o
-  título, a hora em mono, o alfinete da fixada, o número do painel e o ponto de não lido; a pasta na
-  dica do balão); a linha de baixo, com a prévia, volta só na busca que achou no texto. O ponto:
+  título, a hora, o alfinete da fixada, o ponto de não lido e o número do painel; a pasta na dica do
+  balão); a linha de baixo, com a prévia, volta só na busca que achou no texto. A hora sai em
+  metadado tênue de dígitos iguais ("3 min", "5 d", com espaço fino que não quebra), clara na linha
+  selecionada. Chat aberto num painel mostra só o número do painel, sempre na mesma coluna, e a hora
+  vai para a dica do balão, junto da pasta: com três painéis a lista fica estreita e o título precisa
+  do lugar. O número é uma tecla no recuo com borda; a do painel ativo tem a borda e o algarismo em
+  azul (o disco azul cheio é só dos avisos, no sino e no logo). O ponto:
   vermelho erro, âmbar pedido ou parada, azul resposta nova, aro azul rodando. No hover, o horário
   dá lugar a duas ações: **Abrir ao lado** (ou Retomar) e **…**; fora do hover, o título usa o lugar
   delas, e só o cartão sob o ponteiro (ou realçado pelo teclado) corta o título para mostrá-las. O
@@ -957,7 +962,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 - **Teclado na lista**: ↓ na busca entra na lista; ↑/↓, Home e End andam pelos cartões; Enter abre
   (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado, F2 renomeia e Esc volta à busca.
   Na busca, Esc limpa e, vazia, volta à caixa do painel.
-- **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone com o número; liga e desliga a
+- **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone, com o número na dica; liga e desliga a
   vista das arquivadas; a busca acha as duas) e, com algo rodando, quantos agentes rodam no Vitral
   inteiro ("2 rodando"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.
 - Aba **Arquivos**: os arquivos da pasta do chat aberto numa árvore (pastas recolhidas, menos o

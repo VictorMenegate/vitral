@@ -1668,13 +1668,16 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
         }))
 }
 
+/// "agora", "22 min", "3 h", "5 d". Entre o número e a unidade vai o espaço fino inseparável
+/// (U+202F): a linha não quebra entre os dois e o espaço não abre como o normal
+/// (relatório de design, 16/11/2026).
 pub fn tempo_relativo(instante: u64) -> String {
     let passado = modelo::agora().saturating_sub(instante);
     match passado {
         0..60 => "agora".into(),
-        60..3600 => format!("{} min", passado / 60),
-        3600..86400 => format!("{} h", passado / 3600),
-        _ => format!("{} d", passado / 86400),
+        60..3600 => format!("{}\u{202f}min", passado / 60),
+        3600..86400 => format!("{}\u{202f}h", passado / 3600),
+        _ => format!("{}\u{202f}d", passado / 86400),
     }
 }
 
