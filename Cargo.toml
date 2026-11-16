@@ -95,5 +95,8 @@ lto = "thin"
 # trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`, `fio_de_pontos`), o desenho único
 # de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
 # em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).
+#
+# Cópia do gpui-pre-linux (o backend Linux do GPUI), com as mudanças marcadas com "Vitral:".
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
