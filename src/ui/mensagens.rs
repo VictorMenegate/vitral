@@ -7,16 +7,17 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+use gpui_kit::base::InteractiveElementExt as _;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, StyledExt as _,
+    ActiveTheme as _, ElementExt as _, Icon, StyledExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     clipboard::Clipboard,
     h_flex,
     input::{Enter, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
-    scroll::ScrollableElement as _,
+    scroll::{ScrollableElement as _, Scrollbar, ScrollbarMode},
     shimmer::ShimmerText,
     text::{TextView, TextViewStyle},
     tooltip::Tooltip,
@@ -147,6 +148,10 @@ fn entrada_do_bloco(indice: Option<usize>, base: usize, vistos: usize) -> Option
     indice.filter(|i| *i >= base).map(|i| i >= vistos)
 }
 
+fn deslocamento_apos_prepend(offset: Pixels, altura_antes: Pixels, altura_depois: Pixels) -> Pixels {
+    offset - (altura_depois - altura_antes).max(px(0.))
+}
+
 impl Janela {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn mensagens(
@@ -166,7 +171,7 @@ impl Janela {
         let agora = crate::modelo::agora();
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
-        if chat.itens.is_empty() {
+        if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push((Bloco::Texto, None, self.dica_inicial(motor, chat, window, cx)));
         }
         // Conversas antigas guardaram as buscas de ferramenta; não interessam. O modo foco tira
@@ -186,27 +191,9 @@ impl Janela {
         let escondidos = visiveis.len().saturating_sub(mostrar);
         if escondidos > 0 {
             visiveis.drain(..escondidos);
-            let mais = escondidos.min(ITENS_NA_TELA);
-            let botao = botao_fantasma(
-                SharedString::from(format!("{}:anteriores", chat.id)),
-                Some(Lucide::ChevronUp.into()),
-                format!("Mostrar anteriores ({mais} de {escondidos})"),
-                TamanhoBotao::Barra,
-                window,
-                cx,
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(painel) = this.paineis.iter_mut().find(|p| p.id == painel_id) {
-                    painel.mostrar += ITENS_NA_TELA;
-                    // Quem pediu os de antes está lendo lá em cima: o painel não volta ao fim.
-                    painel.seguindo = false;
-                }
-                cx.notify();
-            }));
-            blocos.push((Bloco::Log, None, h_flex().w_full().justify_center().child(botao).into_any_element()));
         } else if chat.importada.is_some() {
             // A conversa trazida do Claude Code: o que foi dito lá vem antes, lido do arquivo dela.
-            blocos.extend(self.blocos_do_historico(motor, chat, nivel, window, cx));
+            blocos.extend(self.blocos_do_historico(motor, chat, nivel, ix, window, cx));
         }
         // O dia de cada turno: o separador entra onde a data muda (pela posição em `visiveis`).
         let horas: Vec<u64> = visiveis.iter().map(|(_, item)| item.em()).collect();
@@ -267,6 +254,7 @@ impl Janela {
         // Na última conversa, estreita, o texto não passa por baixo dos anéis de uso do canto.
         let folga_do_uso = self.uso_sobre_as_mensagens(ix, cx);
         let mut lista = v_flex()
+            .flex_none()
             .map(coluna)
             .when(minima(nivel), |s| s.px(esp::E12))
             .when(folga_do_uso, |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
@@ -281,6 +269,24 @@ impl Janela {
             };
             anterior = Some(bloco);
         }
+        let janela = cx.entity().downgrade();
+        lista = lista.on_prepaint(move |bounds, window, cx| {
+            let mut restaurou = false;
+            let _ = janela.update(cx, |j, cx| {
+                let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
+                p.altura_conteudo = bounds.size.height;
+                if let Some((altura, offset)) = p.preservar_topo.take() {
+                    let novo = point(offset.x, deslocamento_apos_prepend(offset.y, altura, bounds.size.height));
+                    p.rolagem.set_offset(novo);
+                    p.leitura.deslocamento = novo.y;
+                    restaurou = true;
+                }
+                let _ = cx;
+            });
+            if restaurou {
+                window.on_next_frame(move |_, cx| { let _ = janela.update(cx, |_, cx| cx.notify()); });
+            }
+        });
 
         // `seguindo` já foi conferido no começo do desenho (`acompanhar_rolagem`). No fim, o
         // painel volta a ele a cada desenho: com a largura nova (abrir ao lado, Ctrl+B, zoom), as
@@ -315,25 +321,48 @@ impl Janela {
                 div()
                     .id(SharedString::from(format!("mensagens-{painel_id}")))
                     .size_full()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
                     .overflow_y_scroll()
+                    .lock_scroll_axis()
                     .track_scroll(&rolagem)
-                    .on_scroll(cx.listener(move |this, evento: &ScrollEvent, _, cx| {
-                        // A roda do mouse (em linhas) anda em degraus: o degrau vira um deslize.
-                        // O touchpad (em pixels) já vem liso e passa direto.
-                        if matches!(evento.delta, ScrollDelta::Lines(_)) {
-                            this.suavizar_roda(painel_id);
-                        }
+                    .on_scroll(cx.listener(move |this, _evento: &ScrollEvent, _, cx| {
                         // A roda já mexeu no deslocamento: decide agora, antes que o motor peça
                         // para voltar ao fim.
                         this.acompanhar_rolagem(cx);
+                        this.carregar_anteriores(painel_id, cx);
                         cx.notify();
                     }))
-                    .child(lista)
-                    .vertical_scrollbar(&rolagem),
+                    .child(lista),
             )
+            .child(div().absolute().inset_0().child(
+                Scrollbar::vertical(&rolagem).id(("barra-conversa", painel_id as usize))
+                    .mode(ScrollbarMode::Always).viewport_from_layout(),
+            ))
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
             // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
             .children(barra_busca)
+    }
+
+    fn carregar_anteriores(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel_id) else { return; };
+        let p = &self.paineis[ix];
+        if p.rolagem.offset().y < -px(240.) || p.preservar_topo.is_some() || p.busca.aberta { return; }
+        let nativos = self.motor.as_ref().and_then(|m| m.read(cx).chat(p.chat.as_deref()?)).map_or(0, |chat| {
+            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch" || p.modo_foco)).count()
+        });
+        let tem_mais = if p.mostrar < nativos {
+            self.paineis[ix].mostrar += ITENS_NA_TELA;
+            true
+        } else { self.mais_historico(ix) };
+        if tem_mais {
+            let p = &mut self.paineis[ix];
+            p.seguindo = false;
+            p.preservar_topo = Some((p.altura_conteudo, p.rolagem.offset()));
+            cx.notify();
+        }
     }
 
     /// Conversa vazia: o chat diz onde trabalha.
@@ -944,6 +973,7 @@ fn contagem_do_diff(pedido: &str) -> Option<(usize, usize)> {
     }
     let (mut entram, mut saem, mut ultimo) = (0usize, 0usize, b' ');
     for linha in pedido.lines() {
+        if linha.starts_with("+++") || linha.starts_with("---") { continue; }
         match linha.as_bytes().first() {
             Some(b'+') => {
                 entram += 1;
@@ -966,8 +996,8 @@ fn contagem_do_diff(pedido: &str) -> Option<(usize, usize)> {
     (entram + saem > 0).then_some((entram, saem))
 }
 
-/// Quantos itens da conversa um painel desenha de cada vez: os últimos, com "Mostrar anteriores"
-/// para os de antes. A conversa não é virtualizada: cada redesenho da janela monta e mede todos
+/// Quantos itens entram por página: começa pelos últimos e acrescenta os anteriores ao subir.
+/// A conversa não é virtualizada: cada redesenho da janela monta e mede todos
 /// os blocos de todos os painéis, e isso custa a cada passo da roda, a cada movimento do
 /// ponteiro e a cada letra. Medido em 13/11/2026 no binário otimizado, com duas conversas de 400
 /// itens lado a lado: 6,2 s de processador para 80 passos de rolagem (78 ms por passo).
@@ -1202,28 +1232,64 @@ impl<'a> Contexto<'a> {
 
 /// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, ícone de 14 a 12 da borda
 /// e o texto a 8 dele. Coladas, dão o passo de 28.
-const ALTURA_DO_LOG: Rems = r(28.);
+const ALTURA_DO_LOG: Rems = r(32.);
 
 /// O resultado aberto de uma linha de log, embaixo do texto dela.
-const RECUO_DO_LOG: Rems = r(32.);
+const RECUO_DO_LOG: Rems = r(56.);
+
+fn resumo_das_chamadas(chamadas: &[(usize, &Item)]) -> String {
+    let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
+    let mut editados = std::collections::HashSet::new();
+    for (_, item) in chamadas {
+        match item {
+            Item::Raciocinio { .. } => pensamentos += 1,
+            Item::Ferramenta { nome, arquivo, resumo, .. } => match nome.as_str() {
+                "Bash" => comandos += 1,
+                "Read" => leituras += 1,
+                "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => { editados.insert(arquivo.as_deref().unwrap_or(resumo)); }
+                "Grep" | "Glob" | "WebSearch" | "WebFetch" => buscas += 1,
+                _ => outras += 1,
+            },
+            _ => {}
+        }
+    }
+    let mut partes = Vec::new();
+    if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
+    if !editados.is_empty() { partes.push(format!("editou {}", contagem(editados.len(), "arquivo", "arquivos"))); }
+    if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
+    if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
+    if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
+    if partes.is_empty() && pensamentos > 0 { partes.push("Pensou sobre o pedido".into()); }
+    let mut resumo = partes.join(" · ");
+    if let Some(primeira) = resumo.get_mut(..1) { primeira.make_ascii_uppercase(); }
+    resumo
+}
 
 /// Trilho de 1 px que liga os ícones de linhas de log seguidas: no centro do ícone (12 + 7),
 /// de 2 px abaixo dele até 1 px antes do ícone da linha de baixo.
-fn trilho_do_log() -> Div {
+fn trilho_do_log(continua: bool) -> Div {
     div()
         .absolute()
-        .left(r(19.))
-        .top(r(23.))
-        .bottom(r(-6.))
-        .w(px(1.))
-        .bg(Cores::traco())
+        .inset_0()
+        .child(canvas(|_, _, _| (), move |bounds, _, window, _| {
+            let x = bounds.left() + r(19.).to_pixels(window.rem_size());
+            let y = bounds.top();
+            let passo = r(16.).to_pixels(window.rem_size());
+            let curva = r(6.).to_pixels(window.rem_size());
+            let mut linha = PathBuilder::stroke(px(1.));
+            linha.move_to(point(x, y));
+            linha.line_to(point(x, y + passo - curva));
+            linha.curve_to(point(x + curva, y + passo), point(x, y + passo));
+            linha.line_to(point(bounds.left() + r(28.).to_pixels(window.rem_size()), y + passo));
+            if continua { linha.move_to(point(x, y + passo - curva)); linha.line_to(point(x, bounds.bottom())); }
+            if let Ok(path) = linha.build() { window.paint_path(path, Cores::traco()); }
+        }).size_full())
 }
 
 impl Janela {
 
-    /// Várias chamadas comuns seguidas, uma linha cada, ligadas pelo trilho. De 4 em diante ganham
-    /// um cabeçalho com o resumo ("5 ações · leu 3 · rodou 2") e começam recolhidas; ao vivo, a
-    /// última fica à vista.
+    /// Chamadas ligadas por ramificações, com resumo do trabalho. O grupo abre durante o turno
+    /// e recolhe quando termina; a escolha manual prevalece.
     fn trilha(
         &self,
         contexto: &Contexto,
@@ -1234,10 +1300,11 @@ impl Janela {
         if let [(indice, item)] = chamadas {
             return self.chamada(contexto, *indice, item, false, cx);
         }
-        let recolhivel = chamadas.len() >= 4;
+        let recolhivel = chamadas.len() > 1;
         // Os itens só crescem no fim: o índice da primeira chamada identifica o grupo.
         let chave = format!("{}:{}:grupo", contexto.chat.id, chamadas[0].0);
-        let aberto = !recolhivel || self.expandidos.contains(&chave);
+        let aberto = !recolhivel || self.expandidos.contains(&chave)
+            || (ao_vivo && !self.expandidos.contains(&format!("{chave}:fechado")));
         let mostradas = if aberto {
             chamadas
         } else if ao_vivo {
@@ -1246,14 +1313,7 @@ impl Janela {
             &[]
         };
         let cabecalho = recolhivel.then(|| {
-            let nomes: Vec<&str> = chamadas
-                .iter()
-                .filter_map(|(_, item)| match item {
-                    Item::Ferramenta { nome, .. } => Some(nome.as_str()),
-                    _ => None,
-                })
-                .collect();
-            let pensou = chamadas.iter().filter(|(_, item)| matches!(item, Item::Raciocinio { .. })).count();
+            let resumo = resumo_das_chamadas(chamadas);
             let falhas = chamadas
                 .iter()
                 .filter(|(_, item)| matches!(item, Item::Ferramenta { erro: true, .. }))
@@ -1283,32 +1343,19 @@ impl Janela {
                         .text_color(Cores::tenue())
                         .child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)),
                 )
-                .child(
-                    div()
-                        .flex_none()
-                        .font_semibold()
-                        .text_color(Cores::texto())
-                        .child(contagem(nomes.len(), "ação", "ações")),
-                )
-                .map(|s| {
-                    if larga(contexto.nivel) {
-                        s.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(Cores::tenue())
-                                .child(format!("· {}{}", resumo_da_trilha(&nomes), if pensou > 0 { format!(" · pensou {pensou}") } else { String::new() })),
-                        )
-                    } else {
-                        s.child(div().flex_1())
-                    }
-                })
+                .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(if ao_vivo {
+                    ShimmerText::new(resumo).duration(Duration::from_millis(3400)).highlight_color(Cores::forte()).into_any_element()
+                } else { div().child(resumo).into_any_element() }))
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
                 .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque())))
-                .on_click(alternar(chave.clone(), cx))
+                .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
+                    if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
+                    else { j.expandidos.remove(&format!("{chave}:fechado")); j.expandidos.insert(chave.clone()); }
+                    for p in j.paineis.iter_mut().filter(|p| p.seguindo) { p.manter_lugar = true; }
+                    cx.notify();
+                }}))
         });
         // Recolhido, o grupo ainda mostra as imagens que as chamadas escondidas leram ou gravaram.
         let escondidas = &chamadas[..chamadas.len() - mostradas.len()];
@@ -1384,7 +1431,8 @@ impl Janela {
         let linha = h_flex()
             .id(SharedString::from(format!("raciocinio-{chave}")))
             .h(ALTURA_DO_LOG)
-            .px(esp::E12)
+            .pl(esp::E32)
+            .pr(esp::E8)
             .gap(esp::E8)
             .rounded(raio::CONTROLE)
             .metadado()
@@ -1427,7 +1475,7 @@ impl Janela {
                     ),
                 )
             })
-            .when(com_trilho, |s| s.child(trilho_do_log()))
+            .child(trilho_do_log(com_trilho))
             .into_any_element()
     }
 
@@ -1530,6 +1578,9 @@ impl Janela {
             .and_then(contagem_do_diff);
         let verbo = verbo_da_ferramenta(nome, pendente);
         let detalhe = sem_marcacao(&detalhe_da_chamada(nome, resumo));
+        let detalhe = if detalhe.is_empty() && nome == "Bash" {
+            pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo).to_string()
+        } else { detalhe };
         // Ctrl+F: o resumo da chamada fica na linha e o resultado dentro do bloco que ela abre.
         let (no_resumo, no_resultado) =
             (contexto.busca.realce(indice, Campo::Resumo), contexto.busca.realce(indice, Campo::Resultado));
@@ -1549,7 +1600,8 @@ impl Janela {
         let linha = h_flex()
             .id(SharedString::from(format!("ferramenta-{chave}")))
             .h(ALTURA_DO_LOG)
-            .px(esp::E12)
+            .pl(esp::E32)
+            .pr(esp::E8)
             .gap(esp::E8)
             .rounded(raio::CONTROLE)
             .metadado()
@@ -1568,12 +1620,15 @@ impl Janela {
             })
             .child(
                 div()
-                    .flex_1()
+                    .flex_shrink(1.)
                     .min_w_0()
                     .truncate()
                     .font_family(FONTE_MONO)
                     .text_color(Cores::tenue())
-                    .child(busca_conversa::realcar(detalhe, &no_resumo)),
+                    .when(arquivo.is_some() || nome == "Bash", |s| s.h(r(22.)).px(esp::E6).rounded(raio::CONTROLE).bg(Cores::recuo()).flex().items_center())
+                    .child(busca_conversa::realcar(if let Some(arquivo) = arquivo {
+                        Path::new(arquivo).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(detalhe)
+                    } else { detalhe }, &no_resumo)),
             )
             .when_some(meta_do_sub.filter(|_| !minima), |s, texto| {
                 s.child(div().flex_none().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto))
@@ -1594,7 +1649,8 @@ impl Janela {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
             .group(grupo.clone())
-            .when_some(abrir, |s, alvo| {
+            .child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.).text_color(Cores::apagado()))
+            .when_some(abrir.clone(), |s, alvo| {
                 s.child(
                     div()
                         .id(SharedString::from(format!("abrir-arquivo-{chave}")))
@@ -1627,8 +1683,9 @@ impl Janela {
         // dele"). O resultado de ler uma imagem não tem texto: a caixa vazia não aparece.
         let imagem = imagem_da_chamada(item, &contexto.chat.cwd);
         let sem_texto = imagem.is_some() && resultado.as_deref().is_some_and(|r| r.trim().is_empty());
-        let comando = pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).filter(|_| nome == "Bash");
+        let comando = (nome == "Bash").then(|| pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo));
         let bloco = v_flex()
+            .id(SharedString::from(format!("bloco-chamada-{chave}")))
             .relative()
             .w_full()
             .child(linha)
@@ -1644,15 +1701,20 @@ impl Janela {
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
-                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(bloco_do_pedido(pedido)))
+                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(cartao_de_edicao(&chave, arquivo.as_deref(), pedido)))
                 })
                 .when_some(comando, |s, comando| {
-                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(bloco_do_pedido(&format!("$ {comando}"))))
+                    s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                        CaixaDeCodigo::new(SharedString::from(format!("terminal-{chave}")), resultado.as_deref()
+                            .unwrap_or(if pendente { "A saída aparece quando terminar." } else { "(interrompido, sem saída)" }).to_string().into())
+                            .comando(comando.to_string()).raio_chat().erro(*erro)
+                            .tempo(if pendente { "Em execução" } else if *erro { "Falhou" } else { "Concluído" }),
+                    ))
                 })
                 // Rodando ainda não há saída: em vez da caixa do resultado vazia, com o Copiar e
                 // um "(rodando…)" dentro, uma linha só (dono, 13/11/2026: "melhora essa parte que
                 // fica o rodando").
-                .when(pendente && resultado.is_none(), |s| {
+                .when(comando.is_none() && pendente && resultado.is_none(), |s| {
                     let texto = match rodando_ha {
                         Some(segundos) => format!("A saída aparece quando terminar · rodando há {}", relogio(segundos)),
                         None => "A saída aparece quando terminar".to_string(),
@@ -1661,14 +1723,21 @@ impl Janela {
                         div().px(esp::E12).metadado().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto),
                     ))
                 })
-                .when(!so_o_pedido && !sem_texto && !(pendente && resultado.is_none()), |s| {
+                .when(comando.is_none() && !so_o_pedido && !sem_texto && !(pendente && resultado.is_none()), |s| {
                     s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
                     ))
                 })
+                .when_some(abrir.filter(|_| pedido.is_none() && matches!(nome.as_str(), "Edit" | "Write")), |s, alvo| {
+                    s.child(div().pl(RECUO_DO_LOG).py(esp::E8).child(
+                        div().id(SharedString::from(format!("abrir-versao-{chave}"))).cursor_pointer().corpo_ui()
+                            .text_color(Cores::destaque_texto()).child("Este registro não guardou o diff. Abrir o arquivo atual")
+                            .on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx)),
+                    ))
+                })
                 .when(so_o_pedido, |s| s.pb(esp::E4))
             })
-            .when(com_trilho, |s| s.child(trilho_do_log()))
+            .child(trilho_do_log(com_trilho))
             .into_any_element();
         // A conversa anda até a chamada quando o achado atual está nela (no resumo ou na saída).
         let realce = if no_resumo.atual.is_some() { no_resumo } else { no_resultado };
@@ -1696,7 +1765,17 @@ pub(super) fn alternar(
 }
 
 /// Quantas linhas do pedido de uma chamada aparecem; o resto vira "… mais N linhas".
-const LINHAS_DO_PEDIDO: usize = 80;
+const LINHAS_DO_PEDIDO: usize = 600;
+
+fn cartao_de_edicao(chave: &str, arquivo: Option<&str>, pedido: &str) -> Div {
+    div().w_full().rounded(raio::CARTAO).border_1().border_color(Cores::borda()).bg(Cores::preto()).overflow_hidden()
+        .child(h_flex().gap(esp::E8).px(esp::E8).h(r(28.))
+            .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
+            .child(div().flex_1().min_w_0().truncate().mono_pequeno().text_color(Cores::texto()).child(
+                arquivo.and_then(|a| Path::new(a).file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Alteração".into())))
+            .child(BotaoCopiar::new(Clipboard::new(SharedString::from(format!("copiar-diff-{chave}"))).value(pedido.to_string()))))
+        .child(bloco_do_pedido(pedido))
+}
 
 /// O que a chamada pediu (`Item::Ferramenta::detalhe`): o que saiu em vermelho, o que entrou em
 /// verde, o comando e o resto no tom do texto, em mono, numa caixa que rola de lado.
@@ -1729,6 +1808,8 @@ fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
         .when(total > LINHAS_DO_PEDIDO, |s| {
             s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
         })
+        .max_h(r(300.))
+        .overflow_y_scrollbar()
 }
 
 /// O resultado de uma chamada aberta, na caixa de código do chat (as últimas 40 linhas).
@@ -2322,12 +2403,14 @@ impl Janela {
     /// Qualquer subida solta o fim (o painel no fim volta a ele a cada desenho, e um passo da
     /// roda ou do touchpad é menor que a folga); descendo, a folga de 48 já prende de novo.
     pub(super) fn acompanhar_rolagem(&mut self, cx: &mut Context<Self>) {
+        let mut anteriores = Vec::new();
         for painel in &mut self.paineis {
             let deslocamento = painel.rolagem.offset().y;
             if deslocamento == painel.leitura.deslocamento {
                 continue;
             }
             let subiu = deslocamento > painel.leitura.deslocamento;
+            if subiu && deslocamento >= -px(240.) { anteriores.push(painel.id); }
             painel.leitura.deslocamento = deslocamento;
             let folga = if subiu { px(1.) } else { px(48.) };
             painel.seguindo = distancia_do_fim(&painel.rolagem) <= folga;
@@ -2337,27 +2420,7 @@ impl Janela {
                 motor.update(cx, |m, _| m.marcar_lido(chat));
             }
         }
-    }
-
-    /// A roda do mouse acabou de dar um degrau na conversa do painel: o deslocamento volta para
-    /// onde estava e o degrau vira o alvo de um deslize curto, que o `render` da Janela anda
-    /// (dono, 13/11/2026: "faz uma rolagem ser mais fluida"). Degraus seguidos somam no alvo.
-    fn suavizar_roda(&mut self, painel_id: u64) {
-        let Some(painel) = self.paineis.iter_mut().find(|p| p.id == painel_id) else {
-            return;
-        };
-        let (antes, novo) = (painel.leitura.deslocamento, painel.rolagem.offset());
-        if !antes.as_f32().is_finite() || novo.y == antes {
-            return;
-        }
-        let maximo = painel.rolagem.max_offset().y.as_f32();
-        let de = painel.rolagem_suave.unwrap_or(antes.as_f32());
-        let alvo = (de + (novo.y - antes).as_f32()).clamp(-maximo, 0.);
-        if painel.rolagem_suave.is_none() {
-            painel.geracao_rolagem += 1;
-        }
-        painel.rolagem_suave = Some(alvo);
-        painel.rolagem.set_offset(point(novo.x, antes));
+        for painel in anteriores { self.carregar_anteriores(painel, cx); }
     }
 
     /// Ctrl+End: o painel ativo volta ao fim da conversa.
@@ -2373,7 +2436,6 @@ impl Janela {
             return;
         };
         painel.seguindo = true;
-        painel.rolagem_suave = None;
         painel.rolagem.scroll_to_bottom();
         if let (Some(chat), Some(motor)) = (painel.chat.clone(), self.motor.clone()) {
             motor.update(cx, |m, _| m.marcar_lido(&chat));
@@ -3488,6 +3550,13 @@ fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> 
 
 #[cfg(test)]
 mod testes {
+    #[test]
+    fn mensagens_acrescentadas_em_cima_preservam_o_ponto_de_leitura() {
+        let antes = gpui_kit::px(-120.);
+        let depois = super::deslocamento_apos_prepend(antes, gpui_kit::px(1800.), gpui_kit::px(3100.));
+        assert_eq!(gpui_kit::px(1600.) + antes, gpui_kit::px(2900.) + depois);
+        assert_eq!(super::deslocamento_apos_prepend(antes, gpui_kit::px(1800.), gpui_kit::px(1800.)), antes);
+    }
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,

@@ -25,9 +25,6 @@ pub enum TomAba {
     Selecionada,
     #[default]
     Normal,
-    /// A aba à vista de um painel sem o foco que tem outras abas ao lado: um degrau mais claro
-    /// que elas (que são `Inativa`), para dar para ver qual está aberta.
-    InativaAVista,
 }
 
 /// Aba de painel ou de arquivo: 32 em pílula, título 13/500, até 400; encolhe com o painel.
@@ -124,9 +121,9 @@ impl Aba {
     pub fn construir(self, window: &Window, _: &App) -> Stateful<Div> {
         // A aba do chat tem fundo sempre (pedido do dono, 12/11/2026), e opaco: é o miolo do aro
         // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem. As
-        // aba à vista do painel com o foco mora numa casca preta (`casca_da_aba`) e é o campo dela,
+        // abas moram na mesma casca preta (`casca_da_aba`); a selecionada é o campo dela,
         // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
-        // parecido com a que digito aqui"); as outras são lisas, só com o contorno.
+        // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
         let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
         let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
             TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::borda()),
@@ -134,7 +131,6 @@ impl Aba {
             TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::borda()),
             TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::borda()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
-            TomAba::InativaAVista => (Cores::tinta_solida(Cores::forte(), 0.10).into(), Cores::texto(), transparent_black()),
         };
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
@@ -200,7 +196,7 @@ impl Aba {
             .text_color(texto)
             .map(|s| match self.tom {
                 TomAba::Inativa | TomAba::Normal => s.hover(|s| s.text_color(Cores::texto())),
-                TomAba::Unica | TomAba::Ativa | TomAba::Selecionada | TomAba::InativaAVista => s,
+                TomAba::Unica | TomAba::Ativa | TomAba::Selecionada => s,
             })
             // O aro de metal (só com o ponteiro em cima) e, por cima dele, o miolo opaco da aba.
             .when(!self.arrastando, |s| {
@@ -248,9 +244,8 @@ impl Aba {
 
 /// A casca da aba à vista no painel com o foco: o preto da caixa de mensagem em volta dela,
 /// reduzido a um fio (1 px de folga mais 1 px de borda), com a aba fazendo de campo. O dono viu a
-/// casca com 4 e com 2 de folga e pediu mais fina, e entre as abas todas num trilho só e cada aba
-/// uma peça, ficou com as peças separadas (13/11/2026): só esta leva a casca, e as outras abas e
-/// as dos painéis sem o foco são lisas, com o contorno.
+/// casca com 4 e com 2 de folga e pediu mais fina. Em 16/11/2026 pediu o mesmo desenho em todos os
+/// painéis e abas: todas levam a casca; o tom do miolo distingue a selecionada.
 pub fn casca_da_aba() -> Div {
     div().flex().items_center().min_w_0().p(px(1.)).rounded(raio::de(34.)).border_1().border_color(Cores::preto()).bg(Cores::preto())
 }

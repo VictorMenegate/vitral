@@ -446,6 +446,7 @@ impl Janela {
             })
             .child(cabecalho)
             .child(corpo)
+            .children(chat.zip(ix).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
             .children(faixa)
             .when_some(chat.zip(ix), |s, (chat, ix)| {
                 let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();
@@ -693,18 +694,15 @@ impl Janela {
                     });
                 // As outras abas cedem o espaço antes da que está à vista, até sobrar o símbolo: só
                 // então ela encolhe (com o peso igual, "WMS" virava "W…" ao lado de títulos longos).
-                Some(sem_arrastar().flex().min_w(r(40.)).flex_shrink(1000.).child(aba).into_any_element())
+                Some(sem_arrastar().flex().min_w(r(40.)).flex_shrink(1000.)
+                    .child(super::componentes::casca_da_aba().child(aba)).into_any_element())
             })
             .collect()
     }
 
-    /// A aba do chat à vista, pronta para o cabeçalho: a do painel com o foco leva a casca preta.
+    /// A aba do chat à vista: a mesma casca preta em todos os painéis.
     fn aba_a_vista(&self, motor_entidade: &Entity<Motor>, motor: &Motor, chat: &Chat, ix: usize, window: &Window, cx: &Context<Self>) -> AnyElement {
         let aba = self.aba_da_conversa(motor_entidade, motor, chat, ix, window, cx);
-        let com_foco = self.paineis.len() <= 1 || ix == self.ativo;
-        if !com_foco {
-            return aba;
-        }
         super::componentes::casca_da_aba().child(aba).into_any_element()
     }
 
@@ -731,8 +729,7 @@ impl Janela {
             (false, _) => TomAba::Unica,
             (true, true) => TomAba::Ativa,
             // Sem o foco e com outras abas ao lado: um degrau mais claro que elas.
-            (true, false) if painel.abas.len() > 1 => TomAba::InativaAVista,
-            (true, false) => TomAba::Inativa,
+            (true, false) => TomAba::Ativa,
         };
         let arrastando = self.arrastando_aba == Some(painel_id);
         let previa = Some(simbolo_da_conversa());

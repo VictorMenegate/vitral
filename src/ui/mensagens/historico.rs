@@ -1,6 +1,6 @@
 //! O histórico das conversas trazidas do Claude Code: lido do arquivo da sessão, em segundo plano,
-//! quando a conversa aparece num painel, e guardado só na memória. Mostra os últimos itens, com
-//! "Carregar mais" para os de antes. Enquanto a conversa não continuou no Vitral, acompanha o
+//! quando a conversa aparece num painel, e guardado só na memória. As mensagens anteriores
+//! aparecem ao subir, em páginas, preservando o ponto de leitura. Enquanto a conversa não continuou, acompanha o
 //! arquivo (ela pode seguir aberta no VS Code); depois, para onde ela saiu.
 
 use std::{cell::RefCell, time::Instant};
@@ -24,7 +24,7 @@ struct Lido {
     conferido: Instant,
     /// O tamanho e o mtime do arquivo na última leitura, e até onde ela leu.
     marca: Marca,
-    mostrar: usize,
+    limite: usize,
 }
 
 type Marca = (u64, u64, Option<u64>);
@@ -44,7 +44,6 @@ struct Vista {
     itens: Option<Rc<Vec<Item>>>,
     cortados: usize,
     erro: Option<String>,
-    mostrar: usize,
 }
 
 impl Janela {
@@ -58,7 +57,7 @@ impl Janela {
             lendo: false,
             conferido: Instant::now(),
             marca: (0, 0, None),
-            mostrar: ITENS_POR_VEZ,
+            limite: importar::MAX_ITENS,
         });
         let nunca = lido.itens.is_none() && lido.erro.is_none();
         let conferir = !lido.lendo && (nunca || lido.conferido.elapsed() >= CONFERIR_A_CADA);
@@ -67,15 +66,26 @@ impl Janela {
             let marca = marca_do_arquivo(importada);
             if nunca || marca != lido.marca {
                 lido.lendo = true;
-                let (id, arquivo, limite) = (chat.id.clone(), importada.arquivo.clone(), importada.limite());
+                let (id, arquivo, limite, maximo) = (chat.id.clone(), importada.arquivo.clone(), importada.limite(), lido.limite);
                 cx.spawn(async move |this, cx| {
                     let (lidos, marca) = cx
-                        .background_spawn(async move { (importar::historico(&arquivo, limite), marca) })
+                        .background_spawn(async move {
+                            let lido = if maximo == importar::MAX_ITENS { importar::historico(&arquivo, limite) }
+                                else { importar::historico_com_maximo(&arquivo, limite, maximo) };
+                            (lido, marca)
+                        })
                         .await;
                     let _ = this.update(cx, |this, cx| {
                         if let Some(l) = this.historicos.0.borrow_mut().get_mut(&id) {
                             match lidos {
-                                Ok(h) => (l.itens, l.cortados, l.erro) = (Some(Rc::new(h.itens)), h.cortados, None),
+                                Ok(h) => {
+                                    if l.itens.is_none() || h.cortados < l.cortados {
+                                        for p in this.paineis.iter_mut().filter(|p| p.chat.as_deref() == Some(id.as_str()) && !p.seguindo) {
+                                            p.preservar_topo = Some((p.altura_conteudo, p.rolagem.offset()));
+                                        }
+                                    }
+                                    (l.itens, l.cortados, l.erro) = (Some(Rc::new(h.itens)), h.cortados, None);
+                                }
                                 Err(erro) => l.erro = Some(erro.to_string()),
                             }
                             (l.marca, l.lendo, l.conferido) = (marca, false, Instant::now());
@@ -86,16 +96,17 @@ impl Janela {
                 .detach();
             }
         }
-        Vista { itens: lido.itens.clone(), cortados: lido.cortados, erro: lido.erro.clone(), mostrar: lido.mostrar }
+        Vista { itens: lido.itens.clone(), cortados: lido.cortados, erro: lido.erro.clone() }
     }
 
-    /// Os blocos do histórico, antes dos da conversa: "Carregar mais" quando há itens antes dos
-    /// mostrados e os últimos itens, desenhados como os do chat, sem ações nem entrada animada.
+    /// Os blocos do histórico, antes dos da conversa: a janela de itens pedida por este painel,
+    /// desenhada como os itens do chat, sem ações de edição nem entrada animada.
     pub(super) fn blocos_do_historico(
         &self,
         motor: &Motor,
         chat: &Chat,
         nivel: LarguraPainel,
+        ix: usize,
         window: &Window,
         cx: &Context<Self>,
     ) -> Vec<(Bloco, Option<usize>, AnyElement)> {
@@ -117,47 +128,24 @@ impl Janela {
         };
         // O histórico do Claude Code fica fora da busca e da rolagem da conversa: ele é lido do
         // arquivo sob demanda, e nem todo ele está em memória para ser varrido.
-        let (sem_busca, sem_rolagem) = (busca_conversa::Indice::default(), ScrollHandle::new());
+        let sem_busca = busca_conversa::Indice::default();
         let contexto = Contexto {
             motor,
             chat,
             rodando: false,
             nivel,
             // O histórico trazido do Claude Code é só para ler: nada dele se corrige aqui.
-            painel: 0,
+            painel: self.paineis[ix].id,
             editavel: None,
             marco: None,
             // A busca da conversa não varre o histórico do Claude Code: ele é lido do arquivo,
             // sob demanda, e nem todo ele está em memória.
             busca: &sem_busca,
-            rolagem: &sem_rolagem,
+            rolagem: &self.paineis[ix].rolagem,
         };
-        let inicio = itens.len().saturating_sub(vista.mostrar);
+        let inicio = itens.len().saturating_sub(self.paineis[ix].mostrar_historico);
         let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
-        if inicio > 0 {
-            let id = chat.id.clone();
-            let mais = inicio.min(ITENS_POR_VEZ);
-            let botao = botao_fantasma(
-                SharedString::from(chave("mais")),
-                Some(Lucide::ChevronUp.into()),
-                format!("Carregar mais ({mais} de {} anteriores)", inicio + vista.cortados),
-                TamanhoBotao::Barra,
-                window,
-                cx,
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(l) = this.historicos.0.borrow_mut().get_mut(&id) {
-                    l.mostrar += ITENS_POR_VEZ;
-                }
-                cx.notify();
-            }));
-            blocos.push((Bloco::Log, None, h_flex().w_full().justify_center().child(botao).into_any_element()));
-        } else if vista.cortados > 0 {
-            let texto = format!("As {} mensagens mais antigas ficaram só no Claude Code.", vista.cortados);
-            let (bloco, elemento) = aviso_do_chat(&chave("cortados"), &texto, false, &Realce::default());
-            blocos.push((bloco, None, elemento));
-        }
-        let mostrados: Vec<(usize, &Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + i, item)).collect();
+        let mostrados: Vec<(usize, &Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + vista.cortados + i, item)).collect();
         // A conversa trazida tem a hora de cada linha do arquivo dela: os dias também se separam.
         let horas: Vec<u64> = mostrados.iter().map(|(_, item)| item.em()).collect();
         let datas: HashMap<usize, String> = super::separadores_de_data(&horas, crate::modelo::agora()).into_iter().collect();
@@ -181,5 +169,22 @@ impl Janela {
             i += 1;
         }
         blocos
+    }
+
+    pub(super) fn mais_historico(&mut self, ix: usize) -> bool {
+        let painel = &mut self.paineis[ix];
+        let Some(id) = &painel.chat else { return false; };
+        let mut historicos = self.historicos.0.borrow_mut();
+        let Some(lido) = historicos.get_mut(id) else { return false; };
+        let total = lido.itens.as_ref().map_or(0, |i| i.len());
+        if total <= painel.mostrar_historico && lido.cortados == 0 { return false; }
+        if lido.lendo { return false; }
+        painel.mostrar_historico += ITENS_POR_VEZ;
+        if painel.mostrar_historico > total && lido.cortados > 0 {
+            lido.limite += importar::MAX_ITENS;
+            lido.marca = (0, 0, None);
+            lido.conferido = Instant::now() - CONFERIR_A_CADA;
+        }
+        true
     }
 }

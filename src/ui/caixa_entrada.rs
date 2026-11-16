@@ -373,7 +373,13 @@ fn linha(
         .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
+    // O botão com texto ("Tentar de novo", "Retomar") fica no fluxo, sempre à vista, e o título
+    // encolhe antes dele. Como ação de hover ele cairia no lugar de um botão de ícone (24 px) e
+    // cobria o título (dono, 16/11/2026: "esse tentar de novo tá bugado"). Só o de ícone
+    // ("Marcar como lida") é ação de hover.
+    let com_texto = !matches!(l.pedido, Pedido::Nova);
     match acao {
+        Some(acao) if com_texto => cartao.acao_fixa(div().flex_none().ml(esp::E8).child(acao)).into_any_element(),
         Some(acao) => cartao.acao(acao).into_any_element(),
         None => cartao.into_any_element(),
     }

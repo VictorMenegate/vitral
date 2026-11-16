@@ -1258,19 +1258,6 @@ impl Render for Janela {
         self.trecho = gpui_kit::base::TextSelection::has_selection(window, cx)
             .then(|| gpui_kit::base::TextSelection::selected_text(window, cx))
             .filter(|t| !t.trim().is_empty());
-        // O deslize da roda do mouse: cada painel que está deslizando anda um passo até o alvo.
-        for painel in &mut self.paineis {
-            let Some(alvo) = painel.rolagem_suave else {
-                continue;
-            };
-            let atual = painel.rolagem.offset();
-            let id = ElementId::NamedInteger(format!("rolagem-suave-{}", painel.id).into(), painel.geracao_rolagem);
-            let y = movimento::valor_desde(id, atual.y.as_f32(), alvo, movimento::MOVER, movimento::Curva::Mover, window, cx);
-            painel.rolagem.set_offset(point(atual.x, px(y)));
-            if (y - alvo).abs() < 0.5 {
-                painel.rolagem_suave = None;
-            }
-        }
         // Antes da lista, para ela já mostrar como lida a conversa que voltou ao fim.
         self.acompanhar_rolagem(cx);
         // As abas de cada painel acompanham o chat à vista (e perdem os chats que sumiram).

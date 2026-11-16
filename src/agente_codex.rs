@@ -1,6 +1,7 @@
-//! O Codex (CLI da OpenAI) como o agente de um chat: um `codex exec --json` por turno, com o pedido
-//! pela entrada padrão, e a saída traduzida para os mesmos eventos do Claude Code (`claude::Evento`),
-//! de modo que a conversa, a trilha e o motor não precisem saber quem respondeu.
+//! O Codex como agente de um chat, pelo `codex app-server`: JSON-RPC com entrada aberta durante
+//! o turno, `turn/steer` para novas mensagens e diffs em `fileChange` (`servidor.rs`). A tradução
+//! entrega os mesmos eventos do Claude Code, para a conversa não depender de quem respondeu.
+//! O formato do `exec` abaixo continua como base do tradutor e dos testes de compatibilidade.
 //!
 //! Conferido no Codex 0.169.0 (13/11/2026), com o login do ChatGPT:
 //! - `codex exec - --json --skip-git-repo-check -C <pasta> -c sandbox_mode="…"` lê o pedido da
@@ -31,6 +32,25 @@ use crate::{
     claude::{Evento, Opcoes},
     processos,
 };
+
+pub mod servidor;
+
+/// Configurações só deste processo; o modelo, a pasta e a retomada vão no pedido JSON-RPC.
+pub fn argumentos_servidor(opcoes: &Opcoes) -> Vec<String> {
+    let antigos = argumentos(opcoes, &[]);
+    std::iter::once("app-server".to_string()).chain(
+        antigos.windows(2).filter(|p| p[0] == "-c").flat_map(|p| p.to_vec())
+    ).collect()
+}
+
+pub fn parametros_servidor(opcoes: &Opcoes) -> Value {
+    let mut parametros = json!({
+        "cwd":opcoes.cwd, "model":opcoes.modelo, "sandbox":sandbox_de(&opcoes.permissao),
+        "approvalPolicy":"never", "developerInstructions":opcoes.prompt_sistema,
+    });
+    if opcoes.retomar { parametros["threadId"] = json!(opcoes.sessao); }
+    parametros
+}
 
 /// No Windows o Codex do npm é um `codex.cmd`.
 const NOME_DO_CODEX: &str = if cfg!(windows) { "codex.cmd" } else { "codex" };
@@ -174,13 +194,20 @@ impl Leitor {
             }
             "file_change" => {
                 let mudancas = item["changes"].as_array().cloned().unwrap_or_default();
-                let caminho = |m: &Value| m["path"].as_str().unwrap_or_default().to_string();
-                let (nome, entrada) = match mudancas.as_slice() {
-                    [uma] if uma["kind"] == "add" => ("Write", json!({ "file_path": caminho(uma) })),
-                    [uma] => ("Edit", json!({ "file_path": caminho(uma) })),
-                    _ => ("Edit", json!({ "file_path": mudancas.first().map(caminho).unwrap_or_default() })),
-                };
-                ferramenta(nome, entrada, resumo_das_mudancas(&mudancas), falhou)
+                let mut eventos = Vec::new();
+                for (i, mudanca) in mudancas.iter().enumerate() {
+                    let id = if mudancas.len() == 1 { id.clone() } else { format!("{id}:{i}") };
+                    let nome = if mudanca["kind"] == "add" || mudanca["kind"]["type"] == "add" { "Write" } else { "Edit" };
+                    if self.abertos.insert(id.clone()) {
+                        eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.into(), entrada: json!({
+                            "file_path":mudanca["path"], "diff":mudanca["diff"],
+                        }) });
+                    }
+                    if terminou {
+                        eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou });
+                    }
+                }
+                eventos
             }
             "mcp_tool_call" => {
                 let nome = format!("mcp__{}__{}", texto("server"), texto("tool"));

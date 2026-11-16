@@ -266,6 +266,9 @@ pub struct Motor {
     uso_por_conta: HashMap<String, Uso>,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
+    /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
+    /// renovar): ficam fora da escolha até um turno nelas dar certo ou a pessoa entrar de novo.
+    sem_login: HashSet<String>,
     /// Nome do plano, limites por modelo e créditos extras de cada conta (do `.claude.json`).
     plano_por_conta: HashMap<String, Plano>,
     /// Quando buscar o uso dos planos na Anthropic e o recuo de cada conta (`contas::busca`).
@@ -512,6 +515,7 @@ impl Motor {
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
             limite_ate: HashMap::new(),
+            sem_login: HashSet::new(),
             plano_por_conta: HashMap::new(),
             agenda_uso: Agenda::default(),
             uso_em_vista: None,
@@ -1972,8 +1976,10 @@ impl Motor {
     }
 
     fn conta_da_escolha(&self, escolha: &str) -> Conta {
+        // A conta escolhida vale enquanto tem login; sem ele, cai na escolha automática.
         if escolha != contas::AUTOMATICA
             && let Some(conta) = self.contas.iter().find(|c| c.id == escolha)
+            && !self.sem_login.contains(&conta.id)
         {
             return conta.clone();
         }
@@ -1985,13 +1991,64 @@ impl Motor {
             } else {
                 0
             };
-            (uso.bloqueado, volta, (uso.cinco_horas.unwrap_or(0.0) * 1000.0) as i64)
+            // Conta sem login só entra se não houver outra.
+            (self.sem_login.contains(&c.id), uso.bloqueado, volta, (uso.cinco_horas.unwrap_or(0.0) * 1000.0) as i64)
         };
         self.contas
             .iter()
             .min_by_key(folga)
             .cloned()
             .unwrap_or_else(|| self.contas[0].clone())
+    }
+
+    /// A conta perdeu o login num turno e ainda não voltou (`login_perdido`).
+    pub fn conta_sem_login(&self, id: &str) -> bool {
+        self.sem_login.contains(id)
+    }
+
+    /// O Claude Code disse que o login da conta do turno se perdeu ("OAuth token revoked", "OAuth
+    /// session expired and could not be refreshed"). Tentar de novo na mesma conta falha igual, e
+    /// era o que o chat fazia (dono, 16/11/2026). A conta sai da escolha e, havendo outra com
+    /// login, o mesmo turno roda de novo nela, com o aviso de qual foi; sem outra, o aviso diz
+    /// onde entrar de novo e o erro segue o caminho normal. Devolve `true` se repetiu o turno.
+    fn login_perdido(&mut self, chat: &str, erro: &str, cx: &mut Context<Self>) -> bool {
+        if !falha_de_login(erro) {
+            return false;
+        }
+        let Some(c) = self.chat_mut(chat).map(Chat::copia_sem_itens) else {
+            return false;
+        };
+        let Some(atual) = self.conta_do_turno.get(chat).cloned().filter(|_| c.agente == Agente::Claude) else {
+            return false;
+        };
+        self.sem_login.insert(atual.clone());
+        let nome = self.contas.iter().find(|x| x.id == atual).map_or_else(|| atual.clone(), |x| x.nome.clone());
+        let proxima = self.conta_para(&c);
+        if proxima.id == atual || self.sem_login.contains(&proxima.id) {
+            self.avisar(
+                chat,
+                &format!(
+                    "A conta {nome} perdeu o login no Claude Code. Entre nela de novo em Contas do Claude (menu do logo) e \
+                     use Tentar de novo."
+                ),
+                true,
+            );
+            return false;
+        }
+        self.execucao.insert(chat.to_string(), Execucao::Parado);
+        self.avisar(
+            chat,
+            &format!(
+                "A conta {nome} perdeu o login no Claude Code; continuando na conta {}. Para voltar a usar a {nome}, \
+                 entre nela de novo em Contas do Claude (menu do logo).",
+                proxima.nome
+            ),
+            false,
+        );
+        if let Some(mensagens) = self.entrada_para_repetir(chat) {
+            self.comecar_turno_com(chat, mensagens, false, cx);
+        }
+        true
     }
 
     /// Depois de um erro de limite na conta do turno, repete o turno em outra conta se a escolha
@@ -2260,6 +2317,8 @@ impl Motor {
     }
 
     pub fn adicionar_conta(&mut self, conta: Conta, cx: &mut Context<Self>) {
+        // Entrar de novo numa conta devolve ela à escolha.
+        self.sem_login.remove(&conta.id);
         self.contas.retain(|c| c.id != conta.id);
         self.contas.push(conta);
         let _ = contas::salvar(&self.contas);
@@ -2580,6 +2639,18 @@ impl Motor {
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
+            Evento::DirecaoConfirmada { texto, aceita } => {
+                if let Some(dirigidas) = self.dirigidas.get_mut(chat_id)
+                    && let Some(indice) = dirigidas.iter().position(|e| texto_do_turno(std::slice::from_ref(e)).0 == texto)
+                {
+                    let entrada = dirigidas.remove(indice);
+                    if !aceita {
+                        self.filas.entry(chat_id.to_string()).or_default().push(Entrada { registrada: true, ..entrada });
+                        self.avisar(chat_id, "O turno já estava terminando; a mensagem ficou na fila para o próximo.", false);
+                        self.salvar();
+                    }
+                }
+            }
             Evento::Fim {
                 erro,
                 texto,
@@ -2670,10 +2741,20 @@ impl Motor {
                     self.parcial.remove(chat_id);
                     return;
                 }
+                // Login perdido na conta do turno, com outra conta com login: o mesmo turno roda
+                // de novo nela.
+                if erro && self.login_perdido(chat_id, &texto, cx) {
+                    self.parcial.remove(chat_id);
+                    return;
+                }
                 // Limite do plano numa conta, com outra disponível na escolha automática: o
                 // mesmo turno roda de novo na outra conta.
                 if erro && self.trocar_de_conta(chat_id, &texto, cx) {
                     return;
+                }
+                // O turno deu certo nesta conta: o login dela está valendo.
+                if !erro && let Some(conta) = self.conta_do_turno.get(chat_id) {
+                    self.sem_login.remove(conta);
                 }
                 if erro {
                     self.avisar(
@@ -3090,6 +3171,15 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
         matches!(item, Item::Ferramenta { nome, erro: false, em, .. }
             if *em > desde && matches!(nome.as_str(), "Edit" | "Write" | "MultiEdit" | "NotebookEdit"))
     })
+}
+
+/// O erro do turno é de login perdido no Claude Code (os textos são os que o 2.1.322 devolveu em
+/// 16/11/2026, mais o pedido de `/login` das versões anteriores).
+pub fn falha_de_login(erro: &str) -> bool {
+    let erro = erro.to_lowercase();
+    ["failed to authenticate", "oauth token revoked", "oauth session expired", "please run /login", "invalid api key"]
+        .iter()
+        .any(|trecho| erro.contains(trecho))
 }
 
 /// "Claude" ou "Codex", para títulos e rótulos curtos.
@@ -3615,6 +3705,17 @@ mod testes {
 
     fn avisos(chat: &Chat) -> usize {
         chat.itens.iter().filter(|i| matches!(i, Item::Aviso { .. })).count()
+    }
+
+    #[test]
+    fn login_perdido_e_reconhecido_pelo_texto_do_claude_code() {
+        use super::falha_de_login;
+        assert!(falha_de_login("Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator."));
+        assert!(falha_de_login("Failed to authenticate: OAuth session expired and could not be refreshed"));
+        assert!(falha_de_login("Invalid API key · Please run /login"));
+        // Limite do plano e erro comum não são login perdido.
+        assert!(!falha_de_login("You've hit your usage limit."));
+        assert!(!falha_de_login("API Error: 500 Internal server error"));
     }
 
     /// A revisão da memória só é pedida quando houve edição de arquivo que deu certo depois do

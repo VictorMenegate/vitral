@@ -7,6 +7,20 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
+- **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
+  enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.
+- **Trilha de atividade.** Resumo do trabalho, ramificações entre as chamadas e identificação dos
+  arquivos. Os grupos abrem enquanto trabalham e recolhem ao terminar, respeitando sua escolha.
+  Abrir uma edição mostra o diff; abrir um comando reúne o comando e sua saída.
+- **Conta que perdeu o login.** Quando o Claude Code avisa que o login de uma conta caiu, o chat
+  continua sozinho em outra conta que esteja com login e diz qual; sem outra, o aviso mostra onde
+  entrar de novo. Antes, o "Tentar de novo" repetia na mesma conta e falhava igual.
+- **A conta mora no seletor de modelo.** Com mais de uma conta do Claude, a escolha fica na aba do
+  Claude do seletor, e não mais solta na caixa de mensagem.
+- **Histórico ao subir.** As mensagens anteriores aparecem automaticamente ao rolar para cima,
+  mantendo o ponto de leitura. A barra fica visível quando a conversa tem conteúdo para rolar.
+
 - **Mais simples.** Saíram os projetos, o Mestre, as rotinas, as issues e PRs e as cópias isoladas.
   Ficou o essencial: uma lista de chats, e cada chat trabalha direto na pasta dele, como o Claude
   Code no terminal ou no VS Code. Os dados antigos ficam guardados em `estado.versao-2.json`.

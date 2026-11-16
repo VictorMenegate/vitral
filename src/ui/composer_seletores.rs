@@ -20,10 +20,10 @@ use super::{
 };
 use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
-    AnelDeUso, BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
+    BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
-    Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, azulejo_de_escolha, botao_icone, cabecalho_escolha, cor_da_faixa,
-    desenho_teclas, escolhido_em_ficha, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
+    Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, botao_icone, cabecalho_escolha,
+    desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
 };
 use crate::{
     agente_codex::{self, ModeloDoCodex},
@@ -139,40 +139,6 @@ fn rodape_de_teclas(dicas: impl IntoIterator<Item = Div>, window: &Window) -> [A
     ]
 }
 
-/// Linha de duas (48) com o símbolo de 20 no azulejo de 28: as contas e a Automática, no desenho
-/// dos itens descritos (a escolhida na ficha de metal, com a descrição em `texto`).
-fn linha_de_duas(simbolo: AnyElement, titulo: SharedString, descricao: SharedString, escolhida: bool) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(esp::E12)
-        .h(r(48.))
-        .min_w_0()
-        .child(azulejo_de_escolha(simbolo, escolhida))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(r(14.))
-                        .line_height(r(20.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(Cores::forte())
-                        .child(titulo),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .metadado()
-                        .text_color(if escolhida { Cores::texto() } else { Cores::tenue() })
-                        .child(descricao),
-                ),
-        )
-}
-
 // ── Modo ────────────────────────────────────────────────────────────────
 
 struct DadosModo {
@@ -268,40 +234,6 @@ fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx:
 
 // ── Conta ───────────────────────────────────────────────────────────────
 
-struct DadosConta {
-    motor: Option<Entity<Motor>>,
-    janela: WeakEntity<Janela>,
-    chat: String,
-    escolha: String,
-    /// (id, nome, uso) de cada conta.
-    contas: Vec<(String, String, Uso)>,
-}
-
-impl DadosConta {
-    fn automatica(&self) -> bool {
-        self.escolha == contas::AUTOMATICA
-    }
-
-    fn nome(&self) -> String {
-        if self.automatica() {
-            return "Automática".into();
-        }
-        self.contas
-            .iter()
-            .find(|(id, _, _)| *id == self.escolha)
-            .map(|(_, nome, _)| nome.clone())
-            .unwrap_or_else(|| "Principal".into())
-    }
-
-    fn uso(&self) -> Uso {
-        self.contas
-            .iter()
-            .find(|(id, _, _)| *id == self.escolha)
-            .map(|(_, _, uso)| *uso)
-            .unwrap_or_default()
-    }
-}
-
 fn cinco_h(uso: &Uso) -> Option<f32> {
     uso.cinco_horas.map(|f| f as f32)
 }
@@ -309,48 +241,6 @@ fn cinco_h(uso: &Uso) -> Option<f32> {
 fn descricao_da_conta(uso: &Uso) -> String {
     let resumo = resumo_uso(cinco_h(uso), uso.semana.map(|f| f as f32));
     if uso.bloqueado { format!("limite atingido · {resumo}") } else { resumo }
-}
-
-fn itens_da_conta(mut menu: PopupMenu, d: &Rc<DadosConta>, window: &mut Window) -> PopupMenu {
-    let largura = tam(window, 320.);
-    menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Conta do Claude", None));
-    let trocar = |valor: String| {
-        let d = d.clone();
-        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-            let valor = valor.clone();
-            mudar(&d.motor, &d.chat, cx, move |c| c.conta = Some(valor));
-        }
-    };
-    for (id, nome, uso) in &d.contas {
-        let (titulo, uso, chave): (SharedString, Uso, SharedString) =
-            (nome.clone().into(), *uso, format!("uso-conta-{id}").into());
-        let escolhida = *id == d.escolha;
-        let item = PopupMenuItem::element(move |_, _| {
-            let anel = AnelDeUso::new(chave.clone(), Marca::Claude, cinco_h(&uso))
-                .diametro(20.)
-                .bloqueado(uso.bloqueado);
-            linha_de_duas(anel.into_any_element(), titulo.clone(), descricao_da_conta(&uso).into(), escolhida)
-        });
-        menu = menu.item(escolhido_em_ficha(item, escolhida, 48.).on_click(trocar(id.clone())));
-    }
-    let janela = d.janela.clone();
-    let automatica = d.automatica();
-    let item = PopupMenuItem::element(move |window, _| {
-        linha_de_duas(
-            div()
-                .text_color(if automatica { Cores::texto() } else { Cores::tenue() })
-                .child(Icon::new(Lucide::Shuffle).with_size(tam(window, 16.)))
-                .into_any_element(),
-            "Automática".into(),
-            "A conta com mais folga no plano".into(),
-            automatica,
-        )
-    });
-    menu.item(escolhido_em_ficha(item, automatica, 48.).on_click(trocar(contas::AUTOMATICA.to_string())))
-    .separator()
-    .item(item_com_icone(Lucide::Settings, "Gerenciar contas…").on_click(move |_, window, cx| {
-        let _ = janela.update(cx, |this, cx| this.dialogo_contas(window, cx));
-    }))
 }
 
 // ── Anexar ──────────────────────────────────────────────────────────────
@@ -585,17 +475,52 @@ fn grupos_de_modelo(motor: &Motor, chat: &Chat, aba: Agente) -> Vec<GrupoDeEscol
     }
     let em_uso = chat.modelo_atual.as_deref().filter(|_| do_chat);
     let motivo = motivo_sem_versao_exata(motor.versao_claude);
-    vec![
-        GrupoDeEscolha {
-            // Com as abas, o nome do agente já está nelas.
-            titulo: (!com_abas_de_agente(chat)).then(|| "Claude".into()),
-            itens: itens_de_modelo(linhas_de_modelo(escolhido, em_uso, padrao_da_pasta(motor, chat))),
-        },
-        GrupoDeEscolha {
-            titulo: Some("Versões exatas".into()),
-            itens: itens_de_modelo(linhas_de_versao(escolhido, em_uso, motivo.as_deref())),
-        },
-    ]
+    let mut grupos = vec![GrupoDeEscolha {
+        // Com as abas, o nome do agente já está nelas.
+        titulo: (!com_abas_de_agente(chat)).then(|| "Claude".into()),
+        itens: itens_de_modelo(linhas_de_modelo(escolhido, em_uso, padrao_da_pasta(motor, chat))),
+    }];
+    // A conta é do Claude, então mora na aba dele, e não solta na caixa (dono, 16/11/2026: "por
+    // que tem essa conta aqui se agora tem o Codex também?"). Só com mais de uma conta.
+    if motor.contas.len() > 1 {
+        grupos.push(GrupoDeEscolha { titulo: Some("Conta do Claude".into()), itens: itens_de_conta(motor, chat) });
+    }
+    grupos.push(GrupoDeEscolha {
+        titulo: Some("Versões exatas".into()),
+        itens: itens_de_modelo(linhas_de_versao(escolhido, em_uso, motivo.as_deref())),
+    });
+    grupos
+}
+
+/// O prefixo das chaves do grupo "Conta do Claude" no seletor: `conta:<id>`, ou `conta:auto`.
+const DA_CONTA: &str = "conta:";
+
+/// As linhas do grupo "Conta do Claude": cada conta com o uso do plano dela e a automática. A que
+/// o chat usa leva o selo "em uso" (o visto do seletor é do modelo); a sem login diz isso.
+fn itens_de_conta(motor: &Motor, chat: &Chat) -> Vec<ItemDeEscolha> {
+    let escolha = motor.escolha_de_conta(chat);
+    let selo = |sim: bool| if sim { vec![Selo::neutro("em uso")] } else { Vec::new() };
+    let mut itens: Vec<ItemDeEscolha> = motor
+        .contas
+        .iter()
+        .map(|c| {
+            let uso = motor.uso_da_conta(&c.id);
+            let descricao = if motor.conta_sem_login(&c.id) { "sem login: entre de novo em Contas do Claude".to_string() } else { descricao_da_conta(&uso) };
+            ItemDeEscolha {
+                descricao: Some(descricao.into()),
+                selos: selo(c.id == escolha),
+                termos: Some(format!("conta {}", c.nome).into()),
+                ..ItemDeEscolha::new(format!("{DA_CONTA}{}", c.id), c.nome.clone())
+            }
+        })
+        .collect();
+    itens.push(ItemDeEscolha {
+        descricao: Some("A conta com mais folga no plano".into()),
+        selos: selo(escolha == contas::AUTOMATICA),
+        termos: Some("conta automática".into()),
+        ..ItemDeEscolha::new(format!("{DA_CONTA}{}", contas::AUTOMATICA), "Automática")
+    });
+    itens
 }
 
 /// Ao abrir o seletor (clique ou Ctrl+Shift+M) e ao trocar de aba: as linhas de agora, a busca
@@ -940,6 +865,13 @@ impl Janela {
                                 if valor == SEM_VERSOES {
                                     return;
                                 }
+                                // Uma linha do grupo da conta troca só a conta do chat.
+                                if let Some(conta) = valor.strip_prefix(DA_CONTA) {
+                                    let conta = conta.to_string();
+                                    mudar(&motor_e, &chat_id, cx, move |c| c.conta = Some(conta));
+                                    abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
+                                    return;
+                                }
                                 // A linha escolhida diz também quem responde: as do grupo do Codex
                                 // passam o chat para ele, as outras para o Claude.
                                 let (agente, modelo) = match valor.strip_prefix(DO_CODEX) {
@@ -1081,56 +1013,6 @@ impl Janela {
             .into_any_element()
     }
 
-    pub(super) fn chip_conta(&self, motor: &Motor, chat: &Chat, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let dados = Rc::new(self.dados_da_conta(motor, chat, cx));
-        let padrao = if motor.config.conta.is_empty() { contas::PRINCIPAL } else { motor.config.conta.as_str() };
-        let mudado = dados.escolha != padrao;
-        let (nome, uso) = (dados.nome(), dados.uso());
-        let cor = if dados.automatica() {
-            Cores::tenue()
-        } else if uso.bloqueado {
-            Cores::vermelho()
-        } else {
-            cor_da_faixa(cinco_h(&uso).unwrap_or(0.), Cores::tenue())
-        };
-        let detalhe = if dados.automatica() {
-            "a com mais folga no plano, a cada turno".to_string()
-        } else {
-            descricao_da_conta(&uso)
-        };
-        let dica: SharedString = format!("Conta: {nome}\n{detalhe}").into();
-        let chip = |aberto: bool| {
-            let mut chip = Chip::new(b.id("chip-conta"), nome.clone())
-                .simbolo(Simbolo::Icone(Lucide::CircleUserRound.into(), Some(cor)))
-                .tamanho(b.tamanho())
-                .mudado(mudado)
-                .so_icone(!b.larga())
-                .aberto(aberto);
-            if !aberto {
-                chip = chip.dica(dica.clone());
-            }
-            // Nome comprido corta com reticências.
-            chip.construir(window, cx).max_w(r(160.))
-        };
-        GatilhoChip::new(chip(false), chip(true))
-            .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, window, _| itens_da_conta(menu, &dados, window))
-            .into_any_element()
-    }
-
-    fn dados_da_conta(&self, motor: &Motor, chat: &Chat, cx: &Context<Self>) -> DadosConta {
-        DadosConta {
-            motor: self.motor.clone(),
-            janela: cx.entity().downgrade(),
-            chat: chat.id.clone(),
-            escolha: motor.escolha_de_conta(chat),
-            contas: motor
-                .contas
-                .iter()
-                .map(|c| (c.id.clone(), c.nome.clone(), motor.uso_da_conta(&c.id)))
-                .collect(),
-        }
-    }
-
     pub(super) fn botao_anexar(&self, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
         let dados = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
         let dica = "Anexar arquivo ou contexto";
@@ -1150,7 +1032,6 @@ impl Janela {
     pub(super) fn botao_mais(&self, motor: &Motor, chat: &Chat, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
         let estreita = b.estreita();
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
-        let conta = estreita.then(|| Rc::new(self.dados_da_conta(motor, chat, cx)));
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
         // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
         // Quem já ia pela fila de qualquer jeito não precisa da opção.
@@ -1166,7 +1047,7 @@ impl Janela {
         });
         let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
-            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, cx| {
+            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
                 let largura = tam(window, 300.);
                 let (j1, j2, j3) = (anexar.janela.clone(), anexar.janela.clone(), anexar.janela.clone());
                 let (m1, m2, c1, c2) = (motor_e.clone(), motor_e.clone(), anexar.chat.clone(), anexar.chat.clone());
@@ -1227,16 +1108,6 @@ impl Janela {
                     );
                 if estreita {
                     menu = itens_de_anexar(menu.separator(), &anexar, false);
-                    if let Some(conta) = &conta {
-                        let c = conta.clone();
-                        menu = menu.submenu_with_icon(
-                            Some(Icon::new(Lucide::CircleUserRound)),
-                            format!("Conta: {}", conta.nome()),
-                            window,
-                            cx,
-                            move |sub, window, _| itens_da_conta(sub, &c, window),
-                        );
-                    }
                 }
                 menu
             })

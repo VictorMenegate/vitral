@@ -674,10 +674,7 @@ impl Janela {
                     // abaixo do recorte.
                     .child(div().h(r(altura)))
                     .child(grupo(self.chip_modelo(motor, chat, ix, b, window, cx)))
-                    .child(grupo(self.chip_esforco(motor, chat, ix, b, window, cx)))
-                    // A conta só com mais de uma: com uma só não há o que escolher (o uso dela está
-                    // nos anéis do cabeçalho).
-                    .when(!estreita && motor.contas.len() > 1 && chat.agente == crate::modelo::Agente::Claude, |s| s.child(grupo(self.chip_conta(motor, chat, b, window, cx)))),
+                    .child(grupo(self.chip_esforco(motor, chat, ix, b, window, cx))),
             )
             .child(
                 div()

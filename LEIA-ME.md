@@ -36,17 +36,28 @@ componentes do GPUI Kit.
   (trocar de aba só mostra os modelos do outro; quem responde muda ao escolher um; a aba do Codex tem
   o padrão dele e os modelos do `codex debug models`, relidos a cada abertura, com a descrição em
   português quando a frase do catálogo é reconhecida, `descricao_do_codex`); o padrão dos chats
-  novos é `Config.agente_padrao` (Configurações e boas-vindas). O Codex roda um `codex exec --json`
-  por turno, com o pedido pela entrada padrão, e a saída é traduzida para os mesmos eventos do
-  Claude Code (`src/agente_codex.rs`, que documenta o formato conferido no 0.169.0): a conversa, a
-  trilha e o motor não sabem quem respondeu. O `thread_id` dele fica em `Chat.sessao` e o turno
-  seguinte usa `codex exec resume`. O que muda num chat do Codex: não há pedido de permissão no
+  novos é `Config.agente_padrao` (Configurações e boas-vindas). O Codex roda um `codex app-server`
+  por turno, com o protocolo JSON-RPC (`src/agente_codex/servidor.rs`): `thread/start` ou
+  `thread/resume`, `turn/start`, `turn/steer` para mensagens durante o trabalho e `turn/interrupt`.
+  A confirmação do steer tira a mensagem das pendentes; uma recusa devolve só ela à fila. O fim
+  espera as confirmações, para não perder mensagens na corrida com o encerramento. O `thread_id`
+  fica em `Chat.sessao`, e `thread/resume` recebe esse id. O schema veio da própria
+  CLI instalada, e o initialize e thread/start foram conferidos sem inferência em 16/11/2026.
+  O que muda num chat do Codex: não há pedido de permissão no
   meio do turno (o modo vira o sandbox: Planejar é `read-only`, Sem perguntar é
   `danger-full-access`, os outros `workspace-write`), não há conta, comandos de barra nem
   `/compact` (fica o `/clear`, que é do Vitral), o custo e o contexto não são medidos, e parar é
-  pelo SIGINT. Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
+  pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
+- **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
+  no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
+  as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
+  "OAuth session expired and could not be refreshed"; `motor::falha_de_login`), a conta entra em
+  `Motor.sem_login`, sai da escolha (`conta_da_escolha` passa a pular até a conta escolhida à mão)
+  e o turno é repetido em outra conta com login, com o aviso de qual (`Motor::login_perdido`). Sem
+  outra, o aviso diz onde entrar de novo. A conta volta quando um turno nela dá certo ou quando a
+  pessoa entra de novo (`adicionar_conta`).
 - **A mesma pergunta para os dois.** **Perguntar também ao Codex** (ou ao Claude), no "…" da caixa,
   manda a mensagem para o chat e para um chat novo do outro agente, na mesma pasta, aberto num
   painel ao lado (`Janela::enviar_aos_dois`, `Motor::abrir_raia`). O chat novo nasce em Planejar,
@@ -125,7 +136,8 @@ componentes do GPUI Kit.
   pasta que não existe mais (um disco desmontado: entram quando ele estiver montado e você pedir de
   novo). O aviso diz o resultado ("40 conversas do Claude Code importadas · 3 abertas agora no
   Claude Code"). O histórico aparece no chat, lido do arquivo da sessão quando ele abre (em segundo
-  plano; nada disso vai para os dados do Vitral): os 300 últimos itens, com **Carregar mais**, e a
+  plano; nada disso vai para os dados do Vitral): começa pelos 60 últimos itens e mostra os
+  anteriores automaticamente ao subir, preservando a posição de leitura, e a
   linha "Trazida do Claude Code (VS Code) em 01/11" antes do que vem no Vitral. A primeira mensagem
   continua numa cópia da conversa (`--resume <id> --fork-session`): a original fica como está e pode
   seguir no VS Code; as seguintes retomam a cópia. A conversa que estava aberta no Claude Code quando
@@ -391,7 +403,8 @@ ferramentas, vale por painel).
   vai para o `interface.json` 1,2 s depois de você parar de digitar, e volta quando o Vitral abrir
   de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). A **fila** do que você mandou com
   o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da fila (na linha de
-  estado da caixa, com o chat trabalhando, ou na faixa acima dela): cada
+  estado da caixa, com o chat trabalhando, ou na faixa acima dela), dentro do painel e acima da
+  caixa de mensagem: cada
   mensagem esperando numa linha, com o × que devolve o texto à caixa e, com o chat parado,
   **Entregar agora** no rodapé. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
@@ -438,15 +451,17 @@ ferramentas, vale por painel).
   vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
   no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
   perigoso, o segurar).
-- **Ferramentas.** Chamadas seguidas viram uma trilha calma, uma linha de 28 por chamada, coladas e
-  ligadas por um traço fino: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
+- **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
+  ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
   "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. Um fluxo de agentes (a
-  ferramenta `Workflow`) aparece como **Fluxo de agentes**. A partir de 4 a trilha começa recolhida
-  ("6 ações · leu 3 · rodou 2", com "1 falhou" em vermelho); o cabeçalho entra no Tab. O clique numa
+  ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
+  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"); abrem enquanto trabalham e
+  recolhem ao terminar, respeitando a escolha manual. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
-  lado ficam guardadas na conversa; as chamadas de antes disto não têm). Embaixo, o resultado (as
+  lado ficam guardadas na conversa; o Codex entrega o diff do `fileChange`; registros antigos
+  sem diff oferecem abrir o arquivo atual). Comandos têm comando e saída na mesma caixa. O resultado mostra as
   últimas 40 linhas, com Copiar e Mostrar tudo); o de uma edição que deu certo é só "o arquivo foi
   atualizado" e fica de fora. No hover, a linha que leu ou mudou um arquivo que ainda está no disco
   ganha na ponta o ícone **Abrir o arquivo ao lado**. As ferramentas do Vitral que um chat usa
@@ -467,7 +482,12 @@ ferramentas, vale por painel).
   mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
   conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 24 px antes do seu balão,
   16 depois dele e 12 entre os blocos de um turno.
-- **Rolagem.** Barra de rolagem por painel. No fim, a conversa continua colada no fim também
+- **Rolagem.** Barra visível por painel quando o conteúdo transborda, com identidade própria e
+  desenhada sobre a área fixa, fora do conteúdo rolado. Os itens anteriores aparecem em páginas
+  de 60 ao chegar perto do topo; a compensação da altura acrescentada mantém a leitura no lugar.
+  O histórico importado amplia a janela de leitura do arquivo quando necessário. A suavização
+  antiga foi retirada em 16/11/2026: ela restaurava o deslocamento antes de detectar a subida,
+  mantendo o painel preso ao fim. No fim, a conversa continua colada no fim também
   quando o painel muda de largura (abrir ao lado, Ctrl+B, zoom, puxar a borda da janela), em que
   as linhas quebram de novo. Qualquer subida com a roda, o touchpad ou a barra solta o fim; aí o
   streaming não puxa a tela de volta e a conversa não conta como lida; a pílula com a seta (e
@@ -1029,7 +1049,7 @@ para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os seg
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
 bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
 três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
-`ferramentas/claude-falso/codex`, o Codex de mentira (fala o `codex exec --json`, entende o mesmo
+`ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
 (fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; no `--fork-session`, copia a sessão original para a nova ao lado dela (só nesse `CLAUDE_CONFIG_DIR`); e
@@ -1272,12 +1292,12 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
-| `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do `codex exec`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |
+| `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do processo e o protocolo JSON-RPC em `src/agente_codex/servidor.rs`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |
 | `src/git.rs` | O comando do git (`novo_git`, o único jeito de abrir o git), o caminho relativo em texto e de onde saiu uma cópia isolada das versões de antes (para a carga pôr o chat de volta na origem) |
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com Carregar mais; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

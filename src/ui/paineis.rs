@@ -36,12 +36,13 @@ pub struct Painel {
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
     /// Quantos itens da conversa o painel desenha (os últimos; ver `mensagens::ITENS_NA_TELA`).
-    /// "Mostrar anteriores" aumenta; trocar de conversa volta ao começo.
+    /// Subir perto do topo aumenta; trocar de conversa volta ao começo.
     pub mostrar: usize,
-    /// A roda do mouse anda em degraus: aqui fica para onde a conversa está deslizando (o
-    /// deslocamento alvo) e a geração do gesto, que dá um estado de animação novo a cada deslize.
-    pub rolagem_suave: Option<f32>,
-    pub geracao_rolagem: u64,
+    pub mostrar_historico: usize,
+    /// Altura anterior e deslocamento, para acrescentar mensagens em cima sem perder a leitura.
+    pub preservar_topo: Option<(Pixels, Point<Pixels>)>,
+    pub altura_conteudo: Pixels,
+    pub fila_aberta: bool,
     /// Um bloco desta conversa acabou de abrir: no próximo desenho o painel fica onde está, em
     /// vez de pular para o fim do que abriu.
     pub manter_lugar: bool,
@@ -368,6 +369,10 @@ impl Janela {
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
             rolagem: ScrollHandle::new(),
+            mostrar_historico: crate::importar::ITENS_POR_VEZ,
+            preservar_topo: None,
+            altura_conteudo: px(0.),
+            fila_aberta: false,
             leitura: Default::default(),
             seguindo: true,
             manter_lugar: false,
@@ -385,8 +390,6 @@ impl Janela {
             entra: false,
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
-            rolagem_suave: None,
-            geracao_rolagem: 0,
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
@@ -430,7 +433,10 @@ impl Janela {
         }
         painel.chat = novo;
         painel.mostrar = super::mensagens::ITENS_NA_TELA;
-        painel.rolagem_suave = None;
+        painel.mostrar_historico = crate::importar::ITENS_POR_VEZ;
+        painel.preservar_topo = None;
+        painel.altura_conteudo = px(0.);
+        painel.fila_aberta = false;
         painel.seguindo = true;
         painel.rolagem.scroll_to_bottom();
         painel.base_animacao = tamanho;

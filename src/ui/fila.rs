@@ -1,6 +1,6 @@
 //! A fila de mensagens de uma conversa: o que escolheu esperar o turno acabar ("Mandar depois"),
 //! o que chegou de outro chat com este ocupado e o que o turno não chegou a receber. A pílula da
-//! faixa do turno abre esta lista, que mostra cada mensagem esperando e deixa editar uma, mudar a
+//! faixa do turno abre esta lista acima da caixa de mensagem, dentro do painel. Deixa editar uma, mudar a
 //! ordem, tirar uma de volta para a caixa, mandar uma agora para dentro do turno que está rodando
 //! e, com o chat parado, entregar tudo agora.
 
@@ -9,6 +9,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Textarea, TextareaState},
+    scroll::ScrollableElement as _,
     tooltip::Tooltip,
     v_flex,
 };
@@ -18,8 +19,8 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        CabecalhoPopover, CorpoPopover, LarguraPopover, RodapeDialogo, Selo, TamanhoBotao, Tom, aviso, botao_fantasma,
-        botao_icone, botao_primario, contagem, largura, popover, variante_fantasma,
+        RodapeDialogo, Selo, TamanhoBotao, Tom, aviso, botao_fantasma,
+        botao_icone, botao_primario, contagem, largura, variante_fantasma,
     },
     dialogos::{cabecalho, moldura, topo},
 };
@@ -77,7 +78,7 @@ impl Janela {
     /// andamento (a fila entra quando ele acabar); parado, o rodapé traz o "Entregar agora".
     pub(super) fn pilula_da_fila(
         &self,
-        chat: &str,
+        _chat: &str,
         painel: u64,
         n: usize,
         rodando: bool,
@@ -102,18 +103,18 @@ impl Janela {
                     .child(Selo::contagem(n))
                     .child(div().metadado().text_color(Cores::apagado()).child(rotulo(n, rodando, estreita))),
             );
-        let (motor, janela, id) = (self.motor.clone(), cx.entity().downgrade(), chat.to_string());
-        popover(("pop-fila", painel as usize))
-            .anchor(Anchor::TopLeft)
-            .offset(px(8.))
-            .trigger(gatilho)
-            .content(move |_, window, cx| {
-                let Some(m) = motor.clone() else {
-                    return div().into_any_element();
-                };
-                corpo_da_fila(&m, &janela, &id, painel, rodando, window, cx)
-            })
-            .into_any_element()
+        gatilho.on_click(cx.listener(move |this, _, _, cx| {
+            if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel) { p.fila_aberta = !p.fila_aberta; }
+            cx.notify();
+        })).into_any_element()
+    }
+
+    pub(super) fn fila_do_painel(&self, motor: &Entity<Motor>, chat: &str, ix: usize, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let p = &self.paineis[ix];
+        if !p.fila_aberta || motor.read(cx).na_fila(chat) == 0 { return None; }
+        let rodando = matches!(motor.read(cx).execucao(chat), crate::modelo::Execucao::Rodando { .. });
+        Some(div().map(super::mensagens::coluna).py(esp::E8)
+            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, window, cx)).into_any_element())
     }
 
     /// Tira uma mensagem da fila. O texto volta para a caixa quando ela está vazia; com algo
@@ -177,8 +178,8 @@ fn corpo_da_fila(
     chat: &str,
     painel: u64,
     rodando: bool,
-    window: &mut Window,
-    cx: &mut App,
+    window: &Window,
+    cx: &App,
 ) -> AnyElement {
     let m = motor.read(cx);
     let fila = m.fila_do_chat(chat);
@@ -200,17 +201,17 @@ fn corpo_da_fila(
             agora,
         })
         .collect();
-    let cabecalho = |valor: Option<SharedString>| CabecalhoPopover::Escolha {
-        simbolo: Some(super::componentes::Simbolo::Icone(Lucide::ListChecks.into(), Some(Cores::tenue()))),
-        titulo: "Fila desta conversa".into(),
-        valor: valor.map(|v| (v, Cores::texto())),
-        dica: None,
-    };
+    let fechar = janela.clone();
+    let cabecalho = h_flex().gap(esp::E8).items_center()
+        .child(super::mensagens::icone_de(Lucide::ListChecks, 16.).text_color(Cores::tenue()))
+        .child(div().flex_1().corpo_ui().text_color(Cores::texto()).child(format!("Fila · {}", contagem(total, "mensagem", "mensagens"))))
+        .child(botao_icone(("fechar-fila", painel as usize), Lucide::X, "Fechar a fila", TamanhoBotao::Linha, window, cx)
+            .on_click(move |_, _, cx| { let _ = fechar.update(cx, |j, cx| {
+                if let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel) { p.fila_aberta = false; }
+                cx.notify();
+            }); }));
     if linhas.is_empty() {
-        return CorpoPopover::new(LarguraPopover::P400)
-            .cabecalho(cabecalho(None))
-            .child(div().corpo_ui().text_color(Cores::tenue()).child("A fila está vazia."))
-            .into_any_element();
+        return div().into_any_element();
     }
     let desenhadas: Vec<AnyElement> = linhas
         .into_iter()
@@ -252,11 +253,12 @@ fn corpo_da_fila(
     } else {
         None
     };
-    CorpoPopover::new(LarguraPopover::P400)
-        .cabecalho(cabecalho(Some(contagem(total, "mensagem", "mensagens").into())))
-        .child(v_flex().gap(esp::E6).children(desenhadas))
+    v_flex().w_full().min_w_0().gap(esp::E8).p(esp::E12).rounded(raio::CARTAO)
+        .border_1().border_color(Cores::borda()).bg(Cores::cartao_elevado())
+        .child(cabecalho)
+        .child(v_flex().gap(esp::E6).children(desenhadas).max_h(r(160.)).overflow_y_scrollbar().id(("fila-mensagens", painel as usize)))
         .child(div().metadado().text_color(Cores::tenue()).child(explicacao))
-        .when_some(entregar, |c, b| c.rodape(h_flex().justify_end().child(b)))
+        .when_some(entregar, |c, b| c.child(h_flex().justify_end().child(b)))
         .into_any_element()
 }
 
@@ -270,8 +272,8 @@ fn linha_da_fila(
     chat: &str,
     painel: u64,
     linha: Linha,
-    window: &mut Window,
-    cx: &mut App,
+    window: &Window,
+    cx: &App,
 ) -> AnyElement {
     let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora } = linha;
     let dica: SharedString = dica.into();

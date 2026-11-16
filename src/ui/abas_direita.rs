@@ -72,8 +72,8 @@ impl Janela {
         let compacta = n > 1 && self.direita_compacta;
         let tom = |ativa: bool| match () {
             _ if n <= 1 => TomAba::Unica,
-            _ if ativa => TomAba::Selecionada,
-            _ => TomAba::Normal,
+            _ if ativa => TomAba::Ativa,
+            _ => TomAba::Inativa,
         };
         let dica = |e: Stateful<Div>, d: Option<SharedString>| match d {
             Some(d) => e.tooltip(move |window, cx| Tooltip::new(d.clone()).build(window, cx)),
@@ -87,7 +87,7 @@ impl Janela {
             if n > 1 && !ativa {
                 aba = aba.cursor_pointer().on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Chat, cx)));
             }
-            abas.push(super::sem_arrastar().flex().min_w_0().child(dica(aba, d)).into_any_element());
+            abas.push(super::sem_arrastar().flex().min_w_0().child(super::componentes::casca_da_aba().child(dica(aba, d))).into_any_element());
         }
         if let Some((raiz, caminho)) = arquivo {
             let ativa = matches!(visivel, AbaDireita::Arquivo(_));
@@ -105,7 +105,7 @@ impl Janela {
                 aba = aba.cursor_pointer().on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Arquivo(0), cx)));
             }
             let caminho = SharedString::from(raiz.join(&caminho).display().to_string());
-            abas.push(super::sem_arrastar().flex().min_w_0().child(dica(aba, Some(caminho))).into_any_element());
+            abas.push(super::sem_arrastar().flex().min_w_0().child(super::componentes::casca_da_aba().child(dica(aba, Some(caminho)))).into_any_element());
         }
         self.arrastavel(id)
             .flex_none()

@@ -26,7 +26,7 @@ pub const EM_USO_SEGUNDOS: u64 = 300;
 /// está à vista, o histórico entra de 60 em 60.
 pub const ITENS_POR_VEZ: usize = 60;
 /// O histórico guarda no máximo isso de itens, os mais novos.
-const MAX_ITENS: usize = 6000;
+pub const MAX_ITENS: usize = 6000;
 /// O resultado de uma ferramenta no histórico fica até aqui.
 const MAX_RESULTADO: usize = 4000;
 /// O `criado_por` dos chats que vieram do Claude Code.
@@ -481,15 +481,19 @@ pub struct Historico {
 }
 
 pub fn historico(arquivo: &Path, ate: Option<u64>) -> std::io::Result<Historico> {
+    historico_com_maximo(arquivo, ate, MAX_ITENS)
+}
+
+pub fn historico_com_maximo(arquivo: &Path, ate: Option<u64>, maximo: usize) -> std::io::Result<Historico> {
     let arquivo = fs::File::open(arquivo)?;
     let leitor: Box<dyn Read> = match ate {
         Some(limite) => Box::new(arquivo.take(limite)),
         None => Box::new(arquivo),
     };
-    Ok(historico_de(BufReader::with_capacity(1 << 16, leitor)))
+    Ok(historico_limitado_de(BufReader::with_capacity(1 << 16, leitor), maximo.max(ITENS_POR_VEZ)))
 }
 
-fn historico_de(leitor: impl BufRead) -> Historico {
+fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
     let mut itens: Vec<Item> = Vec::new();
     // As chamadas pelo id, com o índice contado desde o começo (os cortados saem da frente).
     let mut chamadas: HashMap<String, usize> = HashMap::new();
@@ -596,14 +600,14 @@ fn historico_de(leitor: impl BufRead) -> Historico {
             _ => {}
         }
         // Sem deixar crescer sem fim: os mais antigos saem aos blocos.
-        if itens.len() >= 2 * MAX_ITENS {
-            let sobra = itens.len() - MAX_ITENS;
+        if itens.len() >= 2 * maximo {
+            let sobra = itens.len() - maximo;
             itens.drain(..sobra);
             cortados += sobra;
         }
     }
-    if itens.len() > MAX_ITENS {
-        let sobra = itens.len() - MAX_ITENS;
+    if itens.len() > maximo {
+        let sobra = itens.len() - maximo;
         itens.drain(..sobra);
         cortados += sobra;
     }
@@ -1342,6 +1346,10 @@ mod testes {
         assert_eq!(h.itens.len(), MAX_ITENS);
         assert_eq!(h.cortados, 11);
         assert!(matches!(h.itens.last(), Some(Item::Ferramenta { resultado: Some(r), erro: true, .. }) if r == "a\nb"));
+        let ampliado = historico_com_maximo(&arquivo, None, MAX_ITENS + 100).unwrap();
+        assert_eq!(ampliado.cortados, 0);
+        assert_eq!(ampliado.itens.len(), MAX_ITENS + 11);
+        assert!(matches!(ampliado.itens.first(), Some(Item::Usuario { texto, .. }) if texto == "m0"));
         let _ = fs::remove_dir_all(&raiz);
     }
 

@@ -133,6 +133,8 @@ pub enum Evento {
         conteudo: String,
         erro: bool,
     },
+    /// O Codex confirmou (ou recusou) uma mensagem enviada durante o turno.
+    DirecaoConfirmada { texto: String, aceita: bool },
     Fim {
         erro: bool,
         texto: String,
@@ -159,6 +161,7 @@ pub enum Evento {
 pub struct Processo {
     filho: Child,
     entrada: Option<ChildStdin>,
+    codex: Option<Arc<Mutex<crate::agente_codex::servidor::Canal>>>,
     escopo: Escopo,
     parado: bool,
 }
@@ -172,7 +175,7 @@ impl Processo {
         let codex = opcoes.agente == crate::modelo::Agente::Codex;
         let mut comando = if codex {
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
-            comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos(opcoes, mensagem.imagens));
+            comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
             if let Some((_, chave)) = opcoes.mcp_da_equipe.as_deref().and_then(crate::memoria_equipe::conexao_do_arquivo) {
                 comando.env("VITRAL_MEMORIA_EQUIPE_TOKEN", chave);
             }
@@ -207,6 +210,14 @@ impl Processo {
         let saida = filho.stdout.take().unwrap();
         let erros = filho.stderr.take().unwrap();
         let mut entrada = filho.stdin.take();
+        let canal_codex = if codex {
+            entrada.take().map(|stdin| Arc::new(Mutex::new(crate::agente_codex::servidor::Canal::novo(Box::new(stdin)))))
+        } else { None };
+        let mut protocolo_codex = canal_codex.as_ref().map(|canal| {
+            crate::agente_codex::servidor::Protocolo::novo(canal.clone(), crate::agente_codex::parametros_servidor(opcoes),
+                crate::agente_codex::servidor::entrada(mensagem.texto, mensagem.imagens), opcoes.esforco.clone())
+        });
+        if let Some(protocolo) = protocolo_codex.as_mut() { protocolo.iniciar()?; }
 
         // O stderr é lido junto: cheio (64 KiB) sem ninguém ler, ele travaria o claude.
         let ultimas = Arc::new(Mutex::new(VecDeque::new()));
@@ -224,7 +235,7 @@ impl Processo {
         });
         std::thread::spawn(move || {
             // O Codex fala outro formato, traduzido para os mesmos eventos.
-            let mut do_codex = codex.then(crate::agente_codex::Leitor::default);
+            let mut do_codex = protocolo_codex;
             for linha in BufReader::new(saida).lines() {
                 let Ok(linha) = linha else { break };
                 let Ok(valor) = serde_json::from_str::<Value>(&linha) else {
@@ -250,18 +261,13 @@ impl Processo {
             enviar(Evento::Saiu { stderr, codigo });
         });
 
-        if codex {
-            // O pedido inteiro vai pela entrada, que fecha em seguida: o `codex exec` é um turno
-            // por processo, e parar é pelo sinal (ver `interromper`).
-            if let Some(mut entrada) = entrada.take() {
-                entrada.write_all(mensagem.texto.as_bytes()).and_then(|()| entrada.flush())?;
-            }
-        } else if let Some(entrada) = entrada.as_mut() {
+        if let Some(entrada) = entrada.as_mut() {
             escrever_mensagem(entrada, mensagem)?;
         }
         Ok(Self {
             filho,
             entrada,
+            codex: canal_codex,
             escopo,
             parado: false,
         })
@@ -270,11 +276,12 @@ impl Processo {
     /// Encerra a entrada: o processo termina depois do turno atual.
     pub fn fechar_entrada(&mut self) {
         self.entrada = None;
+        if let Some(canal) = &self.codex { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
     }
 
     /// A entrada ainda está aberta: dá para dirigir o turno (`dirigir`).
     pub fn entrada_aberta(&self) -> bool {
-        self.entrada.is_some()
+        self.entrada.is_some() || self.codex.as_ref().is_some_and(|c| c.lock().unwrap_or_else(|e| e.into_inner()).aberta())
     }
 
     /// Dirige o turno que está rodando: escreve outra mensagem do usuário na entrada, que fica
@@ -295,6 +302,9 @@ impl Processo {
     ///
     /// Nada dela aparece na saída: quem põe a mensagem na conversa é o Vitral.
     pub fn dirigir(&mut self, mensagem: Mensagem) -> bool {
+        if let Some(canal) = &self.codex {
+            return canal.lock().unwrap_or_else(|e| e.into_inner()).dirigir(mensagem.texto, mensagem.imagens).is_ok();
+        }
         let Some(entrada) = self.entrada.as_mut() else {
             return false;
         };
@@ -308,6 +318,8 @@ impl Processo {
     /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
     /// saiu (`Motor::conferir_parada`).
     pub fn interromper(&mut self) {
+        if let Some(canal) = &self.codex
+            && canal.lock().unwrap_or_else(|e| e.into_inner()).interromper().is_ok() { return; }
         if let Some(mut entrada) = self.entrada.take() {
             let pedido = json!({
                 "type": "control_request",
@@ -330,7 +342,7 @@ impl Processo {
     /// SIGTERM no claude e em tudo que ele abriu (com SIGKILL ele não limpa nada e os shells,
     /// servidores e hooks ficam rodando sozinhos).
     pub fn matar(&mut self) {
-        self.entrada = None;
+        self.fechar_entrada();
         if !self.parado && self.esperar().is_none() {
             self.parado = true;
             self.escopo.parar();
@@ -1400,6 +1412,7 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
     let campo = |chave: &str| entrada[chave].as_str().filter(|t| !t.is_empty());
     let arquivo = campo("file_path").or_else(|| campo("notebook_path")).map(str::to_string);
     let detalhe = match nome {
+        "Edit" | "Write" if campo("diff").is_some() => campo("diff").map(str::to_string),
         "Edit" => Some(troca(campo("old_string").unwrap_or_default(), campo("new_string").unwrap_or_default())),
         "MultiEdit" => entrada["edits"].as_array().map(|trocas| {
             trocas
