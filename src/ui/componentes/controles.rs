@@ -921,6 +921,12 @@ impl RenderOnce for ControleSegmentado {
         // O segmentado comum é neutro (um vidro mais claro com um fio em volta); só o de outra
         // cor (um estado, um aviso) pinta a escolha.
         let neutro = cor == Cores::destaque();
+        // O escolhido do neutro (e do solto) é a ficha de metal, a mesma do alto da lista, do
+        // esforço e das listas de escolha; a pílula tingida fica só para o de outra cor. Antes o
+        // neutro sem `solto` (as Configurações, o boas-vindas) saía numa pílula cinza lisa, mais
+        // clara que o trilho: o mesmo componente marcava o escolhido de dois jeitos opostos
+        // (relatório de design, 16/11/2026). `solto` agora só tira o fio do trilho.
+        let em_ficha = neutro || self.solto;
         let cor_texto = if neutro { Cores::forte() } else { cor };
         let (fundo_escolhido, borda_escolhida) =
             if neutro { (Cores::selecao(), Cores::borda_forte()) } else { (Cores::selecao_de(cor), Cores::tinta_borda(cor)) };
@@ -961,9 +967,8 @@ impl RenderOnce for ControleSegmentado {
                 .w(px(largura))
                 .rounded(raio::de(altura) - px(2.))
                 .map(|s| {
-                    if solto {
-                        // No alto da lista (e no esforço), a escolhida vai na ficha do escolhido:
-                        // o azul leve do destaque com a aresta de tecla.
+                    if em_ficha {
+                        // A escolhida vai na ficha do escolhido: o metal com a aresta de tecla.
                         s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
                     } else {
                         // A pílula escolhida fica em relevo (tecla) dentro do trilho cavado (poço).
@@ -1030,8 +1035,8 @@ impl RenderOnce for ControleSegmentado {
                     .rounded(raio::de(altura) - px(2.))
                     .when(self.largura_total, |s| s.flex_1())
                     .border_1()
-                    .border_color(if escolhido && !tem_pilula { borda_escolhida } else { transparent_black() })
-                    .when(escolhido && !tem_pilula, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
+                    .border_color(if escolhido && !tem_pilula && !em_ficha { borda_escolhida } else { transparent_black() })
+                    .when(escolhido && !tem_pilula && !em_ficha, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
                     .text_size(r(13.))
                     .whitespace_nowrap()
                     .font_weight(if escolhido { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
@@ -1047,6 +1052,11 @@ impl RenderOnce for ControleSegmentado {
                             *lugar = Some(limites);
                         }
                     }))
+                    // No primeiro quadro (sem medida, sem a pílula que desliza), a ficha no próprio
+                    // segmento.
+                    .when(escolhido && !tem_pilula && em_ficha, |s| {
+                        s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
+                    })
                     .when_some(seg.icone, |s, icone| s.child(icone.with_size(tam(window, 14.))))
                     .when(!self.so_icone, |s| s.child(seg.rotulo.clone()))
                     .when_some(seg.ponto, |s, c| s.child(div().size(r(6.)).rounded_full().bg(c)))

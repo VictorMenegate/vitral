@@ -931,7 +931,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   como o reflexo de um vidro; as gavetas da lista e da direita entram deslizando 24 px da borda, em
   180 ms, com o véu em fade junto, e fecham secas. O véu dos diálogos cobre só a janela, não a
   margem da sombra. A pílula do segmentado (Conversas · Arquivos, o esforço) desliza até a
-  opção nova; os botões redondos (enviar, +, sino) acendem suave com o ponteiro em cima; os anéis de
+  opção nova; no segmentado neutro ela é sempre a ficha de metal, também nas Configurações e no
+  boas-vindas (a pílula tingida fica para o segmentado de outra cor); os botões redondos (enviar, +, sino) acendem suave com o ponteiro em cima; os anéis de
   uso e de contexto deslizam até o valor novo; o sino pulsa quando chega algo que precisa de você;
   e o ponto de "rodando" respira enquanto o compasso dos spinners e do texto com brilho (o da
   linha de estado) bate. Listas, menus e cartões continuam com o
