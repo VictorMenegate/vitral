@@ -828,8 +828,14 @@ impl Janela {
             None => nome,
         };
         let aberto = self.pop_caixa == Some((b.painel, PopCaixa::Modelo));
+        let marca_de = |a: Agente| if a == Agente::Codex { Marca::Codex } else { Marca::Claude };
+        // Na dupla, as duas marcas, em toda largura (a de quem trabalhou por último na frente).
+        let simbolo = match &chat.parceiro {
+            Some(p) => Simbolo::Dupla(marca_de(chat.agente), marca_de(p.agente)),
+            None => Simbolo::Marca(marca_de(chat.agente)),
+        };
         let mut chip = Chip::new(b.id("chip-modelo"), if b.larga() { nome.clone() } else { curto })
-            .simbolo(Simbolo::Marca(if codex { Marca::Codex } else { Marca::Claude }))
+            .simbolo(simbolo)
             .tamanho(b.tamanho())
             .mudado(chat.modelo.is_some() || chat.agente != motor.config.agente_padrao)
             .seta(b.larga())

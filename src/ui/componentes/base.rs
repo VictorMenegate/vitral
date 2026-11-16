@@ -30,6 +30,10 @@ pub enum Simbolo {
     /// O estado de um chat, como o ícone dele na lista (`icone_de_estado`): se copia, para as
     /// listas de escolha que desenham a cada quadro.
     Estado(Option<Sinal>),
+    /// Duas marcas sobrepostas, deslocadas 6 (Claude e Codex juntos no mesmo chat): a primeira na
+    /// frente. Com uma marca só, a dupla parecia ter virado só de um deles (teste de usabilidade,
+    /// 16/11/2026).
+    Dupla(Marca, Marca),
     Elemento(AnyElement),
 }
 
@@ -52,6 +56,7 @@ impl Simbolo {
             Simbolo::Anel { fracao, cor } => Simbolo::Anel { fracao: *fracao, cor: *cor },
             Simbolo::Imagem(imagem) => Simbolo::Imagem(imagem.clone()),
             Simbolo::Estado(sinal) => Simbolo::Estado(*sinal),
+            Simbolo::Dupla(frente, atras) => Simbolo::Dupla(*frente, *atras),
             Simbolo::Elemento(_) => return None,
         })
     }
@@ -76,6 +81,14 @@ impl Simbolo {
                 .into_any_element(),
             Simbolo::Imagem(imagem) => img(imagem).flex_none().size(r(lado)).into_any_element(),
             Simbolo::Estado(sinal) => icone_de_estado(sinal, lado).into_any_element(),
+            Simbolo::Dupla(frente, atras) => div()
+                .flex_none()
+                .relative()
+                .h(r(lado))
+                .w(r(lado + 6.))
+                .child(div().absolute().top_0().right_0().child(atras.disco(lado)))
+                .child(div().absolute().top_0().left_0().child(frente.disco(lado)))
+                .into_any_element(),
             Simbolo::Elemento(elemento) => elemento,
         }
     }

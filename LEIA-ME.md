@@ -62,7 +62,8 @@ componentes do GPUI Kit.
   pedido de revisão que fica fora da conversa (`Entrada.registrada`); a rodada para em "Nada a
   acrescentar" (`nada_a_acrescentar`), no limite de trocas, num erro ou no Parar. Escolher no seletor
   um modelo do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O
-  interruptor fica no seletor de modelo (`juntar_agentes`).
+  interruptor fica no seletor de modelo (`juntar_agentes`), e o chip do modelo mostra as duas
+  marcas sobrepostas (`Simbolo::Dupla`, a de quem trabalhou por último na frente) em toda largura.
 - **Subagente em segundo plano.** Desde o Claude Code 2.1.3xx a chamada Agent volta na hora com
   `tool_use_result.status = "async_launched"`: isso vira `Evento::SubLancado`, e não resultado. O
   `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
