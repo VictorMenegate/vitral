@@ -2,6 +2,8 @@
 //! botões da janela), o menu "⋯", o popover de uso, a tela sem conversa e a soltura de arquivos.
 //! As mensagens ficam em `mensagens.rs` e a caixa em `composer.rs`.
 
+use std::{collections::HashMap, rc::Rc};
+
 use gpui_kit::base::actions::SelectDown;
 use gpui_kit::component::{
     ElementExt as _, Selectable, h_flex,
@@ -43,14 +45,26 @@ use crate::{
 /// A chave da linha "Novo chat neste painel", no "+" do cabeçalho.
 const NOVO_CHAT_NO_PAINEL: &str = "\u{0}novo-chat";
 
-fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>, a_vista: Option<&str>) -> Vec<GrupoDeEscolha> {
+/// Uma linha do histórico, em dados simples: a busca própria (sem acento e por palavras, item 4.3)
+/// monta as linhas de novo a cada letra, sem o motor.
+#[derive(Clone)]
+struct LinhaDoHistorico {
+    grupo: Option<&'static str>,
+    chave: String,
+    titulo: String,
+    descricao: String,
+    sinal: Option<super::componentes::Sinal>,
+    termos: String,
+}
+
+fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>, a_vista: Option<&str>) -> Vec<LinhaDoHistorico> {
     // O "+N" da faixa das abas mostra só as que saíram dela.
     let mut chats: Vec<&Chat> = motor.chats_da_lista().filter(|c| so.is_none_or(|so| so.contains(&c.id))).collect();
     chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
     // A pasta só aparece quando é outra que a do chat deste painel: com todos os chats em ~/eita,
     // o "· eita" em toda linha não dizia nada (rodada de uso, item 3.3).
     let pasta_do_painel = a_vista.and_then(|id| motor.chat(id)).map(|c| c.cwd.clone());
-    let item = |c: &Chat| {
+    let linha = |grupo: Option<&'static str>, c: &Chat| {
         let quando = super::tempo_relativo(c.atualizado_em);
         let quando = if quando == "agora" { quando } else { format!("há {quando}") };
         let pasta = if motor.sem_pasta(c) {
@@ -71,11 +85,13 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
         }
         partes.push(quando);
         partes.extend(pasta);
-        ItemDeEscolha {
-            simbolo: Some(Simbolo::Estado(sinal_do_chat(motor, c))),
-            descricao: Some(format!("{onde}{}", partes.join(" · ")).into()),
-            termos: Some(com_til(&c.cwd).into()),
-            ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
+        LinhaDoHistorico {
+            grupo,
+            chave: c.id.clone(),
+            titulo: c.titulo.clone(),
+            descricao: format!("{onde}{}", partes.join(" · ")),
+            sinal: sinal_do_chat(motor, c),
+            termos: com_til(&c.cwd),
         }
     };
     let (arquivados, ativos): (Vec<&Chat>, Vec<&Chat>) = chats.into_iter().partition(|c| c.arquivado);
@@ -86,14 +102,68 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
             && motor.espera_do_chat(c).is_some_and(|e| e != crate::motor::Espera::Nova)
     });
     let recentes = if esperando.is_empty() { None } else { Some("Recentes") };
-    [(Some("Esperando você"), esperando), (recentes, ativos), (Some("Arquivados"), arquivados)]
-        .into_iter()
-        .filter(|(_, chats)| !chats.is_empty())
-        .map(|(titulo, chats)| GrupoDeEscolha {
-            titulo: titulo.map(Into::into),
-            itens: chats.into_iter().map(item).collect(),
+    let mut linhas: Vec<LinhaDoHistorico> = Vec::new();
+    for (grupo, chats) in [(Some("Esperando você"), esperando), (recentes, ativos), (Some("Arquivados"), arquivados)] {
+        linhas.extend(chats.into_iter().map(|c| linha(grupo, c)));
+    }
+    linhas
+}
+
+/// As linhas que casam com a busca, nos grupos delas. Sem acento dos dois lados e por palavras
+/// soltas, no título, na pasta ou numa fala; as que casam no título primeiro, e dentro disso a
+/// ordem de antes (por data).
+fn grupos_que_casam(
+    linhas: &[LinhaDoHistorico],
+    preparados: &HashMap<String, Rc<super::lateral::Preparado>>,
+    busca: &str,
+) -> Vec<GrupoDeEscolha> {
+    let palavras = super::acentos::palavras(busca);
+    let mut achadas: Vec<(super::lateral::Casou, &LinhaDoHistorico)> = linhas
+        .iter()
+        .filter_map(|l| {
+            let casou = match preparados.get(&l.chave) {
+                _ if palavras.is_empty() => Some(super::lateral::Casou::NoTitulo),
+                Some(p) => p.casa(&palavras),
+                None => super::acentos::tem_todas(&super::acentos::normalizar(&format!("{} {}", l.titulo, l.termos)), &palavras)
+                    .then_some(super::lateral::Casou::NoTitulo),
+            };
+            Some((casou?, l))
         })
-        .collect()
+        .collect();
+    achadas.sort_by_key(|(casou, _)| *casou);
+    let mut grupos: Vec<GrupoDeEscolha> = Vec::new();
+    // Os grupos na ordem em que aparecem nas linhas.
+    let mut ordem: Vec<Option<&'static str>> = Vec::new();
+    for l in linhas {
+        if !ordem.contains(&l.grupo) {
+            ordem.push(l.grupo);
+        }
+    }
+    for grupo in ordem {
+        let itens: Vec<ItemDeEscolha> = achadas
+            .iter()
+            .filter(|(_, l)| l.grupo == grupo)
+            .map(|(_, l)| {
+                if l.chave == NOVO_CHAT_NO_PAINEL {
+                    return ItemDeEscolha {
+                        simbolo: Some(Simbolo::icone(Lucide::Plus)),
+                        termos: Some(l.termos.clone().into()),
+                        ..ItemDeEscolha::new(NOVO_CHAT_NO_PAINEL, l.titulo.clone())
+                    };
+                }
+                ItemDeEscolha {
+                    simbolo: Some(Simbolo::Estado(l.sinal)),
+                    descricao: Some(l.descricao.clone().into()),
+                    termos: Some(l.termos.clone().into()),
+                    ..ItemDeEscolha::new(l.chave.clone(), l.titulo.clone())
+                }
+            })
+            .collect();
+        if !itens.is_empty() {
+            grupos.push(GrupoDeEscolha { titulo: grupo.map(Into::into), itens });
+        }
+    }
+    grupos
 }
 
 /// A dica da aba de fundo, em até duas linhas: o título; e o estado com quando ("Terminou há 3
@@ -1228,31 +1298,45 @@ impl Janela {
             .filter(|(_, p)| p.id != painel_id)
             .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
             .collect();
-        let mut grupos = grupos_do_historico(motor.read(cx), &noutros, so.as_deref(), atual.as_deref());
+        let mut linhas = linhas_do_historico(motor.read(cx), &noutros, so.as_deref(), atual.as_deref());
         // No "+" do cabeçalho, a primeira linha é o chat novo neste painel, já marcada (o Enter
         // cria). A busca é a da lista: digitar filtra o histórico, e ela só fica se casar com o
         // texto dela (dono, 16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e
         // ter o histórico também").
         let escolhido = if so.is_none() {
-            grupos.insert(
+            linhas.insert(
                 0,
-                GrupoDeEscolha {
-                    titulo: None,
-                    itens: vec![ItemDeEscolha {
-                        simbolo: Some(Simbolo::icone(Lucide::Plus)),
-                        termos: Some("novo chat criar conversa".into()),
-                        ..ItemDeEscolha::new(NOVO_CHAT_NO_PAINEL, "Novo chat neste painel")
-                    }],
+                LinhaDoHistorico {
+                    grupo: None,
+                    chave: NOVO_CHAT_NO_PAINEL.into(),
+                    titulo: "Novo chat neste painel".into(),
+                    descricao: String::new(),
+                    sinal: None,
+                    termos: "novo chat criar conversa".into(),
                 },
             );
             Some(NOVO_CHAT_NO_PAINEL.into())
         } else {
             atual.map(Into::into)
         };
+        // O texto de cada chat, preparado para a busca (o mesmo guardado da lista).
+        let preparados: HashMap<String, Rc<super::lateral::Preparado>> = {
+            let m = motor.read(cx);
+            linhas
+                .iter()
+                .filter_map(|l| m.chat(&l.chave))
+                .map(|c| (c.id.clone(), super::lateral::preparado(&self.busca_preparada, c)))
+                .collect()
+        };
+        let grupos = grupos_que_casam(&linhas, &preparados, "");
+        let linhas = Rc::new(linhas);
         self.so_um_flutuante(QualFlutuante::Historico(painel_id));
         self.historico_aberto = Some((painel_id, so.is_some()));
         lista.update(cx, |l, cx| {
             l.ficha_no_escolhido(true);
+            // A busca do histórico ignora acento e aceita as palavras em qualquer ordem, como a da
+            // lista (rodada de uso, item 4.3).
+            l.filtro_proprio(move |busca| grupos_que_casam(&linhas, &preparados, busca));
             l.definir(grupos, escolhido, cx);
             l.abrir(window, cx);
         });
@@ -1394,8 +1478,37 @@ impl Direita {
 
 #[cfg(test)]
 mod testes {
-    use super::{JeitoDaAba, jeito_das_abas, modelo_da_conversa};
+    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa};
     use crate::modelo::Chat;
+
+    #[test]
+    fn historico_busca_sem_acento_com_o_titulo_primeiro() {
+        let linha = |chave: &str, titulo: &str, grupo: Option<&'static str>| LinhaDoHistorico {
+            grupo,
+            chave: chave.into(),
+            titulo: titulo.into(),
+            descricao: String::new(),
+            sinal: None,
+            termos: format!("~/eita/{chave}"),
+        };
+        let mut so_no_texto = Chat::novo("b".into(), "Ajustes", std::path::PathBuf::from("/x/eita"));
+        so_no_texto.itens.push(crate::modelo::Item::Assistente { texto: "A integração ficou pronta".into(), em: 0 });
+        let no_titulo = Chat::novo("a".into(), "Integração do Tiny", std::path::PathBuf::from("/x/eita"));
+        let cache = Default::default();
+        let preparados = [&so_no_texto, &no_titulo]
+            .into_iter()
+            .map(|c| (c.id.clone(), crate::ui::lateral::preparado(&cache, c)))
+            .collect();
+        let linhas = vec![linha("b", "Ajustes", None), linha("a", "Integração do Tiny", None), linha("c", "Outro", Some("Arquivados"))];
+        let achados = grupos_que_casam(&linhas, &preparados, "integracao");
+        let chaves: Vec<String> = achados.iter().flat_map(|g| g.itens.iter().map(|i| i.chave.to_string())).collect();
+        // O que casa no título vem antes do que casa só numa fala, mesmo sendo mais antigo.
+        assert_eq!(chaves, ["a", "b"]);
+        // Sem busca, tudo, na ordem e nos grupos de antes.
+        let todos = grupos_que_casam(&linhas, &preparados, "");
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[1].titulo.as_ref().map(|t| t.to_string()), Some("Arquivados".to_string()));
+    }
 
     /// Com espaço, todas com título; apertando, a mais estreita vira ícone primeiro e devolve o
     /// espaço às outras; sem lugar nem assim para o começo do título da aba à vista, as de fundo

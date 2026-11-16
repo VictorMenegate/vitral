@@ -55,6 +55,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   Ultrathink ou Ultracode, e com algo escrito ela se junta ao fim (Ctrl+Z desfaz). Com o turno
   rodando e a caixa vazia, a seta para cima traz de volta a última da fila. O lápis edita na própria
   linha, sem diálogo (Ctrl+Enter salva, Esc desiste).
+- **Busca de chat sem acento e por palavras.** Na lista e no histórico do "+", "integracao" acha
+  "integração" e "vip cupons" acha "Cupons para grupos VIP"; o que casa no título vem primeiro.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

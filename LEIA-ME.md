@@ -1074,8 +1074,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   ↑/↓ e Enter): a primeira linha, já marcada, é **Novo chat neste painel** (o Enter cria o chat
   novo aqui, como aba, na mesma pasta que o "+" da lista escolheria); embaixo, todos os chats, do
   mexido por último ao mais antigo, cada um com o ícone do estado, a hora e a pasta, e os
-  arquivados num grupo no fim. Digitar filtra a lista, e a linha do chat novo só fica se casar com
-  o texto dela ("novo"). O chat à vista diz "à vista neste painel"; escolher outro mostra ele
+  arquivados num grupo no fim. Digitar filtra a lista (sem acento e por palavras soltas, como a
+  busca da lista: ver abaixo), e a linha do chat novo só fica se casar com o texto dela ("novo"). O chat à vista diz "à vista neste painel"; escolher outro mostra ele
   neste painel, como uma aba (o que já está à vista noutro painel diz "no painel 2" e só ativa
   aquele painel). O botão fica também no painel estreito. O **⋯** do cabeçalho saiu: o **botão
   direito** no cabeçalho (na faixa das abas e no vazio dela) abre o menu do painel onde o mouse
@@ -1183,6 +1183,13 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   que espera você (pedido, parada, erro) vem num grupo "Esperando você" no alto. Se a lista sai de
   vista com o foco nela (um painel novo a empurrou, Ctrl+B, a janela estreitou), o foco vai para a
   caixa do painel ativo.
+- **Busca sem acento e por palavras** (`src/ui/acentos.rs`, rodada de uso, item 4.3). Na lista e no
+  histórico do "+", a busca ignora acento e maiúsculas dos dois lados e separa o termo em palavras:
+  aceita o chat em que cada palavra aparece no título, na pasta ou numa fala, em qualquer ordem
+  ("integracao" acha "integração"; "vip cupons" acha "Cupons para grupos VIP"). Primeiro vêm os que
+  casam no título, depois os que casam só no texto, e dentro de cada grupo a ordem é por data. O
+  realce marca cada palavra no texto original. O texto preparado de cada chat fica guardado e só é
+  refeito quando os itens mudam. A peça que tira o acento é a mesma do Ctrl+F da conversa.
 - **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone, com o número na dica; liga e desliga a
   vista das arquivadas; a busca acha as duas) e, com algo rodando, quantos agentes rodam no Vitral
   inteiro ("2 rodando"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.

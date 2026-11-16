@@ -217,29 +217,15 @@ fn primeira_linha(texto: &str) -> String {
         .collect()
 }
 
-/// Onde `busca` (já em minúsculas) aparece em `texto`, ignorando maiúsculas, em bytes de `texto`.
+/// Onde a busca aparece em `texto`, ignorando maiúsculas e acento, em bytes de `texto`: a primeira
+/// ocorrência de qualquer uma das palavras dela (rodada de uso, item 4.3).
 fn trecho(texto: &str, busca: &str) -> Option<Range<usize>> {
-    let alvo: Vec<char> = busca.chars().flat_map(char::to_lowercase).collect();
-    if alvo.is_empty() {
-        return None;
+    let palavras = super::acentos::palavras(busca);
+    match palavras.as_slice() {
+        [] => None,
+        [uma] => super::acentos::primeira(texto, uma),
+        varias => super::acentos::faixas_das_palavras(texto, varias).into_iter().next(),
     }
-    let letras: Vec<(usize, char)> = texto.char_indices().collect();
-    for inicio in 0..letras.len() {
-        let (mut k, mut j) = (0, inicio);
-        while j < letras.len() && k < alvo.len() {
-            let baixa: Vec<char> = letras[j].1.to_lowercase().collect();
-            if !alvo[k..].starts_with(&baixa) {
-                break;
-            }
-            k += baixa.len();
-            j += 1;
-        }
-        if k == alvo.len() {
-            let fim = letras.get(j).map_or(texto.len(), |l| l.0);
-            return Some(letras[inicio].0..fim);
-        }
-    }
-    None
 }
 
 /// O termo achado, em forte: no título, no nome do arquivo e no recorte da prévia.
@@ -247,38 +233,107 @@ fn realce_da_busca() -> HighlightStyle {
     HighlightStyle { font_weight: Some(FontWeight::SEMIBOLD), color: Some(Cores::forte()), ..Default::default() }
 }
 
-/// Título com o peso do não lido ou com o trecho da busca em forte; `None` quando é o simples.
+/// Título com o peso do não lido ou com as palavras da busca em forte (cada uma, no texto
+/// original); `None` quando é o simples.
 fn titulo_rico(titulo: &str, busca: &str, nao_lido: bool) -> Option<StyledText> {
-    let faixa = if nao_lido {
-        0..titulo.len()
+    let faixas = if nao_lido {
+        vec![0..titulo.len()]
     } else {
-        trecho(titulo, busca)?
+        super::acentos::faixas_das_palavras(titulo, &super::acentos::palavras(busca))
     };
-    Some(StyledText::new(titulo.to_string()).with_highlights([(faixa, realce_da_busca())]))
+    if faixas.is_empty() {
+        return None;
+    }
+    Some(StyledText::new(titulo.to_string()).with_highlights(faixas.into_iter().map(|f| (f, realce_da_busca()))))
 }
 
-/// Casa com a busca (já em minúsculas): o título ou o texto de alguma fala.
-fn casa_com_a_busca(c: &Chat, busca: &str) -> bool {
-    busca.is_empty()
-        || c.titulo.to_lowercase().contains(busca)
-        || c.cwd.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().contains(busca))
-        || c.itens.iter().any(|i| match i {
-            Item::Usuario { texto, .. } | Item::Assistente { texto, .. } | Item::Entrega { texto, .. } => {
-                texto.to_lowercase().contains(busca)
+/// Onde a busca casou num chat: no título (ou na pasta) ou só no texto das falas. Os que casam no
+/// título vêm antes (rodada de uso, item 4.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Casou {
+    NoTitulo,
+    NoTexto,
+}
+
+/// O texto de um chat preparado para a busca, sem acento e em minúsculas, guardado até os itens
+/// mudarem: o título com a pasta e as falas.
+pub(super) struct Preparado {
+    assinatura: (usize, u64, String),
+    titulo: String,
+    falas: String,
+}
+
+impl Preparado {
+    fn de(chat: &Chat) -> Preparado {
+        let pasta = chat.cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut falas = String::new();
+        for item in &chat.itens {
+            if let Item::Usuario { texto, .. } | Item::Assistente { texto, .. } | Item::Entrega { texto, .. } = item {
+                falas.push_str(&super::acentos::normalizar(texto));
+                falas.push('\n');
             }
-            _ => false,
-        })
+        }
+        Preparado {
+            assinatura: (chat.itens.len(), chat.atualizado_em, chat.titulo.clone()),
+            titulo: super::acentos::normalizar(&format!("{}\n{pasta}", chat.titulo)),
+            falas,
+        }
+    }
+
+    /// Cada palavra aparece no título, na pasta ou numa fala, em qualquer ordem.
+    pub(super) fn casa(&self, palavras: &[String]) -> Option<Casou> {
+        if super::acentos::tem_todas(&self.titulo, palavras) {
+            return Some(Casou::NoTitulo);
+        }
+        palavras
+            .iter()
+            .all(|p| self.titulo.contains(p.as_str()) || self.falas.contains(p.as_str()))
+            .then_some(Casou::NoTexto)
+    }
 }
 
-/// As conversas arquivadas que casam com a busca, da mais recente para a mais antiga. Sem busca,
-/// nenhuma: fora dela, as arquivadas ficam em Arquivadas.
-fn arquivadas_que_casam<'a>(chats: impl Iterator<Item = &'a Chat>, busca: &str) -> Vec<&'a Chat> {
-    if busca.is_empty() {
+/// Casa com a busca: sem acento dos dois lados e por palavras soltas. O texto preparado de cada
+/// chat fica guardado em `cache` e só é refeito quando os itens mudam.
+pub(super) fn casa_com_a_busca(
+    cache: &std::cell::RefCell<std::collections::HashMap<String, Rc<Preparado>>>,
+    c: &Chat,
+    palavras: &[String],
+) -> Option<Casou> {
+    if palavras.is_empty() {
+        return Some(Casou::NoTitulo);
+    }
+    preparado(cache, c).casa(palavras)
+}
+
+/// O texto preparado de um chat, do guardado (ou feito agora, se os itens mudaram).
+pub(super) fn preparado(cache: &std::cell::RefCell<std::collections::HashMap<String, Rc<Preparado>>>, c: &Chat) -> Rc<Preparado> {
+    let assinatura = (c.itens.len(), c.atualizado_em, c.titulo.clone());
+    let mut cache = cache.borrow_mut();
+    match cache.get(&c.id).filter(|p| p.assinatura == assinatura) {
+        Some(p) => p.clone(),
+        None => {
+            let p = Rc::new(Preparado::de(c));
+            cache.insert(c.id.clone(), p.clone());
+            p
+        }
+    }
+}
+
+/// As conversas arquivadas que casam com a busca: as que casam no título primeiro, cada grupo da
+/// mais recente para a mais antiga. Sem busca, nenhuma: fora dela, as arquivadas ficam em
+/// Arquivadas.
+fn arquivadas_que_casam<'a>(
+    chats: impl Iterator<Item = &'a Chat>,
+    cache: &std::cell::RefCell<std::collections::HashMap<String, Rc<Preparado>>>,
+    palavras: &[String],
+) -> Vec<&'a Chat> {
+    if palavras.is_empty() {
         return Vec::new();
     }
-    let mut lista: Vec<&Chat> = chats.filter(|c| c.arquivado && casa_com_a_busca(c, busca)).collect();
-    lista.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
-    lista
+    let mut lista: Vec<(Casou, &Chat)> =
+        chats.filter(|c| c.arquivado).filter_map(|c| Some((casa_com_a_busca(cache, c, palavras)?, c))).collect();
+    lista.sort_by_key(|(onde, c)| (*onde, std::cmp::Reverse(c.atualizado_em)));
+    lista.into_iter().map(|(_, c)| c).collect()
 }
 
 /// Letras de contexto antes do termo, no recorte da prévia.
@@ -1251,14 +1306,21 @@ impl Janela {
 
     fn lista_conversas(&self, motor: &Motor, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> Montagem {
         let busca = ctx.busca.as_str();
-        let combina = |c: &Chat| casa_com_a_busca(c, busca);
+        let palavras = super::acentos::palavras(busca);
+        let combina = |c: &Chat| casa_com_a_busca(&self.busca_preparada, c, &palavras);
         let rodando = |c: &Chat| motor.execucao(&c.id).rodando();
 
         let mostrar_arquivados = self.filtro == Filtro::Arquivados;
         let geral = !mostrar_arquivados;
-        let mut chats: Vec<&Chat> =
-            motor.chats_da_lista().filter(|c| c.arquivado == mostrar_arquivados).filter(|c| combina(c)).collect();
-        chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+        // Na busca, os que casam no título antes dos que casam só no texto; dentro de cada grupo,
+        // por data (rodada de uso, item 4.3).
+        let mut achados: Vec<(Casou, &Chat)> = motor
+            .chats_da_lista()
+            .filter(|c| c.arquivado == mostrar_arquivados)
+            .filter_map(|c| Some((combina(c)?, c)))
+            .collect();
+        achados.sort_by_key(|(onde, c)| (*onde, std::cmp::Reverse(c.atualizado_em)));
+        let chats: Vec<&Chat> = achados.into_iter().map(|(_, c)| c).collect();
         let linhas: Vec<DaLista> = chats
             .into_iter()
             .map(|c| (c, pendencia_visivel(motor, c, self.selecionado.as_deref())))
@@ -1401,7 +1463,7 @@ impl Janela {
 
         // Na busca, as arquivadas que casam vêm no fim, tênues; fora dela, ficam em Arquivadas.
         if !mostrar_arquivados {
-            let arquivadas = arquivadas_que_casam(motor.chats_da_lista(), busca);
+            let arquivadas = arquivadas_que_casam(motor.chats_da_lista(), &self.busca_preparada, &palavras);
             if !arquivadas.is_empty() {
                 m.cabecalho(CabecalhoDeSecao::new("Arquivadas").contagem(arquivadas.len()));
                 for c in arquivadas {
@@ -2061,13 +2123,19 @@ mod testes {
         let mut na_pasta = conversa("c5", "Ajustes", &[]);
         (na_pasta.arquivado, na_pasta.cwd) = (true, "/p/frete-correios".into());
         let chats = vec![cupons, antiga, outra, na_pasta];
+        let cache = Default::default();
         let ids = |busca: &str| -> Vec<String> {
-            arquivadas_que_casam(chats.iter(), busca).into_iter().map(|c| c.id.clone()).collect()
+            let palavras = crate::ui::acentos::palavras(busca);
+            arquivadas_que_casam(chats.iter(), &cache, &palavras).into_iter().map(|c| c.id.clone()).collect()
         };
-        assert_eq!(ids("frete"), ["c4", "c3", "c5"]);
+        // As que casam no título (ou na pasta) vêm antes das que casam só no texto (item 4.3).
+        assert_eq!(ids("frete"), ["c4", "c5", "c3"]);
         assert!(ids("").is_empty());
         // O caminho acima da pasta não conta.
         assert!(ids("/p/").is_empty());
+        // Sem acento e por palavras soltas, em qualquer ordem.
+        assert_eq!(ids("CEP calculei"), ["c3"]);
+        assert_eq!(ids("fréte antigo"), ["c4"]);
     }
 
     fn achatar(nos: &[No]) -> Vec<(String, bool)> {

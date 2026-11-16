@@ -3,6 +3,7 @@
 
 pub mod componentes;
 mod abas_direita;
+mod acentos;
 pub mod arranjo;
 mod boas_vindas;
 mod abertura;
@@ -446,6 +447,9 @@ pub struct Janela {
     direita_compacta: bool,
     /// Os avisos do canto que você dispensou no × (a chave do pedido ou da falha).
     avisos_dispensados: HashSet<String>,
+    /// O texto de cada chat preparado para a busca da lista e do histórico (sem acento), refeito só
+    /// quando os itens mudam (item 4.3).
+    busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
     /// A mensagem da fila que está sendo editada na própria linha (item 1.3).
     editando_fila: Option<fila::EdicaoNaFila>,
     /// O último filtro do menu "@" (a pasta, o digitado, a lista lida e o arquivo aberto) e o que
@@ -653,6 +657,7 @@ impl Janela {
             avisos_dispensados: HashSet::new(),
             mencoes: Default::default(),
             editando_fila: None,
+            busca_preparada: Default::default(),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
