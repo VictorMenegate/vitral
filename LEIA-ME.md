@@ -425,7 +425,8 @@ vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` p
 `/compact`), num menu acima da caixa: ↑/↓ andam pelo menu (o campo fica no contexto "Menu" só
 enquanto ele está à vista), Tab ou Enter completam o item marcado (o Enter com o nome exato de um
 comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante, à esquerda do seu balão, na altura da última linha
-(no canto de cima dele, no painel mínimo), e no canto de cima à direita da resposta; nada fica
+(no canto de cima dele, no painel mínimo), e no pé da resposta, à direita (em cima ela cobria a
+primeira linha); nada fica
 reservado nem à vista sem o ponteiro, e nada se mexe quando ela aparece. O hover da mensagem
 alcança a barra inteira, que fica metade para fora dela (`com_alcance_da_barra`): chegando por
 cima, o lápis não some antes do clique. Os blocos de código ficam

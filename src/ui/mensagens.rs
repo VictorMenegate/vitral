@@ -626,12 +626,15 @@ impl Janela {
                     pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, cx)
                 })))
             })
-            .child(div().absolute().top(r(-14.)).right_0().child(barra_de_acoes(
+            // A barra fica no pé da resposta, onde o olho termina: em cima ela cobria metade da
+            // primeira linha, que quase sempre vai até a borda (relatório de aparência,
+            // 16/11/2026, V7). O seu balão continua com ela em cima.
+            .child(div().absolute().bottom(r(-8.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
                 hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
                 cx,
             )));
-        div().w_full().map(com_alcance_da_barra).group(grupo).child(resposta).into_any_element()
+        div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()
     }
 
     /// Mensagem que outro chat (ou o Vitral) entregou: quem mandou e uma prévia; a linha do nome
@@ -999,6 +1002,12 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
 /// antes do clique no lápis (teste de usabilidade, 16/11/2026).
 fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
     elemento.pt(esp::E16).mt(r(-16.))
+}
+
+/// O mesmo para a barra no pé da resposta, que sai 8 abaixo dela: 8 de folga embaixo, devolvidos
+/// pela margem.
+fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
+    elemento.pb(esp::E8).mb(r(-8.))
 }
 
 fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
