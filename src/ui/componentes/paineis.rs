@@ -137,10 +137,12 @@ impl Aba {
         // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
         let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
         let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
-            TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::borda()),
+            // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
+            // 16/11/2026: "diminui as bordas").
+            TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::preto()),
             // A aba de um painel sem o foco: lisa, quase da cor do painel, só com o contorno.
-            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::borda()),
-            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::borda()),
+            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::preto()),
+            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
@@ -253,12 +255,14 @@ impl Aba {
     }
 }
 
-/// A casca da aba à vista no painel com o foco: o preto da caixa de mensagem em volta dela,
-/// reduzido a um fio (1 px de folga mais 1 px de borda), com a aba fazendo de campo. O dono viu a
-/// casca com 4 e com 2 de folga e pediu mais fina. Em 16/11/2026 pediu o mesmo desenho em todos os
-/// painéis e abas: todas levam a casca; o tom do miolo distingue a selecionada.
+/// A casca da aba: o preto da caixa de mensagem em volta dela virou só o fio de 1 px, que é a
+/// própria borda da aba, em preto. O dono viu a casca com 4 e com 2 de folga e pediu mais fina; em
+/// 16/11/2026 pediu o mesmo desenho em todos os painéis e abas e, no mesmo dia, "diminui as
+/// bordas": a folga de 1 e a borda da casca saíram, e o fio da aba deixou de vir dobrado (eram uns
+/// 3 px de contorno escuro). Fica a peça que agrupa a aba na faixa; o tom do miolo distingue a
+/// selecionada.
 pub fn casca_da_aba() -> Div {
-    div().flex().items_center().min_w_0().p(px(1.)).rounded(raio::de(34.)).border_1().border_color(Cores::preto()).bg(Cores::preto())
+    div().flex().items_center().min_w_0().rounded(raio::de(32.))
 }
 
 /// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280.

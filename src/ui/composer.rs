@@ -431,18 +431,18 @@ pub(super) fn tokens(n: u64) -> String {
     if quantia.ends_with("mil") { format!("{quantia} tokens") } else { format!("{quantia} de tokens") }
 }
 
-/// Onde começa o texto da caixa, da borda de fora dela: a moldura (1 de borda e 4 de folga), a
+/// Onde começa o texto da caixa, da borda de fora dela: a moldura (1 de borda e 2 de folga), a
 /// borda do campo (1), a margem (8; na estreita, 6 com o campo 2 para a esquerda) e os 10 do
 /// campo do kit, que crescem com o zoom como o resto. Cai na coluna do ícone do primeiro chip, e
 /// a faixa do turno se alinha por aqui.
 pub(super) fn recuo_do_texto(estreita: bool, window: &Window) -> Pixels {
-    tam(window, if estreita { 20. } else { 24. })
+    tam(window, if estreita { 18. } else { 22. })
 }
 
 /// Da borda de fora da caixa ao conteúdo (o enviar, à direita): a moldura, a borda do campo e a
 /// margem.
 pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
-    tam(window, if estreita { 12. } else { 14. })
+    tam(window, if estreita { 10. } else { 12. })
 }
 
 /// O máximo de letras de um trecho citado (uma seleção enorme não vira a mensagem).
@@ -524,8 +524,10 @@ impl Janela {
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
         let com_menu = self.menu_da_caixa(ix, chat, cx).is_some();
-        // O miolo é concêntrico com a moldura de 20 e 4 de folga, não com o cartão da conversa.
-        let raio_miolo = raio::peca() - px(4.);
+        // O miolo é concêntrico com a moldura de 20 e 2 de folga, não com o cartão da conversa.
+        // A moldura preta tem 2 de folga (eram 4; dono, 16/11/2026: "diminui as bordas"); o miolo
+        // continua concêntrico com ela.
+        let raio_miolo = raio::peca() - px(2.);
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
         // A linha de baixo só existe com o chat trabalhando (o que ele faz agora e o Esc). Parada,
         // a caixa não tem mais a linha das teclas (dono, 13/11/2026: "tira essa parte de baixo").
@@ -595,11 +597,11 @@ impl Janela {
             )
             .child(div().h(esp::E8))
             .child(barra);
-        // Na altura, os 4 de cima igualam a folga de baixo da moldura.
+        // Na altura, os 2 de cima igualam a folga de baixo da moldura.
         let linha_de_estado = estado.map(|(estado_esquerda, estado_direita)| {
             h_flex()
-                .h(r(24.))
-                .pt(esp::E4)
+                .h(r(22.))
+                .pt(esp::E2)
                 .px(esp::E12)
                 .gap(esp::E8)
                 .justify_between()
@@ -616,7 +618,7 @@ impl Janela {
             .rounded(raio_caixa)
             .bg(Cores::preto())
             .border_1()
-            .p(esp::E4)
+            .p(esp::E2)
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     window.focus(&foco_da_caixa, cx);

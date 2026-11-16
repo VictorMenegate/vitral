@@ -335,7 +335,8 @@ componentes do GPUI Kit.
 ## Opções da conversa (como na extensão do Claude Code)
 
 A caixa de mensagem é uma moldura dupla (`caixa_mensagem`, em `src/ui/composer.rs`): por fora, uma
-moldura preta de canto 20 (14 na Estreita); dentro dela, com 4 de folga, o campo opaco, com o texto
+moldura preta de canto 20 (14 na Estreita); dentro dela, com 2 de folga (eram 4; dono, 16/11/2026:
+"diminui as bordas"), o campo opaco, com o texto
 e os chips; embaixo do campo, ainda na moldura, a **linha de estado**, em mono 11. Com o foco, um
 aro de metal de 2 px acende em volta da moldura (180 ms; apaga em 120), sem azul nem halo. A barra
 de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo
@@ -906,9 +907,11 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   `acertar_abas` põe o chat à vista entre as abas e tira as de chats que sumiram. Um chat só aparece
   num lugar por vez: a vizinha que já está à vista noutro painel não entra. A aba à vista é a
   completa (até 280 de largura, e nunca menos que o símbolo, o número, o × e o começo do título);
+  toda aba tem um contorno só, o fio preto de 1 px (a casca preta de 1 px de folga em volta dela
+  saiu, dono, 16/11/2026: "diminui as bordas");
   as outras são compactas (até 180), com o título e o caminho na dica, e encolhem antes dela. A de
   fundo que não teria lugar para 4 letras e as reticências fica só com o ícone, num quadrado de
-  36 (`Aba::quadrada`); se nem assim a aba à vista tiver o começo do título, as de fundo saem da
+  32 (`Aba::quadrada`); se nem assim a aba à vista tiver o começo do título, as de fundo saem da
   faixa, a mais antiga primeiro, e um **+N** no fim da faixa abre a lista delas (a do histórico,
   só com elas; `jeito_das_abas`, em `src/ui/conversa.rs`, com a largura da faixa medida no quadro
   anterior e a natural de cada aba, conta o lugar do +N). A faixa nunca passa por cima do **+** e

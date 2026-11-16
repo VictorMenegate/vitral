@@ -106,11 +106,11 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     window.text_system().shape_line(texto.into(), tam(window, 13.), &[corrida], None).width
 }
 
-/// O que uma aba ocupa além do título (a 100%): a casca (4), a borda (2), a folga da esquerda
-/// (12), o ícone (16), os dois vãos (8 + 8), o lugar do × (20) e a folga da direita (8).
-const ABA_SEM_TITULO: f32 = 78.;
-/// A aba de fundo só com o ícone: um quadrado da altura da aba (32 e a casca de 4).
-const ABA_SO_ICONE: f32 = 36.;
+/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (12), o ícone
+/// (16), os dois vãos (8 + 8), o lugar do × (20) e a folga da direita (8).
+const ABA_SEM_TITULO: f32 = 74.;
+/// A aba de fundo só com o ícone: um quadrado da altura da aba.
+const ABA_SO_ICONE: f32 = 32.;
 /// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
 const NUMERO_NA_ABA: f32 = 26.;
 /// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
