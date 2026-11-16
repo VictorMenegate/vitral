@@ -41,6 +41,7 @@ pub struct Aba {
     foco: Option<FocusHandle>,
     fim: Option<AnyElement>,
     so_simbolo: bool,
+    quadrada: bool,
 }
 
 impl Aba {
@@ -58,12 +59,22 @@ impl Aba {
             foco: None,
             fim: None,
             so_simbolo: false,
+            quadrada: false,
         }
     }
 
     /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
     pub fn so_simbolo(mut self, sim: bool) -> Self {
         self.so_simbolo = sim;
+        self
+    }
+
+    /// Só o símbolo, num quadrado da altura da aba e centrado, sem o lugar do × nem o número: a
+    /// aba de fundo que não cabe com o título (o clique do meio ainda fecha; a dica dá o nome).
+    /// Com o lugar do × reservado ela ficava uma pílula de 80 com o ícone num canto (o dono viu,
+    /// 16/11/2026).
+    pub fn quadrada(mut self, sim: bool) -> Self {
+        self.quadrada = sim;
         self
     }
 
@@ -168,8 +179,9 @@ impl Aba {
                 .when(tem_fechar, |s| s.group_hover(GRUPO_DA_ABA, |s| s.invisible()))
                 .child(sinal.ponto(8.))
         });
-        let fim = (fechar.is_some() || ponto.is_some())
+        let fim = ((fechar.is_some() || ponto.is_some()) && !self.quadrada)
             .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar));
+        let so_simbolo = self.so_simbolo || self.quadrada;
         // Ícone solto em 16; o círculo do chat em 18.
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
@@ -187,8 +199,7 @@ impl Aba {
             .h(r(32.))
             .max_w(r(400.))
             .min_w_0()
-            .pl(esp::E12)
-            .pr(esp::E8)
+            .map(|s| if self.quadrada { s.w(r(32.)).flex_none().justify_center() } else { s.pl(esp::E12).pr(esp::E8) })
             .relative()
             .rounded(raio::de(32.))
             .border_1()
@@ -218,8 +229,8 @@ impl Aba {
                     .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             })
             .children(simbolo)
-            .when(!self.so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
-            .children(self.detalhe.filter(|_| !self.so_simbolo).map(|(t, mono)| {
+            .when(!so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
+            .children(self.detalhe.filter(|_| !so_simbolo).map(|(t, mono)| {
                 div()
                     .flex_none()
                     .max_w(r(160.))
@@ -229,7 +240,7 @@ impl Aba {
                     .child(t)
             }))
             // O número do painel fica à direita, antes do × (dono, 13/11/2026).
-            .children(self.numero.map(|(n, ativo)| numero_painel(n, ativo)))
+            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| numero_painel(n, ativo)))
             .children(self.fim)
             .children(fim)
             .when_some(fechar_meio, |s, f| {

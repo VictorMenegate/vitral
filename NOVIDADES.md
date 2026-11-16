@@ -144,9 +144,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.
-- **Abas que cabem.** Sem lugar para o título, a aba de fundo fica só com o ícone (antes sobravam
-  duas reticências). Com muitas abas, a que está à vista não some mais por baixo do "⋯": guarda o
-  ícone, o estado e o começo do título.
+- **Abas que cabem.** Sem lugar para o título, a aba de fundo vira um quadrado só com o ícone
+  (antes sobravam duas reticências), e a que está à vista guarda sempre o começo do título: sem
+  lugar nem assim, as de fundo saem da faixa (continuam no histórico do painel). Com muitas abas,
+  a que está à vista não some mais por baixo do "⋯".
 - **Trocar de chat pelo teclado.** Na busca (Ctrl+K), Enter abre o primeiro resultado e o Ctrl+K
   seguinte troca o termo em vez de somar. Depois de clicar num chat da lista, o que se digita vai
   para a caixa. O teclado não trava mais quando um painel aberto ao lado empurra a lista para fora.

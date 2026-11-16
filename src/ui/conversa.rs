@@ -101,38 +101,71 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
 /// O que uma aba ocupa além do título (a 100%): a casca (4), a borda (2), a folga da esquerda
 /// (12), o ícone (16), os dois vãos (8 + 8), o lugar do × (20) e a folga da direita (8).
 const ABA_SEM_TITULO: f32 = 78.;
-/// A aba só com o ícone: a mesma conta sem o título e sem um dos vãos.
-const ABA_SO_ICONE: f32 = 70.;
-/// Até onde a aba à vista encolhe, quando o título é maior: o símbolo, o estado e o começo do
-/// título continuam à vista (teste de usabilidade, 16/11/2026: com 7 abas ela sumia por baixo do "⋯").
-const ABA_A_VISTA_MINIMA: f32 = 120.;
+/// A aba de fundo só com o ícone: um quadrado da altura da aba (32 e a casca de 4).
+const ABA_SO_ICONE: f32 = 36.;
+/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
+const NUMERO_NA_ABA: f32 = 26.;
 
-/// Quais abas de fundo ficam só com o ícone: as que, com o título, receberiam menos que o
-/// `minimo` delas (4 letras e as reticências, ou o título inteiro, se for menor). O espaço é o da
-/// faixa menos a aba à vista e os vãos; as de fundo encolhem na proporção da largura, como o
-/// `flex_shrink` faz. Uma de cada vez, a mais estreita primeiro, porque cada uma que vira ícone
-/// devolve espaço às outras. Antes, o título encolhia até sobrar só "..", ao lado do ícone (o dono
-/// viu, 16/11/2026).
-pub(super) fn abas_so_icone(disponivel: f32, a_vista: f32, naturais: &[f32], minimos: &[f32], so_icone: f32, vao: f32) -> Vec<bool> {
+/// Como cada aba de fundo entra na faixa.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum JeitoDaAba {
+    Titulo,
+    /// Só o ícone, num quadrado.
+    Icone,
+    /// Fora da faixa (continua no painel; volta quando houver lugar).
+    Fora,
+}
+
+/// Como as abas de fundo cabem na faixa, sem o título da aba à vista sumir. As de fundo encolhem
+/// antes dela, na proporção da largura, como o `flex_shrink` faz; a que receberia menos que o
+/// `minimo` dela (4 letras e as reticências, ou o título inteiro, se for menor) fica só com o
+/// ícone, a mais estreita primeiro, porque cada uma que vira ícone devolve espaço às outras. Se
+/// mesmo com todas em ícone a aba à vista não chegar ao mínimo dela, as de fundo saem da faixa, a
+/// mais antiga primeiro (a ordem de `naturais` é a das abas). Antes o título encolhia até sobrar
+/// "..", e a aba à vista ficava só com o ícone e as reticências (o dono viu, 16/11/2026).
+pub(super) fn jeito_das_abas(
+    disponivel: f32,
+    a_vista: (f32, f32),
+    naturais: &[f32],
+    minimos: &[f32],
+    so_icone: f32,
+    vao: f32,
+) -> Vec<JeitoDaAba> {
     let n = naturais.len();
-    let mut icone = vec![false; n];
+    let mut jeito = vec![JeitoDaAba::Titulo; n];
     if disponivel <= 0. {
-        return icone;
+        return jeito;
     }
+    let (natural_a_vista, minima_a_vista) = a_vista;
     loop {
-        let fixos = a_vista + vao * n as f32 + so_icone * icone.iter().filter(|i| **i).count() as f32;
-        let soma: f32 = (0..n).filter(|i| !icone[*i]).map(|i| naturais[i]).sum();
-        let espaco = (disponivel - fixos).max(0.);
-        if soma <= espaco || soma <= 0. {
-            return icone;
+        let conta = |j: JeitoDaAba| jeito.iter().filter(|x| **x == j).count() as f32;
+        let fixos = vao * (n as f32 - conta(JeitoDaAba::Fora)) + so_icone * conta(JeitoDaAba::Icone);
+        let titulos: Vec<usize> = (0..n).filter(|i| jeito[*i] == JeitoDaAba::Titulo).collect();
+        let soma: f32 = titulos.iter().map(|i| naturais[*i]).sum();
+        let espaco = (disponivel - natural_a_vista - fixos).max(0.);
+        if soma > espaco {
+            // As com título encolhem até o mínimo delas; a que passaria dele vira ícone.
+            let razao = espaco / soma;
+            if let Some(i) = titulos
+                .iter()
+                .copied()
+                .filter(|i| naturais[*i] * razao < minimos[*i])
+                .min_by(|a, b| naturais[*a].total_cmp(&naturais[*b]))
+            {
+                jeito[i] = JeitoDaAba::Icone;
+                continue;
+            }
+            return jeito;
         }
-        let razao = espaco / soma;
-        let apertada = (0..n)
-            .filter(|i| !icone[*i] && naturais[*i] * razao < minimos[*i])
-            .min_by(|a, b| naturais[*a].total_cmp(&naturais[*b]));
-        match apertada {
-            Some(i) => icone[i] = true,
-            None => return icone,
+        // As de fundo cabem como estão; a aba à vista fica com o resto, que não pode passar
+        // abaixo do mínimo dela.
+        let resto = disponivel - fixos - soma;
+        if resto >= minima_a_vista {
+            return jeito;
+        }
+        match (0..n).find(|i| jeito[*i] != JeitoDaAba::Fora) {
+            Some(i) => jeito[i] = JeitoDaAba::Fora,
+            None => return jeito,
         }
     }
 }
@@ -783,9 +816,11 @@ impl Janela {
         // quadro anterior e a largura natural de cada aba, que não depende da decisão.
         let fundo: Vec<&Chat> = painel.abas.iter().filter(|id| **id != chat.id).filter_map(|id| motor.chat(id)).collect();
         let quatro = largura_do_rotulo(window, "Abcd…");
-        let natural_a_vista = (tam(window, ABA_SEM_TITULO + if self.paineis.len() > 1 && self.lista { 26. } else { 0. })
-            + largura_do_rotulo(window, &chat.titulo))
-            .min(tam(window, 280.));
+        let titulo_a_vista = largura_do_rotulo(window, &chat.titulo);
+        let resto_a_vista = tam(window, ABA_SEM_TITULO + if self.paineis.len() > 1 && self.lista { NUMERO_NA_ABA } else { 0. });
+        let natural_a_vista = (resto_a_vista + titulo_a_vista).min(tam(window, 280.));
+        // O mínimo da aba à vista: o símbolo, o número, o lugar do × e o começo do título.
+        let minima_a_vista = (resto_a_vista + titulo_a_vista.min(quatro)).min(natural_a_vista);
         let (naturais, minimos): (Vec<f32>, Vec<f32>) = fundo
             .iter()
             .map(|c| {
@@ -794,29 +829,32 @@ impl Janela {
                 ((resto + titulo).min(tam(window, 184.)).as_f32(), (resto + titulo.min(quatro)).as_f32())
             })
             .unzip();
-        let so_icone = abas_so_icone(
+        let jeitos = jeito_das_abas(
             painel.largura_abas.as_f32(),
-            natural_a_vista.as_f32(),
+            (natural_a_vista.as_f32(), minima_a_vista.as_f32()),
             &naturais,
             &minimos,
             tam(window, ABA_SO_ICONE).as_f32(),
             tam(window, 6.).as_f32(),
         );
-        let so_icone_de = |id: &str| fundo.iter().position(|c| c.id == id).is_some_and(|i| so_icone[i]);
-        let minima_a_vista = natural_a_vista.min(tam(window, ABA_A_VISTA_MINIMA));
+        let jeito_de = |id: &str| fundo.iter().position(|c| c.id == id).map_or(JeitoDaAba::Titulo, |i| jeitos[i]);
         painel
             .abas
             .iter()
             .filter_map(|id| {
                 if *id == chat.id {
                     // Com outras abas ao lado, a que está à vista para em 280 de largura, para as
-                    // outras ficarem com um pedaço do título, e não desce de 120 (o símbolo, o
-                    // estado e o começo do título).
+                    // outras ficarem com um pedaço do título, e não desce do mínimo dela (o
+                    // símbolo, o número, o × e o começo do título).
                     let a_vista = self.aba_a_vista(motor_entidade, motor, chat, ix, window, cx);
                     return Some(div().flex().min_w(minima_a_vista).max_w(r(280.)).child(a_vista).into_any_element());
                 }
+                let jeito = jeito_de(id);
+                if jeito == JeitoDaAba::Fora {
+                    return None;
+                }
+                let icone = jeito == JeitoDaAba::Icone;
                 let outro = motor.chat(id)?;
-                let icone = so_icone_de(id);
                 let fechar = cx.entity().downgrade();
                 let (id_abrir, id_fechar) = (id.clone(), id.clone());
                 let dica = SharedString::from(format!("{}\n{}", outro.titulo, pasta_em_texto(motor, outro)));
@@ -829,8 +867,9 @@ impl Janela {
                     .tom(TomAba::Inativa)
                     // O ícone da aba é o estado do chat (e o ponto ao lado do × sai).
                     .simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).into_any_element()))
-                    // Sem lugar para 4 letras e as reticências, só o ícone; o título vai na dica.
-                    .so_simbolo(icone)
+                    // Sem lugar para 4 letras e as reticências, só o ícone num quadrado; o título
+                    // vai na dica.
+                    .quadrada(icone)
                     .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
                         let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
                     })
@@ -1221,23 +1260,31 @@ impl Direita {
 
 #[cfg(test)]
 mod testes {
-    use super::{abas_so_icone, modelo_da_conversa};
+    use super::{JeitoDaAba, jeito_das_abas, modelo_da_conversa};
     use crate::modelo::Chat;
 
     /// Com espaço, todas com título; apertando, a mais estreita vira ícone primeiro e devolve o
-    /// espaço às outras; sem espaço nenhum (antes de medir), nada muda.
+    /// espaço às outras; sem lugar nem assim para o começo do título da aba à vista, as de fundo
+    /// saem da faixa, a mais antiga primeiro; sem medida (o primeiro quadro), nada muda.
     #[test]
-    fn aba_de_fundo_sem_lugar_para_o_titulo_fica_so_com_o_icone() {
-        // À vista 200, vãos de 6, ícone de 70; de fundo: 150 e 110 de natural, mínimo de 114 e 108.
-        let naturais = [150., 110.];
-        let minimos = [114., 108.];
-        assert_eq!(abas_so_icone(500., 200., &naturais, &minimos, 70., 6.), [false, false]);
-        // 400: sobram 188 para 260 de natural (razão 0,72): 108 e 79. As duas ficam abaixo do
-        // mínimo; a mais estreita (110) vira ícone, e a outra ganha 188 - 70 = 118, que basta.
-        assert_eq!(abas_so_icone(400., 200., &naturais, &minimos, 70., 6.), [false, true]);
-        // 340: nem a outra cabe com título.
-        assert_eq!(abas_so_icone(340., 200., &naturais, &minimos, 70., 6.), [true, true]);
-        assert_eq!(abas_so_icone(0., 200., &naturais, &minimos, 70., 6.), [false, false]);
+    fn as_abas_de_fundo_cedem_antes_do_titulo_da_aba_a_vista() {
+        use JeitoDaAba::{Fora, Icone, Titulo};
+        // À vista: 200 de natural e 140 de mínimo; vãos de 6; ícone de 36. De fundo: 150 e 110 de
+        // natural, 114 e 108 de mínimo.
+        let (naturais, minimos) = ([150., 110.], [114., 108.]);
+        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, 36., 6.);
+        assert_eq!(jeito(500.), [Titulo, Titulo]);
+        // 400: sobram 188 para 260 (razão 0,72): 108 e 79, as duas abaixo do mínimo. A mais
+        // estreita vira ícone, e a outra ganha 188 - 36 = 152, que basta.
+        assert_eq!(jeito(400.), [Titulo, Icone]);
+        // 340: nem a outra cabe com título; a aba à vista fica com 340 - 12 - 72 = 256.
+        assert_eq!(jeito(340.), [Icone, Icone]);
+        // 200: com as duas em ícone sobram 116 para a aba à vista, menos que os 140 dela: a mais
+        // antiga sai, e sobram 158.
+        assert_eq!(jeito(200.), [Fora, Icone]);
+        // 150: nem uma em ícone deixa os 140; as duas saem.
+        assert_eq!(jeito(150.), [Fora, Fora]);
+        assert_eq!(jeito(0.), [Titulo, Titulo]);
     }
 
     fn chat(modelo: Option<&str>, atual: Option<&str>) -> Chat {
