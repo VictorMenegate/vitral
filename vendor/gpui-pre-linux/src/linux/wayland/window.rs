@@ -29,6 +29,8 @@ use wayland_protocols::{
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
+// Vitral: o desfoque padrão do Wayland (ver `aplicar_desfoque`).
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
@@ -109,6 +111,9 @@ pub struct WaylandWindowState {
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    // Vitral: o desfoque padrão da superfície, criado no primeiro `Blurred` e mantido até a
+    // janela fechar (sem desfoque, a região fica nula).
+    efeito_de_fundo: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -611,6 +616,7 @@ impl WaylandWindowState {
             surface,
             app_id: options.app_id,
             blur: None,
+            efeito_de_fundo: None,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -786,6 +792,10 @@ impl Drop for WaylandWindow {
         if let Some(blur) = &state.blur {
             blur.release();
         }
+        // Vitral: o desfoque padrão também sai antes da superfície, como o do KDE.
+        if let Some(efeito) = state.efeito_de_fundo.take() {
+            efeito.destroy();
+        }
 
         // Decorations must be destroyed before the xdg state.
         // See https://wayland.app/protocols/xdg-decoration-unstable-v1#zxdg_toplevel_decoration_v1
@@ -923,6 +933,13 @@ impl WaylandWindowStatePtr {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
+    }
+
+    /// Vitral: o compositor mudou o que o desfoque padrão faz (o `capabilities`): refaz o
+    /// pedido, que vale no commit do quadro seguinte.
+    pub fn reaplicar_desfoque(&self) {
+        aplicar_desfoque(&mut self.state.borrow_mut());
+        self.request_redraw();
     }
 
     pub fn add_child(&self, child: ObjectId, blocking: bool) {
@@ -1143,7 +1160,7 @@ impl WaylandWindowStatePtr {
                     }
                 }
             }
-            let state = self.state.borrow_mut();
+            let mut state = self.state.borrow_mut();
             state.surface_state.ack_configure(serial);
 
             let window_geometry = inset_by_tiling(
@@ -1160,6 +1177,9 @@ impl WaylandWindowStatePtr {
                 window_geometry.size.width,
                 window_geometry.size.height,
             );
+            // Vitral: a região desfocada acompanha o quadro (o encaixe tira a margem da sombra
+            // do lado encostado sem mudar o tamanho da superfície).
+            aplicar_desfoque(&mut state);
 
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
             drop(state);
@@ -1514,6 +1534,9 @@ impl WaylandWindowStatePtr {
             }
             if let Some(size) = size {
                 state.bounds.size = size;
+                // Vitral: a região desfocada acompanha o tamanho (também no resize pedido pelo
+                // app, que não passa por um configure).
+                aplicar_desfoque(&mut state);
             }
             if let Some(scale) = scale {
                 state.scale = scale;
@@ -2319,23 +2342,80 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
-    if let Some(ref blur_manager) = state.globals.blur_manager {
-        if state.background_appearance == WindowBackgroundAppearance::Blurred {
-            if state.blur.is_none() {
-                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                state.blur = Some(blur);
-            }
-            state.blur.as_ref().unwrap().commit();
-        } else {
-            // It probably doesn't hurt to clear the blur for opaque windows
-            blur_manager.unset(&state.surface);
-            if let Some(b) = state.blur.take() {
-                b.release()
-            }
+    // Vitral: o desfoque do KDE que morava aqui foi para o `aplicar_desfoque`, junto do padrão.
+    aplicar_desfoque(&mut state);
+
+    region.destroy();
+}
+
+/// Vitral: o desfoque do que está atrás da janela, quando ela pede `Blurred`.
+///
+/// Dos dois protocolos, o padrão do Wayland (ext-background-effect-v1) vem antes do do KDE
+/// (`org_kde_kwin_blur`) quando o compositor anuncia o blur nele: é o único que o GNOME tem (do
+/// 51 em diante), é o que os compositores novos implementam, e o `capabilities` diz se o
+/// desfoque vale de fato, enquanto o do KDE só diz que o global existe. O do KDE fica para o KWin
+/// sem o padrão (e entra se o padrão deixar de anunciar o blur). Nunca os dois na mesma
+/// superfície, para não desfocar duas vezes.
+///
+/// Os dois desfocam só o quadro da janela: com as decorações do cliente, a margem da sombra fica
+/// de fora (o original pedia o do KDE na superfície inteira, e a sombra virava uma moldura
+/// fosca). A região vale no próximo commit da superfície, e quem muda o tamanho, o encaixe ou a
+/// margem chama de novo (`update_window`, o configure e o `set_size_and_scale`).
+fn aplicar_desfoque(state: &mut WaylandWindowState) {
+    let quer = state.background_appearance == WindowBackgroundAppearance::Blurred;
+    let padrao = quer
+        && state.globals.efeito_de_fundo.is_some()
+        && state.globals.efeito_de_fundo_desfoca.get();
+    let kde = quer && !padrao && state.globals.blur_manager.is_some();
+
+    let regiao = (padrao || kde).then(|| {
+        let quadro = inset_by_tiling(
+            state.bounds.map_origin(|_| px(0.0)),
+            state.inset(),
+            state.tiling,
+        )
+        .map(|v| f32::from(v) as i32);
+        let regiao = state
+            .globals
+            .compositor
+            .create_region(&state.globals.qh, ());
+        regiao.add(
+            quadro.origin.x,
+            quadro.origin.y,
+            quadro.size.width.max(0),
+            quadro.size.height.max(0),
+        );
+        regiao
+    });
+
+    if let Some(gerente) = &state.globals.efeito_de_fundo {
+        if padrao {
+            let efeito = state.efeito_de_fundo.get_or_insert_with(|| {
+                gerente.get_background_effect(&state.surface, &state.globals.qh, ())
+            });
+            efeito.set_blur_region(regiao.as_ref());
+        } else if let Some(efeito) = &state.efeito_de_fundo {
+            // A região nula tira o efeito; o objeto fica (só pode haver um por superfície).
+            efeito.set_blur_region(None);
         }
     }
 
-    region.destroy();
+    if let Some(blur_manager) = &state.globals.blur_manager {
+        if kde {
+            let blur = state
+                .blur
+                .get_or_insert_with(|| blur_manager.create(&state.surface, &state.globals.qh, ()));
+            blur.set_region(regiao.as_ref());
+            blur.commit();
+        } else if let Some(blur) = state.blur.take() {
+            blur_manager.unset(&state.surface);
+            blur.release();
+        }
+    }
+
+    if let Some(regiao) = regiao {
+        regiao.destroy();
+    }
 }
 
 pub(crate) trait WindowDecorationsExt {

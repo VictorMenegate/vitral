@@ -75,6 +75,10 @@ use wayland_protocols::{
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
+// Vitral: o desfoque padrão do Wayland (ver `efeito_de_fundo` nos `Globals`).
+use wayland_protocols::ext::background_effect::v1::client::{
+    ext_background_effect_manager_v1, ext_background_effect_surface_v1,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
@@ -254,6 +258,13 @@ pub struct Globals {
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub blur_manager: Option<org_kde_kwin_blur_manager::OrgKdeKwinBlurManager>,
+    // Vitral: o desfoque padrão do Wayland, o ext-background-effect-v1 (GNOME 51 em diante e os
+    // outros compositores que o tenham), e se o compositor anunciou o blur no `capabilities` (ele
+    // diz no bind e a cada mudança). As janelas o preferem ao do KDE (ver `aplicar_desfoque`, em
+    // window.rs).
+    pub efeito_de_fundo:
+        Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
+    pub efeito_de_fundo_desfoca: Rc<std::cell::Cell<bool>>,
     pub text_input_manager: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
     pub gesture_manager: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
@@ -304,6 +315,9 @@ impl Globals {
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             layer_shell: globals.bind(&qh, 1..=5, ()).ok(),
             blur_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            // Vitral: o desfoque padrão; o `capabilities` chega no roundtrip do fim do `new`.
+            efeito_de_fundo: globals.bind(&qh, 1..=1, ()).ok(),
+            efeito_de_fundo_desfoca: Rc::new(std::cell::Cell::new(false)),
             text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
             gesture_manager: globals.bind(&qh, 1..=3, ()).ok(),
             dialog: globals.bind(&qh, dialog_v..=dialog_v, ()).ok(),
@@ -1671,6 +1685,47 @@ delegate_noop!(WaylandClientStatePtr: ignore xdg_positioner::XdgPositioner);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur_manager::OrgKdeKwinBlurManager);
 delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
+// Vitral: o objeto do desfoque padrão de cada superfície não tem eventos.
+delegate_noop!(WaylandClientStatePtr: ignore ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1);
+
+// Vitral: o compositor diz no bind, e de novo a cada mudança, se desfoca o fundo pelo protocolo
+// padrão. Quando muda, as janelas abertas refazem o pedido (sem o blur anunciado, o padrão não
+// desfoca mais, e o do KDE entra se existir).
+impl Dispatch<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1, ()>
+    for WaylandClientStatePtr
+{
+    fn event(
+        this: &mut Self,
+        _: &ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1,
+        event: ext_background_effect_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let ext_background_effect_manager_v1::Event::Capabilities { flags } = event else {
+            return;
+        };
+        let desfoca = match flags {
+            WEnum::Value(flags) => {
+                flags.contains(ext_background_effect_manager_v1::Capability::Blur)
+            }
+            WEnum::Unknown(bits) => {
+                bits & ext_background_effect_manager_v1::Capability::Blur.bits() != 0
+            }
+        };
+        let client = this.get_client();
+        let state = client.borrow();
+        if state.globals.efeito_de_fundo_desfoca.replace(desfoca) == desfoca {
+            return;
+        }
+        let windows = state.windows.values().cloned().collect::<Vec<_>>();
+        drop(state);
+        for window in windows {
+            window.reaplicar_desfoque();
+        }
+    }
+}
+
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
 

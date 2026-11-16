@@ -96,7 +96,11 @@ lto = "thin"
 # de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
 # em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).
 #
-# Cópia do gpui-pre-linux (o backend Linux do GPUI), com as mudanças marcadas com "Vitral:".
+# Cópia do gpui-pre-linux (o backend Linux do GPUI), com as mudanças marcadas com "Vitral:": no
+# Wayland, a janela com `Blurred` usa também o desfoque padrão, o ext-background-effect-v1 (o do
+# GNOME 51 em diante), e prefere ele ao do KDE quando o compositor anuncia o blur; os dois desfocam
+# só o quadro da janela, sem a margem da sombra (src/linux/wayland/window.rs, `aplicar_desfoque`, e
+# src/linux/wayland/client.rs, `efeito_de_fundo`).
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
