@@ -63,6 +63,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Ctrl+G percorre todas as pendências.** Ele vai à seguinte à do chat aberto e dá a volta
   (Ctrl+Shift+G volta), põe o foco no Retomar ou no Tentar de novo quando é o caso, e diz "2 de 3 ·
   Parada · WMS". No sino, as Paradas ganham **Retomar tudo**.
+- **Esc que não custa caro.** Depois de um Esc, a faixa oferece **Continuar**, e o Enter com a caixa
+  vazia continua o turno. Com agentes em segundo plano ou Ultracode rodando, o primeiro Esc só arma
+  ("Esc de novo para parar os 3 agentes"), para um Esc distraído não jogar fora o trabalho deles.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

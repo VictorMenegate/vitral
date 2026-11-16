@@ -77,6 +77,9 @@ actions!(vitral, [EditarUltima, AbrirAtalhos]);
 actions!(vitral, [AbrirMenuDoPainel]);
 
 
+/// Por quanto tempo o Esc armado espera o segundo (item 6.2).
+const ESC_ARMADO: Duration = Duration::from_secs(3);
+
 /// Seções da lista que começam recolhidas.
 const RECOLHIDAS_DE_INICIO: [&str; 1] = ["Mais antigas"];
 
@@ -453,6 +456,9 @@ pub struct Janela {
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
+    /// O Esc que só armou (parar agora derrubaria os agentes em segundo plano ou o Ultracode): o
+    /// chat e quando; um segundo Esc em 3 s para (item 6.2).
+    esc_armado: Option<(String, std::time::Instant)>,
     /// A mensagem da fila que está sendo editada na própria linha (item 1.3).
     editando_fila: Option<fila::EdicaoNaFila>,
     /// O último filtro do menu "@" (a pasta, o digitado, a lista lida e o arquivo aberto) e o que
@@ -662,6 +668,7 @@ impl Janela {
             editando_fila: None,
             busca_preparada: Default::default(),
             assinatura_dos_anexos: (0, 0, 0, 0),
+            esc_armado: None,
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -678,9 +685,37 @@ impl Janela {
             .zip(self.motor.clone())
             .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando());
         match rodando {
-            Some((chat, motor)) if !self.foco_lista.is_focused(window) => motor.update(cx, |m, cx| m.parar(&chat, cx)),
+            Some((chat, _)) if !self.foco_lista.is_focused(window) => self.esc_no_turno(&chat, cx),
             _ => cx.propagate(),
         }
+    }
+
+    /// O Esc que para o turno (na caixa ou fora dela). Quando parar derrubaria o processo inteiro
+    /// (agentes em segundo plano, Ultracode), o primeiro Esc só arma, e a linha de estado diz "Esc
+    /// de novo para parar os N agentes" por 3 s; o botão Parar continua parando direto (dono,
+    /// 16/11/2026: rodada de uso, item 6.2).
+    pub(super) fn esc_no_turno(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let armado = self.esc_armado.as_ref().is_some_and(|(c, quando)| c == chat && quando.elapsed() < ESC_ARMADO);
+        if motor.read(cx).parar_custa_caro(chat) && !armado {
+            self.esc_armado = Some((chat.to_string(), std::time::Instant::now()));
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(ESC_ARMADO).await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.esc_armado.as_ref().is_some_and(|(_, q)| q.elapsed() >= ESC_ARMADO) {
+                        this.esc_armado = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+            cx.notify();
+            return;
+        }
+        self.esc_armado = None;
+        motor.update(cx, |m, cx| m.parar(chat, cx));
     }
 
     /// Algum flutuante da janela está aberto (menu do logo, sino, popover da caixa, histórico ou
@@ -973,6 +1008,8 @@ impl Janela {
                     }
                 });
             }
+            // O fundo da caixa diz que o Enter continua, logo depois de um Esc (item 6.2).
+            this.acertar_dicas_das_caixas(window, cx);
             // Uma rolagem pela barra ainda não desenhada não pode ser desfeita pelo fim abaixo.
             this.acompanhar_rolagem(cx);
             for painel in &this.paineis {
@@ -1089,6 +1126,10 @@ impl Janela {
         }
         let texto = composer.read(cx).value().to_string();
         if texto.trim().is_empty() && self.anexos.get(&chat).is_none_or(Vec::is_empty) {
+            // Logo depois de um Esc, o Enter com a caixa vazia continua o turno (item 6.2).
+            if motor.read(cx).parou_por_voce(&chat) {
+                motor.update(cx, |m, cx| m.continuar_depois_do_esc(&chat, cx));
+            }
             return;
         }
         // O `/mcp` é do Vitral: no `-p` o Claude Code só manda abrir o terminal.

@@ -1492,7 +1492,7 @@ impl Janela {
             self.paineis[ix].menu_dispensado = true;
             cx.notify();
         } else if ocupado {
-            motor.update(cx, |m, cx| m.parar(chat, cx));
+            self.esc_no_turno(chat, cx);
         } else {
             cx.propagate();
         }

@@ -560,7 +560,13 @@ ferramentas, vale por painel).
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
   "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
   Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
-  segundo plano…". Nas larguras menores saem o
+  segundo plano…". **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
+  processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
+  primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
+  continua parando direto. Depois de um Esc (ou do Parar) que parou o turno, a faixa acima da caixa
+  mostra "Você parou" com **Continuar**, e o fundo da caixa diz "O que fazer em vez disso? Enter
+  continua": o Continuar, ou o Enter com a caixa vazia, manda a mesma frase do Retomar. Isso não
+  entra no sino e some no primeiro envio, ao trocar de chat ou depois de 10 minutos. Nas larguras menores saem o
   "ação N", o rótulo do Esc e, na mínima, o relógio. Acima da caixa (`faixa_atividade`), alinhada
   com o texto dela e, à direita, com o enviar, que entra com um fade e 8 px de baixo, só fica o que
   pede um botão seu: **Parada** com **Retomar** (âmbar quando foi o Vitral que parou; o motivo no

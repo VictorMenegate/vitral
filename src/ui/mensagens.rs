@@ -3165,6 +3165,8 @@ enum Situacao {
     Fria { tokens: u64 },
     /// O último turno mudou arquivos e nada roda (item 5.1): quantos e as linhas.
     Mudou { arquivos: usize, entram: usize, saem: usize },
+    /// Você parou o turno há pouco: "Você parou · Continuar" (item 6.2).
+    VocePorou,
 }
 
 /// O que um chat parado tem a dizer acima da caixa: a pasta dele sumiu (a do chat sem pasta o
@@ -3361,7 +3363,25 @@ impl Janela {
                             s.child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, fila, true, estreita, window, cx)))
                         })
                         .into_any_element(),
-                    Some(esc("para parar", window)),
+                    Some(match self.esc_armado.as_ref().filter(|(c, q)| *c == chat.id && q.elapsed() < std::time::Duration::from_secs(3)) {
+                        // O Esc só armou: parar agora derruba os agentes (item 6.2).
+                        Some(_) => {
+                            let n = motor.agentes_no_fundo(&chat.id).max(agentes);
+                            let rotulo = match n {
+                                0 => "Esc de novo para parar o Ultracode".to_string(),
+                                1 => "Esc de novo para parar o agente".to_string(),
+                                n => format!("Esc de novo para parar os {n} agentes"),
+                            };
+                            h_flex()
+                                .flex_none()
+                                .gap(esp::E6)
+                                .text_color(Cores::espera())
+                                .children(teclas(&PararTurno, Some("Caixa"), window))
+                                .child(rotulo)
+                                .into_any_element()
+                        }
+                        None => esc("para parar", window),
+                    }),
                 )
             }
             _ => return None,
@@ -3387,6 +3407,8 @@ impl Janela {
             // Por último, e só com o chat quieto: a conversa grande que esfriou e, depois, o que o
             // último turno mudou (o lugar onde o dono aprovou "N arquivos mudados", 12/11; item 5.1).
             None => situacao_do_chat(motor, chat)
+                // Logo depois de um Esc: o Continuar (não entra no sino; item 6.2).
+                .or_else(|| motor.parou_por_voce(&chat.id).then_some(Situacao::VocePorou))
                 .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))
                 .or_else(|| {
                     let (arquivos, entram, saem) = total_das_mudancas(&mudancas_do_chat(&chat.itens).0);
@@ -3569,6 +3591,28 @@ impl Janela {
                         .on_click(cx.listener(move |this, _, window, cx| this.por_na_caixa(painel_id, "/compact ", window, cx)))
                         .into_any_element(),
                 ),
+            ),
+            // Depois de um Esc: "Você parou", com o Continuar, que manda a mesma frase do Retomar.
+            // O Enter com a caixa vazia faz o mesmo, e o fundo da caixa diz isso (item 6.2).
+            Situacao::VocePorou => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::CirclePause, 14.).text_color(Cores::tenue()))
+                    .child(texto("Você parou".to_string()))
+                    .into_any_element(),
+                Some({
+                    let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+                    botao_fantasma("faixa-continuar", Some(Lucide::Play.into()), "Continuar", TamanhoBotao::Barra, window, cx)
+                        .tooltip("Pede ao agente para continuar de onde parou (o mesmo que o Enter com a caixa vazia)")
+                        .on_click(move |_, _, cx| {
+                            if let Some(m) = &motor_e {
+                                m.update(cx, |m, cx| m.continuar_depois_do_esc(&id, cx));
+                            }
+                        })
+                        .into_any_element()
+                }),
             ),
             // "3 arquivos mudados · +40 −12": o clique abre a direita em "Este chat", na seção
             // Mudanças (item 5.1).

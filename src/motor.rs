@@ -40,6 +40,9 @@ use crate::{
 
 const CORTADO: &str = "o Vitral foi fechado no meio do turno";
 
+/// Por quanto tempo, depois de um Esc, a faixa oferece "Continuar" (item 6.2).
+const PARADA_POR_VOCE_VALE: u64 = 10 * 60;
+
 enum Sinal {
     /// Evento do processo de um chat; o número separa um processo do seguinte do mesmo chat.
     Claude(String, u64, Evento),
@@ -329,6 +332,9 @@ pub struct Motor {
     /// Quantas mensagens o usuário dirigiu ao turno que está rodando em cada chat, para a faixa
     /// dizer que ele foi dirigido. Zera a cada turno novo.
     dirigidos: HashMap<String, usize>,
+    /// Os chats cujo turno você parou com o Esc (ou o Parar), e quando: a faixa oferece "Continuar"
+    /// e o Enter com a caixa vazia continua, por alguns minutos (rodada de uso, item 6.2).
+    parados_por_voce: HashMap<String, u64>,
     /// Os chats cujo turno de agora é a revisão da memória (rodada de uso, item 6.1): por fora eles
     /// contam como parados (o "Terminou" sai na hora), por dentro ainda trabalham.
     revisando: HashMap<String, Revisao>,
@@ -549,6 +555,7 @@ impl Motor {
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             dirigidos: HashMap::new(),
+            parados_por_voce: HashMap::new(),
             revisando: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
@@ -805,6 +812,7 @@ impl Motor {
             self.dirigidas.remove(id);
             self.dirigidos.remove(id);
             self.revisando.remove(id);
+            self.parados_por_voce.remove(id);
             self.visiveis.remove(id);
         }
         self.interrompidos.retain(|c| !saiu(c));
@@ -902,8 +910,10 @@ impl Motor {
         {
             c.titulo = titulo_de(&texto);
         }
-        // O usuário falou: os ciclos de mensagens automáticas desse chat recomeçam.
+        // O usuário falou: os ciclos de mensagens automáticas desse chat recomeçam, e a oferta de
+        // continuar depois do Esc some (item 6.2).
         self.ciclos.zerar(chat);
+        self.parados_por_voce.remove(chat);
         let entrada = entrada_do_usuario(texto, anexos, reforco);
         // Mensagem durante a revisão da memória (item 6.1): ela nunca dirige a revisão. Se a
         // revisão ainda não escreveu nada, ela é cortada e a mensagem abre um turno normal (a
@@ -2080,6 +2090,42 @@ impl Motor {
         self.fim_adiado.contains_key(chat)
     }
 
+    /// Quantos agentes o turno roda em segundo plano agora.
+    pub fn agentes_no_fundo(&self, chat: &str) -> usize {
+        self.fundo.get(chat).copied().unwrap_or(0)
+    }
+
+    /// Parar agora derrubaria o processo inteiro (agentes em segundo plano, a espera por eles, um
+    /// turno com Ultracode): o Esc só arma, e um segundo Esc para (rodada de uso, item 6.2).
+    pub fn parar_custa_caro(&self, chat: &str) -> bool {
+        self.execucao_real(chat).rodando()
+            && (self.agentes_no_fundo(chat) > 0 || self.fim_adiado.contains_key(chat) || self.turno_com_ultracode(chat))
+    }
+
+    /// O turno foi parado por você há pouco (o Esc ou o Parar) e nada mais aconteceu: a faixa
+    /// oferece "Continuar", e o Enter com a caixa vazia continua.
+    pub fn parou_por_voce(&self, chat: &str) -> bool {
+        self.parados_por_voce
+            .get(chat)
+            .is_some_and(|quando| agora().saturating_sub(*quando) < PARADA_POR_VOCE_VALE && !self.execucao_real(chat).rodando())
+    }
+
+    /// Some a oferta de continuar (trocou de chat).
+    pub fn esquecer_parada_por_voce(&mut self, chat: &str) {
+        self.parados_por_voce.remove(chat);
+    }
+
+    /// "Continuar" depois de um Esc: manda a mesma frase do Retomar (item 6.2).
+    pub fn continuar_depois_do_esc(&mut self, chat: &str, cx: &mut Context<Self>) {
+        if self.parados_por_voce.remove(chat).is_none() || self.processos.contains_key(chat) {
+            return;
+        }
+        let texto = "O turno anterior parou antes de terminar (você o parou). Continue de onde parou.".to_string();
+        self.entregar(chat, Some("Vitral".into()), texto, cx);
+        self.salvar();
+        cx.notify();
+    }
+
     pub fn permissao_de(&self, chat: &Chat) -> String {
         chat.permissao
             .clone()
@@ -2976,7 +3022,10 @@ impl Motor {
                             }
                             self.entregar_fila(chat_id, cx);
                         }
-                        None => self.avisar(chat_id, "Interrompido.", false),
+                        None => {
+                            self.avisar(chat_id, "Interrompido.", false);
+                            self.parados_por_voce.insert(chat_id.to_string(), agora());
+                        }
                     }
                     if let Some(c) = self.chat(chat_id) {
                         let _ = self.dados.salvar_chat(c);
@@ -3085,6 +3134,7 @@ impl Motor {
                     } else if interrompido {
                         self.avisar(chat_id, "Interrompido.", false);
                         self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+                        self.parados_por_voce.insert(chat_id.to_string(), agora());
                     } else if self.consertar_sessao(chat_id, &stderr, cx) {
                         // Repetido com a sessão certa.
                     } else {
