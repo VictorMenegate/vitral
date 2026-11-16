@@ -227,9 +227,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.
-- **O escolhido em metal azul de verdade.** A ficha do item escolhido nos menus e a placa do menu
-  do logo usam o miolo do metal, o mesmo azul do "+" e do enviar, sem a ponta cinza nem o chuvisco
-  debaixo do texto, e nas listas de escolha têm o canto das outras linhas.
+- **O metal do escolhido e do aro de foco continua o de antes.** A rodada de aparência tinha
+  trocado o metal vivo da ficha do escolhido e do aro de foco por um recorte mais liso; o dono
+  preferiu o metal de antes ("por que tirou os shaders?"), e ele voltou.
 - **Marca do modelo mais discreta.** No chip do modelo (e nos menus das Configurações) a marca do
   Claude ou do Codex aparece como glifo solto, sem o disco colorido cheio, e as barrinhas do
   esforço ficaram do tamanho de um ícone.
