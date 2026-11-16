@@ -1226,9 +1226,14 @@ impl Janela {
             }))
     }
 
-    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/").
+    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/") e as
+    /// menções do "@" (rodada de uso, item 1.2).
     pub(super) fn sugestoes_da_caixa(&self, chat: &Chat, texto: &str) -> Option<(char, usize, Vec<Sugestao>)> {
         let (sinal, digitado, inicio) = gatilho(texto)?;
+        if sinal == '@' {
+            let lista = self.mencoes_da_caixa(chat, digitado, inicio);
+            return (!lista.is_empty()).then_some((sinal, inicio, lista));
+        }
         let itens: Vec<Sugestao> = match sinal {
             '/' => self
                 .comandos_de(chat)
@@ -1246,6 +1251,81 @@ impl Janela {
         };
         let lista = menu_sugestoes(itens, digitado);
         (!lista.is_empty()).then_some((sinal, inicio, lista))
+    }
+
+    /// O menu "@" na própria caixa (dono, 16/11/2026: rodada de uso, item 1.2), no lugar do diálogo
+    /// "Mencionar arquivo", que tirava o cursor da caixa e engolia o "@claude" da dupla. Na ordem:
+    /// o @claude e o @codex (só com a dupla ligada e só no começo da mensagem, a única posição que
+    /// o motor entende) e os arquivos e as pastas do chat, com o arquivo aberto à direita no topo.
+    /// Enquanto a pasta é lida, uma linha "Lendo a pasta…".
+    fn mencoes_da_caixa(&self, chat: &Chat, digitado: &str, inicio: usize) -> Vec<Sugestao> {
+        let mut lista: Vec<Sugestao> = Vec::new();
+        if chat.parceiro.is_some() && inicio == 0 {
+            for agente in [crate::modelo::Agente::Claude, crate::modelo::Agente::Codex] {
+                let nome = agente.nome().to_lowercase();
+                if nome.starts_with(&digitado.to_lowercase()) {
+                    lista.push(Sugestao {
+                        valor: format!("@{nome}"),
+                        titulo: format!("@{nome}"),
+                        detalhe: Some(format!("Só o {} responde a esta mensagem", agente.nome())),
+                        chave: nome.clone(),
+                        busca: nome,
+                        peso: 0,
+                    });
+                }
+            }
+        }
+        let Some((arquivos, pastas)) = self.arquivos_e_pastas_lidos(&chat.cwd).filter(|_| !self.lendo_arquivos(&chat.cwd)) else {
+            lista.push(Sugestao {
+                valor: String::new(),
+                titulo: "Lendo a pasta…".into(),
+                detalhe: None,
+                chave: String::new(),
+                busca: String::new(),
+                peso: 0,
+            });
+            return lista;
+        };
+        // O arquivo aberto à direita, se é deste chat, vem antes dos outros.
+        let aberto = self.arquivo_aberto.as_ref().and_then(|(pasta, caminho)| {
+            let inteiro = pasta.join(caminho);
+            inteiro.strip_prefix(&chat.cwd).ok().map(crate::git::caminho_em_texto)
+        });
+        let chave_memo = (chat.cwd.clone(), digitado.to_string(), std::rc::Rc::as_ptr(&arquivos) as usize, aberto.clone());
+        let achados = {
+            let memo = self.mencoes.borrow();
+            memo.as_ref().filter(|(chave, _)| *chave == chave_memo).map(|(_, achados)| achados.clone())
+        };
+        let achados = achados.unwrap_or_else(|| {
+            let termos: Vec<String> = digitado.to_lowercase().split_whitespace().map(str::to_string).collect();
+            let mut achados: Vec<String> = aberto
+                .clone()
+                .filter(|a| termos.iter().all(|t| a.to_lowercase().contains(t)))
+                .into_iter()
+                .collect();
+            for a in super::seletor_arquivos::filtrar_mencoes(&arquivos, &pastas, digitado, MAX_SUGESTOES) {
+                if !achados.contains(a) {
+                    achados.push(a.clone());
+                }
+            }
+            *self.mencoes.borrow_mut() = Some((chave_memo, achados.clone()));
+            achados
+        });
+        for caminho in achados {
+            let sem_barra = caminho.trim_end_matches('/');
+            let (pasta, nome) = sem_barra.rsplit_once('/').unwrap_or(("", sem_barra));
+            let titulo = if caminho.ends_with('/') { format!("{nome}/") } else { nome.to_string() };
+            lista.push(Sugestao {
+                valor: format!("@{caminho}"),
+                titulo,
+                detalhe: (!pasta.is_empty()).then(|| pasta.to_string()),
+                chave: nome.to_lowercase(),
+                busca: caminho.to_lowercase(),
+                peso: caminho.len(),
+            });
+        }
+        lista.truncate(MAX_SUGESTOES);
+        lista
     }
 
     /// O menu "/" do painel `ix`, se está à vista: há sugestões e o Esc não o fechou.
@@ -1350,6 +1430,10 @@ impl Janela {
         let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
             return;
         };
+        // A linha "Lendo a pasta…" não completa nada.
+        if valor.is_empty() {
+            return;
+        }
         // A palavra é medida de novo no texto de agora (o clique pode vir depois de outra tecla).
         let atual = composer.read(cx).value().to_string();
         let inicio = gatilho(&atual).map_or(inicio, |(_, _, i)| i);
@@ -1607,6 +1691,15 @@ mod testes_sugestoes {
     /// O Enter completa o que o menu marca, e não o primeiro da lista crua que contém o digitado:
     /// "/s" virava "/usage" com "/simplify" marcado, e "/" virava "/clear" (teste de usabilidade,
     /// 16/11/2026).
+    #[test]
+    fn arroba_so_no_comeco_ou_depois_de_espaco() {
+        assert_eq!(gatilho("@"), Some(('@', "", 0)));
+        assert_eq!(gatilho("veja @cent"), Some(('@', "cent", 5)));
+        // O "@" de um e-mail não abre o menu.
+        assert_eq!(gatilho("victor@"), None);
+        assert_eq!(gatilho("fala com victor@eita"), None);
+    }
+
     #[test]
     fn o_enter_completa_o_item_marcado_do_menu() {
         let comandos: Vec<String> = ["clear", "usage", "init", "simplify", "compact"].map(String::from).to_vec();

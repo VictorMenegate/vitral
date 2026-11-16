@@ -286,6 +286,8 @@ fn largura_util(window: &Window) -> f32 {
 /// Os arquivos de uma pasta na aba Arquivos.
 struct ArquivosLidos {
     lista: std::rc::Rc<Vec<String>>,
+    /// As pastas desses arquivos ("central/src/"), para o "@" mencionar uma pasta.
+    pastas: std::rc::Rc<Vec<String>>,
     /// Quando a lista foi lida; `None` pede uma releitura.
     lidos_em: Option<std::time::Instant>,
     /// A pasta da releitura em andamento, uma por vez.
@@ -443,6 +445,10 @@ pub struct Janela {
     direita_compacta: bool,
     /// Os avisos do canto que você dispensou no × (a chave do pedido ou da falha).
     avisos_dispensados: HashSet<String>,
+    /// O último filtro do menu "@" (a pasta, o digitado, a lista lida e o arquivo aberto) e o que
+    /// achou: o menu é pedido várias vezes por quadro, e a lista tem milhares de arquivos.
+    #[allow(clippy::type_complexity)]
+    mencoes: std::cell::RefCell<Option<((PathBuf, String, usize, Option<String>), Vec<String>)>>,
 }
 
 /// Redesenhos da janela desde a última conta (o `VITRAL_QUADROS`).
@@ -640,6 +646,7 @@ impl Janela {
             aba_direita: abas_direita::AbaDireita::Chat,
             direita_compacta: true,
             avisos_dispensados: HashSet::new(),
+            mencoes: Default::default(),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -830,13 +837,34 @@ impl Janela {
         )
     }
 
-    /// Arquivos de uma pasta. A primeira leitura é na hora; depois, a cada 20 segundos (ou no
-    /// ↻), a lista é relida em segundo plano, e a anterior fica na tela enquanto isso.
+    /// Arquivos de uma pasta, lidos em segundo plano: a primeira leitura também (com os
+    /// repositórios de dentro, a de ~/eita passa de mil arquivos e travaria a janela; rodada de
+    /// uso, item 1.2), e depois a cada 20 segundos (ou no ↻), com a anterior na tela enquanto isso.
+    /// Enquanto a primeira não chega, a lista vem vazia e `lendo_arquivos` diz que está lendo.
     pub(super) fn arquivos_da_pasta(&self, pasta: &std::path::Path, cx: &Context<Self>) -> std::rc::Rc<Vec<String>> {
+        self.ler_arquivos(pasta, cx);
+        self.cache_arquivos.borrow().get(pasta).map(|l| l.lista.clone()).unwrap_or_default()
+    }
+
+    /// Os arquivos e as pastas já lidos de uma pasta (sem pedir leitura): o "@" da caixa.
+    pub(super) fn arquivos_e_pastas_lidos(&self, pasta: &std::path::Path) -> Option<(std::rc::Rc<Vec<String>>, std::rc::Rc<Vec<String>>)> {
+        let cache = self.cache_arquivos.borrow();
+        let lidos = cache.get(pasta)?;
+        Some((lidos.lista.clone(), lidos.pastas.clone()))
+    }
+
+    /// A primeira leitura da pasta ainda não chegou.
+    pub(super) fn lendo_arquivos(&self, pasta: &std::path::Path) -> bool {
+        self.cache_arquivos.borrow().get(pasta).is_none_or(|l| l.lista.is_empty() && l.relendo.is_some())
+    }
+
+    /// Pede a leitura da pasta em segundo plano, se a lista venceu (ou nunca foi lida).
+    pub(super) fn ler_arquivos(&self, pasta: &std::path::Path, cx: &Context<Self>) {
         let mut cache = self.cache_arquivos.borrow_mut();
         let lidos = cache.entry(pasta.to_path_buf()).or_insert_with(|| ArquivosLidos {
-            lista: std::rc::Rc::new(seletor_arquivos::listar(pasta)),
-            lidos_em: Some(std::time::Instant::now()),
+            lista: Default::default(),
+            pastas: Default::default(),
+            lidos_em: None,
             relendo: None,
         });
         let vencida = lidos.lidos_em.is_none_or(|q| q.elapsed() >= Duration::from_secs(20));
@@ -844,9 +872,14 @@ impl Janela {
             lidos.relendo = Some(pasta.to_path_buf());
             let pasta = pasta.to_path_buf();
             cx.spawn(async move |this, cx| {
-                let lida = {
+                let (lida, pastas) = {
                     let pasta = pasta.clone();
-                    cx.background_spawn(async move { seletor_arquivos::listar(&pasta) }).await
+                    cx.background_spawn(async move {
+                        let lida = seletor_arquivos::listar(&pasta);
+                        let pastas = seletor_arquivos::pastas_dos_arquivos(&lida);
+                        (lida, pastas)
+                    })
+                    .await
                 };
                 let _ = this.update(cx, |this, cx| {
                     let mudou = {
@@ -856,13 +889,15 @@ impl Janela {
                             return;
                         };
                         lidos.relendo = None;
+                        let primeira = lidos.lidos_em.is_none() && lidos.lista.is_empty();
                         lidos.lidos_em = Some(std::time::Instant::now());
                         // A mesma lista fica com o mesmo Rc: a árvore não é refeita à toa.
                         let mudou = *lidos.lista != lida;
                         if mudou {
                             lidos.lista = std::rc::Rc::new(lida);
+                            lidos.pastas = std::rc::Rc::new(pastas);
                         }
-                        mudou
+                        mudou || primeira
                     };
                     if mudou {
                         cx.notify();
@@ -871,7 +906,6 @@ impl Janela {
             })
             .detach();
         }
-        lidos.lista.clone()
     }
 
     /// O ↻ da aba Arquivos: a próxima vez que a lista for pedida, ela é relida.
@@ -1007,6 +1041,19 @@ impl Janela {
         else {
             return;
         };
+        // Com o menu "@" à vista, o Enter completa o marcado (o mesmo que o Tab), sempre: a menção
+        // ainda não está escrita inteira (rodada de uso, item 1.2).
+        let arroba = {
+            let ix = self.ativo;
+            motor.read(cx).chat(&chat).and_then(|c| self.menu_da_caixa(ix, c, cx)).filter(|(sinal, ..)| *sinal == '@')
+        };
+        if let Some((_, inicio, lista)) = arroba {
+            let ix = self.ativo;
+            let marcado = self.paineis[ix].indice_menu.min(lista.len() - 1);
+            let (painel, valor) = (self.paineis[ix].id, lista[marcado].valor.clone());
+            self.escolher_sugestao(painel, inicio, &valor, window, cx);
+            return;
+        }
         // Enter com um comando pela metade e o menu "/" à vista completa o item marcado no menu
         // (o mesmo que o Tab), em vez de enviar. Com o nome exato de um comando, ou com o menu
         // fechado pelo Esc, envia como está.

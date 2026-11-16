@@ -350,7 +350,6 @@ impl Janela {
                 }
                 InputEvent::Focus => this.ativar_painel(id, cx),
                 InputEvent::Change => {
-                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos.
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
                     // O menu "/" recomeça do primeiro item e volta a aparecer.
@@ -360,10 +359,19 @@ impl Janela {
                     }
                     // O rascunho vai para o disco pouco depois de a digitação parar.
                     this.agendar_gravacao(cx);
-                    if (texto == "@" || texto.ends_with(" @"))
-                        && let Some(chat) = this.selecionado.clone()
+                    // O "@" no começo ou depois de um espaço abre o menu "@" na própria caixa; a
+                    // pasta do chat é lida em segundo plano, de novo a cada "@" novo (item 1.2). O
+                    // diálogo ficou só no "Arquivo da pasta…" do clipe.
+                    if let Some(('@', digitado, _)) = super::composer::gatilho(&texto)
+                        && let Some(cwd) = this
+                            .selecionado
+                            .as_ref()
+                            .and_then(|c| this.motor.as_ref()?.read(cx).chat(c).map(|c| c.cwd.clone()))
                     {
-                        this.dialogo_mencionar_arquivo(chat, window, cx);
+                        if digitado.is_empty() {
+                            this.reler_arquivos(&cwd);
+                        }
+                        this.ler_arquivos(&cwd, cx);
                     }
                     cx.notify();
                 }

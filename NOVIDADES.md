@@ -35,6 +35,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   a revisão da memória roda por baixo e vira uma linha na conversa ("Memória revista · nada a
   guardar"). Uma mensagem sua no meio dela corta a revisão (se ela ainda não escreveu nada) e
   começa o seu turno.
+- **Menu "@" na própria caixa.** O "@" abre um menu como o do "/", sem tirar o cursor da caixa:
+  **@claude** e **@codex** na dupla (agora funcionam pelo teclado) e os arquivos e as pastas do
+  chat, com Tab ou Enter para completar. A lista de arquivos passou a descer nos repositórios de
+  dentro da pasta: em ~/eita, o "@", a aba Arquivos e o Mencionar acham o código de central/,
+  layout/ e dos outros projetos.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

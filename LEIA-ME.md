@@ -459,7 +459,18 @@ nível, **Espaço** Ultrathink, **U** Ultracode, **Enter** fecha; no de modelo, 
 **Enter** usa. Com a caixa média, as setas e o "Claude " do modelo saem, e a conta fica só com o
 ícone. Com a caixa estreita, os chips ficam só com o ícone (o nome vai na dica), e o anexar e a
 conta vão para o **…**. Nenhum texto é cortado no meio: o que não cabe some inteiro, a conta
-primeiro. Mencionar arquivo da pasta (`@`, ou digite `@`) e anexar outra conversa como contexto.
+primeiro. Anexar outra conversa como contexto e mencionar arquivo da pasta pelo clipe
+(**Arquivo da pasta…**). Digitar `@` no começo da mensagem ou depois de um espaço abre o **menu
+"@"** na própria caixa, o mesmo desenho do `/`, filtrando enquanto se digita (até 8 linhas): com
+a dupla ligada e no começo da mensagem, **@claude** e **@codex** primeiro (o "@" de um e-mail,
+"victor@", não abre nada); depois os arquivos e as pastas do chat, com o arquivo aberto à direita
+no topo. Tab ou Enter completam "@caminho ", e Esc fecha sem apagar. A pasta é lida em segundo
+plano e de novo a cada "@" novo; enquanto lê, a linha "Lendo a pasta…". A lista de arquivos da
+pasta (a do "@", a da aba Arquivos e a do Mencionar) desce nos repositórios de dentro: cada
+subpasta com git próprio que o de cima ignora ou não conhece entra com o prefixo dela
+(`central/src/…`), até 3 níveis e dentro do teto de 20 mil arquivos. Só conta o `.git` que é
+pasta (o worktree, com `.git` em arquivo, duplicaria tudo). Em ~/eita, cuja raiz é lista-branca,
+é isso que faz o "@" achar o código dos projetos.
 Colar (Ctrl+V) imagem ou arquivos copiados, ou arrastar arquivos do gerenciador para a conversa,
 vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` para sessão nova e
 `/compact`), num menu acima da caixa: ↑/↓ andam pelo menu (o campo fica no contexto "Menu" só

@@ -1768,6 +1768,11 @@ impl Janela {
             let vazio = EstadoVazio::new(Lucide::FolderX, "Nenhuma pasta à mão").texto(texto);
             return div().flex_1().px(esp::E8).child(vazio).into_any_element();
         };
+        // A primeira leitura agora é em segundo plano (rodada de uso, item 1.2).
+        if a.lista.is_empty() && self.lendo_arquivos(&pasta) {
+            let vazio = EstadoVazio::new(Lucide::FolderOpen, "Lendo a pasta…").texto(pasta.display().to_string());
+            return div().flex_1().px(esp::E8).child(vazio).into_any_element();
+        }
         if a.lista.is_empty() {
             let destino = pasta.clone();
             let abrir = botao_fantasma(
