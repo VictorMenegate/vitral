@@ -192,20 +192,19 @@ impl Leitor {
                 let saiu_com_erro = item["exit_code"].as_i64().is_some_and(|c| c != 0);
                 ferramenta("Bash", json!({ "command": comando_limpo(&texto("command")) }), texto("aggregated_output"), saiu_com_erro || falhou)
             }
-            "file_change" => {
+            // Uma linha por arquivo, com o diff daquele arquivo. Só no fim do item (dono, 16/11/2026:
+            // "ver a edição"): o app-server pode abrir o item antes de o patch chegar inteiro (o
+            // `item/fileChange/patchUpdated` vem no meio), e a linha nasceria com o diff pela metade.
+            "file_change" if terminou => {
                 let mudancas = item["changes"].as_array().cloned().unwrap_or_default();
                 let mut eventos = Vec::new();
                 for (i, mudanca) in mudancas.iter().enumerate() {
                     let id = if mudancas.len() == 1 { id.clone() } else { format!("{id}:{i}") };
-                    let nome = if mudanca["kind"] == "add" || mudanca["kind"]["type"] == "add" { "Write" } else { "Edit" };
+                    let (nome, entrada) = entrada_da_mudanca(mudanca);
                     if self.abertos.insert(id.clone()) {
-                        eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.into(), entrada: json!({
-                            "file_path":mudanca["path"], "diff":mudanca["diff"],
-                        }) });
+                        eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.into(), entrada });
                     }
-                    if terminou {
-                        eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou });
-                    }
+                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou });
                 }
                 eventos
             }
@@ -239,12 +238,49 @@ fn comando_limpo(comando: &str) -> String {
     }
 }
 
-/// O que mudou, um arquivo por linha (o Codex não entrega o diff).
+/// O tipo de uma mudança: `"add"` no `exec` e `{"type":"add"}` no app-server.
+fn tipo_da_mudanca(mudanca: &Value) -> &str {
+    mudanca["kind"].as_str().or_else(|| mudanca["kind"]["type"].as_str()).unwrap_or("update")
+}
+
+/// A chamada que a conversa guarda para uma mudança do Codex, no formato das do Claude Code (o
+/// `detalhe_ferramenta` e o `mudanca_da_ferramenta` servem às duas). Conferido no schema do
+/// app-server do Codex 0.169.0 (`FileUpdateChange { path, kind, diff }`): no `update`, o `diff` é
+/// o diff unificado do arquivo (com "Moved to: …" no fim quando ele muda de nome); no `add`, o
+/// conteúdo do arquivo novo; no `delete`, o que o arquivo tinha. O arquivo novo vira um Write com
+/// o conteúdo (antes as linhas sem "+" contavam como nada); o apagado, um diff só de saídas.
+fn entrada_da_mudanca(mudanca: &Value) -> (&'static str, Value) {
+    let caminho = mudanca["path"].clone();
+    let diff = mudanca["diff"].as_str().unwrap_or_default();
+    let unificado = diff.lines().any(|l| l.starts_with("@@"));
+    match tipo_da_mudanca(mudanca) {
+        "add" => {
+            let conteudo = if unificado {
+                diff.lines().filter(|l| l.starts_with('+') && !l.starts_with("+++")).map(|l| &l[1..]).collect::<Vec<_>>().join("\n")
+            } else {
+                diff.to_string()
+            };
+            ("Write", json!({ "file_path": caminho, "content": conteudo }))
+        }
+        "delete" if !unificado && !diff.is_empty() => {
+            let linhas: Vec<&str> = diff.lines().collect();
+            let mut saidas = format!("@@ -1,{} +0,0 @@", linhas.len());
+            for linha in linhas {
+                saidas.push_str("\n-");
+                saidas.push_str(linha);
+            }
+            ("Edit", json!({ "file_path": caminho, "diff": saidas }))
+        }
+        _ => ("Edit", json!({ "file_path": caminho, "diff": diff })),
+    }
+}
+
+/// O que mudou, um arquivo por linha.
 fn resumo_das_mudancas(mudancas: &[Value]) -> String {
     mudancas
         .iter()
         .map(|m| {
-            let verbo = match m["kind"].as_str().unwrap_or_default() {
+            let verbo = match tipo_da_mudanca(m) {
                 "add" => "criou",
                 "delete" => "apagou",
                 _ => "mudou",
@@ -469,6 +505,44 @@ mod testes {
         let mut leitor = Leitor::default();
         let eventos: Vec<Evento> = linhas.iter().flat_map(|l| leitor.linha(&serde_json::from_str(l).unwrap())).collect();
         assert!(matches!(eventos.as_slice(), [Evento::Fim { erro: true, texto, .. }] if texto.contains("not supported")));
+    }
+
+    /// O formato do app-server (Codex 0.169.0): o tipo num objeto e o diff de cada arquivo.
+    #[test]
+    fn cada_arquivo_do_codex_vira_uma_chamada_com_a_edicao() {
+        let item = json!({ "type": "file_change", "id": "fc", "status": "completed", "changes": [
+            { "path": "/p/a.rs", "kind": { "type": "update", "move_path": null }, "diff": "@@ -1,2 +1,2 @@\n fn a() {}\n-antes\n+depois\n" },
+            { "path": "/p/novo.md", "kind": { "type": "add" }, "diff": "um\ndois\n" },
+            { "path": "/p/velho.txt", "kind": { "type": "delete" }, "diff": "x\ny" },
+        ] });
+        let mut leitor = Leitor::default();
+        assert!(leitor.linha(&json!({ "type": "item.started", "item": item })).is_empty(), "o diff só vale no fim do item");
+        let eventos = leitor.linha(&json!({ "type": "item.completed", "item": item }));
+        let chamadas: Vec<(String, String, Value)> = eventos
+            .iter()
+            .filter_map(|e| match e {
+                Evento::Ferramenta { id, nome, entrada } => Some((id.clone(), nome.clone(), entrada.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chamadas.iter().map(|(id, nome, _)| format!("{id}:{nome}")).collect::<Vec<_>>(), ["fc:0:Edit", "fc:1:Write", "fc:2:Edit"]);
+        assert_eq!(chamadas[0].2["diff"], "@@ -1,2 +1,2 @@\n fn a() {}\n-antes\n+depois\n");
+        assert_eq!(chamadas[1].2["content"], "um\ndois\n");
+        assert_eq!(chamadas[2].2["diff"], "@@ -1,2 +0,0 @@\n-x\n-y");
+        let resultados: Vec<&str> = eventos
+            .iter()
+            .filter_map(|e| match e {
+                Evento::ResultadoFerramenta { conteudo, .. } => Some(conteudo.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(resultados, ["mudou /p/a.rs", "criou /p/novo.md", "apagou /p/velho.txt"]);
+        // O arquivo novo conta as linhas que gravou; o detalhe é o de um Write.
+        let (detalhe, _) = crate::claude::detalhe_ferramenta("Write", &chamadas[1].2);
+        assert_eq!(detalhe.as_deref(), Some("+ um\n+ dois"));
+        assert_eq!(crate::claude::mudanca_da_ferramenta("Write", &chamadas[1].2).map(|m| (m.entram, m.saem)), Some((2, 0)));
+        assert_eq!(crate::claude::mudanca_da_ferramenta("Edit", &chamadas[2].2).map(|m| (m.entram, m.saem)), Some((0, 2)));
+        assert!(crate::claude::write_criou(resultados[1]));
     }
 
     #[test]

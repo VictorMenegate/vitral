@@ -1507,9 +1507,10 @@ fn linhas_do_diff(diff: &str) -> (u32, u32) {
     })
 }
 
-/// O resultado do Write diz que o arquivo foi criado agora (e não regravado): o selo "novo".
+/// O resultado do Write diz que o arquivo foi criado agora (e não regravado): o selo "novo". No
+/// Codex, o resultado de um arquivo novo é "criou <caminho>" (`agente_codex::resumo_das_mudancas`).
 pub fn write_criou(resultado: &str) -> bool {
-    resultado.to_ascii_lowercase().contains("created successfully")
+    resultado.to_ascii_lowercase().contains("created successfully") || resultado.starts_with("criou ")
 }
 
 /// O que saiu e o que entrou numa troca, cada linha com o seu sinal.
