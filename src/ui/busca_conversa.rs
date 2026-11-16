@@ -889,6 +889,8 @@ mod testes {
         indice.atualizar("c1", &itens, false, "cupom");
         assert_eq!(indice.total(), 3);
         assert_eq!(indice.contador().as_deref(), Some("1 de 3"));
+        // Na barra estreita, o curto.
+        assert_eq!(indice.contador_curto().as_deref(), Some("1/3"));
         // A atual é a primeira da mensagem 0; a mensagem 1 só leva o termo, sem a atual.
         assert_eq!(indice.realce(0, Campo::Texto).atual, Some(0));
         assert_eq!(indice.realce(1, Campo::Texto).atual, None);

@@ -157,6 +157,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Fila mais fácil de mexer.** O × de tirar uma mensagem da fila funciona com o turno rodando e
   várias na fila (a barra de rolagem ficava por cima dele), os botões cabem no painel estreito, a
   lista mostra três mensagens inteiras e o "Entregar agora" não aparece duas vezes.
+- **Buscar na conversa (Ctrl+F) mais confiável.** O achado dentro de uma trilha com raciocínio
+  aparece (antes o contador andava e a tela não), não para mais na última linha debaixo da pílula
+  de voltar ao fim, o campo não encolhe até uma letra no painel estreito e o × de fechar a busca
+  não fica debaixo dos anéis de uso.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 
