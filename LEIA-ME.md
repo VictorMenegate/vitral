@@ -611,13 +611,14 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
-- **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado), o histórico e o **⋯**. Abrir e fechar o painel da direita mora no **⋯** do último painel,
-  com o número do que ele espera no canto do **⋯**.
+- **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado) e o **+** (novo
+  chat ou histórico). O resto do painel, inclusive abrir e fechar a direita, mora no menu do botão
+  direito no cabeçalho (ou Shift+F10).
 - **O chip da conta**, na caixa, só aparece com mais de uma conta.
 - **O × do canto é o da janela.** Com o painel da direita aberto, o cabeçalho dele tem o botão de
   fechar o painel (o ícone de recolher), um traço e então os botões da janela; o × acende em
   vermelho e a dica diz "Fechar o Vitral". Com a direita fechada, os botões da janela ficam no
-  cabeçalho da última conversa, também depois de um traço e um pouco afastados do **⋯**, para o ×
+  cabeçalho da última conversa, também depois de um traço e um pouco afastados do **+**, para o ×
   não parecer o de fechar o painel.
 
 ## Acabamento
@@ -909,7 +910,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   36 (`Aba::quadrada`); se nem assim a aba à vista tiver o começo do título, as de fundo saem da
   faixa, a mais antiga primeiro, e um **+N** no fim da faixa abre a lista delas (a do histórico,
   só com elas; `jeito_das_abas`, em `src/ui/conversa.rs`, com a largura da faixa medida no quadro
-  anterior e a natural de cada aba, conta o lugar do +N). A faixa nunca passa por cima do **⋯** e
+  anterior e a natural de cada aba, conta o lugar do +N). A faixa nunca passa por cima do **+** e
   não rola: a roda do mouse em cima dela não faz nada. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
@@ -936,26 +937,28 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
   (**Recolher a lista**) ou pelo Ctrl+B, e no arrasto vai de 200 a 560 px (`FAIXA_LISTA`).
   Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
-- **Cabeçalho do painel.** Uma linha só (44): as abas, o modo foco (só ligado), o **histórico** e o
-  **⋯** (**Mais opções da conversa**, o mesmo menu do clique direito na aba, como diz a dica). O
-  histórico é o relógio com a seta, como o da extensão do Claude Code (`botao_historico`, em
-  `src/ui/conversa.rs`): abre uma lista com busca ("Buscar chat…", ↑/↓ e Enter) de todos os chats,
-  do mexido por último ao mais antigo, cada um com o ícone do estado, a hora e a pasta, e os
-  arquivados num grupo no fim. O chat à vista vem marcado; escolher outro mostra ele neste painel,
-  como uma aba (o que já está à vista noutro painel diz "no painel 2" e só ativa aquele painel). O
-  botão fica também no painel estreito. O botão da direita
-  saiu do cabeçalho: no último painel, abrir e fechar a direita é o item do **⋯**, **Mostrar Este
-  chat** (ou **Mostrar o arquivo aberto**), marcado quando ela está aberta, com o Ctrl+J. Com a
-  direita fora da vista (fechada, ou a gaveta dela fechada) e chats que pedem você, o **⋯** leva no
-  canto um selo com o número, âmbar, ou vermelho se um caiu, e o item mostra o mesmo número tingido.
-  Ligados, ficam num cinza mais claro, nunca azul. Na aba, o balão do chat, com a pasta na dica
-  ("Direto em ~/Projetos/loja", "Sem pasta: um chat numa pasta vazia só dele"). O **⋯** tem **Modo
-  foco**, o item da direita (no último painel), **Nova conversa ao lado**, **Mover para a
-  esquerda/direita**, **Fechar os outros painéis**, **Fechar este painel** e o menu da conversa
-  (renomear, fixar, arquivar; o "Abrir no VS Code" e o "Abrir no terminal" saíram dele). O custo ("US$ 0,42") está no anel do contexto
-  da caixa. Não há linha entre o cabeçalho e as mensagens, nem com a conversa rolada. Em painel
-  estreito o modo foco vai para o **⋯**; no mais estreito, com vários painéis, o número toma o
-  lugar do símbolo da aba. Nenhum texto é cortado no meio.
+- **Cabeçalho do painel.** Uma linha só (44): as abas, o modo foco (só ligado) e o **+** (dono,
+  16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e ter o histórico também, e
+  tira o de 3 pontinhos e deixa só no botão direito"). O **+** (`botao_historico`, em
+  `src/ui/conversa.rs`, dica "Novo chat ou histórico") abre uma lista com busca ("Buscar chat…",
+  ↑/↓ e Enter): a primeira linha, já marcada, é **Novo chat neste painel** (o Enter cria o chat
+  novo aqui, como aba, na mesma pasta que o "+" da lista escolheria); embaixo, todos os chats, do
+  mexido por último ao mais antigo, cada um com o ícone do estado, a hora e a pasta, e os
+  arquivados num grupo no fim. Digitar filtra a lista, e a linha do chat novo só fica se casar com
+  o texto dela ("novo"). O chat à vista diz "à vista neste painel"; escolher outro mostra ele
+  neste painel, como uma aba (o que já está à vista noutro painel diz "no painel 2" e só ativa
+  aquele painel). O botão fica também no painel estreito. O **⋯** do cabeçalho saiu: o **botão
+  direito** no cabeçalho (na faixa das abas e no vazio dela) abre o menu do painel onde o mouse
+  está, e na aba de fundo o mesmo menu, com as ações da conversa valendo para aquele chat;
+  **Shift+F10** e a tecla **Menu** abrem o mesmo menu do painel ativo, ancorado onde ficava o
+  **⋯** (`menu_pelo_teclado`). O menu tem **Modo foco**, no último painel o item da direita
+  (**Mostrar Este chat** ou **Mostrar o arquivo aberto**, marcado quando ela está aberta, com o
+  Ctrl+J), **Nova conversa ao lado** e o menu da conversa (renomear, fixar, arquivar). Na aba, o
+  balão do chat, com a pasta na dica ("Direto em ~/Projetos/loja", "Sem pasta: um chat numa pasta
+  vazia só dele"). O custo ("US$ 0,42") está no anel do contexto da caixa. Não há linha entre o
+  cabeçalho e as mensagens, nem com a conversa rolada. Em painel estreito o modo foco vai para o
+  menu do painel; no mais estreito, com vários painéis, o número toma o lugar do símbolo da aba.
+  Nenhum texto é cortado no meio.
 - **Painel sem conversa:** "Comece um chat" com **Novo chat** (na última pasta usada) e **Em outra
   pasta…**; dá para soltar ali uma conversa arrastada da lista.
 - **Zoom:** Ctrl + roda do mouse (ou do touchpad), Ctrl+= / Ctrl+- e Ctrl+0 (volta a 100%)
@@ -1103,7 +1106,7 @@ também com o foco fora da caixa, depois de um clique na conversa (ou fecha a ga
 caixa do painel ativo (no do esforço, ←/→, Home e End mudam o nível, Espaço liga o Ultrathink, U
 liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fecha sem parar a
 conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez: abrir o menu do
-logo, o sino, um popover da caixa, o **⋯** ou o histórico de um painel, pelo mouse ou pelo atalho,
+logo, o sino, um popover da caixa, o menu ou o **+** de um painel, pelo mouse ou pelo atalho,
 fecha o que estava aberto (`Janela::so_um_flutuante`).
 
 ## Compilar e rodar

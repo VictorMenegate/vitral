@@ -130,6 +130,8 @@ tabela! {
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";
     "alt-4", super::IrParaPainel4, None, Grupo::Paineis, "", "";
     "escape", super::FecharGaveta, Some("Gaveta"), Grupo::Paineis, "Recolher a gaveta", "";
+    "shift-f10", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "Menu do painel ativo (também no botão direito do cabeçalho e das abas)", "Shift+F10";
+    "menu", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "", "";
     "ctrl-w", super::FecharPainel, None, Grupo::Paineis, "Fechar a aba à vista e, na última, o painel (a conversa fica na lista)", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";

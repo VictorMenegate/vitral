@@ -108,9 +108,12 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   Arquivadas foi para a dica.
 - **Porcentagem do contexto sempre à vista**, também com três painéis lado a lado: o anel sozinho
   parecia algo carregando.
-- **Histórico em cada painel.** O relógio no cabeçalho, como na extensão do Claude Code, abre a
-  lista de todos os chats, do mais recente ao mais antigo, com busca: o escolhido abre neste
-  painel, numa aba.
+- **"+" em cada painel: chat novo ou histórico.** O "+" no cabeçalho abre uma lista com "Novo chat
+  neste painel" no topo, já marcado (Enter cria), e todos os chats, do mais recente ao mais antigo,
+  com busca: o escolhido abre neste painel, numa aba.
+- **Sem o "⋯" no cabeçalho.** O menu do painel (modo foco, mostrar o painel da direita, nova
+  conversa ao lado, renomear, fixar, arquivar) abre com o botão direito no cabeçalho ou numa aba
+  (na aba, vale para aquele chat), e com Shift+F10 ou a tecla Menu.
 - **Os anéis de uso não cobrem mais o texto.** Com o painel da direita aberto, o conteúdo dele
   deixa o lugar dos anéis; sem ele, as mensagens, a faixa e a caixa do último painel terminam na
   mesma linha, ao lado dos anéis.

@@ -40,7 +40,10 @@ use crate::{
 /// O histórico do cabeçalho: os chats do mexido por último ao mais antigo, com o ícone do estado
 /// (o da lista), a hora e a pasta; os arquivados num grupo no fim. Um chat à vista noutro painel
 /// diz qual.
-fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>) -> Vec<GrupoDeEscolha> {
+/// A chave da linha "Novo chat neste painel", no "+" do cabeçalho.
+const NOVO_CHAT_NO_PAINEL: &str = "\u{0}novo-chat";
+
+fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>, a_vista: Option<&str>) -> Vec<GrupoDeEscolha> {
     // O "+N" da faixa das abas mostra só as que saíram dela.
     let mut chats: Vec<&Chat> = motor.chats_da_lista().filter(|c| so.is_none_or(|so| so.contains(&c.id))).collect();
     chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
@@ -48,7 +51,11 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
         let quando = super::tempo_relativo(c.atualizado_em);
         let quando = if quando == "agora" { quando } else { format!("há {quando}") };
         let pasta = if motor.sem_pasta(c) { "sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
-        let onde = noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default();
+        let onde = if a_vista == Some(c.id.as_str()) {
+            "à vista neste painel · ".to_string()
+        } else {
+            noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default()
+        };
         ItemDeEscolha {
             simbolo: Some(Simbolo::Estado(sinal_do_chat(motor, c))),
             descricao: Some(format!("{onde}{quando} · {pasta}").into()),
@@ -239,11 +246,16 @@ fn item_com_motivo(titulo: &'static str, icone: Lucide, motivo: Option<String>) 
 
 /// O menu do painel, o mesmo no "⋯" e no clique direito da aba: o que saiu do cabeçalho na
 /// largura estreita, abrir ao lado, mover e fechar, e o menu da conversa.
+/// O menu do painel: o botão direito no cabeçalho e nas abas, e o Shift+F10 (o "⋯" do cabeçalho
+/// saiu a pedido do dono, 16/11/2026: "tira o de 3 pontinhos e deixa só no botão direito"). Com
+/// `do_chat`, as ações da conversa valem para aquele chat (a aba de fundo clicada); sem ele, para
+/// o chat à vista no painel.
 fn menu_do_painel(
     menu: PopupMenu,
     janela: WeakEntity<Janela>,
     motor: Entity<Motor>,
     painel_id: u64,
+    do_chat: Option<String>,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
@@ -263,7 +275,7 @@ fn menu_do_painel(
         let ix = j.paineis.iter().position(|p| p.id == painel_id)?;
         let painel = &j.paineis[ix];
         let m = motor.read(cx);
-        let chat = m.chat(painel.chat.as_deref()?)?;
+        let chat = m.chat(do_chat.as_deref().or(painel.chat.as_deref())?)?;
         let nivel = painel.medida.nivel;
         let estreito = matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo);
         let rotulo = estreito.then(|| {
@@ -734,7 +746,10 @@ impl Janela {
         let mostra_botoes_janela = ultimo && !self.direita_visivel();
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
-        self.arrastavel_com_id(SharedString::from(format!("arrastar-conversa-{painel_id}")))
+        // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.
+        let menu_do_cabecalho = conversa.map(|_| (cx.entity().downgrade(), motor_entidade.clone()));
+        let cabecalho = self
+            .arrastavel_com_id(SharedString::from(format!("arrastar-conversa-{painel_id}")))
             .flex_none()
             .flex()
             .items_center()
@@ -794,7 +809,13 @@ impl Janela {
                 )
                     .child(acoes)
                     .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
-            })
+            });
+        match menu_do_cabecalho {
+            Some((janela, motor)) => cabecalho
+                .context_menu(move |menu, window, cx| menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, None, window, cx))
+                .into_any_element(),
+            None => cabecalho.into_any_element(),
+        }
     }
 
     /// As abas do painel, na ordem em que abriram: a do chat à vista (a aba completa, abaixo) e as
@@ -885,6 +906,11 @@ impl Janela {
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
                         let simbolo = previa.copia().unwrap_or_else(simbolo_da_conversa);
                         cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
+                    })
+                    // O botão direito na aba de fundo: o menu do painel, com as ações daquele chat.
+                    .context_menu({
+                        let (janela, motor, chat) = (cx.entity().downgrade(), motor_entidade.clone(), id.clone());
+                        move |menu, window, cx| menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, Some(chat.clone()), window, cx)
                     });
                 // As outras abas cedem o espaço antes da que está à vista, até sobrar o símbolo: só
                 // então ela encolhe (com o peso igual, "WMS" virava "W…" ao lado de títulos longos).
@@ -1008,14 +1034,14 @@ impl Janela {
                 cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
             })
             .context_menu(move |menu, window, cx| {
-                menu_do_painel(menu, menu_janela.clone(), menu_motor.clone(), painel_id, window, cx)
+                menu_do_painel(menu, menu_janela.clone(), menu_motor.clone(), painel_id, None, window, cx)
             });
         // O clique na aba não move a janela; o vazio em volta dela, sim.
         sem_arrastar().flex().min_w_0().child(aba).into_any_element()
     }
 
     /// Shift+F10 ou a tecla Menu na aba: abre o "⋯" do painel.
-    fn abrir_menu_do_painel(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+    pub(super) fn abrir_menu_do_painel(&mut self, painel_id: u64, cx: &mut Context<Self>) {
         self.so_um_flutuante(super::QualFlutuante::MenuPainel(painel_id));
         if let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel_id) {
             p.menu_aberto = true;
@@ -1057,9 +1083,15 @@ impl Janela {
                         })),
                 ))
             })
-            .child(sem_arrastar().child(self.botao_historico(ix, window, cx)))
-            // O "..." leva tudo do painel, inclusive abrir e fechar a direita.
-            .child(sem_arrastar().relative().child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx)))
+            // O "+": novo chat neste painel ou um do histórico. O menu do painel, sem o "⋯" (dono,
+            // 16/11/2026), abre no botão direito; pelo teclado (Shift+F10, tecla Menu), ancorado
+            // aqui, num gatilho sem tamanho.
+            .child(
+                sem_arrastar()
+                    .relative()
+                    .child(self.botao_historico(ix, window, cx))
+                    .child(div().absolute().right_0().bottom_0().child(self.menu_pelo_teclado(motor_entidade, painel_id, painel.menu_aberto, cx))),
+            )
     }
 
     /// O histórico, o relógio da extensão do Claude Code (dono, 16/11/2026: "coloca essa parte de
@@ -1090,8 +1122,8 @@ impl Janela {
             .track_focus(&foco)
             .trigger(botao_icone(
                 ("historico-painel", painel_id as usize),
-                Lucide::RotateCcwClock,
-                "Histórico: abrir outro chat neste painel",
+                Lucide::Plus,
+                "Novo chat ou histórico",
                 TamanhoBotao::Barra,
                 window,
                 cx,
@@ -1157,12 +1189,32 @@ impl Janela {
             .filter(|(_, p)| p.id != painel_id)
             .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
             .collect();
-        let grupos = grupos_do_historico(motor.read(cx), &noutros, so.as_deref());
+        let mut grupos = grupos_do_historico(motor.read(cx), &noutros, so.as_deref(), atual.as_deref());
+        // No "+" do cabeçalho, a primeira linha é o chat novo neste painel, já marcada (o Enter
+        // cria). A busca é a da lista: digitar filtra o histórico, e ela só fica se casar com o
+        // texto dela (dono, 16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e
+        // ter o histórico também").
+        let escolhido = if so.is_none() {
+            grupos.insert(
+                0,
+                GrupoDeEscolha {
+                    titulo: None,
+                    itens: vec![ItemDeEscolha {
+                        simbolo: Some(Simbolo::icone(Lucide::Plus)),
+                        termos: Some("novo chat criar conversa".into()),
+                        ..ItemDeEscolha::new(NOVO_CHAT_NO_PAINEL, "Novo chat neste painel")
+                    }],
+                },
+            );
+            Some(NOVO_CHAT_NO_PAINEL.into())
+        } else {
+            atual.map(Into::into)
+        };
         self.so_um_flutuante(QualFlutuante::Historico(painel_id));
         self.historico_aberto = Some((painel_id, so.is_some()));
         lista.update(cx, |l, cx| {
             l.ficha_no_escolhido(true);
-            l.definir(grupos, atual.map(Into::into), cx);
+            l.definir(grupos, escolhido, cx);
             l.abrir(window, cx);
         });
         cx.notify();
@@ -1173,6 +1225,13 @@ impl Janela {
     pub(super) fn escolheu_no_historico(&mut self, painel_id: u64, evento: &EventoEscolha, window: &mut Window, cx: &mut Context<Self>) {
         if self.historico_aberto.is_some_and(|(p, _)| p == painel_id) {
             self.historico_aberto = None;
+        }
+        // A linha do chat novo: cria neste painel, como aba (o "+" da lista, mas aqui).
+        if matches!(evento, EventoEscolha::Escolheu(chave) if chave.as_ref() == NOVO_CHAT_NO_PAINEL) {
+            self.ativar_painel(painel_id, cx);
+            self.novo_chat_direto(window, cx);
+            cx.notify();
+            return;
         }
         if let EventoEscolha::Escolheu(chat) = evento
             && !self.paineis.iter().any(|p| p.id == painel_id && p.chat.as_deref() == Some(chat.as_ref()))
@@ -1197,15 +1256,10 @@ impl Janela {
         }
     }
 
-    /// O "⋯" do painel, controlado por `Painel.menu_aberto` para o Shift+F10 da aba abrir o mesmo.
-    fn botao_opcoes(
-        &self,
-        motor_entidade: &Entity<Motor>,
-        painel_id: u64,
-        aberto: bool,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
+    /// O menu do painel pelo teclado (Shift+F10, tecla Menu), controlado por `Painel.menu_aberto`,
+    /// num gatilho sem tamanho no lugar onde ficava o "⋯"; o botão direito abre o mesmo menu onde
+    /// o mouse está.
+    fn menu_pelo_teclado(&self, motor_entidade: &Entity<Motor>, painel_id: u64, aberto: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
         let janela = cx.entity().downgrade();
         let ao_mudar = janela.clone();
         let motor = motor_entidade.clone();
@@ -1228,15 +1282,8 @@ impl Janela {
                     }
                 });
             })
-            // O clique direito na aba abre o mesmo menu (`menu_do_painel`).
-            .trigger(botao_icone(
-                ("opcoes-painel", painel_id as usize),
-                Lucide::Ellipsis,
-                "Mais opções da conversa\nTambém no clique direito da aba",
-                TamanhoBotao::Barra,
-                window,
-                cx,
-            ))
+            // Sem botão à vista: o gatilho não tem tamanho, e o menu abre pelo teclado.
+            .trigger(super::trilho::Gatilho(div().size_0().into_any_element()))
             .content(move |_, window, cx| {
                 // Feito uma vez por abertura (o conteúdo é pedido a cada quadro) e refeito
                 // depois de fechar, como o dropdown do kit.
@@ -1250,7 +1297,7 @@ impl Janela {
                 }
                 let (janela, motor) = (janela.clone(), motor.clone());
                 let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
-                    menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, window, cx)
+                    menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, None, window, cx)
                 });
                 menu.focus_handle(cx).focus(window, cx);
                 // Pelo Shift+F10, o primeiro item já vem realçado.

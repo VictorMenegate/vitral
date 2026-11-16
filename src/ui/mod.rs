@@ -69,6 +69,9 @@ actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, IrAoFim
 actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsquerda, MoverPainelDireita]);
 // A seta para cima na caixa vazia e o "?" fora de um campo de texto.
 actions!(vitral, [EditarUltima, AbrirAtalhos]);
+// Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
+// cabeçalho e nas abas abre o mesmo).
+actions!(vitral, [AbrirMenuDoPainel]);
 
 
 /// Seções da lista que começam recolhidas.
@@ -1422,6 +1425,11 @@ impl Render for Janela {
             // turno do painel ativo, como a linha de estado promete. A caixa, a gaveta, a busca
             // e os diálogos têm o Esc deles antes deste (teste de usabilidade, 16/11/2026).
             .on_action(cx.listener(|this, _: &composer::PararTurno, window, cx| this.esc_na_janela(window, cx)))
+            .on_action(cx.listener(|this, _: &AbrirMenuDoPainel, _, cx| {
+                if let Some(id) = this.paineis.get(this.ativo).map(|p| p.id) {
+                    this.abrir_menu_do_painel(id, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &AlternarPainel, window, cx| {
                 this.alternar_painel(window, cx)
             }))
