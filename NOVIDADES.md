@@ -122,6 +122,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Trilha de ferramentas mais regular.** O chevron fica sempre no fim da linha, o detalhe que é
   código vai num chip em mono e o que é texto (a tarefa de um subagente, uma busca na web) vai em
   letra normal. A chamada sozinha não tem mais o ramo pendurado nem o vão entre o verbo e o detalhe.
+  No painel médio, o resumo do grupo sai curto ("13 comandos · 1 editado · 3 lidos"), sem cortar o
+  último número.
 - **Escolhas iguais em todo lugar.** Nas Configurações e no boas-vindas, a opção escolhida de um
   seletor (como "7 dias") usa a mesma ficha de metal do esforço e do alto da lista.
 - **Rolagem sem corte seco.** Rolada para cima, a conversa esmaece no pé em vez de cortar a última

@@ -494,7 +494,9 @@ ferramentas, vale por painel).
   num chip; o que é prosa (a tarefa do Agent, a busca na web, a lista de tarefas) vai em Inter, sem
   chip. Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
-  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"), com o ícone da trilha à
+  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"; fora do painel largo, a forma
+  curta sem os verbos, "2 comandos · 1 editado · 3 lidos", para o corte não levar o último número),
+  com o ícone da trilha à
   esquerda, de onde descem os ramos, e o chevron no fim, como nas chamadas e no "Pensou"; abrem
   enquanto trabalham e recolhem ao terminar, respeitando a escolha manual. Dentro do grupo, o verbo
   tem uma coluna de 56 para os detalhes ficarem alinhados. A chamada solta (sozinha entre duas

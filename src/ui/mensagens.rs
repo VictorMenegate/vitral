@@ -1190,7 +1190,10 @@ const RECUO_DO_LOG: Rems = r(56.);
 /// ramo: a coluna do texto dela (12 + 14 + 8).
 const RECUO_DO_LOG_SOLTO: Rems = r(34.);
 
-fn resumo_das_chamadas(chamadas: &[(usize, &Item)]) -> String {
+/// O resumo do grupo de chamadas: "Rodou 13 comandos · editou 1 arquivo · leu 3 arquivos" no
+/// painel largo e, fora dele, a forma curta sem os verbos, "13 comandos · 1 editado · 3 lidos":
+/// cortado, o fim levava o último número junto ("leu 3 arqu…") (relatório de design, 16/11/2026).
+fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
     let mut editados = std::collections::HashSet::new();
     for (_, item) in chamadas {
@@ -1207,12 +1210,21 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)]) -> String {
         }
     }
     let mut partes = Vec::new();
-    if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
-    if !editados.is_empty() { partes.push(format!("editou {}", contagem(editados.len(), "arquivo", "arquivos"))); }
-    if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
-    if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
-    if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
-    if partes.is_empty() && pensamentos > 0 { partes.push("Pensou sobre o pedido".into()); }
+    if curto {
+        if comandos > 0 { partes.push(contagem(comandos, "comando", "comandos")); }
+        if !editados.is_empty() { partes.push(contagem(editados.len(), "editado", "editados")); }
+        if leituras > 0 { partes.push(contagem(leituras, "lido", "lidos")); }
+        if buscas > 0 { partes.push(contagem(buscas, "busca", "buscas")); }
+        if outras > 0 { partes.push(contagem(outras, "ferramenta", "ferramentas")); }
+        if partes.is_empty() && pensamentos > 0 { partes.push("Pensou".into()); }
+    } else {
+        if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
+        if !editados.is_empty() { partes.push(format!("editou {}", contagem(editados.len(), "arquivo", "arquivos"))); }
+        if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
+        if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
+        if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
+        if partes.is_empty() && pensamentos > 0 { partes.push("Pensou sobre o pedido".into()); }
+    }
     let mut resumo = partes.join(" · ");
     if let Some(primeira) = resumo.get_mut(..1) { primeira.make_ascii_uppercase(); }
     resumo
@@ -1266,7 +1278,7 @@ impl Janela {
             &[]
         };
         let cabecalho = recolhivel.then(|| {
-            let resumo = resumo_das_chamadas(chamadas);
+            let resumo = resumo_das_chamadas(chamadas, !larga(contexto.nivel));
             let falhas = chamadas
                 .iter()
                 .filter(|(_, item)| matches!(item, Item::Ferramenta { erro: true, .. }))
@@ -3596,7 +3608,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        linhas_da_edicao, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha, sem_marcacao,
+        linhas_da_edicao, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha, resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
     };
@@ -3856,6 +3868,20 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn resumo_do_grupo_longo_e_curto() {
+        let mut editar = ferramenta("Edit", "Edit · views.py", Some("ok"), false);
+        if let crate::modelo::Item::Ferramenta { arquivo, .. } = &mut editar {
+            *arquivo = Some("produtos/views.py".into());
+        }
+        let ler = ferramenta("Read", "Read · views.py", Some("ok"), false);
+        let rodar = ferramenta("Bash", "Bash · cargo test", Some("ok"), false);
+        let itens = [rodar.clone(), rodar, editar, ler.clone(), ler.clone(), ler];
+        let chamadas: Vec<(usize, &crate::modelo::Item)> = itens.iter().enumerate().collect();
+        assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos");
+        assert_eq!(resumo_das_chamadas(&chamadas, true), "2 comandos · 1 editado · 3 lidos");
     }
 
     #[test]
