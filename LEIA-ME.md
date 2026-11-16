@@ -549,7 +549,8 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
 
 - **O alto da lista é uma linha só**: o logo (o menu do Vitral) e as abas **Conversas | Arquivos**,
   na mesma altura (40), num segmentado de largura toda (`topo_enxuto`, em `src/ui/trilho.rs`).
-  Arquivos mostra a pasta do chat aberto.
+  A fileira tem a altura do cabeçalho dos painéis (44), para o logo e as abas da lista ficarem na
+  linha das abas das conversas ao lado. Arquivos mostra a pasta do chat aberto.
 - **A busca e o "+" moram no pé da lista**, embaixo das Arquivadas, dos agentes rodando e do sino,
   também na altura de 40. O recolher da lista (Ctrl+B) mora no menu do logo, **Recolher a lista**.
 - **A lista é corrida**, sem título nem os das seções: o que espera você, o que roda, as fixadas

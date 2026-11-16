@@ -32,7 +32,7 @@ use super::{
 use crate::{
     atualizacao,
     motor::{Motor, PrecisaDeVoce},
-    tema::{Cores, Lucide, esp, halo_foco, r, raio, tam},
+    tema::{Cores, Lucide, altura, esp, halo_foco, r, raio, tam},
 };
 
 /// O logo pequeno (16 a 32 px na tela): o quadrado de metal líquido com o V, parado. É o PNG de
@@ -56,9 +56,6 @@ static LOGO_V: LazyLock<Arc<Image>> = LazyLock::new(|| {
 pub(super) fn logo_v() -> Arc<Image> {
     LOGO_V.clone()
 }
-
-/// Medidas da peça a 100% (crescem com o zoom): o lugar do logo.
-pub(super) const LARGURA: f32 = 52.;
 
 /// Dica do sino: o título e, embaixo, o que trava o trabalho (pedidos, paradas, erros) separado
 /// das respostas novas.
@@ -314,7 +311,10 @@ impl Janela {
             .items_center()
             .flex_none()
             .w_full()
-            .h(r(LARGURA))
+            // Na altura do cabeçalho dos painéis (44): o logo de 44 enche a fileira, o segmentado
+            // de 40 centra, e os centros caem na linha das abas ao lado. Com 52, ficavam uns 5 px
+            // abaixo delas (relatório de design, 16/11/2026).
+            .h(altura::CABECALHO)
             .px(esp::E4)
             .gap(esp::E8)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
