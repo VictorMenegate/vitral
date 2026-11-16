@@ -153,10 +153,14 @@ impl Janela {
                 .bg(Cores::cartao_elevado())
                 .border_1()
                 .border_color(Cores::tinta_borda(Cores::destaque()))
+                // Relógio e × presos à primeira linha do título, que pode quebrar em duas: no
+                // centro, eles ficavam no vão entre as linhas (relatório de aparência,
+                // 16/11/2026, V17).
                 .child(
                     h_flex()
+                        .items_start()
                         .gap(esp::E8)
-                        .child(Icon::new(Lucide::Clock).size(r(14.)).flex_none().text_color(Cores::destaque_texto()))
+                        .child(Icon::new(Lucide::Clock).size(r(14.)).flex_none().mt(esp::E2).text_color(Cores::destaque_texto()))
                         .child(
                             div()
                                 .id(SharedString::from(format!("titulo-resumo-{onde}")))
@@ -170,7 +174,7 @@ impl Janela {
                                 .child("Enquanto você esteve fora")
                                 .tooltip(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
                         )
-                        .child(div().flex_none().child(fechar)),
+                        .child(div().flex_none().relative().top(r(-3.)).child(fechar)),
                 )
                 .child(corpo)
                 .into_any_element(),
