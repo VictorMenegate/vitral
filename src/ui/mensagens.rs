@@ -2324,8 +2324,9 @@ impl Janela {
             // Na linha de estado da caixa (o `return` de cima).
             Situacao::Rodando { .. } => return None,
             // No formato da lista e do sino ("Parada · Vitral fechou"), com o motivo inteiro na
-            // dica: o cru do motor saía cortado em todo painel parado. O longo que não encurta
-            // quebra em duas linhas (relatório de design, 16/11/2026).
+            // dica: o cru do motor saía cortado em todo painel parado (relatório de design,
+            // 16/11/2026). Numa linha só, com reticências no fim quando aperta: em duas linhas a
+            // faixa ficava mais alta que as outras (o dono viu "Parada · Vitral" / "fechou").
             Situacao::Parada { motivo, atencao } => (
                 h_flex()
                     .flex_1()
@@ -2338,16 +2339,15 @@ impl Janela {
                     }))
                     .child({
                         let curto = motivo_curto(&motivo);
-                        let dica = (curto != motivo).then(|| SharedString::from(format!("Parada: {motivo}")));
+                        let dica = SharedString::from(format!("Parada: {motivo}"));
                         div()
                             .id(("faixa-parada", painel_id as usize))
                             .min_w_0()
-                            .line_clamp(2)
-                            .text_ellipsis()
+                            .truncate()
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .child(format!("Parada · {curto}"))
-                            .when_some(dica, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)))
+                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     })
                     .into_any_element(),
                 Some(
@@ -2436,12 +2436,12 @@ impl Janela {
                 .map(coluna)
                 .pl(recuo)
                 .pr(fim)
-                // Pelo menos 28: o motivo longo da parada pode ocupar duas linhas.
-                .min_h(r(28.))
+                .h(r(28.))
                 .gap(esp::E8)
                 .text_color(Cores::tenue())
                 .child(esquerda)
-                .children(direita)
+                // A ação fica sempre inteira; quem corta é o texto, à esquerda.
+                .children(direita.map(|d| div().flex_none().child(d)))
                 .into_any_element(),
         )
     }
