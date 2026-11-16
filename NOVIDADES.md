@@ -161,6 +161,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   aparece (antes o contador andava e a tela não), não para mais na última linha debaixo da pílula
   de voltar ao fim, o campo não encolhe até uma letra no painel estreito e o × de fechar a busca
   não fica debaixo dos anéis de uso.
+- **O lápis não foge do ponteiro.** A barra de ações da mensagem (hora, editar, copiar) continua
+  à vista quando o ponteiro chega nela por cima.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

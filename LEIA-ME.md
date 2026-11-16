@@ -417,7 +417,9 @@ vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` p
 enquanto ele está à vista), Tab ou Enter completam o item marcado (o Enter com o nome exato de um
 comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante, à esquerda do seu balão, na altura da última linha
 (no canto de cima dele, no painel mínimo), e no canto de cima à direita da resposta; nada fica
-reservado nem à vista sem o ponteiro, e nada se mexe quando ela aparece. Os blocos de código ficam
+reservado nem à vista sem o ponteiro, e nada se mexe quando ela aparece. O hover da mensagem
+alcança a barra inteira, que fica metade para fora dela (`com_alcance_da_barra`): chegando por
+cima, o lápis não some antes do clique. Os blocos de código ficam
 num preto quase puro, como as saídas de comando, e têm o próprio Copiar, numa coluna à direita que
 nunca cobre o código; a linguagem fica na dica dele ("Copiar código python"). Modo foco (esconde as
 ferramentas, vale por painel).

@@ -538,6 +538,7 @@ impl Janela {
         let barra = div().absolute().top(r(-14.)).right_0();
         v_flex()
             .w_full()
+            .map(com_alcance_da_barra)
             .group(grupo.clone())
             .child(div().relative().w_full().child(corpo).child(barra.child(barra_de_acoes(grupo, acoes, cx))))
             .into_any_element()
@@ -566,11 +567,10 @@ impl Janela {
         // miniatura dos anexos, que abre no visor.
         let apontadas = imagens::imagens_do_texto(texto, Some(&contexto.chat.cwd));
         let chat_id = contexto.chat.id.clone();
-        v_flex()
+        let resposta = v_flex()
             .relative()
             .w_full()
             .gap(esp::E8)
-            .group(grupo.clone())
             .child(
                 div().corpo().text_color(Cores::texto()).child(
                     markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(|vista, cx| {
@@ -592,11 +592,11 @@ impl Janela {
                 })))
             })
             .child(div().absolute().top(r(-14.)).right_0().child(barra_de_acoes(
-                grupo,
+                grupo.clone(),
                 hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
                 cx,
-            )))
-            .into_any_element()
+            )));
+        div().w_full().map(com_alcance_da_barra).group(grupo).child(resposta).into_any_element()
     }
 
     /// Mensagem que outro chat (ou o Vitral) entregou: quem mandou e uma prévia; a linha do nome
@@ -802,6 +802,13 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
 /// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
 /// hover da mensagem, sem reservar altura. Quem chama a posiciona. Um fade aqui viraria animação
 /// em cadeia ao passar o ponteiro pela conversa.
+/// O hover da mensagem alcança a barra de ações inteira, que fica 14 acima dela (metade para
+/// fora): 16 de folga em cima, devolvidos pela margem. Sem isso, chegando por cima, a barra sumia
+/// antes do clique no lápis (teste de usabilidade, 16/11/2026).
+fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
+    elemento.pt(esp::E16).mt(r(-16.))
+}
+
 fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
     h_flex()
         .h(r(28.))
