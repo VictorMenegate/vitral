@@ -450,6 +450,10 @@ pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
     tam(window, if estreita { 10. } else { 12. })
 }
 
+/// A dica dos botões de compactar: o clique compacta já; quem quer foco escreve a instrução.
+pub(super) const DICA_DO_COMPACTAR: &str =
+    "Resume a conversa agora, sem mexer no que está escrito na caixa (com o turno rodando, entra na fila). Para compactar com foco, escreva “/compact” e a instrução na caixa.";
+
 /// O máximo de letras de um trecho citado (uma seleção enorme não vira a mensagem).
 const MAX_DA_CITACAO: usize = 4_000;
 
@@ -888,11 +892,12 @@ impl Janela {
                         window,
                         cx,
                     )
+                    .tooltip(DICA_DO_COMPACTAR)
                     .on_click(move |_, window, cx| {
                         if let Some(pop) = pop.upgrade() {
                             pop.update(cx, |p, cx| p.dismiss(window, cx));
                         }
-                        let _ = janela_e.update(cx, |this, cx| this.por_na_caixa(painel, "/compact ", window, cx));
+                        let _ = janela_e.update(cx, |this, cx| this.compactar_conversa(painel, cx));
                     });
                     let Some(m) = motor.as_ref().map(|m| m.read(cx)) else {
                         return div().into_any_element();
@@ -965,6 +970,23 @@ impl Janela {
                         cx.notify();
                     })),
             )
+    }
+
+    /// "Compactar" (o do anel, o da faixa da conversa grande parada, o do "…" e o do cartão de
+    /// erro): manda o /compact direto pelo envio normal, sem tocar na caixa; com o turno rodando,
+    /// ele entra na fila. Antes ele escrevia "/compact " na caixa no lugar do rascunho, que sumia
+    /// sem aviso, e ainda faltava o Enter (dono, 16/11/2026: rodada de uso, item 6.3).
+    pub(super) fn compactar_conversa(&mut self, painel: u64, cx: &mut Context<Self>) {
+        let (Some(motor), Some(chat)) = (self.motor.clone(), self.paineis.iter().find(|p| p.id == painel).and_then(|p| p.chat.clone()))
+        else {
+            return;
+        };
+        motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, "/compact".into(), Vec::new(), crate::modelo::Reforco::default(), cx));
+        if let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel) {
+            p.seguindo = true;
+            p.rolagem.scroll_to_bottom();
+        }
+        cx.notify();
     }
 
     pub(super) fn por_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {

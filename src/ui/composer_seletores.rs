@@ -1120,8 +1120,8 @@ impl Janela {
                     .item(item_de_comandos(j1, painel))
                     // O `/compact` é do Claude Code.
                     .when(!codex, |menu| {
-                        menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, window, cx| {
-                            let _ = j2.update(cx, |this, cx| this.por_na_caixa(painel, "/compact ", window, cx));
+                        menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, _, cx| {
+                            let _ = j2.update(cx, |this, cx| this.compactar_conversa(painel, cx));
                         }))
                     })
                     // O mapa dos subagentes, quando a conversa abriu algum.

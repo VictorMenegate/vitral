@@ -78,9 +78,12 @@ componentes do GPUI Kit.
   (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`). (2) `Chat::fria` (em `src/modelo.rs`): conversa do Claude
   com sessão, `CONTEXTO_GRANDE` (100 mil tokens) ou mais e parada há `DESCONTO_DURA` (uma hora, o
-  tempo do cache na assinatura) vira `Situacao::Fria` na faixa acima da caixa, com "Compactar",
-  que só escreve `/compact ` na caixa. Turno rodando, parada, falha, pasta sumida e fila de
-  mensagens vêm antes dela; depois dela, por último, `Situacao::Mudou`: quando o último turno
+  tempo do cache na assinatura) vira `Situacao::Fria` na faixa acima da caixa, com "Compactar".
+  O "Compactar" (o da faixa, o do anel, o do "…" e o do cartão de erro) manda o `/compact` direto
+  pelo envio normal, sem tocar na caixa (o rascunho fica); com o turno rodando, ele entra na fila.
+  Para compactar com foco, escreve-se "/compact <instrução>" na caixa, como a dica lembra
+  (`compactar_conversa`, rodada de uso, item 6.3). Turno rodando, parada, falha, pasta sumida, fila de
+  mensagens e o "Você parou" (item 6.2) vêm antes dela; depois dela, por último, `Situacao::Mudou`: quando o último turno
   mudou arquivos e nada roda, a faixa diz "3 arquivos mudados · +40 −12" com **Ver mudanças**,
   que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,

@@ -984,7 +984,7 @@ impl Janela {
                         Some(Lucide::Minimize),
                         "Compactar",
                         TamanhoBotao::Linha,
-                        cx.listener(move |this, _, window, cx| this.por_na_caixa(painel, "/compact ", window, cx)),
+                        cx.listener(move |this, _, _, cx| this.compactar_conversa(painel, cx)),
                         window,
                         cx,
                     )
@@ -3587,8 +3587,8 @@ impl Janela {
                     .into_any_element(),
                 Some(
                     botao_fantasma("faixa-compactar", Some(Lucide::Minimize.into()), "Compactar", TamanhoBotao::Barra, window, cx)
-                        .tooltip("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume antes, e os próximos turnos releem só o resumo.")
-                        .on_click(cx.listener(move |this, _, window, cx| this.por_na_caixa(painel_id, "/compact ", window, cx)))
+                        .tooltip("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume agora, sem mexer no que está escrito na caixa, e os próximos turnos releem só o resumo. Para compactar com foco, escreva “/compact” e a instrução na caixa.")
+                        .on_click(cx.listener(move |this, _, _, cx| this.compactar_conversa(painel_id, cx)))
                         .into_any_element(),
                 ),
             ),
