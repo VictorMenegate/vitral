@@ -679,7 +679,7 @@ impl Janela {
                 // Cada aba é uma peça; o vão depois delas continua arrastando a janela.
                 s.child(div().flex().flex_1().min_w_0().items_center().gap(esp::E6).children(abas.into_iter().flatten()))
                     .child(acoes)
-                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela(cx)))
+                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
             })
     }
 

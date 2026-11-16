@@ -566,12 +566,14 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
-- **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado) e o **⋯**. Abrir e fechar o painel da direita mora no **⋯** do último painel,
+- **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado), o histórico e o **⋯**. Abrir e fechar o painel da direita mora no **⋯** do último painel,
   com o número do que ele espera no canto do **⋯**.
 - **O chip da conta**, na caixa, só aparece com mais de uma conta.
 - **O × do canto é o da janela.** Com o painel da direita aberto, o cabeçalho dele tem o botão de
   fechar o painel (o ícone de recolher), um traço e então os botões da janela; o × acende em
-  vermelho e a dica diz "Fechar o Vitral".
+  vermelho e a dica diz "Fechar o Vitral". Com a direita fechada, os botões da janela ficam no
+  cabeçalho da última conversa, também depois de um traço e um pouco afastados do **⋯**, para o ×
+  não parecer o de fechar o painel.
 
 ## Acabamento
 

@@ -124,6 +124,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   letra normal. A chamada sozinha não tem mais o ramo pendurado nem o vão entre o verbo e o detalhe.
 - **Escolhas iguais em todo lugar.** Nas Configurações e no boas-vindas, a opção escolhida de um
   seletor (como "7 dias") usa a mesma ficha de metal do esforço e do alto da lista.
+- **O × da janela separado do painel.** No cabeçalho da última conversa, um traço separa o × da
+  janela das ações do painel, como já era no painel da direita.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

@@ -1062,6 +1062,16 @@ impl Janela {
         grupo_botoes_janela(botoes_do_layout(cx.button_layout()), false)
     }
 
+    /// Os mesmos, depois das ações de um painel: o traço de 1×16 os separa, como no painel da
+    /// direita, e o grupo fica 8 mais longe. Colado ao "⋯" do cabeçalho da conversa, com o mesmo
+    /// cinza e tamanho do × da aba, o × da janela se lia como "fechar este painel" (relatório de
+    /// design, 16/11/2026).
+    fn botoes_janela_separados(&self, cx: &Context<Self>) -> Div {
+        let botoes = botoes_do_layout(cx.button_layout());
+        let vazio = botoes.is_empty();
+        grupo_botoes_janela(botoes, true).when(!vazio, |s| s.ml(esp::E12))
+    }
+
     /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das
     /// conversas; na gaveta, o botão de recolhê-la, com o Esc tirado do keymap (os da janela
     /// ficam na última conversa).
