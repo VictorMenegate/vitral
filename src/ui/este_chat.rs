@@ -2,7 +2,7 @@
 //! aviso, se ela sumiu).
 
 use gpui_kit::component::{
-    ElementExt as _, clipboard::Clipboard, scroll::ScrollableElement as _, tooltip::Tooltip,
+    ElementExt as _, scroll::ScrollableElement as _, tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -160,9 +160,9 @@ fn fica_compacta(rem: f32, antes: bool) -> bool {
     if antes { rem < limite + 0.5 } else { rem < limite }
 }
 
-/// Copiar do kit, de 24 (troca para o check por 2 s).
+/// O Copiar de 24 (troca para o visto por 2 s).
 fn copiar(id: String, valor: String) -> impl IntoElement {
-    BotaoCopiar::new(Clipboard::new(SharedString::from(id)).value(SharedString::from(valor)))
+    BotaoCopiar::new(SharedString::from(id), valor)
 }
 
 /// Uma linha de dado (28): o rótulo numa coluna fixa, o valor em mono cortado no começo (o fim do

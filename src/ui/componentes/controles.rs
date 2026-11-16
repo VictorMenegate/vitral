@@ -6,7 +6,6 @@ use std::{cell::RefCell, ops::RangeInclusive, rc::Rc};
 use gpui_kit::component::{
     Disableable, Icon, Selectable, Sizable, Size, StyledExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
-    clipboard::Clipboard,
     input::{Input, InputState},
     kbd::Kbd,
     menu::DropdownMenu,
@@ -22,20 +21,52 @@ use super::superficies::desenho_teclas;
 use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
 
-/// O Copiar do kit (troca para o check por 2 s) em 24, crescendo com o zoom: o tamanho só se
-/// sabe ao desenhar, com a janela.
+/// O Copiar: um botão de linha (24, ícone de 14 tênue, como os outros botões de linha), que troca
+/// para o visto verde por 2 s. O do kit desenhava o ícone a 0,75 do botão (18) em `texto`, maior
+/// e mais claro que o texto que ele copia (relatório de aparência, 16/11/2026, V12).
 #[derive(IntoElement)]
-pub struct BotaoCopiar(Clipboard);
+pub struct BotaoCopiar {
+    id: ElementId,
+    valor: SharedString,
+    dica: SharedString,
+}
 
 impl BotaoCopiar {
-    pub fn new(c: Clipboard) -> Self {
-        BotaoCopiar(c)
+    pub fn new(id: impl Into<ElementId>, valor: impl Into<SharedString>) -> Self {
+        BotaoCopiar { id: id.into(), valor: valor.into(), dica: "Copiar".into() }
+    }
+
+    pub fn dica(mut self, dica: impl Into<SharedString>) -> Self {
+        self.dica = dica.into();
+        self
     }
 }
 
 impl RenderOnce for BotaoCopiar {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        self.0.with_size(Size::Size(tam(window, 24.)))
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let copiado = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
+        let feito = *copiado.read(cx);
+        let icone: Icon = if feito { Lucide::Check.into() } else { Lucide::Copy.into() };
+        let valor = self.valor;
+        botao_icone(self.id, icone.when(feito, |i| i.text_color(Cores::verde())), self.dica, TamanhoBotao::Linha, window, cx).on_click(
+            move |_, _, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(valor.to_string()));
+                copiado.update(cx, |c, cx| {
+                    *c = true;
+                    cx.notify();
+                });
+                let copiado = copiado.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                    _ = copiado.update(cx, |c, cx| {
+                        *c = false;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            },
+        )
     }
 }
 

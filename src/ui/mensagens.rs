@@ -13,7 +13,6 @@ use gpui_kit::component::{
     ActiveTheme as _, ElementExt as _, Icon, StyledExt as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
-    clipboard::Clipboard,
     h_flex,
     input::{Enter, Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -609,11 +608,9 @@ impl Janela {
                             .relative()
                             .pr(esp::E32)
                             .child(texto)
-                            .child(div().absolute().top_0().right_0().child(BotaoCopiar::new(
-                                Clipboard::new(SharedString::from(format!("copiar-{chave_do_trecho}")))
-                                    .value(copiar)
-                                    .tooltip("Copiar a citação"),
-                            )))
+                            .child(div().absolute().top_0().right_0().child(
+                                BotaoCopiar::new(SharedString::from(format!("copiar-{chave_do_trecho}")), copiar).dica("Copiar a citação"),
+                            ))
                             .into_any_element(),
                         None => texto.into_any_element(),
                     }
@@ -769,7 +766,7 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
                 Some(l) => format!("Copiar código {l}"),
                 None => "Copiar código".to_string(),
             };
-            BotaoCopiar::new(Clipboard::new("copiar").value(bloco.code()).tooltip(dica))
+            BotaoCopiar::new("copiar", bloco.code()).dica(dica)
         })
 }
 
@@ -1151,11 +1148,7 @@ fn separador_de_dia(rotulo: &str) -> AnyElement {
 }
 
 fn copiar(chave: &str, texto: &str) -> BotaoCopiar {
-    BotaoCopiar::new(
-        Clipboard::new(SharedString::from(format!("copiar-{chave}")))
-            .value(SharedString::from(texto.to_string()))
-            .tooltip("Copiar"),
-    )
+    BotaoCopiar::new(SharedString::from(format!("copiar-{chave}")), texto.to_string())
 }
 
 /// Abre o chat (Ctrl+clique, ao lado), sem abrir ou fechar a linha de baixo.
@@ -2045,7 +2038,7 @@ fn cartao_de_edicao(chave: &str, arquivo: Option<&str>, pedido: &str) -> Div {
             .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
             .child(div().flex_1().min_w_0().truncate().mono_pequeno().text_color(Cores::texto()).child(
                 arquivo.and_then(|a| Path::new(a).file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Alteração".into())))
-            .child(BotaoCopiar::new(Clipboard::new(SharedString::from(format!("copiar-diff-{chave}"))).value(pedido.to_string()))))
+            .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string())))
         .child(bloco_do_pedido(pedido))
 }
 
@@ -3082,7 +3075,7 @@ impl Janela {
                 .into_any_element();
         }
         let copiar_plano =
-            BotaoCopiar::new(Clipboard::new(id_copiar).value(SharedString::from(plano)).tooltip("Copiar o plano"));
+            BotaoCopiar::new(id_copiar, plano).dica("Copiar o plano");
         let rotulo_aprovar = if estreita { "Aprovar" } else { "Aprovar e executar" };
         let aprovar = botao_primario(id_aprovar, Some(Lucide::Check.into()), rotulo_aprovar, TamanhoBotao::Controle, window, cx)
             .on_click(aprovar);

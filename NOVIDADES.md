@@ -102,6 +102,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
   erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
   transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+- **Copiar discreto.** O botão de copiar dos blocos de código, das citações e das mensagens tem o
+  ícone pequeno e apagado dos outros botões de linha, e vira um visto verde por 2 s.
 - **Selo do sino menor e recortado.** O número do sino tem o tamanho de um contador e um aro
   escuro que o separa do botão.
 - **Nomes inteiros na aba Arquivos.** Os botões de cada arquivo só ocupam lugar com o ponteiro em

@@ -2,7 +2,6 @@
 //! dentro (`Cores::preto`).
 
 use gpui_kit::component::ElementExt as _;
-use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -139,9 +138,7 @@ impl RenderOnce for CaixaDeCodigo {
                     )
                     .children(self.tempo.map(|t| div().flex_none().metadado().text_color(cor_tempo).child(t)))
                     .child(
-                        BotaoCopiar::new(
-                            Clipboard::new(SharedString::from(format!("{}-copiar", self.id))).value(para_copiar),
-                        ),
+                        BotaoCopiar::new(SharedString::from(format!("{}-copiar", self.id)), para_copiar),
                     ),
             )
             .child(
