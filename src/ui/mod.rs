@@ -501,8 +501,10 @@ impl Janela {
     pub fn new(motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         iniciar_contador_de_quadros(cx);
         let busca = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar"));
-        let mut assinaturas = vec![cx.subscribe_in(&busca, window, |_, _, evento, _, cx| {
+        let mut assinaturas = vec![cx.subscribe_in(&busca, window, |this, _, evento, _, cx| {
             if matches!(evento, InputEvent::Change) {
+                // Termo novo: a marca volta ao primeiro resultado (rodada de uso, item 4.1).
+                this.realce_lista = None;
                 cx.notify();
             }
         })];
@@ -791,7 +793,7 @@ impl Janela {
     }
 
     /// O foco vai para a gaveta, para o Esc fechá-la.
-    fn abrir_gaveta(&mut self, gaveta: Gaveta, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn abrir_gaveta(&mut self, gaveta: Gaveta, window: &mut Window, cx: &mut Context<Self>) {
         self.gaveta = Some(gaveta);
         self.geracao_gaveta += 1;
         window.focus(&self.foco_gaveta, cx);

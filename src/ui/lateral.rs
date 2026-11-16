@@ -14,7 +14,7 @@ use gpui_kit::component::{
     ElementExt as _, Selectable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Enter, Escape, InputState, MoveDown},
+    input::{Enter, Escape, InputState, MoveDown, MoveUp},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     tooltip::Tooltip,
@@ -873,7 +873,10 @@ impl Janela {
         // A aba Arquivos mostra a pasta do chat aberto.
         let conversas = self.aba == AbaLateral::Conversas;
         let arquivos = (!conversas).then(|| self.preparar_arquivos(motor_entidade, &busca, window, cx));
-        let teclado = self.foco_lista.is_focused(window) && window.last_input_was_keyboard();
+        // Com texto na busca e o cursor nela, o resultado marcado aparece mesmo sem o foco na lista:
+        // é o que o Enter abre (rodada de uso, item 4.1).
+        let busca_ativa = !busca.is_empty() && self.busca.read(cx).focus_handle(cx).is_focused(window);
+        let teclado = (self.foco_lista.is_focused(window) && window.last_input_was_keyboard()) || busca_ativa;
         let motor = motor_entidade.read(cx);
         let ctx = Contexto {
             busca: busca.clone(),
@@ -885,6 +888,16 @@ impl Janela {
 
         let abas = self.abas_da_lista(motor, &ctx, conversas);
         let montagem = if conversas { self.lista_conversas(motor, &ctx, window, cx) } else { Montagem::default() };
+        // Com a busca ativa, o primeiro resultado já vem marcado: o realce que saiu da lista (o
+        // termo mudou) volta ao primeiro, no quadro seguinte.
+        if busca_ativa
+            && conversas
+            && let Some(primeiro) = montagem.navegaveis.first()
+            && !self.realce_lista.as_ref().is_some_and(|r| montagem.navegaveis.iter().any(|n| n.chat == *r))
+        {
+            self.realce_lista = Some(primeiro.chat.clone());
+            window.refresh();
+        }
         let linha_busca = self.linha_da_busca(&montagem, &ctx, window, cx);
         let escopo = self.linha_escopo(motor, arquivos.as_ref(), &ctx, window, cx);
         let rodape = self.rodape(motor, arquivos.as_ref(), window, cx);
@@ -977,6 +990,31 @@ impl Janela {
     fn linha_da_busca(&self, montagem: &Montagem, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> Div {
         let conversas = self.aba == AbaLateral::Conversas;
         let primeiro = montagem.navegaveis.first().map(|n| (n.chat.clone(), n.indice));
+        let navegaveis: Rc<Vec<(String, usize)>> = Rc::new(montagem.navegaveis.iter().map(|n| (n.chat.clone(), n.indice)).collect());
+        // O marcado com a busca ativa: o realce, se está entre os resultados; senão o primeiro.
+        let marcado = {
+            let navegaveis = navegaveis.clone();
+            move |this: &Janela| -> Option<(String, usize)> {
+                this.realce_lista
+                    .as_ref()
+                    .and_then(|r| navegaveis.iter().find(|(c, _)| c == r).cloned())
+                    .or_else(|| navegaveis.first().cloned())
+            }
+        };
+        // As setas com texto na busca movem a marca sem tirar o cursor do campo: refinar o termo
+        // continua sendo digitar (rodada de uso, item 4.1). Com o campo vazio, a ↓ leva à lista.
+        let mover = {
+            let navegaveis = navegaveis.clone();
+            move |this: &mut Janela, tecla: &str, cx: &mut Context<Janela>| {
+                let atual = this.realce_lista.as_ref().and_then(|r| navegaveis.iter().position(|(c, _)| c == r));
+                if let Some(ix) = posicao_do_realce(navegaveis.len(), atual, tecla) {
+                    this.realce_lista = Some(navegaveis[ix].0.clone());
+                    this.rolagem_lista.scroll_to_item(navegaveis[ix].1);
+                    cx.notify();
+                }
+            }
+        };
+        let mover_abaixo = mover.clone();
         let campo = div()
             .flex_1()
             .min_w_0()
@@ -987,26 +1025,50 @@ impl Janela {
                         return;
                     };
                     cx.stop_propagation();
+                    if !this.busca.read(cx).value().is_empty() {
+                        mover_abaixo(this, "down", cx);
+                        return;
+                    }
                     this.realce_lista = Some(chat);
                     this.rolagem_lista.scroll_to_item(indice);
                     window.focus(&this.foco_lista, cx);
                     cx.notify();
                 }
             }))
-            // Enter abre o primeiro resultado (Ctrl+Enter, ao lado) e põe o cursor na caixa dele:
-            // antes era preciso ↓ e Enter (teste de usabilidade, 16/11/2026).
-            .capture_action(cx.listener(move |this, acao: &Enter, window, cx| {
-                let Some((chat, _)) = primeiro.clone().filter(|_| this.aba == AbaLateral::Conversas) else {
-                    return;
-                };
-                cx.stop_propagation();
-                if acao.secondary {
-                    this.abrir_ao_lado(chat, None, window, cx);
-                } else {
-                    this.selecionar(Some(chat), window, cx);
+            .capture_action(cx.listener(move |this, _: &MoveUp, _, cx| {
+                if this.aba == AbaLateral::Conversas && !this.busca.read(cx).value().is_empty() {
+                    cx.stop_propagation();
+                    mover(this, "up", cx);
                 }
-                this.focar_composer(window, cx);
-                cx.notify();
+            }))
+            // Enter abre o marcado (o primeiro, até as setas andarem; Ctrl+Enter, ao lado) e põe o
+            // cursor na caixa dele: antes era preciso ↓ e Enter (teste de usabilidade, 16/11/2026).
+            .capture_action(cx.listener({
+                let marcado = marcado.clone();
+                move |this, acao: &Enter, window, cx| {
+                    let Some((chat, _)) = marcado(this).filter(|_| this.aba == AbaLateral::Conversas) else {
+                        return;
+                    };
+                    cx.stop_propagation();
+                    if acao.secondary {
+                        this.abrir_ao_lado(chat, None, window, cx);
+                    } else {
+                        this.selecionar(Some(chat), window, cx);
+                    }
+                    this.focar_composer(window, cx);
+                    cx.notify();
+                }
+            }))
+            // F2 renomeia o marcado, como na lista.
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                if ev.keystroke.key == "f2"
+                    && this.aba == AbaLateral::Conversas
+                    && !this.busca.read(cx).value().is_empty()
+                    && let Some((chat, _)) = marcado(this)
+                {
+                    cx.stop_propagation();
+                    this.dialogo_renomear(chat, window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| this.esc_na_busca(window, cx)))
             .child(campo_da_lista(&self.busca, self.aba, ctx.aperto.estreita, window, cx));
@@ -1601,9 +1663,13 @@ impl Janela {
     }
 
     /// A busca das conversas, com a lista à vista (em gaveta, se não couber ao lado). Também é
-    /// o Esc da lista.
+    /// o Esc da lista. Com a lista recolhida (Ctrl+B), ela abre como gaveta por cima dos painéis
+    /// e recolhe sozinha ao abrir um chat: o Ctrl+K não a fixa de volta nem espreme os painéis
+    /// (rodada de uso, item 4.1).
     pub(super) fn focar_busca(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
+        if !self.lista && self.gaveta != Some(Gaveta::Lista) {
+            self.abrir_gaveta(Gaveta::Lista, window, cx);
+        } else if !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
             self.mostrar_lista(window, cx);
         }
         if self.aba != AbaLateral::Conversas {
@@ -1613,9 +1679,12 @@ impl Janela {
         window.focus(&foco, cx);
     }
 
-    /// Esc na busca: limpa; vazia, fecha a gaveta ou volta à caixa do painel ativo.
+    /// Esc na busca: na gaveta do Ctrl+K, fecha (o termo fica, para o próximo Ctrl+K o achar
+    /// selecionado); fora dela, limpa e, vazia, volta à caixa do painel ativo.
     fn esc_na_busca(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.busca.read(cx).value().is_empty() {
+        if self.gaveta == Some(Gaveta::Lista) && !self.lista {
+            self.fechar_gaveta(window, cx);
+        } else if !self.busca.read(cx).value().is_empty() {
             self.busca.update(cx, |b, cx| b.set_value("", window, cx));
         } else if self.gaveta == Some(Gaveta::Lista) {
             self.fechar_gaveta(window, cx);

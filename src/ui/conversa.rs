@@ -79,7 +79,14 @@ fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
         }
     };
     let (arquivados, ativos): (Vec<&Chat>, Vec<&Chat>) = chats.into_iter().partition(|c| c.arquivado);
-    [(None, ativos), (Some("Arquivados"), arquivados)]
+    // O que espera você (pedido, parada, erro) vem num grupo no alto, antes da ordem por data
+    // (rodada de uso, item 4.1).
+    let (esperando, ativos): (Vec<&Chat>, Vec<&Chat>) = ativos.into_iter().partition(|c| {
+        a_vista != Some(c.id.as_str())
+            && motor.espera_do_chat(c).is_some_and(|e| e != crate::motor::Espera::Nova)
+    });
+    let recentes = if esperando.is_empty() { None } else { Some("Recentes") };
+    [(Some("Esperando você"), esperando), (recentes, ativos), (Some("Arquivados"), arquivados)]
         .into_iter()
         .filter(|(_, chats)| !chats.is_empty())
         .map(|(titulo, chats)| GrupoDeEscolha {

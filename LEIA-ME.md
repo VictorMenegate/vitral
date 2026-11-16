@@ -1166,9 +1166,15 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   num chat) vai para a caixa do painel ativo, que fica com o cursor. O mesmo vale com o foco na
   conversa (depois de abrir uma trilha, selecionar para copiar ou clicar no "Hoje") e numa aba:
   a letra entra na caixa do painel ativo, e o Ctrl+V cola nela (um print copiado vira pílula sem
-  clicar antes). O Espaço e o Enter continuam do botão focado, e o "?" abre os atalhos. Na busca, Enter abre o primeiro
-  resultado (Ctrl+Enter, ao lado) e põe o cursor na caixa dele; Esc limpa e, vazia, volta à caixa
-  do painel. O Ctrl+K seleciona o termo anterior, para a busca nova o trocar. Se a lista sai de
+  clicar antes). O Espaço e o Enter continuam do botão focado, e o "?" abre os atalhos. Na busca, com texto, o
+  primeiro resultado já vem marcado, mesmo com o cursor no campo; ↑/↓ movem a marca sem tirar o
+  cursor (refinar o termo continua sendo digitar), Enter abre o marcado (Ctrl+Enter, ao lado) e
+  põe o cursor na caixa dele, e F2 o renomeia. Com o campo vazio, ↓ leva à lista. Esc limpa e,
+  vazia, volta à caixa do painel. O Ctrl+K seleciona o termo anterior, para a busca nova o trocar.
+  Com a lista recolhida (Ctrl+B), o Ctrl+K a abre como gaveta por cima dos painéis, com o cursor
+  na busca: abrir um chat a recolhe sozinha, e Esc a fecha (o termo fica). Ela não volta fixa nem
+  espreme os painéis, e o Ctrl+B continua igual (rodada de uso, item 4.1). No histórico do "+", o
+  que espera você (pedido, parada, erro) vem num grupo "Esperando você" no alto. Se a lista sai de
   vista com o foco nela (um painel novo a empurrou, Ctrl+B, a janela estreitou), o foco vai para a
   caixa do painel ativo.
 - **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone, com o número na dica; liga e desliga a

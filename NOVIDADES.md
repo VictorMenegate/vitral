@@ -48,6 +48,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   o turno fez ("3 editados · 12 comandos"); o histórico do "+" diz o estado e o começo da última
   fala; a dica da aba de fundo também; e o "Enquanto você esteve fora" deixa o título curto, com a
   frase ao lado.
+- **Ctrl+K como seletor rápido.** Com a lista recolhida, o Ctrl+K a abre por cima dos painéis e
+  ela recolhe sozinha ao abrir o chat. Com texto na busca, o primeiro resultado já vem marcado, e as
+  setas movem a marca sem tirar o cursor do campo. No histórico do "+", o que espera você vem no alto.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.
