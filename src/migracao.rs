@@ -1135,7 +1135,9 @@ mod testes {
         // As notas ficam no .vitral antigo, e o relatório diz onde.
         assert!(dados::nao_existe(&dados.pasta.join("notas")));
         let registro: Registro = dados::ler_json_r(&dados.arquivo_migracao()).unwrap().unwrap();
-        assert!(registro.relatorio.avisos.iter().any(|a| a.contains(".vitral/notas")), "{:?}", registro.relatorio.avisos);
+        // O caminho sai com o separador do sistema (no Windows, `.vitral\notas`).
+        let notas = Path::new(".vitral").join("notas").display().to_string();
+        assert!(registro.relatorio.avisos.iter().any(|a| a.contains(&notas)), "{:?}", registro.relatorio.avisos);
         let _ = fs::remove_dir_all(&base);
     }
 
