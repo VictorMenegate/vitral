@@ -439,7 +439,8 @@ ferramentas, vale por painel).
   aberta (`src/ui/busca_conversa.rs`): a barra flutua no alto do painel, com o contador ("3 de
   12"), **F3** e **Shift+F3** para andar e realce em âmbar; a busca não liga para maiúscula nem
   para acento ("codigo" acha "código"), conta também o que está dentro de um bloco fechado (a saída
-  de uma ferramenta), que abre ao chegar a vez dele (também na trilha com raciocínio no meio: a
+  de uma ferramenta, também a de um comando, que então aparece inteira e rola até o achado), que
+  abre ao chegar a vez dele (também na trilha com raciocínio no meio: a
   busca agrupa as chamadas com as mesmas regras da conversa), e **Esc** fecha. O achado para a 48 px
   do alto e a 88 do pé, longe da pílula de voltar ao fim. Fora do painel largo o contador é curto
   ("2/7", com a frase na dica) e o campo não desce de 128; no último painel, com os anéis de uso no

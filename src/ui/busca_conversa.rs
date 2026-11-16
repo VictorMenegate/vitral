@@ -360,7 +360,7 @@ impl Realce {
 
     /// O número do salto, só quando a ocorrência atual está neste texto: é o que faz a vista
     /// rolar até ela uma vez, e não a cada quadro.
-    fn salto_aqui(&self) -> Option<u64> {
+    pub(crate) fn salto_aqui(&self) -> Option<u64> {
         self.atual.map(|_| self.salto)
     }
 }
@@ -376,15 +376,21 @@ fn cor_do_achado(atual: bool) -> Hsla {
 /// Texto simples (a linha de uma chamada, um aviso, a saída de um comando) com as ocorrências
 /// realçadas. Mantém o texto num só filho: a quebra de linha e o recorte continuam iguais.
 pub fn realcar(texto: String, realce: &Realce) -> StyledText {
-    if realce.vazio() {
+    realcar_trecho(texto, &realce.termo, realce.atual)
+}
+
+/// O mesmo para um pedaço do texto (uma linha da saída de um comando): `atual` é a posição da
+/// ocorrência atual entre as do pedaço.
+pub fn realcar_trecho(texto: String, termo: &str, atual: Option<usize>) -> StyledText {
+    if termo.is_empty() {
         return StyledText::new(texto);
     }
-    let destaques: Vec<(Range<usize>, HighlightStyle)> = faixas(&texto, &realce.termo)
+    let destaques: Vec<(Range<usize>, HighlightStyle)> = faixas(&texto, termo)
         .into_iter()
         .enumerate()
         .map(|(i, faixa)| {
             let estilo = HighlightStyle {
-                background_color: Some(cor_do_achado(realce.atual == Some(i))),
+                background_color: Some(cor_do_achado(atual == Some(i))),
                 ..Default::default()
             };
             (faixa, estilo)

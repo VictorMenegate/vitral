@@ -1739,6 +1739,9 @@ impl Janela {
                     s.child(div().pl(recuo_aberto).py(esp::E4).child(
                         CaixaDeCodigo::new(SharedString::from(format!("terminal-{chave}")), resultado.as_deref()
                             .unwrap_or(if pendente { "A saída aparece quando terminar." } else { "(interrompido, sem saída)" }).to_string().into())
+                            // A busca da conversa conta a saída do comando: o achado ganha o realce
+                            // e a caixa rola até ele (conferência na bancada, 16/11/2026).
+                            .realce(&no_resultado)
                             .comando(comando.to_string()).raio_chat().erro(*erro)
                             .tempo(if pendente { "Em execução" } else if *erro { "Falhou" } else { "Concluído" }),
                     ))
