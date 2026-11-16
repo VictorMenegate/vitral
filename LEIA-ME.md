@@ -567,7 +567,9 @@ ferramentas, vale por painel).
   seta, nunca cortada no meio da letra; o clique abre o texto inteiro. Os avisos do Vitral são
   marcos centralizados ("Sessão nova", "Turno interrompido", "O Vitral fechou no meio do turno",
   que é como aparece o aviso gravado do turno cortado, sem a instrução de usar Retomar, porque a
-  faixa logo abaixo já tem o botão), linhas tênues ("Tentando de novo.")
+  faixa logo abaixo já tem o botão; quando ele é o último item e a faixa diz "Parada · Vitral
+  fechou", ele nem aparece, para o mesmo fato não vir duas vezes, menos com a busca aberta),
+  linhas tênues ("Tentando de novo.")
   ou, quando é erro, um alerta vermelho com Copiar. O que chega com a conversa aberta no painel (a sua
   mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
   conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão

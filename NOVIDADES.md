@@ -122,7 +122,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   estreita, em vez de virar "Enquanto voc…". A faixa de cima da caixa diz "Parada · Vitral
   fechou", como a lista, com o motivo inteiro na dica. O aviso de turno cortado pelo fechamento do
   Vitral virou um marco de uma linha, "O Vitral fechou no meio do turno", sem repetir a instrução
-  a cada turno nem falar do Claude no chat do Codex.
+  a cada turno nem falar do Claude no chat do Codex; no fim de um painel parado, em que a faixa
+  acima da caixa já diz isso com o Retomar, ele não se repete.
 - **Trilha de ferramentas mais regular.** O chevron fica sempre no fim da linha, o detalhe que é
   código vai num chip em mono e o que é texto (a tarefa de um subagente, uma busca na web) vai em
   letra normal. A chamada sozinha não tem mais o ramo pendurado nem o vão entre o verbo e o detalhe.

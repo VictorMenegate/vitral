@@ -197,6 +197,16 @@ impl Janela {
         // Só os últimos itens são desenhados (ver `ITENS_NA_TELA`); com a busca aberta, todos, para
         // o Ctrl+F achar e rolar até qualquer um.
         let mostrar = if self.paineis[ix].busca.aberta { usize::MAX } else { self.paineis[ix].mostrar };
+        // O marco "O Vitral fechou no meio do turno" no fim, com a faixa logo abaixo dizendo
+        // "Parada · Vitral fechou" com o Retomar: o mesmo fato duas vezes antes da caixa. Sai o
+        // marco (só o último, só com essa faixa, e não com a busca aberta); o texto gravado fica
+        // (relatório de aparência, 16/11/2026, V15).
+        if !self.paineis[ix].busca.aberta
+            && visiveis.last().is_some_and(|(_, item)| matches!(item, Item::Aviso { texto, erro: false, .. } if texto.starts_with(VITRAL_FECHADO)))
+            && matches!(situacao_do_turno(motor, &chat.id), Some(Situacao::Parada { ref motivo, .. }) if motivo_curto(motivo) == "Vitral fechou")
+        {
+            visiveis.pop();
+        }
         let escondidos = visiveis.len().saturating_sub(mostrar);
         if escondidos > 0 {
             visiveis.drain(..escondidos);
