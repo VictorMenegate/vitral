@@ -162,7 +162,9 @@ impl Janela {
                                 .id(SharedString::from(format!("titulo-resumo-{onde}")))
                                 .flex_1()
                                 .min_w_0()
-                                .truncate()
+                                // Em duas linhas, e não cortado: na lista estreita saía
+                                // "Enquanto voc…" ao lado do × (relatório de design, 16/11/2026).
+                                .line_clamp(2)
                                 .rotulo()
                                 .text_color(Cores::forte())
                                 .child("Enquanto você esteve fora")

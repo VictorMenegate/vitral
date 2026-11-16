@@ -188,7 +188,8 @@ componentes do GPUI Kit.
 - **Enquanto você esteve fora.** Ao voltar à janela depois de 15 min fora (**Resumo ao voltar
   depois de**), ou ao abrir o Vitral, o topo da lista mostra o que terminou, o que precisa de você e
   o que falhou ou parou desde que você saiu, cada linha abrindo o chat (Ctrl+clique, ao lado), com
-  o ×. Fica só na memória: a próxima volta troca, e nada entra no histórico.
+  o ×. Na lista estreita o título quebra em duas linhas, sem cortar a palavra. Fica só na memória:
+  a próxima volta troca, e nada entra no histórico.
 
 ## Primeira abertura, dados e linha de comando
 
