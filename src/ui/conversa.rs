@@ -44,6 +44,8 @@ use crate::{
 /// diz qual.
 /// A chave da linha "Novo chat neste painel", no "+" do cabeçalho.
 const NOVO_CHAT_NO_PAINEL: &str = "\u{0}novo-chat";
+/// O grupo só da linha de criar, no alto do "+", sem título (os chats vão em "Recentes").
+const GRUPO_DE_ACAO: &str = "\u{0}acao";
 
 /// Uma linha do histórico, em dados simples: a busca própria (sem acento e por palavras, item 4.3)
 /// monta as linhas de novo a cada letra, sem o motor.
@@ -146,7 +148,7 @@ fn grupos_que_casam(
             .map(|(_, l)| {
                 if l.chave == NOVO_CHAT_NO_PAINEL {
                     return ItemDeEscolha {
-                        simbolo: Some(Simbolo::icone(Lucide::Plus)),
+                        simbolo: Some(Simbolo::icone_cor(Lucide::Plus, Cores::destaque_texto())),
                         termos: Some(l.termos.clone().into()),
                         ..ItemDeEscolha::new(NOVO_CHAT_NO_PAINEL, l.titulo.clone())
                     };
@@ -160,7 +162,7 @@ fn grupos_que_casam(
             })
             .collect();
         if !itens.is_empty() {
-            grupos.push(GrupoDeEscolha { titulo: grupo.map(Into::into), itens });
+            grupos.push(GrupoDeEscolha { titulo: grupo.filter(|g| *g != GRUPO_DE_ACAO).map(Into::into), itens });
         }
     }
     grupos
@@ -1310,15 +1312,20 @@ impl Janela {
             .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
             .collect();
         let mut linhas = linhas_do_historico(motor.read(cx), &noutros, so.as_deref(), atual.as_deref());
-        // No "+" do cabeçalho, a primeira linha é o chat novo neste painel, já marcada (o Enter
-        // cria). A busca é a da lista: digitar filtra o histórico, e ela só fica se casar com o
-        // texto dela (dono, 16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e
-        // ter o histórico também").
-        let escolhido = if so.is_none() {
+        // No "+" do cabeçalho, a primeira linha é a ação de criar um chat neste painel, num grupo
+        // só dela, com o atalho à direita; o realce do teclado começa nela (o Enter cria) e o
+        // visto fica no chat à vista, como nas outras escolhas (dono, 16/11/2026: "o novo chat tem
+        // um certinho do lado"). Os chats vão embaixo, em "Recentes". A busca é a da lista:
+        // digitar filtra o histórico, e a ação só fica se casar com o texto dela.
+        let novo = so.is_none();
+        if novo {
+            for l in linhas.iter_mut().filter(|l| l.grupo.is_none()) {
+                l.grupo = Some("Recentes");
+            }
             linhas.insert(
                 0,
                 LinhaDoHistorico {
-                    grupo: None,
+                    grupo: Some(GRUPO_DE_ACAO),
                     chave: NOVO_CHAT_NO_PAINEL.into(),
                     titulo: "Novo chat neste painel".into(),
                     descricao: String::new(),
@@ -1326,9 +1333,17 @@ impl Janela {
                     termos: "novo chat criar conversa".into(),
                 },
             );
-            Some(NOVO_CHAT_NO_PAINEL.into())
-        } else {
-            atual.map(Into::into)
+        }
+        let escolhido: Option<SharedString> = atual.map(Into::into);
+        // As teclas do Ctrl+N (o mesmo chat novo no painel ativo, que é este) na linha de criar.
+        let teclas = gpui_kit::component::kbd::Kbd::binding_for_action(&super::NovaConversa, None, window).map(|k| k.partes());
+        let com_teclas = move |mut grupos: Vec<GrupoDeEscolha>| {
+            for item in grupos.iter_mut().flat_map(|g| g.itens.iter_mut()) {
+                if item.chave.as_ref() == NOVO_CHAT_NO_PAINEL {
+                    item.teclas = teclas.clone();
+                }
+            }
+            grupos
         };
         // O texto de cada chat, preparado para a busca (o mesmo guardado da lista).
         let preparados: HashMap<String, Rc<super::lateral::Preparado>> = {
@@ -1339,15 +1354,18 @@ impl Janela {
                 .map(|c| (c.id.clone(), super::lateral::preparado(&self.busca_preparada, c)))
                 .collect()
         };
-        let grupos = grupos_que_casam(&linhas, &preparados, "");
+        let grupos = com_teclas(grupos_que_casam(&linhas, &preparados, ""));
         let linhas = Rc::new(linhas);
         self.so_um_flutuante(QualFlutuante::Historico(painel_id));
         self.historico_aberto = Some((painel_id, so.is_some()));
         lista.update(cx, |l, cx| {
-            l.ficha_no_escolhido(true);
+            // Sem a ficha de metal: o visto basta para o chat à vista, e o realce do teclado
+            // (na linha de criar) não briga com ela.
+            l.ficha_no_escolhido(false);
+            l.cursor_em(novo.then(|| NOVO_CHAT_NO_PAINEL.into()));
             // A busca do histórico ignora acento e aceita as palavras em qualquer ordem, como a da
             // lista (rodada de uso, item 4.3).
-            l.filtro_proprio(move |busca| grupos_que_casam(&linhas, &preparados, busca));
+            l.filtro_proprio(move |busca| com_teclas(grupos_que_casam(&linhas, &preparados, busca)));
             l.definir(grupos, escolhido, cx);
             l.abrir(window, cx);
         });

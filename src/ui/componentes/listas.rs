@@ -807,6 +807,8 @@ pub struct ItemDeEscolha {
     pub desabilitado: Option<SharedString>,
     /// Outras palavras que a busca encontra.
     pub termos: Option<SharedString>,
+    /// O atalho que faz o mesmo, em teclas, à direita (a linha de ação "Novo chat").
+    pub teclas: Option<Vec<SharedString>>,
 }
 
 impl ItemDeEscolha {
@@ -819,6 +821,7 @@ impl ItemDeEscolha {
             selos: Vec::new(),
             desabilitado: None,
             termos: None,
+            teclas: None,
         }
     }
 }
@@ -846,6 +849,9 @@ pub struct ListaDeEscolha {
     simbolos_dos_grupos: Vec<(SharedString, Rc<Simbolo>)>,
     /// O escolhido vai na ficha de metal, como nos popovers de escolha (o seletor de modelo).
     ficha_no_escolhido: bool,
+    /// Onde o realce do teclado começa ao abrir, quando não é no escolhido (no "+" do painel, a
+    /// linha de criar: o Enter cria, e o visto fica no chat à vista).
+    cursor: Option<SharedString>,
 }
 
 impl EventEmitter<EventoEscolha> for ListaDeEscolha {}
@@ -868,7 +874,13 @@ impl ListaDeEscolha {
             rodape: None,
             simbolos_dos_grupos: Vec::new(),
             ficha_no_escolhido: false,
+            cursor: None,
         }
+    }
+
+    /// O realce do teclado começa nesta chave ao abrir (sem ela, no escolhido).
+    pub fn cursor_em(&mut self, chave: Option<SharedString>) {
+        self.cursor = chave;
     }
 
     /// O escolhido na ficha de metal (o visto continua), como nos popovers de escolha.
@@ -903,7 +915,7 @@ impl ListaDeEscolha {
     /// Limpa a busca, realça o escolhido e foca a busca.
     pub fn abrir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.filtrados = None;
-        let escolhido = self.escolhido.clone().and_then(|chave| posicao(&self.grupos, &chave));
+        let escolhido = self.cursor.clone().or_else(|| self.escolhido.clone()).and_then(|chave| posicao(&self.grupos, &chave));
         self.estado.update(cx, |estado, cx| {
             estado.set_query("", window, cx);
             estado.set_selected_index(escolhido, window, cx);
@@ -973,6 +985,7 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
                 .items_center()
                 .gap(esp::E4)
                 .children(item.selos.iter().cloned())
+                .children(item.teclas.clone().map(super::desenho_teclas))
                 .when(escolhido, |d| {
                     d.child(
                         div()

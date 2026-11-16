@@ -68,6 +68,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   linha, sem diálogo (Ctrl+Enter salva, Esc desiste).
 - **Busca de chat sem acento e por palavras.** Na lista e no histórico do "+", "integracao" acha
   "integração" e "vip cupons" acha "Cupons para grupos VIP"; o que casa no título vem primeiro.
+- **"+" do painel mais claro.** **Novo chat neste painel** fica no alto, com o + azul e o atalho
+  (Ctrl+N), separado dos chats em "Recentes"; o Enter cria, e o visto marca o chat à vista.
 - **Rascunho inteiro e à vista.** O rascunho guardado leva os prints colados e a citação, e volta
   inteiro quando o Vitral abre de novo. Na lista e nas abas, o chat com mensagem começada ganha um
   lápis e "Rascunho: começo do texto".
