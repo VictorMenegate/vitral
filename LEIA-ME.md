@@ -285,7 +285,9 @@ componentes do GPUI Kit.
   cortado no meio do turno também. O aviso ao reabrir sai uma vez só.
 - **Chat que cai** (processo que morre ou não abre, erro da API): o turno termina com erro, a faixa
   acima da caixa diz "O último turno falhou" com **Tentar de novo**, e com a janela em segundo plano
-  vem a notificação. Nada tenta de novo sozinho.
+  vem a notificação. Nada tenta de novo sozinho. Quando o Claude Code manda o erro também como
+  resposta, ela fica gravada mas não é desenhada nem contada pela busca: aparece só o cartão do erro
+  (`resposta_repete_o_erro`, em `src/ui/mensagens.rs`).
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
   ainda rodando, o turno não acaba ali: o chat continua rodando, a conversa ganha o aviso "Os
   agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e o turno só

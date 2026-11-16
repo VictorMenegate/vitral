@@ -158,6 +158,10 @@ pub fn ocorrencias(itens: &[Item], termo: &str, foco: bool) -> Vec<Ocorrencia> {
         let mut achar = |campo: Campo, texto: &str| {
             saida.extend(faixas(texto, termo).into_iter().map(|faixa| Ocorrencia { item, campo, faixa }));
         };
+        // A resposta que repete o erro do turno não vai para a tela: a busca acha no cartão.
+        if super::mensagens::resposta_repete_o_erro(itens, item) {
+            continue;
+        }
         match dado {
             Item::Usuario { texto, .. }
             | Item::Assistente { texto, .. }
@@ -193,6 +197,7 @@ fn primeira_da_trilha(itens: &[Item], indice: usize, foco: bool) -> usize {
     let visiveis: Vec<usize> = (0..itens.len())
         .filter(|i| match &itens[*i] {
             Item::Ferramenta { nome, .. } => ferramenta_visivel(nome, foco),
+            Item::Assistente { .. } => !super::mensagens::resposta_repete_o_erro(itens, *i),
             _ => true,
         })
         .collect();

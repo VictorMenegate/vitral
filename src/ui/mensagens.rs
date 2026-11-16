@@ -180,8 +180,9 @@ impl Janela {
             .itens
             .iter()
             .enumerate()
-            .filter(|(_, item)| match item {
+            .filter(|(i, item)| match item {
                 Item::Ferramenta { nome, .. } => nome != "ToolSearch" && !foco,
+                Item::Assistente { .. } => !resposta_repete_o_erro(&chat.itens, *i),
                 _ => true,
             })
             .collect();
@@ -745,6 +746,29 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
                 None => "Copiar código".to_string(),
             };
             BotaoCopiar::new(Clipboard::new("copiar").value(bloco.code()).tooltip(dica))
+        })
+}
+
+/// A resposta do índice `i` é o próprio erro com que o turno terminou: o Claude Code manda o erro
+/// no `result` e às vezes também como mensagem, e a conversa mostrava o texto duas vezes, como
+/// resposta e no cartão do erro logo abaixo (dono, 16/11/2026). Ela fica gravada; só não é
+/// desenhada (nem contada pela busca), e fica o cartão.
+pub(super) fn resposta_repete_o_erro(itens: &[Item], i: usize) -> bool {
+    let Some(Item::Assistente { texto, .. }) = itens.get(i) else {
+        return false;
+    };
+    let texto = texto.trim();
+    if texto.is_empty() {
+        return false;
+    }
+    itens[i + 1..]
+        .iter()
+        .take_while(|item| !matches!(item, Item::Usuario { .. }))
+        .any(|item| match item {
+            Item::Aviso { texto: aviso, erro: true, .. } => {
+                aviso.strip_prefix("O turno terminou com erro:").unwrap_or(aviso).trim() == texto
+            }
+            _ => false,
         })
 }
 
@@ -3836,7 +3860,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        com_quebras_duras, dica_da_pilha, linhas_da_edicao, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
+        com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
@@ -4097,6 +4121,22 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn a_resposta_igual_ao_erro_do_turno_nao_aparece_duas_vezes() {
+        let erro = "Failed to authenticate: OAuth token revoked";
+        let aviso = |t: &str| Item::Aviso { em: 0, texto: t.into(), erro: true };
+        let itens = [usuario("oi"), assistente(erro), aviso(&format!("O turno terminou com erro: {erro}"))];
+        assert!(resposta_repete_o_erro(&itens, 1));
+        // Outra resposta, ou o erro de outro turno, não some.
+        let outra = [usuario("oi"), assistente("Vou olhar."), aviso(&format!("O turno terminou com erro: {erro}"))];
+        assert!(!resposta_repete_o_erro(&outra, 1));
+        let outro_turno = [assistente(erro), usuario("de novo"), aviso(&format!("O turno terminou com erro: {erro}"))];
+        assert!(!resposta_repete_o_erro(&outro_turno, 0));
+        // Um aviso que não é erro, com o mesmo texto, também não.
+        let info = [assistente(erro), Item::Aviso { em: 0, texto: erro.into(), erro: false }];
+        assert!(!resposta_repete_o_erro(&info, 0));
     }
 
     #[test]
