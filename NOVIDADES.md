@@ -10,6 +10,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Digitar em qualquer ponto escreve na caixa.** Depois de clicar na conversa (para abrir uma
   trilha ou selecionar um trecho) ou numa aba, a letra que você digita vai para a caixa do painel
   ativo, e o Ctrl+V cola nela: um print copiado vira pílula sem clicar antes.
+- **A conversa abre onde a resposta começa.** Um chat que terminou abre no começo da resposta
+  nova quando ela não cabe na tela, com um separador "Novo" antes do que você não viu. Trocar de
+  aba no meio de uma leitura guarda o lugar, e voltar à aba volta a ele. Abrir não marca mais como
+  lido: o chat só sai de "Terminou" quando você chega ao fim.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

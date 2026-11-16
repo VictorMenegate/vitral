@@ -82,6 +82,18 @@ pub struct Painel {
     pub entra: bool,
     /// Sobe a cada envio, para o pulso do enviar.
     pub envios: u64,
+    /// Onde a conversa abre no próximo desenho: no começo da resposta nova ou na âncora de leitura
+    /// guardada (dono, 16/11/2026: rodada de uso, item 2.2).
+    pub alvo: Option<super::mensagens::AlvoDeAbertura>,
+    /// A âncora de leitura de cada chat que saiu deste painel sem estar no fim: o item no alto e
+    /// quanto dele já tinha subido. Só durante a sessão, em memória.
+    pub ancoras: std::collections::HashMap<String, super::mensagens::Ancora>,
+    /// Até quando o chat estava lido quando abriu com novidade: o separador "Novo" entra antes do
+    /// primeiro item (que não seja seu) depois disso.
+    pub novo_desde: Option<u64>,
+    /// Onde estava cada bloco da conversa no último desenho (o índice do item, o alto e o pé, a
+    /// partir do alto da lista): de onde saem a âncora e a abertura no começo da resposta.
+    pub posicoes: std::rc::Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -413,6 +425,10 @@ impl Janela {
             entra: false,
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
+            alvo: None,
+            ancoras: Default::default(),
+            novo_desde: None,
+            posicoes: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
@@ -431,36 +447,61 @@ impl Janela {
     ) {
         let texto = painel.composer.read(cx).value().to_string();
         if let Some(antigo) = antigo {
+            // Quem lia o meio de uma resposta não perde o lugar ao trocar de aba: a âncora (o item
+            // no alto e quanto dele já subiu) volta com o chat. No fim, nada a guardar.
+            let ancora = (!painel.seguindo)
+                .then(|| super::mensagens::ancora_de(&painel.posicoes.borrow(), -painel.rolagem.offset().y))
+                .flatten();
+            match ancora {
+                Some(ancora) => painel.ancoras.insert(antigo.clone(), ancora),
+                None => painel.ancoras.remove(&antigo),
+            };
             self.guardar_rascunho(antigo, texto, cx);
         }
         let rascunho = novo
             .as_ref()
             .and_then(|c| self.rascunhos.remove(c))
             .unwrap_or_default();
-        // Com pasta, "Mensagem para este chat…"; sem pasta (ou sem chat), só "Mensagem…".
-        let (com_pasta, tamanho) = novo
+        // Com pasta, "Mensagem para este chat…"; sem pasta (ou sem chat), só "Mensagem…". E se o
+        // chat tem resposta que você não viu, até quando ele estava lido.
+        let (com_pasta, tamanho, novidade, itens) = novo
             .as_ref()
             .and_then(|id| {
                 let m = self.motor.as_ref()?.read(cx);
                 let chat = m.chat(id)?;
-                Some((!m.sem_pasta(chat), tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some())))
+                let novidade = m.nao_lido(chat).then_some(chat.lido_em);
+                let tamanho = tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some());
+                Some((!m.sem_pasta(chat), tamanho, novidade, chat.itens.len()))
             })
-            .unwrap_or((false, 0));
+            .unwrap_or((false, 0, None, 0));
         let dica = if com_pasta { "Mensagem para este chat…" } else { "Mensagem…" };
         painel.composer.update(cx, |c, cx| {
             c.set_value(rascunho, window, cx);
             c.set_placeholder(dica, window, cx);
         });
-        if let (Some(id), Some(motor)) = (&novo, &self.motor) {
-            motor.update(cx, |m, _| m.marcar_lido(id));
-        }
+        // Abrir não marca mais como lido: o chat só conta como lido com o fim à vista (ou depois do
+        // Ctrl+End), e "não lido" passa a querer dizer "não vi" (rodada de uso, item 2.2).
+        // Com novidade, a conversa abre no começo da resposta nova (se ela não couber na tela) e o
+        // separador "Novo" marca onde ela começa; sem novidade, onde você parou de ler neste painel.
+        let ancora = novo.as_ref().and_then(|id| painel.ancoras.remove(id));
+        painel.alvo = match (novidade, ancora) {
+            (Some(_), _) => Some(super::mensagens::AlvoDeAbertura::InicioDaResposta),
+            (None, Some(ancora)) => Some(super::mensagens::AlvoDeAbertura::Ancora(ancora)),
+            (None, None) => None,
+        };
+        painel.novo_desde = novidade;
+        painel.posicoes.borrow_mut().clear();
         painel.chat = novo;
         painel.mostrar = super::mensagens::ITENS_NA_TELA;
         painel.mostrar_historico = crate::importar::ITENS_POR_VEZ;
         painel.preservar_topo = None;
         painel.altura_conteudo = px(0.);
         painel.fila_aberta = false;
-        painel.seguindo = true;
+        // Com um alvo, o painel não segue o fim (seguir marcaria como lido); o primeiro quadro
+        // ainda mostra o fim, e o seguinte já vai ao alvo. A pílula diz "Novas mensagens" só com
+        // novidade.
+        painel.seguindo = painel.alvo.is_none();
+        painel.leitura.marcar_vista(if novidade.is_some() { (0, 0) } else { (itens, 0) });
         painel.rolagem.scroll_to_bottom();
         painel.base_animacao = tamanho;
         painel.vistos = tamanho;

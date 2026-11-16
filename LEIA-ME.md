@@ -619,6 +619,14 @@ ferramentas, vale por painel).
   da faixa ou da caixa (no topo, não). Abrir um bloco no fim da
   conversa (a saída de uma ferramenta) não pula para o fim dele: o
   painel fica onde está.
+- **Onde a conversa abre.** Um chat com resposta que você não viu abre no começo dela quando ela
+  não cabe na tela (com a linha "Trabalhou…" logo acima e a pílula "Novas mensagens" embaixo);
+  quando cabe, abre no fim, como sempre. Um separador "Novo", em azul, marca o primeiro item que
+  você não viu (sem contar as suas mensagens). Abrir não marca como lido: o chat só sai de
+  "Terminou" e do ponto azul com o fim à vista (rolando até lá ou com o Ctrl+End). Ao trocar de aba
+  no meio de uma leitura, cada painel guarda onde você estava em cada chat (o item no alto e
+  quanto dele já subiu), e voltar à aba volta a esse ponto; isso vale enquanto o Vitral está
+  aberto. Se o Corrigir tirou o item, a conversa abre no fim.
 - Mensagens, pedidos e caixa ficam numa coluna de leitura centrada (até 860 px, com 16 de margem).
   Em janela baixa, o plano e os pedidos encolhem e rolam, e a caixa cresce menos. Blocos de código
   têm cor de sintaxe.

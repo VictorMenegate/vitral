@@ -160,6 +160,97 @@ fn deslocamento_apos_prepend(offset: Pixels, altura_antes: Pixels, altura_depois
     offset - (altura_depois - altura_antes).max(px(0.))
 }
 
+/// Onde a leitura de um chat parou num painel: o item no alto da tela e quanto dele já tinha
+/// subido. Guarda o item, e não o pixel, porque a altura muda com a largura (rodada de uso, 2.2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ancora {
+    pub item: usize,
+    pub desloc: Pixels,
+}
+
+/// Onde a conversa abre ao trocar de chat num painel (rodada de uso, 2.2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AlvoDeAbertura {
+    /// No começo da última resposta (com a linha "Trabalhou…" logo acima), se ela não couber.
+    InicioDaResposta,
+    /// Onde você parou de ler este chat neste painel.
+    Ancora(Ancora),
+}
+
+/// O que fazer com o alvo, já com os blocos medidos.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Abertura {
+    /// No fim, seguindo o que chegar.
+    Fim,
+    /// Com este ponto da lista no alto da tela.
+    Em(Pixels),
+    /// O item da âncora ainda não está desenhado: mais itens antes.
+    CarregarMais,
+}
+
+/// Um respiro acima do começo da resposta, para ela não abrir colada na borda.
+const RESPIRO_DA_ABERTURA: Pixels = px(12.);
+
+/// A âncora de leitura: o primeiro bloco que ainda aparece abaixo de `topo` (o alto da tela, a
+/// partir do alto da lista) e quanto dele já subiu.
+pub(super) fn ancora_de(posicoes: &[(usize, Pixels, Pixels)], topo: Pixels) -> Option<Ancora> {
+    let &(item, alto, _) = posicoes.iter().find(|(_, _, pe)| *pe > topo)?;
+    Some(Ancora { item, desloc: (topo - alto).max(px(0.)) })
+}
+
+/// Onde abrir: no começo da resposta (`inicio`: o primeiro item depois da sua última mensagem) só
+/// quando o que vem dali até o fim não cabe na `vista`; na âncora, com o deslocamento que ela
+/// guardou, e no fim quando o item dela saiu (o Corrigir o tirou).
+pub(super) fn onde_abrir(
+    alvo: AlvoDeAbertura,
+    posicoes: &[(usize, Pixels, Pixels)],
+    altura: Pixels,
+    vista: Pixels,
+    inicio: Option<usize>,
+    itens: usize,
+) -> Abertura {
+    match alvo {
+        AlvoDeAbertura::InicioDaResposta => {
+            let Some(&(_, alto, _)) = inicio.and_then(|inicio| posicoes.iter().find(|(i, ..)| *i >= inicio)) else {
+                return Abertura::Fim;
+            };
+            let alto = (alto - RESPIRO_DA_ABERTURA).max(px(0.));
+            if altura - alto <= vista { Abertura::Fim } else { Abertura::Em(alto) }
+        }
+        AlvoDeAbertura::Ancora(ancora) => {
+            if ancora.item >= itens {
+                return Abertura::Fim;
+            }
+            // O bloco que contém o item: o último que começa nele ou antes (uma trilha junta vários).
+            match posicoes.iter().rev().find(|(i, ..)| *i <= ancora.item) {
+                Some(&(i, alto, _)) => Abertura::Em(if i == ancora.item { alto + ancora.desloc } else { alto }),
+                // O primeiro desenhado já vem depois dela: ela está mais para cima.
+                None if !posicoes.is_empty() => Abertura::CarregarMais,
+                None => Abertura::Fim,
+            }
+        }
+    }
+}
+
+/// O primeiro item que você não viu e que não é mensagem sua: onde entra o separador "Novo".
+/// Item sem hora (conversa de antes dela) não conta.
+pub(super) fn item_do_separador_novo(itens: &[Item], lido_em: u64) -> Option<usize> {
+    itens.iter().position(|item| item.em() > lido_em && !matches!(item, Item::Usuario { .. }))
+}
+
+/// O primeiro item depois da sua última mensagem (ou da última entrega, sem mensagem sua): onde
+/// começa a resposta que a conversa abre no alto.
+pub(super) fn inicio_da_ultima_resposta(itens: &[Item]) -> Option<usize> {
+    let ultima = itens
+        .iter()
+        .rposition(|i| matches!(i, Item::Usuario { .. }))
+        .or_else(|| itens.iter().rposition(|i| matches!(i, Item::Entrega { .. })));
+    match ultima {
+        Some(i) => (i + 1 < itens.len()).then_some(i + 1),
+        None => (!itens.is_empty()).then_some(0),
+    }
+}
+
 impl Janela {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn mensagens(
@@ -217,11 +308,21 @@ impl Janela {
         // O dia de cada turno: o separador entra onde a data muda (pela posição em `visiveis`).
         let horas: Vec<u64> = visiveis.iter().map(|(_, item)| item.em()).collect();
         let datas: HashMap<usize, String> = separadores_de_data(&horas, agora).into_iter().collect();
+        // O separador "Novo", antes do primeiro bloco que tem o primeiro item que você não viu
+        // (quando ele está carregado; numa trilha, antes dela).
+        let mut novo = self.paineis[ix]
+            .novo_desde
+            .and_then(|lido| item_do_separador_novo(&chat.itens, lido))
+            .filter(|n| escondidos == 0 || visiveis.first().is_some_and(|(i, _)| i <= n));
         let mut i = 0;
         while i < visiveis.len() {
             let (indice, item) = visiveis[i];
             if let Some(dia) = datas.get(&i) {
                 blocos.push((Bloco::Dia, None, separador_de_dia(dia)));
+            }
+            if novo.is_some_and(|n| indice >= n) {
+                novo = None;
+                blocos.push((Bloco::Dia, None, separador_novo()));
             }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
             if matches!(item, Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
@@ -293,8 +394,15 @@ impl Janela {
             .pt(esp::E12)
             .pb(esp::E12);
         let mut anterior = None;
+        // Onde cada bloco ficou neste quadro (o índice do item, o alto e o pé, na tela): o
+        // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
+        let medidos: Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>> = Default::default();
         for (bloco, indice, elemento) in blocos {
-            let caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
+            let mut caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
+            if let Some(i) = indice {
+                let medidos = medidos.clone();
+                caixa = caixa.on_prepaint(move |limites, _, _| medidos.borrow_mut().push((i, limites.top(), limites.bottom())));
+            }
             lista = match (indice, entrada_do_bloco(indice, base, vistos)) {
                 (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
                 _ => lista.child(caixa),
@@ -302,20 +410,53 @@ impl Janela {
             anterior = Some(bloco);
         }
         let janela = cx.entity().downgrade();
+        let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
+        let (chat_id, n_itens) = (chat.id.clone(), chat.itens.len());
         lista = lista.on_prepaint(move |bounds, window, cx| {
-            let mut restaurou = false;
+            let mut redesenhar = false;
             let _ = janela.update(cx, |j, cx| {
                 let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
                 p.altura_conteudo = bounds.size.height;
+                {
+                    let mut posicoes = p.posicoes.borrow_mut();
+                    posicoes.clear();
+                    posicoes.extend(medidos.borrow().iter().map(|&(i, alto, pe)| (i, alto - bounds.top(), pe - bounds.top())));
+                }
                 if let Some((altura, offset)) = p.preservar_topo.take() {
                     let novo = point(offset.x, deslocamento_apos_prepend(offset.y, altura, bounds.size.height));
                     p.rolagem.set_offset(novo);
                     p.leitura.deslocamento = novo.y;
-                    restaurou = true;
+                    redesenhar = true;
                 }
-                let _ = cx;
+                // A abertura do chat (rodada de uso, 2.2): no começo da resposta nova ou na âncora.
+                if let Some(alvo) = p.alvo {
+                    let vista = p.rolagem.bounds().size.height;
+                    let decisao = onde_abrir(alvo, &p.posicoes.borrow(), bounds.size.height, vista, inicio_da_resposta, n_itens);
+                    let mut lido = false;
+                    match decisao {
+                        Abertura::CarregarMais if p.mostrar < n_itens => p.mostrar += ITENS_NA_TELA,
+                        Abertura::Em(y) => {
+                            p.alvo = None;
+                            let novo = point(px(0.), -y);
+                            p.rolagem.set_offset(novo);
+                            p.leitura.deslocamento = novo.y;
+                            p.seguindo = false;
+                        }
+                        Abertura::Fim | Abertura::CarregarMais => {
+                            p.alvo = None;
+                            p.seguindo = true;
+                            p.rolagem.scroll_to_bottom();
+                            lido = true;
+                        }
+                    }
+                    redesenhar = true;
+                    // Coube na tela: o fim já está à vista, e o chat conta como lido.
+                    if lido && let Some(motor) = j.motor.clone() {
+                        motor.update(cx, |m, _| m.marcar_lido(&chat_id));
+                    }
+                }
             });
-            if restaurou {
+            if redesenhar {
                 window.on_next_frame(move |_, cx| { let _ = janela.update(cx, |_, cx| cx.notify()); });
             }
         });
@@ -1404,6 +1545,20 @@ fn separador_de_dia(rotulo: &str) -> AnyElement {
                 .text_color(Cores::tenue())
                 .child(rotulo.to_string()),
         )
+        .child(traco())
+        .into_any_element()
+}
+
+/// O separador "Novo": o desenho do separador de dia, em azul, antes do primeiro item que você não
+/// viu (rodada de uso, 2.2).
+fn separador_novo() -> AnyElement {
+    let traco = || div().flex_1().min_w(r(16.)).h(px(1.)).bg(Cores::destaque());
+    h_flex()
+        .w_full()
+        .min_h(r(24.))
+        .gap(r(8.))
+        .child(traco())
+        .child(div().flex_none().metadado().font_semibold().text_color(Cores::destaque_texto()).child("Novo"))
         .child(traco())
         .into_any_element()
 }
@@ -2587,6 +2742,14 @@ fn aviso_do_chat(texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement
 pub struct Leitura {
     deslocamento: Pixels,
     vista: (usize, usize),
+}
+
+impl Leitura {
+    /// O tamanho da conversa que conta como visto: a pílula do fim diz "Novas mensagens" quando a
+    /// conversa passou dele.
+    pub(super) fn marcar_vista(&mut self, vista: (usize, usize)) {
+        self.vista = vista;
+    }
 }
 
 /// O campo aberto embaixo de um pedido de permissão para negar explicando.
@@ -4623,5 +4786,61 @@ mod testes {
         assert!(!chat.permite("Bash", &json!({"command": "cargo test && rm -rf /"})));
         assert!(chat.permite("Write", &json!({"file_path": "/home/v/projeto/novo.txt"})));
         assert!(!unix || !chat.permite("Write", &json!({"file_path": "/home/v/.bashrc"})));
+    }
+
+    #[test]
+    fn a_conversa_abre_no_comeco_da_resposta_que_nao_cabe() {
+        use super::{AlvoDeAbertura, Abertura, onde_abrir};
+        use gpui_kit::px;
+        // Blocos: a mensagem (0), a linha do turno (1) e a resposta (5), numa lista de 900.
+        let posicoes = [(0, px(0.), px(40.)), (1, px(72.), px(104.)), (5, px(116.), px(900.))];
+        // A resposta (do 72 ao 900) não cabe em 400: abre no começo dela, com o respiro de 12.
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(400.), Some(1), 6), Abertura::Em(px(60.)));
+        // Cabe: abre no fim, como sempre.
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(1000.), Some(1), 6), Abertura::Fim);
+        // Sem resposta depois da sua mensagem: no fim.
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(400.), None, 6), Abertura::Fim);
+    }
+
+    #[test]
+    fn a_ancora_volta_no_mesmo_item_e_carrega_mais_quando_falta() {
+        use super::{AlvoDeAbertura, Abertura, Ancora, ancora_de, onde_abrir};
+        use gpui_kit::px;
+        let posicoes = [(10, px(0.), px(100.)), (12, px(112.), px(400.)), (20, px(412.), px(500.))];
+        // O alto da tela no 150: o bloco 12 (que vai até o 400) estava 38 abaixo do alto dele.
+        let ancora = ancora_de(&posicoes, px(150.)).unwrap();
+        assert_eq!(ancora, Ancora { item: 12, desloc: px(38.) });
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(ancora), &posicoes, px(500.), px(200.), None, 30), Abertura::Em(px(150.)));
+        // O item ficou dentro de uma trilha que começa antes: abre no começo dela.
+        let dentro = Ancora { item: 15, desloc: px(10.) };
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(dentro), &posicoes, px(500.), px(200.), None, 30), Abertura::Em(px(112.)));
+        // Mais para cima do que está desenhado: carrega mais itens antes.
+        let antes = Ancora { item: 3, desloc: px(0.) };
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(antes), &posicoes, px(500.), px(200.), None, 30), Abertura::CarregarMais);
+        // O Corrigir tirou o item: abre no fim.
+        let sumiu = Ancora { item: 40, desloc: px(0.) };
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(sumiu), &posicoes, px(500.), px(200.), None, 30), Abertura::Fim);
+    }
+
+    #[test]
+    fn separador_novo_e_comeco_da_resposta() {
+        use super::{Item, inicio_da_ultima_resposta, item_do_separador_novo};
+        let com_hora = |item: Item, em: u64| match item {
+            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em },
+            Item::Assistente { texto, .. } => Item::Assistente { texto, em },
+            outro => outro,
+        };
+        let itens = vec![
+            com_hora(usuario("oi"), 100),
+            com_hora(assistente("olá"), 110),
+            com_hora(usuario("e agora?"), 200),
+            com_hora(assistente("feito"), 260),
+        ];
+        // Lido até o 150: a sua mensagem das 200 não conta, o separador fica antes da resposta.
+        assert_eq!(item_do_separador_novo(&itens, 150), Some(3));
+        assert_eq!(item_do_separador_novo(&itens, 300), None);
+        assert_eq!(inicio_da_ultima_resposta(&itens), Some(3));
+        assert_eq!(inicio_da_ultima_resposta(&itens[..3]), None);
+        assert_eq!(inicio_da_ultima_resposta(&[]), None);
     }
 }
