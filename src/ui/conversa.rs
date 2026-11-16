@@ -289,17 +289,6 @@ pub(super) fn jeito_das_abas(
     }
 }
 
-/// Alt+1…4 de cada painel (para a dica da aba mostrar a tecla do keymap).
-fn acao_do_painel(ix: usize) -> Option<Box<dyn Action>> {
-    Some(match ix {
-        0 => Box::new(IrParaPainel1),
-        1 => Box::new(IrParaPainel2),
-        2 => Box::new(IrParaPainel3),
-        3 => Box::new(IrParaPainel4),
-        _ => return None,
-    })
-}
-
 /// O modelo em uso ("Opus 5.5") e, quando a escolha da caixa é outra, o nome dela.
 fn modelo_da_conversa(chat: &Chat) -> (String, Option<String>) {
     let escolha = chat.modelo.clone().unwrap_or_default();
@@ -1113,8 +1102,6 @@ impl Janela {
         if numerada {
             aba = aba.numero(ix + 1, ativo);
         }
-        let dica = SharedString::from(format!("{}\n{}", chat.titulo, pasta_em_texto(motor, chat)));
-        let acao = acao_do_painel(ix).filter(|_| varios);
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: Some(painel_id) };
         let (menu_janela, menu_motor) = (janela.clone(), motor_entidade.clone());
         let aba = aba
@@ -1139,13 +1126,8 @@ impl Janela {
                 }
                 cx.stop_propagation();
             }))
-            .tooltip(move |window, cx| {
-                let mut dica = Tooltip::new(dica.clone());
-                if let Some(acao) = &acao {
-                    dica = dica.action(acao.as_ref(), None);
-                }
-                dica.build(window, cx)
-            })
+            // Sem dica na aba à vista: o título está ali mesmo, e a dica abria por cima da conversa
+            // a cada passada do ponteiro (dono, 16/11/2026: "o de passar o mouse tá bem ruim").
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(ix) = this.paineis.iter().position(|p| p.id == painel_id) {
                     this.focar_painel(ix, window, cx);
