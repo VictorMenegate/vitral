@@ -14,6 +14,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   nova quando ela não cabe na tela, com um separador "Novo" antes do que você não viu. Trocar de
   aba no meio de uma leitura guarda o lugar, e voltar à aba volta a ele. Abrir não marca mais como
   lido: o chat só sai de "Terminou" quando você chega ao fim.
+- **Turno pronto vira "Trabalhou 6 min".** Ao terminar, o que o agente fez antes da resposta final
+  recolhe numa linha ("Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs"), com a
+  resposta logo embaixo. As perguntas do meio, os erros e as imagens continuam à vista, e o clique
+  na linha mostra o resto.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

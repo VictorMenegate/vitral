@@ -314,11 +314,41 @@ impl Janela {
             .novo_desde
             .and_then(|lido| item_do_separador_novo(&chat.itens, lido))
             .filter(|n| escondidos == 0 || visiveis.first().is_some_and(|(i, _)| i <= n));
+        // Os turnos prontos recolhem numa linha "Trabalhou…" (rodada de uso, 2.1). No modo foco as
+        // ferramentas já saíram, e não há o que recolher.
+        let turnos = if foco { Vec::new() } else { turnos_recolhiveis(&chat.itens, contexto.rodando) };
+        let mut turno_posto: Option<usize> = None;
+        // A linha do turno não entra com fade: o primeiro item dele, aberto, já usa o índice.
+        let mut sem_entrada: std::collections::HashSet<usize> = Default::default();
         let mut i = 0;
         while i < visiveis.len() {
             let (indice, item) = visiveis[i];
             if let Some(dia) = datas.get(&i) {
                 blocos.push((Bloco::Dia, None, separador_de_dia(dia)));
+            }
+            if let Some(turno) = turnos.iter().copied().find(|t| t.contem(indice)).filter(|t| turno_posto != Some(t.mensagem)) {
+                turno_posto = Some(turno.mensagem);
+                let aberto = self.expandidos.contains(&turno.chave(&chat.id));
+                let fim = visiveis[i..].iter().position(|(k, _)| *k >= turno.resposta).map_or(visiveis.len(), |p| i + p);
+                // O separador "Novo" de um item lá dentro fica antes da linha.
+                if novo.is_some_and(|n| n < turno.resposta) {
+                    novo = None;
+                    blocos.push((Bloco::Dia, None, separador_novo()));
+                }
+                sem_entrada.insert(blocos.len());
+                let elemento = self.linha_do_turno(&contexto, turno, aberto, &visiveis[i..fim], cx);
+                blocos.push((Bloco::Log, Some(indice), elemento));
+                if !aberto {
+                    // Recolhido, só o que não pode sumir: a pergunta, o aviso de erro e o cartão.
+                    for &(k, escondido) in &visiveis[i..fim] {
+                        if fica_fora_do_recolhido(escondido) {
+                            let (bloco, elemento) = self.item(&contexto, k, escondido, window, cx);
+                            blocos.push((bloco, Some(k), elemento));
+                        }
+                    }
+                    i = fim;
+                    continue;
+                }
             }
             if novo.is_some_and(|n| indice >= n) {
                 novo = None;
@@ -397,13 +427,14 @@ impl Janela {
         // Onde cada bloco ficou neste quadro (o índice do item, o alto e o pé, na tela): o
         // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
         let medidos: Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>> = Default::default();
-        for (bloco, indice, elemento) in blocos {
+        for (k, (bloco, indice, elemento)) in blocos.into_iter().enumerate() {
             let mut caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
             if let Some(i) = indice {
                 let medidos = medidos.clone();
                 caixa = caixa.on_prepaint(move |limites, _, _| medidos.borrow_mut().push((i, limites.top(), limites.bottom())));
             }
-            lista = match (indice, entrada_do_bloco(indice, base, vistos)) {
+            let entrada = if sem_entrada.contains(&k) { None } else { entrada_do_bloco(indice, base, vistos) };
+            lista = match (indice, entrada) {
                 (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
                 _ => lista.child(caixa),
             };
@@ -1947,6 +1978,133 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     resumo
 }
 
+/// Um turno pronto que recolhe numa linha "Trabalhou…" (dono, 16/11/2026: rodada de uso, item
+/// 2.1): de depois da `mensagem` (a sua, a entrega ou a vez da dupla que o abriu) até antes da
+/// `resposta` final, tudo vira uma linha, com a resposta logo embaixo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TurnoRecolhivel {
+    pub mensagem: usize,
+    pub resposta: usize,
+}
+
+impl TurnoRecolhivel {
+    /// O item `indice` está no que recolhe.
+    pub fn contem(&self, indice: usize) -> bool {
+        indice > self.mensagem && indice < self.resposta
+    }
+
+    /// A chave de abrir em `expandidos` (o Ctrl+F a abre ao achar algo lá dentro).
+    pub fn chave(&self, chat: &str) -> String {
+        format!("{chat}:{}:turno", self.mensagem)
+    }
+}
+
+/// Os turnos que recolhem: os prontos (o último, com o chat `rodando`, não) com uma resposta final
+/// e, antes dela, pelo menos uma trilha e um texto intermediário. Na dupla, a vez de cada agente
+/// é um turno (um recolhido por agente).
+pub(super) fn turnos_recolhiveis(itens: &[Item], rodando: bool) -> Vec<TurnoRecolhivel> {
+    let marcos: Vec<usize> = itens
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }))
+        .map(|(k, _)| k)
+        .collect();
+    let mut saida = Vec::new();
+    for (n, &mensagem) in marcos.iter().enumerate() {
+        let fim = marcos.get(n + 1).copied().unwrap_or(itens.len());
+        if rodando && fim == itens.len() {
+            continue;
+        }
+        let Some(resposta) = itens[mensagem + 1..fim].iter().rposition(|i| matches!(i, Item::Assistente { .. })).map(|k| mensagem + 1 + k)
+        else {
+            continue;
+        };
+        let antes = &itens[mensagem + 1..resposta];
+        let trilha = antes.iter().any(|i| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. }));
+        let texto = antes.iter().any(|i| matches!(i, Item::Assistente { .. }));
+        if trilha && texto {
+            saida.push(TurnoRecolhivel { mensagem, resposta });
+        }
+    }
+    saida
+}
+
+/// O que fica à vista com o turno recolhido: o texto intermediário que termina em pergunta, o
+/// aviso de erro e o cartão de falha.
+pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
+    match item {
+        Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
+        Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
+        _ => false,
+    }
+}
+
+/// Quanto o turno levou: "45 s", "6 min 12 s", "1 h 3 min".
+pub(super) fn duracao_do_turno(segundos: u64) -> String {
+    match segundos {
+        s if s < 60 => format!("{s} s"),
+        s if s < 3600 && s % 60 == 0 => format!("{} min", s / 60),
+        s if s < 3600 => format!("{} min {} s", s / 60, s % 60),
+        s if (s % 3600) / 60 == 0 => format!("{} h", s / 3600),
+        s => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Os arquivos editados ou gravados, pelo nome, na ordem em que apareceram (sem repetir).
+fn editados_nas_chamadas<'a>(chamadas: impl IntoIterator<Item = &'a Item>) -> Vec<String> {
+    let mut nomes: Vec<String> = Vec::new();
+    for item in chamadas {
+        if let Item::Ferramenta { nome, arquivo, resumo, .. } = item
+            && matches!(nome_curto(nome), "Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+        {
+            let caminho = arquivo.as_deref().unwrap_or(resumo);
+            let nome = Path::new(caminho).file_name().map_or_else(|| caminho.to_string(), |n| n.to_string_lossy().into_owned());
+            if !nomes.contains(&nome) {
+                nomes.push(nome);
+            }
+        }
+    }
+    nomes
+}
+
+/// "editou carrinho.py e motor.rs" com até dois arquivos; acima disso, a contagem (5.1).
+pub(super) fn editou(nomes: &[String]) -> String {
+    match nomes {
+        [] => String::new(),
+        [um] => format!("editou {um}"),
+        [um, dois] => format!("editou {um} e {dois}"),
+        varios => format!("editou {}", contagem(varios.len(), "arquivo", "arquivos")),
+    }
+}
+
+/// A linha do turno recolhido: "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e
+/// motor.rs". A duração é a hora do último item menos a da mensagem; sem hora (conversa de antes
+/// da 0.4.0), sem número.
+pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String {
+    let inicio = itens[turno.mensagem].em();
+    let fim = itens[turno.mensagem..=turno.resposta].iter().map(Item::em).max().unwrap_or(0);
+    let mut partes = vec![if inicio > 0 && fim >= inicio {
+        format!("Trabalhou {}", duracao_do_turno(fim - inicio))
+    } else {
+        "Trabalhou".to_string()
+    }];
+    let trecho = &itens[turno.mensagem + 1..turno.resposta];
+    let comandos = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { nome, .. } if nome == "Bash")).count();
+    if comandos > 0 {
+        partes.push(contagem(comandos, "comando", "comandos"));
+    }
+    let nomes = editados_nas_chamadas(trecho);
+    if !nomes.is_empty() {
+        partes.push(editou(&nomes));
+    } else {
+        let lidos = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { nome, .. } if nome == "Read")).count();
+        if lidos > 0 {
+            partes.push(format!("leu {}", contagem(lidos, "arquivo", "arquivos")));
+        }
+    }
+    partes.join(" · ")
+}
+
 /// Trilho de 1 px que liga os ícones de linhas de log seguidas: no centro do ícone (12 + 7),
 /// de 2 px abaixo dele até 1 px antes do ícone da linha de baixo.
 fn trilho_do_log(continua: bool) -> Div {
@@ -2080,6 +2238,60 @@ impl Janela {
                     .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, Some(k < ultima), cx)),
             )
             .into_any_element()
+    }
+
+    /// A linha de um turno pronto, "Trabalhou 6 min · 13 comandos · editou x e y", que abre e
+    /// recolhe o que veio antes da resposta final (rodada de uso, 2.1). Recolhida, as imagens que as
+    /// chamadas escondidas leram ou gravaram continuam à vista embaixo dela (dono, 13/11 e 16/11).
+    fn linha_do_turno(
+        &self,
+        contexto: &Contexto,
+        turno: TurnoRecolhivel,
+        aberto: bool,
+        escondidos: &[(usize, &Item)],
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let chave = turno.chave(&contexto.chat.id);
+        let resumo = resumo_do_turno(&contexto.chat.itens, turno);
+        let dica = SharedString::from(if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" });
+        let linha = h_flex()
+            .id(SharedString::from(format!("turno-{chave}")))
+            .h(ALTURA_DO_LOG)
+            .px(esp::E12)
+            .gap(esp::E8)
+            .rounded(raio::CONTROLE)
+            .metadado()
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::hover()))
+            .tab_index(0)
+            .focus_visible(|s| s.shadow(halo_foco()))
+            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
+            .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(resumo))
+            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .on_click(alternar(chave.clone(), cx));
+        let mut imagens: Vec<(usize, PathBuf)> = Vec::new();
+        if !aberto {
+            for (indice, item) in escondidos {
+                if let Some(imagem) = imagem_da_chamada(item, &contexto.chat.cwd)
+                    && !imagens.iter().any(|(_, outra)| *outra == imagem)
+                {
+                    imagens.push((*indice, imagem));
+                }
+            }
+        }
+        let fileira = match imagens.as_slice() {
+            [] => None,
+            [(indice, imagem)] => Some(
+                h_flex()
+                    .pl(RECUO_DO_LOG_SOLTO)
+                    .py(esp::E4)
+                    .child(pilula_de_arquivo(format!("img-{}:{indice}:t", contexto.chat.id), imagem, &contexto.chat.id, false, cx))
+                    .into_any_element(),
+            ),
+            varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
+        };
+        v_flex().w_full().child(linha).children(fileira).into_any_element()
     }
 
     /// Um bloco de raciocínio na trilha: "Pensou" e quanto durou; o clique mostra o texto, quando
@@ -4842,5 +5054,84 @@ mod testes {
         assert_eq!(inicio_da_ultima_resposta(&itens), Some(3));
         assert_eq!(inicio_da_ultima_resposta(&itens[..3]), None);
         assert_eq!(inicio_da_ultima_resposta(&[]), None);
+    }
+
+    #[test]
+    fn turno_pronto_recolhe_ate_a_resposta_final() {
+        use super::{Item, TurnoRecolhivel, fica_fora_do_recolhido, resumo_do_turno, turnos_recolhiveis};
+        let em = |item: Item, t: u64| match item {
+            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em: t },
+            Item::Assistente { texto, .. } => Item::Assistente { texto, em: t },
+            outro => outro,
+        };
+        let editar = |arquivo: &str| Item::Ferramenta {
+            id: "e".into(),
+            nome: "Edit".into(),
+            resumo: arquivo.into(),
+            resultado: Some("ok".into()),
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: Some(format!("src/{arquivo}")),
+            sub: None,
+        };
+        let itens = vec![
+            em(usuario("faz"), 1_000),
+            assistente("Vou olhar."),
+            ferramenta("Bash", "cargo test", Some("ok"), false),
+            editar("carrinho.py"),
+            assistente("Quer que eu suba?"),
+            editar("motor.rs"),
+            ferramenta("Bash", "cargo check", Some("ok"), false),
+            em(assistente("Pronto."), 1_372),
+        ];
+        let turnos = turnos_recolhiveis(&itens, false);
+        assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7 }]);
+        assert!(turnos[0].contem(1) && turnos[0].contem(6) && !turnos[0].contem(7) && !turnos[0].contem(0));
+        assert_eq!(resumo_do_turno(&itens, turnos[0]), "Trabalhou 6 min 12 s · 2 comandos · editou carrinho.py e motor.rs");
+        // Com o turno ainda rodando, o último não recolhe.
+        assert!(turnos_recolhiveis(&itens, true).is_empty());
+        // Sem texto intermediário (só a trilha e a resposta), não recolhe: a trilha já basta.
+        let curto = vec![usuario("faz"), ferramenta("Bash", "ls", Some("ok"), false), assistente("Feito.")];
+        assert!(turnos_recolhiveis(&curto, false).is_empty());
+        // A pergunta do meio e o erro ficam à vista.
+        assert!(fica_fora_do_recolhido(&itens[4]));
+        assert!(!fica_fora_do_recolhido(&itens[1]));
+        assert!(fica_fora_do_recolhido(&Item::Aviso { texto: "O turno terminou com erro: x".into(), erro: true, em: 0 }));
+        // Sem hora, sem número.
+        let sem_hora: Vec<Item> = itens.iter().map(|i| match i {
+            Item::Usuario { texto, .. } => usuario(texto),
+            Item::Assistente { texto, .. } => assistente(texto),
+            outro => outro.clone(),
+        }).collect();
+        assert!(resumo_do_turno(&sem_hora, turnos[0]).starts_with("Trabalhou · 2 comandos"));
+    }
+
+    #[test]
+    fn duracao_do_turno_em_segundos_minutos_e_horas() {
+        use super::duracao_do_turno;
+        assert_eq!(duracao_do_turno(45), "45 s");
+        assert_eq!(duracao_do_turno(360), "6 min");
+        assert_eq!(duracao_do_turno(372), "6 min 12 s");
+        assert_eq!(duracao_do_turno(3600), "1 h");
+        assert_eq!(duracao_do_turno(3780), "1 h 3 min");
+    }
+
+    #[test]
+    fn na_dupla_cada_agente_tem_o_seu_recolhido() {
+        use super::{Agente, Item, turnos_recolhiveis};
+        let itens = vec![
+            usuario("faz"),
+            Item::Vez { agente: Agente::Claude, em: 0 },
+            assistente("a"),
+            ferramenta("Bash", "ls", Some("ok"), false),
+            assistente("pronto"),
+            Item::Vez { agente: Agente::Codex, em: 0 },
+            assistente("b"),
+            ferramenta("Bash", "ls", Some("ok"), false),
+            assistente("concordo"),
+        ];
+        let turnos: Vec<(usize, usize)> = turnos_recolhiveis(&itens, false).iter().map(|t| (t.mensagem, t.resposta)).collect();
+        assert_eq!(turnos, [(1, 4), (5, 8)]);
     }
 }

@@ -221,6 +221,10 @@ pub fn chaves_para_abrir(chat: &str, itens: &[Item], indice: usize, foco: bool) 
     if matches!(itens.get(indice), Some(Item::Ferramenta { .. } | Item::Raciocinio { .. })) {
         chaves.push(format!("{chat}:{}:grupo", primeira_da_trilha(itens, indice, foco)));
     }
+    // Dentro de um turno recolhido na linha "Trabalhou…", a linha abre (rodada de uso, 2.1).
+    if !foco && let Some(turno) = super::mensagens::turnos_recolhiveis(itens, false).into_iter().find(|t| t.contem(indice)) {
+        chaves.push(turno.chave(chat));
+    }
     chaves
 }
 

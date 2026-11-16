@@ -564,7 +564,17 @@ ferramentas, vale por painel).
   Recolhido, o grupo mostra as imagens que as chamadas dele leram ou gravaram: uma só, na pílula
   dela; mais de uma, numa linha só (`pilha_de_imagens`): a pilha de até 4 miniaturas quadradas de
   22, sobrepostas como avatares, e "9 imagens", com os nomes na dica (até 10); o clique abre o
-  visor na primeira, e as setas passam pelas outras. Aberto, cada chamada mostra a pílula dela. O clique numa
+  visor na primeira, e as setas passam pelas outras. Aberto, cada chamada mostra a pílula dela.
+  **Turno pronto.** Quando o turno termina, tudo o que veio antes da resposta final recolhe numa
+  linha só, "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs" (o nome dos
+  arquivos editados até dois; acima disso, a contagem), com a resposta logo embaixo; o clique na
+  linha abre e recolhe o resto. Só recolhe o turno com pelo menos uma trilha e um texto
+  intermediário; o texto intermediário que termina em pergunta, o aviso de erro e o cartão de
+  falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
+  A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
+  0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
+  dentro. O histórico importado do Claude Code não recolhe. O clique numa
+  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
   lado ficam guardadas na conversa; o Codex entrega o diff do `fileChange`; registros antigos
