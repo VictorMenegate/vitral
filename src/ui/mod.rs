@@ -638,6 +638,21 @@ impl Janela {
         janela
     }
 
+    /// Esc que chegou à janela: com o turno do painel ativo rodando, para; fora disso (ou com a
+    /// lista em foco, onde o Esc volta à busca), a tecla segue adiante.
+    fn esc_na_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rodando = self
+            .paineis
+            .get(self.ativo)
+            .and_then(|p| p.chat.clone())
+            .zip(self.motor.clone())
+            .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando());
+        match rodando {
+            Some((chat, motor)) if !self.foco_lista.is_focused(window) => motor.update(cx, |m, cx| m.parar(&chat, cx)),
+            _ => cx.propagate(),
+        }
+    }
+
     /// Abre um flutuante controlado pela janela e fecha os outros: um por vez. Com o mouse o
     /// clique fora já fechava o anterior; pelo atalho, não, e o Ctrl+E abria o esforço por cima
     /// do sino aberto (relatório de design, 16/11/2026). Quem abre chama antes de ligar o seu.
@@ -1397,6 +1412,10 @@ impl Render for Janela {
             }))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoSeguinte, _, cx| this.andar_na_busca(1, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoAnterior, _, cx| this.andar_na_busca(-1, cx)))
+            // Esc com o foco fora da caixa (um clique na conversa leva o foco para cá): para o
+            // turno do painel ativo, como a linha de estado promete. A caixa, a gaveta, a busca
+            // e os diálogos têm o Esc deles antes deste (teste de usabilidade, 16/11/2026).
+            .on_action(cx.listener(|this, _: &composer::PararTurno, window, cx| this.esc_na_janela(window, cx)))
             .on_action(cx.listener(|this, _: &AlternarPainel, window, cx| {
                 this.alternar_painel(window, cx)
             }))

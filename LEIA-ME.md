@@ -1064,8 +1064,8 @@ lista; nela, `Enter` abre, `Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` 
 configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha a aba à vista (na última, o painel),
 `Ctrl+PgUp/PgDn` painel vizinho, `Ctrl+Shift+PgUp/PgDn` muda o painel de lugar (na aba: `Enter` vai
 para a caixa, `Delete` fecha, `Shift+F10` abre o menu), `Ctrl+End` vai ao fim da conversa, `Ctrl+F`
-busca na conversa (`F3`/`Shift+F3` andam), `Shift+Tab` troca o modo, `Esc` para o turno (ou fecha a
-gaveta), `Enter` envia, `Shift+Enter` quebra a linha, `Ctrl+roda`, `Ctrl+=` e `Ctrl+-` zoom,
+busca na conversa (`F3`/`Shift+F3` andam), `Shift+Tab` troca o modo, `Esc` para o turno do painel ativo,
+também com o foco fora da caixa, depois de um clique na conversa (ou fecha a gaveta), `Enter` envia, `Shift+Enter` quebra a linha, `Ctrl+roda`, `Ctrl+=` e `Ctrl+-` zoom,
 `Ctrl+0` zoom normal. `Ctrl+Shift+M` (modelo) e `Ctrl+E` (esforço) abrem e fecham os popovers da
 caixa do painel ativo (no do esforço, ←/→, Home e End mudam o nível, Espaço liga o Ultrathink, U
 liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fecha sem parar a

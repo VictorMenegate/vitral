@@ -84,6 +84,8 @@ macro_rules! tabela {
 tabela! {
     // ---------- na conversa ----------
     "escape", composer::PararTurno, Some("Caixa"), Grupo::Conversa, "Parar o turno (ou fechar o menu “/”, sem apagar o que foi escrito)", "";
+    // Fora da caixa (um clique na conversa), o Esc também para o turno do painel ativo.
+    "escape", composer::PararTurno, Some("Vitral"), Grupo::Conversa, "", "";
     // Registrado depois do shift-tab do campo (recuar a linha), ganha dele dentro da caixa. Só
     // no campo da mensagem: a busca de um popover da caixa continua recuando.
     "shift-tab", composer::AlternarModo, Some("Composer > Input"), Grupo::Conversa, "Passar para o próximo modo de permissão", "";
