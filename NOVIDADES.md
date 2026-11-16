@@ -179,7 +179,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   conversa mostra só o cartão do erro, e não o mesmo texto duas vezes.
 - **Copiar a citação.** Quando a resposta traz uma citação (como a mensagem pronta para mandar a
   alguém), ela tem o próprio botão de copiar, que leva o texto limpo, sem os ">" nem o negrito em
-  asteriscos, pronto para colar no WhatsApp.
+  asteriscos, pronto para colar no WhatsApp. E o texto da citação ficou na cor do resto da resposta,
+  em vez do cinza mais apagado.
 - **Suas quebras de linha ficam.** O balão da mensagem enviada mostra as linhas como você as
   escreveu (antes juntava tudo num parágrafo, e o "Mostrar tudo" aparecia sem nada escondido).
 - **Fila mais fácil de mexer.** O × de tirar uma mensagem da fila funciona com o turno rodando e

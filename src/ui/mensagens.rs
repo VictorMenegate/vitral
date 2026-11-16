@@ -743,12 +743,15 @@ pub(super) fn markdown(id: SharedString, texto: String, cx: &App) -> TextView {
 fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
     vista
         .style(estilo_texto(cx))
+        // A citação na cor do texto: é onde o agente põe a mensagem pronta para mandar, e no
+        // tênue era o texto longo menos legível da resposta. O fio e o recuo marcam a citação
+        // (relatório de aparência, 16/11/2026, V13).
         .blockquote_style(
             StyleRefinement::default()
                 .border_l_2()
                 .border_color(Cores::borda_forte())
                 .pl(esp::E12)
-                .text_color(Cores::tenue()),
+                .text_color(Cores::texto()),
         )
         .selectable(true)
         .code_block_actions(move |bloco, _, _| {

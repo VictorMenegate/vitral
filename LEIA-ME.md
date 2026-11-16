@@ -432,7 +432,8 @@ alcança a barra inteira, que fica metade para fora dela (`com_alcance_da_barra`
 cima, o lápis não some antes do clique. Os blocos de código ficam
 num preto quase puro, como as saídas de comando, e têm o próprio Copiar, numa coluna à direita que
 nunca cobre o código; a linguagem fica na dica dele ("Copiar código python"). Cada citação em
-bloco da resposta ("> ...", em geral a mensagem pronta para mandar a outra pessoa) tem o Copiar
+bloco da resposta ("> ...", em geral a mensagem pronta para mandar a outra pessoa; na cor do
+texto, com o fio e o recuo marcando a citação) tem o Copiar
 dela no canto de cima à direita, que leva o texto sem os ">" e sem as marcas de markdown (negrito,
 itálico, código, título; o link vira "texto (endereço)"), com as linhas e os parágrafos. O kit não
 tem gancho para as ações da citação: a resposta com citação é partida em trechos
