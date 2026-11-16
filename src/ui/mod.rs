@@ -8,6 +8,7 @@ mod boas_vindas;
 mod abertura;
 pub mod atalhos;
 mod atualizacao;
+mod avisos_no_app;
 mod busca_conversa;
 mod caixa_entrada;
 mod composer;
@@ -440,6 +441,8 @@ pub struct Janela {
     aba_direita: abas_direita::AbaDireita,
     /// A direita está abaixo de 520 px: com mais de uma aba, elas ficam só com o símbolo.
     direita_compacta: bool,
+    /// Os avisos do canto que você dispensou no × (a chave do pedido ou da falha).
+    avisos_dispensados: HashSet<String>,
 }
 
 /// Redesenhos da janela desde a última conta (o `VITRAL_QUADROS`).
@@ -636,6 +639,7 @@ impl Janela {
             atualizacao_avisada: None,
             aba_direita: abas_direita::AbaDireita::Chat,
             direita_compacta: true,
+            avisos_dispensados: HashSet::new(),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -1564,6 +1568,8 @@ impl Render for Janela {
             .children(self.faixa_de_gravacao(&motor, cx))
             // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026).
             .children(self.uso_no_canto(cx))
+            // Quem espera você, fora de vista: o aviso no canto de baixo (rodada de uso, item 3.1).
+            .children(self.avisos_no_canto(window, cx))
             .children(fora)
             .into_any_element();
         self.lembrar_ultimo_chat(cx);

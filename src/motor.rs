@@ -1489,7 +1489,7 @@ impl Motor {
         };
         self.registrar("falhou", &chat.id, &chat.id, &format!("{}: o processo do Claude caiu", chat.titulo));
         if !self.janela_ativa {
-            self.notificar(&chat, "Parou com erro: o processo do Claude caiu");
+            self.notificar(&chat, "Parou com erro: o processo do Claude caiu", true);
         }
     }
 
@@ -3011,7 +3011,7 @@ impl Motor {
         } else if !erro && self.pedir_revisao_da_memoria(chat_id, cx) {
             // O turno da memória já abriu; o aviso de "terminou" vem no fim dele.
         } else if !self.janela_ativa && !erro {
-            self.notificar(&chat, &texto_do_fim(&texto));
+            self.notificar(&chat, &texto_do_fim(&texto), false);
         }
         self.salvar();
     }
@@ -3135,7 +3135,7 @@ impl Motor {
                 // Como os outros avisos, só com a janela sem foco: com ela à frente, o pedido já
                 // aparece no app (e se responde lá, nunca na notificação).
                 if !self.janela_ativa {
-                    self.notificar(&chat, &texto_do_pedido(a["tool_name"].as_str().unwrap_or("?"), &a["input"]));
+                    self.notificar(&chat, &texto_do_pedido(a["tool_name"].as_str().unwrap_or("?"), &a["input"]), true);
                 }
                 return;
             }
@@ -3194,13 +3194,16 @@ impl Motor {
 
     /// Notificação do sistema, numa thread que espera o clique: a primeira linha do
     /// `notify-send` é o id (para a próxima do mesmo chat substituir esta), a seguinte é a ação.
-    fn notificar(&self, chat: &Chat, texto: &str) {
+    /// `urgente`: o pedido de permissão e a queda com erro, que travam trabalho (item 3.1).
+    fn notificar(&self, chat: &Chat, texto: &str, urgente: bool) {
         let titulo = chat.titulo.clone();
         let corpo = texto.lines().find(|l| !l.trim().is_empty()).unwrap_or_default().to_string();
         // No Windows, o aviso do sistema (toast) com o AppUserModelID do Vitral: o do mesmo chat
         // substitui o anterior, e o clique volta como `Sinal::Abrir`.
         #[cfg(windows)]
         {
+            // O toast do GPUI não tem o cenário de lembrete: lá o urgente sai como os outros.
+            let _ = urgente;
             let aviso = gpui_kit::SystemNotification {
                 tag: chat.id.clone().into(),
                 title: titulo.into(),
@@ -3223,7 +3226,7 @@ impl Motor {
                     let _ = velho.wait();
                 }
                 let filho = crate::processos::novo_comando("notify-send")
-                    .args(argumentos_do_aviso(&titulo, &corpo, aviso.id))
+                    .args(argumentos_do_aviso(&titulo, &corpo, aviso.id, urgente))
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::null())
@@ -3950,12 +3953,17 @@ pub fn janela_padrao(modelo: Option<&str>) -> u64 {
 /// Os argumentos do `notify-send`: o clique (a ação padrão) abre a conversa, e a notificação
 /// anterior do mesmo chat é substituída em vez de empilhar.
 #[cfg_attr(windows, allow(dead_code))]
-fn argumentos_do_aviso(titulo: &str, corpo: &str, substitui: Option<u32>) -> Vec<String> {
+fn argumentos_do_aviso(titulo: &str, corpo: &str, substitui: Option<u32>, urgente: bool) -> Vec<String> {
     let mut args: Vec<String> = ["-a", "Vitral", "-i", "vitral", "-h", "string:desktop-entry:vitral"]
         .into_iter()
         .chain(["-A", "default=Abrir", "-p"])
         .map(String::from)
         .collect();
+    // O pedido de permissão e a queda com erro saem com urgência alta: o GNOME os deixa na tela
+    // até o clique, e o "Terminou" continua sumindo sozinho (rodada de uso, item 3.1).
+    if urgente {
+        args.extend(["-u".to_string(), "critical".to_string()]);
+    }
     if let Some(id) = substitui {
         args.extend(["--replace-id".to_string(), id.to_string()]);
     }
@@ -4412,13 +4420,17 @@ mod testes {
 
     #[test]
     fn notificacao_abre_a_conversa_e_substitui_a_anterior() {
-        let args = argumentos_do_aviso("loja · Preços", "Terminou", None);
+        let args = argumentos_do_aviso("loja · Preços", "Terminou", None, false);
         assert_eq!(
             args.join(" "),
             "-a Vitral -i vitral -h string:desktop-entry:vitral -A default=Abrir -p loja · Preços Terminou"
         );
-        let args = argumentos_do_aviso("t", "c", Some(42));
+        let args = argumentos_do_aviso("t", "c", Some(42), false);
         assert!(args.windows(2).any(|w| w == ["--replace-id", "42"]));
+        assert!(!args.iter().any(|a| a == "critical"));
+        // O pedido de permissão fica na tela até o clique.
+        let args = argumentos_do_aviso("t", "c", None, true);
+        assert!(args.windows(2).any(|w| w == ["-u", "critical"]));
         assert_eq!(&args[args.len() - 2..], ["t", "c"]);
     }
 

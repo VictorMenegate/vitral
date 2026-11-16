@@ -354,6 +354,7 @@ impl Render for Configuracoes {
         let (mcp, alternar_mcp) = (config.mcp_trabalhadores, m());
         let (memoria, alternar_memoria) = (config.memoria_ao_terminar, m());
         let (uso_no_canto, alternar_uso) = (config.uso_no_canto, m());
+        let (avisos_no_app, alternar_avisos) = (config.avisos_no_app, m());
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
@@ -363,6 +364,15 @@ impl Render for Configuracoes {
                 })
                 .into_any_element(),
             ))
+            .linha(
+                // Rodada de uso, item 3.1 (dono, 16/11/2026).
+                LinhaDeOpcao::new("cfg-avisos-no-app", "Avisar dentro do app")
+                    .info("Só para chat fora de vista e só para o que trava trabalho: pedido de permissão, plano para aprovar e falha. O aviso fica até ser respondido e nunca pega o foco da caixa.")
+                    .descricao("No canto de baixo, à direita, quando um chat que não está à vista precisa de você.")
+                    .interruptor(avisos_no_app, move |ligado, _, cx| {
+                        alternar_avisos.update(cx, |m, cx| m.mudar_config(|c| c.avisos_no_app = ligado, cx))
+                    }),
+            )
             .linha(
                 LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
                     // Os anéis voltaram para baixo do × no mesmo dia em que foram ao cabeçalho

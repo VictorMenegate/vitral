@@ -1165,7 +1165,18 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   ("Precisa da sua permissão: Bash, $ cargo test", "Terminou: …", "Parou com erro: ..."). Clicar nela abre
   a conversa no painel ativo e traz a janela para a frente (ou o GNOME avisa que o Vitral está
   pronto). Uma notificação nova do mesmo chat substitui a anterior em vez de empilhar. A permissão se
-  responde dentro do app, nunca na notificação.
+  responde dentro do app, nunca na notificação. O pedido de permissão e a queda com erro saem com
+  urgência alta: no GNOME ficam na tela até o clique (no Windows saem como as outras); o "Terminou"
+  some sozinho, como sempre.
+- **Aviso dentro do app.** Com a janela na frente, o chat fora de vista (em nenhum painel, ou numa
+  aba de fundo) que precisa de você ganha um aviso no canto de baixo, à direita, acima da caixa do
+  último painel: o pedido de permissão com **Negar** e **Permitir** (o comando perigoso ou comprido
+  vira **Ver o comando…**, a regra do sino), o plano com **Ver plano** e a falha com **Abrir** e
+  **Tentar de novo**. O clique no título abre o chat. O aviso fica até ser respondido e some
+  sozinho quando é respondido em outro lugar; o × o dispensa. Ele nunca pega o foco, e o Enter da
+  caixa nunca cai num botão dele. Três ou mais de uma vez viram um aviso só, "3 chats precisam de
+  você · Ver", que abre o sino. O turno começado por outro chat nunca avisa, e o "Terminou" fica
+  no sino. Desliga em Configurações, **Avisar dentro do app**.
 
 Atalhos: `Ctrl+N` novo chat (na hora, na pasta do chat aberto), `Ctrl+K` buscar (`↓` entra na
 lista; nela, `Enter` abre, `Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita,

@@ -18,6 +18,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   recolhe numa linha ("Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs"), com a
   resposta logo embaixo. As perguntas do meio, os erros e as imagens continuam à vista, e o clique
   na linha mostra o resto.
+- **Quem espera você aparece onde você está olhando.** O pedido de permissão, o plano e a falha de
+  um chat fora de vista viram um aviso no canto de baixo, à direita, com Negar e Permitir (ou Ver
+  plano, Tentar de novo) ali mesmo. Ele fica até ser respondido e nunca pega o foco da caixa. Com
+  a janela atrás, o pedido de permissão fica na tela do GNOME até o clique. Desliga em
+  Configurações, **Avisar dentro do app**.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

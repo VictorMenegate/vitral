@@ -583,6 +583,9 @@ pub struct Config {
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
     /// equipe. A chave da pessoa fica fora daqui, num arquivo só dela.
     pub memoria_da_equipe: String,
+    /// O aviso dentro do app, no canto de baixo à direita, quando um chat fora de vista precisa de
+    /// você (pedido de permissão, plano, falha). Começa ligado (rodada de uso, item 3.1).
+    pub avisos_no_app: bool,
 }
 
 /// Um instante Unix no fuso local (o do sistema, como o `localtime_r`); fora do alcance do chrono,
@@ -674,6 +677,7 @@ impl Default for Config {
             agente_padrao: Agente::default(),
             memoria_ao_terminar: true,
             memoria_da_equipe: String::new(),
+            avisos_no_app: true,
         }
     }
 }
