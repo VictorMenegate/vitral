@@ -506,7 +506,7 @@ impl Janela {
                         .children(pilulas)
                         .when(com_texto, |s| {
                             s.child(div().corpo().text_color(Cores::forte()).child(
-                                markdown_achado(contexto, chave.to_string().into(), texto.to_string(), realce)
+                                markdown_achado(contexto, chave.to_string().into(), com_quebras_duras(texto), realce)
                                     .linhas((longo && !tudo).then_some(12)),
                             ))
                         })
@@ -720,6 +720,42 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
             };
             BotaoCopiar::new(Clipboard::new("copiar").value(bloco.code()).tooltip(dica))
         })
+}
+
+/// O texto do seu balão com as quebras de linha que você digitou: no markdown, a quebra simples
+/// vira espaço, e o balão juntava "linha um" e "linha dois" num parágrafo só (log colado,
+/// endereço, lista sem marcador). Cada linha de texto seguida de outra ganha a quebra dura (dois
+/// espaços no fim), menos dentro de blocos cercados (``` e ~~~), em linhas de tabela e antes de
+/// linha em branco (teste de usabilidade, 16/11/2026). O Copiar continua com o texto original.
+pub(super) fn com_quebras_duras(texto: &str) -> String {
+    let linhas: Vec<&str> = texto.split('\n').collect();
+    let mut saida = String::with_capacity(texto.len() + linhas.len() * 2);
+    let mut cerca: Option<&str> = None;
+    for (i, linha) in linhas.iter().enumerate() {
+        let aparada = linha.trim_start();
+        let marca = ["```", "~~~"].into_iter().find(|m| aparada.starts_with(m));
+        let dentro = cerca.is_some();
+        match (cerca, marca) {
+            (None, Some(m)) => cerca = Some(m),
+            (Some(aberta), Some(m)) if aberta == m => cerca = None,
+            _ => {}
+        }
+        saida.push_str(linha);
+        let seguinte = linhas.get(i + 1).map(|l| l.trim());
+        let tabela = |l: &str| l.trim_start().starts_with('|');
+        let quebra = !dentro
+            && marca.is_none()
+            && !linha.trim().is_empty()
+            && !tabela(linha)
+            && seguinte.is_some_and(|s| !s.is_empty() && !s.starts_with('|') && !s.starts_with("```") && !s.starts_with("~~~"));
+        if quebra && !linha.ends_with("  ") {
+            saida.push_str("  ");
+        }
+        if i + 1 < linhas.len() {
+            saida.push('\n');
+        }
+    }
+    saida
 }
 
 /// Ctrl+F: o markdown de uma mensagem com o termo da busca realçado atrás das letras, que rola
@@ -3608,7 +3644,8 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        linhas_da_edicao, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha, resumo_das_chamadas, sem_marcacao,
+        com_quebras_duras, linhas_da_edicao, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
+        resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
     };
@@ -3868,6 +3905,20 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn o_balao_guarda_as_quebras_que_voce_digitou() {
+        assert_eq!(com_quebras_duras("linha um\nlinha dois\nlinha três"), "linha um  \nlinha dois  \nlinha três");
+        // Linha em branco separa parágrafos: nada muda ali.
+        assert_eq!(com_quebras_duras("um\n\ndois"), "um\n\ndois");
+        // Dentro do bloco cercado e nas linhas de tabela, o texto fica como veio.
+        let codigo = "veja:\n```\nfn a() {}\nfn b() {}\n```\nfim";
+        assert_eq!(com_quebras_duras(codigo), "veja:\n```\nfn a() {}\nfn b() {}\n```\nfim");
+        let tabela = "| a | b |\n|---|---|\n| 1 | 2 |";
+        assert_eq!(com_quebras_duras(tabela), tabela);
+        // A linha que já termina com a quebra dura não ganha outra.
+        assert_eq!(com_quebras_duras("um  \ndois"), "um  \ndois");
     }
 
     #[test]

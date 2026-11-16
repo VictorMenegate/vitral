@@ -152,6 +152,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   para a caixa. O teclado não trava mais quando um painel aberto ao lado empurra a lista para fora.
 - **Esc para o turno de qualquer lugar.** Depois de clicar na conversa (o foco sai da caixa), o Esc
   continua parando o turno do painel ativo, como a linha de estado mostra.
+- **Suas quebras de linha ficam.** O balão da mensagem enviada mostra as linhas como você as
+  escreveu (antes juntava tudo num parágrafo, e o "Mostrar tudo" aparecia sem nada escondido).
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

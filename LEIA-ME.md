@@ -525,7 +525,9 @@ ferramentas, vale por painel).
 - **Mensagens.** O que você escreve fica num balão neutro à direita (sem avatar, com o reflexo do
   vidro), com as miniaturas das imagens anexadas, o nome e o tamanho dos outros arquivos e os selos
   **Ultrathink** (em arco-íris) e **Ultracode** (em violeta, com o ícone de fluxo) quando a mensagem
-  foi com eles; texto com mais de 14 linhas mostra 12 e **Mostrar tudo**. Mensagens que outro chat
+  foi com eles; texto com mais de 14 linhas mostra 12 e **Mostrar tudo**. As quebras de linha que
+  você digitou ficam no balão (`com_quebras_duras`: cada linha seguida de outra ganha a quebra dura
+  do markdown, menos nos blocos cercados e nas tabelas), e o Copiar leva o texto como foi escrito. Mensagens que outro chat
   (ou o Vitral) entregou mostram quem mandou (o balão de outro chat ou o logo do Vitral; nas
   conversas antigas, o círculo do Mestre, do coordenador ou a chave inglesa de um ajudante) e uma
   prévia; as de outro chat têm **Abrir o chat**. A prévia termina com reticências antes da coluna da
