@@ -187,8 +187,31 @@ impl Aba {
                 .when(tem_fechar, |s| s.group_hover(GRUPO_DA_ABA, |s| s.invisible()))
                 .child(sinal.ponto(8.))
         });
-        let fim = ((fechar.is_some() || ponto.is_some()) && !self.quadrada)
-            .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar));
+        // O × que só aparece no hover não guarda lugar: ele surge por cima do fim da aba (do número
+        // do painel ou do fim do título), num disco do fundo da aba, e a aba não muda de tamanho
+        // (dono, 16/11/2026: "esse espaço pro x não ter, e ficar quando passar o mouse em cima,
+        // sem crescer o tamanho"). O lugar só fica reservado quando o × está sempre à vista ou
+        // quando há o ponto do estado, que divide o lugar com ele.
+        let reserva = !self.quadrada && (fechar_a_vista || ponto.is_some());
+        let (fechar_no_lugar, fechar_por_cima) = match fechar {
+            Some(f) if !reserva && !self.quadrada => (None, Some(f)),
+            outro => (outro, None),
+        };
+        let fim = (reserva && (fechar_no_lugar.is_some() || ponto.is_some()))
+            .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar_no_lugar));
+        let fundo_do_x = fundo.clone();
+        let por_cima = fechar_por_cima.map(|f| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(esp::E4)
+                .flex()
+                .items_center()
+                .invisible()
+                .group_hover(GRUPO_DA_ABA, |s| s.visible())
+                .child(div().rounded(raio::de(24.)).bg(fundo_do_x).p(esp::E2).child(f))
+        });
         let so_simbolo = self.so_simbolo || self.quadrada;
         // Ícone solto em 16; o círculo do chat em 18.
         let simbolo = self.simbolo.map(|s| {
@@ -251,6 +274,7 @@ impl Aba {
             .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| numero_painel(n, ativo)))
             .children(self.fim)
             .children(fim)
+            .children(por_cima)
             .when_some(fechar_meio, |s, f| {
                 s.on_aux_click(move |ev: &ClickEvent, window, cx| {
                     if ev.is_middle_click() {
