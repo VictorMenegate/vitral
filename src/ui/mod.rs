@@ -224,13 +224,16 @@ fn orcamento(util: f32, escala: f32, n: usize, lista: bool, direita: bool) -> Or
 struct Larguras {
     lista: f32,
     direita: f32,
-    /// A fração de cada conversa no espaço das conversas; vazia, partes iguais.
-    conversas: Vec<f32>,
+    /// A divisão das conversas lado a lado (a fração de cada uma no espaço delas), uma por
+    /// quantidade de conversas: fechar um painel e abrir de novo volta à divisão que aquela
+    /// quantidade tinha (dono, 16/11/2026: "falta lembrar como deixei"). Sem a da quantidade de
+    /// agora, partes iguais.
+    divisoes: Vec<Vec<f32>>,
 }
 
 impl Default for Larguras {
     fn default() -> Self {
-        Larguras { lista: LATERAL, direita: DIREITA, conversas: Vec::new() }
+        Larguras { lista: LATERAL, direita: DIREITA, divisoes: Vec::new() }
     }
 }
 
@@ -243,23 +246,47 @@ struct LargurasPx {
 }
 
 impl Larguras {
-    /// Guarda o que o arrasto deixou: `tamanhos` em px, na ordem das partes na tela.
-    fn guardar(&mut self, tamanhos: &[f32], lista: bool, direita: bool, escala: f32) {
+    /// A divisão guardada para `n` conversas lado a lado.
+    fn divisao(&self, n: usize) -> Option<&[f32]> {
+        self.divisoes.iter().find(|d| d.len() == n).map(Vec::as_slice)
+    }
+
+    /// Troca a divisão de `n` conversas (`None` volta às partes iguais).
+    fn guardar_divisao(&mut self, n: usize, divisao: Option<Vec<f32>>) {
+        self.divisoes.retain(|d| d.len() != n);
+        if let Some(d) = divisao.filter(|d| d.len() == n && n > 1) {
+            self.divisoes.push(d);
+            self.divisoes.sort_by_key(Vec::len);
+        }
+    }
+
+    /// Guarda o que o arrasto deixou: `tamanhos` em px, na ordem das partes na tela; `antes`, as
+    /// larguras com que as partes foram montadas (a lista e a direita, se ancoradas). A lista e a
+    /// direita só mudam se o arrasto as mexeu: arrastar a divisória entre duas conversas não troca
+    /// a largura pedida da lista pela que o orçamento apertou nesta janela.
+    fn guardar(&mut self, tamanhos: &[f32], antes: &LargurasPx, escala: f32) {
+        let mexeu = |agora: f32, antes: f32| (agora - antes).abs() >= 1.;
         let mut resto = tamanhos;
-        if lista && let Some((l, depois)) = resto.split_first() {
-            self.lista = (l / escala).clamp(FAIXA_LISTA.0, FAIXA_LISTA.1);
+        if let Some(lista) = antes.lista
+            && let Some((l, depois)) = resto.split_first()
+        {
+            if mexeu(*l, lista) {
+                self.lista = (l / escala).clamp(FAIXA_LISTA.0, FAIXA_LISTA.1);
+            }
             resto = depois;
         }
-        if direita && let Some((d, antes)) = resto.split_last() {
-            self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+        if let Some(direita) = antes.direita
+            && let Some((d, antes)) = resto.split_last()
+        {
+            if mexeu(*d, direita) {
+                self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+            }
             resto = antes;
         }
         let total: f32 = resto.iter().sum();
-        self.conversas = if resto.len() > 1 && total > 0. {
-            resto.iter().map(|c| c / total).collect()
-        } else {
-            Vec::new()
-        };
+        if resto.len() > 1 && total > 0. {
+            self.guardar_divisao(resto.len(), Some(resto.iter().map(|c| c / total).collect()));
+        }
     }
 
     /// As larguras guardadas neste orçamento, com `n` conversas: a lista e a direita dentro da
@@ -271,8 +298,8 @@ impl Larguras {
         let direita = (o.direita == Direita::Ancorada)
             .then(|| u(self.direita).min(o.max_direita).max(u(FAIXA_DIREITA.0)).floor());
         let livre = o.util - lista.unwrap_or(0.) - direita.unwrap_or(0.);
-        let conversas = if self.conversas.len() == n {
-            self.conversas.iter().map(|f| (livre * f).floor().max(o.min_conversa)).collect()
+        let conversas = if let Some(divisao) = self.divisao(n) {
+            divisao.iter().map(|f| (livre * f).floor().max(o.min_conversa)).collect()
         } else {
             vec![(livre / n as f32).floor().max(o.min_conversa); n]
         };
@@ -403,10 +430,10 @@ pub struct Janela {
     orcamento: Orcamento,
     /// Larguras dadas no arrasto das divisórias, a 100%.
     larguras: Larguras,
-    /// Estado das divisórias, recomeçado quando muda a composição ou o zoom: as partes voltam às
-    /// `larguras` na escala nova.
+    /// Estado das divisórias, recomeçado quando muda a composição, o zoom ou a largura: as partes
+    /// voltam às `larguras` na escala nova.
     estado_partes: Entity<ResizableState>,
-    chave_partes: Option<(usize, bool, bool, u32)>,
+    chave_partes: Option<(usize, bool, bool, u32, u32)>,
     gaveta: Option<Gaveta>,
     /// Sobe a cada abertura da gaveta: a entrada dela toca uma vez por abertura.
     geracao_gaveta: u64,
@@ -1807,14 +1834,19 @@ impl Janela {
         let n = self.paineis.len().max(1);
         let lista = o.lista;
         let painel = o.direita == Direita::Ancorada;
-        // Com outra composição ou outro zoom, as divisórias recomeçam das larguras guardadas, já
-        // na escala nova: nada pula, e o que foi arrastado a 100% fica 1,5× a 150%.
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32);
+        // Com outra composição, outro zoom ou outra largura de janela, as divisórias recomeçam
+        // das larguras guardadas, já na escala nova: nada pula, e o que foi arrastado a 100% fica
+        // 1,5× a 150%. A largura entra porque o kit, sozinho, só reparte a diferença na proporção
+        // do que já estava: na abertura o primeiro quadro sai na janela ainda não maximizada, com
+        // as conversas presas no mínimo, e essa conta torta ficava (dono, 16/11/2026: "falta
+        // lembrar como deixei quando fecho e abro"; a divisão de 455/280/420 voltava 432/324/399).
+        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
         let larguras = self.larguras.em_px(&o, n);
+        let antes = larguras.clone();
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
         let janela = cx.entity().downgrade();
@@ -1830,16 +1862,16 @@ impl Janela {
             .on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
                 let _ = janela.update(cx, |this, cx| {
-                    // A lista arrastada bem abaixo do mínimo recolhe (o Ctrl+B a traz de volta,
-                    // na largura mínima).
+                    // A lista arrastada bem abaixo do mínimo recolhe; o Ctrl+B a traz de volta na
+                    // largura de antes do arrasto, que ainda é a guardada (dono, 16/11/2026: "quando
+                    // minimizo a parte do lado e abre de novo", ela voltava no mínimo).
                     if lista && tamanhos.first().is_some_and(|l| l / o.escala < RECOLHER_ABAIXO_DE) {
                         this.lista = false;
-                        this.larguras.lista = FAIXA_LISTA.0;
                         this.chave_partes = None;
                         cx.notify();
                         return;
                     }
-                    this.larguras.guardar(&tamanhos, lista, painel, o.escala)
+                    this.larguras.guardar(&tamanhos, &antes, o.escala)
                 });
             });
         if let Some(largura) = larguras.lista {
@@ -1922,7 +1954,7 @@ impl Janela {
 
     /// As conversas lado a lado voltam a dividir o espaço por igual.
     fn igualar_conversas(&mut self, cx: &mut Context<Self>) {
-        self.larguras.conversas.clear();
+        self.larguras.guardar_divisao(self.paineis.len(), None);
         // As divisórias recomeçam das larguras guardadas.
         self.chave_partes = None;
         cx.notify();
@@ -2096,7 +2128,7 @@ mod testes_botoes_janela {
 
 #[cfg(test)]
 mod testes_orcamento {
-    use super::{Direita, Gaveta, Larguras, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
+    use super::{Direita, Gaveta, Larguras, LargurasPx, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
 
     // Área das partes na janela mínima (960), no tamanho inicial (1440) e em meia tela de
     // 2560 a 100% (1280) e a 125% (1024), com a sombra de 20 px dos dois lados.
@@ -2220,14 +2252,20 @@ mod testes_orcamento {
         }
     }
 
+    /// As larguras de montagem de um arrasto que mexeu em tudo (a lista e a direita, se
+    /// ancoradas, com um valor que nenhum arrasto deixa).
+    fn mexeu_em_tudo(lista: bool, direita: bool) -> LargurasPx {
+        LargurasPx { lista: lista.then_some(-10.), conversas: Vec::new(), direita: direita.then_some(-10.) }
+    }
+
     #[test]
     fn o_que_foi_arrastado_cresce_com_o_zoom() {
         // A 100%, a lista foi a 400 e as duas conversas ficaram em 60/40.
         let mut l = Larguras::default();
-        l.guardar(&[400., 480., 320., 380.], true, true, 1.);
+        l.guardar(&[400., 480., 320., 380.], &mexeu_em_tudo(true, true), 1.);
         assert_eq!(l.lista, 400.);
         assert_eq!(l.direita, 380.);
-        assert_eq!(l.conversas, vec![0.6, 0.4]);
+        assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
         // A 150%, numa janela que comporta: 600 de lista e a mesma divisão.
         let o = orcamento(2412., 1.5, 2, true, true);
         let px = l.em_px(&o, 2);
@@ -2237,24 +2275,58 @@ mod testes_orcamento {
         assert_eq!(px.conversas, vec![(livre * 0.6f32).floor(), (livre * 0.4f32).floor()]);
         // Guardar a 150% e voltar a 100% devolve o que era.
         let mut de_volta = Larguras::default();
-        de_volta.guardar(&[600., 745., 497., 570.], true, true, 1.5);
+        de_volta.guardar(&[600., 745., 497., 570.], &mexeu_em_tudo(true, true), 1.5);
         assert_eq!(de_volta.lista, 400.);
         assert_eq!(de_volta.direita, 380.);
         // Outra quantidade de conversas divide por igual.
-        assert_eq!(l.em_px(&orcamento(INICIAL, 1., 3, true, false), 3).conversas.len(), 3);
+        let tres = l.em_px(&orcamento(INICIAL, 1., 3, true, false), 3).conversas;
+        assert_eq!(tres.len(), 3);
+        assert!(tres.iter().all(|c| *c == tres[0]));
+    }
+
+    #[test]
+    fn cada_quantidade_de_conversas_lembra_a_sua_divisao() {
+        // Duas conversas em 60/40; depois três em 50/25/25; fechar uma volta aos 60/40.
+        let mut l = Larguras::default();
+        l.guardar(&[600., 400.], &mexeu_em_tudo(false, false), 1.);
+        l.guardar(&[500., 250., 250.], &mexeu_em_tudo(false, false), 1.);
+        assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
+        assert_eq!(l.divisao(3), Some(&[0.5, 0.25, 0.25][..]));
+        let o = orcamento(1000., 1., 2, false, false);
+        assert_eq!(l.em_px(&o, 2).conversas, vec![600., 400.]);
+        // Igualar (dois cliques na divisória) esquece só a daquela quantidade.
+        l.guardar_divisao(3, None);
+        assert_eq!(l.divisao(3), None);
+        assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
+    }
+
+    #[test]
+    fn arrastar_entre_as_conversas_nao_aperta_a_lista_guardada() {
+        // A lista pedida é 500, mas nesta janela o orçamento a montou com 340: arrastar a
+        // divisória entre as conversas deixa os 340 da lista onde estavam, e os 500 continuam
+        // guardados para quando couberem.
+        let mut l = Larguras { lista: 500., ..Larguras::default() };
+        let antes = LargurasPx { lista: Some(340.), conversas: vec![400., 400.], direita: None };
+        l.guardar(&[340., 500., 300.], &antes, 1.);
+        assert_eq!(l.lista, 500.);
+        assert_eq!(l.divisao(2), Some(&[0.625, 0.375][..]));
+        // Arrastada de fato, a lista guarda a nova.
+        l.guardar(&[380., 460., 300.], &antes, 1.);
+        assert_eq!(l.lista, 380.);
     }
 
     #[test]
     fn larguras_guardadas_ficam_na_faixa_e_no_que_cabe() {
         let mut l = Larguras::default();
         // Sem a direita e sem a lista ancoradas, só as conversas contam.
-        l.guardar(&[500., 500.], false, false, 1.);
+        l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1.);
         assert_eq!((l.lista, l.direita), (312., 380.));
-        assert_eq!(l.conversas, vec![0.5, 0.5]);
-        // Arrastada além da faixa, fica no limite; na janela pequena, no máximo que cabe.
-        l.guardar(&[900., 600.], true, false, 1.);
+        assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
+        // Arrastada além da faixa, fica no limite; na janela pequena, no máximo que cabe. Uma
+        // conversa só não mexe na divisão das duas.
+        l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1.);
         assert_eq!(l.lista, 560.);
-        assert!(l.conversas.is_empty());
+        assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         let o = orcamento(MINIMA, 1., 1, true, false);
         let px = l.em_px(&o, 1);
         assert_eq!(px.lista, Some(o.max_lista));

@@ -160,7 +160,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Revisão da memória.** Depois de uma sessão que editou arquivos, o Vitral pede ao agente que
   avalie o que vale guardar. Pode ser desligada nas Configurações.
 - **A janela volta como estava.** Ao abrir, o Vitral recoloca os painéis, as abas, a largura da
-  lista e o tamanho da janela de quando foi fechado.
+  lista, a divisão entre as conversas e o tamanho da janela de quando foi fechado. Cada quantidade
+  de conversas lado a lado lembra a sua divisão (fechar uma e abrir de novo volta como era), e a
+  lista recolhida no arrasto volta, no Ctrl+B, na largura de antes.
 - **Imagens à vista.** As imagens que o agente lê ou gera aparecem na conversa, em grade quando são
   várias. O visor ganhou zoom pela roda do mouse, arrasto e os botões de aproximar e afastar.
 - **Responder a um trecho.** Selecione um pedaço de uma resposta e clique em **Responder a este

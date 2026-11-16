@@ -49,8 +49,11 @@ pub(super) struct Arranjo {
     /// As larguras dadas no arrasto, a 100% de zoom.
     pub largura_lista: Option<f32>,
     pub largura_direita: Option<f32>,
-    /// A fração de cada conversa no espaço das conversas; vazia, partes iguais.
+    /// A divisão das conversas de agora (a fração de cada uma no espaço delas); vazia, partes
+    /// iguais. Fica para quem abrir este arquivo numa versão de antes das `divisoes`.
     pub conversas: Vec<f32>,
+    /// A divisão de cada quantidade de conversas lado a lado (`Larguras::divisoes`).
+    pub divisoes: Vec<Vec<f32>>,
     /// A largura e a altura da janela fora de maximizada.
     pub janela: Option<(f32, f32)>,
     pub maximizada: bool,
@@ -110,23 +113,30 @@ impl Arranjo {
         (paineis, ativo)
     }
 
-    /// As larguras guardadas, dentro das faixas de cada parte. A divisão das conversas só vale
-    /// para o mesmo número de painéis e com frações que fecham a conta; senão, partes iguais.
-    pub(super) fn larguras(&self, paineis: usize) -> Larguras {
+    /// As larguras guardadas, dentro das faixas de cada parte. Só voltam as divisões das conversas
+    /// que fecham a conta (de 2 ao máximo de painéis, frações que somam 1); a quantidade sem
+    /// divisão guardada divide por igual. Um arquivo de antes das `divisoes` traz a das
+    /// `conversas`.
+    pub(super) fn larguras(&self) -> Larguras {
         let padrao = Larguras::default();
         let na_faixa = |guardada: Option<f32>, faixa: (f32, f32), padrao: f32| {
             guardada.filter(|v| v.is_finite()).map_or(padrao, |v| v.clamp(faixa.0, faixa.1))
         };
-        let soma: f32 = self.conversas.iter().sum();
-        let fecha = paineis > 1
-            && self.conversas.len() == paineis
-            && self.conversas.iter().all(|f| f.is_finite() && *f > 0.02)
-            && (soma - 1.).abs() < 0.02;
-        Larguras {
+        let fecha = |d: &Vec<f32>| {
+            let soma: f32 = d.iter().sum();
+            (2..=MAX_PAINEIS).contains(&d.len()) && d.iter().all(|f| f.is_finite() && *f > 0.02) && (soma - 1.).abs() < 0.02
+        };
+        let mut larguras = Larguras {
             lista: na_faixa(self.largura_lista, FAIXA_LISTA, padrao.lista),
             direita: na_faixa(self.largura_direita, FAIXA_DIREITA, padrao.direita),
-            conversas: if fecha { self.conversas.clone() } else { Vec::new() },
+            divisoes: Vec::new(),
+        };
+        for d in self.divisoes.iter().chain(std::iter::once(&self.conversas)).filter(|d| fecha(d)) {
+            if larguras.divisao(d.len()).is_none() {
+                larguras.guardar_divisao(d.len(), Some(d.clone()));
+            }
         }
+        larguras
     }
 }
 
@@ -176,7 +186,8 @@ impl Janela {
             lista_recolhida: !self.lista,
             largura_lista: Some(self.larguras.lista),
             largura_direita: Some(self.larguras.direita),
-            conversas: self.larguras.conversas.clone(),
+            conversas: self.larguras.divisao(self.paineis.len()).map(<[f32]>::to_vec).unwrap_or_default(),
+            divisoes: self.larguras.divisoes.clone(),
             janela,
             maximizada,
         }
@@ -196,7 +207,7 @@ impl Janela {
         };
         let (paineis, ativo) = guardado.reabrivel(existe);
         self.lista = !guardado.lista_recolhida;
-        self.larguras = guardado.larguras(paineis.len());
+        self.larguras = guardado.larguras();
         // O tamanho guardado continua valendo se a janela abrir maximizada.
         self.arranjo = Some(guardado);
         if paineis.is_empty() {
@@ -332,17 +343,26 @@ mod testes {
             conversas: vec![0.3, 0.7],
             ..Default::default()
         };
-        let l = a.larguras(2);
+        let l = a.larguras();
         assert_eq!(l.lista, FAIXA_LISTA.0);
         assert_eq!(l.direita, Larguras::default().direita);
-        assert_eq!(l.conversas, vec![0.3, 0.7]);
-        // Outro número de painéis, ou frações que não somam 1: partes iguais.
-        assert!(a.larguras(3).conversas.is_empty());
-        assert!(a.larguras(1).conversas.is_empty());
-        let torto = Arranjo { conversas: vec![0.9, 0.9], ..Default::default() };
-        assert!(torto.larguras(2).conversas.is_empty());
+        // O arquivo de antes das `divisoes` traz a divisão de duas pelas `conversas`.
+        assert_eq!(l.divisao(2), Some(&[0.3, 0.7][..]));
+        assert_eq!(l.divisao(3), None);
+        // Frações que não somam 1: partes iguais.
+        let torto = Arranjo { conversas: vec![0.9, 0.9], divisoes: vec![vec![0.5, 0.6, 0.1]], ..Default::default() };
+        assert_eq!(torto.larguras().divisoes, Vec::<Vec<f32>>::new());
+        // Cada quantidade com a sua; a das `divisoes` vale mais que a das `conversas`.
+        let varias = Arranjo {
+            conversas: vec![0.5, 0.5],
+            divisoes: vec![vec![0.6, 0.4], vec![0.5, 0.25, 0.25]],
+            ..Default::default()
+        };
+        let l = varias.larguras();
+        assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
+        assert_eq!(l.divisao(3), Some(&[0.5, 0.25, 0.25][..]));
         // Sem nada guardado, as larguras de sempre.
-        assert_eq!(Arranjo::default().larguras(1), Larguras::default());
+        assert_eq!(Arranjo::default().larguras(), Larguras::default());
     }
 
     #[test]
