@@ -342,16 +342,7 @@ pub enum Encaixe {
     /// A chapa inteira encolhida até cobrir a caixa, centrada: um botão mostra o miolo do campo,
     /// com as bolhas pequenas, como no botão do menu; uma placa, a faixa do meio.
     Cobrir,
-    /// O `Cobrir` aumentado `FATOR_DO_MIOLO` vezes em volta do centro: só o miolo do campo, sem
-    /// a vinheta das pontas. É o das fichas e placas largas e baixas e do aro de foco: com o
-    /// `Cobrir`, numa pílula larga a faixa do meio ia de cinza-ardósia a quase preto de ponta a
-    /// ponta, e o aro pegava a beirada escura (relatório de aparência, 16/11/2026).
-    Miolo,
 }
-
-/// Quanto o `Encaixe::Miolo` aumenta a chapa do `Cobrir`: com 2,5, na fase 66,5 a faixa de 30% a
-/// 70% do campo vai de 108,150,203 a 10,55,163, sem a vinheta.
-const FATOR_DO_MIOLO: f32 = 2.5;
 
 /// O fundo da janela: a chapa de metal inteira, com o grão. Vai como PRIMEIRO filho da raiz da
 /// janela (absoluto, sem clique) e é chamado no `render`: é aqui que o tempo do campo anda e o
@@ -556,7 +547,6 @@ fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>
                     let moldura = match encaixe {
                         Encaixe::Continuo => onde,
                         Encaixe::Cobrir => chapa_que_cobre(limites, onde),
-                        Encaixe::Miolo => chapa_do_miolo(limites, onde),
                     };
                     let _ = window.paint_image(limites, moldura, raios, imagem, 0, false);
                     pintar_o_grao(limites, raios, grao.as_ref(), window);
@@ -583,13 +573,6 @@ fn chapa_que_cobre(abertura: Bounds<Pixels>, onde: Bounds<Pixels>) -> Bounds<Pix
     dentro.dilate(folga * (dentro.size.width.as_f32() / campo.width.as_f32()))
 }
 
-/// A chapa do `Encaixe::Miolo`: a do `Cobrir` aumentada `FATOR_DO_MIOLO` vezes em volta do
-/// centro da abertura (continua cobrindo a abertura inteira).
-fn chapa_do_miolo(abertura: Bounds<Pixels>, onde: Bounds<Pixels>) -> Bounds<Pixels> {
-    let cobre = chapa_que_cobre(abertura, onde);
-    Bounds::centered_at(abertura.center(), size(cobre.size.width * FATOR_DO_MIOLO, cobre.size.height * FATOR_DO_MIOLO))
-}
-
 /// O aro de metal: "é aqui" (a caixa com foco) e "espera você" (o pedido pendente). Vai como
 /// PRIMEIRO filho de um `div().relative()`; o miolo, OPACO, vem depois, por cima, e o que sobra à
 /// vista é a moldura de `espessura` em volta dele. `raio` é o do miolo; `t`, de 0 a 1, o quanto
@@ -613,7 +596,7 @@ mod testes {
 
     use super::{
         BRILHO, CONTRASTE, CORES, PX_POR_TEXEL, Quadro, SATURACAO, TETO_DO_METAL, bmp_de_bgra, caixa_que_cobre, centro_do_texel,
-        chapa_do_miolo, chapa_que_cobre, paleta_acabada, pintar_campo, pintar_grao, tabela_da_vinheta, texels_para,
+        chapa_que_cobre, paleta_acabada, pintar_campo, pintar_grao, tabela_da_vinheta, texels_para,
     };
     use crate::ui::componentes::malha::cor_sem_grao;
 
@@ -737,26 +720,6 @@ mod testes {
             let margem = px(PX_POR_TEXEL * cobre.size.width.as_f32() / 1400.);
             assert!(perto(chapa.left() + margem, cobre.left()) && perto(chapa.top() + margem, cobre.top()), "{caixa:?}");
             assert!(perto(chapa.size.width, cobre.size.width + margem * 2.));
-        }
-    }
-
-    /// O `Miolo` aumenta a chapa em volta do centro e continua cobrindo a abertura inteira, em
-    /// pílula larga, disco e faixa alta.
-    #[test]
-    fn miolo_cobre_a_abertura() {
-        let onde = Bounds::new(point(px(-PX_POR_TEXEL), px(-PX_POR_TEXEL)), size(px(1400. + 2. * PX_POR_TEXEL), px(880. + 2. * PX_POR_TEXEL)));
-        for caixa in [
-            Bounds::new(point(px(10.), px(20.)), size(px(36.), px(36.))),
-            Bounds::new(point(px(0.), px(0.)), size(px(300.), px(32.))),
-            Bounds::new(point(px(500.), px(100.)), size(px(40.), px(400.))),
-        ] {
-            let miolo = chapa_do_miolo(caixa, onde);
-            let cobre = chapa_que_cobre(caixa, onde);
-            assert!(miolo.left() <= caixa.left() && miolo.right() >= caixa.right(), "{caixa:?}");
-            assert!(miolo.top() <= caixa.top() && miolo.bottom() >= caixa.bottom(), "{caixa:?}");
-            assert!((miolo.size.width.as_f32() / cobre.size.width.as_f32() - 2.5).abs() < 1e-3);
-            let perto = |a: Pixels, b: Pixels| (a - b).as_f32().abs() < 0.01;
-            assert!(perto(miolo.center().x, caixa.center().x) && perto(miolo.center().y, caixa.center().y));
         }
     }
 
