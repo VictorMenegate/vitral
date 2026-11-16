@@ -472,23 +472,20 @@ impl Janela {
                     let id = SharedString::from(format!("tudo-{chave}"));
                     fantasma(id, None, rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx)
                 });
-                // Os anexos ficam fora do balão, em cima dele: a imagem é uma peça própria e o balão
-                // abraça só o texto. Dentro, a imagem esticava o balão até a largura dela e o
-                // texto curto ficava solto num cartão grande (dono, 13/11/2026: "melhora como
-                // ficam as mensagens minhas").
-                let fora = (!anexos.is_empty()).then(|| {
+                // Os anexos entram no balão, em pílulas em cima do texto, como na extensão do
+                // Claude Code (dono, 16/11/2026).
+                let pilulas = (!anexos.is_empty()).then(|| {
                     h_flex()
                         .flex_wrap()
-                        .justify_end()
                         .gap(esp::E6)
-                        .children(anexos.iter().enumerate().map(|(i, a)| anexo(chave, i, a, &contexto.chat.id, cx)))
+                        .children(anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, cx)))
                 });
                 let com_texto = !texto.trim().is_empty();
                 // O balão é azul bem baixo (o destaque misturado à base, opaco): diz de quem é a
                 // fala sem a moldura de cartão, e o canto de baixo à direita é o da ponta.
                 // Na largura toda da coluna (dono, 16/11/2026: "faz o campo das minhas mensagens
                 // ficar na largura toda").
-                let balao = (com_texto || mostrar.is_some() || reforco != Reforco::default()).then(|| {
+                let balao = (com_texto || pilulas.is_some() || mostrar.is_some() || reforco != Reforco::default()).then(|| {
                     v_flex()
                         .w_full()
                         .px(dentro_da_borda(12.))
@@ -499,6 +496,7 @@ impl Janela {
                         .bg(Cores::tinta_solida(Cores::destaque(), 0.2))
                         .border_1()
                         .border_color(Cores::destaque().opacity(0.24))
+                        .children(pilulas)
                         .when(com_texto, |s| {
                             s.child(div().corpo().text_color(Cores::forte()).child(
                                 markdown_achado(contexto, chave.to_string().into(), texto.to_string(), realce)
@@ -516,7 +514,7 @@ impl Janela {
                             )
                         })
                 });
-                v_flex().w_full().items_end().gap(esp::E6).children(fora).children(balao).into_any_element()
+                v_flex().w_full().children(balao).into_any_element()
             }
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
@@ -583,19 +581,7 @@ impl Janela {
             )
             .when(!apontadas.is_empty(), |s| {
                 s.child(h_flex().flex_wrap().gap(esp::E6).children(apontadas.iter().enumerate().map(|(i, caminho)| {
-                    let dica = SharedString::from(format!(
-                        "{} · {}\n{}",
-                        imagens::nome_do_arquivo(caminho),
-                        imagens::anexo(caminho).detalhe(),
-                        caminho.display()
-                    ));
-                    miniatura(
-                        format!("resposta-{chave}-{i}"),
-                        caminho,
-                        &chat_id,
-                        move |window, cx| Tooltip::new(dica.clone()).build(window, cx),
-                        cx,
-                    )
+                    pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, cx)
                 })))
             })
             .child(div().absolute().top(r(-14.)).right_0().child(barra_de_acoes(
@@ -1006,25 +992,9 @@ fn contagem_do_diff(pedido: &str) -> Option<(usize, usize)> {
 /// itens lado a lado: 6,2 s de processador para 80 passos de rolagem (78 ms por passo).
 pub(super) const ITENS_NA_TELA: usize = 60;
 
-/// A imagem de uma chamada, embaixo da linha dela (altura e largura máximas), e a de um grupo
-/// recolhido, menor, em fileira.
-const IMAGEM_DA_CHAMADA: (f32, f32) = (220., 520.);
-const IMAGEM_DO_GRUPO: (f32, f32) = (76., 132.);
 /// Quantas imagens o grupo recolhido mostra na grade; as outras viram "+N" (abrir o grupo mostra
 /// todas, cada uma na linha da chamada dela).
 const IMAGENS_NA_GRADE: usize = 8;
-
-/// Miniatura de uma imagem: na proporção dela, com o véu e a lupa no hover, e o clique abre o
-/// visor. Serve ao anexo do balão e às imagens que o markdown da resposta aponta.
-fn miniatura<D: Fn(&mut Window, &mut App) -> AnyView + 'static>(
-    chave: String,
-    caminho: &Path,
-    chat: &str,
-    dica: D,
-    cx: &Context<Janela>,
-) -> impl IntoElement + use<D> {
-    miniatura_de(chave, caminho, chat, (imagens::ALTURA_MINIATURA, imagens::LARGURA_MAXIMA_MINIATURA), dica, cx)
-}
 
 /// A imagem que uma chamada leu ou gravou (um Read ou Write de um .png, .jpg…), se ainda está no
 /// disco: é o progresso do trabalho à vista (uma captura de tela que o chat tirou e foi olhar).
@@ -1036,64 +1006,12 @@ fn imagem_da_chamada(item: &Item, cwd: &Path) -> Option<PathBuf> {
     crate::claude::tipo_imagem(&inteiro).is_some().then_some(inteiro)
 }
 
-/// A imagem de uma chamada, embaixo da linha dela: grande o bastante para se ver o que é, e o
-/// clique abre o visor (com zoom).
-fn imagem_no_log(chave: String, caminho: &Path, chat: &str, medida: (f32, f32), cx: &Context<Janela>) -> impl IntoElement + use<> {
-    miniatura_de(chave, caminho, chat, medida, |window, cx| Tooltip::new("Abrir a imagem").build(window, cx), cx)
-}
-
-/// A miniatura com a altura e a largura máxima dadas.
-fn miniatura_de<D: Fn(&mut Window, &mut App) -> AnyView + 'static>(
-    chave: String,
-    caminho: &Path,
-    chat: &str,
-    (altura_max, largura_max): (f32, f32),
-    dica: D,
-    cx: &Context<Janela>,
-) -> impl IntoElement + use<D> {
-    let lido = imagens::anexo(caminho);
-    let (largura, altura) = imagens::medida_da_miniatura(lido.medidas, altura_max, largura_max);
-    let lado_minimo = imagens::LADO_MINIMO_MINIATURA;
-    let grupo = SharedString::from(format!("mini-{chave}"));
-    let (chat, alvo) = (chat.to_string(), caminho.to_path_buf());
-    div()
-        .id(SharedString::from(chave))
-        .group(grupo.clone())
-        .relative()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(r(largura.max(lado_minimo)))
-        .h(r(altura.max(lado_minimo)))
-        .rounded(raio::CONTROLE)
-        .bg(Cores::preto())
-        .border_1()
-        .border_color(Cores::borda())
-        .overflow_hidden()
-        .cursor_pointer()
-        .child(img(caminho.to_path_buf()).flex_none().w(r(largura)).h(r(altura)))
-        // No hover, o véu com a lupa diz que a imagem abre.
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(Cores::veu())
-                .invisible()
-                .group_hover(grupo, |s| s.visible())
-                .child(icone_de(Lucide::Maximize, 16.).text_color(Cores::forte())),
-        )
-        .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
-        .tooltip(dica)
-}
-
-/// Anexo do balão: miniatura na proporção da imagem, que o clique abre no visor; chip com o nome
-/// e o tamanho para o resto. O que saiu do disco vira um aviso, e não um vazio mudo.
-fn anexo(chave: &str, i: usize, caminho: &Path, chat: &str, cx: &Context<Janela>) -> AnyElement {
-    let id = format!("anexo-{chave}-{i}");
+/// Um arquivo na conversa, como a extensão do Claude Code mostra (dono, 16/11/2026: "faz as
+/// imagens que mando e a que você usa ficar igual fica aqui"): uma pílula com a miniatura (ou o
+/// ícone), o nome e as medidas da imagem (ou o tamanho do arquivo). Serve aos anexos das suas
+/// mensagens, às imagens que a resposta aponta e às que uma chamada leu ou gravou; o clique numa
+/// imagem abre o visor. O que saiu do disco fica apagado, com "sumiu".
+fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, cx: &Context<Janela>) -> AnyElement {
     let lido = imagens::anexo(caminho);
     let nome = imagens::nome_do_arquivo(caminho);
     let detalhe = lido.detalhe();
@@ -1103,34 +1021,55 @@ fn anexo(chave: &str, i: usize, caminho: &Path, chat: &str, cx: &Context<Janela>
         (true, true) => format!("{nome}\n{}", caminho.display()),
         (true, false) => format!("{nome} · {detalhe}\n{}", caminho.display()),
     });
-    let dica = move |window: &mut Window, cx: &mut App| Tooltip::new(dica.clone()).build(window, cx);
-    if imagem && lido.existe {
-        return miniatura(id, caminho, chat, dica, cx).into_any_element();
-    }
-    let (icone, cor) = match (imagem, lido.existe) {
-        (true, false) => (Lucide::ImageOff, Cores::apagado()),
-        (false, false) => (Lucide::FileX, Cores::apagado()),
-        (true, true) => (Lucide::Image, Cores::tenue()),
-        (false, true) => (Lucide::File, Cores::tenue()),
+    let medida = match (lido.medidas, &lido.tamanho) {
+        (Some((largura, altura)), _) => format!("{largura}×{altura}"),
+        (None, Some(tamanho)) => tamanho.to_string(),
+        (None, None) => "sumiu".into(),
     };
+    let abre = imagem && lido.existe;
+    let simbolo = if abre {
+        let (largura, altura) = imagens::medida_da_miniatura(lido.medidas, imagens::ALTURA_CHIP, imagens::LARGURA_MAXIMA_CHIP);
+        div()
+            .flex_none()
+            .w(r(largura.max(imagens::ALTURA_CHIP)))
+            .h(r(altura.max(imagens::ALTURA_CHIP)))
+            .rounded(raio::CONTROLE)
+            .bg(Cores::preto())
+            .overflow_hidden()
+            .child(img(caminho.to_path_buf()).size_full().object_fit(ObjectFit::Cover))
+            .into_any_element()
+    } else {
+        let (icone, cor) = match (imagem, lido.existe) {
+            (true, false) => (Lucide::ImageOff, Cores::apagado()),
+            (false, false) => (Lucide::FileX, Cores::apagado()),
+            (true, true) => (Lucide::Image, Cores::tenue()),
+            (false, true) => (Lucide::File, Cores::tenue()),
+        };
+        icone_de(icone, 14.).text_color(cor).into_any_element()
+    };
+    let (chat, alvo) = (chat.to_string(), caminho.to_path_buf());
     h_flex()
         .id(SharedString::from(id))
-        .h(r(24.))
+        .flex_none()
         .max_w_full()
-        .px(r(8.))
-        .gap(r(6.))
-        .rounded(raio::de(24.))
-        .bg(Cores::recuo())
+        .h(r(28.))
+        .map(|s| if abre { s.pl(esp::E4) } else { s.pl(esp::E8) })
+        .pr(esp::E8)
+        .gap(esp::E6)
+        .rounded(raio::de(28.))
+        .bg(Cores::cartao_elevado())
+        .border_1()
+        .border_color(Cores::borda_forte())
         .metadado()
-        .child(icone_de(icone, 14.).text_color(cor))
-        .child(div().min_w_0().truncate().text_color(if lido.existe { Cores::texto() } else { Cores::tenue() }).child(nome))
-        .child(
-            div()
-                .flex_none()
-                .text_color(Cores::tenue())
-                .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| "sumiu".into())),
-        )
-        .tooltip(dica)
+        .child(simbolo)
+        .child(div().min_w_0().max_w(r(220.)).truncate().text_color(if lido.existe { Cores::texto() } else { Cores::tenue() }).child(nome))
+        .child(div().flex_none().text_color(Cores::tenue()).child(medida))
+        .when(abre, |s| {
+            s.cursor_pointer()
+                .hover(|s| s.bg(Cores::hover()))
+                .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
+        })
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -1381,7 +1320,7 @@ impl Janela {
                 .pl(RECUO_DO_LOG)
                 .py(esp::E4)
                 .children(imagens_do_grupo.iter().take(IMAGENS_NA_GRADE).map(|(indice, imagem)| {
-                    imagem_no_log(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, IMAGEM_DO_GRUPO, cx)
+                    pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, cx)
                 }))
                 // O "+N" é um ladrilho que abre o visor na primeira que não coube (dono, 13/11/2026:
                 // "como acesso esse mais 2?"); dali as setas passam pelas outras.
@@ -1395,15 +1334,15 @@ impl Janela {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .h(r(IMAGEM_DO_GRUPO.0))
-                            .min_w(r(IMAGEM_DO_GRUPO.0))
+                            .h(r(28.))
                             .px(esp::E12)
-                            .rounded(raio::CONTROLE)
+                            .rounded(raio::de(28.))
+                            .bg(Cores::cartao_elevado())
                             .border_1()
-                            .border_color(Cores::borda())
+                            .border_color(Cores::borda_forte())
                             .cursor_pointer()
                             .hover(|s| s.bg(Cores::hover()))
-                            .corpo_ui()
+                            .metadado()
                             .text_color(Cores::texto())
                             .child(format!("+{a_mais}"))
                             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &primeira, window, cx)))
@@ -1694,13 +1633,7 @@ impl Janela {
             .child(linha)
             .children(atividade_viva)
             .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(imagem_no_log(
-                    format!("img-{chave}"),
-                    imagem,
-                    &contexto.chat.id,
-                    IMAGEM_DA_CHAMADA,
-                    cx,
-                )))
+                s.child(h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, cx)))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {

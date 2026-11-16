@@ -24,6 +24,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Corrigir qualquer mensagem sua.** O Editar aparece em todas as suas mensagens, não só na última
   (e não some mais quando o Claude pensa antes de responder). A conversa volta ao ponto antes dela.
 - **Suas mensagens na largura toda** da coluna.
+- **Imagens em pílulas, como na extensão do Claude Code.** As imagens que você manda (dentro do
+  balão, em cima do texto), as que a resposta aponta e as que o agente leu ou gravou viram uma pílula
+  com a miniatura, o nome e as medidas; o clique abre o visor.
 - **Aviso de conversa grande e parada.** Depois de uma hora sem uso, uma conversa do Claude com
   mais de 100 mil tokens avisa, acima da caixa, quanto a próxima mensagem vai reler por inteiro, com
   o botão **Compactar**. O seletor de modelo avisa o mesmo custo antes de trocar o modelo.

@@ -8,12 +8,6 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::SharedString;
 
-/// Altura da miniatura de uma imagem na bolha. O quadrado de 56 cortado (`ObjectFit::Cover`) não
-/// deixava ler nada de uma captura de tela; com a proporção certa, 120 de altura já mostra do que
-/// a imagem trata, e ainda cabem duas lado a lado no painel estreito.
-pub const ALTURA_MINIATURA: f32 = 120.;
-/// Até onde a miniatura cresce para o lado: um panorama não toma o balão inteiro.
-pub const LARGURA_MAXIMA_MINIATURA: f32 = 260.;
 /// Altura da miniatura dentro do chip da caixa de mensagem (o chip tem 28 de alto).
 pub const ALTURA_CHIP: f32 = 20.;
 /// Largura máxima da miniatura do chip: ela fica no lugar do ícone, antes do nome.
