@@ -3375,10 +3375,43 @@ pub fn nome_curto_do_agente(agente: Agente) -> &'static str {
     }
 }
 
+/// A linha sem as marcas de markdown do começo: título ("## "), citação ("> "), tarefa
+/// ("- [ ] "), item de lista ("- ", "* ", "+ ", "1. ", "1) "), repetidas enquanto casarem.
+fn sem_marca_de_markdown(linha: &str) -> &str {
+    let mut resto = linha.trim();
+    loop {
+        let antes = resto;
+        let titulo = resto.trim_start_matches('#');
+        if titulo.len() < resto.len() && resto.len() - titulo.len() <= 6 && titulo.starts_with(' ') {
+            resto = titulo;
+        }
+        for marca in ["> ", "- [ ] ", "- [x] ", "- [X] ", "- ", "* ", "+ "] {
+            if let Some(r) = resto.strip_prefix(marca) {
+                resto = r;
+            }
+        }
+        let digitos = resto.chars().take_while(char::is_ascii_digit).count();
+        if digitos > 0 && (resto[digitos..].starts_with(". ") || resto[digitos..].starts_with(") ")) {
+            resto = &resto[digitos + 2..];
+        }
+        resto = resto.trim_start();
+        // Só a marca, sem nada depois (o espaço dela saiu no `trim`).
+        if ["-", "*", "+", ">", "- [ ]", "- [x]", "- [X]"].contains(&resto) || (!resto.is_empty() && resto.len() <= 6 && resto.chars().all(|c| c == '#')) {
+            return "";
+        }
+        if resto == antes {
+            return resto;
+        }
+    }
+}
+
+/// O título do chat pela primeira linha da mensagem, sem as marcas de markdown do começo (o
+/// título saía "- ponto 1": teste de usabilidade, 16/11/2026); se a linha ficar vazia, a seguinte.
 fn titulo_de(texto: &str) -> String {
     let linha = texto
         .lines()
-        .find(|l| !l.trim().is_empty())
+        .map(sem_marca_de_markdown)
+        .find(|l| !l.is_empty())
         .unwrap_or("Conversa");
     let palavras: Vec<&str> = linha.split_whitespace().take(7).collect();
     let mut titulo = palavras.join(" ");
@@ -3974,6 +4007,21 @@ fn juntar_parcial(
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn o_titulo_sai_sem_as_marcas_de_markdown() {
+        assert_eq!(titulo_de("- ponto 1\n- ponto 2"), "ponto 1");
+        assert_eq!(titulo_de("## Ajustar o frete"), "Ajustar o frete");
+        assert_eq!(titulo_de("> - [ ] revisar cupom"), "revisar cupom");
+        assert_eq!(titulo_de("1. primeiro passo"), "primeiro passo");
+        assert_eq!(titulo_de("2) segundo"), "segundo");
+        // Linha só com a marca: vale a seguinte.
+        assert_eq!(titulo_de("- \nconferir pedidos"), "conferir pedidos");
+        // O que não é marca fica: "#1" sem espaço, número sem ponto.
+        assert_eq!(titulo_de("#1 prioridade"), "#1 prioridade");
+        assert_eq!(titulo_de("2024 foi bom"), "2024 foi bom");
+        assert_eq!(titulo_de("   "), "Conversa");
+    }
     use crate::modelo::Chat;
 
     fn chat(id: &str) -> Chat {

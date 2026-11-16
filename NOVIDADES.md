@@ -165,6 +165,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   à vista quando o ponteiro chega nela por cima.
 - **O modo escolhido pelo teclado devolve o cursor à caixa**, como já faziam o mouse e os outros
   seletores.
+- **Título do chat sem marcas de lista.** Um chat que começa com "- ponto 1" ganha o título "ponto 1".
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

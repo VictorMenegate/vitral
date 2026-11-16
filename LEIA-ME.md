@@ -30,7 +30,9 @@ componentes do GPUI Kit.
   pergunta. **Novo chat em outra pasta…**, no menu do logo, abre a paleta "Em qual pasta?": as
   pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), **Outra
   pasta…** (o seletor do sistema) e **Sem pasta**. Quem cria é `Motor::novo_chat(pasta:
-  Option<&Path>, …)`; a pasta chega canônica.
+  Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
+  `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
+  "- ", "- [ ] ", "1. "), até 7 palavras.
 - **Claude ou Codex.** Cada chat diz quem responde (`Chat.agente`, em `src/modelo.rs`): o Claude
   Code ou o Codex, a CLI da OpenAI. Escolhe-se no seletor de modelo, que tem as abas **Claude** e **Codex**
   (trocar de aba só mostra os modelos do outro; quem responde muda ao escolher um; a aba do Codex tem
