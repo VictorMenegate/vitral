@@ -724,7 +724,7 @@ impl RenderOnce for BotaoRedondo {
                         .build(window, cx)
                 })
             })
-            .when_some(self.selo, |s, selo| s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo)))
+            .when_some(self.selo, |s, selo| s.child(div().absolute().top(r(-2.)).right(r(-2.)).child(selo)))
     }
 }
 

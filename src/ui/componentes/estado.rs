@@ -260,6 +260,11 @@ impl RenderOnce for PilulaDeEstado {
     }
 }
 
+/// O aro de 2 no escuro da base que recorta um selo do botão embaixo dele.
+fn aro_de_recorte() -> BoxShadow {
+    BoxShadow::new(px(0.), px(0.), Cores::vidro()).spread_radius(px(2.))
+}
+
 #[derive(Clone)]
 enum TipoSelo {
     Neutro,
@@ -281,6 +286,7 @@ pub struct Selo {
     vazado: bool,
     lado: f32,
     clicavel: Option<(ElementId, Rc<dyn Fn(&mut Window, &mut App)>)>,
+    recortado: bool,
 }
 
 impl Selo {
@@ -294,7 +300,17 @@ impl Selo {
             vazado: false,
             lado: 8.,
             clicavel: None,
+            recortado: false,
         }
+    }
+
+    /// O selo por cima de um botão (o sino, o logo recolhido): do tamanho de um contador (16), com
+    /// um aro de 2 no escuro da base que o recorta do botão, como o ponto do logo e a inicial do
+    /// anel de uso. O de 18 encostado no sino era maior que ele (relatório de aparência,
+    /// 16/11/2026, V16).
+    pub fn recortado(mut self) -> Self {
+        self.recortado = true;
+        self
     }
 
     /// "1M de contexto", "padrão": contorno, 11/600 tênue.
@@ -365,7 +381,7 @@ impl RenderOnce for Selo {
         let pilula = || div().flex_none().flex().items_center().rounded(raio::de(20.)).micro().whitespace_nowrap();
         let corpo = match self.tipo {
             TipoSelo::Ponto(cor) => {
-                let ponto = div().flex_none().size(r(self.lado)).rounded_full();
+                let ponto = div().flex_none().size(r(self.lado)).rounded_full().when(self.recortado, |s| s.shadow(vec![aro_de_recorte()]));
                 if self.vazado { ponto.border_2().border_color(cor) } else { ponto.bg(cor) }.into_any_element()
             }
             TipoSelo::Contagem(n) => {
@@ -375,13 +391,15 @@ impl RenderOnce for Selo {
                     (None, Some(c)) => (Cores::tinta(c), c),
                     (None, None) => (Cores::traco(), Cores::tenue()),
                 };
+                let lado = if self.recortado { 16. } else { 18. };
                 pilula()
-                    .min_w(r(18.))
-                    .h(r(18.))
+                    .min_w(r(lado))
+                    .h(r(lado))
                     .px(esp::E4)
                     .justify_center()
                     .bg(fundo)
                     .text_color(cor)
+                    .when(self.recortado, |s| s.shadow(vec![aro_de_recorte()]))
                     .child(texto)
                     .into_any_element()
             }

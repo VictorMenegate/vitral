@@ -102,8 +102,8 @@ fn cor_do_pulso(p: &PrecisaDeVoce) -> Hsla {
 /// O selo do sino: sólido, porque fica por cima do botão.
 pub(super) fn selo_do_sino(p: &PrecisaDeVoce) -> Option<Selo> {
     match marca_do_sino(p) {
-        MarcaDoSino::Numero(n, cor) => Some(Selo::contagem(n).solida(cor)),
-        MarcaDoSino::Ponto => Some(Selo::ponto(Cores::destaque())),
+        MarcaDoSino::Numero(n, cor) => Some(Selo::contagem(n).solida(cor).recortado()),
+        MarcaDoSino::Ponto => Some(Selo::ponto(Cores::destaque()).recortado()),
         MarcaDoSino::Nada => None,
     }
 }
@@ -247,7 +247,7 @@ impl RenderOnce for BotaoLogo {
             )
             .children(pulso)
             .when_some(self.selo, |s, selo| {
-                s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo))
+                s.child(div().absolute().top(r(-2.)).right(r(-2.)).child(selo))
             })
             .when(self.pronta.is_some(), |s| {
                 // O aro opaco separa o ponto das cores do medalhão.

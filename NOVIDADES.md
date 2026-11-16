@@ -102,6 +102,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
   erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
   transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+- **Selo do sino menor e recortado.** O número do sino tem o tamanho de um contador e um aro
+  escuro que o separa do botão.
 - **Nomes inteiros na aba Arquivos.** Os botões de cada arquivo só ocupam lugar com o ponteiro em
   cima: fora disso, o nome vai até o fim da linha.
 - **Ícones de estado do mesmo tamanho.** Na lista e nas abas, o disco de "esperando" e o anel de
