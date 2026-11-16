@@ -478,7 +478,13 @@ primeiro. Anexar outra conversa como contexto e mencionar arquivo da pasta pelo 
 "@"** na própria caixa, o mesmo desenho do `/`, filtrando enquanto se digita (até 8 linhas): com
 a dupla ligada e no começo da mensagem, **@claude** e **@codex** primeiro (o "@" de um e-mail,
 "victor@", não abre nada); depois os arquivos e as pastas do chat, com o arquivo aberto à direita
-no topo. Tab ou Enter completam "@caminho ", e Esc fecha sem apagar. A pasta é lida em segundo
+no topo. Tab ou Enter completam "@caminho ", e Esc fecha sem apagar. O arquivo (ou a pasta)
+completado vira uma **pílula** dentro da caixa (o `InlineToken` do campo do kit, em
+`composer::ficha_da_mencao`): o ícone do tipo, o nome curto e as linhas, se houver
+("fila.rs:120-134"); o clique abre o arquivo à direita e o Backspace apaga a menção inteira. O
+texto que vai ao agente continua o caminho inteiro, com as linhas no formato das menções do Claude
+Code ("@src/ui/fila.rs#L120-134"). O rascunho guardado volta com as pílulas; o texto que volta à
+caixa por Corrigir ou pela fila volta como texto, e vira pílula no balão do mesmo jeito. A pasta é lida em segundo
 plano e de novo a cada "@" novo; enquanto lê, a linha "Lendo a pasta…". A lista de arquivos da
 pasta (a do "@", a da aba Arquivos e a do Mencionar) desce nos repositórios de dentro: cada
 subpasta com git próprio que o de cima ignora ou não conhece entra com o prefixo dela
@@ -640,8 +646,18 @@ ferramentas, vale por painel).
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
-  lado ficam guardadas na conversa; o Codex entrega o diff do `fileChange`; registros antigos
-  sem diff oferecem abrir o arquivo atual). Comandos têm comando e saída na mesma caixa. O resultado mostra as
+  lado ficam guardadas na conversa). **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
+  certo (Edit, MultiEdit, Write, NotebookEdit; o `fileChange` do Codex), o clique na linha abre o
+  arquivo no painel da direita já na edição, e o chevron do fim, sozinho, mostra o diff ali
+  mesmo. O Codex entrega um arquivo por linha, cada um com o diff dele (o `changes[].diff` do
+  `fileChange` do app-server, conferido no schema do Codex 0.169.0: o diff unificado no
+  `update`, o conteúdo no `add`, que vira um Write, e o que tinha no `delete`), lido no fim do
+  item, quando o patch chegou inteiro. O registro antigo do Codex, que juntava vários arquivos
+  numa chamada sem o diff, aparece com uma linha por arquivo (no lugar da caixa com a lista de
+  "mudou …"), e o clique abre o arquivo como está agora, com um aviso discreto. Recolhidos, o
+  turno ("Trabalhou…") e o grupo de chamadas mostram embaixo deles uma linha por arquivo
+  editado, com o +N −M e o "novo" (até 5; acima disso, "e mais N arquivos", que abre o
+  recolhido): o clique abre a edição daquele arquivo, somando as chamadas do turno. Comandos têm comando e saída na mesma caixa. O resultado mostra as
   últimas 40 linhas, com Copiar e Mostrar tudo); o de uma edição que deu certo é só "o arquivo foi
   atualizado" e fica de fora. No hover, a linha que leu ou mudou um arquivo que ainda está no disco
   ganha na ponta o ícone **Abrir o arquivo ao lado**. As ferramentas do Vitral que um chat usa
@@ -928,6 +944,13 @@ cabeçalho dele tem o próprio botão de fechar (o ícone de recolher). O que vo
 lembrado (`painel` no `interface.json`). Ele também abre sozinho quando você clica num arquivo
 citado na conversa, sem mudar essa escolha.
 
+**Menções** (`src/ui/mencao.rs`). No seu balão, a menção de um arquivo ou pasta que existe
+("@src/ui/fila.rs#L120-134", "@central/src/") vira uma pílula no meio do texto, no poço escuro do
+balão: o ícone do tipo, o nome curto em mono e as linhas em tom tênue, com o caminho inteiro na
+dica. O clique abre o arquivo à direita, com as linhas escolhidas (dá para mencionar de novo); a
+pasta abre no gerenciador de arquivos. É um plugin do texto do kit (`PilulaDeMencao`) que pega os
+links `vitral:mencao/<linhas>/<caminho>` que `ligar_mencoes` põe no lugar das menções.
+
 **Arquivos citados** (`src/ui/links_arquivo.rs`). Na resposta do assistente, o arquivo que está no
 disco vira link: `produtos/views.py`, `src/motor.rs:120` entre crases, o link do markdown para um
 caminho
@@ -939,7 +962,8 @@ chat); o resto avisa e fica para o VS Code.
 **Este chat** (`src/ui/este_chat.rs`) abre com a seção **Mudanças**: os arquivos que o chat editou
 ou criou, separados em **Neste turno** (desde a sua última mensagem) e **Antes**, cada um com o
 ícone do tipo, o nome, a pasta em tom tênue, o +N −M e o selo **novo** (o Write que criou o
-arquivo). O clique abre o arquivo aqui. O +N −M é contado quando a chamada chega, com o texto
+arquivo). O clique abre o arquivo aqui, já na edição (todas as chamadas que mudaram o arquivo,
+somadas). O +N −M é contado quando a chamada chega, com o texto
 inteiro, e fica gravado no item (`Mudanca`); as chamadas de antes disso contam pelo detalhe
 gravado, que é cortado. A lista sai das chamadas de edição: o que um comando mudou fica de fora,
 e a nota no pé diz isso. Embaixo, o cartão de onde o chat trabalha. Diz se ele mexe direto na pasta, se é
@@ -1230,6 +1254,26 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel
   da direita: a aba com o nome e o ícone do tipo, e uma barra com a pasta, o número de linhas e a
   linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, mostrar na pasta).
+  O **cabeçalho do arquivo** (`cabecalho_do_arquivo`) tem o ícone e o nome, as linhas e a
+  linguagem ("59 linhas · JavaScript"), a pasta em tom tênue cortada no começo e, à direita, as
+  ações. Nada passa por baixo de nada: a conta (`o_que_cabe`) é pela largura do painel e pelo
+  tamanho dos textos, e o que não cabe sai inteiro (primeiro os rótulos das ações, que ficam só
+  ícone com a dica, depois as linhas e a linguagem); o nome é o último a encolher. Com os anéis de
+  uso ligados, as fileiras de cima do painel (o cabeçalho e a faixa da edição) guardam o lugar
+  deles na ponta direita (`reserva_dos_aneis`); o conteúdo não. **Mencionar** põe na caixa a
+  menção do arquivo, como pílula; com linhas escolhidas, a delas ("@x.rs#L12-18"); na edição, a
+  da mudança à vista (o **…** tem **Mencionar o arquivo inteiro**). Um clique no número da linha
+  escolhe a linha (o segundo a desfaz) e Shift+clique estende a escolha; as escolhidas ficam em
+  azul, e o cabeçalho diz quais são ("linhas 12 a 18"), com o × que desfaz. Aberto pela edição
+  (ver **Ver a edição**, em Ferramentas), o arquivo ganha a faixa da edição embaixo do cabeçalho:
+  "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra (dão a volta) e o ×
+  que volta ao arquivo sem as marcas. As linhas que entraram ficam com o fundo verde, a faixa
+  verde na borda e o "+"; as que saíram aparecem entre elas, sem número, em vermelho, com o "−"
+  (o markdown sai em linhas nesse modo). Cada trecho da edição é achado no arquivo de agora pelo
+  lado novo (o contexto e o que entrou; no diff do Codex, perto da linha que ele diz); o que não
+  se acha mais (o arquivo mudou depois) aparece solto no fim, com uma nota. O painel abre rolado
+  até a primeira mudança. O registro antigo, sem o diff, abre o arquivo como está, com o aviso
+  "Este registro não guardou a edição" na faixa.
   O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. Arquivo grande
   (mais de 400 KB), binário, vazio ou que sumiu dá um aviso no lugar, com **Abrir no VS Code** ou
   **Fechar**. Na lista, no hover, **@** menciona o arquivo na conversa e **…** (ou o
@@ -1605,7 +1649,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

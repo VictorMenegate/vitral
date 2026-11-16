@@ -40,6 +40,17 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   chat, com Tab ou Enter para completar. A lista de arquivos passou a descer nos repositórios de
   dentro da pasta: em ~/eita, o "@", a aba Arquivos e o Mencionar acham o código de central/,
   layout/ e dos outros projetos.
+- **Menções em pílula.** O arquivo mencionado vira uma pílula com o ícone, o nome e as linhas
+  ("fila.rs:120-134"), dentro da caixa enquanto você escreve e no balão da mensagem enviada. O
+  clique abre o arquivo ao lado, nas linhas. Para o agente, a menção continua o caminho inteiro.
+- **Ver a edição no próprio arquivo.** Cada arquivo editado vira uma linha com o nome e o +N −M,
+  também embaixo do "Trabalhou…" recolhido. O clique abre o arquivo ao lado já na edição: o que
+  entrou em verde, o que saiu em vermelho entre as linhas, rolado até a primeira mudança, com
+  setas para passar de uma à outra. No Codex, uma linha por arquivo, cada uma com a sua edição.
+- **Mencionar um trecho.** No arquivo aberto, **Mencionar** leva o arquivo, as linhas que você
+  escolheu (clique no número; Shift+clique estende) ou, na edição, a mudança à vista.
+- **Cabeçalho do arquivo que cabe.** O nome, as linhas e a linguagem nunca passam por baixo dos
+  botões nem dos anéis de uso: sem lugar, os botões ficam só com o ícone e o resto sai inteiro.
 - **O que mudou fica à vista.** A trilha diz o nome dos arquivos editados ("editou carrinho.py e
   motor.rs") quando são até dois. Quando o turno muda arquivos, a faixa colada na caixa diz "3
   arquivos mudados · +40 −12", e **Ver mudanças** abre "Este chat" com a lista: neste turno e
