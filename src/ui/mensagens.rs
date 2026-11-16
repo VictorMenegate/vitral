@@ -567,25 +567,54 @@ impl Janela {
         // miniatura dos anexos, que abre no visor.
         let apontadas = imagens::imagens_do_texto(texto, Some(&contexto.chat.cwd));
         let chat_id = contexto.chat.id.clone();
+        // Uma citação em bloco ("> ...") ganha o Copiar dela, como o bloco de código (dono,
+        // 16/11/2026: "esse tipo de mensagem aqui tem que ter botão pra copiar": o agente escreve
+        // numa citação a mensagem pronta para mandar a outra pessoa). O kit não tem gancho para
+        // as ações da citação, então a resposta com citação é partida em trechos, e cada citação
+        // é desenhada à parte, com o mesmo estilo e o botão no canto. A busca conta as ocorrências
+        // trecho a trecho, na ordem do texto. Sem citação, a resposta é um texto só, como antes.
+        let trechos = trechos_com_citacoes(&ligado);
+        let corpo = if trechos.iter().any(|(citacao, _)| *citacao) {
+            let mut antes = 0;
+            v_flex()
+                .gap(esp::E12)
+                .children(trechos.into_iter().enumerate().map(|(i, (citacao, trecho))| {
+                    let n = if realce.vazio() { 0 } else { super::busca_conversa::faixas(&trecho, &realce.termo).len() };
+                    let realce_do_trecho = realce.trecho(antes, n);
+                    antes += n;
+                    // O primeiro trecho guarda a chave do texto inteiro (a do texto que chegava).
+                    let chave_do_trecho = if i == 0 { chave.to_string() } else { format!("{chave}:trecho{i}") };
+                    let copiar_citacao = citacao.then(|| texto_da_citacao(&trecho));
+                    let texto = div().corpo().text_color(Cores::texto()).child(
+                        markdown_achado(contexto, chave_do_trecho.clone().into(), trecho, realce_do_trecho).estilo(estilo_da_resposta),
+                    );
+                    match copiar_citacao {
+                        Some(copiar) => div()
+                            .relative()
+                            .pr(esp::E32)
+                            .child(texto)
+                            .child(div().absolute().top_0().right_0().child(BotaoCopiar::new(
+                                Clipboard::new(SharedString::from(format!("copiar-{chave_do_trecho}")))
+                                    .value(copiar)
+                                    .tooltip("Copiar a citação"),
+                            )))
+                            .into_any_element(),
+                        None => texto.into_any_element(),
+                    }
+                }))
+                .into_any_element()
+        } else {
+            div()
+                .corpo()
+                .text_color(Cores::texto())
+                .child(markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(estilo_da_resposta))
+                .into_any_element()
+        };
         let resposta = v_flex()
             .relative()
             .w_full()
             .gap(esp::E8)
-            .child(
-                div().corpo().text_color(Cores::texto()).child(
-                    markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(|vista, cx| {
-                        estilo_das_mensagens(vista, cx).on_link_click(|url, _, window, cx| {
-                            if url.starts_with("vitral:") {
-                                if super::links_arquivo::link_permitido(url, true) {
-                                    window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(url.to_string())), cx);
-                                }
-                            } else {
-                                cx.open_url(url);
-                            }
-                        })
-                    }),
-                ),
-            )
+            .child(corpo)
             .when(!apontadas.is_empty(), |s| {
                 s.child(h_flex().flex_wrap().gap(esp::E6).children(apontadas.iter().enumerate().map(|(i, caminho)| {
                     pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, cx)
@@ -720,6 +749,140 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
             };
             BotaoCopiar::new(Clipboard::new("copiar").value(bloco.code()).tooltip(dica))
         })
+}
+
+/// O estilo da resposta do agente: o das mensagens, com os links de arquivo abrindo no Vitral.
+fn estilo_da_resposta(vista: TextView, cx: &App) -> TextView {
+    estilo_das_mensagens(vista, cx).on_link_click(|url, _, window, cx| {
+        if url.starts_with("vitral:") {
+            if super::links_arquivo::link_permitido(url, true) {
+                window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(url.to_string())), cx);
+            }
+        } else {
+            cx.open_url(url);
+        }
+    })
+}
+
+/// A resposta em trechos, na ordem: `true` nas citações em bloco (linhas que começam com ">",
+/// fora dos blocos de código), `false` no resto. As linhas em branco das pontas saem.
+pub(super) fn trechos_com_citacoes(texto: &str) -> Vec<(bool, String)> {
+    let mut saida: Vec<(bool, String)> = Vec::new();
+    let mut cerca: Option<&str> = None;
+    for linha in texto.split('\n') {
+        let aparada = linha.trim_start();
+        let recuo = linha.len() - aparada.len();
+        let marca = ["```", "~~~"].into_iter().find(|m| aparada.starts_with(m));
+        let citacao = cerca.is_none() && marca.is_none() && recuo <= 3 && aparada.starts_with('>');
+        match (cerca, marca) {
+            (None, Some(m)) => cerca = Some(m),
+            (Some(aberta), Some(m)) if aberta == m => cerca = None,
+            _ => {}
+        }
+        match saida.last_mut() {
+            Some((c, t)) if *c == citacao => {
+                t.push('\n');
+                t.push_str(linha);
+            }
+            _ => saida.push((citacao, linha.to_string())),
+        }
+    }
+    saida
+        .into_iter()
+        .filter_map(|(c, t)| {
+            let t = t.trim_matches('\n').to_string();
+            (!t.trim().is_empty()).then_some((c, t))
+        })
+        .collect()
+}
+
+/// O que o Copiar de uma citação leva: o texto sem os ">" e sem as marcas de markdown que não
+/// fazem sentido colar numa conversa (negrito, itálico, código, título; o link vira "texto
+/// (endereço)"), com as linhas como estão e um parágrafo em branco entre os parágrafos.
+pub(super) fn texto_da_citacao(trecho: &str) -> String {
+    let mut saida = String::new();
+    let mut paragrafo_novo = false;
+    for linha in trecho.lines() {
+        let linha = linha.trim_start();
+        let linha = linha.strip_prefix('>').unwrap_or(linha);
+        let linha = linha.strip_prefix(' ').unwrap_or(linha).trim_end();
+        if linha.trim().is_empty() {
+            paragrafo_novo = !saida.is_empty();
+            continue;
+        }
+        if paragrafo_novo {
+            saida.push_str("\n\n");
+            paragrafo_novo = false;
+        } else if !saida.is_empty() {
+            saida.push('\n');
+        }
+        saida.push_str(&sem_marcas_de_markdown(linha));
+    }
+    saida
+}
+
+/// Uma linha sem as marcas de markdown: o título ("## "), o código (`x`, que fica como está por
+/// dentro), os links e a ênfase (**, __, * e _ só quando abrem ou fecham uma palavra, para não
+/// mexer em "a*b" nem em nome_com_sublinhado).
+fn sem_marcas_de_markdown(linha: &str) -> String {
+    let semtitulo = linha.trim_start_matches('#');
+    let linha = if semtitulo.len() < linha.len() && semtitulo.starts_with(' ') { semtitulo.trim_start() } else { linha };
+    let mut saida = String::new();
+    for (i, pedaco) in linha.split('`').enumerate() {
+        // Os pedaços ímpares estavam entre crases: código, que vai como está.
+        if i % 2 == 1 {
+            saida.push_str(pedaco);
+        } else {
+            saida.push_str(&sem_enfase(&links_em_texto(pedaco)));
+        }
+    }
+    saida
+}
+
+/// "[texto](endereço)" vira "texto (endereço)"; o link de arquivo do Vitral vira só o texto.
+fn links_em_texto(texto: &str) -> String {
+    let mut saida = String::new();
+    let mut resto = texto;
+    while let Some(abre) = resto.find('[') {
+        let depois = &resto[abre + 1..];
+        let Some(fecha) = depois.find("](") else { break };
+        let Some(fim) = depois[fecha + 2..].find(')') else { break };
+        let (rotulo, endereco) = (&depois[..fecha], &depois[fecha + 2..fecha + 2 + fim]);
+        saida.push_str(&resto[..abre]);
+        if endereco.starts_with("vitral:") || endereco == rotulo || endereco.is_empty() {
+            saida.push_str(rotulo);
+        } else {
+            saida.push_str(&format!("{rotulo} ({endereco})"));
+        }
+        resto = &depois[fecha + 2 + fim + 1..];
+    }
+    saida.push_str(resto);
+    saida
+}
+
+/// Tira as marcas de ênfase que abrem ou fecham uma palavra.
+fn sem_enfase(texto: &str) -> String {
+    let letras: Vec<char> = texto.chars().collect();
+    let mut saida = String::with_capacity(texto.len());
+    let mut i = 0;
+    while i < letras.len() {
+        let c = letras[i];
+        if c == '*' || c == '_' {
+            let tam = if letras.get(i + 1) == Some(&c) { 2 } else { 1 };
+            let antes = i.checked_sub(1).map(|j| letras[j]);
+            let depois = letras.get(i + tam).copied();
+            let borda = |x: Option<char>| x.is_none_or(|x| !x.is_alphanumeric());
+            let abre = borda(antes) && depois.is_some_and(|d| !d.is_whitespace());
+            let fecha = antes.is_some_and(|a| !a.is_whitespace()) && borda(depois);
+            if abre || fecha {
+                i += tam;
+                continue;
+            }
+        }
+        saida.push(c);
+        i += 1;
+    }
+    saida
 }
 
 /// O texto do seu balão com as quebras de linha que você digitou: no markdown, a quebra simples
@@ -3657,7 +3820,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        com_quebras_duras, linhas_da_edicao, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
+        com_quebras_duras, linhas_da_edicao, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
@@ -3918,6 +4081,28 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn a_citacao_e_um_trecho_proprio_e_copia_sem_as_marcas() {
+        let resposta = "Para a Carol:\n\n> **Oi, Carol!**\n>\n> O pedido *saiu* hoje.\n> Rastreio: [aqui](https://x.y/1)\n\nQualquer coisa me avise.";
+        let trechos = trechos_com_citacoes(resposta);
+        assert_eq!(trechos.len(), 3, "{trechos:?}");
+        assert_eq!(trechos[0], (false, "Para a Carol:".to_string()));
+        assert!(trechos[1].0 && trechos[1].1.starts_with("> **Oi"));
+        assert_eq!(trechos[2], (false, "Qualquer coisa me avise.".to_string()));
+        assert_eq!(
+            texto_da_citacao(&trechos[1].1),
+            "Oi, Carol!\n\nO pedido saiu hoje.\nRastreio: aqui (https://x.y/1)"
+        );
+        // O ">" dentro de um bloco de código não é citação.
+        let codigo = "veja:\n```\n> não é citação\n```";
+        assert!(trechos_com_citacoes(codigo).iter().all(|(c, _)| !*c));
+        // Lista, código e nome com sublinhado ficam; o título e o link de arquivo perdem a marca.
+        assert_eq!(texto_da_citacao("> - item 1\n> - item 2"), "- item 1\n- item 2");
+        assert_eq!(texto_da_citacao("> rode `cargo test` em nome_com_sublinhado"), "rode cargo test em nome_com_sublinhado");
+        assert_eq!(texto_da_citacao("> ## Aviso\n> veja [notas.md](vitral:arquivo/x)"), "Aviso\nveja notas.md");
+        assert_eq!(texto_da_citacao("> 2*3 = 6"), "2*3 = 6");
     }
 
     #[test]

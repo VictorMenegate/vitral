@@ -363,6 +363,16 @@ impl Realce {
     pub(crate) fn salto_aqui(&self) -> Option<u64> {
         self.atual.map(|_| self.salto)
     }
+
+    /// O realce de um pedaço do texto que tem `n` ocorrências, a partir da ocorrência `inicio`
+    /// do texto todo: a resposta partida em trechos (as citações com o Copiar delas).
+    pub fn trecho(&self, inicio: usize, n: usize) -> Realce {
+        Realce {
+            termo: self.termo.clone(),
+            atual: self.atual.filter(|a| *a >= inicio && *a < inicio + n).map(|a| a - inicio),
+            salto: self.salto,
+        }
+    }
 }
 
 // ------------------------------------------------------------------ realce na tela
