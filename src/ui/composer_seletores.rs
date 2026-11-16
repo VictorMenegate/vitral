@@ -203,7 +203,12 @@ fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx:
         let d2 = d.clone();
         menu = menu.item(
             item_descrito(Some(Simbolo::Icone(icone, Some(cor))), nome, descricao, valor == d.atual)
-                .on_click(move |_, _, cx| mudar(&d2.motor, &d2.chat, cx, |c| c.permissao = Some(valor.into()))),
+                // O foco volta para a caixa, como no mouse e nos outros seletores: pelo teclado
+                // ele ficava no chip, e a letra seguinte se perdia (teste de usabilidade, 16/11/2026).
+                .on_click(move |_, window, cx| {
+                    mudar(&d2.motor, &d2.chat, cx, |c| c.permissao = Some(valor.into()));
+                    window.focus(&d2.foco_caixa, cx);
+                }),
         );
     }
     if !d.permitidas.is_empty() {

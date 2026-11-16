@@ -163,6 +163,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   não fica debaixo dos anéis de uso.
 - **O lápis não foge do ponteiro.** A barra de ações da mensagem (hora, editar, copiar) continua
   à vista quando o ponteiro chega nela por cima.
+- **O modo escolhido pelo teclado devolve o cursor à caixa**, como já faziam o mouse e os outros
+  seletores.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 
