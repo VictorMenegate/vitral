@@ -106,6 +106,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   título ganha o lugar da hora (ela vai para a dica do ícone, junto da pasta). A hora ficou mais
   clara, e o número do painel ativo deixou de parecer um aviso de não lidas. O número das
   Arquivadas foi para a dica.
+- **Porcentagem do contexto sempre à vista**, também com três painéis lado a lado: o anel sozinho
+  parecia algo carregando.
 
 ## 0.7.0
 

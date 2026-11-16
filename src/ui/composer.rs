@@ -768,7 +768,9 @@ impl Janela {
         let estreita = b.faixa == FaixaCaixa::Estreita;
         // O anel com fenda, sem número dentro (lia como selo de notificação): a porcentagem vai
         // ao lado, em mono, e acompanha o arco quando ele sai do destaque (âmbar a 70%, vermelho
-        // a 90%). Na caixa estreita, só o anel.
+        // a 90%). Também na caixa estreita, mais justa: só o anel, com a fenda e o arco azul
+        // parcial, ficava igual ao anel girando de "rodando", e com 3 painéis a porcentagem nunca
+        // aparecia (relatório de design, 16/11/2026).
         let anel = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(20.);
         let cor_arco = cor_da_faixa(fracao, Cores::destaque());
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
@@ -782,14 +784,14 @@ impl Janela {
         let gatilho = Button::new(("contexto", b.painel as usize))
             .custom(variante_fantasma(cx))
             .h(r(lado))
-            .map(|s| if estreita { s.w(r(lado)).px_0() } else { s.px(esp::E8) })
+            .px(if estreita { esp::E4 } else { esp::E8 })
             .rounded(raio::de(lado))
             .tooltip(dica)
             .child(
                 h_flex()
-                    .gap(esp::E6)
+                    .gap(if estreita { esp::E4 } else { esp::E6 })
                     .child(anel)
-                    .when(!estreita, |s| s.child(div().etiqueta().text_color(cor_numero).child(format!("{numero}%")))),
+                    .child(div().etiqueta().text_color(cor_numero).child(format!("{numero}%"))),
             );
         let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
         Some(

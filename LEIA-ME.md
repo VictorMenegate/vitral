@@ -338,7 +338,8 @@ cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perg
 Opus 5.5"), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
 uso de 5 h; só com mais de uma conta). O que segue o padrão da pasta fica em tom tênue. À direita
 ficam o anel do contexto (com a fenda embaixo e a porcentagem ao lado, "24%", em mono; âmbar a
-70%, vermelho a 90%; na caixa estreita, só o anel; o clique abre o uso da conversa: em cima o
+70%, vermelho a 90%; também na caixa estreita, mais justa, porque o anel sozinho parecia o anel
+girando de "rodando"; o clique abre o uso da conversa: em cima o
 contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta e os tokens, e no rodapé
 **Compactar a conversa**, que prepara o `/compact`), o clipe de anexar (arquivo ou imagem, arquivo
 da pasta, conversa anterior e comandos
