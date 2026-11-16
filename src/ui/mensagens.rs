@@ -208,6 +208,7 @@ pub(super) fn ancora_de(posicoes: &[(usize, Pixels, Pixels)], topo: Pixels) -> O
 pub(super) fn onde_abrir(
     alvo: AlvoDeAbertura,
     posicoes: &[(usize, Pixels, Pixels)],
+    novo: Option<(usize, Pixels)>,
     altura: Pixels,
     vista: Pixels,
     inicio: Option<usize>,
@@ -215,8 +216,14 @@ pub(super) fn onde_abrir(
 ) -> Abertura {
     match alvo {
         AlvoDeAbertura::InicioDaResposta => {
-            let Some(&(_, alto, _)) = inicio.and_then(|inicio| posicoes.iter().find(|(i, ..)| *i >= inicio)) else {
+            let Some(&(primeiro, alto, _)) = inicio.and_then(|inicio| posicoes.iter().find(|(i, ..)| *i >= inicio)) else {
                 return Abertura::Fim;
+            };
+            // O separador "Novo" logo antes do começo da resposta fica à vista no alto: a abertura
+            // conta a partir dele (`novo`: o índice do bloco que vem depois dele e o alto dele).
+            let alto = match novo {
+                Some((seguinte, alto_do_novo)) if seguinte == primeiro => alto_do_novo.min(alto),
+                _ => alto,
             };
             let alto = (alto - RESPIRO_DA_ABERTURA).max(px(0.));
             if altura - alto <= vista { Abertura::Fim } else { Abertura::Em(alto) }
@@ -322,6 +329,9 @@ impl Janela {
         // ferramentas já saíram, e não há o que recolher.
         let turnos = if foco { Vec::new() } else { turnos_recolhiveis(&chat.itens, contexto.rodando) };
         let mut turno_posto: Option<usize> = None;
+        // Onde o separador "Novo" entrou (a posição entre os blocos) e o índice do bloco logo depois
+        // dele: a abertura no começo da resposta o deixa à vista no alto (conferência, 16/11/2026).
+        let mut lugar_do_novo: Option<(usize, usize)> = None;
         // A linha do turno não entra com fade: o primeiro item dele, aberto, já usa o índice.
         let mut sem_entrada: std::collections::HashSet<usize> = Default::default();
         let mut i = 0;
@@ -354,6 +364,7 @@ impl Janela {
                 // O separador "Novo" de um item lá dentro fica antes da linha.
                 if novo.is_some_and(|n| n < turno.resposta) {
                     novo = None;
+                    lugar_do_novo = Some((blocos.len(), indice));
                     blocos.push((Bloco::Dia, None, separador_novo()));
                 }
                 sem_entrada.insert(blocos.len());
@@ -373,6 +384,7 @@ impl Janela {
             }
             if novo.is_some_and(|n| indice >= n) {
                 novo = None;
+                lugar_do_novo = Some((blocos.len(), indice));
                 blocos.push((Bloco::Dia, None, separador_novo()));
             }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
@@ -448,11 +460,16 @@ impl Janela {
         // Onde cada bloco ficou neste quadro (o índice do item, o alto e o pé, na tela): o
         // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
         let medidos: Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>> = Default::default();
+        let alto_do_novo: Rc<std::cell::Cell<Option<(usize, Pixels)>>> = Default::default();
         for (k, (bloco, indice, elemento)) in blocos.into_iter().enumerate() {
             let mut caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
             if let Some(i) = indice {
                 let medidos = medidos.clone();
                 caixa = caixa.on_prepaint(move |limites, _, _| medidos.borrow_mut().push((i, limites.top(), limites.bottom())));
+            }
+            if let Some((_, seguinte)) = lugar_do_novo.filter(|(lugar, _)| *lugar == k) {
+                let alto_do_novo = alto_do_novo.clone();
+                caixa = caixa.on_prepaint(move |limites, _, _| alto_do_novo.set(Some((seguinte, limites.top()))));
             }
             let entrada = if sem_entrada.contains(&k) { None } else { entrada_do_bloco(indice, base, vistos) };
             lista = match (indice, entrada) {
@@ -483,7 +500,8 @@ impl Janela {
                 // A abertura do chat (rodada de uso, 2.2): no começo da resposta nova ou na âncora.
                 if let Some(alvo) = p.alvo {
                     let vista = p.rolagem.bounds().size.height;
-                    let decisao = onde_abrir(alvo, &p.posicoes.borrow(), bounds.size.height, vista, inicio_da_resposta, n_itens);
+                    let novo = alto_do_novo.get().map(|(seguinte, alto)| (seguinte, alto - bounds.top()));
+                    let decisao = onde_abrir(alvo, &p.posicoes.borrow(), novo, bounds.size.height, vista, inicio_da_resposta, n_itens);
                     let mut lido = false;
                     match decisao {
                         Abertura::CarregarMais if p.mostrar < n_itens => p.mostrar += ITENS_NA_TELA,
@@ -536,6 +554,7 @@ impl Janela {
         painel.pilula_vista = !seguindo;
 
         div()
+            .key_context(CONTEXTO_DA_CONVERSA)
             .relative()
             .flex_1()
             // Em janela baixa, o plano e os pedidos de permissão encolhem e rolam antes: as
@@ -554,7 +573,6 @@ impl Janela {
                     .lock_scroll_axis()
                     .track_scroll(&rolagem)
                     .on_scroll(cx.listener(move |this, _evento: &ScrollEvent, _, cx| {
-            .key_context(CONTEXTO_DA_CONVERSA)
                         // A roda já mexeu no deslocamento: decide agora, antes que o motor peça
                         // para voltar ao fim.
                         this.acompanhar_rolagem(cx);
@@ -5336,11 +5354,18 @@ mod testes {
         // Blocos: a mensagem (0), a linha do turno (1) e a resposta (5), numa lista de 900.
         let posicoes = [(0, px(0.), px(40.)), (1, px(72.), px(104.)), (5, px(116.), px(900.))];
         // A resposta (do 72 ao 900) não cabe em 400: abre no começo dela, com o respiro de 12.
-        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(400.), Some(1), 6), Abertura::Em(px(60.)));
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, None, px(900.), px(400.), Some(1), 6), Abertura::Em(px(60.)));
+        // Com o separador "Novo" logo antes (do 40 ao 64, depois da mensagem), ele fica à vista no
+        // alto: a abertura conta a partir dele (conferência na bancada, 16/11/2026).
+        let novo = Some((1, px(40.)));
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, novo, px(900.), px(400.), Some(1), 6), Abertura::Em(px(28.)));
+        // Um "Novo" mais acima (antes de outro bloco) não muda a abertura.
+        let antes = Some((0, px(0.)));
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, antes, px(900.), px(400.), Some(1), 6), Abertura::Em(px(60.)));
         // Cabe: abre no fim, como sempre.
-        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(1000.), Some(1), 6), Abertura::Fim);
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, novo, px(900.), px(1000.), Some(1), 6), Abertura::Fim);
         // Sem resposta depois da sua mensagem: no fim.
-        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, px(900.), px(400.), None, 6), Abertura::Fim);
+        assert_eq!(onde_abrir(AlvoDeAbertura::InicioDaResposta, &posicoes, None, px(900.), px(400.), None, 6), Abertura::Fim);
     }
 
     #[test]
@@ -5351,16 +5376,16 @@ mod testes {
         // O alto da tela no 150: o bloco 12 (que vai até o 400) estava 38 abaixo do alto dele.
         let ancora = ancora_de(&posicoes, px(150.)).unwrap();
         assert_eq!(ancora, Ancora { item: 12, desloc: px(38.) });
-        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(ancora), &posicoes, px(500.), px(200.), None, 30), Abertura::Em(px(150.)));
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(ancora), &posicoes, None, px(500.), px(200.), None, 30), Abertura::Em(px(150.)));
         // O item ficou dentro de uma trilha que começa antes: abre no começo dela.
         let dentro = Ancora { item: 15, desloc: px(10.) };
-        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(dentro), &posicoes, px(500.), px(200.), None, 30), Abertura::Em(px(112.)));
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(dentro), &posicoes, None, px(500.), px(200.), None, 30), Abertura::Em(px(112.)));
         // Mais para cima do que está desenhado: carrega mais itens antes.
         let antes = Ancora { item: 3, desloc: px(0.) };
-        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(antes), &posicoes, px(500.), px(200.), None, 30), Abertura::CarregarMais);
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(antes), &posicoes, None, px(500.), px(200.), None, 30), Abertura::CarregarMais);
         // O Corrigir tirou o item: abre no fim.
         let sumiu = Ancora { item: 40, desloc: px(0.) };
-        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(sumiu), &posicoes, px(500.), px(200.), None, 30), Abertura::Fim);
+        assert_eq!(onde_abrir(AlvoDeAbertura::Ancora(sumiu), &posicoes, None, px(500.), px(200.), None, 30), Abertura::Fim);
     }
 
     #[test]
