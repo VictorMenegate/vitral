@@ -677,25 +677,43 @@ fn acoes_do_arquivo(
     caminho: String,
     window: &Window,
     cx: &App,
-) -> Div {
+) -> Stateful<Div> {
     let (j, c) = (janela.clone(), caminho.clone());
+    // O lugar das ações só fica reservado no hover da linha, como no cartão da lista de chats: o
+    // id faz o `group_hover` valer já no layout. Fora dele, o nome vai até o fim da linha; as
+    // ações, invisíveis, ocupavam 50 px e cortavam "AGENTS…" e "README…" ao lado de pastas
+    // inteiras (relatório de aparência, 16/11/2026, V14). Os botões ficam absolutos na ponta
+    // direita (com o menu aberto, a âncora não anda).
     div()
-        .flex()
+        .id(("acoes-arquivo", ix))
+        .relative()
         .flex_none()
-        .gap(esp::E2)
-        .opacity(0.)
-        .group_hover(grupo, |s| s.opacity(1.))
+        .h_full()
+        .min_w(r(0.))
+        .group_hover(grupo, |s| s.min_w(r(50.)))
         .child(
-            botao_icone(("mencionar-arquivo", ix), Lucide::AtSign, "Mencionar na conversa", TamanhoBotao::Linha, window, cx)
-                .on_click(move |_, window, cx| {
-                    let _ = j.update(cx, |this, cx| this.mencionar(&c, window, cx));
-                }),
-        )
-        .child(
-            botao_icone(("mais-do-arquivo", ix), Lucide::Ellipsis, "Mais opções do arquivo\nTambém no clique direito", TamanhoBotao::Linha, window, cx)
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    menu_do_arquivo(menu, janela.clone(), pasta.clone(), caminho.clone(), false)
-                }),
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right_0()
+                .flex()
+                .items_center()
+                .gap(esp::E2)
+                .opacity(0.)
+                .group_hover(grupo, |s| s.opacity(1.))
+                .child(
+                    botao_icone(("mencionar-arquivo", ix), Lucide::AtSign, "Mencionar na conversa", TamanhoBotao::Linha, window, cx)
+                        .on_click(move |_, window, cx| {
+                            let _ = j.update(cx, |this, cx| this.mencionar(&c, window, cx));
+                        }),
+                )
+                .child(
+                    botao_icone(("mais-do-arquivo", ix), Lucide::Ellipsis, "Mais opções do arquivo\nTambém no clique direito", TamanhoBotao::Linha, window, cx)
+                        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                            menu_do_arquivo(menu, janela.clone(), pasta.clone(), caminho.clone(), false)
+                        }),
+                ),
         )
 }
 

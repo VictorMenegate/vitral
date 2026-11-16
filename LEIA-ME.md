@@ -1076,7 +1076,8 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   vista das arquivadas; a busca acha as duas) e, com algo rodando, quantos agentes rodam no Vitral
   inteiro ("2 rodando"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.
   Um fio em cima e 4 de respiro o separam da última linha da lista.
-- Aba **Arquivos**: os arquivos da pasta do chat aberto numa árvore (pastas recolhidas, menos o
+- Aba **Arquivos** (o @ e o **…** de cada arquivo só ocupam lugar no hover da linha, como no
+  cartão de chat, e o nome vai até o fim fora dele): os arquivos da pasta do chat aberto numa árvore (pastas recolhidas, menos o
   caminho até o arquivo aberto), com o caminho dela em cima e o ↻ para reler. Com busca, uma lista
   plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel
   da direita: a aba com o nome e o ícone do tipo, e uma barra com a pasta, o número de linhas e a
