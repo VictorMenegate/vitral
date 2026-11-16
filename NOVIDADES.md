@@ -230,6 +230,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Fundo mais fosco.** Com a transparência ligada, o véu leitoso por cima do fundo ficou mais forte
   (mais ainda nos níveis mais transparentes): o que está atrás da janela aparece esmaecido, como
   vidro fosco, e não nítido como janela aberta.
+- **Fosco de verdade.** Nos níveis transparentes, o que está atrás da janela aparece desfocado pelo
+  próprio sistema: no Windows (o acrílico), no macOS, no KDE e no GNOME 51 em diante. No GNOME 50
+  ou anterior a janela fica só transparente, com o véu fosco por cima. No Opaco o Vitral não pede
+  desfoque nenhum, e trocar o nível nas Configurações vale na hora.
 - **Editar na fila salva com Ctrl+Enter.** O lápis de uma mensagem da fila abre com o cursor no fim,
   e o Ctrl+Enter salva (antes quebrava a linha).
 - **Aba sem o espaço do ×.** A aba não guarda mais lugar para o × que só aparece no hover: ele surge

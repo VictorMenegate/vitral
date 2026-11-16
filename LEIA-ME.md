@@ -806,6 +806,20 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   próxima batida por janela, no compasso (o tempo do desenho não se soma ao intervalo). Quem decide
   o ritmo da chapa é o `metal::fundo(trabalhando, …)`, chamado no `render` da Janela.
   `VITRAL_QUADROS=1` mostra os quadros e o tempo do campo.
+- **Transparência dos fundos e o desfoque.** Nas Configurações, **Transparência dos fundos** vai do
+  Opaco (o padrão) ao Leve, Média e Forte (`tema::NIVEIS_DE_TRANSPARENCIA`): o metal perde
+  opacidade, o véu da base e o cartão deixam passar o que está atrás da janela, e um grão por cima
+  faz ler como fosco. Nos níveis transparentes a janela pede ao sistema o fundo desfocado
+  (`Blurred`, em `fundo_da_janela`, no `src/main.rs`), com o mesmo código em todo sistema, e o que
+  está atrás aparece desfocado de verdade: no Windows (o acrílico), no macOS, no KDE e no GNOME 51
+  em diante. No Wayland o GPUI só conhecia o protocolo do KDE; o padrão, o ext-background-effect-v1
+  (o que o GNOME 51 trouxe), vem do `vendor/gpui-pre-linux` (ver o `Cargo.toml`). Com os dois no
+  compositor vale o padrão, e nos dois o desfoque cobre só o quadro da janela, sem a margem da
+  sombra. **No GNOME 50 ou anterior** (e no X11) não há desfoque: a janela fica só transparente,
+  com o véu e o grão por cima (no GNOME, a extensão Blur my Shell pode desfocar por fora). No Opaco
+  a chapa cobre tudo e o pedido é só transparente, para não gastar o desfoque; trocar o nível troca
+  o pedido na hora. `VITRAL_FUNDO=mica`, `transparente` ou `opaco` força um fundo em qualquer
+  nível, para comparar (o Mica só existe no Windows 11).
 - **Três materiais.** Tudo é feito só de luz e sombra de 1 px por dentro (`src/tema.rs`): **vidro**
   nos cartões (`aresta_de_vidro`: fio claro de 1 px nos lados, luz na própria quina de cima, sombra
   de 1 px na base e um brilho de 3% que entra uns 40 px pelo topo; o brilho fica em 3% porque com
@@ -1394,9 +1408,9 @@ local; já vinha no `Cargo.lock` pelo vendor.
 comandos no Git Bash dele) e do **Claude Code nativo** (`irm https://claude.ai/install.ps1 | iex`, o
 `claude.exe` em `%USERPROFILE%\.local\bin`); o que faltar aparece como aviso na janela, e uma pasta
 de chat dentro do OneDrive também. Os dados ficam em `%LOCALAPPDATA%\vitral` (o cache em `cache\` dentro
-dela) e a configuração em `%APPDATA%\vitral`. As fontes vão dentro do binário nos dois sistemas. A
-janela pede o fundo acrílico do sistema (`VITRAL_FUNDO=mica`, `transparente` ou `opaco` troca), mas
-ele fica debaixo da chapa de metal, que é opaca, e não aparece mais; o
+dela) e a configuração em `%APPDATA%\vitral`. As fontes vão dentro do binário nos dois sistemas.
+Nos níveis transparentes, o desfoque é o acrílico do sistema (ver **Transparência dos fundos e o
+desfoque**, em **Acabamento**; no Windows 10 ele pode pesar ao arrastar); o
 arrastar, o clique duplo, o Snap e os botões –, □ e × são do próprio Windows. Os avisos saem como
 notificações do Windows (AppUserModelID `VictorMenegate.Vitral`), o Parar manda o `interrupt` pela
 entrada do Claude Code (nos dois sistemas) e o Parar de verdade é o Job Object, que derruba a
