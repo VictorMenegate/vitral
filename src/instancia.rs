@@ -145,7 +145,7 @@ pub fn ouvir(arquivo: &Path) -> io::Result<Receiver<Abertura>> {
     let ouvinte = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let senha = uuid::Uuid::new_v4().simple().to_string();
     let porta = ouvinte.local_addr()?.port();
-    crate::dados::gravar_texto(arquivo, &format!("{porta} {senha}\n")).map_err(io::Error::other)?;
+    crate::dados::gravar_seguro(arquivo, format!("{porta} {senha}\n").as_bytes(), false).map_err(io::Error::other)?;
     let (envia, recebe) = unbounded();
     std::thread::spawn(move || {
         for conexao in ouvinte.incoming().flatten() {
