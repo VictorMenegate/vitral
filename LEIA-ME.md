@@ -338,7 +338,10 @@ A caixa de mensagem é uma moldura dupla (`caixa_mensagem`, em `src/ui/composer.
 moldura preta de canto 20 (14 na Estreita); dentro dela, com 2 de folga (eram 4; dono, 16/11/2026:
 "diminui as bordas"), o campo opaco, com o texto
 e os chips; embaixo do campo, ainda na moldura, a **linha de estado**, em mono 11. Com o foco, um
-aro de metal de 2 px acende em volta da moldura (180 ms; apaga em 120), sem azul nem halo. A barra
+aro de metal de 2 px acende em volta da moldura (180 ms; apaga em 120), sem azul nem halo; ele
+recorta o miolo do campo (`Encaixe::Miolo`, com o grão leve), para a fita ser contínua nos quatro
+lados, e não azul em cima e cinza nos lados (o mesmo na busca, na aba sob o ponteiro e na moldura
+do pedido que espera você). A barra
 de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo
 cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar),
 **modelo** (o logo do Claude e o que vale, como "Claude

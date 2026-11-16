@@ -17,7 +17,7 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
-use super::metal::{Encaixe, abertura, aro_de_metal};
+use super::metal::{Encaixe, abertura, abertura_lisa, aro_de_metal};
 use super::superficies::desenho_teclas;
 use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
@@ -1305,10 +1305,11 @@ pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
     let moldura = div().flex().flex_col().w_full().p(esp::E4).rounded(raio::PECA);
     match estado {
         // Aberta e não perigosa, a moldura de fora é metal vivo: o aro de 4 px do que espera você
-        // (o miolo opaco, por cima, deixa só o aro à vista).
+        // (o miolo opaco, por cima, deixa só o aro à vista), no miolo do campo, como o aro de foco
+        // (relatório de aparência, 16/11/2026, V5).
         EstadoDaMoldura::Esperando => moldura
             .relative()
-            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::peca())))),
+            .child(div().absolute().top_0().left_0().size_full().child(abertura_lisa(Encaixe::Miolo, None, Corners::all(raio::peca())))),
         EstadoDaMoldura::Perigo => moldura.bg(Cores::tinta_solida(Cores::vermelho(), 0.35)),
         EstadoDaMoldura::Recolhida => moldura.bg(Cores::preto()).border_1().border_color(Cores::borda()),
     }
