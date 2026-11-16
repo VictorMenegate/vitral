@@ -525,7 +525,13 @@ ferramentas, vale por painel).
   "Vazia"; com texto escrito a seta continua movendo o cursor). O **rascunho** de cada conversa (o
   que você escreveu e não enviou) já ficava na memória da janela ao trocar de painel; agora também
   vai para o `interface.json` 1,2 s depois de você parar de digitar, e volta quando o Vitral abrir
-  de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). O texto que o Vitral põe na caixa
+  de novo, inclusive depois de uma queda (`src/ui/rascunhos.rs`). O rascunho é inteiro: o texto,
+  os anexos (os prints colados) e a citação; um rascunho só com um anexo também vai, e o formato
+  antigo (só o texto) continua abrindo. O Ultrathink e o Ultracode continuam começando desligados.
+  Na lista e nas abas de fundo, o chat com rascunho ganha o lápis pequeno e, no cartão da lista, a
+  segunda linha "Rascunho: começo do texto" (ou "Rascunho: 2 anexos") no lugar da hora; na aba, o
+  começo vai na dica do lápis. O painel em que o chat está aberto não leva a marca (rodada de uso,
+  item 1.4). O texto que o Vitral põe na caixa
   (a correção, um comando completado, a menção de um arquivo) entra por `composer::por_texto`, que
   guarda o desfazer (o Ctrl+Z traz de volta o que estava escrito), rola a caixa até o cursor, no
   fim, e conta como digitação para o rascunho; a mensagem corrigida, que já saiu da conversa, vai

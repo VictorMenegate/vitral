@@ -123,6 +123,12 @@ impl Aba {
         self
     }
 
+    /// Algo depois do título e do número, antes do × (o lápis do rascunho).
+    pub fn fim(mut self, e: impl IntoElement) -> Self {
+        self.fim = Some(e.into_any_element());
+        self
+    }
+
     /// A aba entra no Tab com este foco, com o anel de foco; focada, mostra o ×.
     pub fn foco(mut self, f: &FocusHandle) -> Self {
         self.foco = Some(f.clone());

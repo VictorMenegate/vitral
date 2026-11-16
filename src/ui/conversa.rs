@@ -997,14 +997,27 @@ impl Janela {
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
                 let previa = simbolo_da_conversa();
-                let aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
+                let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
                     // As outras abas do painel são peças lisas, só com o contorno.
                     .tom(TomAba::Inativa)
                     // O ícone da aba é o estado do chat (e o ponto ao lado do × sai).
                     .simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).into_any_element()))
                     // Sem lugar para 4 letras e as reticências, só o ícone num quadrado; o título
                     // vai na dica.
-                    .quadrada(icone)
+                    .quadrada(icone);
+                // O lápis do rascunho, com o começo dele na dica (rodada de uso, item 1.4).
+                if let Some(rascunho) = self.rascunho_fora_de_vista(id).filter(|_| !icone) {
+                    let dica = SharedString::from(rascunho);
+                    aba = aba.fim(
+                        div()
+                            .id(SharedString::from(format!("rascunho-aba-{painel_id}-{id}")))
+                            .flex_none()
+                            .text_color(Cores::apagado())
+                            .child(super::componentes::icone(Lucide::Pencil, 11., window))
+                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                    );
+                }
+                let aba = aba
                     .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
                         let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
                     })

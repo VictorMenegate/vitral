@@ -450,6 +450,9 @@ pub struct Janela {
     /// O texto de cada chat preparado para a busca da lista e do histórico (sem acento), refeito só
     /// quando os itens mudam (item 4.3).
     busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
+    /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
+    /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
+    assinatura_dos_anexos: (usize, usize, usize, usize),
     /// A mensagem da fila que está sendo editada na própria linha (item 1.3).
     editando_fila: Option<fila::EdicaoNaFila>,
     /// O último filtro do menu "@" (a pasta, o digitado, a lista lida e o arquivo aberto) e o que
@@ -658,6 +661,7 @@ impl Janela {
             mencoes: Default::default(),
             editando_fila: None,
             busca_preparada: Default::default(),
+            assinatura_dos_anexos: (0, 0, 0, 0),
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
@@ -1007,7 +1011,8 @@ impl Janela {
             .collect();
         self.painel = interface.as_ref().and_then(|i| i.get("painel")?.as_bool()).unwrap_or(false);
         // Os rascunhos antes do `selecionar`: é ele que leva o do chat que abre para a caixa.
-        self.rascunhos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
+        let rascunhos_lidos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
+        self.restaurar_rascunhos(rascunhos_lidos);
         // O último destino de um chat novo é uma pasta; o das versões com projetos (um id de projeto,
         // ou "avulsos") não vale mais.
         self.ultimo_destino = lido("ultimo_destino").map(PathBuf::from).filter(|p| p.is_absolute());
@@ -1457,6 +1462,19 @@ impl Render for Janela {
         }
         // Com as abas acertadas: o que mudou no arranjo da janela fica marcado para gravar.
         self.lembrar_arranjo(window, cx);
+        // Um anexo ou uma citação que entrou ou saiu também é rascunho (item 1.4).
+        let anexos = (
+            self.anexos.values().map(Vec::len).sum::<usize>(),
+            self.anexos.len(),
+            self.citacoes.values().map(String::len).sum::<usize>(),
+            self.citacoes.len(),
+        );
+        if anexos != self.assinatura_dos_anexos {
+            self.assinatura_dos_anexos = anexos;
+            if self.arranjo_ligado {
+                self.agendar_gravacao(cx);
+            }
+        }
         // Faixas de soltura só valem durante um arrasto (o sistema não avisa quando ele sai).
         if !cx.has_active_drag() {
             self.alvo_arrasto = None;

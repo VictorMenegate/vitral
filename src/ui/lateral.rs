@@ -1626,10 +1626,20 @@ impl Janela {
         } else {
             None
         };
+        // O rascunho de um chat fora de vista: o lápis pequeno e "Rascunho: começo do texto" na
+        // segunda linha, no lugar da hora (rodada de uso, item 1.4).
+        let rascunho = if achado.is_none() { self.rascunho_fora_de_vista(&chat.id) } else { None };
         // O cartão é uma linha só (o balão, o título e a hora); a de baixo volta na busca que achou
-        // no texto, para mostrar onde.
-        let enxuta = achado.is_none();
+        // no texto, para mostrar onde, e no rascunho.
+        let enxuta = achado.is_none() && rascunho.is_none();
         // A pasta vem antes do trecho achado ("loja · …", "Sem pasta · …").
+        let subtitulo_do_rascunho = rascunho.map(|r| {
+            h_flex()
+                .gap(esp::E4)
+                .min_w_0()
+                .child(div().flex_none().text_color(Cores::apagado()).child(icone(Lucide::Pencil, 11., window)))
+                .child(div().flex_1().min_w_0().truncate().child(r))
+        });
         let subtitulo = achado.map(|(achado, faixa)| {
             let pasta = if motor.sem_pasta(chat) { "Sem pasta".to_string() } else { nome_da_pasta(&chat.cwd) };
             let onde = div().min_w_0().truncate().child(StyledText::new(achado).with_highlights([(faixa, realce_da_busca())]));
@@ -1658,7 +1668,8 @@ impl Janela {
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a
         // lista fica no mínimo, e número mais hora comiam uns 80 px do título ("Nova co…")
         // (relatório de design, 16/11/2026).
-        let quando = em_painel.is_none().then_some(hora);
+        let quando = (em_painel.is_none() && subtitulo_do_rascunho.is_none()).then_some(hora);
+        let subtitulo = subtitulo.or(subtitulo_do_rascunho);
         let sinal = sinal_do_chat(motor, chat);
         // A resposta nova já está no ponto do avatar: aqui o azul só entra quando lá vale outro.
         // O número do painel vem por último, para ficar sempre na mesma coluna, encostado na borda.

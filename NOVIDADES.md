@@ -57,6 +57,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   linha, sem diálogo (Ctrl+Enter salva, Esc desiste).
 - **Busca de chat sem acento e por palavras.** Na lista e no histórico do "+", "integracao" acha
   "integração" e "vip cupons" acha "Cupons para grupos VIP"; o que casa no título vem primeiro.
+- **Rascunho inteiro e à vista.** O rascunho guardado leva os prints colados e a citação, e volta
+  inteiro quando o Vitral abre de novo. Na lista e nas abas, o chat com mensagem começada ganha um
+  lápis e "Rascunho: começo do texto".
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.
