@@ -88,6 +88,15 @@ impl Janela {
             && self.paineis[ix].medida.rem * 15. < 1000.
     }
 
+    /// A direita (ao lado ou em gaveta) ocupa a borda onde moram os anéis: o conteúdo dela, abaixo
+    /// da faixa das abas, ganha `FOLGA_DO_USO` à direita. Sem isso o selo da conta encostava no
+    /// fim do texto de "Este chat" e o anel do Codex tocava a borda do cartão (relatório de
+    /// design, 16/11/2026).
+    pub(super) fn uso_sobre_a_direita(&self, cx: &Context<Self>) -> bool {
+        (self.direita_visivel() || self.gaveta == Some(super::Gaveta::Direita))
+            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
+    }
+
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
         let Some(motor) = self.motor.clone() else {
             return Vec::new();

@@ -615,6 +615,9 @@ impl Janela {
         div()
             .map(super::mensagens::coluna)
             .when(estreita, |s| s.px(esp::E12))
+            // Na última conversa, com os anéis de uso por cima, a caixa termina onde as mensagens
+            // terminam (relatório de design, 16/11/2026).
+            .when(self.uso_sobre_as_mensagens(ix, cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
             .pb(esp::E12)
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")

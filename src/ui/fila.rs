@@ -114,6 +114,7 @@ impl Janela {
         if !p.fila_aberta || motor.read(cx).na_fila(chat) == 0 { return None; }
         let rodando = matches!(motor.read(cx).execucao(chat), crate::modelo::Execucao::Rodando { .. });
         Some(div().map(super::mensagens::coluna).py(esp::E8)
+            .when(self.uso_sobre_as_mensagens(ix, cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
             .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, window, cx)).into_any_element())
     }
 

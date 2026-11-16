@@ -1456,7 +1456,7 @@ impl Render for Janela {
                     ),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
-            // O uso do plano flutua no canto de baixo, à direita.
+            // O uso do plano flutua no canto de cima, à direita.
             .children(self.uso_no_canto(cx))
             .children(fora)
             .into_any_element();

@@ -111,6 +111,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Histórico em cada painel.** O relógio no cabeçalho, como na extensão do Claude Code, abre a
   lista de todos os chats, do mais recente ao mais antigo, com busca: o escolhido abre neste
   painel, numa aba.
+- **Os anéis de uso não cobrem mais o texto.** Com o painel da direita aberto, o conteúdo dele
+  deixa o lugar dos anéis; sem ele, as mensagens, a faixa e a caixa do último painel terminam na
+  mesma linha, ao lado dos anéis.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

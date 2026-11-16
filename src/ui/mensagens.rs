@@ -2225,7 +2225,11 @@ impl Janela {
         // com o enviar.
         let caixa_estreita = medida.faixa == FaixaCaixa::Estreita;
         let margem = tam(window, if caixa_estreita { 12. } else { 16. });
-        let (recuo, fim) = (margem + composer::recuo_do_texto(caixa_estreita, window), margem + composer::borda_ao_conteudo(caixa_estreita, window));
+        // À direita, a mesma margem da caixa: com os anéis de uso por cima, a folga deles.
+        let sob_o_uso = self.paineis.iter().position(|p| p.id == painel_id).is_some_and(|ix| self.uso_sobre_as_mensagens(ix, cx));
+        let margem_direita = if sob_o_uso { tam(window, super::uso_plano::FOLGA_DO_USO) } else { margem };
+        let (recuo, fim) =
+            (margem + composer::recuo_do_texto(caixa_estreita, window), margem_direita + composer::borda_ao_conteudo(caixa_estreita, window));
         // A fila é da conversa, não do turno: depois de um reinício (ou de uma parada, ou de uma
         // falha) o chat não está mais rodando e ela continua esperando, à vista.
         let fila_fora = match situacao {

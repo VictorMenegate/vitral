@@ -353,8 +353,10 @@ entra na fila. A linha de estado, com o chat parado, mostra as teclas: à esquer
 com a caixa vazia, "↑" última; à direita "Enter" envia e, com
 texto escrito, "Shift Enter" quebra a linha (na caixa estreita, só a direita). Com o chat
 trabalhando, ela diz o que ele faz (ver **Faixa do turno**, abaixo). Na última conversa estreita (o
-cartão com menos de 1000 px e a direita fechada), a caixa encolhe 32 à direita para os anéis de uso
-do canto da janela caberem ao lado dela. Vazia, a caixa diz "Mensagem para este chat…" no chat
+cartão com menos de 1000 px e a direita fechada), as mensagens, a fila, a faixa do turno e a caixa
+terminam 40 antes da borda (`FOLGA_DO_USO`), todas na mesma linha, para os anéis de uso do canto
+da janela caberem ao lado delas. Com a direita aberta (ao lado ou em gaveta), quem ganha a folga é
+o conteúdo dela, abaixo das abas. Vazia, a caixa diz "Mensagem para este chat…" no chat
 com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
 segmentado (←/→, Home e End mudam na hora; o nível escolhido fica na ficha do escolhido, a mesma
@@ -549,7 +551,7 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   (ver **Chat novo**, em **Como funciona**). Escolher a pasta fica no menu do logo, **Novo chat em
   outra pasta…**: as pastas que já têm chat (com o caminho embaixo do nome), **Outra pasta…**, que
   escolhe uma no disco, e **Sem pasta**.
-- **Os anéis de uso** flutuam no canto de baixo, à direita, da janela, um em cima do outro, sem
+- **Os anéis de uso** flutuam no canto de cima, à direita, da janela, logo abaixo do ×, um em cima do outro, sem
   cápsula atrás (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex
   quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
@@ -750,7 +752,7 @@ lista).
 
 ## Contas e uso dos planos
 
-No canto de baixo, à direita, da janela flutua um anel de 30 por serviço, um em cima do outro
+No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do outro
 (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
 instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (com a fenda
 embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,

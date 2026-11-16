@@ -949,8 +949,9 @@ pub fn marco(i: &Importada) -> String {
 pub const AVISO_EM_USO: &str = "Esta conversa estava aberta no Claude Code quando foi trazida. A primeira \
 mensagem daqui continua numa cópia dela; a de lá segue como está.";
 
-/// O que "Este chat" diz da conversa trazida.
-pub fn descricao(i: &Importada, pasta: &str) -> String {
+/// O que "Este chat" diz da conversa trazida. Sem o caminho: ele já está na linha Pasta, logo
+/// abaixo, em mono (relatório de design, 16/11/2026).
+pub fn descricao(i: &Importada) -> String {
     let de = match i.origem.as_str() {
         "" => "do Claude Code".to_string(),
         origem => format!("do Claude Code ({origem})"),
@@ -961,7 +962,7 @@ pub fn descricao(i: &Importada, pasta: &str) -> String {
     };
     let mensagens = if i.mensagens == 1 { "1 mensagem".to_string() } else { format!("{} mensagens", i.mensagens) };
     let mut texto = format!(
-        "Continua uma conversa {de} {datas}, com {mensagens}. Mexe direto em {pasta}, como lá."
+        "Continua uma conversa {de} {datas}, com {mensagens}. Mexe direto na pasta, como lá."
     );
     if !i.continuada {
         texto.push_str(" A primeira mensagem daqui continua numa cópia da sessão; a original segue no Claude Code como está.");
@@ -1364,10 +1365,10 @@ mod testes {
             ..Default::default()
         };
         assert!(marco(&i).starts_with("Trazida do Claude Code (VS Code) em "));
-        let texto = descricao(&i, "~");
+        let texto = descricao(&i);
         assert!(texto.starts_with("Continua uma conversa do Claude Code (VS Code) de "));
-        assert!(texto.contains("com 42 mensagens. Mexe direto em ~"));
+        assert!(texto.contains("com 42 mensagens. Mexe direto na pasta, como lá."));
         assert!(texto.ends_with("segue no Claude Code como está."));
-        assert!(!descricao(&Importada { continuada: true, ..i }, "~").contains("cópia da sessão"));
+        assert!(!descricao(&Importada { continuada: true, ..i }).contains("cópia da sessão"));
     }
 }

@@ -559,7 +559,13 @@ impl Janela {
                 // Com um trecho da conversa selecionado, o painel ativo oferece citá-lo na caixa
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
                 let responder = (ativo && self.trecho.is_some()).then(|| {
-                    div().map(super::mensagens::coluna).flex().justify_end().pb(esp::E6).child(
+                    div()
+                        .map(super::mensagens::coluna)
+                        .when(self.uso_sobre_as_mensagens(ix, cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
+                        .flex()
+                        .justify_end()
+                        .pb(esp::E6)
+                        .child(
                         h_flex()
                             .id(("responder-trecho", painel_id as usize))
                             .flex_none()

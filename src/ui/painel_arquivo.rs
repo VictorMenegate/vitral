@@ -458,8 +458,17 @@ impl Janela {
             .when(!na_gaveta, |s| s.bg(Cores::cartao()).shadow(crate::tema::sombra_flutuante()))
             .overflow_hidden()
             .child(cabecalho)
-            .child(barra)
-            .child(corpo)
+            // Abaixo das abas, a barra e o arquivo deixam o lugar dos anéis de uso do canto.
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .when(self.uso_sobre_a_direita(cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
+                    .child(barra)
+                    .child(corpo),
+            )
             .when(!na_gaveta, |s| s.aresta_de_vidro(crate::tema::raio_da_peca()))
             .on_prepaint(medir)
             .into_any_element()

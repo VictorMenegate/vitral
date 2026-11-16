@@ -68,6 +68,7 @@ impl Janela {
                     .flex()
                     .flex_col()
                     .px(esp::E12)
+                    .when(self.uso_sobre_a_direita(cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
                     // Sem encolher: o que passa da altura rola, em vez de espremer os cartões.
                     .children(filhos)
                     .child(div().flex_none().h(esp::E16))
@@ -115,9 +116,10 @@ impl Janela {
             linhas.push(alerta.into_any_element());
         }
         let descricao = match &chat.importada {
-            Some(i) => crate::importar::descricao(i, &curta),
+            Some(i) => crate::importar::descricao(i),
             None if motor.sem_pasta(chat) => "Um chat sem pasta, numa pasta vazia só dele: os arquivos que ele criar ficam lá.".to_string(),
-            None => format!("Mexe direto em {curta}."),
+            // O caminho fica só na linha Pasta, logo abaixo.
+            None => "Mexe direto na pasta, como o Claude Code no terminal.".to_string(),
         };
         linhas.push(texto(descricao));
         let caminho = pasta.display().to_string();
