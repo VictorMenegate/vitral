@@ -521,9 +521,11 @@ pub fn fosco(raios: Corners<Pixels>) -> impl IntoElement {
             // ser apagado para ler como vidro fosco e não como janela aberta (dono, 16/11/2026:
             // "deixa o transparente fosco"). O grão continua o leve: o cheio vira chuvisco.
             let leitoso = match crate::tema::transparencia() {
-                0 | 1 => 0xffffff28,
-                2 => 0xffffff2c,
-                _ => 0xffffff30,
+                // Ardósia azulada, e não branco: o branco apagava o fundo mas deixava tudo leitoso
+                // demais (dono, 16/11/2026: "tá meio esbranquiçado o fosco").
+                0 | 1 => 0x3c4a6650,
+                2 => 0x3c4a6658,
+                _ => 0x3c4a6660,
             };
             window.paint_quad(fill(limites, gpui_kit::rgba(leitoso)).corner_radii(raios));
             let grao = cx.try_global::<Metal>().and_then(|metal| metal.grao_leve.clone());
