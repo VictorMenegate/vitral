@@ -896,9 +896,10 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   as outras são compactas (até 180), com o título e o caminho na dica, e encolhem antes dela. A de
   fundo que não teria lugar para 4 letras e as reticências fica só com o ícone, num quadrado de
   36 (`Aba::quadrada`); se nem assim a aba à vista tiver o começo do título, as de fundo saem da
-  faixa, a mais antiga primeiro, e continuam no painel, a um clique pelo histórico
-  (`jeito_das_abas`, em `src/ui/conversa.rs`, com a largura da faixa medida no quadro anterior e a
-  natural de cada aba). A faixa nunca passa por cima do **⋯**. Toda
+  faixa, a mais antiga primeiro, e um **+N** no fim da faixa abre a lista delas (a do histórico,
+  só com elas; `jeito_das_abas`, em `src/ui/conversa.rs`, com a largura da faixa medida no quadro
+  anterior e a natural de cada aba, conta o lugar do +N). A faixa nunca passa por cima do **⋯** e
+  não rola: a roda do mouse em cima dela não faz nada. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer

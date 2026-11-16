@@ -424,8 +424,9 @@ pub struct Janela {
     dica_busca: &'static str,
     /// Popover da caixa aberto (um por vez em toda a janela): painel e qual.
     pop_caixa: Option<(u64, composer::PopCaixa)>,
-    /// O histórico do cabeçalho de um painel aberto (o id do painel).
-    historico_aberto: Option<u64>,
+    /// O histórico do cabeçalho de um painel aberto: o id do painel e se é o "+N" da faixa das
+    /// abas (só as abas que saíram dela).
+    historico_aberto: Option<(u64, bool)>,
     /// A aba (Claude ou Codex) à vista no seletor de modelo do painel; sem ela, a do agente do chat.
     aba_do_modelo: Option<(u64, crate::modelo::Agente)>,
     /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
@@ -671,7 +672,7 @@ impl Janela {
                 painel.menu_aberto = false;
             }
         }
-        if self.historico_aberto.is_some_and(|p| abre != QualFlutuante::Historico(p)) {
+        if self.historico_aberto.is_some_and(|(p, _)| abre != QualFlutuante::Historico(p)) {
             self.historico_aberto = None;
         }
     }

@@ -40,8 +40,9 @@ use crate::{
 /// O histórico do cabeçalho: os chats do mexido por último ao mais antigo, com o ícone do estado
 /// (o da lista), a hora e a pasta; os arquivados num grupo no fim. Um chat à vista noutro painel
 /// diz qual.
-fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)]) -> Vec<GrupoDeEscolha> {
-    let mut chats: Vec<&Chat> = motor.chats_da_lista().collect();
+fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>) -> Vec<GrupoDeEscolha> {
+    // O "+N" da faixa das abas mostra só as que saíram dela.
+    let mut chats: Vec<&Chat> = motor.chats_da_lista().filter(|c| so.is_none_or(|so| so.contains(&c.id))).collect();
     chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
     let item = |c: &Chat| {
         let quando = super::tempo_relativo(c.atualizado_em);
@@ -105,6 +106,8 @@ const ABA_SEM_TITULO: f32 = 78.;
 const ABA_SO_ICONE: f32 = 36.;
 /// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
 const NUMERO_NA_ABA: f32 = 26.;
+/// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
+const BOTAO_MAIS: f32 = 40.;
 
 /// Como cada aba de fundo entra na faixa.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,8 +131,7 @@ pub(super) fn jeito_das_abas(
     a_vista: (f32, f32),
     naturais: &[f32],
     minimos: &[f32],
-    so_icone: f32,
-    vao: f32,
+    (so_icone, mais, vao): (f32, f32, f32),
 ) -> Vec<JeitoDaAba> {
     let n = naturais.len();
     let mut jeito = vec![JeitoDaAba::Titulo; n];
@@ -139,7 +141,9 @@ pub(super) fn jeito_das_abas(
     let (natural_a_vista, minima_a_vista) = a_vista;
     loop {
         let conta = |j: JeitoDaAba| jeito.iter().filter(|x| **x == j).count() as f32;
-        let fixos = vao * (n as f32 - conta(JeitoDaAba::Fora)) + so_icone * conta(JeitoDaAba::Icone);
+        // Com alguma de fora, o "+N" do fim da faixa (e o vão dele) também ocupa lugar.
+        let com_mais = if conta(JeitoDaAba::Fora) > 0. { mais + vao } else { 0. };
+        let fixos = vao * (n as f32 - conta(JeitoDaAba::Fora)) + so_icone * conta(JeitoDaAba::Icone) + com_mais;
         let titulos: Vec<usize> = (0..n).filter(|i| jeito[*i] == JeitoDaAba::Titulo).collect();
         let soma: f32 = titulos.iter().map(|i| naturais[*i]).sum();
         let espaco = (disponivel - natural_a_vista - fixos).max(0.);
@@ -834,9 +838,10 @@ impl Janela {
             (natural_a_vista.as_f32(), minima_a_vista.as_f32()),
             &naturais,
             &minimos,
-            tam(window, ABA_SO_ICONE).as_f32(),
-            tam(window, 6.).as_f32(),
+            (tam(window, ABA_SO_ICONE).as_f32(), tam(window, BOTAO_MAIS).as_f32(), tam(window, 6.).as_f32()),
         );
+        let fora: Vec<String> =
+            fundo.iter().zip(&jeitos).filter(|(_, j)| **j == JeitoDaAba::Fora).map(|(c, _)| c.id.clone()).collect();
         let jeito_de = |id: &str| fundo.iter().position(|c| c.id == id).map_or(JeitoDaAba::Titulo, |i| jeitos[i]);
         painel
             .abas
@@ -890,6 +895,9 @@ impl Janela {
                     sem_arrastar().flex().min_w(r(40.)).flex_shrink(1000.).child(casca).into_any_element()
                 })
             })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .chain((!fora.is_empty()).then(|| self.botao_abas_fora(ix, fora.clone(), window, cx)))
             .collect()
     }
 
@@ -1068,12 +1076,12 @@ impl Janela {
             .anchor(Anchor::TopRight)
             .offset(px(4.))
             .p(esp::E6)
-            .open(self.historico_aberto == Some(painel_id))
+            .open(self.historico_aberto == Some((painel_id, false)))
             .on_open_change(move |abriu, window, cx| {
                 let _ = janela.update(cx, |this, cx| {
                     if *abriu {
-                        this.abrir_historico(painel_id, window, cx);
-                    } else if this.historico_aberto == Some(painel_id) {
+                        this.abrir_historico(painel_id, None, window, cx);
+                    } else if this.historico_aberto == Some((painel_id, false)) {
                         this.historico_aberto = None;
                         cx.notify();
                     }
@@ -1094,8 +1102,48 @@ impl Janela {
             })
     }
 
-    /// Abre o histórico do painel: a lista de agora, a busca limpa e o chat à vista marcado.
-    fn abrir_historico(&mut self, painel_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+    /// O "+N" no fim da faixa das abas, com as que saíram dela por falta de lugar: abre a lista do
+    /// histórico só com elas (conferência na bancada, 16/11/2026: sem ele, sumiam da vista).
+    fn botao_abas_fora(&self, ix: usize, fora: Vec<String>, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let painel = &self.paineis[ix];
+        let painel_id = painel.id;
+        let lista = painel.busca_historico.clone();
+        let foco = lista.read(cx).focus_handle(cx);
+        let janela = cx.entity().downgrade();
+        let n = fora.len();
+        let dica = if n == 1 { "1 aba que não coube aqui".to_string() } else { format!("{n} abas que não couberam aqui") };
+        let gatilho = botao_fantasma(("abas-fora", painel_id as usize), None, format!("+{n}"), TamanhoBotao::Barra, window, cx).tooltip(dica);
+        sem_arrastar()
+            .flex_none()
+            .child(
+                popover(("pop-abas-fora", painel_id as usize))
+                    .anchor(Anchor::TopLeft)
+                    .offset(px(4.))
+                    .p(esp::E6)
+                    .open(self.historico_aberto == Some((painel_id, true)))
+                    .on_open_change(move |abriu, window, cx| {
+                        let _ = janela.update(cx, |this, cx| {
+                            if *abriu {
+                                this.abrir_historico(painel_id, Some(fora.clone()), window, cx);
+                            } else if this.historico_aberto == Some((painel_id, true)) {
+                                this.historico_aberto = None;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .track_focus(&foco)
+                    .trigger(gatilho)
+                    .content(move |_, window, _| {
+                        let largura = (tam(window, LarguraPopover::P360.px()) - tam(window, 12.)).min(window.viewport_size().width - px(44.));
+                        div().w(largura).child(lista.clone())
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// Abre o histórico do painel: a lista de agora, a busca limpa e o chat à vista marcado. Com
+    /// `so`, só esses chats (o "+N" das abas que saíram da faixa).
+    fn abrir_historico(&mut self, painel_id: u64, so: Option<Vec<String>>, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(motor), Some(painel)) = (self.motor.clone(), self.paineis.iter().find(|p| p.id == painel_id)) else {
             return;
         };
@@ -1109,9 +1157,9 @@ impl Janela {
             .filter(|(_, p)| p.id != painel_id)
             .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
             .collect();
-        let grupos = grupos_do_historico(motor.read(cx), &noutros);
+        let grupos = grupos_do_historico(motor.read(cx), &noutros, so.as_deref());
         self.so_um_flutuante(QualFlutuante::Historico(painel_id));
-        self.historico_aberto = Some(painel_id);
+        self.historico_aberto = Some((painel_id, so.is_some()));
         lista.update(cx, |l, cx| {
             l.ficha_no_escolhido(true);
             l.definir(grupos, atual.map(Into::into), cx);
@@ -1123,7 +1171,7 @@ impl Janela {
     /// Escolheu (ou fechou com Esc) no histórico do painel: o chat vai para este painel, como uma
     /// aba, e o foco volta à caixa.
     pub(super) fn escolheu_no_historico(&mut self, painel_id: u64, evento: &EventoEscolha, window: &mut Window, cx: &mut Context<Self>) {
-        if self.historico_aberto == Some(painel_id) {
+        if self.historico_aberto.is_some_and(|(p, _)| p == painel_id) {
             self.historico_aberto = None;
         }
         if let EventoEscolha::Escolheu(chat) = evento
@@ -1272,19 +1320,24 @@ mod testes {
         // À vista: 200 de natural e 140 de mínimo; vãos de 6; ícone de 36. De fundo: 150 e 110 de
         // natural, 114 e 108 de mínimo.
         let (naturais, minimos) = ([150., 110.], [114., 108.]);
-        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, 36., 6.);
+        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, (36., 40., 6.));
         assert_eq!(jeito(500.), [Titulo, Titulo]);
         // 400: sobram 188 para 260 (razão 0,72): 108 e 79, as duas abaixo do mínimo. A mais
         // estreita vira ícone, e a outra ganha 188 - 36 = 152, que basta.
         assert_eq!(jeito(400.), [Titulo, Icone]);
         // 340: nem a outra cabe com título; a aba à vista fica com 340 - 12 - 72 = 256.
         assert_eq!(jeito(340.), [Icone, Icone]);
-        // 200: com as duas em ícone sobram 116 para a aba à vista, menos que os 140 dela: a mais
-        // antiga sai, e sobram 158.
-        assert_eq!(jeito(200.), [Fora, Icone]);
-        // 150: nem uma em ícone deixa os 140; as duas saem.
-        assert_eq!(jeito(150.), [Fora, Fora]);
+        // 200: com as duas em ícone sobram 116 para a aba à vista, menos que os 140 dela. A mais
+        // antiga sai, mas o "+N" (40 e o vão) ocupa mais que ela: sai a outra também, e sobram 154.
+        assert_eq!(jeito(200.), [Fora, Fora]);
         assert_eq!(jeito(0.), [Titulo, Titulo]);
+        // Com três de fundo, sair uma já basta: 250 - (12 + 72 + 46) = 120, ainda pouco; saindo
+        // as duas mais antigas, sobram 250 - (6 + 36 + 46) = 162.
+        let (naturais, minimos) = ([150., 110., 120.], [114., 108., 110.]);
+        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, (36., 40., 6.));
+        assert_eq!(jeito(250.), [Fora, Fora, Icone]);
+        // 300: todas em ícone deixam 300 - 126 = 174 para a aba à vista.
+        assert_eq!(jeito(300.), [Icone, Icone, Icone]);
     }
 
     fn chat(modelo: Option<&str>, atual: Option<&str>) -> Chat {

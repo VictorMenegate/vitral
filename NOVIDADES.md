@@ -147,7 +147,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   apagar o que foi escrito.
 - **Abas que cabem.** Sem lugar para o título, a aba de fundo vira um quadrado só com o ícone
   (antes sobravam duas reticências), e a que está à vista guarda sempre o começo do título: sem
-  lugar nem assim, as de fundo saem da faixa (continuam no histórico do painel). Com muitas abas,
+  lugar nem assim, as de fundo saem da faixa, e um "+N" no fim dela abre a lista das que saíram. Com muitas abas,
   a que está à vista não some mais por baixo do "⋯".
 - **Trocar de chat pelo teclado.** Na busca (Ctrl+K), Enter abre o primeiro resultado e o Ctrl+K
   seguinte troca o termo em vez de somar. Depois de clicar num chat da lista, o que se digita vai
