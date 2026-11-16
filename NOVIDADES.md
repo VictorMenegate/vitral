@@ -141,7 +141,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   antes, e o Ctrl+Z traz o texto de volta. A mensagem corrigida fica guardada como rascunho na hora,
   mesmo se o Vitral cair logo depois, e a caixa mostra o fim dela, com o cursor. O aviso de depois
   cabe inteiro. E uma queda logo depois de enviar não traz mais a mensagem enviada de volta para a
-  caixa.
+  caixa. Colar um texto longo deixa à vista o fim do que foi colado, com o cursor.
 - **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.

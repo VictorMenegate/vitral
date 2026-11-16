@@ -508,7 +508,7 @@ impl Janela {
             || self.pop_caixa.is_some_and(|(p, _)| p == painel_id);
         let anexos = self.anexos.get(&chat.id).cloned().unwrap_or_default();
         let janela = cx.entity().downgrade();
-        let (colar, chat_colar) = (janela.clone(), chat.id.clone());
+        let (colar, chat_colar, campo_colado) = (janela.clone(), chat.id.clone(), composer.downgrade());
         let pasta_anexos = motor.dados.pasta_anexos();
         let barra = Barra {
             painel: painel_id,
@@ -567,9 +567,21 @@ impl Janela {
                         Textarea::new(&composer)
                             .appearance(false)
                             // Colar imagem ou arquivos copiados no gerenciador vira anexo.
-                            .on_paste(move |item, _, cx| {
+                            .on_paste(move |item, window, cx| {
                                 let caminhos = anexos_da_area_de_transferencia(item, &pasta_anexos);
                                 if caminhos.is_empty() {
+                                    // Texto: quem cola é o campo, que pede a rolagem até o cursor
+                                    // antes do layout novo, com a caixa ainda do tamanho de antes;
+                                    // com 200 linhas ela ficava parada no topo até a próxima tecla.
+                                    // No quadro seguinte, já medido, o cursor vai para onde está e
+                                    // a caixa rola até ele (conferência na bancada, 16/11/2026).
+                                    let campo = campo_colado.clone();
+                                    window.on_next_frame(move |_, cx| {
+                                        let _ = campo.update(cx, |c, cx| {
+                                            let cursor = c.cursor();
+                                            c.set_selected_range(cursor..cursor, cx);
+                                        });
+                                    });
                                     return false;
                                 }
                                 let chat = chat_colar.clone();

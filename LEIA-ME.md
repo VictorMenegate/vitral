@@ -454,7 +454,8 @@ ferramentas, vale por painel).
   (a correção, um comando completado, a menção de um arquivo) entra por `composer::por_texto`, que
   guarda o desfazer (o Ctrl+Z traz de volta o que estava escrito), rola a caixa até o cursor, no
   fim, e conta como digitação para o rascunho; a mensagem corrigida, que já saiu da conversa, vai
-  para o disco na hora. Ao enviar, a caixa vazia também vai para o disco na hora, senão uma queda
+  para o disco na hora. Colar um texto longo também rola a caixa até o cursor, no quadro seguinte
+  ao da colagem, quando ela já cresceu. Ao enviar, a caixa vazia também vai para o disco na hora, senão uma queda
   logo depois trazia de volta, como rascunho, a mensagem já enviada. Corrigir com algo escrito na caixa sempre pergunta antes, e a pergunta diz
   que o texto da caixa sai dela. A **fila** do que você mandou com
   o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da fila (na linha de
