@@ -186,6 +186,11 @@ pub trait Tipo: Styled + Sized {
     fn corpo(self) -> Self {
         self.text_size(r(15.)).line_height(r(23.))
     }
+    /// O que você escreveu (o balão): um degrau abaixo do corpo da resposta, com a entrelinha mais
+    /// aberta (1,57) (balão e cartão de erro, 16/11/2026).
+    fn fala(self) -> Self {
+        self.text_size(r(14.)).line_height(r(22.)).font_weight(FontWeight::NORMAL)
+    }
     fn corpo_ui(self) -> Self {
         self.text_size(r(14.)).line_height(r(20.))
     }
@@ -338,6 +343,11 @@ pub fn gradiente_da_doca() -> Background {
 pub fn gradiente_do_pe_do_cartao() -> Background {
     let cartao = Cores::cartao_opaco();
     linear_gradient(180., linear_color_stop(cartao.opacity(0.), 0.), linear_color_stop(cartao, 1.))
+}
+
+/// O véu do seu balão cortado: a última linha some no azul do balão (opaco, então sem emenda).
+pub fn gradiente_do_pe_do_balao() -> Background {
+    linear_gradient(180., linear_color_stop(Cores::balao().opacity(0.), 0.), linear_color_stop(Cores::balao(), 1.))
 }
 
 /// Os lados da doca: o escuro do cartão some da beirada para o meio (da esquerda para a direita;
@@ -1186,6 +1196,16 @@ impl Cores {
     pub fn destaque_ativo() -> Hsla {
         rgba(superficie::atual().destaque_ativo).into()
     }
+    /// O fundo do seu balão e da pílula do comando: o destaque bem baixo misturado à base, opaco.
+    /// Desceu de 0,20 para 0,16 com a fala um degrau abaixo da resposta (balão e cartão de erro,
+    /// 16/11/2026).
+    pub fn balao() -> Hsla {
+        Self::tinta_solida(Self::destaque(), 0.16)
+    }
+    /// O fio do balão e da pílula do comando (era 0,24).
+    pub fn balao_borda() -> Hsla {
+        Self::destaque().opacity(0.16)
+    }
     /// O destaque para texto pequeno: o cheio pode ficar abaixo de 4,5:1 nas peças.
     pub fn destaque_texto() -> Hsla {
         rgba(superficie::atual().destaque_texto).into()
@@ -1422,6 +1442,9 @@ pub(crate) mod testes {
             ("preto", sobre(Cores::preto(), painel)),
             ("fim preto da caixa", sobre(Cores::caixa_preta(), painel)),
             ("recuo no flutuante", sobre(Cores::recuo_no_flutuante(), flutuante)),
+            // O seu balão é opaco: o código em linha e as pílulas vão no poço escuro dentro dele.
+            ("balão", Rgba::from(Cores::balao())),
+            ("poço no balão", sobre(Cores::recuo(), Rgba::from(Cores::balao()))),
         ];
         let textos = [
             ("forte", Cores::forte()),

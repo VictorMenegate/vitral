@@ -450,9 +450,8 @@ impl Janela {
         }
     }
 
-    /// O que você escreveu: balão neutro, do material da caixa, com o reflexo do vidro, alinhado à
-    /// direita. As ações flutuam à esquerda dele, na altura da última linha, só no hover (na
-    /// largura mínima, no canto de cima).
+    /// O que você escreveu: balão azul baixo, na largura toda da coluna, com a ponta no canto de
+    /// baixo à direita; as ações flutuam no canto de cima à direita, só no hover.
     #[allow(clippy::too_many_arguments)]
     fn balao_usuario(
         &self,
@@ -473,16 +472,25 @@ impl Janela {
         let chave_tudo = format!("{chave}:tudo");
         let tudo = self.expandidos.contains(&chave_tudo);
         let corpo = match comando_de_barra(texto).filter(|_| anexos.is_empty()) {
-            Some(comando) => div()
-                .h(r(28.))
-                .px(esp::E12)
-                .flex()
-                .items_center()
-                .rounded(raio::CONTROLE)
-                .bg(Cores::preto())
-                .mono()
-                .text_color(Cores::texto())
-                .child(comando.to_string())
+            // O comando sozinho ("/compact") é uma pílula no material do balão: a barra preta na
+            // largura toda não parecia mensagem sua (balão e cartão de erro, 16/11/2026).
+            Some(comando) => h_flex()
+                .w_full()
+                .child(
+                    div()
+                        .flex_none()
+                        .h(r(32.))
+                        .px(dentro_da_borda(12.))
+                        .flex()
+                        .items_center()
+                        .rounded(raio::de(32.))
+                        .bg(Cores::balao())
+                        .border_1()
+                        .border_color(Cores::balao_borda())
+                        .mono()
+                        .text_color(Cores::codigo())
+                        .child(comando.to_string()),
+                )
                 .into_any_element(),
             None => {
                 let mostrar = longo.then(|| {
@@ -492,40 +500,67 @@ impl Janela {
                         format!("Mostrar tudo ({linhas} linhas)")
                     };
                     let id = SharedString::from(format!("tudo-{chave}"));
-                    fantasma(id, None, rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx)
+                    let icone = if tudo { Lucide::ChevronUp } else { Lucide::ChevronDown };
+                    fantasma(id, Some(icone), rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx)
                 });
                 // Os anexos entram no balão, em pílulas em cima do texto, como na extensão do
-                // Claude Code (dono, 16/11/2026).
+                // Claude Code (dono, 16/11/2026), no poço escuro do balão.
                 let pilulas = (!anexos.is_empty()).then(|| {
-                    h_flex()
-                        .flex_wrap()
-                        .gap(esp::E6)
-                        .children(anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, cx)))
+                    h_flex().flex_wrap().gap(esp::E6).children(
+                        anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, true, cx)),
+                    )
                 });
                 let com_texto = !texto.trim().is_empty();
+                let folga = if minima(contexto.nivel) { 12. } else { 16. };
                 // O balão é azul bem baixo (o destaque misturado à base, opaco): diz de quem é a
                 // fala sem a moldura de cartão, e o canto de baixo à direita é o da ponta.
                 // Na largura toda da coluna (dono, 16/11/2026: "faz o campo das minhas mensagens
-                // ficar na largura toda").
+                // ficar na largura toda"). Raio 16, o das peças: com 20 numa faixa de 46 a
+                // mensagem de uma linha virava pílula (balão e cartão de erro, 16/11/2026).
                 let balao = (com_texto || pilulas.is_some() || mostrar.is_some() || reforco != Reforco::default()).then(|| {
                     v_flex()
                         .w_full()
-                        .px(dentro_da_borda(12.))
-                        .py(dentro_da_borda(8.))
+                        .px(dentro_da_borda(folga))
+                        .py(dentro_da_borda(12.))
                         .gap(esp::E8)
-                        .rounded(raio::PECA)
+                        .rounded(crate::tema::raio_da_peca())
                         .rounded_br(raio::CONTROLE)
-                        .bg(Cores::tinta_solida(Cores::destaque(), 0.2))
+                        .bg(Cores::balao())
                         .border_1()
-                        .border_color(Cores::destaque().opacity(0.24))
+                        .border_color(Cores::balao_borda())
                         .children(pilulas)
                         .when(com_texto, |s| {
-                            s.child(div().corpo().text_color(Cores::forte()).child(
-                                markdown_achado(contexto, chave.to_string().into(), com_quebras_duras(texto), realce)
-                                    .linhas((longo && !tudo).then_some(12)),
-                            ))
+                            // A fala um degrau abaixo da resposta (14/22 no texto, não no branco),
+                            // e os caminhos que existem viram link, como na resposta. O Copiar e o
+                            // Editar levam o texto original.
+                            let cwd = &contexto.chat.cwd;
+                            let ligado = super::links_arquivo::ligar_arquivos(texto, &mut |c| super::links_arquivo::resolver(cwd, c));
+                            let cortado = longo && !tudo;
+                            s.child(
+                                div()
+                                    .relative()
+                                    .fala()
+                                    .text_color(Cores::texto())
+                                    .child(
+                                        markdown_achado(contexto, chave.to_string().into(), com_quebras_duras(&ligado), realce)
+                                            .estilo(estilo_do_balao)
+                                            .linhas(cortado.then_some(12)),
+                                    )
+                                    .when(cortado, |s| {
+                                        s.child(
+                                            div()
+                                                .absolute()
+                                                .left_0()
+                                                .right_0()
+                                                .bottom_0()
+                                                .h(r(24.))
+                                                .bg(crate::tema::gradiente_do_pe_do_balao()),
+                                        )
+                                    }),
+                            )
                         })
-                        .when_some(mostrar, |s, b| s.child(h_flex().child(b)))
+                        // O chevron cai na coluna do texto.
+                        .when_some(mostrar, |s, b| s.child(h_flex().ml(r(-8.)).child(b)))
                         .when(reforco != Reforco::default(), |s| {
                             s.child(
                                 h_flex()
@@ -549,8 +584,9 @@ impl Janela {
             }
         }
         acoes.push(copiar(chave, texto).into_any_element());
-        // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, como na resposta.
-        let barra = div().absolute().top(r(-14.)).right_0();
+        // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, no trecho reto
+        // da borda (a 16, na coluna do texto); no canto ela montava na curva.
+        let barra = div().absolute().top(r(-14.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
         v_flex()
             .w_full()
             .map(com_alcance_da_barra)
@@ -630,7 +666,7 @@ impl Janela {
             .child(corpo)
             .when(!apontadas.is_empty(), |s| {
                 s.child(h_flex().flex_wrap().gap(esp::E6).children(apontadas.iter().enumerate().map(|(i, caminho)| {
-                    pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, cx)
+                    pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, false, cx)
                 })))
             })
             // A barra fica no pé da resposta, onde o olho termina: em cima ela cobria metade da
@@ -804,6 +840,30 @@ fn estilo_da_resposta(vista: TextView, cx: &App) -> TextView {
             cx.open_url(url);
         }
     })
+}
+
+/// O estilo do seu balão: o da resposta (links de arquivo abrem no Vitral), com títulos que nunca
+/// passam da fala e o código no poço escuro, que se vê no azul.
+fn estilo_do_balao(vista: TextView, cx: &App) -> TextView {
+    estilo_da_resposta(vista, cx).style(
+        estilo_com_titulos(cx, [15., 14., 14.])
+            .code_block(
+                StyleRefinement::default()
+                    .p(dentro_da_borda(12.))
+                    .pr(COLUNA_DO_COPIAR)
+                    .bg(Cores::preto())
+                    .border_color(Cores::borda())
+                    // 16 de fora menos 16 de padding: o mínimo, 10.
+                    .rounded(raio::CONTROLE),
+            )
+            .inline_code(HighlightStyle {
+                color: Some(Cores::codigo()),
+                // O branco de 8% sumia no azul.
+                background_color: Some(Cores::recuo()),
+                ..Default::default()
+            })
+            .table(StyleRefinement::default().rounded(raio::CONTROLE).border_color(Cores::borda())),
+    )
 }
 
 /// A resposta em trechos, na ordem: `true` nas citações em bloco (linhas que começam com ">",
@@ -1316,8 +1376,10 @@ fn imagem_da_chamada(item: &Item, cwd: &Path) -> Option<PathBuf> {
 /// imagens que mando e a que você usa ficar igual fica aqui"): uma pílula com a miniatura (ou o
 /// ícone), o nome e as medidas da imagem (ou o tamanho do arquivo). Serve aos anexos das suas
 /// mensagens, às imagens que a resposta aponta e às que uma chamada leu ou gravou; o clique numa
-/// imagem abre o visor. O que saiu do disco fica apagado, com "sumiu".
-fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, cx: &Context<Janela>) -> AnyElement {
+/// imagem abre o visor. O que saiu do disco fica apagado, com "sumiu". Dentro do seu balão
+/// (`no_balao`), a pílula vai no poço escuro, da família do código do balão: o cinza opaco parecia
+/// colado de fora no azul (balão e cartão de erro, 16/11/2026).
+fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx: &Context<Janela>) -> AnyElement {
     let lido = imagens::anexo(caminho);
     let nome = imagens::nome_do_arquivo(caminho);
     let detalhe = lido.detalhe();
@@ -1363,9 +1425,9 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, cx: &Context<Janela
         .pr(esp::E8)
         .gap(esp::E6)
         .rounded(raio::de(28.))
-        .bg(Cores::cartao_elevado())
+        .bg(if no_balao { Cores::recuo() } else { Cores::cartao_elevado() })
         .border_1()
-        .border_color(Cores::borda_forte())
+        .border_color(if no_balao { Cores::borda() } else { Cores::borda_forte() })
         .metadado()
         .child(simbolo)
         .child(div().min_w_0().max_w(r(220.)).truncate().text_color(if lido.existe { Cores::texto() } else { Cores::tenue() }).child(nome))
@@ -1645,7 +1707,7 @@ impl Janela {
                 h_flex()
                     .pl(RECUO_DO_LOG_SOLTO)
                     .py(esp::E4)
-                    .child(pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, cx))
+                    .child(pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, false, cx))
                     .into_any_element(),
             ),
             varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
@@ -1959,7 +2021,7 @@ impl Janela {
             .child(linha)
             .children(atividade_viva)
             .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(h_flex().pl(recuo_aberto).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, cx)))
+                s.child(h_flex().pl(recuo_aberto).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, false, cx)))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {

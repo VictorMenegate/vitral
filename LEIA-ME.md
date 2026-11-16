@@ -429,8 +429,8 @@ Colar (Ctrl+V) imagem ou arquivos copiados, ou arrastar arquivos do gerenciador 
 vira anexo. `/` abre os comandos de barra (os do seu Claude Code, com `/clear` para sessão nova e
 `/compact`), num menu acima da caixa: ↑/↓ andam pelo menu (o campo fica no contexto "Menu" só
 enquanto ele está à vista), Tab ou Enter completam o item marcado (o Enter com o nome exato de um
-comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante, à esquerda do seu balão, na altura da última linha
-(no canto de cima dele, no painel mínimo), e no pé da resposta, à direita (em cima ela cobria a
+comando envia), e Esc fecha o menu sem apagar o que foi escrito; a próxima letra o abre de novo. Passe o mouse numa mensagem para copiar (e, na sua, corrigir e mandar de novo): as ações aparecem numa barra flutuante no canto de cima do seu balão, à direita, a 16 da borda
+(12 no painel mínimo: no trecho reto, na coluna do texto, e não na curva do canto), e no pé da resposta, à direita (em cima ela cobria a
 primeira linha); nada fica
 reservado nem à vista sem o ponteiro, e nada se mexe quando ela aparece. O hover da mensagem
 alcança a barra inteira, que fica metade para fora dela (`com_alcance_da_barra`): chegando por
@@ -560,10 +560,14 @@ ferramentas, vale por painel).
   **Abrir o chat** (o balão de conversa; Ctrl+clique abre ao lado). As das versões de antes (as do
   Mestre e dos ajudantes, nas conversas antigas) continuam com os verbos delas. Fora da largura
   larga, o verbo e a frase vão para a dica (o ícone já diz o que foi) e o título fica com o espaço.
-- **Mensagens.** O que você escreve fica num balão neutro à direita (sem avatar, com o reflexo do
-  vidro), com as miniaturas das imagens anexadas, o nome e o tamanho dos outros arquivos e os selos
+- **Mensagens.** O que você escreve fica num balão azul baixo na largura toda da coluna (raio 16,
+  ponta no canto de baixo à direita, texto em 14/22, um degrau abaixo da resposta), com as pílulas
+  das imagens e arquivos anexados no poço escuro em cima do texto e os selos
   **Ultrathink** (em arco-íris) e **Ultracode** (em violeta, com o ícone de fluxo) quando a mensagem
-  foi com eles; texto com mais de 14 linhas mostra 12 e **Mostrar tudo**. As quebras de linha que
+  foi com eles. Os caminhos que existem na pasta do chat viram link e abrem no painel da direita,
+  como na resposta; o código em linha e os blocos de código vão no poço escuro. Um comando sozinho
+  ("/compact") vira uma pílula azul em mono. Texto com mais de 14 linhas mostra 12, com a última
+  sumindo num véu, e **Mostrar tudo** com o chevron. As quebras de linha que
   você digitou ficam no balão (`com_quebras_duras`: cada linha seguida de outra ganha a quebra dura
   do markdown, menos nos blocos cercados e nas tabelas), e o Copiar leva o texto como foi escrito. Mensagens que outro chat
   (ou o Vitral) entregou mostram quem mandou (o balão de outro chat ou o logo do Vitral; nas
