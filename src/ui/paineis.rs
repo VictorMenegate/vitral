@@ -231,11 +231,20 @@ pub enum Soltura {
 pub struct FormaSoltura {
     id: ElementId,
     soltura: Soltura,
+    /// O raio dos cantos da esquerda da peça por baixo (os da direita são sempre retos: a fileira
+    /// das conversas encosta na direita da janela), para o realce casar com ela.
+    raio_esquerdo: Pixels,
 }
 
 impl FormaSoltura {
     pub fn new(id: impl Into<ElementId>, soltura: Soltura) -> Self {
-        FormaSoltura { id: id.into(), soltura }
+        FormaSoltura { id: id.into(), soltura, raio_esquerdo: crate::tema::raio_da_peca() }
+    }
+
+    /// Os cantos da esquerda da peça (`tema::raio_encostado`).
+    pub fn raio_esquerdo(mut self, raio: Pixels) -> Self {
+        self.raio_esquerdo = raio;
+        self
     }
 }
 
@@ -270,23 +279,17 @@ impl RenderOnce for FormaSoltura {
                     .child(div().rotulo().text_color(Cores::forte()).child(texto)),
             )
             .when_some(detalhe, |s, d| s.child(div().metadado().text_color(Cores::tenue()).child(d)));
-        let base = || {
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(crate::tema::raio_da_peca())
-        };
+        // Os cantos seguem os da peça: só os da esquerda podem ser redondos, e a metade da
+        // direita, que começa no meio dela, é reta.
+        let raio = self.raio_esquerdo;
+        let base = || div().absolute().top_0().bottom_0().flex().items_center().justify_center();
         let metade = |lado: Lado| match lado {
-            Lado::Esquerda => base().left_0().w(relative(0.5)),
+            Lado::Esquerda => base().left_0().w(relative(0.5)).rounded_l(raio),
             _ => base().right_0().w(relative(0.5)),
         };
         let realce = |s: Div| s.bg(Cores::selecao()).border_2().border_color(Cores::destaque());
         let forma = match self.soltura {
-            Soltura::Arquivos => realce(base().left_0().right_0()).border_dashed(),
+            Soltura::Arquivos => realce(base().left_0().right_0().rounded_l(raio)).border_dashed(),
             Soltura::Conversa(Efeito::AbrirAoLado(lado), _) => realce(metade(lado)),
             Soltura::Conversa(Efeito::Mover { lado, .. }, _) => {
                 let barra = div()
@@ -1029,6 +1032,7 @@ impl Janela {
             .filter(|(id, ..)| *id == painel)
             .map(|(_, _, efeito)| efeito);
         let abertos = self.paineis.len();
+        let raio = crate::tema::raio_encostado(self.esquerda_do_painel(self.paineis.iter().position(|p| p.id == painel)));
         div()
             .id(("painel", painel as usize))
             .relative()
@@ -1079,7 +1083,10 @@ impl Janela {
             .when_some(alvo.filter(|e| *e != Efeito::Nenhum), |s, efeito| {
                 // Da borda, sem lugar para outro painel, a soltura troca e diz por quê.
                 let detalhe = matches!(efeito, Efeito::Trocar { cheio: true, .. }).then(|| motivo_sem_lugar(abertos));
-                s.child(FormaSoltura::new(("soltura", painel as usize), Soltura::Conversa(efeito, detalhe)))
+                s.child(
+                    FormaSoltura::new(("soltura", painel as usize), Soltura::Conversa(efeito, detalhe))
+                        .raio_esquerdo(raio),
+                )
             })
     }
 }

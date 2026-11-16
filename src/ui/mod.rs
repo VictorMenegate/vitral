@@ -291,6 +291,20 @@ fn largura_util(window: &Window) -> f32 {
     (largura - margem).max(0.)
 }
 
+/// Se `ponto` cai na faixa de redimensionar do kit: 4 px para dentro da borda visível
+/// (`RESIZE_HIT_SIZE` em vendor/gpui-component/src/window_border.rs), só nos lados soltos. O
+/// `window_paddings` dá 0 no lado ladrilhado e com a decoração do servidor.
+fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
+    const FAIXA: f32 = 4.;
+    let folga = gpui_kit::component::window_paddings(window);
+    let tamanho = window.viewport_size();
+    let perto = |borda: Pixels, distancia: Pixels| borda > px(0.) && distancia <= borda + px(FAIXA);
+    perto(folga.top, ponto.y)
+        || perto(folga.left, ponto.x)
+        || perto(folga.right, tamanho.width - ponto.x)
+        || perto(folga.bottom, tamanho.height - ponto.y)
+}
+
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
 /// 16/11/2026: "sem a lista tem que ficar sem a borda da esquerda também"): sem ela, as conversas
 /// ganham esses px. A conta sai de novo sem a lista, para não ancorar a lista justo nos px que só
@@ -1270,6 +1284,12 @@ impl Janela {
         }
         faixa
             .on_mouse_down(MouseButton::Left, |evento, window, _| {
+                // Na faixa de redimensionar do kit quem age é o fundo da janela: as conversas
+                // encostam na beirada, e mover também mandaria dois pedidos ao compositor no mesmo
+                // clique (o de mover ganhava, com o cursor de redimensionar à vista).
+                if na_faixa_de_redimensionar(evento.position, window) {
+                    return;
+                }
                 if evento.click_count >= 2 {
                     window.zoom_window();
                 } else {
@@ -1374,10 +1394,10 @@ impl Janela {
                         .id("fundo-gaveta")
                         .absolute()
                         .inset_0()
-                        // A área das partes encosta no topo, na direita e embaixo da janela: só os
-                        // cantos da esquerda fazem a curva, e só com a lista ancorada (sem ela não
-                        // há margem à esquerda).
-                        .when(self.orcamento.lista, |s| s.rounded_l(crate::tema::raio_da_peca()))
+                        // Cobre a janela inteira, sem curva: com a lista ancorada, entra também pela
+                        // margem da esquerda (a lista não tem cartão para uma curva casar; com
+                        // o véu só nas partes sobrava uma faixa clara e um retângulo redondo).
+                        .when(self.orcamento.lista, |s| s.left(-crate::tema::margem_da_janela()))
                         .bg(Cores::veu().opacity(0.5 * t))
                         .occlude()
                         .on_any_mouse_down(
@@ -1401,6 +1421,9 @@ impl Janela {
                         })
                         .w(largura)
                         .flutuante(cx)
+                        // Encosta no topo e embaixo da janela: sem a luz de 1 px no topo nem a
+                        // sombra de 1 px na base do popover.
+                        .shadow(crate::tema::sombra_da_gaveta())
                         .bg(Cores::gaveta())
                         // Curva só no lado solto: a gaveta encosta na beirada da janela (a da lista
                         // na esquerda, que fica sem margem com a lista recolhida; a da direita na

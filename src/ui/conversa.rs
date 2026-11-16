@@ -539,6 +539,18 @@ fn grupo_das_acoes(painel_id: u64) -> SharedString {
 
 impl Janela {
     /// Um painel de conversa (`ix` em `self.paineis`); sem painel, a tela de começar.
+    /// O que há à esquerda do painel `ix` da fileira (`None`: a tela de começar, sozinha): a
+    /// vizinha, o vão da lista ou a beirada da janela, com a lista recolhida.
+    pub(super) fn esquerda_do_painel(&self, ix: Option<usize>) -> crate::tema::Esquerda {
+        if ix.is_some_and(|ix| ix > 0) {
+            crate::tema::Esquerda::Emendada
+        } else if self.orcamento.lista {
+            crate::tema::Esquerda::Solta
+        } else {
+            crate::tema::Esquerda::Beirada
+        }
+    }
+
     pub(super) fn conversa(
         &mut self,
         motor_entidade: &Entity<Motor>,
@@ -600,13 +612,7 @@ impl Janela {
         // Só os cantos da esquerda da primeira fazem a curva, e só com a lista ao lado: sem ela,
         // a primeira encosta também na beirada da esquerda. Sem a sombra de cartão flutuante,
         // que vazaria por cima da vizinha na emenda.
-        let esquerda = if ix.is_some_and(|ix| ix > 0) {
-            crate::tema::Esquerda::Emendada
-        } else if self.orcamento.lista {
-            crate::tema::Esquerda::Solta
-        } else {
-            crate::tema::Esquerda::Beirada
-        };
+        let esquerda = self.esquerda_do_painel(ix);
         let raio = crate::tema::raio_encostado(esquerda);
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
@@ -812,7 +818,7 @@ impl Janela {
                 s.child(self.permissoes(motor, chat, window, cx)).child(doca)
             })
             .when(arquivos_sobre, |s| {
-                s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
+                s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos).raio_esquerdo(raio))
             })
             // O vidro da peça (fio, luz na quina de cima, sombra na base), por cima de tudo.
             .aresta_encostada(esquerda);

@@ -302,6 +302,22 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
     }
 }
 
+/// A casca da gaveta (lista ou painel da direita por cima das conversas): a do popover do kit
+/// (`popover_shadow` em vendor/gpui-component/src/styled.rs, com o anel de 14%) sem a luz de 1 px
+/// no topo e a sombra de 1 px na base, que a gaveta encosta no topo e embaixo da janela. Por fora
+/// ficam a sombra, o fio preto e o anel claro, que a separam das conversas no lado solto.
+pub fn sombra_da_gaveta() -> Vec<BoxShadow> {
+    let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
+    let branco = |a: f32| gpui_kit::hsla(0., 0., 1., a);
+    vec![
+        BoxShadow::new(px(0.), px(24.), preto(0.60)).blur_radius(px(16.)).spread_radius(px(-10.)),
+        BoxShadow::new(px(0.), px(4.), preto(0.35)).blur_radius(px(2.5)).spread_radius(px(-1.)),
+        BoxShadow::new(px(0.), px(0.), preto(0.60)).spread_radius(px(2.)),
+        BoxShadow::new(px(0.), px(0.), branco(0.14)).spread_radius(px(1.)),
+        BoxShadow::new(px(0.), px(28.), branco(0.03)).blur_radius(px(12.)).spread_radius(px(-12.)).inset(),
+    ]
+}
+
 /// O que fica à esquerda de uma peça da fileira das conversas.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Esquerda {
