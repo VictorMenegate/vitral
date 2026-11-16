@@ -365,7 +365,9 @@ impl Render for Configuracoes {
             ))
             .linha(
                 LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
-                    .descricao("Os anéis de uso ficam flutuando embaixo, à direita. Desligado, somem; o uso continua em Contas do Claude.")
+                    // Os anéis ficam em cima desde 13/11/2026; o texto ainda dizia embaixo
+                    // (relatório de design, 16/11/2026).
+                    .descricao("Os anéis ficam no canto de cima, à direita. Desligado, o uso fica só em Contas do Claude.")
                     .interruptor(uso_no_canto, move |ligado, _, cx| {
                         alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
                     }),
@@ -373,13 +375,13 @@ impl Render for Configuracoes {
             .linha(com(
                 LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
                     .info("“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.")
-                    .descricao("Cada conversa pode trocar o seu na caixa de mensagem."),
+                    .descricao("Cada chat pode trocar o modo na caixa de mensagem."),
                 menu_escolha("cfg-permissao", ancora, modos, &config.permissao, &padrao.permissao, gravar(m(), |c, v| c.permissao = v), window, cx),
             ))
             .linha(com(
                 LinhaDeOpcao::new("cfg-agente", "Quem responde nos chats novos")
                     .info("O Codex é o agente de código da OpenAI. Ele usa o login e o plano do próprio Codex, e precisa estar instalado neste computador.")
-                    .descricao("Cada chat pode trocar o seu no seletor de modelo."),
+                    .descricao("Cada chat pode trocar o agente no seletor de modelo."),
                 menu_escolha(
                     "cfg-agente",
                     ancora,
@@ -397,7 +399,7 @@ impl Render for Configuracoes {
                 ),
             ))
             .linha(com(
-                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude").descricao("Cada chat pode trocar o seu na caixa de mensagem."),
+                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude").descricao("Cada chat pode trocar o modelo na caixa de mensagem."),
                 menu_escolha(
                     "cfg-modelo-trab",
                     ancora,
@@ -422,11 +424,14 @@ impl Render for Configuracoes {
             ))
             .linha(
                 LinhaDeOpcao::new("cfg-mcp", "Servidores MCP do Claude Code")
-                    .info(
-                        "Ligado, os chats carregam também os servidores MCP do seu Claude Code. No Haiku, muitos \
-                         servidores estouram o contexto.",
-                    )
-                    .descricao("Desligado, eles só têm as ferramentas do Vitral.")
+                    .info("No Haiku, muitos servidores MCP estouram o contexto.")
+                    // A descrição acompanha o estado, como a da Memória da equipe: ligado, ela só
+                    // falava do desligado.
+                    .descricao(if mcp {
+                        "Ligado, os chats usam também os servidores do seu Claude Code."
+                    } else {
+                        "Desligado, só as ferramentas do Vitral."
+                    })
                     .interruptor(mcp, move |ligado, _, cx| {
                         alternar_mcp.update(cx, |m, cx| m.mudar_config(|c| c.mcp_trabalhadores = ligado, cx))
                     }),

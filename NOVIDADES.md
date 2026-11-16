@@ -132,6 +132,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   painéis (antes, uns 5 px abaixo).
 - **O × da janela separado do painel.** No cabeçalho da última conversa, um traço separa o × da
   janela das ações do painel, como já era no painel da direita.
+- **Textos das Configurações acertados.** A dos anéis de uso diz que eles ficam no canto de cima, a
+  dos servidores MCP acompanha o interruptor, e as linhas de modo, agente e modelo dizem o que cada
+  chat troca.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 
