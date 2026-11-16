@@ -9,9 +9,11 @@ use std::path::{Path, PathBuf};
 use gpui_kit::SharedString;
 
 /// Altura da miniatura dentro do chip da caixa de mensagem (o chip tem 28 de alto).
-pub const ALTURA_CHIP: f32 = 20.;
+/// 24 de altura num chip de 28: a miniatura ocupa quase tudo, com 2 de folga em volta (dono,
+/// 16/11/2026: "o espaçamento em volta da imagem tem que ser menor").
+pub const ALTURA_CHIP: f32 = 24.;
 /// Largura máxima da miniatura do chip: ela fica no lugar do ícone, antes do nome.
-pub const LARGURA_MAXIMA_CHIP: f32 = 44.;
+pub const LARGURA_MAXIMA_CHIP: f32 = 52.;
 /// Lado mínimo da caixa da miniatura. Uma imagem de 24 px fica centrada num quadrado em vez de
 /// virar um risco entre as vizinhas, e o alvo do clique continua clicável.
 pub const LADO_MINIMO_MINIATURA: f32 = 56.;

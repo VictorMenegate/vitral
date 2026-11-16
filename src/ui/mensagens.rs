@@ -1868,7 +1868,7 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
         .flex_none()
         .max_w_full()
         .h(r(28.))
-        .map(|s| if abre { s.pl(esp::E4) } else { s.pl(esp::E8) })
+        .map(|s| if abre { s.pl(esp::E2) } else { s.pl(esp::E8) })
         .pr(esp::E8)
         .gap(esp::E6)
         .rounded(raio::de(28.))

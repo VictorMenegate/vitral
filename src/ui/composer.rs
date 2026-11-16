@@ -1181,7 +1181,7 @@ impl Janela {
                     .items_center()
                     .gap(esp::E6)
                     .h(r(28.))
-                    .map(|s| if miniatura.is_some() { s.pl(esp::E4) } else { s.pl(esp::E8) })
+                    .map(|s| if miniatura.is_some() { s.pl(esp::E2) } else { s.pl(esp::E8) })
                     .pr(esp::E2)
                     .rounded(raio::de(28.))
                     .border_1()
