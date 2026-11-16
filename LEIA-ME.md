@@ -349,7 +349,8 @@ de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Man
 cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar),
 **modelo** (o glifo do Claude, solto, sem o disco cheio, e o que vale, como "Claude
 Opus 5.5"; nos chips a marca é sempre o glifo, `Marca::glifo`, e o disco fica nas listas, nos
-popovers e no anel de uso), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
+popovers e no anel de uso), **esforço** (barrinhas em ciano, de "Auto" a "Máximo", na medida de um ícone: barras de 2 com
+vão de 2, de 4 a 12 de altura) e **conta** (o ícone na cor do
 uso de 5 h; só com mais de uma conta). O que segue o padrão da pasta fica em tom tênue. À direita
 ficam o anel do contexto (com a fenda embaixo e a porcentagem ao lado, "24%", em mono; âmbar a
 70%, vermelho a 90%; também na caixa estreita, mais justa, porque o anel sozinho parecia o anel
