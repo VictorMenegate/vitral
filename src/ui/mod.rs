@@ -1360,6 +1360,16 @@ impl Render for Janela {
             self.lista,
             self.direita_pedida(),
         );
+        // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
+        // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
+        // da árvore e nenhuma tecla chegava às ações da janela até um clique (teste de
+        // usabilidade, 16/11/2026).
+        if !self.orcamento.lista
+            && self.gaveta != Some(Gaveta::Lista)
+            && (self.foco_lista.is_focused(window) || self.busca.read(cx).focus_handle(cx).is_focused(window))
+        {
+            cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
+        }
         // A gaveta fecha quando a parte volta a caber ao lado (ou some) e durante um arrasto,
         // em que ela cobriria as zonas de soltura.
         let fecha_gaveta = self.gaveta.is_some_and(|g| gaveta_fecha_sozinha(g, &self.orcamento));
@@ -1371,7 +1381,12 @@ impl Render for Janela {
             .key_context("Vitral")
             .track_focus(&self.foco)
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
-            .on_action(cx.listener(|this, _: &Buscar, window, cx| this.focar_busca(window, cx)))
+            // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
+            // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.
+            .on_action(cx.listener(|this, _: &Buscar, window, cx| {
+                this.focar_busca(window, cx);
+                this.busca.update(cx, |b, cx| b.select_all(window, cx));
+            }))
             // Ctrl+F e F3: buscar dentro da conversa aberta. O `Search` é o que o campo do kit
             // liga ao Ctrl+F; sem atender aqui, o Ctrl+F na caixa de mensagem se perderia.
             .on_action(cx.listener(|this, _: &busca_conversa::BuscarNaConversa, window, cx| {

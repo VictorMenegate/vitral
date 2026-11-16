@@ -14,7 +14,7 @@ use gpui_kit::component::{
     ElementExt as _, Selectable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Escape, InputState, MoveDown},
+    input::{Enter, Escape, InputState, MoveDown},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     tooltip::Tooltip,
@@ -962,14 +962,32 @@ impl Janela {
         let campo = div()
             .flex_1()
             .min_w_0()
-            .capture_action(cx.listener(move |this, _: &MoveDown, window, cx| {
-                let Some((chat, indice)) = primeiro.clone().filter(|_| this.aba == AbaLateral::Conversas) else {
+            .capture_action(cx.listener({
+                let primeiro = primeiro.clone();
+                move |this, _: &MoveDown, window, cx| {
+                    let Some((chat, indice)) = primeiro.clone().filter(|_| this.aba == AbaLateral::Conversas) else {
+                        return;
+                    };
+                    cx.stop_propagation();
+                    this.realce_lista = Some(chat);
+                    this.rolagem_lista.scroll_to_item(indice);
+                    window.focus(&this.foco_lista, cx);
+                    cx.notify();
+                }
+            }))
+            // Enter abre o primeiro resultado (Ctrl+Enter, ao lado) e põe o cursor na caixa dele:
+            // antes era preciso ↓ e Enter (teste de usabilidade, 16/11/2026).
+            .capture_action(cx.listener(move |this, acao: &Enter, window, cx| {
+                let Some((chat, _)) = primeiro.clone().filter(|_| this.aba == AbaLateral::Conversas) else {
                     return;
                 };
                 cx.stop_propagation();
-                this.realce_lista = Some(chat);
-                this.rolagem_lista.scroll_to_item(indice);
-                window.focus(&this.foco_lista, cx);
+                if acao.secondary {
+                    this.abrir_ao_lado(chat, None, window, cx);
+                } else {
+                    this.selecionar(Some(chat), window, cx);
+                }
+                this.focar_composer(window, cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| this.esc_na_busca(window, cx)))
@@ -1557,7 +1575,7 @@ impl Janela {
     }
 
     /// Põe o cursor na caixa de mensagem do painel ativo.
-    fn focar_composer(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focar_composer(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(composer) = self.composer_ativo() {
             let foco = composer.read(cx).focus_handle(cx);
             window.focus(&foco, cx);
@@ -1598,6 +1616,20 @@ impl Janela {
             self.focar_busca(window, cx);
             return;
         }
+        // Uma letra digitada com a lista em foco (depois de clicar num chat) vai para a caixa do
+        // painel ativo, que passa a ter o cursor: antes ela se perdia (teste de usabilidade,
+        // 16/11/2026). As setas, o Enter e o F2 continuam da lista.
+        let m = &ev.keystroke.modifiers;
+        if let Some(letra) = ev.keystroke.key_char.clone().filter(|l| !l.chars().any(char::is_control))
+            && !(m.control || m.alt || m.platform || m.function)
+            && let Some(composer) = self.composer_ativo()
+        {
+            cx.stop_propagation();
+            let foco = composer.read(cx).focus_handle(cx);
+            window.focus(&foco, cx);
+            composer.update(cx, |c, cx| c.insert(letra, window, cx));
+            return;
+        }
         let atual = self.realce_lista.as_ref().and_then(|id| nav.iter().position(|n| n.chat == *id));
         if let Some(ix) = posicao_do_realce(nav.len(), atual, tecla) {
             self.realce_lista = Some(nav[ix].chat.clone());
@@ -1610,7 +1642,12 @@ impl Janela {
             return;
         };
         match tecla {
-            "enter" if ev.keystroke.modifiers.control => self.abrir_ao_lado(n.chat.clone(), None, window, cx),
+            // O painel novo pode empurrar a lista para fora: o foco vai para a caixa dele, senão o
+            // teclado ficava sem dono até um clique (teste de usabilidade, 16/11/2026).
+            "enter" if ev.keystroke.modifiers.control => {
+                self.abrir_ao_lado(n.chat.clone(), None, window, cx);
+                self.focar_composer(window, cx);
+            }
             "enter" => {
                 self.selecionar(Some(n.chat.clone()), window, cx);
                 if n.pendencia {

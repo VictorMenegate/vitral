@@ -1001,8 +1001,13 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   clique simples abre o chat numa aba do painel ativo; clique duplo renomeia; Ctrl+clique ou o
   clique do meio abrem ao lado.
 - **Teclado na lista**: ↓ na busca entra na lista; ↑/↓, Home e End andam pelos cartões; Enter abre
-  (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado, F2 renomeia e Esc volta à busca.
-  Na busca, Esc limpa e, vazia, volta à caixa do painel.
+  (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado e põe o cursor na caixa do painel
+  novo, F2 renomeia e Esc volta à busca. Uma letra digitada com a lista em foco (depois de clicar
+  num chat) vai para a caixa do painel ativo, que fica com o cursor. Na busca, Enter abre o primeiro
+  resultado (Ctrl+Enter, ao lado) e põe o cursor na caixa dele; Esc limpa e, vazia, volta à caixa
+  do painel. O Ctrl+K seleciona o termo anterior, para a busca nova o trocar. Se a lista sai de
+  vista com o foco nela (um painel novo a empurrou, Ctrl+B, a janela estreitou), o foco vai para a
+  caixa do painel ativo.
 - **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone, com o número na dica; liga e desliga a
   vista das arquivadas; a busca acha as duas) e, com algo rodando, quantos agentes rodam no Vitral
   inteiro ("2 rodando"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.
