@@ -111,10 +111,11 @@ impl Janela {
 
 /// O diâmetro dos anéis no canto da janela.
 const DIAMETRO_NO_CANTO: f32 = 30.;
-/// A distância dos anéis do canto até a borda da direita da janela.
-const USO_DA_BORDA: f32 = 14.;
-/// A distância do topo da janela: a margem, o cabeçalho da conversa (onde fica o ×) e um respiro.
-const USO_DO_TOPO: f32 = 60.;
+/// A distância dos anéis do canto até a borda da direita da janela (a conversa encosta nela).
+const USO_DA_BORDA: f32 = 6.;
+/// A distância do topo da janela: o cabeçalho da conversa (onde fica o ×; a conversa encosta no
+/// topo) e um respiro.
+const USO_DO_TOPO: f32 = 52.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.

@@ -285,7 +285,8 @@ fn largura_util(window: &Window) -> f32 {
     let lado = |s: Pixels| if s > px(0.) { s.as_f32() + 1. } else { 0. };
     let largura = window.viewport_size().width.as_f32() - lado(sombra.left) - lado(sombra.right);
     let margem = tam(window, crate::tema::margem_da_janela().as_f32()).as_f32();
-    (largura - 2. * margem).max(0.)
+    // Só a da esquerda: a fileira das conversas encosta na direita da janela.
+    (largura - margem).max(0.)
 }
 
 /// Os arquivos de uma pasta na aba Arquivos.
@@ -1336,7 +1337,9 @@ impl Janela {
                         .id("fundo-gaveta")
                         .absolute()
                         .inset_0()
-                        .rounded(crate::tema::raio_da_peca())
+                        // A área das partes encosta no topo, na direita e embaixo da janela: só os
+                        // cantos da esquerda fazem a curva.
+                        .rounded_l(crate::tema::raio_da_peca())
                         .bg(Cores::veu().opacity(0.5 * t))
                         .occlude()
                         .on_any_mouse_down(
@@ -1361,7 +1364,10 @@ impl Janela {
                         .w(largura)
                         .flutuante(cx)
                         .bg(Cores::gaveta())
+                        // Curva nos lados soltos: a da lista, nos quatro cantos; a da direita, que
+                        // encosta na beirada da janela, só nos da esquerda.
                         .rounded(crate::tema::raio_da_peca())
+                        .when(gaveta == Gaveta::Direita, |s| s.rounded_r(crate::tema::raio_encostado(true)))
                         .occlude()
                         .map(|s| movimento::deslizar_gaveta(s, de, t))
                         .child(conteudo),
@@ -1640,8 +1646,10 @@ impl Render for Janela {
             .child(
                 h_flex()
                     .size_full()
-                    .p(crate::tema::margem_da_janela())
-                    .gap(crate::tema::vao_entre_pecas())
+                    // Margem só à esquerda: a fileira das conversas encosta no topo, na direita e
+                    // embaixo da janela (dono, 16/11/2026: "não tenha em cima, na direita e no meio
+                    // dos chats" e "tem que ficar sem embaixo também").
+                    .pl(crate::tema::margem_da_janela())
                     .items_start()
                     // O trilho virou a fileira de cima da lista: a coluna de ícones à esquerda
                     // saiu, e Ctrl+B continua escondendo as duas coisas de uma vez.
@@ -1746,12 +1754,11 @@ impl Janela {
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
         let janela = cx.entity().downgrade();
-        // Meio vão de cada lado de uma divisória: o vão entre as peças (entre a lista e o 1º
-        // painel, entre os painéis, entre o último e a direita) é o mesmo da margem da janela, em
-        // px da tela, como ela (dono, 16/11/2026: "a do meio dos chats tem que ficar igual das
-        // bordas"; o vão era 4 rem de cada lado e crescia com o zoom: uns 14 px contra os 10 da
-        // borda). A faixa de pegar da divisória é do kit, absoluta e mais larga que o vão: passa
-        // por cima da borda das peças, invisível, e não encolhe com ele.
+        // Meio vão de cada lado da divisória entre a lista e a 1ª conversa (o mesmo da margem da
+        // janela, em px da tela). Entre as conversas, e entre a última e a direita, não há vão: a
+        // fileira é uma peça só, emendada por divisórias de 1 px (dono, 16/11/2026: "no meio dos
+        // chats quero uma divisão simples e moderna"); o fio é da própria peça
+        // (`aresta_encostada`), e a faixa de pegar do kit fica em cima dele.
         let meio_vao = crate::tema::vao_entre_pecas() / 2.;
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
         let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}")))
@@ -1786,23 +1793,25 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.conversas[0]))
-                    .child(div().size_full().px(meio_vao).child(self.zona_de_soltura(0, conteudo, cx))),
+                    .child(
+                        div()
+                            .size_full()
+                            .when(larguras.lista.is_some(), |d| d.pl(meio_vao))
+                            .child(self.zona_de_soltura(0, conteudo, cx)),
+                    ),
             );
         } else {
-            let ultimo = self.paineis.len() - 1;
             for ix in 0..self.paineis.len() {
                 let id = self.paineis[ix].id;
                 let conteudo = self.conversa(motor, Some(ix), window, cx).into_any_element();
-                // Meio vão de cada lado, menos na beirada da janela: lá a margem é só a da janela,
-                // igual à de cima (o dono viu "a borda do lado maior que a de cima", 13/11/2026).
-                let na_esquerda = ix == 0 && larguras.lista.is_none();
-                let na_direita = ix == ultimo && !painel;
+                // Só a 1ª conversa, com a lista ao lado, guarda o meio vão da esquerda; sem a lista
+                // vale a margem da janela.
+                let depois_da_lista = ix == 0 && larguras.lista.is_some();
                 grupo = grupo.child(
                     resizable_panel().size(px(larguras.conversas[ix])).size_range(min_conversa..Pixels::MAX).child(
                         div()
                             .size_full()
-                            .when(!na_esquerda, |d| d.pl(meio_vao))
-                            .when(!na_direita, |d| d.pr(meio_vao))
+                            .when(depois_da_lista, |d| d.pl(meio_vao))
                             .child(self.zona_de_soltura(id, conteudo, cx)),
                     ),
                 );
@@ -1815,7 +1824,7 @@ impl Janela {
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
                     .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
                     .fixed()
-                    .child(div().size_full().pl(meio_vao).child(conteudo)),
+                    .child(div().size_full().child(conteudo)),
             );
         }
         grupo

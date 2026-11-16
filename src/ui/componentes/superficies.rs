@@ -53,6 +53,22 @@ pub trait Reflexo: ParentElement + Sized {
     fn aresta_de_vidro(self, raio: Pixels) -> Self {
         self.child(camada_de_aresta(raio))
     }
+
+    /// O vidro de uma peça da fileira das conversas (encostada no topo, na direita e embaixo):
+    /// a `aresta_encostada` do tema, com a divisória à esquerda na peça `emendada`. Depois dos
+    /// filhos, como a `aresta_de_vidro`.
+    fn aresta_encostada(self, emendada: bool) -> Self {
+        self.child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .rounded_l(crate::tema::raio_encostado(emendada))
+                .shadow(crate::tema::aresta_encostada(emendada)),
+        )
+    }
 }
 
 impl<T: ParentElement> Reflexo for T {}

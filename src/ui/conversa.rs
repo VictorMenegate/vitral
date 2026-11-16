@@ -595,16 +595,19 @@ impl Janela {
         } else {
             4.
         };
+        // A fileira das conversas encosta no topo, na direita e embaixo da janela, e cada conversa
+        // depois da primeira emenda na da esquerda por uma divisória de 1 px (dono, 16/11/2026).
+        // Só os cantos da esquerda da primeira fazem a curva; sem a sombra de cartão flutuante,
+        // que vazaria por cima da vizinha na emenda.
+        let emendada = ix.is_some_and(|ix| ix > 0);
+        let raio = crate::tema::raio_encostado(emendada);
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
             .size_full()
             .min_w_0()
-            .rounded(crate::tema::raio_da_peca())
+            .rounded_l(raio)
             .bg(Cores::cartao())
-            // O cartão flutua sobre a base. Com os fundos transparentes a sombra sai: debaixo de
-            // um cartão transparente ela só o escurecia (é pintada também por baixo da peça).
-            .when(crate::tema::transparencia() == 0, |s| s.shadow(crate::tema::sombra_flutuante()))
             .overflow_hidden()
             // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
             // caixa de mensagem: 200 de degradê e 200 cheios (por baixo do conteúdo).
@@ -627,7 +630,7 @@ impl Janela {
                                 .right_0()
                                 .bottom_0()
                                 .h(px(200.))
-                                .rounded_b(crate::tema::raio_da_peca())
+                                .rounded_bl(raio)
                                 .bg(Cores::cartao_opaco()),
                         ),
                 )
@@ -676,7 +679,7 @@ impl Janela {
                 // A doca está no fluxo: as mensagens terminam onde ela começa, e nenhum texto fica
                 // por cima do metal. O `overflow_hidden` do cartão corta reto, então a abertura leva
                 // o raio dos cantos de baixo.
-                let raio_doca = crate::tema::raio_da_peca();
+                let raio_doca = raio;
                 let doca = com_estado(move |window, cx| {
                     let topo = movimento::valor(
                         ("doca", painel_id as usize),
@@ -711,7 +714,7 @@ impl Janela {
                                     .child(abertura_lisa(
                                         Encaixe::Cobrir,
                                         Some(Cores::destaque().opacity(0.2)),
-                                        Corners { bottom_left: raio_doca, bottom_right: raio_doca, ..Default::default() },
+                                        Corners { bottom_left: raio_doca, ..Default::default() },
                                     ))
                                     // O escuro do cartão some devagar, da beirada de cima até o pé
                                     // (duas camadas de degradê dão a curva): o metal é uma luz que
@@ -739,7 +742,7 @@ impl Janela {
                                                 .w(relative(largura))
                                                 .bg(crate::tema::gradiente_do_lado_da_doca(direita));
                                             if direita {
-                                                lado.right_0().rounded_br(raio_doca)
+                                                lado.right_0()
                                             } else {
                                                 lado.left_0().rounded_bl(raio_doca)
                                             }
@@ -805,7 +808,7 @@ impl Janela {
                 s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
             })
             // O vidro da peça (fio, luz na quina de cima, sombra na base), por cima de tudo.
-            .aresta_de_vidro(crate::tema::raio_da_peca());
+            .aresta_encostada(emendada);
         // O painel ativo é marcado pela luz de baixo da doca (acima), não por borda nem cantoneira.
         // O que acabou de abrir ao lado entra só com o fade: a largura não anima.
         com_estado(move |window, cx| {

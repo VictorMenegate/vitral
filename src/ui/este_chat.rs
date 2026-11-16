@@ -56,8 +56,10 @@ impl Janela {
             .size_full()
             .flex()
             .flex_col()
-            .rounded(crate::tema::raio_da_peca())
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).shadow(crate::tema::sombra_flutuante()))
+            // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
+            // janela e emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
+            .when(self.gaveta == Some(Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()))
             .overflow_hidden()
             .child(cabecalho)
             .child(
@@ -75,7 +77,7 @@ impl Janela {
                     .child(div().flex_none().h(esp::E16))
                     .vertical_scrollbar(&self.rolagem_este_chat),
             )
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.aresta_de_vidro(crate::tema::raio_da_peca()))
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.aresta_encostada(true))
             .on_prepaint(self.medir_direita(cx))
     }
 

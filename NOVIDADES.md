@@ -256,8 +256,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Aro de foco contínuo.** O aro de metal em volta da caixa com foco (e da busca, da aba sob o
   ponteiro e do pedido que espera você) é igual nos quatro lados.
 - **Bordas mais finas.** As abas têm um contorno só, o fio preto de 1 px, e a moldura preta da
-  caixa de mensagem caiu de 4 para 2 px. O vão entre os painéis (e entre eles e a lista ou o
-  painel da direita) ficou igual à margem das bordas da janela.
+  caixa de mensagem caiu de 4 para 2 px. As conversas encostam no topo, na direita e embaixo da
+  janela, e entre uma e outra (e o painel da direita) o vão virou uma divisória de 1 px: a
+  fileira parece uma peça só, com os cantos da esquerda redondos. A lista continua separada dela
+  por um vão de 8 px.
 - **Abas que cabem.** Sem lugar para o título, a aba de fundo vira um quadrado só com o ícone
   (antes sobravam duas reticências), e a que está à vista guarda sempre o começo do título: sem
   lugar nem assim, as de fundo saem da faixa, e um "+N" no fim dela abre a lista das que saíram. Com muitas abas,

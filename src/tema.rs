@@ -282,6 +282,29 @@ pub fn aresta_de_vidro() -> Vec<BoxShadow> {
     ]
 }
 
+/// A aresta de uma peça da fileira das conversas, que encosta no topo, na direita e embaixo da
+/// janela (dono, 16/11/2026: "não tenha em cima, na direita e no meio dos chats; no meio dos chats
+/// uma divisão simples e moderna" e "sem embaixo também, com os cantos da esquerda redondos").
+/// Sem o fio da direita (lá é a beirada da janela ou a vizinha) e, na peça `emendada` à da
+/// esquerda, o fio da esquerda vira a divisória: 1 px no tom do traço, de cima a baixo. O brilho
+/// do topo fica; a sombra da base sai (ela dá na beirada da janela).
+pub fn aresta_encostada(emendada: bool) -> Vec<BoxShadow> {
+    let lado = |x: f32, y: f32, cor: Hsla| BoxShadow::new(px(x), px(y), cor).inset();
+    vec![
+        BoxShadow::new(px(0.), px(28.), Cores::brilho_de_dentro())
+            .blur_radius(px(12.))
+            .spread_radius(px(-12.))
+            .inset(),
+        lado(1., 0., if emendada { Cores::traco() } else { Cores::aro_da_peca() }),
+    ]
+}
+
+/// O raio dos cantos curvos de uma peça encostada: os dois da esquerda da primeira da fileira
+/// (os outros dão na beirada da janela ou na emenda com a vizinha).
+pub fn raio_encostado(emendada: bool) -> gpui_kit::Pixels {
+    if emendada { px(0.) } else { raio_da_peca() }
+}
+
 /// Tecla, no que está em relevo e escolhido (a pílula do segmentado, a tecla de atalho): luz de
 /// 1 px em cima e sombra de 1 px embaixo, por dentro. Nunca em cada linha de uma lista.
 pub fn aresta_de_tecla() -> Vec<BoxShadow> {
