@@ -32,7 +32,7 @@ use super::{
         Alerta, AnelGirando, BotaoCopiar, BotaoDeSegurar, CabecalhoDeSecao, EstadoDaMoldura, Etiqueta, azulejo,
         botao_claro, miolo_da_moldura, moldura_dupla, CaixaDeCodigo, EstadoVazio, FaixaCaixa, Flutuante as _,
         LarguraPainel, Marca, Papel as Quem, Selo, TamanhoBotao, Tom, botao_fantasma, botao_icone, botao_primario, relogio,
-        contagem, icone_do_modo, teclas, texto_arco_iris,
+        contagem, icone_do_modo, motivo_curto, teclas, texto_arco_iris,
     },
     busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
     composer::{self, PararTurno, nome_do_modo},
@@ -2254,6 +2254,9 @@ impl Janela {
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {
             // Na linha de estado da caixa (o `return` de cima).
             Situacao::Rodando { .. } => return None,
+            // No formato da lista e do sino ("Parada · Vitral fechou"), com o motivo inteiro na
+            // dica: o cru do motor saía cortado em todo painel parado. O longo que não encurta
+            // quebra em duas linhas (relatório de design, 16/11/2026).
             Situacao::Parada { motivo, atencao } => (
                 h_flex()
                     .flex_1()
@@ -2264,7 +2267,19 @@ impl Janela {
                     } else {
                         Cores::tenue()
                     }))
-                    .child(texto(format!("Parada: {motivo}")))
+                    .child({
+                        let curto = motivo_curto(&motivo);
+                        let dica = (curto != motivo).then(|| SharedString::from(format!("Parada: {motivo}")));
+                        div()
+                            .id(("faixa-parada", painel_id as usize))
+                            .min_w_0()
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .text_size(r(13.))
+                            .line_height(r(18.))
+                            .child(format!("Parada · {curto}"))
+                            .when_some(dica, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)))
+                    })
                     .into_any_element(),
                 Some(
                     botao_fantasma("faixa-retomar", Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Barra, window, cx)
@@ -2352,7 +2367,8 @@ impl Janela {
                 .map(coluna)
                 .pl(recuo)
                 .pr(fim)
-                .h(r(28.))
+                // Pelo menos 28: o motivo longo da parada pode ocupar duas linhas.
+                .min_h(r(28.))
                 .gap(esp::E8)
                 .text_color(Cores::tenue())
                 .child(esquerda)

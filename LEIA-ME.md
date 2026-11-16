@@ -451,7 +451,8 @@ ferramentas, vale por painel).
   segundo plano…". Nas larguras menores saem o
   "ação N", o rótulo do Esc e, na mínima, o relógio. Acima da caixa (`faixa_atividade`), alinhada
   com o texto dela e, à direita, com o enviar, que entra com um fade e 8 px de baixo, só fica o que
-  pede um botão seu: **Parada** com **Retomar** (âmbar quando foi o Vitral que parou), **O último
+  pede um botão seu: **Parada** com **Retomar** (âmbar quando foi o Vitral que parou; o motivo no
+  formato da lista e do sino, "Parada · Vitral fechou", com o motivo inteiro na dica), **O último
   turno falhou** com **Tentar de novo**, mensagens esperando com **Entregar agora** e a pasta do
   chat que sumiu do disco. Esperando você, ela some (o pedido está logo abaixo).
 - **Planejar.** O plano aparece num cartão com a faixa âmbar em cima e o modo em que a conversa

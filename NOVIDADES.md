@@ -115,7 +115,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   deixa o lugar dos anéis; sem ele, as mensagens, a faixa e a caixa do último painel terminam na
   mesma linha, ao lado dos anéis.
 - **Menos texto cortado.** O título "Enquanto você esteve fora" quebra em duas linhas na lista
-  estreita, em vez de virar "Enquanto voc…".
+  estreita, em vez de virar "Enquanto voc…". A faixa de cima da caixa diz "Parada · Vitral
+  fechou", como a lista, com o motivo inteiro na dica.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 
