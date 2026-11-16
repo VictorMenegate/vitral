@@ -536,8 +536,14 @@ ferramentas, vale por painel).
   o turno rodando tem lista própria (`src/ui/fila.rs`), aberta pela pílula da fila (na linha de
   estado da caixa, com o chat trabalhando, ou na faixa acima dela), dentro do painel e acima da
   caixa de mensagem: cada
-  mensagem esperando numa linha, com o × que devolve o texto à caixa e, com o chat parado,
-  **Entregar agora** no rodapé (a faixa acima da caixa não repete o botão com a fila aberta). A
+  mensagem esperando numa linha, com o × que devolve a mensagem inteira à caixa (o texto, os
+  anexos e o Ultrathink ou Ultracode dela; com algo escrito na caixa, o texto se junta ao fim,
+  depois de uma linha em branco, os anexos se somam às pílulas e o Ctrl+Z desfaz a junção), o lápis
+  que edita ali mesmo, na linha (Ctrl+Enter salva, Esc desiste; se a fila andou enquanto isso,
+  nada é trocado) e, com o chat parado, **Entregar agora** no rodapé (a faixa acima da caixa não
+  repete o botão com a fila aberta). Com o turno rodando, a caixa vazia e algo seu na fila, a seta
+  para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
+  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3). A
   lista mostra umas três mensagens antes de rolar e guarda à direita o lugar da barra de rolagem,
   que segurava o clique do ×; o que a fila faz fica na dica do título. Fora do painel largo, o
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do

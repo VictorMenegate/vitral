@@ -1433,8 +1433,9 @@ impl Motor {
     }
 
     /// Tira da fila a mensagem na posição `indice` (a mesma de `fila_do_chat`): ela não vai mais
-    /// ao Claude. Devolve o texto dela, para a caixa ou para o aviso.
-    pub fn tirar_da_fila(&mut self, chat: &str, indice: usize, cx: &mut Context<Self>) -> Option<String> {
+    /// ao Claude. Devolve a mensagem inteira (o texto, os anexos e o reforço), para a caixa: nada
+    /// do que foi escrito ou colado se perde num × (rodada de uso, item 1.3).
+    pub fn tirar_da_fila(&mut self, chat: &str, indice: usize, cx: &mut Context<Self>) -> Option<Entrada> {
         let fila = self.filas.get_mut(chat)?;
         if indice >= fila.len() || fila[indice].nota {
             return None;
@@ -1445,7 +1446,7 @@ impl Motor {
         }
         self.salvar();
         cx.notify();
-        Some(entrada.texto)
+        Some(entrada)
     }
 
     /// Troca o texto de uma mensagem da fila (o índice é o de `fila_do_chat`). Texto vazio não

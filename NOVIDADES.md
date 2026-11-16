@@ -51,6 +51,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Ctrl+K como seletor rápido.** Com a lista recolhida, o Ctrl+K a abre por cima dos painéis e
   ela recolhe sozinha ao abrir o chat. Com texto na busca, o primeiro resultado já vem marcado, e as
   setas movem a marca sem tirar o cursor do campo. No histórico do "+", o que espera você vem no alto.
+- **Fila que não perde nada.** O × da fila devolve a mensagem inteira à caixa, com os anexos e o
+  Ultrathink ou Ultracode, e com algo escrito ela se junta ao fim (Ctrl+Z desfaz). Com o turno
+  rodando e a caixa vazia, a seta para cima traz de volta a última da fila. O lápis edita na própria
+  linha, sem diálogo (Ctrl+Enter salva, Esc desiste).
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

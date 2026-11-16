@@ -128,6 +128,15 @@ impl Janela {
             .iter()
             .find(|p| p.id == painel)
             .is_some_and(|p| !p.composer.read(cx).value().trim().is_empty());
+        // Com o turno rodando, a caixa vazia e algo seu na fila, a seta para cima traz a última da
+        // fila de volta, sem tocar no turno (rodada de uso, item 1.3).
+        if !parar
+            && !caixa_com_texto
+            && motor.read(cx).execucao(&chat).rodando()
+            && self.trazer_da_fila(painel, &chat, window, cx)
+        {
+            return;
+        }
         let (ix, rodando, tem_sessao) = {
             let m = motor.read(cx);
             let Some(c) = m.chat(&chat) else {

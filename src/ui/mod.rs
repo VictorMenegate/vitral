@@ -446,6 +446,8 @@ pub struct Janela {
     direita_compacta: bool,
     /// Os avisos do canto que você dispensou no × (a chave do pedido ou da falha).
     avisos_dispensados: HashSet<String>,
+    /// A mensagem da fila que está sendo editada na própria linha (item 1.3).
+    editando_fila: Option<fila::EdicaoNaFila>,
     /// O último filtro do menu "@" (a pasta, o digitado, a lista lida e o arquivo aberto) e o que
     /// achou: o menu é pedido várias vezes por quadro, e a lista tem milhares de arquivos.
     #[allow(clippy::type_complexity)]
@@ -650,6 +652,7 @@ impl Janela {
             direita_compacta: true,
             avisos_dispensados: HashSet::new(),
             mencoes: Default::default(),
+            editando_fila: None,
         };
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
