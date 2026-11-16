@@ -163,19 +163,25 @@ pub fn apagar_pasta(id: &str) {
 /// quando o navegador não consegue voltar (outra máquina, por exemplo).
 pub struct Login {
     pub id: String,
-    pub pasta: PathBuf,
+    /// A pasta da conta extra; `None` na principal, que usa a configuração padrão do Claude Code.
+    pub pasta: Option<PathBuf>,
     filho: Child,
     entrada: Option<ChildStdin>,
 }
 
 impl Login {
     /// Começa o login e devolve o endereço que o usuário precisa abrir (o próprio Claude Code
-    /// também tenta abrir o navegador).
+    /// também tenta abrir o navegador). Na principal, refaz o login padrão do Claude Code (o
+    /// "Entrar de novo" das Contas, item 8.3); numa extra, o da pasta dela, que já existe ou é
+    /// criada agora.
     pub fn iniciar(id: &str) -> Result<(Self, String)> {
-        let pasta = preparar_pasta(id)?;
-        let mut filho = novo_comando(binario_claude())
-            .args(["auth", "login", "--claudeai"])
-            .env("CLAUDE_CONFIG_DIR", &pasta)
+        let pasta = if id == PRINCIPAL { None } else { Some(preparar_pasta(id)?) };
+        let mut comando = novo_comando(binario_claude());
+        comando.args(["auth", "login", "--claudeai"]);
+        if let Some(pasta) = &pasta {
+            comando.env("CLAUDE_CONFIG_DIR", pasta);
+        }
+        let mut filho = comando
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -241,7 +247,7 @@ impl Login {
             }
             bail!("o login falhou: {}", erro.trim());
         }
-        status(Some(&self.pasta))
+        status(self.pasta.as_deref())
     }
 }
 

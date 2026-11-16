@@ -284,10 +284,17 @@ componentes do GPUI Kit.
   que parou) e ganha **Retomar** no cartão da lista, na direita e no fim da conversa. Um chat
   cortado no meio do turno também. O aviso ao reabrir sai uma vez só.
 - **Chat que cai** (processo que morre ou não abre, erro da API): o turno termina com erro, a faixa
-  acima da caixa diz em poucas palavras o que foi ("Limite de uso do Codex · volta 12:30", "Sem
+  acima da caixa diz em poucas palavras o que foi ("Limite de uso do Codex · volta às 12:30", "Sem
   login no Claude Code", "Sem conexão", "Serviço sobrecarregado", "Conversa longa demais para o
-  modelo" ou "O último turno falhou") com **Tentar de novo**, e com a janela em segundo plano
-  vem a notificação. Nada tenta de novo sozinho. Na conversa, o erro vira o **cartão de erro**
+  modelo" ou, no resto, a primeira linha do erro), com o texto inteiro na dica e **Tentar de
+  novo**, e com a janela em segundo plano vem a notificação "Parou com erro: <primeira linha>"
+  (com urgência: fica na tela do GNOME até o clique). Duas causas ganham saída própria na faixa.
+  No limite de uma conta escolhida à mão, se outra conta tem login e folga, a faixa diz "Limite da
+  <conta> · volta 15:42" e oferece **Continuar na <outra>**: a conta do chat passa a ser a outra
+  (o seletor de modelo mostra, e é por lá que se volta) e o mesmo turno roda de novo, sem o
+  Ultracode. Sem outra conta com folga, fica "Limite do plano · volta às 15:42" com Tentar de
+  novo. No login perdido, a faixa diz "Login da <conta> caiu" e oferece **Entrar de novo**, que
+  abre as Contas do Claude já refazendo o login dessa conta. Nada tenta de novo sozinho. Na conversa, o erro vira o **cartão de erro**
   (`src/ui/mensagens/erros.rs` lê o texto; `CartaoDeErro` desenha): o ícone na cor do assunto
   (vermelho quando o turno não pôde seguir, azul-claro quando precisa de você, âmbar quando seguiu
   com ressalva, neutro na rede e no serviço sobrecarregado) num véu de 6%, o título em português,
@@ -296,7 +303,8 @@ componentes do GPUI Kit.
   domínio e clicáveis (aberto quando o Vitral não conhece o erro). No erro vivo (o último, sem
   mensagem sua depois e com o turno parado) entram até duas ações: **Ver o uso** e **Continuar no
   Claude** no limite do Codex; **Contas do Claude** e **Continuar no Codex** no limite do Claude;
-  **Entrar de novo** (ou **Entrar no Codex**) no login perdido; **Instalar o Codex**; **Compactar**
+  **Entrar de novo** (que abre as Contas já no login da conta que caiu) ou **Entrar no Codex** no
+  login perdido; **Instalar o Codex**; **Compactar**
   na conversa longa demais. O Continuar troca quem responde e repete o turno; na dupla (o Claude e
   o Codex no mesmo chat), passa a vez ao outro. O **Tentar de novo** fica só na faixa. O limite do
   plano com outra conta livre continua trocando de conta sozinho, sem cartão. O login perdido sem
@@ -917,6 +925,13 @@ clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como pad
 **Copiar o e-mail** e, nas extras, **Desconectar…**. **Entrar com outra conta…** mostra dois passos:
 o navegador (com **Abrir de novo** e **Copiar endereço**, que vira "Copiado" por um instante) e o
 código da página, com **Entrar**; se falhar, o erro aparece ali com **Tentar de novo**.
+
+A conta que perdeu o login mostra a pílula **sem login** no lugar do uso e o botão **Entrar de
+novo** à vista. Ele refaz o login nessa mesma conta (na principal, o login padrão do Claude Code),
+pelos mesmos dois passos, e a conta volta para a escolha; o nome se mantém. Se o login falhar, a
+pasta da conta fica (só a de uma conta nova é apagada). Se o login voltar com outro e-mail, o
+Vitral avisa e não troca nada. O **Entrar de novo** do cartão de erro e o da faixa do turno abrem
+este diálogo já no login da conta que caiu.
 
 Cada conta extra tem uma pasta própria só com o login; CLAUDE.md, configurações, skills, plugins
 e o histórico das conversas são compartilhados com o seu Claude Code, então uma conversa continua

@@ -43,6 +43,9 @@ pub struct PainelContas {
     erro: Option<String>,
     /// Aberto pelo "Entrar com outra conta…": a lista fica numa linha até o "Ver".
     lista_recolhida: bool,
+    /// O login em andamento é o "Entrar de novo" desta conta, que já existe (item 8.3): o fim não
+    /// cria conta nova, e a falha não apaga a pasta dela.
+    refazendo: Option<String>,
     /// "Copiar endereço" acabou de copiar: o botão diz "Copiado" por um instante.
     copiado: bool,
     _copiado: Task<()>,
@@ -66,6 +69,7 @@ impl PainelContas {
             codigo,
             erro: None,
             lista_recolhida: false,
+            refazendo: None,
             copiado: false,
             _copiado: Task::ready(()),
             _assinaturas: assinaturas,
@@ -80,10 +84,30 @@ impl PainelContas {
 
     /// Começa o login de uma conta nova.
     pub(super) fn adicionar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refazendo = None;
+        self.comecar_login(novo_id(), window, cx);
+    }
+
+    /// "Entrar de novo" na conta que perdeu o login (dono, 16/11/2026: rodada de uso, item 8.3):
+    /// refaz o login nessa mesma conta (na principal, o login padrão do Claude Code), em vez de
+    /// criar uma conta nova com o mesmo e-mail e deixar a velha para limpar à mão.
+    pub(super) fn entrar_de_novo(&mut self, conta: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.refazendo = Some(conta.clone());
+        self.comecar_login(conta, window, cx);
+    }
+
+    /// O "Tentar de novo" do erro: o mesmo login que falhou.
+    fn de_novo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.refazendo.clone() {
+            Some(conta) => self.entrar_de_novo(conta, window, cx),
+            None => self.adicionar(window, cx),
+        }
+    }
+
+    fn comecar_login(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.estado = EstadoLogin::Abrindo;
         self.erro = None;
         cx.notify();
-        let id = novo_id();
         let tarefa = cx.background_spawn(async move { Login::iniciar(&id) });
         cx.spawn_in(window, async move |this, cx| {
             let resultado = tarefa.await;
@@ -130,6 +154,30 @@ impl PainelContas {
         let quantas = self.motor.read(cx).contas.len();
         self.estado = EstadoLogin::Parado;
         self.codigo.update(cx, |c, cx| c.set_value("", window, cx));
+        // O "Entrar de novo" de uma conta que já existe: ela continua a mesma (o nome se mantém).
+        if self.refazendo.as_deref() == Some(id.as_str()) {
+            let conta = self.motor.read(cx).contas.iter().find(|c| c.id == id).cloned();
+            match (resultado, conta) {
+                (Ok((email, plano)), Some(conta)) => {
+                    // Voltou com outro e-mail: a conta não troca de dona; avisa e fica sem login.
+                    if !conta.email.is_empty() && !email.is_empty() && !email.eq_ignore_ascii_case(&conta.email) {
+                        self.erro = Some(format!(
+                            "O login voltou com {email}, e esta conta é {}. Nada foi trocado: entre de novo com {}.",
+                            conta.email, conta.email
+                        ));
+                    } else {
+                        self.refazendo = None;
+                        self.motor.update(cx, |m, cx| m.login_refeito(&id, plano, cx));
+                        window.push_notification(aviso(Tom::Pronto, format!("Login da {} refeito", conta.nome)), cx);
+                    }
+                }
+                // A pasta de uma conta que já existe nunca é apagada aqui.
+                (Err(erro), _) => self.erro = Some(format!("{erro:#}")),
+                (Ok(_), None) => self.refazendo = None,
+            }
+            cx.notify();
+            return;
+        }
         match resultado {
             Ok((email, plano)) => {
                 let nome = email
@@ -193,8 +241,12 @@ impl PainelContas {
         if let EstadoLogin::EsperandoCodigo { login, .. } = std::mem::replace(&mut self.estado, EstadoLogin::Parado) {
             let id = login.id.clone();
             drop(login);
-            contas::apagar_pasta(&id);
+            // Só a pasta de uma conta nova: a de uma que já existe fica.
+            if self.refazendo.as_deref() != Some(id.as_str()) {
+                contas::apagar_pasta(&id);
+            }
         }
+        self.refazendo = None;
         cx.notify();
     }
 
@@ -214,7 +266,7 @@ impl PainelContas {
     /// Uma conta: o anel de uso (5 h por fora, a semana por dentro, como no trilho), o login e o
     /// plano, o uso (ou quando volta do limite), o "…" e o check na padrão. O clique a torna a
     /// padrão da pasta.
-    fn linha_conta(&self, ix: usize, conta: &Conta, escolhida: bool, window: &Window, cx: &App) -> CartaoDeLista {
+    fn linha_conta(&self, ix: usize, conta: &Conta, escolhida: bool, window: &Window, cx: &Context<Self>) -> CartaoDeLista {
         let m = self.motor.read(cx);
         let uso = m.uso_da_conta(&conta.id);
         let principal = conta.id == contas::PRINCIPAL;
@@ -232,7 +284,11 @@ impl PainelContas {
             .semana(semana)
             .diametro(36.)
             .bloqueado(uso.bloqueado);
-        let meta = if uso.bloqueado {
+        let sem_login = m.conta_sem_login(&conta.id);
+        let meta = if sem_login {
+            // Sem login, o uso não diz nada: a pílula no lugar dele, e o "Entrar de novo" à vista.
+            PilulaDeEstado::new(Estado::ParadoAtencao).rotulo("sem login").into_any_element()
+        } else if uso.bloqueado {
             let mut pilula = PilulaDeEstado::new(Estado::Erro).rotulo("no limite");
             if let Some(fim) = m.limite_vence(&conta.id) {
                 pilula = pilula.detalhe(format!("volta {}", quando_local(fim)));
@@ -251,11 +307,21 @@ impl PainelContas {
         };
         let menu = self.menu_conta(ix, conta, escolhida, window, cx);
         let escolher = (self.motor.clone(), conta.id.clone());
+        let entrar = sem_login.then(|| {
+            let id = conta.id.clone();
+            let refazendo = self.refazendo.as_deref() == Some(conta.id.as_str()) && !matches!(self.estado, EstadoLogin::Parado);
+            botao_fantasma(("conta-entrar", ix), Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Linha, window, cx)
+                .disabled(refazendo)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.entrar_de_novo(id.clone(), window, cx)
+                }))
+        });
         CartaoDeLista::new(("conta", ix), conta.nome.clone())
             .simbolo(Simbolo::Elemento(anel.into_any_element()))
             .subtitulo(subtitulo)
             .meta(meta)
-            .acao_fixa(acoes_da_linha(Some(menu), escolhida))
+            .acao_fixa(div().flex().items_center().gap(esp::E6).children(entrar).child(acoes_da_linha(Some(menu), escolhida)))
             .on_click(move |_, _, cx| escolher_conta(&escolher.0, &escolher.1, cx))
     }
 
@@ -531,7 +597,7 @@ impl Render for PainelContas {
         let erro = self.erro.clone().map(|erro| {
             Alerta::new(Tom::Erro, erro).titulo("Não deu para entrar").acao(
                 botao_fantasma("login-de-novo", Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
-                    .on_click(cx.listener(|this, _, window, cx| this.adicionar(window, cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.de_novo(window, cx))),
             )
         });
         div().flex().flex_col().gap(r(16.)).child(lista).children(erro).child(login)

@@ -518,8 +518,7 @@ pub(super) fn precede_o_erro(texto: &str) -> bool {
 /// prefixo).
 pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Lucide, Option<Hsla>, String) {
     let texto = texto_da_execucao.trim();
-    let agente = agente_do_erro(texto, agente_do_chat);
-    let tipo = if PREFIXOS_DO_VITRAL.iter().any(|p| texto.starts_with(p)) { TipoDeErro::Desconhecido } else { tipo_do_cru(texto) };
+    let (tipo, agente) = tipo_da_execucao(texto, agente_do_chat);
     match tipo {
         TipoDeErro::Limite => {
             let base = match agente {
@@ -527,7 +526,7 @@ pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Luci
                 Agente::Claude => "Limite do plano",
             };
             let rotulo = match hora_de_volta(texto) {
-                Some(hora) => format!("{base} · volta {hora}"),
+                Some(hora) => format!("{base} · volta às {hora}"),
                 None => base.to_string(),
             };
             (Lucide::Gauge, Some(Cores::vermelho()), rotulo)
@@ -536,8 +535,25 @@ pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Luci
         TipoDeErro::Rede => (Lucide::WifiOff, None, "Sem conexão".into()),
         TipoDeErro::Sobrecarga => (Lucide::Clock, None, "Serviço sobrecarregado".into()),
         TipoDeErro::Contexto => (Lucide::Minimize, Some(Cores::vermelho()), "Conversa longa demais para o modelo".into()),
-        _ => (Lucide::CircleX, Some(Cores::vermelho()), "O último turno falhou".into()),
+        // O resto não se classifica: a primeira linha do erro, curta, diz mais que "O último turno
+        // falhou" (rodada de uso, item 3.2); o texto inteiro vai na dica da faixa.
+        _ => (Lucide::CircleX, Some(Cores::vermelho()), primeira_linha_curta(texto)),
     }
+}
+
+/// O tipo e o agente do erro da execução, como a faixa os lê: os textos do próprio Vitral não são
+/// lidos como texto do agente.
+pub(super) fn tipo_da_execucao(texto: &str, agente_do_chat: Agente) -> (TipoDeErro, Agente) {
+    let texto = texto.trim();
+    let agente = agente_do_erro(texto, agente_do_chat);
+    let tipo = if PREFIXOS_DO_VITRAL.iter().any(|p| texto.starts_with(p)) { TipoDeErro::Desconhecido } else { tipo_do_cru(texto) };
+    (tipo, agente)
+}
+
+/// A primeira linha com texto, em até 120 letras (a faixa ainda corta com reticências).
+pub(super) fn primeira_linha_curta(texto: &str) -> String {
+    let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("O último turno falhou");
+    if linha.chars().count() > 120 { format!("{}…", linha.chars().take(119).collect::<String>().trim_end()) } else { linha.to_string() }
 }
 
 /// A primeira letra em maiúscula ("o processo caiu." vira "O processo caiu.").
@@ -765,12 +781,17 @@ mod testes {
     #[test]
     fn faixa_curta() {
         let (icone, cor, rotulo) = na_faixa(CODEX_DO_DONO, Agente::Codex);
-        assert_eq!(rotulo, "Limite de uso do Codex · volta 12:30");
+        assert_eq!(rotulo, "Limite de uso do Codex · volta às 12:30");
         assert!(matches!(icone, Lucide::Gauge));
         assert!(cor.is_some());
-        assert_eq!(na_faixa("algo", Agente::Claude).2, "O último turno falhou");
-        assert_eq!(na_faixa("You've hit your limit · resets 3pm", Agente::Claude).2, "Limite do plano · volta 15:00");
+        assert_eq!(na_faixa("algo", Agente::Claude).2, "algo");
+        assert_eq!(na_faixa("\n  Error: spawn ENOENT\nstack", Agente::Claude).2, "Error: spawn ENOENT");
+        assert_eq!(na_faixa("", Agente::Claude).2, "O último turno falhou");
+        assert_eq!(na_faixa("You've hit your limit · resets 3pm", Agente::Claude).2, "Limite do plano · volta às 15:00");
         assert_eq!(na_faixa("OAuth token revoked", Agente::Claude).2, "Sem login no Claude Code");
-        assert_eq!(na_faixa("Os agentes em segundo plano não terminaram: o processo caiu.", Agente::Claude).2, "O último turno falhou");
+        assert_eq!(
+            na_faixa("Os agentes em segundo plano não terminaram: o processo caiu.", Agente::Claude).2,
+            "Os agentes em segundo plano não terminaram: o processo caiu."
+        );
     }
 }

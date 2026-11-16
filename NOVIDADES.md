@@ -23,6 +23,14 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   plano, Tentar de novo) ali mesmo. Ele fica até ser respondido e nunca pega o foco da caixa. Com
   a janela atrás, o pedido de permissão fica na tela do GNOME até o clique. Desliga em
   Configurações, **Avisar dentro do app**.
+- **Falha que diz a causa e já oferece a saída.** A faixa acima da caixa mostra a primeira linha do
+  erro (o texto inteiro na dica). No limite de uma conta escolhida à mão, com outra conta livre,
+  **Continuar na <outra>** troca a conta do chat e repete o turno num clique. No login perdido,
+  **Entrar de novo** abre as Contas já refazendo o login daquela conta. O turno com erro passa a
+  notificar com a janela atrás.
+- **Entrar de novo na conta que perdeu o login.** Nas Contas do Claude, a conta sem login mostra
+  "sem login" e o botão **Entrar de novo**, que refaz o login nela mesma, sem criar uma conta
+  duplicada.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

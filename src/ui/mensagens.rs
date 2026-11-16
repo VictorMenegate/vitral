@@ -936,7 +936,27 @@ impl Janela {
                 acoes.push(contas("Contas do Claude", Lucide::CircleUserRound, "contas"));
                 continuar(&mut acoes);
             }
-            (TipoDeErro::Login, Agente::Claude) => acoes.push(contas("Entrar de novo", Lucide::KeyRound, "entrar")),
+            // As Contas já no login da conta que caiu, e não na lista (rodada de uso, item 8.3).
+            (TipoDeErro::Login, Agente::Claude) => {
+                let m = contexto.motor;
+                let conta = m
+                    .conta_do_ultimo_turno(&chat.id)
+                    .filter(|c| m.conta_sem_login(&c.id))
+                    .or_else(|| m.contas.iter().find(|c| m.conta_sem_login(&c.id)))
+                    .map(|c| c.id.clone());
+                acoes.push(
+                    fantasma(
+                        id("entrar"),
+                        Some(Lucide::KeyRound),
+                        "Entrar de novo",
+                        TamanhoBotao::Linha,
+                        cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(conta.clone(), window, cx)),
+                        window,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+            }
             (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar("Entrar no Codex", Lucide::KeyRound, "entrar")),
             (TipoDeErro::SemCodex, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
             (TipoDeErro::Contexto, Agente::Claude) => {
@@ -3266,34 +3286,76 @@ impl Janela {
                 ),
             ),
             // O que falhou, em poucas palavras (balão e cartão de erro, 16/11/2026): "Limite de uso
-            // do Codex · volta 12:30" diz mais que "O último turno falhou".
-            Situacao::Falhou => (
-                {
-                    let (icone, cor, rotulo) = match motor.execucao(&chat.id) {
-                        Execucao::Erro(texto) => erros::na_faixa(&texto, chat.agente),
-                        _ => (Lucide::CircleX, Some(Cores::vermelho()), "O último turno falhou".into()),
-                    };
+            // do Codex · volta 12:30" diz mais que "O último turno falhou". Só o limite e o login
+            // ganham saída própria, porque o motor sabe essas duas causas com certeza; no resto, a
+            // primeira linha do erro, com o texto inteiro na dica (rodada de uso, item 3.2).
+            Situacao::Falhou => {
+                let cru = match motor.execucao(&chat.id) {
+                    Execucao::Erro(texto) => texto,
+                    _ => String::new(),
+                };
+                let (mut icone, mut cor, mut rotulo) = erros::na_faixa(&cru, chat.agente);
+                let (tipo, agente) = erros::tipo_da_execucao(&cru, chat.agente);
+                let conta = motor.conta_do_ultimo_turno(&chat.id).cloned();
+                let tentar_de_novo = || {
+                    botao_fantasma("faixa-tentar", Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
+                        .on_click(tentar)
+                        .into_any_element()
+                };
+                let acao = match (tipo, agente) {
+                    // No limite de uma conta escolhida à mão, com outra com login e folga: um clique
+                    // troca a conta do chat e repete o turno (eram 4 passos por painel).
+                    (erros::TipoDeErro::Limite, Agente::Claude) => match (conta.as_ref(), motor.outra_conta_com_folga(chat)) {
+                        (Some(atual), Some(outra)) => {
+                            let volta = erros::hora_de_volta(&cru).map(|h| format!(" · volta {h}")).unwrap_or_default();
+                            rotulo = format!("Limite da {}{volta}", atual.nome);
+                            let (motor_e, id, destino) = (self.motor.clone(), chat.id.clone(), outra.id.clone());
+                            let dica = format!("A conta deste chat passa a ser a {}; volta-se pelo seletor de modelo.", outra.nome);
+                            botao_fantasma("faixa-outra-conta", Some(Lucide::Shuffle.into()), format!("Continuar na {}", outra.nome), TamanhoBotao::Barra, window, cx)
+                                .tooltip(dica)
+                                .on_click(move |_, _, cx| {
+                                    if let Some(m) = &motor_e {
+                                        m.update(cx, |m, cx| m.continuar_em_outra_conta(&id, &destino, cx));
+                                    }
+                                })
+                                .into_any_element()
+                        }
+                        _ => tentar_de_novo(),
+                    },
+                    // O login da conta caiu: "Entrar de novo" abre as Contas já no login dela (8.3).
+                    (erros::TipoDeErro::Login, Agente::Claude) => {
+                        let sem_login = conta.filter(|c| motor.conta_sem_login(&c.id));
+                        if let Some(c) = &sem_login {
+                            (icone, cor, rotulo) = (Lucide::KeyRound, Some(Cores::espera()), format!("Login da {} caiu", c.nome));
+                        }
+                        let id_conta = sem_login.map(|c| c.id);
+                        botao_fantasma("faixa-entrar", Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Barra, window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(id_conta.clone(), window, cx)))
+                            .into_any_element()
+                    }
+                    _ => tentar_de_novo(),
+                };
+                let dica = SharedString::from(if cru.trim().is_empty() { rotulo.clone() } else { cru.trim().to_string() });
+                (
                     h_flex()
                         .flex_1()
                         .min_w_0()
                         .gap(r(8.))
                         .child(icone_de(icone, 14.).text_color(cor.unwrap_or(Cores::tenue())))
-                        .child(texto(rotulo))
-                        .into_any_element()
-                },
-                Some(
-                    botao_fantasma(
-                        "faixa-tentar",
-                        Some(Lucide::RotateCw.into()),
-                        "Tentar de novo",
-                        TamanhoBotao::Barra,
-                        window,
-                        cx,
-                    )
-                    .on_click(tentar)
-                    .into_any_element(),
-                ),
-            ),
+                        .child(
+                            div()
+                                .id(("faixa-erro", painel_id as usize))
+                                .min_w_0()
+                                .truncate()
+                                .text_size(r(13.))
+                                .line_height(r(18.))
+                                .child(rotulo)
+                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                        )
+                        .into_any_element(),
+                    Some(acao),
+                )
+            }
             Situacao::OrigemSumiu { pasta } => (
                 h_flex()
                     .flex_1()

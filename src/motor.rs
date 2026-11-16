@@ -2111,6 +2111,62 @@ impl Motor {
         self.sem_login.contains(id)
     }
 
+    /// A conta que rodou o último turno do chat (a que bateu no limite ou perdeu o login).
+    pub fn conta_do_ultimo_turno(&self, chat: &str) -> Option<&Conta> {
+        let id = self.conta_do_turno.get(chat)?;
+        self.contas.iter().find(|c| &c.id == id)
+    }
+
+    /// No limite de uma conta escolhida à mão: outra conta com login e folga, a de menor uso
+    /// (rodada de uso, item 3.2). Na Automática a troca já é sozinha (`trocar_de_conta`).
+    pub fn outra_conta_com_folga(&self, chat: &Chat) -> Option<Conta> {
+        if chat.agente != Agente::Claude {
+            return None;
+        }
+        let atual = self.conta_do_turno.get(&chat.id)?;
+        self.contas
+            .iter()
+            .filter(|c| &c.id != atual && !self.sem_login.contains(&c.id) && !self.uso_da_conta(&c.id).bloqueado)
+            .min_by_key(|c| (self.uso_da_conta(&c.id).cinco_horas.unwrap_or(0.0) * 1000.0) as i64)
+            .cloned()
+    }
+
+    /// "Continuar na <outra>" da faixa: a conta do chat passa a ser `conta` (o seletor de modelo
+    /// mostra, e é por lá que se volta) e o mesmo turno roda de novo nela, sem o Ultracode, como a
+    /// troca automática (rodada de uso, item 3.2).
+    pub fn continuar_em_outra_conta(&mut self, chat_id: &str, conta: &str, cx: &mut Context<Self>) {
+        if self.processos.contains_key(chat_id) || !self.pode_tentar_de_novo(chat_id) {
+            return;
+        }
+        let nome_de = |id: &str| self.contas.iter().find(|c| c.id == id).map_or_else(|| id.to_string(), |c| c.nome.clone());
+        let (nova, antiga) = (nome_de(conta), self.conta_do_turno.get(chat_id).map(|id| nome_de(id)).unwrap_or_default());
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.conta = Some(conta.to_string());
+        }
+        self.avisar(chat_id, &format!("A conta {antiga} chegou ao limite do plano; continuando na conta {nova}."), false);
+        self.execucao.insert(chat_id.to_string(), Execucao::Parado);
+        if let Some(mensagens) = self.entrada_para_repetir(chat_id) {
+            self.comecar_turno_com(chat_id, mensagens, false, cx);
+        }
+        self.salvar();
+        cx.notify();
+    }
+
+    /// O login da conta foi refeito no diálogo das Contas (item 8.3): ela volta à escolha, com o
+    /// plano que o Claude Code disse.
+    pub fn login_refeito(&mut self, id: &str, plano: String, cx: &mut Context<Self>) {
+        self.sem_login.remove(id);
+        if let Some(conta) = self.contas.iter_mut().find(|c| c.id == id)
+            && !plano.is_empty()
+        {
+            conta.plano = plano;
+        }
+        if let Err(erro) = contas::salvar(&self.contas) {
+            eprintln!("vitral: não salvou as contas: {erro:#}");
+        }
+        cx.notify();
+    }
+
     /// O Claude Code disse que o login da conta do turno se perdeu ("OAuth token revoked", "OAuth
     /// session expired and could not be refreshed"). Tentar de novo na mesma conta falha igual, e
     /// era o que o chat fazia (dono, 16/11/2026). A conta sai da escolha e, havendo outra com
@@ -3012,6 +3068,10 @@ impl Motor {
             // O turno da memória já abriu; o aviso de "terminou" vem no fim dele.
         } else if !self.janela_ativa && !erro {
             self.notificar(&chat, &texto_do_fim(&texto), false);
+        } else if !self.janela_ativa && erro {
+            // O turno com erro avisa em segundo plano como o Terminou, e com urgência: travou
+            // trabalho (rodada de uso, item 3.2; o LEIA-ME já prometia).
+            self.notificar(&chat, &texto_do_erro(&texto), true);
         }
         self.salvar();
     }
@@ -3994,6 +4054,14 @@ fn texto_do_pedido(ferramenta: &str, entrada: &Value) -> String {
 }
 
 /// "Terminou: " e a primeira linha da resposta.
+/// "Parou com erro: <primeira linha>" da notificação de um turno que falhou.
+fn texto_do_erro(erro: &str) -> String {
+    match erro.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(linha) => format!("Parou com erro: {linha}"),
+        None => "Parou com erro".to_string(),
+    }
+}
+
 fn texto_do_fim(resposta: &str) -> String {
     let linha = resposta.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
     if linha.is_empty() { "Terminou".into() } else { format!("Terminou: {linha}") }
@@ -4444,6 +4512,8 @@ mod testes {
             "Precisa da sua permissão: Edit, motor.rs"
         );
         assert_eq!(texto_do_fim(""), "Terminou");
+        assert_eq!(texto_do_erro("\nYou've hit your usage limit\nresto"), "Parou com erro: You've hit your usage limit");
+        assert_eq!(texto_do_erro(""), "Parou com erro");
         assert_eq!(texto_do_fim("\n  Feito: o bug sumiu.\nresto"), "Terminou: Feito: o bug sumiu.");
     }
 

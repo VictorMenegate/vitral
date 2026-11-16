@@ -426,13 +426,25 @@ impl Janela {
         self.abrir_contas(true, window, cx);
     }
 
+    /// "Entrar de novo" (o cartão de erro, a faixa do turno): as Contas já no login da conta que
+    /// caiu (rodada de uso, itens 3.2 e 8.3). Sem saber qual, abre a lista.
+    pub(super) fn entrar_de_novo_na_conta(&mut self, conta: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.abrir_contas_em(false, conta, window, cx);
+    }
+
     fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.abrir_contas_em(entrar, None, window, cx);
+    }
+
+    fn abrir_contas_em(&mut self, entrar: bool, de_novo: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
         let painel = cx.new(|cx| PainelContas::new(motor.clone(), window, cx));
         if entrar {
             painel.update(cx, |p, cx| p.entrar(window, cx));
+        } else if let Some(conta) = de_novo {
+            painel.update(cx, |p, cx| p.entrar_de_novo(conta, window, cx));
         }
         self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
