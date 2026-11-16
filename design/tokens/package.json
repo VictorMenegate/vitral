@@ -1,0 +1,7 @@
+{
+  "name": "vitral-ui-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Os tokens do Vitral (src/tema.rs) como variáveis CSS. O tokens.css é gerado pelo build a partir do tokens.json.",
+  "style": "tokens.css"
+}
