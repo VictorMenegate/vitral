@@ -333,6 +333,7 @@ mod testes {
             detalhe: None,
             arquivo: None,
             sub,
+            mudanca: None,
         }
     }
 
@@ -359,6 +360,7 @@ mod testes {
                 detalhe: None,
                 arquivo: None,
                 sub: None,
+                mudanca: None,
             },
         ];
         let agentes = agentes_do_chat(&itens, true, 345);

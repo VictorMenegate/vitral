@@ -1471,6 +1471,47 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
     (detalhe, arquivo)
 }
 
+/// Quanto uma edição muda, com o texto inteiro da chamada (rodada de uso, item 5.1): numa troca,
+/// as linhas que sobram depois de tirar o começo e o fim iguais; num Write, as linhas gravadas; num
+/// diff pronto, as linhas com + e −. Outras ferramentas, nada.
+pub fn mudanca_da_ferramenta(nome: &str, entrada: &Value) -> Option<crate::modelo::Mudanca> {
+    let campo = |chave: &str| entrada[chave].as_str();
+    let (entram, saem) = match nome {
+        "Edit" | "Write" if campo("diff").is_some_and(|d| !d.is_empty()) => linhas_do_diff(campo("diff").unwrap_or_default()),
+        "Edit" => linhas_da_troca(campo("old_string").unwrap_or_default(), campo("new_string").unwrap_or_default()),
+        "MultiEdit" => entrada["edits"].as_array()?.iter().fold((0, 0), |(e, s), t| {
+            let (e2, s2) = linhas_da_troca(t["old_string"].as_str().unwrap_or_default(), t["new_string"].as_str().unwrap_or_default());
+            (e + e2, s + s2)
+        }),
+        "Write" => (campo("content")?.lines().count() as u32, 0),
+        "NotebookEdit" => (campo("new_source").unwrap_or_default().lines().count() as u32, 0),
+        _ => return None,
+    };
+    Some(crate::modelo::Mudanca { entram, saem, novo: false })
+}
+
+/// As linhas que entram e as que saem numa troca, sem o começo e o fim que ficaram iguais.
+fn linhas_da_troca(antes: &str, depois: &str) -> (u32, u32) {
+    let (a, d): (Vec<&str>, Vec<&str>) = (antes.lines().collect(), depois.lines().collect());
+    let comeco = a.iter().zip(&d).take_while(|(x, y)| x == y).count();
+    let fim = a[comeco..].iter().rev().zip(d[comeco..].iter().rev()).take_while(|(x, y)| x == y).count();
+    ((d.len() - comeco - fim) as u32, (a.len() - comeco - fim) as u32)
+}
+
+/// As linhas com + e − de um diff unificado (sem os cabeçalhos +++ e ---).
+fn linhas_do_diff(diff: &str) -> (u32, u32) {
+    diff.lines().filter(|l| !l.starts_with("+++") && !l.starts_with("---")).fold((0, 0), |(e, s), l| match l.as_bytes().first() {
+        Some(b'+') => (e + 1, s),
+        Some(b'-') => (e, s + 1),
+        _ => (e, s),
+    })
+}
+
+/// O resultado do Write diz que o arquivo foi criado agora (e não regravado): o selo "novo".
+pub fn write_criou(resultado: &str) -> bool {
+    resultado.to_ascii_lowercase().contains("created successfully")
+}
+
 /// O que saiu e o que entrou numa troca, cada linha com o seu sinal.
 fn troca(antes: &str, depois: &str) -> String {
     match (antes.is_empty(), depois.is_empty()) {
@@ -2182,5 +2223,32 @@ mod testes_dos_modelos {
         assert_eq!(std::fs::metadata(&pasta).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(std::fs::read_dir(&pasta).unwrap().count(), 0, "a pergunta deixou arquivo na pasta");
         let _ = std::fs::remove_dir_all(pasta.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod testes_da_mudanca {
+    use super::{mudanca_da_ferramenta, write_criou};
+    use serde_json::json;
+
+    #[test]
+    fn mudanca_contada_com_o_texto_inteiro() {
+        // Na troca, o começo e o fim iguais não contam.
+        let edit = json!({"file_path": "a.rs", "old_string": "fn a() {\n    1\n}\n", "new_string": "fn a() {\n    2\n    3\n}\n"});
+        let m = mudanca_da_ferramenta("Edit", &edit).unwrap();
+        assert_eq!((m.entram, m.saem, m.novo), (2, 1, false));
+        let multi = json!({"edits": [{"old_string": "x", "new_string": "y"}, {"old_string": "", "new_string": "z\nw"}]});
+        let m = mudanca_da_ferramenta("MultiEdit", &multi).unwrap();
+        assert_eq!((m.entram, m.saem), (3, 1));
+        // O Write conta tudo o que gravou, mesmo acima do corte do detalhe.
+        let longo: String = (0..500).map(|i| format!("linha {i}\n")).collect();
+        let m = mudanca_da_ferramenta("Write", &json!({"file_path": "b.md", "content": longo})).unwrap();
+        assert_eq!((m.entram, m.saem), (500, 0));
+        assert_eq!(mudanca_da_ferramenta("Bash", &json!({"command": "ls"})), None);
+        let diff = json!({"diff": "--- a\n+++ b\n@@\n-x\n+y\n+z\n"});
+        let m = mudanca_da_ferramenta("Edit", &diff).unwrap();
+        assert_eq!((m.entram, m.saem), (2, 1));
+        assert!(write_criou("File created successfully at: /x/b.md"));
+        assert!(!write_criou("The file /x/b.md has been updated successfully."));
     }
 }

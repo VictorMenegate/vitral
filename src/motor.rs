@@ -2766,6 +2766,8 @@ impl Motor {
                 }
                 let resumo = claude::resumo_ferramenta(&nome, &entrada);
                 let (detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
+                // O +N −M contado agora, com o texto inteiro (item 5.1).
+                let mudanca = claude::mudanca_da_ferramenta(&nome, &entrada);
                 self.chats_sujos.insert(chat_id.to_string());
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.itens.push(Item::Ferramenta {
@@ -2778,6 +2780,7 @@ impl Motor {
                         detalhe,
                         arquivo,
                         sub: None,
+                        mudanca,
                     });
                 }
             }
@@ -2790,13 +2793,21 @@ impl Motor {
                     for item in c.itens.iter_mut().rev() {
                         if let Item::Ferramenta {
                             id: id_item,
+                            nome,
                             resultado,
                             erro: erro_item,
                             sub,
+                            mudanca,
                             ..
                         } = item
                             && *id_item == id
                         {
+                            // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
+                            if nome == "Write" && !erro && claude::write_criou(&conteudo)
+                                && let Some(m) = mudanca
+                            {
+                                m.novo = true;
+                            }
                             *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
                             *erro_item = erro;
                             // O subagente terminou: o cartão dele dobra numa linha com a duração.
@@ -4258,6 +4269,7 @@ mod testes {
             detalhe: None,
             arquivo: Some("src/ui/fila.rs".into()),
             sub: None,
+            mudanca: None,
         };
         let itens = vec![
             usuario("antes da dupla"),
@@ -4315,6 +4327,7 @@ mod testes {
             detalhe: None,
             arquivo: None,
             sub: None,
+            mudanca: None,
         };
         assert!(!editou_arquivo_desde(&[ferramenta("Read", 10, false), ferramenta("Bash", 11, false)], 0));
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 10, true)], 0));
@@ -4336,6 +4349,7 @@ mod testes {
             detalhe: None,
             arquivo: None,
             sub: None,
+            mudanca: None,
         };
         assert!(ferramenta_de_escrita("Edit") && ferramenta_de_escrita("Write") && ferramenta_de_escrita("MultiEdit"));
         assert!(ferramenta_de_escrita("mcp__ai-memory__memory_write_page"));

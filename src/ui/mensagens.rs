@@ -1980,31 +1980,33 @@ const RECUO_DO_LOG_SOLTO: Rems = r(34.);
 /// cortado, o fim levava o último número junto ("leu 3 arqu…") (relatório de design, 16/11/2026).
 fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
-    let mut editados = std::collections::HashSet::new();
     for (_, item) in chamadas {
         match item {
             Item::Raciocinio { .. } => pensamentos += 1,
-            Item::Ferramenta { nome, arquivo, resumo, .. } => match nome.as_str() {
+            Item::Ferramenta { nome, .. } => match nome.as_str() {
                 "Bash" => comandos += 1,
                 "Read" => leituras += 1,
-                "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => { editados.insert(arquivo.as_deref().unwrap_or(resumo)); }
+                "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {}
                 "Grep" | "Glob" | "WebSearch" | "WebFetch" => buscas += 1,
                 _ => outras += 1,
             },
             _ => {}
         }
     }
+    // Até dois arquivos, o nome deles ("editou carrinho.py e motor.rs"); acima, a contagem (5.1).
+    let editados = editados_nas_chamadas(chamadas.iter().map(|(_, item)| *item));
     let mut partes = Vec::new();
     if curto {
         if comandos > 0 { partes.push(contagem(comandos, "comando", "comandos")); }
-        if !editados.is_empty() { partes.push(contagem(editados.len(), "editado", "editados")); }
+        if (1..=2).contains(&editados.len()) { partes.push(editou(&editados)); }
+        else if !editados.is_empty() { partes.push(contagem(editados.len(), "editado", "editados")); }
         if leituras > 0 { partes.push(contagem(leituras, "lido", "lidos")); }
         if buscas > 0 { partes.push(contagem(buscas, "busca", "buscas")); }
         if outras > 0 { partes.push(contagem(outras, "ferramenta", "ferramentas")); }
         if partes.is_empty() && pensamentos > 0 { partes.push("Pensou".into()); }
     } else {
         if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
-        if !editados.is_empty() { partes.push(format!("editou {}", contagem(editados.len(), "arquivo", "arquivos"))); }
+        if !editados.is_empty() { partes.push(editou(&editados)); }
         if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
         if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
         if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
@@ -2099,6 +2101,69 @@ pub(super) fn resumo_da_revisao(itens: &[Item]) -> (String, Vec<String>) {
         "Memória revista · nada a guardar".to_string()
     };
     (texto, caminhos)
+}
+
+/// O +N −M de uma chamada de edição: o contado quando ela chegou ou, nas de antes disso, o do
+/// detalhe gravado (que é cortado: sem número quando ele foi cortado).
+pub(super) fn linhas_da_edicao_gravada(item: &Item) -> Option<(usize, usize)> {
+    let Item::Ferramenta { nome, detalhe, mudanca, .. } = item else {
+        return None;
+    };
+    if !matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+        return None;
+    }
+    match mudanca {
+        Some(m) => Some((m.entram as usize, m.saem as usize)).filter(|(e, s)| e + s > 0),
+        None => detalhe.as_deref().and_then(contagem_do_diff),
+    }
+}
+
+/// Um arquivo que o chat editou ou criou, somado em todas as chamadas: para a seção Mudanças de
+/// "Este chat" e para a faixa colada na caixa (rodada de uso, item 5.1).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ArquivoMudado {
+    /// O caminho como a chamada o deu (relativo ou inteiro).
+    pub caminho: String,
+    pub entram: usize,
+    pub saem: usize,
+    pub novo: bool,
+}
+
+/// As mudanças do chat pelas chamadas de edição: as do último turno (desde a sua última mensagem)
+/// e as de antes, cada arquivo uma vez (no turno em que mudou por último). O que um comando mudou
+/// fica de fora: não há como saber pelas chamadas.
+pub(super) fn mudancas_do_chat(itens: &[Item]) -> (Vec<ArquivoMudado>, Vec<ArquivoMudado>) {
+    let turno = itens.iter().rposition(|i| matches!(i, Item::Usuario { .. })).unwrap_or(0);
+    let mut neste: Vec<ArquivoMudado> = Vec::new();
+    let mut antes: Vec<ArquivoMudado> = Vec::new();
+    for (i, item) in itens.iter().enumerate() {
+        let Item::Ferramenta { nome, arquivo, resumo, erro: false, mudanca, .. } = item else {
+            continue;
+        };
+        if !matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+            continue;
+        }
+        let caminho = arquivo.clone().unwrap_or_else(|| resumo.clone());
+        let (entram, saem) = linhas_da_edicao_gravada(item).unwrap_or((0, 0));
+        let novo = mudanca.is_some_and(|m| m.novo);
+        let lista = if i > turno { &mut neste } else { &mut antes };
+        match lista.iter_mut().find(|a| a.caminho == caminho) {
+            Some(a) => {
+                a.entram += entram;
+                a.saem += saem;
+                a.novo |= novo;
+            }
+            None => lista.push(ArquivoMudado { caminho, entram, saem, novo }),
+        }
+    }
+    // O que mudou neste turno não se repete em "Antes".
+    antes.retain(|a| !neste.iter().any(|n| n.caminho == a.caminho));
+    (neste, antes)
+}
+
+/// Quanto o turno de agora mudou: arquivos e o total de linhas que entraram e saíram.
+pub(super) fn total_das_mudancas(arquivos: &[ArquivoMudado]) -> (usize, usize, usize) {
+    arquivos.iter().fold((0, 0, 0), |(n, e, s), a| (n + 1, e + a.entram, s + a.saem))
 }
 
 /// Quanto o turno levou: "45 s", "6 min 12 s", "1 h 3 min".
@@ -2491,6 +2556,7 @@ impl Janela {
             arquivo,
             sub,
             em,
+            mudanca,
             ..
         } = item
         else {
@@ -2498,6 +2564,7 @@ impl Janela {
         };
         let chave = format!("{}:{indice}", contexto.chat.id);
         let aberto = self.expandidos.contains(&chave);
+        let novo = mudanca.is_some_and(|m| m.novo);
         let pendente = contexto.pendente(indice, item);
         // O subagente (Task/Agent): quantas ferramentas usou e há quanto tempo roda (ou quanto
         // levou), na linha; o que ele faz agora, embaixo dela enquanto roda; e os passos dele,
@@ -2562,10 +2629,9 @@ impl Janela {
             };
             icone_de(icone_da_ferramenta(nome), 14.).text_color(cor).into_any_element()
         };
-        let linhas_do_diff = pedido
-            .as_deref()
-            .filter(|_| matches!(nome.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit"))
-            .and_then(contagem_do_diff);
+        // O +N −M contado com o texto inteiro quando a chamada chegou (item 5.1); as chamadas de
+        // antes disso contam pelo detalhe gravado.
+        let linhas_do_diff = linhas_da_edicao_gravada(item);
         let verbo = verbo_da_ferramenta(nome, pendente);
         let detalhe = sem_marcacao(&detalhe_da_chamada(nome, resumo));
         let detalhe = if detalhe.is_empty() && nome == "Bash" {
@@ -2656,6 +2722,7 @@ impl Janela {
                         .when(saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{saem}")))),
                 )
             })
+            .when(novo && !minima && !*erro, |s| s.child(Selo::cor("novo", Cores::verde())))
             .when_some(meta.filter(|_| !estreita), |s, (meta, cor)| {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
@@ -3096,6 +3163,8 @@ enum Situacao {
     Fila(usize),
     /// A conversa grande ficou parada: a próxima mensagem relê estes tokens por inteiro.
     Fria { tokens: u64 },
+    /// O último turno mudou arquivos e nada roda (item 5.1): quantos e as linhas.
+    Mudou { arquivos: usize, entram: usize, saem: usize },
 }
 
 /// O que um chat parado tem a dizer acima da caixa: a pasta dele sumiu (a do chat sem pasta o
@@ -3315,9 +3384,14 @@ impl Janela {
         let situacao = match situacao_do_turno(motor, &chat.id) {
             Some(Situacao::Fila(n)) => situacao_do_chat(motor, chat).unwrap_or(Situacao::Fila(n)),
             Some(s) => s,
-            // Por último, e só com o chat quieto: a conversa grande que esfriou.
+            // Por último, e só com o chat quieto: a conversa grande que esfriou e, depois, o que o
+            // último turno mudou (o lugar onde o dono aprovou "N arquivos mudados", 12/11; item 5.1).
             None => situacao_do_chat(motor, chat)
-                .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))?,
+                .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))
+                .or_else(|| {
+                    let (arquivos, entram, saem) = total_das_mudancas(&mudancas_do_chat(&chat.itens).0);
+                    (arquivos > 0).then_some(Situacao::Mudou { arquivos, entram, saem })
+                })?,
         };
         // O turno em andamento mora na linha de estado da caixa, dentro da moldura
         // (`linha_de_estado`): acima da caixa só fica o que pede um botão seu.
@@ -3486,6 +3560,37 @@ impl Janela {
                     botao_fantasma("faixa-compactar", Some(Lucide::Minimize.into()), "Compactar", TamanhoBotao::Barra, window, cx)
                         .tooltip("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume antes, e os próximos turnos releem só o resumo.")
                         .on_click(cx.listener(move |this, _, window, cx| this.por_na_caixa(painel_id, "/compact ", window, cx)))
+                        .into_any_element(),
+                ),
+            ),
+            // "3 arquivos mudados · +40 −12": o clique abre a direita em "Este chat", na seção
+            // Mudanças (item 5.1).
+            Situacao::Mudou { arquivos, entram, saem } => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
+                    .child(texto(contagem(arquivos, "arquivo mudado", "arquivos mudados")))
+                    .when(entram + saem > 0, |s| {
+                        s.child(
+                            h_flex()
+                                .flex_none()
+                                .gap(esp::E6)
+                                .font_family(FONTE_MONO)
+                                .metadado()
+                                .when(entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{entram}"))))
+                                .when(saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{saem}")))),
+                        )
+                    })
+                    .into_any_element(),
+                Some(
+                    botao_fantasma("faixa-mudancas", Some(Lucide::PanelRight.into()), "Ver mudanças", TamanhoBotao::Barra, window, cx)
+                        .tooltip("Abrir a lista do que este chat mudou, à direita. O que um comando mudou não aparece aqui.")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.aba_direita = super::abas_direita::AbaDireita::Chat;
+                            this.mostrar_direita(window, cx);
+                        }))
                         .into_any_element(),
                 ),
             ),
@@ -4734,6 +4839,7 @@ mod testes {
             detalhe: None,
             arquivo: None,
             sub: None,
+            mudanca: None,
         }
     }
 
@@ -5044,8 +5150,9 @@ mod testes {
         let rodar = ferramenta("Bash", "Bash · cargo test", Some("ok"), false);
         let itens = [rodar.clone(), rodar, editar, ler.clone(), ler.clone(), ler];
         let chamadas: Vec<(usize, &crate::modelo::Item)> = itens.iter().enumerate().collect();
-        assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos");
-        assert_eq!(resumo_das_chamadas(&chamadas, true), "2 comandos · 1 editado · 3 lidos");
+        // Até dois arquivos, o nome deles no lugar da contagem (rodada de uso, item 5.1).
+        assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 2 comandos · editou views.py · leu 3 arquivos");
+        assert_eq!(resumo_das_chamadas(&chamadas, true), "2 comandos · editou views.py · 3 lidos");
     }
 
     #[test]
@@ -5240,6 +5347,7 @@ mod testes {
             detalhe: None,
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
+            mudanca: None,
         };
         let itens = vec![
             em(usuario("faz"), 1_000),
@@ -5314,6 +5422,7 @@ mod testes {
             detalhe: None,
             arquivo: Some(arquivo.into()),
             sub: None,
+            mudanca: None,
         };
         let pedido = Item::Entrega { de: "Vitral".into(), texto: crate::motor::PEDIDO_DE_REVISAO.into(), em: 0 };
         let nada = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), assistente("Não há nada a registrar.")];
@@ -5327,5 +5436,65 @@ mod testes {
         itens.extend(vec![pedido, ferramenta("Read", "x", Some("ok"), false), assistente("olhei"), editar("AGENTS.md"), assistente("Anotei.")]);
         let turnos: Vec<usize> = turnos_recolhiveis(&itens, false).iter().map(|t| t.mensagem).collect();
         assert_eq!(turnos, [0]);
+    }
+
+    #[test]
+    fn mudancas_do_chat_neste_turno_e_antes() {
+        use super::{Item, mudancas_do_chat, total_das_mudancas};
+        use crate::modelo::Mudanca;
+        let editar = |arquivo: &str, entram: u32, saem: u32, novo: bool| Item::Ferramenta {
+            id: "e".into(),
+            nome: if novo { "Write".into() } else { "Edit".into() },
+            resumo: arquivo.into(),
+            resultado: Some("ok".into()),
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: Some(arquivo.into()),
+            sub: None,
+            mudanca: Some(Mudanca { entram, saem, novo }),
+        };
+        let itens = vec![
+            usuario("um"),
+            editar("src/a.rs", 3, 1, false),
+            editar("src/b.rs", 2, 0, false),
+            assistente("ok"),
+            usuario("dois"),
+            editar("src/a.rs", 1, 1, false),
+            editar("docs/c.md", 10, 0, true),
+            editar("src/a.rs", 4, 0, false),
+            assistente("pronto"),
+        ];
+        let (neste, antes) = mudancas_do_chat(&itens);
+        let nomes = |l: &[super::ArquivoMudado]| l.iter().map(|a| (a.caminho.clone(), a.entram, a.saem, a.novo)).collect::<Vec<_>>();
+        assert_eq!(nomes(&neste), [("src/a.rs".to_string(), 5, 1, false), ("docs/c.md".to_string(), 10, 0, true)]);
+        // O que mudou de novo neste turno sai de "Antes".
+        assert_eq!(nomes(&antes), [("src/b.rs".to_string(), 2, 0, false)]);
+        assert_eq!(total_das_mudancas(&neste), (2, 15, 1));
+    }
+
+    #[test]
+    fn resumo_da_trilha_diz_o_nome_ate_dois_arquivos() {
+        use super::{Item, resumo_das_chamadas};
+        let editar = |arquivo: &str| Item::Ferramenta {
+            id: "e".into(),
+            nome: "Edit".into(),
+            resumo: arquivo.into(),
+            resultado: Some("ok".into()),
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: Some(format!("src/{arquivo}")),
+            sub: None,
+            mudanca: None,
+        };
+        let dois = [editar("carrinho.py"), editar("motor.rs"), ferramenta("Bash", "ls", Some("ok"), false)];
+        let chamadas: Vec<(usize, &Item)> = dois.iter().enumerate().collect();
+        assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 1 comando · editou carrinho.py e motor.rs");
+        assert_eq!(resumo_das_chamadas(&chamadas, true), "1 comando · editou carrinho.py e motor.rs");
+        let tres = [editar("a.rs"), editar("b.rs"), editar("c.rs")];
+        let chamadas: Vec<(usize, &Item)> = tres.iter().enumerate().collect();
+        assert_eq!(resumo_das_chamadas(&chamadas, false), "Editou 3 arquivos");
+        assert_eq!(resumo_das_chamadas(&chamadas, true), "3 editados");
     }
 }

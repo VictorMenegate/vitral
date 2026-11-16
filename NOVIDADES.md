@@ -40,6 +40,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   chat, com Tab ou Enter para completar. A lista de arquivos passou a descer nos repositórios de
   dentro da pasta: em ~/eita, o "@", a aba Arquivos e o Mencionar acham o código de central/,
   layout/ e dos outros projetos.
+- **O que mudou fica à vista.** A trilha diz o nome dos arquivos editados ("editou carrinho.py e
+  motor.rs") quando são até dois. Quando o turno muda arquivos, a faixa colada na caixa diz "3
+  arquivos mudados · +40 −12", e **Ver mudanças** abre "Este chat" com a lista: neste turno e
+  antes, com o +N −M de cada um e o selo "novo" no que foi criado. O clique abre o arquivo à direita.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

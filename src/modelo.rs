@@ -140,6 +140,11 @@ pub enum Item {
         /// Quando a chamada é um subagente (Task/Agent): o que ele fez lá dentro.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sub: Option<Subagente>,
+        /// Quanto a edição mudou, contado com o texto inteiro quando a chamada chegou (o
+        /// `detalhe` gravado é cortado e não serve para a conta). As chamadas de antes disto não
+        /// têm (rodada de uso, item 5.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mudanca: Option<Mudanca>,
     },
     /// Um bloco de raciocínio do modelo: o texto (pode vir vazio, quando o Claude Code não o
     /// entrega) e quanto durou, em milissegundos (0: não medido).
@@ -189,6 +194,16 @@ impl Item {
             Item::Desconhecido(_) => 0,
         }
     }
+}
+
+/// Quanto uma edição mudou: as linhas que entraram e as que saíram, e se o arquivo é novo (o
+/// resultado do Write diz que criou).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mudanca {
+    pub entram: u32,
+    pub saem: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub novo: bool,
 }
 
 /// Quem responde num chat: o Claude Code ou o Codex (CLI da OpenAI).

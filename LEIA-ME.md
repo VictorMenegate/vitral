@@ -79,8 +79,10 @@ componentes do GPUI Kit.
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`). (2) `Chat::fria` (em `src/modelo.rs`): conversa do Claude
   com sessão, `CONTEXTO_GRANDE` (100 mil tokens) ou mais e parada há `DESCONTO_DURA` (uma hora, o
   tempo do cache na assinatura) vira `Situacao::Fria` na faixa acima da caixa, com "Compactar",
-  que só escreve `/compact ` na caixa. Ela é a última da fila: turno rodando, parada, falha,
-  pasta sumida e fila de mensagens vêm antes. (3) `Chat::contexto_grande` põe uma linha no seletor
+  que só escreve `/compact ` na caixa. Turno rodando, parada, falha, pasta sumida e fila de
+  mensagens vêm antes dela; depois dela, por último, `Situacao::Mudou`: quando o último turno
+  mudou arquivos e nada roda, a faixa diz "3 arquivos mudados · +40 −12" com **Ver mudanças**,
+  que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
   custo, modelo, conta e Compactar) já existia, no anel da caixa.
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
@@ -584,8 +586,9 @@ ferramentas, vale por painel).
   num chip; o que é prosa (a tarefa do Agent, a busca na web, a lista de tarefas) vai em Inter, sem
   chip. Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
-  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"; fora do painel largo, a forma
-  curta sem os verbos, "2 comandos · 1 editado · 3 lidos", para o corte não levar o último número),
+  resumo ("Rodou 2 comandos · editou views.py · leu 3 arquivos", com o nome dos arquivos editados
+  até dois e a contagem acima disso; fora do painel largo, a forma curta, "2 comandos · editou
+  views.py · 3 lidos", para o corte não levar o último número),
   com o ícone da trilha à
   esquerda, de onde descem os ramos, e o chevron no fim, como nas chamadas e no "Pensou"; abrem
   enquanto trabalham e recolhem ao terminar, respeitando a escolha manual. Dentro do grupo, o verbo
@@ -893,7 +896,13 @@ abre o arquivo aqui, rolado até a linha, que fica marcada; uma imagem abre no v
 relativo parte da pasta do chat. Só abre o que está numa pasta que o Vitral conhece (a de algum
 chat); o resto avisa e fica para o VS Code.
 
-**Este chat** (`src/ui/este_chat.rs`): onde o chat trabalha. Diz se ele mexe direto na pasta, se é
+**Este chat** (`src/ui/este_chat.rs`) abre com a seção **Mudanças**: os arquivos que o chat editou
+ou criou, separados em **Neste turno** (desde a sua última mensagem) e **Antes**, cada um com o
+ícone do tipo, o nome, a pasta em tom tênue, o +N −M e o selo **novo** (o Write que criou o
+arquivo). O clique abre o arquivo aqui. O +N −M é contado quando a chamada chega, com o texto
+inteiro, e fica gravado no item (`Mudanca`); as chamadas de antes disso contam pelo detalhe
+gravado, que é cortado. A lista sai das chamadas de edição: o que um comando mudou fica de fora,
+e a nota no pé diz isso. Embaixo, o cartão de onde o chat trabalha. Diz se ele mexe direto na pasta, se é
 um chat Sem pasta (os arquivos que ele criar ficam na pasta só dele) ou, numa conversa trazida do
 Claude Code, de onde ela veio, as datas e quantas mensagens tinha; mostra a pasta (o caminho
 inteiro na dica, com copiar) e **Abrir pasta**. Com a pasta sumida do disco (disco desmontado,

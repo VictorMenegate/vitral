@@ -2,7 +2,7 @@
 //! aviso, se ela sumiu).
 
 use gpui_kit::component::{
-    ElementExt as _, scroll::ScrollableElement as _, tooltip::Tooltip,
+    ElementExt as _, StyledExt as _, scroll::ScrollableElement as _, tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -15,7 +15,7 @@ use super::{
 use crate::{
     modelo::Chat,
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
+    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
 };
 
 /// Abaixo desta largura (em rem, uns 330 px a 100%) o painel da direita fica no desenho estreito.
@@ -32,6 +32,8 @@ impl Janela {
         let chat = self.selecionado.as_ref().and_then(|id| motor.chat(id));
         let mut filhos: Vec<AnyElement> = Vec::new();
         if let Some(chat) = chat {
+            // As Mudanças no topo; a pasta e o Abrir pasta descem para o pé (item 5.1).
+            filhos.push(self.mudancas(chat, window));
             filhos.push(self.este_chat(motor, chat, window, cx));
         }
         // Ao trocar de chat, o painel volta ao topo.
@@ -102,6 +104,54 @@ impl Janela {
         }
     }
 
+    /// A seção Mudanças (dono, 16/11/2026: rodada de uso, item 5.1): os arquivos que o chat editou
+    /// ou criou, em "Neste turno" e "Antes", com o ícone, o nome, a pasta em tom tênue, o +N −M e o
+    /// selo "novo". O clique abre o arquivo à direita. Sai das chamadas de edição: o que um comando
+    /// mudou fica de fora, e a nota no pé diz isso.
+    fn mudancas(&self, chat: &Chat, window: &Window) -> AnyElement {
+        let (neste, antes) = super::mensagens::mudancas_do_chat(&chat.itens);
+        let titulo = |t: &'static str, n: usize| {
+            div()
+                .flex()
+                .items_center()
+                .gap(esp::E6)
+                .h(r(24.))
+                .metadado()
+                .font_semibold()
+                .text_color(Cores::tenue())
+                .child(t)
+                .child(div().font_family(FONTE_MONO).text_color(Cores::apagado()).child(n.to_string()))
+        };
+        let mut corpo = div().flex().flex_col().gap(esp::E2);
+        if neste.is_empty() && antes.is_empty() {
+            corpo = corpo.child(
+                div().corpo_ui().text_color(Cores::tenue()).child("Este chat ainda não editou nem criou arquivo."),
+            );
+        }
+        for (rotulo, lista, grupo) in [("Neste turno", &neste, "neste"), ("Antes", &antes, "antes")] {
+            if lista.is_empty() {
+                continue;
+            }
+            corpo = corpo.child(titulo(rotulo, lista.len()));
+            for (i, arquivo) in lista.iter().enumerate() {
+                corpo = corpo.child(linha_mudanca(chat, arquivo, format!("mudanca-{grupo}-{i}"), window));
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(esp::E8)
+            .p(dentro_da_borda(12.))
+            .rounded(raio::CARTAO)
+            .bg(Cores::cartao_elevado())
+            .border_1()
+            .border_color(Cores::linha())
+            .reflexo(raio::cartao())
+            .child(div().rotulo().text_color(Cores::forte()).child("Mudanças"))
+            .child(corpo)
+            .into_any_element()
+    }
+
     /// "Este chat": a pasta onde o chat trabalha, direto, com Abrir pasta (sem ela, o aviso). A
     /// conversa trazida do Claude Code diz de onde veio; o chat sem pasta, que a pasta é só dele.
     fn este_chat(&self, motor: &Motor, chat: &Chat, window: &Window, cx: &Context<Self>) -> AnyElement {
@@ -139,8 +189,61 @@ impl Janela {
             .reflexo(raio::cartao())
             .children(linhas)
             .when_some(abrir, |s, abrir| s.child(sem_arrastar().flex().flex_wrap().gap(esp::E4).child(abrir)))
+            .child(div().metadado().text_color(Cores::tenue()).child("O que um comando mudou não aparece em Mudanças."))
             .into_any_element()
     }
+}
+
+/// Uma linha de Mudanças: o ícone do tipo, o nome, a pasta em tom tênue, o +N −M e o "novo". O
+/// clique abre o arquivo à direita; um arquivo que saiu do disco fica apagado e sem clique.
+fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: String, window: &Window) -> AnyElement {
+    let inteiro = super::links_arquivo::resolver(&chat.cwd, &arquivo.caminho);
+    let relativo = inteiro
+        .as_deref()
+        .and_then(|i| std::path::Path::new(i).strip_prefix(&chat.cwd).ok().map(crate::git::caminho_em_texto))
+        .unwrap_or_else(|| arquivo.caminho.clone());
+    let (pasta, nome) = relativo.rsplit_once('/').unwrap_or(("", relativo.as_str()));
+    let (pasta, nome) = (pasta.to_string(), nome.to_string());
+    let icone = super::seletor_arquivos::icone_do_arquivo(&nome);
+    let existe = inteiro.is_some();
+    let alvo = inteiro.map(|i| super::links_arquivo::link_de(&i, None));
+    let dica = SharedString::from(if existe { relativo.clone() } else { format!("{relativo} (não está mais no disco)") });
+    div()
+        .id(SharedString::from(id))
+        .flex()
+        .items_center()
+        .gap(esp::E8)
+        .h(r(28.))
+        .px(esp::E6)
+        .rounded(raio::CONTROLE)
+        .when(existe, |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
+        .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone, 14., window)))
+        .child(
+            div()
+                .flex_shrink(1.)
+                .min_w_0()
+                .truncate()
+                .corpo_ui()
+                .text_color(if existe { Cores::texto() } else { Cores::tenue() })
+                .child(nome),
+        )
+        .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(pasta))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .gap(esp::E6)
+                .font_family(FONTE_MONO)
+                .metadado()
+                .when(arquivo.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", arquivo.entram))))
+                .when(arquivo.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", arquivo.saem)))),
+        )
+        .when(arquivo.novo, |s| s.child(super::componentes::Selo::cor("novo", Cores::verde())))
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .when_some(alvo, |s, alvo| {
+            s.on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx))
+        })
+        .into_any_element()
 }
 
 /// O painel da direita fica estreito abaixo de 22 rem e só volta acima de 22,5 (a folga evita
