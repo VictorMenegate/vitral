@@ -119,6 +119,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   fechou", como a lista, com o motivo inteiro na dica. O aviso de turno cortado pelo fechamento do
   Vitral virou um marco de uma linha, "O Vitral fechou no meio do turno", sem repetir a instrução
   a cada turno nem falar do Claude no chat do Codex.
+- **Trilha de ferramentas mais regular.** O chevron fica sempre no fim da linha, o detalhe que é
+  código vai num chip em mono e o que é texto (a tarefa de um subagente, uma busca na web) vai em
+  letra normal. A chamada sozinha não tem mais o ramo pendurado nem o vão entre o verbo e o detalhe.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

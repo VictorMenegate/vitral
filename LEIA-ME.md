@@ -489,10 +489,16 @@ ferramentas, vale por painel).
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
-  "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. Um fluxo de agentes (a
+  "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. O detalhe que é código
+  (comando, arquivo, padrão do Grep e do Glob, endereço do WebFetch, ferramenta MCP) vai em mono
+  num chip; o que é prosa (a tarefa do Agent, a busca na web, a lista de tarefas) vai em Inter, sem
+  chip. Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
-  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"); abrem enquanto trabalham e
-  recolhem ao terminar, respeitando a escolha manual. O clique numa
+  resumo ("Rodou 2 comandos · editou 1 arquivo · leu 3 arquivos"), com o ícone da trilha à
+  esquerda, de onde descem os ramos, e o chevron no fim, como nas chamadas e no "Pensou"; abrem
+  enquanto trabalham e recolhem ao terminar, respeitando a escolha manual. Dentro do grupo, o verbo
+  tem uma coluna de 56 para os detalhes ficarem alinhados. A chamada solta (sozinha entre duas
+  falas) começa na coluna do cabeçalho de grupo, sem ramo, e com o detalhe logo depois do verbo. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
   lado ficam guardadas na conversa; o Codex entrega o diff do `fileChange`; registros antigos

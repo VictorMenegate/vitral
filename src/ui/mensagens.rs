@@ -1179,6 +1179,10 @@ const ALTURA_DO_LOG: Rems = r(32.);
 /// O resultado aberto de uma linha de log, embaixo do texto dela.
 const RECUO_DO_LOG: Rems = r(56.);
 
+/// O mesmo numa chamada solta (fora de grupo), que começa a 12 como o cabeçalho do grupo, sem
+/// ramo: a coluna do texto dela (12 + 14 + 8).
+const RECUO_DO_LOG_SOLTO: Rems = r(34.);
+
 fn resumo_das_chamadas(chamadas: &[(usize, &Item)]) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
     let mut editados = std::collections::HashSet::new();
@@ -1240,7 +1244,7 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         if let [(indice, item)] = chamadas {
-            return self.chamada(contexto, *indice, item, false, cx);
+            return self.chamada(contexto, *indice, item, None, cx);
         }
         let recolhivel = chamadas.len() > 1;
         // Os itens só crescem no fim: o índice da primeira chamada identifica o grupo.
@@ -1275,6 +1279,9 @@ impl Janela {
                 // O único ponto de Tab da trilha; Enter ou Espaço abre e fecha.
                 .tab_index(0)
                 .focus_visible(|s| s.shadow(halo_foco()))
+                // Na coluna dos ícones, o da trilha, de onde descem os ramos das chamadas; o
+                // chevron vai no fim, como na chamada e no "Pensou" (relatório de design,
+                // 16/11/2026: à esquerda só aqui, à direita no resto).
                 .child(
                     div()
                         .flex_none()
@@ -1283,7 +1290,7 @@ impl Janela {
                         .items_center()
                         .justify_center()
                         .text_color(Cores::tenue())
-                        .child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)),
+                        .child(icone_de(Lucide::ListTree, 14.)),
                 )
                 .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(if ao_vivo {
                     ShimmerText::new(resumo).duration(Duration::from_millis(3400)).highlight_color(Cores::forte()).into_any_element()
@@ -1292,6 +1299,7 @@ impl Janela {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
                 .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque())))
+                .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
                     else { j.expandidos.remove(&format!("{chave}:fechado")); j.expandidos.insert(chave.clone()); }
@@ -1359,30 +1367,32 @@ impl Janela {
                 mostradas
                     .iter()
                     .enumerate()
-                    .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, k < ultima, cx)),
+                    .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, Some(k < ultima), cx)),
             )
             .into_any_element()
     }
 
     /// Um bloco de raciocínio na trilha: "Pensou" e quanto durou; o clique mostra o texto, quando
     /// o Claude Code o entrega (referência do dono: 21st.dev, "AI Thinking and Tool calls").
-    fn raciocinio(&self, contexto: &Contexto, indice: usize, texto: &str, milis: u64, com_trilho: bool, cx: &Context<Self>) -> AnyElement {
+    fn raciocinio(&self, contexto: &Contexto, indice: usize, texto: &str, milis: u64, ramo: Option<bool>, cx: &Context<Self>) -> AnyElement {
         let chave = format!("{}:{indice}", contexto.chat.id);
         let tem_texto = !texto.trim().is_empty();
         let aberto = tem_texto && self.expandidos.contains(&chave);
+        let (recuo, recuo_aberto) = if ramo.is_some() { (esp::E32, RECUO_DO_LOG) } else { (esp::E12, RECUO_DO_LOG_SOLTO) };
         let linha = h_flex()
             .id(SharedString::from(format!("raciocinio-{chave}")))
             .h(ALTURA_DO_LOG)
-            .pl(esp::E32)
+            .pl(recuo)
             .pr(esp::E8)
             .gap(esp::E8)
             .rounded(raio::CONTROLE)
             .metadado()
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone_de(Lucide::Brain, 14.).text_color(Cores::tenue())))
             .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child("Pensou"))
+            // Sem `flex_1`: o chevron vem logo depois do texto, como na chamada.
             .child(
                 div()
-                    .flex_1()
+                    .flex_shrink(1.)
                     .min_w_0()
                     .truncate()
                     .font_family(FONTE_MONO)
@@ -1401,7 +1411,7 @@ impl Janela {
             .child(linha)
             .when(aberto, |s| {
                 s.child(
-                    div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                    div().pl(recuo_aberto).py(esp::E4).child(
                         div()
                             .id(SharedString::from(format!("raciocinio-texto-{chave}")))
                             .w_full()
@@ -1417,23 +1427,26 @@ impl Janela {
                     ),
                 )
             })
-            .child(trilho_do_log(com_trilho))
+            .children(ramo.map(trilho_do_log))
             .into_any_element()
     }
 
-    /// Uma chamada comum: ícone do tipo (cor só na falha), verbo, detalhe em mono e a meta. O
-    /// clique mostra o resultado.
+    /// Uma chamada comum: ícone do tipo (cor só na falha), verbo, detalhe e a meta. O clique
+    /// mostra o resultado. `ramo`: dentro de um grupo, o ramo que a liga ao cabeçalho (e se ele
+    /// continua para a de baixo); solta, `None`, ela começa na coluna do cabeçalho, sem ramo
+    /// (relatório de design, 16/11/2026: o "└" da chamada solta pendia do nada).
     fn chamada(
         &self,
         contexto: &Contexto,
         indice: usize,
         item: &Item,
-        com_trilho: bool,
+        ramo: Option<bool>,
         cx: &Context<Self>,
     ) -> AnyElement {
         if let Item::Raciocinio { texto, milis, .. } = item {
-            return self.raciocinio(contexto, indice, texto, *milis, com_trilho, cx);
+            return self.raciocinio(contexto, indice, texto, *milis, ramo, cx);
         }
+        let (recuo, recuo_aberto) = if ramo.is_some() { (esp::E32, RECUO_DO_LOG) } else { (esp::E12, RECUO_DO_LOG_SOLTO) };
         let Item::Ferramenta {
             nome,
             resumo,
@@ -1461,7 +1474,7 @@ impl Janela {
         });
         let atividade_viva = do_sub.as_ref().filter(|(_, s)| pendente && !s.atividade.is_empty()).map(|(_, s)| {
             h_flex()
-                .pl(RECUO_DO_LOG)
+                .pl(recuo_aberto)
                 .h(r(22.))
                 .gap(esp::E6)
                 .metadado()
@@ -1475,7 +1488,7 @@ impl Janela {
                 )
         });
         let passos = do_sub.as_ref().filter(|(_, s)| !s.passos.is_empty()).map(|(_, s)| {
-            div().pl(RECUO_DO_LOG).pt(esp::E4).child(
+            div().pl(recuo_aberto).pt(esp::E4).child(
                 v_flex()
                     .w_full()
                     .py(esp::E8)
@@ -1539,10 +1552,20 @@ impl Janela {
             nome_curto(nome),
             meta.map(|(m, _)| format!(" · {m}")).unwrap_or_default()
         ));
+        // O detalhe: o que é código (comando, caminho, padrão de busca, endereço, ferramenta MCP)
+        // sai em mono dentro do chip; a prosa (a tarefa do Agent, a busca na web, a lista de
+        // tarefas) sai em Inter, sem chip. Antes, o "conferir cupons" do Agent saía em mono solto
+        // e o mesmo texto do Codex num chip (relatório de design, 16/11/2026).
+        let codigo = arquivo.is_some()
+            || matches!(nome.as_str(), "Bash" | "BashOutput" | "KillShell" | "Grep" | "Glob" | "WebFetch")
+            || nome.starts_with("mcp__");
+        // A coluna do verbo (56) só alinha os detalhes dentro de um grupo; na solta, ela deixava
+        // uns 35 px entre "Rodou" e o chip.
+        let em_grupo = ramo.is_some();
         let linha = h_flex()
             .id(SharedString::from(format!("ferramenta-{chave}")))
             .h(ALTURA_DO_LOG)
-            .pl(esp::E32)
+            .pl(recuo)
             .pr(esp::E8)
             .gap(esp::E8)
             .rounded(raio::CONTROLE)
@@ -1554,7 +1577,7 @@ impl Janela {
                 s.child(
                     div()
                         .flex_none()
-                        .min_w(r(56.))
+                        .when(em_grupo, |s| s.min_w(r(56.)))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(Cores::texto())
                         .child(verbo.to_string()),
@@ -1565,9 +1588,20 @@ impl Janela {
                     .flex_shrink(1.)
                     .min_w_0()
                     .truncate()
-                    .font_family(FONTE_MONO)
-                    .text_color(Cores::tenue())
-                    .when(arquivo.is_some() || nome == "Bash", |s| s.h(r(22.)).px(esp::E6).rounded(raio::CONTROLE).bg(Cores::recuo()).flex().items_center())
+                    .map(|s| {
+                        if codigo {
+                            s.font_family(FONTE_MONO)
+                                .text_color(Cores::tenue())
+                                .h(r(22.))
+                                .px(esp::E6)
+                                .rounded(raio::CONTROLE)
+                                .bg(Cores::recuo())
+                                .flex()
+                                .items_center()
+                        } else {
+                            s.text_color(Cores::texto())
+                        }
+                    })
                     .child(busca_conversa::realcar(if let Some(arquivo) = arquivo {
                         Path::new(arquivo).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(detalhe)
                     } else { detalhe }, &no_resumo)),
@@ -1633,14 +1667,14 @@ impl Janela {
             .child(linha)
             .children(atividade_viva)
             .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, cx)))
+                s.child(h_flex().pl(recuo_aberto).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, cx)))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
-                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(cartao_de_edicao(&chave, arquivo.as_deref(), pedido)))
+                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, arquivo.as_deref(), pedido)))
                 })
                 .when_some(comando, |s, comando| {
-                    s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                    s.child(div().pl(recuo_aberto).py(esp::E4).child(
                         CaixaDeCodigo::new(SharedString::from(format!("terminal-{chave}")), resultado.as_deref()
                             .unwrap_or(if pendente { "A saída aparece quando terminar." } else { "(interrompido, sem saída)" }).to_string().into())
                             .comando(comando.to_string()).raio_chat().erro(*erro)
@@ -1655,17 +1689,17 @@ impl Janela {
                         Some(segundos) => format!("A saída aparece quando terminar · rodando há {}", relogio(segundos)),
                         None => "A saída aparece quando terminar".to_string(),
                     };
-                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E6).pb(esp::E4).child(
+                    s.child(div().pl(recuo_aberto).pt(esp::E6).pb(esp::E4).child(
                         div().px(esp::E12).metadado().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto),
                     ))
                 })
                 .when(comando.is_none() && !so_o_pedido && !sem_texto && !(pendente && resultado.is_none()), |s| {
-                    s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
+                    s.child(div().pl(recuo_aberto).py(esp::E4).child(
                         bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
                     ))
                 })
                 .when_some(abrir.filter(|_| pedido.is_none() && matches!(nome.as_str(), "Edit" | "Write")), |s, alvo| {
-                    s.child(div().pl(RECUO_DO_LOG).py(esp::E8).child(
+                    s.child(div().pl(recuo_aberto).py(esp::E8).child(
                         div().id(SharedString::from(format!("abrir-versao-{chave}"))).cursor_pointer().corpo_ui()
                             .text_color(Cores::destaque_texto()).child("Este registro não guardou o diff. Abrir o arquivo atual")
                             .on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx)),
@@ -1673,7 +1707,7 @@ impl Janela {
                 })
                 .when(so_o_pedido, |s| s.pb(esp::E4))
             })
-            .child(trilho_do_log(com_trilho))
+            .children(ramo.map(trilho_do_log))
             .into_any_element();
         // A conversa anda até a chamada quando o achado atual está nela (no resumo ou na saída).
         let realce = if no_resumo.atual.is_some() { no_resumo } else { no_resultado };
