@@ -1879,10 +1879,20 @@ enum ClasseAvisoChat {
     Alerta,
 }
 
+/// O aviso do turno cortado ao fechar o Vitral (`motor::marcar_turnos_cortados`). O texto gravado
+/// não muda: o motor compara o texto exato para não avisar duas vezes.
+const VITRAL_FECHADO: &str = "O Vitral foi fechado";
+
 /// Os textos vêm todos de `motor.rs`.
 fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
-    const MARCOS: [&str; 5] =
-        ["Sessão nova", "Interrompido", "Saiu do modo Planejar", "Retomando a sessão", crate::importar::MARCO];
+    const MARCOS: [&str; 6] = [
+        "Sessão nova",
+        "Interrompido",
+        "Saiu do modo Planejar",
+        "Retomando a sessão",
+        crate::importar::MARCO,
+        VITRAL_FECHADO,
+    ];
     if erro {
         ClasseAvisoChat::Alerta
     } else if MARCOS.iter().any(|m| texto.starts_with(m)) {
@@ -1907,6 +1917,12 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool, realce: &Realce) -> (Bloc
         ClasseAvisoChat::Marco => {
             let (icone, cor, rotulo) = if texto.starts_with("Interrompido") {
                 (Lucide::CirclePause, Cores::tenue(), "Turno interrompido".to_string())
+            } else if texto.starts_with(VITRAL_FECHADO) {
+                // Um marco de uma linha, sem a instrução (a faixa logo abaixo já tem o Retomar, e
+                // nos antigos não há mais o que retomar) e sem nome de agente (no chat do Codex o
+                // texto mandava o Claude continuar). Vale também para os avisos já gravados
+                // (relatório de design, 16/11/2026).
+                (Lucide::CirclePause, Cores::tenue(), "O Vitral fechou no meio do turno".to_string())
             } else if texto.starts_with("Saiu do modo Planejar") {
                 (Lucide::Map, Cores::verde(), texto.to_string())
             } else if texto.starts_with(crate::importar::MARCO) {
@@ -3681,6 +3697,10 @@ mod testes {
     #[test]
     fn classe_de_cada_aviso() {
         assert_eq!(tipo_aviso("Interrompido.", false), ClasseAvisoChat::Marco);
+        assert_eq!(
+            tipo_aviso("O Vitral foi fechado no meio deste turno. Use Retomar para o Claude continuar de onde parou.", false),
+            ClasseAvisoChat::Marco
+        );
         assert_eq!(tipo_aviso("Sessão nova: o Claude não lembra das mensagens acima.", false), ClasseAvisoChat::Marco);
         assert_eq!(tipo_aviso("Retomando a sessão anterior.", false), ClasseAvisoChat::Marco);
         assert_eq!(tipo_aviso("Tentando de novo.", false), ClasseAvisoChat::Info);
