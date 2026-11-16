@@ -658,7 +658,6 @@ impl Janela {
                 let responder = (ativo && self.trecho.is_some()).then(|| {
                     div()
                         .map(super::mensagens::coluna)
-                        .when(self.uso_sobre_as_mensagens(ix, cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
                         .flex()
                         .justify_end()
                         .pb(esp::E6)
@@ -808,7 +807,8 @@ impl Janela {
                         .children(abas.into_iter().flatten()),
                 )
                     .child(acoes)
-                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
+                    // Os anéis de uso ficam ao lado dos botões da janela (dono, 16/11/2026).
+                    .when(mostra_botoes_janela, |s| s.children(self.uso_no_cabecalho(cx)).child(self.botoes_janela_separados(cx)))
             });
         match menu_do_cabecalho {
             Some((janela, motor)) => cabecalho

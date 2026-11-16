@@ -695,9 +695,6 @@ impl Janela {
         let sem_achado = total == 0 && contador.is_some();
         let contador_longo = contador.clone().map(SharedString::from);
         let contador = if estreita { painel.busca.indice.contador_curto() } else { contador };
-        // No último painel, com os anéis de uso no canto, a barra termina antes deles: o × de
-        // fechar a busca ficava debaixo dos anéis.
-        let direita = if self.uso_no_ultimo_painel(ix, cx) { r(super::uso_plano::FOLGA_DO_USO) } else { esp::E8 };
         let seta = |nome: &'static str, icone: Lucide, dica: &'static str, acao: &dyn Action, passo: i32| {
             botao_icone(SharedString::from(format!("{nome}-{id}")), icone, dica, TamanhoBotao::Barra, window, cx)
                 .tooltip_with_action(dica, acao, None)
@@ -749,7 +746,7 @@ impl Janela {
             div()
                 .absolute()
                 .top(esp::E8)
-                .right(direita)
+                .right(esp::E8)
                 .left(esp::E8)
                 .flex()
                 .justify_end()

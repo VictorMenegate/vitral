@@ -68,7 +68,6 @@ impl Janela {
                     .flex()
                     .flex_col()
                     .px(esp::E12)
-                    .when(self.uso_sobre_a_direita(cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
                     // Sem encolher: o que passa da altura rola, em vez de espremer os cartões.
                     .children(filhos)
                     .child(div().flex_none().h(esp::E16))

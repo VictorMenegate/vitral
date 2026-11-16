@@ -114,9 +114,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Sem o "⋯" no cabeçalho.** O menu do painel (modo foco, mostrar o painel da direita, nova
   conversa ao lado, renomear, fixar, arquivar) abre com o botão direito no cabeçalho ou numa aba
   (na aba, vale para aquele chat), e com Shift+F10 ou a tecla Menu.
-- **Os anéis de uso não cobrem mais o texto.** Com o painel da direita aberto, o conteúdo dele
-  deixa o lugar dos anéis; sem ele, as mensagens, a faixa e a caixa do último painel terminam na
-  mesma linha, ao lado dos anéis.
+- **Os anéis de uso no cabeçalho.** Os anéis do Claude e do Codex foram para a fileira do
+  cabeçalho, ao lado do × da janela, menores e lado a lado: não ficam mais por cima do texto, e a
+  conversa, a caixa e as faixas do último painel vão até a borda, sem a folga que guardavam para
+  eles.
 - **Menos texto cortado.** O título "Enquanto você esteve fora" quebra em duas linhas na lista
   estreita, em vez de virar "Enquanto voc…". A faixa de cima da caixa diz "Parada · Vitral
   fechou", como a lista, com o motivo inteiro na dica. O aviso de turno cortado pelo fechamento do
@@ -135,7 +136,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   painéis (antes, uns 5 px abaixo).
 - **O × da janela separado do painel.** No cabeçalho da última conversa, um traço separa o × da
   janela das ações do painel, como já era no painel da direita.
-- **Textos das Configurações acertados.** A dos anéis de uso diz que eles ficam no canto de cima, a
+- **Textos das Configurações acertados.** A dos anéis de uso diz onde eles ficam, a
   dos servidores MCP acompanha o interruptor, e as linhas de modo, agente e modelo dizem o que cada
   chat troca.
 - **Ultracode desligado legível.** O motivo de ele não valer no chat aparece claro (só a chave fica
@@ -171,8 +172,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Buscar na conversa (Ctrl+F) mais confiável.** O achado dentro de uma trilha com raciocínio
   aparece, também o que está na saída de um comando (antes o contador andava e a tela não), não
   para mais na última linha debaixo da pílula
-  de voltar ao fim, o campo não encolhe até uma letra no painel estreito e o × de fechar a busca
-  não fica debaixo dos anéis de uso.
+  de voltar ao fim e o campo não encolhe até uma letra no painel estreito.
 - **O lápis não foge do ponteiro.** A barra de ações da mensagem (hora, editar, copiar) continua
   à vista quando o ponteiro chega nela por cima.
 - **O modo escolhido pelo teclado devolve o cursor à caixa**, como já faziam o mouse e os outros

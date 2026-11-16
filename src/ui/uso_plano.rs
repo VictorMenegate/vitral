@@ -54,11 +54,13 @@ pub(super) fn instalar_codex() {
 }
 
 impl Janela {
-    /// Os anéis de uso flutuando no canto de CIMA, à direita, da janela, logo abaixo do × de
-    /// fechar (dono, 13/11/2026; em 12/11 ele os tinha pedido embaixo): os anéis de 30 um em cima
-    /// do outro, sem fundo. Os popovers abrem para baixo. Some com a opção "Mostrar o uso do plano
-    /// no canto da janela" desligada.
-    pub(super) fn uso_no_canto(&self, cx: &Context<Self>) -> Option<AnyElement> {
+    /// Os anéis de uso na fileira do cabeçalho, ao lado dos botões da janela (no último painel, ou
+    /// no painel da direita quando ele está ao lado): dois anéis de 22, lado a lado, com o mesmo
+    /// clique, dica e popover (dono, 16/11/2026: "não precisa ter esse espaço na direita, que era
+    /// por conta do uso"). Antes eles flutuavam por cima da conversa, abaixo do ×, e a conversa, a
+    /// caixa e as faixas do último painel guardavam uma folga para eles. Somem com a opção "Mostrar
+    /// o uso do plano no cabeçalho" desligada.
+    pub(super) fn uso_no_cabecalho(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let motor = self.motor.as_ref()?;
         if !motor.read(cx).config.uso_no_canto {
             return None;
@@ -67,43 +69,7 @@ impl Janela {
         if botoes.is_empty() {
             return None;
         }
-        Some(
-            div()
-                .absolute()
-                .right(r(USO_DA_BORDA))
-                .top(r(USO_DO_TOPO))
-                .child(v_flex().gap(esp::E6).children(botoes))
-                .into_any_element(),
-        )
-    }
-
-    /// Os anéis moram no canto de cima, à direita, por cima da última conversa. Quando ela é
-    /// estreita (a coluna das mensagens tem até uns 780 de largura, centrada: com menos de 1000
-    /// no cartão o texto chegaria debaixo deles), as mensagens dela ganham `FOLGA_DO_USO` à
-    /// direita. A 150% de zoom, com três painéis, o texto passava por baixo dos anéis.
-    pub(super) fn uso_sobre_as_mensagens(&self, ix: usize, cx: &Context<Self>) -> bool {
-        ix + 1 == self.paineis.len()
-            && !self.direita_visivel()
-            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
-            && self.paineis[ix].medida.rem * 15. < 1000.
-    }
-
-    /// Os anéis ficam por cima da ponta direita do painel `ix`: o último, com a direita fechada.
-    /// Em qualquer largura (a barra do Ctrl+F encosta na borda); `uso_sobre_as_mensagens` é para
-    /// a coluna de leitura, que só chega lá no painel estreito.
-    pub(super) fn uso_no_ultimo_painel(&self, ix: usize, cx: &App) -> bool {
-        ix + 1 == self.paineis.len()
-            && !self.direita_visivel()
-            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
-    }
-
-    /// A direita (ao lado ou em gaveta) ocupa a borda onde moram os anéis: o conteúdo dela, abaixo
-    /// da faixa das abas, ganha `FOLGA_DO_USO` à direita. Sem isso o selo da conta encostava no
-    /// fim do texto de "Este chat" e o anel do Codex tocava a borda do cartão (relatório de
-    /// design, 16/11/2026).
-    pub(super) fn uso_sobre_a_direita(&self, cx: &Context<Self>) -> bool {
-        (self.direita_visivel() || self.gaveta == Some(super::Gaveta::Direita))
-            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
+        Some(super::sem_arrastar().flex().flex_none().items_center().gap(esp::E4).children(botoes).into_any_element())
     }
 
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -135,14 +101,8 @@ impl Janela {
     }
 }
 
-/// O diâmetro dos anéis no canto da janela.
-const DIAMETRO_NO_CABECALHO: f32 = 30.;
-/// A distância dos anéis do canto até as bordas de baixo e da direita da janela.
-const USO_DA_BORDA: f32 = 14.;
-/// A distância do topo da janela: a margem, o cabeçalho da conversa (onde fica o ×) e um respiro.
-const USO_DO_TOPO: f32 = 60.;
-/// O quanto a caixa de mensagem encolhe à direita para os anéis do canto caberem ao lado dela.
-pub(super) const FOLGA_DO_USO: f32 = 40.;
+/// O diâmetro dos anéis no cabeçalho.
+const DIAMETRO_NO_CABECALHO: f32 = 22.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.
