@@ -55,6 +55,9 @@ pub struct Painel {
     pub foco_aba: FocusHandle,
     /// O menu "⋯" do painel está aberto (o Shift+F10 na aba abre o mesmo).
     pub menu_aberto: bool,
+    /// A largura da faixa das abas no quadro anterior (zero antes de medir): decide quais abas de
+    /// fundo ficam só com o ícone.
+    pub largura_abas: Pixels,
     /// O item marcado no menu "/" da caixa (as setas andam, o Enter e o Tab o escolhem) e o menu
     /// fechado pelo Esc. Os dois voltam ao começo a cada mudança no texto.
     pub indice_menu: usize,
@@ -396,6 +399,7 @@ impl Janela {
             medida: MedidaPainel::default(),
             foco_aba,
             menu_aberto: false,
+            largura_abas: px(0.),
             indice_menu: 0,
             menu_dispensado: false,
             foco_esforco: cx.focus_handle(),

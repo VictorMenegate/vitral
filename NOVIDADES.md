@@ -144,6 +144,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.
+- **Abas que cabem.** Sem lugar para o título, a aba de fundo fica só com o ícone (antes sobravam
+  duas reticências). Com muitas abas, a que está à vista não some mais por baixo do "⋯": guarda o
+  ícone, o estado e o começo do título.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

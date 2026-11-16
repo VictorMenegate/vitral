@@ -873,7 +873,11 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   última fecha o painel. O Ctrl+W fecha a aba à vista e, na última, o painel. A cada desenho,
   `acertar_abas` põe o chat à vista entre as abas e tira as de chats que sumiram. Um chat só aparece
   num lugar por vez: a vizinha que já está à vista noutro painel não entra. A aba à vista é a
-  completa; as outras são compactas (até 180 de largura), com o título e o caminho na dica. Toda
+  completa (de 120 a 280 de largura); as outras são compactas (até 180), com o título e o caminho
+  na dica, e encolhem antes dela. A de fundo que não teria lugar para 4 letras e as reticências
+  fica só com o ícone (`abas_so_icone`, em `src/ui/conversa.rs`, com a largura da faixa medida no
+  quadro anterior e a natural de cada aba), e o que ainda não couber é cortado na borda da faixa,
+  nunca por cima do **⋯**. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer
