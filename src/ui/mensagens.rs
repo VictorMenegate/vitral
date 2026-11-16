@@ -31,7 +31,7 @@ use super::{
     componentes::{
         Alerta, AnelGirando, BotaoCopiar, BotaoDeSegurar, CabecalhoDeSecao, EstadoDaMoldura, Etiqueta, azulejo,
         botao_claro, miolo_da_moldura, moldura_dupla, CaixaDeCodigo, EstadoVazio, FaixaCaixa, Flutuante as _,
-        LarguraPainel, Papel as Quem, Selo, TamanhoBotao, Tom, botao_fantasma, botao_icone, botao_primario, relogio,
+        LarguraPainel, Marca, Papel as Quem, Selo, TamanhoBotao, Tom, botao_fantasma, botao_icone, botao_primario, relogio,
         contagem, icone_do_modo, teclas, texto_arco_iris,
     },
     busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
@@ -41,7 +41,7 @@ use super::{
     paineis::tamanho_da_conversa,
 };
 use crate::{
-    modelo::{Chat, Execucao, Item, Reforco},
+    modelo::{Agente, Chat, Execucao, Item, Reforco},
     motor::Motor,
     tema::{
         Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, halo_foco, r, raio, tam,
@@ -404,7 +404,7 @@ impl Janela {
             } => {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
-                let editavel = contexto.editavel == Some(indice);
+                let editavel = contexto.editavel.is_some_and(|desde| indice >= desde);
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, window, cx))
             }
             Item::Assistente { texto, .. } => {
@@ -421,6 +421,7 @@ impl Janela {
                 (bloco, rolar.into_any_element())
             }
             Item::Cartao { id, .. } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false, &Realce::default()),
+            Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
             Item::Desconhecido(_) => {
                 aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false, &Realce::default())
             }
@@ -444,14 +445,6 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let nivel = contexto.nivel;
-        let largura = if larga(nivel) {
-            0.80
-        } else if minima(nivel) {
-            0.92
-        } else {
-            0.88
-        };
         let grupo = SharedString::from(format!("msg-{chave}"));
         let linhas = texto.lines().count();
         let longo = linhas > 14;
@@ -493,8 +486,11 @@ impl Janela {
                 let com_texto = !texto.trim().is_empty();
                 // O balão é azul bem baixo (o destaque misturado à base, opaco): diz de quem é a
                 // fala sem a moldura de cartão, e o canto de baixo à direita é o da ponta.
+                // Na largura toda da coluna (dono, 16/11/2026: "faz o campo das minhas mensagens
+                // ficar na largura toda").
                 let balao = (com_texto || mostrar.is_some() || reforco != Reforco::default()).then(|| {
                     v_flex()
+                        .w_full()
                         .px(dentro_da_borda(12.))
                         .py(dentro_da_borda(8.))
                         .gap(esp::E8)
@@ -520,33 +516,25 @@ impl Janela {
                             )
                         })
                 });
-                v_flex().items_end().gap(esp::E6).children(fora).children(balao).into_any_element()
+                v_flex().w_full().items_end().gap(esp::E6).children(fora).children(balao).into_any_element()
             }
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
         acoes.extend(hora_na_barra(em));
-        // Só na última mensagem: o texto volta para a caixa e a conversa volta a antes dela.
+        // Em qualquer mensagem sua: o texto volta para a caixa e a conversa volta a antes dela.
         if editavel {
-            acoes.push(super::reenvio::botao_editar(chave, contexto.painel, window, cx).into_any_element());
+            let ix = chave.rsplit(':').next().and_then(|i| i.parse().ok());
+            if let Some(ix) = ix {
+                acoes.push(super::reenvio::botao_editar(chave, contexto.painel, ix, window, cx).into_any_element());
+            }
         }
         acoes.push(copiar(chave, texto).into_any_element());
-        // A largura máxima fica no invólucro: o balão encolhe ao texto e a barra se mede por ele.
-        // Só no painel largo sobra lugar à esquerda do balão; nos outros a barra vai para o canto
-        // de cima (à esquerda ela saía cortada pela borda do cartão: dono, 13/11/2026).
-        let barra = div().absolute().map(|s| {
-            if larga(nivel) { s.bottom_0().right(relative(1.)).pr(esp::E8) } else { s.top(r(-14.)).right_0() }
-        });
+        // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, como na resposta.
+        let barra = div().absolute().top(r(-14.)).right_0();
         v_flex()
             .w_full()
-            .items_end()
             .group(grupo.clone())
-            .child(
-                div()
-                    .relative()
-                    .max_w(relative(largura))
-                    .child(corpo)
-                    .child(barra.child(barra_de_acoes(grupo, acoes, cx))),
-            )
+            .child(div().relative().w_full().child(corpo).child(barra.child(barra_de_acoes(grupo, acoes, cx))))
             .into_any_element()
     }
 
@@ -876,6 +864,21 @@ fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, String)> {
 }
 
 /// O dia entre dois turnos, no molde do marco: o nome do dia no meio de uma linha fina.
+/// Num chat com o Claude e o Codex juntos, quem trabalha daqui em diante: a marca e o nome, à
+/// esquerda, na coluna do texto da resposta.
+fn marca_da_vez(agente: Agente) -> AnyElement {
+    let marca = match agente {
+        Agente::Claude => Marca::Claude,
+        Agente::Codex => Marca::Codex,
+    };
+    h_flex()
+        .h(r(24.))
+        .gap(r(8.))
+        .child(marca.disco(18.))
+        .child(div().metadado().font_semibold().text_color(Cores::forte()).child(agente.nome()))
+        .into_any_element()
+}
+
 fn separador_de_dia(rotulo: &str) -> AnyElement {
     let traco = || div().flex_1().min_w(r(16.)).h(px(1.)).bg(Cores::linha());
     h_flex()
@@ -1190,7 +1193,7 @@ struct Contexto<'a> {
     nivel: LarguraPainel,
     /// O painel em que esta conversa está desenhada (o "Editar" devolve o texto à caixa dele).
     painel: u64,
-    /// A última mensagem do usuário, quando ela ainda dá para corrigir (ver `reenvio`).
+    /// Desde que posição as mensagens do usuário dão para corrigir (ver `reenvio`); `None`, nenhuma.
     editavel: Option<usize>,
     /// Última mensagem ou aviso: chamadas sem resultado antes dele foram interrompidas.
     marco: Option<usize>,
@@ -1215,7 +1218,7 @@ impl<'a> Contexto<'a> {
             rodando: motor.execucao(&chat.id).rodando(),
             nivel,
             painel,
-            editavel: super::reenvio::indice_editavel(motor, chat),
+            editavel: super::reenvio::editaveis_desde(motor, chat),
             marco: marco_da_conversa(&chat.itens, motor.dirigidas_no_turno(&chat.id)),
             busca,
             rolagem,

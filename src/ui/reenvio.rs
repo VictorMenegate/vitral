@@ -17,12 +17,18 @@ use crate::{
     tema::Lucide,
 };
 
-/// A última mensagem do usuário pode ser corrigida nesta conversa: o Vitral não está só para
+/// A última mensagem do usuário que pode ser corrigida nesta conversa: o Vitral não está só para
 /// leitura e nada de outro chat entrou depois dela.
 pub(super) fn indice_editavel(motor: &Motor, chat: &Chat) -> Option<usize> {
     motor.somente_leitura().is_none()
         .then(|| motor::indice_editavel(&chat.itens))
         .flatten()
+}
+
+/// Desde que posição as mensagens do usuário podem ser corrigidas (`None` com o Vitral só para
+/// leitura).
+pub(super) fn editaveis_desde(motor: &Motor, chat: &Chat) -> Option<usize> {
+    motor.somente_leitura().is_none().then(|| motor::editaveis_desde(&chat.itens))
 }
 
 /// O que sai da conversa junto com a mensagem do índice `ix`: a resposta, as ferramentas e os
@@ -58,7 +64,7 @@ pub(super) fn pergunta(depois: usize, rodando: bool, tem_sessao: bool) -> Confir
     Confirmacao {
         tom: TomConfirmacao::Atencao,
         icone: Lucide::Pencil.into(),
-        titulo: "Corrigir a última mensagem?".into(),
+        titulo: "Corrigir esta mensagem?".into(),
         texto: "O texto volta para a caixa, com os anexos e o reforço, e a conversa volta ao ponto antes \
                 dela. Ao enviar, o turno roda de novo."
             .into(),
@@ -69,8 +75,9 @@ pub(super) fn pergunta(depois: usize, rodando: bool, tem_sessao: bool) -> Confir
     }
 }
 
-/// O "Editar" do balão da última mensagem: pergunta e, com o turno rodando, para ele primeiro.
-pub(super) fn botao_editar(chave: &str, painel: u64, window: &Window, cx: &Context<Janela>) -> Button {
+/// O "Editar" do balão de uma mensagem sua (`ix` na conversa): pergunta e, com o turno rodando,
+/// para ele primeiro.
+pub(super) fn botao_editar(chave: &str, painel: u64, ix: usize, window: &Window, cx: &Context<Janela>) -> Button {
     let janela = cx.entity().downgrade();
     botao_icone(
         SharedString::from(format!("editar-{chave}")),
@@ -82,7 +89,7 @@ pub(super) fn botao_editar(chave: &str, painel: u64, window: &Window, cx: &Conte
     )
     .on_click(move |_, window, cx| {
         cx.stop_propagation();
-        let _ = janela.update(cx, |this, cx| this.pedir_para_editar(painel, true, window, cx));
+        let _ = janela.update(cx, |this, cx| this.pedir_para_editar(painel, Some(ix), true, window, cx));
     })
 }
 
@@ -90,12 +97,13 @@ impl Janela {
     /// A seta para cima na caixa vazia: igual ao "Editar", mas sem parar um turno em andamento —
     /// uma tecla sem querer não corta o trabalho do Claude.
     pub(super) fn editar_ultima(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
-        self.pedir_para_editar(painel, false, window, cx);
+        self.pedir_para_editar(painel, None, false, window, cx);
     }
 
     /// Pergunta antes de corrigir. Com `parar`, um turno em andamento é interrompido e a correção
     /// espera ele sair; sem ele, a conversa rodando só avisa como parar.
-    pub(super) fn pedir_para_editar(&mut self, painel: u64, parar: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// `ix`: a mensagem; `None` é a última que dá para corrigir.
+    pub(super) fn pedir_para_editar(&mut self, painel: u64, ix: Option<usize>, parar: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
@@ -107,14 +115,18 @@ impl Janela {
             let Some(c) = m.chat(&chat) else {
                 return;
             };
-            (indice_editavel(m, c), m.execucao(&chat).rodando(), c.sessao_criada)
+            let ix = match ix {
+                Some(ix) => motor::editavel(&c.itens, ix).then_some(ix).filter(|_| m.somente_leitura().is_none()),
+                None => indice_editavel(m, c),
+            };
+            (ix, m.execucao(&chat).rodando(), c.sessao_criada)
         };
         let Some(ix) = ix else {
             return;
         };
         if rodando && !parar {
             window.push_notification(
-                aviso(Tom::Info, "A conversa está rodando: pare (Esc) para corrigir a última mensagem."),
+                aviso(Tom::Info, "A conversa está rodando: pare (Esc) para corrigir uma mensagem."),
                 cx,
             );
             return;
@@ -128,7 +140,7 @@ impl Janela {
         };
         // Nada a perder (a mensagem é o último bloco e nada roda): vai direto para a caixa.
         if depois == 0 && !rodando {
-            self.aplicar_correcao(painel, chat, window, cx);
+            self.aplicar_correcao(painel, chat, ix, window, cx);
             return;
         }
         let janela = cx.entity().downgrade();
@@ -139,9 +151,9 @@ impl Janela {
                 let (janela, motor_e, id) = (janela.clone(), motor_e.clone(), id.clone());
                 if rodando {
                     motor_e.update(cx, |m, cx| m.parar(&id, cx));
-                    esperar_e_corrigir(janela, motor_e, id, painel, window, cx);
+                    esperar_e_corrigir(janela, motor_e, id, painel, ix, window, cx);
                 } else {
-                    let _ = janela.update(cx, |this, cx| this.aplicar_correcao(painel, id.clone(), window, cx));
+                    let _ = janela.update(cx, |this, cx| this.aplicar_correcao(painel, id.clone(), ix, window, cx));
                 }
             },
             None,
@@ -152,11 +164,11 @@ impl Janela {
 
     /// Tira a mensagem da conversa e a põe de volta na caixa, com os anexos e o reforço. Os
     /// arquivos da pasta ficam como estão.
-    fn aplicar_correcao(&mut self, painel: u64, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn aplicar_correcao(&mut self, painel: u64, chat: String, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        let Some(retirada) = motor.update(cx, |m, cx| m.retirar_ultima_mensagem(&chat, cx)) else {
+        let Some(retirada) = motor.update(cx, |m, cx| m.retirar_mensagem(&chat, ix, cx)) else {
             window.push_notification(aviso(Tom::Atencao, "Não deu para corrigir esta mensagem agora."), cx);
             return;
         };
@@ -188,6 +200,7 @@ fn esperar_e_corrigir(
     motor: Entity<Motor>,
     chat: String,
     painel: u64,
+    ix: usize,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -199,7 +212,7 @@ fn esperar_e_corrigir(
                     .unwrap_or(true);
                 if parou {
                     let _ = cx.update(|window, cx| {
-                        let _ = janela.update(cx, |this, cx| this.aplicar_correcao(painel, chat.clone(), window, cx));
+                        let _ = janela.update(cx, |this, cx| this.aplicar_correcao(painel, chat.clone(), ix, window, cx));
                     });
                     return;
                 }
@@ -216,7 +229,7 @@ fn esperar_e_corrigir(
 mod testes {
     use super::{blocos_depois, pergunta};
     use crate::modelo::Item;
-    use crate::motor::indice_editavel;
+    use crate::motor::{editavel, indice_editavel};
 
     fn usuario(texto: &str) -> Item {
         Item::Usuario {
@@ -254,6 +267,20 @@ mod testes {
         let sozinha = [Item::Assistente { em: 0, texto: "antes".into() }, usuario("última")];
         assert_eq!(indice_editavel(&sozinha), Some(1));
         assert_eq!(blocos_depois(&sozinha, 1), 0);
+        // Qualquer mensagem sua dá para corrigir, não só a última; o raciocínio e o pedido de
+        // revisar a memória no meio não trancam nada.
+        let longa = [
+            usuario("primeira"),
+            Item::Raciocinio { em: 0, texto: String::new(), milis: 900 },
+            Item::Assistente { em: 0, texto: "resposta".into() },
+            Item::Entrega { em: 0, de: "Vitral".into(), texto: "reveja a memória".into() },
+            usuario("segunda"),
+        ];
+        assert!(editavel(&longa, 0) && editavel(&longa, 4));
+        assert!(!editavel(&longa, 2), "só mensagem do usuário");
+        assert_eq!(indice_editavel(&longa), Some(4));
+        // O que outro chat entregou tranca o que veio antes dele.
+        assert!(!editavel(&com_entrega, 0));
     }
 
     #[test]

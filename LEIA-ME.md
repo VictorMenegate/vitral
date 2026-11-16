@@ -50,6 +50,26 @@ componentes do GPUI Kit.
   pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
+- **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
+  outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
+  modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
+  `comecar_turno_com`, a mensagem do usuário escolhe quem trabalha (`alvo_da_dupla`: "@claude",
+  "@codex" ou os dois) e abre a rodada (`Motor.rodadas`, `DUPLA_TROCAS`); `o_que_o_outro_fez`
+  monta, a partir da última `Item::Vez` do agente, o que o usuário mandou e o que o outro disse e
+  mexeu, e vai antes do texto do turno. No `fim_de_turno`, `passar_a_vez` abre a vez do outro com um
+  pedido de revisão que fica fora da conversa (`Entrada.registrada`); a rodada para em "Nada a
+  acrescentar" (`nada_a_acrescentar`), no limite de trocas, num erro ou no Parar. Escolher no seletor
+  um modelo do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O
+  interruptor fica no seletor de modelo (`juntar_agentes`).
+- **Subagente em segundo plano.** Desde o Claude Code 2.1.3xx a chamada Agent volta na hora com
+  `tool_use_result.status = "async_launched"`: isso vira `Evento::SubLancado`, e não resultado. O
+  `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
+  fecha a chamada com o `summary` (`SubFim`). O `ferramentas/claude-falso/claude` encena isso no
+  `[ferramenta Agent …]`; o `Task` segue no jeito antigo, que termina no próprio resultado.
+- **Corrigir qualquer mensagem.** `motor::editaveis_desde` diz desde onde as mensagens do usuário
+  dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
+  do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
+  e o que veio depois. Na dupla, a sessão do parceiro também recomeça.
 - **Economia de tokens sem mexer na resposta.** Três coisas, nenhuma corta saída, baixa esforço ou
   troca modelo sozinha. (1) `claude::ambiente` desliga o gasto de fundo que o Vitral não mostra
   (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,

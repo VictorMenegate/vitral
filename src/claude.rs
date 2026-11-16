@@ -133,6 +133,13 @@ pub enum Evento {
         conteudo: String,
         erro: bool,
     },
+    /// O subagente da chamada `pai` foi para o segundo plano: o resultado da chamada é só o aviso
+    /// de que ele começou, e o de verdade chega no `SubFim`.
+    SubLancado { pai: String },
+    /// O Claude Code contou quantas ferramentas o subagente em segundo plano já usou.
+    SubProgresso { pai: String, ferramentas: u32 },
+    /// O subagente em segundo plano terminou (ou falhou), com o resumo do que fez.
+    SubFim { pai: String, erro: bool, resumo: String },
     /// O Codex confirmou (ou recusou) uma mensagem enviada durante o turno.
     DirecaoConfirmada { texto: String, aceita: bool },
     Fim {
@@ -1197,6 +1204,15 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .filter(|t| t["ambient"] != true)
                 .count(),
         )],
+        "system" if valor["subtype"] == "task_progress" && valor["tool_use_id"].is_string() => vec![Evento::SubProgresso {
+            pai: texto(&valor["tool_use_id"]),
+            ferramentas: valor["usage"]["tool_uses"].as_u64().unwrap_or(0) as u32,
+        }],
+        "system" if valor["subtype"] == "task_notification" && valor["tool_use_id"].is_string() => vec![Evento::SubFim {
+            pai: texto(&valor["tool_use_id"]),
+            erro: valor["status"] != "completed",
+            resumo: texto(&valor["summary"]),
+        }],
         "stream_event" => {
             let evento = &valor["event"];
             if evento["type"] == "content_block_delta" && evento["delta"]["type"] == "text_delta" {
@@ -1236,17 +1252,25 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             }
             eventos
         }
-        "user" => valor["message"]["content"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|bloco| bloco["type"] == "tool_result")
-            .map(|bloco| Evento::ResultadoFerramenta {
-                id: texto(&bloco["tool_use_id"]),
-                conteudo: conteudo_resultado(&bloco["content"]),
-                erro: bloco["is_error"].as_bool().unwrap_or(false),
-            })
-            .collect(),
+        "user" => {
+            // Desde o 2.1.3xx a chamada Agent devolve na hora "Async agent launched": o subagente
+            // segue trabalhando, e não terminou (medido em 16/11/2026).
+            let lancado = valor["tool_use_result"]["status"] == "async_launched";
+            valor["message"]["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|bloco| bloco["type"] == "tool_result")
+                .map(|bloco| match lancado {
+                    true => Evento::SubLancado { pai: texto(&bloco["tool_use_id"]) },
+                    false => Evento::ResultadoFerramenta {
+                        id: texto(&bloco["tool_use_id"]),
+                        conteudo: conteudo_resultado(&bloco["content"]),
+                        erro: bloco["is_error"].as_bool().unwrap_or(false),
+                    },
+                })
+                .collect()
+        }
         "result" => vec![Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
@@ -2043,6 +2067,26 @@ mod testes_dos_modelos {
         let resultado_do_sub = json!({ "type": "user", "parent_tool_use_id": "toolu_pai", "message": { "content": [
             { "type": "tool_result", "tool_use_id": "x", "content": "ok" } ] } });
         assert!(interpretar(&resultado_do_sub).is_empty());
+    }
+
+    /// O subagente em segundo plano, como o Claude Code 2.1.322 o mostrou (16/11/2026): a chamada
+    /// volta na hora com "Async agent launched", o progresso conta as ferramentas e o fim vem
+    /// num aviso à parte, com o resumo.
+    #[test]
+    fn subagente_em_segundo_plano_so_termina_no_aviso_de_fim() {
+        use super::{Evento, interpretar};
+        let lancado = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_pai", "type": "tool_result",
+            "content": [{ "type": "text", "text": "Async agent launched successfully." }] }] },
+            "tool_use_result": { "isAsync": true, "status": "async_launched", "agentId": "a5b" } });
+        assert!(matches!(interpretar(&lancado).as_slice(), [Evento::SubLancado { pai }] if pai == "toolu_pai"));
+        let progresso = json!({ "type": "system", "subtype": "task_progress", "task_id": "a5b", "tool_use_id": "toolu_pai",
+            "description": "Reading um.txt", "usage": { "total_tokens": 57402, "tool_uses": 2, "duration_ms": 6893 } });
+        assert!(matches!(interpretar(&progresso).as_slice(), [Evento::SubProgresso { pai, ferramentas: 2 }] if pai == "toolu_pai"));
+        let fim = json!({ "type": "system", "subtype": "task_notification", "task_id": "a5b", "tool_use_id": "toolu_pai",
+            "status": "completed", "summary": "Encontrei três arquivos." });
+        assert!(matches!(interpretar(&fim).as_slice(), [Evento::SubFim { pai, erro: false, resumo }] if pai == "toolu_pai" && resumo == "Encontrei três arquivos."));
+        let falhou = json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "toolu_pai", "status": "failed" });
+        assert!(matches!(interpretar(&falhou).as_slice(), [Evento::SubFim { erro: true, .. }]));
     }
 
     /// A resposta do `mcp_status` como o Claude Code 2.1.322 a deu.

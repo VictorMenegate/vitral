@@ -91,6 +91,9 @@ def servidor():
             item(valor, True)
         interrompido = fim.is_set()
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
+        # Na dupla do Vitral, a vez de revisar o outro agente: revisa e não acrescenta nada (a rodada para).
+        if "responda só: Nada a acrescentar" in pedido:
+            texto = "Nada a acrescentar."
         if not interrompido: item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
         falhou = "[falha]" in pedido
         evento("turn/completed", {"threadId": thread, "turn": {"id": turno,

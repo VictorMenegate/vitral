@@ -264,6 +264,30 @@ def fingir_ferramentas(texto):
             continue
         emitir({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
+        # O Agent vai para o segundo plano, como no Claude Code 2.1.3xx: a chamada volta na hora com
+        # "Async agent launched", o progresso conta as ferramentas e o fim vem num aviso à parte.
+        if nome == "Agent":
+            emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
+                    "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
+                    "tool_use_result": {"isAsync": True, "status": "async_launched", "agentId": "falso" + str(i)}})
+            emitir({"type": "system", "subtype": "background_tasks_changed",
+                    "tasks": [{"task_id": "falso" + str(i), "task_type": "local_agent", "description": detalhe}]})
+            espera = (int(segundos) if segundos else 8) / 4
+            usadas = 0
+            for passo in ({"type": "tool_use", "id": id_ + "a", "name": "Grep", "input": {"pattern": "cupom"}},
+                          {"type": "tool_use", "id": id_ + "b", "name": "Read", "input": {"file_path": "produtos/views.py"}},
+                          {"type": "text", "text": "Conferindo os testes do carrinho."},
+                          {"type": "tool_use", "id": id_ + "c", "name": "Bash", "input": {"command": "python3 manage.py test"}}):
+                time.sleep(espera)
+                emitir({"type": "assistant", "parent_tool_use_id": id_, "message": {"content": [passo]}})
+                if passo["type"] == "tool_use":
+                    usadas += 1
+                    emitir({"type": "system", "subtype": "task_progress", "task_id": "falso" + str(i), "tool_use_id": id_,
+                            "description": "Running " + passo["name"], "usage": {"tool_uses": usadas}})
+            emitir({"type": "system", "subtype": "task_notification", "task_id": "falso" + str(i), "tool_use_id": id_,
+                    "status": "completed", "summary": f"(claude falso) {detalhe}: dois lugares mexem no cupom."})
+            emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+            continue
         # O subagente trabalha lá dentro: três ferramentas e uma frase, presas à chamada dele.
         if nome in ("Task", "Agent"):
             espera = (int(segundos) if segundos else 8) / 4

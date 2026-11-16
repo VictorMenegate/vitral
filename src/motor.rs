@@ -32,7 +32,8 @@ use crate::{
     git,
     mcp::{self, Chamada, Resposta},
     modelo::{
-        Agente, Chat, Config, Entrada, Estado, EstadoRef, Execucao, Filas, Item, Ocorrencia, Reforco, agora, novo_id,
+        Agente, Chat, Config, Entrada, Estado, EstadoRef, Execucao, Filas, Item, Ocorrencia, Parceiro, Reforco, agora,
+        novo_id,
     },
     prompts,
 };
@@ -261,6 +262,9 @@ pub struct Motor {
     /// repetição (tentar de novo, a troca de conta) é o mesmo turno, e a guarda das ações externas
     /// não repete o que ele já fez.
     ultima_entrada: HashMap<String, (String, Vec<Entrada>)>,
+    /// Chats com o Claude e o Codex juntos numa rodada de "os dois": quantas vezes ainda um pode
+    /// passar a vez ao outro antes de a rodada parar (`DUPLA_TROCAS`).
+    rodadas: HashMap<String, u8>,
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
@@ -512,6 +516,7 @@ impl Motor {
             geracao: 0,
             geracao_atual: HashMap::new(),
             ultima_entrada: HashMap::new(),
+            rodadas: HashMap::new(),
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
             limite_ate: HashMap::new(),
@@ -1336,15 +1341,18 @@ impl Motor {
     /// estava nela para a caixa. A sessão do Claude Code não volta atrás: ela é trocada por uma
     /// nova, e o próximo turno começa com o bloco de passagem do que ficou na tela — senão o
     /// Claude continuaria lembrando da mensagem que saiu. Os arquivos da pasta não voltam.
-    pub fn retirar_ultima_mensagem(&mut self, chat_id: &str, cx: &mut Context<Self>) -> Option<Retirada> {
+    pub fn retirar_mensagem(&mut self, chat_id: &str, ix: usize, cx: &mut Context<Self>) -> Option<Retirada> {
         if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
             return None;
         }
-        let ix = indice_editavel(&self.chat(chat_id)?.itens)?;
+        if !editavel(&self.chat(chat_id)?.itens, ix) {
+            return None;
+        }
+        self.rodadas.remove(chat_id);
         let c = self.chat_mut(chat_id)?;
         let mut saindo = c.itens.split_off(ix);
         let Item::Usuario { texto, anexos, ultrathink, ultracode, .. } = saindo.remove(0) else {
-            // O `indice_editavel` já garante que o primeiro é a mensagem; se não for, nada muda.
+            // O `editavel` já garante que o primeiro é a mensagem; se não for, nada muda.
             c.itens.append(&mut saindo);
             return None;
         };
@@ -1356,6 +1364,14 @@ impl Motor {
             c.sessao_criada = false;
             c.contexto = None;
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::Reenvio);
+        }
+        // Na dupla, o outro agente também viu o que saiu: ele recomeça numa sessão nova e recebe a
+        // conversa que ficou na vez dele.
+        if let Some(c) = self.chat_mut(chat_id)
+            && let Some(p) = c.parceiro.as_mut()
+            && p.sessao_criada
+        {
+            (p.sessao, p.sessao_criada, p.contexto) = (uuid::Uuid::new_v4().to_string(), false, None);
         }
         // O turno que saiu não é mais repetível, e o que ele estava escrevendo não tem mais lugar.
         self.ultima_entrada.remove(chat_id);
@@ -1540,6 +1556,32 @@ impl Motor {
             cx.notify();
             return;
         }
+        // Com o Claude e o Codex juntos: a mensagem do usuário escolhe quem trabalha (e se é uma
+        // rodada dos dois), e quem trabalha recebe o que o outro fez desde a vez dele.
+        let resumo_da_dupla = if chat.parceiro.is_some() {
+            if let Some(alvo) = mensagens.iter().find(|e| e.do_usuario() && !e.registrada).map(|e| alvo_da_dupla(&e.texto)) {
+                let primeiro = match alvo {
+                    AlvoDaDupla::So(agente) => {
+                        self.rodadas.remove(chat_id);
+                        agente
+                    }
+                    AlvoDaDupla::OsDois => {
+                        self.rodadas.insert(chat_id.to_string(), DUPLA_TROCAS);
+                        chat.agente
+                    }
+                };
+                if primeiro != chat.agente
+                    && let Some(c) = self.chat_mut(chat_id)
+                {
+                    c.trocar_vez();
+                    chat = c.copia_sem_itens();
+                }
+            }
+            let itens = self.chat(chat_id).map_or(&[][..], |c| c.itens.as_slice());
+            o_que_o_outro_fez(itens, chat.agente)
+        } else {
+            None
+        };
         // Ultracode só com o que ele precisa: sem isso, o Claude Code o ignora calado. Um por vez no
         // Vitral inteiro: a fonte do PC não segura dois fluxos de agentes.
         let codex = chat.agente == Agente::Codex;
@@ -1585,16 +1627,25 @@ impl Motor {
         });
 
         let (texto, imagens) = texto_do_turno(&mensagens);
-        let texto = match passagem {
-            Some(bloco) => format!("{bloco}\n\n---\n\n{texto}"),
-            None => texto,
-        };
+        let texto = [passagem, resumo_da_dupla]
+            .into_iter()
+            .flatten()
+            .rfold(texto, |texto, bloco| format!("{bloco}\n\n---\n\n{texto}"));
         let ultrathink = mensagens.iter().any(|e| e.ultrathink);
         let turno = turno_do_lote(self.ultima_entrada.get(chat_id).map(|(t, _)| t.as_str()), &mensagens);
         self.ultima_entrada.insert(chat_id.to_string(), (turno, mensagens.clone()));
         {
+            let repeticao = mensagens.iter().all(|e| e.registrada);
             let c = self.chat_mut(chat_id).unwrap();
             c.itens.extend(itens_das_entradas(mensagens));
+            // A marca de quem trabalha, na dupla; a repetição do mesmo turno não marca de novo.
+            let ultima_vez = c.itens.iter().rev().find_map(|i| match i {
+                Item::Vez { agente, .. } => Some(*agente),
+                _ => None,
+            });
+            if c.parceiro.is_some() && !(repeticao && ultima_vez == Some(c.agente)) {
+                c.itens.push(Item::Vez { agente: c.agente, em: agora() });
+            }
             c.atualizado_em = agora();
         }
         if let Some(motivo) = sem_ultracode {
@@ -1780,6 +1831,19 @@ impl Motor {
             self.mudar_chat(chat_id, |c| c.modelo = modelo, cx);
             return true;
         }
+        // Na dupla, escolher um modelo do outro agente é escolher o modelo dele: os dois seguem.
+        if self.chat(chat_id).and_then(|c| c.parceiro.as_ref()).is_some_and(|p| p.agente == agente) {
+            self.mudar_chat(
+                chat_id,
+                move |c| {
+                    if let Some(p) = c.parceiro.as_mut() {
+                        (p.modelo, p.modelo_atual) = (modelo, None);
+                    }
+                },
+                cx,
+            );
+            return true;
+        }
         if self.processos.contains_key(chat_id) {
             self.avisar(chat_id, "Troque entre o Claude e o Codex quando este turno terminar.", false);
             cx.notify();
@@ -1801,6 +1865,45 @@ impl Motor {
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::TrocouDeAgente);
             self.avisar(chat_id, &format!("Daqui em diante quem responde é o {}, numa conversa nova com as últimas mensagens.", agente.programa()), false);
         }
+        self.salvar();
+        cx.notify();
+        true
+    }
+
+    /// Põe o Claude e o Codex juntos no chat (ou tira o outro). Juntos, cada mensagem vai aos dois,
+    /// um de cada vez, e um revisa o que o outro fez; "@claude" ou "@codex" no começo manda só para
+    /// um. Cada um tem a própria sessão, e antes da vez dele recebe o que o outro fez.
+    pub fn juntar_agentes(&mut self, chat_id: &str, juntos: bool, cx: &mut Context<Self>) -> bool {
+        let Some((agente, com_parceiro)) = self.chat(chat_id).map(|c| (c.agente, c.parceiro.is_some())) else {
+            return false;
+        };
+        if com_parceiro == juntos {
+            return true;
+        }
+        if self.processos.contains_key(chat_id) {
+            self.avisar(chat_id, "Junte ou separe o Claude e o Codex quando este turno terminar.", false);
+            cx.notify();
+            return false;
+        }
+        let outro = agente.outro();
+        if juntos && outro == Agente::Codex && !crate::agente_codex::instalado() {
+            self.avisar(chat_id, "O Codex não está instalado neste computador (ou não está no PATH).", true);
+            cx.notify();
+            return false;
+        }
+        let aviso = if juntos {
+            if let Some(c) = self.chat_mut(chat_id) {
+                c.parceiro = Some(Parceiro::novo(outro));
+            }
+            "O Claude e o Codex estão juntos neste chat: cada mensagem vai aos dois, um de cada vez, e um revisa o que o outro fez. Comece com @claude ou @codex para falar só com um.".to_string()
+        } else {
+            self.rodadas.remove(chat_id);
+            if let Some(c) = self.chat_mut(chat_id) {
+                c.parceiro = None;
+            }
+            format!("Só o {} segue neste chat.", agente.nome())
+        };
+        self.avisar(chat_id, &aviso, false);
         self.salvar();
         cx.notify();
         true
@@ -2614,6 +2717,34 @@ impl Motor {
                     }
                 }
             }
+            Evento::SubLancado { pai } => {
+                // Como no resultado de uma chamada: a mensagem dirigida já entrou no turno.
+                self.dirigidas.remove(chat_id);
+                self.no_subagente(chat_id, &pai, |sub| {
+                    if sub.atividade.is_empty() {
+                        sub.atividade = "Trabalhando em segundo plano".into();
+                    }
+                });
+            }
+            Evento::SubProgresso { pai, ferramentas } => {
+                self.no_subagente(chat_id, &pai, |sub| sub.ferramentas = sub.ferramentas.max(ferramentas));
+            }
+            Evento::SubFim { pai, erro, resumo } => {
+                self.chats_sujos.insert(chat_id.to_string());
+                if let Some(c) = self.chat_mut(chat_id) {
+                    for item in c.itens.iter_mut().rev() {
+                        if let Item::Ferramenta { id, resultado, erro: erro_item, sub, .. } = item
+                            && *id == pai
+                        {
+                            let resumo = if resumo.trim().is_empty() { if erro { "Falhou" } else { "Terminou" }.to_string() } else { resumo };
+                            *resultado = Some(git::inicio_do_texto(&resumo, 20_000));
+                            *erro_item = erro;
+                            sub.get_or_insert_with(Default::default).fim = agora();
+                            break;
+                        }
+                    }
+                }
+            }
             Evento::Limite {
                 uso_5h,
                 uso_semana,
@@ -2728,6 +2859,7 @@ impl Motor {
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {
                     self.interrompidos.retain(|c| c != chat_id);
+                    self.rodadas.remove(chat_id);
                     self.parcial.remove(chat_id);
                     self.avisar(chat_id, "Interrompido.", false);
                     self.execucao.insert(chat_id.to_string(), Execucao::Parado);
@@ -2865,16 +2997,66 @@ impl Motor {
         let resumo = if linha.is_empty() { format!("{}: {fim}", chat.titulo) } else { format!("{}: {linha}", chat.titulo) };
         self.registrar(tipo, &chat.id, &chat.id, &resumo);
         // Mensagens que chegaram durante o turno viram o próximo (as notas esperam uma de verdade).
+        if erro {
+            self.rodadas.remove(chat_id);
+        }
         if self.na_fila(chat_id) > 0
             && let Some(fila) = self.filas.remove(chat_id)
         {
             self.comecar_turno(chat_id, fila, cx);
+        } else if !erro && self.passar_a_vez(chat_id, cx) {
+            // O outro agente da dupla revisa o que este fez; o aviso de "terminou" vem no fim.
         } else if !erro && self.pedir_revisao_da_memoria(chat_id, cx) {
             // O turno da memória já abriu; o aviso de "terminou" vem no fim dele.
         } else if !self.janela_ativa && !erro {
             self.notificar(&chat, &texto_do_fim(&texto));
         }
         self.salvar();
+    }
+
+    /// Na rodada dos dois: passa a vez ao outro agente da dupla, que recebe o que este fez e
+    /// revisa. Para quando um deles diz que não tem nada a acrescentar ou quando as trocas acabam.
+    /// Devolve `true` se abriu o turno do outro.
+    fn passar_a_vez(&mut self, chat_id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(restantes) = self.rodadas.get(chat_id).copied() else {
+            return false;
+        };
+        let Some((quem, sem_parceiro, acabou)) = self.chat(chat_id).map(|c| (c.agente, c.parceiro.is_none(), nada_a_acrescentar(&c.itens)))
+        else {
+            self.rodadas.remove(chat_id);
+            return false;
+        };
+        if sem_parceiro || acabou {
+            self.rodadas.remove(chat_id);
+            return false;
+        }
+        if restantes == 0 {
+            self.rodadas.remove(chat_id);
+            self.avisar(
+                chat_id,
+                &format!("O Claude e o Codex já trocaram {} vezes nesta mensagem; parei a conversa entre eles. Mande outra para continuar.", DUPLA_TROCAS + 1),
+                false,
+            );
+            return false;
+        }
+        self.rodadas.insert(chat_id.to_string(), restantes - 1);
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.trocar_vez();
+        }
+        let entrada = Entrada {
+            de: Some("Vitral".into()),
+            texto: format!(
+                "Sua vez. O {} acabou de trabalhar no pedido (o que ele fez está acima). Confira o que ele mudou e o que respondeu: \
+                 complete o que faltou, corrija o que estiver errado e diga se discorda de algo, falando com ele e com o usuário. \
+                 Se estiver tudo certo e você não tiver nada a acrescentar, responda só: {NADA_A_ACRESCENTAR}.",
+                quem.nome()
+            ),
+            // Fica fora da conversa: o usuário vê só a marca de quem trabalha.
+            registrada: true,
+            ..Entrada::default()
+        };
+        self.comecar_turno_com(chat_id, vec![entrada], true, cx);
+        true
     }
 
     /// A revisão da memória, nativa (dono, 13/11/2026: "deixa nativo no Vitral o de quando acabar
@@ -2973,6 +3155,7 @@ impl Motor {
                     texto.push_str(&format!("## Mensagem de {de}\n\n{t}\n\n"))
                 }
                 Item::Ferramenta { resumo, .. } => texto.push_str(&format!("- (ferramenta) {resumo}\n")),
+                Item::Vez { agente, .. } => texto.push_str(&format!("### Vez do {}\n\n", agente.nome())),
                 Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Desconhecido(_) => {}
             }
         }
@@ -3386,20 +3569,115 @@ pub struct Retirada {
 /// ou um cartão no meio, tirar a mensagem levaria o que eles trouxeram: aí não dá.
 pub fn indice_editavel(itens: &[Item]) -> Option<usize> {
     let ix = itens.iter().rposition(|i| matches!(i, Item::Usuario { .. }))?;
-    itens[ix..]
+    editavel(itens, ix).then_some(ix)
+}
+
+/// A partir de que posição as mensagens do usuário podem ser corrigidas: depois do último item que
+/// não dá para tirar da conversa (o que outro chat entregou, um cartão, um item de versão mais
+/// nova). O que o próprio Vitral entregou (o pedido de revisar a memória) sai junto sem perda.
+pub fn editaveis_desde(itens: &[Item]) -> usize {
+    itens
         .iter()
-        .all(|i| {
-            matches!(
-                i,
-                Item::Usuario { .. } | Item::Assistente { .. } | Item::Ferramenta { .. } | Item::Aviso { .. }
-            )
+        .rposition(|i| match i {
+            Item::Entrega { de, .. } => de != "Vitral",
+            Item::Cartao { .. } | Item::Desconhecido(_) => true,
+            _ => false,
         })
-        .then_some(ix)
+        .map_or(0, |i| i + 1)
+}
+
+/// A mensagem do usuário na posição `ix` pode ser corrigida: corrigir tira ela e tudo o que veio
+/// depois (dono, 16/11/2026: "por que esse tem o de editar e o que tem a imagem não?").
+pub fn editavel(itens: &[Item], ix: usize) -> bool {
+    ix >= editaveis_desde(itens) && matches!(itens.get(ix), Some(Item::Usuario { .. }))
 }
 
 /// O começo do primeiro turno de uma sessão nova que tomou o lugar de outra: as últimas 10
 /// mensagens (até 6000 caracteres, as mais recentes ficam). As `pular` últimas mensagens já vão no
 /// próprio turno.
+/// Quantas vezes, numa mensagem para os dois, um agente da dupla passa a vez ao outro: a mensagem
+/// do usuário abre a primeira vez, e a rodada tem no máximo `DUPLA_TROCAS + 1` turnos.
+const DUPLA_TROCAS: u8 = 5;
+/// O que o agente responde, sozinho, quando revisou e não tem o que mudar: a rodada para aí.
+const NADA_A_ACRESCENTAR: &str = "Nada a acrescentar";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AlvoDaDupla {
+    So(Agente),
+    OsDois,
+}
+
+/// A quem vai a mensagem num chat com os dois: "@claude" ou "@codex" no começo manda só para um.
+fn alvo_da_dupla(texto: &str) -> AlvoDaDupla {
+    let comeco = texto.trim_start().to_lowercase();
+    if comeco.starts_with("@claude") {
+        AlvoDaDupla::So(Agente::Claude)
+    } else if comeco.starts_with("@codex") {
+        AlvoDaDupla::So(Agente::Codex)
+    } else {
+        AlvoDaDupla::OsDois
+    }
+}
+
+/// A última resposta do agente da vez foi só o "Nada a acrescentar".
+fn nada_a_acrescentar(itens: &[Item]) -> bool {
+    let ultima = itens.iter().rev().take_while(|i| !matches!(i, Item::Vez { .. })).find_map(|i| match i {
+        Item::Assistente { texto, .. } => Some(texto.trim()),
+        _ => None,
+    });
+    ultima.is_some_and(|t| t.chars().count() < 80 && t.to_lowercase().starts_with(&NADA_A_ACRESCENTAR.to_lowercase()))
+}
+
+/// O que `este` agente da dupla ainda não viu: o que o usuário mandou e o que o outro fez desde a
+/// última vez dele (tudo o que há, na primeira), do mais recente para trás até caber em
+/// `PASSAGEM_CARACTERES`. `None` quando não há nada novo.
+fn o_que_o_outro_fez(itens: &[Item], este: Agente) -> Option<String> {
+    let outro = este.outro();
+    let ultima = itens.iter().rposition(|i| matches!(i, Item::Vez { agente, .. } if *agente == este));
+    // Depois da última vez dele, o que vem até a próxima marca é dele mesmo.
+    let mut do_outro = ultima.is_none();
+    let mut linhas = Vec::new();
+    for item in &itens[ultima.map_or(0, |i| i + 1)..] {
+        match item {
+            Item::Vez { agente, .. } => do_outro = *agente == outro,
+            Item::Usuario { texto, .. } => linhas.push(format!("Usuário: {}", texto.trim())),
+            Item::Entrega { de, texto, .. } => linhas.push(format!("[de: {de}] {}", texto.trim())),
+            Item::Assistente { texto, .. } if do_outro => linhas.push(format!("{}: {}", outro.nome(), texto.trim())),
+            Item::Ferramenta { nome, resumo, arquivo, erro, .. } if do_outro => {
+                let alvo = arquivo.as_deref().unwrap_or(resumo.as_str());
+                let alvo: String = alvo.chars().take(160).collect();
+                linhas.push(format!("{} usou {nome}{}: {alvo}", outro.nome(), if *erro { " (deu erro)" } else { "" }));
+            }
+            _ => {}
+        }
+    }
+    if linhas.is_empty() {
+        return None;
+    }
+    let mut sobra = PASSAGEM_CARACTERES;
+    let mut cabem = Vec::new();
+    for linha in linhas.into_iter().rev() {
+        let n = linha.chars().count();
+        if n > sobra {
+            if cabem.is_empty() {
+                cabem.push(format!("{}…", linha.chars().take(sobra).collect::<String>()));
+            }
+            break;
+        }
+        sobra -= n;
+        cabem.push(linha);
+    }
+    cabem.reverse();
+    Some(format!(
+        "[Vitral] Neste chat trabalham dois agentes de código na mesma pasta, um de cada vez: você ({}) e o {}. \
+         O usuário vê os dois. O que aconteceu desde a sua última vez (o que o {} mudou nos arquivos já está na pasta):\n\n{}",
+        este.nome(),
+        outro.nome(),
+        outro.nome(),
+        cabem.join("\n")
+    ))
+}
+
 fn bloco_de_passagem(itens: &[Item], pular: usize, motivo: MotivoPassagem) -> String {
     let mut falas: Vec<String> = itens
         .iter()
@@ -3705,6 +3983,63 @@ mod testes {
 
     fn avisos(chat: &Chat) -> usize {
         chat.itens.iter().filter(|i| matches!(i, Item::Aviso { .. })).count()
+    }
+
+    #[test]
+    fn dupla_manda_para_um_ou_para_os_dois() {
+        use super::{AlvoDaDupla, alvo_da_dupla};
+        assert_eq!(alvo_da_dupla("@codex revisa o teste"), AlvoDaDupla::So(Agente::Codex));
+        assert_eq!(alvo_da_dupla("  @Claude, olha isso"), AlvoDaDupla::So(Agente::Claude));
+        assert_eq!(alvo_da_dupla("arruma a fila"), AlvoDaDupla::OsDois);
+        // Só no começo: citar o outro no meio não muda o destino.
+        assert_eq!(alvo_da_dupla("pede para o @codex ver"), AlvoDaDupla::OsDois);
+    }
+
+    #[test]
+    fn dupla_leva_ao_agente_so_o_que_ele_nao_viu() {
+        use super::{nada_a_acrescentar, o_que_o_outro_fez};
+        let fala = |t: &str| Item::Assistente { texto: t.into(), em: 0 };
+        let vez = |agente| Item::Vez { agente, em: 0 };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 };
+        let editou = Item::Ferramenta {
+            id: "1".into(),
+            nome: "Edit".into(),
+            resumo: "fila.rs".into(),
+            resultado: None,
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: Some("src/ui/fila.rs".into()),
+            sub: None,
+        };
+        let itens = vec![
+            usuario("antes da dupla"),
+            fala("resposta antiga do Claude"),
+            usuario("arruma a fila"),
+            vez(Agente::Claude),
+            fala("Arrumei a fila."),
+            vez(Agente::Codex),
+            editou.clone(),
+            fala("Faltava o teste; acrescentei."),
+        ];
+        let para_o_claude = o_que_o_outro_fez(&itens, Agente::Claude).unwrap();
+        // Só o que veio depois da vez dele, e do Codex.
+        assert!(para_o_claude.contains("Codex usou Edit: src/ui/fila.rs"), "{para_o_claude}");
+        assert!(para_o_claude.contains("Codex: Faltava o teste; acrescentei."));
+        assert!(!para_o_claude.contains("Arrumei a fila."));
+        assert!(!para_o_claude.contains("antes da dupla"));
+        // Na primeira vez dele, o Codex recebe a conversa desde o começo, até a vez dele.
+        let para_o_codex = o_que_o_outro_fez(&itens[..5], Agente::Codex).unwrap();
+        assert!(para_o_codex.contains("antes da dupla") && para_o_codex.contains("Claude: Arrumei a fila."), "{para_o_codex}");
+        // Logo depois da própria vez, nada de novo.
+        assert_eq!(o_que_o_outro_fez(&itens[..5], Agente::Claude), None);
+        // A rodada para quando a revisão não acrescenta nada.
+        assert!(!nada_a_acrescentar(&itens));
+        let mut fim = itens.clone();
+        fim.extend([vez(Agente::Claude), fala("Nada a acrescentar.")]);
+        assert!(nada_a_acrescentar(&fim));
+        fim.push(vez(Agente::Codex));
+        assert!(!nada_a_acrescentar(&fim));
     }
 
     #[test]

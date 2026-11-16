@@ -162,6 +162,12 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
     },
+    /// Num chat com o Claude e o Codex juntos: daqui em diante quem trabalha é este agente.
+    Vez {
+        agente: Agente,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
+    },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
@@ -178,7 +184,8 @@ impl Item {
             | Item::Ferramenta { em, .. }
             | Item::Raciocinio { em, .. }
             | Item::Aviso { em, .. }
-            | Item::Cartao { em, .. } => *em,
+            | Item::Cartao { em, .. }
+            | Item::Vez { em, .. } => *em,
             Item::Desconhecido(_) => 0,
         }
     }
@@ -195,10 +202,68 @@ pub enum Agente {
 
 impl Agente {
     /// O nome de mostrar do programa que roda os turnos.
+    /// O outro agente: o Codex para o Claude, e o contrário.
+    pub fn outro(self) -> Agente {
+        match self {
+            Agente::Claude => Agente::Codex,
+            Agente::Codex => Agente::Claude,
+        }
+    }
+
+    /// O nome curto, de conversa: "Claude", "Codex".
+    pub fn nome(self) -> &'static str {
+        match self {
+            Agente::Claude => "Claude",
+            Agente::Codex => "Codex",
+        }
+    }
+
     pub fn programa(self) -> &'static str {
         match self {
             Agente::Claude => "Claude Code",
             Agente::Codex => "Codex",
+        }
+    }
+}
+
+/// O outro agente de um chat com o Claude e o Codex juntos. Os dois trabalham na mesma pasta, um
+/// de cada vez, e cada um tem a própria sessão: a do agente da vez fica nos campos do chat, e a do
+/// outro fica guardada aqui até a vez dele (`Chat::trocar_vez`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Parceiro {
+    pub agente: Agente,
+    pub sessao: String,
+    #[serde(default)]
+    pub sessao_criada: bool,
+    #[serde(default)]
+    pub modelo: Option<String>,
+    #[serde(default)]
+    pub modelo_atual: Option<String>,
+    #[serde(default)]
+    pub esforco: Option<String>,
+    #[serde(default)]
+    pub contexto: Option<u64>,
+    #[serde(default)]
+    pub janela: Option<u64>,
+    #[serde(default)]
+    pub custo_da_sessao: Option<(String, f64)>,
+    #[serde(default)]
+    pub comandos: Vec<String>,
+}
+
+impl Parceiro {
+    pub fn novo(agente: Agente) -> Self {
+        Parceiro {
+            agente,
+            sessao: uuid::Uuid::new_v4().to_string(),
+            sessao_criada: false,
+            modelo: None,
+            modelo_atual: None,
+            esforco: None,
+            contexto: None,
+            janela: None,
+            custo_da_sessao: None,
+            comandos: Vec::new(),
         }
     }
 }
@@ -226,6 +291,9 @@ pub struct Chat {
     /// Quem responde neste chat. Trocar começa uma sessão nova no outro, com as últimas mensagens.
     #[serde(default)]
     pub agente: Agente,
+    /// Com o Claude e o Codex juntos no chat: o outro agente, com a sessão dele guardada.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parceiro: Option<Parceiro>,
     /// A sessão do Claude Code, ou o `thread_id` do Codex depois do primeiro turno.
     pub sessao: String,
     /// A sessão do Claude Code já existe (próximas vezes usam `--resume`).
@@ -306,6 +374,7 @@ impl Chat {
             pai: None,
             tarefa: None,
             agente: Agente::default(),
+            parceiro: None,
             sessao: uuid::Uuid::new_v4().to_string(),
             sessao_criada: false,
             cwd,
@@ -725,6 +794,25 @@ pub struct Ocorrencia {
 
 impl Chat {
     /// Cópia dos campos do chat com `itens` vazio, sem passar pelo histórico (que pode ter MBs).
+    /// Passa a vez ao parceiro: a sessão, o modelo e o uso de um vão para o parceiro, e os dele
+    /// vêm para o chat. Sem parceiro, não faz nada e devolve `false`.
+    pub fn trocar_vez(&mut self) -> bool {
+        let Some(p) = self.parceiro.as_mut() else {
+            return false;
+        };
+        std::mem::swap(&mut self.agente, &mut p.agente);
+        std::mem::swap(&mut self.sessao, &mut p.sessao);
+        std::mem::swap(&mut self.sessao_criada, &mut p.sessao_criada);
+        std::mem::swap(&mut self.modelo, &mut p.modelo);
+        std::mem::swap(&mut self.modelo_atual, &mut p.modelo_atual);
+        std::mem::swap(&mut self.esforco, &mut p.esforco);
+        std::mem::swap(&mut self.contexto, &mut p.contexto);
+        std::mem::swap(&mut self.janela, &mut p.janela);
+        std::mem::swap(&mut self.custo_da_sessao, &mut p.custo_da_sessao);
+        std::mem::swap(&mut self.comandos, &mut p.comandos);
+        true
+    }
+
     pub fn copia_sem_itens(&mut self) -> Chat {
         let itens = std::mem::take(&mut self.itens);
         let copia = self.clone();
@@ -800,6 +888,25 @@ mod testes {
         .unwrap();
         chat.itens.push(Item::Assistente { texto: "oi".into(), em: 0 });
         chat
+    }
+
+    #[test]
+    fn trocar_vez_leva_a_sessao_de_cada_agente_junto() {
+        let mut chat = chat_de_teste();
+        assert!(!chat.trocar_vez());
+        (chat.sessao, chat.modelo, chat.contexto) = ("sessao-claude".into(), Some("opus".into()), Some(50_000));
+        chat.parceiro = Some(Parceiro::novo(Agente::Codex));
+        let do_codex = chat.parceiro.as_ref().unwrap().sessao.clone();
+        assert!(chat.trocar_vez());
+        assert_eq!((chat.agente, chat.sessao.as_str(), chat.modelo.as_deref(), chat.contexto), (Agente::Codex, do_codex.as_str(), None, None));
+        let p = chat.parceiro.as_ref().unwrap();
+        assert_eq!((p.agente, p.sessao.as_str(), p.modelo.as_deref(), p.contexto), (Agente::Claude, "sessao-claude", Some("opus"), Some(50_000)));
+        // E volta inteiro.
+        assert!(chat.trocar_vez());
+        assert_eq!((chat.agente, chat.sessao.as_str()), (Agente::Claude, "sessao-claude"));
+        // Quem lê um estado sem o parceiro não perde nada, e o item novo volta como veio.
+        let lido: Item = serde_json::from_value(serde_json::json!({ "Vez": { "agente": "codex", "em": 5 } })).unwrap();
+        assert!(matches!(lido, Item::Vez { agente: Agente::Codex, em: 5 }));
     }
 
     #[test]

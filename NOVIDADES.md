@@ -13,6 +13,17 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Trilha de atividade.** Resumo do trabalho, ramificações entre as chamadas e identificação dos
   arquivos. Os grupos abrem enquanto trabalham e recolhem ao terminar, respeitando sua escolha.
   Abrir uma edição mostra o diff; abrir um comando reúne o comando e sua saída.
+- **Claude e Codex no mesmo chat.** Ligue "Claude e Codex juntos" no seletor de modelo. Cada mensagem
+  vai aos dois, um de cada vez: um trabalha e o outro revisa o que ele fez (completa, corrige ou
+  discorda), até um dizer "Nada a acrescentar" ou até 6 turnos. Antes da vez dele, cada um recebe o
+  que o outro disse e os arquivos que mexeu. @claude ou @codex no começo da mensagem fala só com um.
+  A conversa mostra quem está trabalhando.
+- **Subagentes à vista de novo.** No Claude Code novo os subagentes trabalham em segundo plano, e o
+  Vitral os dava como terminados logo ao começar. Agora eles ficam como trabalhando até o fim, com o
+  que estão fazendo e quantas ferramentas usaram, e terminam com o resumo do que fizeram.
+- **Corrigir qualquer mensagem sua.** O Editar aparece em todas as suas mensagens, não só na última
+  (e não some mais quando o Claude pensa antes de responder). A conversa volta ao ponto antes dela.
+- **Suas mensagens na largura toda** da coluna.
 - **Aviso de conversa grande e parada.** Depois de uma hora sem uso, uma conversa do Claude com
   mais de 100 mil tokens avisa, acima da caixa, quanto a próxima mensagem vai reler por inteiro, com
   o botão **Compactar**. O seletor de modelo avisa o mesmo custo antes de trocar o modelo.

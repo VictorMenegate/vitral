@@ -816,6 +816,11 @@ impl Janela {
             };
             (curto.clone(), com_claude(&curto), detalhe)
         };
+        // Na dupla, o chip diz os dois: primeiro quem trabalhou por último.
+        let nome = match &chat.parceiro {
+            Some(p) => format!("{} + {}", chat.agente.nome(), p.agente.nome()),
+            None => nome,
+        };
         let aberto = self.pop_caixa == Some((b.painel, PopCaixa::Modelo));
         let mut chip = Chip::new(b.id("chip-modelo"), if b.larga() { nome.clone() } else { curto })
             .simbolo(Simbolo::Marca(if codex { Marca::Codex } else { Marca::Claude }))
@@ -834,6 +839,7 @@ impl Janela {
         let aba = self.aba_do_modelo.filter(|(p, _)| *p == painel).map_or(chat.agente, |(_, a)| a);
         let com_abas = com_abas_de_agente(chat);
         let (largura, estreita) = (b.largura_popover().px(), b.estreita());
+        let juntos = chat.parceiro.is_some();
         // Numa conversa já grande, trocar o modelo do Claude custa uma releitura inteira.
         let aviso_de_troca: Option<SharedString> = chat.contexto_grande().filter(|_| aba == Agente::Claude).map(|t| {
             format!("Trocar o modelo agora faz a próxima mensagem reler {} por inteiro.", super::tokens(t)).into()
@@ -909,11 +915,25 @@ impl Janela {
                     .largura_total(true);
                     div().px(esp::E2).pb(esp::E6).child(controle)
                 });
+                // Os dois agentes no mesmo chat (dono, 16/11/2026: "dar pra usar o Codex e o Claude no
+                // mesmo chat e eles conseguirem conversar entre si e verem o que cada um tá fazendo").
+                let dupla = com_abas.then(|| {
+                    let (motor_e, chat_id) = (motor_e.clone(), chat_id.clone());
+                    div().child(
+                        LinhaDeOpcao::new(("dupla", painel as usize), "Claude e Codex juntos")
+                            .descricao("Um responde e o outro revisa, um de cada vez. @claude ou @codex no começo fala só com um.")
+                            .interruptor(juntos, move |ligar, _, cx| {
+                                if let Some(m) = &motor_e {
+                                    m.update(cx, |m, cx| m.juntar_agentes(&chat_id, ligar, cx));
+                                }
+                            }),
+                    )
+                });
                 // As teclas na coluna do texto das linhas (8 do item).
                 let aviso = aviso_de_troca
                     .clone()
                     .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
-                div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).when(!estreita, |s| {
+                div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).children(dupla).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolher"),
                         dica_de_tecla(&["Enter"], "usa"),
