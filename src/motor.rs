@@ -332,6 +332,8 @@ pub struct Motor {
     /// Quantas mensagens o usuário dirigiu ao turno que está rodando em cada chat, para a faixa
     /// dizer que ele foi dirigido. Zera a cada turno novo.
     dirigidos: HashMap<String, usize>,
+    /// O estado mudou só na memória (o lido): a gravação agendada o leva ao disco.
+    estado_sujo: bool,
     /// Os chats cujo turno você parou com o Esc (ou o Parar), e quando: a faixa oferece "Continuar"
     /// e o Enter com a caixa vazia continua, por alguns minutos (rodada de uso, item 6.2).
     parados_por_voce: HashMap<String, u64>,
@@ -555,6 +557,7 @@ impl Motor {
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             dirigidos: HashMap::new(),
+            estado_sujo: false,
             parados_por_voce: HashMap::new(),
             revisando: HashMap::new(),
             janela_ativa: true,
@@ -3382,10 +3385,32 @@ impl Motor {
         Ok(arquivo)
     }
 
+    /// O chat conta como lido agora. Só muda (e marca o estado para a gravação agendada, a cada
+    /// 5 s em `gravar_sujos`) quando havia algo não lido: chamado a cada quadro com o fim à vista,
+    /// ele não grava o estado a cada quadro. Desde que abrir deixou de marcar como lido (rodada de
+    /// uso, item 2.2), o lido que só morava na memória se perdia ao fechar pelo × (conferência na
+    /// bancada, 16/11/2026).
     pub fn marcar_lido(&mut self, chat: &str) {
-        if let Some(c) = self.chat_mut(chat) {
-            c.lido_em = agora();
+        let mudou = self.chat_mut(chat).is_some_and(|c| ler_ate_agora(c, agora()));
+        self.estado_sujo |= mudou;
+    }
+
+    /// Antes de a janela fechar pelo × ou pelo Alt+F4 (o `on_app_quit` da Janela não roda no
+    /// `remove_window`): o estado e as conversas que esperavam a gravação vão para o disco agora.
+    pub fn gravar_antes_de_fechar(&mut self) {
+        if self.somente_leitura.is_some() {
+            return;
         }
+        for id in std::mem::take(&mut self.chats_sujos) {
+            if let Some(c) = self.chat(&id) {
+                let _ = self.dados.salvar_chat(c);
+            }
+        }
+        self.estado_sujo = false;
+        // A hora da saída, para o "Enquanto você esteve fora" da próxima abertura (grava o estado).
+        self.visto_em = agora();
+        self.salvar();
+        self.dados.esperar_gravacoes();
     }
 
     /// Algo novo desde a última vez que o usuário abriu a conversa.
@@ -3510,6 +3535,10 @@ impl Motor {
             if let Some(c) = self.chat(&id) {
                 let _ = self.dados.salvar_chat(c);
             }
+        }
+        // O lido que mudou desde a última passada (`marcar_lido`).
+        if std::mem::take(&mut self.estado_sujo) {
+            self.salvar();
         }
         match (self.dados.falha_de_gravacao(), self.falha_gravacao.is_some()) {
             (Some(erro), false) => {
@@ -4237,6 +4266,16 @@ fn texto_do_pedido(ferramenta: &str, entrada: &Value) -> String {
 }
 
 /// "Terminou: " e a primeira linha da resposta.
+/// Marca o chat como lido em `agora`, se havia algo não lido; devolve se mudou (aí o estado vai
+/// para o disco na próxima passada da gravação).
+fn ler_ate_agora(c: &mut Chat, agora: u64) -> bool {
+    let mudou = c.lido_em < c.atualizado_em;
+    if mudou {
+        c.lido_em = agora.max(c.atualizado_em);
+    }
+    mudou
+}
+
 /// "Parou com erro: <primeira linha>" da notificação de um turno que falhou.
 fn texto_do_erro(erro: &str) -> String {
     match erro.lines().map(str::trim).find(|l| !l.is_empty()) {
@@ -4386,6 +4425,18 @@ mod testes {
         // Depois do pedido das 12, só uma edição mais nova conta.
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 12, false)], 12));
         assert!(editou_arquivo_desde(&[ferramenta("Edit", 12, false), ferramenta("NotebookEdit", 13, false)], 12));
+    }
+
+    #[test]
+    fn marcar_lido_so_muda_o_que_estava_nao_lido() {
+        let mut c = chat("c1");
+        (c.atualizado_em, c.lido_em) = (200, 100);
+        // Não lido: marca e pede a gravação do estado.
+        assert!(ler_ate_agora(&mut c, 250));
+        assert_eq!(c.lido_em, 250);
+        // Já lido: nada muda, e a gravação não é pedida a cada quadro.
+        assert!(!ler_ate_agora(&mut c, 300));
+        assert_eq!(c.lido_em, 250);
     }
 
     #[test]

@@ -59,7 +59,10 @@ fn janela_da_raiz(window: &mut Window, cx: &mut App) -> Option<Entity<Janela>> {
 /// serve dentro de um `cx.listener` da Janela, que já estaria emprestada.
 pub(super) fn fechar_janela(window: &mut Window, cx: &mut App) {
     let janela = janela_da_raiz(window, cx);
-    if janela.is_none_or(|j| j.update(cx, |this, cx| this.pode_fechar(window, cx))) {
+    if janela.as_ref().is_none_or(|j| j.update(cx, |this, cx| this.pode_fechar(window, cx))) {
+        if let Some(j) = janela {
+            j.update(cx, |this, cx| this.gravar_antes_de_fechar(cx));
+        }
         window.remove_window();
     }
 }
@@ -79,13 +82,39 @@ impl Janela {
         let fraca = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             fraca
-                .update(cx, |this, cx| this.pode_fechar(window, cx))
+                .update(cx, |this, cx| {
+                    let pode = this.pode_fechar(window, cx);
+                    if pode {
+                        this.gravar_antes_de_fechar(cx);
+                    }
+                    pode
+                })
                 .unwrap_or(true)
         });
     }
 
     fn pode_fechar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.pode_parar_tudo(Parar::Fechar, |window, _| window.remove_window(), window, cx)
+        let fraca = cx.weak_entity();
+        self.pode_parar_tudo(
+            Parar::Fechar,
+            move |window, cx| {
+                let _ = fraca.update(cx, |this, cx| this.gravar_antes_de_fechar(cx));
+                window.remove_window();
+            },
+            window,
+            cx,
+        )
+    }
+
+    /// O que o `on_app_quit` gravaria, antes de a janela sair pelo × ou pelo Alt+F4 (o
+    /// `remove_window` não passa por ele): o lido, os rascunhos e o arranjo (conferência na
+    /// bancada, 16/11/2026).
+    fn gravar_antes_de_fechar(&mut self, cx: &mut Context<Self>) {
+        self.gravar_ao_sair(cx);
+        self.gravar_arranjo_ao_sair();
+        if let Some(motor) = &self.motor {
+            motor.update(cx, |m, _| m.gravar_antes_de_fechar());
+        }
     }
 
     /// Reinicia na versão nova (ou na atual), perguntando antes se há conversa trabalhando. Os
