@@ -655,7 +655,7 @@ impl LinhaDeOpcao {
         self
     }
 
-    /// 0,45, com o motivo no lugar da descrição.
+    /// O título e o controle a 0,45, com o motivo no lugar da descrição, legível.
     pub fn desabilitada(mut self, motivo: impl Into<SharedString>) -> Self {
         self.desabilitada = Some(motivo.into());
         self
@@ -710,13 +710,16 @@ impl RenderOnce for LinhaDeOpcao {
             Controle::Elemento(e) => (Some(e), None),
             Controle::Nenhum => (None, None),
         };
+        // Desabilitada, só o título e o controle apagam: com a linha inteira a 0,45, o motivo dava
+        // 2,45:1 e não se lia. Ele vai em `apagado` cheio (relatório de design, 16/11/2026).
+        let apagar = |d: Div| d.when(desabilitada, |d| d.opacity(0.45));
+        let titulo = apagar(div().child(titulo));
         div()
             .id(self.id)
             .flex()
             .flex_col()
             .gap(esp::E8)
             .p(esp::E12)
-            .when(desabilitada, |d| d.opacity(0.45))
             .child(
                 div()
                     .flex()
@@ -730,14 +733,14 @@ impl RenderOnce for LinhaDeOpcao {
                             .min_w_0()
                             .child(titulo)
                             .when_some(descricao, |d, t| {
-                                d.child(div().metadado().text_color(Cores::tenue()).child(t))
+                                d.child(div().metadado().text_color(if desabilitada { Cores::apagado() } else { Cores::tenue() }).child(t))
                             })
                             .when_some(aviso, |d, t| d.child(div().metadado().text_color(Cores::ambar()).child(t))),
                     )
-                    .children(direita),
+                    .children(direita.map(|e| apagar(div().flex_none().child(e)))),
             )
-            .children(self.campo)
-            .children(controle_embaixo)
+            .children(self.campo.map(|e| apagar(div().child(e))))
+            .children(controle_embaixo.map(apagar))
             .when_some(alternar.filter(|_| !desabilitada), |d, (ligado, f)| {
                 d.cursor_pointer().on_click(move |_, window, cx| f(!ligado, window, cx))
             })

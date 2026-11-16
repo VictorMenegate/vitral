@@ -371,8 +371,10 @@ ferramenta Workflow do Claude Code). A linha avisa em âmbar que gasta bem mais 
 no esforço Extra (o Máximo vira Extra nessa mensagem). Ligada, o chip do esforço vira "Ultracode" em
 violeta com o ícone de fluxo (com o Ultrathink junto, as barrinhas ficam em arco-íris; na caixa
 estreita, só o ícone de fluxo). Começa sempre desligada, também ao abrir o Vitral. Fica
-desabilitada, com o motivo curto no lugar da descrição, com um Claude Code anterior à 2.1.278 (a versão em que o Vitral conferiu o Ultracode; o limite de
-agentes só existe desde a 2.1.269) e com um modelo sem o esforço Extra (o Haiku, os 4.x até o 4.6).
+desabilitada, com o motivo curto no lugar da descrição (só o título e a chave apagam; o motivo
+fica legível), com um Claude Code anterior à 2.1.278 (a versão em que o Vitral conferiu o Ultracode; o limite de
+agentes só existe desde a 2.1.269), com um modelo sem o esforço Extra (o Haiku, os 4.x até o 4.6) e
+no chat em que quem responde é o Codex ("Só no Claude Code", também com os dois juntos).
 Numa conta em que um turno com Ultracode mostrou os fluxos de agentes desligados (em Dynamic
 workflows no `/config`, por `disableWorkflows` ou pela organização), a linha continua ligável e
 avisa em âmbar; esse turno ganha um aviso em vermelho, segue em Extra e a mensagem perde o selo.

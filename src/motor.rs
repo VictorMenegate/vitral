@@ -1985,8 +1985,10 @@ impl Motor {
     /// Por que o Ultracode não vale nesta conversa agora (`None`: vale). O de outra conversa
     /// rodando não entra: esse só faz esperar a vez.
     pub fn motivo_sem_ultracode(&self, chat: &Chat) -> Option<String> {
+        // Vale com ou sem a dupla: "este chat responde pelo Codex" era falso no chat em que os dois
+        // respondem juntos (relatório de design, 16/11/2026).
         if chat.agente == Agente::Codex {
-            return Some("ele é do Claude Code, e este chat responde pelo Codex".into());
+            return Some("só no Claude Code".into());
         }
         let escolhido = chat.modelo.as_deref().unwrap_or(&self.config.modelo_chats);
         let modelo = if escolhido.is_empty() { chat.modelo_atual.as_deref().unwrap_or("") } else { escolhido };

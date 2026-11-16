@@ -135,6 +135,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Textos das Configurações acertados.** A dos anéis de uso diz que eles ficam no canto de cima, a
   dos servidores MCP acompanha o interruptor, e as linhas de modo, agente e modelo dizem o que cada
   chat troca.
+- **Ultracode desligado legível.** O motivo de ele não valer no chat aparece claro (só a chave fica
+  apagada) e diz "Só no Claude Code", certo também com Claude e Codex juntos.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 
