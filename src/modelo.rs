@@ -16,6 +16,13 @@ use serde::{Deserialize, Serialize};
 /// linha.
 pub const FORMATO_DADOS: u32 = 3;
 
+/// A partir de quantos tokens no contexto a conversa pesa (`Chat::contexto_grande`).
+pub const CONTEXTO_GRANDE: u64 = 100_000;
+/// Por quanto tempo o Claude Code guarda o contexto de uma conversa pronto para reler com
+/// desconto: uma hora na assinatura. Por API ou no excedente são 5 minutos, e aí o aviso da
+/// conversa fria só erra para menos.
+pub const DESCONTO_DURA: u64 = 3600;
+
 pub fn agora() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -327,6 +334,19 @@ impl Chat {
             resto: Default::default(),
             itens: Vec::new(),
         }
+    }
+
+    /// Os tokens no contexto de uma conversa do Claude que já pesa: cada chamada de um turno relê
+    /// tudo isso, e trocar o modelo dela joga fora o que estava guardado com desconto.
+    pub fn contexto_grande(&self) -> Option<u64> {
+        self.contexto
+            .filter(|t| self.agente == Agente::Claude && self.sessao_criada && *t >= CONTEXTO_GRANDE)
+    }
+
+    /// Os tokens que a próxima mensagem relê por inteiro: a conversa é grande e ficou parada além
+    /// do tempo em que o Claude Code guarda o contexto com desconto.
+    pub fn fria(&self, agora: u64) -> Option<u64> {
+        self.contexto_grande().filter(|_| agora.saturating_sub(self.atualizado_em) >= DESCONTO_DURA)
     }
 
     /// Soma o custo de um `result`. O `total_cost_usd` dele é o total da sessão, não o do turno:
@@ -780,6 +800,25 @@ mod testes {
         .unwrap();
         chat.itens.push(Item::Assistente { texto: "oi".into(), em: 0 });
         chat
+    }
+
+    #[test]
+    fn conversa_fria_e_a_grande_do_claude_parada_ha_mais_de_uma_hora() {
+        let mut chat = chat_de_teste();
+        (chat.contexto, chat.atualizado_em) = (Some(180_000), 1_000);
+        assert_eq!(chat.contexto_grande(), Some(180_000));
+        // Dentro da hora o contexto ainda está guardado com desconto.
+        assert_eq!(chat.fria(1_000 + 3_599), None);
+        assert_eq!(chat.fria(1_000 + 3_600), Some(180_000));
+        // Pequena, sem sessão ou do Codex: nada a avisar.
+        chat.contexto = Some(99_999);
+        assert_eq!(chat.fria(9_999_999), None);
+        chat.contexto = Some(180_000);
+        chat.sessao_criada = false;
+        assert_eq!(chat.contexto_grande(), None);
+        chat.sessao_criada = true;
+        chat.agente = Agente::Codex;
+        assert_eq!(chat.fria(9_999_999), None);
     }
 
     #[test]

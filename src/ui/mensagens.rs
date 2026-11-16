@@ -2064,6 +2064,8 @@ enum Situacao {
     /// A pasta onde o chat trabalha sumiu.
     OrigemSumiu { pasta: PathBuf },
     Fila(usize),
+    /// A conversa grande ficou parada: a próxima mensagem relê estes tokens por inteiro.
+    Fria { tokens: u64 },
 }
 
 /// O que um chat parado tem a dizer acima da caixa: a pasta dele sumiu (a do chat sem pasta o
@@ -2272,7 +2274,9 @@ impl Janela {
         let situacao = match situacao_do_turno(motor, &chat.id) {
             Some(Situacao::Fila(n)) => situacao_do_chat(motor, chat).unwrap_or(Situacao::Fila(n)),
             Some(s) => s,
-            None => situacao_do_chat(motor, chat)?,
+            // Por último, e só com o chat quieto: a conversa grande que esfriou.
+            None => situacao_do_chat(motor, chat)
+                .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))?,
         };
         // O turno em andamento mora na linha de estado da caixa, dentro da moldura
         // (`linha_de_estado`): acima da caixa só fica o que pede um botão seu.
@@ -2358,6 +2362,25 @@ impl Janela {
                     .child(texto(format!("A pasta {} não foi encontrada", super::dialogos::com_til(&pasta))))
                     .into_any_element(),
                 None,
+            ),
+            Situacao::Fria { tokens } => (
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(r(8.))
+                    .child(icone_de(Lucide::Clock, 14.).text_color(Cores::tenue()))
+                    .child(texto(format!(
+                        "Relê {} · parada há {}",
+                        composer::tokens(tokens),
+                        super::tempo_relativo(chat.atualizado_em)
+                    )))
+                    .into_any_element(),
+                Some(
+                    botao_fantasma("faixa-compactar", Some(Lucide::Minimize.into()), "Compactar", TamanhoBotao::Barra, window, cx)
+                        .tooltip("A conversa ficou parada além da hora em que o contexto fica guardado com desconto: a próxima mensagem relê tudo por inteiro. Compactar resume antes, e os próximos turnos releem só o resumo.")
+                        .on_click(cx.listener(move |this, _, window, cx| this.por_na_caixa(painel_id, "/compact ", window, cx)))
+                        .into_any_element(),
+                ),
             ),
             Situacao::Fila(n) => (
                 h_flex()

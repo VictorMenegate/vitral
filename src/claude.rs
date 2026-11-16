@@ -472,6 +472,12 @@ fn ambiente(opcoes: &Opcoes) -> Vec<(String, String)> {
     // Esperar sem teto é o certo aqui: o Vitral mostra "Os agentes seguem trabalhando em segundo
     // plano", o chat continua contando como rodando e o Parar derruba tudo quando o dono quiser.
     por("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "0".into());
+    // Chamadas ao modelo que o Vitral não mostra em lugar nenhum: a sugestão da próxima
+    // mensagem, o resumo de quando você volta e o título do terminal. Desligadas, não mudam o
+    // que o turno responde.
+    por("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false".into());
+    por("CLAUDE_CODE_ENABLE_AWAY_SUMMARY", "0".into());
+    por("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", "1".into());
     // Para os hooks do usuário saberem que a sessão é de um chat do Vitral.
     por("VITRAL_CHAT", "1".into());
     if opcoes.memoria_nativa {

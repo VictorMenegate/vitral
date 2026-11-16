@@ -562,7 +562,16 @@ impl Janela {
                             ),
                     )
                 });
-                s.child(self.permissoes(motor, chat, window, cx)).children(responder).child(doca)
+                // O botão flutua em cima da doca, fora do fluxo: no fluxo, ele roubava altura da
+                // conversa ao aparecer e a rolagem pulava (dono, 16/11/2026: "quando selecionar o
+                // texto e aparecer o de responder não subir o chat inteiro").
+                let doca = div()
+                    .relative()
+                    .flex_none()
+                    .w_full()
+                    .child(doca)
+                    .children(responder.map(|r| div().absolute().left_0().right_0().bottom(relative(1.)).child(r)));
+                s.child(self.permissoes(motor, chat, window, cx)).child(doca)
             })
             .when(arquivos_sobre, |s| {
                 s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))

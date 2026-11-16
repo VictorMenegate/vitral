@@ -13,6 +13,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Trilha de atividade.** Resumo do trabalho, ramificações entre as chamadas e identificação dos
   arquivos. Os grupos abrem enquanto trabalham e recolhem ao terminar, respeitando sua escolha.
   Abrir uma edição mostra o diff; abrir um comando reúne o comando e sua saída.
+- **Aviso de conversa grande e parada.** Depois de uma hora sem uso, uma conversa do Claude com
+  mais de 100 mil tokens avisa, acima da caixa, quanto a próxima mensagem vai reler por inteiro, com
+  o botão **Compactar**. O seletor de modelo avisa o mesmo custo antes de trocar o modelo.
+- **Menos gasto escondido.** O Vitral desliga no Claude Code as chamadas que ele não mostra: a
+  sugestão da próxima mensagem, o resumo de quando você volta e o título do terminal.
 - **Conta que perdeu o login.** Quando o Claude Code avisa que o login de uma conta caiu, o chat
   continua sozinho em outra conta que esteja com login e diz qual; sem outra, o aviso mostra onde
   entrar de novo. Antes, o "Tentar de novo" repetia na mesma conta e falhava igual.

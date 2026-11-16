@@ -834,6 +834,10 @@ impl Janela {
         let aba = self.aba_do_modelo.filter(|(p, _)| *p == painel).map_or(chat.agente, |(_, a)| a);
         let com_abas = com_abas_de_agente(chat);
         let (largura, estreita) = (b.largura_popover().px(), b.estreita());
+        // Numa conversa já grande, trocar o modelo do Claude custa uma releitura inteira.
+        let aviso_de_troca: Option<SharedString> = chat.contexto_grande().filter(|_| aba == Agente::Claude).map(|t| {
+            format!("Trocar o modelo agora faz a próxima mensagem reler {} por inteiro.", super::tokens(t)).into()
+        });
         popover(b.id("pop-modelo"))
             .anchor(Anchor::BottomLeft)
             .offset(px(8.))
@@ -906,7 +910,10 @@ impl Janela {
                     div().px(esp::E2).pb(esp::E6).child(controle)
                 });
                 // As teclas na coluna do texto das linhas (8 do item).
-                div().w(largura).flex().flex_col().children(abas).child(lista.clone()).when(!estreita, |s| {
+                let aviso = aviso_de_troca
+                    .clone()
+                    .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
+                div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolher"),
                         dica_de_tecla(&["Enter"], "usa"),

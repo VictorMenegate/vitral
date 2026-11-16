@@ -408,7 +408,7 @@ pub(super) fn milhares(n: u64) -> String {
 }
 
 /// "200 mil tokens", "1 milhão de tokens".
-fn tokens(n: u64) -> String {
+pub(super) fn tokens(n: u64) -> String {
     let quantia = milhares(n);
     if quantia.ends_with("mil") { format!("{quantia} tokens") } else { format!("{quantia} de tokens") }
 }
@@ -887,7 +887,7 @@ impl Janela {
             )
     }
 
-    fn por_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn por_na_caixa(&mut self, painel: u64, texto: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.paineis.iter().find(|p| p.id == painel).map(|p| p.composer.clone()) else {
             return;
         };

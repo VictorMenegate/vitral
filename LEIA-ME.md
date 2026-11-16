@@ -50,6 +50,16 @@ componentes do GPUI Kit.
   pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
+- **Economia de tokens sem mexer na resposta.** Três coisas, nenhuma corta saída, baixa esforço ou
+  troca modelo sozinha. (1) `claude::ambiente` desliga o gasto de fundo que o Vitral não mostra
+  (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,
+  `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`). (2) `Chat::fria` (em `src/modelo.rs`): conversa do Claude
+  com sessão, `CONTEXTO_GRANDE` (100 mil tokens) ou mais e parada há `DESCONTO_DURA` (uma hora, o
+  tempo do cache na assinatura) vira `Situacao::Fria` na faixa acima da caixa, com "Compactar",
+  que só escreve `/compact ` na caixa. Ela é a última da fila: turno rodando, parada, falha,
+  pasta sumida e fila de mensagens vêm antes. (3) `Chat::contexto_grande` põe uma linha no seletor
+  de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
+  custo, modelo, conta e Compactar) já existia, no anel da caixa.
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
   no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
   as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
