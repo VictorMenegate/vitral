@@ -652,8 +652,9 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   entre o último e a direita é metade de cada lado da divisória; dono, 16/11/2026: "a do meio dos
   chats tem que ficar igual das bordas"); a faixa de pegar da divisória é mais larga que o vão e
   passa por cima da borda das peças, invisível. Canto dos
-  cartões: 16 (`margem`, `vao` e `raio_peca` da variante). Menus e popovers são praticamente
-  opacos. Texto nunca vai no metal cru: os alfas
+  cartões: 16 (`margem`, `vao` e `raio_peca` da variante). Menus e popovers são opacos e um
+  degrau mais claros que a peça de onde saem (`flutuante` #1F222B, com a sombra funda descendo
+  24; mais claro que isso, o apagado no recuo do flutuante passa do piso de 4,5:1). Texto nunca vai no metal cru: os alfas
   saem da conta de contraste contra a cor mais clara que a chapa entrega (`TETO_DO_METAL`,
   #ACD9FF, a bolha clara com a luz em cima), e o teste `contraste_dos_tokens_no_pior_caso` roda
   contra ela (0xE0 é o mínimo da lista). Para o que vier por cima do metal há dois véus:

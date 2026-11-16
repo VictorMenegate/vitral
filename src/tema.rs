@@ -864,7 +864,11 @@ pub mod superficie {
         vidro_leitura: 0x0a1533e3,
         cartao: 0x14161df2,
         cartao_elevado: 0x1c1f29ff,
-        flutuante: 0x171a23f7,
+        // Um degrau acima da peça de onde sai (o campo da caixa, a aba, o cartão), e opaco: com
+        // 0x171a23f7 os menus da caixa e o sino ficavam mais escuros que ela e liam como buraco
+        // (relatório de aparência, 16/11/2026, V4). Não passar de 0x1f222b: o apagado no recuo
+        // do flutuante fica a 0,02 do piso de 4,5:1.
+        flutuante: 0x1f222bff,
         dialogo: 0x1c1f29fa,
         gaveta: 0x1c1f29fa,
         preto: 0x08090cff,
@@ -1016,8 +1020,8 @@ impl Cores {
         let (_, cartao, _) = crate::tema::nivel_de_transparencia(nivel);
         rgba((superficie::atual().cartao & 0xffffff00) | cartao).into()
     }
-    /// Tudo o que flutua sobre texto (popover, menu, dica, aviso): quase preto e opaco, por cima
-    /// do vidro azul (o `popover.background` do tema).
+    /// Tudo o que flutua sobre texto (popover, menu, dica, aviso): opaco, um degrau acima da peça
+    /// de onde sai, por cima do vidro azul (o `popover.background` do tema).
     pub fn flutuante() -> Hsla {
         rgba(superficie::atual().flutuante).into()
     }
@@ -1034,7 +1038,8 @@ impl Cores {
     pub fn recuo() -> Hsla {
         rgba(superficie::atual().recuo).into()
     }
-    /// O recuo dentro de um flutuante: no quase preto o escuro some, então ali ele é um claro leve.
+    /// O recuo dentro de um flutuante: no escuro do flutuante o escuro some, então ali ele é um
+    /// claro leve.
     pub fn recuo_no_flutuante() -> Hsla {
         rgba(0xffffff0d).into()
     }
@@ -1119,7 +1124,7 @@ impl Cores {
     pub fn caixa_quente() -> Hsla {
         rgba(superficie::atual().caixa_quente).into()
     }
-    /// Fim do gradiente da caixa: o quase preto dos flutuantes, com o alfa do começo.
+    /// Fim do gradiente da caixa, com o alfa do começo.
     pub fn caixa_preta() -> Hsla {
         rgba(superficie::atual().caixa_preta).into()
     }
