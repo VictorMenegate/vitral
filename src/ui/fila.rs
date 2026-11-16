@@ -109,8 +109,11 @@ impl Janela {
         let p = &self.paineis[ix];
         if !p.fila_aberta || motor.read(cx).na_fila(chat) == 0 { return None; }
         let rodando = matches!(motor.read(cx).execucao(chat), crate::modelo::Execucao::Rodando { .. });
+        // A linha em edição vai por parâmetro: ler a Janela daqui de dentro, no desenho dela,
+        // derrubava o app (`cannot read Janela while it is already being updated`).
+        let editando = self.editando_fila.as_ref().filter(|e| e.chat == chat).map(|e| (e.indice, e.campo.clone()));
         Some(div().map(super::mensagens::coluna).py(esp::E8)
-            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, window, cx)).into_any_element())
+            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, editando, window, cx)).into_any_element())
     }
 
     /// Tira uma mensagem da fila e a devolve inteira à caixa (rodada de uso, item 1.3): com a caixa
@@ -275,6 +278,7 @@ fn corpo_da_fila(
     painel: u64,
     rodando: bool,
     larga: bool,
+    editando: Option<(usize, Entity<TextareaState>)>,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -283,9 +287,6 @@ fn corpo_da_fila(
     let total = fila.len();
     // Com o turno rodando e recebendo mensagem, cada uma pode entrar nele agora.
     let agora = rodando && m.turno_recebe_mensagem(chat);
-    let editando = janela
-        .upgrade()
-        .and_then(|j| j.read(cx).editando_fila.as_ref().filter(|e| e.chat == chat).map(|e| (e.indice, e.campo.clone())));
     let linhas: Vec<Linha> = fila
         .into_iter()
         .enumerate()
