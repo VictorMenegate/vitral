@@ -535,7 +535,9 @@ ferramentas, vale por painel).
   as linhas quebram de novo. Qualquer subida com a roda, o touchpad ou a barra solta o fim; aí o
   streaming não puxa a tela de volta e a conversa não conta como lida; a pílula com a seta (e
   "Novas mensagens", com um ponto azul, quando chegou algo), que entra com um fade, volta ao fim,
-  como o **Ctrl+End** (descendo, os últimos 48 px já prendem de novo). Abrir um bloco no fim da
+  como o **Ctrl+End** (descendo, os últimos 48 px já prendem de novo). Fora do fim, o pé da área
+  das mensagens esmaece em 24 px até o cartão, para a última linha não ficar cortada a seco acima
+  da faixa ou da caixa (no topo, não). Abrir um bloco no fim da
   conversa (a saída de uma ferramenta) não pula para o fim dele: o
   painel fica onde está.
 - Mensagens, pedidos e caixa ficam numa coluna de leitura centrada (até 860 px, com 16 de margem).
@@ -988,6 +990,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 - **Rodapé**, só quando há o que mostrar: **Arquivadas** (o ícone, com o número na dica; liga e desliga a
   vista das arquivadas; a busca acha as duas) e, com algo rodando, quantos agentes rodam no Vitral
   inteiro ("2 rodando"; o clique volta ao topo da lista). Na aba Arquivos, quantos arquivos a pasta tem.
+  Um fio em cima e 4 de respiro o separam da última linha da lista.
 - Aba **Arquivos**: os arquivos da pasta do chat aberto numa árvore (pastas recolhidas, menos o
   caminho até o arquivo aberto), com o caminho dela em cima e o ↻ para reler. Com busca, uma lista
   plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel

@@ -1134,18 +1134,20 @@ impl Janela {
         let arquivadas = arquivadas.flatten();
         // O sino desceu do trilho para cá; os anéis de uso ficam no cabeçalho da conversa.
         let sino = self.botao_sino(super::resumo::precisa_em_tudo(motor), cx);
+        // Um fio em cima e 4 de respiro: sem eles a fileira começava colada na última conversa, e
+        // o selo do sino ficava a uns 5 px da hora dela (relatório de design, 16/11/2026).
         Some(
-            h_flex()
-                .flex_none()
-                .h(r(36.))
-                .mx(r(-8.))
-                .px(esp::PECA)
-                .gap(esp::E4)
-                .children(arquivadas)
-                .children(agentes)
-                .child(div().flex_1())
-                .children(total)
-                .child(sino),
+            div().flex_none().mx(r(-8.)).border_t_1().border_color(Cores::traco()).pt(esp::E4).child(
+                h_flex()
+                    .h(r(36.))
+                    .px(esp::PECA)
+                    .gap(esp::E4)
+                    .children(arquivadas)
+                    .children(agentes)
+                    .child(div().flex_1())
+                    .children(total)
+                    .child(sino),
+            ),
         )
     }
 

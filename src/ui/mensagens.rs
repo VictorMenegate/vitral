@@ -337,6 +337,13 @@ impl Janela {
                     }))
                     .child(lista),
             )
+            // Fora do fim, o pé da área rolável esmaece em 24 até o cartão: a última linha não
+            // fica cortada a seco logo acima da faixa ou da caixa. No topo, nada: ali o cartão é
+            // translúcido e o dono tirou a linha do cabeçalho (12/11/2026) (relatório de design,
+            // 16/11/2026).
+            .when(!seguindo, |s| {
+                s.child(div().absolute().left_0().right_0().bottom_0().h(esp::E24).bg(crate::tema::gradiente_do_pe_do_cartao()))
+            })
             .child(div().absolute().inset_0().child(
                 Scrollbar::vertical(&rolagem).id(("barra-conversa", painel_id as usize))
                     .mode(ScrollbarMode::Always).viewport_from_layout(),
