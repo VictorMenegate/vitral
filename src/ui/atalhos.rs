@@ -151,6 +151,30 @@ tabela! {
     "?", super::AbrirAtalhos, Some("Vitral && !Input"), Grupo::Janela, "Esta lista de atalhos", "";
 }
 
+/// O que uma tecla digitada fora de um campo de texto (na lista, na conversa, numa aba) faz com a
+/// caixa do painel ativo: a letra vai para ela, e o Ctrl+V cola nela.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ParaACaixa {
+    Letra(String),
+    Colar,
+}
+
+/// A regra única de "digitar em qualquer ponto escreve na caixa" (dono, 16/11/2026: rodada de uso,
+/// item 1.1; antes valia só na lista). Uma tecla imprimível sem Ctrl, Alt ou Super vai para a
+/// caixa; o Espaço e o Enter ficam com o botão focado, e o "?" abre os atalhos. As setas, PgUp,
+/// PgDn, Home e End não imprimem nada e ficam de fora sozinhas. O Ctrl+V cola na caixa.
+pub(super) fn tecla_para_a_caixa(tecla: &Keystroke) -> Option<ParaACaixa> {
+    let m = &tecla.modifiers;
+    if m.control && !(m.alt || m.shift || m.platform || m.function) && tecla.key == "v" {
+        return Some(ParaACaixa::Colar);
+    }
+    if m.control || m.alt || m.platform || m.function {
+        return None;
+    }
+    let letra = tecla.key_char.clone().filter(|l| !l.is_empty() && !l.chars().any(char::is_control))?;
+    (letra != " " && letra != "?").then_some(ParaACaixa::Letra(letra))
+}
+
 /// Teclas que não são do keymap, mas que todo mundo procura nesta lista: a caixa envia no Enter
 /// (`submit_on_enter`), manda depois no Ctrl+Enter e quebra a linha no Shift+Enter, e o Ctrl+clique
 /// abre ao lado.
@@ -273,6 +297,28 @@ mod testes {
         for grupo in Grupo::TODOS {
             assert!(!do_grupo(grupo).is_empty(), "grupo vazio: {grupo:?}");
         }
+    }
+
+    #[test]
+    fn letra_fora_de_campo_vai_para_a_caixa() {
+        use super::{ParaACaixa, tecla_para_a_caixa};
+        let tecla = |texto: &'static str, letra: Option<&str>| {
+            let mut t = Keystroke::parse(texto).unwrap();
+            t.key_char = letra.map(str::to_string);
+            t
+        };
+        assert_eq!(tecla_para_a_caixa(&tecla("a", Some("a"))), Some(ParaACaixa::Letra("a".into())));
+        assert_eq!(tecla_para_a_caixa(&tecla("shift-a", Some("A"))), Some(ParaACaixa::Letra("A".into())));
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-v", None)), Some(ParaACaixa::Colar));
+        // Espaço e Enter são do botão focado; o "?" abre os atalhos; setas e atalhos não imprimem.
+        assert_eq!(tecla_para_a_caixa(&tecla("space", Some(" "))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("enter", Some("\n"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("shift-/", Some("?"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("down", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("pageup", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-c", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("alt-a", Some("a"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-shift-v", None)), None);
     }
 
     #[test]

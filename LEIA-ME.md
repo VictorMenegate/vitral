@@ -1090,7 +1090,10 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 - **Teclado na lista**: ↓ na busca entra na lista; ↑/↓, Home e End andam pelos cartões; Enter abre
   (e, com pedido, põe o cursor na caixa), Ctrl+Enter abre ao lado e põe o cursor na caixa do painel
   novo, F2 renomeia e Esc volta à busca. Uma letra digitada com a lista em foco (depois de clicar
-  num chat) vai para a caixa do painel ativo, que fica com o cursor. Na busca, Enter abre o primeiro
+  num chat) vai para a caixa do painel ativo, que fica com o cursor. O mesmo vale com o foco na
+  conversa (depois de abrir uma trilha, selecionar para copiar ou clicar no "Hoje") e numa aba:
+  a letra entra na caixa do painel ativo, e o Ctrl+V cola nela (um print copiado vira pílula sem
+  clicar antes). O Espaço e o Enter continuam do botão focado, e o "?" abre os atalhos. Na busca, Enter abre o primeiro
   resultado (Ctrl+Enter, ao lado) e põe o cursor na caixa dele; Esc limpa e, vazia, volta à caixa
   do painel. O Ctrl+K seleciona o termo anterior, para a busca nova o trocar. Se a lista sai de
   vista com o foco nela (um painel novo a empurrou, Ctrl+B, a janela estreitou), o foco vai para a

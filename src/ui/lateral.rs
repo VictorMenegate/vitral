@@ -1636,16 +1636,9 @@ impl Janela {
         }
         // Uma letra digitada com a lista em foco (depois de clicar num chat) vai para a caixa do
         // painel ativo, que passa a ter o cursor: antes ela se perdia (teste de usabilidade,
-        // 16/11/2026). As setas, o Enter e o F2 continuam da lista.
-        let m = &ev.keystroke.modifiers;
-        if let Some(letra) = ev.keystroke.key_char.clone().filter(|l| !l.chars().any(char::is_control))
-            && !(m.control || m.alt || m.platform || m.function)
-            && let Some(composer) = self.composer_ativo()
-        {
-            cx.stop_propagation();
-            let foco = composer.read(cx).focus_handle(cx);
-            window.focus(&foco, cx);
-            composer.update(cx, |c, cx| c.insert(letra, window, cx));
+        // 16/11/2026). As setas, o Enter e o F2 continuam da lista. A regra é a mesma da conversa
+        // (`atalhos::tecla_para_a_caixa`).
+        if self.tecla_para_a_caixa(ev, window, cx) {
             return;
         }
         let atual = self.realce_lista.as_ref().and_then(|id| nav.iter().position(|n| n.chat == *id));

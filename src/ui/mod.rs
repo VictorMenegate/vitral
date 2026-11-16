@@ -657,6 +657,48 @@ impl Janela {
         }
     }
 
+    /// Algum flutuante da janela está aberto (menu do logo, sino, popover da caixa, histórico ou
+    /// menu de um painel): a tecla fora de campo é dele, e não da caixa.
+    fn flutuante_aberto(&self) -> bool {
+        self.menu_aberto
+            || self.caixa_aberta
+            || self.pop_caixa.is_some()
+            || self.historico_aberto.is_some()
+            || self.paineis.iter().any(|p| p.menu_aberto)
+    }
+
+    /// A tecla vai para a caixa do painel ativo (`atalhos::tecla_para_a_caixa`): a letra entra nela
+    /// e o Ctrl+V cola nela, com o cursor já lá. Devolve `true` quando a tecla foi usada.
+    pub(super) fn tecla_para_a_caixa(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(acao) = atalhos::tecla_para_a_caixa(&ev.keystroke) else {
+            return false;
+        };
+        let Some(composer) = self.composer_ativo() else {
+            return false;
+        };
+        cx.stop_propagation();
+        let foco = composer.read(cx).focus_handle(cx);
+        window.focus(&foco, cx);
+        match acao {
+            atalhos::ParaACaixa::Letra(letra) => composer.update(cx, |c, cx| c.insert(letra, window, cx)),
+            // O campo cola (um print copiado vira pílula, pelo `on_paste` da caixa).
+            atalhos::ParaACaixa::Colar => window.dispatch_action(Box::new(gpui_kit::component::input::Paste), cx),
+        }
+        true
+    }
+
+    /// Uma tecla que subiu até a raiz da janela. Só vale com o foco na própria raiz (um clique na
+    /// conversa, no "Hoje", numa trilha) ou numa aba, sem diálogo nem flutuante aberto: o que sobe
+    /// de um campo, de um botão ou de um popover segue o caminho dele (dono, 16/11/2026: rodada de
+    /// uso, item 1.1). O Ctrl+C e o Esc da conversa continuam valendo: não passam por aqui.
+    fn tecla_na_janela(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let numa_aba = self.paineis.iter().any(|p| p.foco_aba.is_focused(window));
+        if !(self.foco.is_focused(window) || numa_aba) || window.has_active_dialog(cx) || self.flutuante_aberto() {
+            return;
+        }
+        self.tecla_para_a_caixa(ev, window, cx);
+    }
+
     /// Abre um flutuante controlado pela janela e fecha os outros: um por vez. Com o mouse o
     /// clique fora já fechava o anterior; pelo atalho, não, e o Ctrl+E abria o esforço por cima
     /// do sino aberto (relatório de design, 16/11/2026). Quem abre chama antes de ligar o seu.
@@ -1404,6 +1446,8 @@ impl Render for Janela {
         let janela = base
             .key_context("Vitral")
             .track_focus(&self.foco)
+            // Digitar com o foco fora de campo escreve na caixa do painel ativo (item 1.1).
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.tecla_na_janela(ev, window, cx)))
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
             // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.

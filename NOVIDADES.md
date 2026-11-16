@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Digitar em qualquer ponto escreve na caixa.** Depois de clicar na conversa (para abrir uma
+  trilha ou selecionar um trecho) ou numa aba, a letra que você digita vai para a caixa do painel
+  ativo, e o Ctrl+V cola nela: um print copiado vira pílula sem clicar antes.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.
