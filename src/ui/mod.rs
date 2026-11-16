@@ -748,13 +748,19 @@ impl Janela {
         true
     }
 
-    /// Uma tecla que subiu até a raiz da janela. Só vale com o foco na própria raiz (um clique na
-    /// conversa, no "Hoje", numa trilha) ou numa aba, sem diálogo nem flutuante aberto: o que sobe
-    /// de um campo, de um botão ou de um popover segue o caminho dele (dono, 16/11/2026: rodada de
-    /// uso, item 1.1). O Ctrl+C e o Esc da conversa continuam valendo: não passam por aqui.
+    /// Uma tecla que subiu até a raiz da janela. Vale com o foco na própria raiz (um clique no vazio
+    /// da conversa), numa aba ou dentro da conversa sem ser num campo de texto (o cabeçalho de uma
+    /// trilha, a linha "Trabalhou…" e o texto selecionável de uma mensagem têm foco próprio e o
+    /// pegam no clique; conferência na bancada, 16/11/2026), sem diálogo nem flutuante aberto (dono,
+    /// 16/11/2026: rodada de uso, item 1.1). O Tab, o Enter e o Espaço continuam de quem tem o foco
+    /// (`tecla_para_a_caixa` não os pega), os atalhos com Ctrl ou Alt já foram para o keymap antes, e
+    /// o Ctrl+C e o Esc da conversa não passam por aqui.
     fn tecla_na_janela(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let numa_aba = self.paineis.iter().any(|p| p.foco_aba.is_focused(window));
-        if !(self.foco.is_focused(window) || numa_aba) || window.has_active_dialog(cx) || self.flutuante_aberto() {
+        let contextos = window.context_stack();
+        let na_conversa = contextos.iter().any(|c| c.contains(mensagens::CONTEXTO_DA_CONVERSA))
+            && !contextos.iter().any(|c| c.contains("Input"));
+        if !(self.foco.is_focused(window) || numa_aba || na_conversa) || window.has_active_dialog(cx) || self.flutuante_aberto() {
             return;
         }
         self.tecla_para_a_caixa(ev, window, cx);

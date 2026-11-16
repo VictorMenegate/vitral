@@ -188,6 +188,10 @@ pub(super) enum Abertura {
     CarregarMais,
 }
 
+/// O contexto de teclado da área da conversa: uma letra digitada com o foco aqui dentro (fora de um
+/// campo) vai para a caixa (`Janela::tecla_na_janela`, item 1.1).
+pub(super) const CONTEXTO_DA_CONVERSA: &str = "Conversa";
+
 /// Um respiro acima do começo da resposta, para ela não abrir colada na borda.
 const RESPIRO_DA_ABERTURA: Pixels = px(12.);
 
@@ -550,6 +554,7 @@ impl Janela {
                     .lock_scroll_axis()
                     .track_scroll(&rolagem)
                     .on_scroll(cx.listener(move |this, _evento: &ScrollEvent, _, cx| {
+            .key_context(CONTEXTO_DA_CONVERSA)
                         // A roda já mexeu no deslocamento: decide agora, antes que o motor peça
                         // para voltar ao fim.
                         this.acompanhar_rolagem(cx);
