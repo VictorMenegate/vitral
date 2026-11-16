@@ -347,8 +347,9 @@ acendem com o ponteiro na caixa e ao ativar o painel; o campo, a moldura, o anel
 porcentagem e o parar ficam sempre acesos (relatório de aparência, 16/11/2026, V2). A barra
 de baixo do campo tem chips com ícone, nesta ordem: **modo de permissão** (Manual, com o escudo
 cheio, e Planejar em verde; Aceitar edições e Automático em violeta; Sem perguntar em âmbar),
-**modelo** (o logo do Claude e o que vale, como "Claude
-Opus 5.5"), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
+**modelo** (o glifo do Claude, solto, sem o disco cheio, e o que vale, como "Claude
+Opus 5.5"; nos chips a marca é sempre o glifo, `Marca::glifo`, e o disco fica nas listas, nos
+popovers e no anel de uso), **esforço** (barrinhas em ciano, de "Auto" a "Máximo") e **conta** (o ícone na cor do
 uso de 5 h; só com mais de uma conta). O que segue o padrão da pasta fica em tom tênue. À direita
 ficam o anel do contexto (com a fenda embaixo e a porcentagem ao lado, "24%", em mono; âmbar a
 70%, vermelho a 90%; também na caixa estreita, mais justa, porque o anel sozinho parecia o anel

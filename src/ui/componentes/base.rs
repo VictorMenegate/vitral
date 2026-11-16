@@ -162,6 +162,16 @@ static DISCO_CODEX: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/codex.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
 });
+/// Os glifos soltos, sem o disco: a marca do Claude em coral e a do Codex no degradê azul, como
+/// elas aparecem sobre fundo escuro (os chips da caixa e das Configurações).
+static GLIFO_CLAUDE: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let svg = include_bytes!("../../../assets/marcas/claude-glifo.svg");
+    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+});
+static GLIFO_CODEX: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let svg = include_bytes!("../../../assets/marcas/codex-glifo.svg");
+    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+});
 static DISCO_LINEAR: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/linear.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
@@ -187,6 +197,17 @@ impl Marca {
 
     pub fn disco(self, lado: f32) -> DiscoDeMarca {
         DiscoDeMarca { marca: self, lado, apagada: false }
+    }
+
+    /// O glifo solto, sem o disco cheio, no lado `lado` (o Linear, que não tem glifo próprio,
+    /// fica no disco).
+    pub fn glifo(self, lado: f32) -> AnyElement {
+        let imagem = match self {
+            Marca::Claude => GLIFO_CLAUDE.clone(),
+            Marca::Codex => GLIFO_CODEX.clone(),
+            Marca::Linear => return self.disco(lado).into_any_element(),
+        };
+        img(imagem).flex_none().size(r(lado)).into_any_element()
     }
 }
 

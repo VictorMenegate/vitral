@@ -235,7 +235,15 @@ impl Chip {
             .border_1()
             .border_color(transparent_black())
             .map(|b| if self.so_icone { b.w(r(altura)).px_0() } else { b.px(r(8.)) })
-            .when_some(self.simbolo, |b, s| b.child(s.desenhar(14., window)))
+            // A marca no chip é o glifo solto, sem o disco cheio: o disco coral a 24 px do escudo
+            // âmbar era a mancha mais forte da faixa de caixas (relatório de aparência,
+            // 16/11/2026, V9). Nas listas, popovers, na dupla e no anel de uso o disco fica.
+            .when_some(self.simbolo, |b, s| {
+                b.child(match s {
+                    Simbolo::Marca(marca) => marca.glifo(14.),
+                    outro => outro.desenhar(14., window),
+                })
+            })
             .when(!self.so_icone, |b| {
                 b.child(
                     div()
