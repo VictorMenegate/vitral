@@ -102,6 +102,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
   erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
   transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+- **Ícones de estado do mesmo tamanho.** Na lista e nas abas, o disco de "esperando" e o anel de
+  "rodando" têm a medida do balão do chat parado, numa coluna só.
 - **Lista mais leve.** Os títulos dos chats lidos ficaram em peso normal: a conversa fica em
   primeiro plano, e o chat não lido salta à vista em negrito.
 - **Lista mais legível.** Com o chat aberto num painel, a linha mostra só o número do painel, e o

@@ -90,12 +90,15 @@ pub fn icone_de_estado(sinal: Option<Sinal>, lado: f32) -> IconeDeEstado {
 
 impl RenderOnce for IconeDeEstado {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+        // Disco e anel a 0,8 da caixa, o balão a `lado - 2`: os três com 15 a 16 de desenho numa
+        // coluna só. O disco enchia os 20 e parecia um botão maior que o balão do lado (relatório
+        // de aparência, 16/11/2026, V10). O ponto continua do mesmo tamanho.
         let caixa = div().flex_none().size(r(self.lado)).flex().items_center().justify_center();
         match self.sinal {
-            Some(Sinal::Rodando) => caixa.child(super::graficos::AnelGirando::new(self.lado - 2.).cor(Cores::destaque())),
+            Some(Sinal::Rodando) => caixa.child(super::graficos::AnelGirando::new(self.lado * 0.8).cor(Cores::destaque())),
             Some(sinal) => caixa.child(
                 div()
-                    .size(r(self.lado))
+                    .size(r(self.lado * 0.8))
                     .flex()
                     .items_center()
                     .justify_center()
