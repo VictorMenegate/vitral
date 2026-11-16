@@ -48,6 +48,9 @@ use crate::{
 };
 
 pub(super) mod historico;
+// O cartão de erro passa a usar a leitura na parte seguinte (balão e cartão de erro, 16/11/2026).
+#[cfg_attr(not(test), allow(dead_code))]
+mod erros;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {

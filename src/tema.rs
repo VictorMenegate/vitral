@@ -432,6 +432,7 @@ gpui_kit::assets::icon_assets!(
         Hand,
         Image,
         ImageOff,
+        KeyRound,
         Keyboard,
         LayoutGrid,
         Link,
