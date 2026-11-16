@@ -981,12 +981,7 @@ impl Janela {
             }
             // As Contas já no login da conta que caiu, e não na lista (rodada de uso, item 8.3).
             (TipoDeErro::Login, Agente::Claude) => {
-                let m = contexto.motor;
-                let conta = m
-                    .conta_do_ultimo_turno(&chat.id)
-                    .filter(|c| m.conta_sem_login(&c.id))
-                    .or_else(|| m.contas.iter().find(|c| m.conta_sem_login(&c.id)))
-                    .map(|c| c.id.clone());
+                let conta = conta_que_caiu(contexto.motor, chat);
                 acoes.push(
                     fantasma(
                         id("entrar"),
@@ -3821,11 +3816,10 @@ impl Janela {
                     },
                     // O login da conta caiu: "Entrar de novo" abre as Contas já no login dela (8.3).
                     (erros::TipoDeErro::Login, Agente::Claude) => {
-                        let sem_login = conta.filter(|c| motor.conta_sem_login(&c.id));
-                        if let Some(c) = &sem_login {
+                        let id_conta = conta_que_caiu(motor, chat);
+                        if let Some(c) = id_conta.as_ref().and_then(|id| motor.contas.iter().find(|c| &c.id == id)) {
                             (icone, cor, rotulo) = (Lucide::KeyRound, Some(Cores::espera()), format!("Login da {} caiu", c.nome));
                         }
-                        let id_conta = sem_login.map(|c| c.id);
                         botao_fantasma("faixa-entrar", Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Barra, window, cx)
                             .track_focus(&foco_faixa)
                             .on_click(cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(id_conta.clone(), window, cx)))
@@ -5126,6 +5120,20 @@ fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> 
         .when(resto > 0, |s| {
             s.child(div().pt(r(4.)).text_color(Cores::tenue()).child(format!("+{resto} linhas")))
         })
+}
+
+
+/// A conta cujo login caiu num erro de login do chat: a do último turno, se ela está marcada
+/// como desconectada; senão, a única desconectada; senão, a escolhida à mão no chat (depois de
+/// reabrir o Vitral a do último turno se perde). `None` quando não dá para saber: aí as Contas
+/// abrem com o "Entrar de novo" em cada conta.
+fn conta_que_caiu(m: &crate::motor::Motor, chat: &Chat) -> Option<String> {
+    let desconectadas: Vec<&crate::contas::Conta> = m.contas.iter().filter(|c| m.conta_desconectada(&c.id)).collect();
+    m.conta_do_ultimo_turno(&chat.id)
+        .filter(|c| m.conta_desconectada(&c.id))
+        .or_else(|| (desconectadas.len() == 1).then(|| desconectadas[0]))
+        .map(|c| c.id.clone())
+        .or_else(|| chat.conta.clone().filter(|id| id != crate::contas::AUTOMATICA && m.contas.iter().any(|c| &c.id == id)))
 }
 
 #[cfg(test)]

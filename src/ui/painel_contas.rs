@@ -46,6 +46,9 @@ pub struct PainelContas {
     /// O login em andamento é o "Entrar de novo" desta conta, que já existe (item 8.3): o fim não
     /// cria conta nova, e a falha não apaga a pasta dela.
     refazendo: Option<String>,
+    /// Aberto pelo "Entrar de novo" de um erro sem saber qual conta caiu: toda linha mostra o
+    /// "Entrar de novo", para escolher em qual entrar.
+    entrar_em_todas: bool,
     /// "Copiar endereço" acabou de copiar: o botão diz "Copiado" por um instante.
     copiado: bool,
     _copiado: Task<()>,
@@ -70,6 +73,7 @@ impl PainelContas {
             erro: None,
             lista_recolhida: false,
             refazendo: None,
+            entrar_em_todas: false,
             copiado: false,
             _copiado: Task::ready(()),
             _assinaturas: assinaturas,
@@ -94,6 +98,12 @@ impl PainelContas {
     pub(super) fn entrar_de_novo(&mut self, conta: String, window: &mut Window, cx: &mut Context<Self>) {
         self.refazendo = Some(conta.clone());
         self.comecar_login(conta, window, cx);
+    }
+
+    /// Vindo do "Entrar de novo" de um erro sem saber qual conta caiu: o botão em todas as linhas.
+    pub(super) fn escolher_onde_entrar(&mut self, cx: &mut Context<Self>) {
+        self.entrar_em_todas = true;
+        cx.notify();
     }
 
     /// O "Tentar de novo" do erro: o mesmo login que falhou.
@@ -284,10 +294,10 @@ impl PainelContas {
             .semana(semana)
             .diametro(36.)
             .bloqueado(uso.bloqueado);
-        let sem_login = m.conta_sem_login(&conta.id);
+        let sem_login = m.conta_desconectada(&conta.id);
         let meta = if sem_login {
             // Sem login, o uso não diz nada: a pílula no lugar dele, e o "Entrar de novo" à vista.
-            PilulaDeEstado::new(Estado::ParadoAtencao).rotulo("sem login").into_any_element()
+            PilulaDeEstado::new(Estado::ParadoAtencao).rotulo("desconectada").into_any_element()
         } else if uso.bloqueado {
             let mut pilula = PilulaDeEstado::new(Estado::Erro).rotulo("no limite");
             if let Some(fim) = m.limite_vence(&conta.id) {
@@ -307,7 +317,7 @@ impl PainelContas {
         };
         let menu = self.menu_conta(ix, conta, escolhida, window, cx);
         let escolher = (self.motor.clone(), conta.id.clone());
-        let entrar = sem_login.then(|| {
+        let entrar = (sem_login || self.entrar_em_todas).then(|| {
             let id = conta.id.clone();
             let refazendo = self.refazendo.as_deref() == Some(conta.id.as_str()) && !matches!(self.estado, EstadoLogin::Parado);
             botao_fantasma(("conta-entrar", ix), Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Linha, window, cx)
@@ -325,19 +335,25 @@ impl PainelContas {
             .on_click(move |_, _, cx| escolher_conta(&escolher.0, &escolher.1, cx))
     }
 
-    /// O "…" de uma conta: tornar padrão, copiar o e-mail e, nas extras, desconectar.
-    fn menu_conta(&self, ix: usize, conta: &Conta, escolhida: bool, window: &Window, cx: &App) -> AnyElement {
+    /// O "…" de uma conta: tornar padrão, entrar de novo, copiar o e-mail e, nas extras,
+    /// desconectar.
+    fn menu_conta(&self, ix: usize, conta: &Conta, escolhida: bool, window: &Window, cx: &Context<Self>) -> AnyElement {
         let (motor, id, email) = (self.motor.clone(), conta.id.clone(), conta.email.clone());
+        let painel = cx.entity().downgrade();
         let extra = conta.id != contas::PRINCIPAL;
         botao_icone(("conta-menu", ix), Lucide::Ellipsis, "Opções da conta", TamanhoBotao::Linha, window, cx)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 let (padrao, sair) = ((motor.clone(), id.clone()), (motor.clone(), id.clone()));
-                let copiar = email.clone();
+                let (copiar, de_novo, painel) = (email.clone(), id.clone(), painel.clone());
                 menu.item(
                     PopupMenuItem::new("Usar como padrão")
                         .checked(escolhida)
                         .on_click(move |_, _, cx| escolher_conta(&padrao.0, &padrao.1, cx)),
                 )
+                // Refaz o login a qualquer hora, sem esperar o erro de um turno.
+                .item(PopupMenuItem::new("Entrar de novo").icon(Lucide::KeyRound).on_click(move |_, window, cx| {
+                    let _ = painel.update(cx, |p, cx| p.entrar_de_novo(de_novo.clone(), window, cx));
+                }))
                 .when(!email.is_empty(), |menu| {
                     menu.item(PopupMenuItem::new("Copiar o e-mail").icon(Lucide::Copy).on_click(move |_, window, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(copiar.clone()));

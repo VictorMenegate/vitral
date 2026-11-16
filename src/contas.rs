@@ -58,6 +58,34 @@ fn arquivo_cadastro() -> Option<PathBuf> {
     Some(CONFIG.get()?.join("contas.json"))
 }
 
+fn arquivo_sem_login() -> Option<PathBuf> {
+    Some(CONFIG.get()?.join("contas-sem-login.json"))
+}
+
+/// As contas que perderam o login e ainda não voltaram. Guardadas à parte (a principal não vai
+/// no `contas.json`), para a marca sobreviver ao fechar o Vitral: antes ela morava só na memória,
+/// e depois de reabrir o "Entrar de novo" do erro não sabia qual conta era e as Contas mostravam
+/// todas como conectadas (dono, 16/11/2026: "tem que ter como ver se a conta desconectou").
+pub fn ler_sem_login() -> std::collections::HashSet<String> {
+    arquivo_sem_login()
+        .and_then(|a| fs::read_to_string(a).ok())
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+}
+
+pub fn salvar_sem_login(ids: &std::collections::HashSet<String>) {
+    let Some(arquivo) = arquivo_sem_login() else {
+        return;
+    };
+    let mut lista: Vec<&String> = ids.iter().collect();
+    lista.sort();
+    if let Err(erro) = crate::dados::gravar_json_seguro(&arquivo, &lista, false) {
+        eprintln!("vitral: não gravou as contas sem login: {erro:#}");
+    }
+}
+
 /// Todas as contas, com a principal primeiro.
 pub fn carregar() -> Vec<Conta> {
     let mut extras: Vec<Conta> = arquivo_cadastro()

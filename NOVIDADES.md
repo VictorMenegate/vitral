@@ -29,8 +29,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   **Entrar de novo** abre as Contas já refazendo o login daquela conta. O turno com erro passa a
   notificar com a janela atrás.
 - **Entrar de novo na conta que perdeu o login.** Nas Contas do Claude, a conta sem login mostra
-  "sem login" e o botão **Entrar de novo**, que refaz o login nela mesma, sem criar uma conta
-  duplicada.
+  "desconectada" e o botão **Entrar de novo**, que refaz o login nela mesma, sem criar uma conta
+  duplicada. A marca continua depois de fechar o Vitral, a conta cujo token a Anthropic recusa na
+  leitura do uso também aparece desconectada, e o "…" de cada conta tem **Entrar de novo** a
+  qualquer hora. O **Entrar de novo** do erro abre já no login da conta que caiu; sem saber qual
+  foi, mostra o botão em cada conta.
 - **Revisão da memória sem prender o chat.** O "Terminou" sai assim que o turno de trabalho acaba;
   a revisão da memória roda por baixo e vira uma linha na conversa ("Memória revista · nada a
   guardar"). Uma mensagem sua no meio dela corta a revisão (se ela ainda não escreveu nada) e

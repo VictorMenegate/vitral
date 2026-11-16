@@ -275,7 +275,12 @@ pub struct Motor {
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
     /// renovar): ficam fora da escolha até um turno nelas dar certo ou a pessoa entrar de novo.
+    /// Gravadas em `contas-sem-login.json`, para a marca sobreviver ao fechar o Vitral.
     sem_login: HashSet<String>,
+    /// As contas cujo token a Anthropic recusou (401 ou 403) na última busca do uso. Só aparece
+    /// nas Contas, como desconectada: não tira a conta da escolha (um 403 do uso não prova que o
+    /// turno falharia).
+    recusadas: HashSet<String>,
     /// Nome do plano, limites por modelo e créditos extras de cada conta (do `.claude.json`).
     plano_por_conta: HashMap<String, Plano>,
     /// Quando buscar o uso dos planos na Anthropic e o recuo de cada conta (`contas::busca`).
@@ -531,7 +536,8 @@ impl Motor {
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
             limite_ate: HashMap::new(),
-            sem_login: HashSet::new(),
+            sem_login: contas::ler_sem_login(),
+            recusadas: HashSet::new(),
             plano_por_conta: HashMap::new(),
             agenda_uso: Agenda::default(),
             uso_em_vista: None,
@@ -2194,6 +2200,22 @@ impl Motor {
         self.sem_login.contains(id)
     }
 
+    /// A conta aparece desconectada nas Contas: perdeu o login num turno ou a Anthropic recusou o
+    /// token dela na busca do uso (dono, 16/11/2026: "tem que ter como ver se a conta
+    /// desconectou e dar pra conectar de novo").
+    pub fn conta_desconectada(&self, id: &str) -> bool {
+        self.sem_login.contains(id) || self.recusadas.contains(id)
+    }
+
+    /// Marca (ou desmarca) a conta sem login e grava a lista quando ela muda.
+    fn marcar_sem_login(&mut self, id: &str, sem: bool) -> bool {
+        let mudou = if sem { self.sem_login.insert(id.to_string()) } else { self.sem_login.remove(id) };
+        if mudou {
+            contas::salvar_sem_login(&self.sem_login);
+        }
+        mudou
+    }
+
     /// A conta que rodou o último turno do chat (a que bateu no limite ou perdeu o login).
     pub fn conta_do_ultimo_turno(&self, chat: &str) -> Option<&Conta> {
         let id = self.conta_do_turno.get(chat)?;
@@ -2238,7 +2260,8 @@ impl Motor {
     /// O login da conta foi refeito no diálogo das Contas (item 8.3): ela volta à escolha, com o
     /// plano que o Claude Code disse.
     pub fn login_refeito(&mut self, id: &str, plano: String, cx: &mut Context<Self>) {
-        self.sem_login.remove(id);
+        self.marcar_sem_login(id, false);
+        self.recusadas.remove(id);
         if let Some(conta) = self.contas.iter_mut().find(|c| c.id == id)
             && !plano.is_empty()
         {
@@ -2265,7 +2288,7 @@ impl Motor {
         let Some(atual) = self.conta_do_turno.get(chat).cloned().filter(|_| c.agente == Agente::Claude) else {
             return false;
         };
-        self.sem_login.insert(atual.clone());
+        self.marcar_sem_login(&atual, true);
         let nome = self.contas.iter().find(|x| x.id == atual).map_or_else(|| atual.clone(), |x| x.nome.clone());
         let proxima = self.conta_para(&c);
         if proxima.id == atual || self.sem_login.contains(&proxima.id) {
@@ -2550,6 +2573,22 @@ impl Motor {
             }
             let antes = self.uso_sem_atualizar(&id);
             self.agenda_uso.registrar(&id, &busca, agora);
+            // O token lido e aceito prova o login (a marca de um turno que falhou sai); recusado,
+            // a conta aparece desconectada nas Contas. Vencido, repetido ou sem rede não dizem nada.
+            let desconectada = self.conta_desconectada(&id);
+            match &busca {
+                Busca::Lida(..) => {
+                    self.recusadas.remove(&id);
+                    self.marcar_sem_login(&id, false);
+                }
+                Busca::Recusado { .. } => {
+                    self.recusadas.insert(id.clone());
+                }
+                _ => {}
+            }
+            if self.conta_desconectada(&id) != desconectada {
+                mudou = Mudanca::Numeros;
+            }
             if let Busca::Lida(uso, plano) = busca {
                 mudou = mudou.max(self.juntar_uso_da_conta(&id, uso, plano, agora as i64));
             }
@@ -2562,7 +2601,8 @@ impl Motor {
 
     pub fn adicionar_conta(&mut self, conta: Conta, cx: &mut Context<Self>) {
         // Entrar de novo numa conta devolve ela à escolha.
-        self.sem_login.remove(&conta.id);
+        self.marcar_sem_login(&conta.id, false);
+        self.recusadas.remove(&conta.id);
         self.contas.retain(|c| c.id != conta.id);
         self.contas.push(conta);
         let _ = contas::salvar(&self.contas);
@@ -3052,8 +3092,8 @@ impl Motor {
                     return;
                 }
                 // O turno deu certo nesta conta: o login dela está valendo.
-                if !erro && let Some(conta) = self.conta_do_turno.get(chat_id) {
-                    self.sem_login.remove(conta);
+                if !erro && let Some(conta) = self.conta_do_turno.get(chat_id).cloned() {
+                    self.marcar_sem_login(&conta, false);
                 }
                 if erro {
                     self.avisar(

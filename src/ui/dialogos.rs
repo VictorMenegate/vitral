@@ -429,14 +429,25 @@ impl Janela {
     /// "Entrar de novo" (o cartão de erro, a faixa do turno): as Contas já no login da conta que
     /// caiu (rodada de uso, itens 3.2 e 8.3). Sem saber qual, abre a lista.
     pub(super) fn entrar_de_novo_na_conta(&mut self, conta: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        self.abrir_contas_em(false, conta, window, cx);
+        // Sem saber qual conta caiu (o erro é de antes de reabrir o Vitral), a lista abre com o
+        // "Entrar de novo" em cada conta, para escolher (dono, 16/11/2026: "só abre a tela mas faz
+        // nada nela").
+        let escolher = conta.is_none();
+        self.abrir_contas_em(false, conta, escolher, window, cx);
     }
 
     fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.abrir_contas_em(entrar, None, window, cx);
+        self.abrir_contas_em(entrar, None, false, window, cx);
     }
 
-    fn abrir_contas_em(&mut self, entrar: bool, de_novo: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn abrir_contas_em(
+        &mut self,
+        entrar: bool,
+        de_novo: Option<String>,
+        escolher_onde_entrar: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
@@ -445,10 +456,21 @@ impl Janela {
             painel.update(cx, |p, cx| p.entrar(window, cx));
         } else if let Some(conta) = de_novo {
             painel.update(cx, |p, cx| p.entrar_de_novo(conta, window, cx));
+        } else if escolher_onde_entrar {
+            painel.update(cx, |p, cx| p.escolher_onde_entrar(cx));
         }
         self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
-            let conectadas = contas_conectadas(motor.read(cx).contas.len());
+            let conectadas = {
+                let m = motor.read(cx);
+                let fora = m.contas.iter().filter(|c| m.conta_desconectada(&c.id)).count();
+                let total = m.contas.len();
+                if fora == 0 {
+                    contas_conectadas(total)
+                } else {
+                    format!("{} · {}", contagem(total, "conta", "contas"), contagem(fora, "desconectada", "desconectadas"))
+                }
+            };
             moldura(dialogo, largura::M, window)
                 .title(topo(cabecalho("Contas do Claude", Some(conectadas))))
                 .child(painel.clone())
