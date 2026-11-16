@@ -489,8 +489,14 @@ impl Janela {
             })
             .unwrap_or((false, 0, None, 0));
         let dica = if com_pasta { "Mensagem para este chat…" } else { "Mensagem…" };
+        // As menções do rascunho voltam como pílulas (dono, 16/11/2026).
+        let pasta = novo.as_ref().and_then(|id| self.motor.as_ref()?.read(cx).chat(id).map(|c| c.cwd.clone()));
+        let conteudo = match &pasta {
+            Some(pasta) => super::composer::conteudo_com_mencoes(&rascunho, pasta),
+            None => rascunho.into(),
+        };
         painel.composer.update(cx, |c, cx| {
-            c.set_value(rascunho, window, cx);
+            c.set_value(conteudo, window, cx);
             c.set_placeholder(dica, window, cx);
         });
         painel.dica_caixa = dica;

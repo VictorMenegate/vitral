@@ -232,36 +232,69 @@ fn ligar_palavras(trecho: &str, resolver: &mut dyn FnMut(&str) -> Option<String>
     }
 }
 
-thread_local! {
-    static VISTOS: RefCell<HashMap<PathBuf, (Instant, bool)>> = RefCell::new(HashMap::new());
+/// O que o disco disse de um caminho.
+#[derive(Clone, Copy, PartialEq)]
+enum NoDisco {
+    Arquivo,
+    Pasta,
+    Nada,
 }
 
-/// O caminho inteiro de um arquivo citado, se ele está no disco: `~/` é a pasta pessoal, o
-/// absoluto vale como está e o relativo parte da pasta do chat. A resposta do disco vale por
-/// alguns segundos (a conversa pergunta a cada quadro).
-pub fn resolver(base: &Path, escrito: &str) -> Option<String> {
-    let caminho = if let Some(resto) = escrito.strip_prefix("~/") {
+thread_local! {
+    static VISTOS: RefCell<HashMap<PathBuf, (Instant, NoDisco)>> = RefCell::new(HashMap::new());
+}
+
+/// O caminho como foi escrito, inteiro: `~/` é a pasta pessoal, o absoluto vale como está e o
+/// relativo parte da pasta do chat.
+fn inteiro(base: &Path, escrito: &str) -> Option<PathBuf> {
+    Some(if let Some(resto) = escrito.strip_prefix("~/") {
         dirs::home_dir()?.join(resto)
     } else {
         let bruto = PathBuf::from(escrito);
         if bruto.is_absolute() { bruto } else { base.join(bruto) }
-    };
-    let existe = VISTOS.with(|vistos| {
+    })
+}
+
+/// O que há no disco nesse caminho. A resposta vale por alguns segundos (a conversa pergunta a
+/// cada quadro).
+fn no_disco(caminho: &Path) -> NoDisco {
+    VISTOS.with(|vistos| {
         let mut vistos = vistos.borrow_mut();
         let agora = Instant::now();
-        if let Some((quando, existe)) = vistos.get(&caminho)
+        if let Some((quando, visto)) = vistos.get(caminho)
             && agora.duration_since(*quando) < VALIDADE
         {
-            return *existe;
+            return *visto;
         }
         if vistos.len() > 4000 {
             vistos.clear();
         }
-        let existe = caminho.is_file();
-        vistos.insert(caminho.clone(), (agora, existe));
-        existe
-    });
-    existe.then(|| caminho.to_string_lossy().into_owned())
+        let visto = match std::fs::metadata(caminho) {
+            Ok(m) if m.is_dir() => NoDisco::Pasta,
+            Ok(_) => NoDisco::Arquivo,
+            Err(_) => NoDisco::Nada,
+        };
+        vistos.insert(caminho.to_path_buf(), (agora, visto));
+        visto
+    })
+}
+
+/// O caminho inteiro de um arquivo citado, se ele está no disco (ver `inteiro`).
+pub fn resolver(base: &Path, escrito: &str) -> Option<String> {
+    let caminho = inteiro(base, escrito)?;
+    (no_disco(&caminho) == NoDisco::Arquivo).then(|| caminho.to_string_lossy().into_owned())
+}
+
+/// O caminho inteiro de uma menção que está no disco: arquivo ou pasta (a pasta sai com a barra
+/// no fim, como o "@" a escreve).
+pub fn resolver_mencao(base: &Path, escrito: &str) -> Option<String> {
+    let caminho = inteiro(base, escrito.trim_end_matches('/'))?;
+    let texto = caminho.to_string_lossy().into_owned();
+    match no_disco(&caminho) {
+        NoDisco::Arquivo => Some(texto),
+        NoDisco::Pasta => Some(format!("{}/", texto.trim_end_matches('/'))),
+        NoDisco::Nada => None,
+    }
 }
 
 /// Um link `vitral:arquivo/…` clicado no texto do assistente (a janela abre o arquivo).
@@ -280,11 +313,24 @@ pub fn link_permitido(url: &str, do_assistente: bool) -> bool {
     do_assistente && comeca("vitral:") && ler_link(url).is_some()
 }
 
-/// O caminho inteiro e a linha de um `vitral:arquivo/<linha>/<caminho em %XX>`.
+/// O caminho inteiro e a linha de um `vitral:arquivo/<linha>/<caminho em %XX>` ou de uma menção,
+/// `vitral:mencao/<linhas>/<caminho em %XX>` (a primeira das linhas "120-134").
 pub fn ler_link(url: &str) -> Option<(String, Option<u32>)> {
-    let resto = url.trim().strip_prefix("vitral:arquivo/")?;
+    let url = url.trim();
+    let resto = url.strip_prefix("vitral:arquivo/").or_else(|| url.strip_prefix("vitral:mencao/"))?;
     let (linha, caminho) = resto.split_once('/')?;
-    Some((caminho_do_link(caminho)?, linha.parse::<u32>().ok().filter(|n| *n > 0)))
+    let primeira = linha.split('-').next().unwrap_or(linha);
+    Some((caminho_do_link(caminho)?, primeira.parse::<u32>().ok().filter(|n| *n > 0)))
+}
+
+/// As linhas "120-134" de um link `vitral:…` (a primeira e a última), quando ele marca mais de uma.
+pub fn ler_faixa(url: &str) -> Option<(u32, u32)> {
+    let url = url.trim();
+    let resto = url.strip_prefix("vitral:arquivo/").or_else(|| url.strip_prefix("vitral:mencao/"))?;
+    let (linhas, _) = resto.split_once('/')?;
+    let (a, b) = linhas.split_once('-')?;
+    let (a, b) = (a.parse::<u32>().ok().filter(|n| *n > 0)?, b.parse::<u32>().ok().filter(|n| *n > 0)?);
+    Some((a.min(b), a.max(b)))
 }
 
 /// A pasta conhecida mais funda que contém o arquivo, e o caminho dele dentro dela (com "/").
@@ -310,10 +356,16 @@ impl super::Janela {
         use gpui_kit::component::WindowExt as _;
         let Some(motor) = self.motor.clone() else { return };
         let Some((caminho, linha)) = ler_link(url) else { return };
+        let faixa = ler_faixa(url);
         let Ok(inteiro) = dunce::canonicalize(&caminho) else {
             window.push_notification(aviso(Tom::Erro, format!("{caminho} não existe mais")), cx);
             return;
         };
+        // A pílula de uma pasta mencionada abre a pasta no gerenciador do sistema.
+        if inteiro.is_dir() {
+            crate::sistema::abrir_pasta(&inteiro, cx);
+            return;
+        }
         let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
         if crate::claude::tipo_imagem(&inteiro).is_some()
             && let Some(chat) = &chat

@@ -766,7 +766,10 @@ impl Janela {
                             // e os caminhos que existem viram link, como na resposta. O Copiar e o
                             // Editar levam o texto original.
                             let cwd = &contexto.chat.cwd;
-                            let ligado = super::links_arquivo::ligar_arquivos(texto, &mut |c| super::links_arquivo::resolver(cwd, c));
+                            // As menções que existem viram pílula (o texto que foi ao agente segue
+                            // com o caminho inteiro); depois, os caminhos soltos viram link.
+                            let mencoes = super::mencao::ligar_mencoes(texto, &mut |c| super::links_arquivo::resolver_mencao(cwd, c));
+                            let ligado = super::links_arquivo::ligar_arquivos(&mencoes, &mut |c| super::links_arquivo::resolver(cwd, c));
                             let cortado = longo && !tudo;
                             s.child(
                                 div()
@@ -1269,7 +1272,8 @@ fn estilo_da_resposta(vista: TextView, cx: &App) -> TextView {
 /// O estilo do seu balão: o da resposta (links de arquivo abrem no Vitral), com títulos que nunca
 /// passam da fala e o código no poço escuro, que se vê no azul.
 fn estilo_do_balao(vista: TextView, cx: &App) -> TextView {
-    estilo_da_resposta(vista, cx).style(
+    // A menção de arquivo ("@src/x.rs#L3-9") é uma pílula no meio do texto (dono, 16/11/2026).
+    estilo_da_resposta(vista, cx).plugin(super::mencao::PilulaDeMencao).style(
         estilo_com_titulos(cx, [15., 14., 14.])
             .code_block(
                 StyleRefinement::default()

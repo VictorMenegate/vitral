@@ -26,6 +26,7 @@ mod mapa_agentes;
 mod mcp_servidores;
 mod memoria_equipe;
 mod mensagens;
+mod mencao;
 mod menus;
 pub mod movimento;
 mod painel_contas;

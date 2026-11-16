@@ -498,20 +498,54 @@ impl Janela {
         lista.update(cx, |l, cx| l.abrir(window, cx));
     }
 
-    /// Põe "@caminho " na caixa de mensagem, trocando o "@" solto que abriu a lista.
+    /// Põe "@caminho " na caixa de mensagem, trocando o "@" solto que abriu a lista. O caminho é o
+    /// relativo à pasta do chat.
     pub(super) fn mencionar(&mut self, caminho: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.mencionar_trecho(caminho, None, window, cx);
+    }
+
+    /// Menciona um arquivo pelo caminho inteiro (o do painel da direita), com as linhas quando é
+    /// um trecho: relativo à pasta do chat da caixa quando está nela; senão, o caminho inteiro.
+    pub(super) fn mencionar_arquivo(&mut self, completo: &Path, linhas: Option<(u32, u32)>, window: &mut Window, cx: &mut Context<Self>) {
+        let cwd = self.pasta_da_caixa(cx);
+        let caminho = cwd
+            .and_then(|cwd| completo.strip_prefix(dunce::canonicalize(&cwd).unwrap_or(cwd)).ok().map(crate::git::caminho_em_texto))
+            .filter(|c| !c.is_empty())
+            .unwrap_or_else(|| completo.display().to_string());
+        self.mencionar_trecho(&caminho, linhas, window, cx);
+    }
+
+    /// A pasta do chat da caixa do painel ativo.
+    fn pasta_da_caixa(&self, cx: &App) -> Option<PathBuf> {
+        let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone())?;
+        self.motor.as_ref()?.read(cx).chat(&chat).map(|c| c.cwd.clone())
+    }
+
+    /// Põe a menção no fim da caixa, como pílula (o texto dela, "@src/x.rs#L3-9", é o que vai ao
+    /// agente), trocando o "@" solto que abriu a lista, e um espaço depois.
+    fn mencionar_trecho(&mut self, caminho: &str, linhas: Option<(u32, u32)>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.composer_ativo() else {
             return;
         };
-        let mut texto = composer.read(cx).value().to_string();
-        if texto.ends_with('@') {
-            texto.pop();
-        }
-        if !texto.is_empty() && !texto.ends_with(char::is_whitespace) {
-            texto.push(' ');
-        }
-        texto.push_str(&format!("@{caminho} "));
-        composer.update(cx, |c, cx| super::composer::por_texto(c, texto, window, cx));
+        let texto = super::mencao::texto_da_mencao(caminho, linhas);
+        let ficha = self
+            .pasta_da_caixa(cx)
+            .and_then(|cwd| super::links_arquivo::resolver_mencao(&cwd, caminho))
+            .map(|inteiro| super::composer::ficha_da_mencao(&texto, &inteiro, linhas));
+        let atual = composer.read(cx).value().to_string();
+        composer.update(cx, |c, cx| {
+            let inicio = if atual.ends_with('@') {
+                atual.len() - 1
+            } else if !atual.is_empty() && !atual.ends_with(char::is_whitespace) {
+                let fim = atual.len();
+                c.set_selected_range(fim..fim, cx);
+                c.insert(" ", window, cx);
+                fim + 1
+            } else {
+                atual.len()
+            };
+            super::composer::trocar_o_fim(c, inicio, &texto, ficha, window, cx);
+        });
         // Vindo do arquivo na gaveta, a caixa está embaixo dela: aberta, o Esc pararia o turno.
         if self.gaveta.take().is_some() {
             cx.notify();

@@ -11,7 +11,7 @@ use gpui_kit::component::{
     ElementExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Textarea, TextareaState},
+    input::{InlineToken, InputContent, Textarea, TextareaState},
     tooltip::Tooltip,
     v_flex,
 };
@@ -291,6 +291,53 @@ pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Windo
     c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
 }
 
+/// A pílula de uma menção na caixa (o `InlineToken` do campo do kit; dono, 16/11/2026: "faz as
+/// menções ficarem de uma forma melhor"): o texto dela é o que vai ao agente ("@src/x.rs#L3-9");
+/// o id, o endereço que o clique abre (`vitral:mencao/…`); o rótulo, o nome curto ("x.rs:3-9").
+/// Apagar com Backspace leva a menção inteira.
+pub(super) fn ficha_da_mencao(texto: &str, inteiro: &str, linhas: Option<(u32, u32)>) -> InlineToken {
+    InlineToken::new(super::mencao::link_da_mencao(inteiro, linhas), texto.to_string())
+        .with_label(super::mencao::rotulo_da_mencao(inteiro, linhas))
+}
+
+/// O texto com as menções que existem em `base` já como pílulas, para o `set_value` (o rascunho
+/// que volta para a caixa ao trocar de chat).
+pub(super) fn conteudo_com_mencoes(texto: &str, base: &Path) -> InputContent {
+    let mut conteudo = InputContent::new(texto.to_string());
+    for (faixa, mencao) in super::mencao::mencoes_no_texto(texto) {
+        let Some(inteiro) = super::links_arquivo::resolver_mencao(base, &mencao.caminho) else { continue };
+        let ficha = ficha_da_mencao(&texto[faixa.clone()], &inteiro, mencao.linhas);
+        if let Ok(com) = conteudo.clone().with_token(faixa, ficha) {
+            conteudo = com;
+        }
+    }
+    conteudo
+}
+
+/// Troca o fim do texto, desde `inicio`, por `texto` (ou pela pílula `ficha`, que tem o mesmo
+/// texto) e um espaço, com o cursor no fim e a caixa rolada até ele. Pela faixa, e não pelo
+/// `replace_all` do `por_texto`: as pílulas que já estavam na caixa continuam pílulas.
+pub(super) fn trocar_o_fim(
+    c: &mut TextareaState,
+    inicio: usize,
+    texto: &str,
+    ficha: Option<InlineToken>,
+    window: &mut Window,
+    cx: &mut Context<TextareaState>,
+) {
+    let total = c.value().len();
+    let inicio = inicio.min(total);
+    let feito = ficha.is_some_and(|f| c.replace_range_with_token(inicio..total, f, window, cx).is_ok());
+    if !feito {
+        c.set_selected_range(inicio..total, cx);
+        c.replace(texto.to_string(), window, cx);
+    }
+    let fim = c.value().len();
+    c.set_selected_range(fim..fim, cx);
+    c.insert(" ", window, cx);
+    c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
+}
+
 /// O que o Enter faz com o menu "/" aberto: com o nome exato de um comando, nada (ele vai como
 /// está); fora disso, completa o item marcado, o mesmo que o menu mostra. Antes ele procurava na
 /// lista crua e completava outro ("/s" virava "/usage", e "/" virava "/clear") (teste de
@@ -308,6 +355,7 @@ fn grupo_da_caixa(painel: u64) -> SharedString {
 }
 
 /// O texto com a última palavra trocada pela escolhida e um espaço depois.
+#[cfg(test)]
 pub(super) fn completar(texto: &str, inicio: usize, valor: &str) -> String {
     let inicio = if texto.is_char_boundary(inicio) { inicio } else { texto.len() };
     format!("{}{valor} ", &texto[..inicio])
@@ -577,6 +625,26 @@ impl Janela {
                     .child(
                         Textarea::new(&composer)
                             .appearance(false)
+                            // As menções de arquivo são pílulas dentro do texto; o clique abre o
+                            // arquivo à direita, nas linhas.
+                            .token(|ficha, _, _| {
+                                let id = ficha.token().id().clone();
+                                match super::mencao::ler_link_da_mencao(&id) {
+                                    Some((inteiro, linhas)) => super::mencao::pilula_de_mencao(
+                                        SharedString::from(format!("ficha-{id}")),
+                                        &inteiro,
+                                        linhas,
+                                        ficha.is_selected(),
+                                        ficha.line_height(),
+                                    )
+                                    .into_any_element(),
+                                    None => div().child(ficha.token().label().clone()).into_any_element(),
+                                }
+                            })
+                            .on_token_click(|evento, window, cx| {
+                                let link = evento.token().id().to_string();
+                                window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(link)), cx);
+                            })
                             // Colar imagem ou arquivos copiados no gerenciador vira anexo.
                             .on_paste(move |item, window, cx| {
                                 let caminhos = anexos_da_area_de_transferencia(item, &pasta_anexos);
@@ -1459,8 +1527,22 @@ impl Janela {
         // A palavra é medida de novo no texto de agora (o clique pode vir depois de outra tecla).
         let atual = composer.read(cx).value().to_string();
         let inicio = gatilho(&atual).map_or(inicio, |(_, _, i)| i);
-        let texto = completar(&atual, inicio, valor);
-        composer.update(cx, |c, cx| por_texto(c, texto, window, cx));
+        let inicio = if atual.is_char_boundary(inicio) { inicio } else { atual.len() };
+        // Um arquivo ou uma pasta do "@" entra como pílula; o comando, o "@claude" e o chat, como
+        // texto. Só a palavra que se completa muda: as pílulas de antes ficam.
+        let cwd = self
+            .paineis
+            .iter()
+            .find(|p| p.id == painel)
+            .and_then(|p| p.chat.clone())
+            .and_then(|id| self.motor.as_ref().and_then(|m| m.read(cx).chat(&id).map(|c| c.cwd.clone())));
+        let ficha = valor
+            .strip_prefix('@')
+            .filter(|c| c.contains(['.', '/']))
+            .zip(cwd)
+            .and_then(|(caminho, cwd)| super::links_arquivo::resolver_mencao(&cwd, caminho))
+            .map(|inteiro| ficha_da_mencao(valor, &inteiro, None));
+        composer.update(cx, |c, cx| trocar_o_fim(c, inicio, valor, ficha, window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
         cx.notify();
