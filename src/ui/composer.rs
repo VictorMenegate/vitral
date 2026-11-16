@@ -930,6 +930,7 @@ impl Janela {
         }
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
+        self.so_um_flutuante(super::QualFlutuante::Caixa);
         self.pop_caixa = Some((id, qual));
         cx.notify();
     }

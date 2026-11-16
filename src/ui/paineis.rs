@@ -11,7 +11,7 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Flutuante as _, ListaDeEscolha, MedidaPainel, icone},
+    componentes::{EventoEscolha, Flutuante as _, ListaDeEscolha, MedidaPainel, icone},
     movimento,
 };
 use crate::tema::{Cores, Lucide, Tipo as _, r, raio};
@@ -59,6 +59,8 @@ pub struct Painel {
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
     pub busca_modelo: Entity<ListaDeEscolha>,
+    /// A lista do histórico do cabeçalho (os chats para abrir neste painel).
+    pub busca_historico: Entity<ListaDeEscolha>,
     /// A busca dentro desta conversa (Ctrl+F): a barra, o termo e as ocorrências.
     pub busca: super::busca_conversa::Busca,
     /// Os blocos da conversa daqui em diante podem entrar com fade: o tamanho dela quando abriu
@@ -359,6 +361,11 @@ impl Janela {
                 _ => {}
             },
         ));
+        // O histórico do cabeçalho: escolher um chat mostra ele neste painel, como uma aba.
+        let busca_historico = cx.new(|cx| ListaDeEscolha::new("Buscar chat…", window, cx));
+        self._assinaturas.push(cx.subscribe_in(&busca_historico, window, move |this, _, evento: &EventoEscolha, window, cx| {
+            this.escolheu_no_historico(id, evento, window, cx)
+        }));
         // A aba alcançada pelo Tab ativa o painel dela: o Ctrl+W e o menu valem para ele.
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
@@ -382,6 +389,7 @@ impl Janela {
             menu_aberto: false,
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
+            busca_historico,
             busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
             vistos: 0,

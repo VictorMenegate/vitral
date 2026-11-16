@@ -870,8 +870,14 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
   (**Recolher a lista**) ou pelo Ctrl+B, e no arrasto vai de 200 a 560 px (`FAIXA_LISTA`).
   Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
-- **Cabeçalho do painel.** Uma linha só (44): as abas, o modo foco (só ligado) e o **⋯** (**Mais
-  opções da conversa**, o mesmo menu do clique direito na aba, como diz a dica). O botão da direita
+- **Cabeçalho do painel.** Uma linha só (44): as abas, o modo foco (só ligado), o **histórico** e o
+  **⋯** (**Mais opções da conversa**, o mesmo menu do clique direito na aba, como diz a dica). O
+  histórico é o relógio com a seta, como o da extensão do Claude Code (`botao_historico`, em
+  `src/ui/conversa.rs`): abre uma lista com busca ("Buscar chat…", ↑/↓ e Enter) de todos os chats,
+  do mexido por último ao mais antigo, cada um com o ícone do estado, a hora e a pasta, e os
+  arquivados num grupo no fim. O chat à vista vem marcado; escolher outro mostra ele neste painel,
+  como uma aba (o que já está à vista noutro painel diz "no painel 2" e só ativa aquele painel). O
+  botão fica também no painel estreito. O botão da direita
   saiu do cabeçalho: no último painel, abrir e fechar a direita é o item do **⋯**, **Mostrar Este
   chat** (ou **Mostrar o arquivo aberto**), marcado quando ela está aberta, com o Ctrl+J. Com a
   direita fora da vista (fechada, ou a gaveta dela fechada) e chats que pedem você, o **⋯** leva no
@@ -1023,7 +1029,9 @@ gaveta), `Enter` envia, `Shift+Enter` quebra a linha, `Ctrl+roda`, `Ctrl+=` e `C
 `Ctrl+0` zoom normal. `Ctrl+Shift+M` (modelo) e `Ctrl+E` (esforço) abrem e fecham os popovers da
 caixa do painel ativo (no do esforço, ←/→, Home e End mudam o nível, Espaço liga o Ultrathink, U
 liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fecha sem parar a
-conversa). `?` abre os **Atalhos do teclado**.
+conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez: abrir o menu do
+logo, o sino, um popover da caixa, o **⋯** ou o histórico de um painel, pelo mouse ou pelo atalho,
+fecha o que estava aberto (`Janela::so_um_flutuante`).
 
 ## Compilar e rodar
 

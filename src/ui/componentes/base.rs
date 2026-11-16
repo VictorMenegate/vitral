@@ -7,6 +7,7 @@ use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::estado::{Sinal, icone_de_estado};
 use super::graficos::{Anel, BarrinhasDeSinal};
 use crate::tema::{ARCO_IRIS, Cores, Lucide, r, raio, tam};
 
@@ -26,6 +27,9 @@ pub enum Simbolo {
     Anel { fracao: f32, cor: Option<Hsla> },
     /// Imagem guardada (o logo do Vitral): se copia, ao contrário de um `Elemento`.
     Imagem(Arc<Image>),
+    /// O estado de um chat, como o ícone dele na lista (`icone_de_estado`): se copia, para as
+    /// listas de escolha que desenham a cada quadro.
+    Estado(Option<Sinal>),
     Elemento(AnyElement),
 }
 
@@ -47,6 +51,7 @@ impl Simbolo {
             Simbolo::Sinal { nivel, total } => Simbolo::Sinal { nivel: *nivel, total: *total },
             Simbolo::Anel { fracao, cor } => Simbolo::Anel { fracao: *fracao, cor: *cor },
             Simbolo::Imagem(imagem) => Simbolo::Imagem(imagem.clone()),
+            Simbolo::Estado(sinal) => Simbolo::Estado(*sinal),
             Simbolo::Elemento(_) => return None,
         })
     }
@@ -70,6 +75,7 @@ impl Simbolo {
                 .when_some(cor, |anel, cor| anel.cor(cor))
                 .into_any_element(),
             Simbolo::Imagem(imagem) => img(imagem).flex_none().size(r(lado)).into_any_element(),
+            Simbolo::Estado(sinal) => icone_de_estado(sinal, lado).into_any_element(),
             Simbolo::Elemento(elemento) => elemento,
         }
     }

@@ -108,6 +108,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   Arquivadas foi para a dica.
 - **Porcentagem do contexto sempre à vista**, também com três painéis lado a lado: o anel sozinho
   parecia algo carregando.
+- **Histórico em cada painel.** O relógio no cabeçalho, como na extensão do Claude Code, abre a
+  lista de todos os chats, do mais recente ao mais antigo, com busca: o escolhido abre neste
+  painel, numa aba.
+- **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
+  menus e popovers) fecha o outro, em vez de empilhar os dois.
 
 ## 0.7.0
 

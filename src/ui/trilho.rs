@@ -354,6 +354,9 @@ impl Janela {
             .open(self.menu_aberto)
             .on_open_change(move |aberto, _, cx| {
                 let _ = janela.update(cx, |this, cx| {
+                    if *aberto {
+                        this.so_um_flutuante(super::QualFlutuante::MenuVitral);
+                    }
                     if this.menu_aberto != *aberto {
                         this.menu_aberto = *aberto;
                         cx.notify();
@@ -499,12 +502,16 @@ impl Janela {
     pub(super) fn abrir_menu_vitral(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // O logo mora na fileira do alto da lista: com a lista na gaveta (ou recolhida sem caber
         // ao lado), abre a gaveta primeiro, senão o menu não teria onde aparecer.
-        if self.lista && !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
+        let abrir = if self.lista && !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
             self.mostrar_lista(window, cx);
-            self.menu_aberto = true;
+            true
         } else {
-            self.menu_aberto = !self.menu_aberto;
+            !self.menu_aberto
+        };
+        if abrir {
+            self.so_um_flutuante(super::QualFlutuante::MenuVitral);
         }
+        self.menu_aberto = abrir;
         cx.notify();
     }
 
@@ -545,6 +552,7 @@ fn itens_recolhido(menu: PopupMenu, janela: &WeakEntity<Janela>, precisa: &Preci
         .icon(Lucide::Bell)
         .on_click(move |_, _, cx| {
             let _ = caixa.update(cx, |this, cx| {
+                this.so_um_flutuante(super::QualFlutuante::Sino);
                 this.caixa_aberta = true;
                 cx.notify();
             });

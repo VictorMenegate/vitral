@@ -15,17 +15,17 @@ use gpui_kit::*;
 
 use super::{
     AlternarPainel, Gaveta, IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4, Janela,
-    NovaConversa,
+    NovaConversa, QualFlutuante,
     componentes::{
-        Aba, Anel, CabecalhoPopover, CorpoPopover, EstadoVazio, LarguraPainel, LarguraPopover,
-        PreviaArrasto, Reflexo as _, Simbolo, TamanhoBotao, TomAba,
+        Aba, Anel, CabecalhoPopover, CorpoPopover, EstadoVazio, EventoEscolha, GrupoDeEscolha, ItemDeEscolha,
+        LarguraPainel, LarguraPopover, PreviaArrasto, Reflexo as _, Simbolo, TamanhoBotao, TomAba,
         botao_fantasma, botao_icone, botao_primario, cor_da_faixa,
         formatar_custo,
         metal::{Encaixe, abertura_lisa},
-        icone_de_estado, sinal_do_chat,
+        icone_de_estado, popover, sinal_do_chat,
     },
     busca_conversa, composer, menus,
-    dialogos::com_til,
+    dialogos::{com_til, nome_da_pasta},
     movimento::{self, Curva, De, com_estado, entrada},
     paineis::{ArrastoChat, FormaSoltura, Soltura, motivo_sem_lugar},
     sem_arrastar,
@@ -36,6 +36,35 @@ use crate::{
     motor::Motor,
     tema::{Cores, Lucide, Tipo as _, altura, esp, r, tam},
 };
+
+/// O histórico do cabeçalho: os chats do mexido por último ao mais antigo, com o ícone do estado
+/// (o da lista), a hora e a pasta; os arquivados num grupo no fim. Um chat à vista noutro painel
+/// diz qual.
+fn grupos_do_historico(motor: &Motor, noutros: &[(String, usize)]) -> Vec<GrupoDeEscolha> {
+    let mut chats: Vec<&Chat> = motor.chats_da_lista().collect();
+    chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+    let item = |c: &Chat| {
+        let quando = super::tempo_relativo(c.atualizado_em);
+        let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+        let pasta = if motor.sem_pasta(c) { "sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+        let onde = noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default();
+        ItemDeEscolha {
+            simbolo: Some(Simbolo::Estado(sinal_do_chat(motor, c))),
+            descricao: Some(format!("{onde}{quando} · {pasta}").into()),
+            termos: Some(com_til(&c.cwd).into()),
+            ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
+        }
+    };
+    let (arquivados, ativos): (Vec<&Chat>, Vec<&Chat>) = chats.into_iter().partition(|c| c.arquivado);
+    [(None, ativos), (Some("Arquivados"), arquivados)]
+        .into_iter()
+        .filter(|(_, chats)| !chats.is_empty())
+        .map(|(titulo, chats)| GrupoDeEscolha {
+            titulo: titulo.map(Into::into),
+            itens: chats.into_iter().map(item).collect(),
+        })
+        .collect()
+}
 
 /// O símbolo da conversa: o balão, o mesmo em todo chat.
 fn simbolo_da_conversa() -> Simbolo {
@@ -824,6 +853,7 @@ impl Janela {
 
     /// Shift+F10 ou a tecla Menu na aba: abre o "⋯" do painel.
     fn abrir_menu_do_painel(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+        self.so_um_flutuante(super::QualFlutuante::MenuPainel(painel_id));
         if let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel_id) {
             p.menu_aberto = true;
             cx.notify();
@@ -864,8 +894,96 @@ impl Janela {
                         })),
                 ))
             })
+            .child(sem_arrastar().child(self.botao_historico(ix, window, cx)))
             // O "..." leva tudo do painel, inclusive abrir e fechar a direita.
             .child(sem_arrastar().relative().child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx)))
+    }
+
+    /// O histórico, o relógio da extensão do Claude Code (dono, 16/11/2026: "coloca essa parte de
+    /// histórico também, pra dar pra escolher outro chat"): os chats numa lista com busca, e o
+    /// escolhido aparece neste painel, como uma aba. Controlado por `historico_aberto`, para
+    /// fechar os outros flutuantes ao abrir.
+    fn botao_historico(&self, ix: usize, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let painel = &self.paineis[ix];
+        let painel_id = painel.id;
+        let lista = painel.busca_historico.clone();
+        let foco = lista.read(cx).focus_handle(cx);
+        let janela = cx.entity().downgrade();
+        popover(("pop-historico", painel_id as usize))
+            .anchor(Anchor::TopRight)
+            .offset(px(4.))
+            .p(esp::E6)
+            .open(self.historico_aberto == Some(painel_id))
+            .on_open_change(move |abriu, window, cx| {
+                let _ = janela.update(cx, |this, cx| {
+                    if *abriu {
+                        this.abrir_historico(painel_id, window, cx);
+                    } else if this.historico_aberto == Some(painel_id) {
+                        this.historico_aberto = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .track_focus(&foco)
+            .trigger(botao_icone(
+                ("historico-painel", painel_id as usize),
+                Lucide::RotateCcwClock,
+                "Histórico: abrir outro chat neste painel",
+                TamanhoBotao::Barra,
+                window,
+                cx,
+            ))
+            .content(move |_, window, _| {
+                let largura = (tam(window, LarguraPopover::P400.px()) - tam(window, 12.)).min(window.viewport_size().width - px(44.));
+                div().w(largura).child(lista.clone())
+            })
+    }
+
+    /// Abre o histórico do painel: a lista de agora, a busca limpa e o chat à vista marcado.
+    fn abrir_historico(&mut self, painel_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(motor), Some(painel)) = (self.motor.clone(), self.paineis.iter().find(|p| p.id == painel_id)) else {
+            return;
+        };
+        let (lista, atual) = (painel.busca_historico.clone(), painel.chat.clone());
+        // Os chats à vista nos outros painéis: escolher um deles ativa aquele painel (um chat só
+        // aparece num lugar), e a linha avisa.
+        let noutros: Vec<(String, usize)> = self
+            .paineis
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.id != painel_id)
+            .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
+            .collect();
+        let grupos = grupos_do_historico(motor.read(cx), &noutros);
+        self.so_um_flutuante(QualFlutuante::Historico(painel_id));
+        self.historico_aberto = Some(painel_id);
+        lista.update(cx, |l, cx| {
+            l.ficha_no_escolhido(true);
+            l.definir(grupos, atual.map(Into::into), cx);
+            l.abrir(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Escolheu (ou fechou com Esc) no histórico do painel: o chat vai para este painel, como uma
+    /// aba, e o foco volta à caixa.
+    pub(super) fn escolheu_no_historico(&mut self, painel_id: u64, evento: &EventoEscolha, window: &mut Window, cx: &mut Context<Self>) {
+        if self.historico_aberto == Some(painel_id) {
+            self.historico_aberto = None;
+        }
+        if let EventoEscolha::Escolheu(chat) = evento
+            && !self.paineis.iter().any(|p| p.id == painel_id && p.chat.as_deref() == Some(chat.as_ref()))
+        {
+            self.abrir_aba(painel_id, chat.to_string(), window, cx);
+        }
+        let ix = match evento {
+            EventoEscolha::Escolheu(_) => Some(self.ativo),
+            EventoEscolha::Fechou => self.paineis.iter().position(|p| p.id == painel_id),
+        };
+        if let Some(ix) = ix {
+            self.focar_painel(ix, window, cx);
+        }
+        cx.notify();
     }
 
     /// O que a direita mostra: o arquivo aberto ou o painel do chat.
@@ -896,6 +1014,9 @@ impl Janela {
             .open(aberto)
             .on_open_change(move |aberto, _, cx| {
                 let _ = ao_mudar.update(cx, |this, cx| {
+                    if *aberto {
+                        this.so_um_flutuante(super::QualFlutuante::MenuPainel(painel_id));
+                    }
                     if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel_id)
                         && p.menu_aberto != *aberto
                     {

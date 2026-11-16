@@ -117,6 +117,21 @@ pub enum Gaveta {
     Direita,
 }
 
+/// Os flutuantes que a janela controla (`Janela::so_um_flutuante`): um aberto por vez.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QualFlutuante {
+    /// O menu do logo (F10).
+    MenuVitral,
+    /// "O que precisa de você", do sino ou do logo recolhido.
+    Sino,
+    /// Os popovers de modelo e de esforço da caixa (`pop_caixa`).
+    Caixa,
+    /// O "⋯" do painel.
+    MenuPainel(u64),
+    /// O histórico do cabeçalho do painel.
+    Historico(u64),
+}
+
 /// Como a largura da janela se divide entre lista, conversas e painel da direita. As larguras
 /// são em px de verdade, já com o zoom.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -409,6 +424,8 @@ pub struct Janela {
     dica_busca: &'static str,
     /// Popover da caixa aberto (um por vez em toda a janela): painel e qual.
     pop_caixa: Option<(u64, composer::PopCaixa)>,
+    /// O histórico do cabeçalho de um painel aberto (o id do painel).
+    historico_aberto: Option<u64>,
     /// A aba (Claude ou Codex) à vista no seletor de modelo do painel; sem ela, a do agente do chat.
     aba_do_modelo: Option<(u64, crate::modelo::Agente)>,
     /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
@@ -609,6 +626,7 @@ impl Janela {
             direita_estreita: false,
             dica_busca: "Buscar",
             pop_caixa: None,
+            historico_aberto: None,
             aba_do_modelo: None,
             atualizacao_pronta: None,
             atualizacao_avisada: None,
@@ -618,6 +636,29 @@ impl Janela {
         window.focus(&janela.foco, cx);
         janela.ligar_motor(motor, window, cx);
         janela
+    }
+
+    /// Abre um flutuante controlado pela janela e fecha os outros: um por vez. Com o mouse o
+    /// clique fora já fechava o anterior; pelo atalho, não, e o Ctrl+E abria o esforço por cima
+    /// do sino aberto (relatório de design, 16/11/2026). Quem abre chama antes de ligar o seu.
+    pub(super) fn so_um_flutuante(&mut self, abre: QualFlutuante) {
+        if abre != QualFlutuante::MenuVitral {
+            self.menu_aberto = false;
+        }
+        if abre != QualFlutuante::Sino {
+            self.caixa_aberta = false;
+        }
+        if abre != QualFlutuante::Caixa {
+            self.pop_caixa = None;
+        }
+        for painel in &mut self.paineis {
+            if abre != QualFlutuante::MenuPainel(painel.id) {
+                painel.menu_aberto = false;
+            }
+        }
+        if self.historico_aberto.is_some_and(|p| abre != QualFlutuante::Historico(p)) {
+            self.historico_aberto = None;
+        }
     }
 
     pub(super) fn trocar_aba(&mut self, aba: AbaLateral, window: &mut Window, cx: &mut Context<Self>) {

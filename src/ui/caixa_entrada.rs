@@ -133,6 +133,9 @@ impl Janela {
             .open(self.caixa_aberta)
             .on_open_change(move |aberto, _, cx| {
                 let _ = fechar.update(cx, |this, cx| {
+                    if *aberto {
+                        this.so_um_flutuante(super::QualFlutuante::Sino);
+                    }
                     if this.caixa_aberta != *aberto {
                         this.caixa_aberta = *aberto;
                         cx.notify();

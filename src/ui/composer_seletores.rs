@@ -76,6 +76,7 @@ fn mudar(motor: &Option<Entity<Motor>>, chat: &str, cx: &mut App, f: impl FnOnce
 fn abrir_ou_fechar(janela: &WeakEntity<Janela>, painel: u64, qual: PopCaixa, abriu: bool, cx: &mut App) {
     let _ = janela.update(cx, |this, cx| {
         if abriu {
+            this.so_um_flutuante(crate::ui::QualFlutuante::Caixa);
             this.pop_caixa = Some((painel, qual));
         } else if this.pop_caixa == Some((painel, qual)) {
             this.pop_caixa = None;
