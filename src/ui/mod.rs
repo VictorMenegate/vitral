@@ -1570,6 +1570,13 @@ impl Janela {
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
         let janela = cx.entity().downgrade();
+        // Meio vão de cada lado de uma divisória: o vão entre as peças (entre a lista e o 1º
+        // painel, entre os painéis, entre o último e a direita) é o mesmo da margem da janela, em
+        // px da tela, como ela (dono, 16/11/2026: "a do meio dos chats tem que ficar igual das
+        // bordas"; o vão era 4 rem de cada lado e crescia com o zoom: uns 14 px contra os 10 da
+        // borda). A faixa de pegar da divisória é do kit, absoluta e mais larga que o vão: passa
+        // por cima da borda das peças, invisível, e não encolhe com ele.
+        let meio_vao = crate::tema::vao_entre_pecas() / 2.;
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
         let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}")))
             .with_state(&self.estado_partes)
@@ -1594,7 +1601,7 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
                     .fixed()
-                    .child(div().size_full().pr(esp::E4).child(self.lateral(motor, window, cx))),
+                    .child(div().size_full().pr(meio_vao).child(self.lateral(motor, window, cx))),
             );
         }
         if self.paineis.is_empty() {
@@ -1603,7 +1610,7 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.conversas[0]))
-                    .child(div().size_full().px(esp::E4).child(self.zona_de_soltura(0, conteudo, cx))),
+                    .child(div().size_full().px(meio_vao).child(self.zona_de_soltura(0, conteudo, cx))),
             );
         } else {
             let ultimo = self.paineis.len() - 1;
@@ -1618,8 +1625,8 @@ impl Janela {
                     resizable_panel().size(px(larguras.conversas[ix])).size_range(min_conversa..Pixels::MAX).child(
                         div()
                             .size_full()
-                            .when(!na_esquerda, |d| d.pl(esp::E4))
-                            .when(!na_direita, |d| d.pr(esp::E4))
+                            .when(!na_esquerda, |d| d.pl(meio_vao))
+                            .when(!na_direita, |d| d.pr(meio_vao))
                             .child(self.zona_de_soltura(id, conteudo, cx)),
                     ),
                 );
@@ -1632,7 +1639,7 @@ impl Janela {
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
                     .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
                     .fixed()
-                    .child(div().size_full().pl(esp::E4).child(conteudo)),
+                    .child(div().size_full().pl(meio_vao).child(conteudo)),
             );
         }
         grupo

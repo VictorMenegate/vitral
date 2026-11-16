@@ -150,7 +150,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
   apagar o que foi escrito.
 - **Bordas mais finas.** As abas têm um contorno só, o fio preto de 1 px, e a moldura preta da
-  caixa de mensagem caiu de 4 para 2 px.
+  caixa de mensagem caiu de 4 para 2 px. O vão entre os painéis (e entre eles e a lista ou o
+  painel da direita) ficou igual à margem das bordas da janela.
 - **Abas que cabem.** Sem lugar para o título, a aba de fundo vira um quadrado só com o ícone
   (antes sobravam duas reticências), e a que está à vista guarda sempre o começo do título: sem
   lugar nem assim, as de fundo saem da faixa, e um "+N" no fim dela abre a lista das que saíram. Com muitas abas,

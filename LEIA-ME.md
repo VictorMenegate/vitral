@@ -643,7 +643,11 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   claro onde passa uma bolha). A lista mora direto na base, sem cartão, fundo nem aresta próprios
   (na gaveta, a superfície é a da gaveta). Por cima flutuam os **cartões**, a conversa e os painéis
   da direita (Este chat, o arquivo aberto), com a sombra dos flutuantes (`sombra_flutuante`)
-  e quase opacos (5% do metal passa). Margem da janela e vão entre os cartões: 8; canto dos
+  e quase opacos (5% do metal passa). Margem da janela e vão entre os cartões: 8 px de tela, os
+  dois iguais e sem crescer com o zoom (o vão entre a lista e o 1º painel, entre os painéis e
+  entre o último e a direita é metade de cada lado da divisória; dono, 16/11/2026: "a do meio dos
+  chats tem que ficar igual das bordas"); a faixa de pegar da divisória é mais larga que o vão e
+  passa por cima da borda das peças, invisível. Canto dos
   cartões: 16 (`margem`, `vao` e `raio_peca` da variante). Menus e popovers são praticamente
   opacos. Texto nunca vai no metal cru: os alfas
   saem da conta de contraste contra a cor mais clara que a chapa entrega (`TETO_DO_METAL`,
