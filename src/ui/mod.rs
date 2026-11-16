@@ -291,6 +291,20 @@ fn largura_util(window: &Window) -> f32 {
     (largura - margem).max(0.)
 }
 
+/// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
+/// 16/11/2026: "sem a lista tem que ficar sem a borda da esquerda também"): sem ela, as conversas
+/// ganham esses px. A conta sai de novo sem a lista, para não ancorar a lista justo nos px que só
+/// sobram porque ela não está lá; o `cabe_lista` fica o da primeira conta (com a margem).
+fn orcamento_da_janela(window: &Window, n: usize, lista: bool, direita: bool) -> Orcamento {
+    let (util, escala) = (largura_util(window), escala(window));
+    let o = orcamento(util, escala, n, lista, direita);
+    if o.lista {
+        return o;
+    }
+    let margem = tam(window, crate::tema::margem_da_janela().as_f32()).as_f32();
+    Orcamento { cabe_lista: o.cabe_lista, ..orcamento(util + margem, escala, n, false, direita) }
+}
+
 /// Os arquivos de uma pasta na aba Arquivos.
 struct ArquivosLidos {
     lista: std::rc::Rc<Vec<String>>,
@@ -639,7 +653,7 @@ impl Janela {
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,
             lista: true,
-            orcamento: orcamento(largura_util(window), escala(window), 1, true, false),
+            orcamento: orcamento_da_janela(window, 1, true, false),
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
             chave_partes: None,
@@ -1361,8 +1375,9 @@ impl Janela {
                         .absolute()
                         .inset_0()
                         // A área das partes encosta no topo, na direita e embaixo da janela: só os
-                        // cantos da esquerda fazem a curva.
-                        .rounded_l(crate::tema::raio_da_peca())
+                        // cantos da esquerda fazem a curva, e só com a lista ancorada (sem ela não
+                        // há margem à esquerda).
+                        .when(self.orcamento.lista, |s| s.rounded_l(crate::tema::raio_da_peca()))
                         .bg(Cores::veu().opacity(0.5 * t))
                         .occlude()
                         .on_any_mouse_down(
@@ -1387,10 +1402,17 @@ impl Janela {
                         .w(largura)
                         .flutuante(cx)
                         .bg(Cores::gaveta())
-                        // Curva nos lados soltos: a da lista, nos quatro cantos; a da direita, que
-                        // encosta na beirada da janela, só nos da esquerda.
+                        // Curva só no lado solto: a gaveta encosta na beirada da janela (a da lista
+                        // na esquerda, que fica sem margem com a lista recolhida; a da direita na
+                        // direita).
                         .rounded(crate::tema::raio_da_peca())
-                        .when(gaveta == Gaveta::Direita, |s| s.rounded_r(crate::tema::raio_encostado(true)))
+                        .map(|s| {
+                            let reto = crate::tema::raio_encostado(crate::tema::Esquerda::Beirada);
+                            match gaveta {
+                                Gaveta::Lista => s.rounded_l(reto),
+                                Gaveta::Direita => s.rounded_r(reto),
+                            }
+                        })
                         .occlude()
                         .map(|s| movimento::deslizar_gaveta(s, de, t))
                         .child(conteudo),
@@ -1577,13 +1599,7 @@ impl Render for Janela {
                 })
             });
         }
-        self.orcamento = orcamento(
-            largura_util(window),
-            escala(window),
-            self.paineis.len(),
-            self.lista,
-            self.direita_pedida(),
-        );
+        self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
         // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
         // da árvore e nenhuma tecla chegava às ações da janela até um clique (teste de
@@ -1670,10 +1686,11 @@ impl Render for Janela {
             .child(
                 h_flex()
                     .size_full()
-                    // Margem só à esquerda: a fileira das conversas encosta no topo, na direita e
-                    // embaixo da janela (dono, 16/11/2026: "não tenha em cima, na direita e no meio
-                    // dos chats" e "tem que ficar sem embaixo também").
-                    .pl(crate::tema::margem_da_janela())
+                    // Margem só à esquerda, e só com a lista ancorada: a fileira das conversas
+                    // encosta no topo, na direita e embaixo da janela, e sem a lista também na
+                    // esquerda (dono, 16/11/2026: "não tenha em cima, na direita e no meio dos
+                    // chats", "sem embaixo também" e "sem a lista, sem a da esquerda também").
+                    .when(self.orcamento.lista, |d| d.pl(crate::tema::margem_da_janela()))
                     .items_start()
                     // O trilho virou a fileira de cima da lista: a coluna de ícones à esquerda
                     // saiu, e Ctrl+B continua escondendo as duas coisas de uma vez.

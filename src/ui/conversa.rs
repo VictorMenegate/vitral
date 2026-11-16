@@ -597,10 +597,17 @@ impl Janela {
         };
         // A fileira das conversas encosta no topo, na direita e embaixo da janela, e cada conversa
         // depois da primeira emenda na da esquerda por uma divisória de 1 px (dono, 16/11/2026).
-        // Só os cantos da esquerda da primeira fazem a curva; sem a sombra de cartão flutuante,
+        // Só os cantos da esquerda da primeira fazem a curva, e só com a lista ao lado: sem ela,
+        // a primeira encosta também na beirada da esquerda. Sem a sombra de cartão flutuante,
         // que vazaria por cima da vizinha na emenda.
-        let emendada = ix.is_some_and(|ix| ix > 0);
-        let raio = crate::tema::raio_encostado(emendada);
+        let esquerda = if ix.is_some_and(|ix| ix > 0) {
+            crate::tema::Esquerda::Emendada
+        } else if self.orcamento.lista {
+            crate::tema::Esquerda::Solta
+        } else {
+            crate::tema::Esquerda::Beirada
+        };
+        let raio = crate::tema::raio_encostado(esquerda);
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
@@ -808,7 +815,7 @@ impl Janela {
                 s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
             })
             // O vidro da peça (fio, luz na quina de cima, sombra na base), por cima de tudo.
-            .aresta_encostada(emendada);
+            .aresta_encostada(esquerda);
         // O painel ativo é marcado pela luz de baixo da doca (acima), não por borda nem cantoneira.
         // O que acabou de abrir ao lado entra só com o fade: a largura não anima.
         com_estado(move |window, cx| {

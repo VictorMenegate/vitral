@@ -55,9 +55,10 @@ pub trait Reflexo: ParentElement + Sized {
     }
 
     /// O vidro de uma peça da fileira das conversas (encostada no topo, na direita e embaixo):
-    /// a `aresta_encostada` do tema, com a divisória à esquerda na peça `emendada`. Depois dos
+    /// a `aresta_encostada` do tema, com o que há à `esquerda` (o vão da lista, a vizinha ou a
+    /// beirada da janela). Depois dos
     /// filhos, como a `aresta_de_vidro`.
-    fn aresta_encostada(self, emendada: bool) -> Self {
+    fn aresta_encostada(self, esquerda: crate::tema::Esquerda) -> Self {
         self.child(
             div()
                 .absolute()
@@ -65,8 +66,8 @@ pub trait Reflexo: ParentElement + Sized {
                 .left_0()
                 .right_0()
                 .bottom_0()
-                .rounded_l(crate::tema::raio_encostado(emendada))
-                .shadow(crate::tema::aresta_encostada(emendada)),
+                .rounded_l(crate::tema::raio_encostado(esquerda))
+                .shadow(crate::tema::aresta_encostada(esquerda)),
         )
     }
 }

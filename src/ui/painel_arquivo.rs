@@ -578,7 +578,7 @@ impl Janela {
             .child(barra)
             .children(faixa)
             .child(corpo)
-            .when(!na_gaveta, |s| s.aresta_encostada(true))
+            .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
             .into_any_element()
     }

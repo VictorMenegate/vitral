@@ -77,7 +77,7 @@ impl Janela {
                     .child(div().flex_none().h(esp::E16))
                     .vertical_scrollbar(&self.rolagem_este_chat),
             )
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.aresta_encostada(true))
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(self.medir_direita(cx))
     }
 
