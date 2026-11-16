@@ -1,0 +1,62 @@
+{
+  "projectId": "81fb78c2-cb38-41ff-8224-5421ed15f04c",
+  "pkg": "vitral-ui",
+  "globalName": "VitralUI",
+  "shape": "package",
+  "buildCmd": "npm run build",
+  "cssEntry": "dist/vitral-ui.css",
+  "tokensPkg": "vitral-ui-tokens",
+  "tokensGlob": "tokens.css",
+  "docsDir": "docs",
+  "guidelinesGlob": [
+    "docs/guias/*.md"
+  ],
+  "provider": {
+    "component": "RaizVitral",
+    "props": {
+      "style": {
+        "padding": 16,
+        "borderRadius": 12
+      }
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "RaizVitral": {
+      "cardMode": "column"
+    },
+    "CampoDeBusca": {
+      "cardMode": "column"
+    },
+    "CaixaDeMensagem": {
+      "cardMode": "column"
+    },
+    "ControleSegmentado": {
+      "cardMode": "column"
+    },
+    "HistoricoDoMais": {
+      "cardMode": "column"
+    },
+    "ListaDeEscolha": {
+      "cardMode": "column"
+    },
+    "MenuComPlaca": {
+      "cardMode": "column"
+    },
+    "PopoverDeEsforco": {
+      "cardMode": "column"
+    },
+    "CartaoDeLista": {
+      "cardMode": "column"
+    },
+    "RotuloDeSecao": {
+      "cardMode": "column"
+    },
+    "Logo": {
+      "cardMode": "column"
+    },
+    "AnelDeUso": {
+      "cardMode": "column"
+    }
+  }
+}
