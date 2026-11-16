@@ -2325,6 +2325,7 @@ impl Janela {
             return None;
         }
         let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
+        let fila_aberta = self.paineis.iter().any(|p| p.id == painel_id && p.fila_aberta);
         let estreita = !larga(medida.nivel);
         // Alinha com o texto da caixa (a margem da coluna mais o recuo do texto nela) e, à direita,
         // com o enviar.
@@ -2450,11 +2451,13 @@ impl Janela {
                     .child(icone_de(Lucide::ListChecks, 14.).text_color(Cores::tenue()))
                     .child(self.pilula_da_fila(&chat.id, painel_id, n, false, estreita, window, cx))
                     .into_any_element(),
-                Some(
+                // Com a fila aberta, o "Entregar agora" fica só no rodapé dela: eram dois iguais,
+                // a uns 60 px um do outro (teste de usabilidade, 16/11/2026).
+                (!fila_aberta).then(|| {
                     botao_fantasma("faixa-entregar", None, "Entregar agora", TamanhoBotao::Barra, window, cx)
                         .on_click(entregar)
-                        .into_any_element(),
-                ),
+                        .into_any_element()
+                }),
             ),
         };
         let esquerda = match fila_fora {

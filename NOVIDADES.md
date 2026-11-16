@@ -154,6 +154,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   continua parando o turno do painel ativo, como a linha de estado mostra.
 - **Suas quebras de linha ficam.** O balão da mensagem enviada mostra as linhas como você as
   escreveu (antes juntava tudo num parágrafo, e o "Mostrar tudo" aparecia sem nada escondido).
+- **Fila mais fácil de mexer.** O × de tirar uma mensagem da fila funciona com o turno rodando e
+  várias na fila (a barra de rolagem ficava por cima dele), os botões cabem no painel estreito, a
+  lista mostra três mensagens inteiras e o "Entregar agora" não aparece duas vezes.
 - **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
   menus e popovers) fecha o outro, em vez de empilhar os dois.
 

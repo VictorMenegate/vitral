@@ -19,7 +19,7 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        RodapeDialogo, Selo, TamanhoBotao, Tom, aviso, botao_fantasma,
+        LarguraPainel, RodapeDialogo, Selo, TamanhoBotao, Tom, aviso, botao_fantasma,
         botao_icone, botao_primario, contagem, largura, variante_fantasma,
     },
     dialogos::{cabecalho, moldura, topo},
@@ -115,7 +115,7 @@ impl Janela {
         let rodando = matches!(motor.read(cx).execucao(chat), crate::modelo::Execucao::Rodando { .. });
         Some(div().map(super::mensagens::coluna).py(esp::E8)
             .when(self.uso_sobre_as_mensagens(ix, cx), |s| s.pr(r(super::uso_plano::FOLGA_DO_USO)))
-            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, window, cx)).into_any_element())
+            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, window, cx)).into_any_element())
     }
 
     /// Tira uma mensagem da fila. O texto volta para a caixa quando ela está vazia; com algo
@@ -157,6 +157,8 @@ struct Linha {
     ultima: bool,
     /// O turno que roda recebe mensagem: a linha ganha o "Mandar agora".
     agora: bool,
+    /// O painel é largo: o "Mandar agora" vai com o rótulo.
+    larga: bool,
 }
 
 /// O que a mensagem leva além do texto, numa linha curta: quem mandou e quantos anexos.
@@ -173,12 +175,14 @@ fn meta_da_linha(e: &Entrada) -> String {
 
 /// A lista da fila: uma linha por mensagem, na ordem em que vão entrar, com editar, mudar de lugar
 /// e tirar em cada uma.
+#[allow(clippy::too_many_arguments)]
 fn corpo_da_fila(
     motor: &Entity<Motor>,
     janela: &WeakEntity<Janela>,
     chat: &str,
     painel: u64,
     rodando: bool,
+    larga: bool,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -200,12 +204,30 @@ fn corpo_da_fila(
             primeira: posicao == 0,
             ultima: posicao + 1 == total,
             agora,
+            larga,
         })
         .collect();
     let fechar = janela.clone();
+    let explicacao = if agora {
+        "Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo."
+    } else if rodando {
+        "Entram juntas no próximo turno, quando este terminar."
+    } else {
+        "Entram juntas na próxima mensagem, ou agora, no botão abaixo."
+    };
+    // A explicação vai na dica do título: com 4 linhas embaixo, o cartão tomava quase metade do
+    // painel e cortava a 3ª mensagem (teste de usabilidade, 16/11/2026).
     let cabecalho = h_flex().gap(esp::E8).items_center()
         .child(super::mensagens::icone_de(Lucide::ListChecks, 16.).text_color(Cores::tenue()))
-        .child(div().flex_1().corpo_ui().text_color(Cores::texto()).child(format!("Fila · {}", contagem(total, "mensagem", "mensagens"))))
+        .child(
+            div()
+                .id(("titulo-da-fila", painel as usize))
+                .flex_1()
+                .corpo_ui()
+                .text_color(Cores::texto())
+                .child(format!("Fila · {}", contagem(total, "mensagem", "mensagens")))
+                .tooltip(move |window, cx| Tooltip::new(explicacao).build(window, cx)),
+        )
         .child(botao_icone(("fechar-fila", painel as usize), Lucide::X, "Fechar a fila", TamanhoBotao::Linha, window, cx)
             .on_click(move |_, _, cx| { let _ = fechar.update(cx, |j, cx| {
                 if let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel) { p.fila_aberta = false; }
@@ -218,13 +240,6 @@ fn corpo_da_fila(
         .into_iter()
         .map(|linha| linha_da_fila(motor, janela, chat, painel, linha, window, cx))
         .collect();
-    let explicacao = if agora {
-        "Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo."
-    } else if rodando {
-        "Entram juntas no próximo turno, quando este terminar."
-    } else {
-        "Entram juntas na próxima mensagem, ou agora, no botão abaixo."
-    };
     let entregar = if agora && total > 1 {
         // Uma por uma, na ordem da fila: cada mandada tira a primeira, e a seguinte vira a primeira.
         let (motor, chat) = (motor.clone(), chat.to_string());
@@ -257,8 +272,18 @@ fn corpo_da_fila(
     v_flex().w_full().min_w_0().gap(esp::E8).p(esp::E12).rounded(raio::CARTAO)
         .border_1().border_color(Cores::borda()).bg(Cores::cartao_elevado())
         .child(cabecalho)
-        .child(v_flex().gap(esp::E6).children(desenhadas).max_h(r(160.)).overflow_y_scrollbar().id(("fila-mensagens", painel as usize)))
-        .child(div().metadado().text_color(Cores::tenue()).child(explicacao))
+        // Até umas três mensagens inteiras antes de rolar. A barra do kit (16) fica por cima da
+        // ponta direita e segura o clique: as linhas guardam o lugar dela, senão o × ficava
+        // debaixo da barra e não tirava a mensagem da fila (teste de usabilidade, 16/11/2026).
+        .child(
+            v_flex()
+                .gap(esp::E6)
+                .pr(esp::E16)
+                .children(desenhadas)
+                .max_h(r(260.))
+                .overflow_y_scrollbar()
+                .id(("fila-mensagens", painel as usize)),
+        )
         .when_some(entregar, |c, b| c.child(h_flex().justify_end().child(b)))
         .into_any_element()
 }
@@ -276,7 +301,7 @@ fn linha_da_fila(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora } = linha;
+    let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora, larga } = linha;
     let dica: SharedString = dica.into();
     let mover = |para_baixo: bool| {
         let (motor, chat) = (motor.clone(), chat.to_string());
@@ -286,8 +311,14 @@ fn linha_da_fila(
     };
     let mandar = agora.then(|| {
         let (motor, chat) = (motor.clone(), chat.to_string());
-        botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), "Mandar agora", TamanhoBotao::Linha, window, cx)
-            .tooltip("Entra no turno que está rodando, sem pará-lo")
+        // Fora do painel largo, só a seta: com o rótulo a fileira não cabia em ~340 e o × saía
+        // cortado na borda.
+        if larga {
+            botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), "Mandar agora", TamanhoBotao::Linha, window, cx)
+                .tooltip("Entra no turno que está rodando, sem pará-lo")
+        } else {
+            botao_icone(("mandar-da-fila", indice), Lucide::ArrowUp, "Mandar agora\nEntra no turno que está rodando, sem pará-lo", TamanhoBotao::Linha, window, cx)
+        }
             .on_click(move |_, window, cx| {
                 if let Err(motivo) = motor.update(cx, |m, cx| m.mandar_da_fila_agora(&chat, indice, cx)) {
                     window.push_notification(aviso(Tom::Atencao, motivo), cx);
@@ -376,10 +407,8 @@ fn linha_da_fila(
                 // Na coluna do texto, depois do número.
                 .pl(esp::E24)
                 .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(meta))
-                .children(mandar)
-                .child(editar)
-                .children(ordem)
-                .child(tirar),
+                // Os botões não encolhem: quem corta é a meta.
+                .child(h_flex().flex_none().gap(esp::E4).children(mandar).child(editar).children(ordem).child(tirar)),
         )
         .into_any_element()
 }

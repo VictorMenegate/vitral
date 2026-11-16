@@ -449,7 +449,10 @@ ferramentas, vale por painel).
   estado da caixa, com o chat trabalhando, ou na faixa acima dela), dentro do painel e acima da
   caixa de mensagem: cada
   mensagem esperando numa linha, com o × que devolve o texto à caixa e, com o chat parado,
-  **Entregar agora** no rodapé. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
+  **Entregar agora** no rodapé (a faixa acima da caixa não repete o botão com a fila aberta). A
+  lista mostra umas três mensagens antes de rolar e guarda à direita o lugar da barra de rolagem,
+  que segurava o clique do ×; o que a fila faz fica na dica do título. Fora do painel largo, o
+  **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
