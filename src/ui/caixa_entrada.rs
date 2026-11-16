@@ -3,7 +3,7 @@
 //! planos, paradas, erros e respostas novas.
 
 use gpui_kit::component::{
-    Icon, Selectable, StyledExt as _, h_flex,
+    Icon, Selectable, StyledExt as _, WindowExt as _, h_flex,
     popover::{Popover, PopoverState},
     v_flex,
 };
@@ -13,8 +13,8 @@ use gpui_kit::*;
 use super::{
     Janela, ProximaPendencia,
     componentes::{
-        CabecalhoDeSecao, CartaoDeLista, CorpoPopover, EstadoVazio, LarguraPopover, Selo, Simbolo,
-        TamanhoBotao, botao_fantasma, botao_icone, botao_primario, numero_painel, popover, simbolo_do_chat,
+        CabecalhoDeSecao, CartaoDeLista, ChaveAviso as _, CorpoPopover, EstadoVazio, LarguraPopover, Selo, Simbolo,
+        TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, botao_primario, numero_painel, popover, simbolo_do_chat,
         teclas,
     },
     lateral::{Causa, MotivoDaPrevia, previa_elemento},
@@ -155,26 +155,85 @@ impl Janela {
             })
     }
 
-    /// Ctrl+G: abre a próxima pendência, a mais antiga que não é a conversa já aberta.
-    pub(super) fn proxima_pendencia(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ctrl+G (e Ctrl+Shift+G, para trás): a pendência seguinte à do chat aberto, achada pelo chat
+    /// e não pela posição, dando a volta depois da última (dono, 16/11/2026: rodada de uso, item
+    /// 3.4; antes ele recomeçava do início e, com A, B e C pendentes, alternava entre A e B). Ao
+    /// chegar, o foco vai para o lugar útil, e a pílula diz onde está ("2 de 3 · Parada · WMS").
+    pub(super) fn andar_nas_pendencias(&mut self, passo: i32, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
         let pendencias = motor.read(cx).pendencias();
-        let aberta = self.selecionado.as_deref();
-        let Some(chat) = pendencias
-            .iter()
-            .find(|p| Some(p.chat()) != aberta)
-            .or(pendencias.first())
-            .map(|p| p.chat().to_string())
-        else {
-            // Sem outra pendência, o primeiro par travado no freio de ciclo.
-            if let Some(e) = super::resumo::esperas_de_ciclo(motor.read(cx)).into_iter().next() {
-                self.selecionar(Some(e.chat), window, cx);
+        let chats = chats_das_pendencias(&pendencias);
+        let Some(ix) = proxima_na_volta(&chats, self.selecionado.as_deref(), passo) else {
+            // Sem pendência, o primeiro par travado no freio de ciclo; sem ele, a pílula avisa.
+            match super::resumo::esperas_de_ciclo(motor.read(cx)).into_iter().next() {
+                Some(e) => self.selecionar(Some(e.chat), window, cx),
+                None => window.push_notification(aviso(Tom::Info, "Nada esperando você").chave("ctrl-g"), cx),
             }
             return;
         };
-        self.selecionar(Some(chat), window, cx);
+        let chat = chats[ix].clone();
+        let Some(pendencia) = pendencias.iter().find(|p| p.chat() == chat).cloned() else {
+            return;
+        };
+        self.selecionar(Some(chat.clone()), window, cx);
+        let titulo = motor.read(cx).chat(&chat).map(|c| c.titulo.clone()).unwrap_or_default();
+        let pilula = format!("{} de {} · {} · {titulo}", ix + 1, chats.len(), rotulo_da_pendencia(&pendencia));
+        window.push_notification(aviso(Tom::Info, pilula).chave("ctrl-g"), cx);
+        // O foco no lugar útil: o Retomar da parada, o Tentar de novo do erro, o comentário do
+        // plano; nos outros casos, a caixa. (O pedido de permissão pelo teclado é o item 6.5.)
+        let painel = self.paineis.get(self.ativo);
+        let foco = match &pendencia {
+            Pendencia::Parada { .. } | Pendencia::Erro { pode_tentar: true, .. } => painel.map(|p| p.foco_faixa.clone()),
+            Pendencia::Plano { pedido, .. } => self.feedback_plano.get(pedido).map(|campo| campo.read(cx).focus_handle(cx)),
+            _ => None,
+        }
+        .or_else(|| painel.map(|p| p.composer.read(cx).focus_handle(cx)));
+        if let Some(foco) = foco {
+            window.focus(&foco, cx);
+        }
+    }
+
+    /// Ctrl+G: a próxima.
+    pub(super) fn proxima_pendencia(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.andar_nas_pendencias(1, window, cx);
+    }
+}
+
+/// Os chats das pendências, um por chat, na ordem do sino.
+fn chats_das_pendencias(pendencias: &[Pendencia]) -> Vec<String> {
+    let mut chats: Vec<String> = Vec::new();
+    for p in pendencias {
+        if !chats.iter().any(|c| c == p.chat()) {
+            chats.push(p.chat().to_string());
+        }
+    }
+    chats
+}
+
+/// A posição da pendência seguinte (ou anterior, com `passo` negativo) à do chat `atual`, dando a
+/// volta; sem o chat aberto na lista, a primeira (ou a última, para trás).
+fn proxima_na_volta(chats: &[String], atual: Option<&str>, passo: i32) -> Option<usize> {
+    let n = chats.len() as i32;
+    if n == 0 {
+        return None;
+    }
+    Some(match atual.and_then(|a| chats.iter().position(|c| c == a)) {
+        Some(k) => (k as i32 + passo).rem_euclid(n) as usize,
+        None if passo < 0 => (n - 1) as usize,
+        None => 0,
+    })
+}
+
+/// O nome da pendência na pílula do Ctrl+G.
+fn rotulo_da_pendencia(p: &Pendencia) -> &'static str {
+    match p {
+        Pendencia::Permissao { .. } => "Permissão",
+        Pendencia::Plano { .. } => "Plano para aprovar",
+        Pendencia::Erro { .. } => "Erro",
+        Pendencia::Parada { .. } => "Parada",
+        Pendencia::Nova { .. } => "Resposta nova",
     }
 }
 
@@ -300,7 +359,18 @@ fn caixa_do_sino(
     corpo = corpo
         .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::espera())))
         .children(secoes.pedidos.into_iter().map(|l| linha_de_pedido(l, janela, &popover, &motor, window, cx)))
-        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::espera())))
+        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::espera())).map(|cabecalho| {
+            // Com duas ou mais, "Retomar tudo" (o mesmo da lista; item 3.4): depois de "Vitral
+            // fechou" eram N cliques.
+            if secoes.paradas.len() < 2 {
+                return cabecalho;
+            }
+            let (motor, chats) = (motor.clone(), secoes.paradas.iter().map(|l| l.chat.clone()).collect::<Vec<_>>());
+            cabecalho.acao(
+                botao_fantasma("caixa-retomar-tudo", Some(Lucide::Play.into()), "Retomar tudo", TamanhoBotao::Linha, window, cx)
+                    .on_click(move |_, _, cx| motor.update(cx, |m, cx| for c in &chats { m.retomar(c, cx) })),
+            )
+        }))
         .children(secoes.paradas.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
         .children(secao(2, "Erros", &secoes.erros, Some(Cores::vermelho())))
         .children(secoes.erros.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
@@ -475,4 +545,24 @@ fn linha_de_pedido(
 
 fn id(prefixo: &str, chave: &str) -> ElementId {
     SharedString::from(format!("{prefixo}-{chave}")).into()
+}
+
+#[cfg(test)]
+mod testes {
+    use super::proxima_na_volta;
+
+    #[test]
+    fn ctrl_g_anda_pelas_pendencias_dando_a_volta() {
+        let chats: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        // Do A vai ao B, do B ao C e do C volta ao A: o C não fica de fora.
+        assert_eq!(proxima_na_volta(&chats, Some("a"), 1), Some(1));
+        assert_eq!(proxima_na_volta(&chats, Some("b"), 1), Some(2));
+        assert_eq!(proxima_na_volta(&chats, Some("c"), 1), Some(0));
+        // Para trás (Ctrl+Shift+G).
+        assert_eq!(proxima_na_volta(&chats, Some("a"), -1), Some(2));
+        // Sem o chat aberto entre as pendências: a primeira, ou a última para trás.
+        assert_eq!(proxima_na_volta(&chats, Some("x"), 1), Some(0));
+        assert_eq!(proxima_na_volta(&chats, None, -1), Some(2));
+        assert_eq!(proxima_na_volta(&[], Some("a"), 1), None);
+    }
 }

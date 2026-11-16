@@ -60,6 +60,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Rascunho inteiro e à vista.** O rascunho guardado leva os prints colados e a citação, e volta
   inteiro quando o Vitral abre de novo. Na lista e nas abas, o chat com mensagem começada ganha um
   lápis e "Rascunho: começo do texto".
+- **Ctrl+G percorre todas as pendências.** Ele vai à seguinte à do chat aberto e dá a volta
+  (Ctrl+Shift+G volta), põe o foco no Retomar ou no Tentar de novo quando é o caso, e diz "2 de 3 ·
+  Parada · WMS". No sino, as Paradas ganham **Retomar tudo**.
 - **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
 - **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
   enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.

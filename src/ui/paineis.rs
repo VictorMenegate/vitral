@@ -82,6 +82,8 @@ pub struct Painel {
     pub entra: bool,
     /// Sobe a cada envio, para o pulso do enviar.
     pub envios: u64,
+    /// O botão da faixa do turno (Retomar, Tentar de novo): o Ctrl+G põe o foco nele (item 3.4).
+    pub foco_faixa: FocusHandle,
     /// Onde a conversa abre no próximo desenho: no começo da resposta nova ou na âncora de leitura
     /// guardada (dono, 16/11/2026: rodada de uso, item 2.2).
     pub alvo: Option<super::mensagens::AlvoDeAbertura>,
@@ -433,6 +435,7 @@ impl Janela {
             entra: false,
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
+            foco_faixa: cx.focus_handle(),
             alvo: None,
             ancoras: Default::default(),
             novo_desde: None,

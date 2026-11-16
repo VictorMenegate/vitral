@@ -121,7 +121,8 @@ tabela! {
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";
     "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas", "";
     "ctrl-b", super::AlternarLista, None, Grupo::Lista, "Mostrar ou recolher a lista", "";
-    "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência", "";
+    "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
+    "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";

@@ -3400,6 +3400,9 @@ impl Janela {
         }
         let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
         let fila_aberta = self.paineis.iter().any(|p| p.id == painel_id && p.fila_aberta);
+        // O botão da faixa (Retomar, Tentar de novo e as saídas da falha) leva este foco: o Ctrl+G
+        // o põe nele ao chegar a uma parada ou a um erro (rodada de uso, item 3.4).
+        let foco_faixa = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.foco_faixa.clone()).unwrap_or_else(|| cx.focus_handle());
         let estreita = !larga(medida.nivel);
         // Alinha com o texto da caixa (a margem da coluna mais o recuo do texto nela) e, à direita,
         // com o enviar.
@@ -3459,6 +3462,7 @@ impl Janela {
                     .into_any_element(),
                 Some(
                     botao_fantasma("faixa-retomar", Some(Lucide::Play.into()), "Retomar", TamanhoBotao::Barra, window, cx)
+                        .track_focus(&foco_faixa)
                         .on_click(retomar)
                         .into_any_element(),
                 ),
@@ -3477,6 +3481,7 @@ impl Janela {
                 let conta = motor.conta_do_ultimo_turno(&chat.id).cloned();
                 let tentar_de_novo = || {
                     botao_fantasma("faixa-tentar", Some(Lucide::RotateCw.into()), "Tentar de novo", TamanhoBotao::Barra, window, cx)
+                        .track_focus(&foco_faixa)
                         .on_click(tentar)
                         .into_any_element()
                 };
@@ -3490,6 +3495,7 @@ impl Janela {
                             let (motor_e, id, destino) = (self.motor.clone(), chat.id.clone(), outra.id.clone());
                             let dica = format!("A conta deste chat passa a ser a {}; volta-se pelo seletor de modelo.", outra.nome);
                             botao_fantasma("faixa-outra-conta", Some(Lucide::Shuffle.into()), format!("Continuar na {}", outra.nome), TamanhoBotao::Barra, window, cx)
+                                .track_focus(&foco_faixa)
                                 .tooltip(dica)
                                 .on_click(move |_, _, cx| {
                                     if let Some(m) = &motor_e {
@@ -3508,6 +3514,7 @@ impl Janela {
                         }
                         let id_conta = sem_login.map(|c| c.id);
                         botao_fantasma("faixa-entrar", Some(Lucide::KeyRound.into()), "Entrar de novo", TamanhoBotao::Barra, window, cx)
+                            .track_focus(&foco_faixa)
                             .on_click(cx.listener(move |this, _, window, cx| this.entrar_de_novo_na_conta(id_conta.clone(), window, cx)))
                             .into_any_element()
                     }

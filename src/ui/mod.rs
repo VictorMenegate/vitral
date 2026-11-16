@@ -68,7 +68,7 @@ actions!(vitral, [NovaConversa, Buscar, AlternarPainel, AlternarLista]);
 actions!(vitral, [IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4]);
 actions!(vitral, [FecharGaveta]);
 actions!(vitral, [AumentarZoom, DiminuirZoom, ZoomPadrao]);
-actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, IrAoFim]);
+actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, PendenciaAnterior, IrAoFim]);
 actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsquerda, MoverPainelDireita]);
 // A seta para cima na caixa vazia e o "?" fora de um campo de texto.
 actions!(vitral, [EditarUltima, AbrirAtalhos]);
@@ -1570,6 +1570,7 @@ impl Render for Janela {
                 this.abrir_configuracoes(window, cx)
             }))
             .on_action(cx.listener(|this, _: &ProximaPendencia, window, cx| this.proxima_pendencia(window, cx)))
+            .on_action(cx.listener(|this, _: &PendenciaAnterior, window, cx| this.andar_nas_pendencias(-1, window, cx)))
             .on_action(cx.listener(|this, _: &FecharPainel, window, cx| this.fechar_painel_ativo(window, cx)))
             .on_action(cx.listener(|this, _: &PainelAnterior, window, cx| this.painel_vizinho(-1, window, cx)))
             .on_action(cx.listener(|this, _: &PainelSeguinte, window, cx| this.painel_vizinho(1, window, cx)))

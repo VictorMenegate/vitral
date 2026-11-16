@@ -1024,7 +1024,12 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   novas (marcar como lida), com o número do painel quando a conversa está aberta; clicar numa linha
   abre a conversa (Ctrl+clique, ao lado). No rodapé, os botões **Marcar tudo como lido** e **Ver na
   lista** (volta à lista, sem arquivadas, e mostra a seção); cabeçalho, seções, linhas e o ícone do
-  rodapé ficam na mesma guia, a 16 da borda. Ctrl+G vai direto à próxima pendência.
+  rodapé ficam na mesma guia, a 16 da borda. Ctrl+G vai à pendência seguinte à do chat
+  aberto, achada pelo chat (e não pela posição), e dá a volta depois da última; Ctrl+Shift+G anda
+  para trás. Ao chegar, o foco vai para o lugar útil: o **Retomar** da faixa no chat parado, o
+  **Tentar de novo** (ou a saída da falha) no erro, o comentário do plano no plano, a caixa nos
+  outros casos. A pílula diz onde está ("2 de 3 · Parada · WMS"), ou "Nada esperando você". O
+  cabeçalho **Paradas** do sino ganha **Retomar tudo** com duas ou mais (rodada de uso, item 3.4).
 - **Ctrl+B recolhido** (ou **Recolher a lista**, no menu do logo). A lista some e a conversa vai
   até a borda. No lugar dela fica o logo, no começo das abas do 1º painel, com o selo do sino (o
   número ou o ponto, que pulsa como o sino); os anéis de uso continuam no canto da janela. O menu
@@ -1261,7 +1266,7 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
 Atalhos: `Ctrl+N` novo chat (na hora, na pasta do chat aberto), `Ctrl+K` buscar (`↓` entra na
 lista; nela, `Enter` abre, `Ctrl+Enter` abre ao lado e `F2` renomeia), `Ctrl+J` painel da direita,
 `Ctrl+B` recolhe ou mostra a lista, `Alt+1…4` painel N, `F10` menu do Vitral, `Ctrl+,`
-configurações, `Ctrl+G` próxima pendência, `Ctrl+W` fecha a aba à vista (na última, o painel),
+configurações, `Ctrl+G` próxima pendência (`Ctrl+Shift+G` a anterior), `Ctrl+W` fecha a aba à vista (na última, o painel),
 `Ctrl+PgUp/PgDn` painel vizinho, `Ctrl+Shift+PgUp/PgDn` muda o painel de lugar (na aba: `Enter` vai
 para a caixa, `Delete` fecha, `Shift+F10` abre o menu), `Ctrl+End` vai ao fim da conversa, `Ctrl+F`
 busca na conversa (`F3`/`Shift+F3` andam), `Shift+Tab` troca o modo, `Esc` para o turno do painel ativo,
