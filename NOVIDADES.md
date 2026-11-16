@@ -236,8 +236,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   desfoque nenhum, e trocar o nível nas Configurações vale na hora.
 - **Editar na fila salva com Ctrl+Enter.** O lápis de uma mensagem da fila abre com o cursor no fim,
   e o Ctrl+Enter salva (antes quebrava a linha).
-- **Aba sem o espaço do ×.** A aba não guarda mais lugar para o × que só aparece no hover: ele surge
-  por cima do fim da aba quando o ponteiro passa, e a aba não muda de tamanho.
+- **Aba sem o espaço do ×.** Nenhuma aba guarda mais lugar para o ×, nem a selecionada: ele surge
+  por cima do fim da aba quando o ponteiro passa (ou com o foco do teclado), e a aba não muda de
+  tamanho. A aba à vista também não abre mais a dica por cima da conversa.
 - **O metal do escolhido e do aro de foco continua o de antes.** A rodada de aparência tinha
   trocado o metal vivo da ficha do escolhido e do aro de foco por um recorte mais liso; o dono
   preferiu o metal de antes ("por que tirou os shaders?"), e ele voltou.

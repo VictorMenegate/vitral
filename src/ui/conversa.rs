@@ -16,7 +16,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AlternarPainel, Gaveta, IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4, Janela,
+    AlternarPainel, Gaveta, Janela,
     NovaConversa, QualFlutuante,
     componentes::{
         Aba, Anel, CabecalhoPopover, CorpoPopover, EstadoVazio, EventoEscolha, GrupoDeEscolha, ItemDeEscolha,
@@ -1073,8 +1073,8 @@ impl Janela {
         let previa = Some(simbolo_da_conversa());
         let janela = cx.entity().downgrade();
         let fechar = janela.clone();
-        // O × aparece no hover, no foco pelo teclado e sempre no ativo quando há vários; o ponto
-        // do estado fica no lugar dele.
+        // O × aparece no hover e no foco pelo teclado, também na aba selecionada (dono, 16/11/2026:
+        // "quando tá selecionada tem que ficar sem o × também"); o ponto do estado fica no lugar dele.
         let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}")), chat.titulo.clone())
             .tom(tom)
             .fechar(
@@ -1083,7 +1083,7 @@ impl Janela {
                 } else {
                     "Fechar este painel (a conversa continua na lista)"
                 },
-                varios && ativo,
+                false,
                 {
                     let id_do_chat = chat.id.clone();
                     move |window, cx| {
