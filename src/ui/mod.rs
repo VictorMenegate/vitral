@@ -981,6 +981,7 @@ impl Janela {
         // O `/mcp` é do Vitral: no `-p` o Claude Code só manda abrir o terminal.
         if texto.trim() == "/mcp" {
             composer.update(cx, |c, cx| c.set_value("", window, cx));
+            self.gravar_agora(cx);
             self.abrir_mcp(window, cx);
             return;
         }
@@ -1006,6 +1007,10 @@ impl Janela {
         self.ilha = None;
         motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, texto, anexos, reforco, cx));
         composer.update(cx, |c, cx| c.set_value("", window, cx));
+        // A caixa esvaziada vai para o disco na hora: o `set_value` não avisa a mudança, e o
+        // rascunho de antes do envio ficava gravado. Numa queda logo depois, a mensagem já enviada
+        // voltava para a caixa ao reabrir (conferência na bancada, 16/11/2026).
+        self.gravar_agora(cx);
         if let Some(painel) = self.paineis.get_mut(self.ativo) {
             painel.seguindo = true;
             painel.rolagem.scroll_to_bottom();
