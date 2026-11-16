@@ -1205,9 +1205,58 @@ fn contagem_do_diff(pedido: &str) -> Option<(usize, usize)> {
 /// itens lado a lado: 6,2 s de processador para 80 passos de rolagem (78 ms por passo).
 pub(super) const ITENS_NA_TELA: usize = 60;
 
-/// Quantas imagens o grupo recolhido mostra na grade; as outras viram "+N" (abrir o grupo mostra
-/// todas, cada uma na linha da chamada dela).
-const IMAGENS_NA_GRADE: usize = 8;
+/// Quantas miniaturas a pilha do grupo recolhido mostra (abrir o grupo mostra todas, cada uma na
+/// linha da chamada dela) e quantos nomes vão na dica dela.
+const IMAGENS_NA_PILHA: usize = 4;
+const NOMES_NA_DICA: usize = 10;
+
+/// A linha das imagens de um grupo recolhido: a pilha de miniaturas quadradas de 22, sobrepostas
+/// 6 com a borda do fundo entre elas (como avatares empilhados), e "9 imagens". O clique abre o
+/// visor na primeira; a dica tem os nomes.
+/// A dica da pilha: os nomes, até `NOMES_NA_DICA`, e "e mais N".
+fn dica_da_pilha(nomes: &[String]) -> String {
+    let mut linhas: Vec<String> = nomes.iter().take(NOMES_NA_DICA).cloned().collect();
+    if nomes.len() > NOMES_NA_DICA {
+        linhas.push(format!("e mais {}", nomes.len() - NOMES_NA_DICA));
+    }
+    linhas.join("\n")
+}
+
+fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>) -> AnyElement {
+    let n = lista.len();
+    let nomes: Vec<String> = lista.iter().map(|(_, c)| imagens::nome_do_arquivo(c)).collect();
+    let dica = SharedString::from(dica_da_pilha(&nomes));
+    let (primeiro, primeira) = lista[0].clone();
+    let chat_id = chat.to_string();
+    h_flex().pl(RECUO_DO_LOG_SOLTO).py(esp::E4).child(
+        h_flex()
+            .id(SharedString::from(format!("pilha-{chat}:{primeiro}")))
+            .flex_none()
+            .h(r(28.))
+            .pl(esp::E4)
+            .pr(esp::E8)
+            .gap(esp::E8)
+            .rounded(raio::de(28.))
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::hover()))
+            .child(h_flex().flex_none().children(lista.iter().take(IMAGENS_NA_PILHA).enumerate().map(|(i, (_, caminho))| {
+                div()
+                    .flex_none()
+                    .size(r(22.))
+                    .when(i > 0, |s| s.ml(r(-6.)))
+                    .rounded(raio::CONTROLE)
+                    .border_2()
+                    .border_color(Cores::cartao_opaco())
+                    .bg(Cores::preto())
+                    .overflow_hidden()
+                    .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+            })))
+            .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, "imagem", "imagens")))
+            .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat_id, &primeira, window, cx)))
+            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+    )
+    .into_any_element()
+}
 
 /// A imagem que uma chamada leu ou gravou (um Read ou Write de um .png, .jpg…), se ainda está no
 /// disco: é o progresso do trabalho à vista (uma captura de tela que o chat tirou e foi olhar).
@@ -1542,47 +1591,21 @@ impl Janela {
                 imagens_do_grupo.push((*indice, imagem));
             }
         }
-        // Em grade de miniaturas pequenas (dono, 13/11/2026: uma embaixo da outra ficava grande
-        // demais), as primeiras `IMAGENS_NA_GRADE` e um "+N" para o resto.
-        let fileira = (!imagens_do_grupo.is_empty()).then(|| {
-            let a_mais = imagens_do_grupo.len().saturating_sub(IMAGENS_NA_GRADE);
-            h_flex()
-                .flex_wrap()
-                .items_center()
-                .gap(esp::E6)
-                .pl(RECUO_DO_LOG)
-                .py(esp::E4)
-                .children(imagens_do_grupo.iter().take(IMAGENS_NA_GRADE).map(|(indice, imagem)| {
-                    pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, cx)
-                }))
-                // O "+N" é um ladrilho que abre o visor na primeira que não coube (dono, 13/11/2026:
-                // "como acesso esse mais 2?"); dali as setas passam pelas outras.
-                .when_some(imagens_do_grupo.get(IMAGENS_NA_GRADE).cloned(), |s, (indice, primeira)| {
-                    let chat = contexto.chat.id.clone();
-                    let dica = SharedString::from(if a_mais == 1 { "Ver a outra imagem".to_string() } else { format!("Ver as outras {a_mais} imagens") });
-                    s.child(
-                        div()
-                            .id(SharedString::from(format!("img-mais-{chat}:{indice}")))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .h(r(28.))
-                            .px(esp::E12)
-                            .rounded(raio::de(28.))
-                            .bg(Cores::cartao_elevado())
-                            .border_1()
-                            .border_color(Cores::borda_forte())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Cores::hover()))
-                            .metadado()
-                            .text_color(Cores::texto())
-                            .child(format!("+{a_mais}"))
-                            .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &primeira, window, cx)))
-                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
-                    )
-                })
-        });
+        // Uma imagem só fica na pílula dela. Mais de uma vira uma linha só: a pilha de até 4
+        // miniaturas, "9 imagens" e, no clique, o visor na primeira (as setas passam pelas outras)
+        // (dono, 16/11/2026: "tá meio ruim isso aqui, tinha que ser mais organizado": eram pílulas
+        // de larguras diferentes quebrando em 8 linhas, com um "+1" solto no fim).
+        let fileira = match imagens_do_grupo.as_slice() {
+            [] => None,
+            [(indice, imagem)] => Some(
+                h_flex()
+                    .pl(RECUO_DO_LOG_SOLTO)
+                    .py(esp::E4)
+                    .child(pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, cx))
+                    .into_any_element(),
+            ),
+            varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
+        };
         let ultima = mostradas.len().saturating_sub(1);
         v_flex()
             .w_full()
@@ -3820,7 +3843,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        com_quebras_duras, linhas_da_edicao, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
+        com_quebras_duras, dica_da_pilha, linhas_da_edicao, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
@@ -4081,6 +4104,16 @@ mod testes {
         assert_eq!(texto_atividade(&[gravar], false, 0), "Gravando cupom.rs…");
         let passos = ferramenta("TodoWrite", "TodoWrite · lista de tarefas", None, false);
         assert_eq!(texto_atividade(&[passos], false, 0), "Atualizando os passos…");
+    }
+
+    #[test]
+    fn a_dica_da_pilha_mostra_ate_dez_nomes() {
+        let nomes: Vec<String> = (1..=12).map(|i| format!("q{i:02}.png")).collect();
+        let dica = dica_da_pilha(&nomes);
+        assert_eq!(dica.lines().count(), 11);
+        assert!(dica.starts_with("q01.png\nq02.png"));
+        assert!(dica.ends_with("q10.png\ne mais 2"));
+        assert_eq!(dica_da_pilha(&nomes[..2]), "q01.png\nq02.png");
     }
 
     #[test]

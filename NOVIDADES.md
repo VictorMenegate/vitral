@@ -154,6 +154,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   para a caixa. O teclado não trava mais quando um painel aberto ao lado empurra a lista para fora.
 - **Esc para o turno de qualquer lugar.** Depois de clicar na conversa (o foco sai da caixa), o Esc
   continua parando o turno do painel ativo, como a linha de estado mostra.
+- **Imagens do grupo recolhido numa linha só.** As imagens que o agente leu num grupo de
+  ferramentas recolhido viram uma pilha de miniaturas e "9 imagens"; o clique abre o visor na
+  primeira. Antes eram pílulas de larguras diferentes, quebrando em várias linhas.
 - **Copiar a citação.** Quando a resposta traz uma citação (como a mensagem pronta para mandar a
   alguém), ela tem o próprio botão de copiar, que leva o texto limpo, sem os ">" nem o negrito em
   asteriscos, pronto para colar no WhatsApp.

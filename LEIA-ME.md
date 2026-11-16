@@ -534,7 +534,11 @@ ferramentas, vale por painel).
   esquerda, de onde descem os ramos, e o chevron no fim, como nas chamadas e no "Pensou"; abrem
   enquanto trabalham e recolhem ao terminar, respeitando a escolha manual. Dentro do grupo, o verbo
   tem uma coluna de 56 para os detalhes ficarem alinhados. A chamada solta (sozinha entre duas
-  falas) começa na coluna do cabeçalho de grupo, sem ramo, e com o detalhe logo depois do verbo. O clique numa
+  falas) começa na coluna do cabeçalho de grupo, sem ramo, e com o detalhe logo depois do verbo.
+  Recolhido, o grupo mostra as imagens que as chamadas dele leram ou gravaram: uma só, na pílula
+  dela; mais de uma, numa linha só (`pilha_de_imagens`): a pilha de até 4 miniaturas quadradas de
+  22, sobrepostas como avatares, e "9 imagens", com os nomes na dica (até 10); o clique abre o
+  visor na primeira, e as setas passam pelas outras. Aberto, cada chamada mostra a pílula dela. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
   lado ficam guardadas na conversa; o Codex entrega o diff do `fileChange`; registros antigos
