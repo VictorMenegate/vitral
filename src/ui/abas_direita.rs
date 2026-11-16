@@ -124,6 +124,8 @@ impl Janela {
     /// Fecha o arquivo da direita; a aba volta à do chat.
     pub(super) fn fechar_arquivo(&mut self, cx: &mut Context<Self>) {
         self.arquivo_aberto = None;
+        self.arquivo_edicao = None;
+        self.arquivo_selecao = None;
         if matches!(self.aba_direita, AbaDireita::Arquivo(_)) {
             self.aba_direita = AbaDireita::Chat;
         }

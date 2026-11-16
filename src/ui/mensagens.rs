@@ -103,11 +103,11 @@ fn minima(nivel: LarguraPainel) -> bool {
 }
 
 /// Fundos da linha que sai e da que entra num trecho de código.
-fn fundo_sai() -> Hsla {
+pub(super) fn fundo_sai() -> Hsla {
     rgba(0xf8717114).into()
 }
 
-fn fundo_entra() -> Hsla {
+pub(super) fn fundo_entra() -> Hsla {
     rgba(0x4ade8014).into()
 }
 
@@ -2154,6 +2154,8 @@ pub(super) struct ArquivoMudado {
     pub entram: usize,
     pub saem: usize,
     pub novo: bool,
+    /// As chamadas que mudaram o arquivo (para abrir a edição delas à direita).
+    pub itens: Vec<usize>,
 }
 
 /// As mudanças do chat pelas chamadas de edição: as do último turno (desde a sua última mensagem)
@@ -2179,14 +2181,90 @@ pub(super) fn mudancas_do_chat(itens: &[Item]) -> (Vec<ArquivoMudado>, Vec<Arqui
                 a.entram += entram;
                 a.saem += saem;
                 a.novo |= novo;
+                a.itens.push(i);
             }
-            None => lista.push(ArquivoMudado { caminho, entram, saem, novo }),
+            None => lista.push(ArquivoMudado { caminho, entram, saem, novo, itens: vec![i] }),
         }
     }
     // O que mudou neste turno não se repete em "Antes".
     antes.retain(|a| !neste.iter().any(|n| n.caminho == a.caminho));
     (neste, antes)
 }
+
+/// Os arquivos de um registro antigo do Codex, de antes de guardar o diff: o resultado da chamada
+/// era a lista "mudou <caminho>" (ou "criou", "apagou"), um por linha, e a conversa mostrava uma
+/// caixa com ela (dono, 16/11/2026: "uma linha por arquivo no lugar da caixa"). Vazio quando o
+/// resultado não é essa lista.
+pub(super) fn arquivos_do_registro_antigo(resultado: &str) -> Vec<(&str, &str)> {
+    let lista: Vec<(&str, &str)> = resultado
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map_while(|l| {
+            let (verbo, caminho) = l.split_once(' ')?;
+            (matches!(verbo, "mudou" | "criou" | "apagou") && !caminho.trim().is_empty()).then_some((verbo, caminho.trim()))
+        })
+        .collect();
+    if lista.len() == resultado.lines().filter(|l| !l.trim().is_empty()).count() { lista } else { Vec::new() }
+}
+
+/// Um arquivo que as chamadas de um turno (ou de um grupo) editaram, para a linha dele: o caminho
+/// como a chamada deu, o +N −M somado, se é novo, as chamadas (para abrir a edição) e se é de um
+/// registro antigo, sem o diff (o caminho então vem do resultado).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Editado {
+    pub caminho: String,
+    pub entram: usize,
+    pub saem: usize,
+    pub novo: bool,
+    pub itens: Vec<usize>,
+    pub antigo: bool,
+}
+
+/// Os arquivos editados nas chamadas, um por arquivo, na ordem em que apareceram.
+pub(super) fn editados(chamadas: &[(usize, &Item)]) -> Vec<Editado> {
+    let mut lista: Vec<Editado> = Vec::new();
+    let mut juntar = |novo: Editado| match lista.iter_mut().find(|e| e.caminho == novo.caminho) {
+        Some(e) => {
+            e.entram += novo.entram;
+            e.saem += novo.saem;
+            e.novo |= novo.novo;
+            e.antigo |= novo.antigo;
+            e.itens.extend(novo.itens);
+        }
+        None => lista.push(novo),
+    };
+    for (i, item) in chamadas {
+        let Item::Ferramenta { nome, arquivo, resumo, resultado, erro: false, detalhe, mudanca, .. } = item else {
+            continue;
+        };
+        if !matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+            continue;
+        }
+        let antigos = match (detalhe, resultado) {
+            (None, Some(r)) => arquivos_do_registro_antigo(r),
+            _ => Vec::new(),
+        };
+        if antigos.len() > 1 {
+            for (verbo, caminho) in antigos {
+                juntar(Editado { caminho: caminho.to_string(), entram: 0, saem: 0, novo: verbo == "criou", itens: vec![*i], antigo: true });
+            }
+            continue;
+        }
+        let (entram, saem) = linhas_da_edicao_gravada(item).unwrap_or((0, 0));
+        juntar(Editado {
+            caminho: arquivo.clone().unwrap_or_else(|| resumo.clone()),
+            entram,
+            saem,
+            novo: mudanca.is_some_and(|m| m.novo),
+            itens: vec![*i],
+            antigo: detalhe.is_none(),
+        });
+    }
+    lista
+}
+
+/// Quantos arquivos editados aparecem embaixo de um recolhido; o resto vira "e mais N arquivos".
+const EDITADOS_NO_RECOLHIDO: usize = 5;
 
 /// Quanto o turno de agora mudou: arquivos e o total de linhas que entraram e saíram.
 pub(super) fn total_das_mudancas(arquivos: &[ArquivoMudado]) -> (usize, usize, usize) {
@@ -2380,10 +2458,23 @@ impl Janela {
             ),
             varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
         };
+        // E os arquivos que elas editaram, uma linha cada, que abre a edição à direita.
+        let editados_do_grupo = (recolhivel && !aberto).then(|| {
+            let mais = cx.listener({
+                let chave = chave.clone();
+                move |j, _, _, cx| {
+                    j.expandidos.remove(&format!("{chave}:fechado"));
+                    j.expandidos.insert(chave.clone());
+                    cx.notify();
+                }
+            });
+            self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidas, mais)
+        });
         let ultima = mostradas.len().saturating_sub(1);
         v_flex()
             .w_full()
             .children(cabecalho)
+            .children(editados_do_grupo.flatten())
             .children(fileira)
             .children(
                 mostradas
@@ -2445,7 +2536,127 @@ impl Janela {
             ),
             varias => Some(pilha_de_imagens(&contexto.chat.id, varias, cx)),
         };
-        v_flex().w_full().child(linha).children(fileira).into_any_element()
+        // Recolhido, cada arquivo que o turno editou fica numa linha embaixo dele, com o +N −M; o
+        // clique abre o arquivo à direita já na edição (dono, 16/11/2026: "tinha que ter como abrir
+        // pra ver o arquivo que editou e ver a edição").
+        let editados = (!aberto)
+            .then(|| self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidos, alternar(chave.clone(), cx)))
+            .flatten();
+        v_flex().w_full().child(linha).children(editados).children(fileira).into_any_element()
+    }
+
+    /// Os arquivos editados nas chamadas escondidas de um recolhido (o turno ou o grupo), uma linha
+    /// por arquivo; acima de cinco, "e mais N arquivos", que abre o recolhido (`mais`).
+    fn editados_do_recolhido(
+        &self,
+        contexto: &Contexto,
+        chave: &str,
+        chamadas: &[(usize, &Item)],
+        mais: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Option<AnyElement> {
+        let lista = editados(chamadas);
+        if lista.is_empty() {
+            return None;
+        }
+        let sobra = lista.len().saturating_sub(EDITADOS_NO_RECOLHIDO);
+        Some(
+            v_flex()
+                .w_full()
+                .children(
+                    lista
+                        .iter()
+                        .take(EDITADOS_NO_RECOLHIDO)
+                        .enumerate()
+                        .map(|(k, editado)| self.linha_de_editado(contexto, format!("{chave}:{k}"), editado, RECUO_DO_LOG_SOLTO, None)),
+                )
+                .when(sobra > 0, |s| {
+                    s.child(
+                        div()
+                            .id(SharedString::from(format!("editados-mais-{chave}")))
+                            .flex()
+                            .items_center()
+                            .h(r(28.))
+                            .pl(RECUO_DO_LOG_SOLTO)
+                            .metadado()
+                            .text_color(Cores::tenue())
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(Cores::texto()))
+                            .child(format!("e mais {}", contagem(sobra, "arquivo", "arquivos")))
+                            .on_click(mais),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// A linha de um arquivo editado: o ícone (criou ou editou), o verbo quando é uma linha da
+    /// trilha, o nome no chip, o +N −M e o "novo". O clique abre o arquivo no painel da direita já
+    /// na edição, rolado até a primeira mudança; no registro antigo, sem o diff, o arquivo como
+    /// está agora, com um aviso. Um arquivo que saiu do disco fica apagado e sem clique.
+    fn linha_de_editado(
+        &self,
+        contexto: &Contexto,
+        chave: String,
+        editado: &Editado,
+        recuo: Rems,
+        verbo: Option<&'static str>,
+    ) -> AnyElement {
+        let existe = super::links_arquivo::resolver(&contexto.chat.cwd, &editado.caminho).is_some();
+        let nome = Path::new(&editado.caminho).file_name().map_or_else(|| editado.caminho.clone(), |n| n.to_string_lossy().into_owned());
+        let icone = if editado.novo { Lucide::FilePlus } else { Lucide::FilePenLine };
+        let pedido = super::edicao::AbrirEdicao {
+            chat: contexto.chat.id.clone(),
+            itens: editado.itens.clone(),
+            caminho: editado.antigo.then(|| editado.caminho.clone()),
+        };
+        let dica = SharedString::from(match (existe, editado.antigo) {
+            (false, _) => format!("{} (não está mais no disco)", editado.caminho),
+            (true, false) => format!("Ver a edição em {}", editado.caminho),
+            (true, true) => format!("Abrir {} (este registro não guardou a edição)", editado.caminho),
+        });
+        h_flex()
+            .id(SharedString::from(format!("editado-{chave}")))
+            .h(ALTURA_DO_LOG)
+            .pl(recuo)
+            .pr(esp::E8)
+            .gap(esp::E8)
+            .rounded(raio::CONTROLE)
+            .metadado()
+            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
+            .when_some(verbo, |s, verbo| s.child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(verbo)))
+            .child(
+                div()
+                    .flex_shrink(1.)
+                    .min_w_0()
+                    .truncate()
+                    .font_family(FONTE_MONO)
+                    .text_color(if existe { Cores::tenue() } else { Cores::apagado() })
+                    .h(r(22.))
+                    .px(esp::E6)
+                    .rounded(raio::CONTROLE)
+                    .bg(Cores::recuo())
+                    .flex()
+                    .items_center()
+                    .child(nome),
+            )
+            .when(editado.entram + editado.saem > 0, |s| {
+                s.child(
+                    h_flex()
+                        .flex_none()
+                        .gap(esp::E6)
+                        .font_family(FONTE_MONO)
+                        .when(editado.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", editado.entram))))
+                        .when(editado.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", editado.saem)))),
+                )
+            })
+            .when(editado.novo, |s| s.child(Selo::cor("novo", Cores::verde())))
+            .when(existe, |s| {
+                s.cursor_pointer()
+                    .hover(|s| s.bg(Cores::hover()))
+                    .on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx))
+            })
+            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .into_any_element()
     }
 
     /// A linha da revisão da memória (item 6.1): recolhida por padrão; o clique mostra o que ela
@@ -2590,6 +2801,32 @@ impl Janela {
             return div().into_any_element();
         };
         let chave = format!("{}:{indice}", contexto.chat.id);
+        // O registro antigo do Codex com vários arquivos numa chamada só: uma linha por arquivo,
+        // no lugar da caixa com a lista de "mudou …" (dono, 16/11/2026).
+        let antigos = match (pedido, resultado) {
+            (None, Some(r)) if !*erro && matches!(nome.as_str(), "Edit" | "Write") => arquivos_do_registro_antigo(r),
+            _ => Vec::new(),
+        };
+        if antigos.len() > 1 {
+            let n = antigos.len();
+            return v_flex()
+                .w_full()
+                .children(antigos.into_iter().enumerate().map(|(k, (verbo, caminho))| {
+                    let editado =
+                        Editado { caminho: caminho.to_string(), entram: 0, saem: 0, novo: verbo == "criou", itens: vec![indice], antigo: true };
+                    let verbo = match verbo {
+                        "criou" => "Criou",
+                        "apagou" => "Apagou",
+                        _ => "Editou",
+                    };
+                    v_flex()
+                        .relative()
+                        .w_full()
+                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some(verbo)))
+                        .children(ramo.map(|continua| trilho_do_log(continua || k + 1 < n)))
+                }))
+                .into_any_element();
+        }
         let aberto = self.expandidos.contains(&chave);
         let novo = mudanca.is_some_and(|m| m.novo);
         let pendente = contexto.pendente(indice, item);
@@ -2641,6 +2878,11 @@ impl Janela {
             .as_deref()
             .and_then(|a| super::links_arquivo::resolver(&contexto.chat.cwd, a))
             .map(|inteiro| super::links_arquivo::link_de(&inteiro, None));
+        // Uma edição que deu certo, num arquivo que ainda está no disco: o clique na linha abre o
+        // arquivo à direita já na edição (dono, 16/11/2026: "ver a edição"); o chevron, sozinho,
+        // mostra o diff aqui mesmo.
+        let edicao = (!*erro && !pendente && abrir.is_some() && matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit"))
+            .then(|| super::edicao::AbrirEdicao { chat: contexto.chat.id.clone(), itens: vec![indice], caminho: None });
         let grupo = SharedString::from(format!("chamada-{chave}"));
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
@@ -2676,9 +2918,10 @@ impl Janela {
         };
         let (estreita, minima) = (!larga(contexto.nivel), minima(contexto.nivel));
         let dica = SharedString::from(format!(
-            "{verbo} ({})\n{detalhe}{}",
+            "{verbo} ({})\n{detalhe}{}{}",
             nome_curto(nome),
-            meta.map(|(m, _)| format!(" · {m}")).unwrap_or_default()
+            meta.map(|(m, _)| format!(" · {m}")).unwrap_or_default(),
+            if edicao.is_some() { "\nClique para ver a edição no arquivo" } else { "" }
         ));
         // O detalhe: o que é código (comando, caminho, padrão de busca, endereço, ferramenta MCP)
         // sai em mono dentro do chip; a prosa (a tarefa do Agent, a busca na web, a lista de
@@ -2754,8 +2997,33 @@ impl Janela {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
             .group(grupo.clone())
-            .child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.).text_color(Cores::apagado()))
-            .when_some(abrir.clone(), |s, alvo| {
+            .map(|s| {
+                let chevron = icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.).text_color(Cores::apagado());
+                if edicao.is_none() {
+                    return s.child(chevron);
+                }
+                // Na edição, o chevron é um botão à parte: a linha abre o arquivo; ele, o diff aqui.
+                let alterna = alternar(chave.clone(), cx);
+                let dica_chevron = if aberto { "Recolher o diff" } else { "Mostrar o diff aqui" };
+                s.child(
+                    div()
+                        .id(SharedString::from(format!("diff-aqui-{chave}")))
+                        .flex_none()
+                        .size(r(20.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(raio::CONTROLE)
+                        .hover(|s| s.bg(Cores::hover()))
+                        .child(chevron)
+                        .tooltip(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
+                        .on_click(move |evento, window, cx| {
+                            cx.stop_propagation();
+                            alterna(evento, window, cx);
+                        }),
+                )
+            })
+            .when_some(abrir.clone().filter(|_| edicao.is_none()), |s, alvo| {
                 s.child(
                     div()
                         .id(SharedString::from(format!("abrir-arquivo-{chave}")))
@@ -2779,7 +3047,10 @@ impl Janela {
                 )
             })
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-            .on_click(alternar(chave.clone(), cx));
+            .map(|s| match edicao.clone() {
+                Some(pedido) => s.on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx)),
+                None => s.on_click(alternar(chave.clone(), cx)),
+            });
         // Aberta, a linha mostra primeiro o que a chamada pediu (o diff, o que gravou). O resultado
         // de uma edição que deu certo é só "o arquivo foi atualizado": fica de fora.
         let so_o_pedido = pedido.is_some() && !*erro && resultado.is_some() && matches!(nome.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
@@ -2828,13 +3099,6 @@ impl Janela {
                 .when(comando.is_none() && !so_o_pedido && !sem_texto && !(pendente && resultado.is_none()), |s| {
                     s.child(div().pl(recuo_aberto).py(esp::E4).child(
                         bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
-                    ))
-                })
-                .when_some(abrir.filter(|_| pedido.is_none() && matches!(nome.as_str(), "Edit" | "Write")), |s, alvo| {
-                    s.child(div().pl(recuo_aberto).py(esp::E8).child(
-                        div().id(SharedString::from(format!("abrir-versao-{chave}"))).cursor_pointer().corpo_ui()
-                            .text_color(Cores::destaque_texto()).child("Este registro não guardou o diff. Abrir o arquivo atual")
-                            .on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx)),
                     ))
                 })
                 .when(so_o_pedido, |s| s.pb(esp::E4))

@@ -88,18 +88,22 @@ impl Janela {
         cx: &Context<Self>,
     ) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static {
         let janela = cx.entity().downgrade();
-        let (antes, compacta_antes) = (self.direita_estreita, self.direita_compacta);
+        let (antes, compacta_antes, largura_antes) = (self.direita_estreita, self.direita_compacta, self.direita_largura);
         move |limites, window, _| {
             let rem = limites.size.width / window.rem_size();
             let estreita = fica_estreita(rem, antes);
             let compacta = fica_compacta(rem, compacta_antes);
-            if estreita == antes && compacta == compacta_antes {
+            // A largura, de meio em meio rem, para o cabeçalho do arquivo decidir o que cabe nele
+            // (dono, 16/11/2026: "59 linhas · JavaScr" ficava por baixo do Mencionar).
+            let largura = if (rem - largura_antes).abs() >= 0.5 { (rem * 2.).floor() / 2. } else { largura_antes };
+            if estreita == antes && compacta == compacta_antes && largura == largura_antes {
                 return;
             }
             window.on_next_frame(move |_, cx| {
                 let _ = janela.update(cx, |this, cx| {
                     this.direita_estreita = estreita;
                     this.direita_compacta = compacta;
+                    this.direita_largura = largura;
                     cx.notify();
                 });
             });
@@ -197,7 +201,8 @@ impl Janela {
 }
 
 /// Uma linha de Mudanças: o ícone do tipo, o nome, a pasta em tom tênue, o +N −M e o "novo". O
-/// clique abre o arquivo à direita; um arquivo que saiu do disco fica apagado e sem clique.
+/// clique abre o arquivo à direita, na edição; um arquivo que saiu do disco fica apagado e sem
+/// clique.
 fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: String, window: &Window) -> AnyElement {
     let inteiro = super::links_arquivo::resolver(&chat.cwd, &arquivo.caminho);
     let relativo = inteiro
@@ -208,7 +213,8 @@ fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: Str
     let (pasta, nome) = (pasta.to_string(), nome.to_string());
     let icone = super::seletor_arquivos::icone_do_arquivo(&nome);
     let existe = inteiro.is_some();
-    let alvo = inteiro.map(|i| super::links_arquivo::link_de(&i, None));
+    // O clique abre o arquivo já na edição que o chat fez nele (dono, 16/11/2026: "ver a edição").
+    let alvo = inteiro.map(|_| super::edicao::AbrirEdicao { chat: chat.id.clone(), itens: arquivo.itens.clone(), caminho: None });
     let dica = SharedString::from(if existe { relativo.clone() } else { format!("{relativo} (não está mais no disco)") });
     div()
         .id(SharedString::from(id))
@@ -243,7 +249,7 @@ fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: Str
         .when(arquivo.novo, |s| s.child(super::componentes::Selo::cor("novo", Cores::verde())))
         .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .when_some(alvo, |s, alvo| {
-            s.on_click(move |_, window, cx| window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(alvo.clone())), cx))
+            s.on_click(move |_, window, cx| window.dispatch_action(Box::new(alvo.clone()), cx))
         })
         .into_any_element()
 }

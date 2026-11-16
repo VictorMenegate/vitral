@@ -17,6 +17,7 @@ mod configuracoes;
 mod conversa;
 mod dialogos;
 mod este_chat;
+mod edicao;
 mod falas;
 mod fila;
 mod imagens;
@@ -25,8 +26,8 @@ mod links_arquivo;
 mod mapa_agentes;
 mod mcp_servidores;
 mod memoria_equipe;
-mod mensagens;
 mod mencao;
+mod mensagens;
 mod menus;
 pub mod movimento;
 mod painel_contas;
@@ -344,6 +345,18 @@ pub struct Janela {
     /// A linha que um link da conversa pediu: o painel rola até ela ao abrir e a deixa marcada.
     arquivo_linha: std::cell::Cell<Option<u32>>,
     arquivo_marcada: std::cell::Cell<Option<u32>>,
+    /// A edição que o clique numa linha da trilha pediu, à espera do `abrir_arquivo`, e a que o
+    /// arquivo aberto mostra (dono, 16/11/2026: "ver a edição"); `None`, o arquivo como está.
+    edicao_pedida: Option<std::rc::Rc<edicao::Edicao>>,
+    arquivo_edicao: Option<std::rc::Rc<edicao::Edicao>>,
+    /// A mudança à vista na edição (as setas passam de uma à outra) e se o painel rola até ela no
+    /// próximo quadro.
+    edicao_atual: usize,
+    edicao_rolar: std::cell::Cell<bool>,
+    /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
+    /// mencionar o trecho, e a ponta de onde a escolha começou.
+    arquivo_selecao: Option<(u32, u32)>,
+    arquivo_ancora: Option<u32>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
@@ -450,6 +463,8 @@ pub struct Janela {
     aba_direita: abas_direita::AbaDireita,
     /// A direita está abaixo de 520 px: com mais de uma aba, elas ficam só com o símbolo.
     direita_compacta: bool,
+    /// A largura da direita em rem (de meio em meio), para o cabeçalho do arquivo decidir o que cabe.
+    direita_largura: f32,
     /// Os avisos do canto que você dispensou no × (a chave do pedido ou da falha).
     avisos_dispensados: HashSet<String>,
     /// O texto de cada chat preparado para a busca da lista e do histórico (sem acento), refeito só
@@ -607,6 +622,12 @@ impl Janela {
             arquivo_aberto: None,
             arquivo_linha: Default::default(),
             arquivo_marcada: Default::default(),
+            edicao_pedida: None,
+            arquivo_edicao: None,
+            edicao_atual: 0,
+            edicao_rolar: Default::default(),
+            arquivo_selecao: None,
+            arquivo_ancora: None,
             cache_arquivos: Default::default(),
             arquivo_lido: Default::default(),
             feedback_plano: HashMap::new(),
@@ -665,6 +686,7 @@ impl Janela {
             atualizacao_avisada: None,
             aba_direita: abas_direita::AbaDireita::Chat,
             direita_compacta: true,
+            direita_largura: 0.,
             avisos_dispensados: HashSet::new(),
             mencoes: Default::default(),
             editando_fila: None,
@@ -1644,6 +1666,7 @@ impl Render for Janela {
                 atalhos::abrir(window, cx);
             }))
             .on_action(cx.listener(|this, acao: &links_arquivo::AbrirLinkVitral, window, cx| this.abrir_link_vitral(&acao.0, window, cx)))
+            .on_action(cx.listener(|this, acao: &edicao::AbrirEdicao, window, cx| this.abrir_edicao(acao, window, cx)))
             .child(
                 h_flex()
                     .size_full()

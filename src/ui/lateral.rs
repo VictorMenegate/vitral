@@ -1819,6 +1819,14 @@ impl Janela {
         if self.arquivo_linha.get().is_none() {
             self.arquivo_marcada.set(None);
         }
+        // A edição é do clique na trilha que a pediu (`abrir_edicao`): abrir de outro jeito mostra o
+        // arquivo como está. A escolha de linhas não passa de uma abertura para a outra.
+        self.arquivo_edicao = self.edicao_pedida.take();
+        self.esquecer_vista();
+        self.edicao_atual = 0;
+        self.edicao_rolar.set(self.arquivo_edicao.is_some());
+        self.arquivo_selecao = None;
+        self.arquivo_ancora = None;
         self.arquivo_aberto = Some((pasta, caminho));
         self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
         self.mostrar_direita(window, cx);

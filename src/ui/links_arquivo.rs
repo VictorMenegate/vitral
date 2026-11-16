@@ -390,6 +390,12 @@ impl super::Janela {
         self.arquivo_linha.set(linha);
         self.arquivo_marcada.set(linha);
         self.abrir_arquivo(raiz, relativo, window, cx);
+        // A menção de um trecho (a pílula "fila.rs:120-134") abre com as linhas escolhidas, como
+        // uma seleção feita no painel: dá para mencionar de novo (dono, 16/11/2026).
+        if let Some((a, b)) = faixa {
+            self.arquivo_selecao = Some((a, b));
+            self.arquivo_marcada.set(None);
+        }
     }
 }
 

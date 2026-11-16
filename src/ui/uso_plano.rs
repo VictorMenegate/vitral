@@ -80,6 +80,16 @@ impl Janela {
         )
     }
 
+    /// Quanto a fileira de cima do painel da direita (o último à direita) deixa livre na ponta para
+    /// os anéis do canto não ficarem por cima dela; `None` com os anéis desligados. Só as fileiras
+    /// de cabeçalho guardam o lugar, não o conteúdo (dono, 16/11/2026: o fim do cabeçalho do
+    /// arquivo e a primeira linha do código ficavam por baixo dos anéis). A folga conta da borda
+    /// da direita da janela: a distância dos anéis até ela, o diâmetro e 8 de respiro.
+    pub(super) fn reserva_dos_aneis(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        let ligado = self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto);
+        ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 8.))
+    }
+
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
         let Some(motor) = self.motor.clone() else {
             return Vec::new();
