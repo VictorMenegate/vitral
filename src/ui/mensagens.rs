@@ -876,7 +876,7 @@ fn hora_na_barra(em: u64) -> Option<AnyElement> {
 /// Onde entram os separadores de data, pela posição de cada item visível: o rótulo do dia quando
 /// ele abre um dia diferente do último item que tinha hora. Item sem hora (conversa de antes dela)
 /// não abre dia nem corta o agrupamento.
-fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, String)> {
+pub(super) fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, String)> {
     let mut saida = Vec::new();
     let mut dia_mostrado = None;
     for (i, &em) in horas.iter().enumerate() {

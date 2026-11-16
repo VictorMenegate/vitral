@@ -18,13 +18,14 @@ use gpui_kit::component::{
     Disableable as _, ElementExt as _, h_flex,
     input::{Escape, InputState},
     text::{RangeHighlight, RenderedText, TextView, TextViewState},
+    tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Flutuante as _, TamanhoBotao, botao_icone, campo_de_busca},
+    componentes::{Flutuante as _, LarguraPainel, TamanhoBotao, botao_icone, campo_de_busca},
     movimento::{self, De},
 };
 use crate::{
@@ -183,26 +184,28 @@ pub fn andar(total: usize, atual: usize, passo: i32) -> usize {
     (atual + passo as i64).rem_euclid(total as i64) as usize
 }
 
-/// A primeira chamada da sequência de chamadas em que `indice` está, do jeito que a conversa as
-/// agrupa: é a chave do grupo em `expandidos`, que a trilha de 4 em diante usa para abrir.
+/// O primeiro item da trilha em que `indice` está, com as mesmas regras com que a conversa monta
+/// as trilhas (`Janela::mensagens`): as chamadas visíveis e os raciocínios ficam juntos (a
+/// escondida não vai para a tela, então não quebra), e a troca de dia parte a trilha. É a chave do
+/// grupo em `expandidos`. Antes o raciocínio partia a trilha só aqui, e o Ctrl+F abria um grupo que
+/// não existia: o contador andava e a tela não (teste de usabilidade, 16/11/2026).
 fn primeira_da_trilha(itens: &[Item], indice: usize, foco: bool) -> usize {
-    let visivel = |i: usize| match &itens[i] {
-        Item::Ferramenta { nome, .. } => ferramenta_visivel(nome, foco).then_some(true),
-        _ => Some(false),
+    let visiveis: Vec<usize> = (0..itens.len())
+        .filter(|i| match &itens[*i] {
+            Item::Ferramenta { nome, .. } => ferramenta_visivel(nome, foco),
+            _ => true,
+        })
+        .collect();
+    let Some(mut p) = visiveis.iter().position(|i| *i == indice) else {
+        return indice;
     };
-    let mut primeiro = indice;
-    let mut i = indice;
-    while i > 0 {
-        i -= 1;
-        match visivel(i) {
-            // Outra chamada visível: o grupo continua para cima.
-            Some(true) => primeiro = i,
-            // Escondida: não quebra o grupo (ela não vai para a tela).
-            None => {}
-            Some(false) => break,
-        }
+    let horas: Vec<u64> = visiveis.iter().map(|i| itens[*i].em()).collect();
+    let dias: Vec<usize> = super::mensagens::separadores_de_data(&horas, 0).into_iter().map(|(p, _)| p).collect();
+    let da_trilha = |i: usize| matches!(itens[i], Item::Ferramenta { .. } | Item::Raciocinio { .. });
+    while p > 0 && da_trilha(visiveis[p - 1]) && !dias.contains(&p) {
+        p -= 1;
     }
-    primeiro
+    visiveis[p]
 }
 
 /// As chaves de `expandidos` que precisam entrar para a ocorrência do item `indice` ficar à
@@ -210,7 +213,7 @@ fn primeira_da_trilha(itens: &[Item], indice: usize, foco: bool) -> usize {
 /// tudo" de uma mensagem longa e, numa chamada, o grupo da trilha.
 pub fn chaves_para_abrir(chat: &str, itens: &[Item], indice: usize, foco: bool) -> Vec<String> {
     let mut chaves = vec![format!("{chat}:{indice}"), format!("{chat}:{indice}:tudo")];
-    if matches!(itens.get(indice), Some(Item::Ferramenta { .. })) {
+    if matches!(itens.get(indice), Some(Item::Ferramenta { .. } | Item::Raciocinio { .. })) {
         chaves.push(format!("{chat}:{}:grupo", primeira_da_trilha(itens, indice, foco)));
     }
     chaves
@@ -276,6 +279,17 @@ impl Indice {
             return Some("nenhum achado".into());
         }
         Some(format!("{} de {}", self.atual + 1, self.achados.len()))
+    }
+
+    /// O contador da barra estreita: "2/7" e, sem achado, "0" (em âmbar; a frase vai na dica).
+    pub fn contador_curto(&self) -> Option<String> {
+        if self.termo.is_empty() {
+            return None;
+        }
+        if self.achados.is_empty() {
+            return Some("0".into());
+        }
+        Some(format!("{}/{}", self.atual + 1, self.achados.len()))
     }
 
     pub fn ocorrencia_atual(&self) -> Option<&Ocorrencia> {
@@ -498,9 +512,12 @@ fn pedidos(desenhado: &RenderedText, realce: &Realce) -> (Vec<RangeHighlight>, O
 }
 
 /// Rola o painel até deixar à vista a faixa que começa em `topo` (em coordenadas da janela), com
-/// um respiro de 48 em cima: o achado nunca cola no cabeçalho.
+/// um respiro de 48 em cima (o achado nunca cola no cabeçalho, onde fica a barra) e de 88 embaixo:
+/// o achado não para na última linha, cortado, debaixo da pílula de voltar ao fim (teste de
+/// usabilidade, 16/11/2026).
 fn rolar_ate(rolagem: &ScrollHandle, topo: Pixels, altura_do_alvo: Pixels) {
     const RESPIRO: Pixels = px(48.);
+    const RESPIRO_BAIXO: Pixels = px(88.);
     let vista = rolagem.bounds();
     if vista.size.height <= px(0.) {
         return;
@@ -508,11 +525,11 @@ fn rolar_ate(rolagem: &ScrollHandle, topo: Pixels, altura_do_alvo: Pixels) {
     let atual = rolagem.offset();
     let acima = topo - vista.origin.y;
     let abaixo = (topo + altura_do_alvo) - (vista.origin.y + vista.size.height);
-    // Já dentro da vista, com o respiro: não mexe (rolar de novo brigaria com a roda).
+    // Já dentro da vista, com os respiros: não mexe (rolar de novo brigaria com a roda).
     let ajuste = if acima < RESPIRO {
         acima - RESPIRO
-    } else if abaixo > px(0.) {
-        abaixo.min(acima - RESPIRO)
+    } else if abaixo > -RESPIRO_BAIXO {
+        (abaixo + RESPIRO_BAIXO).min(acima - RESPIRO)
     } else {
         return;
     };
@@ -655,8 +672,16 @@ impl Janela {
         let painel = self.paineis.get(ix)?;
         let id = painel.id as usize;
         let total = painel.busca.indice.total();
+        // Na barra estreita, o contador curto ("2/7"), e o campo nunca abaixo de 128: com 4
+        // painéis ele mostrava uma letra só (teste de usabilidade, 16/11/2026).
+        let estreita = painel.medida.nivel != LarguraPainel::Largo;
         let contador = painel.busca.indice.contador();
         let sem_achado = total == 0 && contador.is_some();
+        let contador_longo = contador.clone().map(SharedString::from);
+        let contador = if estreita { painel.busca.indice.contador_curto() } else { contador };
+        // No último painel, com os anéis de uso no canto, a barra termina antes deles: o × de
+        // fechar a busca ficava debaixo dos anéis.
+        let direita = if self.uso_no_ultimo_painel(ix, cx) { r(super::uso_plano::FOLGA_DO_USO) } else { esp::E8 };
         let seta = |nome: &'static str, icone: Lucide, dica: &'static str, acao: &dyn Action, passo: i32| {
             botao_icone(SharedString::from(format!("{nome}-{id}")), icone, dica, TamanhoBotao::Barra, window, cx)
                 .tooltip_with_action(dica, acao, None)
@@ -676,7 +701,7 @@ impl Janela {
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(r(128.))
                     .on_action(cx.listener(|this, _: &Escape, window, cx| this.fechar_busca_na_conversa(window, cx)))
                     .child(
                         campo_de_busca(SharedString::from(format!("campo-busca-{id}")), &painel.busca.campo, None, window, cx)
@@ -685,11 +710,15 @@ impl Janela {
             )
             .children(contador.map(|texto| {
                 div()
+                    .id(SharedString::from(format!("contador-busca-{id}")))
                     .flex_none()
                     .px(esp::E4)
                     .metadado()
                     .text_color(if sem_achado { Cores::ambar() } else { Cores::tenue() })
                     .child(texto)
+                    .when_some(contador_longo.filter(|_| estreita), |s, longo| {
+                        s.tooltip(move |window, cx| Tooltip::new(longo.clone()).build(window, cx))
+                    })
             }))
             .child(seta("achado-anterior", Lucide::ChevronUp, "Achado anterior", &AchadoAnterior, -1))
             .child(seta("achado-seguinte", Lucide::ChevronDown, "Próximo achado", &AchadoSeguinte, 1))
@@ -704,7 +733,7 @@ impl Janela {
             div()
                 .absolute()
                 .top(esp::E8)
-                .right(esp::E8)
+                .right(direita)
                 .left(esp::E8)
                 .flex()
                 .justify_end()
@@ -824,6 +853,33 @@ mod testes {
         assert!(chaves.contains(&"c1:1:grupo".to_string()));
         // Uma mensagem não tem grupo, só o próprio bloco e o "Mostrar tudo".
         assert_eq!(chaves_para_abrir("c1", &itens, 0, false), ["c1:0", "c1:0:tudo"]);
+    }
+
+    /// O raciocínio no meio da trilha não a parte: o achado depois dele abre o grupo que começa no
+    /// primeiro raciocínio, o mesmo que a conversa desenha.
+    #[test]
+    fn o_raciocinio_faz_parte_da_trilha_que_o_ctrl_f_abre() {
+        let raciocinio = || Item::Raciocinio { em: 0, texto: String::new(), milis: 500 };
+        let itens = vec![
+            Item::Assistente { em: 0, texto: "antes".into() },
+            raciocinio(),
+            ferramenta("Bash", "parar", None),
+            raciocinio(),
+            ferramenta("Bash", "parar de novo", None),
+        ];
+        for indice in [2, 4] {
+            let chaves = chaves_para_abrir("c1", &itens, indice, false);
+            assert!(chaves.contains(&"c1:1:grupo".to_string()), "{indice}: {chaves:?}");
+        }
+        // Com a troca de dia no meio, a trilha se parte ali, como na conversa.
+        let dia = 86_400;
+        let com_dia = vec![
+            Item::Assistente { em: 1_773_316_800, texto: "antes".into() },
+            Item::Raciocinio { em: 1_773_316_800, texto: String::new(), milis: 1 },
+            Item::Raciocinio { em: 1_773_316_800 + dia, texto: String::new(), milis: 1 },
+            ferramenta("Bash", "parar", None),
+        ];
+        assert!(chaves_para_abrir("c1", &com_dia, 3, false).contains(&"c1:2:grupo".to_string()));
     }
 
     #[test]

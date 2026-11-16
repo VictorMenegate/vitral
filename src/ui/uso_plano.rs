@@ -88,6 +88,15 @@ impl Janela {
             && self.paineis[ix].medida.rem * 15. < 1000.
     }
 
+    /// Os anéis ficam por cima da ponta direita do painel `ix`: o último, com a direita fechada.
+    /// Em qualquer largura (a barra do Ctrl+F encosta na borda); `uso_sobre_as_mensagens` é para
+    /// a coluna de leitura, que só chega lá no painel estreito.
+    pub(super) fn uso_no_ultimo_painel(&self, ix: usize, cx: &App) -> bool {
+        ix + 1 == self.paineis.len()
+            && !self.direita_visivel()
+            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
+    }
+
     /// A direita (ao lado ou em gaveta) ocupa a borda onde moram os anéis: o conteúdo dela, abaixo
     /// da faixa das abas, ganha `FOLGA_DO_USO` à direita. Sem isso o selo da conta encostava no
     /// fim do texto de "Este chat" e o anel do Codex tocava a borda do cartão (relatório de
