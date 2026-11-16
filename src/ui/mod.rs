@@ -1376,6 +1376,8 @@ impl Render for Janela {
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
         }
+        // O desfoque do sistema acompanha o nível (sem desfoque no Opaco).
+        crate::acompanhar_o_fundo(window, crate::tema::transparencia());
         // A chapa de metal atrás de tudo: corre quando um chat dos painéis abertos está
         // trabalhando (o que roda em segundo plano não a acelera).
         let trabalhando = self.motor.as_ref().is_some_and(|motor| {
