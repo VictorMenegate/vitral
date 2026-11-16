@@ -24,6 +24,8 @@ import sys
 import tempfile
 import time
 import uuid
+import struct
+import zlib
 
 MARCA = ".vitrine-do-vitral"
 AGORA = int(time.time())
@@ -108,6 +110,22 @@ def git(pasta, *args, quando=None, indice=None):
     if saida.returncode != 0:
         sys.exit(f"git {' '.join(args)} em {pasta} falhou:\n{saida.stderr}")
     return saida.stdout.strip()
+
+
+def png_escuro(caminho, largura=640, altura=400):
+    """Uma captura de tela de mentira (um PNG escuro com uma faixa azul em cima), para o anexo de
+    imagem da demonstração."""
+    linhas = []
+    for y in range(altura):
+        cor = (0x1F, 0x2A, 0x4A) if y < 48 else (0x12, 0x15, 0x1C)
+        linhas.append(b"\x00" + bytes(cor) * largura)
+    def bloco(tipo, dados):
+        return struct.pack(">I", len(dados)) + tipo + dados + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+    png = (b"\x89PNG\r\n\x1a\n" + bloco(b"IHDR", struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0))
+           + bloco(b"IDAT", zlib.compress(b"".join(linhas))) + bloco(b"IEND", b""))
+    os.makedirs(os.path.dirname(caminho), exist_ok=True)
+    with open(caminho, "wb") as f:
+        f.write(png)
 
 
 def escrever(pasta, arquivos):
@@ -1237,7 +1255,7 @@ def gerar(raiz):
 
     # Ids de antemão (as conversas citam umas às outras).
     C = {k: novo_id() for k in ["carrinho", "contato", "prefs", "ideias", "lentas", "fonte", "gnome50",
-                                "csv", "seo", "deploy", "rotina"]}
+                                "csv", "seo", "deploy", "rotina", "baloes"]}
     W = {n: novo_id() for n in range(1, 9)}
 
     preparacao_loja = verificacao(
@@ -1702,6 +1720,52 @@ class CupomAdmin(admin.ModelAdmin):
                      aviso("O Vitral foi fechado no meio deste turno. Use Retomar para o Claude continuar "
                            "de onde parou."),
                  ], turno_aberto=True, custo_usd=0.22, contexto=14100))
+
+    # ---------- C12 loja: balões e cartões de erro (balão e cartão de erro, 16/11/2026) ----------
+    captura = os.path.join(raiz_loja, "capturas", "carrinho-vazio.png")
+    png_escuro(captura)
+    log_colado = (
+        "Rodei os testes e deu isso aqui, olha:\n"
+        "FAIL: test_cupom_expirado (produtos.tests.CupomTests)\n"
+        "Traceback (most recent call last):\n"
+        "  File produtos/tests.py, line 18, in test_cupom_expirado\n"
+        "    self.assertEqual(desconto(cupom, Decimal(\"100\")), Decimal(\"0\"))\n"
+        "AssertionError: Decimal('10.00') != Decimal('0')\n"
+        "\n"
+        "Acho que o problema está em produtos/models.py, na validação da data.\n"
+        "O carrinho em produtos/views.py chama o desconto antes de conferir o cupom.\n"
+        "Ran 6 tests in 0.041s\n"
+        "FAILED (failures=1)\n"
+        "Também vi um aviso de migração pendente:\n"
+        "  Your models in app(s): 'produtos' have changes that are not yet reflected\n"
+        "  Run 'manage.py makemigrations' to make new migrations\n"
+        "E o README.md ainda fala do carrinho antigo.\n"
+        "Dá para olhar o requirements.txt também?\n"
+        "O Django está na 5.2.7.\n"
+        "Não sei se o Pillow precisa subir.\n"
+        "Valeu!"
+    )
+    guardar(chat(C["baloes"], "loja", "Balões e erros", "Coordenador", raiz_loja,
+                 hoje(80), hoje(60), [
+                     usuario(log_colado),
+                     assistente("O cupom expirado não é recusado: `desconto` não confere a data. Corrijo em "
+                                "`produtos/models.py` e rodo os testes de novo."),
+                     usuario("Assim fica bom?\n\n```python\nif cupom.expira_em < timezone.now():\n"
+                             "    return Decimal(\"0\")\n```"),
+                     assistente("Fica, com `timezone.now()` e não `datetime.now()`, para valer o fuso do projeto."),
+                     usuario("O carrinho vazio está assim:", anexos=[captura]),
+                     assistente("A mensagem do carrinho vazio some porque o template testa `itens` em vez de `carrinho`."),
+                     usuario("/compact"),
+                     usuario("Revisa o carrinho com o Codex."),
+                     aviso("O turno terminou com erro: You've hit your usage limit. Upgrade to Pro "
+                           "(https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to "
+                           "purchase more credits or try again at 12:30 PM.", erro=True),
+                     usuario("Então segue no Claude."),
+                     aviso("A conta Pessoal perdeu o login no Claude Code. Entre nela de novo em Contas do "
+                           "Claude (menu do logo) e use Tentar de novo.", erro=True),
+                     aviso("O turno terminou com erro: OAuth token revoked", erro=True),
+                     aviso("Interrompido."),
+                 ], custo_usd=0.12, contexto=21400))
 
     # ---------- C4 rascunhos (sem git): conversa com erro ----------
     guardar(chat(C["ideias"], "rascunhos", "Roteiro do episódio 12", "Coordenador", raiz_rasc,

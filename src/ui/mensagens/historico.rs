@@ -114,7 +114,6 @@ impl Janela {
             return Vec::new();
         };
         let vista = self.historico_de(chat, importada, cx);
-        let chave = |s: &str| format!("{}:historico-{s}", chat.id);
         let Some(itens) = vista.itens else {
             let texto = match &vista.erro {
                 Some(erro) => format!(
@@ -123,7 +122,7 @@ impl Janela {
                 ),
                 None => "Lendo a conversa do Claude Code…".to_string(),
             };
-            let (bloco, elemento) = aviso_do_chat(&chave("lendo"), &texto, false, &Realce::default());
+            let (bloco, elemento) = aviso_do_chat(&texto, false, &Realce::default());
             return vec![(bloco, None, elemento)];
         };
         // O histórico do Claude Code fica fora da busca e da rolagem da conversa: ele é lido do

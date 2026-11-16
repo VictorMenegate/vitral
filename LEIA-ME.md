@@ -284,8 +284,22 @@ componentes do GPUI Kit.
   que parou) e ganha **Retomar** no cartão da lista, na direita e no fim da conversa. Um chat
   cortado no meio do turno também. O aviso ao reabrir sai uma vez só.
 - **Chat que cai** (processo que morre ou não abre, erro da API): o turno termina com erro, a faixa
-  acima da caixa diz "O último turno falhou" com **Tentar de novo**, e com a janela em segundo plano
-  vem a notificação. Nada tenta de novo sozinho. Quando o Claude Code manda o erro também como
+  acima da caixa diz em poucas palavras o que foi ("Limite de uso do Codex · volta 12:30", "Sem
+  login no Claude Code", "Sem conexão", "Serviço sobrecarregado", "Conversa longa demais para o
+  modelo" ou "O último turno falhou") com **Tentar de novo**, e com a janela em segundo plano
+  vem a notificação. Nada tenta de novo sozinho. Na conversa, o erro vira o **cartão de erro**
+  (`src/ui/mensagens/erros.rs` lê o texto; `CartaoDeErro` desenha): o ícone na cor do assunto
+  (vermelho quando o turno não pôde seguir, azul-claro quando precisa de você, âmbar quando seguiu
+  com ressalva, neutro na rede e no serviço sobrecarregado) num véu de 6%, o título em português,
+  a frase do que fazer ("Volta às 12:30."), o Copiar no canto (leva o texto do agente como veio) e
+  o texto do agente atrás de **Detalhes**, num poço escuro em mono, com as URLs encurtadas no
+  domínio e clicáveis (aberto quando o Vitral não conhece o erro). No erro vivo (o último, sem
+  mensagem sua depois e com o turno parado) entram até duas ações: **Ver o uso** e **Continuar no
+  Claude** no limite do Codex; **Contas do Claude** e **Continuar no Codex** no limite do Claude;
+  **Entrar de novo** (ou **Entrar no Codex**) no login perdido; **Instalar o Codex**; **Compactar**
+  na conversa longa demais. O Continuar troca quem responde e repete o turno; na dupla (o Claude e
+  o Codex no mesmo chat), passa a vez ao outro. O **Tentar de novo** fica só na faixa. O limite do
+  plano com outra conta livre continua trocando de conta sozinho, sem cartão. Quando o Claude Code manda o erro também como
   resposta, ela fica gravada mas não é desenhada nem contada pela busca: aparece só o cartão do erro
   (`resposta_repete_o_erro`, em `src/ui/mensagens.rs`).
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
@@ -496,8 +510,8 @@ ferramentas, vale por painel).
   com o texto dela e, à direita, com o enviar, que entra com um fade e 8 px de baixo, só fica o que
   pede um botão seu: **Parada** com **Retomar** (âmbar quando foi o Vitral que parou; o motivo no
   formato da lista e do sino, "Parada · Vitral fechou", numa linha só, com reticências quando
-  aperta, e o motivo inteiro na dica; a ação à direita nunca é cortada), **O último
-  turno falhou** com **Tentar de novo**, mensagens esperando com **Entregar agora** e a pasta do
+  aperta, e o motivo inteiro na dica; a ação à direita nunca é cortada), o que falhou (**Limite
+  do plano · volta 15:00**, **Sem conexão**, **O último turno falhou**) com **Tentar de novo**, mensagens esperando com **Entregar agora** e a pasta do
   chat que sumiu do disco. Esperando você, ela some (o pedido está logo abaixo).
 - **Planejar.** O plano aparece num cartão com a faixa âmbar em cima e o modo em que a conversa
   fica depois de aprovar ("Depois de aprovar: Aceitar edições"). **Aprovar e executar**
@@ -579,7 +593,10 @@ ferramentas, vale por painel).
   faixa logo abaixo já tem o botão; quando ele é o último item e a faixa diz "Parada · Vitral
   fechou", ele nem aparece, para o mesmo fato não vir duas vezes, menos com a busca aberta),
   linhas tênues ("Tentando de novo.")
-  ou, quando é erro, um alerta vermelho com Copiar. O que chega com a conversa aberta no painel (a sua
+  ou, quando é erro, o cartão de erro (título em português, o que fazer, Copiar no canto, o texto do
+  agente em **Detalhes**; ver **Chat que cai**). A troca da sessão antiga do Claude Code por uma
+  nova com resumo (a que sumiu e a que expirou) é o marco "Sessão nova, com um resumo da anterior",
+  e as linhas de troca de conta ou de agente levam o ícone de troca. O que chega com a conversa aberta no painel (a sua
   mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
   conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
   (e antes do separador de dia), 12 depois dele e 12 entre os blocos de um turno (`esp::ENTRE_TURNOS`

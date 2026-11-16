@@ -1088,12 +1088,21 @@ impl Cores {
     pub fn selecao_de(cor: Hsla) -> Hsla {
         cor.opacity(0.20)
     }
-    /// Fundo de pílula de estado e de alerta.
+    /// Fundo de pílula de estado.
     pub fn tinta(cor: Hsla) -> Hsla {
         cor.opacity(0.12)
     }
     pub fn tinta_borda(cor: Hsla) -> Hsla {
         cor.opacity(0.30)
+    }
+    /// Fundo do cartão de erro e do Alerta: a cor fica no ícone, e o fundo é só um véu (balão e
+    /// cartão de erro, 16/11/2026; era a `tinta`, de 12%).
+    pub fn tinta_leve(cor: Hsla) -> Hsla {
+        cor.opacity(0.06)
+    }
+    /// O fio do cartão de erro e do Alerta (era a `tinta_borda`, de 30%).
+    pub fn tinta_borda_leve(cor: Hsla) -> Hsla {
+        cor.opacity(0.18)
     }
     /// A cor misturada ao marinho, opaca: o fundo das abas e da moldura de perigo.
     pub fn tinta_solida(cor: Hsla, alfa: f32) -> Hsla {
@@ -1446,6 +1455,9 @@ pub(crate) mod testes {
             // O seu balão é opaco: o código em linha e as pílulas vão no poço escuro dentro dele.
             ("balão", Rgba::from(Cores::balao())),
             ("poço no balão", sobre(Cores::recuo(), Rgba::from(Cores::balao()))),
+            // O cartão de erro mora no painel translúcido: vale a regra dele.
+            ("cartão de erro", sobre(Cores::tinta_leve(Cores::vermelho()), painel)),
+            ("poço do cartão de erro", sobre(Cores::recuo(), sobre(Cores::tinta_leve(Cores::vermelho()), painel))),
         ];
         let textos = [
             ("forte", Cores::forte()),
@@ -1468,7 +1480,10 @@ pub(crate) mod testes {
                 // texto continuam em 4,5:1, e as vozes baixas e as cores de estado valem 3:1 (o
                 // que está atrás da janela ainda pesa). Nos cartões de conversa vale o mesmo; no
                 // que flutua (menus, diálogos, a caixa de mensagem), tudo em 4,5:1.
-                let transparente = matches!(nome_fundo, "vidro de leitura" | "painel" | "painel com brilho" | "painel com reflexo")
+                let transparente = matches!(
+                    nome_fundo,
+                    "vidro de leitura" | "painel" | "painel com brilho" | "painel com reflexo" | "cartão de erro" | "poço do cartão de erro"
+                )
                     && !matches!(nome, "forte" | "texto");
                 let minimo = if transparente { 3. } else { 4.5 };
                 assert!(c >= minimo, "{nome} sobre {nome_fundo}: {c:.2}:1");

@@ -28,9 +28,9 @@ use gpui_kit::*;
 use super::{
     IrAoFim, Janela,
     componentes::{
-        Alerta, AnelGirando, BotaoCopiar, BotaoDeSegurar, CabecalhoDeSecao, EstadoDaMoldura, Etiqueta, azulejo,
+        AnelGirando, BotaoCopiar, CartaoDeErro, BotaoDeSegurar, CabecalhoDeSecao, EstadoDaMoldura, Etiqueta, azulejo,
         botao_claro, miolo_da_moldura, moldura_dupla, CaixaDeCodigo, EstadoVazio, FaixaCaixa, Flutuante as _,
-        LarguraPainel, Marca, Papel as Quem, Selo, TamanhoBotao, Tom, botao_fantasma, botao_icone, botao_primario, relogio,
+        LarguraPainel, Marca, Papel as Quem, Selo, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, relogio,
         contagem, icone_do_modo, motivo_curto, teclas, texto_arco_iris,
     },
     busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
@@ -48,8 +48,6 @@ use crate::{
 };
 
 pub(super) mod historico;
-// O cartão de erro passa a usar a leitura na parte seguinte (balão e cartão de erro, 16/11/2026).
-#[cfg_attr(not(test), allow(dead_code))]
 mod erros;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
@@ -439,16 +437,19 @@ impl Janela {
                 (Bloco::Recebida, self.mensagem_recebida(contexto, indice, &chave, de, texto, item.em(), window, cx))
             }
             Item::Ferramenta { .. } | Item::Raciocinio { .. } => (Bloco::Log, self.trilha(contexto, &[(indice, item)], false, cx)),
+            Item::Aviso { texto, erro, .. } if tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta => {
+                (Bloco::Alerta, self.cartao_de_erro(contexto, &chave, indice, texto, None, window, cx))
+            }
             Item::Aviso { texto, erro, .. } => {
                 let realce = contexto.busca.realce(indice, Campo::Texto);
-                let (bloco, elemento) = aviso_do_chat(&chave, texto, *erro, &realce);
+                let (bloco, elemento) = aviso_do_chat(texto, *erro, &realce);
                 let rolar = RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, elemento);
                 (bloco, rolar.into_any_element())
             }
-            Item::Cartao { id, .. } => aviso_do_chat(&chave, &format!("Cartão #{id}"), false, &Realce::default()),
+            Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
             Item::Desconhecido(_) => {
-                aviso_do_chat(&chave, "(mensagem de uma versão mais nova)", false, &Realce::default())
+                aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
             }
         }
     }
@@ -596,6 +597,178 @@ impl Janela {
             .group(grupo.clone())
             .child(div().relative().w_full().child(corpo).child(barra.child(barra_de_acoes(grupo, acoes, cx))))
             .into_any_element()
+    }
+
+    /// O erro de um turno: o cartão com o título em português, o que fazer, o Copiar no canto, as
+    /// ações (só no erro vivo, com o turno parado) e o texto do agente atrás de "Detalhes" (aberto
+    /// no erro que o Vitral não conhece). `antes` é o aviso do Vitral dobrado nele (o mesmo
+    /// problema dito duas vezes), com o índice dele, para a busca rolar até o cartão.
+    #[allow(clippy::too_many_arguments)]
+    fn cartao_de_erro(
+        &self,
+        contexto: &Contexto,
+        chave: &str,
+        indice: usize,
+        texto: &str,
+        antes: Option<(usize, &str)>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let chat = contexto.chat;
+        let lido = erros::ler_erro(texto, chat.agente, antes.map(|(_, t)| t));
+        let (icone, cor) = erros::aparencia(lido.tipo);
+        let realce = contexto.busca.realce(indice, Campo::Texto);
+        let id = |nome: &str| SharedString::from(format!("erro-{chave}-{nome}"));
+        let mut cartao = CartaoDeErro::new(icone, cor, lido.titulo.clone())
+            .canto(BotaoCopiar::new(id("copiar"), lido.para_copiar.clone()).dica("Copiar o erro"));
+        if let Some(frase) = lido.frase.clone() {
+            cartao = if lido.cru.is_none() && !realce.vazio() {
+                cartao.frase(busca_conversa::realcar(frase, &realce))
+            } else {
+                cartao.frase(frase)
+            };
+        }
+        // As ações só no erro vivo e com o turno parado: no que já ficou para trás sobra o
+        // "Detalhes". No máximo duas, e nunca o "Tentar de novo", que mora na faixa.
+        if erros::erro_vivo(&chat.itens, indice) && !contexto.rodando {
+            for acao in self.acoes_do_erro(contexto, &lido, chave, window, cx) {
+                cartao = cartao.acao(acao);
+            }
+        }
+        if let Some(cru) = &lido.cru {
+            let chave_detalhes = format!("{chave}:detalhes");
+            let chave_tudo = format!("{chave_detalhes}:tudo");
+            // A busca abre sozinha, como a trilha.
+            let aberto = !lido.recolhido || self.expandidos.contains(&chave_detalhes) || !realce.vazio();
+            if lido.recolhido {
+                let icone = if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight };
+                cartao = cartao.acao(fantasma(id("detalhes"), Some(icone), "Detalhes", TamanhoBotao::Linha, alternar(chave_detalhes, cx), window, cx));
+            }
+            if aberto {
+                let tudo = self.expandidos.contains(&chave_tudo);
+                let longo = cru.lines().count() > 8 || cru.chars().count() > 640;
+                let cortar = longo && !tudo;
+                let mostrar = longo.then(|| {
+                    let (icone, rotulo) = if tudo { (Lucide::ChevronUp, "Mostrar menos") } else { (Lucide::ChevronDown, "Mostrar tudo") };
+                    h_flex().ml(r(-8.)).child(fantasma(id("tudo"), Some(icone), rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx))
+                });
+                // 14 do cartão menos 8: o mínimo, 10.
+                let original = v_flex()
+                    .w_full()
+                    .gap(esp::E4)
+                    .bg(Cores::recuo())
+                    .rounded(raio::CONTROLE)
+                    .px(esp::E8)
+                    .py(esp::E6)
+                    .mono_pequeno()
+                    .text_color(Cores::tenue())
+                    .child(
+                        TextoAchado::novo(format!("{chave}:original").into(), erros::erro_em_markdown(cru), realce.clone())
+                            .rolagem(contexto.rolagem)
+                            .estilo(estilo_do_erro)
+                            .linhas(cortar.then_some(8)),
+                    )
+                    .children(mostrar);
+                cartao = cartao.original(original, !lido.recolhido);
+            }
+        }
+        let elemento = RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, cartao.into_any_element()).into_any_element();
+        // Um achado só no aviso dobrado também rola até o cartão (sem marcar a palavra).
+        match antes {
+            Some((i, _)) => {
+                let realce_antes = contexto.busca.realce(i, Campo::Texto);
+                RolarAoAchado::novo(format!("rolar-{}:{i}", chat.id).into(), &realce_antes, contexto.rolagem, elemento).into_any_element()
+            }
+            None => elemento,
+        }
+    }
+
+    /// As ações do erro vivo, pela tabela da especificação (balão e cartão de erro, 16/11/2026).
+    fn acoes_do_erro(&self, contexto: &Contexto, lido: &erros::ErroLido, chave: &str, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
+        use erros::TipoDeErro;
+        let chat = contexto.chat;
+        let id = |nome: &str| SharedString::from(format!("erro-{chave}-{nome}"));
+        let mut acoes: Vec<AnyElement> = Vec::new();
+        // Continuar no outro agente: troca quem responde e repete o turno (a passagem
+        // `TrocouDeAgente` já pula a mensagem repetida). Na dupla, o outro já está no chat: a vez
+        // passa a ele, que recebe o que este fez, em vez de trocar o agente do chat (coordenação,
+        // 16/11/2026).
+        let outro = chat.agente.outro();
+        let pode_continuar = lido.agente == chat.agente
+            && contexto.motor.pode_tentar_de_novo(&chat.id)
+            && (outro != Agente::Codex || crate::agente_codex::instalado());
+        let continuar = |acoes: &mut Vec<AnyElement>| {
+            if !pode_continuar {
+                return;
+            }
+            let (motor_e, id_chat, dupla) = (self.motor.clone(), chat.id.clone(), chat.parceiro.is_some());
+            let rotulo = format!("Continuar no {}", outro.nome());
+            acoes.push(
+                fantasma(
+                    id("continuar"),
+                    Some(Lucide::Shuffle),
+                    rotulo,
+                    TamanhoBotao::Linha,
+                    move |_, _, cx| {
+                        let Some(m) = &motor_e else { return };
+                        m.update(cx, |m, cx| {
+                            if dupla {
+                                m.mudar_chat(&id_chat, |c| { c.trocar_vez(); }, cx);
+                                m.tentar_de_novo(&id_chat, cx);
+                            } else if m.definir_agente(&id_chat, outro, None, cx) {
+                                m.tentar_de_novo(&id_chat, cx);
+                            }
+                        });
+                    },
+                    window,
+                    cx,
+                )
+                .into_any_element(),
+            );
+        };
+        let contas = |rotulo: &str, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, cx.listener(|this, _, window, cx| this.dialogo_contas(window, cx)), window, cx)
+                .into_any_element()
+        };
+        let instalar = |rotulo: &str, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_codex(), window, cx)
+                .into_any_element()
+        };
+        match (lido.tipo, lido.agente) {
+            (TipoDeErro::Limite, Agente::Codex) => {
+                if let Some(url) = lido.url_de_uso.clone() {
+                    acoes.push(
+                        fantasma(id("uso"), Some(Lucide::ExternalLink), "Ver o uso", TamanhoBotao::Linha, move |_, _, cx| cx.open_url(&url), window, cx)
+                            .into_any_element(),
+                    );
+                }
+                continuar(&mut acoes);
+            }
+            (TipoDeErro::Limite, Agente::Claude) => {
+                acoes.push(contas("Contas do Claude", Lucide::CircleUserRound, "contas"));
+                continuar(&mut acoes);
+            }
+            (TipoDeErro::Login, Agente::Claude) => acoes.push(contas("Entrar de novo", Lucide::KeyRound, "entrar")),
+            (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar("Entrar no Codex", Lucide::KeyRound, "entrar")),
+            (TipoDeErro::SemCodex, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
+            (TipoDeErro::Contexto, Agente::Claude) => {
+                let painel = contexto.painel;
+                acoes.push(
+                    fantasma(
+                        id("compactar"),
+                        Some(Lucide::Minimize),
+                        "Compactar",
+                        TamanhoBotao::Linha,
+                        cx.listener(move |this, _, window, cx| this.por_na_caixa(painel, "/compact ", window, cx)),
+                        window,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+            }
+            _ => {}
+        }
+        acoes
     }
 
     /// Resposta do assistente: sem balão, na largura da coluna. Cada texto ganha o Copiar numa
@@ -867,6 +1040,15 @@ fn estilo_do_balao(vista: TextView, cx: &App) -> TextView {
             })
             .table(StyleRefinement::default().rounded(raio::CONTROLE).border_color(Cores::borda())),
     )
+}
+
+/// O texto cru de um erro: parágrafos juntos e só link da web, aberto no navegador.
+fn estilo_do_erro(vista: TextView, cx: &App) -> TextView {
+    estilo_das_mensagens(vista, cx).style(estilo_texto(cx).paragraph_gap(esp::E4)).on_link_click(|url, _, _, cx| {
+        if super::links_arquivo::link_permitido(url, false) {
+            cx.open_url(url);
+        }
+    })
 }
 
 /// A resposta em trechos, na ordem: `true` nas citações em bloco (linhas que começam com ">",
@@ -2269,7 +2451,7 @@ enum ClasseAvisoChat {
     Marco,
     /// Uma linha tênue: nova tentativa, conta no limite, cópia sendo preparada.
     Info,
-    /// Erro, no alerta vermelho.
+    /// Erro, no cartão de erro (`Janela::cartao_de_erro`).
     Alerta,
 }
 
@@ -2277,8 +2459,15 @@ enum ClasseAvisoChat {
 /// não muda: o motor compara o texto exato para não avisar duas vezes.
 const VITRAL_FECHADO: &str = "O Vitral foi fechado";
 
+/// A troca da sessão do Claude Code por uma nova com resumo: as duas versões (a que "sumiu", gravada
+/// como erro, e a que "expirou") são um marco, porque o turno continuou.
+const SESSAO_ANTIGA: &str = "A sessão antiga do Claude Code";
+
 /// Os textos vêm todos de `motor.rs`.
 fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
+    if texto.starts_with(SESSAO_ANTIGA) {
+        return ClasseAvisoChat::Marco;
+    }
     const MARCOS: [&str; 6] = [
         "Sessão nova",
         "Interrompido",
@@ -2296,20 +2485,12 @@ fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
     }
 }
 
-/// O título de um erro (o que vem antes do primeiro ": ") e o resto.
-fn partes_do_erro(texto: &str) -> (Option<String>, String) {
-    match texto.split_once(": ") {
-        Some((titulo, resto)) if !resto.trim().is_empty() && titulo.chars().count() <= 80 => {
-            (Some(titulo.to_string()), resto.to_string())
-        }
-        _ => (None, texto.to_string()),
-    }
-}
-
-fn aviso_do_chat(chave: &str, texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement) {
+fn aviso_do_chat(texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement) {
     match tipo_aviso(texto, erro) {
         ClasseAvisoChat::Marco => {
-            let (icone, cor, rotulo) = if texto.starts_with("Interrompido") {
+            let (icone, cor, rotulo) = if texto.starts_with(SESSAO_ANTIGA) {
+                (Lucide::RefreshCw, Cores::tenue(), "Sessão nova, com um resumo da anterior".to_string())
+            } else if texto.starts_with("Interrompido") {
                 (Lucide::CirclePause, Cores::tenue(), "Turno interrompido".to_string())
             } else if texto.starts_with(VITRAL_FECHADO) {
                 // Um marco de uma linha, sem a instrução (a faixa logo abaixo já tem o Retomar, e
@@ -2345,8 +2526,22 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool, realce: &Realce) -> (Bloc
                 .into_any_element();
             (Bloco::Marco, elemento)
         }
-        ClasseAvisoChat::Info => {
-            let icone = if texto.to_lowercase().contains("tentando de novo") { Lucide::RotateCw } else { Lucide::Info };
+        // O erro vai para o cartão (`Janela::cartao_de_erro`); aqui só chega sem ser erro.
+        ClasseAvisoChat::Info | ClasseAvisoChat::Alerta => {
+            // O ícone pelo assunto: a troca de conta ou de agente, o limite, a nova tentativa
+            // (balão e cartão de erro, 16/11/2026).
+            let icone = if texto.contains("chegou ao limite do plano; continuando na conta")
+                || texto.contains("perdeu o login no Claude Code; continuando na conta")
+                || texto.starts_with("Daqui em diante quem responde é o")
+            {
+                Lucide::Shuffle
+            } else if texto.starts_with("Todas as contas chegaram ao limite do plano") {
+                Lucide::Gauge
+            } else if texto.to_lowercase().contains("tentando de novo") {
+                Lucide::RotateCw
+            } else {
+                Lucide::Info
+            };
             // Uma linha de log como as outras (28, ícone a 12), que cresce se o texto quebrar.
             let elemento = h_flex()
                 .items_start()
@@ -2366,21 +2561,6 @@ fn aviso_do_chat(chave: &str, texto: &str, erro: bool, realce: &Realce) -> (Bloc
                 )
                 .into_any_element();
             (Bloco::Log, elemento)
-        }
-        ClasseAvisoChat::Alerta => {
-            let (titulo, detalhe) = partes_do_erro(texto);
-            // No alerta o realce fica no corpo (o título é só o começo da mesma frase).
-            let alerta = Alerta::new(Tom::Erro, sem_marcacao(&detalhe)).acao(copiar(chave, texto));
-            let alerta = match titulo {
-                Some(t) => alerta.titulo(sem_marcacao(&t)),
-                None => alerta,
-            };
-            let alerta = if realce.vazio() {
-                alerta
-            } else {
-                alerta.texto_rico(busca_conversa::realcar(sem_marcacao(&detalhe), realce))
-            };
-            (Bloco::Alerta, alerta.into_any_element())
         }
     }
 }
@@ -2694,14 +2874,22 @@ impl Janela {
                         .into_any_element(),
                 ),
             ),
+            // O que falhou, em poucas palavras (balão e cartão de erro, 16/11/2026): "Limite de uso
+            // do Codex · volta 12:30" diz mais que "O último turno falhou".
             Situacao::Falhou => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(icone_de(Lucide::CircleX, 14.).text_color(Cores::vermelho()))
-                    .child(texto("O último turno falhou".into()))
-                    .into_any_element(),
+                {
+                    let (icone, cor, rotulo) = match motor.execucao(&chat.id) {
+                        Execucao::Erro(texto) => erros::na_faixa(&texto, chat.agente),
+                        _ => (Lucide::CircleX, Some(Cores::vermelho()), "O último turno falhou".into()),
+                    };
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(r(8.))
+                        .child(icone_de(icone, 14.).text_color(cor.unwrap_or(Cores::tenue())))
+                        .child(texto(rotulo))
+                        .into_any_element()
+                },
                 Some(
                     botao_fantasma(
                         "faixa-tentar",
@@ -3948,7 +4136,7 @@ mod testes {
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
-        com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, partes_do_erro, previa, resumo_da_trilha,
+        com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
@@ -4110,6 +4298,15 @@ mod testes {
             ClasseAvisoChat::Info
         );
         assert_eq!(tipo_aviso("Falhou: o processo caiu", true), ClasseAvisoChat::Alerta);
+        // A sessão trocada por uma nova com resumo: o turno continuou, é marco nas duas versões.
+        assert_eq!(
+            tipo_aviso("A sessão antiga do Claude Code sumiu; continuei numa nova com um resumo.", true),
+            ClasseAvisoChat::Marco
+        );
+        assert_eq!(
+            tipo_aviso("A sessão antiga do Claude Code expirou; continuei numa nova com um resumo.", false),
+            ClasseAvisoChat::Marco
+        );
         assert_eq!(
             partes_do_erro("O turno terminou com erro: limite"),
             (Some("O turno terminou com erro".into()), "limite".into())

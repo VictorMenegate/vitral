@@ -1033,7 +1033,66 @@ impl Vitrine {
             .child(Button::new("aviso-texto").outline().label("Texto simples").on_click(|_, window, cx| {
                 window.push_notification(Notification::new().message("Caminho copiado").chave("copiado"), cx)
             }));
-        um("Alertas e avisos", cx, div().flex().flex_col().gap(r(16.)).child(caixa).child(avisos))
+        // O cartão de erro da conversa (balão e cartão de erro, 16/11/2026): limite do Codex com
+        // as ações e o Detalhes fechado; login em espera; rede neutra; desconhecido com o texto do
+        // Codex aberto (os links com o domínio de rótulo); processo só com o título.
+        let fantasma = |id: &'static str, icone: Lucide, rotulo: &'static str, window: &Window, cx: &App| {
+            botao_fantasma(id, Some(icone.into()), rotulo, TamanhoBotao::Linha, window, cx)
+        };
+        let copiar = |id: &'static str| BotaoCopiar::new(id, "You've hit your usage limit.").dica("Copiar o erro");
+        let cru = "You've hit your usage limit. Upgrade to Pro ([chatgpt.com](https://chatgpt.com/explore/pro)), visit \
+                   [chatgpt.com](https://chatgpt.com/settings/usage) to purchase more credits or try again at 12:30 PM.";
+        let original = div()
+            .w_full()
+            .bg(Cores::recuo())
+            .rounded(raio::CONTROLE)
+            .px(esp::E8)
+            .py(esp::E6)
+            .mono_pequeno()
+            .text_color(Cores::tenue())
+            .child(gpui_kit::component::text::TextView::markdown("vitrine-erro-cru", cru));
+        let cartoes = div()
+            .flex()
+            .flex_col()
+            .gap(r(8.))
+            .w(r(520.))
+            .child(
+                CartaoDeErro::new(Lucide::Gauge, Some(Cores::vermelho()), "O Codex chegou ao limite de uso")
+                    .canto(copiar("erro-limite-copiar"))
+                    .frase("Volta às 12:30.")
+                    .acao(fantasma("erro-limite-uso", Lucide::ExternalLink, "Ver o uso", window, cx))
+                    .acao(fantasma("erro-limite-continuar", Lucide::Shuffle, "Continuar no Claude", window, cx))
+                    .acao(fantasma("erro-limite-detalhes", Lucide::ChevronRight, "Detalhes", window, cx)),
+            )
+            .child(
+                CartaoDeErro::new(Lucide::KeyRound, Some(Cores::espera()), "A conta Pessoal perdeu o login")
+                    .canto(copiar("erro-login-copiar"))
+                    .frase("Entre nela de novo e tente outra vez.")
+                    .acao(fantasma("erro-login-entrar", Lucide::KeyRound, "Entrar de novo", window, cx))
+                    .acao(fantasma("erro-login-detalhes", Lucide::ChevronRight, "Detalhes", window, cx)),
+            )
+            .child(
+                CartaoDeErro::new(Lucide::WifiOff, None, "Sem conexão com o Claude")
+                    .canto(copiar("erro-rede-copiar"))
+                    .frase("A internet caiu ou o serviço não respondeu. Quando voltar, tente outra vez."),
+            )
+            .child(
+                CartaoDeErro::new(Lucide::CircleX, Some(Cores::vermelho()), "O Codex parou com um erro")
+                    .canto(copiar("erro-cru-copiar"))
+                    .original(original, true),
+            )
+            .child(CartaoDeErro::new(Lucide::Unplug, Some(Cores::vermelho()), "O Claude Code fechou sem responder").canto(copiar("erro-processo-copiar")));
+        um(
+            "Alertas e avisos",
+            cx,
+            div()
+                .flex()
+                .flex_col()
+                .gap(r(16.))
+                .child(caixa)
+                .child(div().flex().flex_col().gap(r(8.)).child(div().rotulo().text_color(Cores::tenue()).child("Cartão de erro")).child(cartoes))
+                .child(avisos),
+        )
     }
 
     fn vazios(&self, cx: &mut App) -> Div {

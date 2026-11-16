@@ -26,6 +26,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Suas mensagens na largura toda** da coluna, num balão azul mais baixo que a resposta: os
   caminhos de arquivo viram link, o código vai num poço escuro e um "/compact" sozinho vira uma
   pílula.
+- **Erros em português.** O erro do turno vira um cartão com o que aconteceu, o que fazer e quando
+  o limite volta, o Copiar no canto e o texto do agente em **Detalhes**, com os links curtos. No
+  último erro, as ações que resolvem: ver o uso, continuar no outro agente, entrar de novo,
+  instalar o Codex ou compactar. A faixa acima da caixa diz o que falhou.
 - **Imagens em pílulas, como na extensão do Claude Code.** As imagens que você manda (dentro do
   balão, em cima do texto), as que a resposta aponta e as que o agente leu ou gravou viram uma pílula
   com a miniatura, o nome e as medidas; o clique abre o visor.

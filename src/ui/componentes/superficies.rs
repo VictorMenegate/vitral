@@ -12,6 +12,7 @@ use gpui_kit::component::{
     notification::{Notification, NotificationType},
     popover::Popover,
     tooltip::Tooltip,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -556,8 +557,6 @@ pub struct Alerta {
     tom: Tom,
     titulo: Option<SharedString>,
     texto: SharedString,
-    /// O mesmo texto com trechos realçados (o termo do Ctrl+F), quando há.
-    texto_rico: Option<StyledText>,
     acao: Option<AnyElement>,
     fechar: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     compacto: bool,
@@ -565,18 +564,11 @@ pub struct Alerta {
 
 impl Alerta {
     pub fn new(tom: Tom, texto: impl Into<SharedString>) -> Self {
-        Alerta { tom, titulo: None, texto: texto.into(), texto_rico: None, acao: None, fechar: None, compacto: false }
+        Alerta { tom, titulo: None, texto: texto.into(), acao: None, fechar: None, compacto: false }
     }
 
     pub fn titulo(mut self, t: impl Into<SharedString>) -> Self {
         self.titulo = Some(t.into());
-        self
-    }
-
-    /// O texto com trechos em outro fundo (o termo achado na busca da conversa); precisa ser o
-    /// mesmo texto, que continua valendo para a chave do fechar.
-    pub fn texto_rico(mut self, t: StyledText) -> Self {
-        self.texto_rico = Some(t);
         self
     }
 
@@ -616,17 +608,16 @@ impl RenderOnce for Alerta {
                         .text_color(cor)
                         .child(self.tom.icone().with_size(tam(window, 14.))),
                 )
-                .child(match self.texto_rico {
-                    Some(rico) => div().min_w_0().child(rico),
-                    None => div().min_w_0().child(self.texto),
-                })
+                .child(div().min_w_0().child(self.texto))
                 .into_any_element();
         }
         let id_fechar = SharedString::from(format!("alerta-fechar-{}", self.texto));
+        // O mesmo material leve do cartão de erro da conversa: a cor no ícone e num véu de 6%
+        // (balão e cartão de erro, 16/11/2026).
         let (fundo, borda) = if self.tom == Tom::Info {
             (Cores::hover(), Cores::borda())
         } else {
-            (Cores::tinta(cor), Cores::tinta_borda(cor))
+            (Cores::tinta_leve(cor), Cores::tinta_borda_leve(cor))
         };
         div()
             .flex()
@@ -668,10 +659,7 @@ impl RenderOnce for Alerta {
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .text_color(Cores::tenue())
-                            .map(|s| match self.texto_rico {
-                                Some(rico) => s.child(rico),
-                                None => s.child(self.texto),
-                            }),
+                            .child(self.texto),
                     )
                     .when_some(self.acao, |s, a| s.child(div().pt(r(6.)).child(a))),
             )
@@ -687,6 +675,127 @@ impl RenderOnce for Alerta {
                 )
             })
             .into_any_element()
+    }
+}
+
+/// O erro de um turno na conversa: o ícone na cor do assunto, o título em português, a frase do que
+/// fazer e as ações; o texto cru do agente vem montado por quem chama. O vermelho fica no ícone e
+/// num véu de 6% (balão e cartão de erro, 16/11/2026: o alerta vermelho de 12% com o Copiar sozinho
+/// numa linha ocupava de 130 a 166 de altura).
+#[derive(IntoElement)]
+pub struct CartaoDeErro {
+    icone: Icon,
+    /// `None`: neutro (rede, serviço sobrecarregado): ninguém errou.
+    cor: Option<Hsla>,
+    titulo: SharedString,
+    frase: Option<AnyElement>,
+    canto: Option<AnyElement>,
+    acoes: Vec<AnyElement>,
+    original: Option<AnyElement>,
+    /// O original vem antes das ações (desconhecido, sempre aberto) ou depois (atrás de "Detalhes").
+    original_antes: bool,
+}
+
+impl CartaoDeErro {
+    pub fn new(icone: impl Into<Icon>, cor: Option<Hsla>, titulo: impl Into<SharedString>) -> Self {
+        CartaoDeErro {
+            icone: icone.into(),
+            cor,
+            titulo: titulo.into(),
+            frase: None,
+            canto: None,
+            acoes: Vec::new(),
+            original: None,
+            original_antes: false,
+        }
+    }
+
+    /// O que fazer, em 13/18 tênue.
+    pub fn frase(mut self, f: impl IntoElement) -> Self {
+        self.frase = Some(f.into_any_element());
+        self
+    }
+
+    /// No canto do cabeçalho, sempre à vista (o Copiar).
+    pub fn canto(mut self, c: impl IntoElement) -> Self {
+        self.canto = Some(c.into_any_element());
+        self
+    }
+
+    /// Uma ação a mais na linha de ações (acumula).
+    pub fn acao(mut self, a: impl IntoElement) -> Self {
+        self.acoes.push(a.into_any_element());
+        self
+    }
+
+    /// O texto do agente, antes das ações (aberto) ou depois delas (embaixo do "Detalhes").
+    pub fn original(mut self, o: impl IntoElement, antes_das_acoes: bool) -> Self {
+        self.original = Some(o.into_any_element());
+        self.original_antes = antes_das_acoes;
+        self
+    }
+}
+
+impl RenderOnce for CartaoDeErro {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let (fundo, borda, cor_do_icone) = match self.cor {
+            Some(c) => (Cores::tinta_leve(c), Cores::tinta_borda_leve(c), c),
+            None => (Cores::grupo(), Cores::borda(), Cores::tenue()),
+        };
+        let corpo = self.frase.is_some() || self.original.is_some() || !self.acoes.is_empty();
+        let (original_antes, original_depois) = if self.original_antes { (self.original, None) } else { (None, self.original) };
+        let acoes = self.acoes;
+        v_flex()
+            .w_full()
+            .p(dentro_da_borda(8.))
+            .rounded(raio::CARTAO)
+            .bg(fundo)
+            .border_1()
+            .border_color(borda)
+            // Cabeçalho: o ícone num lugar de 24 (o glifo de 16 fica a 12 da borda), o título e o
+            // Copiar.
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap(esp::E8)
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(r(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(cor_do_icone)
+                            .child(self.icone.with_size(tam(window, 16.))),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .pt(esp::E2)
+                            .text_size(r(14.))
+                            .line_height(r(20.))
+                            .font_semibold()
+                            .text_color(Cores::texto())
+                            .child(self.titulo),
+                    )
+                    .children(self.canto.map(|c| div().flex_none().child(c))),
+            )
+            // O corpo alinhado ao título (24 do ícone mais 8 do vão).
+            .when(corpo, |s| {
+                s.child(
+                    v_flex()
+                        .pl(esp::E32)
+                        .pr(esp::E8)
+                        .pt(esp::E2)
+                        .gap(esp::E8)
+                        .children(self.frase.map(|f| div().text_size(r(13.)).line_height(r(18.)).text_color(Cores::tenue()).child(f)))
+                        .children(original_antes)
+                        // O ícone do primeiro botão fantasma (padding 8) cai na coluna do texto.
+                        .when(!acoes.is_empty(), |s| s.child(h_flex().flex_wrap().gap(esp::E4).ml(r(-8.)).children(acoes)))
+                        .children(original_depois),
+                )
+            })
     }
 }
 
