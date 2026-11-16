@@ -96,7 +96,9 @@ pub mod esp {
     pub const GUIA_LISTA: Rems = E16;
     /// Da borda do painel até a coluna-guia da Equipe.
     pub const GUIA_EQUIPE: Rems = E24;
-    pub const ENTRE_TURNOS: Rems = E24;
+    /// Antes do seu balão e do separador de dia: mais de 2 vezes o `NO_TURNO` (relatório de
+    /// aparência, 16/11/2026, V3; não passar de 32, com 40 os balões ficam soltos).
+    pub const ENTRE_TURNOS: Rems = E32;
     pub const NO_TURNO: Rems = E12;
     /// Respiro visível, da peça de cima ao topo da linha de 24 do cabeçalho de seção.
     pub const ANTES_DE_SECAO: Rems = E16;

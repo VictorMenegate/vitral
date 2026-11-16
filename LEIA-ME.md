@@ -568,8 +568,10 @@ ferramentas, vale por painel).
   faixa logo abaixo já tem o botão), linhas tênues ("Tentando de novo.")
   ou, quando é erro, um alerta vermelho com Copiar. O que chega com a conversa aberta no painel (a sua
   mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
-  conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 24 px antes do seu balão,
-  16 depois dele e 12 entre os blocos de um turno.
+  conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
+  (e antes do separador de dia), 12 depois dele e 12 entre os blocos de um turno (`esp::ENTRE_TURNOS`
+  e `NO_TURNO`): com o vão de fora mais de 2 vezes o de dentro, cada pergunta fica presa à resposta
+  e os turnos se leem como parágrafos (relatório de aparência, 16/11/2026, V3).
 - **Rolagem.** Barra visível por painel quando o conteúdo transborda, com identidade própria e
   desenhada sobre a área fixa, fora do conteúdo rolado. Os itens anteriores aparecem em páginas
   de 60 ao chegar perto do topo; a compensação da altura acrescentada mantém a leitura no lugar.

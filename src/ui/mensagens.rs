@@ -120,24 +120,32 @@ enum Bloco {
     Log,
     Recebida,
     Marco,
+    /// O separador de dia ("Hoje"): começa um turno, com o espaço de entre turnos antes dele.
+    Dia,
     Alerta,
 }
 
-/// Espaço antes de um bloco: 24 antes do seu balão (entre turnos), 16 depois dele, 12 dentro do
-/// turno, 16 em volta de marco e nada entre linhas de log, que ficam coladas no passo
-/// de 28. Nada fica reservado para as ações: elas flutuam no hover.
-fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> f32 {
+/// Espaço antes de um bloco: 32 antes do seu balão e do separador de dia (entre turnos), 12 dentro
+/// do turno (também do balão até a resposta e do dia até o balão), 16 em volta de marco e nada
+/// entre linhas de log, que ficam coladas no passo de 28. Com 24 entre turnos e 16 do balão até a
+/// resposta, o vão de fora era só 1,4 vez o de dentro, e a trilha ficava solta no meio; com mais
+/// de 2 vezes, o olho agrupa a pergunta com a resposta (relatório de aparência, 16/11/2026, V3).
+/// Nada fica reservado para as ações: elas flutuam no hover.
+fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> Rems {
     use Bloco::*;
     let Some(anterior) = anterior else {
-        return 0.;
+        return r(0.);
     };
     match (anterior, atual) {
-        (_, Balao) => 24.,
-        (Balao, _) => 16.,
-        (Marco, _) | (_, Marco) => 16.,
-        (Log, Log) => 0.,
-        (Recebida, Log | Recebida) => 4.,
-        _ => 12.,
+        (_, Dia) => esp::ENTRE_TURNOS,
+        (Dia, _) => esp::NO_TURNO,
+        (_, Balao) => esp::ENTRE_TURNOS,
+        // O marco vem antes do balão: o balão seguido de marco continua em 16.
+        (Marco, _) | (_, Marco) => esp::E16,
+        (Balao, _) => esp::NO_TURNO,
+        (Log, Log) => r(0.),
+        (Recebida, Log | Recebida) => esp::E4,
+        _ => esp::NO_TURNO,
     }
 }
 
@@ -203,7 +211,7 @@ impl Janela {
         while i < visiveis.len() {
             let (indice, item) = visiveis[i];
             if let Some(dia) = datas.get(&i) {
-                blocos.push((Bloco::Marco, None, separador_de_dia(dia)));
+                blocos.push((Bloco::Dia, None, separador_de_dia(dia)));
             }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
             if matches!(item, Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
@@ -260,7 +268,7 @@ impl Janela {
             .pb(esp::E12);
         let mut anterior = None;
         for (bloco, indice, elemento) in blocos {
-            let caixa = div().mt(r(espaco_antes(anterior, bloco))).child(elemento);
+            let caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
             lista = match (indice, entrada_do_bloco(indice, base, vistos)) {
                 (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
                 _ => lista.child(caixa),
@@ -3968,24 +3976,31 @@ mod testes {
     #[test]
     fn espaco_entre_os_blocos_da_conversa() {
         use Bloco::*;
-        assert_eq!(espaco_antes(None, Balao), 0.);
-        // Entre turnos, 24 antes do balão; 16 depois dele. Nada fica reservado para as ações.
-        assert_eq!(espaco_antes(Some(Texto), Balao), 24.);
-        assert_eq!(espaco_antes(Some(Log), Balao), 24.);
-        assert_eq!(espaco_antes(Some(Balao), Texto), 16.);
-        assert_eq!(espaco_antes(Some(Balao), Marco), 16.);
+        let px = |e: Option<Bloco>, a: Bloco| espaco_antes(e, a).0 * 15.;
+        let perto = |v: f32, esperado: f32| (v - esperado).abs() < 1e-3;
+        assert!(perto(px(None, Balao), 0.));
+        // Entre turnos, 32 antes do balão; 12 dele até a resposta (mais de 2 vezes). Nada fica
+        // reservado para as ações.
+        assert!(perto(px(Some(Texto), Balao), 32.));
+        assert!(perto(px(Some(Log), Balao), 32.));
+        assert!(perto(px(Some(Balao), Texto), 12.));
+        assert!(perto(px(Some(Balao), Log), 12.));
+        assert!(perto(px(Some(Balao), Marco), 16.));
+        // O dia começa um turno: 32 antes dele, 12 dele até o balão.
+        assert!(perto(px(Some(Marco), Dia), 32.));
+        assert!(perto(px(Some(Dia), Balao), 12.));
         // Linhas de log coladas, no passo de 28; recebida seguida de log, quase.
-        assert_eq!(espaco_antes(Some(Log), Log), 0.);
-        assert_eq!(espaco_antes(Some(Recebida), Log), 4.);
-        assert_eq!(espaco_antes(Some(Recebida), Recebida), 4.);
-        assert_eq!(espaco_antes(Some(Log), Recebida), 12.);
+        assert!(perto(px(Some(Log), Log), 0.));
+        assert!(perto(px(Some(Recebida), Log), 4.));
+        assert!(perto(px(Some(Recebida), Recebida), 4.));
+        assert!(perto(px(Some(Log), Recebida), 12.));
         // O marco pede ar dos dois lados.
-        assert_eq!(espaco_antes(Some(Texto), Marco), 16.);
-        assert_eq!(espaco_antes(Some(Marco), Log), 16.);
+        assert!(perto(px(Some(Texto), Marco), 16.));
+        assert!(perto(px(Some(Marco), Log), 16.));
         // O resto, dentro do turno.
-        assert_eq!(espaco_antes(Some(Texto), Log), 12.);
-        assert_eq!(espaco_antes(Some(Log), Alerta), 12.);
-        assert_eq!(espaco_antes(Some(Alerta), Texto), 12.);
+        assert!(perto(px(Some(Texto), Log), 12.));
+        assert!(perto(px(Some(Log), Alerta), 12.));
+        assert!(perto(px(Some(Alerta), Texto), 12.));
     }
 
     #[test]

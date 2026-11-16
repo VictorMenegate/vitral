@@ -697,7 +697,7 @@ impl Vitrine {
             .child(div().h(esp::NO_TURNO))
             .child(bloco("texto do turno (12 dentro do turno)", false))
             .child(div().h(esp::ENTRE_TURNOS))
-            .child(bloco("próximo turno (24 entre turnos)", true));
+            .child(bloco("próximo turno (32 entre turnos)", true));
         let flutuante = div()
             .w(r(280.))
             .p(esp::FLUTUANTE)

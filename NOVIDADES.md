@@ -152,6 +152,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **O escolhido em metal azul de verdade.** A ficha do item escolhido nos menus e a placa do menu
   do logo usam o miolo do metal, o mesmo azul do "+" e do enviar, sem a ponta cinza nem o chuvisco
   debaixo do texto, e nas listas de escolha têm o canto das outras linhas.
+- **Turnos mais separados.** Mais espaço entre um turno e outro e menos entre a sua mensagem e a
+  resposta: cada pergunta fica presa à resposta dela.
 - **Menus por cima, não afundados.** Menus, popovers e o sino ficam um degrau mais claros que a
   caixa e as abas de onde saem, com uma sombra mais funda.
 - **Aro de foco contínuo.** O aro de metal em volta da caixa com foco (e da busca, da aba sob o

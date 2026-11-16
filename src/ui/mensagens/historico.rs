@@ -152,7 +152,7 @@ impl Janela {
         let mut i = 0;
         while i < mostrados.len() {
             if let Some(dia) = datas.get(&i) {
-                blocos.push((Bloco::Marco, None, super::separador_de_dia(dia)));
+                blocos.push((Bloco::Dia, None, super::separador_de_dia(dia)));
             }
             if matches!(mostrados[i].1, Item::Ferramenta { .. }) {
                 let mut fim = i + 1;
