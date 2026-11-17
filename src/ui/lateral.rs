@@ -960,13 +960,9 @@ impl Janela {
             Some(a) => self.conteudo_arquivos(a, &ctx, window, cx),
             None => {
                 let navegaveis = Rc::new(montagem.navegaveis);
-                // A área vai até a borda da peça (a barra fina fica ali) e devolve os 8 de margem.
-                v_flex()
+                let lista = v_flex()
                     .id("lista-lateral")
-                    .flex_1()
-                    .min_h_0()
-                    .mr(r(-8.))
-                    .pr(esp::PECA)
+                    .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.rolagem_lista)
                     .track_focus(&self.foco_lista)
@@ -974,7 +970,18 @@ impl Janela {
                         this.tecla_na_lista(&navegaveis, ev, window, cx)
                     }))
                     .children(montagem.itens)
-                    .child(div().flex_none().h(esp::E8))
+                    .child(div().flex_none().h(esp::E8));
+                // A área vai até a borda da peça (a barra fina fica ali) e devolve os 8 de margem.
+                // A barra é irmã da lista, como a dos achados: dentro dela, rolava junto com os
+                // cartões e o trilho saía do lugar (dono, 16/11/2026: "a barra de rolagem daqui
+                // tá bugada ainda").
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .mr(r(-8.))
+                    .pr(esp::PECA)
+                    .child(lista)
                     .child(barra_de_rolagem("barra-lista", &self.rolagem_lista))
                     .into_any_element()
             }
