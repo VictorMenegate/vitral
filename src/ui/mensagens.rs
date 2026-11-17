@@ -737,24 +737,29 @@ impl Janela {
                 });
                 // Os anexos entram no balão, em pílulas em cima do texto, como na extensão do
                 // Claude Code (dono, 16/11/2026), no poço escuro do balão.
+                let folga = if minima(contexto.nivel) { 12. } else { 16. };
+                // As pílulas chegam a 8 da borda do balão, e não aos 16 do texto: em volta delas
+                // sobrava muito (dono, 17/11/2026).
                 let pilulas = (!anexos.is_empty()).then(|| {
-                    h_flex().flex_wrap().gap(esp::E6).children(
+                    h_flex().flex_wrap().gap(esp::E6).ml(r(-(folga - 8.))).children(
                         anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, true, cx)),
                     )
                 });
                 let com_texto = !texto.trim().is_empty();
-                let folga = if minima(contexto.nivel) { 12. } else { 16. };
                 // O balão é azul bem baixo (o destaque misturado à base, opaco): diz de quem é a
                 // fala sem a moldura de cartão, e o canto de baixo à direita é o da ponta.
                 // Na largura toda da coluna (dono, 16/11/2026: "faz o campo das minhas mensagens
                 // ficar na largura toda"). Raio 16, o das peças: com 20 numa faixa de 46 a
                 // mensagem de uma linha virava pílula (balão e cartão de erro, 16/11/2026).
+                let tem_pilulas = pilulas.is_some();
                 let balao = (com_texto || pilulas.is_some() || mostrar.is_some() || reforco != Reforco::default()).then(|| {
                     v_flex()
                         .w_full()
                         .px(dentro_da_borda(folga))
-                        .py(dentro_da_borda(12.))
-                        .gap(esp::E8)
+                        // Com pílulas no alto, 8 em cima (o mesmo dos lados delas) e 6 até o texto.
+                        .pt(dentro_da_borda(if tem_pilulas { 8. } else { 12. }))
+                        .pb(dentro_da_borda(12.))
+                        .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
                         .rounded(crate::tema::raio_da_peca())
                         .rounded_br(raio::CONTROLE)
                         .bg(Cores::balao())
