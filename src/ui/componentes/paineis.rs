@@ -223,13 +223,14 @@ impl Aba {
             .flex()
             .flex_shrink(1.)
             .items_center()
-            // O símbolo e o título com mais ar, e mais folga do lado do símbolo que do lado do ×
-            // (que já tem a área de clique dele).
-            .gap(esp::E8)
+            // O símbolo junto do título (6) e a mesma folga dos dois lados (12): com 8 entre eles e
+            // 12 contra 8 nas pontas, o ícone parecia solto e o título colado no fim (dono,
+            // 17/11/2026: "melhorar o espaçamento do nome do chat com o ícone").
+            .gap(esp::E6)
             .h(r(32.))
             .max_w(r(400.))
             .min_w_0()
-            .map(|s| if self.quadrada { s.w(r(32.)).flex_none().justify_center() } else { s.pl(esp::E12).pr(esp::E8) })
+            .map(|s| if self.quadrada { s.w(r(32.)).flex_none().justify_center() } else { s.pl(esp::E12).pr(esp::E12) })
             .relative()
             .rounded(raio::de(32.))
             .border_1()

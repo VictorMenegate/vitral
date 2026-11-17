@@ -217,7 +217,7 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
 }
 
 /// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (12), o ícone
-/// (16), os dois vãos (8 + 8), o lugar do × (20) e a folga da direita (8).
+/// (16), os dois vãos (6 + 6), o lugar do × (20) e a folga da direita (12).
 const ABA_SEM_TITULO: f32 = 74.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
 const ABA_SO_ICONE: f32 = 32.;
@@ -979,6 +979,24 @@ impl Janela {
         );
         let fora: Vec<String> =
             fundo.iter().zip(&jeitos).filter(|(_, j)| **j == JeitoDaAba::Fora).map(|(c, _)| c.id.clone()).collect();
+        // O que sobra da faixa depois das abas de fundo como ficaram: a aba à vista passa dos 280
+        // e usa esse resto até o título inteiro (dono, 17/11/2026: "o espaço aqui de cima tá
+        // limitado e não tá conseguindo ir perto do +"; o título cortava com a faixa vazia ao lado).
+        let a_vista_maxima = {
+            let vao = tam(window, 6.).as_f32();
+            let ocupado: f32 = jeitos
+                .iter()
+                .zip(&naturais)
+                .map(|(jeito, natural)| match jeito {
+                    JeitoDaAba::Titulo => natural + vao,
+                    JeitoDaAba::Icone => tam(window, ABA_SO_ICONE).as_f32() + vao,
+                    JeitoDaAba::Fora => 0.,
+                })
+                .sum::<f32>()
+                + if fora.is_empty() { 0. } else { tam(window, BOTAO_MAIS).as_f32() + vao };
+            let inteira = (resto_a_vista + titulo_a_vista).as_f32();
+            px((painel.largura_abas.as_f32() - ocupado).min(inteira).max(tam(window, 280.).as_f32()))
+        };
         let jeito_de = |id: &str| fundo.iter().position(|c| c.id == id).map_or(JeitoDaAba::Titulo, |i| jeitos[i]);
         painel
             .abas
@@ -989,7 +1007,7 @@ impl Janela {
                     // outras ficarem com um pedaço do título, e não desce do mínimo dela (o
                     // símbolo, o número, o × e o começo do título).
                     let a_vista = self.aba_a_vista(motor_entidade, motor, chat, ix, window, cx);
-                    return Some(div().flex().min_w(minima_a_vista).max_w(r(280.)).child(a_vista).into_any_element());
+                    return Some(div().flex().min_w(minima_a_vista).max_w(a_vista_maxima).child(a_vista).into_any_element());
                 }
                 let jeito = jeito_de(id);
                 if jeito == JeitoDaAba::Fora {
