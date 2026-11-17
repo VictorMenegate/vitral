@@ -2013,8 +2013,11 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
         .flex_none()
         .items_center()
         .gap(esp::E8)
+        // O traço fica a 4 do "+" do painel (o vão de 8 do cabeçalho menos 4) e a 4 do ×: com 4 + 8
+        // de um lado e 8 do outro, o × parecia de outro lugar (dono, 17/11/2026: "ainda tá muito
+        // grande o espaço").
         .when(separar && !botoes.is_empty(), |s| {
-            s.ml(esp::E4).child(div().w(px(1.)).h(r(16.)).bg(Cores::traco()))
+            s.ml(r(-4.)).child(div().w(px(1.)).h(r(16.)).mr(r(-4.)).bg(Cores::traco()))
         })
         .children(botoes.into_iter().map(|botao| {
             let (id, icone) = match botao {
