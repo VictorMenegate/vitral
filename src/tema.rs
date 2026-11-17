@@ -339,9 +339,11 @@ pub enum Esquerda {
 }
 
 /// O raio dos cantos da esquerda de uma peça encostada: redondos só com o vão da lista ao lado
-/// (os outros cantos dão na beirada da janela ou na emenda com a vizinha).
+/// (os outros cantos dão na beirada da janela ou na emenda com a vizinha). Uma vez e meia o das
+/// peças: a fileira das conversas é a peça grande da janela (dono, 17/11/2026: "deixa o border
+/// radius dos cantos da esquerda maior").
 pub fn raio_encostado(esquerda: Esquerda) -> gpui_kit::Pixels {
-    if esquerda == Esquerda::Solta { raio_da_peca() } else { px(0.) }
+    if esquerda == Esquerda::Solta { gpui_kit::px((raio_da_peca().as_f32() * 1.5).round()) } else { px(0.) }
 }
 
 /// Tecla, no que está em relevo e escolhido (a pílula do segmentado, a tecla de atalho): luz de

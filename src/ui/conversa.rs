@@ -869,8 +869,9 @@ impl Janela {
             .items_center()
             .h(altura::FILEIRA_DO_ALTO)
             .pt(esp::TOPO)
-            .pl(esp::E8)
-            .pr(esp::E8)
+            // 12 dos lados: as abas não encostam na divisória nem na beirada da janela.
+            .pl(esp::E12)
+            .pr(esp::E12)
             .gap(esp::E8)
             // Sem a linha embaixo do cabeçalho com a conversa rolada (pedido do dono, 12/11/2026).
             // O recolher da lista mora no menu do logo (pedido do dono, 12/11/2026).
