@@ -257,27 +257,55 @@ pub(super) enum Casou {
 
 /// O texto de um chat preparado para a busca, sem acento e em minúsculas, guardado até os itens
 /// mudarem: o título com a pasta e as falas.
+#[derive(Clone)]
 pub(super) struct Preparado {
     assinatura: (usize, u64, String),
+    /// O tamanho da última fala lida: se ela mudou (o Editar trocou a mensagem do fim), refaz tudo.
+    ultima: Option<usize>,
     titulo: String,
     falas: String,
+}
+
+/// O texto de um item que entra na busca (as falas; ferramentas e resultados, não).
+fn fala_do_item(item: &Item) -> Option<&str> {
+    match item {
+        Item::Usuario { texto, .. } | Item::Assistente { texto, .. } | Item::Entrega { texto, .. } => Some(texto),
+        _ => None,
+    }
 }
 
 impl Preparado {
     fn de(chat: &Chat) -> Preparado {
         let pasta = chat.cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut falas = String::new();
-        for item in &chat.itens {
-            if let Item::Usuario { texto, .. } | Item::Assistente { texto, .. } | Item::Entrega { texto, .. } = item {
-                falas.push_str(&super::acentos::normalizar(texto));
-                falas.push('\n');
+        let mut preparado = Preparado {
+            assinatura: (0, chat.atualizado_em, chat.titulo.clone()),
+            ultima: None,
+            titulo: super::acentos::normalizar(&format!("{}\n{pasta}", chat.titulo)),
+            falas: String::new(),
+        };
+        preparado.acrescentar(chat);
+        preparado
+    }
+
+    /// Prepara só os itens que chegaram depois da última vez: o chat que trabalha e casa com a
+    /// busca não é refeito inteiro a cada item novo.
+    fn acrescentar(&mut self, chat: &Chat) {
+        for item in &chat.itens[self.assinatura.0.min(chat.itens.len())..] {
+            if let Some(texto) = fala_do_item(item) {
+                self.falas.push_str(&super::acentos::normalizar(texto));
+                self.falas.push('\n');
+                self.ultima = Some(texto.len());
             }
         }
-        Preparado {
-            assinatura: (chat.itens.len(), chat.atualizado_em, chat.titulo.clone()),
-            titulo: super::acentos::normalizar(&format!("{}\n{pasta}", chat.titulo)),
-            falas,
-        }
+        self.assinatura = (chat.itens.len(), chat.atualizado_em, chat.titulo.clone());
+    }
+
+    /// Dá para seguir deste: mesmo título, nenhum item tirado e a última fala lida igual.
+    fn serve_para(&self, chat: &Chat) -> bool {
+        let (lidos, _, titulo) = &self.assinatura;
+        *titulo == chat.titulo
+            && *lidos <= chat.itens.len()
+            && chat.itens[..*lidos].iter().rev().find_map(fala_do_item).map(str::len) == self.ultima
     }
 
     /// Cada palavra aparece no título, na pasta ou numa fala, em qualquer ordem.
@@ -309,9 +337,13 @@ pub(super) fn casa_com_a_busca(
 pub(super) fn preparado(cache: &std::cell::RefCell<std::collections::HashMap<String, Rc<Preparado>>>, c: &Chat) -> Rc<Preparado> {
     let assinatura = (c.itens.len(), c.atualizado_em, c.titulo.clone());
     let mut cache = cache.borrow_mut();
-    match cache.get(&c.id).filter(|p| p.assinatura == assinatura) {
-        Some(p) => p.clone(),
-        None => {
+    match cache.get_mut(&c.id) {
+        Some(p) if p.assinatura == assinatura => p.clone(),
+        Some(p) if p.serve_para(c) => {
+            Rc::make_mut(p).acrescentar(c);
+            p.clone()
+        }
+        _ => {
             let p = Rc::new(Preparado::de(c));
             cache.insert(c.id.clone(), p.clone());
             p
@@ -1315,6 +1347,11 @@ impl Janela {
     fn lista_conversas(&self, motor: &Motor, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> Montagem {
         let busca = ctx.busca.as_str();
         let palavras = super::acentos::palavras(busca);
+        // O guardado da busca acompanha os chats que existem (o apagado não fica ocupando memória).
+        if self.busca_preparada.borrow().len() > motor.chats.len() {
+            let vivos: HashSet<&str> = motor.chats.iter().map(|c| c.id.as_str()).collect();
+            self.busca_preparada.borrow_mut().retain(|id, _| vivos.contains(id.as_str()));
+        }
         let combina = |c: &Chat| casa_com_a_busca(&self.busca_preparada, c, &palavras);
         let rodando = |c: &Chat| motor.execucao(&c.id).rodando();
 
@@ -2025,6 +2062,29 @@ mod testes {
         let mut c: Chat = serde_json::from_str(&json).unwrap();
         c.itens = falas.iter().map(|t| Item::Assistente { texto: t.to_string(), em: 0 }).collect();
         c
+    }
+
+    #[test]
+    fn a_busca_acompanha_o_chat_sem_refazer_tudo() {
+        let cache = std::cell::RefCell::new(std::collections::HashMap::new());
+        let palavras = |t: &str| crate::ui::acentos::palavras(t);
+        let mut c = conversa("a", "Loja", &["primeira resposta"]);
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("primeira")).is_some());
+        // Item novo no fim: casa sem refazer (o texto antigo continua lá).
+        c.itens.push(Item::Assistente { texto: "pagamento por Pix".into(), em: 0 });
+        c.atualizado_em = 1;
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("pix")).is_some());
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("primeira")).is_some());
+        // O Editar trocou a última fala, com o mesmo número de itens: refaz.
+        c.itens.pop();
+        c.itens.push(Item::Assistente { texto: "boleto".into(), em: 0 });
+        c.atualizado_em = 2;
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("pix")).is_none());
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("boleto")).is_some());
+        // Conversa cortada (menos itens): refaz.
+        c.itens.truncate(1);
+        c.atualizado_em = 3;
+        assert!(super::casa_com_a_busca(&cache, &c, &palavras("boleto")).is_none());
     }
 
     #[test]

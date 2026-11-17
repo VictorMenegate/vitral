@@ -72,6 +72,9 @@ actions!(vitral, [FecharGaveta]);
 actions!(vitral, [AumentarZoom, DiminuirZoom, ZoomPadrao]);
 actions!(vitral, [AbrirMenuVitral, AbrirConfiguracoes, ProximaPendencia, PendenciaAnterior, IrAoFim]);
 actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsquerda, MoverPainelDireita]);
+// Ctrl+Tab e Ctrl+Shift+Tab andam pelas abas do painel ativo; Ctrl+Shift+T reabre a última
+// fechada; Ctrl+Shift+C copia a última resposta do chat à vista.
+actions!(vitral, [AbaSeguinte, AbaAnterior, ReabrirAba, CopiarUltimaResposta]);
 // A seta para cima na caixa vazia e o "?" fora de um campo de texto.
 actions!(vitral, [EditarUltima, AbrirAtalhos]);
 // Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
@@ -408,6 +411,8 @@ pub struct Janela {
     ativo: usize,
     /// Painel ativo antes do último clique num cartão (o clique ativa o painel na captura).
     ativo_antes_do_clique: Option<u64>,
+    /// As abas fechadas, da mais antiga para a mais nova (Ctrl+Shift+T reabre a do fim).
+    abas_fechadas: Vec<String>,
     proximo_painel: u64,
     /// Painel, lado e efeito sob o ponteiro enquanto uma conversa é arrastada.
     alvo_arrasto: Option<(u64, paineis::Lado, paineis::Efeito)>,
@@ -647,6 +652,16 @@ impl Janela {
         assinaturas.push(cx.on_release(move |_, cx| metal::esquecer_janela(id_da_janela, cx)));
         // O GNOME manda o button-layout depois que a janela abre (e quando muda no Ajustes).
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
+        // A rede do foco: o elemento focado saiu da árvore (o Retomar e o Tentar de novo somem
+        // quando o turno começa) e nada mais tem foco. Sem isto as teclas iam para a raiz, onde os
+        // atalhos da janela não valem, até um clique. O foco volta para a caixa do painel ativo.
+        assinaturas.push(cx.on_focus_lost(window, |this, window, cx| {
+            if this.composer_ativo().is_some() {
+                this.focar_composer(window, cx);
+            } else {
+                window.focus(&this.foco, cx);
+            }
+        }));
         assinaturas.push(cx.on_app_quit(|this, cx| {
             // O que você escreveu e não enviou vai para o disco antes de tudo: é o que você
             // espera encontrar na caixa quando o Vitral abrir de novo.
@@ -694,6 +709,7 @@ impl Janela {
             paineis: Vec::new(),
             ativo: 0,
             ativo_antes_do_clique: None,
+            abas_fechadas: Vec::new(),
             proximo_painel: 0,
             alvo_arrasto: None,
             arquivos_sobre: None,
@@ -1756,6 +1772,10 @@ impl Render for Janela {
                 this.alternar_pop(composer::PopCaixa::Esforco, window, cx)
             }))
             .on_action(cx.listener(|this, _: &IrAoFim, _, cx| this.ir_ao_fim_ativo(cx)))
+            .on_action(cx.listener(|this, _: &AbaSeguinte, window, cx| this.andar_nas_abas(1, window, cx)))
+            .on_action(cx.listener(|this, _: &AbaAnterior, window, cx| this.andar_nas_abas(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &ReabrirAba, window, cx| this.reabrir_aba(window, cx)))
+            .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);

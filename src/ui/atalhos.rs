@@ -114,6 +114,7 @@ tabela! {
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
+    "ctrl-shift-c", super::CopiarUltimaResposta, None, Grupo::Conversa, "Copiar a última resposta", "";
     // No visor de imagem (o Esc que fecha é o do diálogo).
     "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
     "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
@@ -135,6 +136,9 @@ tabela! {
     "shift-f10", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "Menu do painel ativo (também no botão direito do cabeçalho e das abas)", "Shift+F10";
     "menu", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "", "";
     "ctrl-w", super::FecharPainel, None, Grupo::Paineis, "Fechar a aba à vista e, na última, o painel (a conversa fica na lista)", "";
+    "ctrl-tab", super::AbaSeguinte, None, Grupo::Paineis, "Aba seguinte do painel ativo (com Shift, a anterior)", "";
+    "ctrl-shift-tab", super::AbaAnterior, None, Grupo::Paineis, "", "";
+    "ctrl-shift-t", super::ReabrirAba, None, Grupo::Paineis, "Reabrir a última aba fechada", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";

@@ -191,6 +191,15 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
   trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
   rolagem respondem melhor.
+- **Turno calado à vista.** Depois de 10 minutos sem nada do agente (nem texto, nem ferramenta), a
+  linha de estado diz "sem sinal há 12 min". Pode ser um comando longo; se travou, Esc para parar.
+- **Atalhos novos.** Ctrl+Tab e Ctrl+Shift+Tab andam pelas abas do painel ativo, Ctrl+Shift+T
+  reabre a última aba fechada e Ctrl+Shift+C copia a última resposta do chat à vista.
+- **Os atalhos não morrem mais.** Quando o botão com o foco some da tela (o Retomar e o Tentar de
+  novo saem quando o turno começa), o foco volta para a caixa; antes, as teclas da janela paravam
+  até um clique.
+- **Registro de queda.** Um erro interno fica gravado em `queda.log`, na pasta dos dados, e na
+  abertura seguinte o Vitral avisa que aconteceu.
 - **O notebook não dorme no meio de um turno.** Enquanto um chat trabalha, o Vitral segura a
   suspensão automática do sistema (a tela ainda apaga e bloqueia). Ela volta assim que nenhum chat
   está andando; o chat parado num pedido de permissão não a segura.

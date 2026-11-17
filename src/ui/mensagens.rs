@@ -3705,6 +3705,22 @@ impl Janela {
                                     .child(relogio(crate::modelo::agora().saturating_sub(desde))),
                             )
                         })
+                        // Muito tempo sem evento: um comando longo, ou o processo travou. Só avisa;
+                        // o Esc continua sendo o jeito de parar.
+                        .children(motor.silencio(&chat.id).map(|calado| {
+                            let minutos = calado.as_secs() / 60;
+                            let dica: SharedString = format!(
+                                "O agente não manda nada há {minutos} min. Se ele roda um comando longo, é normal; se travou, Esc para parar e mande de novo."
+                            )
+                            .into();
+                            div()
+                                .id(("sem-sinal", painel_id as usize))
+                                .flex_none()
+                                .etiqueta()
+                                .text_color(Cores::espera())
+                                .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
+                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                        }))
                         .when(!estreita && acoes > 0, |s| {
                             s.child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(format!("ação {acoes}")))
                         })

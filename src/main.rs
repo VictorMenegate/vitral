@@ -18,6 +18,7 @@ mod modelo;
 mod motor;
 mod processos;
 mod prompts;
+mod queda;
 mod sistema;
 mod tema;
 mod ui;
@@ -61,6 +62,9 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Daqui em diante, um pânico em qualquer thread fica registrado na pasta dos dados.
+    queda::instalar(&dados.pasta);
+    let queda_anterior = queda::aviso_da_anterior(&dados.pasta);
     let atual = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let abertura = instancia::Abertura::de_args(&argumentos, &atual);
 
@@ -155,6 +159,7 @@ fn main() {
                 if let Some(relatorio) = &relatorio {
                     m.migracao_concluida(relatorio, cx);
                 }
+                m.avisos_ao_abrir.extend(queda_anterior);
                 m.importar_na_abertura(primeiro_uso, cx);
                 m.pedir_abertura(abertura, cx);
             });

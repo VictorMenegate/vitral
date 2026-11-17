@@ -301,6 +301,9 @@ pub struct Motor {
     /// Quando a trava foi pedida pela última vez: sem `systemd-inhibit` (ou com ele saindo na hora),
     /// cada sinal do motor relançaria o comando; assim tenta de novo só depois de um tempo.
     trava_pedida_em: Option<std::time::Instant>,
+    /// Quando chegou o último evento do processo de cada chat (texto, ferramenta, progresso): um
+    /// turno que fica calado muito tempo pode ter travado (`silencio`).
+    ultimo_sinal: HashMap<String, std::time::Instant>,
     /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
     /// espera da sugestão da próxima mensagem (`prompt_suggestion`, que não sai com a entrada
     /// fechada), com a geração do turno: fecham quando ela chega, depois de
@@ -559,6 +562,7 @@ impl Motor {
             encerrando: Vec::new(),
             trava_de_suspensao: None,
             trava_pedida_em: None,
+            ultimo_sinal: HashMap::new(),
             sugerindo: HashMap::new(),
             sugestoes: HashMap::new(),
             parcial: HashMap::new(),
@@ -681,6 +685,17 @@ impl Motor {
     /// A execução de verdade: a revisão da memória ainda é trabalho (o fechar e o Reiniciar contam).
     fn execucao_real(&self, chat: &str) -> Execucao {
         self.execucao.get(chat).cloned().unwrap_or(Execucao::Parado)
+    }
+
+    /// Há quanto tempo o turno andando deste chat não manda nada, a partir de `SILENCIO_SUSPEITO`.
+    /// Um comando longo (um build, um `sleep`) também fica calado: a tela só avisa, não decide.
+    /// Com subagentes no fundo o processo principal espera por eles, e o silêncio é o normal.
+    pub fn silencio(&self, chat: &str) -> Option<std::time::Duration> {
+        if !matches!(self.execucao(chat), Execucao::Rodando { .. }) || self.esperando_agentes(chat) {
+            return None;
+        }
+        let calado = self.ultimo_sinal.get(chat)?.elapsed();
+        (calado >= SILENCIO_SUSPEITO).then_some(calado)
     }
 
     /// O chat está revendo a memória agora (a linha de estado diz, discreta).
@@ -1874,6 +1889,7 @@ impl Motor {
             Ok(processo) => {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
+                self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
                 self.acertar_trava();
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
@@ -2849,6 +2865,7 @@ impl Motor {
             // seguinte já começou) não podem mexer no processo novo.
             Sinal::Claude(chat, geracao, evento) => {
                 if self.geracao_atual.get(&chat) == Some(&geracao) {
+                    self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
                     if let Evento::TextoParcial(pedaco) = &evento {
                         return juntar_parcial(&mut self.parcial, &self.visiveis, &chat, pedaco);
                     }
@@ -3882,6 +3899,10 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
             if *em > desde && matches!(nome.as_str(), "Edit" | "Write" | "MultiEdit" | "NotebookEdit"))
     })
 }
+
+/// A partir de quanto tempo sem evento o turno andando ganha o aviso "sem sinal" na linha de
+/// estado (o MCP_TOOL_TIMEOUT é de 24 h, por causa dos pedidos de permissão: nada mais corta).
+const SILENCIO_SUSPEITO: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// Quanto o processo que acabou o turno fica com a entrada aberta à espera da sugestão da próxima
 /// mensagem. Ela costuma vir em 2 a 5 s (é uma chamada curta, com o cache da conversa).

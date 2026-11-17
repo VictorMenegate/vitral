@@ -742,7 +742,12 @@ impl Janela {
             return;
         };
         let painel = self.paineis.remove(ix);
+        // As abas do painel vão para o Ctrl+Shift+T, a que estava à vista por último.
+        for aba in painel.abas.iter().filter(|a| painel.chat.as_ref() != Some(*a)) {
+            lembrar_fechada(&mut self.abas_fechadas, aba);
+        }
         if let Some(chat) = painel.chat {
+            lembrar_fechada(&mut self.abas_fechadas, &chat);
             let texto = painel.composer.read(cx).value().to_string();
             self.guardar_rascunho(chat, texto, cx);
         }
@@ -767,6 +772,57 @@ impl Janela {
         }
     }
 
+    /// Ctrl+Tab (`passo` 1) e Ctrl+Shift+Tab (-1): a aba vizinha do painel ativo, dando a volta.
+    pub(super) fn andar_nas_abas(&mut self, passo: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(painel) = self.paineis.get(self.ativo) else {
+            return;
+        };
+        let (id, n) = (painel.id, painel.abas.len() as i32);
+        if n < 2 {
+            return;
+        }
+        let atual = painel.chat.as_ref().and_then(|c| painel.abas.iter().position(|a| a == c)).unwrap_or(0) as i32;
+        let alvo = painel.abas[(atual + passo).rem_euclid(n) as usize].clone();
+        self.abrir_aba(id, alvo, window, cx);
+        self.focar_composer(window, cx);
+    }
+
+    /// Ctrl+Shift+T: a última aba fechada volta no painel ativo (a que já está aberta, ou que não
+    /// existe mais, é pulada).
+    pub(super) fn reabrir_aba(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else { return };
+        while let Some(chat) = self.abas_fechadas.pop() {
+            let aberta = self.paineis.iter().any(|p| p.abas.contains(&chat) || p.chat.as_ref() == Some(&chat));
+            if aberta || motor.read(cx).chat(&chat).is_none() {
+                continue;
+            }
+            self.selecionar(Some(chat), window, cx);
+            self.focar_composer(window, cx);
+            return;
+        }
+        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, "Nenhuma aba fechada para reabrir"), cx);
+    }
+
+    /// Ctrl+Shift+C: a última resposta do chat à vista vai para a área de transferência.
+    pub(super) fn copiar_ultima_resposta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else { return };
+        let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
+        let texto = chat.and_then(|id| {
+            motor.read(cx).chat(&id)?.itens.iter().rev().find_map(|item| match item {
+                crate::modelo::Item::Assistente { texto, .. } if !texto.trim().is_empty() => Some(texto.trim().to_string()),
+                _ => None,
+            })
+        });
+        let aviso = match texto {
+            Some(texto) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(texto));
+                "Última resposta copiada"
+            }
+            None => "Este chat ainda não tem resposta para copiar",
+        };
+        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, aviso), cx);
+    }
+
     /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.
     pub(super) fn abrir_aba(&mut self, painel_id: u64, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         self.ativar_painel(painel_id, cx);
@@ -782,6 +838,7 @@ impl Janela {
         let a_vista = painel.chat.as_deref() == Some(chat);
         let lugar = painel.abas.iter().position(|a| a == chat);
         painel.abas.retain(|a| a != chat);
+        lembrar_fechada(&mut self.abas_fechadas, chat);
         if !a_vista {
             cx.notify();
             return;
@@ -1211,5 +1268,15 @@ mod testes_soltura {
             efeito_de(&[A, B, C, D], Some(A), B, Lado::Direita, false, true),
             Efeito::Trocar { origem: Some(A), cheio: true }
         );
+    }
+}
+
+/// Guarda uma aba fechada para o Ctrl+Shift+T: sem repetir (a reaberta e fechada de novo vai
+/// para o fim) e com as últimas 20.
+fn lembrar_fechada(fechadas: &mut Vec<String>, chat: &str) {
+    fechadas.retain(|c| c != chat);
+    fechadas.push(chat.to_string());
+    if fechadas.len() > 20 {
+        fechadas.remove(0);
     }
 }
