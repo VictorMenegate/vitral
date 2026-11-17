@@ -117,6 +117,113 @@ pub fn inicio_do_texto(texto: &str, limite: usize) -> String {
     )
 }
 
+/// Como o `git status` vê um arquivo mudado na pasta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstadoNoGit {
+    Mudado,
+    /// Fora do git ainda (`??`) ou acrescentado.
+    Novo,
+    Apagado,
+    Renomeado,
+}
+
+/// Um arquivo mudado desde o último commit: o caminho relativo à raiz do repositório e as linhas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MudancaNaPasta {
+    pub caminho: String,
+    pub estado: EstadoNoGit,
+    pub entram: u32,
+    pub saem: u32,
+}
+
+/// O que mudou num repositório desde o último commit, inclusive o que um comando mudou (o que a
+/// lista de Mudanças do chat não vê).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetratoDaPasta {
+    pub raiz: PathBuf,
+    pub mudancas: Vec<MudancaNaPasta>,
+    /// Mais que `MAXIMO_NO_RETRATO` arquivos: a lista mostra os primeiros.
+    pub cortado: bool,
+}
+
+const MAXIMO_NO_RETRATO: usize = 200;
+
+/// O retrato da pasta: `None` fora de um repositório.
+pub fn retrato_da_pasta(pasta: &Path) -> Option<RetratoDaPasta> {
+    let raiz = PathBuf::from(git(pasta, &["rev-parse", "--show-toplevel"]).ok()?);
+    let status = git(&raiz, &["status", "--porcelain=v1", "-z", "--untracked-files=normal"]).ok()?;
+    // Num repositório sem commit ainda o HEAD não existe: sem números, só a lista.
+    let numeros = git(&raiz, &["diff", "HEAD", "--numstat", "-z"]).unwrap_or_default();
+    let mut mudancas = mudancas_do_status(&status);
+    let linhas = linhas_do_numstat(&numeros);
+    for m in &mut mudancas {
+        if let Some((entram, saem)) = linhas.iter().find(|(c, _, _)| *c == m.caminho).map(|(_, e, s)| (*e, *s)) {
+            (m.entram, m.saem) = (entram, saem);
+        }
+    }
+    let cortado = mudancas.len() > MAXIMO_NO_RETRATO;
+    mudancas.truncate(MAXIMO_NO_RETRATO);
+    Some(RetratoDaPasta { raiz, mudancas, cortado })
+}
+
+/// As entradas do `git status --porcelain=v1 -z`: "XY caminho\0" (o renomeado traz o nome
+/// antigo no campo seguinte).
+fn mudancas_do_status(status: &str) -> Vec<MudancaNaPasta> {
+    let mut campos = status.split('\0').filter(|c| !c.is_empty());
+    let mut saida = Vec::new();
+    while let Some(campo) = campos.next() {
+        if campo.len() < 4 {
+            continue;
+        }
+        let (xy, caminho) = (&campo[..2], &campo[3..]);
+        let estado = if xy == "??" || xy.contains('A') {
+            EstadoNoGit::Novo
+        } else if xy.contains('D') {
+            EstadoNoGit::Apagado
+        } else if xy.contains('R') || xy.contains('C') {
+            let _ = campos.next();
+            EstadoNoGit::Renomeado
+        } else {
+            EstadoNoGit::Mudado
+        };
+        saida.push(MudancaNaPasta { caminho: caminho.to_string(), estado, entram: 0, saem: 0 });
+    }
+    saida
+}
+
+/// O `git diff --numstat -z`: "entram\tsaem\tcaminho\0", ou, num renomeado, "entram\tsaem\t\0velho\0novo\0".
+/// Binário vem com "-": conta zero.
+fn linhas_do_numstat(numstat: &str) -> Vec<(String, u32, u32)> {
+    let mut campos = numstat.split('\0');
+    let mut saida = Vec::new();
+    while let Some(campo) = campos.next() {
+        let mut partes = campo.splitn(3, '\t');
+        let (Some(e), Some(s), Some(caminho)) = (partes.next(), partes.next(), partes.next()) else {
+            continue;
+        };
+        let caminho = if caminho.is_empty() {
+            let _ = campos.next();
+            campos.next().unwrap_or_default()
+        } else {
+            caminho
+        };
+        saida.push((caminho.to_string(), e.parse().unwrap_or(0), s.parse().unwrap_or(0)));
+    }
+    saida
+}
+
+/// O diff unificado de um arquivo desde o último commit (vazio se não há o que mostrar).
+pub fn diff_do_arquivo(raiz: &Path, caminho: &str) -> String {
+    git(raiz, &["diff", "HEAD", "-U3", "--no-color", "--", caminho]).unwrap_or_default()
+}
+
+/// Desfaz o que mudou num arquivo que o git conhece: ele volta ao último commit (o que estava
+/// preparado para commit também sai).
+pub fn desfazer_arquivo(raiz: &Path, caminho: &str) -> Result<()> {
+    git(raiz, &["restore", "--source=HEAD", "--staged", "--worktree", "--", caminho])?;
+    Ok(())
+}
+
 /// O repositório de onde uma cópia (worktree) saiu: a pasta do `git-common-dir`, canônica.
 pub fn repositorio_da_copia(copia: &Path) -> Option<PathBuf> {
     let comum = git(copia, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
@@ -146,6 +253,47 @@ mod testes {
             }
         }
         assert!(erros.is_empty(), "git aberto fora de git::novo_git:\n{}", erros.join("\n"));
+    }
+
+    #[test]
+    fn le_o_status_e_os_numeros() {
+        let status = " M src/a.rs\0?? novo.txt\0D  velho.rs\0R  b2.rs\0b.rs\0A  c.rs\0";
+        let lidas: Vec<(String, EstadoNoGit)> = mudancas_do_status(status).into_iter().map(|m| (m.caminho, m.estado)).collect();
+        assert_eq!(
+            lidas,
+            [
+                ("src/a.rs".to_string(), EstadoNoGit::Mudado),
+                ("novo.txt".to_string(), EstadoNoGit::Novo),
+                ("velho.rs".to_string(), EstadoNoGit::Apagado),
+                ("b2.rs".to_string(), EstadoNoGit::Renomeado),
+                ("c.rs".to_string(), EstadoNoGit::Novo),
+            ]
+        );
+        let numstat = "3\t1\tsrc/a.rs\0-\t-\timagem.png\00\t0\t\0b.rs\0b2.rs\0";
+        assert_eq!(
+            linhas_do_numstat(numstat),
+            [("src/a.rs".to_string(), 3, 1), ("imagem.png".to_string(), 0, 0), ("b2.rs".to_string(), 0, 0)]
+        );
+    }
+
+    #[test]
+    fn retrato_de_um_repositorio_de_verdade() {
+        let pasta = std::env::temp_dir().join(format!("vitral-git-retrato-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        git(&pasta, &["init", "-q"]).unwrap();
+        std::fs::write(pasta.join("a.txt"), "um\ndois\n").unwrap();
+        git(&pasta, &["add", "a.txt"]).unwrap();
+        git(&pasta, &["commit", "-q", "-m", "primeiro"]).unwrap();
+        std::fs::write(pasta.join("a.txt"), "um\ntres\nquatro\n").unwrap();
+        std::fs::write(pasta.join("b.txt"), "novo\n").unwrap();
+        let retrato = retrato_da_pasta(&pasta).unwrap();
+        let a = retrato.mudancas.iter().find(|m| m.caminho == "a.txt").unwrap();
+        assert_eq!((a.estado, a.entram, a.saem), (EstadoNoGit::Mudado, 2, 1));
+        assert!(retrato.mudancas.iter().any(|m| m.caminho == "b.txt" && m.estado == EstadoNoGit::Novo));
+        assert!(diff_do_arquivo(&retrato.raiz, "a.txt").contains("+tres"));
+        desfazer_arquivo(&retrato.raiz, "a.txt").unwrap();
+        assert_eq!(std::fs::read_to_string(pasta.join("a.txt")).unwrap(), "um\ndois\n");
+        let _ = std::fs::remove_dir_all(&pasta);
     }
 
     #[test]

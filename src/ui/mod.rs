@@ -20,6 +20,7 @@ mod este_chat;
 mod edicao;
 mod falas;
 mod fila;
+mod git_da_pasta;
 mod imagens;
 mod lateral;
 mod links_arquivo;
@@ -457,6 +458,8 @@ pub struct Janela {
     /// O chat para o qual o painel do chat já voltou ao topo: só volta de novo quando o chat
     /// selecionado muda (rolar a cada quadro prenderia a rolagem).
     este_chat_rolado: Option<String>,
+    /// O que o git vê mudado na pasta do chat do Este chat (a seção "Na pasta").
+    git_da_pasta: git_da_pasta::GitDaPasta,
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
@@ -735,6 +738,7 @@ impl Janela {
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
+            git_da_pasta: Default::default(),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,

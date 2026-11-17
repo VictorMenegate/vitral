@@ -191,6 +191,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
   trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
   rolagem respondem melhor.
+- **Na pasta: o que o git vê.** O **Este chat** ganha a seção Na pasta, com tudo o que mudou desde
+  o último commit, inclusive o que um comando mudou (a lista de Mudanças só via as edições). O
+  clique abre o arquivo com o diff por cima, onde o número da linha escolhe um trecho para
+  mencionar na caixa; o **Desfazer** de cada linha volta o arquivo ao último commit, depois de
+  perguntar.
 - **Voltar os arquivos a antes de uma mensagem.** No balão de uma mensagem sua, o botão de voltar
   (o relógio girando para trás) mostra quais arquivos o Claude mudou desde ela e, no ok, volta
   todos a como estavam. A conversa fica como está, com um aviso do que voltou. Vale para as
