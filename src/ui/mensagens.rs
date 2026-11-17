@@ -495,11 +495,25 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
         let (chat_id, n_itens) = (chat.id.clone(), chat.itens.len());
+        let alvo_da_presa = ultima_do_usuario(&chat.itens).map(|(i, _)| i);
+        let busca_aberta = self.paineis[ix].busca.aberta;
         lista = lista.on_prepaint(move |bounds, window, cx| {
             let mut redesenhar = false;
             let _ = janela.update(cx, |j, cx| {
                 let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
                 p.altura_conteudo = bounds.size.height;
+                p.topo_da_lista.set(bounds.top());
+                // A mensagem presa: só quando o pé da sua última mensagem já passou do alto da
+                // vista, com a rolagem e as posições deste quadro.
+                let pe = match alvo_da_presa {
+                    Some(i) => medidos.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, _, pe)| pe - bounds.top()),
+                    None => p.presa_do_historico.borrow().as_ref().map(|&(_, _, pe)| pe - bounds.top()),
+                };
+                let ativa = !busca_aberta && pe.is_some_and(|pe| pe < -p.rolagem.offset().y - px(4.));
+                if p.presa_ativa != ativa {
+                    p.presa_ativa = ativa;
+                    redesenhar = true;
+                }
                 {
                     let mut posicoes = p.posicoes.borrow_mut();
                     posicoes.clear();
@@ -570,14 +584,24 @@ impl Janela {
         // A última mensagem sua fica presa no alto quando sobe para fora da vista (dono, 17/11/2026:
         // "faz a última mensagem que mando grudar em cima"), em duas linhas; o clique leva até ela.
         // Sai com a busca da conversa aberta, que mora no mesmo lugar.
+        // Na conversa trazida do Claude Code sem mensagem própria ainda, vale a última do histórico.
         let presa = (!self.paineis[ix].busca.aberta)
-            .then(|| ultima_do_usuario(&chat.itens))
-            .flatten()
-            .and_then(|(i, texto)| {
+            .then(|| {
                 let p = &self.paineis[ix];
-                let (alto, pe) = p.posicoes.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, pe)| (alto, pe))?;
-                (pe < -p.rolagem.offset().y).then_some((i, alto, texto))
+                match ultima_do_usuario(&chat.itens) {
+                    Some((i, texto)) => {
+                        let (alto, pe) = p.posicoes.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, pe)| (alto, pe))?;
+                        Some((i, alto, pe, texto))
+                    }
+                    None => {
+                        let (texto, alto, pe) = p.presa_do_historico.borrow().clone()?;
+                        let topo = p.topo_da_lista.get();
+                        Some((usize::MAX, alto - topo, pe - topo, texto))
+                    }
+                }
             })
+            .flatten()
+            .and_then(|(i, alto, _, texto)| self.paineis[ix].presa_ativa.then_some((i, alto, texto)))
             .map(|(i, alto, texto)| {
                 let janela = cx.entity().downgrade();
                 let raio = crate::tema::raio_da_peca();
@@ -1593,12 +1617,15 @@ fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
 /// presa no alto mostra em duas) ou, só com anexos, a contagem deles.
 fn ultima_do_usuario(itens: &[Item]) -> Option<(usize, String)> {
     itens.iter().enumerate().rev().find_map(|(i, item)| match item {
-        Item::Usuario { texto, anexos, .. } if !texto.trim().is_empty() => {
-            Some((i, texto.lines().filter(|l| !l.trim().is_empty()).take(3).collect::<Vec<_>>().join(" ")))
-        }
+        Item::Usuario { texto, .. } if !texto.trim().is_empty() => Some((i, texto_da_presa(texto))),
         Item::Usuario { anexos, .. } if !anexos.is_empty() => Some((i, contagem(anexos.len(), "anexo", "anexos"))),
         _ => None,
     })
+}
+
+/// As primeiras linhas de uma mensagem numa linha só (a faixa presa mostra duas).
+pub(super) fn texto_da_presa(texto: &str) -> String {
+    texto.lines().filter(|l| !l.trim().is_empty()).take(3).collect::<Vec<_>>().join(" ")
 }
 
 /// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal
