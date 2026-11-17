@@ -8,7 +8,6 @@ use gpui_kit::*;
 
 use super::base::Simbolo;
 use super::estado::{Sinal, numero_painel};
-use super::metal::aro_de_metal;
 use super::superficies::Flutuante as _;
 use crate::tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_foco, r, raio, tam};
 
@@ -240,9 +239,12 @@ impl Aba {
                 TomAba::Inativa | TomAba::Normal => s.hover(|s| s.text_color(Cores::texto())),
                 TomAba::Unica | TomAba::Ativa | TomAba::Selecionada => s,
             })
-            // O aro de metal (só com o ponteiro em cima) e, por cima dele, o miolo opaco da aba.
+            // Com o ponteiro em cima, o contorno vira o fio claro e o miolo clareia um pouco: um
+            // anel liso e igual na volta toda. O aro de metal de 2 px que acendia aqui ficava
+            // claro de um lado e escuro do outro (dono, 16/11/2026: "o contorno de quando tá com o
+            // mouse em cima ainda tá bem ruim").
             .when(!self.arrastando, |s| {
-                s.child(aro_de_metal(raio::de(32.), px(2.), 1.).invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
+                s.group_hover(GRUPO_DA_ABA, |s| s.border_color(Cores::borda_forte()))
                     .child(
                         div()
                             .absolute()
@@ -251,6 +253,15 @@ impl Aba {
                             .bg(fundo)
                             // O brilho de cima do campo da caixa de mensagem.
                             .when(campo, |s| s.shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(raio::de(32.))
+                            .bg(Cores::forte().opacity(0.05))
+                            .invisible()
+                            .group_hover(GRUPO_DA_ABA, |s| s.visible()),
                     )
             })
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))

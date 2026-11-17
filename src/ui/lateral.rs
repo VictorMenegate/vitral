@@ -1688,7 +1688,9 @@ impl Janela {
             .id(SharedString::from(format!("avatar-{}", chat.id)))
             // O ícone do chat é o estado dele (anel girando, disco âmbar, azul ou vermelho, balão
             // apagado quando parado e lido).
-            .child(super::componentes::icone_de_estado(sinal, 20.))
+            // 18: o balão de 16, um pouco menor que o título (dono, 16/11/2026: "diminui um pouco
+            // o tamanho dos ícones dos chats").
+            .child(super::componentes::icone_de_estado(sinal, 18.))
             .tooltip(move |window, cx| Tooltip::new(onde.clone()).build(window, cx));
         let id = chat.id.clone();
         let tem_pendencia = pendencia.is_some();
