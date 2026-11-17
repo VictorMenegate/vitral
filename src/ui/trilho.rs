@@ -315,7 +315,9 @@ impl Janela {
             // segmentado de 34 centram na linha das abas ao lado (relatório de design, 16/11/2026;
             // dono, 17/11/2026: "melhorar o espaçamento daqui").
             .h(altura::FILEIRA_DO_ALTO)
-            .px(esp::E4)
+            // A fileira passa 4 de cada lado da folga da lista: o logo e o segmentado ficam a 9
+            // da beirada, o mesmo que sobra em cima e embaixo deles.
+            .mx(r(-4.))
             .gap(esp::E8)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
             .children(abas.map(|abas| super::sem_arrastar().flex().flex_1().min_w_0().child(abas.flex_1().mb(r(0.)))))

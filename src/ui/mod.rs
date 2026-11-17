@@ -342,25 +342,23 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
 /// sensação de profundidade aqui"). Vai num recorte à esquerda da peça, com a forma dela: por
 /// baixo do cartão translúcido, a sombra o escureceria. `meio_vao` é onde o cartão começa no
 /// painel.
+///
+/// Três recortes: o do meio para na borda da peça; os dos cantos vão até o fim da curva, para a
+/// sombra acompanhar o arco (dono, 17/11/2026: "a sombra não acompanhou a curva"). Ali ela também
+/// passa por baixo do canto do cartão, num quadrado do tamanho do raio: embaixo o pé do cartão é
+/// opaco, e em cima o escurecido some no cartão quase opaco.
 fn sombra_da_fileira(meio_vao: Pixels) -> Div {
     let alcance = px(18.);
+    let raio = crate::tema::raio_encostado(crate::tema::Esquerda::Solta);
+    // A peça, com a sombra, posta onde o cartão está no painel.
+    let peca = || div().absolute().left(alcance + meio_vao).w(px(4000.)).rounded_l(raio).shadow(crate::tema::sombra_da_fileira());
+    let recorte = || div().absolute().left(-alcance).overflow_hidden();
     div()
         .absolute()
-        .top_0()
-        .bottom_0()
-        .left(-alcance)
-        .w(alcance + meio_vao)
-        .overflow_hidden()
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(alcance + meio_vao)
-                .w(px(400.))
-                .rounded_l(crate::tema::raio_encostado(crate::tema::Esquerda::Solta))
-                .shadow(crate::tema::sombra_da_fileira()),
-        )
+        .inset_0()
+        .child(recorte().top(raio).bottom(raio).w(alcance + meio_vao).child(peca().top(-raio).bottom(-raio)))
+        .child(recorte().top_0().h(raio).w(alcance + meio_vao + raio).child(peca().top_0().h(px(4000.))))
+        .child(recorte().bottom_0().h(raio).w(alcance + meio_vao + raio).child(peca().bottom_0().h(px(4000.))))
 }
 
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,

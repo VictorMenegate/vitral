@@ -135,10 +135,11 @@ pub mod altura {
     pub const GRANDE: Rems = r(36.);
     pub const CABECALHO: Rems = r(44.);
     /// A fileira do alto de cada peça (a do logo na lista, a das abas nas conversas e na direita),
-    /// com o conteúdo no meio: as abas de 32 ficam com 10 em cima (até a beirada da janela, onde
-    /// as peças encostam desde 16/11/2026) e 10 embaixo. Com o respiro só em cima, eram 14 e 6
-    /// (dono, 17/11/2026: "uns espaçamentos meio esquisitos em cima").
-    pub const FILEIRA_DO_ALTO: Rems = r(52.);
+    /// com o conteúdo no meio: as abas de 32 ficam com 12 em cima (até a beirada da janela, onde
+    /// as peças encostam desde 16/11/2026) e 12 embaixo, e o logo de 38 com 9, o mesmo que sobra
+    /// dos lados dele (dono, 17/11/2026: "uns espaçamentos meio esquisitos em cima" e "esses
+    /// espaços das laterais tão maiores que o de cima").
+    pub const FILEIRA_DO_ALTO: Rems = r(56.);
     /// Item de menu ou de lista de escolha com descrição.
     pub const ESCOLHA_2: Rems = r(48.);
     /// Cartão de lista com duas linhas.
@@ -313,8 +314,8 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
 pub fn sombra_da_fileira() -> Vec<BoxShadow> {
     let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
     vec![
-        BoxShadow::new(px(-4.), px(0.), preto(0.45)).blur_radius(px(14.)).spread_radius(px(-2.)),
-        BoxShadow::new(px(-1.), px(0.), preto(0.35)).blur_radius(px(3.)),
+        BoxShadow::new(px(-5.), px(0.), preto(0.7)).blur_radius(px(16.)).spread_radius(px(-1.)),
+        BoxShadow::new(px(-1.), px(0.), preto(0.55)).blur_radius(px(4.)),
     ]
 }
 

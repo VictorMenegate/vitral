@@ -125,7 +125,7 @@ const DIAMETRO_NO_CANTO: f32 = 30.;
 const USO_DA_BORDA: f32 = 10.;
 /// A distância do topo da janela: a fileira do alto da conversa (onde fica o ×; a conversa
 /// encosta no topo) e um respiro.
-const USO_DO_TOPO: f32 = 56.;
+const USO_DO_TOPO: f32 = 58.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.
