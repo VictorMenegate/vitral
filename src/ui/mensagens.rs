@@ -734,7 +734,8 @@ impl Janela {
                         .flex()
                         .items_center()
                         .rounded(raio::de(32.))
-                        .bg(Cores::selecao())
+                        .relative()
+                        .child(fundo_da_lista(raio::de(32.)))
                         .mono()
                         .text_color(Cores::codigo())
                         .child(comando.to_string()),
@@ -778,22 +779,12 @@ impl Janela {
                         .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
                         .pb(dentro_da_borda(8.))
                         .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
-                        // Com a cara do chat escolhido na lista (dono, 17/11/2026: "faz isso ficar
-                        // parecendo a parte da lista"): o fundo claro da seleção, sem fio e sem a
-                        // ponta, e a barra azul de 3 px na esquerda.
+                        // O fundo da lista (dono, 17/11/2026: "era pra ficar igual o fundo da
+                        // lista"): o pedaço da chapa de metal que está atrás, com o véu azul e o
+                        // fosco da base por cima, sem fio e sem a ponta.
                         .relative()
                         .rounded(crate::tema::raio_da_peca())
-                        .bg(Cores::selecao())
-                        .child(
-                            div()
-                                .absolute()
-                                .left(r(2.))
-                                .top(r(10.))
-                                .bottom(r(10.))
-                                .w(px(3.))
-                                .rounded_full()
-                                .bg(Cores::destaque()),
-                        )
+                        .child(fundo_da_lista(crate::tema::raio_da_peca()))
                         .children(pilulas)
                         .when(com_texto, |s| {
                             // A fala um degrau abaixo da resposta (14/22 no texto, não no branco),
@@ -1548,6 +1539,36 @@ fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
 /// pela margem.
 fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
     elemento.pb(esp::E8).mb(r(-8.))
+}
+
+/// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal
+/// que fica atrás dela, o véu azul da base e o fosco por cima. O pai precisa ser `relative`.
+fn fundo_da_lista(raio: Pixels) -> Div {
+    let cantos = Corners::all(raio);
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        // A chapa na mesma opacidade da base (o nível de Transparência), e o véu por cima, à parte.
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .opacity(crate::tema::opacidade_do_metal())
+                .child(super::componentes::metal::abertura(super::componentes::metal::Encaixe::Continuo, None, cantos)),
+        )
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::vidro_leitura()))
+        .when(crate::tema::transparencia() > 0, |s| s.child(super::componentes::metal::fosco(cantos)))
+        // Um buraco no cartão (dono, 17/11/2026: "faz como se tivesse um buraco"): a sombra cai da
+        // beirada de cima para dentro, o corte tem um fio escuro e a quina de baixo pega luz.
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(vec![
+            BoxShadow::new(px(0.), px(4.), Cores::preto_puro().opacity(0.7)).blur_radius(px(8.)).inset(),
+            BoxShadow::new(px(0.), px(0.), Cores::preto_puro().opacity(0.5)).spread_radius(px(1.)).inset(),
+            BoxShadow::new(px(0.), px(-1.), Cores::forte().opacity(0.08)).inset(),
+        ]))
 }
 
 fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
