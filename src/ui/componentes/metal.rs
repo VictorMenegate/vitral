@@ -316,6 +316,50 @@ pub fn custo_do_campo() -> Option<(u32, Duration)> {
     (quantos > 0).then(|| (quantos, Duration::from_nanos(nanos / u64::from(quantos))))
 }
 
+/// Uma imagem pequena feita na CPU (a malha do botão do menu) e guardada: pintada de novo sem
+/// refazer enquanto o `estado` for o mesmo, e trocada (a nova entra no atlas antes de a velha sair)
+/// quando ele muda. Uma por `tamanho`. `fazer` devolve o BGRA de `tamanho.0` por `tamanho.1`.
+pub fn pintar_imagem_guardada(
+    limites: Bounds<Pixels>,
+    tamanho: (u32, u32, u32),
+    estado: (u64, Option<(u32, u32)>),
+    window: &mut Window,
+    cx: &mut App,
+    fazer: impl FnOnce() -> Vec<u8>,
+) {
+    let guardada = cx
+        .default_global::<ImagensGuardadas>()
+        .0
+        .iter()
+        .find(|m| m.tamanho == tamanho && m.estado == estado)
+        .map(|m| m.imagem.clone());
+    if let Some(imagem) = guardada {
+        let _ = window.paint_image(limites, limites, Corners::default(), imagem, 0, false);
+        return;
+    }
+    let Some(nova) = imagem_de_bgra(tamanho.0, tamanho.1, &fazer(), cx.svg_renderer()) else {
+        return;
+    };
+    let _ = window.paint_image(limites, limites, Corners::default(), nova.clone(), 0, false);
+    let guardadas = &mut cx.default_global::<ImagensGuardadas>().0;
+    if let Some(velha) = guardadas.iter().position(|m| m.tamanho == tamanho) {
+        let velha = guardadas.remove(velha);
+        let _ = window.drop_image(velha.imagem);
+    }
+    guardadas.push(ImagemGuardada { tamanho, estado, imagem: nova });
+}
+
+struct ImagemGuardada {
+    tamanho: (u32, u32, u32),
+    estado: (u64, Option<(u32, u32)>),
+    imagem: Arc<RenderImage>,
+}
+
+#[derive(Default)]
+struct ImagensGuardadas(Vec<ImagemGuardada>);
+
+impl Global for ImagensGuardadas {}
+
 /// A imagem que a placa recebe, a partir do BGRA: passa pelo BMP e pelo decodificador do GPUI.
 fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
     static AVISADO: AtomicBool = AtomicBool::new(false);

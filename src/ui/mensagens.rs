@@ -734,9 +734,7 @@ impl Janela {
                         .flex()
                         .items_center()
                         .rounded(raio::de(32.))
-                        .bg(Cores::balao())
-                        .border_1()
-                        .border_color(Cores::balao_borda())
+                        .bg(Cores::selecao())
                         .mono()
                         .text_color(Cores::codigo())
                         .child(comando.to_string()),
@@ -780,11 +778,22 @@ impl Janela {
                         .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
                         .pb(dentro_da_borda(8.))
                         .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
+                        // Com a cara do chat escolhido na lista (dono, 17/11/2026: "faz isso ficar
+                        // parecendo a parte da lista"): o fundo claro da seleção, sem fio e sem a
+                        // ponta, e a barra azul de 3 px na esquerda.
+                        .relative()
                         .rounded(crate::tema::raio_da_peca())
-                        .rounded_br(raio::CONTROLE)
-                        .bg(Cores::balao())
-                        .border_1()
-                        .border_color(Cores::balao_borda())
+                        .bg(Cores::selecao())
+                        .child(
+                            div()
+                                .absolute()
+                                .left(r(2.))
+                                .top(r(10.))
+                                .bottom(r(10.))
+                                .w(px(3.))
+                                .rounded_full()
+                                .bg(Cores::destaque()),
+                        )
                         .children(pilulas)
                         .when(com_texto, |s| {
                             // A fala um degrau abaixo da resposta (14/22 no texto, não no branco),

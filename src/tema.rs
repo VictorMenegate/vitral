@@ -311,11 +311,13 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
 
 /// A sombra da fileira das conversas sobre a lista (`ui::sombra_da_fileira`): uma larga e macia,
 /// que dá a altura, e uma curta junto da borda, que dá o contato.
+/// Mais difusa desde 17/11/2026 (dono: "essa sombra tinha que ficar mais difusa"): a larga anda
+/// mais e esmaece devagar; o recorte em `ui::sombra_da_fileira` vai até onde ela some.
 pub fn sombra_da_fileira() -> Vec<BoxShadow> {
     let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
     vec![
-        BoxShadow::new(px(-5.), px(0.), preto(0.7)).blur_radius(px(16.)).spread_radius(px(-1.)),
-        BoxShadow::new(px(-1.), px(0.), preto(0.55)).blur_radius(px(4.)),
+        BoxShadow::new(px(-10.), px(0.), preto(0.5)).blur_radius(px(28.)).spread_radius(px(-4.)),
+        BoxShadow::new(px(-1.), px(0.), preto(0.4)).blur_radius(px(5.)),
     ]
 }
 
@@ -1016,11 +1018,73 @@ pub mod superficie {
         sobre_destaque: 0xffffffff,
     };
 
+    /// Proposta "Noite" (17/11/2026, "dá uma melhorada na paleta"): o Grafite puxado para o azul
+    /// profundo da base, com as peças em azul-ardósia e o texto tênue mais separado do apagado.
+    pub const NOITE: Variante = Variante {
+        vidro: 0x0a0f1fff,
+        vidro_leitura: 0x0b1940e6,
+        cartao: 0x121a30f2,
+        cartao_elevado: 0x1a2440ff,
+        flutuante: 0x1e2944ff,
+        dialogo: 0x1a2440fa,
+        gaveta: 0x1a2440fa,
+        preto: 0x070b16ff,
+        caixa_quente: 0x1a2440ff,
+        caixa_preta: 0x1a2440ff,
+        hover: 0xffffff12,
+        selecao: 0xffffff1a,
+        texto: 0xe7ecf8ff,
+        tenue: 0xa3aecaff,
+        apagado: 0x8994b3ff,
+        fantasma: 0xa3aeca99,
+        codigo: 0xc3d0ffff,
+        base_da_tinta: 0x121a30ff,
+        destaque: 0x3170ffff,
+        destaque_hover: 0x4d84ffff,
+        destaque_ativo: 0x2459e0ff,
+        destaque_texto: 0x8eacffff,
+        ..GRAFITE
+    };
+
+    /// Proposta "Neutro" (17/11/2026): grafite sem tinta azul nas superfícies (o véu da base
+    /// quase opaco, o metal mal aparece), com o azul só no que é ação.
+    pub const NEUTRO: Variante = Variante {
+        vidro: 0x0d0e11ff,
+        vidro_leitura: 0x0f1115e8,
+        cartao: 0x16181df4,
+        cartao_elevado: 0x1e2127ff,
+        flutuante: 0x23262dff,
+        dialogo: 0x1e2127fa,
+        gaveta: 0x1e2127fa,
+        preto: 0x09090bff,
+        caixa_quente: 0x1e2127ff,
+        caixa_preta: 0x1e2127ff,
+        texto: 0xe9eaedff,
+        tenue: 0xa6aab4ff,
+        apagado: 0x8d919bff,
+        fantasma: 0xa6aab499,
+        codigo: 0xd0d5dfff,
+        base_da_tinta: 0x16181dff,
+        destaque: 0x3b6dffff,
+        destaque_hover: 0x5582ffff,
+        destaque_ativo: 0x2a5ae8ff,
+        destaque_texto: 0x8ea9ffff,
+        ..GRAFITE
+    };
+
     /// O acabamento em uso.
     pub const ATUAL: Variante = GRAFITE;
 
+    /// O acabamento em uso: o `ATUAL` ou, para comparar propostas na bancada, o que o
+    /// `VITRAL_PALETA` (noite, neutro, marinho) pedir.
     pub fn atual() -> &'static Variante {
-        &ATUAL
+        static ESCOLHIDA: std::sync::OnceLock<&'static Variante> = std::sync::OnceLock::new();
+        ESCOLHIDA.get_or_init(|| match std::env::var("VITRAL_PALETA").as_deref() {
+            Ok("noite") => &NOITE,
+            Ok("neutro") => &NEUTRO,
+            Ok("marinho") => &MARINHO,
+            _ => &ATUAL,
+        })
     }
 }
 
@@ -1286,10 +1350,6 @@ impl Cores {
     /// 16/11/2026).
     pub fn balao() -> Hsla {
         Self::tinta_solida(Self::destaque(), 0.16)
-    }
-    /// O fio do balão e da pílula do comando (era 0,24).
-    pub fn balao_borda() -> Hsla {
-        Self::destaque().opacity(0.16)
     }
     /// O destaque para texto pequeno: o cheio pode ficar abaixo de 4,5:1 nas peças.
     pub fn destaque_texto() -> Hsla {

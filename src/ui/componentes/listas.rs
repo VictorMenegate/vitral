@@ -393,7 +393,9 @@ impl RenderOnce for CartaoDeLista {
                 if self.titulo_no_meio {
                     d.overflow_hidden().whitespace_nowrap().text_ellipsis_middle()
                 } else {
-                    d.truncate()
+                    // Cortado seco, sem as reticências, como o título das abas (dono, 17/11/2026:
+                    // "tira os 3 pontinhos daqui também").
+                    d.overflow_hidden().whitespace_nowrap()
                 }
             })
             .text_size(r(if self.nivel > 0 {

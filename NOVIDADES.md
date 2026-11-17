@@ -196,6 +196,12 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   fios dos lados; a caixa de código perdeu o fio do cabeçalho e o Copiar só aparece com o ponteiro
   nela; a linha do turno não mostra mais "ação 5"; o enviar tem a altura dos chips ao lado; e as
   abas cortam o título sem as reticências, com o número mais perto.
+- **Suas mensagens com a cara da lista.** O balão do que você escreve tem o fundo do chat
+  escolhido na lista e a barra azul na esquerda, sem o contorno e sem a ponta.
+- **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
+  pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
+  painel da direita estreito a aba à vista mantém o nome.
+- **Sombra mais macia** entre a lista e as conversas, sumindo devagar em vez de acabar numa beirada.
 - **Popovers dentro da janela.** O de modelo e o do uso do plano não passam mais da borda com o
   zoom alto: a lista encolhe e rola por dentro.
 - **Na pasta: o que o git vê.** O **Este chat** ganha a seção Na pasta, com tudo o que mudou desde

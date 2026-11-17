@@ -352,7 +352,9 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
 /// passa por baixo do canto do cartão, num quadrado do tamanho do raio: embaixo o pé do cartão é
 /// opaco, e em cima o escurecido some no cartão quase opaco.
 fn sombra_da_fileira(meio_vao: Pixels) -> Div {
-    let alcance = px(18.);
+    // Até onde a sombra larga chega (o deslocamento e o desfoque): recortada antes, ela acabava
+    // numa beirada dura em vez de sumir.
+    let alcance = px(60.);
     let raio = crate::tema::raio_encostado(crate::tema::Esquerda::Solta);
     // A peça, com a sombra, posta onde o cartão está no painel.
     let peca = || div().absolute().left(alcance + meio_vao).w(px(4000.)).rounded_l(raio).shadow(crate::tema::sombra_da_fileira());
