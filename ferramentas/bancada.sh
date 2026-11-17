@@ -8,7 +8,8 @@
 # projeto que já a tem ou o Novo projeto com ela ligada. A migração de ponta a ponta é a
 # RAIZ_SINTETICA (abaixo), nunca uma cópia de uma pasta de verdade.
 # Roteiro, uma ação por linha:
-#   espera S | clique X Y | mover X Y | arrastar X1 Y1 X2 Y2 | rolar X Y N | texto ... | tecla Return | print nome
+#   espera S | clique X Y | duplo X Y | mover X Y | arrastar X1 Y1 X2 Y2 | rolar X Y N | texto ... |
+#   tecla Return | print nome
 # "rolar X Y N" gira a roda N entalhes com o ponteiro em X,Y (N negativo sobe).
 # "roda <comando>" roda o comando no bash (sem comentário no fim da linha) e junta a saída em
 # <pasta_dos_prints>/roda.log, com os XDG da bancada ($XDG_DATA_HOME/vitral são os dados dela).
@@ -165,6 +166,10 @@ while read -r cmd resto; do
             ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $a, $b); 'ok'"; sleep 0.3
             ev "$PREP global._vp.notify_button(G.get_monotonic_time(), C.BUTTON_PRIMARY, C.ButtonState.PRESSED); 'ok'"; sleep 0.08
             ev "$PREP global._vp.notify_button(G.get_monotonic_time(), C.BUTTON_PRIMARY, C.ButtonState.RELEASED); 'ok'"; sleep 0.4 ;;
+        duplo)
+            # Dois cliques no mesmo ponto, 50 ms entre eles (o clique duplo do GPUI).
+            ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $a, $b); 'ok'"; sleep 0.3
+            ev "$PREP const t = G.get_monotonic_time(); for (const [d, e] of [[0, C.ButtonState.PRESSED], [30000, C.ButtonState.RELEASED], [80000, C.ButtonState.PRESSED], [110000, C.ButtonState.RELEASED]]) global._vp.notify_button(t + d, C.BUTTON_PRIMARY, e); 'ok'"; sleep 0.4 ;;
         arrastar)
             read -r x1 y1 x2 y2 _ <<< "$resto"
             ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $x1, $y1); 'ok'"; sleep 0.3
