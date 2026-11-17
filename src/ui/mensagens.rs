@@ -751,11 +751,13 @@ impl Janela {
                 });
                 // Os anexos entram no balão, em pílulas em cima do texto, como na extensão do
                 // Claude Code (dono, 16/11/2026), no poço escuro do balão.
-                let folga = if minima(contexto.nivel) { 12. } else { 16. };
+                // Mais justo: 12 dos lados e 8 em cima e embaixo (eram 16 e 12; dono, 17/11/2026:
+                // "diminui o padding disso").
+                let folga = if minima(contexto.nivel) { 10. } else { 12. };
                 // As pílulas chegam a 8 da borda do balão, e não aos 16 do texto: em volta delas
                 // sobrava muito (dono, 17/11/2026).
                 let pilulas = (!anexos.is_empty()).then(|| {
-                    h_flex().flex_wrap().gap(esp::E6).ml(r(-(folga - 8.))).children(
+                    h_flex().flex_wrap().gap(esp::E6).ml(r(-(folga - 6.))).children(
                         anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, true, cx)),
                     )
                 });
@@ -771,8 +773,8 @@ impl Janela {
                         .w_full()
                         .px(dentro_da_borda(folga))
                         // Com pílulas no alto, 8 em cima (o mesmo dos lados delas) e 6 até o texto.
-                        .pt(dentro_da_borda(if tem_pilulas { 8. } else { 12. }))
-                        .pb(dentro_da_borda(12.))
+                        .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
+                        .pb(dentro_da_borda(8.))
                         .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
                         .rounded(crate::tema::raio_da_peca())
                         .rounded_br(raio::CONTROLE)
@@ -1881,6 +1883,23 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
         icone_de(icone, 14.).text_color(cor).into_any_element()
     };
     let (chat, alvo) = (chat.to_string(), caminho.to_path_buf());
+    // A imagem é só a miniatura, uma bolinha (dono, 17/11/2026: "a imagem tem que ficar uma
+    // bolinha só"): o nome e o tamanho vão na dica, e o clique abre o visor.
+    if abre {
+        return div()
+            .id(SharedString::from(id))
+            .flex_none()
+            .p(px(1.))
+            .rounded(raio::CONTROLE)
+            .border_1()
+            .border_color(if no_balao { Cores::borda() } else { Cores::borda_forte() })
+            .cursor_pointer()
+            .hover(|s| s.border_color(Cores::destaque()))
+            .child(simbolo)
+            .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
+            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .into_any_element();
+    }
     h_flex()
         .id(SharedString::from(id))
         .flex_none()
@@ -3220,20 +3239,29 @@ fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
             // A linha vazia mantém a altura.
             .child(if linha.is_empty() { SharedString::from(" ") } else { SharedString::from(linha.to_string()) })
     });
-    div()
-        .id("pedido-da-chamada")
-        .w_full()
+    // O miolo tem a largura da linha mais longa (e ao menos a da caixa), e o fundo verde ou
+    // vermelho de cada linha vai até o fim dele: antes a linha era cortada na beirada, sem como
+    // ver o resto (dono, 17/11/2026: "tá bem zuado essas partes").
+    let miolo = div()
+        .flex_none()
+        .min_w_full()
+        .flex()
+        .flex_col()
         .py(esp::E8)
-        .rounded(raio::CONTROLE)
-        .bg(Cores::hover())
-        .mono_pequeno()
-        .overflow_x_scroll()
         .children(linhas)
         .when(total > LINHAS_DO_PEDIDO, |s| {
             s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
-        })
+        });
+    div()
+        .id("pedido-da-chamada")
+        .w_full()
         .max_h(r(300.))
-        .overflow_y_scrollbar()
+        .rounded(raio::CONTROLE)
+        .bg(Cores::hover())
+        .mono_pequeno()
+        .flex()
+        .child(miolo)
+        .overflow_scrollbar()
 }
 
 /// O resultado de uma chamada aberta, na caixa de código do chat (as últimas 40 linhas).

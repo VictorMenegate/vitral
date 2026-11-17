@@ -2,7 +2,7 @@
 //! dentro (`Cores::preto`).
 
 use gpui_kit::component::ElementExt as _;
-use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -142,18 +142,21 @@ impl RenderOnce for CaixaDeCodigo {
                     ),
             )
             .child(
+                // Sem quebrar as linhas: a saída é código, e a linha quebrada no meio da
+                // indentação embaralhava tudo (dono, 17/11/2026: "tá bem zuado essas partes"). A
+                // caixa rola de lado também; o miolo tem a largura da linha mais longa.
                 div()
                     .id("corpo")
                     .max_h(r(240.))
-                    .overflow_y_scroll()
+                    .overflow_scroll()
                     .track_scroll(&rolagem)
-                    .vertical_scrollbar(&rolagem)
-                    .px(dentro_da_borda(12.))
-                    .py(esp::E8)
+                    .scrollbar(&rolagem, ScrollbarAxis::Both)
+                    .flex()
                     .font_family(crate::tema::FONTE_MONO)
                     .text_size(r(12.))
                     .line_height(r(18.))
                     .text_color(Cores::texto())
+                    .child(div().flex_none().min_w_full().flex().flex_col().px(dentro_da_borda(12.)).py(esp::E8).whitespace_nowrap()
                     .when(fora > 0, |d| {
                         d.child(
                             div()
@@ -170,7 +173,7 @@ impl RenderOnce for CaixaDeCodigo {
                                 })),
                         )
                     })
-                    .child(conteudo),
+                    .child(conteudo)),
             )
     }
 }

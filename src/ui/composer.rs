@@ -1281,7 +1281,8 @@ impl Janela {
                     })
                     .children(icone)
                     .children(miniatura)
-                    .child(
+                    // A imagem fica só na miniatura (o nome e o tamanho vão na dica): uma bolinha.
+                    .when(!(imagem && lido.existe), |s| s.child(
                         div()
                             .max_w(r(220.))
                             .truncate()
@@ -1301,7 +1302,7 @@ impl Janela {
                             .metadado()
                             .text_color(Cores::tenue())
                             .child(lido.tamanho.map(|t| t.to_string()).unwrap_or_else(|| "sumiu".into())),
-                    )
+                    ))
                     .child(
                         BotaoRedondo::new(("tirar-anexo", i), Some(Lucide::X.into()), "Remover o anexo")
                             .variante(VarianteRedonda::Plano)
