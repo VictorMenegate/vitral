@@ -768,66 +768,68 @@ impl CartaoDeErro {
     }
 }
 
+/// Grupo de hover do cartão de erro: o Copiar só aparece com o ponteiro em cima.
+const GRUPO_DO_ERRO: &str = "cartao-de-erro";
+
 impl RenderOnce for CartaoDeErro {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let (fundo, borda, cor_do_icone) = match self.cor {
-            Some(c) => (Cores::tinta_leve(c), Cores::tinta_borda_leve(c), c),
-            None => (Cores::grupo(), Cores::borda(), Cores::tenue()),
+        // Sem caixa: um fio de 2 px na cor do assunto à esquerda, o ícone na mesma cor e o texto
+        // solto na conversa, como uma nota. A caixa tingida com contorno pesava mais que a
+        // resposta e, empilhada (limite, login, outra tentativa), virava uma parede vermelha
+        // (dono, 17/11/2026: "tô achando feio o estilo de quando mando mensagem e tem erro").
+        let (cor_do_fio, cor_do_icone) = match self.cor {
+            Some(c) => (c.opacity(0.7), c),
+            None => (Cores::borda_forte(), Cores::tenue()),
         };
         let corpo = self.frase.is_some() || self.original.is_some() || !self.acoes.is_empty();
         let (original_antes, original_depois) = if self.original_antes { (self.original, None) } else { (None, self.original) };
         let acoes = self.acoes;
-        v_flex()
+        h_flex()
+            .group(GRUPO_DO_ERRO)
             .w_full()
-            .p(dentro_da_borda(8.))
-            .rounded(raio::CARTAO)
-            .bg(fundo)
-            .border_1()
-            .border_color(borda)
-            // Cabeçalho: o ícone num lugar de 24 (o glifo de 16 fica a 12 da borda), o título e o
-            // Copiar.
+            .items_stretch()
+            .gap(esp::E12)
+            .py(esp::E2)
+            .child(div().flex_none().w(px(2.)).rounded_full().bg(cor_do_fio))
             .child(
-                h_flex()
-                    .items_start()
-                    .gap(esp::E8)
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E4)
+                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover).
                     .child(
-                        div()
-                            .flex_none()
-                            .size(r(24.))
-                            .flex()
+                        h_flex()
                             .items_center()
-                            .justify_center()
-                            .text_color(cor_do_icone)
-                            .child(self.icone.with_size(tam(window, 16.))),
+                            .gap(esp::E8)
+                            .child(div().flex_none().text_color(cor_do_icone).child(self.icone.with_size(tam(window, 16.))))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(r(14.))
+                                    .line_height(r(20.))
+                                    .font_semibold()
+                                    .text_color(Cores::texto())
+                                    .child(self.titulo),
+                            )
+                            .children(self.canto.map(|c| {
+                                div().flex_none().invisible().group_hover(GRUPO_DO_ERRO, |s| s.visible()).child(c)
+                            })),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .pt(esp::E2)
-                            .text_size(r(14.))
-                            .line_height(r(20.))
-                            .font_semibold()
-                            .text_color(Cores::texto())
-                            .child(self.titulo),
-                    )
-                    .children(self.canto.map(|c| div().flex_none().child(c))),
+                    // O corpo alinhado ao título (16 do ícone mais 8 do vão).
+                    .when(corpo, |s| {
+                        s.child(
+                            v_flex()
+                                .pl(esp::E24)
+                                .gap(esp::E6)
+                                .children(self.frase.map(|f| div().text_size(r(13.)).line_height(r(18.)).text_color(Cores::tenue()).child(f)))
+                                .children(original_antes)
+                                // O ícone do primeiro botão fantasma (padding 8) cai na coluna do texto.
+                                .when(!acoes.is_empty(), |s| s.child(h_flex().flex_wrap().gap(esp::E4).ml(r(-8.)).children(acoes)))
+                                .children(original_depois),
+                        )
+                    }),
             )
-            // O corpo alinhado ao título (24 do ícone mais 8 do vão).
-            .when(corpo, |s| {
-                s.child(
-                    v_flex()
-                        .pl(esp::E32)
-                        .pr(esp::E8)
-                        .pt(esp::E2)
-                        .gap(esp::E8)
-                        .children(self.frase.map(|f| div().text_size(r(13.)).line_height(r(18.)).text_color(Cores::tenue()).child(f)))
-                        .children(original_antes)
-                        // O ícone do primeiro botão fantasma (padding 8) cai na coluna do texto.
-                        .when(!acoes.is_empty(), |s| s.child(h_flex().flex_wrap().gap(esp::E4).ml(r(-8.)).children(acoes)))
-                        .children(original_depois),
-                )
-            })
     }
 }
 
