@@ -191,6 +191,13 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
   trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
   rolagem respondem melhor.
+- **Conversa mais enxuta.** As linhas do que o agente fez ficaram mais baixas (28), com o verbo em
+  tom apagado e o detalhe em mono solto, sem o chip escuro em cada linha; o dia ("Hoje") perdeu os
+  fios dos lados; a caixa de código perdeu o fio do cabeçalho e o Copiar só aparece com o ponteiro
+  nela; a linha do turno não mostra mais "ação 5"; o enviar tem a altura dos chips ao lado; e as
+  abas cortam o título sem as reticências, com o número mais perto.
+- **Popovers dentro da janela.** O de modelo e o do uso do plano não passam mais da borda com o
+  zoom alto: a lista encolhe e rola por dentro.
 - **Na pasta: o que o git vê.** O **Este chat** ganha a seção Na pasta, com tudo o que mudou desde
   o último commit, inclusive o que um comando mudou (a lista de Mudanças só via as edições). O
   clique abre o arquivo com o diff por cima, onde o número da linha escolhe um trecho para

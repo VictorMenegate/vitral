@@ -1647,13 +1647,13 @@ fn marca_da_vez(agente: Agente) -> AnyElement {
         .into_any_element()
 }
 
+/// O dia, centrado e sem fios: as linhas dos dois lados eram divisória a mais (rodada de concisão,
+/// 17/11/2026). O "Novo", que pede atenção, continua com elas.
 fn separador_de_dia(rotulo: &str) -> AnyElement {
-    let traco = || div().flex_1().min_w(r(16.)).h(px(1.)).bg(Cores::linha());
     h_flex()
         .w_full()
         .min_h(r(24.))
-        .gap(r(8.))
-        .child(traco())
+        .justify_center()
         .child(
             div()
                 .flex_none()
@@ -1664,7 +1664,6 @@ fn separador_de_dia(rotulo: &str) -> AnyElement {
                 .text_color(Cores::tenue())
                 .child(rotulo.to_string()),
         )
-        .child(traco())
         .into_any_element()
 }
 
@@ -2033,8 +2032,9 @@ impl<'a> Contexto<'a> {
 }
 
 /// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, ícone de 14 a 12 da borda
-/// e o texto a 8 dele. Coladas, dão o passo de 28.
-const ALTURA_DO_LOG: Rems = r(32.);
+/// e o texto a 8 dele. Coladas, dão o passo de 28 (eram 32: sete linhas comiam mais da metade da
+/// conversa; rodada de concisão, 17/11/2026).
+const ALTURA_DO_LOG: Rems = r(28.);
 
 /// O resultado aberto de uma linha de log, embaixo do texto dela.
 const RECUO_DO_LOG: Rems = r(56.);
@@ -2685,14 +2685,9 @@ impl Janela {
                     .flex_shrink(1.)
                     .min_w_0()
                     .truncate()
+                    // Mono solto na cor do código, como o detalhe das chamadas (sem o chip).
                     .font_family(FONTE_MONO)
-                    .text_color(if existe { Cores::tenue() } else { Cores::apagado() })
-                    .h(r(22.))
-                    .px(esp::E6)
-                    .rounded(raio::CONTROLE)
-                    .bg(Cores::recuo())
-                    .flex()
-                    .items_center()
+                    .text_color(if existe { Cores::codigo() } else { Cores::apagado() })
                     .child(nome),
             )
             .when(editado.entram + editado.saem > 0, |s| {
@@ -3005,11 +3000,11 @@ impl Janela {
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone))
             .when(!minima, |s| {
                 s.child(
+                    // O verbo é o rótulo (tênue, sem peso); o que importa é o detalhe ao lado.
                     div()
                         .flex_none()
                         .when(em_grupo, |s| s.min_w(r(56.)))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(Cores::texto())
+                        .text_color(Cores::tenue())
                         .child(verbo.to_string()),
                 )
             })
@@ -3019,15 +3014,10 @@ impl Janela {
                     .min_w_0()
                     .truncate()
                     .map(|s| {
+                        // O que é código sai em mono solto, na cor do código; o chip escuro em toda
+                        // linha virava uma tabela de pílulas (rodada de concisão, 17/11/2026).
                         if codigo {
-                            s.font_family(FONTE_MONO)
-                                .text_color(Cores::tenue())
-                                .h(r(22.))
-                                .px(esp::E6)
-                                .rounded(raio::CONTROLE)
-                                .bg(Cores::recuo())
-                                .flex()
-                                .items_center()
+                            s.font_family(FONTE_MONO).text_color(Cores::codigo())
                         } else {
                             s.text_color(Cores::texto())
                         }
@@ -3697,7 +3687,6 @@ impl Janela {
                 } else {
                     sem_marcacao(&atividade)
                 };
-                let (acoes, _) = numeros_do_turno(&chat.itens);
                 let agentes = super::mapa_agentes::agentes_vivos(motor, chat);
                 (
                     h_flex()
@@ -3744,9 +3733,6 @@ impl Janela {
                                 .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
                                 .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
-                        .when(!estreita && acoes > 0, |s| {
-                            s.child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(format!("ação {acoes}")))
-                        })
                         // Os comandos que o agente deixou rodando no fundo (um servidor, um build):
                         // à vista, e o clique para (o `stop_task` de cada um).
                         .children({
@@ -4719,27 +4705,6 @@ fn marco_da_conversa(itens: &[Item], dirigidas: usize) -> Option<usize> {
     })
 }
 
-/// Os números do turno que está aberto (desde a última mensagem sua ou entrega): quantas ações
-/// (chamadas de ferramenta) e quantos arquivos distintos ele editou ou gravou.
-fn numeros_do_turno(itens: &[Item]) -> (usize, usize) {
-    let mut arquivos: Vec<&str> = Vec::new();
-    let mut acoes = 0;
-    for item in itens.iter().rev() {
-        match item {
-            Item::Usuario { .. } | Item::Entrega { .. } => break,
-            Item::Ferramenta { nome, arquivo, .. } if nome != "ToolSearch" => {
-                acoes += 1;
-                let edita = matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
-                if let Some(a) = arquivo.as_deref().filter(|a| edita && !arquivos.contains(a)) {
-                    arquivos.push(a);
-                }
-            }
-            _ => {}
-        }
-    }
-    (acoes, arquivos.len())
-}
-
 /// O que o agente faz agora, tirado da última chamada ainda sem resultado no turno ("Lendo
 /// motor.rs…"); sem chamada, "Escrevendo…" ou "Pensando…". As `dirigidas` últimas mensagens do
 /// usuário entraram neste mesmo turno e não cortam a procura.
@@ -5386,7 +5351,7 @@ mod testes {
         Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
-        separadores_de_data, etiqueta_da_ferramenta, numeros_do_turno, regra_do_pedido, texto_atividade, tipo_aviso,
+        separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
     };
     use crate::modelo::{Chat, Item, regra_de_permissao};
@@ -5739,20 +5704,6 @@ mod testes {
         // Até dois arquivos, o nome deles no lugar da contagem (rodada de uso, item 5.1).
         assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 2 comandos · editou views.py · leu 3 arquivos");
         assert_eq!(resumo_das_chamadas(&chamadas, true), "2 comandos · editou views.py · 3 lidos");
-    }
-
-    #[test]
-    fn numeros_do_turno_contam_so_o_turno_aberto() {
-        let mut editar = ferramenta("Edit", "Edit · views.py", Some("ok"), false);
-        if let crate::modelo::Item::Ferramenta { arquivo, .. } = &mut editar {
-            *arquivo = Some("produtos/views.py".into());
-        }
-        let ler = ferramenta("Read", "Read · views.py", Some("ok"), false);
-        let rodar = ferramenta("Bash", "Bash · python3 manage.py test", None, false);
-        // O turno de antes não conta; duas edições do mesmo arquivo são um arquivo.
-        let itens = [ler.clone(), usuario("ajusta"), ler, editar.clone(), editar, rodar];
-        assert_eq!(numeros_do_turno(&itens), (4, 1));
-        assert_eq!(numeros_do_turno(&[usuario("oi")]), (0, 0));
     }
 
     #[test]

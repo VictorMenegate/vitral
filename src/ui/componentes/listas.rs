@@ -1000,7 +1000,13 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
 }
 
 impl Render for ListaDeEscolha {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Até 440, mas cabendo na janela com o resto do popover em volta (abas, rodapé, a caixa
+        // embaixo): com zoom alto, o popover de modelo passava da borda e cortava o rodapé
+        // (relatório de design, 17/11/2026).
+        let teto = (window.viewport_size().height - px(360.))
+            .min(r(440.).to_pixels(window.rem_size()))
+            .max(px(160.));
         let lista = cx.entity().downgrade();
         let grupos = self.filtrados.clone().unwrap_or_else(|| self.grupos.clone());
         let escolhido = self.escolhido.clone();
@@ -1008,7 +1014,7 @@ impl Render for ListaDeEscolha {
         let mut comando = Command::new(&self.estado)
             .placeholder(self.placeholder.clone())
             .bordered(false)
-            .max_h(r(440.))
+            .max_h(teto)
             .empty(|estado, _, cx| {
                 EstadoVazio::new(Lucide::Search, "Nada encontrado")
                     .texto(format!("Nada encontrado para “{}”", estado.query(cx)))

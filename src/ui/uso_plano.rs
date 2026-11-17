@@ -145,7 +145,14 @@ fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: Wea
             if marca == Marca::Claude {
                 vigiar_uso(&motor, window, cx);
             }
-            detalhes(marca, motor.clone(), janela.clone(), popover, window, cx)
+            // Abre do canto de cima para baixo: sem teto, o rodapé (a hora e as ações) passava da
+            // borda da janela (relatório de design, 17/11/2026).
+            let teto = window.viewport_size().height - px(USO_DO_TOPO + 80.);
+            div()
+                .id("uso-rolagem")
+                .max_h(teto)
+                .overflow_y_scroll()
+                .child(detalhes(marca, motor.clone(), janela.clone(), popover, window, cx))
         })
 }
 

@@ -108,8 +108,10 @@ impl RenderOnce for CaixaDeCodigo {
         };
         let cor_tempo = if self.erro { Cores::vermelho() } else { Cores::tenue() };
         let para_copiar = self.comando.as_ref().map(|c| format!("$ {c}\n\n{}", self.texto)).unwrap_or_else(|| self.texto.to_string());
+        let grupo = SharedString::from(format!("{}-caixa", self.id));
         div()
             .id(self.id.clone())
+            .group(grupo.clone())
             .flex()
             .flex_col()
             .rounded(if self.raio_chat { raio::CARTAO } else { raio::CONTROLE })
@@ -125,8 +127,6 @@ impl RenderOnce for CaixaDeCodigo {
                     .h(r(28.))
                     .pl(dentro_da_borda(12.))
                     .pr(esp::E2)
-                    .border_b_1()
-                    .border_color(Cores::linha())
                     .child(
                         div()
                             .flex_1()
@@ -137,8 +137,13 @@ impl RenderOnce for CaixaDeCodigo {
                             .children(self.comando.map(|c| format!("$ {c}"))),
                     )
                     .children(self.tempo.map(|t| div().flex_none().metadado().text_color(cor_tempo).child(t)))
+                    // O Copiar só com o ponteiro na caixa: à vista em toda caixa, era ruído.
                     .child(
-                        BotaoCopiar::new(SharedString::from(format!("{}-copiar", self.id)), para_copiar),
+                        div()
+                            .flex_none()
+                            .invisible()
+                            .group_hover(grupo, |s| s.visible())
+                            .child(BotaoCopiar::new(SharedString::from(format!("{}-copiar", self.id)), para_copiar)),
                     ),
             )
             .child(

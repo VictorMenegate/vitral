@@ -273,7 +273,9 @@ impl Aba {
                     .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             })
             .children(simbolo)
-            .when(!so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
+            // O título cortado seco, sem as reticências: com elas a aba gastava três letras no "…"
+            // e o número parecia longe (dono, 17/11/2026: "deixa sem esses 3 pontinhos").
+            .when(!so_simbolo, |s| s.child(div().min_w_0().overflow_hidden().whitespace_nowrap().rotulo().child(self.titulo)))
             .children(self.detalhe.filter(|_| !so_simbolo).map(|(t, mono)| {
                 div()
                     .flex_none()
@@ -284,7 +286,9 @@ impl Aba {
                     .child(t)
             }))
             // O número do painel fica à direita, antes do × (dono, 13/11/2026).
-            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| numero_painel(n, ativo)))
+            // Colado no título: 4 em vez dos 6 do vão da aba (dono, 17/11/2026: "diminui o espaço
+            // até o número").
+            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| div().flex_none().ml(-esp::E2).child(numero_painel(n, ativo))))
             .children(self.fim)
             .children(fim)
             .children(por_cima)

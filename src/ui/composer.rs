@@ -860,7 +860,9 @@ impl Janela {
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
         let estreita = b.faixa == FaixaCaixa::Estreita;
-        let (grande, pequeno) = if estreita { (32., 28.) } else { (36., 32.) };
+        // O enviar na altura dos chips da linha (eram 36 ao lado de 32; rodada de concisão,
+        // 17/11/2026: vizinhos na mesma altura).
+        let (grande, pequeno) = if estreita { (28., 28.) } else { (32., 32.) };
         let painel = b.painel;
         let parar = || {
             let (motor, chat) = (self.motor.clone(), b.chat.clone());
