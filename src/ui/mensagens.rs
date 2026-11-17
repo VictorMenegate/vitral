@@ -581,7 +581,9 @@ impl Janela {
             .map(|(i, alto, texto)| {
                 let janela = cx.entity().downgrade();
                 let raio = crate::tema::raio_da_peca();
-                div().absolute().top(esp::E8).left_0().right_0().child(
+                // Uma faixa do cartão por trás, do topo até a mensagem: o pedaço da resposta acima
+                // dela não aparece cortado.
+                div().absolute().top_0().left_0().right_0().pt(esp::E8).pb(esp::E4).bg(Cores::cartao_opaco()).child(
                     div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
@@ -592,6 +594,9 @@ impl Janela {
                             .rounded(raio)
                             .cursor_pointer()
                             .shadow(crate::tema::sombra_elevado())
+                            // Opaca: por cima da conversa, o fundo da lista sozinho deixava a
+                            // resposta aparecer por trás e a faixa sumia no texto.
+                            .bg(Cores::cartao_opaco())
                             .child(fundo_da_lista(raio))
                             .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
                             .tooltip(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
