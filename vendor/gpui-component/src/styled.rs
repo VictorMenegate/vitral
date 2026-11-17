@@ -73,10 +73,12 @@ pub(crate) fn popover_shadow(ring: Hsla, strength: f32) -> Vec<BoxShadow> {
     // Vitral: o contorno de casca, de trás para a frente: a sombra funda e a curta (desfoque em
     // sigma, metade do CSS), o fio preto de 2 por fora, o anel claro de 1 colado na peça e, por
     // dentro, a luz no topo, a sombra na base e o brilho de 3% que entra pelo topo.
+    // Vitral: a sombra funda desce mais (0 24, desfoque 16, -10 a 60%): com o flutuante um degrau
+    // mais claro (16/11/2026), o menu precisa dela para sair da peça.
     vec![
-        BoxShadow::new(px(0.), px(20.), preto(0.55))
-            .blur_radius(px(10.))
-            .spread_radius(px(-8.)),
+        BoxShadow::new(px(0.), px(24.), preto(0.60))
+            .blur_radius(px(16.))
+            .spread_radius(px(-10.)),
         BoxShadow::new(px(0.), px(4.), preto(0.35))
             .blur_radius(px(2.5))
             .spread_radius(px(-1.)),

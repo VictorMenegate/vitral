@@ -3,6 +3,367 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.8.0
+
+Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
+
+- **Digitar em qualquer ponto escreve na caixa.** Depois de clicar na conversa (para abrir uma
+  trilha ou selecionar um trecho) ou numa aba, a letra que você digita vai para a caixa do painel
+  ativo, e o Ctrl+V cola nela: um print copiado vira pílula sem clicar antes.
+- **A conversa abre onde a resposta começa.** Um chat que terminou abre no começo da resposta
+  nova quando ela não cabe na tela, com um separador "Novo" antes do que você não viu. Trocar de
+  aba no meio de uma leitura guarda o lugar, e voltar à aba volta a ele. Abrir não marca mais como
+  lido: o chat só sai de "Terminou" quando você chega ao fim.
+- **Turno pronto vira "Trabalhou 6 min".** Ao terminar, o que o agente fez antes da resposta final
+  recolhe numa linha ("Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs"), com a
+  resposta logo embaixo. As perguntas do meio, os erros e as imagens continuam à vista, e o clique
+  na linha mostra o resto.
+- **Quem espera você aparece onde você está olhando.** O pedido de permissão, o plano e a falha de
+  um chat fora de vista viram um aviso no canto de baixo, à direita, com Negar e Permitir (ou Ver
+  plano, Tentar de novo) ali mesmo. Ele fica até ser respondido e nunca pega o foco da caixa. Com
+  a janela atrás, o pedido de permissão fica na tela do GNOME até o clique. Desliga em
+  Configurações, **Avisar dentro do app**.
+- **Falha que diz a causa e já oferece a saída.** A faixa acima da caixa mostra a primeira linha do
+  erro (o texto inteiro na dica). No limite de uma conta escolhida à mão, com outra conta livre,
+  **Continuar na <outra>** troca a conta do chat e repete o turno num clique. No login perdido,
+  **Entrar de novo** abre as Contas já refazendo o login daquela conta. O turno com erro passa a
+  notificar com a janela atrás.
+- **Entrar de novo na conta que perdeu o login.** Nas Contas do Claude, a conta sem login mostra
+  "desconectada" e o botão **Entrar de novo**, que refaz o login nela mesma, sem criar uma conta
+  duplicada. A marca continua depois de fechar o Vitral, a conta cujo token a Anthropic recusa na
+  leitura do uso também aparece desconectada, e o "…" de cada conta tem **Entrar de novo** a
+  qualquer hora. O **Entrar de novo** do erro abre já no login da conta que caiu; sem saber qual
+  foi, mostra o botão em cada conta.
+- **Revisão da memória sem prender o chat.** O "Terminou" sai assim que o turno de trabalho acaba;
+  a revisão da memória roda por baixo e vira uma linha na conversa ("Memória revista · nada a
+  guardar"). Uma mensagem sua no meio dela corta a revisão (se ela ainda não escreveu nada) e
+  começa o seu turno.
+- **Menu "@" na própria caixa.** O "@" abre um menu como o do "/", sem tirar o cursor da caixa:
+  **@claude** e **@codex** na dupla (agora funcionam pelo teclado) e os arquivos e as pastas do
+  chat, com Tab ou Enter para completar. A lista de arquivos passou a descer nos repositórios de
+  dentro da pasta: em ~/eita, o "@", a aba Arquivos e o Mencionar acham o código de central/,
+  layout/ e dos outros projetos.
+- **Menções em pílula.** O arquivo mencionado vira uma pílula com o ícone, o nome e as linhas
+  ("fila.rs:120-134"), dentro da caixa enquanto você escreve e no balão da mensagem enviada. O
+  clique abre o arquivo ao lado, nas linhas. Para o agente, a menção continua o caminho inteiro.
+- **Ver a edição no próprio arquivo.** Cada arquivo editado vira uma linha com o nome e o +N −M,
+  também embaixo do "Trabalhou…" recolhido. O clique abre o arquivo ao lado já na edição: o que
+  entrou em verde, o que saiu em vermelho entre as linhas, rolado até a primeira mudança, com
+  setas para passar de uma à outra. No Codex, uma linha por arquivo, cada uma com a sua edição.
+- **Mencionar um trecho.** No arquivo aberto, **Mencionar** leva o arquivo, as linhas que você
+  escolheu (clique no número; Shift+clique estende) ou, na edição, a mudança à vista.
+- **Cabeçalho do arquivo que cabe.** O nome, as linhas e a linguagem nunca passam por baixo dos
+  botões nem dos anéis de uso: sem lugar, os botões ficam só com o ícone e o resto sai inteiro.
+- **O que mudou fica à vista.** A trilha diz o nome dos arquivos editados ("editou carrinho.py e
+  motor.rs") quando são até dois. Quando o turno muda arquivos, a faixa colada na caixa diz "3
+  arquivos mudados · +40 −12", e **Ver mudanças** abre "Este chat" com a lista: neste turno e
+  antes, com o +N −M de cada um e o selo "novo" no que foi criado. O clique abre o arquivo à direita.
+- **Toda lista diz o que o chat respondeu.** O sino mostra a primeira frase da resposta nova e o que
+  o turno fez ("3 editados · 12 comandos"); o histórico do "+" diz o estado e o começo da última
+  fala; a dica da aba de fundo também; e o "Enquanto você esteve fora" deixa o título curto, com a
+  frase ao lado.
+- **Ctrl+K como seletor rápido.** Com a lista recolhida, o Ctrl+K a abre por cima dos painéis e
+  ela recolhe sozinha ao abrir o chat. Com texto na busca, o primeiro resultado já vem marcado, e as
+  setas movem a marca sem tirar o cursor do campo. No histórico do "+", o que espera você vem no alto.
+- **Fila que não perde nada.** O × da fila devolve a mensagem inteira à caixa, com os anexos e o
+  Ultrathink ou Ultracode, e com algo escrito ela se junta ao fim (Ctrl+Z desfaz). Com o turno
+  rodando e a caixa vazia, a seta para cima traz de volta a última da fila. O lápis edita na própria
+  linha, sem diálogo (Ctrl+Enter salva, Esc desiste).
+- **Busca de chat sem acento e por palavras.** Na lista e no histórico do "+", "integracao" acha
+  "integração" e "vip cupons" acha "Cupons para grupos VIP"; o que casa no título vem primeiro.
+- **"+" do painel mais claro.** **Novo chat neste painel** fica no alto, com o + azul e o atalho
+  (Ctrl+N), separado dos chats em "Recentes"; o Enter cria, e o visto marca o chat à vista.
+- **Rascunho inteiro e à vista.** O rascunho guardado leva os prints colados e a citação, e volta
+  inteiro quando o Vitral abre de novo. Na lista e nas abas, o chat com mensagem começada ganha um
+  lápis e "Rascunho: começo do texto".
+- **Ctrl+G percorre todas as pendências.** Ele vai à seguinte à do chat aberto e dá a volta
+  (Ctrl+Shift+G volta), põe o foco no Retomar ou no Tentar de novo quando é o caso, e diz "2 de 3 ·
+  Parada · WMS". No sino, as Paradas ganham **Retomar tudo**.
+- **Esc que não custa caro.** Depois de um Esc, a faixa oferece **Continuar**, e o Enter com a caixa
+  vazia continua o turno. Com agentes em segundo plano ou Ultracode rodando, o primeiro Esc só arma
+  ("Esc de novo para parar os 3 agentes"), para um Esc distraído não jogar fora o trabalho deles.
+- **Compactar num clique.** O "Compactar" do anel do contexto e o da conversa grande parada compactam
+  na hora, sem apagar o que estava escrito na caixa; com o turno rodando, entram na fila.
+- **Abas consistentes.** Todos os painéis usam a mesma moldura nas abas; a selecionada muda de tom.
+- **Fila junto da mensagem.** Abre acima da caixa, dentro do painel, com **Mandar agora** para
+  enviar uma mensagem ao turno em andamento. O Codex também recebe novas instruções enquanto trabalha.
+- **Trilha de atividade.** Resumo do trabalho, ramificações entre as chamadas e identificação dos
+  arquivos. Os grupos abrem enquanto trabalham e recolhem ao terminar, respeitando sua escolha.
+  Abrir uma edição mostra o diff; abrir um comando reúne o comando e sua saída.
+- **Claude e Codex no mesmo chat, sem ligar nada.** Num chat que já conversou, trocar de agente no
+  seletor de modelo ou começar a mensagem com @claude ou @codex chama o outro: ele entra com a
+  conversa até ali, e o de antes continua no chat com a sessão dele (o @ o chama de volta). Cada um,
+  antes da vez dele, recebe o que o outro disse e os arquivos que mexeu, e a conversa mostra quem
+  está trabalhando. Para os dois em toda mensagem (um trabalha e o outro revisa, até um dizer "Nada
+  a acrescentar" ou até 6 turnos), ligue **Os dois em toda mensagem** no seletor de modelo.
+- **Subagentes à vista de novo.** No Claude Code novo os subagentes trabalham em segundo plano, e o
+  Vitral os dava como terminados logo ao começar. Agora eles ficam como trabalhando até o fim, com o
+  que estão fazendo, e cada um mostra desde o começo os tokens, as ferramentas e o tempo, como na
+  extensão. O relatório de cada um sai em texto, sem a moldura que o Claude Code põe em volta.
+- **Sem o Ultrathink.** No Claude Code de agora a palavra não muda nada, e a chave só subia o esforço
+  da mensagem para Extra, o mesmo que escolher o Extra no seletor de esforço.
+- **Corrigir qualquer mensagem sua.** O Editar aparece em todas as suas mensagens, não só na última
+  (e não some mais quando o Claude pensa antes de responder). A conversa volta ao ponto antes dela.
+- **Suas mensagens na largura toda** da coluna, num balão azul mais baixo que a resposta: os
+  caminhos de arquivo viram link, o código vai num poço escuro e um "/compact" sozinho vira uma
+  pílula.
+- **Erros em português.** O erro do turno vira um cartão com o que aconteceu, o que fazer e quando
+  o limite volta, o Copiar no canto e o texto do agente em **Detalhes**, com os links curtos. No
+  último erro, as ações que resolvem: ver o uso, continuar no outro agente, entrar de novo,
+  instalar o Codex ou compactar. A faixa acima da caixa diz o que falhou.
+- **Imagens em pílulas, como na extensão do Claude Code.** As imagens que você manda (dentro do
+  balão, em cima do texto), as que a resposta aponta e as que o agente leu ou gravou viram uma pílula
+  com a miniatura, o nome e as medidas; o clique abre o visor.
+- **Aviso de conversa grande e parada.** Depois de uma hora sem uso, uma conversa do Claude com
+  mais de 100 mil tokens avisa, acima da caixa, quanto a próxima mensagem vai reler por inteiro, com
+  o botão **Compactar**. O seletor de modelo avisa o mesmo custo antes de trocar o modelo.
+- **Menos gasto escondido.** O Vitral desliga no Claude Code as chamadas que ele não mostra: o
+  resumo de quando você volta e o título do terminal.
+- **Sugestão da próxima mensagem.** Depois de cada resposta do Claude, a mensagem que você
+  provavelmente escreveria ("roda os testes", "commita") aparece apagada na caixa vazia, e o Tab a
+  põe na caixa para mandar ou mudar. Quando o próximo passo não é óbvio, nada aparece. Desliga em
+  Configurações, **Sugerir a próxima mensagem**.
+- **Conta que perdeu o login.** Quando o Claude Code avisa que o login de uma conta caiu, o chat
+  continua sozinho em outra conta que esteja com login e diz qual; sem outra, o aviso mostra onde
+  entrar de novo. Antes, o "Tentar de novo" repetia na mesma conta e falhava igual.
+- **A conta mora no seletor de modelo.** Com mais de uma conta do Claude, a escolha fica na aba do
+  Claude do seletor, e não mais solta na caixa de mensagem.
+- **Histórico ao subir.** As mensagens anteriores aparecem automaticamente ao rolar para cima,
+  mantendo o ponto de leitura. A barra fica visível quando a conversa tem conteúdo para rolar.
+
+- **Mais simples.** Saíram os projetos, o Mestre, as rotinas, as issues e PRs e as cópias isoladas.
+  Ficou o essencial: uma lista de chats, e cada chat trabalha direto na pasta dele, como o Claude
+  Code no terminal ou no VS Code. Os dados antigos ficam guardados em `estado.versao-2.json`.
+- **Claude ou Codex.** O seletor de modelo ganhou as abas **Claude** e **Codex**; a do Codex
+  mostra os modelos que o Codex instalado oferece. Nas famílias do Claude, a versão de hoje
+  aparece num selo ao lado (Fable 5.2, Opus 5.5). Escolher um deles passa o chat para o Codex; escolher um do Claude traz de
+  volta. Na troca, a conversa segue numa sessão nova do outro, com as últimas mensagens. O Codex
+  usa o login e o plano dele, e o modo de permissão vira o sandbox dele (Planejar só lê, Sem
+  perguntar roda sem sandbox, os outros escrevem só na pasta). Nas Configurações dá para escolher
+  quem responde nos chats novos.
+- **A mesma pergunta para os dois.** No "…" da caixa, **Perguntar também ao Codex** (ou ao Claude)
+  manda a mensagem para o chat e para um chat novo do outro agente, aberto ao lado, para comparar
+  as respostas. O chat novo só lê, para os dois não mexerem nos mesmos arquivos ao mesmo tempo.
+- **Raciocínio e subagentes na conversa.** Quando o modelo pensa, a trilha mostra "Pensou por 9,8 s",
+  e abrir a linha mostra o raciocínio quando o Claude Code o entrega. O subagente virou um cartão
+  com o que ele está fazendo agora, quantas ferramentas já usou e o relógio; aberto, lista os passos.
+- **Mapa de agentes.** Com subagentes trabalhando, a linha da caixa mostra quantos são; o clique
+  abre o mapa: a conversa de um lado e, ligados a ela, os agentes, cada um com o estado, o tempo e
+  as ferramentas usadas. Clicar num agente mostra os passos e o resultado dele. O mapa também
+  abre pelo "…" da caixa (**Agentes desta conversa**).
+- **Mandar mensagem com o chat trabalhando.** A mensagem enviada durante um turno entra nele sem
+  pará-lo, também nos turnos que começaram por uma mensagem assim (antes, essas iam para a fila).
+  Na fila, **Mandar agora** põe uma mensagem que esperava dentro do turno que está rodando.
+- **"Pensando…" na conversa.** Enquanto o modelo pensa, a linha viva aparece no fim da conversa,
+  onde a resposta vai chegar. A linha embaixo da caixa ficou só com o relógio, as ações e a fila.
+- **Suas mensagens.** O balão ficou azul e do tamanho do texto, e as imagens anexadas ficam fora
+  dele, em cima.
+- **Esforço automático.** No **Auto**, o seletor de esforço diz qual nível o modelo está usando.
+- **Primeira abertura.** Uma tela de boas-vindas apresenta o app, pede a pasta de trabalho (como
+  abrir uma pasta no VS Code) e pergunta o básico: permissões, modelo e se traz as conversas que já
+  existem. O último passo permite conectar a memória da equipe. O "+" cria os chats nessa pasta;
+  **Pasta de trabalho…**, no menu do logo, troca.
+- **Memória da equipe.** Conecte o Vitral ao servidor ai-memory da empresa com seu endereço e sua
+  chave. Claude e Codex consultam e registram decisões, procedimentos e aprendizados na mesma
+  memória. **Consultar memória** busca e abre as páginas dentro do app, sem gastar o plano dos
+  agentes. Não precisa instalar o ai-memory no computador, e o histórico dos chats não é enviado
+  automaticamente. A conexão também pode ser configurada depois no menu do logo e nas Configurações.
+- **Revisão da memória.** Depois de uma sessão que editou arquivos, o Vitral pede ao agente que
+  avalie o que vale guardar. Pode ser desligada nas Configurações.
+- **A janela volta como estava.** Ao abrir, o Vitral recoloca os painéis, as abas, a largura da
+  lista, a divisão entre as conversas e o tamanho da janela de quando foi fechado. Cada quantidade
+  de conversas lado a lado lembra a sua divisão (fechar uma e abrir de novo volta como era), e a
+  lista recolhida no arrasto volta, no Ctrl+B, na largura de antes.
+- **Imagens à vista.** As imagens que o agente lê ou gera aparecem na conversa, em grade quando são
+  várias. O visor ganhou zoom pela roda do mouse, arrasto e os botões de aproximar e afastar.
+- **Responder a um trecho.** Selecione um pedaço de uma resposta e clique em **Responder a este
+  trecho**: ele vai citado junto com a sua mensagem.
+- **Skills no "/".** A barra mostra os comandos e as skills da pasta já antes da primeira mensagem.
+- **Modelos sempre em dia.** O seletor pergunta ao Claude Code instalado quais modelos existem, e a
+  família (Fable, Opus, Sonnet, Haiku) usa sempre a versão mais nova que ele oferece.
+- **Outra conta sem código.** Ao entrar numa conta extra, basta autorizar no navegador: o Vitral
+  percebe sozinho e a conta aparece.
+- **Servidores MCP.** `/mcp` na caixa (ou **Servidores MCP**, no menu do logo) mostra os servidores
+  do chat, se estão ligados e quantas ferramentas cada um dá, sem precisar do terminal.
+- **Qualquer arquivo abre no Vitral.** O link de um arquivo de fora das pastas dos chats abre no
+  painel da direita, como os outros.
+- **Mais leve.** Cada painel desenha só as últimas 60 mensagens (**Mostrar anteriores** traz o
+  resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
+  trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
+  rolagem respondem melhor.
+- **Conversa mais enxuta.** As linhas do que o agente fez ficaram mais baixas (28), com o verbo em
+  tom apagado e o detalhe em mono solto, sem o chip escuro em cada linha; o dia ("Hoje") perdeu os
+  fios dos lados; a caixa de código perdeu o fio do cabeçalho e o Copiar só aparece com o ponteiro
+  nela; a linha do turno não mostra mais "ação 5"; o enviar tem a altura dos chips ao lado; e as
+  abas cortam o título sem as reticências, com o número mais perto.
+- **Popovers dentro da janela.** O de modelo e o do uso do plano não passam mais da borda com o
+  zoom alto: a lista encolhe e rola por dentro.
+- **Na pasta: o que o git vê.** O **Este chat** ganha a seção Na pasta, com tudo o que mudou desde
+  o último commit, inclusive o que um comando mudou (a lista de Mudanças só via as edições). O
+  clique abre o arquivo com o diff por cima, onde o número da linha escolhe um trecho para
+  mencionar na caixa; o **Desfazer** de cada linha volta o arquivo ao último commit, depois de
+  perguntar.
+- **Voltar os arquivos a antes de uma mensagem.** No balão de uma mensagem sua, o botão de voltar
+  (o relógio girando para trás) mostra quais arquivos o Claude mudou desde ela e, no ok, volta
+  todos a como estavam. A conversa fica como está, com um aviso do que voltou. Vale para as
+  mensagens mandadas a partir desta versão.
+- **Continuar quando o limite voltar.** Num chat parado no limite do plano, o botão **Às 14:20**
+  agenda: na hora em que o limite volta, o turno é repetido sozinho. A faixa diz "Continua sozinho
+  às 14:20" e o **Cancelar** desfaz; mandar outra mensagem também.
+- **Os passos do agente.** Quando o Claude anota a lista do que vai fazer, a linha do turno mostra
+  "2/5" (a lista inteira na dica), e o **Este chat** ganha a seção Passos, com o que ele está
+  fazendo agora em destaque.
+- **Comandos no fundo à vista.** Um servidor ou um build que o agente deixou rodando em segundo
+  plano aparece na linha do turno ("1 comando no fundo", com o comando na dica); o clique para.
+- **Dois chats no mesmo arquivo.** Quando um chat edita um arquivo que outro chat editou nas
+  últimas 12 horas, a conversa avisa ("O chat «Fila» também editou fila.rs…"), uma vez por par.
+- **Turno calado à vista.** Depois de 10 minutos sem nada do agente (nem texto, nem ferramenta), a
+  linha de estado diz "sem sinal há 12 min". Pode ser um comando longo; se travou, Esc para parar.
+- **Atalhos novos.** Ctrl+Tab e Ctrl+Shift+Tab andam pelas abas do painel ativo, Ctrl+Shift+T
+  reabre a última aba fechada e Ctrl+Shift+C copia a última resposta do chat à vista.
+- **Os atalhos não morrem mais.** Quando o botão com o foco some da tela (o Retomar e o Tentar de
+  novo saem quando o turno começa), o foco volta para a caixa; antes, as teclas da janela paravam
+  até um clique.
+- **Registro de queda.** Um erro interno fica gravado em `queda.log`, na pasta dos dados, e na
+  abertura seguinte o Vitral avisa que aconteceu.
+- **O notebook não dorme no meio de um turno.** Enquanto um chat trabalha, o Vitral segura a
+  suspensão automática do sistema (a tela ainda apaga e bloqueia). Ela volta assim que nenhum chat
+  está andando; o chat parado num pedido de permissão não a segura.
+- **Acabamento.** Cantos mais redondos, que acompanham o zoom; o uso do plano foi para o canto de
+  cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
+  erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
+  transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco), com um grão
+  bem fino.
+- **Copiar discreto.** O botão de copiar dos blocos de código, das citações e das mensagens tem o
+  ícone pequeno e apagado dos outros botões de linha, e vira um visto verde por 2 s.
+- **Selo do sino menor e recortado.** O número do sino tem o tamanho de um contador e um aro
+  escuro que o separa do botão.
+- **Nomes inteiros na aba Arquivos.** Os botões de cada arquivo só ocupam lugar com o ponteiro em
+  cima: fora disso, o nome vai até o fim da linha.
+- **Ícones de estado do mesmo tamanho.** Na lista e nas abas, o disco de "esperando" e o anel de
+  "rodando" têm a medida do balão do chat parado, numa coluna só.
+- **Lista mais leve.** Os títulos dos chats lidos ficaram em peso normal: a conversa fica em
+  primeiro plano, e o chat não lido salta à vista em negrito.
+- **Lista mais legível.** Com o chat aberto num painel, a linha mostra só o número do painel, e o
+  título ganha o lugar da hora (ela vai para a dica do ícone, junto da pasta). A hora ficou mais
+  clara, e o número do painel ativo deixou de parecer um aviso de não lidas. O número das
+  Arquivadas foi para a dica.
+- **Porcentagem do contexto sempre à vista**, também com três painéis lado a lado: o anel sozinho
+  parecia algo carregando.
+- **"+" em cada painel: chat novo ou histórico.** O "+" no cabeçalho abre uma lista com "Novo chat
+  neste painel" no topo, já marcado (Enter cria), e todos os chats, do mais recente ao mais antigo,
+  com busca: o escolhido abre neste painel, numa aba.
+- **Sem o "⋯" no cabeçalho.** O menu do painel (modo foco, mostrar o painel da direita, nova
+  conversa ao lado, renomear, fixar, arquivar) abre com o botão direito no cabeçalho ou numa aba
+  (na aba, vale para aquele chat), e com Shift+F10 ou a tecla Menu.
+- **Os anéis de uso num disco, sem folga na conversa.** Os anéis do Claude e do Codex continuam
+  embaixo do × da janela, agora cada um num disco opaco com sombra curta, como um botão flutuante;
+  a conversa, a caixa e as faixas do último painel vão até a borda, sem a folga que guardavam para
+  eles.
+- **Menos texto cortado.** O título "Enquanto você esteve fora" quebra em duas linhas na lista
+  estreita, em vez de virar "Enquanto voc…". A faixa de cima da caixa diz "Parada · Vitral
+  fechou", como a lista, com o motivo inteiro na dica. O aviso de turno cortado pelo fechamento do
+  Vitral virou um marco de uma linha, "O Vitral fechou no meio do turno", sem repetir a instrução
+  a cada turno nem falar do Claude no chat do Codex; no fim de um painel parado, em que a faixa
+  acima da caixa já diz isso com o Retomar, ele não se repete.
+- **Trilha de ferramentas mais regular.** O chevron fica sempre no fim da linha, o detalhe que é
+  código vai num chip em mono e o que é texto (a tarefa de um subagente, uma busca na web) vai em
+  letra normal. A chamada sozinha não tem mais o ramo pendurado nem o vão entre o verbo e o detalhe.
+  No painel médio, o resumo do grupo sai curto ("13 comandos · 1 editado · 3 lidos"), sem cortar o
+  último número.
+- **Escolhas iguais em todo lugar.** Nas Configurações e no boas-vindas, a opção escolhida de um
+  seletor (como "7 dias") usa a mesma ficha de metal do esforço e do alto da lista.
+- **Rolagem sem corte seco.** Rolada para cima, a conversa esmaece no pé em vez de cortar a última
+  linha no meio, e o pé da lista ganhou um fio que o separa da última conversa.
+- **Fileira de cima alinhada.** O logo e as abas da lista ficam na mesma linha das abas dos
+  painéis (antes, uns 5 px abaixo).
+- **O × da janela separado do painel.** No cabeçalho da última conversa, um traço separa o × da
+  janela das ações do painel, como já era no painel da direita.
+- **Textos das Configurações acertados.** A dos anéis de uso diz onde eles ficam, a
+  dos servidores MCP acompanha o interruptor, e as linhas de modo, agente e modelo dizem o que cada
+  chat troca.
+- **Ultracode desligado legível.** O motivo de ele não valer no chat aparece claro (só a chave fica
+  apagada) e diz "Só no Claude Code", certo também com Claude e Codex juntos.
+- **Corrigir uma mensagem não perde o que está na caixa.** Com algo escrito, o Vitral pergunta
+  antes, e o Ctrl+Z traz o texto de volta. A mensagem corrigida fica guardada como rascunho na hora,
+  mesmo se o Vitral cair logo depois, e a caixa mostra o fim dela, com o cursor. O aviso de depois
+  cabe inteiro. E uma queda logo depois de enviar não traz mais a mensagem enviada de volta para a
+  caixa. Colar um texto longo deixa à vista o fim do que foi colado, com o cursor.
+- **Menu "/" pelo teclado.** O Enter completa o comando marcado no menu (antes podia completar
+  outro, até o /clear), as setas andam pelo menu, o Tab completa e o Esc só fecha o menu, sem
+  apagar o que foi escrito.
+- **Fundo mais fosco.** Com a transparência ligada, o véu leitoso por cima do fundo ficou mais forte
+  (mais ainda nos níveis mais transparentes): o que está atrás da janela aparece esmaecido, como
+  vidro fosco, e não nítido como janela aberta.
+- **Fosco de verdade.** Nos níveis transparentes, o que está atrás da janela aparece desfocado pelo
+  próprio sistema: no Windows (o acrílico), no macOS, no KDE e no GNOME 51 em diante. No GNOME 50
+  ou anterior a janela fica só transparente, com o véu fosco por cima. No Opaco o Vitral não pede
+  desfoque nenhum, e trocar o nível nas Configurações vale na hora.
+- **Editar na fila salva com Ctrl+Enter.** O lápis de uma mensagem da fila abre com o cursor no fim,
+  e o Ctrl+Enter salva (antes quebrava a linha).
+- **Aba sem o espaço do ×.** Nenhuma aba guarda mais lugar para o ×, nem a selecionada: ele surge
+  por cima do fim da aba quando o ponteiro passa (ou com o foco do teclado), e a aba não muda de
+  tamanho. A aba à vista também não abre mais a dica por cima da conversa.
+- **O metal do escolhido e do aro de foco continua o de antes.** A rodada de aparência tinha
+  trocado o metal vivo da ficha do escolhido e do aro de foco por um recorte mais liso; o dono
+  preferiu o metal de antes ("por que tirou os shaders?"), e ele voltou.
+- **Marca do modelo mais discreta.** No chip do modelo (e nos menus das Configurações) a marca do
+  Claude ou do Codex aparece como glifo solto, sem o disco colorido cheio, e as barrinhas do
+  esforço ficaram do tamanho de um ícone.
+- **Painéis de fundo mais calmos.** Na caixa dos painéis que não estão ativos, os chips e botões
+  recuam até o ponteiro chegar ou o painel ser ativado; o painel ativo fica com tudo aceso.
+- **Hora e copiar no pé da resposta.** A barra que aparece no hover de uma resposta fica embaixo
+  dela, e não mais por cima da primeira linha.
+- **Turnos mais separados.** Mais espaço entre um turno e outro e menos entre a sua mensagem e a
+  resposta: cada pergunta fica presa à resposta dela.
+- **Menus por cima, não afundados.** Menus, popovers e o sino ficam um degrau mais claros que a
+  caixa e as abas de onde saem, com uma sombra mais funda.
+- **Aro de foco contínuo.** O aro de metal em volta da caixa com foco (e da busca, da aba sob o
+  ponteiro e do pedido que espera você) é igual nos quatro lados.
+- **Bordas mais finas.** As abas têm um contorno só, o fio preto de 1 px, e a moldura preta da
+  caixa de mensagem caiu de 4 para 2 px. As conversas encostam no topo, na direita e embaixo da
+  janela, e entre uma e outra (e o painel da direita) o vão virou uma divisória de 1 px: a
+  fileira parece uma peça só, com os cantos da esquerda redondos. A lista continua separada dela
+  por um vão de 8 px; com a lista recolhida, a fileira encosta também na esquerda.
+- **Abas que cabem.** Sem lugar para o título, a aba de fundo vira um quadrado só com o ícone
+  (antes sobravam duas reticências), e a que está à vista guarda sempre o começo do título: sem
+  lugar nem assim, as de fundo saem da faixa, e um "+N" no fim dela abre a lista das que saíram. Com muitas abas,
+  a que está à vista não some mais por baixo do "⋯".
+- **Trocar de chat pelo teclado.** Na busca (Ctrl+K), Enter abre o primeiro resultado e o Ctrl+K
+  seguinte troca o termo em vez de somar. Depois de clicar num chat da lista, o que se digita vai
+  para a caixa. O teclado não trava mais quando um painel aberto ao lado empurra a lista para fora.
+- **Esc para o turno de qualquer lugar.** Depois de clicar na conversa (o foco sai da caixa), o Esc
+  continua parando o turno do painel ativo, como a linha de estado mostra.
+- **Imagens do grupo recolhido numa linha só.** As imagens que o agente leu num grupo de
+  ferramentas recolhido viram uma pilha de miniaturas e "9 imagens"; o clique abre o visor na
+  primeira. Antes eram pílulas de larguras diferentes, quebrando em várias linhas.
+- **O erro do turno aparece uma vez só.** Quando o Claude Code manda o erro também como resposta, a
+  conversa mostra só o cartão do erro, e não o mesmo texto duas vezes.
+- **Copiar a citação.** Quando a resposta traz uma citação (como a mensagem pronta para mandar a
+  alguém), ela tem o próprio botão de copiar, que leva o texto limpo, sem os ">" nem o negrito em
+  asteriscos, pronto para colar no WhatsApp. E o texto da citação ficou na cor do resto da resposta,
+  em vez do cinza mais apagado.
+- **Suas quebras de linha ficam.** O balão da mensagem enviada mostra as linhas como você as
+  escreveu (antes juntava tudo num parágrafo, e o "Mostrar tudo" aparecia sem nada escondido).
+- **Fila mais fácil de mexer.** O × de tirar uma mensagem da fila funciona com o turno rodando e
+  várias na fila (a barra de rolagem ficava por cima dele), os botões cabem no painel estreito, a
+  lista mostra três mensagens inteiras e o "Entregar agora" não aparece duas vezes.
+- **Buscar na conversa (Ctrl+F) mais confiável.** O achado dentro de uma trilha com raciocínio
+  aparece, também o que está na saída de um comando (antes o contador andava e a tela não), não
+  para mais na última linha debaixo da pílula
+  de voltar ao fim e o campo não encolhe até uma letra no painel estreito.
+- **O lápis não foge do ponteiro.** A barra de ações da mensagem (hora, editar, copiar) continua
+  à vista quando o ponteiro chega nela por cima.
+- **O modo escolhido pelo teclado devolve o cursor à caixa**, como já faziam o mouse e os outros
+  seletores.
+- **Título do chat sem marcas de lista.** Um chat que começa com "- ponto 1" ganha o título "ponto 1".
+- **Sinal da troca na caixa estreita.** Com os chips só em ícone, trocar o modo (Shift+Tab) ou o
+  modelo mostra um aviso curto com o que ficou.
+- **A dupla à vista na caixa.** Com Claude e Codex juntos, o chip do modelo mostra as duas marcas,
+  também no painel estreito (antes parecia que a conversa tinha passado só para um deles).
+- **Um menu aberto por vez.** Abrir o esforço pelo Ctrl+E com o sino aberto (ou qualquer par de
+  menus e popovers) fecha o outro, em vez de empilhar os dois.
+
 ## 0.7.0
 
 O metal líquido, abas de chat, o novo chat na hora e pedidos de permissão mais seguros.

@@ -46,6 +46,9 @@ const PX_POR_TEXEL: f32 = 8.;
 const LADO_DO_GRAO: u32 = 256;
 /// Quanto do grão da receita vai nas áreas grandes de metal à vista (a doca da conversa).
 const GRAO_LEVE: f32 = 0.3;
+/// O grão do fosco da base, onde mora a lista: com o leve, o fundo lia granulado demais (dono,
+/// 17/11/2026: "deixa o fundo menos granulado").
+const GRAO_DO_FOSCO: f32 = 0.12;
 /// Fora do ritmo vivo o tempo do campo anda a 40% (o metal deriva devagar); vivo, a 100%. Com a
 /// política de hoje (`movimento::QPS_EM_REPOUSO` em 0) o metal fica parado em repouso, e este
 /// andamento vale só enquanto outra coisa mantém o laço batendo (o ponteiro parado em cima do
@@ -272,6 +275,8 @@ struct Metal {
     grao: Option<Arc<RenderImage>>,
     /// O grão leve (um terço do da receita), para as áreas grandes de metal à vista.
     grao_leve: Option<Arc<RenderImage>>,
+    /// O do fosco da base, o mais fino (`GRAO_DO_FOSCO`).
+    grao_do_fosco: Option<Arc<RenderImage>>,
     /// O grão já foi tentado (se a imagem falhou, não tenta de novo a cada quadro).
     grao_tentado: bool,
 }
@@ -403,6 +408,8 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
         metal.grao = imagem_de_bgra(LADO_DO_GRAO, LADO_DO_GRAO, &pintar_grao(LADO_DO_GRAO), svg.clone());
         metal.grao_leve =
             imagem_de_bgra(LADO_DO_GRAO, LADO_DO_GRAO, &pintar_grao_com(LADO_DO_GRAO, GRAO_LEVE), svg.clone());
+        metal.grao_do_fosco =
+            imagem_de_bgra(LADO_DO_GRAO, LADO_DO_GRAO, &pintar_grao_com(LADO_DO_GRAO, GRAO_DO_FOSCO), svg.clone());
     }
     let grao = metal.grao.clone();
     let estado = metal.janelas.entry(janela).or_default();
@@ -502,6 +509,30 @@ pub fn abertura(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>) -> 
 /// grão cheio, numa faixa de 1000 px o metal lê como chuvisco, e não como degradê.
 pub fn abertura_lisa(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>) -> impl IntoElement {
     abertura_com_grao(encaixe, veu, raios, true)
+}
+
+/// O fosco: o grão mais fino do metal e um véu leitoso bem leve, enchendo o pai (absoluto, sem
+/// clique). Vai por cima de um fundo meio transparente, para ele ler como vidro fosco e não como
+/// um buraco na janela: sem desfoque do sistema, é o grão que diz que ali há uma superfície
+/// (dono, 13/11/2026: "deixa um transparente fosco pra não ficar assim igual tá faltando"). Só
+/// na base: o grão cheio, e o grão debaixo de texto corrido, viram chuvisco.
+pub fn fosco(raios: Corners<Pixels>) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |limites, _, window, cx| {
+            if limites.size.width < px(1.) || limites.size.height < px(1.) {
+                return;
+            }
+            let raios = raios.clamp_radii_for_quad_size(limites.size);
+            window.paint_quad(fill(limites, gpui_kit::rgba(0xffffff0a)).corner_radii(raios));
+            let grao = cx.try_global::<Metal>().and_then(|metal| metal.grao_do_fosco.clone());
+            pintar_o_grao(limites, raios, grao.as_ref(), window);
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }
 
 fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>, leve: bool) -> impl IntoElement {

@@ -6,7 +6,6 @@ use std::{cell::RefCell, ops::RangeInclusive, rc::Rc};
 use gpui_kit::component::{
     Disableable, Icon, Selectable, Sizable, Size, StyledExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
-    clipboard::Clipboard,
     input::{Input, InputState},
     kbd::Kbd,
     menu::DropdownMenu,
@@ -17,26 +16,57 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
-use super::graficos::AnelGirando;
 use super::metal::{Encaixe, abertura, aro_de_metal};
 use super::superficies::desenho_teclas;
 use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
 
-/// O Copiar do kit (troca para o check por 2 s) em 24, crescendo com o zoom: o tamanho só se
-/// sabe ao desenhar, com a janela.
+/// O Copiar: um botão de linha (24, ícone de 14 tênue, como os outros botões de linha), que troca
+/// para o visto verde por 2 s. O do kit desenhava o ícone a 0,75 do botão (18) em `texto`, maior
+/// e mais claro que o texto que ele copia (relatório de aparência, 16/11/2026, V12).
 #[derive(IntoElement)]
-pub struct BotaoCopiar(Clipboard);
+pub struct BotaoCopiar {
+    id: ElementId,
+    valor: SharedString,
+    dica: SharedString,
+}
 
 impl BotaoCopiar {
-    pub fn new(c: Clipboard) -> Self {
-        BotaoCopiar(c)
+    pub fn new(id: impl Into<ElementId>, valor: impl Into<SharedString>) -> Self {
+        BotaoCopiar { id: id.into(), valor: valor.into(), dica: "Copiar".into() }
+    }
+
+    pub fn dica(mut self, dica: impl Into<SharedString>) -> Self {
+        self.dica = dica.into();
+        self
     }
 }
 
 impl RenderOnce for BotaoCopiar {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
-        self.0.with_size(Size::Size(tam(window, 24.)))
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let copiado = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
+        let feito = *copiado.read(cx);
+        let icone: Icon = if feito { Lucide::Check.into() } else { Lucide::Copy.into() };
+        let valor = self.valor;
+        botao_icone(self.id, icone.when(feito, |i| i.text_color(Cores::verde())), self.dica, TamanhoBotao::Linha, window, cx).on_click(
+            move |_, _, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(valor.to_string()));
+                copiado.update(cx, |c, cx| {
+                    *c = true;
+                    cx.notify();
+                });
+                let copiado = copiado.clone();
+                cx.spawn(async move |cx| {
+                    cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                    _ = copiado.update(cx, |c, cx| {
+                        *c = false;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            },
+        )
     }
 }
 
@@ -45,19 +75,18 @@ const ESCUDO_CHEIO: &[u8] = include_bytes!("../../../assets/escudo-cheio.svg");
 
 /// O quadrado cheio do Parar: um desenho, como os ícones, e não um canto da escala.
 const QUADRADO_PARAR: &[u8] =
-    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" rx="2"/></svg>"#;
+    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" rx="2.6"/></svg>"#;
 
 /// Ícone e cor de cada modo de permissão: a tabela única que a caixa, o menu do modo e as
 /// Configurações leem. Verde quando nada muda sem você, violeta para automação, âmbar sem
 /// perguntar, e vermelho sem perguntar fora de uma cópia isolada.
-pub fn icone_do_modo(valor: &str, sem_copia: bool) -> (Icon, Hsla) {
+pub fn icone_do_modo(valor: &str) -> (Icon, Hsla) {
     match valor {
         // Os modos comuns são neutros; a cor fica para o que pede cuidado (o "Sem perguntar").
         "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::tenue()),
         "plan" => (Lucide::Map.into(), Cores::tenue()),
         "acceptEdits" => (Lucide::FilePen.into(), Cores::tenue()),
         "auto" => (Lucide::WandSparkles.into(), Cores::tenue()),
-        _ if sem_copia => (Lucide::ShieldOff.into(), Cores::vermelho()),
         _ => (Lucide::ShieldOff.into(), Cores::ambar()),
     }
 }
@@ -145,12 +174,6 @@ impl Chip {
     /// Ciano no esforço.
     pub fn cor_rotulo(mut self, cor: Hsla) -> Self {
         self.cor_rotulo = Some(cor);
-        self
-    }
-
-    /// Selo depois do rótulo, antes da seta ("Arquivos ⁽³⁾"); some com o rótulo no `so_icone`.
-    pub fn selo(mut self, s: Selo) -> Self {
-        self.selo = Some(s);
         self
     }
 
@@ -243,7 +266,15 @@ impl Chip {
             .border_1()
             .border_color(transparent_black())
             .map(|b| if self.so_icone { b.w(r(altura)).px_0() } else { b.px(r(8.)) })
-            .when_some(self.simbolo, |b, s| b.child(s.desenhar(14., window)))
+            // A marca no chip é o glifo solto, sem o disco cheio: o disco coral a 24 px do escudo
+            // âmbar era a mancha mais forte da faixa de caixas (relatório de aparência,
+            // 16/11/2026, V9). Nas listas, popovers, na dupla e no anel de uso o disco fica.
+            .when_some(self.simbolo, |b, s| {
+                b.child(match s {
+                    Simbolo::Marca(marca) => marca.glifo(14.),
+                    outro => outro.desenhar(14., window),
+                })
+            })
             .when(!self.so_icone, |b| {
                 b.child(
                     div()
@@ -355,15 +386,6 @@ pub fn variante_fantasma(cx: &App) -> ButtonCustomVariant {
 pub fn variante_perigo(cx: &App) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .foreground(Cores::vermelho())
-        .hover(Cores::perigo_hover())
-        .active(Cores::vermelho().opacity(0.18))
-}
-
-/// Perigo calmo (Descartar em cada arquivo do diff): tênue em repouso e a tinta vermelha no
-/// hover, para a lista não ficar vermelha.
-pub fn variante_perigo_calma(cx: &App) -> ButtonCustomVariant {
-    ButtonCustomVariant::new(cx)
-        .foreground(Cores::tenue())
         .hover(Cores::perigo_hover())
         .active(Cores::vermelho().opacity(0.18))
 }
@@ -526,7 +548,6 @@ pub struct BotaoRedondo {
     desabilitado: bool,
     selecionado: bool,
     ao_clicar: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
-    girando: bool,
 }
 
 impl BotaoRedondo {
@@ -548,25 +569,11 @@ impl BotaoRedondo {
             desabilitado: false,
             selecionado: false,
             ao_clicar: None,
-            girando: false,
         }
-    }
-
-    /// O anel com fenda girando por cima do disco: o parar do chat que trabalha (o "carregando"
-    /// do enviar, da base AI Input With Loading).
-    pub fn girando(mut self, sim: bool) -> Self {
-        self.girando = sim;
-        self
     }
 
     pub fn variante(mut self, v: VarianteRedonda) -> Self {
         self.variante = v;
-        self
-    }
-
-    /// O disco colorido da marca no lugar do ícone (o botão do Linear no cabeçalho da conversa).
-    pub fn marca(mut self, m: Marca) -> Self {
-        self.marca = Some(m);
         self
     }
 
@@ -700,23 +707,6 @@ impl RenderOnce for BotaoRedondo {
         let cor_pulso = self.pulso_cor.unwrap_or_else(Cores::claro);
         let lado_icone = if self.diametro <= 24. { 14. } else { 16. };
         let (dica, acao) = (self.dica, self.acao);
-        // O anel que gira: claro sobre o metal; sobre o disco claro, no azul do destaque (o claro
-        // sumiria nele).
-        let giro = self.girando.then(|| {
-            let cor_giro = match self.variante {
-                VarianteRedonda::Claro => Cores::destaque(),
-                _ => Cores::forte().opacity(0.85),
-            };
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(AnelGirando::new(self.diametro - 2.).cor(cor_giro))
-        });
         div()
             .id(self.id)
             .relative()
@@ -744,10 +734,11 @@ impl RenderOnce for BotaoRedondo {
             .map(|s| match (self.marca, self.icone) {
                 (Some(marca), _) => s.child(marca.disco(lado_icone)),
                 (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
+                // Só o quadrado, sem anel girando em volta: quem diz que o chat trabalha é a
+                // conversa e a linha de estado (dono, 13/11/2026: "já tem nos outros lugares").
                 (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
-            .children(giro)
             .when(interativo, |s| {
                 s.cursor_pointer()
                     .on_hover(ponteiro.ouvinte())
@@ -764,7 +755,7 @@ impl RenderOnce for BotaoRedondo {
                         .build(window, cx)
                 })
             })
-            .when_some(self.selo, |s, selo| s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo)))
+            .when_some(self.selo, |s, selo| s.child(div().absolute().top(r(-2.)).right(r(-2.)).child(selo)))
     }
 }
 
@@ -790,13 +781,6 @@ pub struct Segmento {
 impl Segmento {
     pub fn new(rotulo: impl Into<SharedString>) -> Self {
         Segmento { rotulo: rotulo.into(), icone: None, dica: None, ponto: None, desabilitado: false }
-    }
-
-    /// A 0,45, sem hover e fora do clique e das setas, com o motivo na dica.
-    pub fn desabilitado(mut self, motivo: impl Into<SharedString>) -> Self {
-        self.desabilitado = true;
-        self.dica = Some(motivo.into());
-        self
     }
 
     pub fn icone(mut self, i: impl Into<Icon>) -> Self {
@@ -976,6 +960,12 @@ impl RenderOnce for ControleSegmentado {
         // O segmentado comum é neutro (um vidro mais claro com um fio em volta); só o de outra
         // cor (um estado, um aviso) pinta a escolha.
         let neutro = cor == Cores::destaque();
+        // O escolhido do neutro (e do solto) é a ficha de metal, a mesma do alto da lista, do
+        // esforço e das listas de escolha; a pílula tingida fica só para o de outra cor. Antes o
+        // neutro sem `solto` (as Configurações, o boas-vindas) saía numa pílula cinza lisa, mais
+        // clara que o trilho: o mesmo componente marcava o escolhido de dois jeitos opostos
+        // (relatório de design, 16/11/2026). `solto` agora só tira o fio do trilho.
+        let em_ficha = neutro || self.solto;
         let cor_texto = if neutro { Cores::forte() } else { cor };
         let (fundo_escolhido, borda_escolhida) =
             if neutro { (Cores::selecao(), Cores::borda_forte()) } else { (Cores::selecao_de(cor), Cores::tinta_borda(cor)) };
@@ -1016,9 +1006,8 @@ impl RenderOnce for ControleSegmentado {
                 .w(px(largura))
                 .rounded(raio::de(altura) - px(2.))
                 .map(|s| {
-                    if solto {
-                        // No alto da lista (e no esforço), a escolhida vai na ficha do escolhido:
-                        // o azul leve do destaque com a aresta de tecla.
+                    if em_ficha {
+                        // A escolhida vai na ficha do escolhido: o metal com a aresta de tecla.
                         s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
                     } else {
                         // A pílula escolhida fica em relevo (tecla) dentro do trilho cavado (poço).
@@ -1085,8 +1074,8 @@ impl RenderOnce for ControleSegmentado {
                     .rounded(raio::de(altura) - px(2.))
                     .when(self.largura_total, |s| s.flex_1())
                     .border_1()
-                    .border_color(if escolhido && !tem_pilula { borda_escolhida } else { transparent_black() })
-                    .when(escolhido && !tem_pilula, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
+                    .border_color(if escolhido && !tem_pilula && !em_ficha { borda_escolhida } else { transparent_black() })
+                    .when(escolhido && !tem_pilula && !em_ficha, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
                     .text_size(r(13.))
                     .whitespace_nowrap()
                     .font_weight(if escolhido { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
@@ -1102,6 +1091,11 @@ impl RenderOnce for ControleSegmentado {
                             *lugar = Some(limites);
                         }
                     }))
+                    // No primeiro quadro (sem medida, sem a pílula que desliza), a ficha no próprio
+                    // segmento.
+                    .when(escolhido && !tem_pilula && em_ficha, |s| {
+                        s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
+                    })
                     .when_some(seg.icone, |s, icone| s.child(icone.with_size(tam(window, 14.))))
                     .when(!self.so_icone, |s| s.child(seg.rotulo.clone()))
                     .when_some(seg.ponto, |s, c| s.child(div().size(r(6.)).rounded_full().bg(c)))
@@ -1332,8 +1326,7 @@ pub fn campo_de_busca_plano(
 }
 
 // A moldura dupla (base AI Tool Approval): o pedido que espera você é um cartão de raio 16 dentro
-// de uma moldura de raio 20, com 4 px de folga. Serve aos pedidos de permissão, ao plano e aos
-// cartões do Mestre.
+// de uma moldura de raio 20, com 4 px de folga. Serve aos pedidos de permissão e ao plano.
 
 /// O que a moldura de fora diz.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1354,7 +1347,7 @@ pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
         // (o miolo opaco, por cima, deixa só o aro à vista).
         EstadoDaMoldura::Esperando => moldura
             .relative()
-            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::PECA)))),
+            .child(div().absolute().top_0().left_0().size_full().child(abertura(Encaixe::Cobrir, None, Corners::all(raio::peca())))),
         EstadoDaMoldura::Perigo => moldura.bg(Cores::tinta_solida(Cores::vermelho(), 0.35)),
         EstadoDaMoldura::Recolhida => moldura.bg(Cores::preto()).border_1().border_color(Cores::borda()),
     }
@@ -1362,11 +1355,10 @@ pub fn moldura_dupla(estado: EstadoDaMoldura) -> Div {
 
 /// O miolo da moldura dupla: opaco, de raio 16 (é ele que deixa só o aro de fora à vista).
 pub fn miolo_da_moldura() -> Div {
-    div().flex().flex_col().w_full().rounded(crate::tema::raio_da_peca()).bg(Cores::cartao_elevado())
+    div().flex().flex_col().w_full().rounded(raio::peca() - px(4.)).bg(Cores::cartao_elevado())
 }
 
-/// O azulejo de 28 com o ícone de 14 do cabeçalho de um pedido (a ferramenta, o plano, o cartão
-/// do Mestre).
+/// O azulejo de 28 com o ícone de 14 do cabeçalho de um pedido (a ferramenta, o plano).
 pub fn azulejo(icone: Lucide, cor: Hsla) -> Div {
     div()
         .flex_none()

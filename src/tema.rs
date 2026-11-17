@@ -25,39 +25,56 @@ pub fn tam(window: &Window, px: f32) -> Pixels {
     window.rem_size() * (px / 15.)
 }
 
-/// Raios: três medidas e a pílula, fixos (o `Button::rounded` só aceita Pixels, e canto que não
-/// cresce não incomoda). Dentro de quem tem padding p, o raio é max(raio de fora − p, CONTROLE),
+/// Raios: três medidas e a pílula. As três são em rem, para crescerem com o zoom como o resto (a
+/// 150% o canto fixo em px ficava bem menos redondo: dono, 13/11/2026); quem só aceita `Pixels`
+/// usa `controle()`, `cartao()` e `peca()`. Dentro de quem tem padding p, o raio é max(raio de fora − p, CONTROLE),
 /// para os cantos ficarem concêntricos; o teste `raios_na_escala` barra o resto.
 pub mod raio {
     use gpui_kit::{Pixels, px};
     /// Campos, linhas (lista, menu, árvore, log), teclas, blocos dentro de cartão, miniaturas.
-    pub const CONTROLE: Pixels = px(10.);
+    pub const CONTROLE: gpui_kit::Rems = gpui_kit::rems(10. / 15.);
     /// Cartões dentro de painéis e popovers, blocos de código e tabelas, balões, alertas, grupos.
-    pub const CARTAO: Pixels = px(14.);
+    pub const CARTAO: gpui_kit::Rems = gpui_kit::rems(14. / 15.);
     /// Peças: trilho, lista, conversa, Equipe, gavetas, popovers e menus, diálogos, avisos e a
     /// caixa de mensagem.
-    pub const PECA: Pixels = px(20.);
+    pub const PECA: gpui_kit::Rems = gpui_kit::rems(20. / 15.);
     /// Cheio (o GPUI corta o raio na metade do lado menor): o `rounded_full()` de quem só aceita
     /// Pixels. Botões, chips, abas, segmentado, selos, avatares, pontos, anéis e barras.
     pub const PILULA: Pixels = px(999.);
+
+    /// As três medidas em px no zoom de agora, para quem só aceita `Pixels` (os cantos de um
+    /// recorte de metal, a conta de um raio de dentro).
+    pub fn controle() -> Pixels {
+        px((10. * super::zoom_dos_raios()).round())
+    }
+    pub fn cartao() -> Pixels {
+        px((14. * super::zoom_dos_raios()).round())
+    }
+    pub fn peca() -> Pixels {
+        px((20. * super::zoom_dos_raios()).round())
+    }
 
     /// O padrão de canto dos controles (botões, campos, abas, chips, selos): bem arredondado,
     /// nunca redondo. É o desenho do logo em escala: 45% da altura (16 num controle de 36, 14 num
     /// de 32, 9 num chip de 20; redondo seria 50%). Só ponto, barra fina e anel continuam redondos.
     pub fn de(altura: f32) -> Pixels {
-        px((altura * 0.45).round())
+        px((altura * 0.45 * super::zoom_dos_raios()).round())
     }
 
-    /// O quadrado do projeto é um ícone: o de 32 (o do trilho) tem o raio de controle, e os
-    /// outros lados levam o mesmo desenho em escala.
-    pub fn do_icone(lado: f32) -> Pixels {
-        CONTROLE * (lado / 32.)
-    }
 }
 
 /// Espaços da grade, em rem: só 2, 4, 6, 8, 12, 16, 24 e 32 (o teste `espacos_na_escala` barra
 /// o resto nos `gap`, `p*` e `m*`). Os atalhos do Tailwind (`gap_2()`, `p_3()`) medem em rem e,
 /// com 1 rem = 15 px, saem fora da grade.
+/// Opacidades com nome: o que está em segundo plano e o que está desabilitado. O repouso nunca
+/// desce abaixo de 0,55, para não ler como desabilitado (0,45).
+pub mod opacidade {
+    /// O que recua até o ponteiro chegar (as ações do cabeçalho, os controles da caixa dos painéis
+    /// de fundo).
+    pub const EM_REPOUSO: f32 = 0.55;
+    pub const DESABILITADO: f32 = 0.45;
+}
+
 pub mod esp {
     use super::r;
     use gpui_kit::Rems;
@@ -88,7 +105,9 @@ pub mod esp {
     pub const GUIA_LISTA: Rems = E16;
     /// Da borda do painel até a coluna-guia da Equipe.
     pub const GUIA_EQUIPE: Rems = E24;
-    pub const ENTRE_TURNOS: Rems = E24;
+    /// Antes do seu balão e do separador de dia: mais de 2 vezes o `NO_TURNO` (relatório de
+    /// aparência, 16/11/2026, V3; não passar de 32, com 40 os balões ficam soltos).
+    pub const ENTRE_TURNOS: Rems = E32;
     pub const NO_TURNO: Rems = E12;
     /// Respiro visível, da peça de cima ao topo da linha de 24 do cabeçalho de seção.
     pub const ANTES_DE_SECAO: Rems = E16;
@@ -115,6 +134,12 @@ pub mod altura {
     /// Botões do trilho, segmentado grande.
     pub const GRANDE: Rems = r(36.);
     pub const CABECALHO: Rems = r(44.);
+    /// A fileira do alto de cada peça (a do logo na lista, a das abas nas conversas e na direita),
+    /// com o conteúdo no meio: as abas de 32 ficam com 12 em cima (até a beirada da janela, onde
+    /// as peças encostam desde 16/11/2026) e 12 embaixo, e o logo de 38 com 9, o mesmo que sobra
+    /// dos lados dele (dono, 17/11/2026: "uns espaçamentos meio esquisitos em cima" e "esses
+    /// espaços das laterais tão maiores que o de cima").
+    pub const FILEIRA_DO_ALTO: Rems = r(56.);
     /// Item de menu ou de lista de escolha com descrição.
     pub const ESCOLHA_2: Rems = r(48.);
     /// Cartão de lista com duas linhas.
@@ -126,19 +151,6 @@ pub const FONTE_MONO: &str = "JetBrains Mono";
 /// Só no rótulo "Ultrathink": a referência clareada para passar de 4,5:1 no flutuante.
 pub const ARCO_IRIS: [u32; 8] = [
     0xf08a5d, 0xf5b642, 0x9bd46a, 0x4ade80, 0x3fd1b5, 0x5cc8f0, 0x7aa7ff, 0xa98bff,
-];
-
-/// Cores dos projetos, na ordem que o ramo `icones` grava (a automática é `soma % 8`). Ficam de
-/// fora o destaque e as cores de estado.
-pub const CORES_PROJETO: [(u32, &str); 8] = [
-    (0x8fb6ff, "Azul"),
-    (0x8fd3f5, "Céu"),
-    (0x5ad1c4, "Turquesa"),
-    (0x8088ff, "Índigo"),
-    (0xb39dff, "Lilás"),
-    (0xe08ef0, "Orquídea"),
-    (0xf49ac1, "Rosa"),
-    (0xc8b98f, "Areia"),
 ];
 
 /// Dígitos de largura igual (`tnum` do OpenType; a Inter embutida tem a tabela): o número que muda
@@ -179,6 +191,11 @@ pub trait Tipo: Styled + Sized {
     }
     fn corpo(self) -> Self {
         self.text_size(r(15.)).line_height(r(23.))
+    }
+    /// O que você escreveu (o balão): um degrau abaixo do corpo da resposta, com a entrelinha mais
+    /// aberta (1,57) (balão e cartão de erro, 16/11/2026).
+    fn fala(self) -> Self {
+        self.text_size(r(14.)).line_height(r(22.)).font_weight(FontWeight::NORMAL)
     }
     fn corpo_ui(self) -> Self {
         self.text_size(r(14.)).line_height(r(20.))
@@ -262,15 +279,80 @@ pub fn aresta_de_vidro() -> Vec<BoxShadow> {
             .blur_radius(px(12.))
             .spread_radius(px(-12.))
             .inset(),
-        // O fio claro nos dois lados e em cima.
+        // O fio claro só nos dois lados. Em cima havia o fio e uma luz na quina; o dono pediu
+        // para tirar "essa bordinha de cima" (13/11/2026).
         lado(1., 0., Cores::aro_da_peca()),
         lado(-1., 0., Cores::aro_da_peca()),
-        lado(0., 1., Cores::aro_da_peca()),
-        // A luz na própria quina de cima, por cima do fio.
-        lado(0., 1., Cores::brilho_topo()),
         // A sombra na base.
         lado(0., -1., Cores::sombra_de_baixo()),
     ]
+}
+
+/// A aresta de uma peça da fileira das conversas, que encosta no topo, na direita e embaixo da
+/// janela (dono, 16/11/2026: "não tenha em cima, na direita e no meio dos chats; no meio dos chats
+/// uma divisão simples e moderna" e "sem embaixo também, com os cantos da esquerda redondos").
+/// Sem o fio da direita (lá é a beirada da janela ou a vizinha). À esquerda, depende do que há
+/// lá (`Esquerda`): o fio claro no vão da lista, a divisória de 1 px no tom do traço na emenda
+/// com a vizinha, nada na beirada da janela. O brilho do topo fica; a sombra da base sai (ela dá
+/// na beirada da janela).
+pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
+    let lado = |x: f32, y: f32, cor: Hsla| BoxShadow::new(px(x), px(y), cor).inset();
+    let brilho = BoxShadow::new(px(0.), px(28.), Cores::brilho_de_dentro())
+        .blur_radius(px(12.))
+        .spread_radius(px(-12.))
+        .inset();
+    match esquerda {
+        Esquerda::Solta => vec![brilho, lado(1., 0., Cores::aro_da_peca())],
+        // A divisória da emenda não é sombra: é o fio que esmaece nas pontas
+        // (`gradiente_da_divisoria`), desenhado à parte.
+        Esquerda::Emendada | Esquerda::Beirada => vec![brilho],
+    }
+}
+
+/// A sombra da fileira das conversas sobre a lista (`ui::sombra_da_fileira`): uma larga e macia,
+/// que dá a altura, e uma curta junto da borda, que dá o contato.
+pub fn sombra_da_fileira() -> Vec<BoxShadow> {
+    let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
+    vec![
+        BoxShadow::new(px(-5.), px(0.), preto(0.7)).blur_radius(px(16.)).spread_radius(px(-1.)),
+        BoxShadow::new(px(-1.), px(0.), preto(0.55)).blur_radius(px(4.)),
+    ]
+}
+
+/// A casca da gaveta (lista ou painel da direita por cima das conversas): a do popover do kit
+/// (`popover_shadow` em vendor/gpui-component/src/styled.rs, com o anel de 14%) sem a luz de 1 px
+/// no topo e a sombra de 1 px na base, que a gaveta encosta no topo e embaixo da janela. Por fora
+/// ficam a sombra, o fio preto e o anel claro, que a separam das conversas no lado solto.
+pub fn sombra_da_gaveta() -> Vec<BoxShadow> {
+    let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
+    let branco = |a: f32| gpui_kit::hsla(0., 0., 1., a);
+    vec![
+        BoxShadow::new(px(0.), px(24.), preto(0.60)).blur_radius(px(16.)).spread_radius(px(-10.)),
+        BoxShadow::new(px(0.), px(4.), preto(0.35)).blur_radius(px(2.5)).spread_radius(px(-1.)),
+        BoxShadow::new(px(0.), px(0.), preto(0.60)).spread_radius(px(2.)),
+        BoxShadow::new(px(0.), px(0.), branco(0.14)).spread_radius(px(1.)),
+        BoxShadow::new(px(0.), px(28.), branco(0.03)).blur_radius(px(12.)).spread_radius(px(-12.)).inset(),
+    ]
+}
+
+/// O que fica à esquerda de uma peça da fileira das conversas.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Esquerda {
+    /// O vão até a lista: os dois cantos da esquerda redondos e o fio claro.
+    Solta,
+    /// Outra peça da fileira: cantos retos e a divisória de 1 px.
+    Emendada,
+    /// A beirada da janela, com a lista recolhida (dono, 16/11/2026: "sem a lista tem que ficar
+    /// sem a borda da esquerda também"): cantos retos e nada de fio.
+    Beirada,
+}
+
+/// O raio dos cantos da esquerda de uma peça encostada: redondos só com o vão da lista ao lado
+/// (os outros cantos dão na beirada da janela ou na emenda com a vizinha). Uma vez e meia o das
+/// peças: a fileira das conversas é a peça grande da janela (dono, 17/11/2026: "deixa o border
+/// radius dos cantos da esquerda maior").
+pub fn raio_encostado(esquerda: Esquerda) -> gpui_kit::Pixels {
+    if esquerda == Esquerda::Solta { gpui_kit::px((raio_da_peca().as_f32() * 1.5).round()) } else { px(0.) }
 }
 
 /// Tecla, no que está em relevo e escolhido (a pílula do segmentado, a tecla de atalho): luz de
@@ -315,7 +397,41 @@ pub fn gradiente_reflexo() -> Background {
 
 /// A beirada de cima da doca (o metal no pé da conversa): o escuro do cartão some para baixo.
 pub fn gradiente_da_doca() -> Background {
-    linear_gradient(180., linear_color_stop(Cores::cartao(), 0.), linear_color_stop(Cores::cartao().opacity(0.), 1.))
+    let cartao = Cores::cartao_opaco();
+    linear_gradient(180., linear_color_stop(cartao, 0.), linear_color_stop(cartao.opacity(0.), 1.))
+}
+
+/// O pé do cartão da conversa: o cartão é meio transparente em cima e vai fechando até ficar
+/// opaco onde mora a caixa de mensagem (é onde os degradês da luz de baixo somem, e não pode
+/// haver emenda).
+pub fn gradiente_do_pe_do_cartao() -> Background {
+    let cartao = Cores::cartao_opaco();
+    linear_gradient(180., linear_color_stop(cartao.opacity(0.), 0.), linear_color_stop(cartao, 1.))
+}
+
+/// A divisória entre duas peças emendadas: um fio de 1 px que nasce do nada no alto, fica cheio no
+/// meio e some de novo embaixo (dono, 16/11/2026: "tem que ser algo diferente, mais moderno"; o
+/// fio reto de cima a baixo cortava a fileira das abas e a das caixas). `embaixo` dá o trecho de
+/// cima (`false`) ou o de baixo (`true`); o meio é `Cores::divisoria()` liso.
+pub fn gradiente_da_divisoria(embaixo: bool) -> Background {
+    let (some, cheio) = (Cores::divisoria().opacity(0.), Cores::divisoria());
+    let (de, ate) = if embaixo { (cheio, some) } else { (some, cheio) };
+    linear_gradient(180., linear_color_stop(de, 0.), linear_color_stop(ate, 1.))
+}
+
+/// O véu do seu balão cortado: a última linha some no azul do balão (opaco, então sem emenda).
+pub fn gradiente_do_pe_do_balao() -> Background {
+    linear_gradient(180., linear_color_stop(Cores::balao().opacity(0.), 0.), linear_color_stop(Cores::balao(), 1.))
+}
+
+/// Os lados da doca: o escuro do cartão some da beirada para o meio (da esquerda para a direita;
+/// `direita` espelha). É o que concentra a luz de baixo no meio do painel.
+pub fn gradiente_do_lado_da_doca(direita: bool) -> Background {
+    linear_gradient(
+        if direita { 270. } else { 90. },
+        linear_color_stop(Cores::cartao_opaco(), 0.),
+        linear_color_stop(Cores::cartao_opaco().opacity(0.), 1.),
+    )
 }
 
 /// Assinatura do Vitral: azul à esquerda indo para o preto (caixa de mensagem).
@@ -329,16 +445,6 @@ pub fn gradiente_quente_em(angulo: f32) -> Background {
         angulo,
         linear_color_stop(Cores::caixa_quente(), 0.),
         linear_color_stop(Cores::caixa_preta(), 0.55),
-    )
-}
-
-/// Variante azul: resumo do coordenador, entrega final, cabeçalho do Mestre.
-pub fn gradiente_destaque() -> Background {
-    linear_gradient(
-        90.,
-        // Um tom só, de ponta a ponta: o azul marca o cartão sem virar degradê.
-        linear_color_stop(Cores::destaque().opacity(0.08), 0.),
-        linear_color_stop(Cores::destaque().opacity(0.08), 1.),
     )
 }
 
@@ -359,6 +465,7 @@ gpui_kit::assets::icon_assets!(
         CalendarClock,
         ChartColumn,
         CheckCheck,
+        Circle,
         CircleArrowUp,
         CircleDashed,
         CircleDot,
@@ -400,6 +507,7 @@ gpui_kit::assets::icon_assets!(
         Hand,
         Image,
         ImageOff,
+        KeyRound,
         Keyboard,
         LayoutGrid,
         Link,
@@ -436,6 +544,7 @@ gpui_kit::assets::icon_assets!(
         SquareSlash,
         Tag,
         Terminal,
+        TextCursorInput,
         TextSearch,
         TextWrap,
         Trash,
@@ -767,7 +876,7 @@ pub mod superficie {
         pub fantasma: u32,
         /// Código em linha no texto.
         pub codigo: u32,
-        /// A base (opaca) onde a cor do projeto é misturada, no quadrado dele.
+        /// A base (opaca) onde uma cor é misturada para virar tinta sólida (as abas, o perigo).
         pub base_da_tinta: u32,
         /// O destaque (o único da tela): o cheio, o do ponteiro em cima, o apertado, o de texto
         /// pequeno (que precisa de 4,5:1 nas peças) e o que vai escrito por cima do cheio.
@@ -852,7 +961,11 @@ pub mod superficie {
         vidro_leitura: 0x0a1533e3,
         cartao: 0x14161df2,
         cartao_elevado: 0x1c1f29ff,
-        flutuante: 0x171a23f7,
+        // Um degrau acima da peça de onde sai (o campo da caixa, a aba, o cartão), e opaco: com
+        // 0x171a23f7 os menus da caixa e o sino ficavam mais escuros que ela e liam como buraco
+        // (relatório de aparência, 16/11/2026, V4). Não passar de 0x1f222b: o apagado no recuo
+        // do flutuante fica a 0,02 do piso de 4,5:1.
+        flutuante: 0x1f222bff,
         dialogo: 0x1c1f29fa,
         gaveta: 0x1c1f29fa,
         preto: 0x08090cff,
@@ -884,6 +997,10 @@ pub mod superficie {
         // A base aparece em volta dos cartões: 8 px dão a ela largura de camada, não de fresta.
         margem: 8.,
         vao: 8.,
+        // Os cartões (a conversa, os painéis): 16. Foram a 24 a pedido do dono ("mais arredondados
+        // ainda", 13/11/2026) e voltaram no mesmo dia: com as abas do chat em pílula logo ao lado
+        // do canto, a curva grande destoava ("diminuir a curva dessas bordas… parece errada com as
+        // abas do chat").
         raio_peca: 16.,
         texto: 0xe2e5ecff,
         tenue: 0x9da3b3ff,
@@ -907,9 +1024,63 @@ pub mod superficie {
     }
 }
 
-/// O raio dos cantos de cada peça (trilho, lista, conversa, painéis).
+/// O raio dos cantos de cada peça (trilho, lista, conversa, painéis), no zoom de agora.
 pub fn raio_da_peca() -> gpui_kit::Pixels {
-    gpui_kit::px(superficie::ATUAL.raio_peca)
+    gpui_kit::px((superficie::ATUAL.raio_peca * zoom_dos_raios()).round())
+}
+
+/// O zoom da interface (1,5 é 150%), para os raios: as medidas dos controles são em rem e
+/// crescem com o zoom, mas o raio é em px. Sem acompanhar, a 150% o enviar, os chips e os cartões
+/// ficavam bem menos redondos que a 110% (dono, 13/11/2026, comparando a tela dele com as
+/// capturas da bancada). Valem daqui o `raio::de` e o `raio_da_peca`; os fixos (`CONTROLE`,
+/// `CARTAO`, `PECA`) ainda não crescem.
+static ZOOM_DOS_RAIOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1f32.to_bits());
+
+/// O `zoom` avisa a cada mudança.
+pub fn definir_zoom_dos_raios(fator: f32) {
+    let fator = if fator.is_finite() && fator > 0. { fator } else { 1. };
+    ZOOM_DOS_RAIOS.store(fator.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn zoom_dos_raios() -> f32 {
+    f32::from_bits(ZOOM_DOS_RAIOS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Quanto os fundos deixam ver o que está atrás da janela, do opaco ao forte: o alfa do véu da
+/// base (o fundo azul, onde mora a lista), o alfa do cartão (o fundo cinza da conversa e dos
+/// painéis) e a opacidade da chapa de metal. O dono pediu "os fundos um transparente meio fosco"
+/// (13/11/2026) e, ao ver que o desfoque do que está atrás não existe em todo sistema (no GNOME
+/// só com extensão), preferiu sem: "se não for, deixa sem mesmo". O padrão é o opaco, e a
+/// transparência ficou como escolha das Configurações. Só o nível 1 tem o contraste conferido em
+/// teste; nos de cima, quem escolhe troca leitura por vidro.
+/// Os três níveis transparentes já foram mais fortes; o dono pediu menos em todos (13/11/2026).
+// O "Leve" ficou menos transparente em 16/11/2026 (dono: "tenta diminuir a transparência só"):
+// o véu da base foi de 0xc8 para 0xdc e o do cartão de 0xe6 para 0xee.
+pub const NIVEIS_DE_TRANSPARENCIA: [(u32, u32, f32); 4] =
+    [(0xe3, 0xf2, 1.), (0xdc, 0xee, 0.5), (0xa6, 0xcc, 0.35), (0x80, 0xa6, 0.3)];
+/// Os nomes dos níveis, na ordem.
+pub const NOMES_DA_TRANSPARENCIA: [&str; 4] = ["Opaco", "Leve", "Média", "Forte"];
+/// O nível com que o Vitral abre.
+pub const TRANSPARENCIA_PADRAO: u8 = 0;
+
+static TRANSPARENCIA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(TRANSPARENCIA_PADRAO);
+
+/// A Janela diz o nível escolhido a cada desenho.
+pub fn definir_transparencia(nivel: u8) {
+    TRANSPARENCIA.store(nivel.min(3), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn transparencia() -> u8 {
+    TRANSPARENCIA.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn nivel_de_transparencia(nivel: u8) -> (u32, u32, f32) {
+    NIVEIS_DE_TRANSPARENCIA[usize::from(nivel.min(3))]
+}
+
+/// A opacidade da chapa de metal no nível de agora.
+pub fn opacidade_do_metal() -> f32 {
+    nivel_de_transparencia(transparencia()).2
 }
 
 /// A margem entre a janela e as peças.
@@ -934,10 +1105,20 @@ impl Cores {
     /// Fundo das colunas com texto pequeno (trilho e lista): fumê sobre a chapa de metal, que o
     /// tinge de azul. Garante o contraste no pior caso (a bolha mais clara atrás).
     pub fn vidro_leitura() -> Hsla {
-        rgba(superficie::atual().vidro_leitura).into()
+        Self::vidro_leitura_no(crate::tema::transparencia())
     }
-    /// Tudo o que flutua sobre texto (popover, menu, dica, aviso): quase preto e opaco, por cima
-    /// do vidro azul (o `popover.background` do tema).
+    /// O véu da base num nível de transparência (ver `NIVEIS_DE_TRANSPARENCIA`).
+    pub fn vidro_leitura_no(nivel: u8) -> Hsla {
+        let (veu, _, _) = crate::tema::nivel_de_transparencia(nivel);
+        rgba((superficie::atual().vidro_leitura & 0xffffff00) | veu).into()
+    }
+    /// O cartão num nível de transparência.
+    pub fn cartao_no(nivel: u8) -> Hsla {
+        let (_, cartao, _) = crate::tema::nivel_de_transparencia(nivel);
+        rgba((superficie::atual().cartao & 0xffffff00) | cartao).into()
+    }
+    /// Tudo o que flutua sobre texto (popover, menu, dica, aviso): opaco, um degrau acima da peça
+    /// de onde sai, por cima do vidro azul (o `popover.background` do tema).
     pub fn flutuante() -> Hsla {
         rgba(superficie::atual().flutuante).into()
     }
@@ -954,7 +1135,8 @@ impl Cores {
     pub fn recuo() -> Hsla {
         rgba(superficie::atual().recuo).into()
     }
-    /// O recuo dentro de um flutuante: no quase preto o escuro some, então ali ele é um claro leve.
+    /// O recuo dentro de um flutuante: no escuro do flutuante o escuro some, então ali ele é um
+    /// claro leve.
     pub fn recuo_no_flutuante() -> Hsla {
         rgba(0xffffff0d).into()
     }
@@ -981,14 +1163,23 @@ impl Cores {
     pub fn selecao_de(cor: Hsla) -> Hsla {
         cor.opacity(0.20)
     }
-    /// Fundo de pílula de estado e de alerta.
+    /// Fundo de pílula de estado.
     pub fn tinta(cor: Hsla) -> Hsla {
         cor.opacity(0.12)
     }
     pub fn tinta_borda(cor: Hsla) -> Hsla {
         cor.opacity(0.30)
     }
-    /// A cor misturada ao marinho, opaca: fundo do quadrado do projeto.
+    /// Fundo do cartão de erro e do Alerta: a cor fica no ícone, e o fundo é só um véu (balão e
+    /// cartão de erro, 16/11/2026; era a `tinta`, de 12%).
+    pub fn tinta_leve(cor: Hsla) -> Hsla {
+        cor.opacity(0.06)
+    }
+    /// O fio do cartão de erro e do Alerta (era a `tinta_borda`, de 30%).
+    pub fn tinta_borda_leve(cor: Hsla) -> Hsla {
+        cor.opacity(0.18)
+    }
+    /// A cor misturada ao marinho, opaca: o fundo das abas e da moldura de perigo.
     pub fn tinta_solida(cor: Hsla, alfa: f32) -> Hsla {
         Hsla::from(rgba(superficie::atual().base_da_tinta)).blend(cor.opacity(alfa))
     }
@@ -1039,7 +1230,7 @@ impl Cores {
     pub fn caixa_quente() -> Hsla {
         rgba(superficie::atual().caixa_quente).into()
     }
-    /// Fim do gradiente da caixa: o quase preto dos flutuantes, com o alfa do começo.
+    /// Fim do gradiente da caixa, com o alfa do começo.
     pub fn caixa_preta() -> Hsla {
         rgba(superficie::atual().caixa_preta).into()
     }
@@ -1067,7 +1258,12 @@ impl Cores {
     }
     /// Cartões (barra lateral, conversa, painel): navy mais claro e mais opaco que o fundo.
     pub fn cartao() -> Hsla {
-        rgba(superficie::atual().cartao).into()
+        Self::cartao_no(crate::tema::transparencia())
+    }
+    /// O cartão sem a transparência: o pé do cartão da conversa (onde mora a caixa de mensagem
+    /// e a luz de baixo) e os degradês que somem nele.
+    pub fn cartao_opaco() -> Hsla {
+        rgba(superficie::atual().cartao | 0xff).into()
     }
     pub fn cartao_elevado() -> Hsla {
         rgba(superficie::atual().cartao_elevado).into()
@@ -1084,6 +1280,16 @@ impl Cores {
     }
     pub fn destaque_ativo() -> Hsla {
         rgba(superficie::atual().destaque_ativo).into()
+    }
+    /// O fundo do seu balão e da pílula do comando: o destaque bem baixo misturado à base, opaco.
+    /// Desceu de 0,20 para 0,16 com a fala um degrau abaixo da resposta (balão e cartão de erro,
+    /// 16/11/2026).
+    pub fn balao() -> Hsla {
+        Self::tinta_solida(Self::destaque(), 0.16)
+    }
+    /// O fio do balão e da pílula do comando (era 0,24).
+    pub fn balao_borda() -> Hsla {
+        Self::destaque().opacity(0.16)
     }
     /// O destaque para texto pequeno: o cheio pode ficar abaixo de 4,5:1 nas peças.
     pub fn destaque_texto() -> Hsla {
@@ -1124,6 +1330,12 @@ impl Cores {
     pub fn aro_da_peca() -> Hsla {
         rgba(superficie::atual().aro).into()
     }
+    /// O fio do meio da divisória entre as conversas emendadas (`gradiente_da_divisoria`): um
+    /// sulco escuro, mais fundo que o cartão (dono, 17/11/2026: "faz esse risco de uma cor mais
+    /// escura"; era um fio claro de 14%).
+    pub fn divisoria() -> Hsla {
+        rgba(0x0000009e).into()
+    }
     /// A sombra de 1 px na base de dentro das peças.
     pub fn sombra_de_baixo() -> Hsla {
         rgba(superficie::atual().sombra_de_baixo).into()
@@ -1158,6 +1370,14 @@ impl Cores {
     pub fn ambar() -> Hsla {
         rgba(0xf5b642ff).into()
     }
+    /// O que espera você (pedido de permissão, parada, o número no sino): um azul-claro, da
+    /// família do destaque e mais leve que ele, para não se confundir com o que está rodando ou
+    /// com a resposta nova. Era âmbar; o dono pediu azul (13/11/2026: "por que tem umas coisas
+    /// amarelas? tem que ser azul"). O âmbar fica para aviso de verdade: uso do plano alto, modo
+    /// Sem perguntar, confirmação de risco.
+    pub fn espera() -> Hsla {
+        rgba(0x8ecbffff).into()
+    }
     pub fn vermelho() -> Hsla {
         rgba(0xf87171ff).into()
     }
@@ -1165,7 +1385,7 @@ impl Cores {
 
 #[cfg(test)]
 pub(crate) mod testes {
-    use super::{CORES_PROJETO, Cores, Icones, TEMA, raio};
+    use super::{Cores, Icones, TEMA, raio};
     use gpui_kit::{Hsla, Rgba, rgb};
     use gpui_kit::component::{
         ThemeMode, ThemeSet,
@@ -1277,7 +1497,20 @@ pub(crate) mod testes {
     #[test]
     fn contraste_dos_tokens_no_pior_caso() {
         let atras = Rgba::from(rgb(crate::ui::componentes::metal::TETO_DO_METAL));
-        let painel = sobre(Cores::cartao(), atras);
+        // A base e o cartão da conversa são meio transparentes (dono, 13/11/2026): atrás deles
+        // não há mais só o metal. A conta usa o metal na opacidade do nível sobre um papel de
+        // parede cinza médio; com um papel de parede branco nada aqui garante a leitura.
+        // O nível conferido é o "Leve" (1): os de cima são escolha de quem usa.
+        let (_, _, metal) = crate::tema::NIVEIS_DE_TRANSPARENCIA[1];
+        let papel_medio = Rgba::from(rgb(0x808080));
+        let atras_da_base = Rgba {
+            r: atras.r * metal + papel_medio.r * (1. - metal),
+            g: atras.g * metal + papel_medio.g * (1. - metal),
+            b: atras.b * metal + papel_medio.b * (1. - metal),
+            a: 1.,
+        };
+        let leitura = sobre(Cores::vidro_leitura_no(1), atras_da_base);
+        let painel = sobre(Cores::cartao_no(1), leitura);
         let flutuante = sobre(Cores::flutuante(), atras);
         // O `.reflexo()` escurece o topo das peças, onde fica o título (#0000001a): o texto
         // precisa continuar legível sobre ele. A linha de luz é de 1 px, sem texto em cima.
@@ -1285,7 +1518,6 @@ pub(crate) mod testes {
         // A `aresta_de_vidro` clareia o topo das peças com o brilho de dentro: os títulos ficam
         // em cima dele. Travado em 3% (com 5% o apagado sobre a lista reprova).
         let brilho = |fundo: Rgba| sobre(Cores::brilho_de_dentro(), fundo);
-        let leitura = sobre(Cores::vidro_leitura(), atras);
         let superficies = [
             // A base (a lista mora nela) não tem a aresta de vidro: sem brilho por cima.
             ("vidro de leitura", leitura),
@@ -1301,6 +1533,12 @@ pub(crate) mod testes {
             ("preto", sobre(Cores::preto(), painel)),
             ("fim preto da caixa", sobre(Cores::caixa_preta(), painel)),
             ("recuo no flutuante", sobre(Cores::recuo_no_flutuante(), flutuante)),
+            // O seu balão é opaco: o código em linha e as pílulas vão no poço escuro dentro dele.
+            ("balão", Rgba::from(Cores::balao())),
+            ("poço no balão", sobre(Cores::recuo(), Rgba::from(Cores::balao()))),
+            // O cartão de erro mora no painel translúcido: vale a regra dele.
+            ("cartão de erro", sobre(Cores::tinta_leve(Cores::vermelho()), painel)),
+            ("poço do cartão de erro", sobre(Cores::recuo(), sobre(Cores::tinta_leve(Cores::vermelho()), painel))),
         ];
         let textos = [
             ("forte", Cores::forte()),
@@ -1318,7 +1556,18 @@ pub(crate) mod testes {
         for (nome_fundo, fundo) in superficies {
             for (nome, cor) in textos {
                 let c = contraste(sobre(cor, fundo), fundo);
-                assert!(c >= 4.5, "{nome} sobre {nome_fundo}: {c:.2}:1");
+                // A base ficou meio transparente e fosca a pedido do dono (13/11/2026: "é pra
+                // deixar mais transparente o Vitral, os fundos azul e cinza"): nela, o título e o
+                // texto continuam em 4,5:1, e as vozes baixas e as cores de estado valem 3:1 (o
+                // que está atrás da janela ainda pesa). Nos cartões de conversa vale o mesmo; no
+                // que flutua (menus, diálogos, a caixa de mensagem), tudo em 4,5:1.
+                let transparente = matches!(
+                    nome_fundo,
+                    "vidro de leitura" | "painel" | "painel com brilho" | "painel com reflexo" | "cartão de erro" | "poço do cartão de erro"
+                )
+                    && !matches!(nome, "forte" | "texto");
+                let minimo = if transparente { 3. } else { 4.5 };
+                assert!(c >= minimo, "{nome} sobre {nome_fundo}: {c:.2}:1");
             }
         }
         // Sobre o metal com véu: na placa de cabeçalho só vão `forte` e `texto` (4,5:1); no botão
@@ -1526,9 +1775,8 @@ pub(crate) mod testes {
         assert!(erros.is_empty(), "raio fora da escala (raio::CONTROLE, CARTAO, PECA, PILULA):\n{}", erros.join("\n"));
         let json: serde_json::Value = serde_json::from_str(TEMA).unwrap();
         let tema = &json["themes"][0];
-        assert_eq!(tema["radius"].as_f64(), Some(f64::from(raio::CONTROLE.as_f32())));
-        assert_eq!(tema["radius.lg"].as_f64(), Some(f64::from(raio::PECA.as_f32())));
-        assert_eq!(raio::do_icone(32.), raio::CONTROLE);
+        assert_eq!(tema["radius"].as_f64(), Some(f64::from(raio::controle().as_f32())));
+        assert_eq!(tema["radius.lg"].as_f64(), Some(f64::from(raio::peca().as_f32())));
     }
 
     /// Toda animação passa por `ui/movimento.rs` (teto de 60 qps, curva curta, movimento
@@ -1614,18 +1862,6 @@ pub(crate) mod testes {
             assert_eq!(m.exit(), Duration::ZERO);
             assert_eq!(m.expand(), Duration::ZERO);
             assert_eq!(m.idle(), Duration::from_millis(1200));
-        }
-    }
-
-    /// O ícone do projeto (sem letra) precisa de 3:1 sobre o próprio quadrado.
-    #[test]
-    fn cores_de_projeto_sobre_a_tinta() {
-        let marinho = Rgba::from(Hsla::from(rgb(0x121726)));
-        for (cor, nome) in CORES_PROJETO {
-            let cor = Hsla::from(rgb(cor));
-            let fundo = Rgba::from(Cores::tinta_solida(cor, 0.18));
-            let c = contraste(sobre(cor, marinho), fundo);
-            assert!(c > 3., "{nome}: {c:.2}:1");
         }
     }
 }

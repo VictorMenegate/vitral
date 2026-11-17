@@ -10,7 +10,7 @@ use gpui_kit::*;
 use super::{
     busca_conversa,
     componentes::{CabecalhoDialogo, RodapeDialogo, TamanhoBotao, botao_primario, desenho_teclas, largura},
-    composer, popover_issues, revisao, visor_imagem,
+    composer, visor_imagem,
 };
 use crate::tema::{Cores, Tipo as _, esp, r, raio};
 
@@ -20,20 +20,18 @@ pub enum Grupo {
     Conversa,
     Lista,
     Paineis,
-    Revisao,
     Janela,
 }
 
 impl Grupo {
     /// Na ordem em que as seções aparecem.
-    pub const TODOS: [Grupo; 5] = [Grupo::Conversa, Grupo::Lista, Grupo::Paineis, Grupo::Revisao, Grupo::Janela];
+    pub const TODOS: [Grupo; 4] = [Grupo::Conversa, Grupo::Lista, Grupo::Paineis, Grupo::Janela];
 
     pub fn titulo(self) -> &'static str {
         match self {
             Grupo::Conversa => "Na conversa",
-            Grupo::Lista => "Conversas e projetos",
+            Grupo::Lista => "Conversas",
             Grupo::Paineis => "Painéis",
-            Grupo::Revisao => "Revisão",
             Grupo::Janela => "Janela",
         }
     }
@@ -85,15 +83,22 @@ macro_rules! tabela {
 
 tabela! {
     // ---------- na conversa ----------
-    "escape", composer::PararTurno, Some("Caixa"), Grupo::Conversa, "Parar o turno (ou fechar o menu “/”)", "";
-    // Do detalhe das issues volta à lista; da lista, fecha (antes do Esc do popover do kit).
-    "escape", popover_issues::VoltarIssues, Some("PopoverIssues"), Grupo::Conversa, "", "";
+    "escape", composer::PararTurno, Some("Caixa"), Grupo::Conversa, "Parar o turno (ou fechar o menu “/”, sem apagar o que foi escrito)", "";
+    // Fora da caixa (um clique na conversa), o Esc também para o turno do painel ativo.
+    "escape", composer::PararTurno, Some("Vitral"), Grupo::Conversa, "", "";
     // Registrado depois do shift-tab do campo (recuar a linha), ganha dele dentro da caixa. Só
     // no campo da mensagem: a busca de um popover da caixa continua recuando.
     "shift-tab", composer::AlternarModo, Some("Composer > Input"), Grupo::Conversa, "Passar para o próximo modo de permissão", "";
     // Só com a caixa vazia (o "Vazia" sai do contexto quando há texto): a seta continua movendo
     // o cursor enquanto se escreve.
     "up", super::EditarUltima, Some("Vazia > Input"), Grupo::Conversa, "Corrigir a última mensagem (caixa vazia)", "↑";
+    // Com o menu "/" à vista (o "Menu" só existe aí): as setas andam nele e o Tab completa. Fora
+    // dele, as setas movem o cursor e o Tab segue o caminho de sempre.
+    "up", composer::MenuAcima, Some("Menu > Input"), Grupo::Conversa, "Andar pelo menu “/”", "↑+↓";
+    "down", composer::MenuAbaixo, Some("Menu > Input"), Grupo::Conversa, "", "";
+    "tab", composer::MenuEscolher, Some("Menu > Input"), Grupo::Conversa, "Completar o comando marcado no menu “/” (ou Enter)", "";
+    // Com a caixa vazia e a sugestão da próxima mensagem à vista (sem ela, o Tab segue adiante).
+    "tab", composer::AceitarSugestao, Some("Vazia > Input"), Grupo::Conversa, "Aceitar a sugestão da próxima mensagem (caixa vazia)", "";
     // O campo do kit liga o Ctrl+F ao `Search` dele, que ninguém atende: o evento segue para cá.
     "ctrl-f", busca_conversa::BuscarNaConversa, None, Grupo::Conversa, "Buscar nesta conversa", "";
     "f3", busca_conversa::AchadoSeguinte, None, Grupo::Conversa, "Ir ao achado seguinte", "";
@@ -106,30 +111,20 @@ tabela! {
     "right", gpui_kit::base::actions::SelectRight, Some("Esforco"), Grupo::Conversa, "", "";
     "home", gpui_kit::base::actions::SelectFirst, Some("Esforco"), Grupo::Conversa, "", "";
     "end", gpui_kit::base::actions::SelectLast, Some("Esforco"), Grupo::Conversa, "", "";
-    "space", composer::AlternarUltrathink, Some("Esforco"), Grupo::Conversa, "Ligar o Ultrathink (no popover de esforço)", "";
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
+    "ctrl-shift-c", super::CopiarUltimaResposta, None, Grupo::Conversa, "Copiar a última resposta", "";
     // No visor de imagem (o Esc que fecha é o do diálogo).
     "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
     "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
 
-    // ---------- conversas e projetos ----------
+    // ---------- conversas ----------
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";
-    "ctrl-shift-n", super::NovoProjeto, None, Grupo::Lista, "Novo projeto", "";
-    "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas e projetos", "";
+    "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas", "";
     "ctrl-b", super::AlternarLista, None, Grupo::Lista, "Mostrar ou recolher a lista", "";
-    "ctrl-m", super::AbrirMestre, None, Grupo::Lista, "Falar com o Mestre", "";
-    "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência", "";
-    "ctrl-1", super::IrParaProjeto(0), None, Grupo::Lista, "Filtrar pelo projeto 1 a 9 do trilho", "Ctrl+1…9";
-    "ctrl-2", super::IrParaProjeto(1), None, Grupo::Lista, "", "";
-    "ctrl-3", super::IrParaProjeto(2), None, Grupo::Lista, "", "";
-    "ctrl-4", super::IrParaProjeto(3), None, Grupo::Lista, "", "";
-    "ctrl-5", super::IrParaProjeto(4), None, Grupo::Lista, "", "";
-    "ctrl-6", super::IrParaProjeto(5), None, Grupo::Lista, "", "";
-    "ctrl-7", super::IrParaProjeto(6), None, Grupo::Lista, "", "";
-    "ctrl-8", super::IrParaProjeto(7), None, Grupo::Lista, "", "";
-    "ctrl-9", super::IrParaProjeto(8), None, Grupo::Lista, "", "";
+    "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
+    "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";
@@ -138,21 +133,16 @@ tabela! {
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";
     "alt-4", super::IrParaPainel4, None, Grupo::Paineis, "", "";
     "escape", super::FecharGaveta, Some("Gaveta"), Grupo::Paineis, "Recolher a gaveta", "";
+    "shift-f10", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "Menu do painel ativo (também no botão direito do cabeçalho e das abas)", "Shift+F10";
+    "menu", super::AbrirMenuDoPainel, Some("Vitral"), Grupo::Paineis, "", "";
     "ctrl-w", super::FecharPainel, None, Grupo::Paineis, "Fechar a aba à vista e, na última, o painel (a conversa fica na lista)", "";
+    "ctrl-tab", super::AbaSeguinte, None, Grupo::Paineis, "Aba seguinte do painel ativo (com Shift, a anterior)", "";
+    "ctrl-shift-tab", super::AbaAnterior, None, Grupo::Paineis, "", "";
+    "ctrl-shift-t", super::ReabrirAba, None, Grupo::Paineis, "Reabrir a última aba fechada", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
     "ctrl-shift-pagedown", super::MoverPainelDireita, None, Grupo::Paineis, "Mover o painel para a direita", "";
-
-    // ---------- revisão ----------
-    "f7", revisao::MudancaSeguinte, Some("Revisao"), Grupo::Revisao, "Mudança seguinte", "";
-    "shift-f7", revisao::MudancaAnterior, Some("Revisao"), Grupo::Revisao, "Mudança anterior", "";
-    // Ficam em contextos da revisão: o Ctrl+PgUp/PgDn ganha do painel vizinho só aqui dentro.
-    "ctrl-pagedown", revisao::ArquivoSeguinte, Some("Revisao"), Grupo::Revisao, "Arquivo seguinte", "";
-    "ctrl-pageup", revisao::ArquivoAnterior, Some("Revisao"), Grupo::Revisao, "Arquivo anterior", "";
-    "enter", revisao::AbrirRascunho, Some("Revisao > Diff"), Grupo::Revisao, "Comentar as linhas escolhidas", "";
-    "c", revisao::AbrirRascunho, Some("Revisao > Diff"), Grupo::Revisao, "", "";
-    "ctrl-enter", revisao::AcaoPrincipal, Some("Revisao"), Grupo::Revisao, "Fazer a ação principal do rodapé", "";
 
     // ---------- janela ----------
     "ctrl-=", super::AumentarZoom, None, Grupo::Janela, "Aumentar o zoom", "";
@@ -165,6 +155,30 @@ tabela! {
     "ctrl-,", super::AbrirConfiguracoes, None, Grupo::Janela, "Abrir as Configurações", "";
     // Fora de campo de texto (o "!Input" tira a tecla de quem está escrevendo).
     "?", super::AbrirAtalhos, Some("Vitral && !Input"), Grupo::Janela, "Esta lista de atalhos", "";
+}
+
+/// O que uma tecla digitada fora de um campo de texto (na lista, na conversa, numa aba) faz com a
+/// caixa do painel ativo: a letra vai para ela, e o Ctrl+V cola nela.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ParaACaixa {
+    Letra(String),
+    Colar,
+}
+
+/// A regra única de "digitar em qualquer ponto escreve na caixa" (dono, 16/11/2026: rodada de uso,
+/// item 1.1; antes valia só na lista). Uma tecla imprimível sem Ctrl, Alt ou Super vai para a
+/// caixa; o Espaço e o Enter ficam com o botão focado, e o "?" abre os atalhos. As setas, PgUp,
+/// PgDn, Home e End não imprimem nada e ficam de fora sozinhas. O Ctrl+V cola na caixa.
+pub(super) fn tecla_para_a_caixa(tecla: &Keystroke) -> Option<ParaACaixa> {
+    let m = &tecla.modifiers;
+    if m.control && !(m.alt || m.shift || m.platform || m.function) && tecla.key == "v" {
+        return Some(ParaACaixa::Colar);
+    }
+    if m.control || m.alt || m.platform || m.function {
+        return None;
+    }
+    let letra = tecla.key_char.clone().filter(|l| !l.is_empty() && !l.chars().any(char::is_control))?;
+    (letra != " " && letra != "?").then_some(ParaACaixa::Letra(letra))
 }
 
 /// Teclas que não são do keymap, mas que todo mundo procura nesta lista: a caixa envia no Enter
@@ -292,6 +306,28 @@ mod testes {
     }
 
     #[test]
+    fn letra_fora_de_campo_vai_para_a_caixa() {
+        use super::{ParaACaixa, tecla_para_a_caixa};
+        let tecla = |texto: &'static str, letra: Option<&str>| {
+            let mut t = Keystroke::parse(texto).unwrap();
+            t.key_char = letra.map(str::to_string);
+            t
+        };
+        assert_eq!(tecla_para_a_caixa(&tecla("a", Some("a"))), Some(ParaACaixa::Letra("a".into())));
+        assert_eq!(tecla_para_a_caixa(&tecla("shift-a", Some("A"))), Some(ParaACaixa::Letra("A".into())));
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-v", None)), Some(ParaACaixa::Colar));
+        // Espaço e Enter são do botão focado; o "?" abre os atalhos; setas e atalhos não imprimem.
+        assert_eq!(tecla_para_a_caixa(&tecla("space", Some(" "))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("enter", Some("\n"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("shift-/", Some("?"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("down", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("pageup", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-c", None)), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("alt-a", Some("a"))), None);
+        assert_eq!(tecla_para_a_caixa(&tecla("ctrl-shift-v", None)), None);
+    }
+
+    #[test]
     fn as_teclas_viram_desenho_de_tecla_uma_a_uma() {
         let acha = |rotulo: &str| {
             linhas()
@@ -300,8 +336,8 @@ mod testes {
                 .map(|l| l.partes().iter().map(|p| p.to_string()).collect::<Vec<_>>())
                 .unwrap()
         };
-        assert_eq!(acha("Novo projeto"), ["Ctrl", "Shift", "N"]);
-        assert_eq!(acha("Filtrar pelo projeto 1 a 9 do trilho"), ["Ctrl", "1…9"]);
+        assert_eq!(acha("Escolher o modelo"), ["Ctrl", "Shift", "M"]);
+        assert_eq!(acha("Imagem anterior e seguinte no visor"), ["←", "→"]);
         assert_eq!(acha("Corrigir a última mensagem (caixa vazia)"), ["↑"]);
         assert_eq!(acha("Esta lista de atalhos"), ["?"]);
     }

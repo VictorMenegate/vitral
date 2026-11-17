@@ -11,13 +11,10 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Flutuante as _, ListaDeEscolha, MedidaPainel, icone},
+    componentes::{EventoEscolha, Flutuante as _, ListaDeEscolha, MedidaPainel, icone},
     movimento,
 };
-use crate::{
-    modelo,
-    tema::{Cores, Lucide, Tipo as _, r, raio},
-};
+use crate::tema::{Cores, Lucide, Tipo as _, r, raio};
 
 /// Mais que isso fica apertado na tela (com a janela estreita, cabem menos).
 pub const MAX_PAINEIS: usize = 4;
@@ -38,6 +35,14 @@ pub struct Painel {
     pub rolagem: ScrollHandle,
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
+    /// Quantos itens da conversa o painel desenha (os últimos; ver `mensagens::ITENS_NA_TELA`).
+    /// Subir perto do topo aumenta; trocar de conversa volta ao começo.
+    pub mostrar: usize,
+    pub mostrar_historico: usize,
+    /// Altura anterior e deslocamento, para acrescentar mensagens em cima sem perder a leitura.
+    pub preservar_topo: Option<(Pixels, Point<Pixels>)>,
+    pub altura_conteudo: Pixels,
+    pub fila_aberta: bool,
     /// Um bloco desta conversa acabou de abrir: no próximo desenho o painel fica onde está, em
     /// vez de pular para o fim do que abriu.
     pub manter_lugar: bool,
@@ -50,10 +55,19 @@ pub struct Painel {
     pub foco_aba: FocusHandle,
     /// O menu "⋯" do painel está aberto (o Shift+F10 na aba abre o mesmo).
     pub menu_aberto: bool,
+    /// A largura da faixa das abas no quadro anterior (zero antes de medir): decide quais abas de
+    /// fundo ficam só com o ícone.
+    pub largura_abas: Pixels,
+    /// O item marcado no menu "/" da caixa (as setas andam, o Enter e o Tab o escolhem) e o menu
+    /// fechado pelo Esc. Os dois voltam ao começo a cada mudança no texto.
+    pub indice_menu: usize,
+    pub menu_dispensado: bool,
     /// O popover de esforço da caixa (as teclas ←/→, Espaço e Enter vão para ele).
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
     pub busca_modelo: Entity<ListaDeEscolha>,
+    /// A lista do histórico do cabeçalho (os chats para abrir neste painel).
+    pub busca_historico: Entity<ListaDeEscolha>,
     /// A busca dentro desta conversa (Ctrl+F): a barra, o termo e as ocorrências.
     pub busca: super::busca_conversa::Busca,
     /// Os blocos da conversa daqui em diante podem entrar com fade: o tamanho dela quando abriu
@@ -68,6 +82,22 @@ pub struct Painel {
     pub entra: bool,
     /// Sobe a cada envio, para o pulso do enviar.
     pub envios: u64,
+    /// O que o fundo da caixa diz agora (o texto padrão, ou o "Enter continua" depois de um Esc).
+    pub dica_caixa: SharedString,
+    /// O botão da faixa do turno (Retomar, Tentar de novo): o Ctrl+G põe o foco nele (item 3.4).
+    pub foco_faixa: FocusHandle,
+    /// Onde a conversa abre no próximo desenho: no começo da resposta nova ou na âncora de leitura
+    /// guardada (dono, 16/11/2026: rodada de uso, item 2.2).
+    pub alvo: Option<super::mensagens::AlvoDeAbertura>,
+    /// A âncora de leitura de cada chat que saiu deste painel sem estar no fim: o item no alto e
+    /// quanto dele já tinha subido. Só durante a sessão, em memória.
+    pub ancoras: std::collections::HashMap<String, super::mensagens::Ancora>,
+    /// Até quando o chat estava lido quando abriu com novidade: o separador "Novo" entra antes do
+    /// primeiro item (que não seja seu) depois disso.
+    pub novo_desde: Option<u64>,
+    /// Onde estava cada bloco da conversa no último desenho (o índice do item, o alto e o pé, a
+    /// partir do alto da lista): de onde saem a âncora e a abertura no começo da resposta.
+    pub posicoes: std::rc::Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -77,13 +107,6 @@ pub struct ArrastoChat {
     pub titulo: SharedString,
     /// Painel de onde a aba saiu (para mover em vez de abrir de novo).
     pub de_painel: Option<u64>,
-}
-
-/// Um projeto arrastado no trilho, para mudar de lugar.
-#[derive(Clone)]
-pub struct ArrastoProjeto {
-    pub id: String,
-    pub nome: SharedString,
 }
 
 /// Onde a conversa arrastada cai num painel.
@@ -208,11 +231,20 @@ pub enum Soltura {
 pub struct FormaSoltura {
     id: ElementId,
     soltura: Soltura,
+    /// O raio dos cantos da esquerda da peça por baixo (os da direita são sempre retos: a fileira
+    /// das conversas encosta na direita da janela), para o realce casar com ela.
+    raio_esquerdo: Pixels,
 }
 
 impl FormaSoltura {
     pub fn new(id: impl Into<ElementId>, soltura: Soltura) -> Self {
-        FormaSoltura { id: id.into(), soltura }
+        FormaSoltura { id: id.into(), soltura, raio_esquerdo: crate::tema::raio_da_peca() }
+    }
+
+    /// Os cantos da esquerda da peça (`tema::raio_encostado`).
+    pub fn raio_esquerdo(mut self, raio: Pixels) -> Self {
+        self.raio_esquerdo = raio;
+        self
     }
 }
 
@@ -247,23 +279,17 @@ impl RenderOnce for FormaSoltura {
                     .child(div().rotulo().text_color(Cores::forte()).child(texto)),
             )
             .when_some(detalhe, |s, d| s.child(div().metadado().text_color(Cores::tenue()).child(d)));
-        let base = || {
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(crate::tema::raio_da_peca())
-        };
+        // Os cantos seguem os da peça: só os da esquerda podem ser redondos, e a metade da
+        // direita, que começa no meio dela, é reta.
+        let raio = self.raio_esquerdo;
+        let base = || div().absolute().top_0().bottom_0().flex().items_center().justify_center();
         let metade = |lado: Lado| match lado {
-            Lado::Esquerda => base().left_0().w(relative(0.5)),
+            Lado::Esquerda => base().left_0().w(relative(0.5)).rounded_l(raio),
             _ => base().right_0().w(relative(0.5)),
         };
         let realce = |s: Div| s.bg(Cores::selecao()).border_2().border_color(Cores::destaque());
         let forma = match self.soltura {
-            Soltura::Arquivos => realce(base().left_0().right_0()).border_dashed(),
+            Soltura::Arquivos => realce(base().left_0().right_0().rounded_l(raio)).border_dashed(),
             Soltura::Conversa(Efeito::AbrirAoLado(lado), _) => realce(metade(lado)),
             Soltura::Conversa(Efeito::Mover { lado, .. }, _) => {
                 let barra = div()
@@ -331,18 +357,28 @@ impl Janela {
                 }
                 InputEvent::Focus => this.ativar_painel(id, cx),
                 InputEvent::Change => {
-                    // "@" digitado no começo ou depois de um espaço abre a lista de arquivos; no
-                    // Mestre, que não tem pasta, o "@" cita um chat (o menu da caixa).
                     let texto = estado.read(cx).value().to_string();
                     this.ativar_painel(id, cx);
+                    // O menu "/" recomeça do primeiro item e volta a aparecer.
+                    if let Some(p) = this.paineis.iter_mut().find(|p| p.id == id) {
+                        p.indice_menu = 0;
+                        p.menu_dispensado = false;
+                    }
                     // O rascunho vai para o disco pouco depois de a digitação parar.
                     this.agendar_gravacao(cx);
-                    let mestre = this.selecionado.as_deref() == Some(modelo::ID_MESTRE);
-                    if (texto == "@" || texto.ends_with(" @"))
-                        && !mestre
-                        && let Some(chat) = this.selecionado.clone()
+                    // O "@" no começo ou depois de um espaço abre o menu "@" na própria caixa; a
+                    // pasta do chat é lida em segundo plano, de novo a cada "@" novo (item 1.2). O
+                    // diálogo ficou só no "Arquivo da pasta…" do clipe.
+                    if let Some(('@', digitado, _)) = super::composer::gatilho(&texto)
+                        && let Some(cwd) = this
+                            .selecionado
+                            .as_ref()
+                            .and_then(|c| this.motor.as_ref()?.read(cx).chat(c).map(|c| c.cwd.clone()))
                     {
-                        this.dialogo_arquivos_projeto(chat, window, cx);
+                        if digitado.is_empty() {
+                            this.reler_arquivos(&cwd);
+                        }
+                        this.ler_arquivos(&cwd, cx);
                     }
                     cx.notify();
                 }
@@ -364,6 +400,11 @@ impl Janela {
                 _ => {}
             },
         ));
+        // O histórico do cabeçalho: escolher um chat mostra ele neste painel, como uma aba.
+        let busca_historico = cx.new(|cx| ListaDeEscolha::new("Buscar chat…", window, cx));
+        self._assinaturas.push(cx.subscribe_in(&busca_historico, window, move |this, _, evento: &EventoEscolha, window, cx| {
+            this.escolheu_no_historico(id, evento, window, cx)
+        }));
         // A aba alcançada pelo Tab ativa o painel dela: o Ctrl+W e o menu valem para ele.
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
@@ -374,6 +415,10 @@ impl Janela {
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
             rolagem: ScrollHandle::new(),
+            mostrar_historico: crate::importar::ITENS_POR_VEZ,
+            preservar_topo: None,
+            altura_conteudo: px(0.),
+            fila_aberta: false,
             leitura: Default::default(),
             seguindo: true,
             manter_lugar: false,
@@ -381,8 +426,12 @@ impl Janela {
             medida: MedidaPainel::default(),
             foco_aba,
             menu_aberto: false,
+            largura_abas: px(0.),
+            indice_menu: 0,
+            menu_dispensado: false,
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
+            busca_historico,
             busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
             vistos: 0,
@@ -390,6 +439,13 @@ impl Janela {
             pilula_vista: false,
             entra: false,
             envios: 0,
+            mostrar: super::mensagens::ITENS_NA_TELA,
+            foco_faixa: cx.focus_handle(),
+            dica_caixa: "Mensagem…".into(),
+            alvo: None,
+            ancoras: Default::default(),
+            novo_desde: None,
+            posicoes: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
@@ -408,54 +464,108 @@ impl Janela {
     ) {
         let texto = painel.composer.read(cx).value().to_string();
         if let Some(antigo) = antigo {
+            // Quem lia o meio de uma resposta não perde o lugar ao trocar de aba: a âncora (o item
+            // no alto e quanto dele já subiu) volta com o chat. No fim, nada a guardar.
+            let ancora = (!painel.seguindo)
+                .then(|| super::mensagens::ancora_de(&painel.posicoes.borrow(), -painel.rolagem.offset().y))
+                .flatten();
+            match ancora {
+                Some(ancora) => painel.ancoras.insert(antigo.clone(), ancora),
+                None => painel.ancoras.remove(&antigo),
+            };
             self.guardar_rascunho(antigo, texto, cx);
         }
         let rascunho = novo
             .as_ref()
             .and_then(|c| self.rascunhos.remove(c))
             .unwrap_or_default();
-        let (papel, tamanho) = novo
+        // Com pasta, "Mensagem para este chat…"; sem pasta (ou sem chat), só "Mensagem…". E se o
+        // chat tem resposta que você não viu, até quando ele estava lido.
+        let (com_pasta, tamanho, novidade, itens) = novo
             .as_ref()
             .and_then(|id| {
                 let m = self.motor.as_ref()?.read(cx);
                 let chat = m.chat(id)?;
-                Some((Some(chat.papel), tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some())))
+                let novidade = m.nao_lido(chat).then_some(chat.lido_em);
+                let tamanho = tamanho_da_conversa(chat.itens.len(), m.parcial(id).is_some());
+                Some((!m.sem_pasta(chat), tamanho, novidade, chat.itens.len()))
             })
-            .unwrap_or((None, 0));
-        let (avulso, ajudante) = novo
-            .as_ref()
-            .and_then(|id| {
-                let m = self.motor.as_ref()?.read(cx);
-                let c = m.chat(id)?;
-                let pai = c.pai.as_deref().and_then(|p| m.chat(p));
-                Some((c.projeto.is_empty(), pai.is_some_and(|p| p.papel == modelo::Papel::Projeto)))
-            })
-            .unwrap_or_default();
-        let dica = match papel {
-            Some(modelo::Papel::Mestre) => "Peça ao Mestre… (#projeto, @chat)",
-            Some(modelo::Papel::Trabalhador) if ajudante => "Mensagem direta para este ajudante…",
-            Some(modelo::Papel::Trabalhador) => novo
-                .as_ref()
-                .and_then(|id| Some(self.motor.as_ref()?.read(cx).dica_do_trabalhador(id)))
-                .unwrap_or("Mensagem direta para este ajudante…"),
-            Some(modelo::Papel::Projeto) if avulso => "Mensagem…",
-            Some(modelo::Papel::Projeto) => "Mensagem para este chat…",
-            _ => "Mensagem…",
+            .unwrap_or((false, 0, None, 0));
+        let dica = if com_pasta { "Mensagem para este chat…" } else { "Mensagem…" };
+        // As menções do rascunho voltam como pílulas (dono, 16/11/2026).
+        let pasta = novo.as_ref().and_then(|id| self.motor.as_ref()?.read(cx).chat(id).map(|c| c.cwd.clone()));
+        let conteudo = match &pasta {
+            Some(pasta) => super::composer::conteudo_com_mencoes(&rascunho, pasta),
+            None => rascunho.into(),
         };
         painel.composer.update(cx, |c, cx| {
-            c.set_value(rascunho, window, cx);
+            c.set_value(conteudo, window, cx);
             c.set_placeholder(dica, window, cx);
         });
-        if let (Some(id), Some(motor)) = (&novo, &self.motor) {
-            motor.update(cx, |m, _| m.marcar_lido(id));
+        painel.dica_caixa = dica.into();
+        // Trocar de chat tira a oferta de continuar depois do Esc (item 6.2).
+        if let (Some(antigo), Some(motor)) = (painel.chat.clone(), self.motor.clone()) {
+            motor.update(cx, |m, _| m.esquecer_parada_por_voce(&antigo));
         }
+        // Abrir não marca mais como lido: o chat só conta como lido com o fim à vista (ou depois do
+        // Ctrl+End), e "não lido" passa a querer dizer "não vi" (rodada de uso, item 2.2).
+        // Com novidade, a conversa abre no começo da resposta nova (se ela não couber na tela) e o
+        // separador "Novo" marca onde ela começa; sem novidade, onde você parou de ler neste painel.
+        let ancora = novo.as_ref().and_then(|id| painel.ancoras.remove(id));
+        painel.alvo = match (novidade, ancora) {
+            (Some(_), _) => Some(super::mensagens::AlvoDeAbertura::InicioDaResposta),
+            (None, Some(ancora)) => Some(super::mensagens::AlvoDeAbertura::Ancora(ancora)),
+            (None, None) => None,
+        };
+        painel.novo_desde = novidade;
+        painel.posicoes.borrow_mut().clear();
         painel.chat = novo;
-        painel.seguindo = true;
+        painel.mostrar = super::mensagens::ITENS_NA_TELA;
+        painel.mostrar_historico = crate::importar::ITENS_POR_VEZ;
+        painel.preservar_topo = None;
+        painel.altura_conteudo = px(0.);
+        painel.fila_aberta = false;
+        // Com um alvo, o painel não segue o fim (seguir marcaria como lido); o primeiro quadro
+        // ainda mostra o fim, e o seguinte já vai ao alvo. A pílula diz "Novas mensagens" só com
+        // novidade.
+        painel.seguindo = painel.alvo.is_none();
+        painel.leitura.marcar_vista(if novidade.is_some() { (0, 0) } else { (itens, 0) });
         painel.rolagem.scroll_to_bottom();
         painel.base_animacao = tamanho;
         painel.vistos = tamanho;
         painel.faixa_vista = false;
         painel.pilula_vista = false;
+    }
+
+    /// O fundo da caixa de cada painel: logo depois de um Esc, "O que fazer em vez disso? Enter
+    /// continua"; com a sugestão da próxima mensagem, ela e o Tab que a aceita; fora disso, o
+    /// texto de sempre (item 6.2).
+    pub(super) fn acertar_dicas_das_caixas(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        for painel in &mut self.paineis {
+            let Some(chat) = painel.chat.clone() else {
+                continue;
+            };
+            let (parou, com_pasta, sugestao) = {
+                let m = motor.read(cx);
+                (m.parou_por_voce(&chat), m.chat(&chat).is_some_and(|c| !m.sem_pasta(c)), m.sugestao(&chat).map(str::to_string))
+            };
+            let dica: SharedString = if parou {
+                "O que fazer em vez disso? Enter continua".into()
+            } else if let Some(sugestao) = sugestao {
+                format!("{sugestao}  ·  Tab").into()
+            } else if com_pasta {
+                "Mensagem para este chat…".into()
+            } else {
+                "Mensagem…".into()
+            };
+            if painel.dica_caixa != dica {
+                painel.dica_caixa = dica.clone();
+                painel.composer.update(cx, |c, cx| c.set_placeholder(dica, window, cx));
+            }
+        }
     }
 
     /// Envia o que está na caixa do painel e, se foi mesmo (a caixa esvaziou e os anexos saíram;
@@ -466,7 +576,7 @@ impl Janela {
         };
         let chat = self.selecionado.clone();
         let anexos = |this: &Self| {
-            chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()) || this.tem_issue_anexada(c))
+            chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()))
         };
         let tinha = !composer.read(cx).value().trim().is_empty() || anexos(self);
         self.enviar(window, cx);
@@ -589,12 +699,55 @@ impl Janela {
         cx.notify();
     }
 
+    /// "Perguntar também ao Codex" (ou ao Claude): a mensagem da caixa vai para este chat e para um
+    /// chat novo do outro agente, na mesma pasta, aberto num painel ao lado. São duas raias com o
+    /// mesmo pedido, para comparar as respostas (referência do dono: 21st.dev, "Agent Lanes"). A
+    /// raia nova só lê (ver `Motor::abrir_raia`).
+    pub(super) fn enviar_aos_dois(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.ativar_painel(painel, cx);
+        let (Some(motor), Some(chat), Some(composer)) = (self.motor.clone(), self.selecionado.clone(), self.composer_ativo()) else {
+            return;
+        };
+        let texto = composer.read(cx).value().to_string();
+        // Comando de barra é de um agente só.
+        if texto.trim().is_empty() || texto.trim_start().starts_with('/') {
+            return;
+        }
+        if !self.cabe_outro_painel() {
+            window.push_notification("Não cabe outro painel para a segunda resposta. Aumente a janela ou feche um painel.", cx);
+            return;
+        }
+        let raia = match motor.update(cx, |m, cx| m.abrir_raia(&chat, &texto, cx)) {
+            Ok(id) => id,
+            Err(erro) => {
+                window.push_notification(super::componentes::aviso(super::componentes::Tom::Erro, format!("Não abriu a segunda resposta: {erro}")), cx);
+                return;
+            }
+        };
+        // O mesmo que este chat vai receber: os anexos e o trecho citado, que o `enviar` gasta.
+        let anexos = self.anexos.get(&chat).cloned().unwrap_or_default();
+        let pedido = match self.citacoes.get(&chat) {
+            Some(trecho) => super::composer::com_citacao(trecho, &texto),
+            None => texto,
+        };
+        self.enviar(window, cx);
+        motor.update(cx, |m, cx| m.enviar_do_usuario(&raia, pedido, anexos, crate::modelo::Reforco::default(), cx));
+        self.abrir_ao_lado(raia, Some((painel, Lado::Direita)), window, cx);
+        // O foco fica onde o usuário estava escrevendo.
+        self.ativar_painel(painel, cx);
+    }
+
     pub(super) fn fechar_painel(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(ix) = self.paineis.iter().position(|p| p.id == id) else {
             return;
         };
         let painel = self.paineis.remove(ix);
+        // As abas do painel vão para o Ctrl+Shift+T, a que estava à vista por último.
+        for aba in painel.abas.iter().filter(|a| painel.chat.as_ref() != Some(*a)) {
+            lembrar_fechada(&mut self.abas_fechadas, aba);
+        }
         if let Some(chat) = painel.chat {
+            lembrar_fechada(&mut self.abas_fechadas, &chat);
             let texto = painel.composer.read(cx).value().to_string();
             self.guardar_rascunho(chat, texto, cx);
         }
@@ -619,6 +772,57 @@ impl Janela {
         }
     }
 
+    /// Ctrl+Tab (`passo` 1) e Ctrl+Shift+Tab (-1): a aba vizinha do painel ativo, dando a volta.
+    pub(super) fn andar_nas_abas(&mut self, passo: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(painel) = self.paineis.get(self.ativo) else {
+            return;
+        };
+        let (id, n) = (painel.id, painel.abas.len() as i32);
+        if n < 2 {
+            return;
+        }
+        let atual = painel.chat.as_ref().and_then(|c| painel.abas.iter().position(|a| a == c)).unwrap_or(0) as i32;
+        let alvo = painel.abas[(atual + passo).rem_euclid(n) as usize].clone();
+        self.abrir_aba(id, alvo, window, cx);
+        self.focar_composer(window, cx);
+    }
+
+    /// Ctrl+Shift+T: a última aba fechada volta no painel ativo (a que já está aberta, ou que não
+    /// existe mais, é pulada).
+    pub(super) fn reabrir_aba(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else { return };
+        while let Some(chat) = self.abas_fechadas.pop() {
+            let aberta = self.paineis.iter().any(|p| p.abas.contains(&chat) || p.chat.as_ref() == Some(&chat));
+            if aberta || motor.read(cx).chat(&chat).is_none() {
+                continue;
+            }
+            self.selecionar(Some(chat), window, cx);
+            self.focar_composer(window, cx);
+            return;
+        }
+        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, "Nenhuma aba fechada para reabrir"), cx);
+    }
+
+    /// Ctrl+Shift+C: a última resposta do chat à vista vai para a área de transferência.
+    pub(super) fn copiar_ultima_resposta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else { return };
+        let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
+        let texto = chat.and_then(|id| {
+            motor.read(cx).chat(&id)?.itens.iter().rev().find_map(|item| match item {
+                crate::modelo::Item::Assistente { texto, .. } if !texto.trim().is_empty() => Some(texto.trim().to_string()),
+                _ => None,
+            })
+        });
+        let aviso = match texto {
+            Some(texto) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(texto));
+                "Última resposta copiada"
+            }
+            None => "Este chat ainda não tem resposta para copiar",
+        };
+        window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, aviso), cx);
+    }
+
     /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.
     pub(super) fn abrir_aba(&mut self, painel_id: u64, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         self.ativar_painel(painel_id, cx);
@@ -634,6 +838,7 @@ impl Janela {
         let a_vista = painel.chat.as_deref() == Some(chat);
         let lugar = painel.abas.iter().position(|a| a == chat);
         painel.abas.retain(|a| a != chat);
+        lembrar_fechada(&mut self.abas_fechadas, chat);
         if !a_vista {
             cx.notify();
             return;
@@ -691,24 +896,13 @@ impl Janela {
         }
     }
 
-    /// Fecha todos os painéis menos este, que fica ativo.
-    pub(super) fn fechar_outros(&mut self, id: u64, cx: &mut Context<Self>) {
-        let outros: Vec<u64> = self.paineis.iter().map(|p| p.id).filter(|p| *p != id).collect();
-        for outro in outros {
-            self.fechar_painel(outro, cx);
-        }
-        if let Some(ix) = self.paineis.iter().position(|p| p.id == id) {
-            self.ativo = ix;
-            self.selecionado = self.paineis[ix].chat.clone();
-        }
-        cx.notify();
-    }
-
-    /// "Nova conversa ao lado": o diálogo de sempre, e a conversa criada abre num painel novo
-    /// (`selecionar` consome a marca). Fechado o diálogo sem criar nada, a marca cai.
+    /// "Nova conversa ao lado": um chat novo na hora, como o "+" (na pasta do chat deste painel),
+    /// aberto num painel novo (`selecionar` consome a marca). O dono viu a paleta de pastas aqui
+    /// e disse "tá o antigo ainda" (13/11/2026). Só sem ter de onde tirar a pasta a paleta
+    /// pergunta; fechada sem criar nada, a marca cai.
     pub(super) fn nova_conversa_ao_lado(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.nova_ao_lado = true;
-        self.dialogo_nova_conversa(window, cx);
+        self.novo_chat_direto(window, cx);
         if !self.nova_ao_lado {
             return;
         }
@@ -898,6 +1092,7 @@ impl Janela {
             .filter(|(id, ..)| *id == painel)
             .map(|(_, _, efeito)| efeito);
         let abertos = self.paineis.len();
+        let raio = crate::tema::raio_encostado(self.esquerda_do_painel(self.paineis.iter().position(|p| p.id == painel)));
         div()
             .id(("painel", painel as usize))
             .relative()
@@ -948,7 +1143,10 @@ impl Janela {
             .when_some(alvo.filter(|e| *e != Efeito::Nenhum), |s, efeito| {
                 // Da borda, sem lugar para outro painel, a soltura troca e diz por quê.
                 let detalhe = matches!(efeito, Efeito::Trocar { cheio: true, .. }).then(|| motivo_sem_lugar(abertos));
-                s.child(FormaSoltura::new(("soltura", painel as usize), Soltura::Conversa(efeito, detalhe)))
+                s.child(
+                    FormaSoltura::new(("soltura", painel as usize), Soltura::Conversa(efeito, detalhe))
+                        .raio_esquerdo(raio),
+                )
             })
     }
 }
@@ -1070,5 +1268,15 @@ mod testes_soltura {
             efeito_de(&[A, B, C, D], Some(A), B, Lado::Direita, false, true),
             Efeito::Trocar { origem: Some(A), cheio: true }
         );
+    }
+}
+
+/// Guarda uma aba fechada para o Ctrl+Shift+T: sem repetir (a reaberta e fechada de novo vai
+/// para o fim) e com as últimas 20.
+fn lembrar_fechada(fechadas: &mut Vec<String>, chat: &str) {
+    fechadas.retain(|c| c != chat);
+    fechadas.push(chat.to_string());
+    if fechadas.len() > 20 {
+        fechadas.remove(0);
     }
 }

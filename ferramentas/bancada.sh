@@ -8,7 +8,8 @@
 # projeto que já a tem ou o Novo projeto com ela ligada. A migração de ponta a ponta é a
 # RAIZ_SINTETICA (abaixo), nunca uma cópia de uma pasta de verdade.
 # Roteiro, uma ação por linha:
-#   espera S | clique X Y | mover X Y | arrastar X1 Y1 X2 Y2 | rolar X Y N | texto ... | tecla Return | print nome
+#   espera S | clique X Y | duplo X Y | mover X Y | arrastar X1 Y1 X2 Y2 | rolar X Y N | texto ... |
+#   tecla Return | print nome | minimizar | restaurar | outro_app | fecha_outro | cpu nome
 # "rolar X Y N" gira a roda N entalhes com o ponteiro em X,Y (N negativo sobe).
 # "roda <comando>" roda o comando no bash (sem comentário no fim da linha) e junta a saída em
 # <pasta_dos_prints>/roda.log, com os XDG da bancada ($XDG_DATA_HOME/vitral são os dados dela).
@@ -33,15 +34,6 @@
 # antigo dentro da bancada ($B/raiz-sintetica, com os cwd dentro dela e sessões novas), põe ela no
 # recentes.json da bancada, abre como primeiro uso e, no fim, confere que os arquivos do .vitral
 # antigo ficaram iguais (os hashes vão para <pasta_dos_prints>/hashes-antes.txt e -depois.txt).
-# AMOSTRA=prs abre a amostra de PRs, sem rede: o ferramentas/amostra-prs/preparar.py grava nos
-# dados da bancada o projeto top-bar-app-color (um repositório local, com o remote do GitHub levado a
-# um bare ao lado) com a pasta em modo PR, um chat para cada estado do PR (checks com falhas e
-# mudanças pedidas, Ship, conflito, atrás de main, rascunho, bloqueado, commit de fora com o
-# "Confirmar", sem permissão, pronto para mesclar, mesclado, fechado, pronto para atualizar e a cópia
-# antes do PR), os itens de "Esperando você" e as issues do GitHub; o ferramentas/amostra-prs/gh
-# entra no PATH e responde o que o GitHub diria, coerente com o estado (o vigia consulta e nada
-# muda), sem escrever nada (as chamadas vão para $XDG_STATE_HOME/gh-amostra.log). AMOSTRA_CHAT=<id>
-# escolhe o chat que abre (a1000000001 a a1000000013).
 # A atualização fica desligada; VITRAL_SEM_ATUALIZACAO=0 com VITRAL_ATUALIZACAO_BASE (e, no build de
 # desenvolvimento, VITRAL_ATUALIZACAO_CHAVE) procura num release falso. O que ela instala vai para a
 # pasta de dados da bancada, e o link do ~/.local/bin para o $B/bin.
@@ -104,10 +96,6 @@ J
     if [ -n "${ZOOM:-}" ]; then
         mkdir -p "$B/config/vitral"
         echo "{\"zoom\": $ZOOM}" > "$B/config/vitral/interface.json"
-    fi
-    if [ "${AMOSTRA:-}" = prs ]; then
-        python3 -I "$(dirname "$(realpath "$0")")/amostra-prs/preparar.py" "$B" || exit 1
-        export PATH="$(dirname "$(realpath "$0")")/amostra-prs:$PATH" AMOSTRA_GITHUB="$B/amostra/github.json"
     fi
     cat > "$B/config/glib-2.0/settings/keyfile" <<J
 [org/gnome/shell]
@@ -178,6 +166,10 @@ while read -r cmd resto; do
             ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $a, $b); 'ok'"; sleep 0.3
             ev "$PREP global._vp.notify_button(G.get_monotonic_time(), C.BUTTON_PRIMARY, C.ButtonState.PRESSED); 'ok'"; sleep 0.08
             ev "$PREP global._vp.notify_button(G.get_monotonic_time(), C.BUTTON_PRIMARY, C.ButtonState.RELEASED); 'ok'"; sleep 0.4 ;;
+        duplo)
+            # Dois cliques no mesmo ponto, 50 ms entre eles (o clique duplo do GPUI).
+            ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $a, $b); 'ok'"; sleep 0.3
+            ev "$PREP const t = G.get_monotonic_time(); for (const [d, e] of [[0, C.ButtonState.PRESSED], [30000, C.ButtonState.RELEASED], [80000, C.ButtonState.PRESSED], [110000, C.ButtonState.RELEASED]]) global._vp.notify_button(t + d, C.BUTTON_PRIMARY, e); 'ok'"; sleep 0.4 ;;
         arrastar)
             read -r x1 y1 x2 y2 _ <<< "$resto"
             ev "$PREP global._vp.notify_absolute_motion(G.get_monotonic_time(), $x1, $y1); 'ok'"; sleep 0.3
@@ -207,6 +199,17 @@ while read -r cmd resto; do
             ev "$js 'ok'"; sleep 0.4 ;;
         print) gdbus call --session --dest org.gnome.Shell.Screenshot --object-path /org/gnome/Shell/Screenshot --method org.gnome.Shell.Screenshot.Screenshot false false "$PRINTS/$a.png" > /dev/null ;;
         roda) { echo "\$ $resto"; bash -c "$resto"; echo; } >> "$PRINTS/roda.log" 2>&1 ;;
+        # A janela do Vitral some (minimizada) e volta (desminimizada e ativada).
+        minimizar) ev "global.display.list_all_windows().forEach(w => w.minimize()); 'ok'"; sleep 0.5 ;;
+        restaurar) ev "global.display.list_all_windows().forEach(w => { w.unminimize(); w.activate(global.get_current_time()); }); 'ok'"; sleep 0.8 ;;
+        # Outro aplicativo na frente (a calculadora do GNOME), com o foco: o Vitral fica atrás.
+        outro_app) WAYLAND_DISPLAY=$XDG_RUNTIME_DIR/$SOCKET gnome-calculator >/dev/null 2>&1 7>&- 8>&- & OUTRO_PID=$!; sleep 3 ;;
+        fecha_outro) kill $OUTRO_PID 2>/dev/null; sleep 0.5 ;;
+        # "cpu nome": o processador do Vitral em 5 s (100% é um núcleo inteiro), em roda.log.
+        cpu)
+            antes=$(awk '{print $14+$15}' /proc/$APP_PID/stat 2>/dev/null); sleep 5
+            depois=$(awk '{print $14+$15}' /proc/$APP_PID/stat 2>/dev/null)
+            echo "cpu $a: $(( (depois - antes) * 100 / ($(getconf CLK_TCK) * 5) ))%" >> "$PRINTS/roda.log" ;;
         reabre)
             kill -KILL $APP_PID 2>/dev/null; wait $APP_PID 2>/dev/null; sleep 1
             [ -n "$resto" ] && { echo "\$ (fechado) $resto"; bash -c "$resto"; echo; } >> "$PRINTS/roda.log" 2>&1
@@ -215,7 +218,7 @@ while read -r cmd resto; do
             (sleep 4; ev 'Main.overview.hide(); "ok"') & ;;
     esac
 done < "$ROTEIRO"
-kill $APP_PID 2>/dev/null; sleep 1; kill $SHELL_PID 2>/dev/null; wait 2>/dev/null
+kill $APP_PID ${OUTRO_PID:-} 2>/dev/null; sleep 1; kill $SHELL_PID 2>/dev/null; wait 2>/dev/null
 if [ -n "${RAIZ_SINTETICA:-}" ]; then
     B_RAIZ=$(dirname "$XDG_CACHE_HOME")/raiz-sintetica
     (cd "$B_RAIZ" && find .vitral -type f -exec sha256sum {} + | sort -k2) > "$PRINTS/hashes-depois.txt"

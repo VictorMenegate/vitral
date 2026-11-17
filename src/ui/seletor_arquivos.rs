@@ -1,4 +1,4 @@
-//! Arquivos do projeto para mencionar com "@": a lista (do git ou varrendo a pasta), o filtro
+//! Arquivos da pasta do chat para mencionar com "@": a lista (do git ou varrendo a pasta), o filtro
 //! (o nome antes da pasta) e as linhas da lista de escolha.
 
 use std::path::Path;
@@ -12,23 +12,34 @@ const LIMITE: usize = 200;
 /// Os arquivos com todas as palavras da busca no caminho; o nome batendo vem antes da pasta
 /// batendo, e o mais curto antes.
 pub(super) fn filtrar_arquivos<'a>(arquivos: &'a [String], busca: &str, limite: usize) -> Vec<&'a String> {
+    filtrar_mencoes(arquivos, &[], busca, limite)
+}
+
+/// O mesmo filtro sobre os arquivos e as pastas ("central/src/") do "@" da caixa (item 1.2). A
+/// chave de cada um é calculada uma vez (são milhares com os repositórios de dentro).
+pub(super) fn filtrar_mencoes<'a>(arquivos: &'a [String], pastas: &'a [String], busca: &str, limite: usize) -> Vec<&'a String> {
     let busca = busca.to_lowercase();
     let termos: Vec<&str> = busca.split_whitespace().collect();
-    let mut lista: Vec<&String> = arquivos
-        .iter()
-        .filter(|a| {
-            let a = a.to_lowercase();
-            termos.iter().all(|t| a.contains(t))
+    let todos = arquivos.iter().chain(pastas.iter());
+    let Some(ultimo) = termos.last() else {
+        return todos.take(limite).collect();
+    };
+    let mut lista: Vec<(bool, usize, &String)> = todos
+        .filter_map(|a| {
+            let baixo = a.to_lowercase();
+            if !termos.iter().all(|t| baixo.contains(t)) {
+                return None;
+            }
+            let nome = baixo.trim_end_matches('/').rsplit('/').next().unwrap_or(&baixo);
+            Some((!nome.contains(ultimo), a.len(), a))
         })
         .collect();
-    if let Some(ultimo) = termos.last() {
-        lista.sort_by_key(|a| {
-            let nome = a.rsplit('/').next().unwrap_or(a).to_lowercase();
-            (!nome.contains(ultimo), a.len())
-        });
+    if lista.len() > limite {
+        lista.select_nth_unstable_by_key(limite, |(n, t, _)| (*n, *t));
+        lista.truncate(limite);
     }
-    lista.truncate(limite);
-    lista
+    lista.sort_by_key(|(n, t, _)| (*n, *t));
+    lista.into_iter().map(|(_, _, a)| a).collect()
 }
 
 /// O ícone pelo tipo: código, texto, imagem ou o resto.
@@ -74,27 +85,59 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
     vec![GrupoDeEscolha { titulo: None, itens }]
 }
 
-/// Arquivos do projeto: o que o git conhece (respeita o .gitignore); sem git, uma varredura que
-/// pula pastas ocultas e de dependências. Lista vazia do git (repositório novo, ou projeto que o
-/// repositório de cima ignora) também cai na varredura.
+/// Até quantos arquivos a lista guarda (a varredura e os repositórios de dentro param aqui).
+const TETO: usize = 20_000;
+
+/// Até quantos níveis de repositório dentro de repositório a lista desce.
+const NIVEIS_DE_REPOSITORIO: usize = 3;
+
+/// Arquivos da pasta: o que o git conhece (respeita o .gitignore); sem git, uma varredura que pula
+/// pastas ocultas e de dependências. Lista vazia do git (repositório novo, ou pasta que o
+/// repositório de cima ignora) também cai na varredura. Os repositórios de dentro (uma subpasta
+/// com git próprio que o de cima ignora ou não conhece) entram com o prefixo dela: em ~/eita, a raiz
+/// é lista-branca, e central/, layout/ e vitral/ ficavam de fora do "@", da árvore e do Mencionar
+/// (rodada de uso, item 7.1). Só conta o `.git` que é pasta: o worktree tem `.git` em arquivo e
+/// duplicaria tudo. Tudo dentro do mesmo teto.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
-    // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
-    let saida = crate::git::git_em(pasta)
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
-        .output();
-    if let Ok(saida) = saida
-        && saida.status.success()
-    {
-        let lista: Vec<String> = String::from_utf8_lossy(&saida.stdout)
-            .split('\0')
-            .filter(|a| !a.is_empty())
-            .map(str::to_string)
-            .collect();
-        if !lista.is_empty() {
-            return lista;
-        }
-    }
     let mut lista = Vec::new();
+    listar_em(pasta, "", 0, &mut lista);
+    lista
+}
+
+fn listar_em(pasta: &Path, prefixo: &str, nivel: usize, lista: &mut Vec<String>) {
+    // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
+    let ls_files = |extras: &[&str]| -> Option<Vec<String>> {
+        let saida = crate::git::git_em(pasta).args(["ls-files", "-z", "--others", "--exclude-standard"]).args(extras).output().ok()?;
+        saida.status.success().then(|| String::from_utf8_lossy(&saida.stdout).split('\0').filter(|a| !a.is_empty()).map(str::to_string).collect())
+    };
+    if let Some(do_git) = ls_files(&["--cached"]).filter(|l| !l.is_empty()) {
+        // Um repositório de dentro que o de cima não conhece aparece como pasta ("proj/").
+        let mut de_dentro: Vec<String> = Vec::new();
+        for entrada in do_git {
+            if entrada.ends_with('/') {
+                de_dentro.push(entrada);
+            } else if lista.len() < TETO {
+                lista.push(format!("{prefixo}{entrada}"));
+            }
+        }
+        // E os que ele ignora: as pastas ignoradas que têm `.git` (pasta) dentro.
+        if nivel < NIVEIS_DE_REPOSITORIO {
+            de_dentro.extend(ls_files(&["--ignored", "--directory"]).unwrap_or_default().into_iter().filter(|e| e.ends_with('/')));
+            de_dentro.sort();
+            de_dentro.dedup();
+            for sub in de_dentro {
+                if lista.len() >= TETO {
+                    break;
+                }
+                let caminho = pasta.join(sub.trim_end_matches('/'));
+                if caminho.join(".git").is_dir() {
+                    listar_em(&caminho, &format!("{prefixo}{sub}"), nivel + 1, lista);
+                }
+            }
+        }
+        return;
+    }
+    let mut achados = Vec::new();
     let mut pendentes = vec![pasta.to_path_buf()];
     while let Some(atual) = pendentes.pop() {
         let Ok(entradas) = std::fs::read_dir(&atual) else {
@@ -115,22 +158,39 @@ pub(super) fn listar(pasta: &Path) -> Vec<String> {
                 }
             } else if let Ok(relativo) = caminho.strip_prefix(pasta) {
                 // Com `/`, como a lista do git (no Windows o caminho viria com `\`).
-                lista.push(crate::git::caminho_em_texto(relativo));
+                achados.push(format!("{prefixo}{}", crate::git::caminho_em_texto(relativo)));
             }
-            if lista.len() > 20_000 {
-                return lista;
+            if lista.len() + achados.len() >= TETO {
+                lista.append(&mut achados);
+                return;
             }
         }
     }
-    lista.sort();
-    lista
+    achados.sort();
+    lista.append(&mut achados);
+}
+
+/// As pastas que os arquivos da lista mostram ("central/src/"), sem repetir, para o "@" mencionar
+/// uma pasta inteira (rodada de uso, item 1.2).
+pub(super) fn pastas_dos_arquivos(arquivos: &[String]) -> Vec<String> {
+    let mut pastas: std::collections::BTreeSet<String> = Default::default();
+    for arquivo in arquivos {
+        let mut fim = arquivo.len();
+        while let Some(barra) = arquivo[..fim].rfind('/') {
+            if !pastas.insert(arquivo[..=barra].to_string()) {
+                break;
+            }
+            fim = barra;
+        }
+    }
+    pastas.into_iter().collect()
 }
 
 #[cfg(test)]
 mod testes {
     use std::path::Path;
 
-    use super::{filtrar_arquivos, grupos_de_arquivos, icone_do_arquivo, listar};
+    use super::{filtrar_arquivos, grupos_de_arquivos, icone_do_arquivo, listar, pastas_dos_arquivos};
     use crate::{git::novo_git, tema::Lucide};
 
     fn git(pasta: &Path, args: &[&str]) {
@@ -156,6 +216,49 @@ mod testes {
         lista.sort();
         assert_eq!(lista, [".gitignore", "relatório.md"]);
         let _ = std::fs::remove_dir_all(&raiz);
+    }
+
+    #[test]
+    fn desce_nos_repositorios_de_dentro_e_pula_o_worktree() {
+        let raiz = std::env::temp_dir().join(format!("vitral-aninhados-{}", crate::modelo::novo_id()));
+        let projeto = raiz.join("central");
+        std::fs::create_dir_all(projeto.join("src")).unwrap();
+        std::fs::create_dir_all(raiz.join("wt/outra")).unwrap();
+        std::fs::create_dir_all(raiz.join("solto/src")).unwrap();
+        // A raiz é lista-branca, como ~/eita: ignora tudo e libera um nome só.
+        git(&raiz, &["init", "-q"]);
+        std::fs::write(raiz.join(".gitignore"), "*\n!.gitignore\n!AGENTS.md\n").unwrap();
+        std::fs::write(raiz.join("AGENTS.md"), "x").unwrap();
+        git(&projeto, &["init", "-q"]);
+        std::fs::write(projeto.join("src/main.rs"), "x").unwrap();
+        // O worktree tem `.git` em arquivo: não entra (duplicaria tudo).
+        std::fs::write(raiz.join("wt/outra/.git"), "gitdir: /x").unwrap();
+        std::fs::write(raiz.join("wt/outra/a.rs"), "x").unwrap();
+        // Pasta ignorada sem git próprio também fica de fora.
+        std::fs::write(raiz.join("solto/src/b.rs"), "x").unwrap();
+        let mut lista = listar(&raiz);
+        lista.sort();
+        assert_eq!(lista, [".gitignore", "AGENTS.md", "central/src/main.rs"]);
+        let _ = std::fs::remove_dir_all(&raiz);
+    }
+
+    #[test]
+    fn mencoes_com_arquivos_e_pastas() {
+        use super::filtrar_mencoes;
+        let arquivos: Vec<String> = ["central/src/motor.rs", "central/src/ui/motor_ui.rs", "layout/motor.twig"].map(String::from).to_vec();
+        let pastas = pastas_dos_arquivos(&arquivos);
+        // A pasta casa pelo nome dela, sem a barra do fim.
+        assert_eq!(filtrar_mencoes(&arquivos, &pastas, "ui", 8)[0], "central/src/ui/");
+        // O nome do arquivo antes da pasta, e o mais curto antes; o limite corta.
+        assert_eq!(filtrar_mencoes(&arquivos, &pastas, "motor", 2), ["layout/motor.twig", "central/src/motor.rs"]);
+        // Sem nada digitado, os primeiros da lista.
+        assert_eq!(filtrar_mencoes(&arquivos, &pastas, "", 2).len(), 2);
+    }
+
+    #[test]
+    fn pastas_dos_arquivos_sem_repetir() {
+        let arquivos: Vec<String> = ["central/src/a.rs", "central/src/b.rs", "central/x.md", "raiz.md"].map(String::from).to_vec();
+        assert_eq!(pastas_dos_arquivos(&arquivos), ["central/", "central/src/"]);
     }
 
     #[test]

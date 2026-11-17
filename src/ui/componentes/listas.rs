@@ -175,6 +175,10 @@ pub fn barra_de_rolagem<H: ScrollbarHandle + Clone>(id: impl Into<ElementId>, ro
 /// Grupo de hover do `CartaoDeLista`, para o que aparece com o ponteiro no cartão.
 pub const GRUPO_DO_CARTAO: &str = "cartao-de-lista";
 
+/// A altura, a 100%, da linha de chat da lista corrida (uma linha, fora da árvore). A lista usa
+/// a mesma medida no espaço que guarda o lugar dos cartões fora da vista.
+pub const ALTURA_DA_LINHA_DE_CHAT: f32 = 36.;
+
 /// Cartão de uma lista (conversas, trabalhadores, arquivos, contas, rotinas): 52 com duas
 /// linhas ou 32 com uma. O conteúdo fica a 8 da borda (o símbolo de uma lista com a peça de 8
 /// cai na guia de 16) e o título, a 12 do símbolo de 30 (8 do de 16, numa linha). As ações
@@ -348,8 +352,14 @@ impl RenderOnce for CartaoDeLista {
         const GRUPO: &str = GRUPO_DO_CARTAO;
         let arvore = self.nivel > 0;
         let uma_linha = self.uma_linha || arvore;
-        let (altura, raio_cartao, lado_simbolo) =
-            if uma_linha { (32., raio::CONTROLE, 16.) } else { (52., raio::CARTAO, 30.) };
+        // A linha de chat da lista corrida (uma linha, fora da árvore) é um pouco maior que a da
+        // árvore: 36 de altura e título 15 (dono, 13/11/2026: "deixa esses chats um pouco maior").
+        let folgada = self.uma_linha && !arvore;
+        let (altura, raio_cartao, lado_simbolo) = match (uma_linha, folgada) {
+            (true, true) => (ALTURA_DA_LINHA_DE_CHAT, raio::CONTROLE, 16.),
+            (true, false) => (32., raio::CONTROLE, 16.),
+            _ => (52., raio::CARTAO, 30.),
+        };
         let vao = if uma_linha && !arvore { esp::E8 } else { esp::E12 };
         let forte = self.nao_lido || self.selecionado;
         let cor_barra = Cores::destaque();
@@ -377,7 +387,6 @@ impl RenderOnce for CartaoDeLista {
                     .into_any_element()
             })
         };
-        // No nível 1, 13/500 como o rotulo_tarefa.
         let titulo = div()
             .min_w_0()
             .map(|d| {
@@ -387,9 +396,18 @@ impl RenderOnce for CartaoDeLista {
                     d.truncate()
                 }
             })
-            .text_size(r(if self.nivel > 0 { 13. } else { 14. }))
+            .text_size(r(if self.nivel > 0 {
+                13.
+            } else if folgada {
+                15.
+            } else {
+                14.
+            }))
             .line_height(r(20.))
-            .font_weight(FontWeight::MEDIUM)
+            // A linha de chat da lista corrida em 400: a lista pesava mais que a conversa, e o não
+            // lido (600, do `titulo_rico`) era só um degrau acima. A árvore fica em 500
+            // (relatório de aparência, 16/11/2026, V8).
+            .font_weight(if folgada { FontWeight::NORMAL } else { FontWeight::MEDIUM })
             .text_color(if forte { Cores::forte() } else { Cores::texto() })
             .map(|d| match self.titulo_rico {
                 Some(rico) => d.child(rico),
@@ -456,6 +474,9 @@ impl RenderOnce for CartaoDeLista {
             .gap(vao)
             .h(r(altura))
             .px(dentro_da_borda(8.))
+            // Sem símbolo (os chats da lista), o título fica a 12 da borda: com 8 ele encostava na
+            // barra azul do selecionado.
+            .when(simbolo.is_none(), |d| d.pl(dentro_da_borda(12.)))
             .rounded(raio_cartao)
             .bg(fundo)
             .border_1()
@@ -550,18 +571,6 @@ fn coluna_da_arvore(
         .into_any_element()
 }
 
-/// "#2 Aplicar cupom": o número em tênue e o título 13/500 (14/500 em cartão).
-pub fn rotulo_tarefa(n: u64, titulo: &str, grande: bool) -> impl IntoElement {
-    div()
-        .flex()
-        .min_w_0()
-        .gap(r(6.))
-        .text_size(r(if grande { 14. } else { 13. }))
-        .font_weight(FontWeight::MEDIUM)
-        .child(div().flex_none().text_color(Cores::tenue()).child(format!("#{n}")))
-        .child(div().min_w_0().truncate().text_color(Cores::texto()).child(titulo.to_string()))
-}
-
 /// O que vai à direita de uma linha de opção.
 pub enum Controle {
     Interruptor { ligado: bool, ao_mudar: Rc<dyn Fn(bool, &mut Window, &mut App)> },
@@ -628,12 +637,6 @@ impl LinhaDeOpcao {
         self
     }
 
-    /// No diálogo estreito: o controle (menu, botões) desce para baixo do texto.
-    pub fn embaixo(mut self, sim: bool) -> Self {
-        self.embaixo = sim;
-        self
-    }
-
     /// Campo embaixo do título (linha vertical).
     pub fn campo(mut self, e: impl IntoElement) -> Self {
         self.campo = Some(e.into_any_element());
@@ -652,19 +655,13 @@ impl LinhaDeOpcao {
         self
     }
 
-    /// O logo do serviço (16) antes do título, que fica na cor de sempre (GitHub, Linear).
-    pub fn marca(mut self, s: Simbolo) -> Self {
-        self.marca = Some(s);
-        self
-    }
-
     /// Uma linha em âmbar embaixo da descrição (custo, carga); some com a linha desabilitada.
     pub fn aviso(mut self, a: impl Into<SharedString>) -> Self {
         self.aviso = Some(a.into());
         self
     }
 
-    /// 0,45, com o motivo no lugar da descrição.
+    /// O título e o controle a 0,45, com o motivo no lugar da descrição, legível.
     pub fn desabilitada(mut self, motivo: impl Into<SharedString>) -> Self {
         self.desabilitada = Some(motivo.into());
         self
@@ -719,13 +716,16 @@ impl RenderOnce for LinhaDeOpcao {
             Controle::Elemento(e) => (Some(e), None),
             Controle::Nenhum => (None, None),
         };
+        // Desabilitada, só o título e o controle apagam: com a linha inteira a 0,45, o motivo dava
+        // 2,45:1 e não se lia. Ele vai em `apagado` cheio (relatório de design, 16/11/2026).
+        let apagar = |d: Div| d.when(desabilitada, |d| d.opacity(crate::tema::opacidade::DESABILITADO));
+        let titulo = apagar(div().child(titulo));
         div()
             .id(self.id)
             .flex()
             .flex_col()
             .gap(esp::E8)
             .p(esp::E12)
-            .when(desabilitada, |d| d.opacity(0.45))
             .child(
                 div()
                     .flex()
@@ -739,14 +739,14 @@ impl RenderOnce for LinhaDeOpcao {
                             .min_w_0()
                             .child(titulo)
                             .when_some(descricao, |d, t| {
-                                d.child(div().metadado().text_color(Cores::tenue()).child(t))
+                                d.child(div().metadado().text_color(if desabilitada { Cores::apagado() } else { Cores::tenue() }).child(t))
                             })
                             .when_some(aviso, |d, t| d.child(div().metadado().text_color(Cores::ambar()).child(t))),
                     )
-                    .children(direita),
+                    .children(direita.map(|e| apagar(div().flex_none().child(e)))),
             )
-            .children(self.campo)
-            .children(controle_embaixo)
+            .children(self.campo.map(|e| apagar(div().child(e))))
+            .children(controle_embaixo.map(apagar))
             .when_some(alternar.filter(|_| !desabilitada), |d, (ligado, f)| {
                 d.cursor_pointer().on_click(move |_, window, cx| f(!ligado, window, cx))
             })
@@ -810,6 +810,8 @@ pub struct ItemDeEscolha {
     pub desabilitado: Option<SharedString>,
     /// Outras palavras que a busca encontra.
     pub termos: Option<SharedString>,
+    /// O atalho que faz o mesmo, em teclas, à direita (a linha de ação "Novo chat").
+    pub teclas: Option<Vec<SharedString>>,
 }
 
 impl ItemDeEscolha {
@@ -822,6 +824,7 @@ impl ItemDeEscolha {
             selos: Vec::new(),
             desabilitado: None,
             termos: None,
+            teclas: None,
         }
     }
 }
@@ -849,6 +852,9 @@ pub struct ListaDeEscolha {
     simbolos_dos_grupos: Vec<(SharedString, Rc<Simbolo>)>,
     /// O escolhido vai na ficha de metal, como nos popovers de escolha (o seletor de modelo).
     ficha_no_escolhido: bool,
+    /// Onde o realce do teclado começa ao abrir, quando não é no escolhido (no "+" do painel, a
+    /// linha de criar: o Enter cria, e o visto fica no chat à vista).
+    cursor: Option<SharedString>,
 }
 
 impl EventEmitter<EventoEscolha> for ListaDeEscolha {}
@@ -871,7 +877,13 @@ impl ListaDeEscolha {
             rodape: None,
             simbolos_dos_grupos: Vec::new(),
             ficha_no_escolhido: false,
+            cursor: None,
         }
+    }
+
+    /// O realce do teclado começa nesta chave ao abrir (sem ela, no escolhido).
+    pub fn cursor_em(&mut self, chave: Option<SharedString>) {
+        self.cursor = chave;
     }
 
     /// O escolhido na ficha de metal (o visto continua), como nos popovers de escolha.
@@ -906,7 +918,7 @@ impl ListaDeEscolha {
     /// Limpa a busca, realça o escolhido e foca a busca.
     pub fn abrir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.filtrados = None;
-        let escolhido = self.escolhido.clone().and_then(|chave| posicao(&self.grupos, &chave));
+        let escolhido = self.cursor.clone().or_else(|| self.escolhido.clone()).and_then(|chave| posicao(&self.grupos, &chave));
         self.estado.update(cx, |estado, cx| {
             estado.set_query("", window, cx);
             estado.set_selected_index(escolhido, window, cx);
@@ -976,6 +988,7 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
                 .items_center()
                 .gap(esp::E4)
                 .children(item.selos.iter().cloned())
+                .children(item.teclas.clone().map(super::desenho_teclas))
                 .when(escolhido, |d| {
                     d.child(
                         div()
@@ -987,7 +1000,13 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
 }
 
 impl Render for ListaDeEscolha {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Até 440, mas cabendo na janela com o resto do popover em volta (abas, rodapé, a caixa
+        // embaixo): com zoom alto, o popover de modelo passava da borda e cortava o rodapé
+        // (relatório de design, 17/11/2026).
+        let teto = (window.viewport_size().height - px(360.))
+            .min(r(440.).to_pixels(window.rem_size()))
+            .max(px(160.));
         let lista = cx.entity().downgrade();
         let grupos = self.filtrados.clone().unwrap_or_else(|| self.grupos.clone());
         let escolhido = self.escolhido.clone();
@@ -995,7 +1014,7 @@ impl Render for ListaDeEscolha {
         let mut comando = Command::new(&self.estado)
             .placeholder(self.placeholder.clone())
             .bordered(false)
-            .max_h(r(440.))
+            .max_h(teto)
             .empty(|estado, _, cx| {
                 EstadoVazio::new(Lucide::Search, "Nada encontrado")
                     .texto(format!("Nada encontrado para “{}”", estado.query(cx)))
@@ -1017,6 +1036,9 @@ impl Render for ListaDeEscolha {
                 let mut linha = CommandItem::new()
                     .label(item.titulo.clone())
                     .disabled(item.desabilitado.is_some())
+                    // O escolhido já tem a ficha de metal: o realce claro do ponteiro não vai
+                    // por baixo dela (sobrava nos cantos e lavava o metal).
+                    .sem_realce(marcado && ficha)
                     .child(move |window, _| linha_de_escolha(&grupos[g].itens[i], marcado, ficha, window));
                 if let Some(termos) = &item.termos {
                     linha = linha.keywords([termos.clone()]);

@@ -2,10 +2,12 @@
 //! botões da janela), o menu "⋯", o popover de uso, a tela sem conversa e a soltura de arquivos.
 //! As mensagens ficam em `mensagens.rs` e a caixa em `composer.rs`.
 
+use std::{collections::HashMap, rc::Rc};
+
 use gpui_kit::base::actions::SelectDown;
 use gpui_kit::component::{
-    ElementExt as _, Selectable, WindowExt as _, h_flex,
-    menu::{ContextMenuExt as _, DropdownMenu, PopupMenu, PopupMenuItem},
+    ElementExt as _, Selectable, h_flex,
+    menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     popover::Popover,
     tooltip::Tooltip,
     v_flex,
@@ -14,126 +16,307 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbrirMestre, AlternarPainel, FecharPainel, Gaveta, IrParaPainel1, IrParaPainel2, IrParaPainel3, IrParaPainel4, Janela,
-    MoverPainelDireita, MoverPainelEsquerda, NovaConversa, NovoProjeto,
+    AlternarPainel, Gaveta, Janela,
+    NovaConversa, QualFlutuante,
     componentes::{
-        Aba, Anel, CabecalhoPopover, Confirmacao, CorpoPopover, EstadoVazio, LarguraPainel, LarguraPopover, Papel,
-        PreviaArrasto, QuadradoDeProjeto, Reflexo as _, Selo, Simbolo, TamanhoBotao, Tom, TomAba, TomConfirmacao, aviso,
-        botao_fantasma, botao_icone, botao_primario, cabecalho_objeto, confirmar, cor_da_faixa,
+        Aba, Anel, CabecalhoPopover, CorpoPopover, EstadoVazio, EventoEscolha, GrupoDeEscolha, ItemDeEscolha,
+        LarguraPainel, LarguraPopover, PreviaArrasto, Reflexo as _, Simbolo, TamanhoBotao, TomAba,
+        botao_fantasma, botao_icone, botao_primario, cor_da_faixa,
         formatar_custo,
         metal::{Encaixe, abertura_lisa},
-        sinal_do_chat,
+        icone_de_estado, popover, sinal_do_chat,
     },
-    busca_conversa, composer, equipe, icone_projeto, menus,
+    busca_conversa, composer, menus,
+    dialogos::{com_til, nome_da_pasta},
     movimento::{self, Curva, De, com_estado, entrada},
     paineis::{ArrastoChat, FormaSoltura, Soltura, motivo_sem_lugar},
     sem_arrastar,
 };
 use crate::{
     contas,
-    modelo::{Chat, Papel as PapelDoChat},
+    modelo::Chat,
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam},
+    tema::{Cores, Lucide, Tipo as _, altura, esp, r, tam},
 };
 
-/// A resposta do Juntar: o aviso do que entrou, a pergunta da troca de branch (que junta no branch
-/// atual) ou o porquê de não ter juntado.
-fn responder_juntar(
-    motor: Entity<Motor>,
-    tarefa: u64,
-    recebe: smol::channel::Receiver<crate::mcp::Resposta>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    window
-        .spawn(cx, async move |cx| {
-            let Ok(resposta) = recebe.recv().await else {
-                return;
-            };
-            let _ = cx.update(|window, cx| {
-                if !resposta.erro {
-                    let texto = resposta.texto.lines().next().unwrap_or("As mudanças entraram na pasta original.").to_string();
-                    window.push_notification(aviso(Tom::Pronto, texto), cx);
-                } else if resposta.texto.starts_with(crate::motor::RAMO_TROCADO) {
-                    let m = motor.clone();
-                    confirmar(
-                        Confirmacao {
-                            tom: TomConfirmacao::Atencao,
-                            icone: Lucide::GitBranch.into(),
-                            titulo: "Juntar em outro branch?".into(),
-                            texto: resposta.texto.clone().into(),
-                            detalhes: Vec::new(),
-                            ok: "Juntar".into(),
-                            cancelar: "Cancelar".into(),
-                            ok_perigo: false,
-                        },
-                        move |window, cx| {
-                            let recebe = m.update(cx, |m, cx| m.juntar_no_ramo_atual(tarefa, cx));
-                            responder_juntar(m.clone(), tarefa, recebe, window, cx);
-                        },
-                        None,
-                        window,
-                        cx,
-                    );
-                } else {
-                    let tom = if resposta.texto.starts_with("Conflito") { Tom::Atencao } else { Tom::Erro };
-                    window.push_notification(aviso(tom, resposta.texto.clone()), cx);
-                }
-            });
-        })
-        .detach();
+/// O histórico do cabeçalho: os chats do mexido por último ao mais antigo, com o ícone do estado
+/// (o da lista), a hora e a pasta; os arquivados num grupo no fim. Um chat à vista noutro painel
+/// diz qual.
+/// A chave da linha "Novo chat neste painel", no "+" do cabeçalho.
+const NOVO_CHAT_NO_PAINEL: &str = "\u{0}novo-chat";
+/// O grupo só da linha de criar, no alto do "+", sem título (os chats vão em "Recentes").
+const GRUPO_DE_ACAO: &str = "\u{0}acao";
+
+/// Uma linha do histórico, em dados simples: a busca própria (sem acento e por palavras, item 4.3)
+/// monta as linhas de novo a cada letra, sem o motor.
+#[derive(Clone)]
+struct LinhaDoHistorico {
+    grupo: Option<&'static str>,
+    chave: String,
+    titulo: String,
+    descricao: String,
+    sinal: Option<super::componentes::Sinal>,
+    termos: String,
 }
 
-/// Quem age na conversa, para o símbolo da aba e o fundo do cabeçalho (o gradiente do Mestre).
-fn papel_da_conversa(chat: &Chat) -> Papel {
-    match chat.papel {
-        PapelDoChat::Mestre => Papel::Mestre,
-        PapelDoChat::Coordenador => Papel::Coordenador,
-        PapelDoChat::Trabalhador | PapelDoChat::Projeto => Papel::Trabalhador,
-    }
-}
-
-/// O símbolo da conversa: o quadrado do projeto no chat de projeto (e na conversa antiga), o
-/// balão no avulso e o círculo do papel nos outros.
-fn simbolo_da_conversa(motor: &Motor, chat: &Chat) -> Simbolo {
-    match simbolo_da_aba(chat, false) {
-        SimboloDaAba::Projeto => {
-            let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
-            Simbolo::Projeto(icone, cor)
+fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[String]>, a_vista: Option<&str>) -> Vec<LinhaDoHistorico> {
+    // O "+N" da faixa das abas mostra só as que saíram dela.
+    let mut chats: Vec<&Chat> = motor.chats_da_lista().filter(|c| so.is_none_or(|so| so.contains(&c.id))).collect();
+    chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+    // A pasta só aparece quando é outra que a do chat deste painel: com todos os chats em ~/eita,
+    // o "· eita" em toda linha não dizia nada (rodada de uso, item 3.3).
+    let pasta_do_painel = a_vista.and_then(|id| motor.chat(id)).map(|c| c.cwd.clone());
+    let linha = |grupo: Option<&'static str>, c: &Chat| {
+        let quando = super::tempo_relativo(c.atualizado_em);
+        let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+        let pasta = if motor.sem_pasta(c) {
+            Some("sem pasta".to_string())
+        } else {
+            (pasta_do_painel.as_ref() != Some(&c.cwd)).then(|| nome_da_pasta(&c.cwd))
+        };
+        let onde = if a_vista == Some(c.id.as_str()) {
+            "à vista neste painel · ".to_string()
+        } else {
+            noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default()
+        };
+        // O estado e o começo da última fala ("Terminou · Pronto, mandei as duas…"), com o quando.
+        let fala = super::falas::estado_e_fala(motor, c);
+        let mut partes: Vec<String> = Vec::new();
+        if !fala.is_empty() {
+            partes.push(fala);
         }
-        SimboloDaAba::Avulso => Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue()),
-        _ => Simbolo::Papel(papel_da_conversa(chat)),
+        partes.push(quando);
+        partes.extend(pasta);
+        LinhaDoHistorico {
+            grupo,
+            chave: c.id.clone(),
+            titulo: c.titulo.clone(),
+            descricao: format!("{onde}{}", partes.join(" · ")),
+            sinal: sinal_do_chat(motor, c),
+            termos: com_til(&c.cwd),
+        }
+    };
+    let (arquivados, ativos): (Vec<&Chat>, Vec<&Chat>) = chats.into_iter().partition(|c| c.arquivado);
+    // O que espera você (pedido, parada, erro) vem num grupo no alto, antes da ordem por data
+    // (rodada de uso, item 4.1).
+    let (esperando, ativos): (Vec<&Chat>, Vec<&Chat>) = ativos.into_iter().partition(|c| {
+        a_vista != Some(c.id.as_str())
+            && motor.espera_do_chat(c).is_some_and(|e| e != crate::motor::Espera::Nova)
+    });
+    let recentes = if esperando.is_empty() { None } else { Some("Recentes") };
+    let mut linhas: Vec<LinhaDoHistorico> = Vec::new();
+    for (grupo, chats) in [(Some("Esperando você"), esperando), (recentes, ativos), (Some("Arquivados"), arquivados)] {
+        linhas.extend(chats.into_iter().map(|c| linha(grupo, c)));
+    }
+    linhas
+}
+
+/// As linhas que casam com a busca, nos grupos delas. Sem acento dos dois lados e por palavras
+/// soltas, no título, na pasta ou numa fala; as que casam no título primeiro, e dentro disso a
+/// ordem de antes (por data).
+fn grupos_que_casam(
+    linhas: &[LinhaDoHistorico],
+    preparados: &HashMap<String, Rc<super::lateral::Preparado>>,
+    busca: &str,
+) -> Vec<GrupoDeEscolha> {
+    let palavras = super::acentos::palavras(busca);
+    let mut achadas: Vec<(super::lateral::Casou, &LinhaDoHistorico)> = linhas
+        .iter()
+        .filter_map(|l| {
+            let casou = match preparados.get(&l.chave) {
+                _ if palavras.is_empty() => Some(super::lateral::Casou::NoTitulo),
+                Some(p) => p.casa(&palavras),
+                None => super::acentos::tem_todas(&super::acentos::normalizar(&format!("{} {}", l.titulo, l.termos)), &palavras)
+                    .then_some(super::lateral::Casou::NoTitulo),
+            };
+            Some((casou?, l))
+        })
+        .collect();
+    achadas.sort_by_key(|(casou, _)| *casou);
+    let mut grupos: Vec<GrupoDeEscolha> = Vec::new();
+    // Os grupos na ordem em que aparecem nas linhas.
+    let mut ordem: Vec<Option<&'static str>> = Vec::new();
+    for l in linhas {
+        if !ordem.contains(&l.grupo) {
+            ordem.push(l.grupo);
+        }
+    }
+    for grupo in ordem {
+        let itens: Vec<ItemDeEscolha> = achadas
+            .iter()
+            .filter(|(_, l)| l.grupo == grupo)
+            .map(|(_, l)| {
+                if l.chave == NOVO_CHAT_NO_PAINEL {
+                    return ItemDeEscolha {
+                        simbolo: Some(Simbolo::icone_cor(Lucide::Plus, Cores::destaque_texto())),
+                        termos: Some(l.termos.clone().into()),
+                        ..ItemDeEscolha::new(NOVO_CHAT_NO_PAINEL, l.titulo.clone())
+                    };
+                }
+                ItemDeEscolha {
+                    simbolo: Some(Simbolo::Estado(l.sinal)),
+                    descricao: Some(l.descricao.clone().into()),
+                    termos: Some(l.termos.clone().into()),
+                    ..ItemDeEscolha::new(l.chave.clone(), l.titulo.clone())
+                }
+            })
+            .collect();
+        if !itens.is_empty() {
+            grupos.push(GrupoDeEscolha { titulo: grupo.filter(|g| *g != GRUPO_DE_ACAO).map(Into::into), itens });
+        }
+    }
+    grupos
+}
+
+/// A dica da aba de fundo, em até duas linhas: o título; e o estado com quando ("Terminou há 3
+/// min") e o começo da última fala, ou a pasta quando não há o que dizer.
+fn dica_da_aba(motor: &Motor, chat: &Chat) -> String {
+    let quando = super::tempo_relativo(chat.atualizado_em);
+    let quando = if quando == "agora" { quando } else { format!("há {quando}") };
+    let estado = super::falas::estado_do_chat(motor, chat);
+    let fala = super::falas::ultima_fala(chat).unwrap_or_default();
+    let segunda = match (estado.is_empty(), fala.is_empty()) {
+        (true, true) => format!("{quando} · {}", pasta_em_texto(motor, chat)),
+        (true, false) => format!("{quando} · {fala}"),
+        (false, true) => format!("{estado} {quando}"),
+        (false, false) => format!("{estado} {quando} · {fala}"),
+    };
+    format!("{}\n{segunda}", chat.titulo)
+}
+
+/// O símbolo da conversa: o balão, o mesmo em todo chat.
+fn simbolo_da_conversa() -> Simbolo {
+    Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue())
+}
+
+/// O ícone da aba: o estado do chat (anel girando, disco âmbar, azul ou vermelho, balão apagado
+/// quando parado e lido), com a pasta na dica.
+fn simbolo_na_aba(motor: &Motor, chat: &Chat, painel_id: u64) -> AnyElement {
+    let dica: SharedString = if motor.sem_pasta(chat) {
+        "Sem pasta: um chat numa pasta vazia só dele".into()
+    } else if chat.importada.is_some() {
+        format!("Conversa do Claude Code, direto na pasta dela\n{}", com_til(&chat.cwd)).into()
+    } else {
+        format!("Direto em {}", com_til(&chat.cwd)).into()
+    };
+    div()
+        .id(("simbolo-aba", painel_id as usize))
+        .flex_none()
+        .child(icone_de_estado(sinal_do_chat(motor, chat), 16.))
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .into_any_element()
+}
+
+/// A largura de um título de aba (o `rotulo()`: 13, médio), em px de agora.
+fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
+    let mut fonte = window.text_style().font();
+    fonte.weight = FontWeight::MEDIUM;
+    let texto = texto.replace('\n', " ");
+    let corrida = TextRun { len: texto.len(), font: fonte, color: Hsla::default(), background_color: None, underline: None, strikethrough: None };
+    window.text_system().shape_line(texto.into(), tam(window, 13.), &[corrida], None).width
+}
+
+/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (8), o ícone
+/// (16), o vão até o título (6) e a folga da direita (12). O × aparece por cima, no hover, sem
+/// guardar lugar: contado aqui (eram 74, com os 20 dele e mais um vão), a conta via a faixa
+/// 26 px mais cheia por aba e mandava a aba de fundo para o ícone com espaço sobrando (dono,
+/// 17/11/2026: "por que tá ficando só o logo aqui?").
+const ABA_SEM_TITULO: f32 = 44.;
+/// A aba de fundo só com o ícone: um quadrado da altura da aba.
+const ABA_SO_ICONE: f32 = 32.;
+/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
+const NUMERO_NA_ABA: f32 = 26.;
+/// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
+const BOTAO_MAIS: f32 = 40.;
+
+/// Como cada aba de fundo entra na faixa.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum JeitoDaAba {
+    Titulo,
+    /// Só o ícone, num quadrado.
+    Icone,
+    /// Fora da faixa (continua no painel; volta quando houver lugar).
+    Fora,
+}
+
+/// Como as abas de fundo cabem na faixa, sem o título da aba à vista sumir. As de fundo encolhem
+/// antes dela, na proporção da largura, como o `flex_shrink` faz; a que receberia menos que o
+/// `minimo` dela (4 letras e as reticências, ou o título inteiro, se for menor) fica só com o
+/// ícone, a mais estreita primeiro, porque cada uma que vira ícone devolve espaço às outras. Se
+/// mesmo com todas em ícone a aba à vista não chegar ao mínimo dela, as de fundo saem da faixa, a
+/// mais antiga primeiro (a ordem de `naturais` é a das abas). Antes o título encolhia até sobrar
+/// "..", e a aba à vista ficava só com o ícone e as reticências (o dono viu, 16/11/2026).
+pub(super) fn jeito_das_abas(
+    disponivel: f32,
+    a_vista: (f32, f32),
+    naturais: &[f32],
+    minimos: &[f32],
+    (so_icone, mais, vao): (f32, f32, f32),
+) -> Vec<JeitoDaAba> {
+    let n = naturais.len();
+    let mut jeito = vec![JeitoDaAba::Titulo; n];
+    if disponivel <= 0. {
+        return jeito;
+    }
+    let (natural_a_vista, minima_a_vista) = a_vista;
+    loop {
+        let titulos: Vec<usize> = (0..n).filter(|i| jeito[*i] == JeitoDaAba::Titulo).collect();
+        // Todas as com título (a à vista também) dividem o lugar por igual (`teto_por_igual`); a
+        // de fundo que ficaria abaixo do mínimo dela vira ícone, a mais estreita primeiro.
+        let teto = teto_por_igual(livre_para_titulos(disponivel, &jeito, (so_icone, mais, vao)), &com_a_vista(natural_a_vista, &titulos, naturais));
+        if let Some(i) = titulos
+            .iter()
+            .copied()
+            .filter(|i| naturais[*i].min(teto) < minimos[*i])
+            .min_by(|a, b| naturais[*a].total_cmp(&naturais[*b]))
+        {
+            jeito[i] = JeitoDaAba::Icone;
+            continue;
+        }
+        if natural_a_vista.min(teto) >= minima_a_vista {
+            return jeito;
+        }
+        // A aba à vista abaixo do mínimo dela: primeiro a de fundo mais estreita vira ícone.
+        if let Some(i) = titulos.iter().copied().min_by(|a, b| naturais[*a].total_cmp(&naturais[*b])) {
+            jeito[i] = JeitoDaAba::Icone;
+            continue;
+        }
+        // Nem com as de fundo em ícone a aba à vista chega ao mínimo dela: a mais antiga sai.
+        match (0..n).find(|i| jeito[*i] != JeitoDaAba::Fora) {
+            Some(i) => jeito[i] = JeitoDaAba::Fora,
+            None => return jeito,
+        }
     }
 }
 
-/// Alt+1…4 de cada painel (para a dica da aba mostrar a tecla do keymap).
-fn acao_do_painel(ix: usize) -> Option<Box<dyn Action>> {
-    Some(match ix {
-        0 => Box::new(IrParaPainel1),
-        1 => Box::new(IrParaPainel2),
-        2 => Box::new(IrParaPainel3),
-        3 => Box::new(IrParaPainel4),
-        _ => return None,
-    })
+/// O lugar da faixa para os títulos: o que sobra dos vãos, das abas em ícone e do "+N" das que
+/// saíram.
+pub(super) fn livre_para_titulos(disponivel: f32, jeito: &[JeitoDaAba], (so_icone, mais, vao): (f32, f32, f32)) -> f32 {
+    let conta = |j: JeitoDaAba| jeito.iter().filter(|x| **x == j).count() as f32;
+    let com_mais = if conta(JeitoDaAba::Fora) > 0. { mais + vao } else { 0. };
+    (disponivel - vao * (jeito.len() as f32 - conta(JeitoDaAba::Fora)) - so_icone * conta(JeitoDaAba::Icone) - com_mais).max(0.)
 }
 
-/// Onde o trabalhador mexe: a cópia isolada da tarefa ou, num projeto sem git, a pasta original.
-enum Pasta {
-    Copia { tarefa: u64 },
-    Original,
-    Nenhuma,
+fn com_a_vista(natural_a_vista: f32, titulos: &[usize], naturais: &[f32]) -> Vec<f32> {
+    std::iter::once(natural_a_vista).chain(titulos.iter().map(|i| naturais[*i])).collect()
 }
 
-fn pasta_do_chat(motor: &Motor, chat: &Chat) -> Pasta {
-    if chat.papel != PapelDoChat::Trabalhador {
-        return Pasta::Nenhuma;
+/// O teto que reparte `livre` por igual entre abas que pedem `naturais`: a que pede menos que a
+/// parte dela fica com o que pede, e o que sobra vai para as outras (dono, 17/11/2026: "não
+/// ficar só a bolinha, mostrar mais e deixar mais igual todos"). Sem aperto, sem teto.
+pub(super) fn teto_por_igual(livre: f32, naturais: &[f32]) -> f32 {
+    let mut ordem = naturais.to_vec();
+    ordem.sort_by(f32::total_cmp);
+    let (mut resto, mut faltam) = (livre, ordem.len());
+    for natural in ordem {
+        let parte = resto / faltam as f32;
+        if natural > parte {
+            return parte;
+        }
+        resto -= natural;
+        faltam -= 1;
     }
-    let tarefa = chat.tarefa.and_then(|id| motor.tarefa(id)).filter(|t| !t.copia_limpa);
-    match tarefa.filter(|t| t.worktree.is_some()) {
-        Some(t) => Pasta::Copia { tarefa: t.id },
-        None if motor.pasta_do_chat(chat).is_some_and(|p| p == chat.cwd) => Pasta::Original,
-        None => Pasta::Nenhuma,
-    }
+    f32::INFINITY
 }
 
 /// O modelo em uso ("Opus 5.5") e, quando a escolha da caixa é outra, o nome dela.
@@ -156,114 +339,9 @@ fn modelo_da_conversa(chat: &Chat) -> (String, Option<String>) {
     }
 }
 
-/// Onde a conversa está, em texto, para a dica da aba: "loja › Cupons… · cópia t2"; no chat de
-/// projeto, a pasta e o jeito ("site · cópia t12", "receitas · direto").
-fn caminho_em_texto(motor: &Motor, chat: &Chat) -> String {
-    if chat.papel == PapelDoChat::Mestre {
-        return "vê todos os projetos e manda o trabalho para os chats".into();
-    }
-    let mut texto = motor.nome_do_projeto(&chat.projeto);
-    if let Some(pai) = chat.pai.as_ref().and_then(|p| motor.chat(p)) {
-        texto.push_str(&format!(" › {}", pai.titulo));
-    }
-    if chat.papel == PapelDoChat::Projeto {
-        if let Some(t) = chat.tarefa.and_then(|t| motor.tarefa(t)) {
-            let origem = motor.origem_da_tarefa(t);
-            let pasta = origem.file_name().map_or_else(|| origem.display().to_string(), |n| n.to_string_lossy().to_string());
-            let jeito = if t.tem_copia() { format!("cópia t{}", t.id) } else { "direto".into() };
-            if !chat.projeto.is_empty() {
-                texto.push_str(&format!(" · {pasta} · {jeito}"));
-            }
-        }
-        return texto;
-    }
-    match pasta_do_chat(motor, chat) {
-        Pasta::Copia { tarefa, .. } => texto.push_str(&format!(" · cópia t{tarefa}")),
-        Pasta::Original => texto.push_str(" · na pasta original"),
-        Pasta::Nenhuma => {}
-    }
-    texto
-}
-
-/// O que a dica da aba diz do papel: "chat 12", "Avulso · chat 3", "Ajudante de “Checkout”",
-/// "Conversa antiga".
-fn papel_em_texto(motor: &Motor, chat: &Chat) -> String {
-    let pai = chat.pai.as_ref().and_then(|p| motor.chat(p));
-    match (chat.papel, chat.tarefa) {
-        (PapelDoChat::Projeto, Some(n)) if chat.projeto.is_empty() => format!("Avulso · chat {n}"),
-        (PapelDoChat::Projeto, Some(n)) => format!("Chat {n}"),
-        (PapelDoChat::Projeto, None) => "Chat".into(),
-        (PapelDoChat::Trabalhador, _) if pai.is_some_and(|p| p.papel == PapelDoChat::Projeto) => {
-            format!("Ajudante de “{}”", pai.map(|p| p.titulo.as_str()).unwrap_or_default())
-        }
-        (PapelDoChat::Trabalhador, Some(n)) => format!("Ajudante #{n}"),
-        (PapelDoChat::Trabalhador, None) => "Ajudante".into(),
-        (PapelDoChat::Mestre, _) => "Mestre".into(),
-        (PapelDoChat::Coordenador, _) => "Conversa do Vitral antigo".into(),
-    }
-}
-
-/// O que vai no lugar do símbolo da aba: o quadrado do projeto (com o menu dele) no chat de
-/// projeto e na conversa antiga, o balão no avulso, o ↰ que abre o chat pai no ajudante e, sem
-/// pai, o círculo do papel.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum SimboloDaAba {
-    Projeto,
-    Avulso,
-    Pai,
-    Papel,
-}
-
-fn simbolo_da_aba(chat: &Chat, tem_pai: bool) -> SimboloDaAba {
-    match chat.papel {
-        PapelDoChat::Projeto if chat.projeto.is_empty() => SimboloDaAba::Avulso,
-        PapelDoChat::Projeto | PapelDoChat::Coordenador => SimboloDaAba::Projeto,
-        _ if tem_pai => SimboloDaAba::Pai,
-        _ => SimboloDaAba::Papel,
-    }
-}
-
-/// O quadrado do projeto na aba do coordenador, gatilho do menu do projeto: no hover e aberto,
-/// um aro de 2 px em volta.
-#[derive(IntoElement)]
-struct QuadradoComMenu {
-    base: Stateful<Div>,
-    aberto: bool,
-}
-
-impl Selectable for QuadradoComMenu {
-    fn selected(mut self, selected: bool) -> Self {
-        self.aberto = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.aberto
-    }
-}
-
-impl Styled for QuadradoComMenu {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for QuadradoComMenu {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl RenderOnce for QuadradoComMenu {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        self.base.when(self.aberto, |s| s.shadow(aro_do_simbolo()))
-    }
-}
-
-impl DropdownMenu for QuadradoComMenu {}
-
-fn aro_do_simbolo() -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(0.), px(0.), Cores::borda_forte()).spread_radius(px(2.))]
+/// Onde a conversa está, em texto, para a dica da aba: a pasta ("~/Projetos/loja") ou "Sem pasta".
+fn pasta_em_texto(motor: &Motor, chat: &Chat) -> String {
+    if motor.sem_pasta(chat) { "Sem pasta".into() } else { com_til(&chat.cwd) }
 }
 
 /// Clique de item de menu que mexe na janela.
@@ -293,64 +371,30 @@ fn item_com_motivo(titulo: &'static str, icone: Lucide, motivo: Option<String>) 
     }
 }
 
-/// Itens do chip do projeto: o objeto em cima, "Mostrar só este projeto" e os do projeto.
-fn itens_do_chip_projeto(
-    menu: PopupMenu,
-    janela: WeakEntity<Janela>,
-    motor: &Entity<Motor>,
-    projeto: &str,
-    cabecalho: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> PopupMenu {
-    let filtrado = janela.upgrade().is_some_and(|j| j.read(cx).vista.projeto() == Some(projeto));
-    let (icone, cor) = icone_projeto::visual_do(motor.read(cx), projeto);
-    let caminho = motor.read(cx).pasta_principal(projeto).map_or("sem pasta".into(), |p| p.display().to_string());
-    let exibido = motor.read(cx).nome_do_projeto(projeto);
-    let nome = projeto.to_string();
-    let menu = menu
-        .when(cabecalho, |menu| {
-            menu.item(cabecalho_objeto(Simbolo::Projeto(icone, cor), exibido.clone(), Some(caminho.into())))
-                .separator()
-        })
-        .item(
-            PopupMenuItem::new("Mostrar só este projeto")
-                .checked(filtrado)
-                .on_click(na_janela(&janela, move |this, window, cx| this.alternar_vista(nome.clone(), window, cx))),
-        )
-        .separator();
-    menus::itens_do_projeto(menu, janela, motor, projeto, false, window, cx)
-}
-
 /// O menu do painel, o mesmo no "⋯" e no clique direito da aba: o que saiu do cabeçalho na
 /// largura estreita, abrir ao lado, mover e fechar, e o menu da conversa.
+/// O menu do painel: o botão direito no cabeçalho e nas abas, e o Shift+F10 (o "⋯" do cabeçalho
+/// saiu a pedido do dono, 16/11/2026: "tira o de 3 pontinhos e deixa só no botão direito"). Com
+/// `do_chat`, as ações da conversa valem para aquele chat (a aba de fundo clicada); sem ele, para
+/// o chat à vista no painel.
 fn menu_do_painel(
     menu: PopupMenu,
     janela: WeakEntity<Janela>,
     motor: Entity<Motor>,
     painel_id: u64,
+    do_chat: Option<String>,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     struct Dados {
         chat: String,
-        projeto: String,
         foco: bool,
-        primeiro: bool,
         ultimo: bool,
-        varios: bool,
         direita_aberta: bool,
-        /// O que a direita mostra (o arquivo aberto, Este chat, os ajudantes…) e, com ela fora da
-        /// vista, quantos chats pedem você.
-        direita: (Direita, Option<(usize, bool, String)>),
+        /// O que a direita mostra (o arquivo aberto ou Este chat).
+        direita: Direita,
         cheio: Option<String>,
         rotulo: Option<String>,
-        pasta: Pasta,
-        /// A aba não mostra o quadrado do projeto (trabalhador, ou o número no lugar dele): o
-        /// menu do projeto vem para cá.
-        projeto_no_menu: bool,
-        /// O ↰ não está à vista na aba: "Abrir o chat" vem para cá.
-        pai_no_menu: Option<(String, String)>,
     }
     let dados = (|| {
         let j = janela.upgrade()?;
@@ -358,7 +402,7 @@ fn menu_do_painel(
         let ix = j.paineis.iter().position(|p| p.id == painel_id)?;
         let painel = &j.paineis[ix];
         let m = motor.read(cx);
-        let chat = m.chat(painel.chat.as_deref()?)?;
+        let chat = m.chat(do_chat.as_deref().or(painel.chat.as_deref())?)?;
         let nivel = painel.medida.nivel;
         let estreito = matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo);
         let rotulo = estreito.then(|| {
@@ -370,24 +414,14 @@ fn menu_do_painel(
             }
         });
         let cheio = (!j.cabe_outro_painel()).then(|| motivo_sem_lugar(j.paineis.len()));
-        let simbolo_a_vista = !(nivel == LarguraPainel::Minimo && j.paineis.len() > 1);
-        let pai = chat.pai.as_ref().and_then(|p| m.chat(p));
-        let simbolo = simbolo_da_aba(chat, pai.is_some());
         Some(Dados {
-            // O Mestre e os Avulsos têm projeto "": não há projeto para editar, arquivar ou apagar.
-            projeto_no_menu: !chat.projeto.is_empty() && !(simbolo_a_vista && simbolo == SimboloDaAba::Projeto),
-            pai_no_menu: pai.filter(|_| !simbolo_a_vista).map(|p| (p.id.clone(), p.titulo.clone())),
             chat: chat.id.clone(),
-            projeto: chat.projeto.clone(),
             foco: painel.modo_foco,
-            primeiro: ix == 0,
             ultimo: ix + 1 == j.paineis.len(),
-            varios: j.paineis.len() > 1,
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
             cheio,
             rotulo,
-            pasta: pasta_do_chat(m, chat),
         })
     })();
     let Some(d) = dados else {
@@ -411,19 +445,9 @@ fn menu_do_painel(
         );
     if d.ultimo {
         // O botão da direita saiu do cabeçalho (pedido do dono, 12/11/2026): abrir e fechar o
-        // painel fica aqui, com o número do que ele espera, tingido porque fica na linha.
-        let (direita, pedidos) = d.direita;
-        let rotulo = direita.no_menu();
+        // painel fica aqui.
         menu = menu.item(
-            PopupMenuItem::element(move |_, _| {
-                h_flex()
-                    .gap(esp::E8)
-                    .min_w_0()
-                    .child(div().flex_1().min_w_0().truncate().child(rotulo))
-                    .children(pedidos.as_ref().map(|(n, erro, _)| {
-                        Selo::contagem(*n).tingida(if *erro { Cores::vermelho() } else { Cores::ambar() })
-                    }))
-            })
+            PopupMenuItem::new(d.direita.no_menu())
             .icon(Lucide::PanelRight)
             .checked(d.direita_aberta)
             .action(Box::new(AlternarPainel))
@@ -437,76 +461,16 @@ fn menu_do_painel(
                 .on_click(na_janela(&janela, |this, window, cx| this.nova_conversa_ao_lado(window, cx))),
         )
         .separator();
-    if d.varios {
-        let primeiro = d.primeiro.then(|| "Já é o primeiro painel".to_string());
-        let ultimo = d.ultimo.then(|| "Já é o último painel".to_string());
-        menu = menu
-            .item(
-                item_com_motivo("Mover para a esquerda", Lucide::ArrowLeft, primeiro)
-                    .action(Box::new(MoverPainelEsquerda))
-                    .on_click(na_janela(&janela, move |this, _, cx| this.mover_este_painel(painel_id, -1, cx))),
-            )
-            .item(
-                item_com_motivo("Mover para a direita", Lucide::ArrowRight, ultimo)
-                    .action(Box::new(MoverPainelDireita))
-                    .on_click(na_janela(&janela, move |this, _, cx| this.mover_este_painel(painel_id, 1, cx))),
-            )
-            .item(
-                PopupMenuItem::new("Fechar os outros painéis")
-                    .on_click(na_janela(&janela, move |this, _, cx| this.fechar_outros(painel_id, cx))),
-            );
-    }
-    menu = menu
-        .item(
-            PopupMenuItem::new("Fechar este painel")
-                .icon(Lucide::X)
-                .action(Box::new(FecharPainel))
-                .on_click(na_janela(&janela, move |this, window, cx| this.fechar_e_focar(painel_id, window, cx))),
-        )
-        .separator();
+    // Mover o painel, fechar os outros e fechar este saíram do menu a pedido do dono
+    // (13/11/2026): as abas se arrastam, o × fecha, e os atalhos continuam valendo
+    // (Ctrl+Shift+PgUp/PgDn e Ctrl+W).
     menu = menus::menu_conversa(menu, janela.clone(), &motor, &d.chat, false, window, cx);
-    // O que a aba não mostra vem para cá: o coordenador, o projeto e a cópia da tarefa.
-    let copia = match d.pasta {
-        Pasta::Copia { tarefa, .. } => Some(tarefa),
-        _ => None,
-    };
-    if d.pai_no_menu.is_some() || d.projeto_no_menu || copia.is_some() {
-        menu = menu.separator();
-    }
-    if let Some((pai, titulo)) = d.pai_no_menu {
-        menu = menu.item(
-            PopupMenuItem::new(format!("Abrir o chat “{titulo}”"))
-                .icon(Lucide::CornerLeftUp)
-                .on_click(na_janela(&janela, move |this, window, cx| this.selecionar(Some(pai.clone()), window, cx))),
-        );
-    }
-    if d.projeto_no_menu {
-        let (icone, cor) = icone_projeto::visual_do(motor.read(cx), &d.projeto);
-        let (j, m, projeto) = (janela.clone(), motor.clone(), d.projeto.clone());
-        menu = menu.submenu_with_icon(
-            Some(icone_projeto::desenho(icone, 16., rgb(cor))),
-            format!("Projeto {}", motor.read(cx).nome_do_projeto(&d.projeto)),
-            window,
-            cx,
-            move |sub, window, cx| itens_do_chip_projeto(sub, j.clone(), &m, &projeto, false, window, cx),
-        );
-    }
-    if let Some(tarefa) = copia {
-        let (j, m) = (janela.clone(), motor.clone());
-        menu = menu.submenu_with_icon(
-            Some(Lucide::GitBranch.into()),
-            format!("Cópia t{tarefa}"),
-            window,
-            cx,
-            move |sub, window, cx| menus::itens_da_copia(sub, j.clone(), &m, tarefa, false, window, cx),
-        );
-    }
     menu
 }
 
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
-/// US$ 1,84"); embaixo o modelo, a conta, os tokens e, no coordenador, o custo com os
-/// trabalhadores; no rodapé a nota da estimativa e `acao` (o Compactar).
+/// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
+/// Compactar).
 pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> CorpoPopover {
     let linha = |rotulo: &'static str, valor: AnyElement| {
         h_flex()
@@ -566,14 +530,6 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
             )))
             .into_any_element()
     });
-    let trabalhadores: Vec<f64> = motor
-        .chats
-        .iter()
-        .filter(|c| c.pai.as_deref() == Some(chat.id.as_str()))
-        .map(|c| c.custo_usd)
-        .collect();
-    let com_trabalhadores = (chat.papel == PapelDoChat::Coordenador && !trabalhadores.is_empty())
-        .then(|| formatar_custo(chat.custo_usd + trabalhadores.iter().sum::<f64>()));
     CorpoPopover::new(LarguraPopover::P320)
         .cabecalho(CabecalhoPopover::Escolha {
             simbolo,
@@ -585,8 +541,7 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
             v_flex()
                 .child(linha("Modelo", modelo))
                 .child(linha("Conta", texto(format!("Claude · {conta}"))))
-                .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
-                .when_some(com_trabalhadores, |s, total| s.child(linha("Com os ajudantes", texto(total)))),
+                .when_some(tokens, |s, t| s.child(linha("Tokens", t))),
         )
         .rodape(
             h_flex()
@@ -603,9 +558,9 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
         )
 }
 
-/// Quanto as ações do cabeçalho (issues, foco, "⋯", painel da direita) ficam apagadas enquanto o
+/// Quanto as ações do cabeçalho (foco, "⋯", painel da direita) ficam apagadas enquanto o
 /// ponteiro não chega nelas. Acende inteiro no hover do grupo, e o teclado não passa por aqui.
-const ACOES_APAGADAS: f32 = 0.55;
+const ACOES_APAGADAS: f32 = crate::tema::opacidade::EM_REPOUSO;
 
 /// O grupo de hover das ações de um painel.
 fn grupo_das_acoes(painel_id: u64) -> SharedString {
@@ -613,17 +568,19 @@ fn grupo_das_acoes(painel_id: u64) -> SharedString {
 }
 
 impl Janela {
-    /// "Juntar" (a barra acima da caixa, a Equipe): leva as mudanças da cópia para a pasta
-    /// original. Com a pasta em outro branch, pergunta antes; o resto da recusa vira aviso.
-    pub(super) fn juntar_do_chat(&mut self, tarefa: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let recebe = motor.update(cx, |m, cx| m.aprovar_pelo_usuario(tarefa, None, cx));
-        responder_juntar(motor, tarefa, recebe, window, cx);
+    /// Um painel de conversa (`ix` em `self.paineis`); sem painel, a tela de começar.
+    /// O que há à esquerda do painel `ix` da fileira (`None`: a tela de começar, sozinha): a
+    /// vizinha, o vão da lista ou a beirada da janela, com a lista recolhida.
+    pub(super) fn esquerda_do_painel(&self, ix: Option<usize>) -> crate::tema::Esquerda {
+        if ix.is_some_and(|ix| ix > 0) {
+            crate::tema::Esquerda::Emendada
+        } else if self.orcamento.lista {
+            crate::tema::Esquerda::Solta
+        } else {
+            crate::tema::Esquerda::Beirada
+        }
     }
 
-    /// Um painel de conversa (`ix` em `self.paineis`); sem painel, a tela de começar.
     pub(super) fn conversa(
         &mut self,
         motor_entidade: &Entity<Motor>,
@@ -651,7 +608,7 @@ impl Janela {
         let barra_busca = ix.and_then(|ix| self.barra_de_busca(ix, window, cx));
         let corpo = match (&chat, ix) {
             (Some(chat), Some(ix)) => self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element(),
-            _ => self.sem_conversa(motor, window, cx).into_any_element(),
+            _ => self.sem_conversa(window, cx).into_any_element(),
         };
 
         let arquivos_sobre = chat.is_some() && self.arquivos_sobre == Some(painel_id);
@@ -672,10 +629,7 @@ impl Janela {
         // O pé de toda conversa é a doca: uma abertura no cartão por onde se vê o metal, com a
         // caixa de mensagem pousada nela. Alta na conversa ainda vazia, rente à caixa no resto do
         // tempo (com o chat trabalhando, quem mostra é o metal, que corre).
-        let vazia = chat.is_none_or(|c| {
-            c.itens.is_empty()
-                || (c.papel == PapelDoChat::Mestre && c.itens.iter().all(|i| matches!(i, crate::modelo::Item::Aviso { .. })))
-        });
+        let vazia = chat.is_none_or(|c| c.itens.is_empty());
         // Fora da conversa vazia a doca não tem folga em cima: a faixa "N arquivos mudados" fica
         // colada na caixa (com 24 de folga ela parecia solta, longe).
         let topo_da_doca: f32 = if vazia {
@@ -683,16 +637,47 @@ impl Janela {
         } else {
             4.
         };
+        // A fileira das conversas encosta no topo, na direita e embaixo da janela, e cada conversa
+        // depois da primeira emenda na da esquerda por uma divisória de 1 px (dono, 16/11/2026).
+        // Só os cantos da esquerda da primeira fazem a curva, e só com a lista ao lado: sem ela,
+        // a primeira encosta também na beirada da esquerda. Sem a sombra de cartão flutuante,
+        // que vazaria por cima da vizinha na emenda.
+        let esquerda = self.esquerda_do_painel(ix);
+        let raio = crate::tema::raio_encostado(esquerda);
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
             .size_full()
             .min_w_0()
-            .rounded(crate::tema::raio_da_peca())
+            .rounded_l(raio)
             .bg(Cores::cartao())
-            // O cartão flutua sobre a base.
-            .shadow(crate::tema::sombra_flutuante())
             .overflow_hidden()
+            // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
+            // caixa de mensagem: 200 de degradê e 200 cheios (por baixo do conteúdo).
+            // Só com os fundos transparentes (no opaco não há o que fechar). O pedaço cheio leva os
+            // cantos de baixo do cartão: o `overflow_hidden` corta em retângulo, e sem isso o
+            // fundo sobrava quadrado para fora da curva (dono, 13/11/2026).
+            .when(crate::tema::transparencia() > 0, |s| {
+                s.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(px(400.))
+                        .child(div().absolute().top_0().left_0().right_0().h(px(200.)).bg(crate::tema::gradiente_do_pe_do_cartao()))
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .h(px(200.))
+                                .rounded_bl(raio)
+                                .bg(Cores::cartao_opaco()),
+                        ),
+                )
+            })
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
             .capture_any_mouse_down(
@@ -730,27 +715,14 @@ impl Janela {
             })
             .child(cabecalho)
             .child(corpo)
+            .children(chat.zip(ix).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
             .children(faixa)
             .when_some(chat.zip(ix), |s, (chat, ix)| {
-                // No Mestre, "Enquanto você esteve fora" também fica acima da caixa.
-                let resumo = (chat.papel == PapelDoChat::Mestre)
-                    .then(|| self.faixa_do_resumo(motor, "mestre", window, cx))
-                    .flatten()
-                    .map(|f| div().map(super::mensagens::coluna).pb(esp::E8).child(f));
-                // A conversa do Vitral antigo é só para leitura: no lugar da caixa, a faixa que
-                // continua o assunto num chat novo do mesmo projeto.
-                let caixa = if chat.papel == PapelDoChat::Coordenador {
-                    self.faixa_conversa_antiga(chat, window, cx).into_any_element()
-                } else {
-                    self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element()
-                };
+                let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();
                 // A doca está no fluxo: as mensagens terminam onde ela começa, e nenhum texto fica
                 // por cima do metal. O `overflow_hidden` do cartão corta reto, então a abertura leva
                 // o raio dos cantos de baixo.
-                let raio_doca = crate::tema::raio_da_peca();
-                // Na última conversa, estreita, a caixa deixa uma folga à direita para os anéis
-                // de uso do canto da janela.
-                let folga_do_uso = if self.uso_ao_lado_da_caixa(ix, cx) { super::uso_plano::FOLGA_DO_USO } else { 0. };
+                let raio_doca = raio;
                 let doca = com_estado(move |window, cx| {
                     let topo = movimento::valor(
                         ("doca", painel_id as usize),
@@ -770,7 +742,6 @@ impl Janela {
                         .flex_none()
                         .w_full()
                         .pt(r(topo))
-                        .pr(r(folga_do_uso))
                         .when(luz > 0., |s| {
                             s.child(
                                 div()
@@ -786,7 +757,7 @@ impl Janela {
                                     .child(abertura_lisa(
                                         Encaixe::Cobrir,
                                         Some(Cores::destaque().opacity(0.2)),
-                                        Corners { bottom_left: raio_doca, bottom_right: raio_doca, ..Default::default() },
+                                        Corners { bottom_left: raio_doca, ..Default::default() },
                                     ))
                                     // O escuro do cartão some devagar, da beirada de cima até o pé
                                     // (duas camadas de degradê dão a curva): o metal é uma luz que
@@ -801,19 +772,86 @@ impl Janela {
                                             .right_0()
                                             .h(relative(0.5))
                                             .bg(crate::tema::gradiente_da_doca()),
-                                    ),
+                                    )
+                                    // Os lados também somem (dono, 13/11/2026: "menos nos lados
+                                    // pra ficar mais no meio só"): de cada lado uma camada larga e
+                                    // uma estreita, para a luz morrer em curva antes da beirada.
+                                    .children([false, true].into_iter().flat_map(|direita| {
+                                        [0.44, 0.2].map(|largura| {
+                                            let lado = div()
+                                                .absolute()
+                                                .top_0()
+                                                .bottom_0()
+                                                .w(relative(largura))
+                                                .bg(crate::tema::gradiente_do_lado_da_doca(direita));
+                                            if direita {
+                                                lado.right_0()
+                                            } else {
+                                                lado.left_0().rounded_bl(raio_doca)
+                                            }
+                                        })
+                                    })),
                             )
                         })
                         .child(caixa)
                         .into_any_element()
                 });
-                s.child(self.permissoes(motor, chat, window, cx)).children(resumo).child(doca)
+                // Com um trecho da conversa selecionado, o painel ativo oferece citá-lo na caixa
+                // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
+                let responder = (ativo && self.trecho.is_some()).then(|| {
+                    div()
+                        .map(super::mensagens::coluna)
+                        .flex()
+                        .justify_end()
+                        .pb(esp::E6)
+                        .child(
+                        h_flex()
+                            .id(("responder-trecho", painel_id as usize))
+                            .flex_none()
+                            .h(r(28.))
+                            .px(esp::E12)
+                            .gap(esp::E6)
+                            .rounded(crate::tema::raio::de(28.))
+                            // Uma tecla azul em relevo: o azul do destaque bem leve, o fio do
+                            // mesmo azul e a luz em cima.
+                            .bg(Cores::tinta_solida(Cores::destaque(), 0.16))
+                            .border_1()
+                            .border_color(Cores::tinta_borda(Cores::destaque()))
+                            .shadow([crate::tema::aresta_de_tecla(), crate::tema::sombra_elevado()].concat())
+                            .metadado()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Cores::forte())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Cores::tinta_solida(Cores::destaque(), 0.26)))
+                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 13.).text_color(Cores::destaque_texto()))
+                            .child("Responder a este trecho")
+                            // No apertar, e não no clique: o apertar fora do texto desfaz a
+                            // seleção, e o botão sumiria antes de o clique chegar.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.responder_ao_trecho(painel_id, window, cx);
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                    )
+                });
+                // O botão flutua em cima da doca, fora do fluxo: no fluxo, ele roubava altura da
+                // conversa ao aparecer e a rolagem pulava (dono, 16/11/2026: "quando selecionar o
+                // texto e aparecer o de responder não subir o chat inteiro").
+                let doca = div()
+                    .relative()
+                    .flex_none()
+                    .w_full()
+                    .child(doca)
+                    .children(responder.map(|r| div().absolute().left_0().right_0().bottom(relative(1.)).child(r)));
+                s.child(self.permissoes(motor, chat, window, cx)).child(doca)
             })
             .when(arquivos_sobre, |s| {
-                s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos))
+                s.child(FormaSoltura::new(id_texto("soltura-arquivos"), Soltura::Arquivos).raio_esquerdo(raio))
             })
             // O vidro da peça (fio, luz na quina de cima, sombra na base), por cima de tudo.
-            .aresta_de_vidro(crate::tema::raio_da_peca());
+            .aresta_encostada(esquerda);
         // O painel ativo é marcado pela luz de baixo da doca (acima), não por borda nem cantoneira.
         // O que acabou de abrir ao lado entra só com o fade: a largura não anima.
         com_estado(move |window, cx| {
@@ -850,62 +888,77 @@ impl Janela {
         let mostra_botoes_janela = ultimo && !self.direita_visivel();
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
-        self.arrastavel_com_id(SharedString::from(format!("arrastar-conversa-{painel_id}")))
+        // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.
+        let menu_do_cabecalho = conversa.map(|_| (cx.entity().downgrade(), motor_entidade.clone()));
+        let cabecalho = self
+            .arrastavel_com_id(SharedString::from(format!("arrastar-conversa-{painel_id}")))
             .flex_none()
             .flex()
             .items_center()
-            .h(altura::CABECALHO)
-            .pl(esp::E8)
-            .pr(esp::E8)
+            .h(altura::FILEIRA_DO_ALTO)
+            // 12 dos lados: as abas não encostam na divisória nem na beirada da janela.
+            .pl(esp::E12)
+            .pr(esp::E12)
             .gap(esp::E8)
             // Sem a linha embaixo do cabeçalho com a conversa rolada (pedido do dono, 12/11/2026).
-            // O gradiente do Mestre leva o próprio raio: o `overflow_hidden` do cartão não corta
-            // canto arredondado.
             // O recolher da lista mora no menu do logo (pedido do dono, 12/11/2026).
             // Com a lista fora da tela, o primeiro painel começa pelo logo compacto.
             .when(!self.orcamento.lista && primeiro, |s| {
                 s.child(self.logo_compacto(if ix.is_some() { "mostrar-lista" } else { "mostrar-lista-vazio" }, window, cx))
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .gap(esp::E8)
-                    .children(conversa.map(|(chat, ix)| self.abas_do_painel(motor_entidade, motor, chat, ix, nivel, window, cx)).unwrap_or_default())
-                    // O chat que o Mestre criou leva o selo de volta a ele (fora da largura mínima).
-                    .children(
-                        chat.filter(|_| nivel != LarguraPainel::Minimo)
-                            .and_then(|c| super::cartoes::do_mestre(motor, c))
-                            .map(|dica| super::cartoes::selo_do_mestre_no_chat(SharedString::from(format!("do-mestre-aba-{painel_id}")), dica, cx)),
-                    ),
-            )
-            // O PR do chat (abre a aba PR) e as issues do projeto: o chip da issue do chat e os
-            // botões do Linear e do GitHub. Tudo isso é segundo plano: fica apagado enquanto o
-            // ponteiro não chega perto, para o cabeçalho ser o título da conversa, e não uma
-            // fileira de ícones.
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap(esp::E8)
-                    .group(grupo_das_acoes(painel_id))
-                    .child(
-                        h_flex()
-                            .flex_none()
-                            .gap(esp::E8)
-                            .opacity(ACOES_APAGADAS)
-                            .group_hover(grupo_das_acoes(painel_id), |s| s.opacity(1.))
-                            .children(conversa.and_then(|(chat, _)| self.chip_do_pr_no_cabecalho(motor, chat, painel_id, nivel, window, cx)))
-                            .children(conversa.and_then(|(chat, _)| self.botoes_de_issues(motor, chat, painel_id, nivel, window, cx)))
-                            .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx))),
-                    ),
-            )
-            .when(mostra_botoes_janela, |s| {
-                // Com ações do painel à esquerda, um traço separa os botões da janela.
-                // Sem o traço: o apagado das ações já separa elas dos botões da janela.
-                s.child(self.botoes_janela(cx))
-            })
+            .map(|s| {
+                // As ações do painel são segundo plano: ficam apagadas enquanto o ponteiro não
+                // chega perto, para o cabeçalho ser o título da conversa, e não uma fileira de
+                // ícones.
+                let acoes = h_flex().flex_none().gap(esp::E8).group(grupo_das_acoes(painel_id)).child(
+                    h_flex()
+                        .flex_none()
+                        .gap(esp::E8)
+                        .opacity(ACOES_APAGADAS)
+                        .group_hover(grupo_das_acoes(painel_id), |s| s.opacity(1.))
+                        .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx))),
+                );
+                let abas = conversa.map(|(chat, ix)| self.abas_do_painel(motor_entidade, motor, chat, ix, nivel, window, cx));
+                // Cada aba é uma peça; o vão depois delas continua arrastando a janela. A faixa
+                // corta o que não couber (nunca por cima do "⋯") e guarda a largura dela para o
+                // quadro seguinte decidir quais abas ficam só com o ícone.
+                let medir = ix.map(|ix| {
+                    let (janela, antes) = (cx.entity().downgrade(), self.paineis[ix].largura_abas);
+                    move |limites: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+                        let largura = limites.size.width;
+                        if (largura - antes).abs() < px(1.) {
+                            return;
+                        }
+                        window.on_next_frame(move |_, cx| {
+                            let _ = janela.update(cx, |this, cx| {
+                                if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel_id) {
+                                    p.largura_abas = largura;
+                                    cx.notify();
+                                }
+                            });
+                        });
+                    }
+                });
+                s.child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .items_center()
+                        .gap(esp::E6)
+                        .when_some(medir, |s, medir| s.on_prepaint(medir))
+                        .children(abas.into_iter().flatten()),
+                )
+                    .child(acoes)
+                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
+            });
+        match menu_do_cabecalho {
+            Some((janela, motor)) => cabecalho
+                .context_menu(move |menu, window, cx| menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, None, window, cx))
+                .into_any_element(),
+            None => cabecalho.into_any_element(),
+        }
     }
 
     /// As abas do painel, na ordem em que abriram: a do chat à vista (a aba completa, abaixo) e as
@@ -925,41 +978,137 @@ impl Janela {
         let painel_id = painel.id;
         // Na largura mínima só cabe a aba à vista.
         if nivel == LarguraPainel::Minimo || painel.abas.len() <= 1 {
-            return vec![self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx)];
+            return vec![self.aba_a_vista(motor_entidade, motor, chat, ix, window, cx)];
         }
+        // Quais abas de fundo cabem com o título: a conta é feita com a largura da faixa no
+        // quadro anterior e a largura natural de cada aba, que não depende da decisão.
+        let fundo: Vec<&Chat> = painel.abas.iter().filter(|id| **id != chat.id).filter_map(|id| motor.chat(id)).collect();
+        let quatro = largura_do_rotulo(window, "Abcd…");
+        let titulo_a_vista = largura_do_rotulo(window, &chat.titulo);
+        let resto_a_vista = tam(window, ABA_SEM_TITULO + if self.paineis.len() > 1 && self.lista { NUMERO_NA_ABA } else { 0. });
+        // O título inteiro de cada aba, até 260: acima disso, as reticências (a à vista e as de
+        // fundo com o mesmo teto, para elas ficarem iguais).
+        let teto_natural = tam(window, 260.);
+        let natural_a_vista = (resto_a_vista + titulo_a_vista).min(teto_natural);
+        // O mínimo da aba à vista: o símbolo, o número, o lugar do × e o começo do título.
+        let minima_a_vista = (resto_a_vista + titulo_a_vista.min(quatro)).min(natural_a_vista);
+        let (naturais, minimos): (Vec<f32>, Vec<f32>) = fundo
+            .iter()
+            .map(|c| {
+                let titulo = largura_do_rotulo(window, &c.titulo);
+                let resto = tam(window, ABA_SEM_TITULO);
+                ((resto + titulo).min(teto_natural).as_f32(), (resto + titulo.min(quatro)).as_f32())
+            })
+            .unzip();
+        let jeitos = jeito_das_abas(
+            painel.largura_abas.as_f32(),
+            (natural_a_vista.as_f32(), minima_a_vista.as_f32()),
+            &naturais,
+            &minimos,
+            (tam(window, ABA_SO_ICONE).as_f32(), tam(window, BOTAO_MAIS).as_f32(), tam(window, 6.).as_f32()),
+        );
+        let fora: Vec<String> =
+            fundo.iter().zip(&jeitos).filter(|(_, j)| **j == JeitoDaAba::Fora).map(|(c, _)| c.id.clone()).collect();
+        // O teto de cada aba com título, igual para todas: o lugar que sobra dividido por igual,
+        // com quem pede menos ficando com o que pede (dono, 17/11/2026: "deixar mais igual
+        // todos"). Sem aperto, cada uma com o título inteiro (até o teto natural).
+        let teto = {
+            let livre = livre_para_titulos(
+                painel.largura_abas.as_f32(),
+                &jeitos,
+                (tam(window, ABA_SO_ICONE).as_f32(), tam(window, BOTAO_MAIS).as_f32(), tam(window, 6.).as_f32()),
+            );
+            let com_titulo: Vec<f32> = std::iter::once(natural_a_vista.as_f32())
+                .chain(jeitos.iter().zip(&naturais).filter(|(j, _)| **j == JeitoDaAba::Titulo).map(|(_, n)| *n))
+                .collect();
+            let teto = teto_por_igual(livre, &com_titulo);
+            px(if teto.is_finite() { teto } else { teto_natural.as_f32() }.floor())
+        };
+        let a_vista_maxima = teto.max(minima_a_vista);
+        let jeito_de = |id: &str| fundo.iter().position(|c| c.id == id).map_or(JeitoDaAba::Titulo, |i| jeitos[i]);
         painel
             .abas
             .iter()
             .filter_map(|id| {
                 if *id == chat.id {
-                    return Some(self.aba_da_conversa(motor_entidade, motor, chat, ix, nivel, window, cx));
+                    // Com outras abas ao lado, a que está à vista para em 280 de largura, para as
+                    // outras ficarem com um pedaço do título, e não desce do mínimo dela (o
+                    // símbolo, o número, o × e o começo do título).
+                    let a_vista = self.aba_a_vista(motor_entidade, motor, chat, ix, window, cx);
+                    return Some(div().flex().min_w(minima_a_vista).max_w(a_vista_maxima).child(a_vista).into_any_element());
                 }
+                let jeito = jeito_de(id);
+                if jeito == JeitoDaAba::Fora {
+                    return None;
+                }
+                let icone = jeito == JeitoDaAba::Icone;
                 let outro = motor.chat(id)?;
                 let fechar = cx.entity().downgrade();
                 let (id_abrir, id_fechar) = (id.clone(), id.clone());
-                let dica = SharedString::from(format!("{}\n{}", outro.titulo, caminho_em_texto(motor, outro)));
+                // O título e, na segunda linha, o estado com quando e o começo da última fala: dá
+                // para decidir se vale trocar de aba sem trocar (rodada de uso, item 3.3).
+                let dica = SharedString::from(dica_da_aba(motor, outro));
                 // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
-                let previa = simbolo_da_conversa(motor, outro);
-                let aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
-                    .tom(TomAba::Normal)
-                    .simbolo(simbolo_da_conversa(motor, outro))
-                    .estado(sinal_do_chat(motor, outro))
+                let previa = simbolo_da_conversa();
+                let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
+                    // As outras abas do painel são peças lisas, só com o contorno.
+                    .tom(TomAba::Inativa)
+                    // O ícone da aba é o estado do chat (e o ponto ao lado do × sai).
+                    .simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).into_any_element()))
+                    // Sem lugar para 4 letras e as reticências, só o ícone num quadrado; o título
+                    // vai na dica.
+                    .quadrada(icone);
+                // O lápis do rascunho, com o começo dele na dica (rodada de uso, item 1.4).
+                if let Some(rascunho) = self.rascunho_fora_de_vista(id).filter(|_| !icone) {
+                    let dica = SharedString::from(rascunho);
+                    aba = aba.fim(
+                        div()
+                            .id(SharedString::from(format!("rascunho-aba-{painel_id}-{id}")))
+                            .flex_none()
+                            .text_color(Cores::apagado())
+                            .child(super::componentes::icone(Lucide::Pencil, 11., window))
+                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                    );
+                }
+                let aba = aba
                     .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
                         let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
                     })
                     .construir(window, cx)
-                    .max_w(r(180.))
+                    .max_w(teto)
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
-                        let simbolo = previa.copia().unwrap_or(Simbolo::Papel(Papel::Coordenador));
+                        let simbolo = previa.copia().unwrap_or_else(simbolo_da_conversa);
                         cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
+                    })
+                    // O botão direito na aba de fundo: o menu do painel, com as ações daquele chat.
+                    .context_menu({
+                        let (janela, motor, chat) = (cx.entity().downgrade(), motor_entidade.clone(), id.clone());
+                        move |menu, window, cx| menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, Some(chat.clone()), window, cx)
                     });
-                Some(sem_arrastar().flex().min_w_0().child(aba).into_any_element())
+                // Todas as abas com título têm o mesmo teto (o `teto` acima) e não descem do começo do
+                // título delas: ninguém vira bolinha enquanto houver lugar para quatro letras.
+                let minimo = fundo.iter().position(|c| c.id == *id).map_or(px(0.), |i| px(minimos[i]));
+                let casca = super::componentes::casca_da_aba().child(aba);
+                Some(if icone {
+                    sem_arrastar().flex().flex_none().child(casca).into_any_element()
+                } else {
+                    sem_arrastar().flex().min_w(minimo).max_w(teto).child(casca).into_any_element()
+                })
             })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .chain((!fora.is_empty()).then(|| self.botao_abas_fora(ix, fora.clone(), window, cx)))
             .collect()
+    }
+
+    /// A aba do chat à vista: a mesma casca preta em todos os painéis.
+    fn aba_a_vista(&self, motor_entidade: &Entity<Motor>, motor: &Motor, chat: &Chat, ix: usize, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let aba = self.aba_da_conversa(motor_entidade, motor, chat, ix, window, cx);
+        super::componentes::casca_da_aba().child(aba).into_any_element()
     }
 
     /// A aba da conversa: símbolo por papel, número do painel com vários, o ponto do estado no
@@ -972,7 +1121,6 @@ impl Janela {
         motor: &Motor,
         chat: &Chat,
         ix: usize,
-        nivel: LarguraPainel,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -980,30 +1128,29 @@ impl Janela {
         let painel_id = painel.id;
         let varios = self.paineis.len() > 1;
         let ativo = ix == self.ativo;
-        let minimo = nivel == LarguraPainel::Minimo;
         let tom = match (varios, ativo) {
             // Com outras abas ao lado, a que está à vista leva o fundo mais claro.
             (false, _) if painel.abas.len() > 1 => TomAba::Ativa,
             (false, _) => TomAba::Unica,
             (true, true) => TomAba::Ativa,
-            (true, false) => TomAba::Inativa,
+            // Sem o foco e com outras abas ao lado: um degrau mais claro que elas.
+            (true, false) => TomAba::Ativa,
         };
         let arrastando = self.arrastando_aba == Some(painel_id);
-        let previa = Some(simbolo_da_conversa(motor, chat));
+        let previa = Some(simbolo_da_conversa());
         let janela = cx.entity().downgrade();
         let fechar = janela.clone();
-        // O × aparece no hover, no foco pelo teclado e sempre no ativo quando há vários; o ponto
-        // do estado fica no lugar dele.
+        // O × aparece no hover e no foco pelo teclado, também na aba selecionada (dono, 16/11/2026:
+        // "quando tá selecionada tem que ficar sem o × também"); o ponto do estado fica no lugar dele.
         let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}")), chat.titulo.clone())
             .tom(tom)
-            .estado(sinal_do_chat(motor, chat))
             .fechar(
                 if painel.abas.len() > 1 {
                     "Fechar a aba (a conversa continua na lista)"
                 } else {
                     "Fechar este painel (a conversa continua na lista)"
                 },
-                varios && ativo,
+                false,
                 {
                     let id_do_chat = chat.id.clone();
                     move |window, cx| {
@@ -1015,15 +1162,13 @@ impl Janela {
             .arrastando(arrastando);
         // No Mínimo, com vários painéis, o número fica no lugar do símbolo (e o que ele dava vai
         // para o "⋯").
-        if !(minimo && varios) {
-            aba = aba.simbolo(Simbolo::Elemento(self.simbolo_na_aba(motor_entidade, motor, chat, painel_id, window, cx)));
-        }
-        if varios {
+        // O número do painel liga a aba à linha do chat na lista: com a lista recolhida não há a
+        // que ligar, e ele sai (dono, 13/11/2026).
+        let numerada = varios && self.lista;
+        aba = aba.simbolo(Simbolo::Elemento(simbolo_na_aba(motor, chat, painel_id)));
+        if numerada {
             aba = aba.numero(ix + 1, ativo);
         }
-        let papel = papel_em_texto(motor, chat);
-        let dica = SharedString::from(format!("{}\n{papel} · {}", chat.titulo, caminho_em_texto(motor, chat)));
-        let acao = acao_do_painel(ix).filter(|_| varios);
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: Some(painel_id) };
         let (menu_janela, menu_motor) = (janela.clone(), motor_entidade.clone());
         let aba = aba
@@ -1048,127 +1193,27 @@ impl Janela {
                 }
                 cx.stop_propagation();
             }))
-            .tooltip(move |window, cx| {
-                let mut dica = Tooltip::new(dica.clone());
-                if let Some(acao) = &acao {
-                    dica = dica.action(acao.as_ref(), None);
-                }
-                dica.build(window, cx)
-            })
+            // Sem dica na aba à vista: o título está ali mesmo, e a dica abria por cima da conversa
+            // a cada passada do ponteiro (dono, 16/11/2026: "o de passar o mouse tá bem ruim").
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(ix) = this.paineis.iter().position(|p| p.id == painel_id) {
                     this.focar_painel(ix, window, cx);
                 }
             }))
             .on_drag(arrasto, move |arrasto, _, _, cx| {
-                let simbolo = previa.as_ref().and_then(Simbolo::copia).unwrap_or(Simbolo::Papel(Papel::Coordenador));
+                let simbolo = previa.as_ref().and_then(Simbolo::copia).unwrap_or_else(simbolo_da_conversa);
                 cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
             })
             .context_menu(move |menu, window, cx| {
-                menu_do_painel(menu, menu_janela.clone(), menu_motor.clone(), painel_id, window, cx)
+                menu_do_painel(menu, menu_janela.clone(), menu_motor.clone(), painel_id, None, window, cx)
             });
         // O clique na aba não move a janela; o vazio em volta dela, sim.
         sem_arrastar().flex().min_w_0().child(aba).into_any_element()
     }
 
-    /// O símbolo da aba, que também é um botão: no coordenador, o quadrado do projeto com o menu
-    /// dele; no trabalhador, o ↰ que abre o coordenador (Ctrl+clique, ao lado), com um ponto âmbar
-    /// quando ele mexe direto na pasta original. O clique nele não ativa a aba nem a arrasta.
-    fn simbolo_na_aba(
-        &self,
-        motor_entidade: &Entity<Motor>,
-        motor: &Motor,
-        chat: &Chat,
-        painel_id: u64,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let janela = cx.entity().downgrade();
-        let pai = chat.pai.as_ref().and_then(|p| motor.chat(p));
-        let parar = || {
-            div()
-                .flex()
-                .flex_none()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        };
-        match simbolo_da_aba(chat, pai.is_some()) {
-            SimboloDaAba::Projeto => {
-                let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
-                let caminho = motor.pasta_do_chat(chat).map_or("sem pasta".into(), |p| p.display().to_string());
-                let dica = SharedString::from(format!("Projeto {}\n{caminho}", motor.nome_do_projeto(&chat.projeto)));
-                let (m, projeto) = (motor_entidade.clone(), chat.projeto.clone());
-                let lado = 18.;
-                let base = div()
-                    .id(("projeto-aba", painel_id as usize))
-                    .flex_none()
-                    .rounded(raio::do_icone(lado))
-                    .cursor_pointer()
-                    .hover(|s| s.shadow(aro_do_simbolo()))
-                    .child(QuadradoDeProjeto::new(icone, cor, lado))
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
-                parar()
-                    .child(QuadradoComMenu { base, aberto: false }.dropdown_menu_with_anchor(
-                        Anchor::TopLeft,
-                        move |menu, window, cx| itens_do_chip_projeto(menu, janela.clone(), &m, &projeto, true, window, cx),
-                    ))
-                    .into_any_element()
-            }
-            SimboloDaAba::Avulso => {
-                let dica = if chat.importada.is_some() {
-                    "Avulso: uma conversa do Claude Code, direto na pasta dela\nArraste para um projeto do trilho para mover"
-                } else {
-                    "Avulso: um chat sem projeto, numa pasta só dele\nArraste para um projeto do trilho para mover"
-                };
-                div()
-                    .id(("avulso-aba", painel_id as usize))
-                    .flex_none()
-                    .text_color(Cores::tenue())
-                    .child(svg().path(Lucide::MessageCircle.path()).size(r(16.)).text_color(Cores::tenue()))
-                    .tooltip(move |window, cx| Tooltip::new(dica).build(window, cx))
-                    .into_any_element()
-            }
-            SimboloDaAba::Pai => {
-                let do_projeto = pai.is_some_and(|p| p.papel == PapelDoChat::Projeto);
-                let pai = pai.map(|p| (p.id.clone(), p.titulo.clone())).unwrap_or_default();
-                let original = matches!(pasta_do_chat(motor, chat), Pasta::Original);
-                let quem = if do_projeto { "o chat" } else { "a conversa" };
-                let dica = format!("Abrir {quem} “{}”\nCtrl+clique abre ao lado", pai.1);
-                let id_pai = pai.0;
-                let botao = botao_icone(("pai-aba", painel_id as usize), Lucide::CornerLeftUp, dica, TamanhoBotao::Linha, window, cx)
-                    .on_click(move |evento, window, cx| {
-                        let _ = janela.update(cx, |this, cx| {
-                            if evento.modifiers().control {
-                                this.abrir_ao_lado(id_pai.clone(), None, window, cx)
-                            } else {
-                                this.selecionar(Some(id_pai.clone()), window, cx)
-                            }
-                        });
-                    });
-                parar()
-                    .relative()
-                    .child(botao)
-                    // Sem git, ele mexe direto na pasta do projeto: o ponto âmbar avisa (o porquê
-                    // está na dica da aba).
-                    .when(original, |s| {
-                        s.child(
-                            div()
-                                .absolute()
-                                .top(r(2.))
-                                .right(r(2.))
-                                .size(r(6.))
-                                .rounded_full()
-                                .bg(Cores::ambar()),
-                        )
-                    })
-                    .into_any_element()
-            }
-            SimboloDaAba::Papel => papel_da_conversa(chat).circulo(18.).into_any_element(),
-        }
-    }
-
     /// Shift+F10 ou a tecla Menu na aba: abre o "⋯" do painel.
-    fn abrir_menu_do_painel(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+    pub(super) fn abrir_menu_do_painel(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+        self.so_um_flutuante(super::QualFlutuante::MenuPainel(painel_id));
         if let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel_id) {
             p.menu_aberto = true;
             cx.notify();
@@ -1188,9 +1233,7 @@ impl Janela {
     ) -> impl IntoElement + use<> {
         let painel = &self.paineis[ix];
         let (painel_id, foco) = (painel.id, painel.modo_foco);
-        let ultimo = ix + 1 == self.paineis.len();
         let mostra_foco = foco && matches!(nivel, LarguraPainel::Medio | LarguraPainel::Largo);
-        let mostra_direita = ultimo && nivel != LarguraPainel::Minimo;
         h_flex()
             .flex_none()
             .gap(r(4.))
@@ -1211,56 +1254,213 @@ impl Janela {
                         })),
                 ))
             })
-            // O "..." leva tudo do painel, inclusive abrir e fechar a direita. Com a direita fora da
-            // vista, o número do que ela espera fica no canto dele (vermelho se um chat caiu).
-            .child({
-                let selo = mostra_direita
-                    .then(|| self.o_que_a_direita_mostra(motor_entidade.read(cx)).1)
-                    .flatten()
-                    .map(|(n, erro, _)| Selo::contagem(n).solida(if erro { Cores::vermelho() } else { Cores::ambar() }));
+            // O "+": novo chat neste painel ou um do histórico. O menu do painel, sem o "⋯" (dono,
+            // 16/11/2026), abre no botão direito; pelo teclado (Shift+F10, tecla Menu), ancorado
+            // aqui, num gatilho sem tamanho.
+            .child(
                 sem_arrastar()
                     .relative()
-                    .child(self.botao_opcoes(motor_entidade, painel_id, painel.menu_aberto, window, cx))
-                    .when_some(selo, |s, selo| s.child(div().absolute().top(r(-3.)).right(r(-3.)).child(selo)))
+                    .child(self.botao_historico(ix, window, cx))
+                    .child(div().absolute().right_0().bottom_0().child(self.menu_pelo_teclado(motor_entidade, painel_id, painel.menu_aberto, cx))),
+            )
+    }
+
+    /// O histórico, o relógio da extensão do Claude Code (dono, 16/11/2026: "coloca essa parte de
+    /// histórico também, pra dar pra escolher outro chat"): os chats numa lista com busca, e o
+    /// escolhido aparece neste painel, como uma aba. Controlado por `historico_aberto`, para
+    /// fechar os outros flutuantes ao abrir.
+    fn botao_historico(&self, ix: usize, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let painel = &self.paineis[ix];
+        let painel_id = painel.id;
+        let lista = painel.busca_historico.clone();
+        let foco = lista.read(cx).focus_handle(cx);
+        let janela = cx.entity().downgrade();
+        popover(("pop-historico", painel_id as usize))
+            .anchor(Anchor::TopRight)
+            .offset(px(4.))
+            .p(esp::E6)
+            .open(self.historico_aberto == Some((painel_id, false)))
+            .on_open_change(move |abriu, window, cx| {
+                let _ = janela.update(cx, |this, cx| {
+                    if *abriu {
+                        this.abrir_historico(painel_id, None, window, cx);
+                    } else if this.historico_aberto == Some((painel_id, false)) {
+                        this.historico_aberto = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .track_focus(&foco)
+            .trigger(botao_icone(
+                ("historico-painel", painel_id as usize),
+                Lucide::Plus,
+                "Novo chat ou histórico",
+                TamanhoBotao::Barra,
+                window,
+                cx,
+            ))
+            .content(move |_, window, _| {
+                let largura = (tam(window, LarguraPopover::P400.px()) - tam(window, 12.)).min(window.viewport_size().width - px(44.));
+                div().w(largura).child(lista.clone())
             })
     }
 
-    /// Se a direita mostra um arquivo aberto (e não a Equipe) e, com a Equipe fora da vista (a
-    /// direita fechada, ou a gaveta dela fechada), quantas tarefas pedem você, se alguma caiu e o
-    /// resumo. Com o arquivo na direita, o botão não leva à Equipe: nada de número.
-    fn o_que_a_direita_mostra(&self, motor: &Motor) -> (Direita, Option<(usize, bool, String)>) {
-        match self.aba_visivel(motor) {
-            super::abas_direita::AbaDireita::Arquivo(_) => return (Direita::Arquivo, None),
-            super::abas_direita::AbaDireita::Pr => return (Direita::Pr, None),
-            super::abas_direita::AbaDireita::Chat => {}
-        }
-        let direita = match self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.papel) {
-            Some(PapelDoChat::Mestre) => Direita::Distribuido,
-            Some(PapelDoChat::Projeto) => Direita::EsteChat,
-            Some(PapelDoChat::Coordenador) => Direita::ConversaAntiga,
-            _ => Direita::Ajudantes,
-        };
-        let a_vista = self.direita_visivel() || self.gaveta == Some(Gaveta::Direita);
-        let pedidos = self
-            .selecionado
-            .as_ref()
-            .filter(|_| !a_vista)
-            .and_then(|id| motor.chat(id))
-            .and_then(|chat| equipe::coordenador_da_equipe(motor, chat))
-            .map(|coordenador| equipe::pedidos_da_equipe(motor, &coordenador))
-            .filter(|(n, ..)| *n > 0);
-        (direita, pedidos)
+    /// O "+N" no fim da faixa das abas, com as que saíram dela por falta de lugar: abre a lista do
+    /// histórico só com elas (conferência na bancada, 16/11/2026: sem ele, sumiam da vista).
+    fn botao_abas_fora(&self, ix: usize, fora: Vec<String>, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let painel = &self.paineis[ix];
+        let painel_id = painel.id;
+        let lista = painel.busca_historico.clone();
+        let foco = lista.read(cx).focus_handle(cx);
+        let janela = cx.entity().downgrade();
+        let n = fora.len();
+        let dica = if n == 1 { "1 aba que não coube aqui".to_string() } else { format!("{n} abas que não couberam aqui") };
+        let gatilho = botao_fantasma(("abas-fora", painel_id as usize), None, format!("+{n}"), TamanhoBotao::Barra, window, cx).tooltip(dica);
+        sem_arrastar()
+            .flex_none()
+            .child(
+                popover(("pop-abas-fora", painel_id as usize))
+                    .anchor(Anchor::TopLeft)
+                    .offset(px(4.))
+                    .p(esp::E6)
+                    .open(self.historico_aberto == Some((painel_id, true)))
+                    .on_open_change(move |abriu, window, cx| {
+                        let _ = janela.update(cx, |this, cx| {
+                            if *abriu {
+                                this.abrir_historico(painel_id, Some(fora.clone()), window, cx);
+                            } else if this.historico_aberto == Some((painel_id, true)) {
+                                this.historico_aberto = None;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .track_focus(&foco)
+                    .trigger(gatilho)
+                    .content(move |_, window, _| {
+                        let largura = (tam(window, LarguraPopover::P360.px()) - tam(window, 12.)).min(window.viewport_size().width - px(44.));
+                        div().w(largura).child(lista.clone())
+                    }),
+            )
+            .into_any_element()
     }
 
-    /// O "⋯" do painel, controlado por `Painel.menu_aberto` para o Shift+F10 da aba abrir o mesmo.
-    fn botao_opcoes(
-        &self,
-        motor_entidade: &Entity<Motor>,
-        painel_id: u64,
-        aberto: bool,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
+    /// Abre o histórico do painel: a lista de agora, a busca limpa e o chat à vista marcado. Com
+    /// `so`, só esses chats (o "+N" das abas que saíram da faixa).
+    fn abrir_historico(&mut self, painel_id: u64, so: Option<Vec<String>>, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(motor), Some(painel)) = (self.motor.clone(), self.paineis.iter().find(|p| p.id == painel_id)) else {
+            return;
+        };
+        let (lista, atual) = (painel.busca_historico.clone(), painel.chat.clone());
+        // Os chats à vista nos outros painéis: escolher um deles ativa aquele painel (um chat só
+        // aparece num lugar), e a linha avisa.
+        let noutros: Vec<(String, usize)> = self
+            .paineis
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.id != painel_id)
+            .filter_map(|(i, p)| Some((p.chat.clone()?, i + 1)))
+            .collect();
+        let mut linhas = linhas_do_historico(motor.read(cx), &noutros, so.as_deref(), atual.as_deref());
+        // No "+" do cabeçalho, a primeira linha é a ação de criar um chat neste painel, num grupo
+        // só dela, com o atalho à direita; o realce do teclado começa nela (o Enter cria) e o
+        // visto fica no chat à vista, como nas outras escolhas (dono, 16/11/2026: "o novo chat tem
+        // um certinho do lado"). Os chats vão embaixo, em "Recentes". A busca é a da lista:
+        // digitar filtra o histórico, e a ação só fica se casar com o texto dela.
+        let novo = so.is_none();
+        if novo {
+            for l in linhas.iter_mut().filter(|l| l.grupo.is_none()) {
+                l.grupo = Some("Recentes");
+            }
+            linhas.insert(
+                0,
+                LinhaDoHistorico {
+                    grupo: Some(GRUPO_DE_ACAO),
+                    chave: NOVO_CHAT_NO_PAINEL.into(),
+                    titulo: "Novo chat neste painel".into(),
+                    descricao: String::new(),
+                    sinal: None,
+                    termos: "novo chat criar conversa".into(),
+                },
+            );
+        }
+        let escolhido: Option<SharedString> = atual.map(Into::into);
+        // As teclas do Ctrl+N (o mesmo chat novo no painel ativo, que é este) na linha de criar.
+        let teclas = gpui_kit::component::kbd::Kbd::binding_for_action(&super::NovaConversa, None, window).map(|k| k.partes());
+        let com_teclas = move |mut grupos: Vec<GrupoDeEscolha>| {
+            for item in grupos.iter_mut().flat_map(|g| g.itens.iter_mut()) {
+                if item.chave.as_ref() == NOVO_CHAT_NO_PAINEL {
+                    item.teclas = teclas.clone();
+                }
+            }
+            grupos
+        };
+        // O texto de cada chat, preparado para a busca (o mesmo guardado da lista).
+        let preparados: HashMap<String, Rc<super::lateral::Preparado>> = {
+            let m = motor.read(cx);
+            linhas
+                .iter()
+                .filter_map(|l| m.chat(&l.chave))
+                .map(|c| (c.id.clone(), super::lateral::preparado(&self.busca_preparada, c)))
+                .collect()
+        };
+        let grupos = com_teclas(grupos_que_casam(&linhas, &preparados, ""));
+        let linhas = Rc::new(linhas);
+        self.so_um_flutuante(QualFlutuante::Historico(painel_id));
+        self.historico_aberto = Some((painel_id, so.is_some()));
+        lista.update(cx, |l, cx| {
+            // Sem a ficha de metal: o visto basta para o chat à vista, e o realce do teclado
+            // (na linha de criar) não briga com ela.
+            l.ficha_no_escolhido(false);
+            l.cursor_em(novo.then(|| NOVO_CHAT_NO_PAINEL.into()));
+            // A busca do histórico ignora acento e aceita as palavras em qualquer ordem, como a da
+            // lista (rodada de uso, item 4.3).
+            l.filtro_proprio(move |busca| com_teclas(grupos_que_casam(&linhas, &preparados, busca)));
+            l.definir(grupos, escolhido, cx);
+            l.abrir(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Escolheu (ou fechou com Esc) no histórico do painel: o chat vai para este painel, como uma
+    /// aba, e o foco volta à caixa.
+    pub(super) fn escolheu_no_historico(&mut self, painel_id: u64, evento: &EventoEscolha, window: &mut Window, cx: &mut Context<Self>) {
+        if self.historico_aberto.is_some_and(|(p, _)| p == painel_id) {
+            self.historico_aberto = None;
+        }
+        // A linha do chat novo: cria neste painel, como aba (o "+" da lista, mas aqui).
+        if matches!(evento, EventoEscolha::Escolheu(chave) if chave.as_ref() == NOVO_CHAT_NO_PAINEL) {
+            self.ativar_painel(painel_id, cx);
+            self.novo_chat_direto(window, cx);
+            cx.notify();
+            return;
+        }
+        if let EventoEscolha::Escolheu(chat) = evento
+            && !self.paineis.iter().any(|p| p.id == painel_id && p.chat.as_deref() == Some(chat.as_ref()))
+        {
+            self.abrir_aba(painel_id, chat.to_string(), window, cx);
+        }
+        let ix = match evento {
+            EventoEscolha::Escolheu(_) => Some(self.ativo),
+            EventoEscolha::Fechou => self.paineis.iter().position(|p| p.id == painel_id),
+        };
+        if let Some(ix) = ix {
+            self.focar_painel(ix, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// O que a direita mostra: o arquivo aberto ou o painel do chat.
+    fn o_que_a_direita_mostra(&self, motor: &Motor) -> Direita {
+        match self.aba_visivel(motor) {
+            super::abas_direita::AbaDireita::Arquivo(_) => Direita::Arquivo,
+            super::abas_direita::AbaDireita::Chat => Direita::EsteChat,
+        }
+    }
+
+    /// O menu do painel pelo teclado (Shift+F10, tecla Menu), controlado por `Painel.menu_aberto`,
+    /// num gatilho sem tamanho no lugar onde ficava o "⋯"; o botão direito abre o mesmo menu onde
+    /// o mouse está.
+    fn menu_pelo_teclado(&self, motor_entidade: &Entity<Motor>, painel_id: u64, aberto: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
         let janela = cx.entity().downgrade();
         let ao_mudar = janela.clone();
         let motor = motor_entidade.clone();
@@ -1272,6 +1472,9 @@ impl Janela {
             .open(aberto)
             .on_open_change(move |aberto, _, cx| {
                 let _ = ao_mudar.update(cx, |this, cx| {
+                    if *aberto {
+                        this.so_um_flutuante(super::QualFlutuante::MenuPainel(painel_id));
+                    }
                     if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel_id)
                         && p.menu_aberto != *aberto
                     {
@@ -1280,15 +1483,8 @@ impl Janela {
                     }
                 });
             })
-            // O clique direito na aba abre o mesmo menu (`menu_do_painel`).
-            .trigger(botao_icone(
-                ("opcoes-painel", painel_id as usize),
-                Lucide::Ellipsis,
-                "Mais opções da conversa\nTambém no clique direito da aba",
-                TamanhoBotao::Barra,
-                window,
-                cx,
-            ))
+            // Sem botão à vista: o gatilho não tem tamanho, e o menu abre pelo teclado.
+            .trigger(super::trilho::Gatilho(div().size_0().into_any_element()))
             .content(move |_, window, cx| {
                 // Feito uma vez por abertura (o conteúdo é pedido a cada quadro) e refeito
                 // depois de fechar, como o dropdown do kit.
@@ -1302,7 +1498,7 @@ impl Janela {
                 }
                 let (janela, motor) = (janela.clone(), motor.clone());
                 let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
-                    menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, window, cx)
+                    menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, None, window, cx)
                 });
                 menu.focus_handle(cx).focus(window, cx);
                 // Pelo Shift+F10, o primeiro item já vem realçado.
@@ -1323,127 +1519,29 @@ impl Janela {
             })
     }
 
-    /// "Conversa do Vitral antigo, só para leitura." com "Continuar num chat novo", no lugar da caixa.
-    fn faixa_conversa_antiga(&self, chat: &Chat, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let id = chat.id.clone();
-        let continuar = botao_primario("continuar-antiga", Some(Lucide::MessageSquarePlus.into()), "Continuar num chat novo", TamanhoBotao::Controle, window, cx)
-            .tooltip("Um chat novo no mesmo projeto, com esta conversa anexada como contexto")
-            .on_click(cx.listener(move |this, _, window, cx| this.continuar_conversa_antiga(&id, window, cx)));
-        div().map(super::mensagens::coluna).pb(esp::E12).child(
-            h_flex()
-                .flex_wrap()
-                .gap(esp::E12)
-                .p(dentro_da_borda(12.))
-                .rounded(raio::PECA)
-                .bg(Cores::cartao_elevado())
-                .border_1()
-                .border_color(Cores::linha())
-                .child(svg().path(Lucide::Archive.path()).flex_none().size(r(16.)).text_color(Cores::tenue()))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(r(160.))
-                        .corpo_ui()
-                        .text_color(Cores::texto())
-                        .child("Conversa do Vitral antigo, só para leitura."),
-                )
-                .child(div().flex_none().child(continuar)),
-        )
-    }
-
-    /// Um chat novo no projeto da conversa antiga (`Motor::continuar_conversa_antiga`), com ela
-    /// anexada à primeira mensagem e o cursor na caixa.
-    fn continuar_conversa_antiga(&mut self, antiga: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(motor) = self.motor.clone() else {
-            return;
-        };
-        let Some(titulo) = motor.read(cx).chat(antiga).map(|c| c.titulo.clone()) else {
-            return;
-        };
-        let (novo, arquivo) = match motor.update(cx, |m, cx| m.continuar_conversa_antiga(antiga, cx)) {
-            Ok(feito) => feito,
-            Err(erro) => {
-                window.push_notification(aviso(Tom::Erro, format!("Não abriu o chat: {erro}")), cx);
-                return;
-            }
-        };
-        self.anexos.entry(novo.clone()).or_default().push(arquivo);
-        self.selecionar(Some(novo), window, cx);
-        if let Some(painel) = self.paineis.get(self.ativo).map(|p| p.id) {
-            self.escrever_na_caixa(painel, &format!("Continuando a conversa “{titulo}” (anexada): "), window, cx);
-        }
-    }
-
-    /// Painel sem conversa: o estado vazio amplo, com o Mestre primeiro, Novo chat e Novo projeto
-    /// (sem projetos, o projeto antes do chat avulso).
-    fn sem_conversa(&self, motor: &Motor, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        if motor.mestre_id().is_some() {
-            let vazio = EstadoVazio::new(Lucide::Orbit, "Fale com o Mestre")
-                .texto("Ele entende o pedido, manda para o projeto certo e mostra como vai dividir antes de começar.")
-                .acao(
-                    botao_primario("abrir-mestre-vazio", Some(Lucide::Orbit.into()), "Abrir o Mestre", TamanhoBotao::Controle, window, cx)
-                        .tooltip_with_action("Abrir o Mestre", &AbrirMestre, None)
-                        .on_click(cx.listener(|this, _, window, cx| this.abrir_mestre(window, cx))),
-                )
-                .acao(
-                    botao_fantasma("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
-                        .tooltip_with_action("Novo chat", &NovaConversa, None)
-                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
-                )
-                .acao(
-                    botao_fantasma("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
-                        .tooltip_with_action("Novo projeto…", &NovoProjeto, None)
-                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_criar_projeto(window, cx))),
-                );
-            return v_flex().flex_1().items_center().justify_center().p(esp::E32).child(vazio.amplo());
-        }
-        let novo_projeto = |primario: bool, window: &Window| {
-            let botao = if primario {
-                botao_primario("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
-            } else {
-                botao_fantasma("criar-projeto-vazio", Some(Lucide::FolderPlus.into()), "Novo projeto…", TamanhoBotao::Controle, window, cx)
-            };
-            botao
-                .tooltip_with_action("Novo projeto…", &NovoProjeto, None)
-                .on_click(cx.listener(|this, _, window, cx| this.dialogo_criar_projeto(window, cx)))
-        };
-        let vazio = if motor.projetos_visiveis().is_empty() {
-            EstadoVazio::new(Lucide::FolderPlus, "Nenhum projeto ainda")
-                .texto(
-                    "Um projeto liga as pastas em que você trabalha (ou ganha uma pasta própria, com git). \
-                     Também dá para começar um chat avulso, numa pasta só dele.",
-                )
-                .acao(novo_projeto(true, window))
-                .acao(
-                    botao_fantasma("avulso-vazio", Some(Lucide::MessageCircle.into()), "Chat avulso", TamanhoBotao::Controle, window, cx)
-                        .on_click(cx.listener(|this, _, window, cx| this.nova_conversa("", window, cx))),
-                )
-        } else {
-            EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
-                .texto(
-                    "Cada chat trabalha numa pasta de um projeto: numa cópia só dele quando a pasta usa git \
-                     (você junta as mudanças quando quiser) ou direto nela.",
-                )
-                .acao(
-                    botao_primario("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
-                        .tooltip_with_action("Novo chat", &NovaConversa, None)
-                        .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
-                )
-                .acao(novo_projeto(false, window))
-        };
+    /// Painel sem conversa: o estado vazio amplo, com Novo chat (na última pasta usada; sem ela, a
+    /// paleta pergunta) e Novo chat em outra pasta.
+    fn sem_conversa(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let vazio = EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
+            .texto("Cada chat trabalha direto numa pasta do seu computador, como o Claude Code. Sem pasta, ele ganha uma vazia só dele.")
+            .acao(
+                botao_primario("comecar", Some(Lucide::Plus.into()), "Novo chat", TamanhoBotao::Controle, window, cx)
+                    .tooltip_with_action("Novo chat", &NovaConversa, None)
+                    .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx))),
+            )
+            .acao(
+                botao_fantasma("outra-pasta-vazio", Some(Lucide::FolderOpen.into()), "Em outra pasta…", TamanhoBotao::Controle, window, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.dialogo_nova_conversa(window, cx))),
+            );
         v_flex().flex_1().items_center().justify_center().p(esp::E32).child(vazio.amplo())
     }
 }
 
-/// O que o painel da direita mostra, pelo papel do chat aberto (ou o arquivo aberto).
+/// O que o painel da direita mostra: o arquivo aberto ou Este chat.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Direita {
     Arquivo,
-    Pr,
-    Distribuido,
     EsteChat,
-    ConversaAntiga,
-    Ajudantes,
 }
 
 impl Direita {
@@ -1451,24 +1549,82 @@ impl Direita {
     fn no_menu(self) -> &'static str {
         match self {
             Direita::Arquivo => "Mostrar o arquivo aberto",
-            Direita::Pr => "Mostrar o PR do chat",
-            Direita::Distribuido => "Mostrar o Distribuído",
             Direita::EsteChat => "Mostrar Este chat",
-            Direita::ConversaAntiga => "Mostrar Esta conversa",
-            Direita::Ajudantes => "Mostrar os ajudantes",
         }
     }
 }
 
 #[cfg(test)]
 mod testes {
-    use super::modelo_da_conversa;
+    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, teto_por_igual};
     use crate::modelo::Chat;
+
+    #[test]
+    fn historico_busca_sem_acento_com_o_titulo_primeiro() {
+        let linha = |chave: &str, titulo: &str, grupo: Option<&'static str>| LinhaDoHistorico {
+            grupo,
+            chave: chave.into(),
+            titulo: titulo.into(),
+            descricao: String::new(),
+            sinal: None,
+            termos: format!("~/eita/{chave}"),
+        };
+        let mut so_no_texto = Chat::novo("b".into(), "Ajustes", std::path::PathBuf::from("/x/eita"));
+        so_no_texto.itens.push(crate::modelo::Item::Assistente { texto: "A integração ficou pronta".into(), em: 0 });
+        let no_titulo = Chat::novo("a".into(), "Integração do Tiny", std::path::PathBuf::from("/x/eita"));
+        let cache = Default::default();
+        let preparados = [&so_no_texto, &no_titulo]
+            .into_iter()
+            .map(|c| (c.id.clone(), crate::ui::lateral::preparado(&cache, c)))
+            .collect();
+        let linhas = vec![linha("b", "Ajustes", None), linha("a", "Integração do Tiny", None), linha("c", "Outro", Some("Arquivados"))];
+        let achados = grupos_que_casam(&linhas, &preparados, "integracao");
+        let chaves: Vec<String> = achados.iter().flat_map(|g| g.itens.iter().map(|i| i.chave.to_string())).collect();
+        // O que casa no título vem antes do que casa só numa fala, mesmo sendo mais antigo.
+        assert_eq!(chaves, ["a", "b"]);
+        // Sem busca, tudo, na ordem e nos grupos de antes.
+        let todos = grupos_que_casam(&linhas, &preparados, "");
+        assert_eq!(todos.len(), 2);
+        assert_eq!(todos[1].titulo.as_ref().map(|t| t.to_string()), Some("Arquivados".to_string()));
+    }
+
+    /// Com espaço, todas com título; apertando, todas dividem por igual e só vira ícone a de fundo
+    /// que nem assim teria o começo do título (a mais estreita primeiro, devolvendo o espaço às
+    /// outras); sem lugar para o começo do título da aba à vista, as de fundo saem da faixa, a
+    /// mais antiga primeiro; sem medida (o primeiro quadro), nada muda.
+    #[test]
+    fn as_abas_dividem_por_igual_e_so_viram_icone_sem_lugar() {
+        use JeitoDaAba::{Fora, Icone, Titulo};
+        // À vista: 200 de natural e 140 de mínimo; vãos de 6; ícone de 36. De fundo: 150 e 110 de
+        // natural, 114 e 108 de mínimo.
+        let (naturais, minimos) = ([150., 110.], [114., 108.]);
+        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, (36., 40., 6.));
+        assert_eq!(jeito(500.), [Titulo, Titulo]);
+        // 400: as três dividem 388 com teto de 139: a à vista ficaria 1 abaixo dos 140 dela, e a
+        // mais estreita de fundo vira ícone; as outras duas cabem inteiras.
+        assert_eq!(jeito(400.), [Titulo, Icone]);
+        // O teto: quem pede menos que a parte fica com o que pede, e o resto se divide.
+        assert_eq!(teto_por_igual(300., &[50., 200., 200.]), 125.);
+        assert!(teto_por_igual(500., &[50., 200., 200.]).is_infinite());
+        // 340: com teto de 109, a de 150 não chega aos 114 dela e vira ícone; a de 110 fica com
+        // título (antes as duas viravam bolinha).
+        assert_eq!(jeito(340.), [Icone, Titulo]);
+        // 200: com as duas em ícone sobram 116 para a aba à vista, menos que os 140 dela. A mais
+        // antiga sai, mas o "+N" (40 e o vão) ocupa mais que ela: sai a outra também, e sobram 154.
+        assert_eq!(jeito(200.), [Fora, Fora]);
+        assert_eq!(jeito(0.), [Titulo, Titulo]);
+        // Com três de fundo, sair uma já basta: 250 - (12 + 72 + 46) = 120, ainda pouco; saindo
+        // as duas mais antigas, sobram 250 - (6 + 36 + 46) = 162.
+        let (naturais, minimos) = ([150., 110., 120.], [114., 108., 110.]);
+        let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, (36., 40., 6.));
+        assert_eq!(jeito(250.), [Fora, Fora, Icone]);
+        // 300: todas em ícone deixam 300 - 126 = 174 para a aba à vista.
+        assert_eq!(jeito(300.), [Icone, Icone, Icone]);
+    }
 
     fn chat(modelo: Option<&str>, atual: Option<&str>) -> Chat {
         let mut c: Chat = serde_json::from_str(
-            r#"{"id": "c1", "projeto": "loja", "titulo": "Cupons", "papel": "Coordenador", "pai": null,
-                "tarefa": null, "sessao": "s", "sessao_criada": false, "cwd": "/tmp/loja", "modelo": null,
+            r#"{"id": "c1", "titulo": "Cupons", "sessao": "s", "sessao_criada": false, "cwd": "/tmp/loja", "modelo": null,
                 "criado_em": 0, "atualizado_em": 0, "custo_usd": 0.0}"#,
         )
         .unwrap();

@@ -12,6 +12,7 @@ use gpui_kit::component::{
     notification::{Notification, NotificationType},
     popover::Popover,
     tooltip::Tooltip,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -51,6 +52,38 @@ pub trait Reflexo: ParentElement + Sized {
     /// antes deles; como primeira camada, o pontilhado do pé passaria por cima do fio).
     fn aresta_de_vidro(self, raio: Pixels) -> Self {
         self.child(camada_de_aresta(raio))
+    }
+
+    /// O vidro de uma peça da fileira das conversas (encostada no topo, na direita e embaixo):
+    /// a `aresta_encostada` do tema, com o que há à `esquerda` (o vão da lista, a vizinha ou a
+    /// beirada da janela). Depois dos
+    /// filhos, como a `aresta_de_vidro`.
+    fn aresta_encostada(self, esquerda: crate::tema::Esquerda) -> Self {
+        let camada = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .rounded_l(crate::tema::raio_encostado(esquerda))
+            .shadow(crate::tema::aresta_encostada(esquerda));
+        // Na emenda com a vizinha, a divisória: o fio de 1 px que esmaece no alto e embaixo (um
+        // terço da altura para cada ponta), sem cortar as abas nem as caixas de mensagem.
+        let divisoria = (esquerda == crate::tema::Esquerda::Emendada).then(|| {
+            let ponta = |embaixo: bool| div().flex_none().h(relative(0.3)).w_full().bg(crate::tema::gradiente_da_divisoria(embaixo));
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(px(1.))
+                .flex()
+                .flex_col()
+                .child(ponta(false))
+                .child(div().flex_1().w_full().bg(Cores::divisoria()))
+                .child(ponta(true))
+        });
+        self.child(camada.children(divisoria))
     }
 }
 
@@ -117,8 +150,6 @@ pub enum LarguraPopover {
     P320,
     P360,
     P400,
-    /// O das issues, que tem lista e detalhe (a largura P dos diálogos).
-    P440,
     P560,
 }
 
@@ -128,13 +159,12 @@ impl LarguraPopover {
             LarguraPopover::P320 => 320.,
             LarguraPopover::P360 => 360.,
             LarguraPopover::P400 => 400.,
-            LarguraPopover::P440 => 440.,
             LarguraPopover::P560 => 560.,
         }
     }
 }
 
-/// Cabeçalho de popover: de escolha (esforço, modelo) ou de objeto (conta, projeto).
+/// Cabeçalho de popover: de escolha (esforço, modelo) ou de objeto (conta).
 pub enum CabecalhoPopover {
     Escolha {
         simbolo: Option<Simbolo>,
@@ -310,7 +340,7 @@ fn placa_de_cabecalho(simbolo: Option<AnyElement>, nome: SharedString, detalhe: 
         .items_center()
         .h(r(52.))
         .px(esp::E16)
-        .child(placa_de_metal(raio::PECA - px(1.)))
+        .child(placa_de_metal(raio::peca() - px(1.)))
         .child(linha_objeto(simbolo, nome, detalhe, true))
 }
 
@@ -403,10 +433,12 @@ pub fn azulejo_de_escolha(conteudo: AnyElement, sobre_placa: bool) -> Div {
 }
 
 /// A ficha do escolhido (o item marcado numa lista de escolha, a aba escolhida de um segmentado
-/// do alto da lista): o azul do destaque bem leve, com um fio do mesmo azul e a aresta de tecla,
-/// no canto dos controles para a `altura` do item. Absoluta, enche o item (o `fundo` do item do
-/// menu). Já foi um recorte de metal debaixo de um véu; num retângulo comprido ele ficava com um
-/// fundo esquisito, preto de um lado e azul chuviscado do outro (dono, 12/11/2026). O nome ficou.
+/// do alto da lista): um recorte da chapa de metal debaixo do véu de placa (em cima dele só
+/// `forte` e `texto`), com uma sombra curta e a aresta de tecla, no canto dos controles para a
+/// `altura` do item. Absoluta, enche o item (o `fundo` do item do menu). Passou um dia como azul
+/// liso: o "fundo esquisito" que o dono viu (12/11/2026) era o realce claro do ponteiro por cima
+/// do metal, e não o metal. O metal voltou (13/11/2026) e o item escolhido não ganha mais o
+/// realce (`sem_realce` no item do `Command`, e o item de menu com `fundo`).
 pub fn ficha_de_metal(altura: f32) -> Div {
     ficha_do_escolhido(raio::de(altura))
 }
@@ -419,10 +451,9 @@ pub fn ficha_do_escolhido(raio: Pixels) -> Div {
         .left_0()
         .size_full()
         .rounded(raio)
-        .bg(Cores::selecao_de(Cores::destaque()))
-        .border_1()
-        .border_color(Cores::tinta_borda(Cores::destaque()))
-        .shadow(aresta_de_tecla())
+        .shadow(crate::tema::sombra_elevado())
+        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), Corners::all(raio)))
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(aresta_de_tecla()))
 }
 
 /// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal
@@ -484,7 +515,7 @@ fn faixa_do_pe() -> Div {
         .gap(esp::E12)
         .h(r(32.))
         .px(esp::E16)
-        .rounded_b(raio::PECA - px(1.))
+        .rounded_b(raio::peca() - px(1.))
         .bg(Cores::preto().opacity(0.45))
         .shadow(aresta_de_poco())
 }
@@ -558,8 +589,6 @@ pub struct Alerta {
     tom: Tom,
     titulo: Option<SharedString>,
     texto: SharedString,
-    /// O mesmo texto com trechos realçados (o termo do Ctrl+F), quando há.
-    texto_rico: Option<StyledText>,
     acao: Option<AnyElement>,
     fechar: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     compacto: bool,
@@ -567,18 +596,11 @@ pub struct Alerta {
 
 impl Alerta {
     pub fn new(tom: Tom, texto: impl Into<SharedString>) -> Self {
-        Alerta { tom, titulo: None, texto: texto.into(), texto_rico: None, acao: None, fechar: None, compacto: false }
+        Alerta { tom, titulo: None, texto: texto.into(), acao: None, fechar: None, compacto: false }
     }
 
     pub fn titulo(mut self, t: impl Into<SharedString>) -> Self {
         self.titulo = Some(t.into());
-        self
-    }
-
-    /// O texto com trechos em outro fundo (o termo achado na busca da conversa); precisa ser o
-    /// mesmo texto, que continua valendo para a chave do fechar.
-    pub fn texto_rico(mut self, t: StyledText) -> Self {
-        self.texto_rico = Some(t);
         self
     }
 
@@ -618,17 +640,16 @@ impl RenderOnce for Alerta {
                         .text_color(cor)
                         .child(self.tom.icone().with_size(tam(window, 14.))),
                 )
-                .child(match self.texto_rico {
-                    Some(rico) => div().min_w_0().child(rico),
-                    None => div().min_w_0().child(self.texto),
-                })
+                .child(div().min_w_0().child(self.texto))
                 .into_any_element();
         }
         let id_fechar = SharedString::from(format!("alerta-fechar-{}", self.texto));
+        // O mesmo material leve do cartão de erro da conversa: a cor no ícone e num véu de 6%
+        // (balão e cartão de erro, 16/11/2026).
         let (fundo, borda) = if self.tom == Tom::Info {
             (Cores::hover(), Cores::borda())
         } else {
-            (Cores::tinta(cor), Cores::tinta_borda(cor))
+            (Cores::tinta_leve(cor), Cores::tinta_borda_leve(cor))
         };
         div()
             .flex()
@@ -670,10 +691,7 @@ impl RenderOnce for Alerta {
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .text_color(Cores::tenue())
-                            .map(|s| match self.texto_rico {
-                                Some(rico) => s.child(rico),
-                                None => s.child(self.texto),
-                            }),
+                            .child(self.texto),
                     )
                     .when_some(self.acao, |s, a| s.child(div().pt(r(6.)).child(a))),
             )
@@ -689,6 +707,126 @@ impl RenderOnce for Alerta {
                 )
             })
             .into_any_element()
+    }
+}
+
+/// O erro de um turno na conversa: o ícone na cor do assunto, o título em português, a frase do que
+/// fazer e as ações; o texto cru do agente vem montado por quem chama. O vermelho fica no ícone e
+/// num véu de 6% (balão e cartão de erro, 16/11/2026: o alerta vermelho de 12% com o Copiar sozinho
+/// numa linha ocupava de 130 a 166 de altura).
+#[derive(IntoElement)]
+pub struct CartaoDeErro {
+    icone: Icon,
+    /// `None`: neutro (rede, serviço sobrecarregado): ninguém errou.
+    cor: Option<Hsla>,
+    titulo: SharedString,
+    frase: Option<AnyElement>,
+    canto: Option<AnyElement>,
+    acoes: Vec<AnyElement>,
+    original: Option<AnyElement>,
+    /// O original vem antes das ações (desconhecido, sempre aberto) ou depois (atrás de "Detalhes").
+    original_antes: bool,
+}
+
+impl CartaoDeErro {
+    pub fn new(icone: impl Into<Icon>, cor: Option<Hsla>, titulo: impl Into<SharedString>) -> Self {
+        CartaoDeErro {
+            icone: icone.into(),
+            cor,
+            titulo: titulo.into(),
+            frase: None,
+            canto: None,
+            acoes: Vec::new(),
+            original: None,
+            original_antes: false,
+        }
+    }
+
+    /// O que fazer, em 13/18 tênue.
+    pub fn frase(mut self, f: impl IntoElement) -> Self {
+        self.frase = Some(f.into_any_element());
+        self
+    }
+
+    /// No canto do cabeçalho, sempre à vista (o Copiar).
+    pub fn canto(mut self, c: impl IntoElement) -> Self {
+        self.canto = Some(c.into_any_element());
+        self
+    }
+
+    /// Uma ação a mais na linha de ações (acumula).
+    pub fn acao(mut self, a: impl IntoElement) -> Self {
+        self.acoes.push(a.into_any_element());
+        self
+    }
+
+    /// O texto do agente, antes das ações (aberto) ou depois delas (embaixo do "Detalhes").
+    pub fn original(mut self, o: impl IntoElement, antes_das_acoes: bool) -> Self {
+        self.original = Some(o.into_any_element());
+        self.original_antes = antes_das_acoes;
+        self
+    }
+}
+
+/// Grupo de hover do cartão de erro: o Copiar só aparece com o ponteiro em cima.
+const GRUPO_DO_ERRO: &str = "cartao-de-erro";
+
+impl RenderOnce for CartaoDeErro {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        // Sem caixa e sem fio: o ícone na cor do assunto e o texto solto na conversa, como uma
+        // nota. A caixa tingida com contorno pesava mais que a resposta e, empilhada (limite,
+        // login, outra tentativa), virava uma parede vermelha (dono, 17/11/2026: "tô achando feio
+        // o estilo de quando mando mensagem e tem erro"); o fio de 2 px à esquerda que ficou no
+        // lugar dela também saiu ("tira essas barras").
+        let cor_do_icone = self.cor.unwrap_or(Cores::tenue());
+        let corpo = self.frase.is_some() || self.original.is_some() || !self.acoes.is_empty();
+        let (original_antes, original_depois) = if self.original_antes { (self.original, None) } else { (None, self.original) };
+        let acoes = self.acoes;
+        h_flex()
+            .group(GRUPO_DO_ERRO)
+            .w_full()
+            .items_stretch()
+            .gap(esp::E12)
+            .py(esp::E2)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E4)
+                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover).
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap(esp::E8)
+                            .child(div().flex_none().text_color(cor_do_icone).child(self.icone.with_size(tam(window, 16.))))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(r(14.))
+                                    .line_height(r(20.))
+                                    .font_semibold()
+                                    .text_color(Cores::texto())
+                                    .child(self.titulo),
+                            )
+                            .children(self.canto.map(|c| {
+                                div().flex_none().invisible().group_hover(GRUPO_DO_ERRO, |s| s.visible()).child(c)
+                            })),
+                    )
+                    // O corpo alinhado ao título (16 do ícone mais 8 do vão).
+                    .when(corpo, |s| {
+                        s.child(
+                            v_flex()
+                                .pl(esp::E24)
+                                .gap(esp::E6)
+                                .children(self.frase.map(|f| div().text_size(r(13.)).line_height(r(18.)).text_color(Cores::tenue()).child(f)))
+                                .children(original_antes)
+                                // O ícone do primeiro botão fantasma (padding 8) cai na coluna do texto.
+                                .when(!acoes.is_empty(), |s| s.child(h_flex().flex_wrap().gap(esp::E4).ml(r(-8.)).children(acoes)))
+                                .children(original_depois),
+                        )
+                    }),
+            )
     }
 }
 

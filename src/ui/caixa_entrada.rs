@@ -3,7 +3,7 @@
 //! planos, paradas, erros e respostas novas.
 
 use gpui_kit::component::{
-    Icon, Selectable, StyledExt as _, h_flex,
+    Icon, Selectable, StyledExt as _, WindowExt as _, h_flex,
     popover::{Popover, PopoverState},
     v_flex,
 };
@@ -13,11 +13,10 @@ use gpui_kit::*;
 use super::{
     Janela, ProximaPendencia,
     componentes::{
-        CabecalhoDeSecao, CartaoDeLista, CorpoPopover, EstadoVazio, LarguraPopover, QuadradoDeProjeto,
-        Selo, Simbolo, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, numero_painel,
-        popover, teclas,
+        CabecalhoDeSecao, CartaoDeLista, ChaveAviso as _, CorpoPopover, EstadoVazio, LarguraPopover, Selo, Simbolo,
+        TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, botao_primario, numero_painel, popover, simbolo_do_chat,
+        teclas,
     },
-    icone_projeto,
     lateral::{Causa, MotivoDaPrevia, previa_elemento},
     mensagens::trechos_perigosos,
     tempo_relativo,
@@ -45,8 +44,8 @@ struct Linha {
     /// O sinal e o rótulo, os mesmos da prévia da lista (a resposta nova não tem).
     motivo: Option<MotivoDaPrevia>,
     detalhe: String,
-    icone: &'static icone_projeto::Icone,
-    cor: u32,
+    /// O que o último turno fez ("3 editados · 12 comandos"), na linha de baixo da resposta nova.
+    feito: String,
     /// Número do painel em que a conversa está aberta (e se é o ativo).
     painel: Option<(usize, bool)>,
     quando: u64,
@@ -68,7 +67,6 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
         let Some(chat) = motor.chat(p.chat()) else {
             continue;
         };
-        let (icone, cor) = icone_projeto::visual_do(motor, &chat.projeto);
         // A mesma conversa pode ter mais de um pedido, ou estar parada e com erro.
         let chave = match &p {
             Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } => pedido.clone(),
@@ -76,14 +74,17 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             Pendencia::Erro { chat, .. } => format!("erro-{chat}"),
             Pendencia::Nova { chat } => format!("nova-{chat}"),
         };
-        // A frase da lista: a linha já é da conversa que pede, então sem o número da tarefa.
+        // A frase da lista.
         let (motivo, detalhe) = match Causa::da_pendencia(&p) {
             Some(causa) => {
-                let (motivo, detalhe) = MotivoDaPrevia::de(&causa, None, 0);
+                let (motivo, detalhe) = MotivoDaPrevia::de(&causa);
                 (Some(motivo), detalhe)
             }
-            None => (None, format!("Resposta nova em {}", motor.nome_do_projeto(&chat.projeto))),
+            // A resposta nova diz o que o chat respondeu (a primeira frase, sem markdown) em vez de
+            // "Resposta nova" em toda linha (rodada de uso, item 3.3).
+            None => (None, super::falas::ultima_fala(chat).unwrap_or_else(|| "Resposta nova".to_string())),
         };
+        let feito = if matches!(p, Pendencia::Nova { .. }) { super::falas::o_que_o_turno_fez(&chat.itens) } else { String::new() };
         let pedido = match p {
             Pendencia::Permissao { pedido, ferramenta, .. } => {
                 let comando = motor
@@ -104,8 +105,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             titulo: chat.titulo.clone(),
             motivo,
             detalhe,
-            icone,
-            cor,
+            feito,
             painel: janela.painel_da_conversa(&chat.id),
             quando: chat.atualizado_em,
             pedido,
@@ -139,6 +139,9 @@ impl Janela {
             .open(self.caixa_aberta)
             .on_open_change(move |aberto, _, cx| {
                 let _ = fechar.update(cx, |this, cx| {
+                    if *aberto {
+                        this.so_um_flutuante(super::QualFlutuante::Sino);
+                    }
                     if this.caixa_aberta != *aberto {
                         this.caixa_aberta = *aberto;
                         cx.notify();
@@ -152,26 +155,85 @@ impl Janela {
             })
     }
 
-    /// Ctrl+G: abre a próxima pendência, a mais antiga que não é a conversa já aberta.
-    pub(super) fn proxima_pendencia(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ctrl+G (e Ctrl+Shift+G, para trás): a pendência seguinte à do chat aberto, achada pelo chat
+    /// e não pela posição, dando a volta depois da última (dono, 16/11/2026: rodada de uso, item
+    /// 3.4; antes ele recomeçava do início e, com A, B e C pendentes, alternava entre A e B). Ao
+    /// chegar, o foco vai para o lugar útil, e a pílula diz onde está ("2 de 3 · Parada · WMS").
+    pub(super) fn andar_nas_pendencias(&mut self, passo: i32, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
         let pendencias = motor.read(cx).pendencias();
-        let aberta = self.selecionado.as_deref();
-        let Some(chat) = pendencias
-            .iter()
-            .find(|p| Some(p.chat()) != aberta)
-            .or(pendencias.first())
-            .map(|p| p.chat().to_string())
-        else {
-            // Sem outra pendência, o primeiro cartão aberto do Mestre (ou o par travado no freio).
-            if let Some(e) = super::cartoes::esperas_do_mestre(motor.read(cx)).into_iter().next() {
-                self.ver_cartao(e.cartao, &e.chat, window, cx);
+        let chats = chats_das_pendencias(&pendencias);
+        let Some(ix) = proxima_na_volta(&chats, self.selecionado.as_deref(), passo) else {
+            // Sem pendência, o primeiro par travado no freio de ciclo; sem ele, a pílula avisa.
+            match super::resumo::esperas_de_ciclo(motor.read(cx)).into_iter().next() {
+                Some(e) => self.selecionar(Some(e.chat), window, cx),
+                None => window.push_notification(aviso(Tom::Info, "Nada esperando você").chave("ctrl-g"), cx),
             }
             return;
         };
-        self.selecionar(Some(chat), window, cx);
+        let chat = chats[ix].clone();
+        let Some(pendencia) = pendencias.iter().find(|p| p.chat() == chat).cloned() else {
+            return;
+        };
+        self.selecionar(Some(chat.clone()), window, cx);
+        let titulo = motor.read(cx).chat(&chat).map(|c| c.titulo.clone()).unwrap_or_default();
+        let pilula = format!("{} de {} · {} · {titulo}", ix + 1, chats.len(), rotulo_da_pendencia(&pendencia));
+        window.push_notification(aviso(Tom::Info, pilula).chave("ctrl-g"), cx);
+        // O foco no lugar útil: o Retomar da parada, o Tentar de novo do erro, o comentário do
+        // plano; nos outros casos, a caixa. (O pedido de permissão pelo teclado é o item 6.5.)
+        let painel = self.paineis.get(self.ativo);
+        let foco = match &pendencia {
+            Pendencia::Parada { .. } | Pendencia::Erro { pode_tentar: true, .. } => painel.map(|p| p.foco_faixa.clone()),
+            Pendencia::Plano { pedido, .. } => self.feedback_plano.get(pedido).map(|campo| campo.read(cx).focus_handle(cx)),
+            _ => None,
+        }
+        .or_else(|| painel.map(|p| p.composer.read(cx).focus_handle(cx)));
+        if let Some(foco) = foco {
+            window.focus(&foco, cx);
+        }
+    }
+
+    /// Ctrl+G: a próxima.
+    pub(super) fn proxima_pendencia(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.andar_nas_pendencias(1, window, cx);
+    }
+}
+
+/// Os chats das pendências, um por chat, na ordem do sino.
+fn chats_das_pendencias(pendencias: &[Pendencia]) -> Vec<String> {
+    let mut chats: Vec<String> = Vec::new();
+    for p in pendencias {
+        if !chats.iter().any(|c| c == p.chat()) {
+            chats.push(p.chat().to_string());
+        }
+    }
+    chats
+}
+
+/// A posição da pendência seguinte (ou anterior, com `passo` negativo) à do chat `atual`, dando a
+/// volta; sem o chat aberto na lista, a primeira (ou a última, para trás).
+fn proxima_na_volta(chats: &[String], atual: Option<&str>, passo: i32) -> Option<usize> {
+    let n = chats.len() as i32;
+    if n == 0 {
+        return None;
+    }
+    Some(match atual.and_then(|a| chats.iter().position(|c| c == a)) {
+        Some(k) => (k as i32 + passo).rem_euclid(n) as usize,
+        None if passo < 0 => (n - 1) as usize,
+        None => 0,
+    })
+}
+
+/// O nome da pendência na pílula do Ctrl+G.
+fn rotulo_da_pendencia(p: &Pendencia) -> &'static str {
+    match p {
+        Pendencia::Permissao { .. } => "Permissão",
+        Pendencia::Plano { .. } => "Plano para aprovar",
+        Pendencia::Erro { .. } => "Erro",
+        Pendencia::Parada { .. } => "Parada",
+        Pendencia::Nova { .. } => "Resposta nova",
     }
 }
 
@@ -208,15 +270,15 @@ fn caixa_do_sino(
     let Some(motor) = j.read(cx).motor.clone() else {
         return div().into_any_element();
     };
-    let (secoes, precisa, do_mestre) = {
+    let (secoes, precisa, de_ciclo) = {
         let m = motor.read(cx);
-        (ler_secoes(j.read(cx), m), super::cartoes::precisa_com_o_mestre(m), super::cartoes::esperas_do_mestre(m))
+        (ler_secoes(j.read(cx), m), super::resumo::precisa_em_tudo(m), super::resumo::esperas_de_ciclo(m))
     };
     let popover = popover.downgrade();
     let numero = precisa.numero();
-    let cor = if precisa.erro { Cores::vermelho() } else { Cores::ambar() };
+    let cor = if precisa.erro { Cores::vermelho() } else { Cores::espera() };
     let novas: Vec<String> = secoes.novas.iter().map(|l| l.chat.clone()).collect();
-    let vazia = do_mestre.is_empty()
+    let vazia = de_ciclo.is_empty()
         && secoes.pedidos.is_empty()
         && secoes.paradas.is_empty()
         && secoes.erros.is_empty()
@@ -255,29 +317,30 @@ fn caixa_do_sino(
         );
     }
     // A primeira seção encosta no título (4 em cima, e não os 16 de respiro).
-    let primeira = if do_mestre.is_empty() {
+    let primeira = if de_ciclo.is_empty() {
         [&secoes.pedidos, &secoes.paradas, &secoes.erros, &secoes.novas].iter().position(|l| !l.is_empty())
     } else {
         Some(usize::MAX)
     };
-    if !do_mestre.is_empty() {
-        corpo = corpo.child(CabecalhoDeSecao::new("Do Mestre").contagem(do_mestre.len()).tingida(Cores::ambar()).primeira(true));
-        for e in do_mestre {
-            let (cartao, chat, chave) = (e.cartao, e.chat.clone(), e.chave.clone());
+    if !de_ciclo.is_empty() {
+        corpo = corpo.child(CabecalhoDeSecao::new("Mensagens seguidas").contagem(de_ciclo.len()).tingida(Cores::espera()).primeira(true));
+        for e in de_ciclo {
+            let (chat, chave) = (e.chat.clone(), e.chave.clone());
             let (janela_v, popover_v) = (janela.clone(), popover.clone());
             let abrir = move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let _ = popover_v.update(cx, |p, cx| p.dismiss(window, cx));
-                let _ = janela_v.update(cx, |this, cx| this.ver_cartao(cartao, &chat, window, cx));
+                let _ = janela_v.update(cx, |this, cx| this.selecionar(Some(chat.clone()), window, cx));
             };
             let abrir = std::rc::Rc::new(abrir);
             let (a1, a2) = (abrir.clone(), abrir);
             let subtitulo = previa_elemento(None, e.texto, false);
+            let titulo = motor.read(cx).chat(&e.chat).map(|c| c.titulo.clone()).unwrap_or_default();
             corpo = corpo.child(
-                CartaoDeLista::new(id("caixa-mestre", &chave), "Mestre")
-                    .simbolo(Simbolo::Papel(super::componentes::Papel::Mestre))
+                CartaoDeLista::new(id("caixa-ciclo", &chave), titulo)
+                    .simbolo(Simbolo::icone_cor(Lucide::MessageSquare, Cores::espera()))
                     .subtitulo(subtitulo)
                     .acao_fixa(
-                        botao_fantasma(id("caixa-mestre-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
+                        botao_fantasma(id("caixa-ciclo-ver", &chave), None, "Ver", TamanhoBotao::Linha, window, cx)
                             .on_click(move |ev, window, cx| a1(ev, window, cx)),
                     )
                     .on_click(move |ev, window, cx| a2(ev, window, cx)),
@@ -294,9 +357,20 @@ fn caixa_do_sino(
         })
     };
     corpo = corpo
-        .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::ambar())))
+        .children(secao(0, "Pedidos", &secoes.pedidos, Some(Cores::espera())))
         .children(secoes.pedidos.into_iter().map(|l| linha_de_pedido(l, janela, &popover, &motor, window, cx)))
-        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::ambar())))
+        .children(secao(1, "Paradas", &secoes.paradas, Some(Cores::espera())).map(|cabecalho| {
+            // Com duas ou mais, "Retomar tudo" (o mesmo da lista; item 3.4): depois de "Vitral
+            // fechou" eram N cliques.
+            if secoes.paradas.len() < 2 {
+                return cabecalho;
+            }
+            let (motor, chats) = (motor.clone(), secoes.paradas.iter().map(|l| l.chat.clone()).collect::<Vec<_>>());
+            cabecalho.acao(
+                botao_fantasma("caixa-retomar-tudo", Some(Lucide::Play.into()), "Retomar tudo", TamanhoBotao::Linha, window, cx)
+                    .on_click(move |_, _, cx| motor.update(cx, |m, cx| for c in &chats { m.retomar(c, cx) })),
+            )
+        }))
         .children(secoes.paradas.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
         .children(secao(2, "Erros", &secoes.erros, Some(Cores::vermelho())))
         .children(secoes.erros.into_iter().map(|l| linha(l, janela, &popover, &motor, window, cx)))
@@ -330,13 +404,13 @@ fn caixa_do_sino(
         .into_any_element()
 }
 
-/// Onde o texto da linha começa (8 do cartão, o quadrado de 24 e 12): o comando e os botões do
+/// Onde o texto da linha começa (8 do cartão, o balão de 24 e 12): o comando e os botões do
 /// pedido ficam nessa coluna.
 const TEXTO_DA_LINHA: f32 = 44.;
 
-/// O quadrado do projeto de 24 à esquerda da linha.
-fn simbolo(l: &Linha) -> Simbolo {
-    Simbolo::Elemento(QuadradoDeProjeto::new(l.icone, l.cor, 24.).into_any_element())
+/// O balão de 24 à esquerda da linha.
+fn simbolo() -> Simbolo {
+    Simbolo::Elemento(simbolo_do_chat(24.).into_any_element())
 }
 
 /// À direita: o número do painel em que a conversa está aberta, ou há quanto tempo mudou.
@@ -373,12 +447,24 @@ fn linha(
         ),
         _ => None,
     };
+    // Embaixo da frase, o que o turno fez: dá para separar o chat que mexeu em arquivos do que só
+    // respondeu sem abrir nenhum.
+    let subtitulo = v_flex()
+        .min_w_0()
+        .child(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
+        .when(!l.feito.is_empty(), |s| s.child(div().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(l.feito.clone())));
     let cartao = CartaoDeLista::new(id("caixa-linha", &l.chave), l.titulo.clone())
-        .simbolo(simbolo(&l))
-        .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
+        .simbolo(simbolo())
+        .subtitulo(subtitulo)
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
+    // O botão com texto ("Tentar de novo", "Retomar") fica no fluxo, sempre à vista, e o título
+    // encolhe antes dele. Como ação de hover ele cairia no lugar de um botão de ícone (24 px) e
+    // cobria o título (dono, 16/11/2026: "esse tentar de novo tá bugado"). Só o de ícone
+    // ("Marcar como lida") é ação de hover.
+    let com_texto = !matches!(l.pedido, Pedido::Nova);
     match acao {
+        Some(acao) if com_texto => cartao.acao_fixa(div().flex_none().ml(esp::E8).child(acao)).into_any_element(),
         Some(acao) => cartao.acao(acao).into_any_element(),
         None => cartao.into_any_element(),
     }
@@ -397,7 +483,7 @@ fn linha_de_pedido(
 ) -> AnyElement {
     let chave = l.chave.as_str();
     let cartao = CartaoDeLista::new(id("caixa-pedido", chave), l.titulo.clone())
-        .simbolo(simbolo(&l))
+        .simbolo(simbolo())
         .subtitulo(previa_elemento(l.motivo.as_ref(), l.detalhe.clone(), false))
         .meta(meta(&l))
         .on_click(abrir_conversa(janela, popover, &l.chat));
@@ -459,4 +545,24 @@ fn linha_de_pedido(
 
 fn id(prefixo: &str, chave: &str) -> ElementId {
     SharedString::from(format!("{prefixo}-{chave}")).into()
+}
+
+#[cfg(test)]
+mod testes {
+    use super::proxima_na_volta;
+
+    #[test]
+    fn ctrl_g_anda_pelas_pendencias_dando_a_volta() {
+        let chats: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        // Do A vai ao B, do B ao C e do C volta ao A: o C não fica de fora.
+        assert_eq!(proxima_na_volta(&chats, Some("a"), 1), Some(1));
+        assert_eq!(proxima_na_volta(&chats, Some("b"), 1), Some(2));
+        assert_eq!(proxima_na_volta(&chats, Some("c"), 1), Some(0));
+        // Para trás (Ctrl+Shift+G).
+        assert_eq!(proxima_na_volta(&chats, Some("a"), -1), Some(2));
+        // Sem o chat aberto entre as pendências: a primeira, ou a última para trás.
+        assert_eq!(proxima_na_volta(&chats, Some("x"), 1), Some(0));
+        assert_eq!(proxima_na_volta(&chats, None, -1), Some(2));
+        assert_eq!(proxima_na_volta(&[], Some("a"), 1), None);
+    }
 }

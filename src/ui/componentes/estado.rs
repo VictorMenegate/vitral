@@ -1,6 +1,5 @@
 //! Estado e sinais: pontos de sinal, pílula de estado, selos e o número do painel, e as funções
-//! que leem o motor para dar um desenho só a cada situação (`sinal_do_chat`, `sinal_do_projeto`,
-//! `estado_visual`, `pilula_da_tarefa`).
+//! que leem o motor para dar um desenho só a cada situação (`sinal_do_chat`).
 
 use std::{rc::Rc, time::Duration};
 
@@ -9,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::{
-    modelo::{Chat, EstadoTarefa, Execucao, Papel, Tarefa},
+    modelo::{Chat, Execucao},
     motor::Motor,
     tema::{Cores, Tipo as _, esp, r, raio, tam},
 };
@@ -29,7 +28,7 @@ impl Sinal {
     pub fn cor(self) -> Hsla {
         match self {
             Sinal::Erro => Cores::vermelho(),
-            Sinal::Pedido | Sinal::Parada => Cores::ambar(),
+            Sinal::Pedido | Sinal::Parada => Cores::espera(),
             Sinal::Nova | Sinal::Rodando => Cores::destaque(),
         }
     }
@@ -75,6 +74,43 @@ impl RenderOnce for PontoDeSinal {
     }
 }
 
+/// O ícone de um chat É o estado dele (na aba e na linha da lista): o balão igual em todos não
+/// dizia nada (dono, 13/11/2026: "tô achando esse ícone meio inútil"). Trabalhando, um anel
+/// girando; esperando você (permissão, parada), um disco azul-claro; terminou e você não leu, azul;
+/// erro, vermelho; parado e lido, o balão apagado.
+#[derive(IntoElement)]
+pub struct IconeDeEstado {
+    sinal: Option<Sinal>,
+    lado: f32,
+}
+
+pub fn icone_de_estado(sinal: Option<Sinal>, lado: f32) -> IconeDeEstado {
+    IconeDeEstado { sinal, lado }
+}
+
+impl RenderOnce for IconeDeEstado {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+        // Disco e anel a 0,8 da caixa, o balão a `lado - 2`: os três com 15 a 16 de desenho numa
+        // coluna só. O disco enchia os 20 e parecia um botão maior que o balão do lado (relatório
+        // de aparência, 16/11/2026, V10). O ponto continua do mesmo tamanho.
+        let caixa = div().flex_none().size(r(self.lado)).flex().items_center().justify_center();
+        match self.sinal {
+            Some(Sinal::Rodando) => caixa.child(super::graficos::AnelGirando::new(self.lado * 0.8).cor(Cores::destaque())),
+            Some(sinal) => caixa.child(
+                div()
+                    .size(r(self.lado * 0.8))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(Cores::tinta_solida(sinal.cor(), 0.22))
+                    .child(div().size(r((self.lado * 0.45).round())).rounded_full().bg(sinal.cor())),
+            ),
+            None => caixa.child(super::icone(crate::tema::Lucide::MessageCircle, self.lado - 2., window).text_color(Cores::apagado())),
+        }
+    }
+}
+
 /// Estado de uma tarefa ou chat, como a pílula mostra.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Estado {
@@ -108,7 +144,7 @@ impl Estado {
     pub fn cor(self) -> Option<Hsla> {
         match self {
             Estado::Rodando | Estado::Verificando | Estado::EmRevisao => Some(Cores::destaque()),
-            Estado::EsperandoVoce | Estado::ParadoAtencao => Some(Cores::ambar()),
+            Estado::EsperandoVoce | Estado::ParadoAtencao => Some(Cores::espera()),
             Estado::Pronto => Some(Cores::verde()),
             Estado::Erro => Some(Cores::vermelho()),
             Estado::NaFila | Estado::Parado => None,
@@ -151,13 +187,6 @@ pub struct PilulaDeEstado {
 impl PilulaDeEstado {
     pub fn new(estado: Estado) -> Self {
         PilulaDeEstado { estado, rotulo: None, detalhe: None, compacta: false, cor: None }
-    }
-
-    /// Outra cor no lugar da do estado: só o "mesclado" do PR, em violeta (a convenção do GitHub,
-    /// exceção documentada na especificação).
-    pub fn cor(mut self, cor: Hsla) -> Self {
-        self.cor = Some(cor);
-        self
     }
 
     /// Troca o texto padrão ("aprovada", "cancelada").
@@ -231,6 +260,11 @@ impl RenderOnce for PilulaDeEstado {
     }
 }
 
+/// O aro de 2 no escuro da base que recorta um selo do botão embaixo dele.
+fn aro_de_recorte() -> BoxShadow {
+    BoxShadow::new(px(0.), px(0.), Cores::vidro()).spread_radius(px(2.))
+}
+
 #[derive(Clone)]
 enum TipoSelo {
     Neutro,
@@ -252,6 +286,7 @@ pub struct Selo {
     vazado: bool,
     lado: f32,
     clicavel: Option<(ElementId, Rc<dyn Fn(&mut Window, &mut App)>)>,
+    recortado: bool,
 }
 
 impl Selo {
@@ -265,7 +300,17 @@ impl Selo {
             vazado: false,
             lado: 8.,
             clicavel: None,
+            recortado: false,
         }
+    }
+
+    /// O selo por cima de um botão (o sino, o logo recolhido): do tamanho de um contador (16), com
+    /// um aro de 2 no escuro da base que o recorta do botão, como o ponto do logo e a inicial do
+    /// anel de uso. O de 18 encostado no sino era maior que ele (relatório de aparência,
+    /// 16/11/2026, V16).
+    pub fn recortado(mut self) -> Self {
+        self.recortado = true;
+        self
     }
 
     /// "1M de contexto", "padrão": contorno, 11/600 tênue.
@@ -336,7 +381,7 @@ impl RenderOnce for Selo {
         let pilula = || div().flex_none().flex().items_center().rounded(raio::de(20.)).micro().whitespace_nowrap();
         let corpo = match self.tipo {
             TipoSelo::Ponto(cor) => {
-                let ponto = div().flex_none().size(r(self.lado)).rounded_full();
+                let ponto = div().flex_none().size(r(self.lado)).rounded_full().when(self.recortado, |s| s.shadow(vec![aro_de_recorte()]));
                 if self.vazado { ponto.border_2().border_color(cor) } else { ponto.bg(cor) }.into_any_element()
             }
             TipoSelo::Contagem(n) => {
@@ -346,13 +391,15 @@ impl RenderOnce for Selo {
                     (None, Some(c)) => (Cores::tinta(c), c),
                     (None, None) => (Cores::traco(), Cores::tenue()),
                 };
+                let lado = if self.recortado { 16. } else { 18. };
                 pilula()
-                    .min_w(r(18.))
-                    .h(r(18.))
+                    .min_w(r(lado))
+                    .h(r(lado))
                     .px(esp::E4)
                     .justify_center()
                     .bg(fundo)
                     .text_color(cor)
+                    .when(self.recortado, |s| s.shadow(vec![aro_de_recorte()]))
                     .child(texto)
                     .into_any_element()
             }
@@ -480,17 +527,15 @@ impl RenderOnce for Etiqueta {
     }
 }
 
-/// Gravidade de um problema do revisor, em minúsculas.
-pub fn selo_gravidade(gravidade: &str) -> Selo {
-    match gravidade.trim().to_lowercase().as_str() {
-        "alta" => Selo::cor("alta", Cores::vermelho()),
-        "média" | "media" => Selo::cor("média", Cores::ambar()),
-        outra => Selo::neutro(if outra.is_empty() { "baixa".to_string() } else { outra.to_string() }),
-    }
-}
-
-/// Número do painel (Alt+1…4): destaque cheio no ativo, recuo com borda nos outros.
+/// Número do painel (Alt+1…4): uma tecla no recuo, com borda. O ativo leva a borda e o algarismo
+/// em azul, sem o metal: o disco cheio azul com algarismo branco é o desenho dos avisos (sino,
+/// logo), e "Nova conversa 1" se lia como "1 não lida" (relatório de design, 16/11/2026).
 pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
+    let (borda, cor) = if ativo {
+        (Cores::tinta_borda(Cores::destaque()), Cores::destaque_texto())
+    } else {
+        (Cores::borda(), Cores::tenue())
+    };
     div()
         .flex_none()
         .size(r(18.))
@@ -499,19 +544,11 @@ pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
         .justify_center()
         .rounded(raio::de(18.))
         .micro()
-        .relative()
-        .map(|s| {
-            if ativo {
-                // O número do painel ativo é uma tecla de metal azul, como o "+" e o enviar.
-                let cantos = gpui_kit::Corners::all(raio::de(18.));
-                s.text_color(Cores::sobre_destaque())
-                    .child(super::metal::abertura(super::metal::Encaixe::Cobrir, Some(Cores::destaque().opacity(0.6)), cantos))
-                    .child(div().absolute().inset_0().rounded(raio::de(18.)).shadow(crate::tema::aresta_de_tecla()))
-            } else {
-                s.bg(Cores::recuo()).border_1().border_color(Cores::borda()).text_color(Cores::tenue())
-            }
-        })
-        .child(div().relative().child(n.to_string()))
+        .bg(Cores::recuo())
+        .border_1()
+        .border_color(borda)
+        .text_color(cor)
+        .child(n.to_string())
 }
 
 /// O que um chat tem para o sinal, já filtrado (arquivado não espera nada).
@@ -522,19 +559,19 @@ struct FatosDoSinal {
     /// Parou e precisa de Retomar (a parada por você não conta).
     parada: bool,
     nova: bool,
-    /// Processo ativo ou na fila esperando vaga.
+    /// Processo ativo.
     rodando: bool,
 }
 
 fn fatos_do_sinal(motor: &Motor, c: &Chat) -> FatosDoSinal {
     let execucao = motor.execucao(&c.id);
-    let espera = !motor.arquivada(c);
+    let espera = !c.arquivado;
     FatosDoSinal {
         erro: espera && matches!(execucao, Execucao::Erro(_)),
         pedido: espera && execucao == Execucao::EsperandoVoce,
         parada: espera && motor.precisa_retomar(&c.id),
-        nova: espera && c.papel.na_lista() && motor.nao_lido(c),
-        rodando: matches!(execucao, Execucao::Rodando { .. }) || motor.esperando_vaga(&c.id),
+        nova: espera && motor.nao_lido(c),
+        rodando: matches!(execucao, Execucao::Rodando { .. }),
     }
 }
 
@@ -556,323 +593,32 @@ fn sinal_de(fatos: &[FatosDoSinal]) -> Option<Sinal> {
     }
 }
 
-/// O sinal de um chat; no coordenador vale a família toda (os trabalhadores não arquivados).
+/// O sinal de um chat.
 pub fn sinal_do_chat(motor: &Motor, chat: &Chat) -> Option<Sinal> {
-    let fatos: Vec<FatosDoSinal> = match chat.papel {
-        Papel::Coordenador | Papel::Mestre | Papel::Projeto => {
-            motor.familia(chat).into_iter().map(|c| fatos_do_sinal(motor, c)).collect()
-        }
-        Papel::Trabalhador => vec![fatos_do_sinal(motor, chat)],
-    };
-    sinal_de(&fatos)
+    sinal_de(&[fatos_do_sinal(motor, chat)])
 }
 
-/// O sinal de um projeto: o mais forte entre as conversas dele que não estão arquivadas.
-pub fn sinal_do_projeto(motor: &Motor, projeto: &str) -> Option<Sinal> {
-    let fatos: Vec<FatosDoSinal> = motor
-        .chats
-        .iter()
-        .filter(|c| c.projeto == projeto && !c.arquivado && c.papel != Papel::Mestre)
-        .map(|c| fatos_do_sinal(motor, c))
-        .collect();
-    sinal_de(&fatos)
-}
-
-/// Como uma tarefa aparece em todo lugar (pílula, legenda, chip do chat): a mesma palavra e a
-/// mesma cor, com o detalhe curto e a explicação inteira na dica.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EstadoVisual {
-    pub estado: Estado,
-    pub rotulo: SharedString,
-    pub detalhe: Option<SharedString>,
-    pub dica: SharedString,
-}
-
-/// O que a tabela de estados precisa do motor, além da tarefa.
-#[derive(Clone, Debug, Default)]
-struct FatosDaTarefa {
-    execucao: Option<Execucao>,
-    /// `Motor::tarefa_parada`: parou no meio e nada a faz andar até alguém mandar retomar.
-    parada: bool,
-    /// A parada não foi você: pede Retomar (âmbar).
-    precisa_retomar: bool,
-    esperando_vaga: bool,
-    revisor_ligado: bool,
-    /// Há quanto tempo o turno do trabalhador roda ("2 min 13 s").
-    decorrido: Option<String>,
-}
-
-/// O motivo da parada em poucas palavras ("Vitral fechou", "verificação parou"), o mesmo na
-/// pílula, na prévia da lista e no sino. Numa tarefa em revisão, quem parou foi a revisão.
-pub fn motivo_curto(motivo: &str, em_revisao: bool) -> String {
-    if motivo.starts_with("você") {
-        "você interrompeu".into()
-    } else if motivo.contains("verificação") {
-        "verificação parou".into()
-    } else if motivo.contains("preparação") {
-        "preparação parou".into()
-    } else if em_revisao {
-        "revisão parou".into()
-    } else if motivo.contains("Vitral") {
-        "Vitral fechou".into()
-    } else {
-        motivo.to_string()
-    }
-}
-
-fn estado_visual_de(t: &Tarefa, f: &FatosDaTarefa) -> EstadoVisual {
-    let ativa = t.estado.ativa();
-    let progresso = t.progresso.as_deref().unwrap_or_default();
-    let visual = |estado: Estado, rotulo: &str, detalhe: Option<String>, dica: String| EstadoVisual {
-        estado,
-        rotulo: rotulo.to_string().into(),
-        detalhe: detalhe.map(Into::into),
-        dica: dica.into(),
-    };
-    match &f.execucao {
-        Some(Execucao::EsperandoVoce) if ativa => {
-            return visual(
-                Estado::EsperandoVoce,
-                "esperando você",
-                Some("permissão".into()),
-                "O chat espera a sua permissão para continuar.".into(),
-            );
-        }
-        Some(Execucao::Erro(erro)) if ativa => {
-            let linha = erro.lines().next().unwrap_or_default().to_string();
-            return visual(Estado::Erro, "erro", Some("o processo caiu".into()), format!("O processo caiu: {linha}"));
-        }
-        _ => {}
-    }
-    if f.parada {
-        let motivo = t.parada.clone().unwrap_or_default();
-        let estado = if f.precisa_retomar { Estado::ParadoAtencao } else { Estado::Parado };
-        let dica = if f.precisa_retomar {
-            format!("Parada: {motivo}. Use Retomar para continuar.")
-        } else {
-            format!("Parada: {motivo}.")
-        };
-        return visual(estado, "parada", Some(motivo_curto(&motivo, t.estado == EstadoTarefa::EmRevisao)), dica);
-    }
-    match t.estado {
-        EstadoTarefa::Rodando | EstadoTarefa::Ajustando if f.esperando_vaga => visual(
-            Estado::NaFila,
-            "na fila",
-            Some("esperando vaga".into()),
-            "Começa quando outro chat terminar.".into(),
-        ),
-        EstadoTarefa::Rodando | EstadoTarefa::Ajustando if !t.preparada || progresso.starts_with("preparando") => {
-            visual(Estado::Rodando, "preparando", Some("a cópia".into()), "Preparando a cópia isolada do chat.".into())
-        }
-        EstadoTarefa::Rodando | EstadoTarefa::Ajustando if progresso.starts_with("esperando") => visual(
-            Estado::NaFila,
-            "esperando resposta",
-            None,
-            "O chat perguntou algo e espera a resposta de quem pediu.".into(),
-        ),
-        EstadoTarefa::Rodando => {
-            visual(Estado::Rodando, "rodando", f.decorrido.clone(), "O chat está trabalhando no pedido.".into())
-        }
-        EstadoTarefa::Ajustando => {
-            let detalhe = match &f.decorrido {
-                Some(d) => format!("rodada {} · {d}", t.rodada),
-                None => format!("rodada {}", t.rodada),
-            };
-            visual(Estado::Rodando, "ajustando", Some(detalhe), "O chat ajusta o que foi pedido.".into())
-        }
-        EstadoTarefa::EmRevisao if t.conferindo() => {
-            let detalhe = match (t.verificacao.is_some(), f.revisor_ligado) {
-                (true, true) => "testes e revisor",
-                (true, false) => "testes",
-                (false, true) => "revisor",
-                (false, false) => "a entrega",
-            };
-            visual(
-                Estado::Verificando,
-                "verificando",
-                Some(detalhe.into()),
-                "A verificação e o revisor conferem a entrega antes de quem pediu decidir.".into(),
-            )
-        }
-        EstadoTarefa::EmRevisao => {
-            let (com_quem, quem) = match t.dono() {
-                None => ("com você", "Você decide"),
-                Some(crate::modelo::ID_MESTRE) => ("com o Mestre", "O Mestre decide"),
-                Some(_) => ("com o chat dele", "O chat que pediu decide"),
-            };
-            visual(Estado::EmRevisao, "em revisão", Some(com_quem.into()), format!("{quem}: juntar ou pedir ajuste."))
-        }
-        EstadoTarefa::Aprovada => visual(
-            Estado::Pronto,
-            "aprovada",
-            t.branch.is_some().then(|| "juntada".into()),
-            "Aprovada e juntada ao projeto.".into(),
-        ),
-        EstadoTarefa::Falhou => visual(Estado::Erro, "falhou", None, "O pedido falhou.".into()),
-        EstadoTarefa::Cancelada => visual(Estado::Parado, "cancelada", None, "O pedido foi cancelado.".into()),
-        EstadoTarefa::Conversa => visual(Estado::Parado, "conversa", None, "Pronto para conversar.".into()),
-        // O PR aberto: a cor segue os checks (e a rodada que espera o "Atualizar PR").
-        EstadoTarefa::NoPr => {
-            let Some(pr) = t.pr.as_ref() else {
-                return visual(Estado::Parado, "PR aberto", None, "O PR está aberto no GitHub.".into());
-            };
-            let n = format!("#{}", pr.numero);
-            let c = &pr.checks;
-            let checks = (c.total > 0).then(|| format!("{n} · {}/{}", c.terminados, c.total)).unwrap_or_else(|| n.clone());
-            match () {
-                _ if t.pronto_para_atualizar => visual(
-                    Estado::EsperandoVoce,
-                    "pronto para atualizar",
-                    Some(n),
-                    "A rodada passou na verificação e espera o Atualizar PR.".into(),
-                ),
-                _ if pr.estado == crate::github::EstadoPr::Rascunho => {
-                    visual(Estado::Parado, "rascunho", Some(n), "O PR está aberto como rascunho.".into())
-                }
-                _ if c.estado == crate::github::EstadoChecks::Falhou => {
-                    visual(Estado::Erro, "CI falhou", Some(n), format!("{} de {} checks falharam no PR.", c.falhos, c.total))
-                }
-                _ if c.estado == crate::github::EstadoChecks::Pendente => visual(
-                    Estado::Rodando,
-                    "PR aberto",
-                    Some(checks),
-                    "O PR está aberto e os checks rodam; o Vitral acompanha.".into(),
-                ),
-                _ => visual(Estado::Pronto, "PR aberto", Some(n), "O PR está aberto no GitHub; o Vitral acompanha os checks e a revisão.".into()),
-            }
-        }
-    }
-}
-
-/// O estado de uma tarefa como aparece em toda a interface (tabela 3.4 da Equipe).
-pub fn estado_visual(motor: &Motor, t: &Tarefa) -> EstadoVisual {
-    let execucao = motor.execucao(&t.trabalhador);
-    let decorrido = match execucao {
-        Execucao::Rodando { desde } => Some(crate::ui::duracao(desde)),
-        _ => None,
-    };
-    let fatos = FatosDaTarefa {
-        execucao: Some(execucao),
-        parada: motor.tarefa_parada(t),
-        precisa_retomar: motor.precisa_retomar(&t.trabalhador),
-        esperando_vaga: motor.esperando_vaga(&t.trabalhador),
-        revisor_ligado: motor.config.revisor,
-        decorrido,
-    };
-    estado_visual_de(t, &fatos)
-}
-
-/// A pílula de uma tarefa: na lista, no chat, na Equipe e no Mestre.
-pub fn pilula_da_tarefa(motor: &Motor, t: &Tarefa) -> PilulaDeEstado {
-    let visual = estado_visual(motor, t);
-    let pilula = PilulaDeEstado::new(visual.estado).rotulo(visual.rotulo);
-    match visual.detalhe {
-        Some(d) => pilula.detalhe(d),
-        None => pilula,
-    }
+/// O motivo da parada em poucas palavras ("Vitral fechou"), o mesmo na prévia da lista e no sino.
+pub fn motivo_curto(motivo: &str) -> String {
+    if motivo.contains("Vitral") { "Vitral fechou".into() } else { motivo.to_string() }
 }
 
 #[cfg(test)]
 mod testes {
-    use super::{Estado, EstadoVisual, FatosDaTarefa, FatosDoSinal, Sinal, estado_visual_de, motivo_curto, sinal_de};
-    use crate::modelo::{Execucao, Tarefa};
-
-    fn tarefa(estado: &str) -> Tarefa {
-        let json = format!(
-            r#"{{"id": 2, "projeto": "loja", "coordenador": "c", "trabalhador": "t", "titulo": "Preços",
-                "objetivo": "o", "criterios": [], "verificacao": "cargo test", "estado": "{estado}",
-                "rodada": 1, "branch": "vitral/tarefa-2", "criada_em": 0}}"#
-        );
-        serde_json::from_str(&json).unwrap()
-    }
-
-    fn ver(t: &Tarefa, f: FatosDaTarefa) -> (Estado, String, Option<String>) {
-        let EstadoVisual { estado, rotulo, detalhe, .. } = estado_visual_de(t, &f);
-        (estado, rotulo.to_string(), detalhe.map(|d| d.to_string()))
-    }
-
-    fn com(rotulo: &str, detalhe: Option<&str>) -> (String, Option<String>) {
-        (rotulo.into(), detalhe.map(Into::into))
-    }
-
-    #[test]
-    fn estado_visual_segue_a_tabela_da_equipe() {
-        let rodando = tarefa("Rodando");
-        let caso = |t: &Tarefa, f: FatosDaTarefa| {
-            let (estado, rotulo, detalhe) = ver(t, f);
-            (estado, (rotulo, detalhe))
-        };
-        let pedido = FatosDaTarefa { execucao: Some(Execucao::EsperandoVoce), ..Default::default() };
-        assert_eq!(caso(&rodando, pedido), (Estado::EsperandoVoce, com("esperando você", Some("permissão"))));
-        let erro = FatosDaTarefa { execucao: Some(Execucao::Erro("529\nresto".into())), ..Default::default() };
-        assert_eq!(caso(&rodando, erro), (Estado::Erro, com("erro", Some("o processo caiu"))));
-        let fila = FatosDaTarefa { esperando_vaga: true, ..Default::default() };
-        assert_eq!(caso(&rodando, fila), (Estado::NaFila, com("na fila", Some("esperando vaga"))));
-        let correndo = FatosDaTarefa { decorrido: Some("2 min 13 s".into()), ..Default::default() };
-        assert_eq!(caso(&rodando, correndo.clone()), (Estado::Rodando, com("rodando", Some("2 min 13 s"))));
-
-        let mut preparando = tarefa("Rodando");
-        preparando.preparada = false;
-        assert_eq!(caso(&preparando, Default::default()), (Estado::Rodando, com("preparando", Some("a cópia"))));
-        preparando.preparada = true;
-        preparando.progresso = Some("esperando resposta do coordenador".into());
-        assert_eq!(caso(&preparando, Default::default()), (Estado::NaFila, com("esperando resposta", None)));
-
-        let mut ajustando = tarefa("Ajustando");
-        ajustando.rodada = 2;
-        let tres = FatosDaTarefa { decorrido: Some("3 min 00 s".into()), ..Default::default() };
-        assert_eq!(caso(&ajustando, tres), (Estado::Rodando, com("ajustando", Some("rodada 2 · 3 min 00 s"))));
-
-        let mut conferindo = tarefa("EmRevisao");
-        conferindo.progresso = Some("verificando e revisando a entrega".into());
-        let revisor = FatosDaTarefa { revisor_ligado: true, ..Default::default() };
-        assert_eq!(caso(&conferindo, revisor.clone()), (Estado::Verificando, com("verificando", Some("testes e revisor"))));
-        conferindo.verificacao = None;
-        assert_eq!(caso(&conferindo, revisor), (Estado::Verificando, com("verificando", Some("revisor"))));
-        assert_eq!(
-            caso(&tarefa("EmRevisao"), Default::default()),
-            (Estado::EmRevisao, com("em revisão", Some("com o chat dele")))
-        );
-        assert_eq!(caso(&tarefa("Aprovada"), Default::default()), (Estado::Pronto, com("aprovada", Some("juntada"))));
-        assert_eq!(caso(&tarefa("Falhou"), Default::default()), (Estado::Erro, com("falhou", None)));
-        assert_eq!(caso(&tarefa("Cancelada"), Default::default()), (Estado::Parado, com("cancelada", None)));
-    }
+    use super::{Estado, FatosDoSinal, Sinal, motivo_curto, sinal_de};
 
     #[test]
     fn motivo_da_parada_em_poucas_palavras() {
-        assert_eq!(motivo_curto("o Vitral foi fechado no meio", false), "Vitral fechou");
-        assert_eq!(motivo_curto("o Vitral foi fechado no meio do turno", false), "Vitral fechou");
-        assert_eq!(motivo_curto("o Vitral foi fechado no meio", true), "revisão parou");
-        assert_eq!(motivo_curto("a verificação foi interrompida", true), "verificação parou");
-        assert_eq!(motivo_curto("a preparação da cópia foi interrompida", false), "preparação parou");
-        assert_eq!(motivo_curto("você interrompeu", true), "você interrompeu");
-        assert_eq!(motivo_curto("outro motivo", false), "outro motivo");
+        assert_eq!(motivo_curto("o Vitral foi fechado no meio do turno"), "Vitral fechou");
+        assert_eq!(motivo_curto("outro motivo"), "outro motivo");
     }
 
+    /// A cor de espera fica só para o que precisa de você; a revisão anda na família do rodando.
     #[test]
-    fn parada_pelo_vitral_e_ambar_e_por_voce_e_neutra() {
-        let mut t = tarefa("Rodando");
-        t.parada = Some("o Vitral foi fechado no meio".into());
-        let atencao = FatosDaTarefa { parada: true, precisa_retomar: true, ..Default::default() };
-        assert_eq!(ver(&t, atencao), (Estado::ParadoAtencao, "parada".into(), Some("Vitral fechou".into())));
-        t.parada = Some("você interrompeu".into());
-        let voce = FatosDaTarefa { parada: true, ..Default::default() };
-        assert_eq!(ver(&t, voce), (Estado::Parado, "parada".into(), Some("você interrompeu".into())));
-        let mut revisao = tarefa("EmRevisao");
-        revisao.parada = Some("a verificação foi interrompida".into());
-        let cortada = FatosDaTarefa { parada: true, precisa_retomar: true, ..Default::default() };
-        assert_eq!(ver(&revisao, cortada).2.as_deref(), Some("verificação parou"));
-        // O pedido vence a parada: o trabalhador que pede está rodando.
-        let pedido = FatosDaTarefa { execucao: Some(Execucao::EsperandoVoce), parada: true, ..Default::default() };
-        assert_eq!(ver(&tarefa("Rodando"), pedido).0, Estado::EsperandoVoce);
-    }
-
-    /// O âmbar fica só para o que precisa de você; a revisão anda na família do rodando.
-    #[test]
-    fn ambar_so_no_que_precisa_de_voce() {
+    fn cor_de_espera_so_no_que_precisa_de_voce() {
         use crate::tema::Cores;
-        let ambar: Vec<Estado> = Estado::TODOS.into_iter().filter(|e| e.cor() == Some(Cores::ambar())).collect();
-        assert_eq!(ambar, [Estado::EsperandoVoce, Estado::ParadoAtencao]);
+        let espera: Vec<Estado> = Estado::TODOS.into_iter().filter(|e| e.cor() == Some(Cores::espera())).collect();
+        assert_eq!(espera, [Estado::EsperandoVoce, Estado::ParadoAtencao]);
         assert_eq!(Estado::EmRevisao.cor(), Some(Cores::destaque()));
         assert_eq!(Estado::EmRevisao.cor_texto(), Cores::destaque_texto());
         assert_eq!(Estado::Rodando.cor_texto(), Cores::destaque_texto());

@@ -440,7 +440,11 @@ impl BarrinhasDeSinal {
 
 impl RenderOnce for BarrinhasDeSinal {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        const ALTURAS: [f32; 5] = [4., 6., 9., 11., 14.];
+        // Barras de 2 com vão de 2, de 4 a 12, embaixo na caixa de 14: 18 x 12 de desenho, a medida
+        // de um ícone ao lado do escudo e do glifo. Eram de 3, até 14: 23 x 14, quase o dobro do
+        // escudo (relatório de aparência, 16/11/2026, V11). O vão de 2 deixa as posições inteiras
+        // a 100% e a 150%.
+        const ALTURAS: [f32; 5] = [4., 6., 8., 10., 12.];
         let escala = self.altura / 14.;
         let total = self.total.max(1) as usize;
         let ativa = if self.sugerido { self.cor.opacity(0.45) } else { self.cor };
@@ -450,6 +454,7 @@ impl RenderOnce for BarrinhasDeSinal {
             .items_end()
             .gap(r(2. * escala))
             .h(r(self.altura))
+            .pb(r(escala))
             .children((0..total).map(|i| {
                 let altura = ALTURAS[(i * (ALTURAS.len() - 1)) / (total - 1).max(1)];
                 let cor = if self.arco_iris {
@@ -459,12 +464,12 @@ impl RenderOnce for BarrinhasDeSinal {
                 } else {
                     Cores::barra_apagada()
                 };
-                div().w(r(3. * escala)).h(r(altura * escala)).rounded_full().bg(cor)
+                div().w(r(2. * escala)).h(r(altura * escala)).rounded_full().bg(cor)
             }))
     }
 }
 
-/// Proporção de estados numa barra fina (tarefas da Equipe), com dica por segmento.
+/// Proporção de estados numa barra fina, com dica por segmento.
 #[derive(IntoElement)]
 pub struct BarraSegmentada {
     partes: Vec<(usize, Hsla, SharedString)>,

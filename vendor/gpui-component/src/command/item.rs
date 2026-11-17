@@ -15,6 +15,9 @@ pub struct CommandItem {
     pub(crate) action: Option<Box<dyn Action>>,
     pub(crate) checked: bool,
     disabled: bool,
+    /// Vitral: o item desenha a própria marca (a ficha do escolhido) e não ganha o fundo de
+    /// realce do ponteiro ou do teclado.
+    pub(crate) sem_realce: bool,
     pub(crate) content: Option<Rc<CommandItemContent>>,
 }
 
@@ -27,6 +30,7 @@ impl Clone for CommandItem {
             action: self.action.as_ref().map(|action| action.boxed_clone()),
             checked: self.checked,
             disabled: self.disabled,
+            sem_realce: self.sem_realce,
             content: self.content.clone(),
         }
     }
@@ -42,8 +46,15 @@ impl CommandItem {
             action: None,
             checked: false,
             disabled: false,
+            sem_realce: false,
             content: None,
         }
+    }
+
+    /// Vitral: sem o fundo de realce (o item escolhido, que já tem a ficha dele).
+    pub fn sem_realce(mut self, sem_realce: bool) -> Self {
+        self.sem_realce = sem_realce;
+        self
     }
 
     /// Set the label to display and search.

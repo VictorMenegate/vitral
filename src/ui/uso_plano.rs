@@ -49,15 +49,18 @@ const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."
 /// Abre o terminal do usuário com a instalação (se faltar) e o login do Codex.
 pub(super) fn instalar_codex() {
     if let Some(casa) = dirs::home_dir() {
-        sistema::abrir_terminal(&casa, None, Some(INSTALAR_CODEX));
+        sistema::abrir_terminal(&casa, Some(INSTALAR_CODEX));
     }
 }
 
 impl Janela {
-    /// Os anéis de uso flutuando no canto de baixo, à direita, da janela (pedido do dono,
-    /// 12/11/2026; antes ficavam no cabeçalho da última conversa): os anéis de 30 um em cima do
-    /// outro, quase colados embaixo, sem fundo. Os popovers abrem para cima. Some com a opção
-    /// "Mostrar o uso do plano no canto da janela" desligada.
+    /// Os anéis de uso flutuando no canto de CIMA, à direita, da janela, logo abaixo do × de
+    /// fechar, um em cima do outro (dono, 13/11/2026; em 12/11 ele os tinha pedido embaixo). Em
+    /// 16/11/2026 eles foram para o cabeçalho e voltaram no mesmo dia ("o de uso tem que ficar
+    /// onde eu tinha falado, embaixo do ×"), sem a folga que a conversa guardava para eles: cada
+    /// anel tem o disco opaco da peça, com o fio de 1 px e uma sombra curta, como um botão
+    /// flutuante, para não sumir no texto que passa por baixo. Os popovers abrem para baixo. Somem
+    /// com a opção "Mostrar o uso do plano no canto da janela" desligada.
     pub(super) fn uso_no_canto(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let motor = self.motor.as_ref()?;
         if !motor.read(cx).config.uso_no_canto {
@@ -71,20 +74,20 @@ impl Janela {
             div()
                 .absolute()
                 .right(r(USO_DA_BORDA))
-                .bottom(r(USO_DA_BORDA))
+                .top(r(USO_DO_TOPO))
                 .child(v_flex().gap(esp::E6).children(botoes))
                 .into_any_element(),
         )
     }
 
-    /// Os anéis do canto ficam ao lado da caixa de mensagem da última conversa quando ela é
-    /// estreita (a coluna da caixa tem até uns 780 de largura, centrada: com menos de 1000 no
-    /// cartão a caixa chegaria debaixo deles). Aí a caixa encolhe `FOLGA_DO_USO` à direita.
-    pub(super) fn uso_ao_lado_da_caixa(&self, ix: usize, cx: &Context<Self>) -> bool {
-        ix + 1 == self.paineis.len()
-            && !self.direita_visivel()
-            && self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto)
-            && self.paineis[ix].medida.rem * 15. < 1000.
+    /// Quanto a fileira de cima do painel da direita (o último à direita) deixa livre na ponta para
+    /// os anéis do canto não ficarem por cima dela; `None` com os anéis desligados. Só as fileiras
+    /// de cabeçalho guardam o lugar, não o conteúdo (dono, 16/11/2026: o fim do cabeçalho do
+    /// arquivo e a primeira linha do código ficavam por baixo dos anéis). A folga conta da borda
+    /// da direita da janela: a distância dos anéis até ela, o diâmetro e 8 de respiro.
+    pub(super) fn reserva_dos_aneis(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        let ligado = self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto);
+        ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 8.))
     }
 
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -117,23 +120,24 @@ impl Janela {
 }
 
 /// O diâmetro dos anéis no canto da janela.
-const DIAMETRO_NO_CABECALHO: f32 = 30.;
-/// A distância dos anéis do canto até as bordas de baixo e da direita da janela.
-const USO_DA_BORDA: f32 = 14.;
-/// O quanto a caixa de mensagem encolhe à direita para os anéis do canto caberem ao lado dela.
-pub(super) const FOLGA_DO_USO: f32 = 32.;
+const DIAMETRO_NO_CANTO: f32 = 30.;
+/// A distância dos anéis do canto até a borda da direita da janela (a conversa encosta nela).
+const USO_DA_BORDA: f32 = 10.;
+/// A distância do topo da janela: a fileira do alto da conversa (onde fica o ×; a conversa
+/// encosta no topo) e um respiro.
+const USO_DO_TOPO: f32 = 58.;
 
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
 /// à direita do botão.
 fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
     popover(("uso-popover", marca as usize))
-        .anchor(Anchor::BottomRight)
+        .anchor(Anchor::TopRight)
         .offset(px(8.))
         .arrow(true)
         .trigger(BotaoUso {
             marca,
             leitura,
-            diametro: DIAMETRO_NO_CABECALHO,
+            diametro: DIAMETRO_NO_CANTO,
             aberto: false,
         })
         .content(move |_, window, cx| {
@@ -141,7 +145,14 @@ fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: Wea
             if marca == Marca::Claude {
                 vigiar_uso(&motor, window, cx);
             }
-            detalhes(marca, motor.clone(), janela.clone(), popover, window, cx)
+            // Abre do canto de cima para baixo: sem teto, o rodapé (a hora e as ações) passava da
+            // borda da janela (relatório de design, 17/11/2026).
+            let teto = window.viewport_size().height - px(USO_DO_TOPO + 80.);
+            div()
+                .id("uso-rolagem")
+                .max_h(teto)
+                .overflow_y_scroll()
+                .child(detalhes(marca, motor.clone(), janela.clone(), popover, window, cx))
         })
 }
 
@@ -196,10 +207,15 @@ impl RenderOnce for BotaoUso {
             .cursor_pointer()
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            .bg(Cores::preto())
-            .when(self.aberto, |s| s.bg(Cores::preto().blend(Cores::pressionado())))
+            // O disco opaco da peça, com o fio de 1 px e uma sombra curta: flutua por cima da
+            // conversa sem sumir no texto (dono, 16/11/2026).
+            .bg(Cores::cartao_opaco())
+            .border_1()
+            .border_color(Cores::borda())
+            .shadow(crate::tema::sombra_elevado())
+            .when(self.aberto, |s| s.bg(Cores::cartao_opaco().blend(Cores::pressionado())))
             .when(!self.aberto, |s| {
-                s.hover(|s| s.bg(Cores::preto().blend(Cores::hover())))
+                s.hover(|s| s.bg(Cores::cartao_opaco().blend(Cores::hover())))
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(

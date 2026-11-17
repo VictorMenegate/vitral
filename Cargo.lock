@@ -2352,8 +2352,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-linux"
 version = "0.3.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c6ffd2dce7b75cce0bb3382994912f84c2a05389a4a236bb8bd72cb098fc083"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -6913,7 +6911,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vitral"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6924,7 +6922,6 @@ dependencies = [
  "gpui-kit",
  "libc",
  "minisign-verify",
- "oo7",
  "semver",
  "serde",
  "serde_json",
@@ -6935,7 +6932,6 @@ dependencies = [
  "ureq",
  "uuid",
  "windows-sys 0.61.2",
- "zeroize",
 ]
 
 [[package]]

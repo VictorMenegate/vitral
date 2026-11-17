@@ -8,9 +8,8 @@ use gpui_kit::*;
 
 use super::base::Simbolo;
 use super::estado::{Sinal, numero_painel};
-use super::metal::aro_de_metal;
 use super::superficies::Flutuante as _;
-use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_foco, r, raio, tam};
 
 /// Grupo de hover da aba: no hover, o × aparece e o ponto do estado some.
 pub const GRUPO_DA_ABA: &str = "aba";
@@ -41,6 +40,7 @@ pub struct Aba {
     foco: Option<FocusHandle>,
     fim: Option<AnyElement>,
     so_simbolo: bool,
+    quadrada: bool,
 }
 
 impl Aba {
@@ -58,18 +58,22 @@ impl Aba {
             foco: None,
             fim: None,
             so_simbolo: false,
+            quadrada: false,
         }
-    }
-
-    /// Um elemento depois do título, antes do × (o anel dos checks na aba do PR).
-    pub fn fim(mut self, e: impl IntoElement) -> Self {
-        self.fim = Some(e.into_any_element());
-        self
     }
 
     /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
     pub fn so_simbolo(mut self, sim: bool) -> Self {
         self.so_simbolo = sim;
+        self
+    }
+
+    /// Só o símbolo, num quadrado da altura da aba e centrado, sem o lugar do × nem o número: a
+    /// aba de fundo que não cabe com o título (o clique do meio ainda fecha; a dica dá o nome).
+    /// Com o lugar do × reservado ela ficava uma pílula de 80 com o ícone num canto (o dono viu,
+    /// 16/11/2026).
+    pub fn quadrada(mut self, sim: bool) -> Self {
+        self.quadrada = sim;
         self
     }
 
@@ -118,6 +122,12 @@ impl Aba {
         self
     }
 
+    /// Algo depois do título e do número, antes do × (o lápis do rascunho).
+    pub fn fim(mut self, e: impl IntoElement) -> Self {
+        self.fim = Some(e.into_any_element());
+        self
+    }
+
     /// A aba entra no Tab com este foco, com o anel de foco; focada, mostra o ×.
     pub fn foco(mut self, f: &FocusHandle) -> Self {
         self.foco = Some(f.clone());
@@ -126,13 +136,19 @@ impl Aba {
 
     pub fn construir(self, window: &Window, _: &App) -> Stateful<Div> {
         // A aba do chat tem fundo sempre (pedido do dono, 12/11/2026), e opaco: é o miolo do aro
-        // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem.
-        let (fundo, texto, borda) = match self.tom {
-            TomAba::Unica => (Cores::tinta_solida(Cores::forte(), 0.08), Cores::forte(), transparent_black()),
-            TomAba::Ativa => (Cores::tinta_solida(Cores::forte(), 0.11), Cores::forte(), transparent_black()),
-            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
-            TomAba::Selecionada => (Cores::cartao_elevado(), Cores::forte(), Cores::borda()),
-            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05), Cores::tenue(), transparent_black()),
+        // de metal que acende com o ponteiro em cima, o mesmo contorno da caixa de mensagem. As
+        // abas moram na mesma casca preta (`casca_da_aba`); a selecionada é o campo dela,
+        // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
+        // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
+        let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
+        let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
+            // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
+            // 16/11/2026: "diminui as bordas").
+            TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::preto()),
+            // A aba de um painel sem o foco: lisa, quase da cor do painel, só com o contorno.
+            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::preto()),
+            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
+            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
@@ -170,9 +186,33 @@ impl Aba {
                 .when(tem_fechar, |s| s.group_hover(GRUPO_DA_ABA, |s| s.invisible()))
                 .child(sinal.ponto(8.))
         });
-        let fim = (fechar.is_some() || ponto.is_some())
-            .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar));
-        // Ícone solto em 16; quadrado do projeto e círculo do papel em 18.
+        // O × que só aparece no hover não guarda lugar: ele surge por cima do fim da aba (do número
+        // do painel ou do fim do título), num disco do fundo da aba, e a aba não muda de tamanho
+        // (dono, 16/11/2026: "esse espaço pro x não ter, e ficar quando passar o mouse em cima,
+        // sem crescer o tamanho"). O lugar só fica reservado quando o × está sempre à vista ou
+        // quando há o ponto do estado, que divide o lugar com ele.
+        let reserva = !self.quadrada && (fechar_a_vista || ponto.is_some());
+        let (fechar_no_lugar, fechar_por_cima) = match fechar {
+            Some(f) if !reserva && !self.quadrada => (None, Some(f)),
+            outro => (outro, None),
+        };
+        let fim = (reserva && (fechar_no_lugar.is_some() || ponto.is_some()))
+            .then(|| div().relative().flex_none().size(r(20.)).children(ponto).children(fechar_no_lugar));
+        let fundo_do_x = fundo.clone();
+        let por_cima = fechar_por_cima.map(|f| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(esp::E4)
+                .flex()
+                .items_center()
+                .invisible()
+                .group_hover(GRUPO_DA_ABA, |s| s.visible())
+                .child(div().rounded(raio::de(24.)).bg(fundo_do_x).p(esp::E2).child(f))
+        });
+        let so_simbolo = self.so_simbolo || self.quadrada;
+        // Ícone solto em 16; o círculo do chat em 18.
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
             s.desenhar(lado, window)
@@ -183,11 +223,15 @@ impl Aba {
             .flex()
             .flex_shrink(1.)
             .items_center()
-            .gap(r(6.))
+            // O símbolo junto do título (6), 8 antes dele e 12 depois do título: o desenho do ícone
+            // já tem um respiro dentro, e com 12 dos dois lados a folga da esquerda parecia maior
+            // (dono, 17/11/2026: "melhorar o espaçamento do nome do chat com o ícone" e "o espaço
+            // da esquerda do ícone tá muito grande").
+            .gap(esp::E6)
             .h(r(32.))
             .max_w(r(400.))
             .min_w_0()
-            .px(r(8.))
+            .map(|s| if self.quadrada { s.w(r(32.)).flex_none().justify_center() } else { s.pl(esp::E8).pr(esp::E12) })
             .relative()
             .rounded(raio::de(32.))
             .border_1()
@@ -197,10 +241,30 @@ impl Aba {
                 TomAba::Inativa | TomAba::Normal => s.hover(|s| s.text_color(Cores::texto())),
                 TomAba::Unica | TomAba::Ativa | TomAba::Selecionada => s,
             })
-            // O aro de metal (só com o ponteiro em cima) e, por cima dele, o miolo opaco da aba.
+            // Com o ponteiro em cima, o contorno vira o fio claro e o miolo clareia um pouco: um
+            // anel liso e igual na volta toda. O aro de metal de 2 px que acendia aqui ficava
+            // claro de um lado e escuro do outro (dono, 16/11/2026: "o contorno de quando tá com o
+            // mouse em cima ainda tá bem ruim").
             .when(!self.arrastando, |s| {
-                s.child(aro_de_metal(raio::de(32.), px(2.), 1.).invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
-                    .child(div().absolute().inset_0().rounded(raio::de(32.)).bg(fundo))
+                s.group_hover(GRUPO_DA_ABA, |s| s.border_color(Cores::borda_forte()))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(raio::de(32.))
+                            .bg(fundo)
+                            // O brilho de cima do campo da caixa de mensagem.
+                            .when(campo, |s| s.shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(raio::de(32.))
+                            .bg(Cores::forte().opacity(0.05))
+                            .invisible()
+                            .group_hover(GRUPO_DA_ABA, |s| s.visible()),
+                    )
             })
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
@@ -208,10 +272,11 @@ impl Aba {
                     .tab_index(0)
                     .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             })
-            .children(self.numero.map(|(n, ativo)| numero_painel(n, ativo)))
             .children(simbolo)
-            .when(!self.so_simbolo, |s| s.child(div().min_w_0().truncate().rotulo().child(self.titulo)))
-            .children(self.detalhe.filter(|_| !self.so_simbolo).map(|(t, mono)| {
+            // O título cortado seco, sem as reticências: com elas a aba gastava três letras no "…"
+            // e o número parecia longe (dono, 17/11/2026: "deixa sem esses 3 pontinhos").
+            .when(!so_simbolo, |s| s.child(div().min_w_0().overflow_hidden().whitespace_nowrap().rotulo().child(self.titulo)))
+            .children(self.detalhe.filter(|_| !so_simbolo).map(|(t, mono)| {
                 div()
                     .flex_none()
                     .max_w(r(160.))
@@ -220,8 +285,13 @@ impl Aba {
                     .map(|d| if mono { d.mono_pequeno() } else { d.metadado() })
                     .child(t)
             }))
+            // O número do painel fica à direita, antes do × (dono, 13/11/2026).
+            // Colado no título: 4 em vez dos 6 do vão da aba (dono, 17/11/2026: "diminui o espaço
+            // até o número").
+            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| div().flex_none().ml(-esp::E2).child(numero_painel(n, ativo))))
             .children(self.fim)
             .children(fim)
+            .children(por_cima)
             .when_some(fechar_meio, |s, f| {
                 s.on_aux_click(move |ev: &ClickEvent, window, cx| {
                     if ev.is_middle_click() {
@@ -230,6 +300,16 @@ impl Aba {
                 })
             })
     }
+}
+
+/// A casca da aba: o preto da caixa de mensagem em volta dela virou só o fio de 1 px, que é a
+/// própria borda da aba, em preto. O dono viu a casca com 4 e com 2 de folga e pediu mais fina; em
+/// 16/11/2026 pediu o mesmo desenho em todos os painéis e abas e, no mesmo dia, "diminui as
+/// bordas": a folga de 1 e a borda da casca saíram, e o fio da aba deixou de vir dobrado (eram uns
+/// 3 px de contorno escuro). Fica a peça que agrupa a aba na faixa; o tom do miolo distingue a
+/// selecionada.
+pub fn casca_da_aba() -> Div {
+    div().flex().items_center().min_w_0().rounded(raio::de(32.))
 }
 
 /// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280.

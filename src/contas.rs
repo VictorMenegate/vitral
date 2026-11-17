@@ -58,6 +58,34 @@ fn arquivo_cadastro() -> Option<PathBuf> {
     Some(CONFIG.get()?.join("contas.json"))
 }
 
+fn arquivo_sem_login() -> Option<PathBuf> {
+    Some(CONFIG.get()?.join("contas-sem-login.json"))
+}
+
+/// As contas que perderam o login e ainda não voltaram. Guardadas à parte (a principal não vai
+/// no `contas.json`), para a marca sobreviver ao fechar o Vitral: antes ela morava só na memória,
+/// e depois de reabrir o "Entrar de novo" do erro não sabia qual conta era e as Contas mostravam
+/// todas como conectadas (dono, 16/11/2026: "tem que ter como ver se a conta desconectou").
+pub fn ler_sem_login() -> std::collections::HashSet<String> {
+    arquivo_sem_login()
+        .and_then(|a| fs::read_to_string(a).ok())
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+}
+
+pub fn salvar_sem_login(ids: &std::collections::HashSet<String>) {
+    let Some(arquivo) = arquivo_sem_login() else {
+        return;
+    };
+    let mut lista: Vec<&String> = ids.iter().collect();
+    lista.sort();
+    if let Err(erro) = crate::dados::gravar_json_seguro(&arquivo, &lista, false) {
+        eprintln!("vitral: não gravou as contas sem login: {erro:#}");
+    }
+}
+
 /// Todas as contas, com a principal primeiro.
 pub fn carregar() -> Vec<Conta> {
     let mut extras: Vec<Conta> = arquivo_cadastro()
@@ -157,22 +185,31 @@ pub fn apagar_pasta(id: &str) {
     }
 }
 
-/// Um `claude auth login` em andamento: mostra o endereço de login e espera o código.
+/// Um `claude auth login` em andamento: mostra o endereço de login e espera. O Claude Code de
+/// hoje termina sozinho quando você autoriza no navegador (a página volta para ele e diz "Tudo
+/// pronto para usar Claude Code", sem código nenhum); o código colado continua valendo para
+/// quando o navegador não consegue voltar (outra máquina, por exemplo).
 pub struct Login {
     pub id: String,
-    pub pasta: PathBuf,
+    /// A pasta da conta extra; `None` na principal, que usa a configuração padrão do Claude Code.
+    pub pasta: Option<PathBuf>,
     filho: Child,
     entrada: Option<ChildStdin>,
 }
 
 impl Login {
     /// Começa o login e devolve o endereço que o usuário precisa abrir (o próprio Claude Code
-    /// também tenta abrir o navegador).
+    /// também tenta abrir o navegador). Na principal, refaz o login padrão do Claude Code (o
+    /// "Entrar de novo" das Contas, item 8.3); numa extra, o da pasta dela, que já existe ou é
+    /// criada agora.
     pub fn iniciar(id: &str) -> Result<(Self, String)> {
-        let pasta = preparar_pasta(id)?;
-        let mut filho = novo_comando(binario_claude())
-            .args(["auth", "login", "--claudeai"])
-            .env("CLAUDE_CONFIG_DIR", &pasta)
+        let pasta = if id == PRINCIPAL { None } else { Some(preparar_pasta(id)?) };
+        let mut comando = novo_comando(binario_claude());
+        comando.args(["auth", "login", "--claudeai"]);
+        if let Some(pasta) = &pasta {
+            comando.env("CLAUDE_CONFIG_DIR", pasta);
+        }
+        let mut filho = comando
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -210,14 +247,7 @@ impl Login {
         drop(entrada);
         let fim = std::time::Instant::now() + Duration::from_secs(60);
         loop {
-            if let Some(estado) = self.filho.try_wait()? {
-                if !estado.success() {
-                    let mut erro = String::new();
-                    if let Some(mut stderr) = self.filho.stderr.take() {
-                        let _ = std::io::Read::read_to_string(&mut stderr, &mut erro);
-                    }
-                    bail!("o login falhou: {}", erro.trim());
-                }
+            if self.terminou() {
                 break;
             }
             if std::time::Instant::now() > fim {
@@ -226,7 +256,26 @@ impl Login {
             }
             std::thread::sleep(Duration::from_millis(200));
         }
-        status(Some(&self.pasta))
+        self.resultado()
+    }
+
+    /// O Claude Code já encerrou o login (sozinho, depois do "Autorizar" no navegador, ou com
+    /// erro). Não bloqueia.
+    pub fn terminou(&mut self) -> bool {
+        !matches!(self.filho.try_wait(), Ok(None))
+    }
+
+    /// Com o login encerrado: o e-mail e o plano da conta, ou o erro que ele deu.
+    pub fn resultado(mut self) -> Result<(String, String)> {
+        let estado = self.filho.wait()?;
+        if !estado.success() {
+            let mut erro = String::new();
+            if let Some(mut stderr) = self.filho.stderr.take() {
+                let _ = std::io::Read::read_to_string(&mut stderr, &mut erro);
+            }
+            bail!("o login falhou: {}", erro.trim());
+        }
+        status(self.pasta.as_deref())
     }
 }
 

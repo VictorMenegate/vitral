@@ -2,31 +2,26 @@
 // que o Vitral escreve no stderr).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod agente_codex;
 mod atualizacao;
 mod claude;
 mod codex;
 mod contas;
 mod dados;
 mod git;
-mod github;
 mod importar;
 mod instancia;
-mod isolamento;
-mod issues;
-mod linear;
 mod mcp;
+mod memoria_equipe;
 mod migracao;
 mod modelo;
 mod motor;
 mod processos;
 mod prompts;
-mod remoto;
-mod revisor;
-mod segredos;
+mod queda;
 mod sistema;
 mod tema;
 mod ui;
-mod vigia;
 
 use std::{
     path::{Path, PathBuf},
@@ -37,13 +32,9 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 fn main() {
-    // `vitral` abre o app; `vitral <pasta>` liga ou abre o projeto da pasta; `vitral --nova
-    // <projeto> [mensagem]` já começa uma conversa. Com o Vitral aberto, o pedido vai para ele.
+    // `vitral` abre o app; `vitral <pasta>` abre o chat da pasta (ou um novo nela); `vitral --nova
+    // <pasta> [mensagem]` já começa uma conversa nela. Com o Vitral aberto, o pedido vai para ele.
     let argumentos: Vec<String> = std::env::args().skip(1).collect();
-    // O hook Stop dos ajudantes no Windows (exec form, sem shell): responde e sai, sem tocar em nada.
-    if argumentos.first().is_some_and(|a| a == "--hook-verificacao") {
-        std::process::exit(revisor::rodar_hook_verificacao());
-    }
     // `vitral --versao [--json]` e `vitral --instalar` respondem sem janela (o release e o
     // atualizador conferem o binário), antes de tocar nos dados.
     if let Some(codigo) = atualizacao::sem_janela(&argumentos) {
@@ -71,6 +62,9 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Daqui em diante, um pânico em qualquer thread fica registrado na pasta dos dados.
+    queda::instalar(&dados.pasta);
+    let queda_anterior = queda::aviso_da_anterior(&dados.pasta);
     let atual = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let abertura = instancia::Abertura::de_args(&argumentos, &atual);
 
@@ -150,19 +144,22 @@ fn main() {
             ui::atalhos::ligar(cx);
             // Procura versão nova em segundo plano; na versão instalada, o reinício vai para o link `atual`.
             atualizacao::iniciar(aviso, dados.pasta.clone(), cx);
+            let motor = cx.new(|cx| motor::Motor::new(dados, aberto, cx));
             let opcoes = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(920.)), cx)),
-                window_min_size: Some(size(px(960.), px(600.))),
-                window_background: fundo_da_janela(),
+                // O tamanho de quando fechou (e maximizada, se estava); na primeira vez, 1440 por 920.
+                window_bounds: Some(ui::arranjo::limites_da_janela(cx)),
+                window_min_size: Some(size(px(ui::arranjo::TAMANHO_MINIMO.0), px(ui::arranjo::TAMANHO_MINIMO.1))),
+                // Já no nível guardado, para o primeiro quadro não sair com o fundo de outro.
+                window_background: fundo_inicial(motor.read(cx).config.transparencia),
                 window_decorations: Some(WindowDecorations::Client),
                 app_id: Some("vitral".into()),
                 ..TitleBar::window_options()
             };
-            let motor = cx.new(|cx| motor::Motor::new(dados, aberto, cx));
             motor.update(cx, |m, cx| {
                 if let Some(relatorio) = &relatorio {
                     m.migracao_concluida(relatorio, cx);
                 }
+                m.avisos_ao_abrir.extend(queda_anterior);
                 m.importar_na_abertura(primeiro_uso, cx);
                 m.pedir_abertura(abertura, cx);
             });
@@ -189,24 +186,86 @@ fn main() {
         });
 }
 
-/// O fundo da janela. O vidro do GNOME vem do compositor (o Blur my Shell desfoca o que está atrás
-/// do fundo transparente). No Windows, o acrílico do sistema (`Blurred`); `VITRAL_FUNDO=mica`,
-/// `transparente` ou `opaco` troca, para comparar num Windows de verdade (no Windows 10 o acrílico
-/// pode pesar ao arrastar).
-fn fundo_da_janela() -> WindowBackgroundAppearance {
-    if cfg!(not(windows)) {
-        return WindowBackgroundAppearance::Transparent;
-    }
-    match std::env::var("VITRAL_FUNDO").as_deref() {
-        Ok("mica") => WindowBackgroundAppearance::MicaBackdrop,
-        Ok("transparente") => WindowBackgroundAppearance::Transparent,
-        Ok("opaco") => WindowBackgroundAppearance::Opaque,
+/// O fundo que a janela pede ao sistema no nível de transparência das Configurações (o mesmo
+/// código em todo sistema).
+///
+/// Nos níveis transparentes, `Blurred`: o sistema desfoca o que está atrás da janela, e o véu e o
+/// grão por cima fazem o fosco. Desfocam o Windows (o acrílico), o macOS, o KDE e o GNOME 51 em
+/// diante (no Wayland, pelo protocolo padrão ext-background-effect-v1, que o vendor/gpui-pre-linux
+/// acrescenta ao GPUI, ou pelo do KDE). No GNOME 50 ou anterior e no X11 a janela fica só
+/// transparente (no GNOME, a extensão Blur my Shell pode desfocar por fora).
+///
+/// No Opaco, a chapa de metal cobre a janela inteira e o desfoque não apareceria: o pedido é
+/// `Transparent`, que não gasta o desfoque. O `Opaque` não serve: no X11 o GPUI passa a desenhar
+/// opaco e a margem da sombra das decorações do cliente sairia preta, e ele trocaria o texto para
+/// o antisserrilhado por subpixel só nesse nível.
+///
+/// `VITRAL_FUNDO=mica`, `transparente` ou `opaco` força um fundo em qualquer nível, para comparar
+/// (o Mica só existe no Windows 11; nos outros vira transparente).
+fn fundo_da_janela(nivel: u8, forcado: Option<&str>) -> WindowBackgroundAppearance {
+    match forcado {
+        Some("mica") => WindowBackgroundAppearance::MicaBackdrop,
+        Some("transparente") => WindowBackgroundAppearance::Transparent,
+        Some("opaco") => WindowBackgroundAppearance::Opaque,
+        _ if nivel == 0 => WindowBackgroundAppearance::Transparent,
         _ => WindowBackgroundAppearance::Blurred,
+    }
+}
+
+/// O `VITRAL_FUNDO`, lido uma vez.
+fn fundo_forcado() -> Option<&'static str> {
+    static FORCADO: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    FORCADO.get_or_init(|| std::env::var("VITRAL_FUNDO").ok()).as_deref()
+}
+
+thread_local! {
+    /// O último fundo pedido para a janela principal.
+    static FUNDO_PEDIDO: std::cell::Cell<Option<WindowBackgroundAppearance>> = const { std::cell::Cell::new(None) };
+}
+
+/// O fundo com que a janela principal abre.
+fn fundo_inicial(nivel: u8) -> WindowBackgroundAppearance {
+    let fundo = fundo_da_janela(nivel, fundo_forcado());
+    FUNDO_PEDIDO.set(Some(fundo));
+    fundo
+}
+
+/// A Janela chama a cada desenho, com o nível de agora: trocado o nível nas Configurações, o
+/// pedido ao sistema troca na hora (o `set_background_appearance` vale com a janela aberta). Só
+/// pede quando o fundo muda: no Windows e no macOS cada pedido refaz o efeito.
+pub fn acompanhar_o_fundo(window: &Window, nivel: u8) {
+    let fundo = fundo_da_janela(nivel, fundo_forcado());
+    if FUNDO_PEDIDO.replace(Some(fundo)) != Some(fundo) {
+        window.set_background_appearance(fundo);
     }
 }
 
 #[cfg(test)]
 mod testes {
+    use gpui_kit::WindowBackgroundAppearance as Fundo;
+
+    /// O nível escolhe o fundo do mesmo jeito em todo sistema (a CI roda no Linux e no Windows):
+    /// desfocado nos níveis transparentes e sem desfoque no Opaco, que a chapa cobre.
+    #[test]
+    fn fundo_desfocado_so_nos_niveis_transparentes() {
+        assert_eq!(crate::tema::NOMES_DA_TRANSPARENCIA[0], "Opaco");
+        assert_eq!(super::fundo_da_janela(0, None), Fundo::Transparent);
+        for nivel in 1..crate::tema::NOMES_DA_TRANSPARENCIA.len() as u8 {
+            assert_eq!(super::fundo_da_janela(nivel, None), Fundo::Blurred, "nível {nivel}");
+        }
+    }
+
+    /// O `VITRAL_FUNDO` força o fundo em qualquer nível; um valor que ele não conhece não força nada.
+    #[test]
+    fn vitral_fundo_forca_em_qualquer_nivel() {
+        for nivel in 0..crate::tema::NOMES_DA_TRANSPARENCIA.len() as u8 {
+            assert_eq!(super::fundo_da_janela(nivel, Some("mica")), Fundo::MicaBackdrop);
+            assert_eq!(super::fundo_da_janela(nivel, Some("transparente")), Fundo::Transparent);
+            assert_eq!(super::fundo_da_janela(nivel, Some("opaco")), Fundo::Opaque);
+            assert_eq!(super::fundo_da_janela(nivel, Some("acrilico")), super::fundo_da_janela(nivel, None));
+        }
+    }
+
     /// `dunce::canonicalize` no lugar do da std: no Windows o da std devolve `\\?\C:\…`, que estraga
     /// as regras de permissão, a comparação com o que o git devolve e o que aparece na tela. (O
     /// atualizador do Linux fica de fora: só roda lá.)
