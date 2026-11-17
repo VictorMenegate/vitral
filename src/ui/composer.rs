@@ -735,7 +735,7 @@ impl Janela {
 
         div()
             .map(super::mensagens::coluna)
-            .when(estreita, |s| s.px(esp::E12))
+            .when(estreita, |s| s.px(esp::E16))
             .pb(esp::E12)
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")

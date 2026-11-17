@@ -453,7 +453,9 @@ impl Janela {
         let mut lista = v_flex()
             .flex_none()
             .map(coluna)
-            .when(minima(nivel), |s| s.px(esp::E12))
+            // No painel estreito, 16 dos lados (eram 12; dono, 17/11/2026: "aumenta um pouco o
+            // padding de dentro da parte do texto").
+            .when(minima(nivel), |s| s.px(esp::E16))
             .pt(esp::E12)
             .pb(esp::E12);
         let mut anterior = None;
@@ -4411,7 +4413,7 @@ impl Janela {
 /// Largura máxima da coluna de leitura: 860 px com o texto em 16 px. Em rem, para o zoom não
 /// mudar quantas letras cabem na linha.
 const COLUNA: Rems = rems(53.75);
-/// Margem da coluna de leitura de cada lado (12 na largura mínima e na caixa estreita). 24: com as
+/// Margem da coluna de leitura de cada lado (16 na largura mínima e na caixa estreita). 24: com as
 /// conversas emendadas e encostadas na janela, os 16 deixavam o texto e a caixa colados na
 /// divisória e na beirada (dono, 17/11/2026: "melhora o espaçamento dessas partes").
 pub(super) const MARGEM_DA_COLUNA: Rems = esp::E24;
