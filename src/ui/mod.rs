@@ -337,6 +337,32 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
         || perto(folga.bottom, tamanho.height - ponto.y)
 }
 
+/// A sombra que a fileira das conversas projeta na lista, do lado de fora dos cantos redondos:
+/// a fileira parece um degrau acima da base (dono, 17/11/2026: "uma sombra ou outra coisa que dê
+/// sensação de profundidade aqui"). Vai num recorte à esquerda da peça, com a forma dela: por
+/// baixo do cartão translúcido, a sombra o escureceria. `meio_vao` é onde o cartão começa no
+/// painel.
+fn sombra_da_fileira(meio_vao: Pixels) -> Div {
+    let alcance = px(18.);
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(-alcance)
+        .w(alcance + meio_vao)
+        .overflow_hidden()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(alcance + meio_vao)
+                .w(px(400.))
+                .rounded_l(crate::tema::raio_encostado(crate::tema::Esquerda::Solta))
+                .shadow(crate::tema::sombra_da_fileira()),
+        )
+}
+
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
 /// 16/11/2026: "sem a lista tem que ficar sem a borda da esquerda também"): sem ela, as conversas
 /// ganham esses px. A conta sai de novo sem a lista, para não ancorar a lista justo nos px que só
@@ -1897,7 +1923,8 @@ impl Janela {
                     .child(
                         div()
                             .size_full()
-                            .when(larguras.lista.is_some(), |d| d.pl(meio_vao))
+                            .relative()
+                            .when(larguras.lista.is_some(), |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
                             .child(self.zona_de_soltura(0, conteudo, cx)),
                     ),
             );
@@ -1912,7 +1939,8 @@ impl Janela {
                     resizable_panel().size(px(larguras.conversas[ix])).size_range(min_conversa..Pixels::MAX).child(
                         div()
                             .size_full()
-                            .when(depois_da_lista, |d| d.pl(meio_vao))
+                            .relative()
+                            .when(depois_da_lista, |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
                             .child(self.zona_de_soltura(id, conteudo, cx)),
                     ),
                 );

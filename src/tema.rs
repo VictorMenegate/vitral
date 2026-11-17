@@ -308,6 +308,16 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
     }
 }
 
+/// A sombra da fileira das conversas sobre a lista (`ui::sombra_da_fileira`): uma larga e macia,
+/// que dá a altura, e uma curta junto da borda, que dá o contato.
+pub fn sombra_da_fileira() -> Vec<BoxShadow> {
+    let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
+    vec![
+        BoxShadow::new(px(-4.), px(0.), preto(0.45)).blur_radius(px(14.)).spread_radius(px(-2.)),
+        BoxShadow::new(px(-1.), px(0.), preto(0.35)).blur_radius(px(3.)),
+    ]
+}
+
 /// A casca da gaveta (lista ou painel da direita por cima das conversas): a do popover do kit
 /// (`popover_shadow` em vendor/gpui-component/src/styled.rs, com o anel de 14%) sem a luz de 1 px
 /// no topo e a sombra de 1 px na base, que a gaveta encosta no topo e embaixo da janela. Por fora
@@ -1318,9 +1328,11 @@ impl Cores {
     pub fn aro_da_peca() -> Hsla {
         rgba(superficie::atual().aro).into()
     }
-    /// O fio do meio da divisória entre as conversas emendadas (`gradiente_da_divisoria`).
+    /// O fio do meio da divisória entre as conversas emendadas (`gradiente_da_divisoria`): um
+    /// sulco escuro, mais fundo que o cartão (dono, 17/11/2026: "faz esse risco de uma cor mais
+    /// escura"; era um fio claro de 14%).
     pub fn divisoria() -> Hsla {
-        rgba(0xffffff24).into()
+        rgba(0x0000009e).into()
     }
     /// A sombra de 1 px na base de dentro das peças.
     pub fn sombra_de_baixo() -> Hsla {

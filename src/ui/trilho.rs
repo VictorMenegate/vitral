@@ -311,8 +311,8 @@ impl Janela {
             .items_center()
             .flex_none()
             .w_full()
-            // Na altura da fileira do alto dos painéis (52), com tudo no meio: o logo de 44 e o
-            // segmentado de 40 centram na linha das abas ao lado (relatório de design, 16/11/2026;
+            // Na altura da fileira do alto dos painéis (52), com tudo no meio: o logo de 38 e o
+            // segmentado de 34 centram na linha das abas ao lado (relatório de design, 16/11/2026;
             // dono, 17/11/2026: "melhorar o espaçamento daqui").
             .h(altura::FILEIRA_DO_ALTO)
             .px(esp::E4)
@@ -343,9 +343,11 @@ impl Janela {
     fn botao_logo(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
         let construir = self.itens_menu(motor, compacto, precisa, cx);
         let janela = cx.entity().downgrade();
-        // O logo enche o botão; sobra só o aro de 2 do hover. Na lista enxuta ele divide a linha
-        // com a busca e o "+", e os três têm a mesma altura à vista (36).
-        let (lado, medalhao) = if compacto { (32., 28.) } else { (44., 40.) };
+        // O logo enche o botão; sobra só o aro de 2 do hover. No alto da lista, 38 com o medalhão de
+        // 34, a altura do segmentado ao lado: na fileira de 52 sobram 9 em cima e embaixo (com 44
+        // o logo encostava na beirada da janela; dono, 17/11/2026: "melhora o espaçamento dessa
+        // parte de cima").
+        let (lado, medalhao) = if compacto { (32., 28.) } else { (38., 34.) };
         Popover::new("menu-vitral")
             .appearance(false)
             .overlay_closable(false)

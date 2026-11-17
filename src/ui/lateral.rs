@@ -1044,8 +1044,8 @@ impl Janela {
         .solto(true)
         .largura_total(true)
         .so_icone(ctx.aperto.estreita);
-        // 40 de altura, a do logo: os dois dividem a fileira do alto.
-        let abas = gpui_kit::component::Sizable::with_size(abas, gpui_kit::component::Size::Size(px(40.)));
+        // 34 de altura, a do medalhão do logo: os dois dividem a fileira do alto.
+        let abas = gpui_kit::component::Sizable::with_size(abas, gpui_kit::component::Size::Size(px(34.)));
         div().flex_none().mb(esp::E8).child(abas)
     }
 
