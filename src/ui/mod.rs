@@ -101,6 +101,11 @@ const FAIXA_LISTA: (f32, f32) = (200., 560.);
 /// "quando arrastar bastante pra diminuir a parte da esquerda, ela minimizar").
 const LISTA_NO_ARRASTO: f32 = 130.;
 const RECOLHER_ABAIXO_DE: f32 = 160.;
+/// A menor largura que a lista guarda: a do ponto em que ela recolhe. Solta entre ela e o mínimo
+/// da faixa, a lista fica onde foi deixada; antes ela guardava os 200 e, no clique duplo da
+/// divisória das conversas ou na volta do Ctrl+B, crescia sozinha (dono, 17/11/2026: "deixei o
+/// painel lateral menor e quando clico pra deixar o tamanho dos chats igual ela cresce").
+const LISTA_MINIMA: f32 = RECOLHER_ABAIXO_DE;
 const FAIXA_DIREITA: (f32, f32) = (280., 900.);
 /// O que a gaveta deixa da conversa à mostra, para o clique fora fechá-la.
 const FRESTA_GAVETA: f32 = 40.;
@@ -271,7 +276,7 @@ impl Larguras {
             && let Some((l, depois)) = resto.split_first()
         {
             if mexeu(*l, lista) {
-                self.lista = (l / escala).clamp(FAIXA_LISTA.0, FAIXA_LISTA.1);
+                self.lista = (l / escala).clamp(LISTA_MINIMA, FAIXA_LISTA.1);
             }
             resto = depois;
         }
@@ -294,7 +299,7 @@ impl Larguras {
     fn em_px(&self, o: &Orcamento, n: usize) -> LargurasPx {
         let n = n.max(1);
         let u = |medida: f32| medida * o.escala;
-        let lista = o.lista.then(|| u(self.lista).min(o.max_lista).max(u(FAIXA_LISTA.0)).floor());
+        let lista = o.lista.then(|| u(self.lista).min(o.max_lista).max(u(LISTA_MINIMA)).floor());
         let direita = (o.direita == Direita::Ancorada)
             .then(|| u(self.direita).min(o.max_direita).max(u(FAIXA_DIREITA.0)).floor());
         let livre = o.util - lista.unwrap_or(0.) - direita.unwrap_or(0.);
@@ -2282,6 +2287,19 @@ mod testes_orcamento {
         let tres = l.em_px(&orcamento(INICIAL, 1., 3, true, false), 3).conversas;
         assert_eq!(tres.len(), 3);
         assert!(tres.iter().all(|c| *c == tres[0]));
+    }
+
+    #[test]
+    fn a_lista_estreitada_abaixo_da_faixa_fica_onde_foi_deixada() {
+        // Solta em 180 (abaixo dos 200 da faixa, acima do ponto de recolher): guarda 180, e a
+        // montagem seguinte (clique duplo, Ctrl+B) devolve os mesmos 180.
+        let mut l = Larguras::default();
+        l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1.);
+        assert_eq!(l.lista, 180.);
+        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
+        // Abaixo do ponto de recolher não fica (quem recolhe é o arrasto, antes de guardar).
+        l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1.);
+        assert_eq!(l.lista, super::LISTA_MINIMA);
     }
 
     #[test]

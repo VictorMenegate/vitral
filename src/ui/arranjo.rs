@@ -10,7 +10,7 @@ use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FAIXA_DIREITA, FAIXA_LISTA, Janela, Larguras,
+    FAIXA_DIREITA, FAIXA_LISTA, Janela, LISTA_MINIMA, Larguras,
     paineis::{MAX_ABAS, MAX_PAINEIS},
 };
 
@@ -127,7 +127,7 @@ impl Arranjo {
             (2..=MAX_PAINEIS).contains(&d.len()) && d.iter().all(|f| f.is_finite() && *f > 0.02) && (soma - 1.).abs() < 0.02
         };
         let mut larguras = Larguras {
-            lista: na_faixa(self.largura_lista, FAIXA_LISTA, padrao.lista),
+            lista: na_faixa(self.largura_lista, (LISTA_MINIMA, FAIXA_LISTA.1), padrao.lista),
             direita: na_faixa(self.largura_direita, FAIXA_DIREITA, padrao.direita),
             divisoes: Vec::new(),
         };
@@ -258,7 +258,7 @@ impl Janela {
 mod testes {
     use super::{Arranjo, PainelGuardado, TAMANHO_INICIAL, TAMANHO_MINIMO, tamanho_da_janela};
     use crate::ui::{
-        FAIXA_LISTA, Larguras,
+        LISTA_MINIMA, Larguras,
         paineis::{MAX_ABAS, MAX_PAINEIS},
     };
 
@@ -344,7 +344,7 @@ mod testes {
             ..Default::default()
         };
         let l = a.larguras();
-        assert_eq!(l.lista, FAIXA_LISTA.0);
+        assert_eq!(l.lista, LISTA_MINIMA);
         assert_eq!(l.direita, Larguras::default().direita);
         // O arquivo de antes das `divisoes` traz a divisão de duas pelas `conversas`.
         assert_eq!(l.divisao(2), Some(&[0.3, 0.7][..]));
