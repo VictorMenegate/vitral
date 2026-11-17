@@ -304,8 +304,9 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
         .inset();
     match esquerda {
         Esquerda::Solta => vec![brilho, lado(1., 0., Cores::aro_da_peca())],
-        Esquerda::Emendada => vec![brilho, lado(1., 0., Cores::traco())],
-        Esquerda::Beirada => vec![brilho],
+        // A divisória da emenda não é sombra: é o fio que esmaece nas pontas
+        // (`gradiente_da_divisoria`), desenhado à parte.
+        Esquerda::Emendada | Esquerda::Beirada => vec![brilho],
     }
 }
 
@@ -395,6 +396,16 @@ pub fn gradiente_da_doca() -> Background {
 pub fn gradiente_do_pe_do_cartao() -> Background {
     let cartao = Cores::cartao_opaco();
     linear_gradient(180., linear_color_stop(cartao.opacity(0.), 0.), linear_color_stop(cartao, 1.))
+}
+
+/// A divisória entre duas peças emendadas: um fio de 1 px que nasce do nada no alto, fica cheio no
+/// meio e some de novo embaixo (dono, 16/11/2026: "tem que ser algo diferente, mais moderno"; o
+/// fio reto de cima a baixo cortava a fileira das abas e a das caixas). `embaixo` dá o trecho de
+/// cima (`false`) ou o de baixo (`true`); o meio é `Cores::divisoria()` liso.
+pub fn gradiente_da_divisoria(embaixo: bool) -> Background {
+    let (some, cheio) = (Cores::divisoria().opacity(0.), Cores::divisoria());
+    let (de, ate) = if embaixo { (cheio, some) } else { (some, cheio) };
+    linear_gradient(180., linear_color_stop(de, 0.), linear_color_stop(ate, 1.))
 }
 
 /// O véu do seu balão cortado: a última linha some no azul do balão (opaco, então sem emenda).
@@ -1306,6 +1317,10 @@ impl Cores {
     /// que não tem aro.
     pub fn aro_da_peca() -> Hsla {
         rgba(superficie::atual().aro).into()
+    }
+    /// O fio do meio da divisória entre as conversas emendadas (`gradiente_da_divisoria`).
+    pub fn divisoria() -> Hsla {
+        rgba(0xffffff24).into()
     }
     /// A sombra de 1 px na base de dentro das peças.
     pub fn sombra_de_baixo() -> Hsla {

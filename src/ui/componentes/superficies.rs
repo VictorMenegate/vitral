@@ -59,16 +59,31 @@ pub trait Reflexo: ParentElement + Sized {
     /// beirada da janela). Depois dos
     /// filhos, como a `aresta_de_vidro`.
     fn aresta_encostada(self, esquerda: crate::tema::Esquerda) -> Self {
-        self.child(
+        let camada = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .rounded_l(crate::tema::raio_encostado(esquerda))
+            .shadow(crate::tema::aresta_encostada(esquerda));
+        // Na emenda com a vizinha, a divisória: o fio de 1 px que esmaece no alto e embaixo (um
+        // terço da altura para cada ponta), sem cortar as abas nem as caixas de mensagem.
+        let divisoria = (esquerda == crate::tema::Esquerda::Emendada).then(|| {
+            let ponta = |embaixo: bool| div().flex_none().h(relative(0.3)).w_full().bg(crate::tema::gradiente_da_divisoria(embaixo));
             div()
                 .absolute()
                 .top_0()
-                .left_0()
-                .right_0()
                 .bottom_0()
-                .rounded_l(crate::tema::raio_encostado(esquerda))
-                .shadow(crate::tema::aresta_encostada(esquerda)),
-        )
+                .left_0()
+                .w(px(1.))
+                .flex()
+                .flex_col()
+                .child(ponta(false))
+                .child(div().flex_1().w_full().bg(Cores::divisoria()))
+                .child(ponta(true))
+        });
+        self.child(camada.children(divisoria))
     }
 }
 
