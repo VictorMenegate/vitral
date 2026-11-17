@@ -9,7 +9,7 @@
 # RAIZ_SINTETICA (abaixo), nunca uma cópia de uma pasta de verdade.
 # Roteiro, uma ação por linha:
 #   espera S | clique X Y | duplo X Y | mover X Y | arrastar X1 Y1 X2 Y2 | rolar X Y N | texto ... |
-#   tecla Return | print nome
+#   tecla Return | print nome | minimizar | restaurar | outro_app | fecha_outro | cpu nome
 # "rolar X Y N" gira a roda N entalhes com o ponteiro em X,Y (N negativo sobe).
 # "roda <comando>" roda o comando no bash (sem comentário no fim da linha) e junta a saída em
 # <pasta_dos_prints>/roda.log, com os XDG da bancada ($XDG_DATA_HOME/vitral são os dados dela).
@@ -199,6 +199,17 @@ while read -r cmd resto; do
             ev "$js 'ok'"; sleep 0.4 ;;
         print) gdbus call --session --dest org.gnome.Shell.Screenshot --object-path /org/gnome/Shell/Screenshot --method org.gnome.Shell.Screenshot.Screenshot false false "$PRINTS/$a.png" > /dev/null ;;
         roda) { echo "\$ $resto"; bash -c "$resto"; echo; } >> "$PRINTS/roda.log" 2>&1 ;;
+        # A janela do Vitral some (minimizada) e volta (desminimizada e ativada).
+        minimizar) ev "global.display.list_all_windows().forEach(w => w.minimize()); 'ok'"; sleep 0.5 ;;
+        restaurar) ev "global.display.list_all_windows().forEach(w => { w.unminimize(); w.activate(global.get_current_time()); }); 'ok'"; sleep 0.8 ;;
+        # Outro aplicativo na frente (a calculadora do GNOME), com o foco: o Vitral fica atrás.
+        outro_app) WAYLAND_DISPLAY=$XDG_RUNTIME_DIR/$SOCKET gnome-calculator >/dev/null 2>&1 7>&- 8>&- & OUTRO_PID=$!; sleep 3 ;;
+        fecha_outro) kill $OUTRO_PID 2>/dev/null; sleep 0.5 ;;
+        # "cpu nome": o processador do Vitral em 5 s (100% é um núcleo inteiro), em roda.log.
+        cpu)
+            antes=$(awk '{print $14+$15}' /proc/$APP_PID/stat 2>/dev/null); sleep 5
+            depois=$(awk '{print $14+$15}' /proc/$APP_PID/stat 2>/dev/null)
+            echo "cpu $a: $(( (depois - antes) * 100 / ($(getconf CLK_TCK) * 5) ))%" >> "$PRINTS/roda.log" ;;
         reabre)
             kill -KILL $APP_PID 2>/dev/null; wait $APP_PID 2>/dev/null; sleep 1
             [ -n "$resto" ] && { echo "\$ (fechado) $resto"; bash -c "$resto"; echo; } >> "$PRINTS/roda.log" 2>&1
@@ -207,7 +218,7 @@ while read -r cmd resto; do
             (sleep 4; ev 'Main.overview.hide(); "ok"') & ;;
     esac
 done < "$ROTEIRO"
-kill $APP_PID 2>/dev/null; sleep 1; kill $SHELL_PID 2>/dev/null; wait 2>/dev/null
+kill $APP_PID ${OUTRO_PID:-} 2>/dev/null; sleep 1; kill $SHELL_PID 2>/dev/null; wait 2>/dev/null
 if [ -n "${RAIZ_SINTETICA:-}" ]; then
     B_RAIZ=$(dirname "$XDG_CACHE_HOME")/raiz-sintetica
     (cd "$B_RAIZ" && find .vitral -type f -exec sha256sum {} + | sort -k2) > "$PRINTS/hashes-depois.txt"

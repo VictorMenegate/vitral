@@ -260,38 +260,63 @@ pub(super) fn jeito_das_abas(
     }
     let (natural_a_vista, minima_a_vista) = a_vista;
     loop {
-        let conta = |j: JeitoDaAba| jeito.iter().filter(|x| **x == j).count() as f32;
-        // Com alguma de fora, o "+N" do fim da faixa (e o vão dele) também ocupa lugar.
-        let com_mais = if conta(JeitoDaAba::Fora) > 0. { mais + vao } else { 0. };
-        let fixos = vao * (n as f32 - conta(JeitoDaAba::Fora)) + so_icone * conta(JeitoDaAba::Icone) + com_mais;
         let titulos: Vec<usize> = (0..n).filter(|i| jeito[*i] == JeitoDaAba::Titulo).collect();
-        let soma: f32 = titulos.iter().map(|i| naturais[*i]).sum();
-        let espaco = (disponivel - natural_a_vista - fixos).max(0.);
-        if soma > espaco {
-            // As com título encolhem até o mínimo delas; a que passaria dele vira ícone.
-            let razao = espaco / soma;
-            if let Some(i) = titulos
-                .iter()
-                .copied()
-                .filter(|i| naturais[*i] * razao < minimos[*i])
-                .min_by(|a, b| naturais[*a].total_cmp(&naturais[*b]))
-            {
-                jeito[i] = JeitoDaAba::Icone;
-                continue;
-            }
+        // Todas as com título (a à vista também) dividem o lugar por igual (`teto_por_igual`); a
+        // de fundo que ficaria abaixo do mínimo dela vira ícone, a mais estreita primeiro.
+        let teto = teto_por_igual(livre_para_titulos(disponivel, &jeito, (so_icone, mais, vao)), &com_a_vista(natural_a_vista, &titulos, naturais));
+        if let Some(i) = titulos
+            .iter()
+            .copied()
+            .filter(|i| naturais[*i].min(teto) < minimos[*i])
+            .min_by(|a, b| naturais[*a].total_cmp(&naturais[*b]))
+        {
+            jeito[i] = JeitoDaAba::Icone;
+            continue;
+        }
+        if natural_a_vista.min(teto) >= minima_a_vista {
             return jeito;
         }
-        // As de fundo cabem como estão; a aba à vista fica com o resto, que não pode passar
-        // abaixo do mínimo dela.
-        let resto = disponivel - fixos - soma;
-        if resto >= minima_a_vista {
-            return jeito;
+        // A aba à vista abaixo do mínimo dela: primeiro a de fundo mais estreita vira ícone.
+        if let Some(i) = titulos.iter().copied().min_by(|a, b| naturais[*a].total_cmp(&naturais[*b])) {
+            jeito[i] = JeitoDaAba::Icone;
+            continue;
         }
+        // Nem com as de fundo em ícone a aba à vista chega ao mínimo dela: a mais antiga sai.
         match (0..n).find(|i| jeito[*i] != JeitoDaAba::Fora) {
             Some(i) => jeito[i] = JeitoDaAba::Fora,
             None => return jeito,
         }
     }
+}
+
+/// O lugar da faixa para os títulos: o que sobra dos vãos, das abas em ícone e do "+N" das que
+/// saíram.
+pub(super) fn livre_para_titulos(disponivel: f32, jeito: &[JeitoDaAba], (so_icone, mais, vao): (f32, f32, f32)) -> f32 {
+    let conta = |j: JeitoDaAba| jeito.iter().filter(|x| **x == j).count() as f32;
+    let com_mais = if conta(JeitoDaAba::Fora) > 0. { mais + vao } else { 0. };
+    (disponivel - vao * (jeito.len() as f32 - conta(JeitoDaAba::Fora)) - so_icone * conta(JeitoDaAba::Icone) - com_mais).max(0.)
+}
+
+fn com_a_vista(natural_a_vista: f32, titulos: &[usize], naturais: &[f32]) -> Vec<f32> {
+    std::iter::once(natural_a_vista).chain(titulos.iter().map(|i| naturais[*i])).collect()
+}
+
+/// O teto que reparte `livre` por igual entre abas que pedem `naturais`: a que pede menos que a
+/// parte dela fica com o que pede, e o que sobra vai para as outras (dono, 17/11/2026: "não
+/// ficar só a bolinha, mostrar mais e deixar mais igual todos"). Sem aperto, sem teto.
+pub(super) fn teto_por_igual(livre: f32, naturais: &[f32]) -> f32 {
+    let mut ordem = naturais.to_vec();
+    ordem.sort_by(f32::total_cmp);
+    let (mut resto, mut faltam) = (livre, ordem.len());
+    for natural in ordem {
+        let parte = resto / faltam as f32;
+        if natural > parte {
+            return parte;
+        }
+        resto -= natural;
+        faltam -= 1;
+    }
+    f32::INFINITY
 }
 
 /// O modelo em uso ("Opus 5.5") e, quando a escolha da caixa é outra, o nome dela.
@@ -961,7 +986,10 @@ impl Janela {
         let quatro = largura_do_rotulo(window, "Abcd…");
         let titulo_a_vista = largura_do_rotulo(window, &chat.titulo);
         let resto_a_vista = tam(window, ABA_SEM_TITULO + if self.paineis.len() > 1 && self.lista { NUMERO_NA_ABA } else { 0. });
-        let natural_a_vista = (resto_a_vista + titulo_a_vista).min(tam(window, 280.));
+        // O título inteiro de cada aba, até 260: acima disso, as reticências (a à vista e as de
+        // fundo com o mesmo teto, para elas ficarem iguais).
+        let teto_natural = tam(window, 260.);
+        let natural_a_vista = (resto_a_vista + titulo_a_vista).min(teto_natural);
         // O mínimo da aba à vista: o símbolo, o número, o lugar do × e o começo do título.
         let minima_a_vista = (resto_a_vista + titulo_a_vista.min(quatro)).min(natural_a_vista);
         let (naturais, minimos): (Vec<f32>, Vec<f32>) = fundo
@@ -969,7 +997,7 @@ impl Janela {
             .map(|c| {
                 let titulo = largura_do_rotulo(window, &c.titulo);
                 let resto = tam(window, ABA_SEM_TITULO);
-                ((resto + titulo).min(tam(window, 184.)).as_f32(), (resto + titulo.min(quatro)).as_f32())
+                ((resto + titulo).min(teto_natural).as_f32(), (resto + titulo.min(quatro)).as_f32())
             })
             .unzip();
         let jeitos = jeito_das_abas(
@@ -981,24 +1009,22 @@ impl Janela {
         );
         let fora: Vec<String> =
             fundo.iter().zip(&jeitos).filter(|(_, j)| **j == JeitoDaAba::Fora).map(|(c, _)| c.id.clone()).collect();
-        // O que sobra da faixa depois das abas de fundo como ficaram: a aba à vista passa dos 280
-        // e usa esse resto até o título inteiro (dono, 17/11/2026: "o espaço aqui de cima tá
-        // limitado e não tá conseguindo ir perto do +"; o título cortava com a faixa vazia ao lado).
-        let a_vista_maxima = {
-            let vao = tam(window, 6.).as_f32();
-            let ocupado: f32 = jeitos
-                .iter()
-                .zip(&naturais)
-                .map(|(jeito, natural)| match jeito {
-                    JeitoDaAba::Titulo => natural + vao,
-                    JeitoDaAba::Icone => tam(window, ABA_SO_ICONE).as_f32() + vao,
-                    JeitoDaAba::Fora => 0.,
-                })
-                .sum::<f32>()
-                + if fora.is_empty() { 0. } else { tam(window, BOTAO_MAIS).as_f32() + vao };
-            let inteira = (resto_a_vista + titulo_a_vista).as_f32();
-            px((painel.largura_abas.as_f32() - ocupado).min(inteira).max(tam(window, 280.).as_f32()))
+        // O teto de cada aba com título, igual para todas: o lugar que sobra dividido por igual,
+        // com quem pede menos ficando com o que pede (dono, 17/11/2026: "deixar mais igual
+        // todos"). Sem aperto, cada uma com o título inteiro (até o teto natural).
+        let teto = {
+            let livre = livre_para_titulos(
+                painel.largura_abas.as_f32(),
+                &jeitos,
+                (tam(window, ABA_SO_ICONE).as_f32(), tam(window, BOTAO_MAIS).as_f32(), tam(window, 6.).as_f32()),
+            );
+            let com_titulo: Vec<f32> = std::iter::once(natural_a_vista.as_f32())
+                .chain(jeitos.iter().zip(&naturais).filter(|(j, _)| **j == JeitoDaAba::Titulo).map(|(_, n)| *n))
+                .collect();
+            let teto = teto_por_igual(livre, &com_titulo);
+            px(if teto.is_finite() { teto } else { teto_natural.as_f32() }.floor())
         };
+        let a_vista_maxima = teto.max(minima_a_vista);
         let jeito_de = |id: &str| fundo.iter().position(|c| c.id == id).map_or(JeitoDaAba::Titulo, |i| jeitos[i]);
         painel
             .abas
@@ -1051,7 +1077,7 @@ impl Janela {
                         let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
                     })
                     .construir(window, cx)
-                    .max_w(r(180.))
+                    .max_w(teto)
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
@@ -1063,13 +1089,14 @@ impl Janela {
                         let (janela, motor, chat) = (cx.entity().downgrade(), motor_entidade.clone(), id.clone());
                         move |menu, window, cx| menu_do_painel(menu, janela.clone(), motor.clone(), painel_id, Some(chat.clone()), window, cx)
                     });
-                // As outras abas cedem o espaço antes da que está à vista, até sobrar o símbolo: só
-                // então ela encolhe (com o peso igual, "WMS" virava "W…" ao lado de títulos longos).
+                // Todas as abas com título têm o mesmo teto (o `teto` acima) e não descem do começo do
+                // título delas: ninguém vira bolinha enquanto houver lugar para quatro letras.
+                let minimo = fundo.iter().position(|c| c.id == *id).map_or(px(0.), |i| px(minimos[i]));
                 let casca = super::componentes::casca_da_aba().child(aba);
                 Some(if icone {
                     sem_arrastar().flex().flex_none().child(casca).into_any_element()
                 } else {
-                    sem_arrastar().flex().min_w(r(40.)).flex_shrink(1000.).child(casca).into_any_element()
+                    sem_arrastar().flex().min_w(minimo).max_w(teto).child(casca).into_any_element()
                 })
             })
             .collect::<Vec<_>>()
@@ -1529,7 +1556,7 @@ impl Direita {
 
 #[cfg(test)]
 mod testes {
-    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa};
+    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, teto_por_igual};
     use crate::modelo::Chat;
 
     #[test]
@@ -1561,22 +1588,27 @@ mod testes {
         assert_eq!(todos[1].titulo.as_ref().map(|t| t.to_string()), Some("Arquivados".to_string()));
     }
 
-    /// Com espaço, todas com título; apertando, a mais estreita vira ícone primeiro e devolve o
-    /// espaço às outras; sem lugar nem assim para o começo do título da aba à vista, as de fundo
-    /// saem da faixa, a mais antiga primeiro; sem medida (o primeiro quadro), nada muda.
+    /// Com espaço, todas com título; apertando, todas dividem por igual e só vira ícone a de fundo
+    /// que nem assim teria o começo do título (a mais estreita primeiro, devolvendo o espaço às
+    /// outras); sem lugar para o começo do título da aba à vista, as de fundo saem da faixa, a
+    /// mais antiga primeiro; sem medida (o primeiro quadro), nada muda.
     #[test]
-    fn as_abas_de_fundo_cedem_antes_do_titulo_da_aba_a_vista() {
+    fn as_abas_dividem_por_igual_e_so_viram_icone_sem_lugar() {
         use JeitoDaAba::{Fora, Icone, Titulo};
         // À vista: 200 de natural e 140 de mínimo; vãos de 6; ícone de 36. De fundo: 150 e 110 de
         // natural, 114 e 108 de mínimo.
         let (naturais, minimos) = ([150., 110.], [114., 108.]);
         let jeito = |largura: f32| jeito_das_abas(largura, (200., 140.), &naturais, &minimos, (36., 40., 6.));
         assert_eq!(jeito(500.), [Titulo, Titulo]);
-        // 400: sobram 188 para 260 (razão 0,72): 108 e 79, as duas abaixo do mínimo. A mais
-        // estreita vira ícone, e a outra ganha 188 - 36 = 152, que basta.
+        // 400: as três dividem 388 com teto de 139: a à vista ficaria 1 abaixo dos 140 dela, e a
+        // mais estreita de fundo vira ícone; as outras duas cabem inteiras.
         assert_eq!(jeito(400.), [Titulo, Icone]);
-        // 340: nem a outra cabe com título; a aba à vista fica com 340 - 12 - 72 = 256.
-        assert_eq!(jeito(340.), [Icone, Icone]);
+        // O teto: quem pede menos que a parte fica com o que pede, e o resto se divide.
+        assert_eq!(teto_por_igual(300., &[50., 200., 200.]), 125.);
+        assert!(teto_por_igual(500., &[50., 200., 200.]).is_infinite());
+        // 340: com teto de 109, a de 150 não chega aos 114 dela e vira ícone; a de 110 fica com
+        // título (antes as duas viravam bolinha).
+        assert_eq!(jeito(340.), [Icone, Titulo]);
         // 200: com as duas em ícone sobram 116 para a aba à vista, menos que os 140 dela. A mais
         // antiga sai, mas o "+N" (40 e o vão) ocupa mais que ela: sai a outra também, e sobram 154.
         assert_eq!(jeito(200.), [Fora, Fora]);
