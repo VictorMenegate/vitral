@@ -868,7 +868,6 @@ impl Janela {
             .flex()
             .items_center()
             .h(altura::FILEIRA_DO_ALTO)
-            .pt(esp::TOPO)
             // 12 dos lados: as abas não encostam na divisória nem na beirada da janela.
             .pl(esp::E12)
             .pr(esp::E12)

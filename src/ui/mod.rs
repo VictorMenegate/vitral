@@ -1341,9 +1341,9 @@ impl Janela {
     /// cinza e tamanho do × da aba, o × da janela se lia como "fechar este painel" (relatório de
     /// design, 16/11/2026).
     fn botoes_janela_separados(&self, cx: &Context<Self>) -> Div {
-        let botoes = botoes_do_layout(cx.button_layout());
-        let vazio = botoes.is_empty();
-        grupo_botoes_janela(botoes, true).when(!vazio, |s| s.ml(esp::E12))
+        // Sem folga a mais: o traço do grupo já separa o × do "+" do painel (dono, 17/11/2026:
+        // "tá muito distante o + do x").
+        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true)
     }
 
     /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das

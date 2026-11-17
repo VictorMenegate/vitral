@@ -110,7 +110,6 @@ impl Janela {
         self.arrastavel(id)
             .flex_none()
             .h(altura::FILEIRA_DO_ALTO)
-            .pt(esp::TOPO)
             .px(esp::E8)
             .flex()
             .items_center()

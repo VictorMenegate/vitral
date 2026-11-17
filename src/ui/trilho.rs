@@ -311,12 +311,10 @@ impl Janela {
             .items_center()
             .flex_none()
             .w_full()
-            // Na altura da fileira do alto dos painéis (o respiro de cima e o cabeçalho de 44): o
-            // logo de 44 enche o cabeçalho, o segmentado de 40 centra, e os centros caem na linha
-            // das abas ao lado (relatório de design, 16/11/2026). O respiro afasta o logo da
-            // beirada da janela (dono, 16/11/2026: "melhorar o espaçamento daqui").
+            // Na altura da fileira do alto dos painéis (52), com tudo no meio: o logo de 44 e o
+            // segmentado de 40 centram na linha das abas ao lado (relatório de design, 16/11/2026;
+            // dono, 17/11/2026: "melhorar o espaçamento daqui").
             .h(altura::FILEIRA_DO_ALTO)
-            .pt(esp::TOPO)
             .px(esp::E4)
             .gap(esp::E8)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
