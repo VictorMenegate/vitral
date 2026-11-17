@@ -23,12 +23,26 @@ Feito em Rust com GPUI, o motor de interface do Zed. Linux, com o Windows em pr�
 - **As suas conversas do Claude Code entram.** As da extensão do VS Code e do terminal viram chats,
   com o histórico, direto na pasta delas. A conversa original fica como está e pode seguir no VS
   Code: o Vitral continua numa cópia dela.
+- **Claude e Codex no mesmo chat.** Escolha o modelo do outro agente ou comece a mensagem com
+  `@codex` ou `@claude`, e a conversa passa para ele com o que já foi dito. Com **Os dois em toda
+  mensagem**, um responde e o outro revisa. Cada um usa seu próprio login e plano.
+- **Você vê o que o agente faz.** O que ele fez num turno vira uma linha ("Trabalhou 6 min · 13
+  comandos · editou carrinho.py"), que abre a trilha inteira. Os subagentes mostram as ferramentas,
+  os tokens e o tempo de cada um. A lista de passos do agente ("2/5") e os comandos que ele deixou
+  rodando no fundo ficam na linha do turno; um clique ali interrompe o comando.
+- **Revisar e desfazer.** O painel **Este chat** mostra o que o chat editou e, em **Na pasta**, tudo
+  o que o git vê mudado desde o último commit, com o diff no próprio arquivo e um **Desfazer** por
+  arquivo. No balão de uma mensagem sua, **voltar os arquivos** devolve o que o Claude mudou desde
+  ela. Quando dois chats editam o mesmo arquivo, a conversa avisa.
 - **Permissões à vista.** Cada pedido de permissão vira um cartão com o comando inteiro; o que tem
   um trecho arriscado (`rm -rf`, `sudo`, `| sh`) pede para segurar o botão antes de permitir.
+- **O limite do plano não para o trabalho.** No limite de uma conta, **Continuar na outra** troca a
+  conta do chat e repete o turno; **Às 14:20** repete o turno sozinho quando o limite volta.
+- **A próxima mensagem sugerida.** Depois de cada resposta, a caixa sugere o que mandar em seguida;
+  o Tab aceita.
 - **Nada se perde numa queda.** Se o Vitral fecha ou o PC desliga, o que estava rodando fica parado,
-  com **Retomar**, e as conversas voltam como estavam.
-- **Claude ou Codex.** Escolha quem responde em cada chat ou envie a mesma pergunta aos dois,
-  em painéis lado a lado. Cada um usa seu próprio login e plano.
+  com **Retomar**, e as conversas voltam como estavam. Enquanto um chat trabalha, o computador não
+  suspende sozinho.
 - **Memória da equipe.** Conecte um servidor ai-memory com o endereço e sua chave, já no primeiro
   uso ou depois nas Configurações. Os agentes compartilham aprendizados, e você pode buscar e ler
   as páginas dentro do Vitral. Não precisa instalar o ai-memory no seu computador.
@@ -102,7 +116,7 @@ só para o seu usuário, **sem administrador**.
 ## Conferir o que você baixou
 
 Todo arquivo do release entra no `SHA256SUMS`, que é assinado com **minisign** (Ed25519). A chave
-pública é a [`pacote/vitral.pub`](pacote/vitral.pub) deste repositório — a mesma que vai embutida
+pública é a [`pacote/vitral.pub`](pacote/vitral.pub) deste repositório, a mesma que vai embutida
 no app e confere cada atualização automática.
 
 ```sh
@@ -181,7 +195,7 @@ e as pegadinhas. O que entrou em cada versão fica no **[NOVIDADES.md](NOVIDADES
 
 ## Licença e créditos
 
-O Vitral é MIT — veja o [LICENSE](LICENSE).
+O Vitral é MIT: veja o [LICENSE](LICENSE).
 
 - **[GPUI](https://github.com/zed-industries/zed)**, o motor de interface do Zed (Apache-2.0).
 - **[GPUI Kit](https://github.com/longbridge/gpui-component)**, os componentes de desktop
