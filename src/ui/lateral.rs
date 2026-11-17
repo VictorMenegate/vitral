@@ -1658,7 +1658,7 @@ impl Janela {
                 .child(div().flex_none().child("·"))
                 .child(div().flex_1().min_w_0().child(onde))
         });
-        let (hora, hora_na_dica) = match motor.execucao(&chat.id) {
+        let (hora, _) = match motor.execucao(&chat.id) {
             Execucao::Rodando { desde } => (
                 hora_do_cartao()
                     .text_color(if selecionado { Cores::texto() } else { Cores::destaque_texto() })
@@ -1681,7 +1681,15 @@ impl Janela {
         let sinal = sinal_do_chat(motor, chat);
         // A resposta nova já está no ponto do avatar: aqui o azul só entra quando lá vale outro.
         // O número do painel vem por último, para ficar sempre na mesma coluna, encostado na borda.
+        // O estado do chat mora aqui, na ponta da linha: o balão da frente saiu para o título ter
+        // mais lugar (dono, 17/11/2026: "tira esse logo, só faz dar pra ler menos os títulos"). O
+        // anel gira com ele rodando; os outros estados são o ponto da cor deles.
+        let estado = sinal.map(|s| match s {
+            Sinal::Rodando => super::componentes::icone_de_estado(Some(s), 14.).into_any_element(),
+            _ => s.ponto(8.).into_any_element(),
+        });
         let indicadores = linha_meta(16.)
+            .children(estado)
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
             .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))))
@@ -1689,23 +1697,10 @@ impl Janela {
         // O balão é sempre o pequeno, também no resultado da busca (que tem duas linhas): com uns de
         // 18 e outros de 30 a coluna dos ícones ficava torta. A pasta vai na dica, e a hora junto
         // quando ela saiu da linha.
-        let pasta = if motor.sem_pasta(chat) { "Sem pasta".to_string() } else { com_til(&chat.cwd) };
-        let onde = SharedString::from(if em_painel.is_some() { format!("{pasta}\n{hora_na_dica}") } else { pasta });
-        let avatar = div()
-            .id(SharedString::from(format!("avatar-{}", chat.id)))
-            // O ícone do chat é o estado dele (anel girando, disco âmbar, azul ou vermelho, balão
-            // apagado quando parado e lido).
-            // 18: o balão de 16, um pouco menor que o título (dono, 16/11/2026: "diminui um pouco
-            // o tamanho dos ícones dos chats").
-            .child(super::componentes::icone_de_estado(sinal, 18.))
-            .tooltip(move |window, cx| Tooltip::new(onde.clone()).build(window, cx));
         let id = chat.id.clone();
         let tem_pendencia = pendencia.is_some();
         let titulo_do_cartao: SharedString = chat.titulo.clone().into();
         let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), titulo_do_cartao)
-            .simbolo(Simbolo::Elemento(avatar.into_any_element()))
-            // O ícone já é o estado: sem o ponto no canto.
-            .sinal(sinal.filter(|_| !enxuta))
             .map(|c| match subtitulo {
                 None => c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).children(quando)),
                 Some(subtitulo) => match quando {

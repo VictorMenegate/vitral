@@ -474,6 +474,9 @@ impl RenderOnce for CartaoDeLista {
             .gap(vao)
             .h(r(altura))
             .px(dentro_da_borda(8.))
+            // Sem símbolo (os chats da lista), o título fica a 12 da borda: com 8 ele encostava na
+            // barra azul do selecionado.
+            .when(simbolo.is_none(), |d| d.pl(dentro_da_borda(12.)))
             .rounded(raio_cartao)
             .bg(fundo)
             .border_1()
