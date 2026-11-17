@@ -281,6 +281,8 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("vitral-git-retrato-{}", crate::modelo::novo_id()));
         std::fs::create_dir_all(&pasta).unwrap();
         git(&pasta, &["init", "-q"]).unwrap();
+        // No Windows do CI o git converte o fim de linha ao restaurar: aqui, o arquivo volta igual.
+        git(&pasta, &["config", "core.autocrlf", "false"]).unwrap();
         std::fs::write(pasta.join("a.txt"), "um\ndois\n").unwrap();
         git(&pasta, &["add", "a.txt"]).unwrap();
         git(&pasta, &["commit", "-q", "-m", "primeiro"]).unwrap();
