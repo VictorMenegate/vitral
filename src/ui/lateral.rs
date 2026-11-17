@@ -1003,7 +1003,8 @@ impl Janela {
             .children(escopo)
             .child(conteudo)
             .children(rodape)
-            .child(linha_busca.mt(esp::E4).mb(esp::E8))
+            // Embaixo, o mesmo respiro da caixa de mensagem até a beirada da janela.
+            .child(linha_busca.mt(esp::E4).mb(esp::E16))
             // Sem fundo nem aresta: a lista é a própria base da janela (duas camadas: a base com
             // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
