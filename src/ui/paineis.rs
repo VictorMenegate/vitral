@@ -83,7 +83,7 @@ pub struct Painel {
     /// Sobe a cada envio, para o pulso do enviar.
     pub envios: u64,
     /// O que o fundo da caixa diz agora (o texto padrão, ou o "Enter continua" depois de um Esc).
-    pub dica_caixa: &'static str,
+    pub dica_caixa: SharedString,
     /// O botão da faixa do turno (Retomar, Tentar de novo): o Ctrl+G põe o foco nele (item 3.4).
     pub foco_faixa: FocusHandle,
     /// Onde a conversa abre no próximo desenho: no começo da resposta nova ou na âncora de leitura
@@ -441,7 +441,7 @@ impl Janela {
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
             foco_faixa: cx.focus_handle(),
-            dica_caixa: "Mensagem…",
+            dica_caixa: "Mensagem…".into(),
             alvo: None,
             ancoras: Default::default(),
             novo_desde: None,
@@ -502,7 +502,7 @@ impl Janela {
             c.set_value(conteudo, window, cx);
             c.set_placeholder(dica, window, cx);
         });
-        painel.dica_caixa = dica;
+        painel.dica_caixa = dica.into();
         // Trocar de chat tira a oferta de continuar depois do Esc (item 6.2).
         if let (Some(antigo), Some(motor)) = (painel.chat.clone(), self.motor.clone()) {
             motor.update(cx, |m, _| m.esquecer_parada_por_voce(&antigo));
@@ -538,7 +538,8 @@ impl Janela {
     }
 
     /// O fundo da caixa de cada painel: logo depois de um Esc, "O que fazer em vez disso? Enter
-    /// continua"; fora disso, o texto de sempre (item 6.2).
+    /// continua"; com a sugestão da próxima mensagem, ela e o Tab que a aceita; fora disso, o
+    /// texto de sempre (item 6.2).
     pub(super) fn acertar_dicas_das_caixas(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
@@ -547,19 +548,21 @@ impl Janela {
             let Some(chat) = painel.chat.clone() else {
                 continue;
             };
-            let (parou, com_pasta) = {
+            let (parou, com_pasta, sugestao) = {
                 let m = motor.read(cx);
-                (m.parou_por_voce(&chat), m.chat(&chat).is_some_and(|c| !m.sem_pasta(c)))
+                (m.parou_por_voce(&chat), m.chat(&chat).is_some_and(|c| !m.sem_pasta(c)), m.sugestao(&chat).map(str::to_string))
             };
-            let dica = if parou {
-                "O que fazer em vez disso? Enter continua"
+            let dica: SharedString = if parou {
+                "O que fazer em vez disso? Enter continua".into()
+            } else if let Some(sugestao) = sugestao {
+                format!("{sugestao}  ·  Tab").into()
             } else if com_pasta {
-                "Mensagem para este chat…"
+                "Mensagem para este chat…".into()
             } else {
-                "Mensagem…"
+                "Mensagem…".into()
             };
             if painel.dica_caixa != dica {
-                painel.dica_caixa = dica;
+                painel.dica_caixa = dica.clone();
                 painel.composer.update(cx, |c, cx| c.set_placeholder(dica, window, cx));
             }
         }

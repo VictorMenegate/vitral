@@ -398,5 +398,10 @@ emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": re
                                          "usage": {"input_tokens": 1200}}})
 emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0,
         "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+# Com --prompt-suggestions, como o de verdade (2.1.325): a próxima mensagem provável depois do
+# `result`, só com a entrada ainda aberta (fechada antes, ele não sugere).
+if "--prompt-suggestions" in args and not fim_da_entrada.wait(1.5):
+    emitir({"type": "prompt_suggestion", "suggestion": f"(sugestão) continua o {pedido[:30]}", "uuid": "falso",
+            "session_id": sessao})
 # O Vitral fecha a entrada no fim do turno; sem isso, sai sozinho depois de um tempo.
 fim_da_entrada.wait(30)

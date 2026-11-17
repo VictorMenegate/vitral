@@ -97,6 +97,8 @@ tabela! {
     "up", composer::MenuAcima, Some("Menu > Input"), Grupo::Conversa, "Andar pelo menu “/”", "↑+↓";
     "down", composer::MenuAbaixo, Some("Menu > Input"), Grupo::Conversa, "", "";
     "tab", composer::MenuEscolher, Some("Menu > Input"), Grupo::Conversa, "Completar o comando marcado no menu “/” (ou Enter)", "";
+    // Com a caixa vazia e a sugestão da próxima mensagem à vista (sem ela, o Tab segue adiante).
+    "tab", composer::AceitarSugestao, Some("Vazia > Input"), Grupo::Conversa, "Aceitar a sugestão da próxima mensagem (caixa vazia)", "";
     // O campo do kit liga o Ctrl+F ao `Search` dele, que ninguém atende: o evento segue para cá.
     "ctrl-f", busca_conversa::BuscarNaConversa, None, Grupo::Conversa, "Buscar nesta conversa", "";
     "f3", busca_conversa::AchadoSeguinte, None, Grupo::Conversa, "Ir ao achado seguinte", "";

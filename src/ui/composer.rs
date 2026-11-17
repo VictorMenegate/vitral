@@ -225,6 +225,8 @@ actions!(vitral, [AlternarModo]);
 actions!(vitral, [AbrirModelo, AbrirEsforco, AlternarUltrathink, AlternarUltracode]);
 // No menu "/" da caixa: as setas andam e o Tab completa o marcado (o Enter também, pelo enviar).
 actions!(vitral, [MenuAcima, MenuAbaixo, MenuEscolher]);
+// Tab na caixa vazia com a sugestão da próxima mensagem à vista: ela vira o texto da caixa.
+actions!(vitral, [AceitarSugestao]);
 
 /// Popover da caixa (um por vez em toda a janela, guardado em `Janela.pop_caixa`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -749,6 +751,10 @@ impl Janela {
             .on_action(cx.listener(move |this, _: &MenuAbaixo, _, cx| this.andar_no_menu(painel_id, 1, cx)))
             .on_action(cx.listener(move |this, _: &MenuEscolher, window, cx| {
                 this.escolher_no_menu(painel_id, window, cx);
+            }))
+            .on_action(cx.listener({
+                let chat = chat.id.clone();
+                move |this, _: &AceitarSugestao, window, cx| this.aceitar_sugestao(&chat, painel_id, window, cx)
             }))
             // Seta para cima na caixa vazia: o texto da última mensagem volta para ela, como num
             // terminal (o keymap só a manda para cá no contexto "Vazia").
@@ -1447,6 +1453,23 @@ impl Janela {
         let id = self.paineis.get(ix)?.chat.clone()?;
         let motor = self.motor.as_ref()?.read(cx);
         self.menu_da_caixa(ix, motor.chat(&id)?, cx)
+    }
+
+    /// Tab na caixa vazia: a sugestão da próxima mensagem vira o texto, com o cursor no fim, para
+    /// mandar com Enter ou mudar antes. Sem sugestão, o Tab segue o caminho de sempre.
+    fn aceitar_sugestao(&mut self, chat: &str, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let sugestao = self.motor.as_ref().and_then(|m| m.read(cx).sugestao(chat).map(str::to_string));
+        let (Some(sugestao), Some(p)) = (sugestao, self.paineis.iter().find(|p| p.id == painel)) else {
+            cx.propagate();
+            return;
+        };
+        let composer = p.composer.clone();
+        composer.update(cx, |c, cx| {
+            c.set_value(sugestao.clone(), window, cx);
+            let fim = sugestao.len();
+            c.set_selected_range(fim..fim, cx);
+        });
+        cx.notify();
     }
 
     /// Tab com o menu "/" à vista: completa o item marcado.

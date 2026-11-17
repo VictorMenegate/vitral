@@ -51,6 +51,9 @@ pub struct Opcoes {
     /// processo leva `VITRAL_MEMORIA_NATIVA=1`, para um hook `Stop` que faça o mesmo pedido saber
     /// que não precisa (senão o agente recebe os dois).
     pub memoria_nativa: bool,
+    /// `--prompt-suggestions`: depois do turno, o Claude Code manda um `prompt_suggestion` com a
+    /// próxima mensagem provável (`Evento::Sugestao`). Ele só sai com a entrada ainda aberta.
+    pub sugestoes: bool,
     /// O arquivo com o servidor MCP da memória da equipe (`memoria_equipe::arquivo_do_mcp`): vai
     /// como mais um `--mcp-config`.
     pub mcp_da_equipe: Option<PathBuf>,
@@ -142,6 +145,9 @@ pub enum Evento {
     SubFim { pai: String, erro: bool, resumo: String },
     /// O Codex confirmou (ou recusou) uma mensagem enviada durante o turno.
     DirecaoConfirmada { texto: String, aceita: bool },
+    /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
+    /// depois do `result`.
+    Sugestao(String),
     Fim {
         erro: bool,
         texto: String,
@@ -398,6 +404,9 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if let Some(arquivo) = &opcoes.mcp_da_equipe {
         args.push(arquivo.display().to_string());
     }
+    if opcoes.sugestoes {
+        args.push("--prompt-suggestions".into());
+    }
     args.extend(["--allowedTools".to_string(), "mcp__vitral".to_string()]);
     match &opcoes.prompt_arquivo {
         Some(arquivo) => args.extend([
@@ -479,10 +488,10 @@ fn ambiente(opcoes: &Opcoes) -> Vec<(String, String)> {
     // Esperar sem teto é o certo aqui: o Vitral mostra "Os agentes seguem trabalhando em segundo
     // plano", o chat continua contando como rodando e o Parar derruba tudo quando o dono quiser.
     por("CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", "0".into());
-    // Chamadas ao modelo que o Vitral não mostra em lugar nenhum: a sugestão da próxima
-    // mensagem, o resumo de quando você volta e o título do terminal. Desligadas, não mudam o
-    // que o turno responde.
-    por("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", "false".into());
+    // Chamadas ao modelo que o Vitral não mostra em lugar nenhum: o resumo de quando você volta e
+    // o título do terminal. Desligadas, não mudam o que o turno responde. A sugestão da próxima
+    // mensagem só com a opção ligada (`Opcoes::sugestoes`), que o Vitral mostra na caixa.
+    por("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION", if opcoes.sugestoes { "true" } else { "false" }.into());
     por("CLAUDE_CODE_ENABLE_AWAY_SUMMARY", "0".into());
     por("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", "1".into());
     // Para os hooks do usuário saberem que a sessão é de um chat do Vitral.
@@ -1285,6 +1294,12 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
         }],
+        "prompt_suggestion" => valor["suggestion"]
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| vec![Evento::Sugestao(s.to_string())])
+            .unwrap_or_default(),
         "rate_limit_event" => {
             let info = &valor["rate_limit_info"];
             // Frações de 0 a 1; sem `unifiedWindows`, vale ao menos a janela do aviso.
@@ -1800,6 +1815,7 @@ mod testes {
             ultracode: false,
             pasta_conta: None,
             memoria_nativa: false,
+            sugestoes: false,
             mcp_da_equipe: None,
         }
     }
@@ -1956,6 +1972,16 @@ mod testes {
         assert!(matches!(interpretar(&evento).as_slice(), [Evento::Fundo(2)]));
         let vazio = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
         assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0)]));
+    }
+
+    #[test]
+    fn sugestao_da_proxima_mensagem() {
+        // O formato do 2.1.325 (`prompt_suggestion`, com `--prompt-suggestions`).
+        let sugestao = json!({ "type": "prompt_suggestion", "suggestion": "  roda os testes\n", "uuid": "u", "session_id": "s" });
+        assert!(matches!(interpretar(&sugestao).as_slice(), [Evento::Sugestao(t)] if t == "roda os testes"));
+        // Vazia (ele ficou em silêncio) não vira nada.
+        let vazia = json!({ "type": "prompt_suggestion", "suggestion": "  " });
+        assert!(interpretar(&vazia).is_empty());
     }
 
     #[test]

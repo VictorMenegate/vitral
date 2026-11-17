@@ -595,6 +595,10 @@ pub struct Config {
     /// Ao fim de um turno que mexeu em arquivo, uma vez por sessão, o Vitral pede ao agente para
     /// rever o que vale guardar na memória e nas instruções do projeto.
     pub memoria_ao_terminar: bool,
+    /// Depois de cada turno do Claude, a próxima mensagem provável (o `--prompt-suggestions` do
+    /// Claude Code, que reaproveita o cache da conversa) aparece apagada na caixa vazia, e o Tab a
+    /// aceita (dono, 17/11/2026: "faz ter esse negócio de sugerir resposta também no Vitral").
+    pub sugerir_resposta: bool,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
     /// equipe. A chave da pessoa fica fora daqui, num arquivo só dela.
     pub memoria_da_equipe: String,
@@ -691,6 +695,7 @@ impl Default for Config {
             importar_da_pasta: true,
             agente_padrao: Agente::default(),
             memoria_ao_terminar: true,
+            sugerir_resposta: true,
             memoria_da_equipe: String::new(),
             avisos_no_app: true,
         }

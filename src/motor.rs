@@ -296,6 +296,13 @@ pub struct Motor {
     conta_do_turno: HashMap<String, String>,
     /// Processos que já entregaram o resultado e estão terminando de gravar a sessão.
     encerrando: Vec<Processo>,
+    /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
+    /// espera da sugestão da próxima mensagem (`prompt_suggestion`, que não sai com a entrada
+    /// fechada), com a geração do turno: fecham quando ela chega, depois de
+    /// `ESPERA_DA_SUGESTAO` ou quando o chat começa outro turno.
+    sugerindo: HashMap<String, (Processo, u64)>,
+    /// A próxima mensagem provável de cada chat, até o chat começar outro turno.
+    sugestoes: HashMap<String, String>,
     parcial: HashMap<String, String>,
     /// Mensagens que chegaram com o chat ocupado: entram juntas no próximo turno.
     filas: Filas,
@@ -545,6 +552,8 @@ impl Motor {
             codex_lido: false,
             conta_do_turno: HashMap::new(),
             encerrando: Vec::new(),
+            sugerindo: HashMap::new(),
+            sugestoes: HashMap::new(),
             parcial: HashMap::new(),
             filas,
             interrompidos: Vec::new(),
@@ -1189,9 +1198,43 @@ impl Motor {
         cx.notify();
     }
 
+    /// A próxima mensagem provável do chat (`Config.sugerir_resposta`), até ele começar outro
+    /// turno.
+    pub fn sugestao(&self, chat: &str) -> Option<&str> {
+        self.sugestoes.get(chat).map(String::as_str)
+    }
+
+    /// Guarda o processo que acabou o turno com a entrada aberta, à espera da sugestão, e marca
+    /// quando desistir dela.
+    fn esperar_sugestao(&mut self, chat_id: &str, processo: Processo, geracao: u64, cx: &mut Context<Self>) {
+        self.parar_de_esperar_sugestao(chat_id);
+        self.sugerindo.insert(chat_id.to_string(), (processo, geracao));
+        let id = chat_id.to_string();
+        cx.spawn(async move |motor, cx| {
+            cx.background_executor().timer(ESPERA_DA_SUGESTAO).await;
+            let _ = motor.update(cx, |m, _| {
+                if m.sugerindo.get(&id).is_some_and(|(_, g)| *g == geracao) {
+                    m.parar_de_esperar_sugestao(&id);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Fecha a entrada do processo que esperava a sugestão do chat: ele sai sozinho.
+    fn parar_de_esperar_sugestao(&mut self, chat_id: &str) {
+        if let Some((mut processo, _)) = self.sugerindo.remove(chat_id) {
+            processo.fechar_entrada();
+            self.encerrando.push(processo);
+        }
+    }
+
     /// Para todos os processos (ao fechar a janela).
     pub fn encerrar_tudo(&mut self) {
         for (_, mut processo) in self.processos.drain() {
+            processo.matar();
+        }
+        for (_, (mut processo, _)) in self.sugerindo.drain() {
             processo.matar();
         }
         // O que os processos deixaram em segundo plano.
@@ -1740,6 +1783,10 @@ impl Motor {
             texto: &texto,
             imagens: &imagens,
         };
+        // A sugestão do turno anterior sai, e o processo que ainda esperava por ela fecha antes de
+        // o novo abrir a mesma sessão.
+        self.sugestoes.remove(chat_id);
+        self.parar_de_esperar_sugestao(chat_id);
         match Processo::iniciar(&opcoes, mensagem, move |evento| {
             let _ = sinais.send_blocking(Sinal::Claude(id.clone(), geracao, evento));
         }) {
@@ -1850,6 +1897,7 @@ impl Motor {
             ultracode: false,
             pasta_conta: None,
             memoria_nativa: self.config.memoria_ao_terminar,
+            sugestoes: self.config.sugerir_resposta && !codex,
             mcp_da_equipe,
         }
     }
@@ -2962,6 +3010,13 @@ impl Motor {
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
+            Evento::Sugestao(texto) => {
+                // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
+                if !self.processos.contains_key(chat_id) {
+                    self.sugestoes.insert(chat_id.to_string(), texto);
+                }
+                self.parar_de_esperar_sugestao(chat_id);
+            }
             Evento::DirecaoConfirmada { texto, aceita } => {
                 if let Some(dirigidas) = self.dirigidas.get_mut(chat_id)
                     && let Some(indice) = dirigidas.iter().position(|e| texto_do_turno(std::slice::from_ref(e)).0 == texto)
@@ -3027,14 +3082,29 @@ impl Motor {
                 let dirigidas_perdidas = self.devolver_dirigidas(chat_id);
                 self.dirigidos.remove(chat_id);
                 if let Some(mut processo) = self.processos.remove(chat_id) {
-                    processo.fechar_entrada();
                     // Turno com erro ou parado e agentes ainda em segundo plano: com a entrada
                     // fechada, o Claude Code seguiria esperando por eles (sem teto no Ultracode),
                     // fora da tela, do Parar e da conta de um Ultracode por vez. Saem juntos.
-                    if self.fundo.remove(chat_id).unwrap_or(0) > 0 || dirigidas_perdidas > 0 {
-                        processo.matar();
+                    let fundo = self.fundo.remove(chat_id).unwrap_or(0) > 0;
+                    let geracao = self.geracao_atual.get(chat_id).copied();
+                    let sugerir = !erro
+                        && !interrompido
+                        && !fundo
+                        && dirigidas_perdidas == 0
+                        && self.config.sugerir_resposta
+                        && self.chat(chat_id).is_some_and(|c| c.agente == Agente::Claude);
+                    match geracao.filter(|_| sugerir) {
+                        // A sugestão da próxima mensagem só sai com a entrada aberta: ela fica
+                        // aberta um pouco mais, à espera dela.
+                        Some(geracao) => self.esperar_sugestao(chat_id, processo, geracao, cx),
+                        None => {
+                            processo.fechar_entrada();
+                            if fundo || dirigidas_perdidas > 0 {
+                                processo.matar();
+                            }
+                            self.encerrando.push(processo);
+                        }
                     }
-                    self.encerrando.push(processo);
                 }
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
@@ -3672,6 +3742,10 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
             if *em > desde && matches!(nome.as_str(), "Edit" | "Write" | "MultiEdit" | "NotebookEdit"))
     })
 }
+
+/// Quanto o processo que acabou o turno fica com a entrada aberta à espera da sugestão da próxima
+/// mensagem. Ela costuma vir em 2 a 5 s (é uma chamada curta, com o cache da conversa).
+const ESPERA_DA_SUGESTAO: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// O erro do turno é de login perdido no Claude Code (os textos são os que o 2.1.322 devolveu em
 /// 16/11/2026, mais o pedido de `/login` das versões anteriores).

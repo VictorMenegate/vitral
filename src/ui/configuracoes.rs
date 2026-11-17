@@ -353,6 +353,7 @@ impl Render for Configuracoes {
             .collect();
         let (mcp, alternar_mcp) = (config.mcp_trabalhadores, m());
         let (memoria, alternar_memoria) = (config.memoria_ao_terminar, m());
+        let (sugerir, alternar_sugerir) = (config.sugerir_resposta, m());
         let (uso_no_canto, alternar_uso) = (config.uso_no_canto, m());
         let (avisos_no_app, alternar_avisos) = (config.avisos_no_app, m());
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
@@ -471,6 +472,19 @@ impl Render for Configuracoes {
                     .descricao("Vale para o Claude e para o Codex.")
                     .interruptor(memoria, move |ligado, _, cx| {
                         alternar_memoria.update(cx, |m, cx| m.mudar_config(|c| c.memoria_ao_terminar = ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-sugerir", "Sugerir a próxima mensagem")
+                    .info(
+                        "Depois de cada resposta do Claude, o Claude Code adivinha o que você escreveria em seguida \
+                         (\"roda os testes\", \"commita\"). A sugestão aparece apagada na caixa vazia, e o Tab a põe na \
+                         caixa. Quando o próximo passo não é óbvio, ele não sugere nada. É uma chamada curta, que \
+                         reaproveita o cache da conversa.",
+                    )
+                    .descricao("Só no Claude. O Tab aceita.")
+                    .interruptor(sugerir, move |ligado, _, cx| {
+                        alternar_sugerir.update(cx, |m, cx| m.mudar_config(|c| c.sugerir_resposta = ligado, cx))
                     }),
             );
 
