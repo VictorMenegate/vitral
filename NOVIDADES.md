@@ -191,10 +191,14 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
   trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
   rolagem respondem melhor.
+- **O notebook não dorme no meio de um turno.** Enquanto um chat trabalha, o Vitral segura a
+  suspensão automática do sistema (a tela ainda apaga e bloqueia). Ela volta assim que nenhum chat
+  está andando; o chat parado num pedido de permissão não a segura.
 - **Acabamento.** Cantos mais redondos, que acompanham o zoom; o uso do plano foi para o canto de
   cima, à direita; o ícone de cada chat mostra o estado dele (trabalhando, esperando você, com
   erro); arrastar a borda da lista até o fim a recolhe; e os fundos podem ficar um pouco
-  transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco).
+  transparentes (**Transparência dos fundos**, nas Configurações; o padrão é opaco), com um grão
+  bem fino.
 - **Copiar discreto.** O botão de copiar dos blocos de código, das citações e das mensagens tem o
   ícone pequeno e apagado dos outros botões de linha, e vira um visto verde por 2 s.
 - **Selo do sino menor e recortado.** O número do sino tem o tamanho de um contador e um aro

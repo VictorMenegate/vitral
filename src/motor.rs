@@ -296,6 +296,11 @@ pub struct Motor {
     conta_do_turno: HashMap<String, String>,
     /// Processos que já entregaram o resultado e estão terminando de gravar a sessão.
     encerrando: Vec<Processo>,
+    /// A trava que segura a suspensão automática enquanto algum chat trabalha (`acertar_trava`).
+    trava_de_suspensao: Option<std::process::Child>,
+    /// Quando a trava foi pedida pela última vez: sem `systemd-inhibit` (ou com ele saindo na hora),
+    /// cada sinal do motor relançaria o comando; assim tenta de novo só depois de um tempo.
+    trava_pedida_em: Option<std::time::Instant>,
     /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
     /// espera da sugestão da próxima mensagem (`prompt_suggestion`, que não sai com a entrada
     /// fechada), com a geração do turno: fecham quando ela chega, depois de
@@ -552,6 +557,8 @@ impl Motor {
             codex_lido: false,
             conta_do_turno: HashMap::new(),
             encerrando: Vec::new(),
+            trava_de_suspensao: None,
+            trava_pedida_em: None,
             sugerindo: HashMap::new(),
             sugestoes: HashMap::new(),
             parcial: HashMap::new(),
@@ -1198,6 +1205,59 @@ impl Motor {
         cx.notify();
     }
 
+    /// Com algum chat trabalhando, o computador não suspende sozinho por inatividade: deixar um
+    /// turno longo rodando e ir para outro aplicativo (ou sair de perto) não o congela no meio
+    /// (dono, 17/11/2026: "se deixar rodando e for mexer em outro aplicativo ele não vai parar").
+    /// É uma trava `sleep` do logind (`systemd-inhibit`): a tela ainda apaga e bloqueia, e fechar
+    /// a tampa ainda suspende (o logind ignora a trava na tampa). Ela morre junto com o Vitral
+    /// (`tail --pid`), mesmo numa queda. Só no Linux.
+    fn acertar_trava(&mut self) {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        // Só turno andando: o chat parado num pedido de permissão (ou com o processo vivo à toa)
+        // não segura a suspensão de um notebook que ninguém está olhando.
+        let trabalhando =
+            self.processos.keys().any(|chat| matches!(self.execucao_real(chat), Execucao::Rodando { .. }));
+        if let Some(trava) = self.trava_de_suspensao.as_mut()
+            && trava.try_wait().ok().flatten().is_some()
+        {
+            self.trava_de_suspensao = None;
+        }
+        match (trabalhando, self.trava_de_suspensao.is_some()) {
+            (true, false) => {
+                if self.trava_pedida_em.is_some_and(|em| em.elapsed() < std::time::Duration::from_secs(30)) {
+                    return;
+                }
+                self.trava_pedida_em = Some(std::time::Instant::now());
+                let pid = std::process::id().to_string();
+                let mut comando = crate::processos::novo_comando("systemd-inhibit");
+                comando
+                    .args(["--what=sleep", "--who=Vitral", "--why=Um chat está trabalhando", "--mode=block", "tail", "--pid", &pid, "-f", "/dev/null"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                // Num grupo próprio, para soltar a trava levando junto o `tail` de dentro dela.
+                #[cfg(unix)]
+                std::os::unix::process::CommandExt::process_group(&mut comando, 0);
+                self.trava_de_suspensao = comando.spawn().ok();
+            }
+            (false, true) => {
+                if let Some(mut trava) = self.trava_de_suspensao.take() {
+                    // SAFETY: o grupo é o do filho que ainda não foi colhido (o id é dele).
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(-(trava.id() as i32), libc::SIGTERM);
+                    }
+                    #[cfg(not(unix))]
+                    let _ = trava.kill();
+                    let _ = trava.wait();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// A próxima mensagem provável do chat (`Config.sugerir_resposta`), até ele começar outro
     /// turno.
     pub fn sugestao(&self, chat: &str) -> Option<&str> {
@@ -1234,6 +1294,7 @@ impl Motor {
         for (_, mut processo) in self.processos.drain() {
             processo.matar();
         }
+        self.acertar_trava();
         for (_, (mut processo, _)) in self.sugerindo.drain() {
             processo.matar();
         }
@@ -1813,6 +1874,7 @@ impl Motor {
             Ok(processo) => {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
+                self.acertar_trava();
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
                 self.dirigidas.remove(chat_id);
@@ -2781,6 +2843,7 @@ impl Motor {
     /// parcial, mas "escrevendo" muda o tamanho da conversa).
     fn tratar(&mut self, sinal: Sinal, cx: &mut Context<Self>) -> bool {
         self.encerrando.retain_mut(|p| p.esperar().is_none());
+        self.acertar_trava();
         match sinal {
             // Eventos atrasados de um processo anterior (ex.: a saída dele depois que o turno
             // seguinte já começou) não podem mexer no processo novo.
