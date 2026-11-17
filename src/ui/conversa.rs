@@ -216,9 +216,12 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     window.text_system().shape_line(texto.into(), tam(window, 13.), &[corrida], None).width
 }
 
-/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (12), o ícone
-/// (16), os dois vãos (6 + 6), o lugar do × (20) e a folga da direita (12).
-const ABA_SEM_TITULO: f32 = 74.;
+/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (8), o ícone
+/// (16), o vão até o título (6) e a folga da direita (12). O × aparece por cima, no hover, sem
+/// guardar lugar: contado aqui (eram 74, com os 20 dele e mais um vão), a conta via a faixa
+/// 26 px mais cheia por aba e mandava a aba de fundo para o ícone com espaço sobrando (dono,
+/// 17/11/2026: "por que tá ficando só o logo aqui?").
+const ABA_SEM_TITULO: f32 = 44.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
 const ABA_SO_ICONE: f32 = 32.;
 /// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).

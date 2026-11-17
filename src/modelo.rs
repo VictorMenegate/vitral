@@ -84,6 +84,8 @@ fn sem_hora(em: &u64) -> bool {
 #[serde(default)]
 pub struct Subagente {
     pub ferramentas: u32,
+    /// Os tokens que ele gastou até agora (o `usage.total_tokens` do progresso e do fim).
+    pub tokens: u64,
     pub atividade: String,
     pub passos: Vec<String>,
     pub fim: u64,
@@ -309,6 +311,13 @@ pub struct Chat {
     /// Com o Claude e o Codex juntos no chat: o outro agente, com a sessão dele guardada.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parceiro: Option<Parceiro>,
+    /// Na dupla, cada mensagem sem @ vai aos dois, um de cada vez, e um revisa o que o outro fez
+    /// (a opção "Os dois em toda mensagem" do seletor de modelo). Desligada, a dupla nasce sozinha
+    /// quando você troca de agente ou chama o outro com @, e a mensagem vai só a quem está na vez
+    /// (dono, 17/11/2026: "um jeito de não precisar escolher isso, automático quando troco e
+    /// quando chamo com o @").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revisao_em_dupla: bool,
     /// A sessão do Claude Code, ou o `thread_id` do Codex depois do primeiro turno.
     pub sessao: String,
     /// A sessão do Claude Code já existe (próximas vezes usam `--resume`).
@@ -390,6 +399,7 @@ impl Chat {
             tarefa: None,
             agente: Agente::default(),
             parceiro: None,
+            revisao_em_dupla: false,
             sessao: uuid::Uuid::new_v4().to_string(),
             sessao_criada: false,
             cwd,

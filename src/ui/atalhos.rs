@@ -111,7 +111,6 @@ tabela! {
     "right", gpui_kit::base::actions::SelectRight, Some("Esforco"), Grupo::Conversa, "", "";
     "home", gpui_kit::base::actions::SelectFirst, Some("Esforco"), Grupo::Conversa, "", "";
     "end", gpui_kit::base::actions::SelectLast, Some("Esforco"), Grupo::Conversa, "", "";
-    "space", composer::AlternarUltrathink, Some("Esforco"), Grupo::Conversa, "Ligar o Ultrathink (no popover de esforço)", "";
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";

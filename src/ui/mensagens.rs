@@ -419,6 +419,18 @@ impl Janela {
                 i += 2;
                 continue;
             }
+            // A marca que só fecha a vez de um agente (a dupla que nasceu pela troca de agente ou
+            // pelo @) não tem nada dele depois: não aparece, senão sobrava um "Claude" solto antes
+            // do aviso da dupla.
+            if let Item::Vez { .. } = item
+                && !chat.itens.get(indice + 1..).unwrap_or_default().iter()
+                    .take_while(|i| !matches!(i, Item::Usuario { .. } | Item::Vez { .. }))
+                    .any(|i| matches!(i, Item::Assistente { .. } | Item::Ferramenta { .. } | Item::Raciocinio { .. }))
+                && chat.itens.get(indice + 1..).unwrap_or_default().iter().any(|i| matches!(i, Item::Usuario { .. } | Item::Vez { .. }))
+            {
+                i += 1;
+                continue;
+            }
             i += 1;
             let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
             blocos.push((bloco, Some(indice), elemento));
@@ -2835,10 +2847,13 @@ impl Janela {
         // O subagente (Task/Agent): quantas ferramentas usou e há quanto tempo roda (ou quanto
         // levou), na linha; o que ele faz agora, embaixo dela enquanto roda; e os passos dele,
         // ao abrir. É o cartão de subagente da referência do dono (21st.dev, 13/11/2026).
+        // Como na extensão do Claude Code: os tokens, as ferramentas e o tempo (dono, 17/11/2026:
+        // "testa essa parte de agents").
         let do_sub = sub.as_ref().map(|s| {
             let segundos = if s.fim > 0 { s.fim.saturating_sub(*em) } else { crate::modelo::agora().saturating_sub(*em) };
             let ferramentas = contagem(s.ferramentas as usize, "ferramenta", "ferramentas");
-            (format!("{ferramentas} · {}", relogio(segundos)), s)
+            let tokens = if s.tokens > 0 { format!("{} tokens · ", super::mapa_agentes::em_mil(s.tokens)) } else { String::new() };
+            (format!("{tokens}{ferramentas} · {}", relogio(segundos)), s)
         });
         let atividade_viva = do_sub.as_ref().filter(|(_, s)| pendente && !s.atividade.is_empty()).map(|(_, s)| {
             h_flex()
@@ -3098,11 +3113,52 @@ impl Janela {
                         div().px(esp::E12).metadado().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto),
                     ))
                 })
-                .when(comando.is_none() && !so_o_pedido && !sem_texto && !(pendente && resultado.is_none()), |s| {
-                    s.child(div().pl(recuo_aberto).py(esp::E4).child(
-                        bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
-                    ))
-                })
+                // O relatório do subagente é prosa: vai em texto, num cartão claro, e não na caixa
+                // preta de saída de comando, já sem a moldura do Claude Code (dono, 17/11/2026:
+                // "melhora o estilo dessas caixas pretas").
+                .when_some(
+                    (comando.is_none() && matches!(nome.as_str(), "Agent" | "Task") && !*erro)
+                        .then(|| resultado.as_deref())
+                        .flatten()
+                        .map(crate::claude::relatorio_do_subagente)
+                        .filter(|r| !r.is_empty()),
+                    |s, relatorio| {
+                        s.child(div().pl(recuo_aberto).py(esp::E4).child(
+                            div()
+                                .relative()
+                                .group("relatorio")
+                                .px(esp::E12)
+                                .py(esp::E8)
+                                .rounded(raio::CARTAO)
+                                .bg(Cores::hover())
+                                .text_size(r(14.))
+                                .line_height(r(22.))
+                                .text_color(Cores::texto())
+                                .child(markdown(SharedString::from(format!("relatorio-{chave}")), relatorio.clone(), cx))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top(esp::E6)
+                                        .right(esp::E6)
+                                        .invisible()
+                                        .group_hover("relatorio", |s| s.visible())
+                                        .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-{chave}")), relatorio).dica("Copiar o relatório")),
+                                ),
+                        ))
+                    },
+                )
+                .when(
+                    comando.is_none()
+                        && !so_o_pedido
+                        && !sem_texto
+                        && !(pendente && resultado.is_none())
+                        && !(matches!(nome.as_str(), "Agent" | "Task") && !*erro && resultado.as_deref().is_some_and(|r| !crate::claude::relatorio_do_subagente(r).is_empty())),
+                    |s| {
+                        s.child(div().pl(recuo_aberto).py(esp::E4).child(
+                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
+                        ))
+                    },
+                )
                 .when(so_o_pedido, |s| s.pb(esp::E4))
             })
             .children(ramo.map(trilho_do_log))

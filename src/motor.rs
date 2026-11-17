@@ -1652,17 +1652,37 @@ impl Motor {
             cx.notify();
             return;
         }
-        // Com o Claude e o Codex juntos: a mensagem do usuário escolhe quem trabalha (e se é uma
-        // rodada dos dois), e quem trabalha recebe o que o outro fez desde a vez dele.
+        // O @claude ou @codex do começo chama aquele agente: num chat que ainda não tem o outro, a
+        // dupla nasce aqui, sem precisar ligar nada (dono, 17/11/2026: "automático quando chamo
+        // com o @"), e o chamado recebe a conversa inteira.
+        let alvo = mensagens.iter().find(|e| e.do_usuario() && !e.registrada).map(|e| alvo_da_dupla(&e.texto));
+        if let Some(AlvoDaDupla::So(chamado)) = alvo
+            && chamado != chat.agente
+            && chat.parceiro.is_none()
+            && (chamado != Agente::Codex || crate::agente_codex::instalado())
+            && let Some(c) = self.chat_mut(chat_id)
+        {
+            iniciar_dupla(c, chamado);
+            chat = c.copia_sem_itens();
+            self.avisar(chat_id, &aviso_da_dupla(chamado, chamado.outro()), false);
+        }
+        // Com o Claude e o Codex juntos: a mensagem do usuário escolhe quem trabalha (e, com a
+        // revisão ligada, se é uma rodada dos dois), e quem trabalha recebe o que o outro fez desde
+        // a vez dele.
         let resumo_da_dupla = if chat.parceiro.is_some() {
-            if let Some(alvo) = mensagens.iter().find(|e| e.do_usuario() && !e.registrada).map(|e| alvo_da_dupla(&e.texto)) {
+            if let Some(alvo) = alvo {
                 let primeiro = match alvo {
                     AlvoDaDupla::So(agente) => {
                         self.rodadas.remove(chat_id);
                         agente
                     }
-                    AlvoDaDupla::OsDois => {
+                    AlvoDaDupla::OsDois if chat.revisao_em_dupla => {
                         self.rodadas.insert(chat_id.to_string(), DUPLA_TROCAS);
+                        chat.agente
+                    }
+                    // Sem a revisão, só quem está na vez.
+                    AlvoDaDupla::OsDois => {
+                        self.rodadas.remove(chat_id);
                         chat.agente
                     }
                 };
@@ -1932,7 +1952,13 @@ impl Motor {
             self.mudar_chat(chat_id, |c| c.modelo = modelo, cx);
             return true;
         }
-        // Na dupla, escolher um modelo do outro agente é escolher o modelo dele: os dois seguem.
+        if self.processos.contains_key(chat_id) {
+            self.avisar(chat_id, "Troque entre o Claude e o Codex quando este turno terminar.", false);
+            cx.notify();
+            return false;
+        }
+        // Na dupla, escolher um modelo do outro agente passa a vez para ele, com esse modelo: a
+        // próxima mensagem vai para ele, e os dois seguem no chat.
         if self.chat(chat_id).and_then(|c| c.parceiro.as_ref()).is_some_and(|p| p.agente == agente) {
             self.mudar_chat(
                 chat_id,
@@ -1940,15 +1966,27 @@ impl Motor {
                     if let Some(p) = c.parceiro.as_mut() {
                         (p.modelo, p.modelo_atual) = (modelo, None);
                     }
+                    c.trocar_vez();
                 },
                 cx,
             );
             return true;
         }
-        if self.processos.contains_key(chat_id) {
-            self.avisar(chat_id, "Troque entre o Claude e o Codex quando este turno terminar.", false);
+        // Num chat que já conversou, trocar de agente junta os dois em vez de começar do zero: o
+        // de antes guarda a sessão dele (o @ o chama de volta) e o novo recebe a conversa inteira
+        // na primeira vez (dono, 17/11/2026: "automático quando troco").
+        let tem_conversa = self.chat(chat_id).is_some_and(|c| {
+            c.sessao_criada || c.importada.is_some() || c.itens.iter().any(|i| matches!(i, Item::Usuario { .. }))
+        });
+        if tem_conversa && (agente != Agente::Codex || crate::agente_codex::instalado()) {
+            if let Some(c) = self.chat_mut(chat_id) {
+                iniciar_dupla(c, agente);
+                (c.modelo, c.modelo_atual) = (modelo, None);
+            }
+            self.avisar(chat_id, &aviso_da_dupla(agente, antes), false);
+            self.salvar();
             cx.notify();
-            return false;
+            return true;
         }
         let mut com_conversa = false;
         if let Some(c) = self.chat_mut(chat_id) {
@@ -1995,18 +2033,40 @@ impl Motor {
         let aviso = if juntos {
             if let Some(c) = self.chat_mut(chat_id) {
                 c.parceiro = Some(Parceiro::novo(outro));
+                c.revisao_em_dupla = true;
             }
             "O Claude e o Codex estão juntos neste chat: cada mensagem vai aos dois, um de cada vez, e um revisa o que o outro fez. Comece com @claude ou @codex para falar só com um.".to_string()
         } else {
             self.rodadas.remove(chat_id);
             if let Some(c) = self.chat_mut(chat_id) {
                 c.parceiro = None;
+                c.revisao_em_dupla = false;
             }
             format!("Só o {} segue neste chat.", agente.nome())
         };
         self.avisar(chat_id, &aviso, false);
         self.salvar();
         cx.notify();
+        true
+    }
+
+    /// A revisão em dupla (a opção "Os dois em toda mensagem"): ligada, cada mensagem sem @ vai
+    /// aos dois, um de cada vez, e o outro entra no chat se ainda não estava; desligada, os dois
+    /// continuam no chat e a mensagem vai só a quem está na vez.
+    pub fn revisao_em_dupla(&mut self, chat_id: &str, ligar: bool, cx: &mut Context<Self>) -> bool {
+        let Some((com_parceiro, ligada)) = self.chat(chat_id).map(|c| (c.parceiro.is_some(), c.revisao_em_dupla)) else {
+            return false;
+        };
+        if ligada == ligar {
+            return true;
+        }
+        if ligar && !com_parceiro {
+            return self.juntar_agentes(chat_id, true, cx);
+        }
+        if !ligar {
+            self.rodadas.remove(chat_id);
+        }
+        self.mudar_chat(chat_id, move |c| c.revisao_em_dupla = ligar, cx);
         true
     }
 
@@ -2946,6 +3006,12 @@ impl Motor {
                             {
                                 m.novo = true;
                             }
+                            // O relatório do subagente sem a moldura que o Claude Code põe nele.
+                            let conteudo = if matches!(nome.as_str(), "Agent" | "Task") {
+                                claude::relatorio_do_subagente(&conteudo)
+                            } else {
+                                conteudo
+                            };
                             *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
                             *erro_item = erro;
                             // O subagente terminou: o cartão dele dobra numa linha com a duração.
@@ -2966,10 +3032,21 @@ impl Motor {
                     }
                 });
             }
-            Evento::SubProgresso { pai, ferramentas } => {
-                self.no_subagente(chat_id, &pai, |sub| sub.ferramentas = sub.ferramentas.max(ferramentas));
+            Evento::SubInicio { pai } => {
+                // Só abre o registro dele: a linha passa a mostrar 0 ferramentas e o relógio.
+                self.no_subagente(chat_id, &pai, |_| {});
             }
-            Evento::SubFim { pai, erro, resumo } => {
+            Evento::SubProgresso { pai, ferramentas, tokens } => {
+                self.no_subagente(chat_id, &pai, |sub| {
+                    sub.ferramentas = sub.ferramentas.max(ferramentas);
+                    sub.tokens = sub.tokens.max(tokens);
+                });
+            }
+            Evento::SubFim { pai, erro, resumo, ferramentas, tokens } => {
+                self.no_subagente(chat_id, &pai, |sub| {
+                    sub.ferramentas = sub.ferramentas.max(ferramentas);
+                    sub.tokens = sub.tokens.max(tokens);
+                });
                 self.chats_sujos.insert(chat_id.to_string());
                 if let Some(c) = self.chat_mut(chat_id) {
                     for item in c.itens.iter_mut().rev() {
@@ -4032,6 +4109,31 @@ enum AlvoDaDupla {
 }
 
 /// A quem vai a mensagem num chat com os dois: "@claude" ou "@codex" no começo manda só para um.
+/// Põe o `chamado` no chat, ao lado de quem já estava: ele vira o da vez, numa sessão nova, e o de
+/// antes guarda a dele no parceiro. A marca de vez do de antes fecha o que ele já fez, para cada
+/// um receber depois só o que o outro fez (`o_que_o_outro_fez`).
+fn iniciar_dupla(chat: &mut Chat, chamado: Agente) {
+    let antes = chat.agente;
+    if chat.parceiro.is_some() || chamado == antes {
+        return;
+    }
+    chat.itens.push(Item::Vez { agente: antes, em: agora() });
+    chat.parceiro = Some(Parceiro::novo(chamado));
+    chat.trocar_vez();
+}
+
+/// O aviso de quando a dupla nasce sozinha (pela troca de agente ou pelo @).
+fn aviso_da_dupla(chamado: Agente, antes: Agente) -> String {
+    format!(
+        "O {} entra neste chat com a conversa até aqui; o {} continua nele com a sessão dele. Comece a mensagem com @{} \
+         ou @{} para escolher quem responde.",
+        chamado.nome(),
+        antes.nome(),
+        Agente::Claude.nome().to_lowercase(),
+        Agente::Codex.nome().to_lowercase()
+    )
+}
+
 fn alvo_da_dupla(texto: &str) -> AlvoDaDupla {
     let comeco = texto.trim_start().to_lowercase();
     if comeco.starts_with("@claude") {
@@ -4455,6 +4557,25 @@ mod testes {
         assert_eq!(alvo_da_dupla("arruma a fila"), AlvoDaDupla::OsDois);
         // Só no começo: citar o outro no meio não muda o destino.
         assert_eq!(alvo_da_dupla("pede para o @codex ver"), AlvoDaDupla::OsDois);
+    }
+
+    #[test]
+    fn a_dupla_nasce_com_a_sessao_de_cada_um() {
+        use super::iniciar_dupla;
+        let mut chat = chat("c");
+        let sessao_do_claude = chat.sessao.clone();
+        iniciar_dupla(&mut chat, Agente::Codex);
+        // O Codex fica na vez, numa sessão nova; o Claude guarda a dele, e a marca dele fecha o que
+        // ele fez antes.
+        assert_eq!(chat.agente, Agente::Codex);
+        assert_ne!(chat.sessao, sessao_do_claude);
+        let p = chat.parceiro.as_ref().unwrap();
+        assert_eq!((p.agente, p.sessao.as_str()), (Agente::Claude, sessao_do_claude.as_str()));
+        assert!(matches!(chat.itens.last(), Some(Item::Vez { agente: Agente::Claude, .. })));
+        assert!(!chat.revisao_em_dupla, "a revisão dos dois só com a opção ligada");
+        // De novo, nada muda.
+        iniciar_dupla(&mut chat, Agente::Claude);
+        assert_eq!(chat.agente, Agente::Codex);
     }
 
     #[test]

@@ -59,6 +59,33 @@ pub struct Opcoes {
     pub mcp_da_equipe: Option<PathBuf>,
 }
 
+/// O relatório que o subagente devolve, sem a moldura que o Claude Code põe em volta dele
+/// (2.1.325): o `<tools-used-before-summary>`, o aviso "[Subagent hand-back] … The report
+/// follows:", o recuo de cada linha e o `agentId` para continuar pelo SendMessage. Sem a moldura,
+/// o texto volta como veio.
+pub fn relatorio_do_subagente(texto: &str) -> String {
+    let mut resto = texto.to_string();
+    while let (Some(a), Some(b)) = (resto.find("<tools-used-before-summary>"), resto.find("</tools-used-before-summary>")) {
+        if b < a {
+            break;
+        }
+        resto.replace_range(a..b + "</tools-used-before-summary>".len(), "");
+    }
+    if resto.contains("[Subagent hand-back]")
+        && let Some(i) = resto.find("The report follows:")
+    {
+        resto = resto[i + "The report follows:".len()..].to_string();
+    }
+    let mut linhas: Vec<&str> = resto.lines().collect();
+    if let Some(i) = linhas.iter().rposition(|l| l.trim_start().starts_with("agentId:")) {
+        linhas.truncate(i);
+    }
+    let recuo = linhas.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start().len()).min().unwrap_or(0);
+    let limpo = linhas.iter().map(|l| l.get(recuo..).unwrap_or(l.trim_start())).collect::<Vec<_>>().join("\n");
+    let limpo = limpo.trim();
+    if limpo.is_empty() { texto.trim().to_string() } else { limpo.to_string() }
+}
+
 /// Versão do Claude Code (2.1.278 vira `(2, 1, 278)`).
 pub type Versao = (u32, u32, u32);
 
@@ -139,10 +166,13 @@ pub enum Evento {
     /// O subagente da chamada `pai` foi para o segundo plano: o resultado da chamada é só o aviso
     /// de que ele começou, e o de verdade chega no `SubFim`.
     SubLancado { pai: String },
+    /// O Claude Code abriu o subagente da chamada `pai` (`task_started`): ele já conta, com 0
+    /// ferramentas e o relógio andando, antes da primeira ferramenta dele.
+    SubInicio { pai: String },
     /// O Claude Code contou quantas ferramentas o subagente em segundo plano já usou.
-    SubProgresso { pai: String, ferramentas: u32 },
+    SubProgresso { pai: String, ferramentas: u32, tokens: u64 },
     /// O subagente em segundo plano terminou (ou falhou), com o resumo do que fez.
-    SubFim { pai: String, erro: bool, resumo: String },
+    SubFim { pai: String, erro: bool, resumo: String, ferramentas: u32, tokens: u64 },
     /// O Codex confirmou (ou recusou) uma mensagem enviada durante o turno.
     DirecaoConfirmada { texto: String, aceita: bool },
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
@@ -1213,14 +1243,20 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .filter(|t| t["ambient"] != true)
                 .count(),
         )],
+        "system" if valor["subtype"] == "task_started" && valor["tool_use_id"].is_string() => {
+            vec![Evento::SubInicio { pai: texto(&valor["tool_use_id"]) }]
+        }
         "system" if valor["subtype"] == "task_progress" && valor["tool_use_id"].is_string() => vec![Evento::SubProgresso {
             pai: texto(&valor["tool_use_id"]),
             ferramentas: valor["usage"]["tool_uses"].as_u64().unwrap_or(0) as u32,
+            tokens: valor["usage"]["total_tokens"].as_u64().unwrap_or(0),
         }],
         "system" if valor["subtype"] == "task_notification" && valor["tool_use_id"].is_string() => vec![Evento::SubFim {
             pai: texto(&valor["tool_use_id"]),
             erro: valor["status"] != "completed",
             resumo: texto(&valor["summary"]),
+            ferramentas: valor["usage"]["tool_uses"].as_u64().unwrap_or(0) as u32,
+            tokens: valor["usage"]["total_tokens"].as_u64().unwrap_or(0),
         }],
         "stream_event" => {
             let evento = &valor["event"];
@@ -1975,6 +2011,14 @@ mod testes {
     }
 
     #[test]
+    fn relatorio_do_subagente_sem_a_moldura() {
+        let cru = "  <tools-used-before-summary>Bash</tools-used-before-summary>\n\n[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n  a.txt tem 3 linhas.\n  Conferi com wc.\nagentId: a329c (use SendMessage with to: 'a329c' to continue this agent)";
+        assert_eq!(super::relatorio_do_subagente(cru), "a.txt tem 3 linhas.\nConferi com wc.");
+        // Sem a moldura, como veio.
+        assert_eq!(super::relatorio_do_subagente("Achei 3 arquivos."), "Achei 3 arquivos.");
+    }
+
+    #[test]
     fn sugestao_da_proxima_mensagem() {
         // O formato do 2.1.325 (`prompt_suggestion`, com `--prompt-suggestions`).
         let sugestao = json!({ "type": "prompt_suggestion", "suggestion": "  roda os testes\n", "uuid": "u", "session_id": "s" });
@@ -2149,10 +2193,16 @@ mod testes_dos_modelos {
         assert!(matches!(interpretar(&lancado).as_slice(), [Evento::SubLancado { pai }] if pai == "toolu_pai"));
         let progresso = json!({ "type": "system", "subtype": "task_progress", "task_id": "a5b", "tool_use_id": "toolu_pai",
             "description": "Reading um.txt", "usage": { "total_tokens": 57402, "tool_uses": 2, "duration_ms": 6893 } });
-        assert!(matches!(interpretar(&progresso).as_slice(), [Evento::SubProgresso { pai, ferramentas: 2 }] if pai == "toolu_pai"));
+        assert!(matches!(interpretar(&progresso).as_slice(), [Evento::SubProgresso { pai, ferramentas: 2, tokens: 57402 }] if pai == "toolu_pai"));
         let fim = json!({ "type": "system", "subtype": "task_notification", "task_id": "a5b", "tool_use_id": "toolu_pai",
-            "status": "completed", "summary": "Encontrei três arquivos." });
-        assert!(matches!(interpretar(&fim).as_slice(), [Evento::SubFim { pai, erro: false, resumo }] if pai == "toolu_pai" && resumo == "Encontrei três arquivos."));
+            "status": "completed", "summary": "Encontrei três arquivos.",
+            "usage": { "total_tokens": 58704, "tool_uses": 3, "duration_ms": 9438 } });
+        assert!(matches!(interpretar(&fim).as_slice(),
+            [Evento::SubFim { pai, erro: false, resumo, ferramentas: 3, tokens: 58704 }] if pai == "toolu_pai" && resumo == "Encontrei três arquivos."));
+        // O começo (2.1.325): o subagente já conta antes da primeira ferramenta.
+        let comecou = json!({ "type": "system", "subtype": "task_started", "task_id": "a5b", "tool_use_id": "toolu_pai",
+            "description": "Contar linhas de a.txt" });
+        assert!(matches!(interpretar(&comecou).as_slice(), [Evento::SubInicio { pai }] if pai == "toolu_pai"));
         let falhou = json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "toolu_pai", "status": "failed" });
         assert!(matches!(interpretar(&falhou).as_slice(), [Evento::SubFim { erro: true, .. }]));
     }

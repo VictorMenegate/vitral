@@ -13,7 +13,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbrirEsforco, AbrirModelo, AlternarModo, AlternarUltracode, AlternarUltrathink, DESCRICOES_DE_MODELO, ESFORCOS,
+    AbrirEsforco, AbrirModelo, AlternarModo, AlternarUltracode, DESCRICOES_DE_MODELO, ESFORCOS,
     MODELOS, MODOS, PopCaixa, com_claude, descricao_do_esforco, descricao_do_modo, descricao_regra,
     indice_esforco, nome_curto_modelo, nome_do_modo, nomes_dos_niveis, rotulo_modelo, sem_sufixo_de_janela,
     usa_esforco, versao_da_familia, versao_exata, versoes_de_modelo,
@@ -609,18 +609,6 @@ impl DadosEsforco {
         });
     }
 
-    fn armar(&self, ligado: bool, cx: &mut App) {
-        let chat = self.chat.clone();
-        let _ = self.janela.update(cx, |this, cx| {
-            if ligado {
-                this.ultrathink.insert(chat);
-            } else {
-                this.ultrathink.remove(&chat);
-            }
-            cx.notify();
-        });
-    }
-
     fn armar_ultracode(&self, ligado: bool, cx: &mut App) {
         if ligado && self.sem_ultracode.is_some() {
             return;
@@ -685,7 +673,7 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement +
         tecla(|_| 0),
         tecla(|_| ESFORCOS.len() - 1),
     );
-    let (d1, d2, d3, d4) = (d.clone(), d.clone(), d.clone(), d.clone());
+    let (d2, d4) = (d.clone(), d.clone());
     div()
         .flex()
         .flex_col()
@@ -695,7 +683,6 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement +
         .on_action(move |_: &SelectRight, _, cx| seguinte(cx))
         .on_action(move |_: &SelectFirst, _, cx| primeiro(cx))
         .on_action(move |_: &SelectLast, _, cx| ultimo(cx))
-        .on_action(move |_: &AlternarUltrathink, _, cx| d1.armar(!d1.armado, cx))
         .on_action(move |_: &AlternarUltracode, _, cx| d4.armar_ultracode(!d4.ultracode, cx))
         .on_action(move |_: &Confirm, _, cx| abrir_ou_fechar(&d2.janela, d2.painel, PopCaixa::Esforco, false, cx))
         .child(
@@ -742,18 +729,15 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement +
                         .flex_col()
                         .mx(r(-12.))
                         .my(r(-6.))
-                        .child(
-                            LinhaDeOpcao::new(("ultrathink", d.painel as usize), "Ultrathink")
-                                .arco_iris()
-                                .descricao("Só na próxima mensagem")
-                                .interruptor(d.armado, move |ligado, _, cx| d3.armar(ligado, cx)),
-                        )
+                        // Sem o Ultrathink: no Claude Code de agora a palavra não faz nada (o
+                        // `ultrathink_available` do init vem falso) e o que sobrava era só subir o
+                        // esforço desta mensagem para Extra, o mesmo que escolher o Extra aqui em
+                        // cima (dono, 17/11/2026: "esse funciona mesmo? se não funcionar tira").
                         .child(linha_ultracode(d)),
                 )
                 .when(!d.estreita, |c| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["←", "→"], "nível"),
-                        dica_de_tecla(&["Espaço"], "Ultrathink"),
                         dica_de_tecla(&["U"], "Ultracode"),
                         dica_de_tecla(&["Enter"], "fecha"),
                     ], window);
@@ -851,7 +835,7 @@ impl Janela {
         let aba = self.aba_do_modelo.filter(|(p, _)| *p == painel).map_or(chat.agente, |(_, a)| a);
         let com_abas = com_abas_de_agente(chat);
         let (largura, estreita) = (b.largura_popover().px(), b.estreita());
-        let juntos = chat.parceiro.is_some();
+        let juntos = chat.revisao_em_dupla;
         // Numa conversa já grande, trocar o modelo do Claude custa uma releitura inteira.
         let aviso_de_troca: Option<SharedString> = chat.contexto_grande().filter(|_| aba == Agente::Claude).map(|t| {
             format!("Trocar o modelo agora faz a próxima mensagem reler {} por inteiro.", super::tokens(t)).into()
@@ -935,14 +919,19 @@ impl Janela {
                 });
                 // Os dois agentes no mesmo chat (dono, 16/11/2026: "dar pra usar o Codex e o Claude no
                 // mesmo chat e eles conseguirem conversar entre si e verem o que cada um tá fazendo").
+                // A dupla nasce sozinha ao trocar de agente ou chamar o outro com @ (17/11/2026); a
+                // chave só liga a revisão, os dois em toda mensagem.
                 let dupla = com_abas.then(|| {
                     let (motor_e, chat_id) = (motor_e.clone(), chat_id.clone());
                     div().child(
-                        LinhaDeOpcao::new(("dupla", painel as usize), "Claude e Codex juntos")
-                            .descricao("Um responde e o outro revisa, um de cada vez. @claude ou @codex no começo fala só com um.")
+                        LinhaDeOpcao::new(("dupla", painel as usize), "Os dois em toda mensagem")
+                            .descricao(
+                                "Um responde e o outro revisa. Sem isso, trocar de modelo ou começar com @claude ou @codex já \
+                                 passa a conversa de um para o outro.",
+                            )
                             .interruptor(juntos, move |ligar, _, cx| {
                                 if let Some(m) = &motor_e {
-                                    m.update(cx, |m, cx| m.juntar_agentes(&chat_id, ligar, cx));
+                                    m.update(cx, |m, cx| m.revisao_em_dupla(&chat_id, ligar, cx));
                                 }
                             }),
                     )

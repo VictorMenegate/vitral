@@ -45,6 +45,8 @@ pub(super) struct Agente {
     pub estado: Estado,
     /// `None` quando a conversa não guardou o que ele fez (veio do histórico do Claude Code).
     pub ferramentas: Option<u32>,
+    /// Os tokens que ele gastou (0: o Claude Code não disse).
+    pub tokens: u64,
     pub segundos: Option<u64>,
     pub atividade: String,
     pub passos: Vec<String>,
@@ -90,6 +92,7 @@ pub(super) fn agentes_do_chat(itens: &[Item], rodando: bool, agora: u64) -> Vec<
                 titulo: detalhe_da_chamada(nome, resumo),
                 estado,
                 ferramentas: sub.as_ref().map(|s| s.ferramentas),
+                tokens: sub.as_ref().map_or(0, |s| s.tokens),
                 segundos,
                 atividade: sub.as_ref().map(|s| s.atividade.clone()).unwrap_or_default(),
                 passos: sub.as_ref().map(|s| s.passos.clone()).unwrap_or_default(),
@@ -109,7 +112,7 @@ pub(super) fn agentes_vivos(motor: &Motor, chat: &Chat) -> usize {
 }
 
 /// "437,7 mil" para os tokens do contexto.
-fn em_mil(n: u64) -> String {
+pub(super) fn em_mil(n: u64) -> String {
     if n < 1_000 {
         return n.to_string();
     }
@@ -120,7 +123,8 @@ fn em_mil(n: u64) -> String {
 fn meta_do_agente(a: &Agente) -> String {
     let ferramentas = a.ferramentas.map(|n| contagem(n as usize, "ferramenta", "ferramentas"));
     let tempo = a.segundos.map(|s| duracao_curta(s * 1_000));
-    let numeros = [tempo, ferramentas].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    let tokens = (a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
+    let numeros = [tempo, tokens, ferramentas].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     match a.estado {
         Estado::Rodando if !a.atividade.is_empty() => detalhe_do_passo(&a.atividade),
         Estado::Rodando => "Começando…".to_string(),
@@ -338,7 +342,7 @@ mod testes {
     }
 
     fn sub(ferramentas: u32, atividade: &str, fim: u64) -> Subagente {
-        Subagente { ferramentas, atividade: atividade.into(), passos: vec!["Read · a.rs".into()], fim }
+        Subagente { ferramentas, atividade: atividade.into(), passos: vec!["Read · a.rs".into()], fim, ..Default::default() }
     }
 
     #[test]
@@ -386,6 +390,7 @@ mod testes {
             titulo: "t".into(),
             estado: Estado::Rodando,
             ferramentas: Some(3),
+            tokens: 0,
             segundos: Some(493),
             atividade: "Read · admin.py".into(),
             passos: Vec::new(),

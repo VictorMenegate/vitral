@@ -90,14 +90,18 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Trilha de atividade.** Resumo do trabalho, ramificações entre as chamadas e identificação dos
   arquivos. Os grupos abrem enquanto trabalham e recolhem ao terminar, respeitando sua escolha.
   Abrir uma edição mostra o diff; abrir um comando reúne o comando e sua saída.
-- **Claude e Codex no mesmo chat.** Ligue "Claude e Codex juntos" no seletor de modelo. Cada mensagem
-  vai aos dois, um de cada vez: um trabalha e o outro revisa o que ele fez (completa, corrige ou
-  discorda), até um dizer "Nada a acrescentar" ou até 6 turnos. Antes da vez dele, cada um recebe o
-  que o outro disse e os arquivos que mexeu. @claude ou @codex no começo da mensagem fala só com um.
-  A conversa mostra quem está trabalhando.
+- **Claude e Codex no mesmo chat, sem ligar nada.** Num chat que já conversou, trocar de agente no
+  seletor de modelo ou começar a mensagem com @claude ou @codex chama o outro: ele entra com a
+  conversa até ali, e o de antes continua no chat com a sessão dele (o @ o chama de volta). Cada um,
+  antes da vez dele, recebe o que o outro disse e os arquivos que mexeu, e a conversa mostra quem
+  está trabalhando. Para os dois em toda mensagem (um trabalha e o outro revisa, até um dizer "Nada
+  a acrescentar" ou até 6 turnos), ligue **Os dois em toda mensagem** no seletor de modelo.
 - **Subagentes à vista de novo.** No Claude Code novo os subagentes trabalham em segundo plano, e o
   Vitral os dava como terminados logo ao começar. Agora eles ficam como trabalhando até o fim, com o
-  que estão fazendo e quantas ferramentas usaram, e terminam com o resumo do que fizeram.
+  que estão fazendo, e cada um mostra desde o começo os tokens, as ferramentas e o tempo, como na
+  extensão. O relatório de cada um sai em texto, sem a moldura que o Claude Code põe em volta.
+- **Sem o Ultrathink.** No Claude Code de agora a palavra não muda nada, e a chave só subia o esforço
+  da mensagem para Extra, o mesmo que escolher o Extra no seletor de esforço.
 - **Corrigir qualquer mensagem sua.** O Editar aparece em todas as suas mensagens, não só na última
   (e não some mais quando o Claude pensa antes de responder). A conversa volta ao ponto antes dela.
 - **Suas mensagens na largura toda** da coluna, num balão azul mais baixo que a resposta: os
