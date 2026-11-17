@@ -567,6 +567,40 @@ impl Janela {
         let pilula_nova = !seguindo && !painel.pilula_vista;
         painel.pilula_vista = !seguindo;
 
+        // A última mensagem sua fica presa no alto quando sobe para fora da vista (dono, 17/11/2026:
+        // "faz a última mensagem que mando grudar em cima"), em duas linhas; o clique leva até ela.
+        // Sai com a busca da conversa aberta, que mora no mesmo lugar.
+        let presa = (!self.paineis[ix].busca.aberta)
+            .then(|| ultima_do_usuario(&chat.itens))
+            .flatten()
+            .and_then(|(i, texto)| {
+                let p = &self.paineis[ix];
+                let (alto, pe) = p.posicoes.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, pe)| (alto, pe))?;
+                (pe < -p.rolagem.offset().y).then_some((i, alto, texto))
+            })
+            .map(|(i, alto, texto)| {
+                let janela = cx.entity().downgrade();
+                let raio = crate::tema::raio_da_peca();
+                div().absolute().top(esp::E8).left_0().right_0().child(
+                    div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
+                        div()
+                            .id(("mensagem-presa", painel_id as usize))
+                            .relative()
+                            .w_full()
+                            .px(dentro_da_borda(12.))
+                            .py(dentro_da_borda(8.))
+                            .rounded(raio)
+                            .cursor_pointer()
+                            .shadow(crate::tema::sombra_elevado())
+                            .child(fundo_da_lista(raio))
+                            .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
+                            .tooltip(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
+                            .on_click(move |_, _, cx| {
+                                let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
+                            }),
+                    ),
+                )
+            });
         div()
             .key_context(CONTEXTO_DA_CONVERSA)
             .relative()
@@ -607,8 +641,20 @@ impl Janela {
                     .mode(ScrollbarMode::Always).viewport_from_layout(),
             ))
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
+            .children(presa)
             // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
             .children(barra_busca)
+    }
+
+    /// Rola o painel até a mensagem `item`, que começa em `alto` no conteúdo, com um respiro em cima.
+    fn ir_para_a_mensagem(&mut self, painel_id: u64, item: usize, alto: Pixels, cx: &mut Context<Self>) {
+        let Some(p) = self.paineis.iter_mut().find(|p| p.id == painel_id) else { return };
+        let alto = p.posicoes.borrow().iter().find(|(k, ..)| *k == item).map_or(alto, |&(_, alto, _)| alto);
+        let novo = point(px(0.), -(alto - px(12.)).max(px(0.)));
+        p.rolagem.set_offset(novo);
+        p.leitura.deslocamento = novo.y;
+        p.seguindo = false;
+        cx.notify();
     }
 
     fn carregar_anteriores(&mut self, painel_id: u64, cx: &mut Context<Self>) {
@@ -717,8 +763,12 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
+        // Fechada em duas linhas, a mensagem abre e fecha com um clique (dono, 17/11/2026: "no
+        // máximo duas linhas e ter que clicar pra aparecer o resto"). Mais de duas linhas no texto
+        // ou mais caracteres do que cabem em duas na coluna (uns 170 na larga, 100 na estreita).
         let linhas = texto.lines().count();
-        let longo = linhas > 14;
+        let cabem = if larga(contexto.nivel) { 170 } else { 100 };
+        let longo = linhas > 2 || texto.chars().count() > cabem;
         let chave_tudo = format!("{chave}:tudo");
         let tudo = self.expandidos.contains(&chave_tudo);
         let corpo = match comando_de_barra(texto).filter(|_| anexos.is_empty()) {
@@ -742,16 +792,18 @@ impl Janela {
                 )
                 .into_any_element(),
             None => {
+                // Longa: o balão inteiro abre e fecha no clique, e um chevron discreto no canto
+                // diz que há mais (ou que dá para fechar).
                 let mostrar = longo.then(|| {
-                    let rotulo = if tudo {
-                        "Mostrar menos".to_string()
-                    } else {
-                        format!("Mostrar tudo ({linhas} linhas)")
-                    };
-                    let id = SharedString::from(format!("tudo-{chave}"));
                     let icone = if tudo { Lucide::ChevronUp } else { Lucide::ChevronDown };
-                    fantasma(id, Some(icone), rotulo, TamanhoBotao::Linha, alternar(chave_tudo, cx), window, cx)
+                    div()
+                        .absolute()
+                        .right(esp::E8)
+                        .bottom(esp::E6)
+                        .text_color(Cores::tenue())
+                        .child(icone_de(icone, 14.))
                 });
+                let alternar_tudo = longo.then(|| alternar(chave_tudo.clone(), cx));
                 // Os anexos entram no balão, em pílulas em cima do texto, como na extensão do
                 // Claude Code (dono, 16/11/2026), no poço escuro do balão.
                 // Mais justo: 12 dos lados e 8 em cima e embaixo (eram 16 e 12; dono, 17/11/2026:
@@ -773,7 +825,9 @@ impl Janela {
                 let tem_pilulas = pilulas.is_some();
                 let balao = (com_texto || pilulas.is_some() || mostrar.is_some() || reforco != Reforco::default()).then(|| {
                     v_flex()
+                        .id(SharedString::from(format!("balao-{chave}")))
                         .w_full()
+                        .when_some(alternar_tudo, |s, f| s.cursor_pointer().on_click(f))
                         .px(dentro_da_borda(folga))
                         // Com pílulas no alto, 8 em cima (o mesmo dos lados delas) e 6 até o texto.
                         .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
@@ -801,26 +855,15 @@ impl Janela {
                                     .relative()
                                     .fala()
                                     .text_color(Cores::texto())
+                                    .when(longo, |s| s.pr(esp::E16))
                                     .child(
                                         markdown_achado(contexto, chave.to_string().into(), com_quebras_duras(&ligado), realce)
                                             .estilo(estilo_do_balao)
-                                            .linhas(cortado.then_some(12)),
-                                    )
-                                    .when(cortado, |s| {
-                                        s.child(
-                                            div()
-                                                .absolute()
-                                                .left_0()
-                                                .right_0()
-                                                .bottom_0()
-                                                .h(r(24.))
-                                                .bg(crate::tema::gradiente_do_pe_do_balao()),
-                                        )
-                                    }),
+                                            .linhas(cortado.then_some(2)),
+                                    ),
                             )
                         })
-                        // O chevron cai na coluna do texto.
-                        .when_some(mostrar, |s, b| s.child(h_flex().ml(r(-8.)).child(b)))
+                        .children(mostrar)
                         .when(reforco != Reforco::default(), |s| {
                             s.child(
                                 h_flex()
@@ -1539,6 +1582,18 @@ fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
 /// pela margem.
 fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
     elemento.pb(esp::E8).mb(r(-8.))
+}
+
+/// A última mensagem sua na conversa, com o índice: o texto (as primeiras linhas, que a faixa
+/// presa no alto mostra em duas) ou, só com anexos, a contagem deles.
+fn ultima_do_usuario(itens: &[Item]) -> Option<(usize, String)> {
+    itens.iter().enumerate().rev().find_map(|(i, item)| match item {
+        Item::Usuario { texto, anexos, .. } if !texto.trim().is_empty() => {
+            Some((i, texto.lines().filter(|l| !l.trim().is_empty()).take(3).collect::<Vec<_>>().join(" ")))
+        }
+        Item::Usuario { anexos, .. } if !anexos.is_empty() => Some((i, contagem(anexos.len(), "anexo", "anexos"))),
+        _ => None,
+    })
 }
 
 /// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal

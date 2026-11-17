@@ -196,8 +196,11 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   fios dos lados; a caixa de código perdeu o fio do cabeçalho e o Copiar só aparece com o ponteiro
   nela; a linha do turno não mostra mais "ação 5"; o enviar tem a altura dos chips ao lado; e as
   abas cortam o título sem as reticências, com o número mais perto.
-- **Suas mensagens com a cara da lista.** O balão do que você escreve tem o fundo do chat
-  escolhido na lista e a barra azul na esquerda, sem o contorno e sem a ponta.
+- **Suas mensagens como um buraco no cartão.** O balão do que você escreve mostra o fundo da
+  lista (o metal com o véu azul), com a sombra caindo da beirada de cima, sem contorno e sem ponta.
+  A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
+- **A sua última mensagem presa no alto.** Quando a resposta passa da tela e a sua mensagem sobe,
+  ela fica presa no topo da conversa, em duas linhas; o clique leva até ela.
 - **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
   pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
   painel da direita estreito a aba à vista mantém o nome.

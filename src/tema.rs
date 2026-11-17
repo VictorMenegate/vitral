@@ -421,11 +421,6 @@ pub fn gradiente_da_divisoria(embaixo: bool) -> Background {
     linear_gradient(180., linear_color_stop(de, 0.), linear_color_stop(ate, 1.))
 }
 
-/// O véu do seu balão cortado: a última linha some no azul do balão (opaco, então sem emenda).
-pub fn gradiente_do_pe_do_balao() -> Background {
-    linear_gradient(180., linear_color_stop(Cores::balao().opacity(0.), 0.), linear_color_stop(Cores::balao(), 1.))
-}
-
 /// Os lados da doca: o escuro do cartão some da beirada para o meio (da esquerda para a direita;
 /// `direita` espelha). É o que concentra a luz de baixo no meio do painel.
 pub fn gradiente_do_lado_da_doca(direita: bool) -> Background {
