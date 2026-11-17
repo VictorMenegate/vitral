@@ -584,6 +584,17 @@ pub fn contar_quadro() {
     QUADROS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// O tempo de montar a árvore da janela (só o `render`, sem o layout e a pintura do GPUI): a soma e
+/// o pior do segundo, em microssegundos, para o `VITRAL_QUADROS`.
+static MONTAGEM_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static MONTAGEM_PIOR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn medir_montagem(tempo: Duration) {
+    let micros = tempo.as_micros() as u64;
+    MONTAGEM_TOTAL.fetch_add(micros, std::sync::atomic::Ordering::Relaxed);
+    MONTAGEM_PIOR.fetch_max(micros, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Com `VITRAL_QUADROS=1`, escreve "quadros/s: N" no stderr a cada segundo em que a janela
 /// redesenhou: a conferência do orçamento de movimento. Quando o metal refez o campo nesse
 /// segundo, a linha leva o tempo médio de um campo (conta, BMP e decodificação):
@@ -601,8 +612,15 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let n = QUADROS.swap(0, std::sync::atomic::Ordering::Relaxed);
             let campo = metal::custo_do_campo();
+            let total = MONTAGEM_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let pior = MONTAGEM_PIOR.swap(0, std::sync::atomic::Ordering::Relaxed);
             if n > 0 {
-                eprintln!("{}", linha_dos_quadros(n, campo));
+                eprintln!(
+                    "{} · montagem: média {:.1} ms, pior {:.1} ms",
+                    linha_dos_quadros(n, campo),
+                    total as f64 / f64::from(n) / 1000.,
+                    pior as f64 / 1000.
+                );
             }
         }
     })
@@ -1522,6 +1540,16 @@ impl Janela {
 
 impl Render for Janela {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let inicio = std::time::Instant::now();
+        let janela = self.montar_janela(window, cx);
+        medir_montagem(inicio.elapsed());
+        janela
+    }
+}
+
+impl Janela {
+    /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
+    fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
