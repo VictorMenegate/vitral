@@ -773,14 +773,12 @@ const GRUPO_DO_ERRO: &str = "cartao-de-erro";
 
 impl RenderOnce for CartaoDeErro {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // Sem caixa: um fio de 2 px na cor do assunto à esquerda, o ícone na mesma cor e o texto
-        // solto na conversa, como uma nota. A caixa tingida com contorno pesava mais que a
-        // resposta e, empilhada (limite, login, outra tentativa), virava uma parede vermelha
-        // (dono, 17/11/2026: "tô achando feio o estilo de quando mando mensagem e tem erro").
-        let (cor_do_fio, cor_do_icone) = match self.cor {
-            Some(c) => (c.opacity(0.7), c),
-            None => (Cores::borda_forte(), Cores::tenue()),
-        };
+        // Sem caixa e sem fio: o ícone na cor do assunto e o texto solto na conversa, como uma
+        // nota. A caixa tingida com contorno pesava mais que a resposta e, empilhada (limite,
+        // login, outra tentativa), virava uma parede vermelha (dono, 17/11/2026: "tô achando feio
+        // o estilo de quando mando mensagem e tem erro"); o fio de 2 px à esquerda que ficou no
+        // lugar dela também saiu ("tira essas barras").
+        let cor_do_icone = self.cor.unwrap_or(Cores::tenue());
         let corpo = self.frase.is_some() || self.original.is_some() || !self.acoes.is_empty();
         let (original_antes, original_depois) = if self.original_antes { (self.original, None) } else { (None, self.original) };
         let acoes = self.acoes;
@@ -790,7 +788,6 @@ impl RenderOnce for CartaoDeErro {
             .items_stretch()
             .gap(esp::E12)
             .py(esp::E2)
-            .child(div().flex_none().w(px(2.)).rounded_full().bg(cor_do_fio))
             .child(
                 v_flex()
                     .flex_1()
