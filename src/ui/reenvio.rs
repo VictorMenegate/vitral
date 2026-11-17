@@ -105,7 +105,126 @@ pub(super) fn botao_editar(chave: &str, painel: u64, ix: usize, window: &Window,
     })
 }
 
+/// O "Voltar os arquivos" do balão de uma mensagem sua que levou marca ao Claude Code.
+pub(super) fn botao_voltar_arquivos(chave: &str, chat: &str, marca: &str, window: &Window, cx: &Context<Janela>) -> Button {
+    let janela = cx.entity().downgrade();
+    let (chat, marca) = (chat.to_string(), marca.to_string());
+    botao_icone(
+        SharedString::from(format!("voltar-arquivos-{chave}")),
+        Lucide::RotateCcw,
+        "Voltar os arquivos a como estavam antes desta mensagem (a conversa fica)",
+        TamanhoBotao::Linha,
+        window,
+        cx,
+    )
+    .on_click(move |_, window, cx| {
+        cx.stop_propagation();
+        let _ = janela.update(cx, |this, cx| this.pedir_volta_dos_arquivos(chat.clone(), marca.clone(), window, cx));
+    })
+}
+
+/// "a.rs, b.rs e mais 3": os nomes dos arquivos, sem a pasta.
+fn nomes_dos_arquivos(arquivos: &[String]) -> String {
+    let nomes: Vec<String> = arquivos
+        .iter()
+        .map(|a| std::path::Path::new(a).file_name().map_or_else(|| a.clone(), |n| n.to_string_lossy().into_owned()))
+        .collect();
+    match nomes.len() {
+        0..=3 => nomes.join(", "),
+        n => format!("{} e mais {}", nomes[..3].join(", "), n - 3),
+    }
+}
+
 impl Janela {
+    /// Pergunta ao Claude Code o que voltaria (sem mexer em nada), mostra e, no ok, volta os
+    /// arquivos a antes da mensagem `marca`. A conversa fica como está; um aviso nela diz o que
+    /// voltou. Com o chat rodando, não: o turno ainda mexe nos arquivos.
+    pub(super) fn pedir_volta_dos_arquivos(&mut self, chat: String, marca: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let Some((pasta, conta, sessao)) = motor.read(cx).onde_voltar_arquivos(&chat) else {
+            window.push_notification(aviso(Tom::Info, "Pare o turno (Esc) antes de voltar os arquivos."), cx);
+            return;
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            let (p, c, s, m) = (pasta.clone(), conta.clone(), sessao.clone(), marca.clone());
+            let seco = cx
+                .background_spawn(async move { crate::claude::voltar_arquivos(&p, c.as_deref(), &s, &m, true) })
+                .await;
+            let _ = cx.update(|window, cx| {
+                let volta = match seco {
+                    Ok(volta) if volta.arquivos.is_empty() => {
+                        window.push_notification(aviso(Tom::Info, "Nada a voltar: os arquivos já estão como antes desta mensagem."), cx);
+                        return;
+                    }
+                    Ok(volta) => volta,
+                    Err(erro) => {
+                        window.push_notification(aviso(Tom::Atencao, format!("Não dá para voltar os arquivos: {erro}")), cx);
+                        return;
+                    }
+                };
+                let linhas = format!("+{} −{}", volta.entram, volta.saem);
+                let detalhes = vec![
+                    (Lucide::FileDiff.into(), format!("{}: {}", contagem(volta.arquivos.len(), "arquivo", "arquivos"), nomes_dos_arquivos(&volta.arquivos)).into(), true),
+                    (Lucide::MessagesSquare.into(), "A conversa fica como está; o agente vê os arquivos de novo no próximo turno".into(), false),
+                    (Lucide::TriangleAlert.into(), "O que você mudou à mão nesses arquivos depois também volta".into(), false),
+                ];
+                let (motor, chat) = (motor.clone(), chat.clone());
+                let texto_do_aviso = format!(
+                    "Voltei {} a como estavam antes de uma mensagem sua: {}.",
+                    contagem(volta.arquivos.len(), "arquivo", "arquivos"),
+                    nomes_dos_arquivos(&volta.arquivos)
+                );
+                confirmar(
+                    Confirmacao {
+                        tom: TomConfirmacao::Atencao,
+                        icone: Lucide::RotateCcw.into(),
+                        titulo: "Voltar os arquivos?".into(),
+                        texto: format!("Os arquivos que o Claude mudou desde esta mensagem voltam a como estavam ({linhas}).").into(),
+                        detalhes,
+                        ok: "Voltar os arquivos".into(),
+                        cancelar: "Deixar como está".into(),
+                        ok_perigo: true,
+                    },
+                    move |window, cx| {
+                        let (pasta, conta, sessao, marca, motor, chat, texto_do_aviso) = (
+                            pasta.clone(),
+                            conta.clone(),
+                            sessao.clone(),
+                            marca.clone(),
+                            motor.clone(),
+                            chat.clone(),
+                            texto_do_aviso.clone(),
+                        );
+                        window
+                            .spawn(cx, async move |cx| {
+                                let feito = cx
+                                    .background_spawn(async move {
+                                        crate::claude::voltar_arquivos(&pasta, conta.as_deref(), &sessao, &marca, false)
+                                    })
+                                    .await;
+                                let _ = cx.update(|window, cx| match feito {
+                                    Ok(_) => {
+                                        motor.update(cx, |m, cx| m.avisar_na_conversa(&chat, &texto_do_aviso, cx));
+                                        window.push_notification(aviso(Tom::Pronto, "Arquivos de volta"), cx);
+                                    }
+                                    Err(erro) => {
+                                        window.push_notification(aviso(Tom::Atencao, format!("Não voltei os arquivos: {erro}")), cx);
+                                    }
+                                });
+                            })
+                            .detach();
+                    },
+                    None,
+                    window,
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
     /// A seta para cima na caixa vazia: igual ao "Editar", mas sem parar um turno em andamento —
     /// uma tecla sem querer não corta o trabalho do Claude.
     pub(super) fn editar_ultima(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
@@ -270,6 +389,7 @@ mod testes {
             anexos: Vec::new(),
             ultrathink: false,
             ultracode: false,
+            marca: None,
         }
     }
 

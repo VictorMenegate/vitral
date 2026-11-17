@@ -2,7 +2,7 @@
 //! aviso, se ela sumiu).
 
 use gpui_kit::component::{
-    ElementExt as _, StyledExt as _, scroll::ScrollableElement as _, tooltip::Tooltip,
+    ElementExt as _, Icon, StyledExt as _, h_flex, scroll::ScrollableElement as _, tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -32,7 +32,11 @@ impl Janela {
         let chat = self.selecionado.as_ref().and_then(|id| motor.chat(id));
         let mut filhos: Vec<AnyElement> = Vec::new();
         if let Some(chat) = chat {
-            // As Mudanças no topo; a pasta e o Abrir pasta descem para o pé (item 5.1).
+            // Os passos do agente, quando ele anotou uma lista; depois as Mudanças; a pasta e o
+            // Abrir pasta descem para o pé (item 5.1).
+            if !motor.passos(&chat.id).is_empty() {
+                filhos.push(passos(motor.passos(&chat.id)));
+            }
             filhos.push(self.mudancas(chat, window));
             filhos.push(self.este_chat(motor, chat, window, cx));
         }
@@ -323,4 +327,46 @@ mod testes {
         assert!(!fica_estreita(380. / 15., false));
         assert!(fica_estreita(380. / 22.5, false));
     }
+}
+
+/// A seção Passos: a lista que o agente mantém (o TodoWrite), com o que está fazendo em destaque.
+fn passos(lista: &[crate::motor::Passo]) -> AnyElement {
+    use crate::motor::EstadoDoPasso::*;
+    let feitos = lista.iter().filter(|p| p.estado == Feito).count();
+    let linhas = lista.iter().map(|p| {
+        let (simbolo, cor, texto) = match p.estado {
+            Feito => (Lucide::CircleCheck, Cores::verde(), p.texto.clone()),
+            Fazendo => (Lucide::CircleDot, Cores::destaque_texto(), p.fazendo.clone()),
+            Falta => (Lucide::Circle, Cores::apagado(), p.texto.clone()),
+        };
+        h_flex()
+            .items_start()
+            .gap(esp::E8)
+            .child(div().flex_none().mt(r(2.)).text_color(cor).child(Icon::new(simbolo).size(r(14.))))
+            .child(
+                div()
+                    .min_w_0()
+                    .corpo_ui()
+                    .text_color(if p.estado == Fazendo { Cores::forte() } else if p.estado == Feito { Cores::tenue() } else { Cores::texto() })
+                    .child(texto),
+            )
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(esp::E8)
+        .p(dentro_da_borda(12.))
+        .rounded(raio::CARTAO)
+        .bg(Cores::cartao_elevado())
+        .border_1()
+        .border_color(Cores::linha())
+        .reflexo(raio::cartao())
+        .child(
+            h_flex()
+                .gap(esp::E6)
+                .child(div().rotulo().text_color(Cores::forte()).child("Passos"))
+                .child(div().font_family(FONTE_MONO).metadado().text_color(Cores::apagado()).child(format!("{feitos} de {}", lista.len()))),
+        )
+        .child(div().flex().flex_col().gap(esp::E6).children(linhas))
+        .into_any_element()
 }

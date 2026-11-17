@@ -532,6 +532,7 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                         ultrathink: false,
                         ultracode: false,
                         em,
+                        marca: None,
                     }),
                     Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false, em)),
                     Fala::Interrompido => itens.push(aviso("Interrompido pelo usuário.", false, em)),

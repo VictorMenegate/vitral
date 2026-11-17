@@ -2186,6 +2186,7 @@ mod testes {
                 ultrathink: false,
                 ultracode: false,
                 em: 0,
+                marca: None,
             },
         );
         // O termo só numa mensagem: a prévia vira o trecho dela, numa linha, com o termo marcado.

@@ -135,7 +135,38 @@ except (ValueError, KeyError, TypeError):
 papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else ""
 
 linha = sys.stdin.readline()
+
+
+def responder_controle(pedido):
+    """Os pedidos de controle sem mensagem (o `initialize` das perguntas do Vitral e o
+    `rewind_files` do Voltar os arquivos): responde como o de verdade, sem mexer em nada."""
+    corpo = pedido.get("request", {})
+    resposta = {}
+    if corpo.get("subtype") == "rewind_files":
+        anotar({"rewind_files": corpo.get("user_message_id"), "dry_run": corpo.get("dry_run")})
+        resposta = {"canRewind": True, "filesChanged": [os.path.join(os.getcwd(), "notas-do-chat.md")],
+                    "insertions": 0, "deletions": 1}
+    emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"),
+                                                     "response": resposta}})
+
+
+try:
+    primeiro = json.loads(linha)
+except ValueError:
+    primeiro = {}
+if isinstance(primeiro, dict) and primeiro.get("type") == "control_request":
+    responder_controle(primeiro)
+    for outra in sys.stdin:
+        try:
+            pedido = json.loads(outra)
+        except ValueError:
+            continue
+        if pedido.get("type") == "control_request":
+            responder_controle(pedido)
+    sys.exit(0)
 fim_da_entrada = threading.Event()
+# O `stop_task` do Vitral (o clique na pílula dos comandos de fundo) para o comando de `[ferramenta Fundo ...]`.
+tarefa_parada = threading.Event()
 
 
 def ouvir_entrada():
@@ -147,6 +178,11 @@ def ouvir_entrada():
         try:
             pedido = json.loads(pedido)
         except ValueError:
+            continue
+        if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "stop_task":
+            anotar({"stop_task": pedido["request"].get("task_id")})
+            emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"), "response": {}}})
+            tarefa_parada.set()
             continue
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "interrupt":
             anotar({"interrupt": pedido.get("request_id")})
@@ -197,6 +233,17 @@ emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_i
         "slash_commands": ["clear", "compact"], "claude_code_version": "2.1.300", "tools": ["Read", "Edit", "Bash"]})
 if "[demora]" in texto:
     time.sleep(10)
+# `[limite]`: a primeira vez, o turno cai no limite do plano, que volta em 60 s (o formato
+# "...|<segundos>" do Claude Code); a seguinte (a retomada) passa.
+marca_do_limite = os.path.join(os.environ.get("XDG_STATE_HOME", "/tmp"), "claude-falso-limite")
+if "[limite]" in texto and not os.path.exists(marca_do_limite):
+    open(marca_do_limite, "w").close()
+    volta = int(time.time()) + 60
+    emitir({"type": "result", "subtype": "success", "is_error": True, "result": f"Claude AI usage limit reached|{volta}",
+            "total_cost_usd": 0.0})
+    sys.exit(0)
+if "[limite]" in texto and os.path.exists(marca_do_limite):
+    os.remove(marca_do_limite)
 
 chamadas = []
 
@@ -246,6 +293,11 @@ def entrada_da_ferramenta(nome, detalhe):
         return {"query": detalhe}
     if nome in ("Task", "Agent", "Workflow"):
         return {"description": detalhe}
+    if nome == "TodoWrite":
+        return {"todos": [
+            {"content": "Ler o código do cupom", "activeForm": "Lendo o código do cupom", "status": "completed"},
+            {"content": "Corrigir o desconto", "activeForm": "Corrigindo o desconto", "status": "in_progress"},
+            {"content": "Rodar os testes", "activeForm": "Rodando os testes", "status": "pending"}]}
     return {"detalhe": detalhe}
 
 
@@ -261,6 +313,21 @@ def fingir_ferramentas(texto):
             emitir({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "thinking"}}})
             time.sleep(int(segundos) if segundos else 2)
             emitir({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": detalhe}]}})
+            continue
+        # `[ferramenta Fundo npm run dev | 20]`: um Bash com run_in_background, como o de verdade
+        # (2.1.325): volta na hora, a tarefa aparece em background_tasks_changed e some quando acaba
+        # (ou quando o Vitral manda o stop_task).
+        if nome == "Fundo":
+            emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_, "name": "Bash",
+                    "input": {"command": detalhe, "run_in_background": True, "description": detalhe}}]}})
+            emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
+                    "content": f"Command running in background with ID: bfalso{i}."}]}})
+            emitir({"type": "system", "subtype": "background_tasks_changed",
+                    "tasks": [{"task_id": f"bfalso{i}", "task_type": "local_bash", "description": detalhe}]})
+            parou = tarefa_parada.wait(int(segundos) if segundos else 20)
+            emitir({"type": "system", "subtype": "task_notification", "task_id": f"bfalso{i}", "tool_use_id": id_,
+                    "status": "killed" if parou else "completed", "summary": f"Background command \"{detalhe}\""})
+            emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
             continue
         emitir({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})

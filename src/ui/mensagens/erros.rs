@@ -349,6 +349,24 @@ pub(super) fn hora_de_volta(cru: &str) -> Option<String> {
     Some(crate::modelo::hora_local(segundos))
 }
 
+/// O instante (em segundos) em que o limite do erro volta: o número depois do "|" ou, pela hora
+/// local do texto, a próxima vez que ela chega (hoje ou amanhã). Sem hora no texto, nenhum.
+pub(super) fn segundos_de_volta(cru: &str, agora: u64) -> Option<u64> {
+    if let Some((_, fim)) = cru.trim_end().rsplit_once('|')
+        && fim.len() >= 9
+        && fim.bytes().all(|b| b.is_ascii_digit())
+    {
+        return fim.parse().ok();
+    }
+    let hora = hora_de_volta(cru)?;
+    let (h, m) = hora.split_once(':')?;
+    let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+    let local = crate::modelo::no_fuso_local(agora as i64);
+    let hoje = local.date_naive().and_hms_opt(h, m, 0)?;
+    let alvo = hoje.and_local_timezone(chrono::Local).earliest()?.timestamp().max(0) as u64;
+    Some(if alvo > agora { alvo } else { alvo + 24 * 3600 })
+}
+
 /// "3pm", "3:30 pm", "12:05 AM" ou "15:00" no começo de `t` (em minúsculas), em 24 h. Sem am/pm,
 /// só com os minutos ("15:00"): um número solto não é hora.
 fn hora_no_comeco(t: &str) -> Option<String> {
@@ -581,7 +599,7 @@ mod testes {
     }
 
     fn usuario() -> Item {
-        Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 }
+        Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None }
     }
 
     #[test]
@@ -603,6 +621,16 @@ mod testes {
         assert_eq!(lido.agente, Agente::Codex);
         assert_eq!(agente_do_erro("getaddrinfo ENOTFOUND api.anthropic.com", Agente::Codex), Agente::Claude);
         assert_eq!(agente_do_erro("algo", Agente::Codex), Agente::Codex);
+    }
+
+    #[test]
+    fn a_volta_do_limite_e_o_proximo_horario() {
+        assert_eq!(segundos_de_volta("Claude AI usage limit reached|1789000000", 0), Some(1_789_000_000));
+        let agora = 1_793_450_000;
+        let volta = segundos_de_volta("You've hit your limit · resets 3pm", agora).unwrap();
+        assert!(volta > agora && volta <= agora + 24 * 3600, "{volta}");
+        assert_eq!(crate::modelo::hora_local(volta), "15:00");
+        assert_eq!(segundos_de_volta("falhou", agora), None);
     }
 
     #[test]

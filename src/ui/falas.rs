@@ -168,7 +168,7 @@ mod testes {
     fn ultima_fala_e_o_que_o_turno_fez() {
         let mut chat = Chat::novo("c".into(), "t", std::path::PathBuf::from("/tmp"));
         assert_eq!(ultima_fala(&chat), None);
-        chat.itens.push(Item::Usuario { texto: "faz o deploy".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 });
+        chat.itens.push(Item::Usuario { texto: "faz o deploy".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None });
         assert_eq!(ultima_fala(&chat).as_deref(), Some("faz o deploy"));
         let ferramenta = |nome: &str, arquivo: Option<&str>| Item::Ferramenta {
             id: "f".into(),
@@ -190,7 +190,7 @@ mod testes {
         assert_eq!(ultima_fala(&chat).as_deref(), Some("Pronto."));
         assert_eq!(o_que_o_turno_fez(&chat.itens), "2 editados · 1 comando");
         // Um turno que só respondeu não diz nada.
-        chat.itens.push(Item::Usuario { texto: "e aí?".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 });
+        chat.itens.push(Item::Usuario { texto: "e aí?".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None });
         chat.itens.push(Item::Assistente { texto: "Tudo certo.".into(), em: 0 });
         assert_eq!(o_que_o_turno_fez(&chat.itens), "");
     }

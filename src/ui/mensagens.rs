@@ -665,12 +665,15 @@ impl Janela {
                 anexos,
                 ultrathink,
                 ultracode,
+                marca,
                 ..
             } => {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
                 let editavel = contexto.editavel.is_some_and(|desde| indice >= desde);
-                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, window, cx))
+                // Só o Claude Code guarda o antes dos arquivos por mensagem.
+                let marca = marca.as_deref().filter(|_| contexto.chat.agente == crate::modelo::Agente::Claude);
+                (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, marca, window, cx))
             }
             Item::Assistente { texto, .. } => {
                 (Bloco::Texto, self.texto_assistente(contexto, indice, &chave, texto, item.em(), cx))
@@ -709,6 +712,7 @@ impl Janela {
         em: u64,
         realce: Realce,
         editavel: bool,
+        marca: Option<&str>,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -838,6 +842,10 @@ impl Janela {
             if let Some(ix) = ix {
                 acoes.push(super::reenvio::botao_editar(chave, contexto.painel, ix, window, cx).into_any_element());
             }
+        }
+        // Os arquivos voltam a como estavam antes desta mensagem (o checkpoint do Claude Code).
+        if let Some(marca) = marca {
+            acoes.push(super::reenvio::botao_voltar_arquivos(chave, &contexto.chat.id, marca, window, cx).into_any_element());
         }
         acoes.push(copiar(chave, texto).into_any_element());
         // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, no trecho reto
@@ -2222,6 +2230,21 @@ pub(super) fn mudancas_do_chat(itens: &[Item]) -> (Vec<ArquivoMudado>, Vec<Arqui
     // O que mudou neste turno não se repete em "Antes".
     antes.retain(|a| !neste.iter().any(|n| n.caminho == a.caminho));
     (neste, antes)
+}
+
+/// A lista de passos do agente em texto, um por linha: ✓ feito, → fazendo (no gerúndio dele),
+/// ○ falta.
+pub(super) fn texto_dos_passos(passos: &[crate::motor::Passo]) -> String {
+    use crate::motor::EstadoDoPasso::*;
+    passos
+        .iter()
+        .map(|p| match p.estado {
+            Feito => format!("✓ {}", p.texto),
+            Fazendo => format!("→ {}", p.fazendo),
+            Falta => format!("○ {}", p.texto),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Os arquivos de um registro antigo do Codex, de antes de guardar o diff: o resultado da chamada
@@ -3724,6 +3747,63 @@ impl Janela {
                         .when(!estreita && acoes > 0, |s| {
                             s.child(div().flex_none().etiqueta().text_color(Cores::apagado()).child(format!("ação {acoes}")))
                         })
+                        // Os comandos que o agente deixou rodando no fundo (um servidor, um build):
+                        // à vista, e o clique para (o `stop_task` de cada um).
+                        .children({
+                            let comandos = motor.comandos_no_fundo(&chat.id);
+                            (!comandos.is_empty()).then(|| {
+                                let n = comandos.len();
+                                let lista = comandos.iter().map(|(_, d)| format!("• {d}")).collect::<Vec<_>>().join("\n");
+                                let dica = format!(
+                                    "Rodando no fundo:\n{lista}\nClique para parar {}.",
+                                    if n == 1 { "o comando" } else { "todos" }
+                                );
+                                let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+                                Button::new(("pilula-comandos", painel_id as usize))
+                                    .custom(super::componentes::variante_fantasma(cx))
+                                    .h(r(22.))
+                                    .px(r(6.))
+                                    .rounded(raio::de(22.))
+                                    .tooltip(dica)
+                                    .child(
+                                        h_flex()
+                                            .gap(r(4.))
+                                            .metadado()
+                                            .text_color(Cores::tenue())
+                                            .child(icone_de(Lucide::Terminal, 12.))
+                                            .child(if estreita {
+                                                n.to_string()
+                                            } else {
+                                                super::componentes::contagem(n, "comando no fundo", "comandos no fundo")
+                                            }),
+                                    )
+                                    .on_click(move |_, _, cx| {
+                                        if let Some(m) = &motor_e {
+                                            m.update(cx, |m, cx| m.parar_comandos_no_fundo(&id, cx));
+                                        }
+                                    })
+                            })
+                        })
+                        // A lista de passos do agente: "3/7", com a lista inteira na dica.
+                        .children({
+                            let passos = motor.passos(&chat.id);
+                            (!passos.is_empty()).then(|| {
+                                let feitos = passos.iter().filter(|p| p.estado == crate::motor::EstadoDoPasso::Feito).count();
+                                let dica: SharedString = texto_dos_passos(passos).into();
+                                div()
+                                    .id(("passos", painel_id as usize))
+                                    .flex_none()
+                                    .child(
+                                        h_flex()
+                                            .gap(r(4.))
+                                            .metadado()
+                                            .text_color(Cores::tenue())
+                                            .child(icone_de(Lucide::ListChecks, 12.))
+                                            .child(format!("{feitos}/{}", passos.len())),
+                                    )
+                                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                            })
+                        })
                         // Os subagentes que trabalham agora: o clique abre o mapa deles.
                         .when(agentes > 0, |s| {
                             let chat_id = chat.id.clone();
@@ -3900,6 +3980,17 @@ impl Janela {
                         .on_click(tentar)
                         .into_any_element()
                 };
+                // No limite: o instante em que ele volta, para "Continuar às 14:20".
+                let volta = (tipo == erros::TipoDeErro::Limite)
+                    .then(|| {
+                        conta
+                            .as_ref()
+                            .filter(|_| agente == Agente::Claude)
+                            .and_then(|c| motor.limite_vence(&c.id))
+                            .or_else(|| erros::segundos_de_volta(&cru, crate::modelo::agora()))
+                    })
+                    .flatten();
+                let agendada = motor.retomada_agendada(&chat.id);
                 let acao = match (tipo, agente) {
                     // No limite de uma conta escolhida à mão, com outra com login e folga: um clique
                     // troca a conta do chat e repete o turno (eram 4 passos por painel).
@@ -3933,6 +4024,42 @@ impl Janela {
                             .into_any_element()
                     }
                     _ => tentar_de_novo(),
+                };
+                // A volta sozinha: com ela agendada, a faixa diz a hora e o botão a cancela; sem
+                // ela, o botão "Às 14:20" vai ao lado da outra saída.
+                let acao = match (agendada, volta) {
+                    (Some(quando), _) => {
+                        rotulo = format!("Continua sozinho às {}", crate::modelo::hora_local(quando));
+                        let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+                        botao_fantasma("faixa-cancelar-volta", Some(Lucide::X.into()), "Cancelar", TamanhoBotao::Barra, window, cx)
+                            .track_focus(&foco_faixa)
+                            .tooltip("Não continuar sozinho quando o limite voltar")
+                            .on_click(move |_, _, cx| {
+                                if let Some(m) = &motor_e {
+                                    m.update(cx, |m, cx| m.cancelar_retomada(&id, cx));
+                                }
+                            })
+                            .into_any_element()
+                    }
+                    (None, Some(quando)) => {
+                        let hora = crate::modelo::hora_local(quando);
+                        let (motor_e, id) = (self.motor.clone(), chat.id.clone());
+                        h_flex()
+                            .flex_none()
+                            .gap(esp::E4)
+                            .child(
+                                botao_fantasma("faixa-agendar-volta", Some(Lucide::Clock.into()), format!("Às {hora}"), TamanhoBotao::Barra, window, cx)
+                                    .tooltip(format!("Continuar este turno sozinho quando o limite voltar, às {hora}"))
+                                    .on_click(move |_, _, cx| {
+                                        if let Some(m) = &motor_e {
+                                            m.update(cx, |m, cx| m.agendar_retomada(&id, quando, cx));
+                                        }
+                                    }),
+                            )
+                            .child(acao)
+                            .into_any_element()
+                    }
+                    (None, None) => acao,
                 };
                 let dica = SharedString::from(if cru.trim().is_empty() { rotulo.clone() } else { cru.trim().to_string() });
                 (
@@ -5303,7 +5430,7 @@ mod testes {
     }
 
     fn usuario(texto: &str) -> Item {
-        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 }
+        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None }
     }
 
     fn assistente(texto: &str) -> Item {
@@ -5777,7 +5904,7 @@ mod testes {
     fn separador_novo_e_comeco_da_resposta() {
         use super::{Item, inicio_da_ultima_resposta, item_do_separador_novo};
         let com_hora = |item: Item, em: u64| match item {
-            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em },
+            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em, marca: None },
             Item::Assistente { texto, .. } => Item::Assistente { texto, em },
             outro => outro,
         };
@@ -5799,7 +5926,7 @@ mod testes {
     fn turno_pronto_recolhe_ate_a_resposta_final() {
         use super::{Item, TurnoRecolhivel, fica_fora_do_recolhido, resumo_do_turno, turnos_recolhiveis};
         let em = |item: Item, t: u64| match item {
-            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em: t },
+            Item::Usuario { texto, anexos, ultrathink, ultracode, .. } => Item::Usuario { texto, anexos, ultrathink, ultracode, em: t, marca: None },
             Item::Assistente { texto, .. } => Item::Assistente { texto, em: t },
             outro => outro,
         };

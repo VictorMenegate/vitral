@@ -191,6 +191,20 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resto), o histórico carrega de 60 em 60 e a rolagem ficou suave. Com um chat
   trabalhando, a janela redesenha no máximo 12 vezes por segundo (eram até 28), e a digitação e a
   rolagem respondem melhor.
+- **Voltar os arquivos a antes de uma mensagem.** No balão de uma mensagem sua, o botão de voltar
+  (o relógio girando para trás) mostra quais arquivos o Claude mudou desde ela e, no ok, volta
+  todos a como estavam. A conversa fica como está, com um aviso do que voltou. Vale para as
+  mensagens mandadas a partir desta versão.
+- **Continuar quando o limite voltar.** Num chat parado no limite do plano, o botão **Às 14:20**
+  agenda: na hora em que o limite volta, o turno é repetido sozinho. A faixa diz "Continua sozinho
+  às 14:20" e o **Cancelar** desfaz; mandar outra mensagem também.
+- **Os passos do agente.** Quando o Claude anota a lista do que vai fazer, a linha do turno mostra
+  "2/5" (a lista inteira na dica), e o **Este chat** ganha a seção Passos, com o que ele está
+  fazendo agora em destaque.
+- **Comandos no fundo à vista.** Um servidor ou um build que o agente deixou rodando em segundo
+  plano aparece na linha do turno ("1 comando no fundo", com o comando na dica); o clique para.
+- **Dois chats no mesmo arquivo.** Quando um chat edita um arquivo que outro chat editou nas
+  últimas 12 horas, a conversa avisa ("O chat «Fila» também editou fila.rs…"), uma vez por par.
 - **Turno calado à vista.** Depois de 10 minutos sem nada do agente (nem texto, nem ferramenta), a
   linha de estado diz "sem sinal há 12 min". Pode ser um comando longo; se travou, Esc para parar.
 - **Atalhos novos.** Ctrl+Tab e Ctrl+Shift+Tab andam pelas abas do painel ativo, Ctrl+Shift+T

@@ -117,6 +117,8 @@ pub const AGENTES_DO_ULTRACODE: u32 = 3;
 pub struct Mensagem<'a> {
     pub texto: &'a str,
     pub imagens: &'a [PathBuf],
+    /// O `uuid` com que a mensagem vai ao Claude Code: o ponto para voltar os arquivos a antes dela.
+    pub marca: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -132,6 +134,9 @@ pub enum Evento {
     /// Agentes e fluxos ainda rodando em segundo plano (o Claude Code abre outro turno quando
     /// eles terminam).
     Fundo(usize),
+    /// Os comandos de shell que o agente deixou rodando em segundo plano (`run_in_background`):
+    /// o id da tarefa (para o `stop_task`) e a descrição. Vazio quando não há mais nenhum.
+    Comandos(Vec<(String, String)>),
     /// A conversa do lado do agente ganhou este id (o `thread_id` do Codex): é ele que retoma.
     Sessao(String),
     /// Tokens que a conversa ocupa no contexto agora.
@@ -314,6 +319,20 @@ impl Processo {
             escopo,
             parado: false,
         })
+    }
+
+    /// Para uma tarefa de fundo do Claude Code (o comando deixado rodando): o `stop_task` do
+    /// protocolo, pela entrada. `false` sem entrada (o processo já está saindo e leva as dele).
+    pub fn parar_tarefa(&mut self, tarefa: &str) -> bool {
+        let Some(entrada) = self.entrada.as_mut() else {
+            return false;
+        };
+        let pedido = json!({
+            "type": "control_request",
+            "request_id": format!("vitral-parar-tarefa-{}", uuid::Uuid::new_v4()),
+            "request": { "subtype": "stop_task", "task_id": tarefa },
+        });
+        writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok()
     }
 
     /// Encerra a entrada: o processo termina depois do turno atual.
@@ -508,6 +527,9 @@ fn ambiente(opcoes: &Opcoes) -> Vec<(String, String)> {
     }
     // Pedidos de permissão podem esperar o usuário por muito tempo.
     por("MCP_TOOL_TIMEOUT", "86400000".into());
+    // O Claude Code guarda o antes de cada arquivo que edita, por mensagem: é o que deixa voltar os
+    // arquivos a antes de uma mensagem (`voltar_arquivos`).
+    por(CHECKPOINTS, "1".into());
     // Em todo turno: um fluxo que escape da opção (num Claude Code que o deixe passar) também
     // fica no limite.
     por("CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS", AGENTES_DO_ULTRACODE.to_string());
@@ -689,6 +711,12 @@ struct SegundoPedido<'a> {
     subtipo: &'a str,
     modelo: &'a str,
     pasta_conta: Option<&'a Path>,
+    /// Os campos do pedido além do subtipo.
+    campos: Value,
+    /// A sessão a retomar (`--resume`): o pedido é sobre ela (o `rewind_files`).
+    sessao: Option<&'a str>,
+    /// A resposta inteira (`response`, com o `subtype` "success" ou "error"), e não só o miolo.
+    resposta_crua: bool,
 }
 
 /// O `initialize` e, com `segundo`, mais um pedido de controle; devolve a resposta do último.
@@ -713,6 +741,9 @@ fn pedir_ao_claude(pasta: &Path, so_do_usuario: bool, segundo: Option<SegundoPed
         if let Some(conta) = segundo.pasta_conta {
             comando.env("CLAUDE_CONFIG_DIR", conta);
         }
+        if let Some(sessao) = segundo.sessao {
+            comando.args(["--resume", sessao]).env(CHECKPOINTS, "1");
+        }
     }
     // Aberto de dentro de outra sessão do Claude Code, o filho herdaria a marca dela.
     for variavel in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] {
@@ -724,15 +755,20 @@ fn pedir_ao_claude(pasta: &Path, so_do_usuario: bool, segundo: Option<SegundoPed
         let _ = filho.wait();
         return None;
     };
-    let pedido_de = |subtipo: &str| {
+    let pedido_de = |subtipo: &str, campos: &Value| {
         let id = format!("vitral-{subtipo}-{}", uuid::Uuid::new_v4());
-        let pedido = json!({ "type": "control_request", "request_id": id, "request": { "subtype": subtipo } });
+        let mut corpo = json!({ "subtype": subtipo });
+        if let (Some(corpo), Some(campos)) = (corpo.as_object_mut(), campos.as_object()) {
+            corpo.extend(campos.clone());
+        }
+        let pedido = json!({ "type": "control_request", "request_id": id, "request": corpo });
         (id, pedido)
     };
-    let (mut esperado, pedido) = pedido_de("initialize");
+    let (mut esperado, pedido) = pedido_de("initialize", &Value::Null);
     let mut escrito = writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok();
+    let crua = segundo.as_ref().is_some_and(|s| s.resposta_crua);
     if let Some(segundo) = &segundo {
-        let (id, pedido) = pedido_de(segundo.subtipo);
+        let (id, pedido) = pedido_de(segundo.subtipo, &segundo.campos);
         esperado = id;
         escrito = escrito && writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok();
     }
@@ -750,7 +786,13 @@ fn pedir_ao_claude(pasta: &Path, so_do_usuario: bool, segundo: Option<SegundoPed
                 Ok(_) => {}
             }
             let texto = String::from_utf8_lossy(&linha);
-            let resposta = serde_json::from_str::<Value>(texto.trim()).ok().and_then(|v| resposta_ao_pedido(&v, &esperado).cloned());
+            let resposta = serde_json::from_str::<Value>(texto.trim()).ok().and_then(|v| {
+                if crua {
+                    (v["type"] == "control_response" && v["response"]["request_id"] == esperado.as_str()).then(|| v["response"].clone())
+                } else {
+                    resposta_ao_pedido(&v, &esperado).cloned()
+                }
+            });
             if let Some(resposta) = resposta {
                 let _ = envia.send(resposta);
                 return;
@@ -765,6 +807,49 @@ fn pedir_ao_claude(pasta: &Path, so_do_usuario: bool, segundo: Option<SegundoPed
     let _ = filho.wait();
     resposta
 }
+
+/// O que voltar os arquivos a antes de uma mensagem faz (ou fez): os arquivos e as linhas.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Volta {
+    pub arquivos: Vec<String>,
+    pub entram: u64,
+    pub saem: u64,
+}
+
+/// Volta os arquivos que o Claude Code mudou desde a mensagem `marca` (o `uuid` com que ela foi
+/// mandada) da sessão `sessao`: o `rewind_files` do protocolo, com o checkpoint de arquivos ligado.
+/// `seco`: só diz o que mudaria. Abre um processo na sessão sem mandar mensagem nenhuma (não gasta
+/// o plano; medido na 2.1.325). Bloqueia até a resposta ou o prazo.
+pub fn voltar_arquivos(pasta: &Path, pasta_conta: Option<&Path>, sessao: &str, marca: &str, seco: bool) -> Result<Volta, String> {
+    pasta_so_do_dono(pasta).map_err(|e| e.to_string())?;
+    let segundo = SegundoPedido {
+        subtipo: "rewind_files",
+        modelo: "",
+        pasta_conta,
+        campos: json!({ "user_message_id": marca, "dry_run": seco }),
+        sessao: Some(sessao),
+        resposta_crua: true,
+    };
+    let resposta = pedir_ao_claude(pasta, false, Some(segundo)).ok_or("o Claude Code não respondeu")?;
+    volta_da_resposta(&resposta)
+}
+
+fn volta_da_resposta(resposta: &Value) -> Result<Volta, String> {
+    let miolo = &resposta["response"];
+    if resposta["subtype"] != "success" || miolo["canRewind"] != true {
+        let erro = miolo["error"].as_str().or(resposta["error"].as_str()).unwrap_or("o Claude Code recusou");
+        return Err(erro.to_string());
+    }
+    Ok(Volta {
+        arquivos: miolo["filesChanged"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect(),
+        entram: miolo["insertions"].as_u64().unwrap_or(0),
+        saem: miolo["deletions"].as_u64().unwrap_or(0),
+    })
+}
+
+/// Liga o checkpoint de arquivos do Claude Code no modo de SDK: sem ela, o `rewind_files` não tem o
+/// que voltar.
+const CHECKPOINTS: &str = "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING";
 
 /// O miolo da resposta ao pedido de controle `id`, se a linha da saída é ela.
 fn resposta_ao_pedido<'a>(valor: &'a Value, id: &str) -> Option<&'a Value> {
@@ -809,7 +894,7 @@ pub fn atualizar_esforco_padrao(pasta: &Path, pasta_conta: Option<&Path>, modelo
     if pasta_so_do_dono(pasta).is_err() {
         return false;
     }
-    let segundo = SegundoPedido { subtipo: "get_settings", modelo, pasta_conta };
+    let segundo = SegundoPedido { subtipo: "get_settings", modelo, pasta_conta, campos: Value::Null, sessao: None, resposta_crua: false };
     let Some(esforco) = pedir_ao_claude(pasta, true, Some(segundo)).and_then(|r| r["applied"]["effort"].as_str().map(str::to_string))
     else {
         return false;
@@ -1178,10 +1263,13 @@ fn escrever_mensagem(entrada: &mut ChildStdin, mensagem: Mensagem) -> Result<()>
             "source": { "type": "base64", "media_type": tipo, "data": base64(&bytes) },
         }));
     }
-    let linha = json!({
+    let mut linha = json!({
         "type": "user",
         "message": { "role": "user", "content": conteudo },
     });
+    if let Some(marca) = mensagem.marca {
+        linha["uuid"] = json!(marca);
+    }
     writeln!(entrada, "{linha}")?;
     entrada.flush()?;
     Ok(())
@@ -1234,15 +1322,18 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
         }],
         // Só o que o Claude Code espera antes de sair: fluxos e subagentes em segundo plano (os
         // comandos de shell ele encerra sozinho).
-        "system" if valor["subtype"] == "background_tasks_changed" => vec![Evento::Fundo(
-            valor["tasks"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|t| matches!(t["task_type"].as_str(), Some("local_workflow" | "local_agent")))
-                .filter(|t| t["ambient"] != true)
-                .count(),
-        )],
+        "system" if valor["subtype"] == "background_tasks_changed" => {
+            let tarefas = || valor["tasks"].as_array().into_iter().flatten().filter(|t| t["ambient"] != true);
+            vec![
+                Evento::Fundo(tarefas().filter(|t| matches!(t["task_type"].as_str(), Some("local_workflow" | "local_agent"))).count()),
+                Evento::Comandos(
+                    tarefas()
+                        .filter(|t| t["task_type"] == "local_bash")
+                        .filter_map(|t| Some((t["task_id"].as_str()?.to_string(), texto(&t["description"]))))
+                        .collect(),
+                ),
+            ]
+        }
         "system" if valor["subtype"] == "task_started" && valor["tool_use_id"].is_string() => {
             vec![Evento::SubInicio { pai: texto(&valor["tool_use_id"]) }]
         }
@@ -2005,9 +2096,12 @@ mod testes {
                 { "task_id": "d", "task_type": "local_agent", "description": "vigia", "ambient": true }
             ]
         });
-        assert!(matches!(interpretar(&evento).as_slice(), [Evento::Fundo(2)]));
+        match interpretar(&evento).as_slice() {
+            [Evento::Fundo(2), Evento::Comandos(comandos)] => assert_eq!(comandos, &[("c".to_string(), "servidor".to_string())]),
+            outro => panic!("{outro:?}"),
+        }
         let vazio = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
-        assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0)]));
+        assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0), Evento::Comandos(c)] if c.is_empty()));
     }
 
     #[test]

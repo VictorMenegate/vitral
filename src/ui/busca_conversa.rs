@@ -705,6 +705,7 @@ mod testes {
             anexos: Vec::new(),
             ultrathink: false,
             ultracode: false,
+            marca: None,
         }
     }
 

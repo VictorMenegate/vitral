@@ -1315,7 +1315,7 @@ mod testes {
         let dados = Dados::em(Path::new("/d"));
         let mut chat_do_pedido = chat("c1", PapelAntigo::Projeto, "loja");
         chat_do_pedido.tarefa = Some(1);
-        chat_do_pedido.itens.push(Item::Usuario { texto: "faça".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 });
+        chat_do_pedido.itens.push(Item::Usuario { texto: "faça".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None });
         let mut estado = Estado {
             chats: vec![chat(ID_MESTRE, PapelAntigo::Mestre, ""), chat("m2", PapelAntigo::Mestre, ""), chat_do_pedido],
             tarefas: vec![TarefaAntiga { coordenador: ID_MESTRE.into(), forma: Forma::Direta, ..tarefa(1, "c1") }],

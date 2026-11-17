@@ -460,6 +460,7 @@ mod testes {
             ultrathink: false,
             ultracode: false,
             em: 0,
+            marca: None,
         }
     }
 

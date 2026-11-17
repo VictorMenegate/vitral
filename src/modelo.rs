@@ -110,6 +110,9 @@ pub enum Item {
         /// mensagens, que não mostram nada.
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
+        /// O `uuid` com que ela foi ao Claude Code: dá para voltar os arquivos a antes dela.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        marca: Option<String>,
     },
     /// Mensagem que o Vitral (ou outro chat) entregou a este chat, no lugar do usuário.
     Entrega {

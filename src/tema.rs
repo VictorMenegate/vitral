@@ -465,6 +465,7 @@ gpui_kit::assets::icon_assets!(
         CalendarClock,
         ChartColumn,
         CheckCheck,
+        Circle,
         CircleArrowUp,
         CircleDashed,
         CircleDot,

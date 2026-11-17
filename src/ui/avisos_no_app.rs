@@ -263,7 +263,7 @@ mod testes {
         assert!(turno_de_outro_chat(&chat));
         chat.itens.push(Item::Entrega { de: "Vitral".into(), texto: "continue".into(), em: 0 });
         assert!(!turno_de_outro_chat(&chat));
-        chat.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 });
+        chat.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None });
         assert!(!turno_de_outro_chat(&chat));
     }
 }

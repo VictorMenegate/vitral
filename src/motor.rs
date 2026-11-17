@@ -304,6 +304,16 @@ pub struct Motor {
     /// Quando chegou o último evento do processo de cada chat (texto, ferramenta, progresso): um
     /// turno que fica calado muito tempo pode ter travado (`silencio`).
     ultimo_sinal: HashMap<String, std::time::Instant>,
+    /// Os chats parados no limite que continuam sozinhos quando ele volta: o instante (segundos)
+    /// de tentar de novo. Some ao começar outro turno no chat.
+    retomar_as: HashMap<String, u64>,
+    /// Os avisos de "outro chat também editou" já dados nesta sessão: (chat, arquivo, outro chat).
+    avisos_de_arquivo: HashSet<(String, PathBuf, String)>,
+    /// A lista de passos que o agente mantém (o TodoWrite do Claude Code), a última de cada chat.
+    /// Só na memória: some ao fechar o Vitral.
+    passos: HashMap<String, Vec<Passo>>,
+    /// Os comandos que o agente de cada chat deixou rodando no fundo: id da tarefa e descrição.
+    comandos_no_fundo: HashMap<String, Vec<(String, String)>>,
     /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
     /// espera da sugestão da próxima mensagem (`prompt_suggestion`, que não sai com a entrada
     /// fechada), com a geração do turno: fecham quando ela chega, depois de
@@ -563,6 +573,10 @@ impl Motor {
             trava_de_suspensao: None,
             trava_pedida_em: None,
             ultimo_sinal: HashMap::new(),
+            retomar_as: HashMap::new(),
+            avisos_de_arquivo: HashSet::new(),
+            passos: HashMap::new(),
+            comandos_no_fundo: HashMap::new(),
             sugerindo: HashMap::new(),
             sugestoes: HashMap::new(),
             parcial: HashMap::new(),
@@ -1391,7 +1405,7 @@ impl Motor {
             return Dirigido::NaFila(Some("Um comando de barra espera o turno acabar."));
         }
         let (texto, imagens) = texto_do_turno(std::slice::from_ref(entrada));
-        let mensagem = Mensagem { texto: &texto, imagens: &imagens };
+        let mensagem = Mensagem { texto: &texto, imagens: &imagens, marca: None };
         let Some(processo) = self.processos.get_mut(chat_id) else {
             return Dirigido::NaFila(None);
         };
@@ -1405,7 +1419,7 @@ impl Motor {
         // Ela não entra na repetição do turno ("Tentar de novo", a troca de conta): quando o turno
         // falha, ela volta para a fila (`devolver_dirigidas`) e iria duas vezes.
         if let Some(c) = self.chat_mut(chat_id) {
-            c.itens.extend(itens_das_entradas(vec![entrada.clone()]));
+            c.itens.extend(itens_das_entradas(vec![entrada.clone()], None));
             c.atualizado_em = agora();
         }
         if let Some(c) = self.chat(chat_id) {
@@ -1501,6 +1515,83 @@ impl Motor {
         if let Some((_, mensagens)) = self.ultima_entrada.get(chat).cloned() {
             self.avisar(chat, "Tentando de novo.", false);
             self.comecar_turno_com(chat, mensagens, false, cx);
+        }
+    }
+
+    /// Os comandos que o agente deste chat deixou rodando no fundo (vazio com o processo fora).
+    pub fn comandos_no_fundo(&self, chat: &str) -> &[(String, String)] {
+        if !self.processos.contains_key(chat) {
+            return &[];
+        }
+        self.comandos_no_fundo.get(chat).map_or(&[], Vec::as_slice)
+    }
+
+    /// Para os comandos de fundo do chat (o `stop_task` de cada um).
+    pub fn parar_comandos_no_fundo(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self.comandos_no_fundo(chat).iter().map(|(id, _)| id.clone()).collect();
+        if let Some(processo) = self.processos.get_mut(chat) {
+            for id in ids {
+                processo.parar_tarefa(&id);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Os passos que o agente deste chat anotou por último (vazio sem lista).
+    pub fn passos(&self, chat: &str) -> &[Passo] {
+        self.passos.get(chat).map_or(&[], Vec::as_slice)
+    }
+
+    /// O que é preciso para voltar os arquivos de um chat: a pasta, a pasta da conta e a sessão.
+    /// `None` com o chat rodando (o processo vivo ainda mexe nos arquivos) ou sem sessão.
+    pub fn onde_voltar_arquivos(&self, chat: &str) -> Option<(PathBuf, Option<PathBuf>, String)> {
+        let c = self.chat(chat)?;
+        if self.processos.contains_key(chat) || self.execucao(chat).rodando() || !c.sessao_criada {
+            return None;
+        }
+        Some((c.cwd.clone(), self.conta_para(c).pasta(), c.sessao.clone()))
+    }
+
+    /// Um aviso do Vitral na conversa (gravado), fora de um turno.
+    pub fn avisar_na_conversa(&mut self, chat: &str, texto: &str, cx: &mut Context<Self>) {
+        self.avisar(chat, texto, false);
+        if let Some(c) = self.chat(chat) {
+            let _ = self.dados.salvar_chat(c);
+        }
+        cx.notify();
+    }
+
+    /// Quando o chat parado no limite vai continuar sozinho (None se não foi pedido).
+    pub fn retomada_agendada(&self, chat: &str) -> Option<u64> {
+        self.retomar_as.get(chat).copied()
+    }
+
+    /// "Continuar às 14:20": na hora em que o limite volta (com meio minuto de folga, para o plano
+    /// já ter renovado), o último turno é repetido, como no Tentar de novo.
+    pub fn agendar_retomada(&mut self, chat: &str, quando: u64, cx: &mut Context<Self>) {
+        self.retomar_as.insert(chat.to_string(), quando);
+        let espera = std::time::Duration::from_secs(quando.saturating_sub(agora()) + 30);
+        let id = chat.to_string();
+        cx.spawn(async move |motor, cx| {
+            cx.background_executor().timer(espera).await;
+            let _ = motor.update(cx, |m, cx| {
+                if m.retomar_as.get(&id) != Some(&quando) {
+                    return;
+                }
+                m.retomar_as.remove(&id);
+                if m.pode_tentar_de_novo(&id) {
+                    m.tentar_de_novo(&id, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn cancelar_retomada(&mut self, chat: &str, cx: &mut Context<Self>) {
+        if self.retomar_as.remove(chat).is_some() {
+            cx.notify();
         }
     }
 
@@ -1819,6 +1910,9 @@ impl Motor {
         });
 
         let (texto, imagens) = texto_do_turno(&mensagens);
+        // O uuid com que a mensagem vai ao Claude Code, novo a cada processo (a repetição de um turno
+        // com o mesmo uuid poderia ser tomada por repetida); o item novo da conversa o guarda.
+        let marca = uuid::Uuid::new_v4().to_string();
         let texto = [passagem, resumo_da_dupla]
             .into_iter()
             .flatten()
@@ -1829,7 +1923,7 @@ impl Motor {
         {
             let repeticao = mensagens.iter().all(|e| e.registrada);
             let c = self.chat_mut(chat_id).unwrap();
-            c.itens.extend(itens_das_entradas(mensagens));
+            c.itens.extend(itens_das_entradas(mensagens, (!codex).then_some(marca.as_str())));
             // A marca de quem trabalha, na dupla; a repetição do mesmo turno não marca de novo.
             let ultima_vez = c.itens.iter().rev().find_map(|i| match i {
                 Item::Vez { agente, .. } => Some(*agente),
@@ -1878,6 +1972,7 @@ impl Motor {
         let mensagem = Mensagem {
             texto: &texto,
             imagens: &imagens,
+            marca: (!codex).then_some(marca.as_str()),
         };
         // A sugestão do turno anterior sai, e o processo que ainda esperava por ela fecha antes de
         // o novo abrir a mesma sessão.
@@ -1890,6 +1985,8 @@ impl Motor {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
+                // Um turno começou (mandado por você ou pela retomada): a volta agendada cai.
+                self.retomar_as.remove(chat_id);
                 self.acertar_trava();
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
@@ -2986,6 +3083,13 @@ impl Motor {
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
             }
+            Evento::Comandos(comandos) => {
+                if comandos.is_empty() {
+                    self.comandos_no_fundo.remove(chat_id);
+                } else {
+                    self.comandos_no_fundo.insert(chat_id.to_string(), comandos);
+                }
+            }
             Evento::TextoParcial(pedaco) => {
                 juntar_parcial(&mut self.parcial, &self.visiveis, chat_id, &pedaco);
             }
@@ -3042,10 +3146,27 @@ impl Motor {
                 if nome == "mcp__vitral__permissao" || nome == "ToolSearch" {
                     return;
                 }
+                if nome == "TodoWrite" {
+                    self.passos.insert(chat_id.to_string(), passos_da_lista(&entrada));
+                }
                 let resumo = claude::resumo_ferramenta(&nome, &entrada);
                 let (detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
                 // O +N −M contado agora, com o texto inteiro (item 5.1).
                 let mudanca = claude::mudanca_da_ferramenta(&nome, &entrada);
+                // Outro chat mexeu no mesmo arquivo há pouco: sem cópias isoladas, os dois
+                // escrevem na mesma pasta, e um pode desfazer o outro sem saber.
+                let mexidos = match (&mudanca, &arquivo, self.chat(chat_id)) {
+                    (Some(_), Some(arquivo), Some(c)) => {
+                        let caminho = caminho_do_arquivo(&c.cwd, arquivo);
+                        let desde = agora().saturating_sub(JANELA_DE_EDICAO_CRUZADA);
+                        chats_que_editaram(&self.chats, chat_id, &caminho, desde)
+                            .into_iter()
+                            .filter(|(id, _)| self.avisos_de_arquivo.insert((chat_id.to_string(), caminho.clone(), id.clone())))
+                            .map(|(_, titulo)| (caminho.clone(), titulo))
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
                 self.chats_sujos.insert(chat_id.to_string());
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.itens.push(Item::Ferramenta {
@@ -3060,6 +3181,10 @@ impl Motor {
                         sub: None,
                         mudanca,
                     });
+                }
+                for (caminho, outro) in mexidos {
+                    let nome = caminho.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.avisar(chat_id, &format!("O chat «{outro}» também editou {nome} nas últimas horas, na mesma pasta: confira se um não desfaz o outro."), false);
                 }
             }
             Evento::ResultadoFerramenta { id, conteudo, erro } => {
@@ -3900,6 +4025,66 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
     })
 }
 
+/// Um passo da lista do agente: o texto, o que ele diz enquanto faz e em que pé está.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Passo {
+    pub texto: String,
+    pub fazendo: String,
+    pub estado: EstadoDoPasso,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstadoDoPasso {
+    Falta,
+    Fazendo,
+    Feito,
+}
+
+/// Os passos da entrada do TodoWrite (`todos`: `content`, `activeForm`, `status`).
+fn passos_da_lista(entrada: &serde_json::Value) -> Vec<Passo> {
+    let Some(lista) = entrada.get("todos").and_then(|t| t.as_array()) else {
+        return Vec::new();
+    };
+    lista
+        .iter()
+        .filter_map(|p| {
+            let texto = p.get("content")?.as_str()?.trim().to_string();
+            let fazendo = p.get("activeForm").and_then(|a| a.as_str()).map(str::trim).unwrap_or(&texto).to_string();
+            let estado = match p.get("status").and_then(|s| s.as_str()) {
+                Some("completed") => EstadoDoPasso::Feito,
+                Some("in_progress") => EstadoDoPasso::Fazendo,
+                _ => EstadoDoPasso::Falta,
+            };
+            (!texto.is_empty()).then_some(Passo { texto, fazendo, estado })
+        })
+        .collect()
+}
+
+/// Até quanto tempo atrás uma edição de outro chat no mesmo arquivo gera o aviso (12 h).
+const JANELA_DE_EDICAO_CRUZADA: u64 = 12 * 3600;
+
+/// O caminho de um arquivo editado: o absoluto como veio, o relativo a partir da pasta do chat.
+fn caminho_do_arquivo(cwd: &Path, arquivo: &str) -> PathBuf {
+    let caminho = Path::new(arquivo);
+    if caminho.is_absolute() { caminho.to_path_buf() } else { cwd.join(caminho) }
+}
+
+/// Os outros chats (fora o `este` e os arquivados) com uma edição em `caminho` desde `desde`: o id
+/// e o título de cada um.
+fn chats_que_editaram(chats: &[Chat], este: &str, caminho: &Path, desde: u64) -> Vec<(String, String)> {
+    chats
+        .iter()
+        .filter(|c| c.id != este && !c.arquivado && c.atualizado_em >= desde)
+        .filter(|c| {
+            c.itens.iter().rev().take_while(|i| i.em() == 0 || i.em() >= desde).any(|i| {
+                matches!(i, Item::Ferramenta { arquivo: Some(a), mudanca: Some(_), erro: false, em, .. }
+                    if *em >= desde && caminho_do_arquivo(&c.cwd, a) == caminho)
+            })
+        })
+        .map(|c| (c.id.clone(), c.titulo.clone()))
+        .collect()
+}
+
 /// A partir de quanto tempo sem evento o turno andando ganha o aviso "sem sinal" na linha de
 /// estado (o MCP_TOOL_TIMEOUT é de 24 h, por causa dos pedidos de permissão: nada mais corta).
 const SILENCIO_SUSPEITO: std::time::Duration = std::time::Duration::from_secs(10 * 60);
@@ -4042,7 +4227,8 @@ fn modo_depois_do_plano(antes: Option<&str>, atual: Option<&str>, padrao: &str) 
 
 /// As mensagens do turno como itens da conversa, menos as que já estão nela (a repetição de um
 /// turno).
-fn itens_das_entradas(mensagens: Vec<Entrada>) -> Vec<Item> {
+fn itens_das_entradas(mensagens: Vec<Entrada>, marca: Option<&str>) -> Vec<Item> {
+    let mut marca = marca.map(str::to_string);
     mensagens
         .into_iter()
         .filter(|e| !e.registrada)
@@ -4059,6 +4245,8 @@ fn itens_das_entradas(mensagens: Vec<Entrada>) -> Vec<Item> {
                     ultrathink: entrada.ultrathink,
                     ultracode: entrada.ultracode,
                     em: agora(),
+                    // A primeira mensagem do turno leva a marca: voltar a ela desfaz o turno todo.
+                    marca: marca.take(),
                 },
             }
         })
@@ -4629,6 +4817,53 @@ mod testes {
         c
     }
 
+    #[test]
+    fn le_os_passos_do_todowrite() {
+        let entrada = serde_json::json!({"todos": [
+            {"content": "Ler o código", "activeForm": "Lendo o código", "status": "completed"},
+            {"content": "Corrigir", "activeForm": "Corrigindo", "status": "in_progress"},
+            {"content": "Testar", "status": "pending"},
+            {"content": "  ", "status": "pending"}
+        ]});
+        let passos = passos_da_lista(&entrada);
+        assert_eq!(passos.iter().map(|p| p.estado).collect::<Vec<_>>(), [EstadoDoPasso::Feito, EstadoDoPasso::Fazendo, EstadoDoPasso::Falta]);
+        assert_eq!(passos[1].fazendo, "Corrigindo");
+        assert_eq!(passos[2].fazendo, "Testar");
+        assert!(passos_da_lista(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn acha_o_outro_chat_que_editou_o_mesmo_arquivo() {
+        let edicao = |arquivo: &str, em: u64, erro: bool| Item::Ferramenta {
+            id: "t".into(),
+            nome: "Edit".into(),
+            resumo: String::new(),
+            resultado: None,
+            erro,
+            em,
+            detalhe: None,
+            arquivo: Some(arquivo.into()),
+            sub: None,
+            mudanca: Some(crate::modelo::Mudanca::default()),
+        };
+        let mut a = chat("a");
+        let mut b = chat("b");
+        b.titulo = "Fila".into();
+        b.atualizado_em = 1_000;
+        // Relativo à pasta do chat (/tmp) vale o mesmo que o absoluto.
+        b.itens.push(edicao("src/fila.rs", 1_000, false));
+        let mut c = chat("c");
+        c.atualizado_em = 1_000;
+        c.itens.push(edicao("/tmp/src/fila.rs", 1_000, true));
+        a.atualizado_em = 1_000;
+        let chats = vec![a, b, c];
+        let caminho = Path::new("/tmp/src/fila.rs");
+        assert_eq!(chats_que_editaram(&chats, "a", caminho, 500), vec![("b".to_string(), "Fila".to_string())]);
+        // Edição antiga demais, ou o próprio chat: nada.
+        assert!(chats_que_editaram(&chats, "a", caminho, 2_000).is_empty());
+        assert!(chats_que_editaram(&chats, "b", caminho, 500).is_empty());
+    }
+
     fn avisos(chat: &Chat) -> usize {
         chat.itens.iter().filter(|i| matches!(i, Item::Aviso { .. })).count()
     }
@@ -4667,7 +4902,7 @@ mod testes {
         use super::{nada_a_acrescentar, o_que_o_outro_fez};
         let fala = |t: &str| Item::Assistente { texto: t.into(), em: 0 };
         let vez = |agente| Item::Vez { agente, em: 0 };
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None };
         let editou = Item::Ferramenta {
             id: "1".into(),
             nome: "Edit".into(),
@@ -4814,10 +5049,10 @@ mod testes {
             registrada,
             ..Default::default()
         };
-        let itens = itens_das_entradas(vec![entrada("pedido", true), entrada("resposta", false)]);
+        let itens = itens_das_entradas(vec![entrada("pedido", true), entrada("resposta", false)], Some("m"));
         assert_eq!(itens.len(), 1);
         assert!(matches!(&itens[0], Item::Entrega { texto, .. } if texto == "resposta"));
-        assert!(itens_das_entradas(vec![entrada("pedido", true)]).is_empty());
+        assert!(itens_das_entradas(vec![entrada("pedido", true)], Some("m")).is_empty());
         // Na fila gravada, só a marca verdadeira vai para o disco.
         let gravada = serde_json::to_value(entrada("x", false)).unwrap();
         assert!(gravada.get("registrada").is_none());
@@ -4908,7 +5143,7 @@ mod testes {
         assert_eq!(texto.matches(UM_FLUXO_POR_VEZ).count(), 1);
         let (comum, _) = texto_do_turno(&[entrada_do_usuario("oi".into(), Vec::new(), ULTRATHINK)]);
         assert!(!comum.contains(UM_FLUXO_POR_VEZ));
-        let itens = itens_das_entradas(vec![entrada]);
+        let itens = itens_das_entradas(vec![entrada], Some("m"));
         assert!(matches!(&itens[0], Item::Usuario { ultracode: true, ultrathink: true, .. }));
         // Comando de barra não leva (e a caixa continua com a chave ligada).
         assert!(!entrada_do_usuario("/compact".into(), Vec::new(), ULTRACODE).ultracode);
@@ -4929,7 +5164,7 @@ mod testes {
         // Desligado, o campo nem vai para o disco; o histórico guarda o selo.
         let comum = serde_json::to_value(entrada_do_usuario("oi".into(), Vec::new(), Reforco::default())).unwrap();
         assert!(comum.get("ultracode").is_none());
-        let item = serde_json::to_value(&itens_das_entradas(vec![lida])[0]).unwrap();
+        let item = serde_json::to_value(&itens_das_entradas(vec![lida], Some("m"))[0]).unwrap();
         assert_eq!(item["Usuario"]["ultracode"], true);
     }
 
@@ -5139,7 +5374,7 @@ mod testes {
         c.itens.push(Item::Aviso { texto: "Esta conversa foi movida para loja.".into(), erro: false, em: 0 });
         assert!(nunca_rodou(&c));
         let mut falou = c.clone();
-        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 });
+        falou.itens.push(Item::Usuario { texto: "oi".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None });
         assert!(!nunca_rodou(&falou));
         let mut sessao = c.clone();
         sessao.sessao_criada = true;
@@ -5150,7 +5385,7 @@ mod testes {
 
     #[test]
     fn passagem_de_sessao_leva_as_ultimas_mensagens() {
-        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0 };
+        let usuario = |t: &str| Item::Usuario { texto: t.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None };
         let mut itens = vec![usuario("primeira")];
         for i in 0..12 {
             itens.push(Item::Assistente { texto: format!("resposta {i}"), em: 0 });
