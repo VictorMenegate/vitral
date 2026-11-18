@@ -605,9 +605,17 @@ impl Janela {
             .map(|(texto, alto, i)| {
                 let janela = cx.entity().downgrade();
                 let raio = crate::tema::raio_da_peca();
-                // Uma faixa do cartão por trás, do topo até a mensagem: o pedaço da resposta acima
-                // dela não aparece cortado.
-                div().absolute().top_0().left_0().right_0().pt(esp::E8).pb(esp::E4).bg(Cores::cartao_opaco()).child(
+                // Uma faixa por trás, do topo até a mensagem, com as mesmas camadas do cartão (o
+                // metal, o véu, o fosco e o cartão): fica transparente como ele e tapa o texto que
+                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Embaixo, uma
+                // sombra curta separa a faixa do que rola, como o "sticky" do VS Code.
+                div().absolute().top_0().left_0().right_0().pt(esp::E8).pb(esp::E4).child(fundo_do_cartao()).child(
+                    div().absolute().left_0().right_0().bottom(-esp::E8).h(esp::E8).bg(linear_gradient(
+                        180.,
+                        linear_color_stop(Cores::preto_puro().opacity(0.22), 0.),
+                        linear_color_stop(Cores::preto_puro().opacity(0.), 1.),
+                    )),
+                ).child(
                     div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
@@ -617,10 +625,7 @@ impl Janela {
                             .py(dentro_da_borda(8.))
                             .rounded(raio)
                             .cursor_pointer()
-                            .shadow(crate::tema::sombra_elevado())
-                            // Opaca: por cima da conversa, o fundo da lista sozinho deixava a
-                            // resposta aparecer por trás e a faixa sumia no texto.
-                            .bg(Cores::cartao_opaco())
+                            // O mesmo buraco dos balões da conversa, por cima da faixa.
                             .child(fundo_da_lista(raio))
                             .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
                             .tooltip(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
@@ -1652,6 +1657,30 @@ pub(super) fn texto_da_presa(texto: &str) -> String {
 
 /// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal
 /// que fica atrás dela, o véu azul da base e o fosco por cima. O pai precisa ser `relative`.
+/// As camadas que a conversa tem atrás do texto (a chapa, o véu e o fosco da janela, e o cartão),
+/// enchendo o pai: o que fica por cima da conversa e precisa tapar o texto sem destoar do cartão
+/// (a faixa da mensagem presa). Por trás dela, o texto que rola fica a uns 5%.
+fn fundo_do_cartao() -> Div {
+    let sem_cantos = Corners::default();
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .opacity(crate::tema::opacidade_do_metal())
+                .child(super::componentes::metal::abertura(super::componentes::metal::Encaixe::Continuo, None, sem_cantos)),
+        )
+        .child(div().absolute().top_0().left_0().size_full().bg(Cores::vidro_leitura()))
+        .when(crate::tema::transparencia() > 0, |s| s.child(super::componentes::metal::fosco(sem_cantos)))
+        .child(div().absolute().top_0().left_0().size_full().bg(Cores::cartao()))
+}
+
 fn fundo_da_lista(raio: Pixels) -> Div {
     let cantos = Corners::all(raio);
     div()

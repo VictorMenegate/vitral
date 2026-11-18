@@ -19,7 +19,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AlternarLista, Filtro, Gaveta, Janela,
+    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirQuadroDeIdeias, AlternarLista, Filtro, Gaveta, Janela,
     NovaConversa, ProximaPendencia,
     componentes::{
         BotaoRedondo, Selo, Simbolo,
@@ -447,6 +447,10 @@ impl Janela {
                 .item(item(rotulo_da_pasta.clone(), Lucide::FolderInput, &janela, |this, window, cx| {
                     this.trocar_pasta_de_trabalho(window, cx)
                 }))
+                .item(
+                    item("Quadro de ideias", Lucide::Kanban, &janela, |this, window, cx| this.abrir_quadro_de_ideias(window, cx))
+                        .action(Box::new(AbrirQuadroDeIdeias)),
+                )
                 .item(item("Importar do Claude Code…", Lucide::Download, &janela, |this, _, cx| {
                     if let Some(motor) = this.motor.clone() {
                         motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));

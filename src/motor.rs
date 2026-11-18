@@ -17,6 +17,8 @@ use smol::channel::{Sender, unbounded};
 
 mod importacao;
 mod conversas;
+mod ideias;
+pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
 use conversas::{Ciclos, MotivoPassagem};
@@ -254,6 +256,12 @@ pub struct Motor {
     pub falha_gravacao: Option<(String, u64)>,
     /// O que avisar ao abrir (estado restaurado, a migração, o que mudou nos chats).
     pub avisos_ao_abrir: Vec<String>,
+    /// O quadro de ideias (`ideias.json`; ver `motor/ideias.rs`).
+    quadro: crate::ideias::Quadro,
+    /// O texto de um cartão mudou na edição: vai para o disco na próxima passada de `gravar_sujos`.
+    quadro_sujo: bool,
+    /// O Linear do quadro (a chave, o time e o que está a caminho).
+    linear: ideias::EstadoDoLinear,
     /// Pedidos de abertura (`vitral <pasta>`, `--nova`, os de outra abertura pelo socket) que a
     /// janela ainda não atendeu.
     pub aberturas: Vec<crate::instancia::Abertura>,
@@ -541,7 +549,20 @@ impl Motor {
             });
         })
         .detach();
+        // O quadro de ideias. Ilegível, o arquivo fica copiado ao lado e o quadro começa vazio.
+        let mut quadro = match dados.ler_ideias() {
+            Ok(quadro) => quadro,
+            Err(erro) => {
+                avisos_ao_abrir.push(format!("Não deu para ler o quadro de ideias ({erro:#})."));
+                Default::default()
+            }
+        };
+        quadro.acertar_ordens();
+        let linear = ideias::EstadoDoLinear::da_config(&dados.config);
         let mut motor = Self {
+            quadro,
+            quadro_sujo: false,
+            linear,
             dados,
             config,
             chats,
@@ -3799,6 +3820,9 @@ impl Motor {
             }
         }
         self.estado_sujo = false;
+        if std::mem::take(&mut self.quadro_sujo) {
+            self.salvar_quadro();
+        }
         // A hora da saída, para o "Enquanto você esteve fora" da próxima abertura (grava o estado).
         self.visto_em = agora();
         self.salvar();
@@ -3931,6 +3955,9 @@ impl Motor {
         // O lido que mudou desde a última passada (`marcar_lido`).
         if std::mem::take(&mut self.estado_sujo) {
             self.salvar();
+        }
+        if std::mem::take(&mut self.quadro_sujo) {
+            self.salvar_quadro();
         }
         match (self.dados.falha_de_gravacao(), self.falha_gravacao.is_some()) {
             (Some(erro), false) => {

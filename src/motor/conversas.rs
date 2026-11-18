@@ -180,7 +180,7 @@ impl Motor {
     }
 
     /// As ferramentas que ligam um chat aos outros (`listar_chats`, `mensagem_para_chat`,
-    /// `abrir_chat`). Devolve a chamada que não é daqui.
+    /// `abrir_chat`) e ao quadro de ideias (`anotar_ideia`). Devolve a chamada que não é daqui.
     pub(super) fn ferramenta_de_conversa(&mut self, chat: &Chat, chamada: Chamada, cx: &mut Context<Self>) -> Result<(), Chamada> {
         let a = chamada.argumentos.clone();
         let texto = |chave: &str| a[chave].as_str().unwrap_or_default().trim().to_string();
@@ -188,6 +188,7 @@ impl Motor {
             "listar_chats" => Resposta::ok(self.texto_listar_chats(chat, &a)),
             "mensagem_para_chat" => self.mensagem_para_chat(chat, &texto("chat"), texto("texto"), cx),
             "abrir_chat" => self.abrir_chat_irmao(chat, &texto("titulo"), texto("pedido"), cx),
+            "anotar_ideia" => self.anotar_ideia_do_chat(chat, &a, cx),
             _ => return Err(chamada),
         };
         let _ = chamada.resposta.try_send(resposta);

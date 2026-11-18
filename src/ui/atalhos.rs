@@ -125,6 +125,7 @@ tabela! {
     "ctrl-b", super::AlternarLista, None, Grupo::Lista, "Mostrar ou recolher a lista", "";
     "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
     "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
+    "ctrl-i", super::AbrirQuadroDeIdeias, None, Grupo::Lista, "Quadro de ideias", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";

@@ -1341,6 +1341,54 @@ conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez:
 logo, o sino, um popover da caixa, o menu ou o **+** de um painel, pelo mouse ou pelo atalho,
 fecha o que estava aberto (`Janela::so_um_flutuante`).
 
+## Quadro de ideias (Ctrl+I)
+
+Um kanban do app todo (`src/ideias.rs`, `src/motor/ideias.rs` e `src/ui/quadro_ideias.rs`), num
+diálogo largo que abre pelo Ctrl+I e pelo **Quadro de ideias** do menu do logo. Quatro colunas:
+**Ideias**, **Próximas**, **Fazendo** e **Feitas**, cada uma com o número de cartões e rolagem
+própria. O campo no alto de Ideias anota com o Enter; o cartão novo entra no alto da coluna, na
+pasta do chat que estava à vista ao abrir o quadro (sem chat, na pasta de trabalho).
+
+- **Cartão:** o título, embaixo o porquê (ou o começo do pedido), as etiquetas, a pasta e, depois
+  de aberto o chat, o estado dele ("trabalhando", "esperando você", "resposta nova", "parado").
+  Com o ponteiro em cima, o botão de **Abrir chat** (ou **Ir ao chat**, quando já tem um).
+- **Arrastar:** solto numa coluna, o cartão vai para o fim dela; solto em cima de outro, entra
+  logo antes dele (a ordem de uma coluna é a ordem dos cartões no arquivo).
+- **Clique:** abre a edição, com a seta de voltar: título, **Pedido para o chat** (vazio, vai o
+  título), a pasta (as dos chats ou **Sem pasta**), a coluna, **Apagar** (com Desfazer no aviso),
+  **Ir ao chat** e **Abrir chat**. O texto se grava sozinho (o motor marca o quadro e grava na
+  passada de 5 s, e ao fechar).
+- **Abrir chat:** a conversa nasce na pasta do cartão com o título dele, recebe o pedido como a
+  sua primeira mensagem e abre no painel ativo; o cartão vai para o fim de Fazendo, ligado a ela.
+- **Botão direito:** abrir chat, editar, mover para cada uma das outras colunas e apagar.
+- **Pelos chats:** a ferramenta `anotar_ideia` (título, pedido, nota e até 3 etiquetas) põe o
+  cartão no alto de Ideias, na pasta do chat; a descrição diz para usar só quando o usuário pedir.
+
+Fica em `ideias.json`, na pasta de dados (`{"ideias": [...]}`; os campos que esta versão não
+conhece são regravados como vieram). Ilegível, o arquivo é copiado ao lado e o quadro abre vazio,
+com o aviso.
+
+**Com o Linear** (`src/linear.rs`; dono, 18/11/2026: "quadro = Linear", no time EFI, Eficiência
+Operacional). Ligado pela faixa do alto do quadro (**Ligar o Linear…**: a chave pessoal, de
+Settings > Security & access > Personal API keys, testada contra o time antes de gravar, em
+`linear.chave` na configuração, 0600), o quadro passa a ser o do time: cada issue aberta (e as
+concluídas nos últimos 30 dias, sem as canceladas) é um cartão, na coluna do tipo do estado
+(triagem e backlog em Ideias, "unstarted" em Próximas, "started" em Fazendo, "completed" em
+Feitas), na ordem do `sortOrder`. O cartão leva o código ("EFI-12") e o responsável; a descrição é
+o pedido. A pasta, o chat e o porquê continuam só do Vitral, guardados no cartão.
+
+- **O que sobe:** a ideia nova (vira issue no estado de backlog), o título e o pedido (1,5 s depois
+  de parar de digitar), a coluna (o primeiro estado do tipo dela no fluxo do time) e a ordem (o
+  `sortOrder` no meio dos vizinhos), o Abrir chat (vai para "started") e o Apagar (arquiva a issue;
+  o Desfazer desarquiva). O cartão muda na hora; a chamada vai em segundo plano.
+- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳ da faixa. Um cartão com
+  mudança daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, a
+  faixa mostra o erro em vermelho e o quadro relê.
+- **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam com a
+  etiqueta "só no Vitral"; o botão direito tem **Mandar ao Linear**, e a faixa, **Mandar as N só
+  do Vitral ao Linear**. O botão direito de um cartão de issue tem **Abrir no Linear**.
+- **Desligar** (o ícone da tomada na faixa) apaga a chave; os cartões das issues saem do quadro.
+
 ## Compilar e rodar
 
 Para usar no dia a dia, instale pelo release, sem compilar: `curl -fsSL

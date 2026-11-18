@@ -128,6 +128,11 @@ impl Dados {
         self.pasta.join("estado.json")
     }
 
+    /// O quadro de ideias (`crate::ideias`).
+    pub fn arquivo_ideias(&self) -> PathBuf {
+        self.pasta.join("ideias.json")
+    }
+
     pub fn arquivo_config(&self) -> PathBuf {
         self.config.join("config.json")
     }
@@ -331,6 +336,17 @@ impl Dados {
         }
         self.gravador.gravar(arquivo, Some(serde_json::to_vec_pretty(&valor)?), true);
         Ok(())
+    }
+
+    pub fn salvar_ideias(&self, quadro: &crate::ideias::Quadro) -> Result<()> {
+        let bytes = serde_json::to_vec_pretty(quadro)?;
+        self.gravador.gravar(self.arquivo_ideias(), Some(bytes), true);
+        Ok(())
+    }
+
+    /// O quadro guardado; sem arquivo, vazio. Ilegível, o erro (e uma cópia dele fica ao lado).
+    pub fn ler_ideias(&self) -> Result<crate::ideias::Quadro> {
+        Ok(ler_json_r(&self.arquivo_ideias())?.unwrap_or_default())
     }
 
     pub fn salvar_chat(&self, chat: &Chat) -> Result<()> {

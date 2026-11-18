@@ -34,6 +34,7 @@ pub mod movimento;
 mod painel_contas;
 mod fechar;
 mod painel_arquivo;
+mod quadro_ideias;
 pub(crate) mod paineis;
 mod rascunhos;
 mod resumo;
@@ -82,6 +83,8 @@ actions!(vitral, [EditarUltima, AbrirAtalhos]);
 // Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
 // cabeçalho e nas abas abre o mesmo).
 actions!(vitral, [AbrirMenuDoPainel]);
+// Ctrl+I: o quadro de ideias.
+actions!(vitral, [AbrirQuadroDeIdeias]);
 
 
 /// Por quanto tempo o Esc armado espera o segundo (item 6.2).
@@ -1828,6 +1831,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AbaAnterior, window, cx| this.andar_nas_abas(-1, window, cx)))
             .on_action(cx.listener(|this, _: &ReabrirAba, window, cx| this.reabrir_aba(window, cx)))
             .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
+            .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);
