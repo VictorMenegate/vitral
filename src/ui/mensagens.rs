@@ -3853,12 +3853,16 @@ impl Janela {
                             )
                         })
                         .when(!minima || no_fim, |s| {
+                            // A dica do relógio diz a memória do chat (só no Linux com systemd).
+                            let memoria = motor.memoria_do_chat(&chat.id).map(super::onde_uso::dica_da_memoria);
                             s.child(
                                 div()
+                                    .id(("relogio-do-turno", painel_id as usize))
                                     .flex_none()
                                     .etiqueta()
                                     .text_color(Cores::apagado())
-                                    .child(relogio(crate::modelo::agora().saturating_sub(desde))),
+                                    .child(relogio(crate::modelo::agora().saturating_sub(desde)))
+                                    .when_some(memoria, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
                             )
                         })
                         // Muito tempo sem evento: um comando longo, ou o processo travou. Só avisa;

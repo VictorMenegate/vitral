@@ -39,6 +39,22 @@ pub(super) fn quantia_curta(n: u64) -> String {
     }
 }
 
+/// "850 MB", "3,1 GB": a memória de um chat (em GB a partir de 1 GB, com uma casa).
+pub(super) fn memoria_curta(bytes: u64) -> String {
+    const MB: f64 = 1024. * 1024.;
+    let megas = bytes as f64 / MB;
+    if megas < 1024. {
+        format!("{} MB", megas.round() as u64)
+    } else {
+        format!("{:.1} GB", megas / 1024.).replace('.', ",")
+    }
+}
+
+/// A dica do relógio do turno: "Memória deste chat: 3,1 GB", com o que o número conta.
+pub(super) fn dica_da_memoria(bytes: u64) -> String {
+    format!("Memória deste chat: {}\nO agente e tudo o que ele abriu (comandos, testes, servidores)", memoria_curta(bytes))
+}
+
 /// "850 tokens", "1,8 mil tokens", "182 mil tokens", "1,2 mi tokens".
 pub(super) fn tokens_curtos(n: u64) -> String {
     format!("{} {}", quantia_curta(n), if n == 1 { "token" } else { "tokens" })
@@ -332,7 +348,7 @@ impl Render for OndeOUsoFoi {
 
 #[cfg(test)]
 mod testes {
-    use super::{desde, dica_com_gasto, gasto_curto, partes_dos_tokens, resumo_com_gasto, tokens_curtos};
+    use super::{desde, dica_com_gasto, dica_da_memoria, gasto_curto, memoria_curta, partes_dos_tokens, resumo_com_gasto, tokens_curtos};
     use crate::motor::{Tokens, gasto::Gasto};
 
     #[test]
@@ -379,6 +395,15 @@ mod testes {
         // Só o custo (um `result` sem os tokens): a dica não inventa os três números.
         let so_custo = Gasto { custo: 0.5, tokens: Tokens::default(), turnos: 1 };
         assert_eq!(dica_com_gasto("Ver", Some(&so_custo)), "Ver\nUS$ 0,50");
+    }
+
+    #[test]
+    fn memoria_do_chat_em_mb_e_gb() {
+        assert_eq!(memoria_curta(0), "0 MB");
+        assert_eq!(memoria_curta(850 * 1024 * 1024), "850 MB");
+        assert_eq!(memoria_curta(1024 * 1024 * 1024), "1,0 GB");
+        assert_eq!(memoria_curta(3_328_599_654), "3,1 GB");
+        assert!(dica_da_memoria(3_328_599_654).starts_with("Memória deste chat: 3,1 GB\n"));
     }
 
     #[test]

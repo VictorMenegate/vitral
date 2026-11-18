@@ -581,7 +581,14 @@ ferramentas, vale por painel).
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
   "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
   Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
-  segundo plano…". **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
+  segundo plano…". **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
+  servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
+  (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
+  só aceito se o cgroup é o do escopo), lido quando a linha pergunta e guardado por 3 s
+  (`src/motor/memoria.rs`); chat parado não é lido. No Windows, sem systemd ou sem o controlador
+  de memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
+  não quis aviso novo). **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
   processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
   primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
   continua parando direto. Depois de um Esc (ou do Parar) que parou o turno, a faixa acima da caixa

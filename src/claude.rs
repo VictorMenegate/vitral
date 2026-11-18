@@ -346,6 +346,11 @@ impl Processo {
         if let Some(canal) = &self.codex { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
     }
 
+    /// A memória que o agente e tudo o que ele abriu ocupam agora (`Escopo::memoria`).
+    pub fn memoria(&self) -> Option<u64> {
+        self.escopo.memoria()
+    }
+
     /// A entrada ainda está aberta: dá para dirigir o turno (`dirigir`).
     pub fn entrada_aberta(&self) -> bool {
         self.entrada.is_some() || self.codex.as_ref().is_some_and(|c| c.lock().unwrap_or_else(|e| e.into_inner()).aberta())

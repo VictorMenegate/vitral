@@ -20,6 +20,7 @@ mod conversas;
 mod ideias;
 mod agendadas;
 pub mod gasto;
+mod memoria;
 pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 pub use ideias::SituacaoDoLinear;
@@ -289,6 +290,8 @@ pub struct Motor {
     gastos: gasto::Livro,
     /// Com quanto contexto um chat novo começa em cada pasta (`motor/peso.rs`).
     pesos: peso::Pesos,
+    /// A memória de cada chat trabalhando, lida do escopo dele (`motor/memoria.rs`).
+    memorias: memoria::Leituras,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -579,6 +582,7 @@ impl Motor {
         let mut motor = Self {
             gastos,
             pesos,
+            memorias: Default::default(),
             quadro,
             quadro_sujo: false,
             linear,

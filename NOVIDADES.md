@@ -7,6 +7,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Memória de cada chat.** No Linux, a dica do relógio do turno diz quanta memória o chat ocupa
+  agora, com tudo o que o agente abriu (comandos, testes, servidores): "Memória deste chat: 3,1 GB".
 - **Mandar a mensagem numa hora marcada.** No **…** da caixa, **Mandar quando a janela de 5 h
   renovar** e **Mandar às…** deixam a mensagem na fila do chat com o selo da hora; ela sai sozinha
   na hora, com o Vitral aberto, e continua lá depois de reiniciar. O × e o lápis da fila valem
