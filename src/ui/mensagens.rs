@@ -501,6 +501,12 @@ impl Janela {
             };
             anterior = Some(bloco);
         }
+        // Embaixo, os 32 só depois de uma resposta, onde a barra de copiar e da hora aparece; depois
+        // da trilha ("Pensou por 5 s") ou de um aviso, 12, colado na caixa (dono, 18/11/2026: "tá
+        // muito longe o pensou da parte das mensagens em baixo").
+        if !matches!(anterior, Some(Bloco::Texto)) {
+            lista = lista.pb(esp::NO_TURNO);
+        }
         let janela = cx.entity().downgrade();
         let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
         let (chat_id, n_itens) = (chat.id.clone(), chat.itens.len());
@@ -1227,6 +1233,8 @@ impl Janela {
                 .child(markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(estilo_da_resposta))
                 .into_any_element()
         };
+        // O texto fecha o turno quando depois dele vem o seu balão (ou nada): só aí há o vão de 32.
+        let cabe_a_barra = matches!(contexto.chat.itens.get(indice + 1), None | Some(Item::Usuario { .. } | Item::Vez { .. } | Item::Entrega { .. }));
         let resposta = v_flex()
             .relative()
             .w_full()
@@ -1240,8 +1248,10 @@ impl Janela {
             // A barra fica embaixo da resposta, no vão até o bloco seguinte (32 antes do seu balão
             // e no fim da lista): em cima ela cobria metade da primeira linha (relatório de
             // aparência, 16/11/2026, V7) e, no pé do texto, o fim da última, que na coluna estreita
-            // era um terço da linha. O seu balão continua com ela em cima.
-            .child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
+            // era um terço da linha. O seu balão continua com ela em cima. Só no texto que fecha o
+            // turno: no do meio, a trilha vem a 12 e a barra ficava em cima dela (dono, 18/11/2026:
+            // "o hover tá em cima da parte de copiar e hora").
+            .when(cabe_a_barra, |s| s.child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
                 hora_na_barra(em)
                     .into_iter()
@@ -1253,7 +1263,7 @@ impl Janela {
                     .chain([copiar(chave, texto).into_any_element()])
                     .collect(),
                 cx,
-            )));
+            ))));
         div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()
     }
 

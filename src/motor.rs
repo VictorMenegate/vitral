@@ -544,8 +544,15 @@ impl Motor {
                 if let Ok((email, plano)) = status
                     && let Some(c) = m.contas.iter_mut().find(|c| c.id == contas::PRINCIPAL)
                 {
-                    c.email = email;
+                    c.email = email.clone();
                     c.plano = plano;
+                    // A conta extra que é a mesma da principal (o login do Claude Code passou a
+                    // ser o dela) sai da escolha: eram duas linhas da mesma conta, e a Automática
+                    // revezava entre ela e ela mesma (dono, 18/11/2026: "tá as duas contas aqui").
+                    // Só na memória: o `contas.json` fica, e ela volta se a principal mudar.
+                    if !email.is_empty() {
+                        m.contas.retain(|c| c.id == contas::PRINCIPAL || !c.email.eq_ignore_ascii_case(&email));
+                    }
                     cx.notify();
                 }
             });

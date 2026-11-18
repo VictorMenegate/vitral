@@ -9,6 +9,16 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   conversa, empurra a faixa da mensagem presa para cima, como no VS Code; antes ela passava por
   baixo da faixa e ficava escondida.
 - **Sem a sombra embaixo da mensagem presa.** A faixa termina seca, sem a sombra escura de antes.
+- **Menus menores.** As linhas das listas de escolha (o modelo, o "/", a paleta, as mensagens)
+  ficaram mais baixas, com o título em 13: cabe mais sem rolar.
+- **A conta repetida sai.** Quando o login do Claude Code passa a ser o de uma conta extra, ela
+  some da escolha (eram duas linhas da mesma conta, e a Automática revezava entre ela e ela mesma).
+- **Realce arredondado nas linhas.** O realce do ponteiro nas linhas de lista (os chats, as contas)
+  tem o canto das abas e dos botões, e não mais quase reto.
+- **A trilha encosta na caixa.** Quando a conversa termina numa linha da trilha ("Pensou por 5 s"),
+  o vão até a caixa é de 12, e não mais de 32; os 32 ficam só depois de uma resposta.
+- **Copiar e hora só na resposta que fecha o turno.** No texto do meio do turno, a barra ficava por
+  cima da linha da trilha logo abaixo.
 
 ## 0.9.0
 

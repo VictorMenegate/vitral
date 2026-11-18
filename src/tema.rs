@@ -140,8 +140,9 @@ pub mod altura {
     /// dos lados dele (dono, 17/11/2026: "uns espaçamentos meio esquisitos em cima" e "esses
     /// espaços das laterais tão maiores que o de cima").
     pub const FILEIRA_DO_ALTO: Rems = r(56.);
-    /// Item de menu ou de lista de escolha com descrição.
-    pub const ESCOLHA_2: Rems = r(48.);
+    /// Item de menu ou de lista de escolha com descrição (era 48; dono, 18/11/2026: "deixa os menus
+    /// menor").
+    pub const ESCOLHA_2: Rems = r(40.);
     /// Cartão de lista com duas linhas.
     pub const LINHA_2: Rems = r(52.);
 }

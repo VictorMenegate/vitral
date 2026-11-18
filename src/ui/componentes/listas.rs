@@ -355,11 +355,14 @@ impl RenderOnce for CartaoDeLista {
         // A linha de chat da lista corrida (uma linha, fora da árvore) é um pouco maior que a da
         // árvore: 36 de altura e título 15 (dono, 13/11/2026: "deixa esses chats um pouco maior").
         let folgada = self.uma_linha && !arvore;
-        let (altura, raio_cartao, lado_simbolo) = match (uma_linha, folgada) {
-            (true, true) => (ALTURA_DA_LINHA_DE_CHAT, raio::CONTROLE, 16.),
-            (true, false) => (32., raio::CONTROLE, 16.),
-            _ => (52., raio::CARTAO, 30.),
+        let (altura, lado_simbolo) = match (uma_linha, folgada) {
+            (true, true) => (ALTURA_DA_LINHA_DE_CHAT, 16.),
+            (true, false) => (32., 16.),
+            _ => (52., 30.),
         };
+        // O canto do realce é o dos controles, 45% da altura, como as abas e os botões (dono,
+        // 18/11/2026: o hover "tá com os cantos quadrados" na lista das contas).
+        let raio_cartao = raio::de(altura);
         let vao = if uma_linha && !arvore { esp::E8 } else { esp::E12 };
         let forte = self.nao_lido || self.selecionado;
         let cor_barra = Cores::destaque();
@@ -964,15 +967,17 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
     div()
         .relative()
         .when(na_ficha, |d| {
-            let lado = if descrito { 48. } else { 32. };
+            let lado = if descrito { 40. } else { 28. };
             d.child(div().absolute().top_0().bottom_0().left(-sangria).right(-sangria).child(ficha_de_metal(lado)))
         })
         .flex()
         .items_center()
         .gap(if descrito { esp::E12 } else { esp::E8 })
         .w_full()
-        .h(if descrito { altura::ESCOLHA_2 } else { altura::CONTROLE })
-        .children(item.simbolo.as_ref().and_then(Simbolo::copia).map(|s| s.desenhar(20., window)))
+        // Mais baixas que antes (48 e 32), com o título em 13: cabe mais no popover (dono,
+        // 18/11/2026: "deixa os menus menor").
+        .h(if descrito { altura::ESCOLHA_2 } else { altura::BARRA })
+        .children(item.simbolo.as_ref().and_then(Simbolo::copia).map(|s| s.desenhar(18., window)))
         .child(
             div()
                 .flex()
@@ -983,8 +988,8 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_size(r(14.))
-                        .line_height(r(20.))
+                        .text_size(r(13.))
+                        .line_height(r(18.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
                         .child(item.titulo.clone()),
