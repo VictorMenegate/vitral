@@ -2528,6 +2528,51 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
     partes.join(" · ")
 }
 
+/// O resumo de uma linha da trilha ("Rodou 1 comando · editou x.rs · leu 3 arquivos") com as partes
+/// inteiras: a parte que não cabe some inteira, com as que vêm depois dela, em vez de o texto
+/// acabar em reticências no meio de uma palavra ("fez 1 bus…"). As partes quebram para uma segunda
+/// linha, que a altura de uma linha só esconde. Uma parte sozinha maior que a linha é a única que
+/// ainda se corta.
+fn partes_inteiras(resumo: &str) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .flex_shrink(1.)
+        .min_w_0()
+        .h(r(16.))
+        .overflow_hidden()
+        .gap_x(esp::E4)
+        .children(resumo.split(" · ").enumerate().map(|(i, parte)| {
+            let texto = if i == 0 { parte.to_string() } else { format!("· {parte}") };
+            div().flex_none().max_w_full().truncate().child(texto)
+        }))
+}
+
+/// O que o subagente gastou ("18,4 mil tokens · 7 ferramentas · 00:48"), na ponta da linha dele
+/// (numa chamada comum que demora, só o relógio). A tarefa vale mais que a conta: sem lugar para os dois, quem cede é a conta, uma parte inteira
+/// por vez, dos tokens para o relógio, e a tarefa só começa a ser cortada depois que a conta saiu
+/// toda. Em ordem invertida, a última parte (o relógio) é a primeira a ganhar lugar na linha, e as
+/// que não cabem vão para a linha de baixo, escondida.
+fn conta_do_subagente(partes: &[String]) -> Div {
+    let ultima = partes.len().saturating_sub(1);
+    div()
+        .flex()
+        .flex_row_reverse()
+        .flex_wrap()
+        // Encolhe muito antes da tarefa, que tem fator 1.
+        .flex_shrink(1000.)
+        .min_w_0()
+        .h(r(16.))
+        .overflow_hidden()
+        .gap_x(esp::E6)
+        .font_family(FONTE_MONO)
+        .text_color(Cores::apagado())
+        .children(partes.iter().enumerate().rev().map(|(i, parte)| {
+            let texto = if i == ultima { parte.clone() } else { format!("{parte} ·") };
+            div().flex_none().child(texto)
+        }))
+}
+
 /// Trilho de 1 px que liga os ícones de linhas de log seguidas: no centro do ícone (12 + 7),
 /// de 2 px abaixo dele até 1 px antes do ícone da linha de baixo.
 fn trilho_do_log(continua: bool) -> Div {
@@ -2609,9 +2654,13 @@ impl Janela {
                         .text_color(Cores::tenue())
                         .child(icone_de(Lucide::ListTree, 14.)),
                 )
-                .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(if ao_vivo {
-                    ShimmerText::new(resumo).duration(Duration::from_millis(3400)).highlight_color(Cores::forte()).into_any_element()
-                } else { div().child(resumo).into_any_element() }))
+                .child(if ao_vivo {
+                    div().min_w_0().truncate().text_color(Cores::tenue()).child(
+                        ShimmerText::new(resumo).duration(Duration::from_millis(3400)).highlight_color(Cores::forte()),
+                    )
+                } else {
+                    partes_inteiras(&resumo).text_color(Cores::tenue())
+                })
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
@@ -2702,7 +2751,7 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
-            .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(resumo))
+            .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
@@ -2781,7 +2830,8 @@ impl Janela {
     }
 
     /// A linha de um arquivo editado: o ícone (criou ou editou), o verbo quando é uma linha da
-    /// trilha, o nome no chip, o +N −M e o "novo". O clique abre o arquivo no painel da direita já
+    /// trilha (tênue e sem peso, como o das chamadas; com `true`, na coluna de 56 do grupo), o nome
+    /// em mono, o +N −M e o "novo". O clique abre o arquivo no painel da direita já
     /// na edição, rolado até a primeira mudança; no registro antigo, sem o diff, o arquivo como
     /// está agora, com um aviso. Um arquivo que saiu do disco fica apagado e sem clique.
     fn linha_de_editado(
@@ -2790,7 +2840,7 @@ impl Janela {
         chave: String,
         editado: &Editado,
         recuo: Rems,
-        verbo: Option<&'static str>,
+        verbo: Option<(&'static str, bool)>,
     ) -> AnyElement {
         let existe = super::links_arquivo::resolver(&contexto.chat.cwd, &editado.caminho).is_some();
         let nome = Path::new(&editado.caminho).file_name().map_or_else(|| editado.caminho.clone(), |n| n.to_string_lossy().into_owned());
@@ -2814,7 +2864,9 @@ impl Janela {
             .rounded(raio::CONTROLE)
             .metadado()
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
-            .when_some(verbo, |s, verbo| s.child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(verbo)))
+            .when_some(verbo, |s, (verbo, em_grupo)| {
+                s.child(div().flex_none().when(em_grupo, |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(verbo))
+            })
             .child(
                 div()
                     .flex_shrink(1.)
@@ -2912,7 +2964,10 @@ impl Janela {
             .rounded(raio::CONTROLE)
             .metadado()
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone_de(Lucide::Brain, 14.).text_color(Cores::tenue())))
-            .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child("Pensou"))
+            // O verbo como o das chamadas: tênue e sem peso, na coluna de 56 dentro de um grupo, com
+            // a duração na coluna dos detalhes. Em negrito branco, o "Pensou" era a linha mais
+            // forte da trilha, e é a que menos importa.
+            .child(div().flex_none().when(ramo.is_some(), |s| s.min_w(r(56.))).text_color(Cores::tenue()).child("Pensou"))
             // Sem `flex_1`: o chevron vem logo depois do texto, como na chamada.
             .child(
                 div()
@@ -2926,7 +2981,7 @@ impl Janela {
             .when(tem_texto, |s| {
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
-                    .child(div().flex_none().text_color(Cores::tenue()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+                    .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                     .on_click(alternar(chave.clone(), cx))
             });
         v_flex()
@@ -3008,7 +3063,7 @@ impl Janela {
                     v_flex()
                         .relative()
                         .w_full()
-                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some(verbo)))
+                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some((verbo, ramo.is_some()))))
                         .children(ramo.map(|continua| trilho_do_log(continua || k + 1 < n)))
                 }))
                 .into_any_element();
@@ -3023,9 +3078,13 @@ impl Janela {
         // "testa essa parte de agents").
         let do_sub = sub.as_ref().map(|s| {
             let segundos = if s.fim > 0 { s.fim.saturating_sub(*em) } else { crate::modelo::agora().saturating_sub(*em) };
-            let ferramentas = contagem(s.ferramentas as usize, "ferramenta", "ferramentas");
-            let tokens = if s.tokens > 0 { format!("{} tokens · ", super::mapa_agentes::em_mil(s.tokens)) } else { String::new() };
-            (format!("{tokens}{ferramentas} · {}", relogio(segundos)), s)
+            let mut partes = Vec::new();
+            if s.tokens > 0 {
+                partes.push(format!("{} tokens", super::mapa_agentes::em_mil(s.tokens)));
+            }
+            partes.push(contagem(s.ferramentas as usize, "ferramenta", "ferramentas"));
+            partes.push(relogio(segundos));
+            (partes, s)
         });
         let atividade_viva = do_sub.as_ref().filter(|(_, s)| pendente && !s.atividade.is_empty()).map(|(_, s)| {
             h_flex()
@@ -3056,11 +3115,11 @@ impl Janela {
                     .children(s.passos.iter().map(|p| div().min_w_0().truncate().child(detalhe_do_passo(p)))),
             )
         });
-        let meta_do_sub = do_sub.map(|(texto, _)| texto);
+        let meta_do_sub = do_sub.map(|(partes, _)| partes);
         // Há quanto tempo a chamada roda, na ponta da linha (depois de 3 s, para as rápidas não
         // piscarem um relógio): num comando longo é o que diz que ela segue viva.
         let rodando_ha = (pendente && item.em() > 0).then(|| crate::modelo::agora().saturating_sub(item.em())).filter(|s| *s >= 3);
-        let meta_do_sub = meta_do_sub.or_else(|| rodando_ha.map(relogio));
+        let meta_do_sub = meta_do_sub.or_else(|| rodando_ha.map(|s| vec![relogio(s)]));
         // O arquivo que a chamada leu ou mudou, se ainda está no disco: abre ao lado pelo ícone
         // que aparece no hover da linha.
         let abrir = arquivo
@@ -3161,9 +3220,7 @@ impl Janela {
                         Path::new(arquivo).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(detalhe)
                     } else { detalhe }, &no_resumo)),
             )
-            .when_some(meta_do_sub.filter(|_| !minima), |s, texto| {
-                s.child(div().flex_none().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto))
-            })
+            .when_some(meta_do_sub.filter(|_| !minima), |s, partes| s.child(conta_do_subagente(&partes)))
             // Numa edição, quanto entrou e quanto saiu, na própria linha ("+5 −2"), como na trilha
             // de referência que o dono mandou (21st.dev, "AI Thinking and Tool calls", 13/11/2026).
             .when_some(linhas_do_diff.filter(|_| !minima && !*erro), |s, (entram, saem)| {
