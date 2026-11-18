@@ -110,8 +110,8 @@ impl Direto {
             Arquivar => "Arquivar a conversa".into(),
             NovoChatEmOutraPasta => "Novo chat em outra pasta…".into(),
             Importar => "Importar do Claude Code…".into(),
-            ModoFoco if chat.is_some_and(|c| c.modo_foco) => "Sair do modo foco".into(),
-            ModoFoco => "Modo foco".into(),
+            ModoFoco if chat.is_some_and(|c| c.modo_foco) => "Sair do modo foco (todos os chats)".into(),
+            ModoFoco => "Modo foco em todos os chats".into(),
             PastaDeTrabalho => "Escolher a pasta de trabalho…".into(),
             Contas => "Contas do Claude".into(),
             ServidoresMcp => "Servidores MCP".into(),
@@ -342,7 +342,7 @@ impl Janela {
                 tem_agentes: super::mapa_agentes::tem_agentes(c),
                 caixa_vazia: caixa.trim().is_empty(),
                 caixa_com_barra: caixa.trim_start().starts_with('/'),
-                modo_foco: p.modo_foco,
+                modo_foco: m.config.modo_foco,
                 tem_resposta: super::bifurcar::ultima_resposta(&c.itens).is_some(),
             }
         });
@@ -439,12 +439,7 @@ impl Janela {
                 let pasta = motor.read(cx).dados.pasta.clone();
                 crate::sistema::abrir_pasta(&pasta, cx);
             }
-            Direto::ModoFoco => {
-                if let Some(p) = self.paineis.get_mut(self.ativo) {
-                    p.modo_foco = !p.modo_foco;
-                }
-                cx.notify();
-            }
+            Direto::ModoFoco => self.alternar_modo_foco(cx),
             _ => {
                 let (Some(painel), Some(chat)) = (painel, chat) else {
                     return;

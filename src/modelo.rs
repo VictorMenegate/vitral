@@ -614,6 +614,9 @@ pub struct Config {
     /// Os anéis de uso do plano flutuando no canto de baixo, à direita, da janela. Desligado,
     /// somem da tela (o uso continua em Contas do Claude).
     pub uso_no_canto: bool,
+    /// Modo foco: as conversas mostram só as mensagens, sem as chamadas de ferramenta. Vale para
+    /// todos os chats (era por painel; dono, 18/11/2026: "ser pra todos os chats").
+    pub modo_foco: bool,
     /// Quanto os fundos deixam ver o que está atrás da janela: 0 opaco, 1 leve, 2 média, 3 forte
     /// (`tema::NIVEIS_DE_TRANSPARENCIA`).
     pub transparencia: u8,
@@ -722,6 +725,7 @@ impl Default for Config {
             arquivar_apos_dias: 0,
             minutos_para_resumo: 15,
             uso_no_canto: true,
+            modo_foco: false,
             transparencia: crate::tema::TRANSPARENCIA_PADRAO,
             pasta_de_trabalho: None,
             importar_da_pasta: true,

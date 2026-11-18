@@ -566,7 +566,7 @@ impl Janela {
         let Some(chat) = self.paineis[ix].chat.clone() else {
             return;
         };
-        let foco = self.paineis[ix].modo_foco;
+        let foco = self.modo_foco(cx);
         let chaves = self
             .motor
             .as_ref()
@@ -596,7 +596,7 @@ impl Janela {
         let campo = self.paineis[ix].busca.campo.clone();
         campo.update(cx, |campo, cx| campo.set_value(termo.clone(), window, cx));
         let itens = self.motor.as_ref().and_then(|m| m.read(cx).chat(&chat)).map(|c| c.itens.clone()).unwrap_or_default();
-        let foco = self.paineis[ix].modo_foco;
+        let foco = self.modo_foco(cx);
         let busca = &mut self.paineis[ix].busca;
         busca.aberta = true;
         busca.indice.atualizar(&chat, &itens, foco, &normalizar(&termo));

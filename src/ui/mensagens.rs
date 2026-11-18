@@ -271,7 +271,7 @@ impl Janela {
     ) -> impl IntoElement + use<> {
         let painel_id = self.paineis[ix].id;
         let rolagem = self.paineis[ix].rolagem.clone();
-        let foco = self.paineis[ix].modo_foco;
+        let foco = motor.config.modo_foco;
         let nivel = self.paineis[ix].medida.nivel;
         let contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
         let agora = crate::modelo::agora();
@@ -732,8 +732,9 @@ impl Janela {
         let Some(ix) = self.paineis.iter().position(|p| p.id == painel_id) else { return; };
         let p = &self.paineis[ix];
         if p.rolagem.offset().y < -px(240.) || p.preservar_topo.is_some() || p.busca.aberta { return; }
+        let foco = self.modo_foco(cx);
         let nativos = self.motor.as_ref().and_then(|m| m.read(cx).chat(p.chat.as_deref()?)).map_or(0, |chat| {
-            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch" || p.modo_foco)).count()
+            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch" || foco)).count()
         });
         let tem_mais = if p.mostrar < nativos {
             self.paineis[ix].mostrar += ITENS_NA_TELA;
