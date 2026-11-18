@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Paleta de comandos (Ctrl+Shift+P).** Tudo o que o Vitral faz numa lista com busca: os atalhos
+  (com as teclas ao lado) e o que só existia em menu, como Compactar, Servidores MCP e Contas. O
+  Enter faz no painel ativo; o que não vale no momento aparece apagado, com o motivo.
 - **Suas mensagens já enviadas (Ctrl+R).** Uma lista das mensagens que você mandou em todos os
   chats, com busca sem acento: as do chat aberto e as da mesma pasta vêm primeiro, sem repetir. O
   Enter põe a escolhida na caixa, sem enviar.

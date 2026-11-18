@@ -48,6 +48,9 @@ pub struct Linha {
     /// O que o atalho faz; vazio deixa a linha fora da lista.
     pub rotulo: &'static str,
     pub grupo: Grupo,
+    /// Onde a tecla vale (o contexto do keymap); `None`, em todo o app. A paleta de comandos usa
+    /// para apagar o que só existe num lugar que ela não alcança (o menu "/", o visor).
+    pub contexto: Option<&'static str>,
 }
 
 impl Linha {
@@ -76,7 +79,13 @@ macro_rules! tabela {
 
         /// As linhas da tabela, na ordem em que foram registradas.
         pub fn linhas() -> Vec<Linha> {
-            vec![$(Linha { teclas: $teclas, exibir: $exibir, rotulo: $rotulo, grupo: $grupo }),*]
+            vec![$(Linha { teclas: $teclas, exibir: $exibir, rotulo: $rotulo, grupo: $grupo, contexto: $contexto }),*]
+        }
+
+        /// As ações da tabela, na ordem das linhas: a paleta de comandos dispara a da linha
+        /// escolhida.
+        pub fn acoes() -> Vec<Box<dyn Action>> {
+            vec![$(Box::new($acao) as Box<dyn Action>),*]
         }
     };
 }
@@ -155,6 +164,7 @@ tabela! {
     "ctrl-0", super::ZoomPadrao, None, Grupo::Janela, "Zoom de 100%", "";
     "f10", super::AbrirMenuVitral, None, Grupo::Janela, "Abrir o menu do Vitral", "";
     "ctrl-,", super::AbrirConfiguracoes, None, Grupo::Janela, "Abrir as Configurações", "";
+    "ctrl-shift-p", super::paleta::AbrirPaleta, None, Grupo::Janela, super::paleta::ROTULO_DA_PALETA, "";
     // Fora de campo de texto (o "!Input" tira a tecla de quem está escrevendo).
     "?", super::AbrirAtalhos, Some("Vitral && !Input"), Grupo::Janela, "Esta lista de atalhos", "";
 }

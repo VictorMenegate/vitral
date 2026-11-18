@@ -35,6 +35,7 @@ pub mod movimento;
 mod painel_contas;
 mod fechar;
 mod painel_arquivo;
+mod paleta;
 mod quadro_ideias;
 pub(crate) mod paineis;
 mod rascunhos;
@@ -1843,6 +1844,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
             .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);

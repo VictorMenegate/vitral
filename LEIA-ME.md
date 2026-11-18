@@ -564,6 +564,19 @@ ferramentas, vale por painel).
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
+- **Paleta de comandos (Ctrl+Shift+P)** (`src/ui/paleta.rs`; também no menu do logo). Uma lista
+  só, com busca sem acento e por palavras, de tudo o que o Vitral faz. Tem duas fontes: as linhas
+  com rótulo da tabela de `src/ui/atalhos.rs` (com as teclas à direita; o Enter dispara a mesma
+  ação da tecla, a partir da caixa do painel ativo, pelo `atalhos::acoes()` que a tabela passou a
+  gerar) e os comandos que só existiam em menu (`paleta::Direto`: do menu do logo, do "…" da
+  caixa e do menu da conversa, como Compactar, Agentes desta conversa, Perguntar também ao Codex,
+  Sessão nova, Renomear, Fixar, Arquivar, Modo foco, Servidores MCP, Contas, Consultar memória),
+  que chamam o método do item do menu. As seções são as do diálogo de atalhos. O que não vale
+  agora fica apagado, no fim da seção, com o motivo embaixo ("A conversa ainda não tem sessão",
+  "Só com o menu “/” da caixa à vista"): a lista é montada de uma foto do momento
+  (`paleta::Momento`). O Esc devolve o foco à caixa. Um teste garante que toda linha com rótulo
+  da tabela de atalhos está na paleta; atalho novo entra sozinho, e comando novo de menu entra em
+  `Direto::TODOS`.
 - **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
   `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
   fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.

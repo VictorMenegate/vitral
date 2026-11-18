@@ -489,6 +489,10 @@ impl Janela {
                     .action(Box::new(AbrirConfiguracoes)),
                 )
                 .item(
+                    item(super::paleta::ROTULO_DA_PALETA, Lucide::Search, &janela, |this, window, cx| this.abrir_paleta(window, cx))
+                        .action(Box::new(super::paleta::AbrirPaleta)),
+                )
+                .item(
                     PopupMenuItem::new("Atalhos do teclado")
                         .icon(Lucide::Keyboard)
                         .action(Box::new(AbrirAtalhos))
