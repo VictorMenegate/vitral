@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **O estado do chat no contorno da aba.** As abas perderam o ícone. Com o chat trabalhando, o fio
+  da aba fica azul e respira; quando ele termina e você ainda não leu, verde; esperando você, âmbar;
+  erro, vermelho.
 - **Quadro de ideias (Ctrl+I).** A lista do que você quer fazer no futuro, num kanban com
   Ideias, Próximas, Fazendo e Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam
   entre as colunas e o clique abre o título, o pedido, o chat e a pasta. Uma ideia pode ser de um

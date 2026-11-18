@@ -41,6 +41,8 @@ pub struct Aba {
     fim: Option<AnyElement>,
     so_simbolo: bool,
     quadrada: bool,
+    /// O estado do chat no contorno da aba (e a chave da vista do contorno que respira).
+    borda: Option<(Sinal, String)>,
 }
 
 impl Aba {
@@ -59,7 +61,17 @@ impl Aba {
             fim: None,
             so_simbolo: false,
             quadrada: false,
+            borda: None,
         }
+    }
+
+    /// O estado do chat no fio preto da aba (dono, 18/11/2026: "colocar algo de quando tá rodando e
+    /// quando acaba algo, faz na borda preta"): trabalhando, o fio azul respira; terminou e você não
+    /// leu, verde; esperando você, âmbar; erro, vermelho. `chave` nomeia a vista do contorno que
+    /// respira (uma por aba).
+    pub fn borda(mut self, sinal: Option<Sinal>, chave: impl Into<String>) -> Self {
+        self.borda = sinal.map(|s| (s, chave.into()));
+        self
     }
 
     /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
@@ -141,7 +153,7 @@ impl Aba {
         // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
         // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
         let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
-        let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
+        let (fundo, texto, mut borda): (Background, Hsla, Hsla) = match self.tom {
             // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
             // 16/11/2026: "diminui as bordas").
             TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::preto()),
@@ -150,6 +162,18 @@ impl Aba {
             TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
+        // O estado no contorno: parado (verde, âmbar, vermelho) é a cor do próprio fio, com um halo
+        // curto; trabalhando, o fio azul que respira vai por cima, numa vista própria.
+        let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
+        let halo = self.borda.as_ref().filter(|(s, _)| *s != Sinal::Rodando).map(|(s, _)| {
+            borda = cor_da_borda(*s);
+            vec![BoxShadow::new(px(0.), px(0.), cor_da_borda(*s).opacity(0.35)).blur_radius(px(6.))]
+        });
+        let respira = self.borda.filter(|(s, _)| *s == Sinal::Rodando).map(|(s, chave)| BordaQueRespira {
+            chave,
+            raio: raio::de(32.),
+            cor: cor_da_borda(s),
+        });
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
         let tem_fechar = self.fechar.is_some();
@@ -266,6 +290,8 @@ impl Aba {
                             .group_hover(GRUPO_DA_ABA, |s| s.visible()),
                     )
             })
+            .when_some(halo.filter(|_| !self.arrastando), |s, halo| s.shadow(halo))
+            .children(respira.filter(|_| !self.arrastando))
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
                 s.track_focus(&foco)
@@ -485,5 +511,41 @@ mod testes {
         assert!(medida.atualizar(px(900.), px(22.5)));
         assert_eq!(medida.nivel, LarguraPainel::Largo);
         assert_eq!(medida.faixa, FaixaCaixa::Media);
+    }
+}
+
+/// O contorno da aba de um chat trabalhando: o fio azul que respira (de 0,4 a 1 em 1,6 s), em cima
+/// do fio preto, numa vista própria (a batida redesenha só ele, e não a janela). Com o movimento
+/// reduzido, fica aceso, parado.
+#[derive(IntoElement)]
+struct BordaQueRespira {
+    chave: String,
+    raio: Pixels,
+    cor: Hsla,
+}
+
+impl RenderOnce for BordaQueRespira {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (raio, cor) = (self.raio, self.cor);
+        // Em cima do fio de 1 px da aba (o absoluto conta de dentro dele).
+        let lugar = div().absolute().top(px(-1.)).left(px(-1.)).right(px(-1.)).bottom(px(-1.));
+        let fio = move |alfa: f32| {
+            div()
+                .size_full()
+                .rounded(raio)
+                .border_1()
+                .border_color(cor.opacity(alfa))
+                .shadow(vec![BoxShadow::new(px(0.), px(0.), cor.opacity(0.4 * alfa)).blur_radius(px(6.))])
+        };
+        if cx.reduce_motion() {
+            return lugar.child(fio(1.));
+        }
+        let versao = u64::from(Rgba::from(cor).b.to_bits()) ^ u64::from(raio.as_f32().to_bits()) << 32;
+        lugar.child(super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), versao, cx, move |window, cx| {
+            let fase = crate::ui::movimento::laco_a(window, cx, crate::ui::movimento::QPS_DO_LACO);
+            let t = (fase / 1.6).fract() as f32;
+            let alfa = 0.4 + 0.6 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
+            fio(alfa).into_any_element()
+        }))
     }
 }

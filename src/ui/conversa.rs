@@ -189,32 +189,6 @@ fn simbolo_da_conversa() -> Simbolo {
     Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue())
 }
 
-/// O ícone da aba: o estado do chat (anel girando, disco âmbar, azul ou vermelho, balão apagado
-/// quando parado e lido), com a pasta na dica.
-fn simbolo_na_aba(motor: &Motor, chat: &Chat, painel_id: u64) -> AnyElement {
-    let dica: SharedString = if motor.sem_pasta(chat) {
-        "Sem pasta: um chat numa pasta vazia só dele".into()
-    } else if chat.importada.is_some() {
-        format!("Conversa do Claude Code, direto na pasta dela\n{}", com_til(&chat.cwd)).into()
-    } else {
-        format!("Direto em {}", com_til(&chat.cwd)).into()
-    };
-    // O ramo do git vai junto da pasta, lido quando a dica aparece.
-    let pasta = (!motor.sem_pasta(chat)).then(|| chat.cwd.clone());
-    div()
-        .id(("simbolo-aba", painel_id as usize))
-        .flex_none()
-        .child(icone_de_estado(sinal_do_chat(motor, chat), 16.).vivo(format!("aba-{painel_id}-{}", chat.id)))
-        .tooltip(move |window, cx| {
-            let texto = match &pasta {
-                Some(pasta) => super::ramo::com_ramo(&dica, pasta),
-                None => dica.to_string(),
-            };
-            Tooltip::new(texto).build(window, cx)
-        })
-        .into_any_element()
-}
-
 /// A largura de um título de aba (o `rotulo()`: 13, médio), em px de agora.
 fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     let mut fonte = window.text_style().font();
@@ -1061,11 +1035,14 @@ impl Janela {
                 let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
                     // As outras abas do painel são peças lisas, só com o contorno.
                     .tom(TomAba::Inativa)
-                    // O ícone da aba é o estado do chat (e o ponto ao lado do × sai).
-                    .simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).vivo(format!("aba-{painel_id}-{id}")).into_any_element()))
-                    // Sem lugar para 4 letras e as reticências, só o ícone num quadrado; o título
-                    // vai na dica.
+                    // Sem ícone (dono, 18/11/2026: "tira os ícones daqui também"): o estado do chat
+                    // vai no contorno da aba.
+                    .borda(sinal_do_chat(motor, outro), format!("borda-aba-{painel_id}-{id}"))
+                    // Sem lugar para 4 letras, só o estado num quadrado; o título vai na dica.
                     .quadrada(icone);
+                if icone {
+                    aba = aba.simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).vivo(format!("aba-{painel_id}-{id}")).into_any_element()));
+                }
                 // O lápis do rascunho, com o começo dele na dica (rodada de uso, item 1.4).
                 if let Some(rascunho) = self.rascunho_fora_de_vista(id).filter(|_| !icone) {
                     let dica = SharedString::from(rascunho);
@@ -1177,7 +1154,8 @@ impl Janela {
         // O número do painel liga a aba à linha do chat na lista: com a lista recolhida não há a
         // que ligar, e ele sai (dono, 13/11/2026).
         let numerada = varios && self.lista;
-        aba = aba.simbolo(Simbolo::Elemento(simbolo_na_aba(motor, chat, painel_id)));
+        // Sem ícone: o estado do chat vai no contorno da aba (dono, 18/11/2026).
+        aba = aba.borda(sinal_do_chat(motor, chat), format!("borda-aba-{painel_id}-{}", chat.id));
         if numerada {
             aba = aba.numero(ix + 1, ativo);
         }
