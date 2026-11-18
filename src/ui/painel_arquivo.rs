@@ -2,7 +2,7 @@
 //! nome, as linhas e a linguagem, a pasta, Mencionar, VS Code), markdown renderizado ou código com
 //! número de linha, e o aviso de quando não dá para mostrar. Aberto por uma linha de edição da
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
-//! (`edicao.rs`). O número da linha escolhe linhas para mencionar.
+//! (`edicao.rs`). O número da linha escolhe linhas para mencionar ou comentar (`comentarios.rs`).
 
 use gpui_kit::component::{
     ActiveTheme as _, ElementExt as _, WindowExt as _,
@@ -244,6 +244,7 @@ enum Fundo {
 /// edição, a coluna do sinal (+ e −) entre os dois, a faixa da cor na borda e o fundo da cor (o
 /// mesmo do diff da trilha). O número escolhe a linha para mencionar; com Shift, estende a escolha
 /// (dono, 16/11/2026: "uma seleção de linhas no painel também pode ser mencionada").
+/// `comentada`: a linha está num trecho com comentário guardado.
 #[allow(clippy::too_many_arguments)]
 fn fileira_de_codigo(
     indice: usize,
@@ -253,6 +254,7 @@ fn fileira_de_codigo(
     largura_numero: Rems,
     fundo: Fundo,
     sinal: Option<&'static str>,
+    comentada: bool,
     janela: WeakEntity<Janela>,
 ) -> AnyElement {
     // Uma faixa fora da linha derrubaria o desenho do texto.
@@ -271,12 +273,18 @@ fn fileira_de_codigo(
         .flex_none()
         .flex()
         .justify_end()
-        .text_color(if fundo == Fundo::Escolhida { Cores::texto() } else { Cores::apagado() })
+        .text_color(if fundo == Fundo::Escolhida {
+            Cores::texto()
+        } else if comentada {
+            Cores::destaque_texto()
+        } else {
+            Cores::apagado()
+        })
         .children(numero.map(|n| n.to_string()))
         .when_some(numero, |s, n| {
-            s.cursor_pointer().hover(|s| s.text_color(Cores::texto())).on_click(move |evento, _, cx| {
+            s.cursor_pointer().hover(|s| s.text_color(Cores::texto())).on_click(move |evento, window, cx| {
                 let estender = evento.modifiers().shift;
-                let _ = janela.update(cx, |this, cx| this.escolher_linha(n as u32, estender, cx));
+                let _ = janela.update(cx, |this, cx| this.escolher_linha(n as u32, estender, window, cx));
             })
         });
     div()
@@ -295,6 +303,9 @@ fn fileira_de_codigo(
             Fundo::Nenhum => s,
         })
         .when_some(faixa, |s, cor| s.child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(cor)))
+        // O trecho com comentário guardado: uma faixa do destaque ao lado da do diff, e o número
+        // na cor dele.
+        .when(comentada, |s| s.child(div().absolute().left(esp::E4).top_0().bottom_0().w(px(2.)).bg(Cores::destaque())))
         .child(numero_el)
         .when_some(sinal, |s, sinal| {
             s.child(div().flex_none().w(r(8.)).text_color(faixa.unwrap_or(Cores::apagado())).child(sinal))
@@ -421,6 +432,7 @@ impl Janela {
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, reserva, na_gaveta, window, cx);
         let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
+        let comentarios = self.faixas_dos_comentarios(reserva, na_gaveta, window, cx);
         let corpo = match conteudo {
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
             // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
@@ -492,6 +504,9 @@ impl Janela {
                 let escolhida = move |n: usize| {
                     selecao.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n)) || marcada == Some(n as u32)
                 };
+                // Os trechos com comentário guardado ficam marcados no número da linha.
+                let comentadas = self.linhas_comentadas(&raiz, &caminho);
+                let comentada = move |n: usize| comentadas.iter().any(|&(a, b)| (a as usize..=b as usize).contains(&n));
                 let id = SharedString::from(format!("codigo-{caminho}"));
                 let lista = match vista {
                     // A edição: as fileiras da vista, com as saídas entre as linhas do arquivo. Ao
@@ -515,10 +530,10 @@ impl Janela {
                                         };
                                         let sinal = if *entrou { "+" } else { " " };
                                         let texto = linhas.get(*linha).cloned().unwrap_or_default();
-                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), janela.clone())
+                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), comentada(linha + 1), janela.clone())
                                     }
                                     Fileira::Saiu(texto) => {
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), false, janela.clone())
                                     }
                                     Fileira::Solta(marca, texto) => {
                                         let (fundo, sinal) = match marca {
@@ -526,7 +541,7 @@ impl Janela {
                                             Marca::Sai => (Fundo::Saiu, "−"),
                                             Marca::Igual => (Fundo::Nenhum, " "),
                                         };
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), false, janela.clone())
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
                                 })
@@ -541,7 +556,7 @@ impl Janela {
                                 .map(|i| {
                                     let cores_linha = cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
                                     let fundo = if escolhida(i + 1) { Fundo::Escolhida } else { Fundo::Nenhum };
-                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, janela.clone())
+                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, comentada(i + 1), janela.clone())
                                 })
                                 .collect()
                         })
@@ -577,6 +592,7 @@ impl Janela {
             .child(cabecalho)
             .child(barra)
             .children(faixa)
+            .children(comentarios)
             .child(corpo)
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
@@ -902,7 +918,7 @@ impl Janela {
 
     /// Um clique no número da linha: escolhe a linha (o segundo clique nela desfaz); com Shift,
     /// estende a escolha desde a primeira.
-    pub(super) fn escolher_linha(&mut self, linha: u32, estender: bool, cx: &mut Context<Self>) {
+    pub(super) fn escolher_linha(&mut self, linha: u32, estender: bool, window: &mut Window, cx: &mut Context<Self>) {
         match (estender, self.arquivo_ancora) {
             (true, Some(ancora)) => self.arquivo_selecao = Some((ancora.min(linha), ancora.max(linha))),
             _ if self.arquivo_selecao == Some((linha, linha)) => {
@@ -915,6 +931,8 @@ impl Janela {
             }
         }
         self.arquivo_marcada.set(None);
+        // O campo do comentário acompanha a escolha: o texto que o trecho já tem, ou vazio.
+        self.acertar_campo_do_comentario(window, cx);
         cx.notify();
     }
 

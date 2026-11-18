@@ -7,6 +7,11 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Comentar linhas e mandar tudo de uma vez.** No arquivo ou no diff aberto à direita, escolha
+  um trecho pelo número da linha e escreva o comentário no campo que aparece: ele fica preso
+  àquelas linhas, e o trecho fica marcado. Os comentários se acumulam por chat, em vários
+  arquivos, e **Enviar N comentários** põe na caixa uma mensagem só, com a pílula de cada trecho
+  e o texto, para revisar e enviar.
 - **Novo chat direto num worktree.** A paleta "Novo chat · Em qual pasta?" ganhou o grupo
   Worktrees: as cópias dos repositórios das pastas que já têm chat, com o ramo embaixo do nome. A
   busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.

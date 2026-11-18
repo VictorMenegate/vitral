@@ -12,6 +12,7 @@ mod atualizacao;
 mod avisos_no_app;
 mod busca_conversa;
 mod caixa_entrada;
+mod comentarios;
 mod composer;
 mod configuracoes;
 mod conversa;
@@ -470,6 +471,8 @@ pub struct Janela {
     git_da_pasta: git_da_pasta::GitDaPasta,
     /// O ramo de agora das pastas dos chats à vista (o aviso de troca de ramo, acima da caixa).
     ramos: ramo::Ramos,
+    /// Os comentários presos a linhas do arquivo aberto, guardados por chat até o envio.
+    comentarios: comentarios::Comentarios,
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
@@ -775,6 +778,7 @@ impl Janela {
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
             ramos: Default::default(),
+            comentarios: comentarios::Comentarios::new(window, cx),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,

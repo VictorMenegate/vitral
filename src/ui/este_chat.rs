@@ -38,6 +38,7 @@ impl Janela {
                 filhos.push(passos(motor.passos(&chat.id)));
             }
             filhos.push(self.mudancas(chat, window));
+            filhos.extend(self.cartao_dos_comentarios(chat, window, cx));
             filhos.extend(self.secao_git(chat, window, cx));
             filhos.push(self.este_chat(motor, chat, window, cx));
         }
