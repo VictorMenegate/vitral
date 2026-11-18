@@ -3,6 +3,12 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.1
+
+- **A mensagem presa não cobre a seguinte.** A sua mensagem seguinte, chegando no alto da
+  conversa, empurra a faixa da mensagem presa para cima, como no VS Code; antes ela passava por
+  baixo da faixa e ficava escondida.
+
 ## 0.9.0
 
 O quadro de ideias, a paleta de comandos e o uso do plano à vista, num app mais leve e com a conversa redesenhada.
@@ -109,8 +115,7 @@ O quadro de ideias, a paleta de comandos e o uso do plano à vista, num app mais
   A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
 - **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
   lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
-  leva até ela. Subindo além dela, gruda a anterior, e a sua mensagem seguinte, chegando no alto,
-  empurra a faixa para fora em vez de passar por baixo dela.
+  leva até ela.
 - **Uso e contexto redesenhados.** Os anéis de uso do Claude e do Codex moram numa cápsula só no
   canto, com um anel fino e inteiro que enche a partir do alto (a inicial da conta, menor,
   recortada nele). O contexto da conversa, na caixa, virou um medidor deitado com a porcentagem:
