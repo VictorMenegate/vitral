@@ -220,8 +220,9 @@ impl Motor {
         );
     }
 
-    /// O cartão só do Vitral vira issue do time, na coluna em que está.
-    pub fn mandar_ao_linear(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// A ideia nova (do campo do quadro ou de um chat) vira issue do time, na coluna em que está.
+    /// Os cartões de antes de ligar o Linear continuam só do Vitral.
+    fn criar_no_linear(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(ideia) = self.quadro.achar(id).cloned().filter(|i| i.linear.is_none()) else {
             return;
         };
@@ -273,14 +274,6 @@ impl Motor {
         );
     }
 
-    /// Todos os cartões só do Vitral viram issues.
-    pub fn mandar_todas_ao_linear(&mut self, cx: &mut Context<Self>) {
-        let locais: Vec<String> = self.quadro.ideias.iter().filter(|i| i.linear.is_none()).map(|i| i.id.clone()).collect();
-        for id in locais {
-            self.mandar_ao_linear(&id, cx);
-        }
-    }
-
     pub fn linear_ligado(&self) -> bool {
         self.linear.chave.is_some()
     }
@@ -296,7 +289,7 @@ impl Motor {
         let id = novo_id();
         self.quadro.adicionar(Ideia { id: id.clone(), titulo: titulo.to_string(), pasta, criada_em: agora(), ..Default::default() });
         self.salvar_quadro();
-        self.mandar_ao_linear(&id, cx);
+        self.criar_no_linear(&id, cx);
         cx.notify();
         Some(id)
     }
@@ -433,7 +426,7 @@ impl Motor {
         };
         self.quadro.adicionar(ideia);
         self.salvar_quadro();
-        self.mandar_ao_linear(&id, cx);
+        self.criar_no_linear(&id, cx);
         cx.notify();
         let onde = if self.linear.chave.is_some() { " e no Linear, no time do quadro" } else { "" };
         Resposta::ok(format!(

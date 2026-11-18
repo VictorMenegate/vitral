@@ -1384,9 +1384,9 @@ o pedido. A pasta, o chat e o porquê continuam só do Vitral, guardados no cart
 - **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳ da faixa. Um cartão com
   mudança daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, a
   faixa mostra o erro em vermelho e o quadro relê.
-- **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam com a
-  etiqueta "só no Vitral"; o botão direito tem **Mandar ao Linear**, e a faixa, **Mandar as N só
-  do Vitral ao Linear**. O botão direito de um cartão de issue tem **Abrir no Linear**.
+- **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam no quadro, sem
+  o código de issue, e não sobem (dono, 18/11/2026: "não precisa ter isso de mandar pro Linear").
+  O botão direito de um cartão de issue tem **Abrir no Linear**.
 - **Desligar** (o ícone da tomada na faixa) apaga a chave; os cartões das issues saem do quadro.
 
 ## Compilar e rodar

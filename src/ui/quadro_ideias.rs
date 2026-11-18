@@ -4,8 +4,9 @@
 //! "Abrir chat", que cria a conversa já com o pedido e leva o cartão para Fazendo. O cartão de
 //! Fazendo mostra como está o chat dele. O botão direito tem o mesmo, e mover e apagar.
 //! Com o Linear ligado, o quadro é o do time (ver `crate::linear`): a faixa do alto diz de que time
-//! e quando foi lido, com o ⟳; cada cartão leva o código da issue, e o que é só do Vitral leva
-//! "só no Vitral" e o "Mandar ao Linear". O quadro relê o Linear ao abrir e a cada minuto aberto.
+//! e quando foi lido, com o ⟳; cada cartão leva o código da issue (o que é só do Vitral fica sem
+//! ele, e não sobe: dono, 18/11/2026, "não precisa ter isso de mandar pro Linear"). O quadro relê
+//! o Linear ao abrir e a cada minuto aberto.
 
 use std::{path::PathBuf, time::Duration};
 
@@ -133,7 +134,6 @@ impl QuadroDeIdeias {
 
     /// A faixa do alto do quadro: o Linear ligado (o time, quando leu, ⟳) ou o convite para ligar.
     fn faixa_do_linear(&self, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let locais = m.quadro().ideias.iter().filter(|i| i.linear.is_none()).count();
         let (texto, cor, botoes): (String, Hsla, Vec<AnyElement>) = match m.situacao_do_linear() {
             SituacaoDoLinear::Desligado { erro, .. } => (
                 erro.unwrap_or_else(|| "Ligue o Linear para este quadro ser o do time EFI (Eficiência Operacional).".into()),
@@ -156,14 +156,6 @@ impl QuadroDeIdeias {
                     (None, false, None) => format!("Linear · {time}"),
                 };
                 let mut botoes = Vec::new();
-                if locais > 0 {
-                    let rotulo = if locais == 1 { "Mandar 1 só do Vitral ao Linear".to_string() } else { format!("Mandar as {locais} só do Vitral ao Linear") };
-                    botoes.push(
-                        botao_fantasma("mandar-todas", Some(Lucide::Send.into()), rotulo, TamanhoBotao::Linha, window, cx)
-                            .on_click(cx.listener(|q, _, _, cx| q.motor.update(cx, |m, cx| m.mandar_todas_ao_linear(cx))))
-                            .into_any_element(),
-                    );
-                }
                 botoes.push(
                     botao_icone("reler-linear", Lucide::RotateCcw, "Ler o Linear agora", TamanhoBotao::Linha, window, cx)
                         .on_click(cx.listener(|q, _, _, cx| q.motor.update(cx, |m, cx| m.ler_linear(cx))))
@@ -393,9 +385,6 @@ impl QuadroDeIdeias {
                     etiquetas.push(Etiqueta::new(quem.clone()).icone(Lucide::CircleUser).baixa().into_any_element());
                 }
             }
-            None if m.linear_ligado() => {
-                etiquetas.push(Etiqueta::new("só no Vitral").tom(Cores::ambar()).baixa().into_any_element());
-            }
             None => {}
         }
         etiquetas.extend(ideia.etiquetas.iter().map(|e| Etiqueta::new(e.clone()).baixa().into_any_element()));
@@ -425,11 +414,7 @@ impl QuadroDeIdeias {
         let arrasto = ArrastoIdeia { id: ideia.id.clone(), titulo: titulo.clone() };
         let vista = cx.entity().downgrade();
         let (id_menu, tem_chat) = (ideia.id.clone(), ideia.chat.is_some());
-        let linear_do_menu = match &ideia.linear {
-            Some(no) => NoMenu::Abrir(no.url.clone()),
-            None if m.linear_ligado() => NoMenu::Mandar,
-            None => NoMenu::Nada,
-        };
+        let linear_do_menu = ideia.linear.as_ref().map(|no| no.url.clone()).filter(|url| !url.is_empty());
         div()
             .id(grupo.clone())
             .group(grupo.clone())
@@ -568,16 +553,8 @@ impl QuadroDeIdeias {
     }
 }
 
-/// O que o botão direito oferece do Linear num cartão.
-#[derive(Clone)]
-enum NoMenu {
-    Abrir(String),
-    Mandar,
-    Nada,
-}
-
 /// O botão direito num cartão.
-fn menu_do_cartao(menu: PopupMenu, vista: WeakEntity<QuadroDeIdeias>, id: &str, coluna: Coluna, tem_chat: bool, linear: &NoMenu) -> PopupMenu {
+fn menu_do_cartao(menu: PopupMenu, vista: WeakEntity<QuadroDeIdeias>, id: &str, coluna: Coluna, tem_chat: bool, linear: &Option<String>) -> PopupMenu {
     let item = |rotulo: &str, icone: Lucide, f: Box<dyn Fn(&mut QuadroDeIdeias, &mut Window, &mut Context<QuadroDeIdeias>)>| {
         let vista = vista.clone();
         PopupMenuItem::new(rotulo.to_string()).icon(icone).on_click(move |_, window, cx| {
@@ -589,16 +566,9 @@ fn menu_do_cartao(menu: PopupMenu, vista: WeakEntity<QuadroDeIdeias>, id: &str, 
     let mut menu = menu
         .item(item(if tem_chat { "Abrir outro chat com esta ideia" } else { "Abrir chat com esta ideia" }, Lucide::Send, Box::new(move |q, w, cx| q.abrir_chat(&a, w, cx))))
         .item(item("Editar", Lucide::Pencil, Box::new(move |q, w, cx| q.editar(&e, w, cx))));
-    menu = match linear.clone() {
-        NoMenu::Abrir(url) if !url.is_empty() => {
-            menu.item(PopupMenuItem::new("Abrir no Linear").icon(Lucide::ExternalLink).on_click(move |_, _, cx| cx.open_url(&url)))
-        }
-        NoMenu::Mandar => {
-            let id = id.clone();
-            menu.item(item("Mandar ao Linear", Lucide::Send, Box::new(move |q, _, cx| q.motor.update(cx, |m, cx| m.mandar_ao_linear(&id, cx)))))
-        }
-        _ => menu,
-    };
+    if let Some(url) = linear.clone() {
+        menu = menu.item(PopupMenuItem::new("Abrir no Linear").icon(Lucide::ExternalLink).on_click(move |_, _, cx| cx.open_url(&url)));
+    }
     menu = menu.separator();
     for destino in Coluna::TODAS.into_iter().filter(|c| *c != coluna) {
         let id = id.clone();
