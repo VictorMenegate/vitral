@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Permitir sempre nesta pasta.** No pedido de permissão, **Sempre nesta pasta** grava a regra
+  para todos os chats daquela pasta, os abertos e os novos: um chat novo no mesmo projeto não
+  pergunta de novo. No menu do modo, as regras aparecem em **Deste chat** e **Desta pasta**.
 - **Arranjos de painéis com nome.** No menu do logo, **Arranjos** guarda os painéis, as abas e as
   larguras de agora com um nome ("Central", "Vitral") e troca entre eles; a volta é de onde você
   parou. Ctrl+Alt+PageDown e PageUp andam pelos arranjos, e os chats fora de vista continuam
