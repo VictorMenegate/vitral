@@ -1219,11 +1219,11 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   não rola: a roda do mouse em cima dela não faz nada. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. As abas não têm ícone (dono,
   18/11/2026: "tira os ícones daqui também"): o estado do chat vai no fio preto da aba (`Aba::borda`,
-  em `src/ui/componentes/paineis.rs`), discreto (dono, 18/11/2026: "tenta não fazer muito
-  chamativo"): trabalhando, o fio azul respira devagar (de 0,35 a 0,9 em 2,4 s, numa vista própria:
-  a batida redesenha só o fio); terminou e você não leu, verde; esperando você, âmbar; erro,
-  vermelho, essas três a 75% e sem halo; parado e lido, o fio preto de sempre. Na bancada, a 0,15 a
-  0,6 o azul quase sumia no fundo escuro (medido: 23, 32, 60 contra 21, 23, 33 da aba parada). Só a aba de fundo que virou um
+  em `src/ui/componentes/paineis.rs`): um fio de 2 px na cor do estado por cima do preto, com um
+  véu de 6% da mesma cor no miolo, sem halo. Trabalhando, azul, respirando devagar (de 0,5 a 1 em
+  2,4 s, numa vista própria: a batida redesenha só o fio); terminou e você não leu, verde; esperando
+  você, âmbar; erro, vermelho; parado e lido, o fio preto de sempre. O dono pediu discreto, mas o
+  fio de 1 px apagado não se via ("dá pra ver nada", 18/11/2026). Só a aba de fundo que virou um
   quadrado (sem lugar para o título) continua com o ícone do estado. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
 - **Arranjos de painéis salvos** (`src/ui/arranjo/salvos.rs`). O que a janela já grava ao fechar

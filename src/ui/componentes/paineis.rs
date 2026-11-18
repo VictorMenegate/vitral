@@ -153,7 +153,7 @@ impl Aba {
         // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
         // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
         let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
-        let (fundo, texto, mut borda): (Background, Hsla, Hsla) = match self.tom {
+        let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
             // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
             // 16/11/2026: "diminui as bordas").
             TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::preto()),
@@ -162,17 +162,16 @@ impl Aba {
             TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
-        // O estado no contorno, discreto (dono, 18/11/2026: "tenta não fazer muito chamativo"):
-        // parado (verde, âmbar, vermelho), a cor apagada no próprio fio, sem halo; trabalhando, o fio
-        // azul que respira devagar vai por cima, numa vista própria.
+        // O estado no contorno (dono, 18/11/2026: "faz na borda preta", "tenta não fazer muito
+        // chamativo" e, com o fio de 1 px apagado, "dá pra ver nada"): um fio de 2 px na cor do
+        // estado por cima do preto, com um véu de 6% da mesma cor no miolo, sem halo. Trabalhando,
+        // o azul respira devagar, numa vista própria; os outros ficam acesos, parados.
         let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
-        if let Some((s, _)) = self.borda.as_ref().filter(|(s, _)| *s != Sinal::Rodando) {
-            borda = cor_da_borda(*s).opacity(0.75);
-        }
-        let respira = self.borda.filter(|(s, _)| *s == Sinal::Rodando).map(|(s, chave)| BordaQueRespira {
+        let respira = self.borda.map(|(s, chave)| ContornoDeEstado {
             chave,
             raio: raio::de(32.),
             cor: cor_da_borda(s),
+            respira: s == Sinal::Rodando,
         });
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
@@ -513,30 +512,34 @@ mod testes {
     }
 }
 
-/// O contorno da aba de um chat trabalhando: o fio azul que respira devagar (de 0,35 a 0,9 em 2,4 s),
-/// em cima do fio preto, sem halo, numa vista própria (a batida redesenha só ele, e não a janela).
-/// Com o movimento reduzido, fica parado, a meia luz.
+/// O estado do chat no contorno da aba: um fio de 2 px na cor do estado, em cima do fio preto, com
+/// um véu de 6% da mesma cor no miolo (por baixo do título). Trabalhando, ele respira devagar (de
+/// 0,5 a 1 em 2,4 s), numa vista própria (a batida redesenha só ele, e não a janela); os outros, e
+/// todos com o movimento reduzido, ficam acesos, parados.
 #[derive(IntoElement)]
-struct BordaQueRespira {
+struct ContornoDeEstado {
     chave: String,
     raio: Pixels,
     cor: Hsla,
+    respira: bool,
 }
 
-impl RenderOnce for BordaQueRespira {
+impl RenderOnce for ContornoDeEstado {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let (raio, cor) = (self.raio, self.cor);
         // Em cima do fio de 1 px da aba (o absoluto conta de dentro dele).
         let lugar = div().absolute().top(px(-1.)).left(px(-1.)).right(px(-1.)).bottom(px(-1.));
-        let fio = move |alfa: f32| div().size_full().rounded(raio).border_1().border_color(cor.opacity(alfa));
-        if cx.reduce_motion() {
-            return lugar.child(fio(0.65));
+        let fio = move |alfa: f32| {
+            div().size_full().rounded(raio).border_2().border_color(cor.opacity(alfa)).bg(cor.opacity(0.06 * alfa))
+        };
+        if !self.respira || cx.reduce_motion() {
+            return lugar.child(fio(0.9));
         }
         let versao = u64::from(Rgba::from(cor).b.to_bits()) ^ u64::from(raio.as_f32().to_bits()) << 32;
         lugar.child(super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), versao, cx, move |window, cx| {
             let fase = crate::ui::movimento::laco_a(window, cx, crate::ui::movimento::QPS_DO_LACO);
             let t = (fase / 2.4).fract() as f32;
-            let alfa = 0.35 + 0.55 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
+            let alfa = 0.5 + 0.5 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
             fio(alfa).into_any_element()
         }))
     }
