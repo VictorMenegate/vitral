@@ -1,7 +1,8 @@
 //! "Na pasta": o que o git vê mudado desde o último commit no repositório do chat, inclusive o que
 //! um comando mudou (a lista de Mudanças só vê as ferramentas de edição). O clique abre o arquivo
 //! com o diff por cima, no mesmo visor das edições, onde o número da linha escolhe um trecho para
-//! mencionar; o Desfazer volta um arquivo ao último commit, depois de perguntar.
+//! mencionar; o Desfazer volta um arquivo ao último commit, depois de perguntar (um trecho só,
+//! no visor: `desfazer_trecho.rs`).
 
 use std::{
     path::{Path, PathBuf},
@@ -17,7 +18,7 @@ use super::{
     componentes::{Confirmacao, Reflexo as _, Selo, TamanhoBotao, Tom, TomConfirmacao, aviso, botao_icone, confirmar},
 };
 use crate::{
-    git::{EstadoNoGit, MudancaNaPasta, RetratoDaPasta},
+    git::{EstadoNoGit, MudancaNaPasta, RamoDaPasta, RetratoDaPasta},
     modelo::Chat,
     tema::{Cores, FONTE_MONO, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
 };
@@ -32,6 +33,13 @@ pub(super) struct GitDaPasta {
     lido_em: Option<Instant>,
     retrato: Option<RetratoDaPasta>,
     lendo: bool,
+}
+
+impl GitDaPasta {
+    /// O retrato envelheceu agora (um trecho foi desfeito): o próximo desenho relê o git.
+    pub(super) fn pedir_releitura(&mut self) {
+        self.lido_em = None;
+    }
 }
 
 impl Janela {
@@ -79,12 +87,16 @@ impl Janela {
         self.reler_git_se_preciso(&chat.cwd, cx);
         let retrato = self.git_da_pasta.retrato.as_ref()?;
         let raiz = retrato.raiz.clone();
+        // O ramo vai no cabeçalho, à direita; sem lugar na linha, desce inteiro para a de baixo.
         let titulo = div()
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(esp::E6)
+            .gap_x(esp::E6)
+            .gap_y(esp::E4)
             .child(div().rotulo().text_color(Cores::forte()).child("Na pasta"))
-            .child(div().font_family(FONTE_MONO).metadado().text_color(Cores::apagado()).child(retrato.mudancas.len().to_string()));
+            .child(div().font_family(FONTE_MONO).metadado().text_color(Cores::apagado()).child(retrato.mudancas.len().to_string()))
+            .children(retrato.ramo.as_ref().map(|ramo| selo_do_ramo(ramo, window)));
         let corpo: Vec<AnyElement> = if retrato.mudancas.is_empty() {
             vec![div().corpo_ui().text_color(Cores::tenue()).child("Nada mudado desde o último commit.").into_any_element()]
         } else {
@@ -120,18 +132,8 @@ impl Janela {
             self.abrir_arquivo(raiz, caminho, window, cx);
             return;
         }
-        cx.spawn_in(window, async move |this, cx| {
-            let (r, c) = (raiz.clone(), caminho.clone());
-            let diff = cx.background_spawn(async move { crate::git::diff_do_arquivo(&r, &c) }).await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                let trechos = super::edicao::trechos(&diff);
-                let (entram, saem) = super::edicao::contar(&trechos);
-                let sem_registro = trechos.is_empty();
-                this.edicao_pedida = Some(std::rc::Rc::new(super::edicao::Edicao { trechos, entram, saem, sem_registro }));
-                this.abrir_arquivo(raiz, caminho, window, cx);
-            });
-        })
-        .detach();
+        // O diff fica guardado com o arquivo aberto: o visor desfaz um trecho só (`desfazer_trecho.rs`).
+        self.abrir_diff_lido_do_git(raiz, caminho, None, window, cx);
     }
 
     /// Pergunta e volta um arquivo ao último commit.
@@ -176,6 +178,26 @@ impl Janela {
             cx,
         );
     }
+}
+
+/// O ramo no cabeçalho de "Na pasta": o ícone (o do commit, com a cabeça solta), o nome em mono e
+/// "worktree" quando a pasta é uma cópia; a frase inteira na dica.
+fn selo_do_ramo(ramo: &RamoDaPasta, window: &Window) -> AnyElement {
+    let icone = if ramo.solta { Lucide::GitCommitHorizontal } else { Lucide::GitBranch };
+    let dica = SharedString::from(super::ramo::onde_esta(ramo));
+    div()
+        .id("ramo-da-pasta")
+        .ml_auto()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(esp::E4)
+        .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone, 12., window)))
+        .child(div().min_w_0().truncate().font_family(FONTE_MONO).metadado().text_color(Cores::texto()).child(ramo.nome.clone()))
+        .when(ramo.solta, |s| s.child(div().flex_none().metadado().text_color(Cores::tenue()).child("cabeça solta")))
+        .when(ramo.worktree, |s| s.child(Selo::cor("worktree", Cores::tenue())))
+        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .into_any_element()
 }
 
 /// Uma linha de "Na pasta": ícone, nome, pasta tênue, +N −M, o selo do estado e, no hover, o

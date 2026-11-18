@@ -199,11 +199,19 @@ fn simbolo_na_aba(motor: &Motor, chat: &Chat, painel_id: u64) -> AnyElement {
     } else {
         format!("Direto em {}", com_til(&chat.cwd)).into()
     };
+    // O ramo do git vai junto da pasta, lido quando a dica aparece.
+    let pasta = (!motor.sem_pasta(chat)).then(|| chat.cwd.clone());
     div()
         .id(("simbolo-aba", painel_id as usize))
         .flex_none()
         .child(icone_de_estado(sinal_do_chat(motor, chat), 16.).vivo(format!("aba-{painel_id}-{}", chat.id)))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .tooltip(move |window, cx| {
+            let texto = match &pasta {
+                Some(pasta) => super::ramo::com_ramo(&dica, pasta),
+                None => dica.to_string(),
+            };
+            Tooltip::new(texto).build(window, cx)
+        })
         .into_any_element()
 }
 
@@ -622,6 +630,8 @@ impl Janela {
             None => (false, false),
         };
         let faixa = faixa.map(|f| entrada(("entra-faixa", painel_id as usize), faixa_nova, De::Baixo, div().child(f)));
+        // A pasta trocou de ramo desde o último turno do chat: o aviso, uma vez (`ramo.rs`).
+        let aviso_do_ramo = chat.and_then(|c| self.aviso_do_ramo(motor, c, painel_id, window, cx));
         // O pé de toda conversa é a doca: uma abertura no cartão por onde se vê o metal, com a
         // caixa de mensagem pousada nela. Alta na conversa ainda vazia, rente à caixa no resto do
         // tempo (com o chat trabalhando, quem mostra é o metal, que corre).
@@ -712,6 +722,7 @@ impl Janela {
             .child(cabecalho)
             .child(corpo)
             .children(chat.zip(ix).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
+            .children(aviso_do_ramo)
             .children(faixa)
             .when_some(chat.zip(ix), |s, (chat, ix)| {
                 let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();
@@ -1044,6 +1055,8 @@ impl Janela {
                 // O título e, na segunda linha, o estado com quando e o começo da última fala: dá
                 // para decidir se vale trocar de aba sem trocar (rodada de uso, item 3.3).
                 let dica = SharedString::from(dica_da_aba(motor, outro));
+                // O ramo do git entra numa linha a mais, lido quando a dica aparece.
+                let pasta_da_dica = (!motor.sem_pasta(outro)).then(|| outro.cwd.clone());
                 // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
@@ -1074,7 +1087,13 @@ impl Janela {
                     })
                     .construir(window, cx)
                     .max_w(teto)
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .tooltip(move |window, cx| {
+                        let texto = match &pasta_da_dica {
+                            Some(pasta) => super::ramo::com_ramo(&dica, pasta),
+                            None => dica.to_string(),
+                        };
+                        Tooltip::new(texto).build(window, cx)
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
                         let simbolo = previa.copia().unwrap_or_else(simbolo_da_conversa);

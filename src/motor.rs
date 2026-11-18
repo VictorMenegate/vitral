@@ -23,6 +23,7 @@ pub mod gasto;
 mod memoria;
 pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
+mod ramo;
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -2042,6 +2043,8 @@ impl Motor {
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.turno_aberto = true;
                 }
+                // O ramo em que o turno começa: se a pasta trocar por fora, a conversa avisa.
+                self.anotar_ramo(chat_id);
             }
             Err(erro) => {
                 let mensagem = format!("Não consegui abrir o {}: {erro:#}", chat.agente.programa());
@@ -3448,6 +3451,8 @@ impl Motor {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
                 let custo_antes = self.chat(chat_id).map_or(0.0, |c| c.custo_usd);
+                // O turno pode ter trocado de ramo ele mesmo: vale o do fim.
+                self.anotar_ramo(chat_id);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;

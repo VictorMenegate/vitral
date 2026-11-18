@@ -28,8 +28,14 @@ componentes do GPUI Kit.
   aberto, na última pasta usada (a do último chat criado, guardada como
   `ultimo_destino` no `interface.json`, ou a do chat mexido por último); sem nenhuma, a paleta
   pergunta. **Novo chat em outra pasta…**, no menu do logo, abre a paleta "Em qual pasta?": as
-  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), **Outra
-  pasta…** (o seletor do sistema) e **Sem pasta**. Quem cria é `Motor::novo_chat(pasta:
+  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), os
+  **Worktrees**, **Outra pasta…** (o seletor do sistema) e **Sem pasta**. O grupo Worktrees
+  (`src/ui/copias.rs`) traz as cópias dos repositórios dessas pastas: o que o `git worktree list
+  --porcelain` de cada uma devolve (`copias_das_pastas`, em `src/git.rs`), lido em segundo plano
+  ao abrir a paleta, com o nome da pasta e, embaixo, o ramo (ou "cabeça solta em <commit>") e o
+  caminho; a busca acha pelo nome, pelo ramo e pelo caminho. A cópia que já tem chat fica só em
+  Pastas, a que teve a pasta apagada não aparece, e o Vitral só lista e abre: não cria nem apaga
+  worktree. Quem cria é `Motor::novo_chat(pasta:
   Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
   `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
   "- ", "- [ ] ", "1. "), até 7 palavras.
@@ -999,6 +1005,78 @@ pasta renomeada), um alerta vermelho no lugar do Abrir. Na dica da aba, a pasta 
 painel. A outra aba é a do arquivo aberto (ver **Arquivos citados**, acima, e a aba Arquivos da
 lista).
 
+**Na pasta e o ramo do git** (`src/ui/git_da_pasta.rs`, `src/ui/ramo.rs`). Depois das Mudanças, a
+seção **Na pasta** lista o que o git vê mudado desde o último commit no repositório do chat (o que
+um comando mudou também), relida a cada 4 s enquanto está à vista. O cabeçalho dela mostra o
+**ramo** em que a pasta está: o nome em mono, o commit curto e "cabeça solta" quando não há ramo, e
+o selo **worktree** quando a pasta é uma cópia de outro repositório. O ramo também vai na dica da
+linha do chat na lista (junto da pasta) e na dica da aba, numa linha a mais ("No ramo feat/x, num
+worktree"), lido quando a dica aparece.
+
+- O ramo sai dos arquivos do git (`git::ramo_no_disco`: o `.git` da pasta ou de uma acima e o
+  `HEAD` dele; num worktree, o `.git` é um arquivo que aponta a pasta de verdade, e o `commondir`
+  lá dentro diz que é cópia). Não abre processo, então serve para a dica e para conferir a cada
+  poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
+  repositório que os arquivos não contam (o formato reftable).
+- **A pasta trocou de ramo.** O motor anota em `Chat::ramo` o ramo em que a pasta estava quando o
+  turno começou e quando terminou (`src/motor/ramo.rs`). Com o chat quieto, se o ramo de agora for
+  outro, uma faixa acima da caixa avisa: "A pasta agora está em main; o chat trabalhava em feat/x".
+  O × dela (ou o turno seguinte) anota o ramo de agora, e o aviso não volta para a mesma troca. O
+  chat que ainda não rodou desde que isto existe não avisa.
+
+**Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
+mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas
+linhas, e embaixo o que o turno dela fez ("3 editados · 12 comandos", a conta de
+`falas::o_que_o_turno_fez`). Numa conversa de vários dias, o dia entra como um título pequeno
+onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
+
+- **O clique leva à mensagem.** O painel passa a desenhar até ela (o `mostrar` do painel cresce:
+  é o mesmo que o subir até o alto faz aos poucos) e a abertura na âncora
+  (`AlvoDeAbertura::Ancora`, em `mensagens.rs`) a põe no alto, abaixo do lugar da mensagem presa;
+  ela fica realçada por 1,6 s, com a moldura e a tinta do destaque.
+- **A mensagem à vista fica marcada**: a última sua que começa até 120 px abaixo do alto da
+  conversa (a que você está lendo, ou a que o clique acabou de trazer). A rolagem da conversa só
+  redesenha a janela quando a marcada muda (`acompanhar_sumario`), e a lista do sumário rola até
+  a linha dela.
+- O que veio do histórico de uma conversa trazida do Claude Code não está nos itens do chat e
+  fica de fora do sumário.
+
+**Desfazer só um trecho** (`src/ui/desfazer_trecho.rs`, `src/git/remendo.rs`). No diff aberto
+pela seção Na pasta, cada bloco de mudança (as linhas seguidas que saem e entram) volta sozinho ao
+último commit: com o ponteiro numa linha mudada, um botão pequeno aparece ao lado do número, por
+cima da coluna do sinal; a faixa da edição tem o mesmo botão para a mudança à vista (a das setas).
+Pergunta antes, como o Desfazer do arquivo, e depois relê o diff e a contagem de linhas da lista.
+
+- O remendo sai do `git diff HEAD` do arquivo: o trecho ("@@") do bloco, com as outras mudanças
+  do mesmo trecho como estão no arquivo de agora (o que entrou vira contexto, o que saiu não
+  aparece), e vai pela entrada padrão para o `git apply -R`. O git aplica tudo ou nada: se o
+  remendo não casar, o aviso diz por quê e o arquivo fica como estava.
+- Antes de aplicar, o diff é relido e conferido com o que a tela mostrava: se o arquivo mudou
+  nesse meio tempo (o agente continuou editando), nada é feito, e o visor mostra o diff novo.
+- Só no diff do git de um arquivo rastreado. O arquivo novo abre sem diff (para ele, o Desfazer
+  inteiro da lista), e a edição de uma chamada do chat (aberta pelas Mudanças ou pela conversa)
+  não é a do disco inteiro, então fica sem o botão. Mexe só no arquivo de trabalho: o que estava
+  preparado para commit (`git add`) continua preparado.
+
+**Comentar linhas e mandar tudo de uma vez** (`src/ui/comentarios.rs`). No arquivo aberto à
+direita (pelas Mudanças, pela seção Na pasta ou por um link da conversa), o clique no número da
+linha escolhe um trecho (Shift+clique estende). Com o trecho escolhido, uma faixa embaixo do
+cabeçalho traz o campo do comentário: o Enter (ou **Comentar**) guarda o texto preso àquelas
+linhas, a escolha é largada e o trecho fica marcado no visor (uma faixa do destaque ao lado do
+número, que toma a cor dele). Os comentários se acumulam por chat (o da caixa do painel ativo), em
+vários arquivos, e continuam lá ao trocar de arquivo; com algum guardado, outra faixa mostra
+quantos são, o botão que abre a lista deles e **Enviar N comentários**. O mesmo aparece num cartão
+**Comentários** do Este chat.
+
+- **Enviar N comentários** monta uma mensagem só, uma linha por comentário, com a menção do trecho
+  (`@src/ui/fila.rs#L120-134`, já como pílula) e o texto, e a põe no fim da caixa do painel ativo,
+  para revisar e enviar; o que já estava escrito fica. Os comentários guardados somem nessa hora
+  (eles passaram para a caixa). Na mensagem, os arquivos vão na ordem em que foram comentados e,
+  em cada um, pelas linhas.
+- Escolher de novo um trecho comentado (ou clicar nele na lista) traz o texto para o campo:
+  guardar troca o comentário, e guardar vazio o tira. **Descartar todos**, na lista, larga tudo.
+- Ficam só na memória: fechar o Vitral larga os comentários que não foram enviados.
+
 - Num painel estreito (abaixo de uns 330 px, ou a 150% de zoom), os botões ficam só com o ícone.
 - Na gaveta (janela estreita), o painel é opaco por cima das conversas, com o fundo escurecido; ele
   entra deslizando da borda direita, e o botão do canto (ou Esc) o recolhe.
@@ -1415,6 +1493,31 @@ liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fec
 conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez: abrir o menu do
 logo, o sino, um popover da caixa, o menu ou o **+** de um painel, pelo mouse ou pelo atalho,
 fecha o que estava aberto (`Janela::so_um_flutuante`).
+
+## Resumo do dia
+
+**Resumo de hoje**, no menu do logo, abre um diálogo com o que os chats fizeram no dia, por pasta
+(`src/ui/resumo_do_dia.rs`). É montado só do que o app já tem, sem chamar modelo nenhum: os itens
+das conversas (cada um com a hora) e o estado de cada chat. Um seletor troca para **Ontem** e **7
+dias**, e **Copiar como Markdown** leva o texto para a área de transferência (um título, uma seção
+por pasta e, em cada chat, a frase, o tempo, a pendência e os arquivos).
+
+- **Quem entra**: o chat em que o agente respondeu ou usou uma ferramenta no período (as
+  arquivadas também). Só a sua mensagem, sem o agente ter feito nada, não conta. A pasta mexida por
+  último vem primeiro e, em cada uma, o chat mexido por último.
+- **De cada chat**: o título (o clique abre o chat), a primeira frase da última resposta do
+  período (`falas::primeira_frase`), os arquivos que as chamadas de edição do período mudaram, com
+  o +N −M somado e o "novo" (a mesma fonte das Mudanças; o que um comando mudou fica de fora), o
+  tempo trabalhado com o número de turnos e o que ficou pendente: o estado do chat agora
+  (`falas::estado_do_chat`: rodando, parada, erro, permissão ou plano esperando você). A resposta
+  que você ainda não leu não é pendência.
+- **O tempo trabalhado** é a soma dos intervalos entre um item e o seguinte dentro de cada turno,
+  só o pedaço que cai no período. Um intervalo de mais de 10 minutos sem nada acontecer conta só
+  até esse teto: é espera (um pedido de permissão parado, o Vitral fechado), não trabalho. Um
+  comando que roda sozinho por mais de 10 minutos também entra só até o teto.
+- Os períodos vão pela meia-noite local: hoje, do começo do dia até agora; ontem, o dia inteiro; 7
+  dias, do começo do dia de seis dias atrás até agora. O resumo é montado ao abrir e ao trocar de
+  período, não a cada quadro.
 
 ## Quadro de ideias (Ctrl+I)
 

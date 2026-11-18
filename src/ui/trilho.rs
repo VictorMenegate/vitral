@@ -451,6 +451,7 @@ impl Janela {
                     item("Quadro de ideias", Lucide::Kanban, &janela, |this, window, cx| this.abrir_quadro_de_ideias(window, cx))
                         .action(Box::new(AbrirQuadroDeIdeias)),
                 )
+                .item(item("Resumo de hoje", Lucide::CalendarClock, &janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx)))
                 .item(item("Importar do Claude Code…", Lucide::Download, &janela, |this, _, cx| {
                     if let Some(motor) = this.motor.clone() {
                         motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));

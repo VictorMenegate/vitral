@@ -474,7 +474,8 @@ impl Janela {
         let medidos: Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>> = Default::default();
         let alto_do_novo: Rc<std::cell::Cell<Option<(usize, Pixels)>>> = Default::default();
         for (k, (bloco, indice, elemento)) in blocos.into_iter().enumerate() {
-            let mut caixa = div().mt(espaco_antes(anterior, bloco)).child(elemento);
+            // A mensagem para a qual o sumário do Este chat acabou de levar fica realçada um instante.
+            let mut caixa = self.com_realce_do_sumario(div().mt(espaco_antes(anterior, bloco)).child(elemento), &chat.id, indice);
             if let Some(i) = indice {
                 let medidos = medidos.clone();
                 caixa = caixa.on_prepaint(move |limites, _, _| medidos.borrow_mut().push((i, limites.top(), limites.bottom())));
@@ -661,6 +662,7 @@ impl Janela {
                         this.acompanhar_rolagem(cx);
                         this.carregar_anteriores(painel_id, cx);
                         this.avisar_vista(painel_id, cx);
+                        this.acompanhar_sumario(painel_id, cx);
                     }))
                     .child(lista),
             )

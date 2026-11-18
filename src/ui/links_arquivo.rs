@@ -395,6 +395,7 @@ impl super::Janela {
         if let Some((a, b)) = faixa {
             self.arquivo_selecao = Some((a, b));
             self.arquivo_marcada.set(None);
+            self.acertar_campo_do_comentario(window, cx);
         }
     }
 }

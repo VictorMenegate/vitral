@@ -13,9 +13,12 @@ mod atualizacao;
 mod avisos_no_app;
 mod busca_conversa;
 mod caixa_entrada;
+mod comentarios;
 mod composer;
 mod configuracoes;
 mod conversa;
+mod copias;
+mod desfazer_trecho;
 mod dialogos;
 mod este_chat;
 mod edicao;
@@ -36,12 +39,15 @@ mod painel_contas;
 mod fechar;
 mod painel_arquivo;
 mod quadro_ideias;
+mod ramo;
 pub(crate) mod paineis;
 mod rascunhos;
 mod resumo;
+mod resumo_do_dia;
 mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;
+mod sumario;
 mod trilho;
 mod onde_uso;
 mod peso_da_pasta;
@@ -469,6 +475,15 @@ pub struct Janela {
     este_chat_rolado: Option<String>,
     /// O que o git vê mudado na pasta do chat do Este chat (a seção "Na pasta").
     git_da_pasta: git_da_pasta::GitDaPasta,
+    /// O ramo de agora das pastas dos chats à vista (o aviso de troca de ramo, acima da caixa).
+    ramos: ramo::Ramos,
+    /// "Nesta conversa", no Este chat: a mensagem marcada, a que o clique realçou e a rolagem.
+    sumario: sumario::Sumario,
+    /// O diff do git que o visor do arquivo mostra (aberto pela seção Na pasta), para o desfazer
+    /// por trecho.
+    diff_do_git: Option<desfazer_trecho::DiffDoGit>,
+    /// Os comentários presos a linhas do arquivo aberto, guardados por chat até o envio.
+    comentarios: comentarios::Comentarios,
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
@@ -776,6 +791,10 @@ impl Janela {
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
+            ramos: Default::default(),
+            sumario: Default::default(),
+            diff_do_git: None,
+            comentarios: comentarios::Comentarios::new(window, cx),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,

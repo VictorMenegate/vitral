@@ -37,6 +37,29 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
   até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica
   dele diz a hora, mesmo abaixo de 70%.
+- **Resumo do dia para copiar.** "Resumo de hoje", no menu do logo, mostra por pasta os chats
+  que trabalharam: o título, a primeira frase da última resposta, os arquivos mudados, o tempo
+  trabalhado e o que ficou pendente. Dá para trocar para Ontem e 7 dias e copiar tudo como
+  Markdown. É montado do que o app já guarda, sem gastar token.
+- **Sumário da conversa no Este chat.** A seção Nesta conversa tem uma linha por mensagem sua,
+  com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
+  conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a
+  que você está lendo fica marcada enquanto a conversa rola.
+- **Desfazer só um trecho.** No diff aberto pela seção Na pasta, cada bloco de mudança volta
+  sozinho ao último commit: o botão aparece com o ponteiro na linha mudada, e a faixa da edição
+  tem o mesmo para a mudança à vista. O resto do arquivo fica, e o Vitral pergunta antes.
+- **Comentar linhas e mandar tudo de uma vez.** No arquivo ou no diff aberto à direita, escolha
+  um trecho pelo número da linha e escreva o comentário no campo que aparece: ele fica preso
+  àquelas linhas, e o trecho fica marcado. Os comentários se acumulam por chat, em vários
+  arquivos, e **Enviar N comentários** põe na caixa uma mensagem só, com a pílula de cada trecho
+  e o texto, para revisar e enviar.
+- **Novo chat direto num worktree.** A paleta "Novo chat · Em qual pasta?" ganhou o grupo
+  Worktrees: as cópias dos repositórios das pastas que já têm chat, com o ramo embaixo do nome. A
+  busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.
+- **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
+  está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
+  a da aba dizem o mesmo. Se a pasta trocar de ramo desde o último turno do chat, uma faixa acima
+  da caixa avisa uma vez: "A pasta agora está em main; o chat trabalhava em feat/x".
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
