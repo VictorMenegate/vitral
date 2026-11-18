@@ -404,7 +404,10 @@ impl FaixaCaixa {
     }
 }
 
-/// Coluna de leitura (até 860 px) menos a margem de 16 de cada lado: a largura nominal da caixa.
+/// A largura nominal da caixa, que escolhe a faixa dela: a do painel (até 860 px) menos a margem
+/// de 16 de cada lado. A caixa de verdade para antes, na coluna de leitura (675 px); a faixa larga
+/// continua valendo no painel largo, e os controles dela cabem nessa largura (conferido na
+/// bancada, 18/11/2026).
 fn caixa_nominal(rem: f32) -> f32 {
     rem.min(860. / 15.) - 32. / 15.
 }
