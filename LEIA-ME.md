@@ -1553,7 +1553,9 @@ do Vitral, guardados no cartão.
   digitar), a coluna (o primeiro estado do tipo dela no fluxo do time) e a ordem (o `sortOrder`
   no meio dos vizinhos), o mandar (vai para "started") e o Apagar (arquiva a issue; o Desfazer
   desarquiva). O cartão muda na hora; a chamada vai em segundo plano.
-- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳. Um cartão com mudança
+- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳. Enquanto o Linear não
+  responde, o cabeçalho mostra o anel girando e "Lendo o Linear", e a coluna vazia mostra o anel
+  no lugar do texto dela (dono, 18/11/2026: "faz um loading"). Um cartão com mudança
   daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, o
   cabeçalho mostra o erro em vermelho e o quadro relê.
 - **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam no quadro, sem

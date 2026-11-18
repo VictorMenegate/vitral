@@ -274,6 +274,11 @@ impl Motor {
         );
     }
 
+    /// Lendo o Linear (ou testando a chave): o quadro mostra que está carregando.
+    pub fn lendo_o_linear(&self) -> bool {
+        self.linear.chave.is_some() && self.linear.lendo || self.linear.ligando
+    }
+
     pub fn linear_ligado(&self) -> bool {
         self.linear.chave.is_some()
     }

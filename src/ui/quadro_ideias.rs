@@ -34,7 +34,7 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        CabecalhoDialogo, ControleSegmentado, Etiqueta, PreviaArrasto, Segmento, Simbolo, TamanhoBotao, Tom, aviso, aviso_com_acao, botao_fantasma,
+        AnelGirando, CabecalhoDialogo, ControleSegmentado, Etiqueta, PreviaArrasto, Segmento, Simbolo, TamanhoBotao, Tom, aviso, aviso_com_acao, botao_fantasma,
         botao_icone, botao_perigo, botao_primario, icone, icone_de_estado, sinal_do_chat,
     },
     configuracoes::{Opcao, menu_escolha},
@@ -376,7 +376,7 @@ impl QuadroDeIdeias {
                 let time = time.unwrap_or_else(|| "o time".into());
                 let texto = match (&erro, lendo, lido_em) {
                     (Some(erro), ..) => erro.clone(),
-                    (None, true, _) => format!("Linear · {time} · lendo"),
+                    (None, true, _) => format!("Lendo o Linear · {time}"),
                     (None, false, Some(quando)) => match tempo_relativo(quando) {
                         agora if agora == "agora" => format!("Linear · {time} · lido agora"),
                         ha => format!("Linear · {time} · lido há {ha}"),
@@ -402,6 +402,8 @@ impl QuadroDeIdeias {
             .child(div().flex_none().text_size(r(15.)).line_height(r(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child("Ideias"))
             .children(filtro)
             .children(self.filtro_de_origem(m, cx))
+            // Carregando: o anel do "trabalhando" ao lado do texto, até o Linear responder.
+            .children(m.lendo_o_linear().then(|| div().flex_none().child(AnelGirando::new(14.).cor(Cores::destaque()).vivo("ideias-lendo"))))
             .child(cortado().flex_1().metadado().text_color(cor).child(texto))
             .children(botoes)
             .child(
@@ -423,8 +425,19 @@ impl QuadroDeIdeias {
             .child(div().metadado().text_color(Cores::apagado()).child(n.to_string()));
         let entrada = (coluna == Coluna::Ideias).then(|| div().flex_none().child(Input::new(&self.nova).small()));
         let cartoes: Vec<AnyElement> = ideias.iter().map(|i| self.cartao(i, m, window, cx)).collect();
+        // Coluna vazia enquanto o Linear não respondeu: o anel girando, e não o "escreva aqui".
+        let lendo = m.lendo_o_linear();
         let vazia = (n == 0).then(|| {
-            div().px(esp::E8).py(esp::E12).text_center().metadado().text_color(Cores::apagado()).child(coluna.vazia())
+            if lendo {
+                v_flex()
+                    .items_center()
+                    .gap(esp::E8)
+                    .py(esp::E16)
+                    .child(AnelGirando::new(18.).cor(Cores::destaque()).vivo(format!("ideias-lendo-{}", coluna as usize)))
+                    .child(div().metadado().text_color(Cores::apagado()).child("Lendo o Linear"))
+            } else {
+                v_flex().px(esp::E8).py(esp::E12).text_center().metadado().text_color(Cores::apagado()).child(coluna.vazia())
+            }
         });
         let raio_da_coluna = raio::cartao();
         v_flex()
