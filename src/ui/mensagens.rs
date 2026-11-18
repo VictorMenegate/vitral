@@ -517,9 +517,15 @@ impl Janela {
                 // Subindo além dela, gruda a anterior. Com a rolagem e as posições deste quadro.
                 let topo = -p.rolagem.offset().y - px(2.);
                 let mut presa: Option<(String, Pixels, usize)> = None;
+                // A sua mensagem seguinte, a primeira que ainda não subiu além do alto: chegando
+                // perto, ela empurra a faixa presa para cima.
+                let mut seguinte: Option<Pixels> = None;
                 let mut considerar = |texto: &str, alto: Pixels, i: usize| {
                     if alto < topo && presa.as_ref().is_none_or(|(_, outro, _)| alto >= *outro) {
                         presa = Some((texto.to_string(), alto, i));
+                    }
+                    if alto >= topo && seguinte.is_none_or(|s| alto < s) {
+                        seguinte = Some(alto);
                     }
                 };
                 for (texto, alto, _) in p.presa_do_historico.borrow().iter() {
@@ -534,8 +540,15 @@ impl Janela {
                     }
                 }
                 let presa = presa.filter(|_| !busca_aberta);
-                if p.presa != presa {
+                // Da seguinte até o alto da vista: o que faltar para caber a faixa inteira é o
+                // quanto ela sobe.
+                let empurrao = match (&presa, seguinte) {
+                    (Some(_), Some(s)) => (p.altura_da_presa.get() - (s - (topo + px(2.)))).max(px(0.)),
+                    _ => px(0.),
+                };
+                if p.presa != presa || p.empurrao_da_presa != empurrao {
                     p.presa = presa;
+                    p.empurrao_da_presa = empurrao;
                     redesenhar = true;
                 }
                 {
@@ -609,6 +622,7 @@ impl Janela {
         // última mensagem que mando grudar em cima" e "não ser só a última, ser também a última
         // onde tô olhando"), em duas linhas; o clique leva até ela. Escolhida no prepaint da lista
         // (acima); sai com a busca da conversa aberta, que mora no mesmo lugar.
+        let (empurrao, altura_da_presa) = (self.paineis[ix].empurrao_da_presa, self.paineis[ix].altura_da_presa.clone());
         let presa = self.paineis[ix]
             .presa
             .clone()
@@ -620,7 +634,18 @@ impl Janela {
                 // metal, o véu, o fosco e o cartão): fica transparente como ele e tapa o texto que
                 // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Embaixo, uma
                 // sombra curta separa a faixa do que rola, como o "sticky" do VS Code.
-                div().absolute().top_0().left_0().right_0().pt(esp::E8).pb(esp::E4).child(fundo_do_cartao()).child(
+                // A seguinte, chegando no alto, empurra a faixa para cima (`empurrao_da_presa`); a
+                // altura dela é medida aqui, para o prepaint da lista saber quanto empurrar.
+                div()
+                    .absolute()
+                    .top(-empurrao)
+                    .left_0()
+                    .right_0()
+                    .pt(esp::E8)
+                    .pb(esp::E4)
+                    .on_prepaint(move |limites, _, _| altura_da_presa.set(limites.size.height))
+                    .child(fundo_do_cartao())
+                    .child(
                     div().absolute().left_0().right_0().bottom(-esp::E8).h(esp::E8).bg(linear_gradient(
                         180.,
                         linear_color_stop(Cores::preto_puro().opacity(0.22), 0.),

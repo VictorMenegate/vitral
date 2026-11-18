@@ -109,7 +109,8 @@ O quadro de ideias, a paleta de comandos e o uso do plano à vista, num app mais
   A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
 - **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
   lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
-  leva até ela.
+  leva até ela. Subindo além dela, gruda a anterior, e a sua mensagem seguinte, chegando no alto,
+  empurra a faixa para fora em vez de passar por baixo dela.
 - **Uso e contexto redesenhados.** Os anéis de uso do Claude e do Codex moram numa cápsula só no
   canto, com um anel fino e inteiro que enche a partir do alto (a inicial da conta, menor,
   recortada nele). O contexto da conversa, na caixa, virou um medidor deitado com a porcentagem:

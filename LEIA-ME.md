@@ -816,6 +816,12 @@ ferramentas, vale por painel).
 
 O padrão é o mínimo, e o resto aparece quando faz falta:
 
+- **A mensagem presa no alto** (`src/ui/mensagens.rs`, decidida no prepaint da lista): a sua
+  mensagem mais recente que já subiu além do alto da conversa gruda lá, em duas linhas, numa faixa
+  com as camadas do cartão; o clique leva até ela. A mensagem seguinte, chegando no alto, empurra
+  a faixa para cima (`Painel::empurrao_da_presa`, com a altura da faixa medida no desenho dela),
+  como no "sticky" do VS Code: antes ela passava por baixo, e a de cima cobria a de baixo (dono,
+  18/11/2026: "fica meio bugado quando tá assim").
 - **O alto da lista é uma linha só**: o logo (o menu do Vitral) e as abas **Conversas | Arquivos**,
   na mesma altura (40), num segmentado de largura toda (`topo_enxuto`, em `src/ui/trilho.rs`).
   A fileira tem a altura do cabeçalho dos painéis (44), para o logo e as abas da lista ficarem na

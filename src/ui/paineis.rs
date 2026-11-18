@@ -110,6 +110,12 @@ pub struct Painel {
     /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
     /// prepaint da lista, com a rolagem e as posições do mesmo quadro.
     pub presa: Option<(String, Pixels, usize)>,
+    /// Quanto a faixa da mensagem presa sobe: a sua mensagem seguinte, chegando no alto, a empurra
+    /// para fora em vez de passar por baixo dela, como no "sticky" do VS Code (dono, 18/11/2026:
+    /// "fica meio bugado quando tá assim", com o "Quero" preso por cima do "Sim").
+    pub empurrao_da_presa: Pixels,
+    /// A altura da faixa presa no último quadro em que ela apareceu (medida no desenho dela).
+    pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
 }
@@ -467,6 +473,8 @@ impl Janela {
             pensando_em: Default::default(),
             topo_da_lista: Default::default(),
             presa: None,
+            empurrao_da_presa: px(0.),
+            altura_da_presa: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
