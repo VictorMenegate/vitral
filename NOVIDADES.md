@@ -3,6 +3,29 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.1
+
+Correções da 0.9.0 na conversa, nos menus e nas contas.
+
+- **A mensagem presa não cobre a seguinte.** A sua mensagem seguinte, chegando no alto da
+  conversa, empurra a faixa da mensagem presa para cima, como no VS Code; antes ela passava por
+  baixo da faixa e ficava escondida.
+- **Sem a sombra embaixo da mensagem presa.** A faixa termina seca, sem a sombra escura de antes.
+- **Menus menores.** As linhas das listas de escolha (o modelo, o "/", a paleta, as mensagens)
+  ficaram mais baixas, com o título em 13: cabe mais sem rolar.
+- **A conta repetida sai.** Quando o login do Claude Code passa a ser o de uma conta extra, ela
+  some da escolha (eram duas linhas da mesma conta, e a Automática revezava entre ela e ela mesma).
+- **Realce arredondado nas linhas.** O realce do ponteiro nas linhas de lista (os chats, as contas)
+  tem o canto das abas e dos botões, e não mais quase reto.
+- **A trilha encosta na caixa.** Quando a conversa termina numa linha da trilha ("Pensou por 5 s"),
+  o vão até a caixa é de 12, e não mais de 32; os 32 ficam só depois de uma resposta.
+- **Todo anel da conversa gira.** A chamada rodando ("Rodando npm test"), o grupo com uma chamada
+  rodando e a revisão da memória giram como o "Pensando…": todos numa camada só, por cima da
+  conversa, que não se redesenha a cada volta. Parados, eles pareciam travados.
+- **Copiar e hora só na resposta que fecha o turno, e por cima.** No texto do meio do turno, a barra
+  ficava por cima da linha da trilha logo abaixo; e a linha de baixo (a revisão da memória) era
+  pintada por cima dela, que parecia transparente. Agora ela é pintada por último, opaca.
+
 ## 0.9.0
 
 O quadro de ideias, a paleta de comandos e o uso do plano à vista, num app mais leve e com a conversa redesenhada.

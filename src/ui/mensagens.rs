@@ -454,14 +454,13 @@ impl Janela {
         // Sem ferramenta rodando e sem texto chegando, o turno está pensando: a linha viva fica
         // aqui, no fim da conversa, no lugar onde a próxima coisa vai aparecer (dono, 13/11/2026:
         // "deixa o pensando no chat mesmo, quando fica em baixo parece que tá fazendo nada").
-        let pensando_em = self.paineis[ix].pensando_em.clone();
-        pensando_em.set(None);
+        super::componentes::limpar_aneis(painel_id);
         if parcial.is_none()
             && matches!(motor.execucao(&chat.id), Execucao::Rodando { .. })
             && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
         {
             let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
-            blocos.push((Bloco::Log, None, linha_pensando(pensando_em, rotulo, cx.theme().font_family.clone())));
+            blocos.push((Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
         }
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let mut lista = v_flex()
@@ -501,6 +500,12 @@ impl Janela {
             };
             anterior = Some(bloco);
         }
+        // Embaixo, os 32 só depois de uma resposta, onde a barra de copiar e da hora aparece; depois
+        // da trilha ("Pensou por 5 s") ou de um aviso, 12, colado na caixa (dono, 18/11/2026: "tá
+        // muito longe o pensou da parte das mensagens em baixo").
+        if !matches!(anterior, Some(Bloco::Texto)) {
+            lista = lista.pb(esp::NO_TURNO);
+        }
         let janela = cx.entity().downgrade();
         let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
         let (chat_id, n_itens) = (chat.id.clone(), chat.itens.len());
@@ -517,9 +522,15 @@ impl Janela {
                 // Subindo além dela, gruda a anterior. Com a rolagem e as posições deste quadro.
                 let topo = -p.rolagem.offset().y - px(2.);
                 let mut presa: Option<(String, Pixels, usize)> = None;
+                // A sua mensagem seguinte, a primeira que ainda não subiu além do alto: chegando
+                // perto, ela empurra a faixa presa para cima.
+                let mut seguinte: Option<Pixels> = None;
                 let mut considerar = |texto: &str, alto: Pixels, i: usize| {
                     if alto < topo && presa.as_ref().is_none_or(|(_, outro, _)| alto >= *outro) {
                         presa = Some((texto.to_string(), alto, i));
+                    }
+                    if alto >= topo && seguinte.is_none_or(|s| alto < s) {
+                        seguinte = Some(alto);
                     }
                 };
                 for (texto, alto, _) in p.presa_do_historico.borrow().iter() {
@@ -534,8 +545,15 @@ impl Janela {
                     }
                 }
                 let presa = presa.filter(|_| !busca_aberta);
-                if p.presa != presa {
+                // Da seguinte até o alto da vista: o que faltar para caber a faixa inteira é o
+                // quanto ela sobe.
+                let empurrao = match (&presa, seguinte) {
+                    (Some(_), Some(s)) => (p.altura_da_presa.get() - (s - (topo + px(2.)))).max(px(0.)),
+                    _ => px(0.),
+                };
+                if p.presa != presa || p.empurrao_da_presa != empurrao {
                     p.presa = presa;
+                    p.empurrao_da_presa = empurrao;
                     redesenhar = true;
                 }
                 {
@@ -609,6 +627,7 @@ impl Janela {
         // última mensagem que mando grudar em cima" e "não ser só a última, ser também a última
         // onde tô olhando"), em duas linhas; o clique leva até ela. Escolhida no prepaint da lista
         // (acima); sai com a busca da conversa aberta, que mora no mesmo lugar.
+        let (empurrao, altura_da_presa) = (self.paineis[ix].empurrao_da_presa, self.paineis[ix].altura_da_presa.clone());
         let presa = self.paineis[ix]
             .presa
             .clone()
@@ -618,15 +637,20 @@ impl Janela {
                 let raio = crate::tema::raio_da_peca();
                 // Uma faixa por trás, do topo até a mensagem, com as mesmas camadas do cartão (o
                 // metal, o véu, o fosco e o cartão): fica transparente como ele e tapa o texto que
-                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Embaixo, uma
-                // sombra curta separa a faixa do que rola, como o "sticky" do VS Code.
-                div().absolute().top_0().left_0().right_0().pt(esp::E8).pb(esp::E4).child(fundo_do_cartao()).child(
-                    div().absolute().left_0().right_0().bottom(-esp::E8).h(esp::E8).bg(linear_gradient(
-                        180.,
-                        linear_color_stop(Cores::preto_puro().opacity(0.22), 0.),
-                        linear_color_stop(Cores::preto_puro().opacity(0.), 1.),
-                    )),
-                ).child(
+                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Sem sombra
+                // embaixo: a de 8 px escura ficava "bem ruim" (dono, 18/11/2026).
+                // A seguinte, chegando no alto, empurra a faixa para cima (`empurrao_da_presa`); a
+                // altura dela é medida aqui, para o prepaint da lista saber quanto empurrar.
+                div()
+                    .absolute()
+                    .top(-empurrao)
+                    .left_0()
+                    .right_0()
+                    .pt(esp::E8)
+                    .pb(esp::E4)
+                    .on_prepaint(move |limites, _, _| altura_da_presa.set(limites.size.height))
+                    .child(fundo_do_cartao())
+                    .child(
                     div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
@@ -1208,6 +1232,8 @@ impl Janela {
                 .child(markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(estilo_da_resposta))
                 .into_any_element()
         };
+        // O texto fecha o turno quando depois dele vem o seu balão (ou nada): só aí há o vão de 32.
+        let cabe_a_barra = matches!(contexto.chat.itens.get(indice + 1), None | Some(Item::Usuario { .. } | Item::Vez { .. } | Item::Entrega { .. }));
         let resposta = v_flex()
             .relative()
             .w_full()
@@ -1221,8 +1247,13 @@ impl Janela {
             // A barra fica embaixo da resposta, no vão até o bloco seguinte (32 antes do seu balão
             // e no fim da lista): em cima ela cobria metade da primeira linha (relatório de
             // aparência, 16/11/2026, V7) e, no pé do texto, o fim da última, que na coluna estreita
-            // era um terço da linha. O seu balão continua com ela em cima.
-            .child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
+            // era um terço da linha. O seu balão continua com ela em cima. Só no texto que fecha o
+            // turno: no do meio, a trilha vem a 12 e a barra ficava em cima dela (dono, 18/11/2026:
+            // "o hover tá em cima da parte de copiar e hora").
+            // Pintada depois de tudo (`deferred`): a linha logo abaixo (a revisão da memória) não
+            // passa por cima dela, e a barra não parece transparente (dono, 18/11/2026: "faz ser
+            // menos transparente isso").
+            .when(cabe_a_barra, |s| s.child(deferred(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
                 hora_na_barra(em)
                     .into_iter()
@@ -1234,7 +1265,7 @@ impl Janela {
                     .chain([copiar(chave, texto).into_any_element()])
                     .collect(),
                 cx,
-            )));
+            ))).with_priority(1)));
         div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()
     }
 
@@ -2695,7 +2726,7 @@ impl Janela {
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
+                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
                 .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
@@ -2947,7 +2978,7 @@ impl Janela {
             .cursor_pointer()
             .hover(|s| s.bg(Cores::hover()))
             .child(coluna_do_icone().child(if rodando {
-                AnelGirando::new(14.).cor(Cores::tenue()).quieto().into_any_element()
+                super::componentes::lugar_do_anel(contexto.painel, Cores::tenue(), 14.).into_any_element()
             } else {
                 icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
             }))
@@ -3144,7 +3175,7 @@ impl Janela {
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
         let icone = if pendente {
-            AnelGirando::new(14.).cor(Cores::destaque()).quieto().into_any_element()
+            super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -3747,14 +3778,12 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
 
 /// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
 /// girando e o rótulo com o brilho passando.
-fn linha_pensando(onde: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>, rotulo: &'static str, fonte: SharedString) -> AnyElement {
+fn linha_pensando(painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .gap(esp::E8)
-        // Só o lugar do anel: ele gira por cima, numa vista própria (`AnelDoPensando`, em
-        // `conversa.rs`). Parado aqui dentro ele lia como travado (dono, 18/11/2026: "o loading tá
-        // travado"), e girando aqui dentro cada batida redesenhava a conversa inteira.
-        .child(coluna_do_icone().child(div().flex_none().size(r(14.)).on_prepaint(move |limites, _, _| onde.set(Some(limites)))))
+        // Só o lugar do anel: ele gira por cima, numa vista própria (`AneisDaConversa`).
+        .child(coluna_do_icone().child(super::componentes::lugar_do_anel(painel, Cores::destaque(), 14.)))
         .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo))
         .into_any_element()
 }

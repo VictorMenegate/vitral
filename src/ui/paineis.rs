@@ -102,14 +102,17 @@ pub struct Painel {
     /// texto e onde cada uma ficou neste desenho (alto e pé, na tela), para a mensagem presa no
     /// alto. O alto da lista na tela fica em `topo_da_lista`.
     pub presa_do_historico: std::rc::Rc<std::cell::RefCell<Vec<(String, Pixels, Pixels)>>>,
-    /// Onde a linha "Pensando…" deixou o lugar do anel (na janela): ele gira por cima das mensagens,
-    /// numa vista própria (`AnelDoPensando`), e a conversa não se redesenha a cada batida.
-    pub pensando_em: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     pub topo_da_lista: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A mensagem presa no alto: a sua mais recente que já subiu além do topo (o texto, o alto
     /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
     /// prepaint da lista, com a rolagem e as posições do mesmo quadro.
     pub presa: Option<(String, Pixels, usize)>,
+    /// Quanto a faixa da mensagem presa sobe: a sua mensagem seguinte, chegando no alto, a empurra
+    /// para fora em vez de passar por baixo dela, como no "sticky" do VS Code (dono, 18/11/2026:
+    /// "fica meio bugado quando tá assim", com o "Quero" preso por cima do "Sim").
+    pub empurrao_da_presa: Pixels,
+    /// A altura da faixa presa no último quadro em que ela apareceu (medida no desenho dela).
+    pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
 }
@@ -464,9 +467,10 @@ impl Janela {
             novo_desde: None,
             posicoes: Default::default(),
             presa_do_historico: Default::default(),
-            pensando_em: Default::default(),
             topo_da_lista: Default::default(),
             presa: None,
+            empurrao_da_presa: px(0.),
+            altura_da_presa: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
