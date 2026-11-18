@@ -98,14 +98,15 @@ pub struct Painel {
     /// Onde estava cada bloco da conversa no último desenho (o índice do item, o alto e o pé, a
     /// partir do alto da lista): de onde saem a âncora e a abertura no começo da resposta.
     pub posicoes: std::rc::Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>>,
-    /// A última mensagem sua do histórico trazido do Claude Code (que não está nos itens do chat):
-    /// o texto e onde ela ficou no último desenho (alto e pé, na tela), para a mensagem presa no
+    /// As mensagens suas do histórico trazido do Claude Code (que não estão nos itens do chat): o
+    /// texto e onde cada uma ficou neste desenho (alto e pé, na tela), para a mensagem presa no
     /// alto. O alto da lista na tela fica em `topo_da_lista`.
-    pub presa_do_historico: std::rc::Rc<std::cell::RefCell<Option<(String, Pixels, Pixels)>>>,
+    pub presa_do_historico: std::rc::Rc<std::cell::RefCell<Vec<(String, Pixels, Pixels)>>>,
     pub topo_da_lista: std::rc::Rc<std::cell::Cell<Pixels>>,
-    /// A mensagem presa está à vista: decidido no prepaint da lista, com a rolagem e as posições
-    /// do mesmo quadro (com as do quadro anterior, ela aparecia junto da mensagem de verdade).
-    pub presa_ativa: bool,
+    /// A mensagem presa no alto: a sua mais recente que já subiu além do topo (o texto, o alto
+    /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
+    /// prepaint da lista, com a rolagem e as posições do mesmo quadro.
+    pub presa: Option<(String, Pixels, usize)>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
 }
@@ -461,7 +462,7 @@ impl Janela {
             posicoes: Default::default(),
             presa_do_historico: Default::default(),
             topo_da_lista: Default::default(),
-            presa_ativa: false,
+            presa: None,
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);

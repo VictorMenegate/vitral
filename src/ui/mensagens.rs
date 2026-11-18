@@ -495,7 +495,7 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
         let (chat_id, n_itens) = (chat.id.clone(), chat.itens.len());
-        let alvo_da_presa = ultima_do_usuario(&chat.itens).map(|(i, _)| i);
+        let suas: Rc<Vec<(usize, String)>> = Rc::new(mensagens_do_usuario(&chat.itens));
         let busca_aberta = self.paineis[ix].busca.aberta;
         lista = lista.on_prepaint(move |bounds, window, cx| {
             let mut redesenhar = false;
@@ -503,16 +503,30 @@ impl Janela {
                 let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
                 p.altura_conteudo = bounds.size.height;
                 p.topo_da_lista.set(bounds.top());
-                // A mensagem presa, como o "sticky" do VS Code: assim que o alto da sua última
-                // mensagem passa do alto da vista, ela gruda lá (a de verdade fica por baixo da
-                // faixa). Com a rolagem e as posições deste quadro.
-                let alto = match alvo_da_presa {
-                    Some(i) => medidos.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, _)| alto - bounds.top()),
-                    None => p.presa_do_historico.borrow().as_ref().map(|&(_, alto, _)| alto - bounds.top()),
+                // A mensagem presa, como o "sticky" do VS Code: a sua mensagem mais recente que já
+                // subiu além do alto da vista gruda lá (a de verdade fica por baixo da faixa).
+                // Subindo além dela, gruda a anterior. Com a rolagem e as posições deste quadro.
+                let topo = -p.rolagem.offset().y - px(2.);
+                let mut presa: Option<(String, Pixels, usize)> = None;
+                let mut considerar = |texto: &str, alto: Pixels, i: usize| {
+                    if alto < topo && presa.as_ref().is_none_or(|(_, outro, _)| alto >= *outro) {
+                        presa = Some((texto.to_string(), alto, i));
+                    }
                 };
-                let ativa = !busca_aberta && alto.is_some_and(|alto| alto < -p.rolagem.offset().y - px(2.));
-                if p.presa_ativa != ativa {
-                    p.presa_ativa = ativa;
+                for (texto, alto, _) in p.presa_do_historico.borrow().iter() {
+                    considerar(texto, *alto - bounds.top(), usize::MAX);
+                }
+                {
+                    let medidos = medidos.borrow();
+                    for (i, texto) in suas.iter() {
+                        if let Some(&(_, alto, _)) = medidos.iter().find(|(k, ..)| k == i) {
+                            considerar(texto, alto - bounds.top(), *i);
+                        }
+                    }
+                }
+                let presa = presa.filter(|_| !busca_aberta);
+                if p.presa != presa {
+                    p.presa = presa;
                     redesenhar = true;
                 }
                 {
@@ -582,28 +596,15 @@ impl Janela {
         let pilula_nova = !seguindo && !painel.pilula_vista;
         painel.pilula_vista = !seguindo;
 
-        // A última mensagem sua fica presa no alto quando sobe para fora da vista (dono, 17/11/2026:
-        // "faz a última mensagem que mando grudar em cima"), em duas linhas; o clique leva até ela.
-        // Sai com a busca da conversa aberta, que mora no mesmo lugar.
-        // Na conversa trazida do Claude Code sem mensagem própria ainda, vale a última do histórico.
-        let presa = (!self.paineis[ix].busca.aberta)
-            .then(|| {
-                let p = &self.paineis[ix];
-                match ultima_do_usuario(&chat.itens) {
-                    Some((i, texto)) => {
-                        let (alto, pe) = p.posicoes.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, pe)| (alto, pe))?;
-                        Some((i, alto, pe, texto))
-                    }
-                    None => {
-                        let (texto, alto, pe) = p.presa_do_historico.borrow().clone()?;
-                        let topo = p.topo_da_lista.get();
-                        Some((usize::MAX, alto - topo, pe - topo, texto))
-                    }
-                }
-            })
-            .flatten()
-            .and_then(|(i, alto, _, texto)| self.paineis[ix].presa_ativa.then_some((i, alto, texto)))
-            .map(|(i, alto, texto)| {
+        // A mensagem sua que você está lendo fica presa no alto (dono, 17 e 18/11/2026: "faz a
+        // última mensagem que mando grudar em cima" e "não ser só a última, ser também a última
+        // onde tô olhando"), em duas linhas; o clique leva até ela. Escolhida no prepaint da lista
+        // (acima); sai com a busca da conversa aberta, que mora no mesmo lugar.
+        let presa = self.paineis[ix]
+            .presa
+            .clone()
+            .filter(|_| !self.paineis[ix].busca.aberta)
+            .map(|(texto, alto, i)| {
                 let janela = cx.entity().downgrade();
                 let raio = crate::tema::raio_da_peca();
                 // Uma faixa do cartão por trás, do topo até a mensagem: o pedaço da resposta acima
@@ -1633,14 +1634,15 @@ fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
     elemento.pb(esp::E8).mb(r(-8.))
 }
 
-/// A última mensagem sua na conversa, com o índice: o texto (as primeiras linhas, que a faixa
-/// presa no alto mostra em duas) ou, só com anexos, a contagem deles.
-fn ultima_do_usuario(itens: &[Item]) -> Option<(usize, String)> {
-    itens.iter().enumerate().rev().find_map(|(i, item)| match item {
+/// As mensagens suas na conversa, com o índice: o texto (as primeiras linhas, que a faixa presa
+/// no alto mostra em duas) ou, só com anexos, a contagem deles.
+fn mensagens_do_usuario(itens: &[Item]) -> Vec<(usize, String)> {
+    itens.iter().enumerate().filter_map(|(i, item)| match item {
         Item::Usuario { texto, .. } if !texto.trim().is_empty() => Some((i, texto_da_presa(texto))),
         Item::Usuario { anexos, .. } if !anexos.is_empty() => Some((i, contagem(anexos.len(), "anexo", "anexos"))),
         _ => None,
     })
+    .collect()
 }
 
 /// As primeiras linhas de uma mensagem numa linha só (a faixa presa mostra duas).
