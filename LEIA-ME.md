@@ -729,14 +729,12 @@ ferramentas, vale por painel).
   falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
   0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
-  dentro. O histórico importado do Claude Code não recolhe. No fim da linha vão os tokens e o
+  dentro. O histórico importado do Claude Code não recolhe. A dica da linha diz os tokens e o
   custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
-  `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela); por serem as
-  últimas partes, são as primeiras a ceder lugar na coluna estreita. A dica da linha repete o
-  gasto e abre os tokens em três números: a entrada nova (a sem desconto mais a gravada no
-  cache), o que foi lido do cache e a saída. O turno sem linha no livro (os de antes disto, e os
+  `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela), e abre os
+  tokens em três números: a entrada nova (a sem desconto mais a gravada no cache), o que foi lido
+  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). O turno sem linha no livro (os de antes disto, e os
   de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
-  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
   lado ficam guardadas na conversa). **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
@@ -1080,11 +1078,7 @@ worktree"), lido quando a dica aparece.
   lá dentro diz que é cópia). Não abre processo, então serve para a dica e para conferir a cada
   poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
   repositório que os arquivos não contam (o formato reftable).
-- **A pasta trocou de ramo.** O motor anota em `Chat::ramo` o ramo em que a pasta estava quando o
-  turno começou e quando terminou (`src/motor/ramo.rs`). Com o chat quieto, se o ramo de agora for
-  outro, uma faixa acima da caixa avisa: "A pasta agora está em main; o chat trabalhava em feat/x".
-  O × dela (ou o turno seguinte) anota o ramo de agora, e o aviso não volta para a mesma troca. O
-  chat que ainda não rodou desde que isto existe não avisa.
+- Não há aviso quando a pasta troca de ramo (dono, 18/11/2026: nada de avisos novos).
 
 **Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
 mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas

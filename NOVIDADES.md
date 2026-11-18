@@ -22,9 +22,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   renovar** e **Mandar às…** deixam a mensagem na fila do chat com o selo da hora; ela sai sozinha
   na hora, com o Vitral aberto, e continua lá depois de reiniciar. O × e o lápis da fila valem
   para ela, e **Entregar agora** a manda antes.
-- **Tokens e custo de cada turno.** A linha "Trabalhou 6 min · 13 comandos" do turno recolhido
-  termina com o que ele gastou, "182 mil tokens · US$ 0,84", e a dica abre em entrada nova, cache
-  lido e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
+- **Tokens e custo de cada turno.** A dica da linha "Trabalhou 6 min · 13 comandos" do turno
+  recolhido diz o que ele gastou, "182 mil tokens · US$ 0,84", e abre em entrada nova, cache lido
+  e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
   turnos de antes desta versão continuam como eram.
 - **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
   7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
@@ -46,8 +46,7 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.
 - **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
   está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
-  a da aba dizem o mesmo. Se a pasta trocar de ramo desde o último turno do chat, uma faixa acima
-  da caixa avisa uma vez: "A pasta agora está em main; o chat trabalhava em feat/x".
+  a da aba dizem o mesmo.
 - **Corrigir mensagem sem perder o contexto.** Corrigir uma mensagem não troca mais a conversa do
   agente por um resumo: ele volta ao ponto exato antes dela, com tudo o que veio antes. Quando
   isso não dá (Codex, conversa antiga), continua como era, com o resumo.

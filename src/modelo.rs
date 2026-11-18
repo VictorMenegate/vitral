@@ -382,10 +382,6 @@ pub struct Chat {
     /// que o Vitral fechado (ou uma queda de energia) cortou no meio.
     #[serde(default)]
     pub turno_aberto: bool,
-    /// O ramo do git em que a pasta estava no último turno do chat (o commit curto, com a cabeça
-    /// solta): se a pasta trocar de ramo por fora, a conversa avisa uma vez (`ui/ramo.rs`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ramo: Option<String>,
     /// Modo em que a conversa estava antes de entrar em Planejar: aprovar o plano volta a ele.
     #[serde(default)]
     pub modo_antes_do_plano: Option<String>,
@@ -445,7 +441,6 @@ impl Chat {
             arquivado: false,
             lido_em: agora,
             turno_aberto: false,
-            ramo: None,
             modo_antes_do_plano: None,
             memoria_da_sessao: None,
             memoria_pedida_em: 0,

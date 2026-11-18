@@ -630,8 +630,6 @@ impl Janela {
             None => (false, false),
         };
         let faixa = faixa.map(|f| entrada(("entra-faixa", painel_id as usize), faixa_nova, De::Baixo, div().child(f)));
-        // A pasta trocou de ramo desde o último turno do chat: o aviso, uma vez (`ramo.rs`).
-        let aviso_do_ramo = chat.and_then(|c| self.aviso_do_ramo(motor, c, painel_id, window, cx));
         // O pé de toda conversa é a doca: uma abertura no cartão por onde se vê o metal, com a
         // caixa de mensagem pousada nela. Alta na conversa ainda vazia, rente à caixa no resto do
         // tempo (com o chat trabalhando, quem mostra é o metal, que corre).
@@ -722,7 +720,6 @@ impl Janela {
             .child(cabecalho)
             .child(corpo)
             .children(chat.zip(ix).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
-            .children(aviso_do_ramo)
             .children(faixa)
             .when_some(chat.zip(ix), |s, (chat, ix)| {
                 let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();

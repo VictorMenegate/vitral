@@ -70,16 +70,6 @@ pub(super) fn partes_dos_tokens(tokens: &Tokens) -> [String; 3] {
     ]
 }
 
-/// A linha "Trabalhou 6 min · 13 comandos" com o gasto do turno no fim, "· 182 mil tokens · US$
-/// 0,84". Por ser o fim, é a primeira parte a ceder lugar na coluna estreita (`partes_inteiras`).
-/// Sem o dado (conversa de antes do livro), a linha fica como veio.
-pub(super) fn resumo_com_gasto(resumo: String, gasto: Option<&Gasto>) -> String {
-    match gasto {
-        Some(gasto) => format!("{resumo} · {}", gasto_curto(gasto)),
-        None => resumo,
-    }
-}
-
 /// A dica da linha do turno, com o gasto e os três números dos tokens embaixo.
 pub(super) fn dica_com_gasto(dica: &str, gasto: Option<&Gasto>) -> String {
     let Some(gasto) = gasto else {
@@ -348,7 +338,7 @@ impl Render for OndeOUsoFoi {
 
 #[cfg(test)]
 mod testes {
-    use super::{desde, dica_com_gasto, dica_da_memoria, gasto_curto, memoria_curta, partes_dos_tokens, resumo_com_gasto, tokens_curtos};
+    use super::{desde, dica_com_gasto, dica_da_memoria, gasto_curto, memoria_curta, partes_dos_tokens, tokens_curtos};
     use crate::motor::{Tokens, gasto::Gasto};
 
     #[test]
@@ -375,14 +365,9 @@ mod testes {
     }
 
     #[test]
-    fn linha_e_dica_do_turno_com_o_gasto() {
+    fn dica_do_turno_com_o_gasto() {
         let tokens = Tokens { entrada: 2_000, cache_lido: 170_000, cache_criado: 6_000, saida: 4_000 };
         let gasto = Gasto { custo: 0.84, tokens, turnos: 1 };
-        // O gasto vai no fim: são as partes que a coluna estreita tira primeiro.
-        assert_eq!(
-            resumo_com_gasto("Trabalhou 6 min 12 s · 13 comandos".into(), Some(&gasto)),
-            "Trabalhou 6 min 12 s · 13 comandos · 182 mil tokens · US$ 0,84"
-        );
         // A entrada nova soma a sem desconto e a que foi para o cache.
         assert_eq!(partes_dos_tokens(&tokens), ["8 mil de entrada nova", "170 mil lidos do cache", "4 mil de saída"]);
         assert_eq!(
@@ -390,7 +375,6 @@ mod testes {
             "Ver o que o agente fez neste turno\n182 mil tokens · US$ 0,84\n8 mil de entrada nova · 170 mil lidos do cache · 4 mil de saída"
         );
         // Conversa antiga, sem o dado: tudo como hoje.
-        assert_eq!(resumo_com_gasto("Trabalhou 45 s".into(), None), "Trabalhou 45 s");
         assert_eq!(dica_com_gasto("Ver o que o agente fez neste turno", None), "Ver o que o agente fez neste turno");
         // Só o custo (um `result` sem os tokens): a dica não inventa os três números.
         let so_custo = Gasto { custo: 0.5, tokens: Tokens::default(), turnos: 1 };
