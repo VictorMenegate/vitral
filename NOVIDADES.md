@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.2
 
+O modo foco para todos os chats e o fundo da conversa vazia sem emenda.
+
 - **Modo foco para todos os chats.** Ligado no menu do painel (ou na paleta), ele esconde as
   ferramentas de todas as conversas de uma vez, e fica guardado. O botão marcado no alto do painel
   saiu.
