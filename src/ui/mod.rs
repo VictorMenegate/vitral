@@ -35,6 +35,7 @@ mod painel_contas;
 mod fechar;
 mod painel_arquivo;
 mod quadro_ideias;
+mod ramo;
 pub(crate) mod paineis;
 mod rascunhos;
 mod resumo;
@@ -466,6 +467,8 @@ pub struct Janela {
     este_chat_rolado: Option<String>,
     /// O que o git vê mudado na pasta do chat do Este chat (a seção "Na pasta").
     git_da_pasta: git_da_pasta::GitDaPasta,
+    /// O ramo de agora das pastas dos chats à vista (o aviso de troca de ramo, acima da caixa).
+    ramos: ramo::Ramos,
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
@@ -770,6 +773,7 @@ impl Janela {
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
+            ramos: Default::default(),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,

@@ -974,6 +974,25 @@ pasta renomeada), um alerta vermelho no lugar do Abrir. Na dica da aba, a pasta 
 painel. A outra aba é a do arquivo aberto (ver **Arquivos citados**, acima, e a aba Arquivos da
 lista).
 
+**Na pasta e o ramo do git** (`src/ui/git_da_pasta.rs`, `src/ui/ramo.rs`). Depois das Mudanças, a
+seção **Na pasta** lista o que o git vê mudado desde o último commit no repositório do chat (o que
+um comando mudou também), relida a cada 4 s enquanto está à vista. O cabeçalho dela mostra o
+**ramo** em que a pasta está: o nome em mono, o commit curto e "cabeça solta" quando não há ramo, e
+o selo **worktree** quando a pasta é uma cópia de outro repositório. O ramo também vai na dica da
+linha do chat na lista (junto da pasta) e na dica da aba, numa linha a mais ("No ramo feat/x, num
+worktree"), lido quando a dica aparece.
+
+- O ramo sai dos arquivos do git (`git::ramo_no_disco`: o `.git` da pasta ou de uma acima e o
+  `HEAD` dele; num worktree, o `.git` é um arquivo que aponta a pasta de verdade, e o `commondir`
+  lá dentro diz que é cópia). Não abre processo, então serve para a dica e para conferir a cada
+  poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
+  repositório que os arquivos não contam (o formato reftable).
+- **A pasta trocou de ramo.** O motor anota em `Chat::ramo` o ramo em que a pasta estava quando o
+  turno começou e quando terminou (`src/motor/ramo.rs`). Com o chat quieto, se o ramo de agora for
+  outro, uma faixa acima da caixa avisa: "A pasta agora está em main; o chat trabalhava em feat/x".
+  O × dela (ou o turno seguinte) anota o ramo de agora, e o aviso não volta para a mesma troca. O
+  chat que ainda não rodou desde que isto existe não avisa.
+
 - Num painel estreito (abaixo de uns 330 px, ou a 150% de zoom), os botões ficam só com o ícone.
 - Na gaveta (janela estreita), o painel é opaco por cima das conversas, com o fundo escurecido; ele
   entra deslizando da borda direita, e o botão do canto (ou Esc) o recolhe.

@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
+  está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
+  a da aba dizem o mesmo. Se a pasta trocar de ramo desde o último turno do chat, uma faixa acima
+  da caixa avisa uma vez: "A pasta agora está em main; o chat trabalhava em feat/x".
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o

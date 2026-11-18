@@ -18,6 +18,7 @@ use smol::channel::{Sender, unbounded};
 mod importacao;
 mod conversas;
 mod ideias;
+mod ramo;
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -2018,6 +2019,8 @@ impl Motor {
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.turno_aberto = true;
                 }
+                // O ramo em que o turno começa: se a pasta trocar por fora, a conversa avisa.
+                self.anotar_ramo(chat_id);
             }
             Err(erro) => {
                 let mensagem = format!("Não consegui abrir o {}: {erro:#}", chat.agente.programa());
@@ -3412,6 +3415,8 @@ impl Motor {
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
+                // O turno pode ter trocado de ramo ele mesmo: vale o do fim.
+                self.anotar_ramo(chat_id);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;

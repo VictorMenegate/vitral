@@ -141,6 +141,8 @@ pub struct MudancaNaPasta {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetratoDaPasta {
     pub raiz: PathBuf,
+    /// O ramo em que a pasta está (`None` num repositório que não deu para ler).
+    pub ramo: Option<RamoDaPasta>,
     pub mudancas: Vec<MudancaNaPasta>,
     /// Mais que `MAXIMO_NO_RETRATO` arquivos: a lista mostra os primeiros.
     pub cortado: bool,
@@ -163,7 +165,73 @@ pub fn retrato_da_pasta(pasta: &Path) -> Option<RetratoDaPasta> {
     }
     let cortado = mudancas.len() > MAXIMO_NO_RETRATO;
     mudancas.truncate(MAXIMO_NO_RETRATO);
-    Some(RetratoDaPasta { raiz, mudancas, cortado })
+    let ramo = ramo_no_disco(&raiz).or_else(|| ramo_pelo_git(&raiz));
+    Some(RetratoDaPasta { raiz, ramo, mudancas, cortado })
+}
+
+/// Onde a pasta está no git: o ramo ou, com a cabeça solta, o commit curto, e se ela é uma cópia
+/// (worktree) de outro repositório.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RamoDaPasta {
+    /// "main", "feat/x" ou, com a cabeça solta, o commit curto ("1a2b3c4").
+    pub nome: String,
+    /// A cabeça está solta: o `nome` é um commit, não um ramo.
+    pub solta: bool,
+    pub worktree: bool,
+}
+
+/// Quantas letras do commit aparecem com a cabeça solta (as do `git rev-parse --short`).
+const COMMIT_CURTO: usize = 7;
+
+/// O que o arquivo `HEAD` diz: o ramo ("ref: refs/heads/feat/x") ou o commit curto e `true`, com a
+/// cabeça solta. `None` no que não é uma coisa nem outra (o "refs/heads/.invalid" que o formato
+/// reftable deixa no lugar: lá quem sabe o ramo é o git).
+fn ler_head(conteudo: &str) -> Option<(String, bool)> {
+    let conteudo = conteudo.trim();
+    if let Some(referencia) = conteudo.strip_prefix("ref:") {
+        let referencia = referencia.trim();
+        let nome = referencia.strip_prefix("refs/heads/").unwrap_or(referencia);
+        return (!nome.is_empty() && nome != ".invalid").then(|| (nome.to_string(), false));
+    }
+    let commit = conteudo.len() >= COMMIT_CURTO && conteudo.chars().all(|c| c.is_ascii_hexdigit());
+    commit.then(|| (conteudo[..COMMIT_CURTO].to_string(), true))
+}
+
+/// A pasta do git de uma cópia, tirada do arquivo `.git` dela ("gitdir: /repo/.git/worktrees/x";
+/// um caminho relativo conta a partir da pasta do arquivo).
+fn pasta_do_git_no_arquivo(conteudo: &str, pasta: &Path) -> Option<PathBuf> {
+    let caminho = conteudo.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    (!caminho.is_empty()).then(|| pasta.join(caminho))
+}
+
+/// O ramo da pasta lido direto dos arquivos do git (o `.git` da pasta ou de uma acima, e o `HEAD`
+/// dele), sem abrir processo: barato o bastante para uma dica ou para conferir a cada poucos
+/// segundos. `None` fora de um repositório.
+pub fn ramo_no_disco(pasta: &Path) -> Option<RamoDaPasta> {
+    let (raiz, ponto_git) = pasta.ancestors().map(|p| (p, p.join(".git"))).find(|(_, g)| g.exists())?;
+    // Num worktree (e num submódulo) o `.git` é um arquivo que aponta a pasta de verdade; só a do
+    // worktree tem o `commondir`, que leva ao repositório de onde ele saiu.
+    let (pasta_do_git, worktree) = if ponto_git.is_dir() {
+        (ponto_git, false)
+    } else {
+        let pasta_do_git = pasta_do_git_no_arquivo(&std::fs::read_to_string(&ponto_git).ok()?, raiz)?;
+        let worktree = pasta_do_git.join("commondir").is_file();
+        (pasta_do_git, worktree)
+    };
+    let (nome, solta) = ler_head(&std::fs::read_to_string(pasta_do_git.join("HEAD")).ok()?)?;
+    Some(RamoDaPasta { nome, solta, worktree })
+}
+
+/// O mesmo pelo git, para o repositório que os arquivos não contam (o formato reftable).
+fn ramo_pelo_git(raiz: &Path) -> Option<RamoDaPasta> {
+    let (nome, solta) = match git(raiz, &["symbolic-ref", "--short", "-q", "HEAD"]) {
+        Ok(ramo) if !ramo.is_empty() => (ramo, false),
+        _ => (git(raiz, &["rev-parse", "--short", "HEAD"]).ok()?, true),
+    };
+    let pastas = git(raiz, &["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]).ok()?;
+    let mut pastas = pastas.lines();
+    let worktree = pastas.next() != pastas.next();
+    Some(RamoDaPasta { nome, solta, worktree })
 }
 
 /// As entradas do `git status --porcelain=v1 -z`: "XY caminho\0" (o renomeado traz o nome
@@ -296,6 +364,64 @@ mod testes {
         desfazer_arquivo(&retrato.raiz, "a.txt").unwrap();
         assert_eq!(std::fs::read_to_string(pasta.join("a.txt")).unwrap(), "um\ndois\n");
         let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn le_o_head_com_ramo_e_com_a_cabeca_solta() {
+        assert_eq!(ler_head("ref: refs/heads/main\n"), Some(("main".into(), false)));
+        assert_eq!(ler_head("ref: refs/heads/feat/ramo-à-vista\n"), Some(("feat/ramo-à-vista".into(), false)));
+        assert_eq!(ler_head("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"), Some(("4b825dc".into(), true)));
+        // O reftable deixa um HEAD de enfeite; lixo não é ramo nem commit.
+        assert_eq!(ler_head("ref: refs/heads/.invalid\n"), None);
+        assert_eq!(ler_head("não é um head"), None);
+        assert_eq!(ler_head(""), None);
+        let pasta = Path::new("/p/wt/x");
+        assert_eq!(pasta_do_git_no_arquivo("gitdir: /p/repo/.git/worktrees/x\n", pasta), Some(PathBuf::from("/p/repo/.git/worktrees/x")));
+        assert_eq!(pasta_do_git_no_arquivo("gitdir: ../../repo/.git/worktrees/x\n", pasta), Some(pasta.join("../../repo/.git/worktrees/x")));
+        assert_eq!(pasta_do_git_no_arquivo("outra coisa", pasta), None);
+    }
+
+    /// Um repositório de verdade num ramo, com a cabeça solta e num worktree: os arquivos e o git
+    /// contam a mesma coisa.
+    #[test]
+    fn ramo_com_cabeca_solta_e_em_worktree() {
+        let base = std::env::temp_dir().join(format!("vitral-git-ramo-{}", crate::modelo::novo_id()));
+        let pasta = base.join("repo");
+        std::fs::create_dir_all(pasta.join("src")).unwrap();
+        git(&pasta, &["init", "-q"]).unwrap();
+        git(&pasta, &["checkout", "-q", "-b", "principal"]).unwrap();
+        std::fs::write(pasta.join("src/a.txt"), "um\n").unwrap();
+        git(&pasta, &["add", "."]).unwrap();
+        git(&pasta, &["commit", "-q", "-m", "primeiro"]).unwrap();
+        let no_ramo = RamoDaPasta { nome: "principal".into(), solta: false, worktree: false };
+        assert_eq!(ramo_no_disco(&pasta), Some(no_ramo.clone()));
+        // De uma subpasta, o `.git` é o de cima.
+        assert_eq!(ramo_no_disco(&pasta.join("src")), Some(no_ramo.clone()));
+        assert_eq!(ramo_pelo_git(&pasta), Some(no_ramo.clone()));
+        assert_eq!(retrato_da_pasta(&pasta).unwrap().ramo, Some(no_ramo));
+
+        // O worktree num ramo dele.
+        let copia = base.join("wt").join("copia");
+        git(&pasta, &["worktree", "add", "-q", "-b", "feat/outro", &copia.to_string_lossy()]).unwrap();
+        let na_copia = RamoDaPasta { nome: "feat/outro".into(), solta: false, worktree: true };
+        assert_eq!(ramo_no_disco(&copia), Some(na_copia.clone()));
+        assert_eq!(ramo_no_disco(&copia.join("src")), Some(na_copia.clone()));
+        assert_eq!(ramo_pelo_git(&copia), Some(na_copia.clone()));
+        assert_eq!(retrato_da_pasta(&copia).unwrap().ramo, Some(na_copia));
+
+        // A cabeça solta: o commit curto no lugar do ramo.
+        git(&pasta, &["checkout", "-q", "--detach"]).unwrap();
+        let inteiro = git(&pasta, &["rev-parse", "HEAD"]).unwrap();
+        let solta = ramo_no_disco(&pasta).unwrap();
+        assert!(solta.solta && !solta.worktree);
+        assert_eq!(solta.nome.len(), 7);
+        assert!(inteiro.starts_with(&solta.nome));
+        let pelo_git = ramo_pelo_git(&pasta).unwrap();
+        assert!(pelo_git.solta && pelo_git.nome.starts_with(&solta.nome));
+
+        // Fora de um repositório, nada.
+        assert_eq!(ramo_no_disco(&base.join("wt")), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
