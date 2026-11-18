@@ -306,6 +306,10 @@ impl Janela {
             visiveis.pop();
         }
         let escondidos = visiveis.len().saturating_sub(mostrar);
+        // As mensagens do histórico que podem ficar presas no alto: só as deste quadro. Sem isto, o
+        // painel que trocava de uma conversa trazida para outra guardava as da anterior, e uma
+        // mensagem de outro chat aparecia presa no alto (visto na bancada, 18/11/2026).
+        self.paineis[ix].presa_do_historico.borrow_mut().clear();
         if escondidos > 0 {
             visiveis.drain(..escondidos);
         } else if chat.importada.is_some() {
@@ -462,6 +466,10 @@ impl Janela {
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let mut lista = v_flex()
             .flex_none()
+            // Numa conversa curta, ela encosta embaixo, perto da caixa, como num mensageiro (dono,
+            // 18/11/2026: o "Pensando…" lá em cima ficava "muito longe de baixo"). A margem automática
+            // só ocupa a sobra: com a conversa maior que a tela, ela é zero e a rolagem segue igual.
+            .mt_auto()
             .map(coluna)
             // No painel estreito, 16 dos lados (eram 12; dono, 17/11/2026: "aumenta um pouco o
             // padding de dentro da parte do texto").
