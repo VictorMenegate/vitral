@@ -14,7 +14,8 @@ use crate::ui::busca_conversa::{Realce, faixas, realcar, realcar_trecho};
 const LINHAS_DO_FIM: usize = 40;
 
 /// Cabeçalho de 28 (comando, tempo e copiar) e o corpo em mono 12/18, com as últimas 40 linhas
-/// e "Mostrar tudo"; altura máxima de 240, rolando.
+/// e "Mostrar tudo"; altura máxima de 240, rolando. Sem comando e sem tempo não há cabeçalho (era
+/// uma faixa vazia de 28 só para o Copiar): o Copiar vai para o canto de cima, no hover.
 #[derive(IntoElement)]
 pub struct CaixaDeCodigo {
     id: ElementId,
@@ -109,9 +110,18 @@ impl RenderOnce for CaixaDeCodigo {
         let cor_tempo = if self.erro { Cores::vermelho() } else { Cores::tenue() };
         let para_copiar = self.comando.as_ref().map(|c| format!("$ {c}\n\n{}", self.texto)).unwrap_or_else(|| self.texto.to_string());
         let grupo = SharedString::from(format!("{}-caixa", self.id));
+        let com_cabecalho = self.comando.is_some() || self.tempo.is_some();
+        // O Copiar só com o ponteiro na caixa: à vista em toda caixa, era ruído.
+        let copiar = div()
+            .flex_none()
+            .invisible()
+            .group_hover(grupo.clone(), |s| s.visible())
+            .child(BotaoCopiar::new(SharedString::from(format!("{}-copiar", self.id)), para_copiar));
+        let (copiar_no_cabecalho, copiar_no_canto) = if com_cabecalho { (Some(copiar), None) } else { (None, Some(copiar)) };
         div()
             .id(self.id.clone())
-            .group(grupo.clone())
+            .group(grupo)
+            .relative()
             .flex()
             .flex_col()
             .rounded(if self.raio_chat { raio::CARTAO } else { raio::CONTROLE })
@@ -119,33 +129,28 @@ impl RenderOnce for CaixaDeCodigo {
             .border_1()
             .border_color(if self.erro { Cores::tinta_borda(Cores::vermelho()) } else { Cores::borda() })
             .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(r(8.))
-                    .h(r(28.))
-                    .pl(dentro_da_borda(12.))
-                    .pr(esp::E2)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .mono_pequeno()
-                            .text_color(Cores::codigo())
-                            .children(self.comando.map(|c| format!("$ {c}"))),
-                    )
-                    .children(self.tempo.map(|t| div().flex_none().metadado().text_color(cor_tempo).child(t)))
-                    // O Copiar só com o ponteiro na caixa: à vista em toda caixa, era ruído.
-                    .child(
-                        div()
-                            .flex_none()
-                            .invisible()
-                            .group_hover(grupo, |s| s.visible())
-                            .child(BotaoCopiar::new(SharedString::from(format!("{}-copiar", self.id)), para_copiar)),
-                    ),
-            )
+            .when(com_cabecalho, |caixa| {
+                caixa.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(r(8.))
+                        .h(r(28.))
+                        .pl(dentro_da_borda(12.))
+                        .pr(esp::E2)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .mono_pequeno()
+                                .text_color(Cores::codigo())
+                                .children(self.comando.map(|c| format!("$ {c}"))),
+                        )
+                        .children(self.tempo.map(|t| div().flex_none().metadado().text_color(cor_tempo).child(t)))
+                        .children(copiar_no_cabecalho),
+                )
+            })
             .child(
                 // Sem quebrar as linhas: a saída é código, e a linha quebrada no meio da
                 // indentação embaralhava tudo (dono, 17/11/2026: "tá bem zuado essas partes"). A
@@ -180,6 +185,11 @@ impl RenderOnce for CaixaDeCodigo {
                     })
                     .child(conteudo)),
             )
+            // Sem cabeçalho, o Copiar flutua no canto de cima, opaco, por cima do fim da primeira
+            // linha.
+            .children(copiar_no_canto.map(|copiar| {
+                div().absolute().top(esp::E4).right(esp::E4).rounded(raio::CONTROLE).bg(Cores::preto()).child(copiar)
+            }))
     }
 }
 

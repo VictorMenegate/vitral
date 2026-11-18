@@ -2998,7 +2998,8 @@ impl Janela {
                             .overflow_y_scroll()
                             .py(esp::E8)
                             .px(esp::E12)
-                            .rounded(raio::CONTROLE)
+                            // O raio das caixas da conversa, como o relatório e o código.
+                            .rounded(raio::CARTAO)
                             .bg(Cores::hover())
                             .metadado()
                             .text_color(Cores::tenue())
@@ -3108,7 +3109,7 @@ impl Janela {
                     .py(esp::E8)
                     .px(esp::E12)
                     .gap(esp::E2)
-                    .rounded(raio::CONTROLE)
+                    .rounded(raio::CARTAO)
                     .bg(Cores::hover())
                     .mono_pequeno()
                     .text_color(Cores::tenue())
@@ -3312,7 +3313,7 @@ impl Janela {
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
-                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, arquivo.as_deref(), pedido)))
+                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, pedido)))
                 })
                 .when_some(comando, |s, comando| {
                     s.child(div().pl(recuo_aberto).py(esp::E4).child(
@@ -3322,7 +3323,9 @@ impl Janela {
                             // e a caixa rola até ele (conferência na bancada, 16/11/2026).
                             .realce(&no_resultado)
                             .comando(comando.to_string()).raio_chat().erro(*erro)
-                            .tempo(if pendente { "Em execução" } else if *erro { "Falhou" } else { "Concluído" }),
+                            // O "Concluído" em toda saída não dizia nada: o comando que terminou bem
+                            // é o caso comum, e a linha acima já marca o que falhou.
+                            .when(pendente || *erro, |c| c.tempo(if pendente { "Em execução" } else { "Falhou" })),
                     ))
                 })
                 // Rodando ainda não há saída: em vez da caixa do resultado vazia, com o Copiar e
@@ -3415,14 +3418,33 @@ pub(super) fn alternar(
 /// Quantas linhas do pedido de uma chamada aparecem; o resto vira "… mais N linhas".
 const LINHAS_DO_PEDIDO: usize = 600;
 
-fn cartao_de_edicao(chave: &str, arquivo: Option<&str>, pedido: &str) -> Div {
-    div().w_full().rounded(raio::CARTAO).border_1().border_color(Cores::borda()).bg(Cores::preto()).overflow_hidden()
-        .child(h_flex().gap(esp::E8).px(esp::E8).h(r(28.))
-            .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
-            .child(div().flex_1().min_w_0().truncate().mono_pequeno().text_color(Cores::texto()).child(
-                arquivo.and_then(|a| Path::new(a).file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Alteração".into())))
-            .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string())))
+/// O diff de uma edição aberto na trilha: o poço preto das caixas de código, com o Copiar no canto
+/// só com o ponteiro em cima. Sem cabeçalho: ele repetia o nome do arquivo, que já está na linha
+/// logo acima, e deixava o Copiar sempre à vista (nas outras caixas ele só aparece no hover).
+fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
+    let grupo = SharedString::from(format!("diff-{chave}"));
+    div()
+        .relative()
+        .group(grupo.clone())
+        .w_full()
+        .rounded(raio::CARTAO)
+        .border_1()
+        .border_color(Cores::borda())
+        .bg(Cores::preto())
+        .overflow_hidden()
         .child(bloco_do_pedido(pedido))
+        .child(
+            // Opaco: fica por cima do começo da primeira linha longa.
+            div()
+                .absolute()
+                .top(esp::E4)
+                .right(esp::E4)
+                .rounded(raio::CONTROLE)
+                .bg(Cores::preto())
+                .invisible()
+                .group_hover(grupo, |s| s.visible())
+                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string()).dica("Copiar o diff")),
+        )
 }
 
 /// O que a chamada pediu (`Item::Ferramenta::detalhe`): o que saiu em vermelho, o que entrou em
@@ -3457,12 +3479,12 @@ fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
         .when(total > LINHAS_DO_PEDIDO, |s| {
             s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
         });
+    // Sem fundo nem raio próprios: quem desenha a caixa é o cartão em volta (era uma caixa cinza
+    // dentro da preta).
     div()
         .id("pedido-da-chamada")
         .w_full()
         .max_h(r(300.))
-        .rounded(raio::CONTROLE)
-        .bg(Cores::hover())
         .mono_pequeno()
         .flex()
         .child(miolo)
