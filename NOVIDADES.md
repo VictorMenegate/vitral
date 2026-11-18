@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.1
 
+Correções da 0.9.0 na conversa, nos menus e nas contas.
+
 - **A mensagem presa não cobre a seguinte.** A sua mensagem seguinte, chegando no alto da
   conversa, empurra a faixa da mensagem presa para cima, como no VS Code; antes ela passava por
   baixo da faixa e ficava escondida.
