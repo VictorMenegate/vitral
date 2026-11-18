@@ -4,6 +4,7 @@
 pub mod componentes;
 mod abas_direita;
 mod acentos;
+mod agendar;
 pub mod arranjo;
 mod boas_vindas;
 mod abertura;
@@ -42,6 +43,8 @@ mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;
 mod trilho;
+mod onde_uso;
+mod peso_da_pasta;
 mod uso_plano;
 mod visor_imagem;
 mod vista_mensagens;
@@ -520,6 +523,9 @@ pub struct Janela {
     /// O próximo envio escolheu "Mandar depois": com o turno rodando, a mensagem espera na fila
     /// em vez de entrar nele. Vale para um envio só.
     mandar_depois: bool,
+    /// O próximo envio tem hora marcada ("Mandar às…", "quando a janela renovar"): a mensagem vai
+    /// para a fila com ela (`agendar.rs`). Vale para um envio só.
+    mandar_agendada: Option<u64>,
     /// Menu do Vitral aberto (F10 ou o logo).
     menu_aberto: bool,
     /// O número do sino no último quadro (`None` antes do primeiro) e a geração do pulso dele,
@@ -801,6 +807,7 @@ impl Janela {
             ultrathink: HashSet::new(),
             ultracode: HashSet::new(),
             mandar_depois: false,
+            mandar_agendada: None,
             menu_aberto: false,
             sino_numero: Default::default(),
             sino_geracao: Default::default(),
@@ -1324,7 +1331,12 @@ impl Janela {
             depois: std::mem::take(&mut self.mandar_depois),
         };
         self.ilha = None;
-        motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, texto, anexos, reforco, cx));
+        // Com hora marcada, a mensagem vai para a fila e espera por ela.
+        let agendada = self.mandar_agendada.take();
+        motor.update(cx, |m, cx| match agendada {
+            Some(quando) => m.agendar_do_usuario(&chat, texto, anexos, reforco, quando, cx),
+            None => m.enviar_do_usuario(&chat, texto, anexos, reforco, cx),
+        });
         composer.update(cx, |c, cx| c.set_value("", window, cx));
         // A caixa esvaziada vai para o disco na hora: o `set_value` não avisa a mudança, e o
         // rascunho de antes do envio ficava gravado. Numa queda logo depois, a mensagem já enviada

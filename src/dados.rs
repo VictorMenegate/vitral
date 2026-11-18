@@ -133,6 +133,25 @@ impl Dados {
         self.pasta.join("ideias.json")
     }
 
+    /// O livro dos gastos por turno (`motor/gasto.rs`): um arquivo por mês, `gastos/AAAA-MM.jsonl`.
+    pub fn pasta_gastos(&self) -> PathBuf {
+        self.pasta.join("gastos")
+    }
+
+    /// O arquivo de um mês do livro dos gastos, inteiro, pela fila do gravador.
+    pub fn salvar_gastos(&self, mes: &str, bytes: Vec<u8>) {
+        self.gravador.gravar(self.pasta_gastos().join(format!("{mes}.jsonl")), Some(bytes), false);
+    }
+
+    /// A base medida de cada pasta (`motor/peso.rs`): com quanto contexto um chat novo começa nela.
+    pub fn arquivo_pesos(&self) -> PathBuf {
+        self.pasta.join("peso-das-pastas.json")
+    }
+
+    pub fn salvar_pesos(&self, bytes: Vec<u8>) {
+        self.gravador.gravar(self.arquivo_pesos(), Some(bytes), false);
+    }
+
     pub fn arquivo_config(&self) -> PathBuf {
         self.config.join("config.json")
     }

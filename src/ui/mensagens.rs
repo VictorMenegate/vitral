@@ -2765,8 +2765,12 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let chave = turno.chave(&contexto.chat.id);
-        let resumo = resumo_do_turno(&contexto.chat.itens, turno);
-        let dica = SharedString::from(if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" });
+        // Os tokens e o custo do turno, quando o livro dos gastos os tem (`motor/gasto.rs`): no fim
+        // da linha e na dica.
+        let gasto = contexto.motor.gastos().do_turno(&contexto.chat.id, turno.mensagem, contexto.chat.itens[turno.mensagem].em());
+        let resumo = super::onde_uso::resumo_com_gasto(resumo_do_turno(&contexto.chat.itens, turno), gasto.as_ref());
+        let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
+        let dica = SharedString::from(super::onde_uso::dica_com_gasto(dica, gasto.as_ref()));
         let linha = h_flex()
             .id(SharedString::from(format!("turno-{chave}")))
             .map(linha_de_log)
@@ -3849,12 +3853,16 @@ impl Janela {
                             )
                         })
                         .when(!minima || no_fim, |s| {
+                            // A dica do relógio diz a memória do chat (só no Linux com systemd).
+                            let memoria = motor.memoria_do_chat(&chat.id).map(super::onde_uso::dica_da_memoria);
                             s.child(
                                 div()
+                                    .id(("relogio-do-turno", painel_id as usize))
                                     .flex_none()
                                     .etiqueta()
                                     .text_color(Cores::apagado())
-                                    .child(relogio(crate::modelo::agora().saturating_sub(desde))),
+                                    .child(relogio(crate::modelo::agora().saturating_sub(desde)))
+                                    .when_some(memoria, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
                             )
                         })
                         // Muito tempo sem evento: um comando longo, ou o processo travou. Só avisa;
@@ -4048,7 +4056,8 @@ impl Janela {
         let (retomar, tentar, entregar) = (
             acao(|m, id, cx| m.retomar(id, cx)),
             acao(|m, id, cx| m.tentar_de_novo(id, cx)),
-            acao(|m, id, cx| m.entregar_fila(id, cx)),
+            // O "Entregar agora" manda tudo, as mensagens com hora marcada também.
+            acao(|m, id, cx| m.entregar_fila_agora(id, cx)),
         );
         let texto = |t: String| div().min_w_0().truncate().text_size(r(13.)).line_height(r(18.)).child(t);
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {

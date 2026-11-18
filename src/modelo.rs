@@ -742,6 +742,10 @@ pub struct Entrada {
     /// Vai só ao Claude, sem aparecer na conversa (o que as referências da mensagem resolveram).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub extra: String,
+    /// Mensagem com hora marcada (segundos Unix): espera na fila até lá, mesmo com o chat livre
+    /// (`motor/agendadas.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agendada: Option<u64>,
 }
 
 impl Entrada {

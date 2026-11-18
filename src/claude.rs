@@ -139,6 +139,8 @@ pub enum Evento {
     Comandos(Vec<(String, String)>),
     /// A conversa do lado do agente ganhou este id (o `thread_id` do Codex): é ele que retoma.
     Sessao(String),
+    /// O que o `init` diz ter carregado (servidores MCP, ferramentas, skills), depois do `Inicio`.
+    Carga(crate::motor::peso::Carga),
     /// Tokens que a conversa ocupa no contexto agora.
     Contexto(u64),
     TextoParcial(String),
@@ -183,6 +185,9 @@ pub enum Evento {
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
     /// depois do `result`.
     Sugestao(String),
+    /// Os tokens que um `result` declara (os do turno; ver `motor::tokens_do_resultado`). Vem
+    /// antes do `Fim` do mesmo `result`.
+    Gasto(crate::motor::Tokens),
     Fim {
         erro: bool,
         texto: String,
@@ -339,6 +344,11 @@ impl Processo {
     pub fn fechar_entrada(&mut self) {
         self.entrada = None;
         if let Some(canal) = &self.codex { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
+    }
+
+    /// A memória que o agente e tudo o que ele abriu ocupam agora (`Escopo::memoria`).
+    pub fn memoria(&self) -> Option<u64> {
+        self.escopo.memoria()
     }
 
     /// A entrada ainda está aberta: dá para dirigir o turno (`dirigir`).
@@ -1305,7 +1315,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
     }
     let texto = |v: &Value| v.as_str().unwrap_or_default().to_string();
     match valor["type"].as_str().unwrap_or_default() {
-        "system" if valor["subtype"] == "init" => vec![Evento::Inicio {
+        "system" if valor["subtype"] == "init" => [Evento::Inicio {
             modelo: texto(&valor["model"]),
             comandos: valor["slash_commands"]
                 .as_array()
@@ -1319,7 +1329,10 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .as_array()
                 .filter(|f| !f.is_empty())
                 .map(|f| f.iter().any(|n| n == "Workflow")),
-        }],
+        }]
+        .into_iter()
+        .chain(crate::motor::peso::carga_do_init(valor).map(Evento::Carga))
+        .collect(),
         // Só o que o Claude Code espera antes de sair: fluxos e subagentes em segundo plano (os
         // comandos de shell ele encerra sozinho).
         "system" if valor["subtype"] == "background_tasks_changed" => {
@@ -1407,7 +1420,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 })
                 .collect()
         }
-        "result" => vec![Evento::Fim {
+        "result" => crate::motor::tokens_do_resultado(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
                 .as_str()
@@ -1420,7 +1433,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .flat_map(|modelos| modelos.values())
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
-        }],
+        }]).collect(),
         "prompt_suggestion" => valor["suggestion"]
             .as_str()
             .map(str::trim)

@@ -558,7 +558,19 @@ ferramentas, vale por painel).
   nada é trocado) e, com o chat parado, **Entregar agora** no rodapé (a faixa acima da caixa não
   repete o botão com a fila aberta). Com o turno rodando, a caixa vazia e algo seu na fila, a seta
   para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
-  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3). A
+  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3).
+  **Mensagem com hora marcada** (`src/motor/agendadas.rs` e `src/ui/agendar.rs`): no **…** da
+  caixa, **Mandar quando a janela de 5 h renovar** (a renovação da conta em que o chat roda, ou a
+  do Codex, mais 30 s de folga; o item some sem essa hora lida) e **Mandar às…** (um diálogo com
+  a hora: "15:10", "15h", "830"; a que já passou hoje vale para amanhã) mandam o que está na caixa
+  para a fila do chat com a hora (`Entrada::agendada`, gravada no estado: sobrevive ao reinício).
+  A fila abre com o cartão dela, que leva o selo "sai às 15:10"; o ×, o lápis, a ordem e o
+  **Mandar agora** valem como nas outras, e o **Entregar agora** do chat parado manda tudo, com
+  hora ou sem. Até a hora, ela não entra em turno nenhum, mesmo com o chat livre: quem tira
+  mensagens da fila para um turno passa por `Motor::tirar_prontas`. Na hora, a rotina de 15 s do
+  motor (`entregar_agendadas`) abre o turno do chat livre, junto com o que mais esperava na fila;
+  com o chat ocupado, a mensagem entra quando o turno acabar. Só sai com o Vitral aberto: a hora
+  que passou com ele fechado sai logo na abertura. A
   lista mostra umas três mensagens antes de rolar e guarda à direita o lugar da barra de rolagem,
   que segurava o clique do ×; o que a fila faz fica na dica do título. Fora do painel largo, o
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
@@ -569,7 +581,14 @@ ferramentas, vale por painel).
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
   "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
   Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
-  segundo plano…". **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
+  segundo plano…". **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
+  servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
+  (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
+  só aceito se o cgroup é o do escopo), lido quando a linha pergunta e guardado por 3 s
+  (`src/motor/memoria.rs`); chat parado não é lido. No Windows, sem systemd ou sem o controlador
+  de memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
+  não quis aviso novo). **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
   processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
   primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
   continua parando direto. Depois de um Esc (ou do Parar) que parou o turno, a faixa acima da caixa
@@ -642,7 +661,13 @@ ferramentas, vale por painel).
   falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
   0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
-  dentro. O histórico importado do Claude Code não recolhe. O clique numa
+  dentro. O histórico importado do Claude Code não recolhe. No fim da linha vão os tokens e o
+  custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
+  `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela); por serem as
+  últimas partes, são as primeiras a ceder lugar na coluna estreita. A dica da linha repete o
+  gasto e abre os tokens em três números: a entrada nova (a sem desconto mais a gravada no
+  cache), o que foi lido do cache e a saída. O turno sem linha no livro (os de antes disto, e os
+  de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
@@ -1005,6 +1030,56 @@ renova (quem renova é o Claude Code) e espera, e a falta de rede e o excesso de
 esperar mais antes de tentar de novo, sem aviso. Contam também o que o Claude Code e o Codex
 guardam no disco (relido a cada 30 s) e os avisos de limite durante os turnos; o Codex só por
 esses dois caminhos.
+
+**Previsão de quando o limite acaba** (`src/contas/previsao.rs`). O motor guarda na memória, por
+conta, as leituras cruas do uso (`Motor::historico_uso`, alimentado em `juntar_uso_da_conta` e no
+`Evento::Limite`), e a inclinação entre a mais velha do trecho recente e a última diz quando a
+janela chega a 100%. No popover do Claude, embaixo de "renova em…", cada janela ganha uma linha:
+"No ritmo de agora, chega a 100% às 15:10", em âmbar, quando isso cai antes da renovação, ou "Dá
+até a renovação". Quando a previsão das 5 h cai antes da renovação, o anel do canto fica âmbar
+mesmo abaixo de 70% e a dica dele diz a hora. O trecho é de 30 min nas 5 h (com pelo menos 5 min
+entre as leituras) e de 6 h na semana (pelo menos 30 min): meia hora de trabalho pesado esticada
+por dias diria sempre que a semana estoura, e por isso a semana também não pinta o anel. Sem
+leituras bastantes, com a última leitura mais velha que o trecho, logo depois de a janela renovar
+(as leituras da janela anterior não contam) ou no limite, a linha não aparece. As leituras não vão
+para o disco: depois de abrir o Vitral a previsão leva alguns minutos para aparecer.
+
+**Onde o uso foi** (`src/motor/gasto.rs` e `src/ui/onde_uso.rs`). Cada turno terminado vira uma
+linha num livro fora do estado, `gastos/AAAA-MM.jsonl` na pasta de dados (um arquivo por mês,
+gravado inteiro pelo gravador do `dados.rs`): a hora, o chat, a pasta, o modelo, a conta, o custo
+e os tokens de entrada nova, de cache lido, de cache criado e de saída. O custo é o que o
+`Chat::somar_custo` somou naquele fim de turno; os tokens vêm do `result` do Claude Code
+(`Evento::Gasto`, de `tokens_do_resultado`: o `model_usage_since_last_result`, que conta os
+subagentes, ou, sem ele, o `usage` do turno; nunca o `modelUsage`, que é o total da sessão) e do
+`turn.completed` do Codex (sem custo). Um turno com vários `result` (agentes em segundo plano)
+soma os tokens de todos. No diálogo **Contas do Claude**, embaixo das contas, a seção **Onde o uso
+foi** tem os seletores **Hoje** e **7 dias** (hoje e os 6 dias anteriores): uma barra por pasta,
+da que mais gastou para a que menos, com "182 mil tokens · US$ 0,84"; o clique na pasta abre os
+cinco chats que mais gastaram nela, e o clique num chat fecha o diálogo e abre a conversa. As
+barras medem o custo; num período só de Codex, os tokens. Na abertura o Vitral lê o mês de agora e
+o anterior (o que os 7 dias e as conversas recentes precisam). Só entra o que rodou depois desta
+versão: o que veio antes não tem linha no livro.
+
+**Último turno**, no popover do contexto da caixa (`ultimo_turno`, em `src/ui/onde_uso.rs`):
+depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
+lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
+
+**Peso fixo da pasta** (`src/motor/peso.rs` e `src/ui/peso_da_pasta.rs`). No popover do contexto
+da caixa, depois dos tokens, a linha **Começa com** diz com quantos tokens um chat novo já começa
+na pasta da conversa, antes de qualquer pergunta: as instruções, os servidores MCP, as skills e as
+ferramentas. A base é medida: o primeiro `Evento::Contexto` de um chat que começa do zero no
+Claude, menos a estimativa da primeira mensagem (3,5 caracteres por token), guardada a última por
+pasta em `peso-das-pastas.json`. Não medem a sessão retomada, a conversa trazida do Claude Code, a
+que já tem mais de uma mensagem (o bloco de passagem inclusive) nem a mensagem com anexo; sem
+medida, a linha diz "sem medida ainda". O clique abre a lista dos arquivos de instrução que a
+pasta carrega, lida do disco pelas regras do Claude Code (`instrucoes`): o `CLAUDE.md` do usuário,
+o `CLAUDE.md`, o `.claude/CLAUDE.md` e o `CLAUDE.local.md` da pasta e das pastas de cima até a
+raiz do repositório, os `@imports` de cada um (até 5 níveis, fora de bloco de código e de crases,
+cada arquivo uma vez; é por eles que o `AGENTS.md` aparece) e o índice da memória (o `MEMORY.md`
+do `autoMemoryDirectory` do `settings.json` ou de `projects/<pasta>/memory`), cada um com o
+tamanho; o clique num arquivo o abre à direita. Embaixo, o que a sessão medida ligou, tirado do
+`init` do Claude Code (`Evento::Carga`): "3 de 4 servidores MCP ligados · 42 ferramentas · 12
+skills". Chats do Codex não têm a linha.
 
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o

@@ -470,8 +470,8 @@ fn menu_do_painel(
 
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
 /// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
-/// Compactar).
-pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> CorpoPopover {
+/// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o peso da pasta).
+pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement>, acao: AnyElement) -> CorpoPopover {
     let linha = |rotulo: &'static str, valor: AnyElement| {
         h_flex()
             .h(r(28.))
@@ -541,7 +541,8 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
             v_flex()
                 .child(linha("Modelo", modelo))
                 .child(linha("Conta", texto(format!("Claude · {conta}"))))
-                .when_some(tokens, |s, t| s.child(linha("Tokens", t))),
+                .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
+                .children(extras),
         )
         .rodape(
             h_flex()

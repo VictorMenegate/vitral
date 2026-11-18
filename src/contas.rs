@@ -21,6 +21,7 @@ use serde_json::Value;
 use crate::{claude::binario_claude, motor::Uso, processos::novo_comando};
 
 pub mod busca;
+pub mod previsao;
 
 /// Id reservado da conta principal (o login normal do Claude Code).
 pub const PRINCIPAL: &str = "principal";

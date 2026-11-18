@@ -16,6 +16,35 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   etiqueta Ideia do time (o EFI): as colunas seguem o estado, e o que você cria, edita, arrasta ou
   apaga aqui muda lá. As tarefas do time não entram. O filtro do cabeçalho mostra todas, só as do
   Linear ou só as do Vitral; com Vitral, a ideia nova fica só aqui.
+- **Memória de cada chat.** No Linux, a dica do relógio do turno diz quanta memória o chat ocupa
+  agora, com tudo o que o agente abriu (comandos, testes, servidores): "Memória deste chat: 3,1 GB".
+- **Mandar a mensagem numa hora marcada.** No **…** da caixa, **Mandar quando a janela de 5 h
+  renovar** e **Mandar às…** deixam a mensagem na fila do chat com o selo da hora; ela sai sozinha
+  na hora, com o Vitral aberto, e continua lá depois de reiniciar. O × e o lápis da fila valem
+  para ela, e **Entregar agora** a manda antes.
+- **Tokens e custo de cada turno.** A linha "Trabalhou 6 min · 13 comandos" do turno recolhido
+  termina com o que ele gastou, "182 mil tokens · US$ 0,84", e a dica abre em entrada nova, cache
+  lido e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
+  turnos de antes desta versão continuam como eram.
+- **Quanto custa abrir um chat na pasta.** O popover do contexto ganhou a linha **Começa com**:
+  os tokens que um chat novo já carrega naquela pasta, medidos no primeiro turno. O clique lista
+  os arquivos de instrução (CLAUDE.md, os @imports, o índice da memória) com o tamanho de cada um
+  e quantos servidores MCP a sessão ligou; clicar num arquivo o abre à direita.
+- **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
+  7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
+  o custo estimado; o clique num chat abre a conversa. Conta o que rodou a partir desta versão.
+- **Previsão de quando o limite acaba.** No popover do uso do Claude, cada janela diz se o ritmo
+  de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
+  até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica
+  dele diz a hora, mesmo abaixo de 70%.
+- **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
+  Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
+  abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
+  pedido, e o cartão vai para Fazendo mostrando como está o chat. Um chat também anota no quadro:
+  é só pedir "anota isso no quadro".
+- **O quadro é o do Linear.** Com a chave pessoal do Linear, o quadro mostra as issues do time
+  (o EFI, por padrão): as colunas seguem o estado da issue, e o que você cria, edita, arrasta ou
+  apaga aqui muda lá. Ele relê o Linear a cada minuto com o quadro aberto.
 - **Mensagem presa sem o cinza.** A faixa da sua mensagem no alto da conversa tem as mesmas
   camadas do cartão, transparente como ele, com uma sombra curta embaixo.
 - **Conversa com duas bordas só.** O texto da resposta, o ícone de cada linha do que o agente fez,

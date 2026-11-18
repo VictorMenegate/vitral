@@ -1071,6 +1071,13 @@ impl Janela {
         // Quem já ia pela fila de qualquer jeito não precisa da opção.
         let depois = composer::dirige_o_turno(motor, &chat.id)
             .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
+        // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
+        let agendar = crate::ui::agendar::DadosDoMenu {
+            janela: cx.entity().downgrade(),
+            painel: b.painel,
+            vazio: b.composer.read(cx).value().trim().is_empty(),
+            renova: motor.renovacao_do_chat(&chat.id),
+        };
         let codex = chat.agente == Agente::Codex;
         let tem_agentes = crate::ui::mapa_agentes::tem_agentes(chat);
         // A segunda resposta: o mesmo pedido para o outro agente, num painel ao lado.
@@ -1100,6 +1107,7 @@ impl Janela {
                         )
                         .separator()
                     })
+                    .map(|menu| crate::ui::agendar::itens_do_menu(menu, &agendar))
                     .when_some(raia.clone(), |menu, (janela, rotulo, vazio)| {
                         menu.item(PopupMenuItem::new(rotulo).icon(Lucide::Columns2).disabled(vazio).on_click(move |_, window, cx| {
                             let _ = janela.update(cx, |this, cx| this.enviar_aos_dois(painel, window, cx));

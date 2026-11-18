@@ -18,6 +18,11 @@ use smol::channel::{Sender, unbounded};
 mod importacao;
 mod conversas;
 mod ideias;
+mod agendadas;
+pub mod gasto;
+mod memoria;
+pub mod peso;
+pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -279,6 +284,14 @@ pub struct Motor {
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
+    /// As últimas leituras do uso de cada conta, para a previsão de quando o limite acaba.
+    historico_uso: HashMap<String, contas::previsao::Historico>,
+    /// O livro dos turnos terminados: custo e tokens por chat e por pasta (`motor/gasto.rs`).
+    gastos: gasto::Livro,
+    /// Com quanto contexto um chat novo começa em cada pasta (`motor/peso.rs`).
+    pesos: peso::Pesos,
+    /// A memória de cada chat trabalhando, lida do escopo dele (`motor/memoria.rs`).
+    memorias: memoria::Leituras,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -499,7 +512,12 @@ impl Motor {
         // popover aberto e com a janela sem foco); a primeira rodada sai logo na abertura.
         cx.spawn(async move |motor, cx| {
             loop {
-                if motor.update(cx, |m, cx| m.rotina_uso(cx)).is_err() {
+                // Na mesma volta, as mensagens com hora marcada cuja hora chegou.
+                let volta = motor.update(cx, |m, cx| {
+                    m.rotina_uso(cx);
+                    m.entregar_agendadas(cx);
+                });
+                if volta.is_err() {
                     break;
                 }
                 cx.background_executor()
@@ -559,7 +577,12 @@ impl Motor {
         };
         quadro.acertar_ordens();
         let linear = ideias::EstadoDoLinear::da_config(&dados.config);
+        let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
+        let pesos = peso::Pesos::ler(&dados.arquivo_pesos());
         let mut motor = Self {
+            gastos,
+            pesos,
+            memorias: Default::default(),
             quadro,
             quadro_sujo: false,
             linear,
@@ -581,6 +604,7 @@ impl Motor {
             rodadas: HashMap::new(),
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
+            historico_uso: HashMap::new(),
             limite_ate: HashMap::new(),
             sem_login: contas::ler_sem_login(),
             recusadas: HashSet::new(),
@@ -1392,7 +1416,7 @@ impl Motor {
         if self.processos.contains_key(chat) || self.na_fila(chat) == 0 {
             return;
         }
-        if let Some(fila) = self.filas.remove(chat) {
+        if let Some(fila) = self.tirar_prontas(chat) {
             self.comecar_turno(chat, fila, cx);
         }
     }
@@ -2744,6 +2768,11 @@ impl Motor {
         uso
     }
 
+    /// No ritmo das últimas leituras, se cada janela da conta enche antes de renovar.
+    pub fn previsao_da_conta(&self, conta: &str) -> contas::previsao::Previsoes {
+        self.historico_uso.get(conta).map(|h| h.prever(agora() as i64)).unwrap_or_default()
+    }
+
     /// Quando a conta no limite volta a receber turnos (None se ela não está no limite).
     pub fn limite_vence(&self, conta: &str) -> Option<u64> {
         self.uso_da_conta(conta).bloqueado.then(|| self.limite_ate.get(conta).copied()).flatten()
@@ -2793,6 +2822,7 @@ impl Motor {
     /// que mudou.
     fn juntar_uso_da_conta(&mut self, id: &str, lido: Uso, plano: Plano, agora: i64) -> Mudanca {
         let antes = self.uso_por_conta.get(id).copied().unwrap_or_default();
+        self.historico_uso.entry(id.to_string()).or_default().registrar(&lido);
         let depois = antes.juntar(lido, agora);
         let velho = self.plano_por_conta.get(id);
         let novo = velho.cloned().unwrap_or_default().juntar(plano);
@@ -3096,7 +3126,10 @@ impl Motor {
                     self.salvar();
                 }
             }
+            Evento::Carga(carga) => self.anotar_carga(chat_id, carga),
             Evento::Contexto(tokens) => {
+                // Antes de gravar no chat: o primeiro contexto de um chat novo é a base da pasta.
+                self.medir_peso(chat_id, tokens);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.contexto = Some(tokens);
                 }
@@ -3310,9 +3343,11 @@ impl Motor {
                     renova_semana,
                     medido_em: Some(agora() as i64),
                 };
+                self.historico_uso.entry(conta.clone()).or_default().registrar(&medido);
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
+            Evento::Gasto(tokens) => self.somar_tokens(chat_id, tokens),
             Evento::Sugestao(texto) => {
                 // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
                 if !self.processos.contains_key(chat_id) {
@@ -3412,6 +3447,7 @@ impl Motor {
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
+                let custo_antes = self.chat(chat_id).map_or(0.0, |c| c.custo_usd);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;
@@ -3420,6 +3456,7 @@ impl Motor {
                         c.janela = janela;
                     }
                 }
+                self.registrar_gasto(chat_id, custo_antes);
                 // Parado pelo usuário: o Claude Code fecha o turno com erro, mas não é falha (o
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {
@@ -3596,7 +3633,7 @@ impl Motor {
                 let _ = self.dados.salvar_chat(c);
             }
             if self.na_fila(chat_id) > 0
-                && let Some(fila) = self.filas.remove(chat_id)
+                && let Some(fila) = self.tirar_prontas(chat_id)
             {
                 self.comecar_turno(chat_id, fila, cx);
             }
@@ -3619,7 +3656,7 @@ impl Motor {
             self.rodadas.remove(chat_id);
         }
         if self.na_fila(chat_id) > 0
-            && let Some(fila) = self.filas.remove(chat_id)
+            && let Some(fila) = self.tirar_prontas(chat_id)
         {
             self.comecar_turno(chat_id, fila, cx);
         } else if !erro && self.passar_a_vez(chat_id, cx) {
