@@ -46,8 +46,6 @@ pub struct Painel {
     /// Um bloco desta conversa acabou de abrir: no próximo desenho o painel fica onde está, em
     /// vez de pular para o fim do que abriu.
     pub manter_lugar: bool,
-    /// Esconde as chamadas de ferramenta e mostra só as mensagens (vale só para este painel).
-    pub modo_foco: bool,
     /// Largura do cartão medida uma vez por quadro: o nível do painel e a faixa da caixa. Muda
     /// só quando passa de um limite (com folga), e aí o painel redesenha no quadro seguinte.
     pub medida: MedidaPainel,
@@ -442,7 +440,6 @@ impl Janela {
             leitura: Default::default(),
             seguindo: true,
             manter_lugar: false,
-            modo_foco: false,
             medida: MedidaPainel::default(),
             foco_aba,
             menu_aberto: false,

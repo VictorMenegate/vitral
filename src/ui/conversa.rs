@@ -6,7 +6,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use gpui_kit::base::actions::SelectDown;
 use gpui_kit::component::{
-    ElementExt as _, Selectable, h_flex,
+    ElementExt as _, h_flex,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     popover::Popover,
     tooltip::Tooltip,
@@ -398,7 +398,7 @@ fn menu_do_painel(
         let cheio = (!j.cabe_outro_painel()).then(|| motivo_sem_lugar(j.paineis.len()));
         Some(Dados {
             chat: chat.id.clone(),
-            foco: painel.modo_foco,
+            foco: j.modo_foco(cx),
             ultimo: ix + 1 == j.paineis.len(),
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
@@ -415,15 +415,10 @@ fn menu_do_painel(
     }
     menu = menu
         .item(
-            PopupMenuItem::new("Modo foco")
+            PopupMenuItem::new("Modo foco em todos os chats")
                 .icon(Lucide::Focus)
                 .checked(d.foco)
-                .on_click(na_janela(&janela, move |this, _, cx| {
-                    if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel_id) {
-                        p.modo_foco = !p.modo_foco;
-                    }
-                    cx.notify();
-                })),
+                .on_click(na_janela(&janela, move |this, _, cx| this.alternar_modo_foco(cx))),
         );
     if d.ultimo {
         // O botão da direita saiu do cabeçalho (pedido do dono, 12/11/2026): abrir e fechar o
@@ -1232,9 +1227,22 @@ impl Janela {
         }
     }
 
-    /// "⋯" e painel da direita, em botões de 28. O modo foco mora no "⋯": o botão dele só aparece
-    /// com ele ligado, no pressionado neutro, para desligar com um clique. Na largura estreita, ele
-    /// e depois o painel da direita ficam só no "⋯".
+    /// O modo foco, que vale para todos os chats (`Config::modo_foco`).
+    pub(super) fn modo_foco(&self, cx: &App) -> bool {
+        self.motor.as_ref().is_some_and(|m| m.read(cx).config.modo_foco)
+    }
+
+    /// Liga ou desliga o modo foco de todos os chats (o menu do painel e a paleta).
+    pub(super) fn alternar_modo_foco(&mut self, cx: &mut Context<Self>) {
+        if let Some(motor) = self.motor.clone() {
+            motor.update(cx, |m, cx| m.mudar_config(|c| c.modo_foco = !c.modo_foco, cx));
+        }
+        cx.notify();
+    }
+
+    /// O "+" do painel (novo chat ou um do histórico). O modo foco, que vale para todos os chats,
+    /// mora no menu do painel e na paleta, sem botão aqui em cima (dono, 18/11/2026: "não ficar
+    /// marcado lá em cima").
     fn acoes_do_painel(
         &self,
         motor_entidade: &Entity<Motor>,
@@ -1243,29 +1251,12 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
+        let _ = nivel;
         let painel = &self.paineis[ix];
-        let (painel_id, foco) = (painel.id, painel.modo_foco);
-        let mostra_foco = foco && matches!(nivel, LarguraPainel::Medio | LarguraPainel::Largo);
+        let painel_id = painel.id;
         h_flex()
             .flex_none()
             .gap(r(4.))
-            .when(mostra_foco, |s| {
-                let dica = if foco {
-                    "Mostrar as ferramentas\nVolta a mostrar as ferramentas usadas neste painel"
-                } else {
-                    "Modo foco\nSó as mensagens, sem as ferramentas (neste painel)"
-                };
-                s.child(sem_arrastar().child(
-                    botao_icone(("modo-foco", painel_id as usize), Lucide::Focus, dica, TamanhoBotao::Barra, window, cx)
-                        .selected(foco)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel_id) {
-                                p.modo_foco = !p.modo_foco;
-                            }
-                            cx.notify();
-                        })),
-                ))
-            })
             // O "+": novo chat neste painel ou um do histórico. O menu do painel, sem o "⋯" (dono,
             // 16/11/2026), abre no botão direito; pelo teclado (Shift+F10, tecla Menu), ancorado
             // aqui, num gatilho sem tamanho.
@@ -1545,7 +1536,7 @@ impl Janela {
             return div().into_any_element();
         };
         let termo = busca_conversa::normalizar(&self.paineis[ix].busca.campo.read(cx).value());
-        let foco = self.paineis[ix].modo_foco;
+        let foco = motor.config.modo_foco;
         self.paineis[ix].busca.indice.atualizar(&chat.id, &chat.itens, foco, &termo);
         let barra_busca = self.barra_de_busca(ix, window, cx);
         self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element()

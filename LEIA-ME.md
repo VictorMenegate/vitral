@@ -557,7 +557,8 @@ tem gancho para as ações da citação: a resposta com citação é partida em 
 (`trechos_com_citacoes`, em `src/ui/mensagens.rs`) e cada citação é desenhada à parte, com o
 mesmo estilo; a busca conta as ocorrências trecho a trecho (`Realce::trecho`), e a seleção vale
 dentro de cada trecho. Modo foco (esconde as
-ferramentas, vale por painel).
+ferramentas, vale para todos os chats: `Config::modo_foco`, no menu do painel e na paleta, sem botão
+no cabeçalho; dono, 18/11/2026).
 
 - **Ler a conversa.** A **hora** de cada mensagem aparece no hover, na mesma barra flutuante do
   Copiar (`hora_na_barra`; a barra é uma tecla em relevo, opaca, com fio claro e a luz em cima, sem
@@ -845,7 +846,7 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
-- **O cabeçalho da conversa tem pouca coisa:** as abas, o modo foco (só ligado) e o **+** (novo
+- **O cabeçalho da conversa tem pouca coisa:** as abas e o **+** (novo
   chat ou histórico). O resto do painel, inclusive abrir e fechar a direita, mora no menu do botão
   direito no cabeçalho (ou Shift+F10).
 - **O chip da conta**, na caixa, só aparece com mais de uma conta.
@@ -1269,7 +1270,7 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
   (**Recolher a lista**) ou pelo Ctrl+B, e no arrasto vai de 200 a 560 px (`FAIXA_LISTA`).
   Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
-- **Cabeçalho do painel.** Uma linha só (44): as abas, o modo foco (só ligado) e o **+** (dono,
+- **Cabeçalho do painel.** Uma linha só (44): as abas e o **+** (dono,
   16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e ter o histórico também, e
   tira o de 3 pontinhos e deixa só no botão direito"). O **+** (`botao_historico`, em
   `src/ui/conversa.rs`, dica "Novo chat ou histórico") abre uma lista com busca ("Buscar chat…",
