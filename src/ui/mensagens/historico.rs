@@ -152,7 +152,11 @@ impl Janela {
         // chat ainda não tem mensagem própria (ver `ultima_do_usuario`).
         let ultima_sua = mostrados.iter().rposition(|(_, item)| matches!(item, Item::Usuario { texto, .. } if !texto.trim().is_empty()));
         let presa = self.paineis[ix].presa_do_historico.clone();
-        *presa.borrow_mut() = None;
+        // A posição de antes fica até o prepaint deste quadro trocar: zerada aqui, a mensagem
+        // presa (calculada logo depois, ainda neste desenho) nunca a via.
+        if ultima_sua.is_none() {
+            *presa.borrow_mut() = None;
+        }
         let mut i = 0;
         while i < mostrados.len() {
             if let Some(dia) = datas.get(&i) {
