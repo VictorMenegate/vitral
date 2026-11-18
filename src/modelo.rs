@@ -305,14 +305,19 @@ impl Parceiro {
     }
 }
 
-/// De onde um chat bifurcado continua ("Continuar daqui em outro chat", `motor/bifurcar.rs`): a
-/// sessão do Claude Code do chat de origem e, quando a bifurcação não foi no último turno, o uuid
-/// da entrada em que a cópia para (`--resume-session-at`). Só vale até a sessão do chat novo nascer.
+/// De onde o próximo turno de um chat continua numa cópia de sessão (`motor/bifurcar.rs`): a sessão
+/// do Claude Code de origem (a do chat de onde ele foi bifurcado, ou a dele mesmo antes de uma
+/// correção) e, quando a cópia não leva a sessão inteira, o uuid da entrada em que ela para
+/// (`--resume-session-at`). Só vale até a sessão nova nascer.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bifurcacao {
     pub sessao: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ate: Option<String>,
+    /// A cópia não é de outro chat: é a sessão deste, de volta ao ponto antes de uma mensagem
+    /// corrigida (`Motor::retirar_mensagem`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub correcao: bool,
 }
 
 fn eh_zero(n: &u64) -> bool {

@@ -1633,10 +1633,12 @@ impl Motor {
         matches!(self.execucao(chat), Execucao::Erro(_)) && self.ultima_entrada.contains_key(chat)
     }
 
-    /// Tira da conversa a última mensagem do usuário e o que veio depois dela, e devolve o que
-    /// estava nela para a caixa. A sessão do Claude Code não volta atrás: ela é trocada por uma
-    /// nova, e o próximo turno começa com o bloco de passagem do que ficou na tela — senão o
-    /// Claude continuaria lembrando da mensagem que saiu. Os arquivos da pasta não voltam.
+    /// Tira da conversa uma mensagem do usuário e o que veio depois dela, e devolve o que estava
+    /// nela para a caixa. Para o Claude não continuar lembrando do que saiu, o próximo turno roda
+    /// numa sessão nova: uma cópia da de agora até o ponto antes da mensagem
+    /// (`--resume-session-at`, ver `motor/bifurcar.rs`), que guarda o contexto exato; quando o
+    /// ponto não é achado na sessão, uma sessão vazia com o bloco de passagem do que ficou na
+    /// tela. Os arquivos da pasta não voltam.
     pub fn retirar_mensagem(&mut self, chat_id: &str, ix: usize, cx: &mut Context<Self>) -> Option<Retirada> {
         if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
             return None;
@@ -1645,6 +1647,8 @@ impl Motor {
             return None;
         }
         self.rodadas.remove(chat_id);
+        // A sessão até o ponto antes da mensagem, lida antes de a mensagem sair da conversa.
+        let volta = self.sessao_antes_da_mensagem(chat_id, ix);
         let c = self.chat_mut(chat_id)?;
         let mut saindo = c.itens.split_off(ix);
         let Item::Usuario { texto, anexos, ultrathink, ultracode, .. } = saindo.remove(0) else {
@@ -1654,11 +1658,10 @@ impl Motor {
         };
         c.atualizado_em = agora();
         c.turno_aberto = false;
-        // Com sessão criada, o próximo turno abre uma nova com a passagem; sem ela, nada a trocar.
-        if c.sessao_criada {
-            c.sessao = uuid::Uuid::new_v4().to_string();
-            c.sessao_criada = false;
-            c.contexto = None;
+        // Com o ponto achado na sessão, o próximo turno sai numa cópia dela até ali (o agente
+        // fica com o contexto exato, sem resumo); sem ele, abre uma nova com a passagem. Sem
+        // sessão, nada a trocar (`bifurcar::sessao_depois_da_correcao`).
+        if bifurcar::sessao_depois_da_correcao(c, volta) {
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::Reenvio);
         }
         // Na dupla, o outro agente também viu o que saiu: ele recomeça numa sessão nova e recebe a

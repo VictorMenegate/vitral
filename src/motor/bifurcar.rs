@@ -14,10 +14,18 @@
 //! bifurcar numa mensagem sua leva tudo o que veio antes (o texto dela vai para a caixa do chat
 //! novo, para mandar de novo ou mudar).
 //!
-//! A flag `--resume-session-at` existe no Claude Code 2.1.325 fora do `--help` (lida no binário:
-//! "only messages up to and including the chain entry with <message.id>", só com `--resume` no
-//! modo print). Se o Claude Code a recusar ("No message found with message.uuid of"), o turno é
-//! repetido numa sessão nova com o bloco de passagem (`consertar_bifurcacao`).
+//! Corrigir uma mensagem usa o mesmo corte (`Motor::retirar_mensagem`): em vez de jogar a sessão
+//! fora e recomeçar com um resumo, o próximo turno sai numa cópia da própria sessão do chat, até
+//! o ponto antes da mensagem corrigida (`Bifurcacao::correcao`). O agente fica com o contexto
+//! exato, e o começo da conversa é o mesmo que o Claude Code já tinha guardado.
+//!
+//! A flag `--resume-session-at` existe no Claude Code 2.1.325 fora do `--help` ("only messages up
+//! to and including the chain entry with <message.id>", só com `--resume` no modo print). Medido
+//! em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem (não gasta o
+//! plano): ela aceita o uuid de qualquer entrada da cadeia; a sessão inteira tinha 40.388 tokens
+//! de mensagens e, cortada na primeira mensagem, 39 (`get_context_usage`); um uuid que não está
+//! na sessão sai com "No message found with message.uuid of". Nesse caso o turno é repetido numa
+//! sessão nova com o bloco de passagem (`consertar_bifurcacao`).
 
 use std::io::BufRead as _;
 
@@ -100,6 +108,40 @@ pub fn ponto_de_corte(linhas: impl Iterator<Item = String>, marca: &str) -> Opti
     None
 }
 
+/// O que a correção de uma mensagem faz com a sessão do chat (os itens já saíram da conversa).
+/// Com `volta` (a sessão até o ponto antes da mensagem), o próximo turno sai numa cópia dela, sem
+/// resumo; sem, a sessão é trocada por uma nova. Devolve `true` quando o próximo turno precisa do
+/// bloco de passagem. O chat que nunca teve sessão (nem espera uma cópia) não muda.
+pub(super) fn sessao_depois_da_correcao(chat: &mut Chat, volta: Option<Bifurcacao>) -> bool {
+    if !chat.sessao_criada && chat.bifurcado_de.is_none() {
+        return false;
+    }
+    // A sessão nova nasce no próximo turno: a de agora fica para trás (é dela que sai a cópia).
+    if chat.sessao_criada {
+        let visto = custo_visto(chat);
+        chat.sessao = uuid::Uuid::new_v4().to_string();
+        chat.sessao_criada = false;
+        chat.custo_da_sessao = visto.map(|v| (chat.sessao.clone(), v));
+    }
+    chat.contexto = None;
+    let passagem = volta.is_none();
+    // A sessão vazia da passagem conta o custo do zero.
+    if passagem {
+        chat.custo_da_sessao = None;
+    }
+    chat.bifurcado_de = volta;
+    passagem
+}
+
+/// O último total de custo que o Vitral viu na sessão do chat. A cópia de uma sessão começa desse
+/// total, e não do zero: o Claude Code restaura nela o custo acumulado da sessão de origem (o
+/// `cost-state` do arquivo dela), e o `total_cost_usd` dos resultados seguintes continua dele. Quem
+/// abre uma cópia leva o visto junto (`Chat::somar_custo` soma só o que crescer), senão o custo da
+/// sessão de origem entraria de novo.
+fn custo_visto(chat: &Chat) -> Option<f64> {
+    chat.custo_da_sessao.as_ref().filter(|(sessao, _)| *sessao == chat.sessao).map(|(_, visto)| *visto)
+}
+
 /// O ponto de corte lido do arquivo da sessão.
 fn ponto_no_arquivo(arquivo: &Path, marca: &str) -> Option<String> {
     let leitor = std::io::BufReader::new(std::fs::File::open(arquivo).ok()?);
@@ -107,23 +149,44 @@ fn ponto_no_arquivo(arquivo: &Path, marca: &str) -> Option<String> {
 }
 
 impl Motor {
-    /// De onde o agente do chat novo continua, quando dá para copiar a sessão: a sessão de origem
-    /// e o uuid do corte (`None`: a sessão inteira, a bifurcação foi no último turno).
+    /// De onde o agente continua com a conversa até o item `fim` (fora), quando dá para copiar a
+    /// sessão: a sessão que guarda o que ele viu e o uuid do corte (`None`: ela inteira, o ponto
+    /// é o fim da conversa). A sessão é a do chat ou, antes do primeiro turno de um chat que já
+    /// espera uma cópia (bifurcado ou corrigido há pouco), a de origem dessa cópia.
     fn origem_da_bifurcacao(&self, chat: &Chat, fim: usize) -> Option<Bifurcacao> {
-        if chat.agente != Agente::Claude || !chat.sessao_criada {
+        if chat.agente != Agente::Claude {
             return None;
         }
+        let (sessao, ate_de_agora) = if chat.sessao_criada {
+            (chat.sessao.clone(), None)
+        } else {
+            let pendente = chat.bifurcado_de.as_ref()?;
+            (pendente.sessao.clone(), pendente.ate.clone())
+        };
         let pasta_conta = self.conta_para(chat).pasta();
-        let arquivo = claude::arquivo_da_sessao(pasta_conta.as_deref(), &chat.cwd, &chat.sessao)?;
+        let arquivo = claude::arquivo_da_sessao(pasta_conta.as_deref(), &chat.cwd, &sessao)?;
         if fim >= chat.itens.len() {
-            return Some(Bifurcacao { sessao: chat.sessao.clone(), ate: None });
+            return Some(Bifurcacao { sessao, ate: ate_de_agora, correcao: false });
         }
         // Só a mensagem sua que abriu um turno tem marca (a dirigida ao turno e a entregue, não).
         let Item::Usuario { marca: Some(marca), .. } = &chat.itens[fim] else {
             return None;
         };
         let ate = ponto_no_arquivo(&arquivo, marca)?;
-        Some(Bifurcacao { sessao: chat.sessao.clone(), ate: Some(ate) })
+        Some(Bifurcacao { sessao, ate: Some(ate), correcao: false })
+    }
+
+    /// Corrigir a mensagem do item `ix` deixa o agente na mesma sessão, de volta ao ponto antes
+    /// dela (`Some`), ou só dá para recomeçar numa sessão nova com o bloco de passagem (`None`:
+    /// Codex, conversa de antes das marcas, a primeira mensagem da sessão, arquivo que sumiu).
+    pub(super) fn sessao_antes_da_mensagem(&self, chat_id: &str, ix: usize) -> Option<Bifurcacao> {
+        let chat = self.chat(chat_id)?;
+        (ix < chat.itens.len()).then(|| self.origem_da_bifurcacao(chat, ix)).flatten().map(|b| Bifurcacao { correcao: true, ..b })
+    }
+
+    /// A pergunta da correção quer saber se o agente continua na mesma sessão (sem resumo).
+    pub fn correcao_mantem_a_sessao(&self, chat_id: &str, ix: usize) -> bool {
+        self.sessao_antes_da_mensagem(chat_id, ix).is_some()
     }
 
     /// Cria o chat novo com a conversa de `chat_id` até o ponto do item `ix` (ver `fim_da_copia`).
@@ -141,6 +204,7 @@ impl Motor {
             return Err("espere o turno terminar para continuar a partir da última resposta".into());
         }
         let bifurcacao = self.origem_da_bifurcacao(origem, fim);
+        let visto = custo_visto(origem);
         let mensagem = match &origem.itens[ix] {
             Item::Usuario { texto, anexos, .. } => Some((texto.clone(), anexos.clone())),
             _ => None,
@@ -165,6 +229,10 @@ impl Motor {
             (c.agente, c.modelo, c.esforco, c.permissao, c.conta, c.permitidas) = (agente, modelo, esforco, permissao, conta, permitidas);
             c.importada = importada;
             c.itens = itens;
+            // O chat novo não paga de novo o que a sessão de origem já custou (`custo_visto`).
+            if com_sessao {
+                c.custo_da_sessao = visto.map(|v| (c.sessao.clone(), v));
+            }
             c.bifurcado_de = bifurcacao;
         }
         if !com_sessao {
@@ -191,12 +259,19 @@ impl Motor {
         let Some((_, mensagens)) = self.ultima_entrada.get(chat_id).cloned() else {
             return false;
         };
+        let correcao = chat.bifurcado_de.as_ref().is_some_and(|b| b.correcao);
         if let Some(c) = self.chat_mut(chat_id) {
             c.bifurcado_de = None;
             (c.sessao, c.contexto) = (uuid::Uuid::new_v4().to_string(), None);
         }
-        self.passagens.insert(chat_id.to_string(), MotivoPassagem::Bifurcou);
-        self.avisar(chat_id, "Não deu para copiar a sessão da conversa de origem; continuei numa nova com um resumo.", false);
+        // A correção cai no caminho de antes dela: sessão nova, com o que ficou na tela.
+        let (motivo, aviso) = if correcao {
+            (MotivoPassagem::Reenvio, "Não deu para voltar a sessão ao ponto antes da mensagem corrigida; continuei numa nova com um resumo.")
+        } else {
+            (MotivoPassagem::Bifurcou, "Não deu para copiar a sessão da conversa de origem; continuei numa nova com um resumo.")
+        };
+        self.passagens.insert(chat_id.to_string(), motivo);
+        self.avisar(chat_id, aviso, false);
         self.execucao.insert(chat_id.to_string(), Execucao::Parado);
         self.salvar();
         self.comecar_turno_com(chat_id, mensagens, false, cx);
@@ -229,6 +304,47 @@ mod testes {
             sub: None,
             mudanca: None,
         }
+    }
+
+    #[test]
+    fn a_correcao_volta_a_sessao_ao_ponto_ou_recomeca_com_a_passagem() {
+        let com_sessao = || {
+            let mut chat = Chat::novo("c".into(), "t", PathBuf::from("/p/loja"));
+            (chat.sessao, chat.sessao_criada, chat.contexto) = ("s1".into(), true, Some(50_000));
+            chat
+        };
+        // Com o ponto achado na sessão: o próximo turno sai numa cópia dela até ali, sem passagem.
+        let mut chat = com_sessao();
+        (chat.custo_usd, chat.custo_da_sessao) = (0.5, Some(("s1".into(), 0.5)));
+        let volta = Bifurcacao { sessao: "s1".into(), ate: Some("r2".into()), correcao: true };
+        assert!(!sessao_depois_da_correcao(&mut chat, Some(volta.clone())));
+        assert_eq!(chat.bifurcado_de, Some(volta));
+        assert!(!chat.sessao_criada && chat.sessao != "s1", "a sessão nova nasce no próximo turno");
+        assert_eq!(chat.contexto, None);
+        // A cópia traz o custo acumulado da sessão de origem: só o que crescer entra na conta.
+        chat.somar_custo(0.6);
+        assert!((chat.custo_usd - 0.6).abs() < 1e-9, "{}", chat.custo_usd);
+        // Corrigir de novo, antes de mandar: a cópia continua saindo da sessão de origem, mais cedo.
+        let mais_cedo = Bifurcacao { sessao: "s1".into(), ate: Some("r1".into()), correcao: true };
+        let sessao_nova = chat.sessao.clone();
+        assert!(!sessao_depois_da_correcao(&mut chat, Some(mais_cedo.clone())));
+        assert_eq!((chat.bifurcado_de.as_ref(), chat.sessao.as_str()), (Some(&mais_cedo), sessao_nova.as_str()));
+        // E se desta vez o ponto não foi achado, a cópia é abandonada e vai a passagem.
+        assert!(sessao_depois_da_correcao(&mut chat, None));
+        assert_eq!(chat.bifurcado_de, None);
+        // Sem o ponto (Codex, conversa antiga, primeira mensagem): o caminho de antes, sessão nova
+        // com o bloco de passagem, que conta o custo do zero.
+        let mut chat = com_sessao();
+        (chat.custo_usd, chat.custo_da_sessao) = (0.5, Some(("s1".into(), 0.5)));
+        assert!(sessao_depois_da_correcao(&mut chat, None));
+        assert!(!chat.sessao_criada && chat.sessao != "s1" && chat.bifurcado_de.is_none());
+        chat.somar_custo(0.7);
+        assert!((chat.custo_usd - 1.2).abs() < 1e-9, "{}", chat.custo_usd);
+        // O chat que ainda não tem sessão não tem o que trocar nem o que resumir.
+        let mut novo = Chat::novo("n".into(), "t", PathBuf::from("/p/loja"));
+        let sessao = novo.sessao.clone();
+        assert!(!sessao_depois_da_correcao(&mut novo, None));
+        assert_eq!((novo.sessao.as_str(), novo.sessao_criada), (sessao.as_str(), false));
     }
 
     #[test]

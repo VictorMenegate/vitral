@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Corrigir mensagem sem perder o contexto.** Corrigir uma mensagem não troca mais a conversa do
+  agente por um resumo: ele volta ao ponto exato antes dela, com tudo o que veio antes. Quando
+  isso não dá (Codex, conversa antiga), continua como era, com o resumo.
 - **Continuar daqui em outro chat.** Nas ações de uma mensagem sua e de uma resposta, o ícone do
   ramo abre ao lado um chat novo com a conversa até aquele ponto, e o agente dele lembra do que
   veio antes. O chat original fica como está: dá para testar outro caminho sem perder o primeiro.

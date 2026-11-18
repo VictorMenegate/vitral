@@ -72,7 +72,23 @@ componentes do GPUI Kit.
 - **Corrigir qualquer mensagem.** `motor::editaveis_desde` diz desde onde as mensagens do usuário
   dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
   do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
-  e o que veio depois. Na dupla, a sessão do parceiro também recomeça.
+  e o que veio depois. Na dupla, a sessão do parceiro também recomeça. **A sessão volta ao ponto,
+  sem resumo:** para o Claude não lembrar do que saiu, o próximo turno roda numa sessão nova, que
+  é uma cópia da de antes até o ponto anterior à mensagem corrigida (`--resume <sessão>
+  --fork-session --session-id <nova> --resume-session-at <uuid>`, o mesmo corte do "Continuar
+  daqui em outro chat"; `Bifurcacao::correcao`, `bifurcar::sessao_depois_da_correcao`). O agente
+  fica com o contexto exato do que veio antes, e o começo da conversa é o mesmo que o Claude Code
+  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. Quando o ponto não é
+  achado no arquivo da sessão (Codex, conversa de antes das marcas, a primeira mensagem da
+  sessão, mensagem dirigida ao turno), vale o caminho de antes: sessão vazia com o bloco de
+  passagem (`MotivoPassagem::Reenvio`); se o Claude Code recusar o corte, o turno é repetido
+  assim, com um aviso na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
+  na sessão de origem. A cópia de uma sessão traz o custo acumulado da original (o Claude Code
+  restaura o `cost-state` dela, lido no binário da 2.1.325): o chat leva o último total visto
+  para a sessão nova, e o `somar_custo` soma só o que crescer. A pergunta antes de corrigir só
+  fala em "sessão nova, com um resumo" quando é isso que vai acontecer. O corte foi medido sem
+  mandar mensagem (ver o "Continuar daqui em outro chat"); a leitura de cache no turno seguinte
+  não foi medida, porque pediria um turno pago.
 - **Continuar daqui em outro chat (bifurcar).** Nas ações de uma mensagem sua e de uma resposta
   (o ícone do ramo; `src/ui/bifurcar.rs`) e na paleta de comandos (a partir da última resposta):
   nasce um chat novo na mesma pasta, "título (ramo)", com os itens da conversa até aquele ponto, o
