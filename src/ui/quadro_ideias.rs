@@ -16,10 +16,14 @@
 //! e estilos do resto"): o cabeçalho numa linha só, as colunas no fundo da lista (o mesmo buraco
 //! azul dos balões) e os cartões como as linhas da lista, num véu claro por cima dele.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicU8, Ordering},
+    time::Duration,
+};
 
 use gpui_kit::component::{
-    Sizable as _, WindowExt as _, h_flex,
+    Sizable as _, Size, WindowExt as _, h_flex,
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     v_flex,
@@ -30,7 +34,7 @@ use gpui_kit::*;
 use super::{
     Janela,
     componentes::{
-        CabecalhoDialogo, Etiqueta, PreviaArrasto, Simbolo, TamanhoBotao, Tom, aviso, aviso_com_acao, botao_fantasma,
+        CabecalhoDialogo, ControleSegmentado, Etiqueta, PreviaArrasto, Segmento, Simbolo, TamanhoBotao, Tom, aviso, aviso_com_acao, botao_fantasma,
         botao_icone, botao_perigo, botao_primario, icone, icone_de_estado, sinal_do_chat,
     },
     configuracoes::{Opcao, menu_escolha},
@@ -50,6 +54,35 @@ const LARGURA: f32 = 1240.;
 const RELER_A_CADA: Duration = Duration::from_secs(60);
 /// Quantas conversas a escolha do chat de uma ideia oferece (as mexidas por último).
 const CHATS_NA_ESCOLHA: usize = 40;
+
+/// De onde vêm as ideias que o quadro mostra (dono, 18/11/2026: "selecionar as do Linear e as do
+/// Vitral como um filtro"). Com "Vitral", a ideia nova também fica só no Vitral.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Origem {
+    #[default]
+    Todas,
+    Linear,
+    Vitral,
+}
+
+impl Origem {
+    const TODAS: [Origem; 3] = [Origem::Todas, Origem::Linear, Origem::Vitral];
+
+    fn aceita(self, ideia: &Ideia) -> bool {
+        match self {
+            Origem::Todas => true,
+            Origem::Linear => ideia.linear.is_some(),
+            Origem::Vitral => ideia.linear.is_none(),
+        }
+    }
+}
+
+/// O filtro escolhido por último, para o quadro abrir nele de novo (até fechar o app).
+static ORIGEM: AtomicU8 = AtomicU8::new(0);
+
+fn origem_lembrada() -> Origem {
+    Origem::TODAS.get(usize::from(ORIGEM.load(Ordering::Relaxed))).copied().unwrap_or_default()
+}
 
 /// O cartão que se arrasta entre as colunas.
 #[derive(Clone)]
@@ -74,6 +107,8 @@ pub(super) struct QuadroDeIdeias {
     pasta_padrao: Option<PathBuf>,
     /// Aberto pelo menu de uma conversa: só as ideias dela, e a nova nasce dela.
     do_chat: Option<String>,
+    /// Todas, só as do Linear ou só as do Vitral.
+    origem: Origem,
     edicao: Option<Edicao>,
     /// A tela de ligar o Linear: o campo da chave.
     conexao: Option<Entity<InputState>>,
@@ -120,7 +155,12 @@ impl QuadroDeIdeias {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let dica = if do_chat.is_some() { "Ideia para este chat (Enter anota)" } else { "Nova ideia (Enter anota)" };
+        let origem = origem_lembrada();
+        let dica = match (origem, do_chat.is_some()) {
+            (Origem::Vitral, _) => "Nova ideia só no Vitral (Enter anota)",
+            (_, true) => "Ideia para este chat (Enter anota)",
+            _ => "Nova ideia (Enter anota)",
+        };
         let nova = cx.new(|cx| InputState::new(window, cx).placeholder(dica));
         let assinatura = cx.subscribe_in(&nova, window, |this, campo, evento: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = evento {
@@ -132,7 +172,8 @@ impl QuadroDeIdeias {
                     Some(_) => None,
                     None => this.pasta_padrao.clone(),
                 };
-                if this.motor.update(cx, |m, cx| m.nova_ideia(&titulo, pasta, chat, cx)).is_some() {
+                let so_no_vitral = this.origem == Origem::Vitral;
+                if this.motor.update(cx, |m, cx| m.nova_ideia(&titulo, pasta, chat, so_no_vitral, cx)).is_some() {
                     campo.update(cx, |c, cx| c.set_value("", window, cx));
                 }
             }
@@ -151,6 +192,7 @@ impl QuadroDeIdeias {
             nova,
             pasta_padrao,
             do_chat,
+            origem,
             edicao: None,
             conexao: None,
             _assinaturas: vec![assinatura],
@@ -256,9 +298,43 @@ impl QuadroDeIdeias {
         cx.notify();
     }
 
-    /// As ideias que o quadro mostra: todas, ou só as do chat dele.
-    fn mostra(&self, ideia: &Ideia) -> bool {
-        self.do_chat.as_ref().is_none_or(|c| ideia.chat.as_ref() == Some(c))
+    /// As ideias que o quadro mostra: as da origem escolhida e, no quadro de um chat, só as dele.
+    fn mostra(&self, ideia: &Ideia, ligado: bool) -> bool {
+        (!ligado || self.origem.aceita(ideia)) && self.do_chat.as_ref().is_none_or(|c| ideia.chat.as_ref() == Some(c))
+    }
+
+    fn escolher_origem(&mut self, origem: Origem, window: &mut Window, cx: &mut Context<Self>) {
+        self.origem = origem;
+        ORIGEM.store(Origem::TODAS.iter().position(|o| *o == origem).unwrap_or(0) as u8, Ordering::Relaxed);
+        let dica = match (origem, self.do_chat.is_some()) {
+            (Origem::Vitral, _) => "Nova ideia só no Vitral (Enter anota)",
+            (_, true) => "Ideia para este chat (Enter anota)",
+            _ => "Nova ideia (Enter anota)",
+        };
+        self.nova.update(cx, |c, cx| c.set_placeholder(dica, window, cx));
+        cx.notify();
+    }
+
+    /// Todas, Linear ou Vitral, com quantas há em cada (só com o Linear ligado).
+    fn filtro_de_origem(&self, m: &Motor, cx: &Context<Self>) -> Option<AnyElement> {
+        if !m.linear_ligado() {
+            return None;
+        }
+        let do_quadro = |o: Origem| m.quadro().ideias.iter().filter(|i| o.aceita(i) && self.do_chat.as_ref().is_none_or(|c| i.chat.as_ref() == Some(c))).count();
+        let segmentos = [
+            Segmento::new(format!("Todas {}", do_quadro(Origem::Todas))),
+            Segmento::new(format!("Linear {}", do_quadro(Origem::Linear))).dica("As issues com a etiqueta Ideia no Linear"),
+            Segmento::new(format!("Vitral {}", do_quadro(Origem::Vitral))).dica("As que ficam só no Vitral; a nova anotada aqui também fica"),
+        ];
+        let atual = Origem::TODAS.iter().position(|o| *o == self.origem).unwrap_or(0);
+        let vista = cx.entity().downgrade();
+        Some(
+            ControleSegmentado::new("origem-das-ideias", segmentos, atual, move |n, window, cx| {
+                let _ = vista.update(cx, |q, cx| q.escolher_origem(Origem::TODAS[n], window, cx));
+            })
+            .with_size(Size::Small)
+            .into_any_element(),
+        )
     }
 
     /// O cabeçalho do quadro numa linha: o nome, o chat do filtro (com o × que mostra todas), como
@@ -325,6 +401,7 @@ impl QuadroDeIdeias {
             .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Lightbulb, 16., window)))
             .child(div().flex_none().text_size(r(15.)).line_height(r(20.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child("Ideias"))
             .children(filtro)
+            .children(self.filtro_de_origem(m, cx))
             .child(cortado().flex_1().metadado().text_color(cor).child(texto))
             .children(botoes)
             .child(
@@ -739,7 +816,7 @@ impl Render for QuadroDeIdeias {
         let colunas: Vec<AnyElement> = Coluna::TODAS
             .into_iter()
             .map(|c| {
-                let ideias: Vec<Ideia> = m.quadro().da_coluna(c).into_iter().filter(|i| self.mostra(i)).cloned().collect();
+                let ideias: Vec<Ideia> = m.quadro().da_coluna(c).into_iter().filter(|i| self.mostra(i, m.linear_ligado())).cloned().collect();
                 self.coluna(c, ideias, m, window, cx)
             })
             .collect();

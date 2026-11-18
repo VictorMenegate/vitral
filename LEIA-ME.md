@@ -1398,6 +1398,10 @@ do Vitral, guardados no cartão.
   cabeçalho mostra o erro em vermelho e o quadro relê.
 - **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam no quadro, sem
   o código de issue, e não sobem (dono, 18/11/2026: "não precisa ter isso de mandar pro Linear").
+- **O filtro:** no cabeçalho, **Todas**, **Linear** e **Vitral**, cada um com quantas há (dono,
+  18/11/2026: "selecionar as do Linear e as do Vitral como um filtro"). Com **Vitral**, a ideia nova
+  também fica só no Vitral (o campo diz "Nova ideia só no Vitral"). O quadro abre no último filtro
+  escolhido, até fechar o app. Sem o Linear ligado, o filtro não aparece.
 - **Desligar** (o ícone da tomada) apaga a chave; os cartões das issues saem do quadro.
 
 ## Compilar e rodar

@@ -14,7 +14,8 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   pedido na fila dela, sem criar outro. Sem chat, **Abrir chat** cria um com o pedido.
 - **As ideias ficam no Linear.** Com a chave pessoal do Linear, as ideias são as issues com a
   etiqueta Ideia do time (o EFI): as colunas seguem o estado, e o que você cria, edita, arrasta ou
-  apaga aqui muda lá. As tarefas do time não entram.
+  apaga aqui muda lá. As tarefas do time não entram. O filtro do cabeçalho mostra todas, só as do
+  Linear ou só as do Vitral; com Vitral, a ideia nova fica só aqui.
 - **Mensagem presa sem o cinza.** A faixa da sua mensagem no alto da conversa tem as mesmas
   camadas do cartão, transparente como ele, com uma sombra curta embaixo.
 - **Conversa com duas bordas só.** O texto da resposta, o ícone de cada linha do que o agente fez,

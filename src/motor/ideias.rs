@@ -280,9 +280,16 @@ impl Motor {
 
     // ---------- os cartões ----------
 
-    /// Um cartão novo no alto da coluna Ideias (e, com o Linear, a issue). `chat`: a conversa de
-    /// que a ideia é (aberto o quadro pelo menu dela). Devolve o id.
-    pub fn nova_ideia(&mut self, titulo: &str, pasta: Option<PathBuf>, chat: Option<String>, cx: &mut Context<Self>) -> Option<String> {
+    /// Um cartão novo no alto da coluna Ideias (e, com o Linear e sem `so_no_vitral`, a issue).
+    /// `chat`: a conversa de que a ideia é (aberto o quadro pelo menu dela). Devolve o id.
+    pub fn nova_ideia(
+        &mut self,
+        titulo: &str,
+        pasta: Option<PathBuf>,
+        chat: Option<String>,
+        so_no_vitral: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         let titulo = titulo.trim();
         if titulo.is_empty() || self.somente_leitura.is_some() {
             return None;
@@ -290,7 +297,9 @@ impl Motor {
         let id = novo_id();
         self.quadro.adicionar(Ideia { id: id.clone(), titulo: titulo.to_string(), pasta, chat, criada_em: agora(), ..Default::default() });
         self.salvar_quadro();
-        self.criar_no_linear(&id, cx);
+        if !so_no_vitral {
+            self.criar_no_linear(&id, cx);
+        }
         cx.notify();
         Some(id)
     }
