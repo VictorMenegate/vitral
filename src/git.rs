@@ -11,6 +11,8 @@ use anyhow::{Result, bail};
 
 use crate::processos::novo_comando;
 
+pub mod remendo;
+
 /// No Windows, `core.longpaths` em todo git do Vitral: as cópias ficam em `.vitral\worktrees\…`, e
 /// um `node_modules` lá dentro passa fácil dos 260 caracteres de caminho do Windows.
 const CAMINHOS_LONGOS: &[&str] = if cfg!(windows) { &["-c", "core.longpaths=true"] } else { &[] };
@@ -280,9 +282,18 @@ fn linhas_do_numstat(numstat: &str) -> Vec<(String, u32, u32)> {
     saida
 }
 
+/// Como o Vitral pede o diff de um arquivo contra o último commit: três linhas de contexto, sem
+/// cor, sem programa de diff de fora e com os prefixos "a/" e "b/" de sempre, qualquer que seja a
+/// configuração de quem usa. O desfazer por trecho (`remendo.rs`) relê o diff com as mesmas
+/// opções e confere com o que a tela mostrava.
+const DIFF_DO_ARQUIVO: [&str; 9] =
+    ["-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "diff", "HEAD", "-U3", "--no-color", "--no-ext-diff"];
+
 /// O diff unificado de um arquivo desde o último commit (vazio se não há o que mostrar).
 pub fn diff_do_arquivo(raiz: &Path, caminho: &str) -> String {
-    git(raiz, &["diff", "HEAD", "-U3", "--no-color", "--", caminho]).unwrap_or_default()
+    let mut args = DIFF_DO_ARQUIVO.to_vec();
+    args.extend(["--", caminho]);
+    git(raiz, &args).unwrap_or_default()
 }
 
 /// Desfaz o que mudou num arquivo que o git conhece: ele volta ao último commit (o que estava

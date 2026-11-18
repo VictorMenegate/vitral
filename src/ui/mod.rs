@@ -17,6 +17,7 @@ mod composer;
 mod configuracoes;
 mod conversa;
 mod copias;
+mod desfazer_trecho;
 mod dialogos;
 mod este_chat;
 mod edicao;
@@ -471,6 +472,9 @@ pub struct Janela {
     git_da_pasta: git_da_pasta::GitDaPasta,
     /// O ramo de agora das pastas dos chats à vista (o aviso de troca de ramo, acima da caixa).
     ramos: ramo::Ramos,
+    /// O diff do git que o visor do arquivo mostra (aberto pela seção Na pasta), para o desfazer
+    /// por trecho.
+    diff_do_git: Option<desfazer_trecho::DiffDoGit>,
     /// Os comentários presos a linhas do arquivo aberto, guardados por chat até o envio.
     comentarios: comentarios::Comentarios,
     painel: bool,
@@ -778,6 +782,7 @@ impl Janela {
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
             ramos: Default::default(),
+            diff_do_git: None,
             comentarios: comentarios::Comentarios::new(window, cx),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.

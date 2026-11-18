@@ -3,6 +3,7 @@
 //! número de linha, e o aviso de quando não dá para mostrar. Aberto por uma linha de edição da
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
 //! (`edicao.rs`). O número da linha escolhe linhas para mencionar ou comentar (`comentarios.rs`).
+//! No diff do git, cada mudança pode voltar sozinha ao último commit (`desfazer_trecho.rs`).
 
 use gpui_kit::component::{
     ActiveTheme as _, ElementExt as _, WindowExt as _,
@@ -244,7 +245,8 @@ enum Fundo {
 /// edição, a coluna do sinal (+ e −) entre os dois, a faixa da cor na borda e o fundo da cor (o
 /// mesmo do diff da trilha). O número escolhe a linha para mencionar; com Shift, estende a escolha
 /// (dono, 16/11/2026: "uma seleção de linhas no painel também pode ser mencionada").
-/// `comentada`: a linha está num trecho com comentário guardado.
+/// `comentada`: a linha está num trecho com comentário guardado. `bloco`: a mudança do diff do git
+/// a que a linha pertence, quando dá para desfazê-la sozinha (o botão aparece com o ponteiro nela).
 #[allow(clippy::too_many_arguments)]
 fn fileira_de_codigo(
     indice: usize,
@@ -255,6 +257,7 @@ fn fileira_de_codigo(
     fundo: Fundo,
     sinal: Option<&'static str>,
     comentada: bool,
+    bloco: Option<usize>,
     janela: WeakEntity<Janela>,
 ) -> AnyElement {
     // Uma faixa fora da linha derrubaria o desenho do texto.
@@ -267,6 +270,33 @@ fn fileira_de_codigo(
         Fundo::Saiu => Some(Cores::vermelho()),
         Fundo::Nenhum | Fundo::Escolhida => None,
     };
+    // Com o ponteiro numa linha mudada do diff do git, o botão que desfaz só aquele bloco: por
+    // cima da coluna do sinal, que não rola para o lado com o texto.
+    let grupo = bloco.map(|_| SharedString::from(format!("fileira-{indice}")));
+    let desfazer = bloco.zip(grupo.clone()).map(|(bloco, grupo)| {
+        let janela = janela.clone();
+        div()
+            .id(("desfazer-trecho-da-linha", indice))
+            .absolute()
+            .left(rems(largura_numero.0 + 14. / 15.))
+            .top_0()
+            .size(r(20.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(raio::CONTROLE)
+            .bg(Cores::dialogo())
+            .text_color(Cores::tenue())
+            .cursor_pointer()
+            .invisible()
+            .group_hover(grupo, |s| s.visible())
+            .hover(|s| s.text_color(Cores::texto()))
+            .child(super::mensagens::icone_de(Lucide::RotateCcw, 12.))
+            .tooltip(|window, cx| Tooltip::new("Desfazer só este trecho\nVolta ao último commit; o resto do arquivo fica").build(window, cx))
+            .on_click(move |_, window, cx| {
+                let _ = janela.update(cx, |this, cx| this.pedir_desfazer_trecho(bloco, window, cx));
+            })
+    });
     let numero_el = div()
         .id(("numero-da-linha", indice))
         .w(largura_numero)
@@ -289,6 +319,7 @@ fn fileira_de_codigo(
         });
     div()
         .relative()
+        .when_some(grupo, |s, grupo| s.group(grupo))
         .flex()
         .h(r(20.))
         .pl(esp::E12)
@@ -316,6 +347,7 @@ fn fileira_de_codigo(
                 .text_color(if fundo == Fundo::Saiu { Cores::tenue() } else { Cores::texto() })
                 .child(StyledText::new(if texto.is_empty() { SharedString::from(" ") } else { texto }).with_highlights(cores)),
         )
+        .children(desfazer)
         .into_any_element()
 }
 
@@ -431,7 +463,8 @@ impl Janela {
         let reserva = self.reserva_dos_aneis(window, cx);
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, reserva, na_gaveta, window, cx);
-        let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
+        let desfaz_por_trecho = vista.as_ref().is_some_and(|(v, _)| self.desfaz_por_trecho(v));
+        let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), desfaz_por_trecho, reserva, na_gaveta, window, cx));
         let comentarios = self.faixas_dos_comentarios(reserva, na_gaveta, window, cx);
         let corpo = match conteudo {
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
@@ -518,6 +551,9 @@ impl Janela {
                             rolagem_codigo.scroll_to_item(mudanca.fileira.saturating_sub(4), ScrollStrategy::Top);
                         }
                         let janela = janela.clone();
+                        // No diff do git, cada linha mudada sabe o bloco dela, para desfazê-lo sozinho.
+                        let blocos = desfaz_por_trecho.then(|| super::desfazer_trecho::bloco_de_cada_fileira(&vista));
+                        let bloco_da = move |i: usize| blocos.as_ref().and_then(|b| b.get(i).copied().flatten());
                         uniform_list(id, vista.fileiras.len(), move |faixa, _, _| {
                             faixa
                                 .map(|i| match &vista.fileiras[i] {
@@ -530,10 +566,10 @@ impl Janela {
                                         };
                                         let sinal = if *entrou { "+" } else { " " };
                                         let texto = linhas.get(*linha).cloned().unwrap_or_default();
-                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), comentada(linha + 1), janela.clone())
+                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), comentada(linha + 1), bloco_da(i), janela.clone())
                                     }
                                     Fileira::Saiu(texto) => {
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), false, janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), false, bloco_da(i), janela.clone())
                                     }
                                     Fileira::Solta(marca, texto) => {
                                         let (fundo, sinal) = match marca {
@@ -541,7 +577,7 @@ impl Janela {
                                             Marca::Sai => (Fundo::Saiu, "−"),
                                             Marca::Igual => (Fundo::Nenhum, " "),
                                         };
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), false, janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), false, None, janela.clone())
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
                                 })
@@ -556,7 +592,7 @@ impl Janela {
                                 .map(|i| {
                                     let cores_linha = cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
                                     let fundo = if escolhida(i + 1) { Fundo::Escolhida } else { Fundo::Nenhum };
-                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, comentada(i + 1), janela.clone())
+                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, comentada(i + 1), None, janela.clone())
                                 })
                                 .collect()
                         })
@@ -797,12 +833,18 @@ impl Janela {
         &self,
         edicao: &Edicao,
         vista: Option<&Vista>,
+        desfaz_por_trecho: bool,
         reserva: Option<Pixels>,
         na_gaveta: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let mudancas = vista.map_or(0, |v| v.mudancas.len());
+        // No diff do git, a mudança à vista (a das setas) volta sozinha ao último commit.
+        let desfazer = (desfaz_por_trecho && mudancas > 0).then(|| {
+            botao_icone("desfazer-trecho", Lucide::RotateCcw, "Desfazer só esta mudança\nVolta ao último commit; o resto do arquivo fica", TamanhoBotao::Linha, window, cx)
+                .on_click(cx.listener(move |this, _, window, cx| this.pedir_desfazer_trecho(this.edicao_atual % mudancas, window, cx)))
+        });
         let fechar = botao_icone("fechar-edicao", Lucide::X, "Ver o arquivo sem a edição", TamanhoBotao::Linha, window, cx)
             .on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)));
         let setas = (mudancas > 1).then(|| {
@@ -872,6 +914,7 @@ impl Janela {
             .border_b_1()
             .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
             .child(esquerda)
+            .children(desfazer)
             .children(setas)
             .child(fechar)
             .into_any_element()
@@ -896,6 +939,20 @@ impl Janela {
         let mais_longa = (0..vista.fileiras.len()).max_by_key(|&i| largura(&vista.fileiras[i])).unwrap_or(0);
         l.vista = Some((Rc::as_ptr(edicao) as usize, vista.clone(), mais_longa));
         (vista, mais_longa)
+    }
+
+    /// A edição posta nas linhas do arquivo aberto, como o último desenho a montou.
+    pub(super) fn vista_aberta(&self) -> Option<Rc<Vista>> {
+        self.arquivo_lido.borrow().as_ref()?.vista.as_ref().map(|(_, vista, _)| vista.clone())
+    }
+
+    /// O arquivo aberto mudou no disco agora mesmo (um trecho desfeito): o próximo desenho o relê
+    /// sem esperar o segundo da conferência, e continua rolado onde estava.
+    pub(super) fn reler_arquivo_aberto(&self) {
+        if let Some(l) = self.arquivo_lido.borrow_mut().as_mut() {
+            l.modificado = None;
+            l.conferido = Instant::now().checked_sub(Duration::from_secs(2)).unwrap_or(l.conferido);
+        }
     }
 
     /// As linhas que o Mencionar leva: as escolhidas ou, na edição, as da mudança à vista.
