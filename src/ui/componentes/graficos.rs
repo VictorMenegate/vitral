@@ -98,6 +98,25 @@ fn pintar_anel(
     pintar_arco(bounds, raio_fora, espessura, de, de + f * (ate - de), cor, window);
 }
 
+/// O trilho inteiro, sem fenda, e por cima o arco da fração a partir do alto, no sentido horário:
+/// lê como medidor, e não como o anel girando de "trabalhando" (dono, 18/11/2026: "melhora o
+/// design dessa parte de usos e contexto").
+fn pintar_anel_inteiro(
+    bounds: Bounds<Pixels>,
+    raio_fora: f32,
+    espessura: f32,
+    fracao: Option<f32>,
+    cor: Hsla,
+    window: &mut Window,
+) {
+    let trilho = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
+    trilho.paint(&ArcData::new(&(), 0, 1., 0., TAU), Cores::traco(), &bounds, window);
+    let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) else {
+        return;
+    };
+    pintar_arco(bounds, raio_fora, espessura, 0., f.max(0.02) * TAU, cor, window);
+}
+
 /// Anel de progresso: contexto, uso da conta, progresso da Equipe. O arco desliza até a fração
 /// nova em 240 ms (o `id` guarda de onde ele vem; precisa ser único entre os irmãos).
 #[derive(IntoElement)]
@@ -390,7 +409,7 @@ impl RenderOnce for AnelDeUso {
             movimento::valor(chave, alvo, movimento::ENCHER, Curva::Mover, window, cx)
         };
         let fora = fora.map(|_| f);
-        let disco = diametro - 12.;
+        let disco = diametro - 10.;
         div()
             .id(self.id)
             .relative()
@@ -405,8 +424,8 @@ impl RenderOnce for AnelDeUso {
                     move |bounds, _, window, _| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
-                        // Um anel só, de 3, com a fenda embaixo.
-                        pintar_anel(bounds, raio_fora, 3. * escala, fora, cor_fora, window);
+                        // Um anel fino e inteiro, que enche a partir do alto.
+                        pintar_anel_inteiro(bounds, raio_fora, 2. * escala, fora, cor_fora, window);
                     },
                 )
                 .absolute()

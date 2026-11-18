@@ -75,7 +75,19 @@ impl Janela {
                 .absolute()
                 .right(r(USO_DA_BORDA))
                 .top(r(USO_DO_TOPO))
-                .child(v_flex().gap(esp::E6).children(botoes))
+                // Os dois numa peça só, a cápsula opaca de fio fino e sombra curta: eram duas moedas
+            // soltas por cima da conversa (dono, 18/11/2026: "melhora o design dessa parte").
+            .child(
+                v_flex()
+                    .p(esp::E4)
+                    .gap(esp::E4)
+                    .rounded(crate::tema::raio::de(DIAMETRO_NO_CANTO + 8.))
+                    .bg(Cores::cartao_opaco())
+                    .border_1()
+                    .border_color(Cores::borda())
+                    .shadow(crate::tema::sombra_elevado())
+                    .children(botoes),
+            )
                 .into_any_element(),
         )
     }
@@ -87,7 +99,8 @@ impl Janela {
     /// da direita da janela: a distância dos anéis até ela, o diâmetro e 8 de respiro.
     pub(super) fn reserva_dos_aneis(&self, window: &Window, cx: &App) -> Option<Pixels> {
         let ligado = self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto);
-        ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 8.))
+        // A cápsula soma 4 de cada lado e o fio.
+        ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 10. + 8.))
     }
 
     fn botoes_uso(&self, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -207,15 +220,10 @@ impl RenderOnce for BotaoUso {
             .cursor_pointer()
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            // O disco opaco da peça, com o fio de 1 px e uma sombra curta: flutua por cima da
-            // conversa sem sumir no texto (dono, 16/11/2026).
-            .bg(Cores::cartao_opaco())
-            .border_1()
-            .border_color(Cores::borda())
-            .shadow(crate::tema::sombra_elevado())
-            .when(self.aberto, |s| s.bg(Cores::cartao_opaco().blend(Cores::pressionado())))
+            // A cápsula em volta é que flutua (`uso_no_canto`); aqui só o realce do ponteiro.
+            .when(self.aberto, |s| s.bg(Cores::pressionado()))
             .when(!self.aberto, |s| {
-                s.hover(|s| s.bg(Cores::cartao_opaco().blend(Cores::hover())))
+                s.hover(|s| s.bg(Cores::hover()))
                     .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(
@@ -235,16 +243,17 @@ fn inicial_da_conta(letra: String, pequena: bool) -> impl IntoElement + use<> {
         .absolute()
         .right(r(-2.))
         .bottom(r(-2.))
-        .size(r(if pequena { 12. } else { 15. }))
+        .size(r(if pequena { 11. } else { 13. }))
         .flex()
         .items_center()
         .justify_center()
         .rounded_full()
+        // Recortado na cápsula: o fio é da cor dela, e não um aro claro.
         .border_1()
-        .border_color(Cores::borda_forte())
+        .border_color(Cores::cartao_opaco())
         .bg(Cores::flutuante())
         .text_color(Cores::texto())
-        .text_size(r(if pequena { 8. } else { 9. }))
+        .text_size(r(if pequena { 7. } else { 8. }))
         .line_height(r(10.))
         .font_semibold()
         .child(letra)

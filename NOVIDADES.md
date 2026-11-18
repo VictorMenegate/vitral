@@ -238,6 +238,10 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
   lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
   leva até ela.
+- **Uso e contexto redesenhados.** Os anéis de uso do Claude e do Codex moram numa cápsula só no
+  canto, com um anel fino e inteiro que enche a partir do alto (a inicial da conta, menor,
+  recortada nele). O contexto da conversa, na caixa, virou um medidor deitado com a porcentagem:
+  o anel com um pedaço azul lia como o "carregando".
 - **Mais leve com um chat trabalhando.** As mensagens de cada painel e a lista viraram partes que
   só se redesenham quando mudam: o anel girando, o metal e a rolagem de um painel não refazem o
   resto. Medido na bancada com um chat rodando: a thread da janela caiu de 48% para 34% de um
