@@ -10,6 +10,7 @@ mod abertura;
 pub mod atalhos;
 mod atualizacao;
 mod avisos_no_app;
+mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
 mod composer;

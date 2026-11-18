@@ -18,6 +18,7 @@ use smol::channel::{Sender, unbounded};
 mod importacao;
 mod conversas;
 mod ideias;
+mod bifurcar;
 mod comando_seu;
 mod permissoes_da_pasta;
 pub use comando_seu::{COMANDO_COMECOU, SituacaoDoComando, citacao_do_comando};
@@ -2108,7 +2109,11 @@ impl Motor {
             sessao: chat.sessao.clone(),
             retomar: chat.sessao_criada,
             // A conversa importada é do Claude Code: no Codex ela entra pelo bloco de passagem.
-            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada).filter(|_| !codex),
+            // O chat bifurcado de outro também começa numa cópia: a da sessão do chat de origem.
+            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada)
+                .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada).map(|b| b.sessao.clone()))
+                .filter(|_| !codex),
+            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && !codex).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
             modelo: self.modelo_do_turno(chat),
@@ -2692,6 +2697,10 @@ impl Motor {
     /// Erro de sessão logo no começo do turno: ela existe e o Vitral achava que não (queda logo
     /// depois de criá-la), ou sumiu. Acerta a marca e repete o turno uma vez. Diz se repetiu.
     fn consertar_sessao(&mut self, chat_id: &str, erro: &str, cx: &mut Context<Self>) -> bool {
+        // O chat bifurcado cuja cópia da sessão o Claude Code recusou (`motor/bifurcar.rs`).
+        if self.consertar_bifurcacao(chat_id, erro, cx) {
+            return true;
+        }
         let Some(chat) = self.chat(chat_id) else {
             return false;
         };
@@ -4562,6 +4571,13 @@ fn bloco_de_passagem(itens: &[Item], pular: usize, motivo: MotivoPassagem) -> St
             "[Vitral] Passagem de sessão: a sessão anterior do Claude Code desta conversa expirou, e esta é \
              uma nova. As últimas mensagens, para continuar de onde parou (a conversa inteira continua na \
              tela do usuário):",
+        // As falas abaixo vieram copiadas do chat de origem, que segue o caminho dele.
+        MotivoPassagem::Bifurcou =>
+            "[Vitral] Passagem de conversa: esta conversa é um ramo de outra. O usuário escolheu um ponto \
+             dela e abriu este chat para seguir por outro caminho a partir dali; a conversa de origem \
+             continua à parte e você não vê o que acontecer nela. O que já estava mudado nos arquivos \
+             continua como está na pasta. As últimas mensagens até o ponto escolhido, para continuar de \
+             lá (a conversa inteira até ali está na tela do usuário):",
         // Nas falas abaixo, "Você" foi o outro agente: o que ele fez nos arquivos continua lá.
         MotivoPassagem::TrocouDeAgente =>
             "[Vitral] Passagem de conversa: até aqui quem respondia nesta conversa era outro agente de \

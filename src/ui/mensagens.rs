@@ -758,7 +758,7 @@ impl Janela {
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, marca, window, cx))
             }
             Item::Assistente { texto, .. } => {
-                (Bloco::Texto, self.texto_assistente(contexto, indice, &chave, texto, item.em(), cx))
+                (Bloco::Texto, self.texto_assistente(contexto, indice, &chave, texto, item.em(), window, cx))
             }
             Item::Entrega { de, texto, .. } => {
                 (Bloco::Recebida, self.mensagem_recebida(contexto, indice, &chave, de, texto, item.em(), window, cx))
@@ -924,6 +924,13 @@ impl Janela {
             if let Some(ix) = ix {
                 acoes.push(super::reenvio::botao_editar(chave, contexto.painel, ix, window, cx).into_any_element());
             }
+        }
+        // "Continuar daqui em outro chat": só nas mensagens da própria conversa (as do histórico
+        // trazido do Claude Code não são itens dela).
+        if let Some(ix) = chave.rsplit(':').next().and_then(|i| i.parse::<usize>().ok())
+            && matches!(contexto.chat.itens.get(ix), Some(Item::Usuario { texto: t, .. }) if t == texto)
+        {
+            acoes.push(super::bifurcar::botao(chave, contexto.painel, ix, window, cx).into_any_element());
         }
         // Os arquivos voltam a como estavam antes desta mensagem (o checkpoint do Claude Code).
         if let Some(marca) = marca {
@@ -1138,6 +1145,7 @@ impl Janela {
         chave: &str,
         texto: &str,
         em: u64,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
@@ -1208,7 +1216,15 @@ impl Janela {
             // era um terço da linha. O seu balão continua com ela em cima.
             .child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
-                hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
+                hora_na_barra(em)
+                    .into_iter()
+                    // "Continuar daqui em outro chat", só nas respostas da própria conversa.
+                    .chain(
+                        matches!(contexto.chat.itens.get(indice), Some(Item::Assistente { texto: t, .. }) if t == texto)
+                            .then(|| super::bifurcar::botao(chave, contexto.painel, indice, window, cx).into_any_element()),
+                    )
+                    .chain([copiar(chave, texto).into_any_element()])
+                    .collect(),
                 cx,
             )));
         div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()

@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Continuar daqui em outro chat.** Nas ações de uma mensagem sua e de uma resposta, o ícone do
+  ramo abre ao lado um chat novo com a conversa até aquele ponto, e o agente dele lembra do que
+  veio antes. O chat original fica como está: dá para testar outro caminho sem perder o primeiro.
 - **Permitir sempre nesta pasta.** No pedido de permissão, **Sempre nesta pasta** grava a regra
   para todos os chats daquela pasta, os abertos e os novos: um chat novo no mesmo projeto não
   pergunta de novo. No menu do modo, as regras aparecem em **Deste chat** e **Desta pasta**.

@@ -21,6 +21,9 @@ pub enum MotivoPassagem {
     SaiuDaCopia,
     /// O usuário trocou quem responde (Claude ou Codex): a conversa de um não abre no outro.
     TrocouDeAgente,
+    /// O chat nasceu de outro ("Continuar daqui em outro chat") e a sessão de lá não pôde ser
+    /// copiada (Codex, conversa sem sessão ou sem o ponto no arquivo dela).
+    Bifurcou,
 }
 
 /// "Enquanto você esteve fora": só na memória, montado das ocorrências; nunca vai para o disco.

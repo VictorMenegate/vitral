@@ -73,6 +73,30 @@ componentes do GPUI Kit.
   dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
   do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
   e o que veio depois. Na dupla, a sessão do parceiro também recomeça.
+- **Continuar daqui em outro chat (bifurcar).** Nas ações de uma mensagem sua e de uma resposta
+  (o ícone do ramo; `src/ui/bifurcar.rs`) e na paleta de comandos (a partir da última resposta):
+  nasce um chat novo na mesma pasta, "título (ramo)", com os itens da conversa até aquele ponto, o
+  mesmo agente, modelo, modo e regras de permissão, aberto num painel ao lado (sem lugar, numa aba
+  do mesmo); o original não muda. O corte é sempre na borda de um turno: numa resposta, vai o
+  turno dela inteiro; numa mensagem sua, tudo o que veio antes, e o texto dela (com os anexos)
+  vai para a caixa do chat novo. No Claude com sessão gravada, o primeiro turno do chat novo sai
+  numa cópia da sessão de origem, pelo caminho das conversas trazidas (`--resume <origem>
+  --fork-session --session-id <nova>`, o `bifurcar` de `src/claude.rs`), cortada no ponto com
+  `--resume-session-at <uuid>` (`Opcoes::cortar_em`): o agente lembra do que veio antes sem
+  resumo. O uuid é o da última entrada do agente ou do usuário antes da mensagem que abre o turno
+  seguinte, achado no arquivo da sessão subindo a cadeia de `parentUuid` a partir da marca dela
+  (`motor/bifurcar.rs`, `ponto_de_corte`); o ponto fica em `Chat.bifurcado_de` até a sessão nova
+  nascer. No Codex, sem sessão, sem marca (conversa antiga, mensagem dirigida ao turno) ou sem o
+  ponto no arquivo, o chat novo começa numa sessão nova com o bloco de passagem
+  (`MotivoPassagem::Bifurcou`). A flag `--resume-session-at` está no Claude Code 2.1.325 fora do
+  `--help`. Medido em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem
+  (não gasta o plano, como o `rewind_files`): ela aceita o uuid de qualquer entrada da cadeia (do
+  agente, sua, de anexo ou de sistema), a sessão retomada inteira tinha 40.388 tokens de
+  mensagens e, cortada na primeira mensagem, 39 (o `get_context_usage`), e um uuid que não está
+  na sessão sai com "No message found with message.uuid of". Nesse caso (e com a sessão de origem
+  apagada) o Vitral repete o turno numa sessão nova com o bloco de passagem
+  (`consertar_bifurcacao`). Não foi medido um turno de verdade depois do corte. Com o último
+  turno ainda rodando, bifurcar na última resposta espera.
 - **Economia de tokens sem mexer na resposta.** Três coisas, nenhuma corta saída, baixa esforço ou
   troca modelo sozinha. (1) `claude::ambiente` desliga o gasto de fundo que o Vitral não mostra
   (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,

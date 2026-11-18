@@ -305,6 +305,16 @@ impl Parceiro {
     }
 }
 
+/// De onde um chat bifurcado continua ("Continuar daqui em outro chat", `motor/bifurcar.rs`): a
+/// sessão do Claude Code do chat de origem e, quando a bifurcação não foi no último turno, o uuid
+/// da entrada em que a cópia para (`--resume-session-at`). Só vale até a sessão do chat novo nascer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bifurcacao {
+    pub sessao: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ate: Option<String>,
+}
+
 fn eh_zero(n: &u64) -> bool {
     *n == 0
 }
@@ -399,6 +409,9 @@ pub struct Chat {
     /// A conversa do Claude Code que este chat continua (o histórico vem do arquivo dela).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importada: Option<crate::importar::Importada>,
+    /// O chat nasceu de outro, a partir de um ponto da conversa: de onde o primeiro turno continua.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bifurcado_de: Option<Bifurcacao>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
@@ -445,6 +458,7 @@ impl Chat {
             memoria_pedida_em: 0,
             criado_por: String::new(),
             importada: None,
+            bifurcado_de: None,
             resto: Default::default(),
             itens: Vec::new(),
         }

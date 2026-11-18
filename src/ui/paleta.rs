@@ -39,6 +39,7 @@ enum Direto {
     Compactar,
     Agentes,
     SessaoNova,
+    Bifurcar,
     Renomear,
     Fixar,
     Arquivar,
@@ -55,12 +56,13 @@ enum Direto {
 }
 
 impl Direto {
-    const TODOS: [Direto; 18] = [
+    const TODOS: [Direto; 19] = [
         Direto::MandarDepois,
         Direto::PerguntarAoOutro,
         Direto::Compactar,
         Direto::Agentes,
         Direto::SessaoNova,
+        Direto::Bifurcar,
         Direto::Renomear,
         Direto::Fixar,
         Direto::Arquivar,
@@ -80,7 +82,9 @@ impl Direto {
     fn grupo(self) -> Grupo {
         use Direto::*;
         match self {
-            MandarDepois | PerguntarAoOutro | Compactar | Agentes | SessaoNova | Renomear | Fixar | Arquivar => Grupo::Conversa,
+            MandarDepois | PerguntarAoOutro | Compactar | Agentes | SessaoNova | Bifurcar | Renomear | Fixar | Arquivar => {
+                Grupo::Conversa
+            }
             NovoChatEmOutraPasta | Importar => Grupo::Lista,
             ModoFoco => Grupo::Paineis,
             PastaDeTrabalho | Contas | ServidoresMcp | MemoriaDaEquipe | ConsultarMemoria | Reiniciar | PastaDeDados => Grupo::Janela,
@@ -98,6 +102,7 @@ impl Direto {
             Compactar => "Compactar a conversa".into(),
             Agentes => "Agentes desta conversa".into(),
             SessaoNova => "Sessão nova".into(),
+            Bifurcar => "Continuar em outro chat a partir da última resposta".into(),
             Renomear => "Renomear a conversa…".into(),
             Fixar if chat.is_some_and(|c| c.fixado) => "Desafixar a conversa".into(),
             Fixar => "Fixar a conversa".into(),
@@ -129,6 +134,7 @@ impl Direto {
             Compactar => "compact resumir contexto",
             Agentes => "mapa subagentes",
             SessaoNova => "clear limpar recomeçar",
+            Bifurcar => "bifurcar ramo fork copiar conversa",
             Renomear => "título nome",
             Fixar => "pin",
             Arquivar => "guardar",
@@ -166,6 +172,8 @@ impl Direto {
                     Compactar if !c.com_sessao => Some("A conversa ainda não tem sessão".into()),
                     Agentes if !c.tem_agentes => Some("Esta conversa não abriu agentes".into()),
                     SessaoNova if c.rodando => Some("Espere o turno terminar".into()),
+                    Bifurcar if !c.tem_resposta => Some("A conversa ainda não tem resposta".into()),
+                    Bifurcar if c.rodando => Some("Espere o turno terminar".into()),
                     _ => None,
                 }
             }
@@ -188,6 +196,8 @@ struct ChatAgora {
     caixa_vazia: bool,
     caixa_com_barra: bool,
     modo_foco: bool,
+    /// A conversa tem pelo menos uma resposta (de onde bifurcar).
+    tem_resposta: bool,
 }
 
 /// A foto do app no instante em que a paleta abre: decide os rótulos e o que fica apagado.
@@ -333,6 +343,7 @@ impl Janela {
                 caixa_vazia: caixa.trim().is_empty(),
                 caixa_com_barra: caixa.trim_start().starts_with('/'),
                 modo_foco: p.modo_foco,
+                tem_resposta: super::bifurcar::ultima_resposta(&c.itens).is_some(),
             }
         });
         Momento {
@@ -443,6 +454,12 @@ impl Janela {
                     Direto::Compactar => self.compactar_conversa(painel, cx),
                     Direto::Agentes => self.abrir_mapa_de_agentes(chat, window, cx),
                     Direto::SessaoNova => motor.update(cx, |m, cx| m.nova_sessao(&chat, cx)),
+                    Direto::Bifurcar => {
+                        let ultima = motor.read(cx).chat(&chat).and_then(|c| super::bifurcar::ultima_resposta(&c.itens));
+                        if let Some(ix) = ultima {
+                            self.continuar_em_outro_chat(painel, ix, window, cx);
+                        }
+                    }
                     Direto::Renomear => self.dialogo_renomear(chat, window, cx),
                     Direto::Fixar => motor.update(cx, |m, cx| m.alternar_fixado(&chat, cx)),
                     Direto::Arquivar => {
