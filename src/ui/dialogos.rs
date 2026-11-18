@@ -452,6 +452,9 @@ impl Janela {
             return;
         };
         let painel = cx.new(|cx| PainelContas::new(motor.clone(), window, cx));
+        // "Onde o uso foi" fica embaixo das contas; no diálogo aberto direto no login, não.
+        let janela = cx.entity().downgrade();
+        let onde = (!entrar).then(|| cx.new(|cx| super::onde_uso::OndeOUsoFoi::new(motor.clone(), janela, cx)));
         if entrar {
             painel.update(cx, |p, cx| p.entrar(window, cx));
         } else if let Some(conta) = de_novo {
@@ -474,6 +477,7 @@ impl Janela {
             moldura(dialogo, largura::M, window)
                 .title(topo(cabecalho("Contas do Claude", Some(conectadas))))
                 .child(painel.clone())
+                .children(onde.clone())
                 // O Enter do código entra pelo próprio campo; o diálogo não fecha com ele.
                 .on_ok(|_, _, _| false)
         });

@@ -42,6 +42,7 @@ mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;
 mod trilho;
+mod onde_uso;
 mod uso_plano;
 mod visor_imagem;
 mod vista_mensagens;

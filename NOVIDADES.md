@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
+  7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
+  o custo estimado; o clique num chat abre a conversa. Conta o que rodou a partir desta versão.
 - **Previsão de quando o limite acaba.** No popover do uso do Claude, cada janela diz se o ritmo
   de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
   até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica

@@ -1019,6 +1019,22 @@ leituras bastantes, com a última leitura mais velha que o trecho, logo depois d
 (as leituras da janela anterior não contam) ou no limite, a linha não aparece. As leituras não vão
 para o disco: depois de abrir o Vitral a previsão leva alguns minutos para aparecer.
 
+**Onde o uso foi** (`src/motor/gasto.rs` e `src/ui/onde_uso.rs`). Cada turno terminado vira uma
+linha num livro fora do estado, `gastos/AAAA-MM.jsonl` na pasta de dados (um arquivo por mês,
+gravado inteiro pelo gravador do `dados.rs`): a hora, o chat, a pasta, o modelo, a conta, o custo
+e os tokens de entrada nova, de cache lido, de cache criado e de saída. O custo é o que o
+`Chat::somar_custo` somou naquele fim de turno; os tokens vêm do `result` do Claude Code
+(`Evento::Gasto`, de `tokens_do_resultado`: o `model_usage_since_last_result`, que conta os
+subagentes, ou, sem ele, o `usage` do turno; nunca o `modelUsage`, que é o total da sessão) e do
+`turn.completed` do Codex (sem custo). Um turno com vários `result` (agentes em segundo plano)
+soma os tokens de todos. No diálogo **Contas do Claude**, embaixo das contas, a seção **Onde o uso
+foi** tem os seletores **Hoje** e **7 dias** (hoje e os 6 dias anteriores): uma barra por pasta,
+da que mais gastou para a que menos, com "182 mil tokens · US$ 0,84"; o clique na pasta abre os
+cinco chats que mais gastaram nela, e o clique num chat fecha o diálogo e abre a conversa. As
+barras medem o custo; num período só de Codex, os tokens. Na abertura o Vitral lê o mês de agora e
+o anterior (o que os 7 dias e as conversas recentes precisam). Só entra o que rodou depois desta
+versão: o que veio antes não tem linha no livro.
+
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
 anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso

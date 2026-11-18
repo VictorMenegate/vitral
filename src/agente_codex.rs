@@ -147,12 +147,13 @@ impl Leitor {
             "thread.started" => valor["thread_id"].as_str().map(|id| vec![Evento::Sessao(id.to_string())]).unwrap_or_default(),
             "item.started" => self.item(&valor["item"], false),
             "item.completed" => self.item(&valor["item"], true),
-            "turn.completed" => vec![Evento::Fim {
+            // Os tokens do turno vão antes do fim (o Codex não diz custo).
+            "turn.completed" => crate::motor::tokens_do_codex(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
                 erro: false,
                 texto: std::mem::take(&mut self.ultima_fala),
                 custo_usd: 0.,
                 janela: None,
-            }],
+            }]).collect(),
             "error" => {
                 self.erro = valor["message"].as_str().unwrap_or_default().to_string();
                 Vec::new()
@@ -477,6 +478,7 @@ mod testes {
                 Evento::Texto(t) => format!("T:{}", t.trim()),
                 Evento::Ferramenta { id, nome, entrada } => format!("F:{id}:{nome}:{}", entrada["command"].as_str().or(entrada["file_path"].as_str()).unwrap_or_default()),
                 Evento::ResultadoFerramenta { id, conteudo, erro } => format!("R:{id}:{}:{erro}", conteudo.trim()),
+                Evento::Gasto(tokens) => format!("G:{}:{}", tokens.entrada, tokens.saida),
                 Evento::Fim { erro, texto, .. } => format!("FIM:{erro}:{texto}"),
                 _ => "?".into(),
             })
@@ -491,6 +493,8 @@ mod testes {
                 "F:item_2:Write:/casa/b.txt",
                 "R:item_2:criou /casa/b.txt:false",
                 "T:feito",
+                // Os tokens do turno, antes do fim.
+                "G:51894:92",
                 "FIM:false:feito",
             ]
         );

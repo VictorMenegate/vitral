@@ -18,6 +18,8 @@ use smol::channel::{Sender, unbounded};
 mod importacao;
 mod conversas;
 mod ideias;
+pub mod gasto;
+pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -281,6 +283,8 @@ pub struct Motor {
     uso_por_conta: HashMap<String, Uso>,
     /// As últimas leituras do uso de cada conta, para a previsão de quando o limite acaba.
     historico_uso: HashMap<String, contas::previsao::Historico>,
+    /// O livro dos turnos terminados: custo e tokens por chat e por pasta (`motor/gasto.rs`).
+    gastos: gasto::Livro,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -561,7 +565,9 @@ impl Motor {
         };
         quadro.acertar_ordens();
         let linear = ideias::EstadoDoLinear::da_config(&dados.config);
+        let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
         let mut motor = Self {
+            gastos,
             quadro,
             quadro_sujo: false,
             linear,
@@ -3323,6 +3329,7 @@ impl Motor {
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
+            Evento::Gasto(tokens) => self.somar_tokens(chat_id, tokens),
             Evento::Sugestao(texto) => {
                 // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
                 if !self.processos.contains_key(chat_id) {
@@ -3422,6 +3429,7 @@ impl Motor {
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
+                let custo_antes = self.chat(chat_id).map_or(0.0, |c| c.custo_usd);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;
@@ -3430,6 +3438,7 @@ impl Motor {
                         c.janela = janela;
                     }
                 }
+                self.registrar_gasto(chat_id, custo_antes);
                 // Parado pelo usuário: o Claude Code fecha o turno com erro, mas não é falha (o
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {

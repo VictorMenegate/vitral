@@ -183,6 +183,9 @@ pub enum Evento {
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
     /// depois do `result`.
     Sugestao(String),
+    /// Os tokens que um `result` declara (os do turno; ver `motor::tokens_do_resultado`). Vem
+    /// antes do `Fim` do mesmo `result`.
+    Gasto(crate::motor::Tokens),
     Fim {
         erro: bool,
         texto: String,
@@ -1407,7 +1410,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 })
                 .collect()
         }
-        "result" => vec![Evento::Fim {
+        "result" => crate::motor::tokens_do_resultado(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
                 .as_str()
@@ -1420,7 +1423,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .flat_map(|modelos| modelos.values())
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
-        }],
+        }]).collect(),
         "prompt_suggestion" => valor["suggestion"]
             .as_str()
             .map(str::trim)
