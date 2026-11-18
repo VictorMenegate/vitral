@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Resumo do dia para copiar.** "Resumo de hoje", no menu do logo, mostra por pasta os chats
+  que trabalharam: o título, a primeira frase da última resposta, os arquivos mudados, o tempo
+  trabalhado e o que ficou pendente. Dá para trocar para Ontem e 7 dias e copiar tudo como
+  Markdown. É montado do que o app já guarda, sem gastar token.
 - **Sumário da conversa no Este chat.** A seção Nesta conversa tem uma linha por mensagem sua,
   com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
   conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a

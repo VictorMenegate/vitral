@@ -42,6 +42,7 @@ mod ramo;
 pub(crate) mod paineis;
 mod rascunhos;
 mod resumo;
+mod resumo_do_dia;
 mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;

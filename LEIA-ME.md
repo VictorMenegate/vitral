@@ -1419,6 +1419,31 @@ conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez:
 logo, o sino, um popover da caixa, o menu ou o **+** de um painel, pelo mouse ou pelo atalho,
 fecha o que estava aberto (`Janela::so_um_flutuante`).
 
+## Resumo do dia
+
+**Resumo de hoje**, no menu do logo, abre um diálogo com o que os chats fizeram no dia, por pasta
+(`src/ui/resumo_do_dia.rs`). É montado só do que o app já tem, sem chamar modelo nenhum: os itens
+das conversas (cada um com a hora) e o estado de cada chat. Um seletor troca para **Ontem** e **7
+dias**, e **Copiar como Markdown** leva o texto para a área de transferência (um título, uma seção
+por pasta e, em cada chat, a frase, o tempo, a pendência e os arquivos).
+
+- **Quem entra**: o chat em que o agente respondeu ou usou uma ferramenta no período (as
+  arquivadas também). Só a sua mensagem, sem o agente ter feito nada, não conta. A pasta mexida por
+  último vem primeiro e, em cada uma, o chat mexido por último.
+- **De cada chat**: o título (o clique abre o chat), a primeira frase da última resposta do
+  período (`falas::primeira_frase`), os arquivos que as chamadas de edição do período mudaram, com
+  o +N −M somado e o "novo" (a mesma fonte das Mudanças; o que um comando mudou fica de fora), o
+  tempo trabalhado com o número de turnos e o que ficou pendente: o estado do chat agora
+  (`falas::estado_do_chat`: rodando, parada, erro, permissão ou plano esperando você). A resposta
+  que você ainda não leu não é pendência.
+- **O tempo trabalhado** é a soma dos intervalos entre um item e o seguinte dentro de cada turno,
+  só o pedaço que cai no período. Um intervalo de mais de 10 minutos sem nada acontecer conta só
+  até esse teto: é espera (um pedido de permissão parado, o Vitral fechado), não trabalho. Um
+  comando que roda sozinho por mais de 10 minutos também entra só até o teto.
+- Os períodos vão pela meia-noite local: hoje, do começo do dia até agora; ontem, o dia inteiro; 7
+  dias, do começo do dia de seis dias atrás até agora. O resumo é montado ao abrir e ao trocar de
+  período, não a cada quadro.
+
 ## Quadro de ideias (Ctrl+I)
 
 Um kanban do app todo (`src/ideias.rs`, `src/motor/ideias.rs` e `src/ui/quadro_ideias.rs`), num
