@@ -7,6 +7,24 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Código que não embaralha na coluna estreita.** O bloco de código da resposta não quebra mais
+  as linhas: quebrada, a linha voltava à margem e a indentação se perdia (com três conversas lado
+  a lado, seis linhas de código viravam catorze). Agora ele rola de lado, como a saída de comando
+  e o diff, e a roda em pé continua levando a conversa.
+- **Tabela sem quebra à toa no zoom.** Com o zoom acima de 100%, a última palavra de cada célula
+  caía para a linha de baixo mesmo com a tabela sobrando de largura. As colunas passam a ter a
+  largura do texto em qualquer zoom.
+- **Trilha mais igual e sem palavra cortada.** O "Pensou" fica tênue como os outros verbos, com a
+  duração na coluna dos detalhes. No subagente, a tarefa aparece inteira, e quem cede lugar é a
+  conta de tokens, ferramentas e tempo, uma parte por vez. O resumo do grupo e o do "Trabalhou"
+  mostram só as partes que cabem inteiras ("1 comando · 1 lido"), em vez de terminar em
+  reticências no meio de uma palavra.
+- **Caixas da trilha com um desenho só.** O diff aberto perdeu o cabeçalho que repetia o nome do
+  arquivo e a caixa cinza dentro da preta, e o Copiar dele aparece no hover, como nas outras. A
+  saída de comando só diz "Falhou" ou "Em execução" (o "Concluído" de toda saída saiu), o
+  resultado sem comando não tem mais a faixa vazia em cima, e o raciocínio e os passos do
+  subagente ficaram com o mesmo canto do relatório. No erro com o título em duas linhas, o ícone
+  fica na primeira.
 - **Digitar em qualquer ponto escreve na caixa.** Depois de clicar na conversa (para abrir uma
   trilha ou selecionar um trecho) ou numa aba, a letra que você digita vai para a caixa do painel
   ativo, e o Ctrl+V cola nela: um print copiado vira pílula sem clicar antes.
