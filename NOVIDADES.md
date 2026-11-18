@@ -17,6 +17,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   tem o canto das abas e dos botões, e não mais quase reto.
 - **A trilha encosta na caixa.** Quando a conversa termina numa linha da trilha ("Pensou por 5 s"),
   o vão até a caixa é de 12, e não mais de 32; os 32 ficam só depois de uma resposta.
+- **Todo anel da conversa gira.** A chamada rodando ("Rodando npm test"), o grupo com uma chamada
+  rodando e a revisão da memória giram como o "Pensando…": todos numa camada só, por cima da
+  conversa, que não se redesenha a cada volta. Parados, eles pareciam travados.
 - **Copiar e hora só na resposta que fecha o turno.** No texto do meio do turno, a barra ficava por
   cima da linha da trilha logo abaixo.
 

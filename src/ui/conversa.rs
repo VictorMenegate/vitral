@@ -586,11 +586,12 @@ impl Janela {
             (Some(c), Some(ix)) => {
                 let mensagens = AnyView::from(self.paineis[ix].vista.clone())
                     .cached(StyleRefinement::default().flex_1().w_full().min_h(super::mensagens::MINIMO_MENSAGENS).flex().flex_col());
-                // O anel do "Pensando…" gira por cima delas, numa vista própria (`AnelDoPensando`).
-                let anel = super::componentes::AnelDoPensando {
-                    chave: format!("pensando-{painel_id}"),
-                    onde: self.paineis[ix].pensando_em.clone(),
-                    ativo: motor.execucao(&c.id).rodando(),
+                // Os anéis de dentro delas (o "Pensando…", a chamada rodando) giram por cima, numa vista
+                // própria (`AneisDaConversa`).
+                let anel = super::componentes::AneisDaConversa {
+                    chave: format!("aneis-{painel_id}"),
+                    painel: painel_id,
+                    ativo: motor.execucao(&c.id).rodando() || motor.revendo_memoria(&c.id),
                 };
                 div()
                     .relative()

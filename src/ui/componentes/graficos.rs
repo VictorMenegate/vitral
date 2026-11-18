@@ -3,6 +3,8 @@
 
 use std::f32::consts::TAU;
 
+use gpui_kit::component::ElementExt as _;
+
 use gpui_kit::base::plot::shape::{Arc as Arco, ArcData};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -256,13 +258,12 @@ pub struct AnelGirando {
     lado: f32,
     cor: Hsla,
     vivo: Option<String>,
-    quieto: bool,
 }
 
 impl AnelGirando {
     /// 12 no nó da ferramenta e na linha de estado, 14 no lugar do spinner pequeno do kit.
     pub fn new(lado: f32) -> Self {
-        AnelGirando { lado, cor: Cores::destaque(), vivo: None, quieto: false }
+        AnelGirando { lado, cor: Cores::destaque(), vivo: None }
     }
 
     pub fn cor(mut self, cor: Hsla) -> Self {
@@ -277,27 +278,21 @@ impl AnelGirando {
         self
     }
 
-    /// Parado (dentro das mensagens: girando ali, cada batida redesenhava a conversa inteira; o
-    /// que está acontecendo gira na linha do turno, embaixo).
-    pub fn quieto(mut self) -> Self {
-        self.quieto = true;
-        self
-    }
 }
 
 impl RenderOnce for AnelGirando {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (lado, cor) = (self.lado, self.cor);
-        if let Some(chave) = self.vivo.filter(|_| !self.quieto && !cx.reduce_motion()) {
+        if let Some(chave) = self.vivo.filter(|_| !cx.reduce_motion()) {
             let versao = u64::from(lado.to_bits()) << 32 ^ u64::from(Rgba::from(cor).r.to_bits() ^ Rgba::from(cor).b.to_bits().rotate_left(8));
             let estilo = StyleRefinement::default().flex_none().size(r(lado));
             return div().flex_none().size(r(lado)).child(super::vista_viva::em_vista_propria(chave, estilo, versao, cx, move |window, cx| {
-                RenderOnce::render(AnelGirando { lado, cor, vivo: None, quieto: false }, window, cx).into_any_element()
+                RenderOnce::render(AnelGirando { lado, cor, vivo: None }, window, cx).into_any_element()
             }));
         }
         // O arco cobre 72% da volta; parado, a fenda de 28% fica centrada embaixo.
         let parado = std::f32::consts::PI + TAU * 0.14;
-        let giro = if cx.reduce_motion() || self.quieto {
+        let giro = if cx.reduce_motion() {
             parado
         } else {
             let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
@@ -586,21 +581,46 @@ mod testes {
     }
 }
 
-/// O anel girando pintado num lugar que outra vista mediu (`onde`, na janela): o da linha
-/// "Pensando…", que gira por cima das mensagens numa vista própria e não as redesenha a cada batida.
-/// `ativo`: o turno está rodando (só então a batida anda); sem o lugar, nada aparece.
+// ---------- os anéis que giram dentro da conversa ----------
+//
+// Dentro das mensagens (uma vista em cache), um anel girando redesenhava a conversa inteira a cada
+// batida; parado, ele lia como travado (dono, 18/11/2026: "o loading tá travado", duas vezes). Então
+// cada anel da conversa (o "Pensando…", a chamada rodando, a revisão da memória) deixa só o lugar,
+// medido no prepaint (`lugar_do_anel`), e quem gira é `AneisDaConversa`, por cima das mensagens,
+// numa vista própria: a batida redesenha só ela.
+
+thread_local! {
+    /// Os lugares dos anéis de cada painel, na janela, com a cor: zerados a cada desenho das
+    /// mensagens dele (`limpar_aneis`), preenchidos no prepaint.
+    static ANEIS: std::cell::RefCell<std::collections::HashMap<u64, Vec<(Bounds<Pixels>, Hsla)>>> = Default::default();
+}
+
+/// Começo do desenho das mensagens de um painel: os lugares de antes saem.
+pub fn limpar_aneis(painel: u64) {
+    ANEIS.with(|a| a.borrow_mut().remove(&painel));
+}
+
+/// O lugar de um anel girando dentro da conversa: vazio, do tamanho dele; `AneisDaConversa` pinta
+/// o anel ali.
+pub fn lugar_do_anel(painel: u64, cor: Hsla, lado: f32) -> Div {
+    div().flex_none().size(r(lado)).on_prepaint(move |limites, _, _| {
+        ANEIS.with(|a| a.borrow_mut().entry(painel).or_default().push((limites, cor)));
+    })
+}
+
+/// Os anéis da conversa de um painel, girando por cima dela numa vista própria. `ativo`: o turno
+/// (ou a revisão da memória) está rodando; só então a batida anda.
 #[derive(IntoElement)]
-pub struct AnelDoPensando {
+pub struct AneisDaConversa {
     pub chave: String,
-    pub onde: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    pub painel: u64,
     pub ativo: bool,
 }
 
-impl RenderOnce for AnelDoPensando {
+impl RenderOnce for AneisDaConversa {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (onde, ativo) = (self.onde, self.ativo);
+        let (painel, ativo) = (self.painel, self.ativo);
         super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), u64::from(ativo), cx, move |window, cx| {
-            let lado = 14.;
             let parado = std::f32::consts::PI + TAU * 0.14;
             let giro = if ativo && !cx.reduce_motion() {
                 let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
@@ -608,17 +628,19 @@ impl RenderOnce for AnelDoPensando {
             } else {
                 parado
             };
-            let onde = onde.clone();
             canvas(
                 |_, _, _| {},
                 move |limites, _, window, _| {
-                    let Some(b) = onde.get().filter(|b| ativo && limites.intersects(b)) else {
+                    if !ativo {
                         return;
-                    };
-                    let escala = b.size.width.as_f32() / lado;
-                    let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
-                    let espessura = (lado * 0.16).max(1.5) * escala;
-                    pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, Cores::destaque(), window);
+                    }
+                    let aneis = ANEIS.with(|a| a.borrow().get(&painel).cloned().unwrap_or_default());
+                    for (b, cor) in aneis.into_iter().filter(|(b, _)| limites.intersects(b)) {
+                        let lado = b.size.width.as_f32().max(1.);
+                        let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
+                        let espessura = (lado * 0.16).max(1.5);
+                        pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, cor, window);
+                    }
                 },
             )
             .size_full()

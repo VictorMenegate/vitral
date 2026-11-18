@@ -454,14 +454,13 @@ impl Janela {
         // Sem ferramenta rodando e sem texto chegando, o turno está pensando: a linha viva fica
         // aqui, no fim da conversa, no lugar onde a próxima coisa vai aparecer (dono, 13/11/2026:
         // "deixa o pensando no chat mesmo, quando fica em baixo parece que tá fazendo nada").
-        let pensando_em = self.paineis[ix].pensando_em.clone();
-        pensando_em.set(None);
+        super::componentes::limpar_aneis(painel_id);
         if parcial.is_none()
             && matches!(motor.execucao(&chat.id), Execucao::Rodando { .. })
             && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
         {
             let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
-            blocos.push((Bloco::Log, None, linha_pensando(pensando_em, rotulo, cx.theme().font_family.clone())));
+            blocos.push((Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
         }
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let mut lista = v_flex()
@@ -2724,7 +2723,7 @@ impl Janela {
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
+                .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
                 .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
@@ -2976,7 +2975,7 @@ impl Janela {
             .cursor_pointer()
             .hover(|s| s.bg(Cores::hover()))
             .child(coluna_do_icone().child(if rodando {
-                AnelGirando::new(14.).cor(Cores::tenue()).quieto().into_any_element()
+                super::componentes::lugar_do_anel(contexto.painel, Cores::tenue(), 14.).into_any_element()
             } else {
                 icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
             }))
@@ -3173,7 +3172,7 @@ impl Janela {
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
         let icone = if pendente {
-            AnelGirando::new(14.).cor(Cores::destaque()).quieto().into_any_element()
+            super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -3776,14 +3775,12 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
 
 /// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
 /// girando e o rótulo com o brilho passando.
-fn linha_pensando(onde: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>, rotulo: &'static str, fonte: SharedString) -> AnyElement {
+fn linha_pensando(painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .gap(esp::E8)
-        // Só o lugar do anel: ele gira por cima, numa vista própria (`AnelDoPensando`, em
-        // `conversa.rs`). Parado aqui dentro ele lia como travado (dono, 18/11/2026: "o loading tá
-        // travado"), e girando aqui dentro cada batida redesenhava a conversa inteira.
-        .child(coluna_do_icone().child(div().flex_none().size(r(14.)).on_prepaint(move |limites, _, _| onde.set(Some(limites)))))
+        // Só o lugar do anel: ele gira por cima, numa vista própria (`AneisDaConversa`).
+        .child(coluna_do_icone().child(super::componentes::lugar_do_anel(painel, Cores::destaque(), 14.)))
         .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo))
         .into_any_element()
 }
