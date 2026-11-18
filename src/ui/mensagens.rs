@@ -125,12 +125,12 @@ enum Bloco {
     Alerta,
 }
 
-/// Espaço antes de um bloco: 32 antes do seu balão e do separador de dia (entre turnos), 12 dentro
-/// do turno (também do balão até a resposta e do dia até o balão), 16 em volta de marco e nada
-/// entre linhas de log, que ficam coladas no passo de 28. Com 24 entre turnos e 16 do balão até a
-/// resposta, o vão de fora era só 1,4 vez o de dentro, e a trilha ficava solta no meio; com mais
-/// de 2 vezes, o olho agrupa a pergunta com a resposta (relatório de aparência, 16/11/2026, V3).
-/// Nada fica reservado para as ações: elas flutuam no hover.
+/// Espaço antes de um bloco, numa escala de três passos (18/11/2026): 32 entre turnos (antes do
+/// seu balão e do dia), 12 dentro do turno e nada entre linhas da trilha, que ficam coladas no
+/// passo de 28. Com mais de 2 vezes de fora para dentro, o olho agrupa a pergunta com a resposta
+/// (relatório de aparência, 16/11/2026, V3). Saíram os 16 em volta do marco e os 4 entre entregas:
+/// eram dois passos a mais para o mesmo "dentro do turno". O fim da lista guarda os mesmos 32 de
+/// entre turnos: a caixa de mensagem começa o próximo.
 fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> Rems {
     use Bloco::*;
     let Some(anterior) = anterior else {
@@ -140,11 +140,7 @@ fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> Rems {
         (_, Dia) => esp::ENTRE_TURNOS,
         (Dia, _) => esp::NO_TURNO,
         (_, Balao) => esp::ENTRE_TURNOS,
-        // O marco vem antes do balão: o balão seguido de marco continua em 16.
-        (Marco, _) | (_, Marco) => esp::E16,
-        (Balao, _) => esp::NO_TURNO,
         (Log, Log) => r(0.),
-        (Recebida, Log | Recebida) => esp::E4,
         _ => esp::NO_TURNO,
     }
 }
@@ -469,7 +465,9 @@ impl Janela {
             // padding de dentro da parte do texto").
             .when(minima(nivel), |s| s.px(esp::E16))
             .pt(esp::E12)
-            .pb(esp::E12);
+            // 32 no fim, o passo de entre turnos: a caixa começa o próximo turno, e a barra de
+            // ações da última resposta cabe embaixo dela.
+            .pb(esp::ENTRE_TURNOS);
         let mut anterior = None;
         // Onde cada bloco ficou neste quadro (o índice do item, o alto e o pé, na tela): o
         // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
@@ -1194,10 +1192,11 @@ impl Janela {
                     pilula_de_arquivo(format!("resposta-{chave}-{i}"), caminho, &chat_id, false, cx)
                 })))
             })
-            // A barra fica no pé da resposta, onde o olho termina: em cima ela cobria metade da
-            // primeira linha, que quase sempre vai até a borda (relatório de aparência,
-            // 16/11/2026, V7). O seu balão continua com ela em cima.
-            .child(div().absolute().bottom(r(-8.)).right_0().child(barra_de_acoes(
+            // A barra fica embaixo da resposta, no vão até o bloco seguinte (32 antes do seu balão
+            // e no fim da lista): em cima ela cobria metade da primeira linha (relatório de
+            // aparência, 16/11/2026, V7) e, no pé do texto, o fim da última, que na coluna estreita
+            // era um terço da linha. O seu balão continua com ela em cima.
+            .child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
                 hora_na_barra(em).into_iter().chain([copiar(chave, texto).into_any_element()]).collect(),
                 cx,
@@ -1219,7 +1218,6 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let nivel = contexto.nivel;
         let realce = contexto.busca.realce(indice, Campo::Texto);
         let aberto = self.expandidos.contains(chave);
         let grupo = SharedString::from(format!("msg-{chave}"));
@@ -1227,8 +1225,8 @@ impl Janela {
         // O chat que mandou: "Abrir o chat" nas ações.
         let de_chat = chat_que_mandou(contexto.motor, de);
         let avatar = match quem {
-            Some(papel) => papel.circulo(24.).into_any_element(),
-            None => img(LOGO.clone()).flex_none().size(r(20.)).into_any_element(),
+            Some(papel) => papel.circulo(16.).into_any_element(),
+            None => img(LOGO.clone()).flex_none().size(r(16.)).into_any_element(),
         };
         let mut acoes: Vec<AnyElement> = Vec::new();
         acoes.extend(hora_na_barra(em));
@@ -1254,13 +1252,13 @@ impl Janela {
             .gap(r(8.))
             .rounded(raio::CONTROLE)
             .cursor_pointer()
-            .child(div().flex_none().size(r(24.)).flex().items_center().justify_center().child(avatar))
+            // O avatar na coluna de 16 da primeira borda e o nome na segunda, como as linhas da trilha.
+            .child(coluna_do_icone().child(avatar))
             .child(
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_size(r(13.))
-                    .line_height(r(18.))
+                    .corpo_ui()
                     .font_semibold()
                     .text_color(Cores::texto())
                     .child(nome),
@@ -1271,7 +1269,7 @@ impl Janela {
             .focus_visible(|s| s.shadow(halo_foco()))
             .on_click(alternar(chave.to_string(), cx));
         let corpo = if aberto {
-            div().pl(r(32.)).corpo().text_color(Cores::texto()).child(markdown_achado(
+            div().pl(RECUO_DO_LOG).corpo().text_color(Cores::texto()).child(markdown_achado(
                 contexto,
                 format!("{chave}-t").into(),
                 texto.to_string(),
@@ -1281,11 +1279,13 @@ impl Janela {
             // A prévia termina com reticências na coluna da seta, nunca cortada no meio da letra.
             div()
                 .min_w_0()
-                .pl(r(32.))
-                .pr(r(32.))
+                .pl(RECUO_DO_LOG)
+                .pr(esp::E32)
                 .corpo_ui()
                 .text_color(Cores::tenue())
-                .line_clamp(if larga(nivel) { 2 } else { 1 })
+                // Duas linhas em qualquer largura: na coluna estreita, uma só mostrava três
+                // palavras.
+                .line_clamp(2)
                 .text_ellipsis()
                 .child(busca_conversa::realcar(previa(texto), &realce))
         };
@@ -1627,10 +1627,10 @@ fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
     elemento.pt(esp::E16).mt(r(-16.))
 }
 
-/// O mesmo para a barra no pé da resposta, que sai 8 abaixo dela: 8 de folga embaixo, devolvidos
-/// pela margem.
+/// O mesmo para a barra embaixo da resposta, que ocupa os 30 depois do texto: 32 de folga
+/// embaixo, devolvidos pela margem.
 fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
-    elemento.pb(esp::E8).mb(r(-8.))
+    elemento.pb(esp::E32).mb(r(-32.))
 }
 
 /// A última mensagem sua na conversa, com o índice: o texto (as primeiras linhas, que a faixa
@@ -1768,9 +1768,8 @@ pub(super) fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, Stri
     saida
 }
 
-/// O dia entre dois turnos, no molde do marco: o nome do dia no meio de uma linha fina.
-/// Num chat com o Claude e o Codex juntos, quem trabalha daqui em diante: a marca e o nome, à
-/// esquerda, na coluna do texto da resposta.
+/// Num chat com o Claude e o Codex juntos, quem trabalha daqui em diante: a marca na coluna de 16
+/// da primeira borda e o nome na segunda, como as linhas da trilha.
 fn marca_da_vez(agente: Agente) -> AnyElement {
     let marca = match agente {
         Agente::Claude => Marca::Claude,
@@ -1779,29 +1778,23 @@ fn marca_da_vez(agente: Agente) -> AnyElement {
     h_flex()
         .h(r(24.))
         .gap(r(8.))
-        .child(marca.disco(18.))
-        .child(div().metadado().font_semibold().text_color(Cores::forte()).child(agente.nome()))
+        .child(marca.disco(16.))
+        .child(div().metadado().font_semibold().text_color(Cores::texto()).child(agente.nome()))
         .into_any_element()
 }
 
-/// O dia, centrado e sem fios: as linhas dos dois lados eram divisória a mais (rodada de concisão,
-/// 17/11/2026). O "Novo", que pede atenção, continua com elas.
+/// A nota da conversa: o que não é fala nem trabalho (o dia, "Trazida do Claude Code", "Turno
+/// interrompido", a troca de conta). Centrada, na letra dos metadados, tênue e sem peso, sem fio e
+/// sem ícone; a frase longa quebra centrada. Só o "Novo", que pede atenção, tem desenho próprio.
+fn nota_da_conversa(conteudo: impl IntoElement) -> Div {
+    h_flex().w_full().min_h(r(24.)).justify_center().child(
+        div().min_w_0().max_w(relative(0.9)).metadado().text_color(Cores::tenue()).text_center().child(conteudo),
+    )
+}
+
+/// O dia entre dois turnos, na nota da conversa.
 fn separador_de_dia(rotulo: &str) -> AnyElement {
-    h_flex()
-        .w_full()
-        .min_h(r(24.))
-        .justify_center()
-        .child(
-            div()
-                .flex_none()
-                .max_w(relative(0.8))
-                .truncate()
-                .metadado()
-                .font_semibold()
-                .text_color(Cores::tenue())
-                .child(rotulo.to_string()),
-        )
-        .into_any_element()
+    nota_da_conversa(rotulo.to_string()).into_any_element()
 }
 
 /// O separador "Novo": o desenho do separador de dia, em azul, antes do primeiro item que você não
@@ -1943,7 +1936,7 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
     let dica = SharedString::from(dica_da_pilha(&nomes));
     let (primeiro, primeira) = lista[0].clone();
     let chat_id = chat.to_string();
-    h_flex().pl(RECUO_DO_LOG_SOLTO).py(esp::E4).child(
+    h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(
         h_flex()
             .id(SharedString::from(format!("pilha-{chat}:{primeiro}")))
             .flex_none()
@@ -2168,17 +2161,28 @@ impl<'a> Contexto<'a> {
     }
 }
 
-/// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, ícone de 14 a 12 da borda
-/// e o texto a 8 dele. Coladas, dão o passo de 28 (eram 32: sete linhas comiam mais da metade da
-/// conversa; rodada de concisão, 17/11/2026).
+/// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, o ícone de 14 numa coluna de
+/// 16 e o texto a 8 dela. Coladas, dão o passo de 28 (eram 32: sete linhas comiam mais da metade
+/// da conversa; rodada de concisão, 17/11/2026).
 const ALTURA_DO_LOG: Rems = r(28.);
 
-/// O resultado aberto de uma linha de log, embaixo do texto dela.
-const RECUO_DO_LOG: Rems = r(56.);
+/// As duas bordas da conversa (18/11/2026). A primeira é a do texto da resposta, e nela ficam
+/// também o ícone de toda linha da trilha, o do erro, o avatar de quem entregou e a marca da vez.
+/// A segunda fica a 24 dela (a coluna de 16 do ícone mais 8), e nela ficam o texto dessas linhas e
+/// tudo o que elas abrem: a saída, o diff, o raciocínio, o relatório, a imagem. Eram cinco começos
+/// diferentes (0, 12, 32, 34 e 56).
+const RECUO_DO_LOG: Rems = r(24.);
 
-/// O mesmo numa chamada solta (fora de grupo), que começa a 12 como o cabeçalho do grupo, sem
-/// ramo: a coluna do texto dela (12 + 14 + 8).
-const RECUO_DO_LOG_SOLTO: Rems = r(34.);
+/// A linha da trilha sangra 8 de cada lado da coluna de leitura: o fundo do hover precisa de folga
+/// em volta do ícone, e sem a sangria o ícone ficava 12 para dentro da borda do texto.
+fn linha_de_log<E: Styled>(linha: E) -> E {
+    linha.h(ALTURA_DO_LOG).mx(r(-8.)).px(esp::E8).gap(esp::E8).rounded(raio::CONTROLE).metadado()
+}
+
+/// A coluna de 16 do ícone de uma linha da trilha, na primeira borda.
+fn coluna_do_icone() -> Div {
+    div().flex_none().size(r(16.)).flex().items_center().justify_center()
+}
 
 /// O resumo do grupo de chamadas: "Rodou 13 comandos · editou 1 arquivo · leu 3 arquivos" no
 /// painel largo e, fora dele, a forma curta sem os verbos, "13 comandos · 1 editado · 3 lidos":
@@ -2575,25 +2579,24 @@ fn conta_do_subagente(partes: &[String]) -> Div {
         }))
 }
 
-/// Trilho de 1 px que liga os ícones de linhas de log seguidas: no centro do ícone (12 + 7),
-/// de 2 px abaixo dele até 1 px antes do ícone da linha de baixo.
+/// O trilho de um grupo aberto: um fio de 1 px pelo centro da coluna dos ícones, que liga o ícone
+/// de cada linha ao da linha de cima e, se o grupo `continua`, desce até o fim do bloco (passando
+/// ao lado da caixa aberta). Uma linha do tempo, como na referência do dono (21st.dev, "AI
+/// Thinking and Tool calls"), no lugar dos ramos em curva, que pediam o recuo das linhas filhas.
+/// O pai precisa ser `relative` e começar na primeira borda.
 fn trilho_do_log(continua: bool) -> Div {
+    // No fio forte: com 1 px de largura, o traço comum (8%) sumia no cartão.
+    let fio = || div().absolute().left_0().w(px(1.)).bg(Cores::borda_forte());
     div()
         .absolute()
-        .inset_0()
-        .child(canvas(|_, _, _| (), move |bounds, _, window, _| {
-            let x = bounds.left() + r(19.).to_pixels(window.rem_size());
-            let y = bounds.top();
-            let passo = r(16.).to_pixels(window.rem_size());
-            let curva = r(6.).to_pixels(window.rem_size());
-            let mut linha = PathBuilder::stroke(px(1.));
-            linha.move_to(point(x, y));
-            linha.line_to(point(x, y + passo - curva));
-            linha.curve_to(point(x + curva, y + passo), point(x, y + passo));
-            linha.line_to(point(bounds.left() + r(28.).to_pixels(window.rem_size()), y + passo));
-            if continua { linha.move_to(point(x, y + passo - curva)); linha.line_to(point(x, bounds.bottom())); }
-            if let Ok(path) = linha.build() { window.paint_path(path, Cores::traco()); }
-        }).size_full())
+        .top_0()
+        .bottom_0()
+        .left(r(7.))
+        .w(px(1.))
+        // Do topo da linha até 2 antes do ícone (que começa em 7).
+        .child(fio().top_0().h(r(5.)))
+        // De 2 depois do ícone (que acaba em 21) até o fim do bloco.
+        .when(continua, |s| s.child(fio().top(r(23.)).bottom_0()))
 }
 
 impl Janela {
@@ -2633,11 +2636,10 @@ impl Janela {
                 .any(|(i, item)| contexto.pendente(*i, item));
             h_flex()
                 .id(SharedString::from(format!("trilha-{chave}")))
-                .h(ALTURA_DO_LOG)
-                .px(esp::E12)
-                .gap(esp::E8)
-                .rounded(raio::CONTROLE)
-                .metadado()
+                .map(linha_de_log)
+                // Aberto, o trilho sai de baixo do ícone do grupo e desce pelas chamadas.
+                .relative()
+                .when(aberto, |s| s.child(div().absolute().left(r(15.)).top(r(23.)).bottom_0().w(px(1.)).bg(Cores::borda_forte())))
                 .cursor_pointer()
                 .hover(|s| s.bg(Cores::hover()))
                 // O único ponto de Tab da trilha; Enter ou Espaço abre e fecha.
@@ -2646,16 +2648,7 @@ impl Janela {
                 // Na coluna dos ícones, o da trilha, de onde descem os ramos das chamadas; o
                 // chevron vai no fim, como na chamada e no "Pensou" (relatório de design,
                 // 16/11/2026: à esquerda só aqui, à direita no resto).
-                .child(
-                    div()
-                        .flex_none()
-                        .size(r(14.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(Cores::tenue())
-                        .child(icone_de(Lucide::ListTree, 14.)),
-                )
+                .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(Lucide::ListTree, 14.)))
                 // Sem o brilho andando: dentro das mensagens, cada batida dele redesenhava a conversa
                 // inteira (ver `vista_mensagens`); o que anda é o anel da linha do turno. Parado, o
                 // resumo corta em partes inteiras.
@@ -2694,7 +2687,7 @@ impl Janela {
             [] => None,
             [(indice, imagem)] => Some(
                 h_flex()
-                    .pl(RECUO_DO_LOG_SOLTO)
+                    .pl(RECUO_DO_LOG)
                     .py(esp::E4)
                     .child(pilula_de_arquivo(format!("img-{}:{indice}:g", contexto.chat.id), imagem, &contexto.chat.id, false, cx))
                     .into_any_element(),
@@ -2723,7 +2716,8 @@ impl Janela {
                 mostradas
                     .iter()
                     .enumerate()
-                    .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, Some(k < ultima), cx)),
+                    // Recolhido e ao vivo, a chamada à vista é uma linha solta, sem trilho.
+                    .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, aberto.then_some(k < ultima), cx)),
             )
             .into_any_element()
     }
@@ -2744,16 +2738,12 @@ impl Janela {
         let dica = SharedString::from(if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" });
         let linha = h_flex()
             .id(SharedString::from(format!("turno-{chave}")))
-            .h(ALTURA_DO_LOG)
-            .px(esp::E12)
-            .gap(esp::E8)
-            .rounded(raio::CONTROLE)
-            .metadado()
+            .map(linha_de_log)
             .cursor_pointer()
             .hover(|s| s.bg(Cores::hover()))
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
+            .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
             .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
@@ -2772,7 +2762,7 @@ impl Janela {
             [] => None,
             [(indice, imagem)] => Some(
                 h_flex()
-                    .pl(RECUO_DO_LOG_SOLTO)
+                    .pl(RECUO_DO_LOG)
                     .py(esp::E4)
                     .child(pilula_de_arquivo(format!("img-{}:{indice}:t", contexto.chat.id), imagem, &contexto.chat.id, false, cx))
                     .into_any_element(),
@@ -2810,7 +2800,7 @@ impl Janela {
                         .iter()
                         .take(EDITADOS_NO_RECOLHIDO)
                         .enumerate()
-                        .map(|(k, editado)| self.linha_de_editado(contexto, format!("{chave}:{k}"), editado, RECUO_DO_LOG_SOLTO, None)),
+                        .map(|(k, editado)| self.linha_de_editado(contexto, format!("{chave}:{k}"), editado, None)),
                 )
                 .when(sobra > 0, |s| {
                     s.child(
@@ -2819,7 +2809,7 @@ impl Janela {
                             .flex()
                             .items_center()
                             .h(r(28.))
-                            .pl(RECUO_DO_LOG_SOLTO)
+                            .pl(RECUO_DO_LOG)
                             .metadado()
                             .text_color(Cores::tenue())
                             .cursor_pointer()
@@ -2842,7 +2832,6 @@ impl Janela {
         contexto: &Contexto,
         chave: String,
         editado: &Editado,
-        recuo: Rems,
         verbo: Option<(&'static str, bool)>,
     ) -> AnyElement {
         let existe = super::links_arquivo::resolver(&contexto.chat.cwd, &editado.caminho).is_some();
@@ -2860,13 +2849,8 @@ impl Janela {
         });
         h_flex()
             .id(SharedString::from(format!("editado-{chave}")))
-            .h(ALTURA_DO_LOG)
-            .pl(recuo)
-            .pr(esp::E8)
-            .gap(esp::E8)
-            .rounded(raio::CONTROLE)
-            .metadado()
-            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
+            .map(linha_de_log)
+            .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
             .when_some(verbo, |s, (verbo, em_grupo)| {
                 s.child(div().flex_none().when(em_grupo, |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(verbo))
             })
@@ -2920,14 +2904,10 @@ impl Janela {
             .map(|inteiro| super::links_arquivo::link_de(&inteiro, None));
         h_flex()
             .id(SharedString::from(format!("memoria-{chave}")))
-            .h(ALTURA_DO_LOG)
-            .px(esp::E12)
-            .gap(esp::E8)
-            .rounded(raio::CONTROLE)
-            .metadado()
+            .map(linha_de_log)
             .cursor_pointer()
             .hover(|s| s.bg(Cores::hover()))
-            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(if rodando {
+            .child(coluna_do_icone().child(if rodando {
                 AnelGirando::new(14.).cor(Cores::tenue()).quieto().into_any_element()
             } else {
                 icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
@@ -2957,16 +2937,10 @@ impl Janela {
         let chave = format!("{}:{indice}", contexto.chat.id);
         let tem_texto = !texto.trim().is_empty();
         let aberto = tem_texto && self.expandidos.contains(&chave);
-        let (recuo, recuo_aberto) = if ramo.is_some() { (esp::E32, RECUO_DO_LOG) } else { (esp::E12, RECUO_DO_LOG_SOLTO) };
         let linha = h_flex()
             .id(SharedString::from(format!("raciocinio-{chave}")))
-            .h(ALTURA_DO_LOG)
-            .pl(recuo)
-            .pr(esp::E8)
-            .gap(esp::E8)
-            .rounded(raio::CONTROLE)
-            .metadado()
-            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone_de(Lucide::Brain, 14.).text_color(Cores::tenue())))
+            .map(linha_de_log)
+            .child(coluna_do_icone().child(icone_de(Lucide::Brain, 14.).text_color(Cores::tenue())))
             // O verbo como o das chamadas: tênue e sem peso, na coluna de 56 dentro de um grupo, com
             // a duração na coluna dos detalhes. Em negrito branco, o "Pensou" era a linha mais
             // forte da trilha, e é a que menos importa.
@@ -2993,7 +2967,7 @@ impl Janela {
             .child(linha)
             .when(aberto, |s| {
                 s.child(
-                    div().pl(recuo_aberto).py(esp::E4).child(
+                    div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         div()
                             .id(SharedString::from(format!("raciocinio-texto-{chave}")))
                             .w_full()
@@ -3029,7 +3003,6 @@ impl Janela {
         if let Item::Raciocinio { texto, milis, .. } = item {
             return self.raciocinio(contexto, indice, texto, *milis, ramo, cx);
         }
-        let (recuo, recuo_aberto) = if ramo.is_some() { (esp::E32, RECUO_DO_LOG) } else { (esp::E12, RECUO_DO_LOG_SOLTO) };
         let Item::Ferramenta {
             nome,
             resumo,
@@ -3067,7 +3040,7 @@ impl Janela {
                     v_flex()
                         .relative()
                         .w_full()
-                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some((verbo, ramo.is_some()))))
+                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, Some((verbo, ramo.is_some()))))
                         .children(ramo.map(|continua| trilho_do_log(continua || k + 1 < n)))
                 }))
                 .into_any_element();
@@ -3092,14 +3065,14 @@ impl Janela {
         });
         let atividade_viva = do_sub.as_ref().filter(|(_, s)| pendente && !s.atividade.is_empty()).map(|(_, s)| {
             h_flex()
-                .pl(recuo_aberto)
+                .pl(RECUO_DO_LOG)
                 .h(r(22.))
                 .gap(esp::E6)
                 .metadado()
                 .child(div().min_w_0().truncate().text_color(Cores::texto()).child(sem_marcacao(&detalhe_do_passo(&s.atividade))))
         });
         let passos = do_sub.as_ref().filter(|(_, s)| !s.passos.is_empty()).map(|(_, s)| {
-            div().pl(recuo_aberto).pt(esp::E4).child(
+            div().pl(RECUO_DO_LOG).pt(esp::E4).child(
                 v_flex()
                     .w_full()
                     .py(esp::E8)
@@ -3137,7 +3110,7 @@ impl Janela {
             let cor = if *erro {
                 Cores::vermelho()
             } else if interrompida {
-                Cores::fantasma()
+                Cores::apagado()
             } else {
                 Cores::tenue()
             };
@@ -3154,8 +3127,10 @@ impl Janela {
         // Ctrl+F: o resumo da chamada fica na linha e o resultado dentro do bloco que ela abre.
         let (no_resumo, no_resultado) =
             (contexto.busca.realce(indice, Campo::Resumo), contexto.busca.realce(indice, Campo::Resultado));
+        // A falha fica no ícone e na palavra, em vermelho, em qualquer largura. A linha inteira com
+        // fundo vermelho pesava mais que a resposta e, com três falhas seguidas, virava uma parede.
         let meta = if *erro {
-            Some(("falhou", Cores::texto()))
+            Some(("falhou", Cores::vermelho()))
         } else if interrompida {
             Some(("interrompida", Cores::apagado()))
         } else {
@@ -3180,15 +3155,10 @@ impl Janela {
         let em_grupo = ramo.is_some();
         let linha = h_flex()
             .id(SharedString::from(format!("ferramenta-{chave}")))
-            .h(ALTURA_DO_LOG)
-            .pl(recuo)
-            .pr(esp::E8)
-            .gap(esp::E8)
-            .rounded(raio::CONTROLE)
-            .metadado()
+            .map(linha_de_log)
             .cursor_pointer()
-            .map(|s| if *erro { s.bg(fundo_sai()) } else { s.hover(|s| s.bg(Cores::hover())) })
-            .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone))
+            .hover(|s| s.bg(Cores::hover()))
+            .child(coluna_do_icone().child(icone))
             .when(!minima, |s| {
                 s.child(
                     // O verbo é o rótulo (tênue, sem peso); o que importa é o detalhe ao lado.
@@ -3231,7 +3201,7 @@ impl Janela {
                 )
             })
             .when(novo && !minima && !*erro, |s| s.child(Selo::cor("novo", Cores::verde())))
-            .when_some(meta.filter(|_| !estreita), |s, (meta, cor)| {
+            .when_some(meta.filter(|_| *erro || !estreita), |s, (meta, cor)| {
                 s.child(div().flex_none().text_color(cor).child(meta))
             })
             .group(grupo.clone())
@@ -3305,14 +3275,14 @@ impl Janela {
             .child(linha)
             .children(atividade_viva)
             .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(h_flex().pl(recuo_aberto).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, false, cx)))
+                s.child(h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, false, cx)))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
-                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, pedido)))
+                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(cartao_de_edicao(&chave, pedido)))
                 })
                 .when_some(comando, |s, comando| {
-                    s.child(div().pl(recuo_aberto).py(esp::E4).child(
+                    s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         CaixaDeCodigo::new(SharedString::from(format!("terminal-{chave}")), resultado.as_deref()
                             .unwrap_or(if pendente { "A saída aparece quando terminar." } else { "(interrompido, sem saída)" }).to_string().into())
                             // A busca da conversa conta a saída do comando: o achado ganha o realce
@@ -3332,7 +3302,7 @@ impl Janela {
                         Some(segundos) => format!("A saída aparece quando terminar · rodando há {}", relogio(segundos)),
                         None => "A saída aparece quando terminar".to_string(),
                     };
-                    s.child(div().pl(recuo_aberto).pt(esp::E6).pb(esp::E4).child(
+                    s.child(div().pl(RECUO_DO_LOG).pt(esp::E6).pb(esp::E4).child(
                         div().px(esp::E12).metadado().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto),
                     ))
                 })
@@ -3346,7 +3316,7 @@ impl Janela {
                         .map(crate::claude::relatorio_do_subagente)
                         .filter(|r| !r.is_empty()),
                     |s, relatorio| {
-                        s.child(div().pl(recuo_aberto).py(esp::E4).child(
+                        s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
                             div()
                                 .relative()
                                 .group("relatorio")
@@ -3377,7 +3347,7 @@ impl Janela {
                         && !(pendente && resultado.is_none())
                         && !(matches!(nome.as_str(), "Agent" | "Task") && !*erro && resultado.as_deref().is_some_and(|r| !crate::claude::relatorio_do_subagente(r).is_empty())),
                     |s| {
-                        s.child(div().pl(recuo_aberto).py(esp::E4).child(
+                        s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
                             bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
                         ))
                     },
@@ -3649,83 +3619,20 @@ fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
 }
 
 fn aviso_do_chat(texto: &str, erro: bool, realce: &Realce) -> (Bloco, AnyElement) {
-    match tipo_aviso(texto, erro) {
-        ClasseAvisoChat::Marco => {
-            let (icone, cor, rotulo) = if texto.starts_with(SESSAO_ANTIGA) {
-                (Lucide::RefreshCw, Cores::tenue(), "Sessão nova, com um resumo da anterior".to_string())
-            } else if texto.starts_with("Interrompido") {
-                (Lucide::CirclePause, Cores::tenue(), "Turno interrompido".to_string())
-            } else if texto.starts_with(VITRAL_FECHADO) {
-                // Um marco de uma linha, sem a instrução (a faixa logo abaixo já tem o Retomar, e
-                // nos antigos não há mais o que retomar) e sem nome de agente (no chat do Codex o
-                // texto mandava o Claude continuar). Vale também para os avisos já gravados
-                // (relatório de design, 16/11/2026).
-                (Lucide::CirclePause, Cores::tenue(), "O Vitral fechou no meio do turno".to_string())
-            } else if texto.starts_with("Saiu do modo Planejar") {
-                (Lucide::Map, Cores::verde(), texto.to_string())
-            } else if texto.starts_with(crate::importar::MARCO) {
-                (Lucide::Download, Cores::tenue(), texto.to_string())
-            } else {
-                (Lucide::RefreshCw, Cores::tenue(), texto.to_string())
-            };
-            let traco = || div().flex_1().min_w(r(16.)).h(px(1.)).bg(Cores::linha());
-            let elemento = h_flex()
-                .w_full()
-                .min_h(r(24.))
-                .gap(r(8.))
-                .child(traco())
-                .child(
-                    h_flex()
-                        .flex_shrink(1.)
-                        .min_w_0()
-                        .max_w(relative(0.8))
-                        .gap(r(6.))
-                        .metadado()
-                        .text_color(Cores::tenue())
-                        .child(icone_de(icone, 12.).text_color(cor))
-                        .child(div().min_w_0().line_clamp(2).text_ellipsis().child(busca_conversa::realcar(sem_marcacao(&rotulo), realce))),
-                )
-                .child(traco())
-                .into_any_element();
-            (Bloco::Marco, elemento)
-        }
+    // Um desenho só para o que não é fala nem trabalho (18/11/2026): a nota da conversa, a mesma
+    // do dia. Eram três: o dia centrado em negrito, o marco centrado entre dois fios com um ícone
+    // e o aviso à esquerda com outro ícone e outro tamanho de letra.
+    let rotulo = match tipo_aviso(texto, erro) {
+        ClasseAvisoChat::Marco if texto.starts_with(SESSAO_ANTIGA) => "Sessão nova, com um resumo da anterior".to_string(),
+        ClasseAvisoChat::Marco if texto.starts_with("Interrompido") => "Turno interrompido".to_string(),
+        // Sem a instrução (a faixa logo abaixo já tem o Retomar, e nos antigos não há mais o que
+        // retomar) e sem nome de agente (no chat do Codex o texto mandava o Claude continuar).
+        // Vale também para os avisos já gravados (relatório de design, 16/11/2026).
+        ClasseAvisoChat::Marco if texto.starts_with(VITRAL_FECHADO) => "O Vitral fechou no meio do turno".to_string(),
         // O erro vai para o cartão (`Janela::cartao_de_erro`); aqui só chega sem ser erro.
-        ClasseAvisoChat::Info | ClasseAvisoChat::Alerta => {
-            // O ícone pelo assunto: a troca de conta ou de agente, o limite, a nova tentativa
-            // (balão e cartão de erro, 16/11/2026).
-            let icone = if texto.contains("chegou ao limite do plano; continuando na conta")
-                || texto.contains("perdeu o login no Claude Code; continuando na conta")
-                || texto.starts_with("Daqui em diante quem responde é o")
-            {
-                Lucide::Shuffle
-            } else if texto.starts_with("Todas as contas chegaram ao limite do plano") {
-                Lucide::Gauge
-            } else if texto.to_lowercase().contains("tentando de novo") {
-                Lucide::RotateCw
-            } else {
-                Lucide::Info
-            };
-            // Uma linha de log como as outras (28, ícone a 12), que cresce se o texto quebrar.
-            let elemento = h_flex()
-                .items_start()
-                .min_h(ALTURA_DO_LOG)
-                .py(esp::E4)
-                .gap(esp::E8)
-                .px(esp::E12)
-                .child(div().flex_none().pt(esp::E2).child(icone_de(icone, 14.).text_color(Cores::tenue())))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(r(13.))
-                        .line_height(r(18.))
-                        .text_color(Cores::tenue())
-                        .child(busca_conversa::realcar(sem_marcacao(texto), realce)),
-                )
-                .into_any_element();
-            (Bloco::Log, elemento)
-        }
-    }
+        _ => sem_marcacao(texto),
+    };
+    (Bloco::Marco, nota_da_conversa(busca_conversa::realcar(rotulo, realce)).into_any_element())
 }
 
 /// Onde o usuário está num painel: o deslocamento da última conferência (para saber quando foi
@@ -3804,11 +3711,10 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
 fn linha_pensando(_painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
-        .px(esp::E12)
         .gap(esp::E8)
         // Parado: o que gira é o anel da linha do turno, fora das mensagens (ver `vista_mensagens`).
-        .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
-        .child(div().font_family(fonte).metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(rotulo))
+        .child(coluna_do_icone().child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
+        .child(div().font_family(fonte).metadado().text_color(Cores::texto()).child(rotulo))
         .into_any_element()
 }
 
@@ -4826,9 +4732,10 @@ impl Janela {
     }
 }
 
-/// Largura máxima da coluna de leitura: 860 px com o texto em 16 px. Em rem, para o zoom não
-/// mudar quantas letras cabem na linha.
-const COLUNA: Rems = rems(53.75);
+/// Largura máxima da coluna de leitura: 675 px a 100%, uns 80 caracteres por linha de resposta
+/// (eram 806 px e perto de 100, linha longa demais para ler no painel único). Em rem, para o zoom
+/// não mudar quantas letras cabem na linha.
+const COLUNA: Rems = rems(45.);
 /// Margem da coluna de leitura de cada lado (16 na largura mínima e na caixa estreita). 24: com as
 /// conversas emendadas e encostadas na janela, os 16 deixavam o texto e a caixa colados na
 /// divisória e na beirada (dono, 17/11/2026: "melhora o espaçamento dessas partes").
@@ -5670,18 +5577,19 @@ mod testes {
         assert!(perto(px(Some(Log), Balao), 32.));
         assert!(perto(px(Some(Balao), Texto), 12.));
         assert!(perto(px(Some(Balao), Log), 12.));
-        assert!(perto(px(Some(Balao), Marco), 16.));
+        assert!(perto(px(Some(Balao), Marco), 12.));
         // O dia começa um turno: 32 antes dele, 12 dele até o balão.
         assert!(perto(px(Some(Marco), Dia), 32.));
         assert!(perto(px(Some(Dia), Balao), 12.));
-        // Linhas de log coladas, no passo de 28; recebida seguida de log, quase.
+        // Linhas de log coladas, no passo de 28.
         assert!(perto(px(Some(Log), Log), 0.));
-        assert!(perto(px(Some(Recebida), Log), 4.));
-        assert!(perto(px(Some(Recebida), Recebida), 4.));
+        // Só três passos: a entrega e a nota ficam no "dentro do turno", como o resto.
+        assert!(perto(px(Some(Recebida), Log), 12.));
+        assert!(perto(px(Some(Recebida), Recebida), 12.));
         assert!(perto(px(Some(Log), Recebida), 12.));
-        // O marco pede ar dos dois lados.
-        assert!(perto(px(Some(Texto), Marco), 16.));
-        assert!(perto(px(Some(Marco), Log), 16.));
+        assert!(perto(px(Some(Texto), Marco), 12.));
+        assert!(perto(px(Some(Marco), Log), 12.));
+        assert!(perto(px(Some(Marco), Balao), 32.));
         // O resto, dentro do turno.
         assert!(perto(px(Some(Texto), Log), 12.));
         assert!(perto(px(Some(Log), Alerta), 12.));
