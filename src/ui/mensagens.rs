@@ -1325,7 +1325,11 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
                 Some(l) => format!("Copiar código {l}"),
                 None => "Copiar código".to_string(),
             };
-            BotaoCopiar::new("copiar", bloco.code()).dica(dica)
+            // Opaco, no preto do poço: o código não quebra mais a linha e passa por baixo do botão
+            // (o fundo que o kit põe em volta dele é translúcido, e a letra aparecia através). A
+            // tampa vai até 2 da borda do bloco e sobra 6 à esquerda, para não ficar um pedaço de
+            // letra de cada lado do ícone.
+            div().bg(Cores::preto()).px(esp::E6).mr(r(-6.)).child(BotaoCopiar::new("copiar", bloco.code()).dica(dica))
         })
 }
 
@@ -1371,15 +1375,8 @@ fn estilo_do_balao(vista: TextView, cx: &App) -> TextView {
     // A menção de arquivo ("@src/x.rs#L3-9") é uma pílula no meio do texto (dono, 16/11/2026).
     estilo_da_resposta(vista, cx).plugin(super::mencao::PilulaDeMencao).style(
         estilo_com_titulos(cx, [15., 14., 14.])
-            .code_block(
-                StyleRefinement::default()
-                    .p(dentro_da_borda(12.))
-                    .pr(COLUNA_DO_COPIAR)
-                    .bg(Cores::preto())
-                    .border_color(Cores::borda())
-                    // 16 de fora menos 16 de padding: o mínimo, 10.
-                    .rounded(raio::CONTROLE),
-            )
+            // 16 de fora menos 16 de padding: o mínimo, 10.
+            .code_block(poco_de_codigo(raio::CONTROLE))
             .inline_code(HighlightStyle {
                 color: Some(Cores::codigo()),
                 // O branco de 8% sumia no azul.
@@ -1581,20 +1578,41 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
                 _ => titulos[2] / 15.,
             }
         })
-        .code_block(
-            StyleRefinement::default()
-                .p(dentro_da_borda(12.))
-                .pr(COLUNA_DO_COPIAR)
-                .bg(Cores::preto())
-                .border_color(Cores::borda())
-                .rounded(raio::CARTAO),
-        )
+        .code_block(poco_de_codigo(raio::CARTAO))
         .inline_code(HighlightStyle {
             color: Some(Cores::codigo()),
             background_color: Some(Cores::hover()),
             ..Default::default()
         })
         .table(StyleRefinement::default().rounded(raio::CARTAO).border_color(Cores::borda()))
+        // O kit mede as colunas contando 24 px de padding por célula, mas desenha o padding em rem
+        // (0,75): com o zoom, a célula ficava mais estreita que o texto medido e a última palavra
+        // caía para a linha de baixo, com a tabela sobrando de largura. Com o padding dito aqui, a
+        // medida e o desenho usam o mesmo número em qualquer zoom.
+        .table_cell(StyleRefinement::default().px(esp::E12))
+}
+
+/// O bloco de código das mensagens: o poço preto com o conteúdo a 12 da borda e a coluna do Copiar
+/// à direita. As linhas não quebram, como na saída de comando e no diff: quebrada no meio, a linha
+/// voltava à coluna zero e a indentação se perdia (numa coluna estreita, seis linhas de código
+/// viravam catorze). O bloco rola de lado; a roda em pé continua levando a conversa, porque ele
+/// nunca tem o que rolar para baixo.
+fn poco_de_codigo(raio: Rems) -> StyleRefinement {
+    let mut poco = StyleRefinement::default()
+        // Em linha (flex), o texto fica com a largura da linha mais longa, e é essa largura que o
+        // bloco rola; em bloco, ele seria esticado até a borda e o resto ficaria cortado.
+        .flex()
+        .p(dentro_da_borda(12.))
+        .pr(COLUNA_DO_COPIAR)
+        .bg(Cores::preto())
+        .border_color(Cores::borda())
+        .rounded(raio)
+        .whitespace_nowrap();
+    // Os dois eixos: só com o de pé o kit põe o Copiar fora do que rola (ele fica no canto), e só
+    // com os dois a roda em pé não é desviada para o lado.
+    poco.overflow.x = Some(Overflow::Scroll);
+    poco.overflow.y = Some(Overflow::Scroll);
+    poco
 }
 
 /// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
