@@ -113,6 +113,7 @@ tabela! {
     "end", gpui_kit::base::actions::SelectLast, Some("Esforco"), Grupo::Conversa, "", "";
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
+    "ctrl-r", super::enviadas::BuscarEnviadas, None, Grupo::Conversa, "Buscar nas suas mensagens já enviadas (o Enter põe na caixa)", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
     "ctrl-shift-c", super::CopiarUltimaResposta, None, Grupo::Conversa, "Copiar a última resposta", "";
     // No visor de imagem (o Esc que fecha é o do diálogo).

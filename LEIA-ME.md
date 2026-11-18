@@ -564,6 +564,15 @@ ferramentas, vale por painel).
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
+- **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
+  `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
+  fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.
+  Primeiro as do chat aberto, depois as dos outros chats da mesma pasta, depois o resto; em cada
+  grupo, da mais recente à mais antiga, e o mesmo texto aparece uma vez só. Cada linha tem o
+  começo da mensagem e, embaixo, o chat, a pasta e há quanto tempo. O **Enter** põe o texto na
+  caixa do painel ativo, sem enviar: com algo escrito, junta ao fim depois de uma linha em branco
+  (o Ctrl+Z desfaz, como no × da fila). Mostra 60 por vez; a busca estreita o resto. Tudo em
+  `src/ui/enviadas.rs`.
 - **Comando seu ("!").** Uma mensagem que começa com "!" (`!git status`) não vai ao agente: o
   comando roda na pasta do chat, pelo `bash -c` (no Windows, `cmd /C`), num escopo de
   `src/processos/`, e aparece na conversa como **Comando seu**, na caixa de saída da trilha: o

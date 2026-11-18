@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Suas mensagens já enviadas (Ctrl+R).** Uma lista das mensagens que você mandou em todos os
+  chats, com busca sem acento: as do chat aberto e as da mesma pasta vêm primeiro, sem repetir. O
+  Enter põe a escolhida na caixa, sem enviar.
 - **Comando com "!" sem gastar turno.** `!git status` na caixa roda o comando na pasta do chat e
   mostra a saída na conversa, sem chamar o agente e sem mudar o custo. **Mandar ao agente** cita a
   saída na próxima mensagem; o Esc para um comando longo, e o arriscado pede para segurar o botão.

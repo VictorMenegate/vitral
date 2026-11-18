@@ -18,6 +18,7 @@ mod conversa;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod enviadas;
 mod falas;
 mod fila;
 mod git_da_pasta;
@@ -1841,6 +1842,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &ReabrirAba, window, cx| this.reabrir_aba(window, cx)))
             .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
+            .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);
