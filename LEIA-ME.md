@@ -1343,51 +1343,62 @@ fecha o que estava aberto (`Janela::so_um_flutuante`).
 
 ## Quadro de ideias (Ctrl+I)
 
-Um kanban do app todo (`src/ideias.rs`, `src/motor/ideias.rs` e `src/ui/quadro_ideias.rs`), num
-diálogo largo que abre pelo Ctrl+I e pelo **Quadro de ideias** do menu do logo. Quatro colunas:
-**Ideias**, **Próximas**, **Fazendo** e **Feitas**, cada uma com o número de cartões e rolagem
-própria. O campo no alto de Ideias anota com o Enter; o cartão novo entra no alto da coluna, na
-pasta do chat que estava à vista ao abrir o quadro (sem chat, na pasta de trabalho).
+A lista do que você quer fazer no futuro, num kanban (`src/ideias.rs`, `src/motor/ideias.rs` e
+`src/ui/quadro_ideias.rs`). Só você anota: nenhum chat põe ideia no quadro sozinho (dono,
+18/11/2026: "essas ideias é pra ser coisas do futuro que vou colocando pra não esquecer"). Abre
+pelo Ctrl+I, pelo **Quadro de ideias** do menu do logo e por **Ideias deste chat** no menu de uma
+conversa (o botão direito na lista ou no cabeçalho, ou Shift+F10), que diz quantas ela tem.
 
-- **Cartão:** o título, embaixo o porquê (ou o começo do pedido), as etiquetas, a pasta e, depois
-  de aberto o chat, o estado dele ("trabalhando", "esperando você", "resposta nova", "parado").
-  Com o ponteiro em cima, o botão de **Abrir chat** (ou **Ir ao chat**, quando já tem um).
+O diálogo ocupa quase a janela, com 16 de margem. Em cima, uma linha só: "Ideias", o chip do chat
+quando o quadro é de um (com o × que mostra todas), como está o Linear (com o ⟳ e a tomada) e o
+fechar. Embaixo, as quatro colunas, **Ideias**, **Próximas**, **Fazendo** e **Feitas**: o nome
+com o número de cartões e, no fundo da lista (o metal, o véu azul e o buraco, como os balões da
+conversa), os cartões, que rolam por coluna. O campo do alto de Ideias anota com o Enter; a ideia
+entra no alto da coluna, na pasta do chat à vista (sem chat, na pasta de trabalho), ou, no quadro
+de um chat, já dele.
+
+- **Cartão:** como uma linha da lista, um véu claro que acende com o ponteiro. O título (13, até 3
+  linhas), o porquê ou o começo do pedido (2 linhas) e uma linha de fatos, cortada na borda sem
+  reticências: o chat da ideia com o estado dele (ou a pasta), o código da issue e o responsável.
+  Com o ponteiro em cima, o botão de mandar.
+- **Ideia de um chat:** a escolha **Chat** da edição liga a ideia a uma conversa (as 40 mexidas por
+  último) ou a deixa para **Um chat novo**. **Mandar no chat** põe o pedido na fila da conversa
+  dela, sem cortar o turno que estiver rodando, e abre a conversa; sem chat, **Abrir chat** cria
+  um na pasta do cartão, com o pedido como primeira mensagem, e liga o cartão a ele. Nos dois
+  casos o cartão vai para Fazendo. O botão direito de um cartão com chat tem os dois.
 - **Arrastar:** solto numa coluna, o cartão vai para o fim dela; solto em cima de outro, entra
-  logo antes dele (a ordem de uma coluna é a ordem dos cartões no arquivo).
+  logo antes dele (a ordem de uma coluna é a `ordem` de cada cartão, crescente).
 - **Clique:** abre a edição, com a seta de voltar: título, **Pedido para o chat** (vazio, vai o
-  título), a pasta (as dos chats ou **Sem pasta**), a coluna, **Apagar** (com Desfazer no aviso),
-  **Ir ao chat** e **Abrir chat**. O texto se grava sozinho (o motor marca o quadro e grava na
-  passada de 5 s, e ao fechar).
-- **Abrir chat:** a conversa nasce na pasta do cartão com o título dele, recebe o pedido como a
-  sua primeira mensagem e abre no painel ativo; o cartão vai para o fim de Fazendo, ligado a ela.
-- **Botão direito:** abrir chat, editar, mover para cada uma das outras colunas e apagar.
-- **Pelos chats:** a ferramenta `anotar_ideia` (título, pedido, nota e até 3 etiquetas) põe o
-  cartão no alto de Ideias, na pasta do chat; a descrição diz para usar só quando o usuário pedir.
+  título), **Chat**, **Pasta** (só para o chat novo), **Coluna**, **Apagar** (com Desfazer no
+  aviso), o código no Linear, **Ir ao chat** e **Mandar no chat** ou **Abrir chat**. O texto se
+  grava sozinho (o motor marca o quadro e grava na passada de 5 s, e ao fechar).
+- **Botão direito:** mandar (no chat ou num novo), editar, abrir no Linear, mover para cada uma
+  das outras colunas e apagar.
 
 Fica em `ideias.json`, na pasta de dados (`{"ideias": [...]}`; os campos que esta versão não
 conhece são regravados como vieram). Ilegível, o arquivo é copiado ao lado e o quadro abre vazio,
 com o aviso.
 
-**Com o Linear** (`src/linear.rs`; dono, 18/11/2026: "quadro = Linear", no time EFI, Eficiência
-Operacional). Ligado pela faixa do alto do quadro (**Ligar o Linear…**: a chave pessoal, de
+**Com o Linear** (`src/linear.rs`; dono, 18/11/2026: o quadro é o do Linear, no time EFI,
+Eficiência Operacional). Ligado pelo **Ligar o Linear** do cabeçalho (a chave pessoal, de
 Settings > Security & access > Personal API keys, testada contra o time antes de gravar, em
-`linear.chave` na configuração, 0600), o quadro passa a ser o do time: cada issue aberta (e as
-concluídas nos últimos 30 dias, sem as canceladas) é um cartão, na coluna do tipo do estado
-(triagem e backlog em Ideias, "unstarted" em Próximas, "started" em Fazendo, "completed" em
-Feitas), na ordem do `sortOrder`. O cartão leva o código ("EFI-12") e o responsável; a descrição é
-o pedido. A pasta, o chat e o porquê continuam só do Vitral, guardados no cartão.
+`linear.chave` na configuração, 0600), as ideias são as issues do time com a etiqueta **Ideia**
+(abertas e concluídas nos últimos 30 dias, sem as canceladas): as tarefas do time ficam de fora.
+A coluna é a do tipo do estado (triagem e backlog em Ideias, "unstarted" em Próximas, "started" em
+Fazendo, "completed" em Feitas), na ordem do `sortOrder`. O chat, a pasta e o porquê continuam só
+do Vitral, guardados no cartão.
 
-- **O que sobe:** a ideia nova (vira issue no estado de backlog), o título e o pedido (1,5 s depois
-  de parar de digitar), a coluna (o primeiro estado do tipo dela no fluxo do time) e a ordem (o
-  `sortOrder` no meio dos vizinhos), o Abrir chat (vai para "started") e o Apagar (arquiva a issue;
-  o Desfazer desarquiva). O cartão muda na hora; a chamada vai em segundo plano.
-- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳ da faixa. Um cartão com
-  mudança daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, a
-  faixa mostra o erro em vermelho e o quadro relê.
+- **O que sobe:** a ideia nova (vira issue no estado de backlog, com a etiqueta Ideia, que o
+  quadro cria no time se ainda não existir), o título e o pedido (1,5 s depois de parar de
+  digitar), a coluna (o primeiro estado do tipo dela no fluxo do time) e a ordem (o `sortOrder`
+  no meio dos vizinhos), o mandar (vai para "started") e o Apagar (arquiva a issue; o Desfazer
+  desarquiva). O cartão muda na hora; a chamada vai em segundo plano.
+- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳. Um cartão com mudança
+  daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, o
+  cabeçalho mostra o erro em vermelho e o quadro relê.
 - **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam no quadro, sem
   o código de issue, e não sobem (dono, 18/11/2026: "não precisa ter isso de mandar pro Linear").
-  O botão direito de um cartão de issue tem **Abrir no Linear**.
-- **Desligar** (o ícone da tomada na faixa) apaga a chave; os cartões das issues saem do quadro.
+- **Desligar** (o ícone da tomada) apaga a chave; os cartões das issues saem do quadro.
 
 ## Compilar e rodar
 

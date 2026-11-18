@@ -48,7 +48,16 @@ pub(super) fn menu_conversa(
         })
         .unwrap_or(false);
     let id = chat.to_string();
-    let (i1, i2, i3, i4) = (id.clone(), id.clone(), id.clone(), id);
+    // As ideias guardadas para o futuro desta conversa (as que ainda não foram feitas).
+    let ideias = motor
+        .read(cx)
+        .quadro()
+        .ideias
+        .iter()
+        .filter(|i| i.chat.as_deref() == Some(chat) && i.coluna != crate::ideias::Coluna::Feitas)
+        .count();
+    let rotulo_ideias = if ideias == 0 { "Ideias deste chat".to_string() } else { format!("Ideias deste chat ({ideias})") };
+    let (i1, i2, i3, i4, i5) = (id.clone(), id.clone(), id.clone(), id.clone(), id);
     let (m1, m2) = (motor.clone(), motor.clone());
     menu.when(ao_lado, |menu| {
         menu.item(
@@ -61,6 +70,9 @@ pub(super) fn menu_conversa(
     })
     .item(acao("Renomear…", Lucide::Pencil, &janela, move |this, window, cx| {
         this.dialogo_renomear(i2.clone(), window, cx)
+    }))
+    .item(acao(rotulo_ideias, Lucide::Lightbulb, &janela, move |this, window, cx| {
+        this.abrir_quadro_de_ideias_do_chat(i5.clone(), window, cx)
     }))
     .separator()
     .item(

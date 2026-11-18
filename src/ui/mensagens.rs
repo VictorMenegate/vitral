@@ -1681,7 +1681,7 @@ fn fundo_do_cartao() -> Div {
         .child(div().absolute().top_0().left_0().size_full().bg(Cores::cartao()))
 }
 
-fn fundo_da_lista(raio: Pixels) -> Div {
+pub(super) fn fundo_da_lista(raio: Pixels) -> Div {
     let cantos = Corners::all(raio);
     div()
         .absolute()

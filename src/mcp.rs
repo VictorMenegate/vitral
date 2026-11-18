@@ -197,7 +197,7 @@ fn ferramenta(nome: &str, descricao: &str, propriedades: Value, obrigatorias: &[
 
 /// As ferramentas do Vitral, na ordem do `tools/list`. A mesma lista guarda o topo do
 /// `tratar_ferramenta`: uma ferramenta fora dela não existe.
-pub const FERRAMENTAS: &[&str] = &["listar_chats", "mensagem_para_chat", "permissao", "abrir_chat", "anotar_ideia"];
+pub const FERRAMENTAS: &[&str] = &["listar_chats", "mensagem_para_chat", "permissao", "abrir_chat"];
 
 pub fn pode(nome: &str) -> bool {
     FERRAMENTAS.contains(&nome)
@@ -266,18 +266,6 @@ fn definicao(nome: &str) -> Option<Value> {
             }),
             &["titulo", "pedido"],
         ),
-        "anotar_ideia" => ferramenta(
-            "anotar_ideia",
-            "Põe um cartão no quadro de ideias do Vitral (um kanban), para o usuário decidir depois e abrir \
-             um chat com ele. Só quando o usuário pedir para anotar ou levantar ideias; uma chamada por ideia.",
-            json!({
-                "titulo": { "type": "string", "description": "curto, até 60 letras" },
-                "pedido": { "type": "string", "description": "o pedido pronto para um chat novo fazer a ideia, com o contexto (o chat não vê esta conversa)" },
-                "nota": { "type": "string", "description": "uma frase: por que vale a pena" },
-                "etiquetas": { "type": "array", "items": { "type": "string" }, "description": "até 3 fatos curtos (o tamanho, a área)" },
-            }),
-            &["titulo"],
-        ),
         _ => return None,
     })
 }
@@ -296,9 +284,9 @@ mod testes {
 
     #[test]
     fn o_chat_tem_as_ferramentas_dele() {
-        assert_eq!(nomes(), ["listar_chats", "mensagem_para_chat", "permissao", "abrir_chat", "anotar_ideia"]);
+        assert_eq!(nomes(), ["listar_chats", "mensagem_para_chat", "permissao", "abrir_chat"]);
         for saiu in ["propor_divisao", "criar_tarefa", "ver_diff", "pedir_ajuste", "aprovar_tarefa", "cancelar_tarefa",
-            "informar_progresso", "perguntar_coordenador", "revisar_minhas_mudancas", "anotar_decisao"]
+            "informar_progresso", "perguntar_coordenador", "revisar_minhas_mudancas", "anotar_decisao", "anotar_ideia"]
         {
             assert!(!pode(saiu), "{saiu}");
         }

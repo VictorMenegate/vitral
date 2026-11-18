@@ -1,7 +1,7 @@
 //! O quadro de ideias no motor: ler, mexer e gravar os cartões (`crate::ideias`), abrir o chat de
-//! uma ideia, a ferramenta `anotar_ideia` (com que um chat põe um cartão no quadro) e o Linear
-//! (`crate::linear`): com a chave dele, o quadro é o do time, e cada mudança daqui sobe para a issue
-//! em segundo plano. O cartão muda na hora; se o Linear recusar, o aviso aparece no quadro e a
+//! uma ideia e o Linear (`crate::linear`): com a chave dele, o quadro é o das ideias do time, e cada
+//! mudança daqui sobe para a issue em segundo plano. Só o dono põe ideia no quadro: nenhum chat
+//! anota sozinho (dono, 18/11/2026: "fica poluindo"). O cartão muda na hora; se o Linear recusar, o aviso aparece no quadro e a
 //! leitura seguinte traz de volta o que vale lá.
 
 use super::*;
@@ -220,7 +220,7 @@ impl Motor {
         );
     }
 
-    /// A ideia nova (do campo do quadro ou de um chat) vira issue do time, na coluna em que está.
+    /// A ideia nova (do campo do quadro) vira issue do time, com a etiqueta do quadro.
     /// Os cartões de antes de ligar o Linear continuam só do Vitral.
     fn criar_no_linear(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(ideia) = self.quadro.achar(id).cloned().filter(|i| i.linear.is_none()) else {
@@ -280,14 +280,15 @@ impl Motor {
 
     // ---------- os cartões ----------
 
-    /// Um cartão novo no alto da coluna Ideias (e, com o Linear, a issue). Devolve o id.
-    pub fn nova_ideia(&mut self, titulo: &str, pasta: Option<PathBuf>, cx: &mut Context<Self>) -> Option<String> {
+    /// Um cartão novo no alto da coluna Ideias (e, com o Linear, a issue). `chat`: a conversa de
+    /// que a ideia é (aberto o quadro pelo menu dela). Devolve o id.
+    pub fn nova_ideia(&mut self, titulo: &str, pasta: Option<PathBuf>, chat: Option<String>, cx: &mut Context<Self>) -> Option<String> {
         let titulo = titulo.trim();
         if titulo.is_empty() || self.somente_leitura.is_some() {
             return None;
         }
         let id = novo_id();
-        self.quadro.adicionar(Ideia { id: id.clone(), titulo: titulo.to_string(), pasta, criada_em: agora(), ..Default::default() });
+        self.quadro.adicionar(Ideia { id: id.clone(), titulo: titulo.to_string(), pasta, chat, criada_em: agora(), ..Default::default() });
         self.salvar_quadro();
         self.criar_no_linear(&id, cx);
         cx.notify();
@@ -369,14 +370,25 @@ impl Motor {
         cx.notify();
     }
 
-    /// "Abrir chat": a conversa nasce na pasta do cartão (sem ela, na `pasta_padrao`, que fica
-    /// no cartão), com o título dele, e recebe o pedido como sua primeira mensagem. O cartão vai
-    /// para Fazendo, ligado ao chat. Devolve o chat.
-    pub fn abrir_chat_da_ideia(&mut self, id: &str, pasta_padrao: Option<PathBuf>, cx: &mut Context<Self>) -> Result<String, String> {
+    /// Manda a ideia para o chat dela (o pedido entra na fila dele, sem cortar um turno que esteja
+    /// rodando) ou, sem chat (ou com `novo`), abre um: a conversa nasce na pasta do cartão (sem ela,
+    /// na `pasta_padrao`, que fica no cartão), com o título dele, e recebe o pedido como a primeira
+    /// mensagem. O cartão vai para Fazendo, ligado ao chat. Devolve o chat.
+    pub fn mandar_ideia(&mut self, id: &str, pasta_padrao: Option<PathBuf>, novo: bool, cx: &mut Context<Self>) -> Result<String, String> {
         let ideia = self.quadro.achar(id).cloned().ok_or("o cartão não existe mais")?;
         let texto = ideia.texto_para_o_chat();
         if texto.is_empty() {
             return Err("o cartão está vazio".into());
+        }
+        let existente = ideia.chat.clone().filter(|c| !novo && self.chat(c).is_some_and(|c| !c.arquivado));
+        if let Some(chat) = existente {
+            self.enviar_do_usuario(&chat, texto, Vec::new(), Reforco { depois: true, ..Default::default() }, cx);
+            if ideia.coluna != Coluna::Fazendo {
+                self.mover_ideia(id, Coluna::Fazendo, None, cx);
+            }
+            self.registrar("ideia", "", &chat, &format!("Mandou a ideia \"{}\" no chat", ideia.titulo));
+            cx.notify();
+            return Ok(chat);
         }
         let pasta = ideia.pasta.clone().or(pasta_padrao);
         let chat = self.novo_chat(pasta.as_deref(), &format!("ideia:{id}"), cx)?;
@@ -397,42 +409,6 @@ impl Motor {
         Ok(chat)
     }
 
-    /// `anotar_ideia`: o cartão entra no alto da coluna Ideias, na pasta do chat que anotou (e,
-    /// com o Linear, vira issue do time).
-    pub(super) fn anotar_ideia_do_chat(&mut self, chat: &Chat, a: &Value, cx: &mut Context<Self>) -> Resposta {
-        let texto = |chave: &str| a[chave].as_str().unwrap_or_default().trim().to_string();
-        let titulo = super::conversas::titulo_do_chat_aberto(&texto("titulo"), &texto("pedido"));
-        if titulo.is_empty() {
-            return Resposta::erro("Dê um título à ideia.");
-        }
-        if self.somente_leitura.is_some() {
-            return Resposta::erro("O Vitral está aberto só para leitura; a ideia não foi anotada.");
-        }
-        let etiquetas = match &a["etiquetas"] {
-            Value::Array(lista) => lista.iter().filter_map(Value::as_str).map(str::trim).filter(|e| !e.is_empty()).take(3).map(String::from).collect(),
-            _ => Vec::new(),
-        };
-        let id = novo_id();
-        let ideia = Ideia {
-            id: id.clone(),
-            titulo: titulo.clone(),
-            pedido: texto("pedido"),
-            nota: texto("nota"),
-            etiquetas,
-            pasta: (!self.sem_pasta(chat)).then(|| chat.cwd.clone()),
-            origem: format!("chat:{}", chat.id),
-            criada_em: agora(),
-            ..Default::default()
-        };
-        self.quadro.adicionar(ideia);
-        self.salvar_quadro();
-        self.criar_no_linear(&id, cx);
-        cx.notify();
-        let onde = if self.linear.chave.is_some() { " e no Linear, no time do quadro" } else { "" };
-        Resposta::ok(format!(
-            "Anotada no quadro de ideias do Vitral{onde}, na coluna Ideias: \"{titulo}\". O usuário abre o quadro com Ctrl+I."
-        ))
-    }
 }
 
 #[cfg(test)]

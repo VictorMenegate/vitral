@@ -7,14 +7,14 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
-- **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
-  Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
-  abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
-  pedido, e o cartão vai para Fazendo mostrando como está o chat. Um chat também anota no quadro:
-  é só pedir "anota isso no quadro".
-- **O quadro é o do Linear.** Com a chave pessoal do Linear, o quadro mostra as issues do time
-  (o EFI, por padrão): as colunas seguem o estado da issue, e o que você cria, edita, arrasta ou
-  apaga aqui muda lá. Ele relê o Linear a cada minuto com o quadro aberto.
+- **Quadro de ideias (Ctrl+I).** A lista do que você quer fazer no futuro, num kanban com
+  Ideias, Próximas, Fazendo e Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam
+  entre as colunas e o clique abre o título, o pedido, o chat e a pasta. Uma ideia pode ser de um
+  chat: **Ideias deste chat**, no menu da conversa, mostra só as dela, e **Mandar no chat** põe o
+  pedido na fila dela, sem criar outro. Sem chat, **Abrir chat** cria um com o pedido.
+- **As ideias ficam no Linear.** Com a chave pessoal do Linear, as ideias são as issues com a
+  etiqueta Ideia do time (o EFI): as colunas seguem o estado, e o que você cria, edita, arrasta ou
+  apaga aqui muda lá. As tarefas do time não entram.
 - **Mensagem presa sem o cinza.** A faixa da sua mensagem no alto da conversa tem as mesmas
   camadas do cartão, transparente como ele, com uma sombra curta embaixo.
 - **Conversa com duas bordas só.** O texto da resposta, o ícone de cada linha do que o agente fez,

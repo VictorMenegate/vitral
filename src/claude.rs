@@ -1739,7 +1739,6 @@ fn resumo_do_vitral(nome: &str, entrada: &Value) -> Option<String> {
             Some(if projetos.is_empty() { quantas } else { format!("{quantas}: {}", projetos.join(", ")) })
         }
         "sugerir_projeto" => campo("nome"),
-        "anotar_ideia" => campo("titulo"),
         "mensagem_para_chat" | "ver_chat" => chat("chat"),
         "aprovar_tarefa" | "pedir_ajuste" | "cancelar_tarefa" | "ver_diff" => {
             let alvo = chat("tarefa")?;
@@ -2164,7 +2163,6 @@ mod testes {
         assert_eq!(r("ver_pr", json!({ "pr": "o/r#12", "metodo": "squash" })), "ver_pr · o/r#12", "o método não é do ver_pr");
         assert_eq!(r("ver_pr", json!({})), "ver_pr");
         assert_eq!(r("ver_issue", json!({ "issue": "ENG-123" })), "ver_issue · ENG-123");
-        assert_eq!(r("anotar_ideia", json!({ "titulo": "Paleta de comandos", "pedido": "..." })), "anotar_ideia · Paleta de comandos");
         assert_eq!(r("listar_issues", json!({ "projeto": "#vitral" })), "listar_issues · vitral · abertas");
     }
 

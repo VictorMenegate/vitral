@@ -4,8 +4,11 @@
 //! do Linear pede para chave pessoal; o "Bearer" é só do OAuth).
 //!
 //! O quadro é o de um time (`TIME_PADRAO`, o EFI, Eficiência Operacional, escolha do dono em
-//! 18/11/2026): as colunas são os tipos de estado da issue (`coluna_do_tipo`), a ordem dentro da
-//! coluna é o `sortOrder` do Linear, a descrição é o pedido que vai para o chat.
+//! 18/11/2026), mas só com as issues da etiqueta `ETIQUETA` ("Ideia"): o quadro guarda as ideias
+//! que o dono anota para o futuro, e não as tarefas do time (dono, 18/11/2026: "essas ideias é pra
+//! ser coisas do futuro que vou colocando pra não esquecer"). As colunas são os tipos de estado da
+//! issue (`coluna_do_tipo`), a ordem dentro da coluna é o `sortOrder` do Linear, a descrição é o
+//! pedido que vai para o chat.
 //! Tudo aqui bloqueia: o motor chama em segundo plano.
 
 use std::{
@@ -21,6 +24,10 @@ use crate::ideias::Coluna;
 const ENDERECO: &str = "https://api.linear.app/graphql";
 /// O time do quadro quando o `ideias.json` não diz outro.
 pub const TIME_PADRAO: &str = "EFI";
+/// A etiqueta que marca as issues do quadro (criada no time se ainda não existir).
+pub const ETIQUETA: &str = "Ideia";
+/// A cor da etiqueta quando o quadro a cria (o violeta das ideias).
+const COR_DA_ETIQUETA: &str = "#8b5cf6";
 /// Onde criar a chave pessoal.
 pub const PAGINA_DA_CHAVE: &str = "https://linear.app/settings/account/security";
 /// As concluídas que o quadro mostra: as dos últimos 30 dias.
@@ -210,10 +217,11 @@ pub fn time(chave: &str, codigo: &str) -> Result<Time, String> {
     })
 }
 
-/// As issues do quadro: as abertas e as concluídas nos últimos 30 dias (sem as canceladas).
+/// As issues do quadro: as da etiqueta, abertas e concluídas nos últimos 30 dias (sem as canceladas).
 pub fn issues(chave: &str, time: &str) -> Result<Vec<Issue>, String> {
     let consulta = format!(
         "query Quadro($time: ID!, $depois: String) {{ issues(first: 100, after: $depois, filter: {{ team: {{ id: {{ eq: $time }} }}, \
+         labels: {{ some: {{ name: {{ eqIgnoreCase: \"{ETIQUETA}\" }} }} }}, \
          or: [{{ state: {{ type: {{ in: [\"triage\", \"backlog\", \"unstarted\", \"started\"] }} }} }}, \
          {{ completedAt: {{ gt: \"{FEITAS_DESDE}\" }} }}] }}) {{ nodes {{ {CAMPOS_DA_ISSUE} }} pageInfo {{ hasNextPage endCursor }} }} }}"
     );
@@ -231,12 +239,36 @@ pub fn issues(chave: &str, time: &str) -> Result<Vec<Issue>, String> {
     Ok(todas)
 }
 
-/// Cria a issue no estado dado, no alto da coluna (`ordem`).
+/// O id da etiqueta do quadro no time: a do time ou a do workspace; sem nenhuma, cria a do time.
+fn etiqueta_do_quadro(chave: &str, time: &str) -> Result<String, String> {
+    let dados = pedir(
+        chave,
+        "query Etiqueta($nome: String!) { issueLabels(filter: { name: { eqIgnoreCase: $nome } }) { nodes { id team { id } } } }",
+        json!({ "nome": ETIQUETA }),
+    )?;
+    let achadas = dados["issueLabels"]["nodes"].as_array().cloned().unwrap_or_default();
+    let do_time = achadas.iter().find(|e| e["team"]["id"].as_str() == Some(time));
+    let do_workspace = achadas.iter().find(|e| e["team"].is_null());
+    if let Some(id) = do_time.or(do_workspace).and_then(|e| e["id"].as_str()) {
+        return Ok(id.to_string());
+    }
+    let dados = pedir(
+        chave,
+        "mutation NovaEtiqueta($entrada: IssueLabelCreateInput!) { issueLabelCreate(input: $entrada) { success issueLabel { id } } }",
+        json!({ "entrada": { "name": ETIQUETA, "teamId": time, "color": COR_DA_ETIQUETA } }),
+    )?;
+    dados["issueLabelCreate"]["issueLabel"]["id"].as_str().map(str::to_string).ok_or_else(|| "O Linear não criou a etiqueta Ideia.".into())
+}
+
+/// Cria a issue no estado dado, no alto da coluna (`ordem`), com a etiqueta do quadro.
 pub fn criar(chave: &str, time: &str, estado: &str, titulo: &str, descricao: &str, ordem: f64) -> Result<Issue, String> {
+    let etiqueta = etiqueta_do_quadro(chave, time)?;
     let consulta = format!(
         "mutation Criar($entrada: IssueCreateInput!) {{ issueCreate(input: $entrada) {{ success issue {{ {CAMPOS_DA_ISSUE} }} }} }}"
     );
-    let entrada = json!({ "teamId": time, "stateId": estado, "title": titulo, "description": descricao, "sortOrder": ordem });
+    let entrada = json!({
+        "teamId": time, "stateId": estado, "title": titulo, "description": descricao, "sortOrder": ordem, "labelIds": [etiqueta],
+    });
     let dados = pedir(chave, &consulta, json!({ "entrada": entrada }))?;
     issue_de(&dados["issueCreate"]["issue"]).ok_or_else(|| "O Linear não devolveu a issue criada.".into())
 }

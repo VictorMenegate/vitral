@@ -3,7 +3,7 @@
 //! com o pedido, e o cartão passa para Fazendo, ligado a ela. Com o Linear ligado (`crate::linear`),
 //! o quadro é o do time: cada cartão espelha uma issue, e o que é só do Vitral (a pasta, o chat, o
 //! porquê) fica no cartão. O motor guarda tudo em `ideias.json`, na pasta de dados, e o quadro abre
-//! com o que foi lido por último; um chat anota cartões pela ferramenta `anotar_ideia`.
+//! com o que foi lido por último. Só o dono anota: é a lista do que ele quer fazer no futuro.
 //!
 //! A ordem dentro de uma coluna é a `ordem` de cada cartão, crescente (a do Linear é o `sortOrder`).
 
@@ -38,7 +38,7 @@ impl Coluna {
     /// O que a coluna vazia diz.
     pub fn vazia(self) -> &'static str {
         match self {
-            Coluna::Ideias => "Escreva uma ideia aqui em cima, ou peça a um chat: \u{201c}anota isso no quadro\u{201d}.",
+            Coluna::Ideias => "Escreva aqui em cima o que você não quer esquecer.",
             Coluna::Proximas => "Arraste para cá o que vem a seguir.",
             Coluna::Fazendo => "Ao abrir o chat de uma ideia, ela vem para cá.",
             Coluna::Feitas => "Arraste para cá o que ficou pronto.",
