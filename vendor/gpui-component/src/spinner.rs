@@ -8,8 +8,10 @@ use gpui::{
 use instant::{Duration, Instant};
 
 /// Vitral: batidas por segundo do compasso que move spinners e brilhos (e, de carona, os laços
-/// do app: o metal e o anel girando).
-pub const BATIDAS_POR_SEGUNDO: u32 = 12;
+/// do app: o metal e o anel girando). Eram 12; subiu para 30 (dono, 18/11/2026: "sobe o anel pra
+/// 30 quadros") depois que as mensagens e a lista viraram vistas em cache e a batida deixou de
+/// redesenhar a janela inteira.
+pub const BATIDAS_POR_SEGUNDO: u32 = 30;
 
 /// Vitral: um compasso só para todos os spinners (e o brilho do texto) da janela. Com uma
 /// animação limitada por spinner, cada um agendava o próprio redesenho, e spinners que surgiam em
