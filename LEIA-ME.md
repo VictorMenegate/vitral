@@ -1131,29 +1131,6 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 - O que veio do histórico de uma conversa trazida do Claude Code não está nos itens do chat e
   fica de fora do sumário.
 
-**Comentar linhas e mandar tudo de uma vez** (`src/ui/comentarios.rs`). No arquivo aberto à
-direita (pelas Mudanças, pela seção Na pasta ou por um link da conversa), o clique no número da
-linha escolhe um trecho (Shift+clique estende). Com o trecho escolhido, uma faixa embaixo do
-cabeçalho traz o campo do comentário: o Enter (ou **Comentar**) guarda o texto preso àquelas
-linhas, a escolha é largada e o trecho fica marcado no visor (uma faixa do destaque ao lado do
-número, que toma a cor dele). Os comentários se acumulam por chat (o da caixa do painel ativo), em
-vários arquivos, e continuam lá ao trocar de arquivo; com algum guardado, outra faixa mostra
-quantos são, o botão que abre a lista deles e **Enviar N comentários**. O mesmo aparece num cartão
-**Comentários** do Este chat.
-
-- **Enviar N comentários** monta uma mensagem só, uma linha por comentário, com a menção do trecho
-  (`@src/ui/fila.rs#L120-134`, já como pílula) e o texto, e a põe no fim da caixa do painel ativo,
-  para revisar e enviar; o que já estava escrito fica. Os comentários guardados somem nessa hora
-  (eles passaram para a caixa). Na mensagem, os arquivos vão na ordem em que foram comentados e,
-  em cada um, pelas linhas.
-- Escolher de novo um trecho comentado (ou clicar nele na lista) traz o texto para o campo:
-  guardar troca o comentário, e guardar vazio o tira. **Descartar todos**, na lista, larga tudo.
-- Ficam só na memória: fechar o Vitral larga os comentários que não foram enviados.
-
-- Num painel estreito (abaixo de uns 330 px, ou a 150% de zoom), os botões ficam só com o ícone.
-- Na gaveta (janela estreita), o painel é opaco por cima das conversas, com o fundo escurecido; ele
-  entra deslizando da borda direita, e o botão do canto (ou Esc) o recolhe.
-
 ## Contas e uso dos planos
 
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
