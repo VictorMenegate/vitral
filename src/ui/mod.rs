@@ -842,7 +842,7 @@ impl Janela {
             .get(self.ativo)
             .and_then(|p| p.chat.clone())
             .zip(self.motor.clone())
-            .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando());
+            .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando() || motor.read(cx).comando_seu_rodando(chat));
         match rodando {
             Some((chat, _)) if !self.foco_lista.is_focused(window) => self.esc_no_turno(&chat, cx),
             _ => cx.propagate(),
@@ -857,6 +857,11 @@ impl Janela {
         let Some(motor) = self.motor.clone() else {
             return;
         };
+        // O comando seu ("!") para antes do turno: é o que você acabou de pôr para rodar.
+        if motor.read(cx).comando_seu_rodando(chat) {
+            motor.update(cx, |m, cx| m.parar_comando_seu(chat, cx));
+            return;
+        }
         let armado = self.esc_armado.as_ref().is_some_and(|(c, quando)| c == chat && quando.elapsed() < ESC_ARMADO);
         if motor.read(cx).parar_custa_caro(chat) && !armado {
             self.esc_armado = Some((chat.to_string(), std::time::Instant::now()));
@@ -1295,6 +1300,10 @@ impl Janela {
             if motor.read(cx).parou_por_voce(&chat) {
                 motor.update(cx, |m, cx| m.continuar_depois_do_esc(&chat, cx));
             }
+            return;
+        }
+        // "!comando" roda direto na pasta do chat, sem turno do agente (`mensagens/comando_seu.rs`).
+        if self.rodar_comando_da_caixa(&chat, &texto, window, cx) {
             return;
         }
         // O `/mcp` é do Vitral: no `-p` o Claude Code só manda abrir o terminal.

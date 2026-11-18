@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Comando com "!" sem gastar turno.** `!git status` na caixa roda o comando na pasta do chat e
+  mostra a saída na conversa, sem chamar o agente e sem mudar o custo. **Mandar ao agente** cita a
+  saída na próxima mensagem; o Esc para um comando longo, e o arriscado pede para segurar o botão.
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o

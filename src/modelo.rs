@@ -178,6 +178,22 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
     },
+    /// Um comando que você rodou na pasta do chat com "!" na caixa (`motor/comando_seu.rs`): não
+    /// passa pelo agente nem entra na sessão dele. `codigo` é o código de saída; sem ele, o comando
+    /// ainda roda, foi interrompido ou (com `milis` 0) nem chegou a rodar.
+    Comando {
+        id: String,
+        comando: String,
+        #[serde(default)]
+        saida: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        codigo: Option<i32>,
+        /// Quanto durou (0: não rodou até o fim).
+        #[serde(default)]
+        milis: u64,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
+    },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
@@ -195,6 +211,7 @@ impl Item {
             | Item::Raciocinio { em, .. }
             | Item::Aviso { em, .. }
             | Item::Cartao { em, .. }
+            | Item::Comando { em, .. }
             | Item::Vez { em, .. } => *em,
             Item::Desconhecido(_) => 0,
         }
