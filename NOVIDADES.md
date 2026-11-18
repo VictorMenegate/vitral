@@ -3,13 +3,10 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
-## 0.8.0
+## 0.9.0
 
-Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
+O quadro de ideias, a paleta de comandos e o uso do plano à vista, num app mais leve e com a conversa redesenhada.
 
-- **O estado do chat no contorno da aba.** As abas perderam o ícone. Com o chat trabalhando, o fio
-  da aba fica azul e respira; quando ele termina e você ainda não leu, verde; esperando você, âmbar;
-  erro, vermelho.
 - **Quadro de ideias (Ctrl+I).** A lista do que você quer fazer no futuro, num kanban com
   Ideias, Próximas, Fazendo e Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam
   entre as colunas e o clique abre o título, o pedido, o chat e a pasta. Uma ideia pode ser de um
@@ -19,61 +16,56 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   etiqueta Ideia do time (o EFI): as colunas seguem o estado, e o que você cria, edita, arrasta ou
   apaga aqui muda lá. As tarefas do time não entram. O filtro do cabeçalho mostra todas, só as do
   Linear ou só as do Vitral; com Vitral, a ideia nova fica só aqui.
-- **Memória de cada chat.** No Linux, a dica do relógio do turno diz quanta memória o chat ocupa
-  agora, com tudo o que o agente abriu (comandos, testes, servidores): "Memória deste chat: 3,1 GB".
-- **Mandar a mensagem numa hora marcada.** No **…** da caixa, **Mandar quando a janela de 5 h
-  renovar** e **Mandar às…** deixam a mensagem na fila do chat com o selo da hora; ela sai sozinha
-  na hora, com o Vitral aberto, e continua lá depois de reiniciar. O × e o lápis da fila valem
-  para ela, e **Entregar agora** a manda antes.
-- **Tokens e custo de cada turno.** A dica da linha "Trabalhou 6 min · 13 comandos" do turno
-  recolhido diz o que ele gastou, "182 mil tokens · US$ 0,84", e abre em entrada nova, cache lido
-  e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
-  turnos de antes desta versão continuam como eram.
-- **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
-  7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
-  o custo estimado; o clique num chat abre a conversa. Conta o que rodou a partir desta versão.
-- **Previsão de quando o limite acaba.** No popover do uso do Claude, cada janela diz se o ritmo
-  de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
-  até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica
-  dele diz a hora, mesmo abaixo de 70%.
-- **Resumo do dia para copiar.** "Resumo de hoje", no menu do logo, mostra por pasta os chats
-  que trabalharam: o título, a primeira frase da última resposta, os arquivos mudados, o tempo
-  trabalhado e o que ficou pendente. Dá para trocar para Ontem e 7 dias e copiar tudo como
-  Markdown. É montado do que o app já guarda, sem gastar token.
-- **Sumário da conversa no Este chat.** A seção Nesta conversa tem uma linha por mensagem sua,
-  com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
-  conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a
-  que você está lendo fica marcada enquanto a conversa rola.
-- **Novo chat direto num worktree.** A paleta "Novo chat · Em qual pasta?" ganhou o grupo
-  Worktrees: as cópias dos repositórios das pastas que já têm chat, com o ramo embaixo do nome. A
-  busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.
-- **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
-  está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
-  a da aba dizem o mesmo.
-- **Corrigir mensagem sem perder o contexto.** Corrigir uma mensagem não troca mais a conversa do
-  agente por um resumo: ele volta ao ponto exato antes dela, com tudo o que veio antes. Quando
-  isso não dá (Codex, conversa antiga), continua como era, com o resumo.
-- **Continuar daqui em outro chat.** Nas ações de uma mensagem sua e de uma resposta, o ícone do
-  ramo abre ao lado um chat novo com a conversa até aquele ponto, e o agente dele lembra do que
-  veio antes. O chat original fica como está: dá para testar outro caminho sem perder o primeiro.
-- **Arranjos de painéis com nome.** No menu do logo, **Arranjos** guarda os painéis, as abas e as
-  larguras de agora com um nome ("Central", "Vitral") e troca entre eles; a volta é de onde você
-  parou. Ctrl+Alt+PageDown e PageUp andam pelos arranjos, e os chats fora de vista continuam
-  rodando.
 - **Paleta de comandos (Ctrl+Shift+P).** Tudo o que o Vitral faz numa lista com busca: os atalhos
   (com as teclas ao lado) e o que só existia em menu, como Compactar, Servidores MCP e Contas. O
   Enter faz no painel ativo; o que não vale no momento aparece apagado, com o motivo.
 - **Suas mensagens já enviadas (Ctrl+R).** Uma lista das mensagens que você mandou em todos os
   chats, com busca sem acento: as do chat aberto e as da mesma pasta vêm primeiro, sem repetir. O
   Enter põe a escolhida na caixa, sem enviar.
-- **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
-  Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
-  abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
-  pedido, e o cartão vai para Fazendo mostrando como está o chat. Um chat também anota no quadro:
-  é só pedir "anota isso no quadro".
-- **O quadro é o do Linear.** Com a chave pessoal do Linear, o quadro mostra as issues do time
-  (o EFI, por padrão): as colunas seguem o estado da issue, e o que você cria, edita, arrasta ou
-  apaga aqui muda lá. Ele relê o Linear a cada minuto com o quadro aberto.
+- **Arranjos de painéis com nome.** No menu do logo, **Arranjos** guarda os painéis, as abas e as
+  larguras de agora com um nome ("Central", "Vitral") e troca entre eles; a volta é de onde você
+  parou. Ctrl+Alt+PageDown e PageUp andam pelos arranjos, e os chats fora de vista continuam
+  rodando.
+- **Continuar daqui em outro chat.** Nas ações de uma mensagem sua e de uma resposta, o ícone do
+  ramo abre ao lado um chat novo com a conversa até aquele ponto, e o agente dele lembra do que
+  veio antes. O chat original fica como está: dá para testar outro caminho sem perder o primeiro.
+- **Corrigir mensagem sem perder o contexto.** Corrigir uma mensagem não troca mais a conversa do
+  agente por um resumo: ele volta ao ponto exato antes dela, com tudo o que veio antes. Quando
+  isso não dá (Codex, conversa antiga), continua como era, com o resumo.
+- **Previsão de quando o limite acaba.** No popover do uso do Claude, cada janela diz se o ritmo
+  de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
+  até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica
+  dele diz a hora, mesmo abaixo de 70%.
+- **Mandar a mensagem numa hora marcada.** No **…** da caixa, **Mandar quando a janela de 5 h
+  renovar** e **Mandar às…** deixam a mensagem na fila do chat com o selo da hora; ela sai sozinha
+  na hora, com o Vitral aberto, e continua lá depois de reiniciar. O × e o lápis da fila valem
+  para ela, e **Entregar agora** a manda antes.
+- **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
+  7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
+  o custo estimado; o clique num chat abre a conversa. Conta o que rodou a partir desta versão.
+- **Tokens e custo de cada turno.** A dica da linha "Trabalhou 6 min · 13 comandos" do turno
+  recolhido diz o que ele gastou, "182 mil tokens · US$ 0,84", e abre em entrada nova, cache lido
+  e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
+  turnos de antes desta versão continuam como eram.
+- **Memória de cada chat.** No Linux, a dica do relógio do turno diz quanta memória o chat ocupa
+  agora, com tudo o que o agente abriu (comandos, testes, servidores): "Memória deste chat: 3,1 GB".
+- **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
+  está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
+  a da aba dizem o mesmo.
+- **Novo chat direto num worktree.** A paleta "Novo chat · Em qual pasta?" ganhou o grupo
+  Worktrees: as cópias dos repositórios das pastas que já têm chat, com o ramo embaixo do nome. A
+  busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.
+- **Sumário da conversa no Este chat.** A seção Nesta conversa tem uma linha por mensagem sua,
+  com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
+  conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a
+  que você está lendo fica marcada enquanto a conversa rola.
+- **Resumo do dia para copiar.** "Resumo de hoje", no menu do logo, mostra por pasta os chats
+  que trabalharam: o título, a primeira frase da última resposta, os arquivos mudados, o tempo
+  trabalhado e o que ficou pendente. Dá para trocar para Ontem e 7 dias e copiar tudo como
+  Markdown. É montado do que o app já guarda, sem gastar token.
+- **O estado do chat no contorno da aba.** As abas perderam o ícone. Com o chat trabalhando, o fio
+  da aba fica azul e respira; quando ele termina e você ainda não leu, verde; esperando você, âmbar;
+  erro, vermelho.
 - **Mensagem presa sem o cinza.** A faixa da sua mensagem no alto da conversa tem as mesmas
   camadas do cartão, transparente como ele, com uma sombra curta embaixo.
 - **Conversa com duas bordas só.** O texto da resposta, o ícone de cada linha do que o agente fez,
@@ -112,6 +104,31 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   resultado sem comando não tem mais a faixa vazia em cima, e o raciocínio e os passos do
   subagente ficaram com o mesmo canto do relatório. No erro com o título em duas linhas, o ícone
   fica na primeira.
+- **Suas mensagens como um buraco no cartão.** O balão do que você escreve mostra o fundo da
+  lista (o metal com o véu azul), com a sombra caindo da beirada de cima, sem contorno e sem ponta.
+  A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
+- **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
+  lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
+  leva até ela.
+- **Uso e contexto redesenhados.** Os anéis de uso do Claude e do Codex moram numa cápsula só no
+  canto, com um anel fino e inteiro que enche a partir do alto (a inicial da conta, menor,
+  recortada nele). O contexto da conversa, na caixa, virou um medidor deitado com a porcentagem:
+  o anel com um pedaço azul lia como o "carregando".
+- **Mais leve com um chat trabalhando.** As mensagens de cada painel e a lista viraram partes que
+  só se redesenham quando mudam: o anel girando, o metal e a rolagem de um painel não refazem o
+  resto. Medido na bancada com um chat rodando: a thread da janela caiu de 48% para 34% de um
+  núcleo, e montar a janela, de 3,3 ms para 0,8 ms por quadro. O anel do "Pensando…" gira por cima
+  da conversa, numa parte só dele, e não a redesenha a cada volta; os anéis das linhas de
+  ferramenta dentro dela ficam parados.
+- **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
+  pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
+  painel da direita estreito a aba à vista mantém o nome.
+- **Sombra mais macia** entre a lista e as conversas, sumindo devagar em vez de acabar numa beirada.
+
+## 0.8.0
+
+Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
+
 - **Digitar em qualquer ponto escreve na caixa.** Depois de clicar na conversa (para abrir uma
   trilha ou selecionar um trecho) ou numa aba, a letra que você digita vai para a caixa do painel
   ativo, e o Ctrl+V cola nela: um print copiado vira pílula sem clicar antes.
@@ -235,7 +252,6 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   Claude do seletor, e não mais solta na caixa de mensagem.
 - **Histórico ao subir.** As mensagens anteriores aparecem automaticamente ao rolar para cima,
   mantendo o ponto de leitura. A barra fica visível quando a conversa tem conteúdo para rolar.
-
 - **Mais simples.** Saíram os projetos, o Mestre, as rotinas, as issues e PRs e as cópias isoladas.
   Ficou o essencial: uma lista de chats, e cada chat trabalha direto na pasta dele, como o Claude
   Code no terminal ou no VS Code. Os dados antigos ficam guardados em `estado.versao-2.json`.
@@ -301,26 +317,6 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   fios dos lados; a caixa de código perdeu o fio do cabeçalho e o Copiar só aparece com o ponteiro
   nela; a linha do turno não mostra mais "ação 5"; o enviar tem a altura dos chips ao lado; e as
   abas cortam o título sem as reticências, com o número mais perto.
-- **Suas mensagens como um buraco no cartão.** O balão do que você escreve mostra o fundo da
-  lista (o metal com o véu azul), com a sombra caindo da beirada de cima, sem contorno e sem ponta.
-  A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
-- **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
-  lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
-  leva até ela.
-- **Uso e contexto redesenhados.** Os anéis de uso do Claude e do Codex moram numa cápsula só no
-  canto, com um anel fino e inteiro que enche a partir do alto (a inicial da conta, menor,
-  recortada nele). O contexto da conversa, na caixa, virou um medidor deitado com a porcentagem:
-  o anel com um pedaço azul lia como o "carregando".
-- **Mais leve com um chat trabalhando.** As mensagens de cada painel e a lista viraram partes que
-  só se redesenham quando mudam: o anel girando, o metal e a rolagem de um painel não refazem o
-  resto. Medido na bancada com um chat rodando: a thread da janela caiu de 48% para 34% de um
-  núcleo, e montar a janela, de 3,3 ms para 0,8 ms por quadro. O anel do "Pensando…" gira por cima
-  da conversa, numa parte só dele, e não a redesenha a cada volta; os anéis das linhas de
-  ferramenta dentro dela ficam parados.
-- **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
-  pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
-  painel da direita estreito a aba à vista mantém o nome.
-- **Sombra mais macia** entre a lista e as conversas, sumindo devagar em vez de acabar numa beirada.
 - **Popovers dentro da janela.** O de modelo e o do uso do plano não passam mais da borda com o
   zoom alto: a lista encolhe e rola por dentro.
 - **Na pasta: o que o git vê.** O **Este chat** ganha a seção Na pasta, com tudo o que mudou desde
