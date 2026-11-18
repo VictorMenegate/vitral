@@ -652,15 +652,19 @@ impl Janela {
             // caixa de mensagem: 200 de degradê e 200 cheios (por baixo do conteúdo).
             // Só com os fundos transparentes (no opaco não há o que fechar). O pedaço cheio leva os
             // cantos de baixo do cartão: o `overflow_hidden` corta em retângulo, e sem isso o
-            // fundo sobrava quadrado para fora da curva (dono, 13/11/2026).
+            // fundo sobrava quadrado para fora da curva (dono, 13/11/2026). O pedaço cheio cresce
+            // com a folga da doca: na conversa vazia a doca é alta, e o topo dela (opaco) caía no
+            // meio do degradê, numa linha reta que cortava o fundo (dono, 18/11/2026: "tá bem ruim
+            // essa parte da divisão do shader").
             .when(crate::tema::transparencia() > 0, |s| {
+                let cheio = px(200.) + tam(window, topo_da_doca);
                 s.child(
                     div()
                         .absolute()
                         .left_0()
                         .right_0()
                         .bottom_0()
-                        .h(px(400.))
+                        .h(cheio + px(200.))
                         .child(div().absolute().top_0().left_0().right_0().h(px(200.)).bg(crate::tema::gradiente_do_pe_do_cartao()))
                         .child(
                             div()
@@ -668,7 +672,7 @@ impl Janela {
                                 .left_0()
                                 .right_0()
                                 .bottom_0()
-                                .h(px(200.))
+                                .h(cheio)
                                 .rounded_bl(raio)
                                 .bg(Cores::cartao_opaco()),
                         ),

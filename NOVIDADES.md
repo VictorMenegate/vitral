@@ -3,6 +3,11 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.2
+
+- **O fundo da conversa vazia sem emenda.** Na conversa vazia, com a transparência ligada, o fundo
+  passava do transparente para o escuro da caixa numa linha reta; agora ele fecha devagar antes.
+
 ## 0.9.1
 
 Correções da 0.9.0 na conversa, nos menus e nas contas.
