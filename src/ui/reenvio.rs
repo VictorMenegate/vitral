@@ -270,6 +270,8 @@ impl Janela {
         let Some(ix) = ix else {
             return;
         };
+        // Quando a sessão volta ao ponto antes da mensagem, não há sessão nova com resumo a avisar.
+        let tem_sessao = tem_sessao && !motor.read(cx).correcao_mantem_a_sessao(&chat, ix);
         if rodando && !parar {
             window.push_notification(
                 aviso(Tom::Info, "A conversa está rodando: pare (Esc) para corrigir uma mensagem."),

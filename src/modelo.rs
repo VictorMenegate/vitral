@@ -178,6 +178,22 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
     },
+    /// Um comando que você rodou na pasta do chat com "!" na caixa (`motor/comando_seu.rs`): não
+    /// passa pelo agente nem entra na sessão dele. `codigo` é o código de saída; sem ele, o comando
+    /// ainda roda, foi interrompido ou (com `milis` 0) nem chegou a rodar.
+    Comando {
+        id: String,
+        comando: String,
+        #[serde(default)]
+        saida: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        codigo: Option<i32>,
+        /// Quanto durou (0: não rodou até o fim).
+        #[serde(default)]
+        milis: u64,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
+    },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
@@ -195,6 +211,7 @@ impl Item {
             | Item::Raciocinio { em, .. }
             | Item::Aviso { em, .. }
             | Item::Cartao { em, .. }
+            | Item::Comando { em, .. }
             | Item::Vez { em, .. } => *em,
             Item::Desconhecido(_) => 0,
         }
@@ -286,6 +303,21 @@ impl Parceiro {
             comandos: Vec::new(),
         }
     }
+}
+
+/// De onde o próximo turno de um chat continua numa cópia de sessão (`motor/bifurcar.rs`): a sessão
+/// do Claude Code de origem (a do chat de onde ele foi bifurcado, ou a dele mesmo antes de uma
+/// correção) e, quando a cópia não leva a sessão inteira, o uuid da entrada em que ela para
+/// (`--resume-session-at`). Só vale até a sessão nova nascer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bifurcacao {
+    pub sessao: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ate: Option<String>,
+    /// A cópia não é de outro chat: é a sessão deste, de volta ao ponto antes de uma mensagem
+    /// corrigida (`Motor::retirar_mensagem`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub correcao: bool,
 }
 
 fn eh_zero(n: &u64) -> bool {
@@ -386,6 +418,9 @@ pub struct Chat {
     /// A conversa do Claude Code que este chat continua (o histórico vem do arquivo dela).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importada: Option<crate::importar::Importada>,
+    /// O chat nasceu de outro, a partir de um ponto da conversa: de onde o primeiro turno continua.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bifurcado_de: Option<Bifurcacao>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
@@ -433,6 +468,7 @@ impl Chat {
             memoria_pedida_em: 0,
             criado_por: String::new(),
             importada: None,
+            bifurcado_de: None,
             resto: Default::default(),
             itens: Vec::new(),
         }

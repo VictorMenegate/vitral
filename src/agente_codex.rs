@@ -390,6 +390,7 @@ mod testes {
             sessao: "01a1d5d6".into(),
             retomar,
             bifurcar: None,
+            cortar_em: None,
             modelo: None,
             permissao: permissao.into(),
             prompt_sistema: String::new(),

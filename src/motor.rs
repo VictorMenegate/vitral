@@ -24,6 +24,10 @@ mod memoria;
 pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod ramo;
+mod bifurcar;
+mod comando_seu;
+mod permissoes_da_pasta;
+pub use comando_seu::{COMANDO_COMECOU, SituacaoDoComando, citacao_do_comando};
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -392,6 +396,11 @@ pub struct Motor {
     /// Os chats cujo turno de agora é a revisão da memória (rodada de uso, item 6.1): por fora eles
     /// contam como parados (o "Terminou" sai na hora), por dentro ainda trabalham.
     revisando: HashMap<String, Revisao>,
+    /// As regras de "sempre nesta pasta", que valem para todos os chats de cada pasta
+    /// (`motor/permissoes_da_pasta.rs`).
+    regras_da_pasta: permissoes_da_pasta::RegrasPorPasta,
+    /// O comando que você rodou com "!" em cada chat e ainda não acabou (`motor/comando_seu.rs`).
+    comandos_seus: HashMap<String, comando_seu::ComandoSeu>,
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
@@ -580,10 +589,12 @@ impl Motor {
         let linear = ideias::EstadoDoLinear::da_config(&dados.config);
         let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
         let pesos = peso::Pesos::ler(&dados.arquivo_pesos());
+        let regras_da_pasta = permissoes_da_pasta::ler(&dados);
         let mut motor = Self {
             gastos,
             pesos,
             memorias: Default::default(),
+            regras_da_pasta,
             quadro,
             quadro_sujo: false,
             linear,
@@ -646,6 +657,7 @@ impl Motor {
             estado_sujo: false,
             parados_por_voce: HashMap::new(),
             revisando: HashMap::new(),
+            comandos_seus: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
             avisos: Arc::default(),
@@ -913,6 +925,7 @@ impl Motor {
             self.dirigidos.remove(id);
             self.revisando.remove(id);
             self.parados_por_voce.remove(id);
+            self.esquecer_comando_seu(id);
             self.visiveis.remove(id);
         }
         self.interrompidos.retain(|c| !saiu(c));
@@ -1645,10 +1658,12 @@ impl Motor {
         matches!(self.execucao(chat), Execucao::Erro(_)) && self.ultima_entrada.contains_key(chat)
     }
 
-    /// Tira da conversa a última mensagem do usuário e o que veio depois dela, e devolve o que
-    /// estava nela para a caixa. A sessão do Claude Code não volta atrás: ela é trocada por uma
-    /// nova, e o próximo turno começa com o bloco de passagem do que ficou na tela — senão o
-    /// Claude continuaria lembrando da mensagem que saiu. Os arquivos da pasta não voltam.
+    /// Tira da conversa uma mensagem do usuário e o que veio depois dela, e devolve o que estava
+    /// nela para a caixa. Para o Claude não continuar lembrando do que saiu, o próximo turno roda
+    /// numa sessão nova: uma cópia da de agora até o ponto antes da mensagem
+    /// (`--resume-session-at`, ver `motor/bifurcar.rs`), que guarda o contexto exato; quando o
+    /// ponto não é achado na sessão, uma sessão vazia com o bloco de passagem do que ficou na
+    /// tela. Os arquivos da pasta não voltam.
     pub fn retirar_mensagem(&mut self, chat_id: &str, ix: usize, cx: &mut Context<Self>) -> Option<Retirada> {
         if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
             return None;
@@ -1657,6 +1672,8 @@ impl Motor {
             return None;
         }
         self.rodadas.remove(chat_id);
+        // A sessão até o ponto antes da mensagem, lida antes de a mensagem sair da conversa.
+        let volta = self.sessao_antes_da_mensagem(chat_id, ix);
         let c = self.chat_mut(chat_id)?;
         let mut saindo = c.itens.split_off(ix);
         let Item::Usuario { texto, anexos, ultrathink, ultracode, .. } = saindo.remove(0) else {
@@ -1666,11 +1683,10 @@ impl Motor {
         };
         c.atualizado_em = agora();
         c.turno_aberto = false;
-        // Com sessão criada, o próximo turno abre uma nova com a passagem; sem ela, nada a trocar.
-        if c.sessao_criada {
-            c.sessao = uuid::Uuid::new_v4().to_string();
-            c.sessao_criada = false;
-            c.contexto = None;
+        // Com o ponto achado na sessão, o próximo turno sai numa cópia dela até ali (o agente
+        // fica com o contexto exato, sem resumo); sem ele, abre uma nova com a passagem. Sem
+        // sessão, nada a trocar (`bifurcar::sessao_depois_da_correcao`).
+        if bifurcar::sessao_depois_da_correcao(c, volta) {
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::Reenvio);
         }
         // Na dupla, o outro agente também viu o que saiu: ele recomeça numa sessão nova e recebe a
@@ -2123,7 +2139,11 @@ impl Motor {
             sessao: chat.sessao.clone(),
             retomar: chat.sessao_criada,
             // A conversa importada é do Claude Code: no Codex ela entra pelo bloco de passagem.
-            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada).filter(|_| !codex),
+            // O chat bifurcado de outro também começa numa cópia: a da sessão do chat de origem.
+            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada)
+                .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada).map(|b| b.sessao.clone()))
+                .filter(|_| !codex),
+            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && !codex).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
             modelo: self.modelo_do_turno(chat),
@@ -2707,6 +2727,10 @@ impl Motor {
     /// Erro de sessão logo no começo do turno: ela existe e o Vitral achava que não (queda logo
     /// depois de criá-la), ou sumiu. Acerta a marca e repete o turno uma vez. Diz se repetiu.
     fn consertar_sessao(&mut self, chat_id: &str, erro: &str, cx: &mut Context<Self>) -> bool {
+        // O chat bifurcado cuja cópia da sessão o Claude Code recusou (`motor/bifurcar.rs`).
+        if self.consertar_bifurcacao(chat_id, erro, cx) {
+            return true;
+        }
         let Some(chat) = self.chat(chat_id) else {
             return false;
         };
@@ -3787,8 +3811,8 @@ impl Motor {
 
         let resposta = match chamada.ferramenta.as_str() {
             "permissao" => {
-                // "Permitir sempre" desta conversa: vale já no turno em andamento.
-                if chat.permite(a["tool_name"].as_str().unwrap_or("?"), &a["input"]) {
+                // "Permitir sempre" desta conversa ou da pasta dela: vale já no turno em andamento.
+                if self.permitido_sempre(&chat, a["tool_name"].as_str().unwrap_or("?"), &a["input"]) {
                     let resposta = json!({"behavior": "allow", "updatedInput": a["input"]});
                     let _ = chamada.resposta.try_send(Resposta::ok(resposta.to_string()));
                     return;
@@ -3830,7 +3854,7 @@ impl Motor {
                 }
                 Item::Ferramenta { resumo, .. } => texto.push_str(&format!("- (ferramenta) {resumo}\n")),
                 Item::Vez { agente, .. } => texto.push_str(&format!("### Vez do {}\n\n", agente.nome())),
-                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Desconhecido(_) => {}
+                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Comando { .. } | Item::Desconhecido(_) => {}
             }
         }
         let pasta = self.dados.pasta_exportadas();
@@ -4592,6 +4616,13 @@ fn bloco_de_passagem(itens: &[Item], pular: usize, motivo: MotivoPassagem) -> St
             "[Vitral] Passagem de sessão: a sessão anterior do Claude Code desta conversa expirou, e esta é \
              uma nova. As últimas mensagens, para continuar de onde parou (a conversa inteira continua na \
              tela do usuário):",
+        // As falas abaixo vieram copiadas do chat de origem, que segue o caminho dele.
+        MotivoPassagem::Bifurcou =>
+            "[Vitral] Passagem de conversa: esta conversa é um ramo de outra. O usuário escolheu um ponto \
+             dela e abriu este chat para seguir por outro caminho a partir dali; a conversa de origem \
+             continua à parte e você não vê o que acontecer nela. O que já estava mudado nos arquivos \
+             continua como está na pasta. As últimas mensagens até o ponto escolhido, para continuar de \
+             lá (a conversa inteira até ali está na tela do usuário):",
         // Nas falas abaixo, "Você" foi o outro agente: o que ele fez nos arquivos continua lá.
         MotivoPassagem::TrocouDeAgente =>
             "[Vitral] Passagem de conversa: até aqui quem respondia nesta conversa era outro agente de \

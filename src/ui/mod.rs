@@ -11,6 +11,7 @@ mod abertura;
 pub mod atalhos;
 mod atualizacao;
 mod avisos_no_app;
+mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
 mod comentarios;
@@ -22,6 +23,7 @@ mod desfazer_trecho;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod enviadas;
 mod falas;
 mod fila;
 mod git_da_pasta;
@@ -38,6 +40,7 @@ pub mod movimento;
 mod painel_contas;
 mod fechar;
 mod painel_arquivo;
+mod paleta;
 mod quadro_ideias;
 mod ramo;
 pub(crate) mod paineis;
@@ -868,7 +871,7 @@ impl Janela {
             .get(self.ativo)
             .and_then(|p| p.chat.clone())
             .zip(self.motor.clone())
-            .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando());
+            .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando() || motor.read(cx).comando_seu_rodando(chat));
         match rodando {
             Some((chat, _)) if !self.foco_lista.is_focused(window) => self.esc_no_turno(&chat, cx),
             _ => cx.propagate(),
@@ -883,6 +886,11 @@ impl Janela {
         let Some(motor) = self.motor.clone() else {
             return;
         };
+        // O comando seu ("!") para antes do turno: é o que você acabou de pôr para rodar.
+        if motor.read(cx).comando_seu_rodando(chat) {
+            motor.update(cx, |m, cx| m.parar_comando_seu(chat, cx));
+            return;
+        }
         let armado = self.esc_armado.as_ref().is_some_and(|(c, quando)| c == chat && quando.elapsed() < ESC_ARMADO);
         if motor.read(cx).parar_custa_caro(chat) && !armado {
             self.esc_armado = Some((chat.to_string(), std::time::Instant::now()));
@@ -1321,6 +1329,10 @@ impl Janela {
             if motor.read(cx).parou_por_voce(&chat) {
                 motor.update(cx, |m, cx| m.continuar_depois_do_esc(&chat, cx));
             }
+            return;
+        }
+        // "!comando" roda direto na pasta do chat, sem turno do agente (`mensagens/comando_seu.rs`).
+        if self.rodar_comando_da_caixa(&chat, &texto, window, cx) {
             return;
         }
         // O `/mcp` é do Vitral: no `-p` o Claude Code só manda abrir o terminal.
@@ -1863,6 +1875,11 @@ impl Janela {
             .on_action(cx.listener(|this, _: &ReabrirAba, window, cx| this.reabrir_aba(window, cx)))
             .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
+            .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoSeguinte, window, cx| this.andar_nos_arranjos(1, window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoAnterior, window, cx| this.andar_nos_arranjos(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::SalvarArranjo, window, cx| this.dialogo_salvar_arranjo(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);

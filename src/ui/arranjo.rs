@@ -14,6 +14,8 @@ use super::{
     paineis::{MAX_ABAS, MAX_PAINEIS},
 };
 
+pub(super) mod salvos;
+
 /// A chave do interface.json.
 const CHAVE: &str = "arranjo";
 

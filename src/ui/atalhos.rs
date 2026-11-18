@@ -48,6 +48,9 @@ pub struct Linha {
     /// O que o atalho faz; vazio deixa a linha fora da lista.
     pub rotulo: &'static str,
     pub grupo: Grupo,
+    /// Onde a tecla vale (o contexto do keymap); `None`, em todo o app. A paleta de comandos usa
+    /// para apagar o que só existe num lugar que ela não alcança (o menu "/", o visor).
+    pub contexto: Option<&'static str>,
 }
 
 impl Linha {
@@ -76,7 +79,13 @@ macro_rules! tabela {
 
         /// As linhas da tabela, na ordem em que foram registradas.
         pub fn linhas() -> Vec<Linha> {
-            vec![$(Linha { teclas: $teclas, exibir: $exibir, rotulo: $rotulo, grupo: $grupo }),*]
+            vec![$(Linha { teclas: $teclas, exibir: $exibir, rotulo: $rotulo, grupo: $grupo, contexto: $contexto }),*]
+        }
+
+        /// As ações da tabela, na ordem das linhas: a paleta de comandos dispara a da linha
+        /// escolhida.
+        pub fn acoes() -> Vec<Box<dyn Action>> {
+            vec![$(Box::new($acao) as Box<dyn Action>),*]
         }
     };
 }
@@ -113,6 +122,7 @@ tabela! {
     "end", gpui_kit::base::actions::SelectLast, Some("Esforco"), Grupo::Conversa, "", "";
     "u", composer::AlternarUltracode, Some("Esforco"), Grupo::Conversa, "Ligar o Ultracode (no popover de esforço)", "";
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
+    "ctrl-r", super::enviadas::BuscarEnviadas, None, Grupo::Conversa, "Buscar nas suas mensagens já enviadas (o Enter põe na caixa)", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
     "ctrl-shift-c", super::CopiarUltimaResposta, None, Grupo::Conversa, "Copiar a última resposta", "";
     // No visor de imagem (o Esc que fecha é o do diálogo).
@@ -144,6 +154,9 @@ tabela! {
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
     "ctrl-shift-pagedown", super::MoverPainelDireita, None, Grupo::Paineis, "Mover o painel para a direita", "";
+    "ctrl-alt-pagedown", super::arranjo::salvos::ArranjoSeguinte, None, Grupo::Paineis, "Arranjo de painéis seguinte (dá a volta)", "";
+    "ctrl-alt-pageup", super::arranjo::salvos::ArranjoAnterior, None, Grupo::Paineis, "Arranjo de painéis anterior", "";
+    "ctrl-alt-s", super::arranjo::salvos::SalvarArranjo, None, Grupo::Paineis, "Salvar o arranjo de painéis atual…", "";
 
     // ---------- janela ----------
     "ctrl-=", super::AumentarZoom, None, Grupo::Janela, "Aumentar o zoom", "";
@@ -154,6 +167,7 @@ tabela! {
     "ctrl-0", super::ZoomPadrao, None, Grupo::Janela, "Zoom de 100%", "";
     "f10", super::AbrirMenuVitral, None, Grupo::Janela, "Abrir o menu do Vitral", "";
     "ctrl-,", super::AbrirConfiguracoes, None, Grupo::Janela, "Abrir as Configurações", "";
+    "ctrl-shift-p", super::paleta::AbrirPaleta, None, Grupo::Janela, super::paleta::ROTULO_DA_PALETA, "";
     // Fora de campo de texto (o "!Input" tira a tecla de quem está escrevendo).
     "?", super::AbrirAtalhos, Some("Vitral && !Input"), Grupo::Janela, "Esta lista de atalhos", "";
 }

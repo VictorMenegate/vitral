@@ -78,7 +78,47 @@ componentes do GPUI Kit.
 - **Corrigir qualquer mensagem.** `motor::editaveis_desde` diz desde onde as mensagens do usuário
   dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
   do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
-  e o que veio depois. Na dupla, a sessão do parceiro também recomeça.
+  e o que veio depois. Na dupla, a sessão do parceiro também recomeça. **A sessão volta ao ponto,
+  sem resumo:** para o Claude não lembrar do que saiu, o próximo turno roda numa sessão nova, que
+  é uma cópia da de antes até o ponto anterior à mensagem corrigida (`--resume <sessão>
+  --fork-session --session-id <nova> --resume-session-at <uuid>`, o mesmo corte do "Continuar
+  daqui em outro chat"; `Bifurcacao::correcao`, `bifurcar::sessao_depois_da_correcao`). O agente
+  fica com o contexto exato do que veio antes, e o começo da conversa é o mesmo que o Claude Code
+  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. Quando o ponto não é
+  achado no arquivo da sessão (Codex, conversa de antes das marcas, a primeira mensagem da
+  sessão, mensagem dirigida ao turno), vale o caminho de antes: sessão vazia com o bloco de
+  passagem (`MotivoPassagem::Reenvio`); se o Claude Code recusar o corte, o turno é repetido
+  assim, com um aviso na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
+  na sessão de origem. A cópia de uma sessão traz o custo acumulado da original (o Claude Code
+  restaura o `cost-state` dela, lido no binário da 2.1.325): o chat leva o último total visto
+  para a sessão nova, e o `somar_custo` soma só o que crescer. A pergunta antes de corrigir só
+  fala em "sessão nova, com um resumo" quando é isso que vai acontecer. O corte foi medido sem
+  mandar mensagem (ver o "Continuar daqui em outro chat"); a leitura de cache no turno seguinte
+  não foi medida, porque pediria um turno pago.
+- **Continuar daqui em outro chat (bifurcar).** Nas ações de uma mensagem sua e de uma resposta
+  (o ícone do ramo; `src/ui/bifurcar.rs`) e na paleta de comandos (a partir da última resposta):
+  nasce um chat novo na mesma pasta, "título (ramo)", com os itens da conversa até aquele ponto, o
+  mesmo agente, modelo, modo e regras de permissão, aberto num painel ao lado (sem lugar, numa aba
+  do mesmo); o original não muda. O corte é sempre na borda de um turno: numa resposta, vai o
+  turno dela inteiro; numa mensagem sua, tudo o que veio antes, e o texto dela (com os anexos)
+  vai para a caixa do chat novo. No Claude com sessão gravada, o primeiro turno do chat novo sai
+  numa cópia da sessão de origem, pelo caminho das conversas trazidas (`--resume <origem>
+  --fork-session --session-id <nova>`, o `bifurcar` de `src/claude.rs`), cortada no ponto com
+  `--resume-session-at <uuid>` (`Opcoes::cortar_em`): o agente lembra do que veio antes sem
+  resumo. O uuid é o da última entrada do agente ou do usuário antes da mensagem que abre o turno
+  seguinte, achado no arquivo da sessão subindo a cadeia de `parentUuid` a partir da marca dela
+  (`motor/bifurcar.rs`, `ponto_de_corte`); o ponto fica em `Chat.bifurcado_de` até a sessão nova
+  nascer. No Codex, sem sessão, sem marca (conversa antiga, mensagem dirigida ao turno) ou sem o
+  ponto no arquivo, o chat novo começa numa sessão nova com o bloco de passagem
+  (`MotivoPassagem::Bifurcou`). A flag `--resume-session-at` está no Claude Code 2.1.325 fora do
+  `--help`. Medido em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem
+  (não gasta o plano, como o `rewind_files`): ela aceita o uuid de qualquer entrada da cadeia (do
+  agente, sua, de anexo ou de sistema), a sessão retomada inteira tinha 40.388 tokens de
+  mensagens e, cortada na primeira mensagem, 39 (o `get_context_usage`), e um uuid que não está
+  na sessão sai com "No message found with message.uuid of". Nesse caso (e com a sessão de origem
+  apagada) o Vitral repete o turno numa sessão nova com o bloco de passagem
+  (`consertar_bifurcacao`). Não foi medido um turno de verdade depois do corte. Com o último
+  turno ainda rodando, bifurcar na última resposta espera.
 - **Economia de tokens sem mexer na resposta.** Três coisas, nenhuma corta saída, baixa esforço ou
   troca modelo sozinha. (1) `claude::ambiente` desliga o gasto de fundo que o Vitral não mostra
   (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,
@@ -582,6 +622,42 @@ ferramentas, vale por painel).
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
+- **Paleta de comandos (Ctrl+Shift+P)** (`src/ui/paleta.rs`; também no menu do logo). Uma lista
+  só, com busca sem acento e por palavras, de tudo o que o Vitral faz. Tem duas fontes: as linhas
+  com rótulo da tabela de `src/ui/atalhos.rs` (com as teclas à direita; o Enter dispara a mesma
+  ação da tecla, a partir da caixa do painel ativo, pelo `atalhos::acoes()` que a tabela passou a
+  gerar) e os comandos que só existiam em menu (`paleta::Direto`: do menu do logo, do "…" da
+  caixa e do menu da conversa, como Compactar, Agentes desta conversa, Perguntar também ao Codex,
+  Sessão nova, Renomear, Fixar, Arquivar, Modo foco, Servidores MCP, Contas, Consultar memória),
+  que chamam o método do item do menu. As seções são as do diálogo de atalhos. O que não vale
+  agora fica apagado, no fim da seção, com o motivo embaixo ("A conversa ainda não tem sessão",
+  "Só com o menu “/” da caixa à vista"): a lista é montada de uma foto do momento
+  (`paleta::Momento`). O Esc devolve o foco à caixa. Um teste garante que toda linha com rótulo
+  da tabela de atalhos está na paleta; atalho novo entra sozinho, e comando novo de menu entra em
+  `Direto::TODOS`.
+- **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
+  `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
+  fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.
+  Primeiro as do chat aberto, depois as dos outros chats da mesma pasta, depois o resto; em cada
+  grupo, da mais recente à mais antiga, e o mesmo texto aparece uma vez só. Cada linha tem o
+  começo da mensagem e, embaixo, o chat, a pasta e há quanto tempo. O **Enter** põe o texto na
+  caixa do painel ativo, sem enviar: com algo escrito, junta ao fim depois de uma linha em branco
+  (o Ctrl+Z desfaz, como no × da fila). Mostra 60 por vez; a busca estreita o resto. Tudo em
+  `src/ui/enviadas.rs`.
+- **Comando seu ("!").** Uma mensagem que começa com "!" (`!git status`) não vai ao agente: o
+  comando roda na pasta do chat, pelo `bash -c` (no Windows, `cmd /C`), num escopo de
+  `src/processos/`, e aparece na conversa como **Comando seu**, na caixa de saída da trilha: o
+  comando no cabeçalho, como ele ficou ("Pronto em 1,2 s", "Saiu com 2", "Interrompido"), o
+  Copiar e a saída chegando enquanto roda (as duas saídas juntas, sem as cores do terminal, só os
+  últimos 200 mil bytes). Não abre turno, não muda o custo nem a hora do chat, e a saída não entra
+  na sessão do agente: **Mandar ao agente** a põe como a citação da próxima mensagem (o cartão em
+  cima do campo, com o comando e o fim da saída). O **Esc** (ou o Parar da linha) derruba o
+  comando e o que ele abriu; o que ele deixar no fundo também sai quando ele termina. Um por chat
+  de cada vez, e pode rodar com o turno do agente em andamento. O comando com trecho arriscado (a
+  lista dos pedidos de permissão, `trechos_perigosos`) entra na conversa parado, com os trechos em
+  vermelho, **Descartar** e **Segure para rodar**. O item é o `Item::Comando` (`src/modelo.rs`); o
+  processo e as funções puras ficam em `src/motor/comando_seu.rs` e o desenho em
+  `src/ui/mensagens/comando_seu.rs`. Fica de fora do bloco de passagem e da conversa exportada.
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
   (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
@@ -639,6 +715,20 @@ ferramentas, vale por painel).
   vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
   no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
   perigoso, o segurar).
+- **Sempre nesta pasta.** A regra da caixa "Não perguntar de novo" vale só para o chat
+  (`Chat.permitidas`): um chat novo na mesma pasta perguntava tudo de novo. Embaixo dela, o
+  cartão do pedido tem **Sempre nesta pasta**, que permite na hora e grava a mesma regra
+  (`modelo::regra_de_permissao`: "edicoes", "bash:<comando exato>", "ferramenta:<nome>") para a
+  pasta do chat: passa a valer em todos os chats dela, os abertos (os pedidos iguais que já
+  esperavam em qualquer um deles são respondidos junto) e os novos. O motor consulta as duas
+  (`Motor::permitido_sempre`, no atendimento da ferramenta `permissao`). O mapa de pasta para
+  regras mora em `permissoes-da-pasta.json`, na pasta de dados, e o código em
+  `src/motor/permissoes_da_pasta.rs`. No menu do modo, embaixo da caixa, as regras aparecem em
+  dois grupos, **Deste chat** e **Desta pasta**: o clique numa regra tira só ela, e cada grupo
+  tem o seu "Voltar a perguntar". O comando com trecho arriscado continua sem a caixa e sem o
+  botão, a edição fora da pasta também, e o chat Sem pasta (a pasta dele é só dele) não oferece
+  a regra da pasta. Diferente da caixa do chat, a regra de edições da pasta não muda o modo de
+  nenhuma conversa.
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
@@ -1251,6 +1341,20 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   não rola: a roda do mouse em cima dela não faz nada. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
+- **Arranjos de painéis salvos** (`src/ui/arranjo/salvos.rs`). O que a janela já grava ao fechar
+  (`Arranjo`: os chats de cada painel, as abas, a aba à vista, a divisão das conversas, as
+  larguras e a lista recolhida) pode ser guardado com um nome, um por frente de trabalho
+  ("Central", "Vitral"), na chave `arranjos` do interface.json (até 12). No menu do logo,
+  **Arranjos**: a lista (o em uso com o visto), **Salvar o arranjo atual…** (Ctrl+Alt+S; o mesmo
+  nome salva por cima) e um **Apagar** para cada um. Trocar guarda antes o arranjo em uso, como a
+  janela está, para a volta ser de onde parou, fecha os painéis de agora (o rascunho de cada caixa
+  fica guardado, e as abas não vão para o Ctrl+Shift+T) e recoloca os do escolhido pelo mesmo
+  `reabrir_arranjo` da abertura; o tamanho da janela não muda. **Ctrl+Alt+PageDown** e
+  **Ctrl+Alt+PageUp** andam pelos arranjos, dando a volta, e a paleta de comandos tem um "Arranjo:
+  nome" para cada. Chat arquivado ou apagado some do arranjo sem erro (`Arranjo::reabrivel`); se
+  não sobrou nenhum, a troca avisa e não acontece. Os chats que saem da tela continuam rodando.
+  Depois de fechar e abrir, a janela volta como estava (a chave `arranjo` de sempre) e o "em uso"
+  continua o mesmo.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer
   aba de um painel, como no VS Code: solta no **meio** de outro painel, ela vira mais uma aba dele
   ("Abrir aqui, como aba"; sai do painel de origem, que fecha se era a única aba); solta na

@@ -60,6 +60,28 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
   a da aba dizem o mesmo. Se a pasta trocar de ramo desde o último turno do chat, uma faixa acima
   da caixa avisa uma vez: "A pasta agora está em main; o chat trabalhava em feat/x".
+- **Corrigir mensagem sem perder o contexto.** Corrigir uma mensagem não troca mais a conversa do
+  agente por um resumo: ele volta ao ponto exato antes dela, com tudo o que veio antes. Quando
+  isso não dá (Codex, conversa antiga), continua como era, com o resumo.
+- **Continuar daqui em outro chat.** Nas ações de uma mensagem sua e de uma resposta, o ícone do
+  ramo abre ao lado um chat novo com a conversa até aquele ponto, e o agente dele lembra do que
+  veio antes. O chat original fica como está: dá para testar outro caminho sem perder o primeiro.
+- **Permitir sempre nesta pasta.** No pedido de permissão, **Sempre nesta pasta** grava a regra
+  para todos os chats daquela pasta, os abertos e os novos: um chat novo no mesmo projeto não
+  pergunta de novo. No menu do modo, as regras aparecem em **Deste chat** e **Desta pasta**.
+- **Arranjos de painéis com nome.** No menu do logo, **Arranjos** guarda os painéis, as abas e as
+  larguras de agora com um nome ("Central", "Vitral") e troca entre eles; a volta é de onde você
+  parou. Ctrl+Alt+PageDown e PageUp andam pelos arranjos, e os chats fora de vista continuam
+  rodando.
+- **Paleta de comandos (Ctrl+Shift+P).** Tudo o que o Vitral faz numa lista com busca: os atalhos
+  (com as teclas ao lado) e o que só existia em menu, como Compactar, Servidores MCP e Contas. O
+  Enter faz no painel ativo; o que não vale no momento aparece apagado, com o motivo.
+- **Suas mensagens já enviadas (Ctrl+R).** Uma lista das mensagens que você mandou em todos os
+  chats, com busca sem acento: as do chat aberto e as da mesma pasta vêm primeiro, sem repetir. O
+  Enter põe a escolhida na caixa, sem enviar.
+- **Comando com "!" sem gastar turno.** `!git status` na caixa roda o comando na pasta do chat e
+  mostra a saída na conversa, sem chamar o agente e sem mudar o custo. **Mandar ao agente** cita a
+  saída na próxima mensagem; o Esc para um comando longo, e o arriscado pede para segurar o botão.
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
