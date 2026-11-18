@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Sumário da conversa no Este chat.** A seção Nesta conversa tem uma linha por mensagem sua,
+  com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
+  conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a
+  que você está lendo fica marcada enquanto a conversa rola.
 - **Desfazer só um trecho.** No diff aberto pela seção Na pasta, cada bloco de mudança volta
   sozinho ao último commit: o botão aparece com o ponteiro na linha mudada, e a faixa da edição
   tem o mesmo para a mudança à vista. O resto do arquivo fica, e o Vitral pergunta antes.

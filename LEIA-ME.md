@@ -999,6 +999,23 @@ worktree"), lido quando a dica aparece.
   O × dela (ou o turno seguinte) anota o ramo de agora, e o aviso não volta para a mesma troca. O
   chat que ainda não rodou desde que isto existe não avisa.
 
+**Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
+mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas
+linhas, e embaixo o que o turno dela fez ("3 editados · 12 comandos", a conta de
+`falas::o_que_o_turno_fez`). Numa conversa de vários dias, o dia entra como um título pequeno
+onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
+
+- **O clique leva à mensagem.** O painel passa a desenhar até ela (o `mostrar` do painel cresce:
+  é o mesmo que o subir até o alto faz aos poucos) e a abertura na âncora
+  (`AlvoDeAbertura::Ancora`, em `mensagens.rs`) a põe no alto, abaixo do lugar da mensagem presa;
+  ela fica realçada por 1,6 s, com a moldura e a tinta do destaque.
+- **A mensagem à vista fica marcada**: a última sua que começa até 120 px abaixo do alto da
+  conversa (a que você está lendo, ou a que o clique acabou de trazer). A rolagem da conversa só
+  redesenha a janela quando a marcada muda (`acompanhar_sumario`), e a lista do sumário rola até
+  a linha dela.
+- O que veio do histórico de uma conversa trazida do Claude Code não está nos itens do chat e
+  fica de fora do sumário.
+
 **Desfazer só um trecho** (`src/ui/desfazer_trecho.rs`, `src/git/remendo.rs`). No diff aberto
 pela seção Na pasta, cada bloco de mudança (as linhas seguidas que saem e entram) volta sozinho ao
 último commit: com o ponteiro numa linha mudada, um botão pequeno aparece ao lado do número, por

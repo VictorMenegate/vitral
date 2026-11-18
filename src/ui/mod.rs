@@ -45,6 +45,7 @@ mod resumo;
 mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;
+mod sumario;
 mod trilho;
 mod uso_plano;
 mod visor_imagem;
@@ -472,6 +473,8 @@ pub struct Janela {
     git_da_pasta: git_da_pasta::GitDaPasta,
     /// O ramo de agora das pastas dos chats à vista (o aviso de troca de ramo, acima da caixa).
     ramos: ramo::Ramos,
+    /// "Nesta conversa", no Este chat: a mensagem marcada, a que o clique realçou e a rolagem.
+    sumario: sumario::Sumario,
     /// O diff do git que o visor do arquivo mostra (aberto pela seção Na pasta), para o desfazer
     /// por trecho.
     diff_do_git: Option<desfazer_trecho::DiffDoGit>,
@@ -782,6 +785,7 @@ impl Janela {
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
             ramos: Default::default(),
+            sumario: Default::default(),
             diff_do_git: None,
             comentarios: comentarios::Comentarios::new(window, cx),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
