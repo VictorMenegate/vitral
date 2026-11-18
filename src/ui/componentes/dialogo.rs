@@ -17,7 +17,7 @@ pub mod largura {
     pub const G: f32 = 640.;
 }
 
-/// Título 18/600, subtítulo 14 tênue e o × de 28.
+/// Numa linha: o título 15/600, o subtítulo 13 tênue ao lado (cortado na borda) e o × de 24.
 #[derive(IntoElement)]
 pub struct CabecalhoDialogo {
     titulo: SharedString,
@@ -65,45 +65,47 @@ impl CabecalhoDialogo {
 
 impl RenderOnce for CabecalhoDialogo {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Numa linha só, como o cabeçalho do quadro de ideias (dono, 18/11/2026: "mais compacto a
+        // parte de cima" e "melhora todos esses menus que estão no estilo antigo"): o título em 15,
+        // o subtítulo ao lado, tênue, cortado na borda, e os botões de 24.
         let voltar = self.voltar.map(|f| {
-            botao_icone("dialogo-voltar", Lucide::ArrowLeft, "Voltar", TamanhoBotao::Barra, window, cx)
+            botao_icone("dialogo-voltar", Lucide::ArrowLeft, "Voltar", TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, window, cx| f(window, cx))
         });
         let fechar = (!self.sem_fechar).then(|| {
-            botao_icone("dialogo-fechar", Lucide::X, "Fechar", TamanhoBotao::Barra, window, cx)
+            botao_icone("dialogo-fechar", Lucide::X, "Fechar (Esc)", TamanhoBotao::Linha, window, cx)
                 .on_click(|_, window, cx| window.close_dialog(cx))
         });
+        let dica = self.titulo.clone();
         div()
             .flex()
-            .items_start()
-            .gap(r(12.))
+            .items_center()
+            .min_h(r(28.))
+            .gap(r(8.))
             .children(voltar)
             .children(self.simbolo)
             .child(
                 div()
-                    .flex()
-                    .flex_col()
+                    .id("dialogo-titulo")
+                    .flex_none()
+                    .max_w(relative(0.7))
+                    .text_size(r(15.))
+                    .line_height(r(20.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(Cores::forte())
+                    .when(self.uma_linha, |t| t.truncate().tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)))
+                    .child(self.titulo),
+            )
+            .child(
+                div()
                     .flex_1()
                     .min_w_0()
-                    .gap(r(2.))
-                    .map(|d| {
-                        let titulo = div().titulo_tela().text_color(Cores::forte());
-                        if self.uma_linha {
-                            let dica = self.titulo.clone();
-                            d.child(
-                                titulo
-                                    .id("dialogo-titulo")
-                                    .truncate()
-                                    .child(self.titulo)
-                                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
-                            )
-                        } else {
-                            d.child(titulo.child(self.titulo))
-                        }
-                    })
-                    .when_some(self.subtitulo, |d, s| {
-                        d.child(div().corpo_ui().text_color(Cores::tenue()).child(s))
-                    }),
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(r(13.))
+                    .line_height(r(18.))
+                    .text_color(Cores::tenue())
+                    .children(self.subtitulo),
             )
             .children(fechar)
     }

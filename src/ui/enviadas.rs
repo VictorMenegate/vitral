@@ -177,6 +177,7 @@ impl Janela {
         };
         let vista = cx.new(|cx| {
             let mut vista = ListaDeEscolha::new("Buscar nas suas mensagens…", window, cx);
+            vista.em_dialogo();
             vista.definir(grupos(&lista, ""), None, cx);
             let filtro = lista.clone();
             vista.filtro_proprio(move |busca| grupos(&filtro, busca));

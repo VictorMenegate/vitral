@@ -30,6 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::malha::{
@@ -794,4 +795,36 @@ mod testes {
             }
         }
     }
+}
+
+/// O fundo da lista numa caixa (absoluto, enchendo o pai): a chapa na opacidade da base, o véu e
+/// o fosco, e a sombra de buraco. É o desenho dos balões seus na conversa, das colunas do quadro de
+/// ideias e das listas dos diálogos de escolha (dono, 17 e 18/11/2026: "igual o fundo da lista",
+/// "como se tivesse um buraco", "nas cores e estilos do resto").
+pub fn fundo_da_lista(raio: Pixels) -> Div {
+    let cantos = Corners::all(raio);
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        // A chapa na mesma opacidade da base (o nível de Transparência), e o véu por cima, à parte.
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .opacity(crate::tema::opacidade_do_metal())
+                .child(abertura(Encaixe::Continuo, None, cantos)),
+        )
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::vidro_leitura()))
+        .when(crate::tema::transparencia() > 0, |s| s.child(fosco(cantos)))
+        // Um buraco no cartão (dono, 17/11/2026: "faz como se tivesse um buraco"): a sombra cai da
+        // beirada de cima para dentro, o corte tem um fio escuro e a quina de baixo pega luz.
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(vec![
+            BoxShadow::new(px(0.), px(4.), Cores::preto_puro().opacity(0.7)).blur_radius(px(8.)).inset(),
+            BoxShadow::new(px(0.), px(0.), Cores::preto_puro().opacity(0.5)).spread_radius(px(1.)).inset(),
+            BoxShadow::new(px(0.), px(-1.), Cores::forte().opacity(0.08)).inset(),
+        ]))
 }

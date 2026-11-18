@@ -361,6 +361,7 @@ impl Janela {
         let todas = Rc::new(entradas(&self.momento_da_paleta(cx)));
         let vista = cx.new(|cx| {
             let mut vista = ListaDeEscolha::new("O que você quer fazer?", window, cx);
+            vista.em_dialogo();
             vista.definir(grupos(&todas, ""), None, cx);
             let filtro = todas.clone();
             vista.filtro_proprio(move |busca| grupos(&filtro, busca));

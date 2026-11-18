@@ -36,7 +36,8 @@ pub(super) fn moldura(dialogo: Dialog, largura: f32, window: &Window) -> Dialog 
     dialogo
         .bg(Cores::dialogo())
         .w(tam(window, largura))
-        .p(r(24.))
+        // 16 de margem, como o quadro de ideias: o espaço é do conteúdo.
+        .p(r(16.))
         .rounded(raio::PECA)
         .border_color(Cores::borda_forte())
         .close_button(false)
@@ -57,9 +58,9 @@ pub(super) fn cabecalho(titulo: impl Into<SharedString>, subtitulo: Option<Strin
     }
 }
 
-/// O cabeçalho no topo do diálogo, a 16 do corpo (8 aqui e os 8 do kit).
+/// O cabeçalho no topo do diálogo, a 12 do corpo (4 aqui e os 8 do kit).
 pub(super) fn topo(cabecalho: CabecalhoDialogo) -> impl IntoElement {
-    div().pb(r(8.)).child(cabecalho)
+    div().pb(r(4.)).child(cabecalho)
 }
 
 /// Caminho com a pasta pessoal como "~".
@@ -260,6 +261,7 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar pasta ou ramo…", window, cx);
+            lista.em_dialogo();
             lista.definir(grupos_da_paleta(&pastas, &[], ""), realce.clone(), cx);
             let (filtro, lidas) = (pastas.clone(), copias.clone());
             lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, &lidas.borrow(), busca));
@@ -515,6 +517,7 @@ impl Janela {
         let arquivos: Rc<RefCell<Option<Rc<Vec<String>>>>> = Rc::default();
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar arquivo…", window, cx);
+            lista.em_dialogo();
             lista.definir(seletor_arquivos::grupos_de_arquivos(None, ""), None, cx);
             let lidos = arquivos.clone();
             lista.filtro_proprio(move |busca| {
@@ -649,6 +652,7 @@ impl Janela {
         let grupos = grupos_de_conversas(motor.read(cx), &chat);
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar conversa…", window, cx);
+            lista.em_dialogo();
             lista.definir(grupos, None, cx);
             lista
         });
