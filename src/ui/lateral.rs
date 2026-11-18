@@ -1722,7 +1722,7 @@ impl Janela {
         // mais lugar (dono, 17/11/2026: "tira esse logo, só faz dar pra ler menos os títulos"). O
         // anel gira com ele rodando; os outros estados são o ponto da cor deles.
         let estado = sinal.map(|s| match s {
-            Sinal::Rodando => super::componentes::icone_de_estado(Some(s), 14.).into_any_element(),
+            Sinal::Rodando => super::componentes::icone_de_estado(Some(s), 14.).vivo(format!("lista-{}", chat.id)).into_any_element(),
             _ => s.ponto(8.).into_any_element(),
         });
         let indicadores = linha_meta(16.)

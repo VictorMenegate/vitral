@@ -43,6 +43,7 @@ mod seletor_arquivos;
 mod trilho;
 mod uso_plano;
 mod visor_imagem;
+mod vista_mensagens;
 pub mod zoom;
 
 use std::{
@@ -564,6 +565,8 @@ pub struct Janela {
     /// O texto de cada chat preparado para a busca da lista e do histórico (sem acento), refeito só
     /// quando os itens mudam (item 4.3).
     busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
+    /// A lista como vista em cache (ver `vista_mensagens`).
+    vista_da_lista: Entity<vista_mensagens::VistaDaLista>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -675,6 +678,8 @@ impl Janela {
         assinaturas.push(cx.on_release(move |_, cx| metal::esquecer_janela(id_da_janela, cx)));
         // O GNOME manda o button-layout depois que a janela abre (e quando muda no Ajustes).
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
+        // A Janela avisada avisa as vistas das mensagens (em cache): o estado delas mora aqui.
+        assinaturas.push(cx.observe_self(|this, cx| this.avisar_vistas(cx)));
         // A rede do foco: o elemento focado saiu da árvore (o Retomar e o Tentar de novo somem
         // quando o turno começa) e nada mais tem foco. Sem isto as teclas iam para a raiz, onde os
         // atalhos da janela não valem, até um clique. O foco volta para a caixa do painel ativo.
@@ -724,7 +729,10 @@ impl Janela {
             }
         });
 
+        let eu = cx.entity().downgrade();
+        let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu));
         let mut janela = Self {
+            vista_da_lista,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -1468,7 +1476,7 @@ impl Janela {
         let gaveta = self.gaveta?;
         let (largura, minima, conteudo) = match gaveta {
             Gaveta::Lista => {
-                let lista = self.lateral(motor, window, cx);
+                let lista = AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full());
                 (self.larguras.lista, FAIXA_LISTA.0, div().size_full().child(lista).into_any_element())
             }
             // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
@@ -1567,7 +1575,17 @@ impl Janela {
         // Nas boas-vindas o metal é o fundo da tela, à vista e andando (dono, 13/11/2026: "faz o
         // shader ficar no fundo"): ele corre como se um chat trabalhasse, e o véu é mais leve.
         let boas_vindas = self.em_boas_vindas();
-        let chapa = metal::fundo(trabalhando || boas_vindas, Corners::default(), window, cx);
+        // Numa vista própria: a batida do metal (12 por segundo com um chat trabalhando) redesenha
+        // só ela, e não avisa a Janela (que avisaria as mensagens; ver `vista_mensagens`).
+        componentes::vista_viva::novo_quadro(cx);
+        let vivo = trabalhando || boas_vindas;
+        let chapa = componentes::vista_viva::em_vista_propria(
+            "chapa-da-janela".into(),
+            StyleRefinement::default().size_full(),
+            u64::from(vivo),
+            cx,
+            move |window, cx| metal::fundo(vivo, Corners::default(), window, cx).into_any_element(),
+        );
         let tema = cx.theme();
         let mut base = div()
             .size_full()
@@ -1963,7 +1981,12 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
                     .fixed()
-                    .child(div().size_full().pr(meio_vao).child(self.lateral(motor, window, cx))),
+                    .child(
+                        div()
+                            .size_full()
+                            .pr(meio_vao)
+                            .child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
+                    ),
             );
         }
         if self.paineis.is_empty() {

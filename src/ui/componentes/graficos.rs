@@ -236,16 +236,32 @@ impl RenderOnce for Anel {
 pub struct AnelGirando {
     lado: f32,
     cor: Hsla,
+    vivo: Option<String>,
+    quieto: bool,
 }
 
 impl AnelGirando {
     /// 12 no nó da ferramenta e na linha de estado, 14 no lugar do spinner pequeno do kit.
     pub fn new(lado: f32) -> Self {
-        AnelGirando { lado, cor: Cores::destaque() }
+        AnelGirando { lado, cor: Cores::destaque(), vivo: None, quieto: false }
     }
 
     pub fn cor(mut self, cor: Hsla) -> Self {
         self.cor = cor;
+        self
+    }
+
+    /// Gira numa vista própria de `chave` (`vista_viva`): a batida redesenha só o anel, e não a
+    /// vista em volta (a Janela, as mensagens).
+    pub fn vivo(mut self, chave: impl Into<String>) -> Self {
+        self.vivo = Some(chave.into());
+        self
+    }
+
+    /// Parado (dentro das mensagens: girando ali, cada batida redesenhava a conversa inteira; o
+    /// que está acontecendo gira na linha do turno, embaixo).
+    pub fn quieto(mut self) -> Self {
+        self.quieto = true;
         self
     }
 }
@@ -253,9 +269,16 @@ impl AnelGirando {
 impl RenderOnce for AnelGirando {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (lado, cor) = (self.lado, self.cor);
+        if let Some(chave) = self.vivo.filter(|_| !self.quieto && !cx.reduce_motion()) {
+            let versao = u64::from(lado.to_bits()) << 32 ^ u64::from(Rgba::from(cor).r.to_bits() ^ Rgba::from(cor).b.to_bits().rotate_left(8));
+            let estilo = StyleRefinement::default().flex_none().size(r(lado));
+            return div().flex_none().size(r(lado)).child(super::vista_viva::em_vista_propria(chave, estilo, versao, cx, move |window, cx| {
+                RenderOnce::render(AnelGirando { lado, cor, vivo: None, quieto: false }, window, cx).into_any_element()
+            }));
+        }
         // O arco cobre 72% da volta; parado, a fenda de 28% fica centrada embaixo.
         let parado = std::f32::consts::PI + TAU * 0.14;
-        let giro = if cx.reduce_motion() {
+        let giro = if cx.reduce_motion() || self.quieto {
             parado
         } else {
             let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);

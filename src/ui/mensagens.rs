@@ -503,13 +503,14 @@ impl Janela {
                 let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
                 p.altura_conteudo = bounds.size.height;
                 p.topo_da_lista.set(bounds.top());
-                // A mensagem presa: só quando o pé da sua última mensagem já passou do alto da
-                // vista, com a rolagem e as posições deste quadro.
-                let pe = match alvo_da_presa {
-                    Some(i) => medidos.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, _, pe)| pe - bounds.top()),
-                    None => p.presa_do_historico.borrow().as_ref().map(|&(_, _, pe)| pe - bounds.top()),
+                // A mensagem presa, como o "sticky" do VS Code: assim que o alto da sua última
+                // mensagem passa do alto da vista, ela gruda lá (a de verdade fica por baixo da
+                // faixa). Com a rolagem e as posições deste quadro.
+                let alto = match alvo_da_presa {
+                    Some(i) => medidos.borrow().iter().find(|(k, ..)| *k == i).map(|&(_, alto, _)| alto - bounds.top()),
+                    None => p.presa_do_historico.borrow().as_ref().map(|&(_, alto, _)| alto - bounds.top()),
                 };
-                let ativa = !busca_aberta && pe.is_some_and(|pe| pe < -p.rolagem.offset().y - px(4.));
+                let ativa = !busca_aberta && alto.is_some_and(|alto| alto < -p.rolagem.offset().y - px(2.));
                 if p.presa_ativa != ativa {
                     p.presa_ativa = ativa;
                     redesenhar = true;
@@ -651,10 +652,11 @@ impl Janela {
                     .track_scroll(&rolagem)
                     .on_scroll(cx.listener(move |this, _evento: &ScrollEvent, _, cx| {
                         // A roda já mexeu no deslocamento: decide agora, antes que o motor peça
-                        // para voltar ao fim.
+                        // para voltar ao fim. Só esta vista se redesenha: a lista e os outros
+                        // painéis ficam no cache.
                         this.acompanhar_rolagem(cx);
                         this.carregar_anteriores(painel_id, cx);
-                        cx.notify();
+                        this.avisar_vista(painel_id, cx);
                     }))
                     .child(lista),
             )
@@ -2591,13 +2593,13 @@ impl Janela {
                         .text_color(Cores::tenue())
                         .child(icone_de(Lucide::ListTree, 14.)),
                 )
-                .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(if ao_vivo {
-                    ShimmerText::new(resumo).duration(Duration::from_millis(3400)).highlight_color(Cores::forte()).into_any_element()
-                } else { div().child(resumo).into_any_element() }))
+                // Sem o brilho andando: dentro das mensagens, cada batida dele redesenhava a conversa
+                // inteira (ver `vista_mensagens`); o que anda é o anel da linha do turno.
+                .child(div().min_w_0().truncate().text_color(if ao_vivo { Cores::texto() } else { Cores::tenue() }).child(resumo))
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
-                .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque())))
+                .when(rodando_escondida, |s| s.child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
                 .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
@@ -2855,7 +2857,7 @@ impl Janela {
             .cursor_pointer()
             .hover(|s| s.bg(Cores::hover()))
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(if rodando {
-                AnelGirando::new(14.).cor(Cores::tenue()).into_any_element()
+                AnelGirando::new(14.).cor(Cores::tenue()).quieto().into_any_element()
             } else {
                 icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
             }))
@@ -3015,14 +3017,7 @@ impl Janela {
                 .h(r(22.))
                 .gap(esp::E6)
                 .metadado()
-                .child(
-                    ShimmerText::new(sem_marcacao(&detalhe_do_passo(&s.atividade)))
-                        .id(SharedString::from(format!("sub-{chave}")))
-                        .duration(Duration::from_secs(3))
-                        .highlight_color(Cores::forte())
-                        .min_w_0()
-                        .truncate(),
-                )
+                .child(div().min_w_0().truncate().text_color(Cores::texto()).child(sem_marcacao(&detalhe_do_passo(&s.atividade))))
         });
         let passos = do_sub.as_ref().filter(|(_, s)| !s.passos.is_empty()).map(|(_, s)| {
             div().pl(recuo_aberto).pt(esp::E4).child(
@@ -3058,7 +3053,7 @@ impl Janela {
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
         let icone = if pendente {
-            AnelGirando::new(14.).cor(Cores::destaque()).into_any_element()
+            AnelGirando::new(14.).cor(Cores::destaque()).quieto().into_any_element()
         } else {
             let cor = if *erro {
                 Cores::vermelho()
@@ -3708,21 +3703,14 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
 
 /// A linha viva do turno que pensa, com o desenho de uma chamada em andamento na trilha: o anel
 /// girando e o rótulo com o brilho passando.
-fn linha_pensando(painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
+fn linha_pensando(_painel: u64, rotulo: &'static str, fonte: SharedString) -> AnyElement {
     h_flex()
         .h(ALTURA_DO_LOG)
         .px(esp::E12)
         .gap(esp::E8)
-        .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(AnelGirando::new(14.).cor(Cores::destaque())))
-        .child(
-            ShimmerText::new(rotulo)
-                .id(("pensando", painel as usize))
-                .duration(Duration::from_secs(3))
-                .highlight_color(Cores::forte())
-                .font_family(fonte)
-                .metadado()
-                .font_weight(FontWeight::MEDIUM),
-        )
+        // Parado: o que gira é o anel da linha do turno, fora das mensagens (ver `vista_mensagens`).
+        .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(AnelGirando::new(14.).cor(Cores::destaque()).quieto()))
+        .child(div().font_family(fonte).metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(rotulo))
         .into_any_element()
 }
 
@@ -3768,7 +3756,7 @@ impl Janela {
                 .flex_1()
                 .min_w_0()
                 .gap(esp::E8)
-                .child(AnelGirando::new(12.).cor(Cores::tenue()))
+                .child(AnelGirando::new(12.).cor(Cores::tenue()).vivo(format!("memoria-{painel_id}")))
                 .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child("Revendo a memória…"));
             return Some((Some(linha.into_any_element()), None));
         }
@@ -3810,7 +3798,7 @@ impl Janela {
                         .flex_1()
                         .min_w_0()
                         .gap(esp::E8)
-                        .child(AnelGirando::new(12.).cor(Cores::destaque_texto()))
+                        .child(AnelGirando::new(12.).cor(Cores::destaque_texto()).vivo(format!("estado-{painel_id}")))
                         .when(!no_fim, |s| {
                             s.child(
                                 // Passada mais lenta: a 12 quadros por segundo, o brilho anda em
@@ -4748,7 +4736,7 @@ const COLUNA: Rems = rems(53.75);
 /// divisória e na beirada (dono, 17/11/2026: "melhora o espaçamento dessas partes").
 pub(super) const MARGEM_DA_COLUNA: Rems = esp::E24;
 /// Altura que as mensagens guardam mesmo em janela baixa (120 px).
-const MINIMO_MENSAGENS: Rems = rems(7.5);
+pub(super) const MINIMO_MENSAGENS: Rems = rems(7.5);
 /// Até aqui o plano encolhe: título, umas linhas do texto, o campo e os botões (200 px).
 const MINIMO_PLANO: Rems = rems(12.5);
 

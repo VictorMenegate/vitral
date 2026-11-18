@@ -106,6 +106,8 @@ pub struct Painel {
     /// A mensagem presa está à vista: decidido no prepaint da lista, com a rolagem e as posições
     /// do mesmo quadro (com as do quadro anterior, ela aparecia junto da mensagem de verdade).
     pub presa_ativa: bool,
+    /// A área de mensagens como vista em cache (ver `vista_mensagens`).
+    pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -416,8 +418,11 @@ impl Janela {
         // A aba alcançada pelo Tab ativa o painel dela: o Ctrl+W e o menu valem para ele.
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
+        let eu = cx.entity().downgrade();
+        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu, id));
         let mut painel = Painel {
             id,
+            vista,
             chat: None,
             abas: Vec::new(),
             composer,

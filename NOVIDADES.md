@@ -199,8 +199,14 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Suas mensagens como um buraco no cartão.** O balão do que você escreve mostra o fundo da
   lista (o metal com o véu azul), com a sombra caindo da beirada de cima, sem contorno e sem ponta.
   A mensagem longa fica em duas linhas e abre com um clique (o chevron no canto diz que há mais).
-- **A sua última mensagem presa no alto.** Quando a resposta passa da tela e a sua mensagem sobe,
-  ela fica presa no topo da conversa, em duas linhas; o clique leva até ela.
+- **A sua última mensagem presa no alto.** Assim que a sua mensagem sobe além do topo, ela gruda
+  lá, em duas linhas, como no VS Code (também nas conversas trazidas do Claude Code); o clique
+  leva até ela.
+- **Mais leve com um chat trabalhando.** As mensagens de cada painel e a lista viraram partes que
+  só se redesenham quando mudam: o anel girando, o metal e a rolagem de um painel não refazem o
+  resto. Medido na bancada com um chat rodando: a thread da janela caiu de 48% para 34% de um
+  núcleo, e montar a janela, de 3,3 ms para 0,8 ms por quadro. Dentro da conversa o anel e o
+  "Pensando…" ficam parados; o que gira é o anel da linha do turno, embaixo.
 - **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
   pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
   painel da direita estreito a aba à vista mantém o nome.
