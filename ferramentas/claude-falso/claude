@@ -463,7 +463,25 @@ else:
 anotar({"papel": papel, "chamadas": chamadas})
 emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
                                          "usage": {"input_tokens": 1200}}})
-emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0,
+# Como o de verdade: o `usage` é o do turno e o `total_cost_usd` é o total da sessão, que continua
+# do que ela gravou (aqui, num arquivo por sessão no $XDG_STATE_HOME). Cada turno "custa" US$ 0,25:
+# é com isso que a bancada vê "Onde o uso foi" e os tokens da linha "Trabalhou".
+arquivo_do_custo = os.path.join(os.environ.get("XDG_STATE_HOME", "/nao-existe"),
+                                "claude-falso-custo-" + re.sub(r"[^A-Za-z0-9-]", "", sessao))
+try:
+    with open(arquivo_do_custo) as guardado:
+        custo_da_sessao = float(guardado.read())
+except (OSError, ValueError):
+    custo_da_sessao = 0.0
+custo_da_sessao += 0.25
+try:
+    with open(arquivo_do_custo, "w") as guardado:
+        guardado.write(str(custo_da_sessao))
+except OSError:
+    pass
+emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": custo_da_sessao,
+        "usage": {"input_tokens": 1200, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 800,
+                  "output_tokens": 300},
         "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
 # Com --prompt-suggestions, como o de verdade (2.1.325): a próxima mensagem provável depois do
 # `result`, só com a entrada ainda aberta (fechada antes, ele não sugere).

@@ -742,7 +742,7 @@ impl CartaoDeErro {
         }
     }
 
-    /// O que fazer, em 13/18 tênue.
+    /// O que fazer, em 14/20 tênue (o tamanho do título, sem o peso).
     pub fn frase(mut self, f: impl IntoElement) -> Self {
         self.frase = Some(f.into_any_element());
         self
@@ -793,12 +793,22 @@ impl RenderOnce for CartaoDeErro {
                     .flex_1()
                     .min_w_0()
                     .gap(esp::E4)
-                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover).
+                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover). O ícone fica na
+                    // primeira linha do título (a caixa dele tem os 20 da linha): na coluna
+                    // estreita o título quebra em duas, e centrado ele boiava entre elas.
                     .child(
                         h_flex()
-                            .items_center()
+                            .items_start()
                             .gap(esp::E8)
-                            .child(div().flex_none().text_color(cor_do_icone).child(self.icone.with_size(tam(window, 16.))))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .h(r(20.))
+                                    .flex()
+                                    .items_center()
+                                    .text_color(cor_do_icone)
+                                    .child(self.icone.with_size(tam(window, 16.))),
+                            )
                             .child(
                                 div()
                                     .flex_1()
@@ -819,7 +829,7 @@ impl RenderOnce for CartaoDeErro {
                             v_flex()
                                 .pl(esp::E24)
                                 .gap(esp::E6)
-                                .children(self.frase.map(|f| div().text_size(r(13.)).line_height(r(18.)).text_color(Cores::tenue()).child(f)))
+                                .children(self.frase.map(|f| div().text_size(r(14.)).line_height(r(20.)).text_color(Cores::tenue()).child(f)))
                                 .children(original_antes)
                                 // O ícone do primeiro botão fantasma (padding 8) cai na coluna do texto.
                                 .when(!acoes.is_empty(), |s| s.child(h_flex().flex_wrap().gap(esp::E4).ml(r(-8.)).children(acoes)))

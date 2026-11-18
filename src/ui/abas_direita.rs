@@ -83,7 +83,10 @@ impl Janela {
         if let Some(chat) = chat {
             let ativa = visivel == AbaDireita::Chat;
             let (aba, d) = self.aba_do_chat(motor, chat);
-            let mut aba = aba.tom(tom(ativa)).so_simbolo(compacta).construir(window, cx);
+            // Estreita, só a aba de fora vira símbolo: a ativa mantém o nome (eram dois símbolos
+            // soltos, um com o número do painel; dono, 17/11/2026: "essa parte de cima fica bem
+            // esquisita").
+            let mut aba = aba.tom(tom(ativa)).so_simbolo(compacta && !ativa).construir(window, cx);
             if n > 1 && !ativa {
                 aba = aba.cursor_pointer().on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Chat, cx)));
             }
@@ -95,9 +98,9 @@ impl Janela {
             let janela = cx.entity().downgrade();
             let mut aba = Aba::new("aba-arquivo", nome)
                 .tom(tom(ativa))
-                .so_simbolo(compacta)
+                .so_simbolo(compacta && !ativa)
                 .simbolo(Simbolo::icone_cor(painel_arquivo::icone_do_arquivo(&caminho), Cores::tenue()))
-                .fechar("Fechar o arquivo", !compacta, move |_, cx| {
+                .fechar("Fechar o arquivo", !compacta || ativa, move |_, cx| {
                     let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
                 })
                 .construir(window, cx);
@@ -132,14 +135,11 @@ impl Janela {
         cx.notify();
     }
 
-    /// A aba "Este chat" do chat selecionado: o nome e o símbolo, o número do painel e a dica (a
-    /// pasta).
+    /// A aba "Este chat" do chat selecionado: o nome, o símbolo e a dica (a pasta e o painel). O
+    /// número do painel não vai na aba: ao lado do símbolo, sozinho, parecia um contador.
     fn aba_do_chat(&self, motor: &Motor, chat: &Chat) -> (Aba, Option<SharedString>) {
         let numero = self.painel_da_conversa(&chat.id);
-        let mut aba = Aba::new("aba-este-chat", "Este chat").simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()));
-        if let Some((n, ativo)) = numero {
-            aba = aba.numero(n, ativo);
-        }
+        let aba = Aba::new("aba-este-chat", "Este chat").simbolo(Simbolo::icone_cor(Lucide::Info, Cores::tenue()));
         let pasta = if motor.sem_pasta(chat) { "sem pasta".to_string() } else { super::dialogos::com_til(&chat.cwd) };
         let mut dica = format!("Onde “{}” trabalha · {pasta}", chat.titulo);
         if let Some((n, _)) = numero {

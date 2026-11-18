@@ -174,6 +174,15 @@ impl Escopo {
         }
     }
 
+    /// A memória que o processo e tudo o que ele abriu ocupam agora, em bytes: o `memory.current`
+    /// do cgroup do escopo. `None` sem systemd (o grupo de processos não tem conta própria), sem o
+    /// controlador de memória no cgroup do usuário ou com o processo fora do escopo.
+    pub fn memoria(&self) -> Option<u64> {
+        let unidade = self.unidade.as_deref()?;
+        let do_processo = std::fs::read_to_string(format!("/proc/{}/cgroup", self.pid)).ok()?;
+        memoria_do_cgroup(std::path::Path::new("/sys/fs/cgroup"), &do_processo, unidade)
+    }
+
     /// O processo principal terminou? Não colhe (WNOWAIT), então o número do grupo continua dele.
     #[cfg(test)]
     pub fn terminou(&self) -> bool {
@@ -182,6 +191,19 @@ impl Escopo {
         let resultado = unsafe { libc::waitid(libc::P_PID, self.pid as libc::id_t, &mut info, opcoes) };
         resultado != 0 || unsafe { info.si_pid() } != 0
     }
+}
+
+/// Lê o `memory.current` do cgroup (v2) em que o processo está, pelo texto do `/proc/<pid>/cgroup`
+/// dele ("0::/user.slice/…/vitral-12-claude-3.scope"). Só vale se esse cgroup é o da `unidade`: o
+/// processo que ainda não entrou no escopo (ou que roda sem ele) está no cgroup do Vitral, e o
+/// número seria o do app inteiro.
+fn memoria_do_cgroup(raiz: &std::path::Path, do_processo: &str, unidade: &str) -> Option<u64> {
+    let caminho = do_processo.lines().find_map(|l| l.strip_prefix("0::"))?.trim().trim_end_matches('/');
+    if caminho.rsplit('/').next() != Some(unidade) {
+        return None;
+    }
+    let arquivo = raiz.join(caminho.trim_start_matches('/')).join("memory.current");
+    std::fs::read_to_string(arquivo).ok()?.trim().parse().ok()
 }
 
 /// Código de saída de um filho que já terminou, sem colhê-lo (WNOWAIT): quem colhe continua sendo
@@ -348,6 +370,51 @@ mod testes {
     #[test]
     fn sem_systemd_o_grupo_de_processos_faz_o_mesmo() {
         parar_derruba_o_que_o_processo_abriu_com(None);
+    }
+
+    #[test]
+    fn le_a_memoria_do_cgroup_do_escopo() {
+        let raiz = std::env::temp_dir().join(format!("vitral-cgroup-{}", crate::modelo::novo_id()));
+        let unidade = "vitral-12-claude-3.scope";
+        let caminho = format!("user.slice/user-1000.slice/user@1000.service/vitral.slice/{unidade}");
+        std::fs::create_dir_all(raiz.join(&caminho)).unwrap();
+        std::fs::write(raiz.join(&caminho).join("memory.current"), "3328599654\n").unwrap();
+        let do_processo = format!("0::/{caminho}\n");
+        assert_eq!(memoria_do_cgroup(&raiz, &do_processo, unidade), Some(3_328_599_654));
+        // O processo no cgroup de outra unidade (a do próprio Vitral): o número não é o do chat.
+        let do_vitral = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-vitral.scope\n";
+        assert_eq!(memoria_do_cgroup(&raiz, do_vitral, unidade), None);
+        // cgroup v1 (sem a linha "0::"), arquivo ausente (sem o controlador de memória) e lixo.
+        assert_eq!(memoria_do_cgroup(&raiz, "5:memory:/user.slice\n", unidade), None);
+        std::fs::remove_file(raiz.join(&caminho).join("memory.current")).unwrap();
+        assert_eq!(memoria_do_cgroup(&raiz, &do_processo, unidade), None);
+        std::fs::write(raiz.join(&caminho).join("memory.current"), "max\n").unwrap();
+        assert_eq!(memoria_do_cgroup(&raiz, &do_processo, unidade), None);
+        let _ = std::fs::remove_dir_all(&raiz);
+    }
+
+    /// De ponta a ponta, onde há systemd com o controlador de memória: o escopo de verdade diz
+    /// quanto ocupa. Sem um dos dois, o teste não tem o que conferir.
+    #[test]
+    fn o_escopo_de_verdade_diz_a_memoria() {
+        let Some(args) = systemd() else {
+            return;
+        };
+        let mut comando = montar("sleep", "teste", Some(args));
+        comando.arg("30").stdout(Stdio::null());
+        let (mut filho, escopo) = abrir(comando).unwrap();
+        // O systemd-run leva um instante para pôr o processo no escopo.
+        let limite = Instant::now() + Duration::from_secs(3);
+        let mut memoria = None;
+        while memoria.is_none() && Instant::now() < limite {
+            memoria = escopo.memoria();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        escopo.matar();
+        let _ = filho.wait();
+        if let Some(bytes) = memoria {
+            assert!(bytes > 0 && bytes < 4 * 1024 * 1024 * 1024, "{bytes}");
+        }
     }
 
     fn parar_derruba_o_que_o_processo_abriu_com(systemd: Option<&Vec<String>>) {

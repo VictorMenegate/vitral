@@ -286,7 +286,7 @@ mod testes {
     fn o_chat_tem_as_ferramentas_dele() {
         assert_eq!(nomes(), ["listar_chats", "mensagem_para_chat", "permissao", "abrir_chat"]);
         for saiu in ["propor_divisao", "criar_tarefa", "ver_diff", "pedir_ajuste", "aprovar_tarefa", "cancelar_tarefa",
-            "informar_progresso", "perguntar_coordenador", "revisar_minhas_mudancas", "anotar_decisao"]
+            "informar_progresso", "perguntar_coordenador", "revisar_minhas_mudancas", "anotar_decisao", "anotar_ideia"]
         {
             assert!(!pode(saiu), "{saiu}");
         }

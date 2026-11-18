@@ -98,6 +98,25 @@ fn pintar_anel(
     pintar_arco(bounds, raio_fora, espessura, de, de + f * (ate - de), cor, window);
 }
 
+/// O trilho inteiro, sem fenda, e por cima o arco da fração a partir do alto, no sentido horário:
+/// lê como medidor, e não como o anel girando de "trabalhando" (dono, 18/11/2026: "melhora o
+/// design dessa parte de usos e contexto").
+fn pintar_anel_inteiro(
+    bounds: Bounds<Pixels>,
+    raio_fora: f32,
+    espessura: f32,
+    fracao: Option<f32>,
+    cor: Hsla,
+    window: &mut Window,
+) {
+    let trilho = Arco::new().inner_radius(raio_fora - espessura).outer_radius(raio_fora);
+    trilho.paint(&ArcData::new(&(), 0, 1., 0., TAU), Cores::traco(), &bounds, window);
+    let Some(f) = fracao.map(|f| f.clamp(0., 1.)).filter(|f| *f > 0.) else {
+        return;
+    };
+    pintar_arco(bounds, raio_fora, espessura, 0., f.max(0.02) * TAU, cor, window);
+}
+
 /// Anel de progresso: contexto, uso da conta, progresso da Equipe. O arco desliza até a fração
 /// nova em 240 ms (o `id` guarda de onde ele vem; precisa ser único entre os irmãos).
 #[derive(IntoElement)]
@@ -236,16 +255,32 @@ impl RenderOnce for Anel {
 pub struct AnelGirando {
     lado: f32,
     cor: Hsla,
+    vivo: Option<String>,
+    quieto: bool,
 }
 
 impl AnelGirando {
     /// 12 no nó da ferramenta e na linha de estado, 14 no lugar do spinner pequeno do kit.
     pub fn new(lado: f32) -> Self {
-        AnelGirando { lado, cor: Cores::destaque() }
+        AnelGirando { lado, cor: Cores::destaque(), vivo: None, quieto: false }
     }
 
     pub fn cor(mut self, cor: Hsla) -> Self {
         self.cor = cor;
+        self
+    }
+
+    /// Gira numa vista própria de `chave` (`vista_viva`): a batida redesenha só o anel, e não a
+    /// vista em volta (a Janela, as mensagens).
+    pub fn vivo(mut self, chave: impl Into<String>) -> Self {
+        self.vivo = Some(chave.into());
+        self
+    }
+
+    /// Parado (dentro das mensagens: girando ali, cada batida redesenhava a conversa inteira; o
+    /// que está acontecendo gira na linha do turno, embaixo).
+    pub fn quieto(mut self) -> Self {
+        self.quieto = true;
         self
     }
 }
@@ -253,9 +288,16 @@ impl AnelGirando {
 impl RenderOnce for AnelGirando {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (lado, cor) = (self.lado, self.cor);
+        if let Some(chave) = self.vivo.filter(|_| !self.quieto && !cx.reduce_motion()) {
+            let versao = u64::from(lado.to_bits()) << 32 ^ u64::from(Rgba::from(cor).r.to_bits() ^ Rgba::from(cor).b.to_bits().rotate_left(8));
+            let estilo = StyleRefinement::default().flex_none().size(r(lado));
+            return div().flex_none().size(r(lado)).child(super::vista_viva::em_vista_propria(chave, estilo, versao, cx, move |window, cx| {
+                RenderOnce::render(AnelGirando { lado, cor, vivo: None, quieto: false }, window, cx).into_any_element()
+            }));
+        }
         // O arco cobre 72% da volta; parado, a fenda de 28% fica centrada embaixo.
         let parado = std::f32::consts::PI + TAU * 0.14;
-        let giro = if cx.reduce_motion() {
+        let giro = if cx.reduce_motion() || self.quieto {
             parado
         } else {
             let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
@@ -290,6 +332,7 @@ pub struct AnelDeUso {
     bloqueado: bool,
     apagado: bool,
     encher: bool,
+    atencao: bool,
 }
 
 impl AnelDeUso {
@@ -303,7 +346,14 @@ impl AnelDeUso {
             bloqueado: false,
             apagado: false,
             encher: false,
+            atencao: false,
         }
+    }
+
+    /// No ritmo de agora o limite acaba antes de renovar: o arco fica âmbar mesmo abaixo de 70%.
+    pub fn atencao(mut self, sim: bool) -> Self {
+        self.atencao = sim;
+        self
     }
 
     /// Os arcos enchem de 0 ao aparecer (popover de uso aberto); depois, deslizam.
@@ -357,7 +407,13 @@ impl RenderOnce for AnelDeUso {
         } else {
             apertada
         };
-        let cor_fora = if self.bloqueado { Cores::vermelho() } else { cor_da_faixa(fora.unwrap_or(0.), base) };
+        let cor_fora = if self.bloqueado {
+            Cores::vermelho()
+        } else if self.atencao && (fora.unwrap_or(0.) * 100.).round() < 70. {
+            Cores::ambar()
+        } else {
+            cor_da_faixa(fora.unwrap_or(0.), base)
+        };
         // Sem número, sem arco.
         let alvo = fora.unwrap_or(0.).clamp(0., 1.);
         let chave = movimento::chave(&self.id, "arcos");
@@ -367,7 +423,7 @@ impl RenderOnce for AnelDeUso {
             movimento::valor(chave, alvo, movimento::ENCHER, Curva::Mover, window, cx)
         };
         let fora = fora.map(|_| f);
-        let disco = diametro - 12.;
+        let disco = diametro - 10.;
         div()
             .id(self.id)
             .relative()
@@ -382,8 +438,8 @@ impl RenderOnce for AnelDeUso {
                     move |bounds, _, window, _| {
                         let escala = bounds.size.width.as_f32() / diametro;
                         let raio_fora = bounds.size.width.min(bounds.size.height).as_f32() / 2.;
-                        // Um anel só, de 3, com a fenda embaixo.
-                        pintar_anel(bounds, raio_fora, 3. * escala, fora, cor_fora, window);
+                        // Um anel fino e inteiro, que enche a partir do alto.
+                        pintar_anel_inteiro(bounds, raio_fora, 2. * escala, fora, cor_fora, window);
                     },
                 )
                 .absolute()
@@ -527,5 +583,46 @@ mod testes {
         assert_eq!(cor_da_faixa(0.90, base), Cores::vermelho());
         assert_eq!(cor_da_faixa(0., base), base);
         assert_eq!(cor_da_faixa(1.2, base), Cores::vermelho());
+    }
+}
+
+/// O anel girando pintado num lugar que outra vista mediu (`onde`, na janela): o da linha
+/// "Pensando…", que gira por cima das mensagens numa vista própria e não as redesenha a cada batida.
+/// `ativo`: o turno está rodando (só então a batida anda); sem o lugar, nada aparece.
+#[derive(IntoElement)]
+pub struct AnelDoPensando {
+    pub chave: String,
+    pub onde: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    pub ativo: bool,
+}
+
+impl RenderOnce for AnelDoPensando {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (onde, ativo) = (self.onde, self.ativo);
+        super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), u64::from(ativo), cx, move |window, cx| {
+            let lado = 14.;
+            let parado = std::f32::consts::PI + TAU * 0.14;
+            let giro = if ativo && !cx.reduce_motion() {
+                let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
+                parado + ((fase / 1.2).fract() as f32) * TAU
+            } else {
+                parado
+            };
+            let onde = onde.clone();
+            canvas(
+                |_, _, _| {},
+                move |limites, _, window, _| {
+                    let Some(b) = onde.get().filter(|b| ativo && limites.intersects(b)) else {
+                        return;
+                    };
+                    let escala = b.size.width.as_f32() / lado;
+                    let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
+                    let espessura = (lado * 0.16).max(1.5) * escala;
+                    pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, Cores::destaque(), window);
+                },
+            )
+            .size_full()
+            .into_any_element()
+        })
     }
 }

@@ -171,7 +171,7 @@ struct Busca {
     erro: Option<String>,
 }
 
-fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
+pub(super) fn abrir_busca(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
     let m = motor.read(cx);
     let endereco = m.config.memoria_da_equipe.clone();
     let Some(chave) = crate::memoria_equipe::ler_chave(&m.dados.config) else { return; };

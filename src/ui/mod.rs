@@ -4,20 +4,24 @@
 pub mod componentes;
 mod abas_direita;
 mod acentos;
+mod agendar;
 pub mod arranjo;
 mod boas_vindas;
 mod abertura;
 pub mod atalhos;
 mod atualizacao;
 mod avisos_no_app;
+mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
 mod composer;
 mod configuracoes;
 mod conversa;
+mod copias;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod enviadas;
 mod falas;
 mod fila;
 mod git_da_pasta;
@@ -34,15 +38,22 @@ pub mod movimento;
 mod painel_contas;
 mod fechar;
 mod painel_arquivo;
+mod paleta;
+mod quadro_ideias;
+mod ramo;
 pub(crate) mod paineis;
 mod rascunhos;
 mod resumo;
+mod resumo_do_dia;
 mod recuperacao;
 mod reenvio;
 mod seletor_arquivos;
+mod sumario;
 mod trilho;
+mod onde_uso;
 mod uso_plano;
 mod visor_imagem;
+mod vista_mensagens;
 pub mod zoom;
 
 use std::{
@@ -81,6 +92,8 @@ actions!(vitral, [EditarUltima, AbrirAtalhos]);
 // Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
 // cabeçalho e nas abas abre o mesmo).
 actions!(vitral, [AbrirMenuDoPainel]);
+// Ctrl+I: o quadro de ideias.
+actions!(vitral, [AbrirQuadroDeIdeias]);
 
 
 /// Por quanto tempo o Esc armado espera o segundo (item 6.2).
@@ -352,7 +365,9 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
 /// passa por baixo do canto do cartão, num quadrado do tamanho do raio: embaixo o pé do cartão é
 /// opaco, e em cima o escurecido some no cartão quase opaco.
 fn sombra_da_fileira(meio_vao: Pixels) -> Div {
-    let alcance = px(18.);
+    // Até onde a sombra larga chega (o deslocamento e o desfoque): recortada antes, ela acabava
+    // numa beirada dura em vez de sumir.
+    let alcance = px(60.);
     let raio = crate::tema::raio_encostado(crate::tema::Esquerda::Solta);
     // A peça, com a sombra, posta onde o cartão está no painel.
     let peca = || div().absolute().left(alcance + meio_vao).w(px(4000.)).rounded_l(raio).shadow(crate::tema::sombra_da_fileira());
@@ -460,6 +475,8 @@ pub struct Janela {
     este_chat_rolado: Option<String>,
     /// O que o git vê mudado na pasta do chat do Este chat (a seção "Na pasta").
     git_da_pasta: git_da_pasta::GitDaPasta,
+    /// "Nesta conversa", no Este chat: a mensagem marcada, a que o clique realçou e a rolagem.
+    sumario: sumario::Sumario,
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
@@ -514,6 +531,9 @@ pub struct Janela {
     /// O próximo envio escolheu "Mandar depois": com o turno rodando, a mensagem espera na fila
     /// em vez de entrar nele. Vale para um envio só.
     mandar_depois: bool,
+    /// O próximo envio tem hora marcada ("Mandar às…", "quando a janela renovar"): a mensagem vai
+    /// para a fila com ela (`agendar.rs`). Vale para um envio só.
+    mandar_agendada: Option<u64>,
     /// Menu do Vitral aberto (F10 ou o logo).
     menu_aberto: bool,
     /// O número do sino no último quadro (`None` antes do primeiro) e a geração do pulso dele,
@@ -562,6 +582,8 @@ pub struct Janela {
     /// O texto de cada chat preparado para a busca da lista e do histórico (sem acento), refeito só
     /// quando os itens mudam (item 4.3).
     busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
+    /// A lista como vista em cache (ver `vista_mensagens`).
+    vista_da_lista: Entity<vista_mensagens::VistaDaLista>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -584,6 +606,17 @@ pub fn contar_quadro() {
     QUADROS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// O tempo de montar a árvore da janela (só o `render`, sem o layout e a pintura do GPUI): a soma e
+/// o pior do segundo, em microssegundos, para o `VITRAL_QUADROS`.
+static MONTAGEM_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static MONTAGEM_PIOR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn medir_montagem(tempo: Duration) {
+    let micros = tempo.as_micros() as u64;
+    MONTAGEM_TOTAL.fetch_add(micros, std::sync::atomic::Ordering::Relaxed);
+    MONTAGEM_PIOR.fetch_max(micros, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Com `VITRAL_QUADROS=1`, escreve "quadros/s: N" no stderr a cada segundo em que a janela
 /// redesenhou: a conferência do orçamento de movimento. Quando o metal refez o campo nesse
 /// segundo, a linha leva o tempo médio de um campo (conta, BMP e decodificação):
@@ -601,8 +634,15 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let n = QUADROS.swap(0, std::sync::atomic::Ordering::Relaxed);
             let campo = metal::custo_do_campo();
+            let total = MONTAGEM_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let pior = MONTAGEM_PIOR.swap(0, std::sync::atomic::Ordering::Relaxed);
             if n > 0 {
-                eprintln!("{}", linha_dos_quadros(n, campo));
+                eprintln!(
+                    "{} · montagem: média {:.1} ms, pior {:.1} ms",
+                    linha_dos_quadros(n, campo),
+                    total as f64 / f64::from(n) / 1000.,
+                    pior as f64 / 1000.
+                );
             }
         }
     })
@@ -655,6 +695,8 @@ impl Janela {
         assinaturas.push(cx.on_release(move |_, cx| metal::esquecer_janela(id_da_janela, cx)));
         // O GNOME manda o button-layout depois que a janela abre (e quando muda no Ajustes).
         assinaturas.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
+        // A Janela avisada avisa as vistas das mensagens (em cache): o estado delas mora aqui.
+        assinaturas.push(cx.observe_self(|this, cx| this.avisar_vistas(cx)));
         // A rede do foco: o elemento focado saiu da árvore (o Retomar e o Tentar de novo somem
         // quando o turno começa) e nada mais tem foco. Sem isto as teclas iam para a raiz, onde os
         // atalhos da janela não valem, até um clique. O foco volta para a caixa do painel ativo.
@@ -704,7 +746,10 @@ impl Janela {
             }
         });
 
+        let eu = cx.entity().downgrade();
+        let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu));
         let mut janela = Self {
+            vista_da_lista,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -739,6 +784,7 @@ impl Janela {
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
             git_da_pasta: Default::default(),
+            sumario: Default::default(),
             // Fechado até você pedir (Ctrl+J, ou um arquivo citado na conversa): a conversa fica com a
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,
@@ -770,6 +816,7 @@ impl Janela {
             ultrathink: HashSet::new(),
             ultracode: HashSet::new(),
             mandar_depois: false,
+            mandar_agendada: None,
             menu_aberto: false,
             sino_numero: Default::default(),
             sino_geracao: Default::default(),
@@ -1293,7 +1340,12 @@ impl Janela {
             depois: std::mem::take(&mut self.mandar_depois),
         };
         self.ilha = None;
-        motor.update(cx, |m, cx| m.enviar_do_usuario(&chat, texto, anexos, reforco, cx));
+        // Com hora marcada, a mensagem vai para a fila e espera por ela.
+        let agendada = self.mandar_agendada.take();
+        motor.update(cx, |m, cx| match agendada {
+            Some(quando) => m.agendar_do_usuario(&chat, texto, anexos, reforco, quando, cx),
+            None => m.enviar_do_usuario(&chat, texto, anexos, reforco, cx),
+        });
         composer.update(cx, |c, cx| c.set_value("", window, cx));
         // A caixa esvaziada vai para o disco na hora: o `set_value` não avisa a mudança, e o
         // rascunho de antes do envio ficava gravado. Numa queda logo depois, a mensagem já enviada
@@ -1448,7 +1500,7 @@ impl Janela {
         let gaveta = self.gaveta?;
         let (largura, minima, conteudo) = match gaveta {
             Gaveta::Lista => {
-                let lista = self.lateral(motor, window, cx);
+                let lista = AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full());
                 (self.larguras.lista, FAIXA_LISTA.0, div().size_full().child(lista).into_any_element())
             }
             // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
@@ -1522,6 +1574,16 @@ impl Janela {
 
 impl Render for Janela {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let inicio = std::time::Instant::now();
+        let janela = self.montar_janela(window, cx);
+        medir_montagem(inicio.elapsed());
+        janela
+    }
+}
+
+impl Janela {
+    /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
+    fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
@@ -1537,7 +1599,17 @@ impl Render for Janela {
         // Nas boas-vindas o metal é o fundo da tela, à vista e andando (dono, 13/11/2026: "faz o
         // shader ficar no fundo"): ele corre como se um chat trabalhasse, e o véu é mais leve.
         let boas_vindas = self.em_boas_vindas();
-        let chapa = metal::fundo(trabalhando || boas_vindas, Corners::default(), window, cx);
+        // Numa vista própria: a batida do metal (12 por segundo com um chat trabalhando) redesenha
+        // só ela, e não avisa a Janela (que avisaria as mensagens; ver `vista_mensagens`).
+        componentes::vista_viva::novo_quadro(cx);
+        let vivo = trabalhando || boas_vindas;
+        let chapa = componentes::vista_viva::em_vista_propria(
+            "chapa-da-janela".into(),
+            StyleRefinement::default().size_full(),
+            u64::from(vivo),
+            cx,
+            move |window, cx| metal::fundo(vivo, Corners::default(), window, cx).into_any_element(),
+        );
         let tema = cx.theme();
         let mut base = div()
             .size_full()
@@ -1780,6 +1852,12 @@ impl Render for Janela {
             .on_action(cx.listener(|this, _: &AbaAnterior, window, cx| this.andar_nas_abas(-1, window, cx)))
             .on_action(cx.listener(|this, _: &ReabrirAba, window, cx| this.reabrir_aba(window, cx)))
             .on_action(cx.listener(|this, _: &CopiarUltimaResposta, window, cx| this.copiar_ultima_resposta(window, cx)))
+            .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
+            .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoSeguinte, window, cx| this.andar_nos_arranjos(1, window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoAnterior, window, cx| this.andar_nos_arranjos(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &arranjo::salvos::SalvarArranjo, window, cx| this.dialogo_salvar_arranjo(window, cx)))
             .on_action(cx.listener(|this, _: &AbrirAtalhos, window, cx| {
                 this.foco_antes_do_dialogo(window, cx);
                 atalhos::abrir(window, cx);
@@ -1933,7 +2011,12 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
                     .fixed()
-                    .child(div().size_full().pr(meio_vao).child(self.lateral(motor, window, cx))),
+                    .child(
+                        div()
+                            .size_full()
+                            .pr(meio_vao)
+                            .child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
+                    ),
             );
         }
         if self.paineis.is_empty() {

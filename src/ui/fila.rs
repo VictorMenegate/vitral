@@ -257,6 +257,8 @@ struct Linha {
     larga: bool,
     /// Esta linha está sendo editada no lugar: o campo dela.
     edicao: Option<Entity<TextareaState>>,
+    /// A mensagem tem hora marcada: o selo dela ("sai às 15:10").
+    agendada: Option<String>,
 }
 
 /// O que a mensagem leva além do texto, numa linha curta: quem mandou e quantos anexos.
@@ -305,6 +307,7 @@ fn corpo_da_fila(
             agora,
             larga,
             edicao: editando.as_ref().filter(|(i, _)| *i == indice).map(|(_, c)| c.clone()),
+            agendada: e.agendada.map(super::agendar::selo_da_hora),
         })
         .collect();
     let fechar = janela.clone();
@@ -363,7 +366,8 @@ fn corpo_da_fila(
         Some(
             botao_fantasma("fila-entregar", Some(Lucide::Play.into()), "Entregar agora", TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| {
-                    motor.update(cx, |m, cx| m.entregar_fila(&chat, cx));
+                    // Tudo entra já, as mensagens com hora marcada também.
+                    motor.update(cx, |m, cx| m.entregar_fila_agora(&chat, cx));
                 }),
         )
     } else {
@@ -401,7 +405,7 @@ fn linha_da_fila(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora, larga, edicao } = linha;
+    let Linha { indice, posicao, previa, dica, meta, do_usuario, primeira, ultima, agora, larga, edicao, agendada } = linha;
     let dica: SharedString = dica.into();
     let mover = |para_baixo: bool| {
         let (motor, chat) = (motor.clone(), chat.to_string());
@@ -532,6 +536,8 @@ fn linha_da_fila(
                 .gap(esp::E4)
                 // Na coluna do texto, depois do número.
                 .pl(esp::E24)
+                // A hora marcada, num selo com o relógio, antes do resto.
+                .children(agendada.map(|hora| Selo::neutro(hora).icone(Lucide::Clock, Cores::tenue())))
                 .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::apagado()).child(meta))
                 // Os botões não encolhem: quem corta é a meta.
                 .child(h_flex().flex_none().gap(esp::E4).children(mandar).child(editar).children(ordem).child(tirar)),

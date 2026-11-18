@@ -148,6 +148,10 @@ impl Janela {
         // A conversa trazida tem a hora de cada linha do arquivo dela: os dias também se separam.
         let horas: Vec<u64> = mostrados.iter().map(|(_, item)| item.em()).collect();
         let datas: HashMap<usize, String> = super::separadores_de_data(&horas, crate::modelo::agora()).into_iter().collect();
+        // As mensagens suas do histórico: o prepaint de cada uma diz onde ela ficou, e a mensagem
+        // presa no alto escolhe entre elas e as do chat (ver `mensagens`).
+        let presa = self.paineis[ix].presa_do_historico.clone();
+        presa.borrow_mut().clear();
         let mut i = 0;
         while i < mostrados.len() {
             if let Some(dia) = datas.get(&i) {
@@ -164,6 +168,16 @@ impl Janela {
             }
             let (indice, item) = mostrados[i];
             let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
+            let elemento = match item {
+                Item::Usuario { texto, .. } if !texto.trim().is_empty() => {
+                    let (presa, texto) = (presa.clone(), super::texto_da_presa(texto));
+                    div()
+                        .child(elemento)
+                        .on_prepaint(move |limites, _, _| presa.borrow_mut().push((texto.clone(), limites.top(), limites.bottom())))
+                        .into_any_element()
+                }
+                _ => elemento,
+            };
             blocos.push((bloco, None, elemento));
             i += 1;
         }

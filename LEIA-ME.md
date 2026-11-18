@@ -28,8 +28,14 @@ componentes do GPUI Kit.
   aberto, na última pasta usada (a do último chat criado, guardada como
   `ultimo_destino` no `interface.json`, ou a do chat mexido por último); sem nenhuma, a paleta
   pergunta. **Novo chat em outra pasta…**, no menu do logo, abre a paleta "Em qual pasta?": as
-  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), **Outra
-  pasta…** (o seletor do sistema) e **Sem pasta**. Quem cria é `Motor::novo_chat(pasta:
+  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), os
+  **Worktrees**, **Outra pasta…** (o seletor do sistema) e **Sem pasta**. O grupo Worktrees
+  (`src/ui/copias.rs`) traz as cópias dos repositórios dessas pastas: o que o `git worktree list
+  --porcelain` de cada uma devolve (`copias_das_pastas`, em `src/git.rs`), lido em segundo plano
+  ao abrir a paleta, com o nome da pasta e, embaixo, o ramo (ou "cabeça solta em <commit>") e o
+  caminho; a busca acha pelo nome, pelo ramo e pelo caminho. A cópia que já tem chat fica só em
+  Pastas, a que teve a pasta apagada não aparece, e o Vitral só lista e abre: não cria nem apaga
+  worktree. Quem cria é `Motor::novo_chat(pasta:
   Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
   `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
   "- ", "- [ ] ", "1. "), até 7 palavras.
@@ -72,7 +78,47 @@ componentes do GPUI Kit.
 - **Corrigir qualquer mensagem.** `motor::editaveis_desde` diz desde onde as mensagens do usuário
   dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
   do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
-  e o que veio depois. Na dupla, a sessão do parceiro também recomeça.
+  e o que veio depois. Na dupla, a sessão do parceiro também recomeça. **A sessão volta ao ponto,
+  sem resumo:** para o Claude não lembrar do que saiu, o próximo turno roda numa sessão nova, que
+  é uma cópia da de antes até o ponto anterior à mensagem corrigida (`--resume <sessão>
+  --fork-session --session-id <nova> --resume-session-at <uuid>`, o mesmo corte do "Continuar
+  daqui em outro chat"; `Bifurcacao::correcao`, `bifurcar::sessao_depois_da_correcao`). O agente
+  fica com o contexto exato do que veio antes, e o começo da conversa é o mesmo que o Claude Code
+  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. Quando o ponto não é
+  achado no arquivo da sessão (Codex, conversa de antes das marcas, a primeira mensagem da
+  sessão, mensagem dirigida ao turno), vale o caminho de antes: sessão vazia com o bloco de
+  passagem (`MotivoPassagem::Reenvio`); se o Claude Code recusar o corte, o turno é repetido
+  assim, com um aviso na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
+  na sessão de origem. A cópia de uma sessão traz o custo acumulado da original (o Claude Code
+  restaura o `cost-state` dela, lido no binário da 2.1.325): o chat leva o último total visto
+  para a sessão nova, e o `somar_custo` soma só o que crescer. A pergunta antes de corrigir só
+  fala em "sessão nova, com um resumo" quando é isso que vai acontecer. O corte foi medido sem
+  mandar mensagem (ver o "Continuar daqui em outro chat"); a leitura de cache no turno seguinte
+  não foi medida, porque pediria um turno pago.
+- **Continuar daqui em outro chat (bifurcar).** Nas ações de uma mensagem sua e de uma resposta
+  (o ícone do ramo; `src/ui/bifurcar.rs`) e na paleta de comandos (a partir da última resposta):
+  nasce um chat novo na mesma pasta, "título (ramo)", com os itens da conversa até aquele ponto, o
+  mesmo agente, modelo, modo e regras de permissão, aberto num painel ao lado (sem lugar, numa aba
+  do mesmo); o original não muda. O corte é sempre na borda de um turno: numa resposta, vai o
+  turno dela inteiro; numa mensagem sua, tudo o que veio antes, e o texto dela (com os anexos)
+  vai para a caixa do chat novo. No Claude com sessão gravada, o primeiro turno do chat novo sai
+  numa cópia da sessão de origem, pelo caminho das conversas trazidas (`--resume <origem>
+  --fork-session --session-id <nova>`, o `bifurcar` de `src/claude.rs`), cortada no ponto com
+  `--resume-session-at <uuid>` (`Opcoes::cortar_em`): o agente lembra do que veio antes sem
+  resumo. O uuid é o da última entrada do agente ou do usuário antes da mensagem que abre o turno
+  seguinte, achado no arquivo da sessão subindo a cadeia de `parentUuid` a partir da marca dela
+  (`motor/bifurcar.rs`, `ponto_de_corte`); o ponto fica em `Chat.bifurcado_de` até a sessão nova
+  nascer. No Codex, sem sessão, sem marca (conversa antiga, mensagem dirigida ao turno) ou sem o
+  ponto no arquivo, o chat novo começa numa sessão nova com o bloco de passagem
+  (`MotivoPassagem::Bifurcou`). A flag `--resume-session-at` está no Claude Code 2.1.325 fora do
+  `--help`. Medido em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem
+  (não gasta o plano, como o `rewind_files`): ela aceita o uuid de qualquer entrada da cadeia (do
+  agente, sua, de anexo ou de sistema), a sessão retomada inteira tinha 40.388 tokens de
+  mensagens e, cortada na primeira mensagem, 39 (o `get_context_usage`), e um uuid que não está
+  na sessão sai com "No message found with message.uuid of". Nesse caso (e com a sessão de origem
+  apagada) o Vitral repete o turno numa sessão nova com o bloco de passagem
+  (`consertar_bifurcacao`). Não foi medido um turno de verdade depois do corte. Com o último
+  turno ainda rodando, bifurcar na última resposta espera.
 - **Economia de tokens sem mexer na resposta.** Três coisas, nenhuma corta saída, baixa esforço ou
   troca modelo sozinha. (1) `claude::ambiente` desliga o gasto de fundo que o Vitral não mostra
   (`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, `CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0`,
@@ -558,18 +604,59 @@ ferramentas, vale por painel).
   nada é trocado) e, com o chat parado, **Entregar agora** no rodapé (a faixa acima da caixa não
   repete o botão com a fila aberta). Com o turno rodando, a caixa vazia e algo seu na fila, a seta
   para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
-  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3). A
+  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3).
+  **Mensagem com hora marcada** (`src/motor/agendadas.rs` e `src/ui/agendar.rs`): no **…** da
+  caixa, **Mandar quando a janela de 5 h renovar** (a renovação da conta em que o chat roda, ou a
+  do Codex, mais 30 s de folga; o item some sem essa hora lida) e **Mandar às…** (um diálogo com
+  a hora: "15:10", "15h", "830"; a que já passou hoje vale para amanhã) mandam o que está na caixa
+  para a fila do chat com a hora (`Entrada::agendada`, gravada no estado: sobrevive ao reinício).
+  A fila abre com o cartão dela, que leva o selo "sai às 15:10"; o ×, o lápis, a ordem e o
+  **Mandar agora** valem como nas outras, e o **Entregar agora** do chat parado manda tudo, com
+  hora ou sem. Até a hora, ela não entra em turno nenhum, mesmo com o chat livre: quem tira
+  mensagens da fila para um turno passa por `Motor::tirar_prontas`. Na hora, a rotina de 15 s do
+  motor (`entregar_agendadas`) abre o turno do chat livre, junto com o que mais esperava na fila;
+  com o chat ocupado, a mensagem entra quando o turno acabar. Só sai com o Vitral aberto: a hora
+  que passou com ele fechado sai logo na abertura. A
   lista mostra umas três mensagens antes de rolar e guarda à direita o lugar da barra de rolagem,
   que segurava o clique do ×; o que a fila faz fica na dica do título. Fora do painel largo, o
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do
   teclado** (`src/ui/atalhos.rs`): a tela é montada da mesma tabela que registra as teclas, então
   nunca desencontra do que o teclado faz.
+- **Paleta de comandos (Ctrl+Shift+P)** (`src/ui/paleta.rs`; também no menu do logo). Uma lista
+  só, com busca sem acento e por palavras, de tudo o que o Vitral faz. Tem duas fontes: as linhas
+  com rótulo da tabela de `src/ui/atalhos.rs` (com as teclas à direita; o Enter dispara a mesma
+  ação da tecla, a partir da caixa do painel ativo, pelo `atalhos::acoes()` que a tabela passou a
+  gerar) e os comandos que só existiam em menu (`paleta::Direto`: do menu do logo, do "…" da
+  caixa e do menu da conversa, como Compactar, Agentes desta conversa, Perguntar também ao Codex,
+  Sessão nova, Renomear, Fixar, Arquivar, Modo foco, Servidores MCP, Contas, Consultar memória),
+  que chamam o método do item do menu. As seções são as do diálogo de atalhos. O que não vale
+  agora fica apagado, no fim da seção, com o motivo embaixo ("A conversa ainda não tem sessão",
+  "Só com o menu “/” da caixa à vista"): a lista é montada de uma foto do momento
+  (`paleta::Momento`). O Esc devolve o foco à caixa. Um teste garante que toda linha com rótulo
+  da tabela de atalhos está na paleta; atalho novo entra sozinho, e comando novo de menu entra em
+  `Direto::TODOS`.
+- **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
+  `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
+  fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.
+  Primeiro as do chat aberto, depois as dos outros chats da mesma pasta, depois o resto; em cada
+  grupo, da mais recente à mais antiga, e o mesmo texto aparece uma vez só. Cada linha tem o
+  começo da mensagem e, embaixo, o chat, a pasta e há quanto tempo. O **Enter** põe o texto na
+  caixa do painel ativo, sem enviar: com algo escrito, junta ao fim depois de uma linha em branco
+  (o Ctrl+Z desfaz, como no × da fila). Mostra 60 por vez; a busca estreita o resto. Tudo em
+  `src/ui/enviadas.rs`.
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
   (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
   "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
   Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
-  segundo plano…". **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
+  segundo plano…". **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
+  servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
+  (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
+  só aceito se o cgroup é o do escopo), lido quando a linha pergunta e guardado por 3 s
+  (`src/motor/memoria.rs`); chat parado não é lido. No Windows, sem systemd ou sem o controlador
+  de memória no cgroup do usuário, a dica não aparece. Não há aviso de máquina no limite (o dono
+  não quis aviso novo). **Esc que não custa caro** (rodada de uso, item 6.2): quando parar derrubaria o
   processo inteiro (agentes em segundo plano, a espera por eles, um turno com Ultracode), o
   primeiro Esc só arma, e a linha diz "Esc de novo para parar os N agentes" por 3 s; o botão Parar
   continua parando direto. Depois de um Esc (ou do Parar) que parou o turno, a faixa acima da caixa
@@ -642,8 +729,12 @@ ferramentas, vale por painel).
   falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
   0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
-  dentro. O histórico importado do Claude Code não recolhe. O clique numa
-  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
+  dentro. O histórico importado do Claude Code não recolhe. A dica da linha diz os tokens e o
+  custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
+  `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela), e abre os
+  tokens em três números: a entrada nova (a sem desconto mais a gravada no cache), o que foi lido
+  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). O turno sem linha no livro (os de antes disto, e os
+  de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
   lado ficam guardadas na conversa). **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
@@ -974,9 +1065,37 @@ pasta renomeada), um alerta vermelho no lugar do Abrir. Na dica da aba, a pasta 
 painel. A outra aba é a do arquivo aberto (ver **Arquivos citados**, acima, e a aba Arquivos da
 lista).
 
-- Num painel estreito (abaixo de uns 330 px, ou a 150% de zoom), os botões ficam só com o ícone.
-- Na gaveta (janela estreita), o painel é opaco por cima das conversas, com o fundo escurecido; ele
-  entra deslizando da borda direita, e o botão do canto (ou Esc) o recolhe.
+**Na pasta e o ramo do git** (`src/ui/git_da_pasta.rs`, `src/ui/ramo.rs`). Depois das Mudanças, a
+seção **Na pasta** lista o que o git vê mudado desde o último commit no repositório do chat (o que
+um comando mudou também), relida a cada 4 s enquanto está à vista. O cabeçalho dela mostra o
+**ramo** em que a pasta está: o nome em mono, o commit curto e "cabeça solta" quando não há ramo, e
+o selo **worktree** quando a pasta é uma cópia de outro repositório. O ramo também vai na dica da
+linha do chat na lista (junto da pasta) e na dica da aba, numa linha a mais ("No ramo feat/x, num
+worktree"), lido quando a dica aparece.
+
+- O ramo sai dos arquivos do git (`git::ramo_no_disco`: o `.git` da pasta ou de uma acima e o
+  `HEAD` dele; num worktree, o `.git` é um arquivo que aponta a pasta de verdade, e o `commondir`
+  lá dentro diz que é cópia). Não abre processo, então serve para a dica e para conferir a cada
+  poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
+  repositório que os arquivos não contam (o formato reftable).
+- Não há aviso quando a pasta troca de ramo (dono, 18/11/2026: nada de avisos novos).
+
+**Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
+mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas
+linhas, e embaixo o que o turno dela fez ("3 editados · 12 comandos", a conta de
+`falas::o_que_o_turno_fez`). Numa conversa de vários dias, o dia entra como um título pequeno
+onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
+
+- **O clique leva à mensagem.** O painel passa a desenhar até ela (o `mostrar` do painel cresce:
+  é o mesmo que o subir até o alto faz aos poucos) e a abertura na âncora
+  (`AlvoDeAbertura::Ancora`, em `mensagens.rs`) a põe no alto, abaixo do lugar da mensagem presa;
+  ela fica realçada por 1,6 s, com a moldura e a tinta do destaque.
+- **A mensagem à vista fica marcada**: a última sua que começa até 120 px abaixo do alto da
+  conversa (a que você está lendo, ou a que o clique acabou de trazer). A rolagem da conversa só
+  redesenha a janela quando a marcada muda (`acompanhar_sumario`), e a lista do sumário rola até
+  a linha dela.
+- O que veio do histórico de uma conversa trazida do Claude Code não está nos itens do chat e
+  fica de fora do sumário.
 
 ## Contas e uso dos planos
 
@@ -1006,36 +1125,38 @@ esperar mais antes de tentar de novo, sem aviso. Contam também o que o Claude C
 guardam no disco (relido a cada 30 s) e os avisos de limite durante os turnos; o Codex só por
 esses dois caminhos.
 
-No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
-linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
-anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso
-embaixo, "5 h 7% · semana 38%", sem a janela que ainda não foi lida) a torna a padrão, e o check
-fica nela; **Entrar com outra conta…** conecta uma nova e o **…** de uma conta extra tem
-**Desconectar…**. **Contas…**, no rodapé, abre o diálogo das contas (também no menu do logo,
-**Contas do Claude**, ou em **Gerenciar contas…**, no chip da conta na caixa de mensagem). Ele
-repete o seletor do popover, maior: em **Conta padrão**, a Automática e uma linha por conta com o
-mesmo anel do canto (a janela mais apertada), o login e o plano, o uso ("5 h 23% ·
-semana 41%", com a hora de renovar na dica, ou "no limite · volta às 14:30") e o check na padrão; o
-clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como padrão**,
-**Copiar o e-mail** e, nas extras, **Desconectar…**. **Entrar com outra conta…** mostra dois passos:
-o navegador (com **Abrir de novo** e **Copiar endereço**, que vira "Copiado" por um instante) e o
-código da página, com **Entrar**; se falhar, o erro aparece ali com **Tentar de novo**.
+**Previsão de quando o limite acaba** (`src/contas/previsao.rs`). O motor guarda na memória, por
+conta, as leituras cruas do uso (`Motor::historico_uso`, alimentado em `juntar_uso_da_conta` e no
+`Evento::Limite`), e a inclinação entre a mais velha do trecho recente e a última diz quando a
+janela chega a 100%. No popover do Claude, embaixo de "renova em…", cada janela ganha uma linha:
+"No ritmo de agora, chega a 100% às 15:10", em âmbar, quando isso cai antes da renovação, ou "Dá
+até a renovação". Quando a previsão das 5 h cai antes da renovação, o anel do canto fica âmbar
+mesmo abaixo de 70% e a dica dele diz a hora. O trecho é de 30 min nas 5 h (com pelo menos 5 min
+entre as leituras) e de 6 h na semana (pelo menos 30 min): meia hora de trabalho pesado esticada
+por dias diria sempre que a semana estoura, e por isso a semana também não pinta o anel. Sem
+leituras bastantes, com a última leitura mais velha que o trecho, logo depois de a janela renovar
+(as leituras da janela anterior não contam) ou no limite, a linha não aparece. As leituras não vão
+para o disco: depois de abrir o Vitral a previsão leva alguns minutos para aparecer.
 
-A conta que perdeu o login mostra a pílula **sem login** no lugar do uso e o botão **Entrar de
-novo** à vista. Ele refaz o login nessa mesma conta (na principal, o login padrão do Claude Code),
-pelos mesmos dois passos, e a conta volta para a escolha; o nome se mantém. Se o login falhar, a
-pasta da conta fica (só a de uma conta nova é apagada). Se o login voltar com outro e-mail, o
-Vitral avisa e não troca nada. O **Entrar de novo** do cartão de erro e o da faixa do turno abrem
-este diálogo já no login da conta que caiu.
+**Onde o uso foi** (`src/motor/gasto.rs` e `src/ui/onde_uso.rs`). Cada turno terminado vira uma
+linha num livro fora do estado, `gastos/AAAA-MM.jsonl` na pasta de dados (um arquivo por mês,
+gravado inteiro pelo gravador do `dados.rs`): a hora, o chat, a pasta, o modelo, a conta, o custo
+e os tokens de entrada nova, de cache lido, de cache criado e de saída. O custo é o que o
+`Chat::somar_custo` somou naquele fim de turno; os tokens vêm do `result` do Claude Code
+(`Evento::Gasto`, de `tokens_do_resultado`: o `model_usage_since_last_result`, que conta os
+subagentes, ou, sem ele, o `usage` do turno; nunca o `modelUsage`, que é o total da sessão) e do
+`turn.completed` do Codex (sem custo). Um turno com vários `result` (agentes em segundo plano)
+soma os tokens de todos. No diálogo **Contas do Claude**, embaixo das contas, a seção **Onde o uso
+foi** tem os seletores **Hoje** e **7 dias** (hoje e os 6 dias anteriores): uma barra por pasta,
+da que mais gastou para a que menos, com "182 mil tokens · US$ 0,84"; o clique na pasta abre os
+cinco chats que mais gastaram nela, e o clique num chat fecha o diálogo e abre a conversa. As
+barras medem o custo; num período só de Codex, os tokens. Na abertura o Vitral lê o mês de agora e
+o anterior (o que os 7 dias e as conversas recentes precisam). Só entra o que rodou depois desta
+versão: o que veio antes não tem linha no livro.
 
-Cada conta extra tem uma pasta própria só com o login; CLAUDE.md, configurações, skills, plugins
-e o histórico das conversas são compartilhados com o seu Claude Code, então uma conversa continua
-em qualquer conta. Na escolha **Automática**, cada turno vai para a conta com mais folga e, se uma
-chegar ao limite, o mesmo turno roda de novo em outra. A conta no limite volta sozinha na hora em
-que o plano renova (o painel de uso e o de contas dizem quando: "limite atingido, volta às
-15:42"); uma janela que já renovou volta a 0%. Se todas estiverem no limite, o turno vai para a
-que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igual em todo lugar:
-"7% do limite de 5 h".
+**Último turno**, no popover do contexto da caixa (`ultimo_turno`, em `src/ui/onde_uso.rs`):
+depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
+lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
 
 ## Organização
 
@@ -1096,8 +1217,29 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   só com elas; `jeito_das_abas`, em `src/ui/conversa.rs`, com a largura da faixa medida no quadro
   anterior e a natural de cada aba, conta o lugar do +N). A faixa nunca passa por cima do **+** e
   não rola: a roda do mouse em cima dela não faz nada. Toda
-  aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
+  aba tem fundo, e com o ponteiro em cima ganha um aro de metal. As abas não têm ícone (dono,
+  18/11/2026: "tira os ícones daqui também"): o estado do chat vai no fio preto da aba (`Aba::borda`,
+  em `src/ui/componentes/paineis.rs`): um fio de 2 px na cor do estado por cima do preto, com um
+  véu de 6% da mesma cor no miolo, sem halo. Trabalhando, azul, respirando devagar (de 0,5 a 1 em
+  2,4 s, numa vista própria: a batida redesenha só o fio); terminou e você não leu, verde; esperando
+  você, âmbar; erro, vermelho; parado e lido, o fio preto de sempre. O dono pediu discreto, mas o
+  fio de 1 px apagado não se via ("dá pra ver nada", 18/11/2026). Só a aba de fundo que virou um
+  quadrado (sem lugar para o título) continua com o ícone do estado. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
+- **Arranjos de painéis salvos** (`src/ui/arranjo/salvos.rs`). O que a janela já grava ao fechar
+  (`Arranjo`: os chats de cada painel, as abas, a aba à vista, a divisão das conversas, as
+  larguras e a lista recolhida) pode ser guardado com um nome, um por frente de trabalho
+  ("Central", "Vitral"), na chave `arranjos` do interface.json (até 12). No menu do logo,
+  **Arranjos**: a lista (o em uso com o visto), **Salvar o arranjo atual…** (Ctrl+Alt+S; o mesmo
+  nome salva por cima) e um **Apagar** para cada um. Trocar guarda antes o arranjo em uso, como a
+  janela está, para a volta ser de onde parou, fecha os painéis de agora (o rascunho de cada caixa
+  fica guardado, e as abas não vão para o Ctrl+Shift+T) e recoloca os do escolhido pelo mesmo
+  `reabrir_arranjo` da abertura; o tamanho da janela não muda. **Ctrl+Alt+PageDown** e
+  **Ctrl+Alt+PageUp** andam pelos arranjos, dando a volta, e a paleta de comandos tem um "Arranjo:
+  nome" para cada. Chat arquivado ou apagado some do arranjo sem erro (`Arranjo::reabrivel`); se
+  não sobrou nenhum, a troca avisa e não acontece. Os chats que saem da tela continuam rodando.
+  Depois de fechar e abrir, a janela volta como estava (a chave `arranjo` de sempre) e o "em uso"
+  continua o mesmo.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer
   aba de um painel, como no VS Code: solta no **meio** de outro painel, ela vira mais uma aba dele
   ("Abrir aqui, como aba"; sai do painel de origem, que fecha se era a única aba); solta na
@@ -1340,6 +1482,96 @@ liga o Ultracode e Enter fecha (as teclas estão no rodapé do popover); Esc fec
 conversa). `?` abre os **Atalhos do teclado**. Fica um flutuante aberto por vez: abrir o menu do
 logo, o sino, um popover da caixa, o menu ou o **+** de um painel, pelo mouse ou pelo atalho,
 fecha o que estava aberto (`Janela::so_um_flutuante`).
+
+## Resumo do dia
+
+**Resumo de hoje**, no menu do logo, abre um diálogo com o que os chats fizeram no dia, por pasta
+(`src/ui/resumo_do_dia.rs`). É montado só do que o app já tem, sem chamar modelo nenhum: os itens
+das conversas (cada um com a hora) e o estado de cada chat. Um seletor troca para **Ontem** e **7
+dias**, e **Copiar como Markdown** leva o texto para a área de transferência (um título, uma seção
+por pasta e, em cada chat, a frase, o tempo, a pendência e os arquivos).
+
+- **Quem entra**: o chat em que o agente respondeu ou usou uma ferramenta no período (as
+  arquivadas também). Só a sua mensagem, sem o agente ter feito nada, não conta. A pasta mexida por
+  último vem primeiro e, em cada uma, o chat mexido por último.
+- **De cada chat**: o título (o clique abre o chat), a primeira frase da última resposta do
+  período (`falas::primeira_frase`), os arquivos que as chamadas de edição do período mudaram, com
+  o +N −M somado e o "novo" (a mesma fonte das Mudanças; o que um comando mudou fica de fora), o
+  tempo trabalhado com o número de turnos e o que ficou pendente: o estado do chat agora
+  (`falas::estado_do_chat`: rodando, parada, erro, permissão ou plano esperando você). A resposta
+  que você ainda não leu não é pendência.
+- **O tempo trabalhado** é a soma dos intervalos entre um item e o seguinte dentro de cada turno,
+  só o pedaço que cai no período. Um intervalo de mais de 10 minutos sem nada acontecer conta só
+  até esse teto: é espera (um pedido de permissão parado, o Vitral fechado), não trabalho. Um
+  comando que roda sozinho por mais de 10 minutos também entra só até o teto.
+- Os períodos vão pela meia-noite local: hoje, do começo do dia até agora; ontem, o dia inteiro; 7
+  dias, do começo do dia de seis dias atrás até agora. O resumo é montado ao abrir e ao trocar de
+  período, não a cada quadro.
+
+## Quadro de ideias (Ctrl+I)
+
+A lista do que você quer fazer no futuro, num kanban (`src/ideias.rs`, `src/motor/ideias.rs` e
+`src/ui/quadro_ideias.rs`). Só você anota: nenhum chat põe ideia no quadro sozinho (dono,
+18/11/2026: "essas ideias é pra ser coisas do futuro que vou colocando pra não esquecer"). Abre
+pelo Ctrl+I, pelo **Quadro de ideias** do menu do logo e por **Ideias deste chat** no menu de uma
+conversa (o botão direito na lista ou no cabeçalho, ou Shift+F10), que diz quantas ela tem.
+
+O diálogo ocupa quase a janela, com 16 de margem. Em cima, uma linha só: "Ideias", o chip do chat
+quando o quadro é de um (com o × que mostra todas), como está o Linear (com o ⟳ e a tomada) e o
+fechar. Embaixo, as quatro colunas, **Ideias**, **Próximas**, **Fazendo** e **Feitas**: o nome
+com o número de cartões e, no fundo da lista (o metal, o véu azul e o buraco, como os balões da
+conversa), os cartões, que rolam por coluna. O campo do alto de Ideias anota com o Enter; a ideia
+entra no alto da coluna, na pasta do chat à vista (sem chat, na pasta de trabalho), ou, no quadro
+de um chat, já dele.
+
+- **Cartão:** como uma linha da lista, um véu claro que acende com o ponteiro. O título (13, até 3
+  linhas), o porquê ou o começo do pedido (2 linhas) e uma linha de fatos, cortada na borda sem
+  reticências: o chat da ideia com o estado dele (ou a pasta), o código da issue e o responsável.
+  Com o ponteiro em cima, o botão de mandar.
+- **Ideia de um chat:** a escolha **Chat** da edição liga a ideia a uma conversa (as 40 mexidas por
+  último) ou a deixa para **Um chat novo**. **Mandar no chat** põe o pedido na fila da conversa
+  dela, sem cortar o turno que estiver rodando, e abre a conversa; sem chat, **Abrir chat** cria
+  um na pasta do cartão, com o pedido como primeira mensagem, e liga o cartão a ele. Nos dois
+  casos o cartão vai para Fazendo. O botão direito de um cartão com chat tem os dois.
+- **Arrastar:** solto numa coluna, o cartão vai para o fim dela; solto em cima de outro, entra
+  logo antes dele (a ordem de uma coluna é a `ordem` de cada cartão, crescente).
+- **Clique:** abre a edição, com a seta de voltar: título, **Pedido para o chat** (vazio, vai o
+  título), **Chat**, **Pasta** (só para o chat novo), **Coluna**, **Apagar** (com Desfazer no
+  aviso), o código no Linear, **Ir ao chat** e **Mandar no chat** ou **Abrir chat**. O texto se
+  grava sozinho (o motor marca o quadro e grava na passada de 5 s, e ao fechar).
+- **Botão direito:** mandar (no chat ou num novo), editar, abrir no Linear, mover para cada uma
+  das outras colunas e apagar.
+
+Fica em `ideias.json`, na pasta de dados (`{"ideias": [...]}`; os campos que esta versão não
+conhece são regravados como vieram). Ilegível, o arquivo é copiado ao lado e o quadro abre vazio,
+com o aviso.
+
+**Com o Linear** (`src/linear.rs`; dono, 18/11/2026: o quadro é o do Linear, no time EFI,
+Eficiência Operacional). Ligado pelo **Ligar o Linear** do cabeçalho (a chave pessoal, de
+Settings > Security & access > Personal API keys, testada contra o time antes de gravar, em
+`linear.chave` na configuração, 0600), as ideias são as issues do time com a etiqueta **Ideia**
+(abertas e concluídas nos últimos 30 dias, sem as canceladas): as tarefas do time ficam de fora.
+A coluna é a do tipo do estado (triagem e backlog em Ideias, "unstarted" em Próximas, "started" em
+Fazendo, "completed" em Feitas), na ordem do `sortOrder`. O chat, a pasta e o porquê continuam só
+do Vitral, guardados no cartão.
+
+- **O que sobe:** a ideia nova (vira issue no estado de backlog, com a etiqueta Ideia, que o
+  quadro cria no time se ainda não existir), o título e o pedido (1,5 s depois de parar de
+  digitar), a coluna (o primeiro estado do tipo dela no fluxo do time) e a ordem (o `sortOrder`
+  no meio dos vizinhos), o mandar (vai para "started") e o Apagar (arquiva a issue; o Desfazer
+  desarquiva). O cartão muda na hora; a chamada vai em segundo plano.
+- **O que desce:** ao abrir o quadro, a cada minuto com ele aberto e no ⟳. Enquanto o Linear não
+  responde, o cabeçalho mostra o anel girando e "Lendo o Linear", e a coluna vazia mostra o anel
+  no lugar do texto dela (dono, 18/11/2026: "faz um loading"). Um cartão com mudança
+  daqui a caminho fica como está até a próxima leitura; se o Linear recusar uma mudança, o
+  cabeçalho mostra o erro em vermelho e o quadro relê.
+- **Os só do Vitral:** os cartões de antes de ligar (e os de um erro ao criar) ficam no quadro, sem
+  o código de issue, e não sobem (dono, 18/11/2026: "não precisa ter isso de mandar pro Linear").
+- **O filtro:** no cabeçalho, **Todas**, **Linear** e **Vitral**, cada um com quantas há (dono,
+  18/11/2026: "selecionar as do Linear e as do Vitral como um filtro"). Com **Vitral**, a ideia nova
+  também fica só no Vitral (o campo diz "Nova ideia só no Vitral"). O quadro abre no último filtro
+  escolhido, até fechar o app. Sem o Linear ligado, o filtro não aparece.
+- **Desligar** (o ícone da tomada) apaga a chave; os cartões das issues saem do quadro.
 
 ## Compilar e rodar
 

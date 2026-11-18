@@ -393,7 +393,9 @@ impl RenderOnce for CartaoDeLista {
                 if self.titulo_no_meio {
                     d.overflow_hidden().whitespace_nowrap().text_ellipsis_middle()
                 } else {
-                    d.truncate()
+                    // Cortado seco, sem as reticências, como o título das abas (dono, 17/11/2026:
+                    // "tira os 3 pontinhos daqui também").
+                    d.overflow_hidden().whitespace_nowrap()
                 }
             })
             .text_size(r(if self.nivel > 0 {
@@ -855,6 +857,9 @@ pub struct ListaDeEscolha {
     /// Onde o realce do teclado começa ao abrir, quando não é no escolhido (no "+" do painel, a
     /// linha de criar: o Enter cria, e o visto fica no chat à vista).
     cursor: Option<SharedString>,
+    /// Num diálogo (a paleta, as mensagens, a pasta do chat novo): a lista vai no fundo da lista,
+    /// mais alta que num popover.
+    em_dialogo: bool,
 }
 
 impl EventEmitter<EventoEscolha> for ListaDeEscolha {}
@@ -878,7 +883,15 @@ impl ListaDeEscolha {
             simbolos_dos_grupos: Vec::new(),
             ficha_no_escolhido: false,
             cursor: None,
+            em_dialogo: false,
         }
+    }
+
+    /// A lista de um diálogo: no fundo da lista (o metal, o véu e o buraco, como as colunas do
+    /// quadro de ideias) e com mais altura (dono, 18/11/2026: "melhora todos esses menus que estão
+    /// no estilo antigo").
+    pub fn em_dialogo(&mut self) {
+        self.em_dialogo = true;
     }
 
     /// O realce do teclado começa nesta chave ao abrir (sem ela, no escolhido).
@@ -904,6 +917,11 @@ impl ListaDeEscolha {
         self.filtrados = None;
         self.escolhido = escolhido;
         cx.notify();
+    }
+
+    /// O que está escrito na busca agora (para redefinir a lista sem perder o filtro).
+    pub fn busca(&self, cx: &App) -> String {
+        self.estado.read(cx).query(cx).to_string()
     }
 
     /// Busca própria (arquivos: o nome antes da pasta); a lista mostra o que ela devolver.
@@ -1004,9 +1022,12 @@ impl Render for ListaDeEscolha {
         // Até 440, mas cabendo na janela com o resto do popover em volta (abas, rodapé, a caixa
         // embaixo): com zoom alto, o popover de modelo passava da borda e cortava o rodapé
         // (relatório de design, 17/11/2026).
-        let teto = (window.viewport_size().height - px(360.))
-            .min(r(440.).to_pixels(window.rem_size()))
-            .max(px(160.));
+        let teto = if self.em_dialogo {
+            // Com o cabeçalho, o rodapé das teclas e as margens do diálogo em volta, sem passar da janela.
+            (window.viewport_size().height - r(330.).to_pixels(window.rem_size())).min(r(560.).to_pixels(window.rem_size())).max(px(200.))
+        } else {
+            (window.viewport_size().height - px(360.)).min(r(440.).to_pixels(window.rem_size())).max(px(160.))
+        };
         let lista = cx.entity().downgrade();
         let grupos = self.filtrados.clone().unwrap_or_else(|| self.grupos.clone());
         let escolhido = self.escolhido.clone();
@@ -1077,6 +1098,18 @@ impl Render for ListaDeEscolha {
         if let Some(rodape) = self.rodape.clone() {
             comando = comando.footer(move |_, window, cx| rodape(window, cx));
         }
-        div().w_full().child(comando)
+        if !self.em_dialogo {
+            return div().w_full().child(comando);
+        }
+        // O Command do kit pinta o fundo do popover por cima de tudo: no diálogo, ele fica
+        // transparente, e o que aparece é o fundo da lista.
+        comando = comando.bg(gpui_kit::transparent_black());
+        let raio = crate::tema::raio::cartao();
+        div()
+            .relative()
+            .w_full()
+            .rounded(raio)
+            .child(super::metal::fundo_da_lista(raio))
+            .child(div().relative().w_full().px(esp::E8).py(esp::E6).child(comando))
     }
 }

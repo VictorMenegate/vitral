@@ -189,24 +189,6 @@ fn simbolo_da_conversa() -> Simbolo {
     Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue())
 }
 
-/// O ícone da aba: o estado do chat (anel girando, disco âmbar, azul ou vermelho, balão apagado
-/// quando parado e lido), com a pasta na dica.
-fn simbolo_na_aba(motor: &Motor, chat: &Chat, painel_id: u64) -> AnyElement {
-    let dica: SharedString = if motor.sem_pasta(chat) {
-        "Sem pasta: um chat numa pasta vazia só dele".into()
-    } else if chat.importada.is_some() {
-        format!("Conversa do Claude Code, direto na pasta dela\n{}", com_til(&chat.cwd)).into()
-    } else {
-        format!("Direto em {}", com_til(&chat.cwd)).into()
-    };
-    div()
-        .id(("simbolo-aba", painel_id as usize))
-        .flex_none()
-        .child(icone_de_estado(sinal_do_chat(motor, chat), 16.))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-        .into_any_element()
-}
-
 /// A largura de um título de aba (o `rotulo()`: 13, médio), em px de agora.
 fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     let mut fonte = window.text_style().font();
@@ -470,8 +452,8 @@ fn menu_do_painel(
 
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
 /// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
-/// Compactar).
-pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> CorpoPopover {
+/// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o último turno).
+pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement>, acao: AnyElement) -> CorpoPopover {
     let linha = |rotulo: &'static str, valor: AnyElement| {
         h_flex()
             .h(r(28.))
@@ -541,7 +523,8 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, acao: AnyElement) -> C
             v_flex()
                 .child(linha("Modelo", modelo))
                 .child(linha("Conta", texto(format!("Claude · {conta}"))))
-                .when_some(tokens, |s, t| s.child(linha("Tokens", t))),
+                .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
+                .children(extras),
         )
         .rodape(
             h_flex()
@@ -597,17 +580,29 @@ impl Janela {
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
         let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
-        // Buscar na conversa (Ctrl+F): o índice é refeito aqui, uma vez por quadro e só quando o
-        // termo, a conversa ou o modo foco mudaram (ver `busca_conversa::Indice::atualizar`). A
-        // barra vai dentro das mensagens, por cima delas.
-        if let (Some(chat), Some(ix)) = (chat, ix) {
-            let termo = busca_conversa::normalizar(&self.paineis[ix].busca.campo.read(cx).value());
-            let foco = self.paineis[ix].modo_foco;
-            self.paineis[ix].busca.indice.atualizar(&chat.id, &chat.itens, foco, &termo);
-        }
-        let barra_busca = ix.and_then(|ix| self.barra_de_busca(ix, window, cx));
+        // As mensagens são uma vista em cache (`vista_mensagens`): a Janela redesenhando por outra
+        // coisa (o spinner da caixa, a lista, outro painel) não refaz o layout nem a pintura delas.
         let corpo = match (&chat, ix) {
-            (Some(chat), Some(ix)) => self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element(),
+            (Some(c), Some(ix)) => {
+                let mensagens = AnyView::from(self.paineis[ix].vista.clone())
+                    .cached(StyleRefinement::default().flex_1().w_full().min_h(super::mensagens::MINIMO_MENSAGENS).flex().flex_col());
+                // O anel do "Pensando…" gira por cima delas, numa vista própria (`AnelDoPensando`).
+                let anel = super::componentes::AnelDoPensando {
+                    chave: format!("pensando-{painel_id}"),
+                    onde: self.paineis[ix].pensando_em.clone(),
+                    ativo: motor.execucao(&c.id).rodando(),
+                };
+                div()
+                    .relative()
+                    .flex_1()
+                    .w_full()
+                    .min_h(super::mensagens::MINIMO_MENSAGENS)
+                    .flex()
+                    .flex_col()
+                    .child(mensagens)
+                    .child(div().absolute().inset_0().child(anel))
+                    .into_any_element()
+            }
             _ => self.sem_conversa(window, cx).into_any_element(),
         };
 
@@ -1048,6 +1043,8 @@ impl Janela {
                 // O título e, na segunda linha, o estado com quando e o começo da última fala: dá
                 // para decidir se vale trocar de aba sem trocar (rodada de uso, item 3.3).
                 let dica = SharedString::from(dica_da_aba(motor, outro));
+                // O ramo do git entra numa linha a mais, lido quando a dica aparece.
+                let pasta_da_dica = (!motor.sem_pasta(outro)).then(|| outro.cwd.clone());
                 // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
@@ -1055,11 +1052,14 @@ impl Janela {
                 let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
                     // As outras abas do painel são peças lisas, só com o contorno.
                     .tom(TomAba::Inativa)
-                    // O ícone da aba é o estado do chat (e o ponto ao lado do × sai).
-                    .simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).into_any_element()))
-                    // Sem lugar para 4 letras e as reticências, só o ícone num quadrado; o título
-                    // vai na dica.
+                    // Sem ícone (dono, 18/11/2026: "tira os ícones daqui também"): o estado do chat
+                    // vai no contorno da aba.
+                    .borda(sinal_do_chat(motor, outro), format!("borda-aba-{painel_id}-{id}"))
+                    // Sem lugar para 4 letras, só o estado num quadrado; o título vai na dica.
                     .quadrada(icone);
+                if icone {
+                    aba = aba.simbolo(Simbolo::Elemento(icone_de_estado(sinal_do_chat(motor, outro), 16.).vivo(format!("aba-{painel_id}-{id}")).into_any_element()));
+                }
                 // O lápis do rascunho, com o começo dele na dica (rodada de uso, item 1.4).
                 if let Some(rascunho) = self.rascunho_fora_de_vista(id).filter(|_| !icone) {
                     let dica = SharedString::from(rascunho);
@@ -1078,7 +1078,13 @@ impl Janela {
                     })
                     .construir(window, cx)
                     .max_w(teto)
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .tooltip(move |window, cx| {
+                        let texto = match &pasta_da_dica {
+                            Some(pasta) => super::ramo::com_ramo(&dica, pasta),
+                            None => dica.to_string(),
+                        };
+                        Tooltip::new(texto).build(window, cx)
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
                         let simbolo = previa.copia().unwrap_or_else(simbolo_da_conversa);
@@ -1165,7 +1171,8 @@ impl Janela {
         // O número do painel liga a aba à linha do chat na lista: com a lista recolhida não há a
         // que ligar, e ele sai (dono, 13/11/2026).
         let numerada = varios && self.lista;
-        aba = aba.simbolo(Simbolo::Elemento(simbolo_na_aba(motor, chat, painel_id)));
+        // Sem ícone: o estado do chat vai no contorno da aba (dono, 18/11/2026).
+        aba = aba.borda(sinal_do_chat(motor, chat), format!("borda-aba-{painel_id}-{}", chat.id));
         if numerada {
             aba = aba.numero(ix + 1, ativo);
         }
@@ -1521,6 +1528,40 @@ impl Janela {
 
     /// Painel sem conversa: o estado vazio amplo, com Novo chat (na última pasta usada; sem ela, a
     /// paleta pergunta) e Novo chat em outra pasta.
+    /// O que a vista das mensagens de um painel desenha (`vista_mensagens`): a busca na conversa
+    /// (Ctrl+F; o índice é refeito só quando o termo, a conversa ou o modo foco mudaram) e as
+    /// mensagens, com a barra da busca por cima delas.
+    pub(super) fn corpo_do_painel(&mut self, painel_id: u64, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (Some(ix), Some(motor_entidade)) = (self.paineis.iter().position(|p| p.id == painel_id), self.motor.clone()) else {
+            return div().into_any_element();
+        };
+        let motor = motor_entidade.read(cx);
+        let Some(chat) = self.paineis[ix].chat.clone().and_then(|id| motor.chat(&id)) else {
+            return div().into_any_element();
+        };
+        let termo = busca_conversa::normalizar(&self.paineis[ix].busca.campo.read(cx).value());
+        let foco = self.paineis[ix].modo_foco;
+        self.paineis[ix].busca.indice.atualizar(&chat.id, &chat.itens, foco, &termo);
+        let barra_busca = self.barra_de_busca(ix, window, cx);
+        self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element()
+    }
+
+    /// Avisa as vistas das mensagens de todos os painéis: o estado que elas desenham mora na
+    /// Janela, e a Janela avisada pode ter mudado qualquer parte dele.
+    pub(super) fn avisar_vistas(&mut self, cx: &mut Context<Self>) {
+        for painel in &self.paineis {
+            painel.vista.update(cx, |_, cx| cx.notify());
+        }
+        self.vista_da_lista.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Avisa só a vista das mensagens de um painel (a rolagem dele, que não mexe no resto).
+    pub(super) fn avisar_vista(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+        if let Some(painel) = self.paineis.iter().find(|p| p.id == painel_id) {
+            painel.vista.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     fn sem_conversa(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
         let vazio = EstadoVazio::new(Lucide::MessageSquarePlus, "Comece um chat")
             .texto("Cada chat trabalha direto numa pasta do seu computador, como o Claude Code. Sem pasta, ele ganha uma vazia só dele.")

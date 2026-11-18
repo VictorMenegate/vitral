@@ -202,6 +202,11 @@ impl Escopo {
         self.parar();
     }
 
+    /// A memória do chat só é lida no Linux, do cgroup do escopo do systemd; aqui, nada aparece.
+    pub fn memoria(&self) -> Option<u64> {
+        None
+    }
+
     /// O processo principal terminou?
     #[cfg(test)]
     pub fn terminou(&self) -> bool {

@@ -98,6 +98,20 @@ pub struct Painel {
     /// Onde estava cada bloco da conversa no último desenho (o índice do item, o alto e o pé, a
     /// partir do alto da lista): de onde saem a âncora e a abertura no começo da resposta.
     pub posicoes: std::rc::Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>>,
+    /// As mensagens suas do histórico trazido do Claude Code (que não estão nos itens do chat): o
+    /// texto e onde cada uma ficou neste desenho (alto e pé, na tela), para a mensagem presa no
+    /// alto. O alto da lista na tela fica em `topo_da_lista`.
+    pub presa_do_historico: std::rc::Rc<std::cell::RefCell<Vec<(String, Pixels, Pixels)>>>,
+    /// Onde a linha "Pensando…" deixou o lugar do anel (na janela): ele gira por cima das mensagens,
+    /// numa vista própria (`AnelDoPensando`), e a conversa não se redesenha a cada batida.
+    pub pensando_em: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    pub topo_da_lista: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// A mensagem presa no alto: a sua mais recente que já subiu além do topo (o texto, o alto
+    /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
+    /// prepaint da lista, com a rolagem e as posições do mesmo quadro.
+    pub presa: Option<(String, Pixels, usize)>,
+    /// A área de mensagens como vista em cache (ver `vista_mensagens`).
+    pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -408,8 +422,11 @@ impl Janela {
         // A aba alcançada pelo Tab ativa o painel dela: o Ctrl+W e o menu valem para ele.
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
+        let eu = cx.entity().downgrade();
+        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu, id));
         let mut painel = Painel {
             id,
+            vista,
             chat: None,
             abas: Vec::new(),
             composer,
@@ -446,6 +463,10 @@ impl Janela {
             ancoras: Default::default(),
             novo_desde: None,
             posicoes: Default::default(),
+            presa_do_historico: Default::default(),
+            pensando_em: Default::default(),
+            topo_da_lista: Default::default(),
+            presa: None,
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);

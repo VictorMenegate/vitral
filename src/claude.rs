@@ -28,6 +28,9 @@ pub struct Opcoes {
     /// A conversa do Claude Code de onde a primeira vez continua, numa cópia dela (`--resume <id>
     /// --fork-session`, com a sessão nova em `sessao`): a original fica como está.
     pub bifurcar: Option<String>,
+    /// Com `bifurcar`: a cópia leva a sessão só até a entrada com este uuid, inclusive
+    /// (`--resume-session-at`, que o Claude Code 2.1.325 tem fora do `--help`).
+    pub cortar_em: Option<String>,
     pub modelo: Option<String>,
     pub permissao: String,
     pub prompt_sistema: String,
@@ -183,6 +186,9 @@ pub enum Evento {
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
     /// depois do `result`.
     Sugestao(String),
+    /// Os tokens que um `result` declara (os do turno; ver `motor::tokens_do_resultado`). Vem
+    /// antes do `Fim` do mesmo `result`.
+    Gasto(crate::motor::Tokens),
     Fim {
         erro: bool,
         texto: String,
@@ -341,6 +347,11 @@ impl Processo {
         if let Some(canal) = &self.codex { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
     }
 
+    /// A memória que o agente e tudo o que ele abriu ocupam agora (`Escopo::memoria`).
+    pub fn memoria(&self) -> Option<u64> {
+        self.escopo.memoria()
+    }
+
     /// A entrada ainda está aberta: dá para dirigir o turno (`dirigir`).
     pub fn entrada_aberta(&self) -> bool {
         self.entrada.is_some() || self.codex.as_ref().is_some_and(|c| c.lock().unwrap_or_else(|e| e.into_inner()).aberta())
@@ -479,7 +490,10 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     match (opcoes.retomar, &opcoes.bifurcar) {
         (true, _) => args.extend(["--resume", &opcoes.sessao].map(String::from)),
         (false, Some(origem)) => {
-            args.extend(["--resume", origem, "--fork-session", "--session-id", &opcoes.sessao].map(String::from))
+            args.extend(["--resume", origem, "--fork-session", "--session-id", &opcoes.sessao].map(String::from));
+            if let Some(uuid) = &opcoes.cortar_em {
+                args.extend(["--resume-session-at", uuid].map(String::from));
+            }
         }
         (false, None) => args.extend(["--session-id", &opcoes.sessao].map(String::from)),
     }
@@ -1407,7 +1421,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 })
                 .collect()
         }
-        "result" => vec![Evento::Fim {
+        "result" => crate::motor::tokens_do_resultado(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
                 .as_str()
@@ -1420,7 +1434,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .flat_map(|modelos| modelos.values())
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
-        }],
+        }]).collect(),
         "prompt_suggestion" => valor["suggestion"]
             .as_str()
             .map(str::trim)
@@ -1527,19 +1541,17 @@ fn pasta_de_config(pasta_conta: Option<&std::path::Path>) -> Option<PathBuf> {
 /// O Claude Code já gravou conversa nesta sessão: com `--session-id` ele recusaria ("already in
 /// use"), então o turno tem de ir com `--resume`. As contas extras têm `projects` ligado ao normal.
 pub fn sessao_existe(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path, sessao: &str) -> bool {
-    let Some(config) = pasta_de_config(pasta_conta) else {
-        return false;
-    };
+    arquivo_da_sessao(pasta_conta, cwd, sessao).is_some()
+}
+
+/// O arquivo em que o Claude Code gravou a sessão (uma entrada por linha), se ele existe.
+pub fn arquivo_da_sessao(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path, sessao: &str) -> Option<PathBuf> {
+    let config = pasta_de_config(pasta_conta)?;
     [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()]
         .into_iter()
         .flatten()
-        .any(|pasta| {
-            config
-                .join("projects")
-                .join(nome_do_projeto(&pasta.to_string_lossy()))
-                .join(format!("{sessao}.jsonl"))
-                .is_file()
-        })
+        .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())).join(format!("{sessao}.jsonl")))
+        .find(|arquivo| arquivo.is_file())
 }
 
 /// Nome da pasta do projeto em `projects`, como o Claude Code monta: o que não é letra ou número
@@ -1930,6 +1942,7 @@ mod testes {
             sessao: "s1".into(),
             retomar: true,
             bifurcar: None,
+            cortar_em: None,
             modelo: Some("opus".into()),
             permissao: "acceptEdits".into(),
             prompt_sistema: "p".into(),
@@ -2014,6 +2027,14 @@ mod testes {
         let args = argumentos(&Opcoes { retomar: false, bifurcar: bifurcar.clone(), ..opcoes() });
         let i = args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(&args[i..i + 5], ["--resume", "orig", "--fork-session", "--session-id", "s1"]);
+        assert!(!args.iter().any(|a| a == "--resume-session-at"));
+        // O chat bifurcado no meio da conversa leva a cópia só até o ponto.
+        let cortada = argumentos(&Opcoes { retomar: false, bifurcar: bifurcar.clone(), cortar_em: Some("u1".into()), ..opcoes() });
+        let i = cortada.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(&cortada[i..i + 7], ["--resume", "orig", "--fork-session", "--session-id", "s1", "--resume-session-at", "u1"]);
+        // Sem a cópia (a sessão do chat novo já nasceu), o corte não vai.
+        let depois = argumentos(&Opcoes { bifurcar: bifurcar.clone(), cortar_em: Some("u1".into()), ..opcoes() });
+        assert!(!depois.iter().any(|a| a == "--resume-session-at"));
         // Depois da primeira vez, a sessão nova.
         let args = argumentos(&Opcoes { bifurcar, ..opcoes() });
         assert_eq!(valor_de(&args, "--resume"), Some("s1"));

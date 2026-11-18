@@ -47,7 +47,7 @@ pub fn gravar_chave(config: &Path, chave: &str) -> std::io::Result<()> {
     gravar_so_do_dono(&arquivo, chave.trim().as_bytes())
 }
 
-fn gravar_so_do_dono(arquivo: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn gravar_so_do_dono(arquivo: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut opcoes = std::fs::OpenOptions::new();
     opcoes.write(true).create(true).truncate(true);

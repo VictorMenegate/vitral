@@ -1587,10 +1587,16 @@ impl Janela {
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: None };
         let id_meio = chat.id.clone();
         let (janela, entidade, id_menu) = (ctx.janela.clone(), ctx.motor.clone(), chat.id.clone());
+        // A dica da linha: a pasta e o ramo do git em que ela está (lido quando a dica aparece). O
+        // balão da frente, que levava a pasta na dica, saiu da linha; os botões dela têm a deles.
+        let pasta_da_dica = (!ctx.motor.read(cx).sem_pasta(chat)).then(|| chat.cwd.clone());
         div()
             .id(SharedString::from(format!("linha-{}", chat.id)))
             .mt(esp::E2)
             .child(cartao)
+            .when_some(pasta_da_dica, |s, pasta| {
+                s.tooltip(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
+            })
             .on_drag(arrasto, move |a, _, _, cx| {
                 let simbolo = simbolo.copia().unwrap_or_else(|| Simbolo::icone(Lucide::MessagesSquare));
                 cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo })
@@ -1722,7 +1728,7 @@ impl Janela {
         // mais lugar (dono, 17/11/2026: "tira esse logo, só faz dar pra ler menos os títulos"). O
         // anel gira com ele rodando; os outros estados são o ponto da cor deles.
         let estado = sinal.map(|s| match s {
-            Sinal::Rodando => super::componentes::icone_de_estado(Some(s), 14.).into_any_element(),
+            Sinal::Rodando => super::componentes::icone_de_estado(Some(s), 14.).vivo(format!("lista-{}", chat.id)).into_any_element(),
             _ => s.ponto(8.).into_any_element(),
         });
         let indicadores = linha_meta(16.)

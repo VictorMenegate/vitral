@@ -37,6 +37,8 @@ impl Janela {
             if !motor.passos(&chat.id).is_empty() {
                 filhos.push(passos(motor.passos(&chat.id)));
             }
+            // O sumário da conversa: uma linha por mensagem sua, para ir até ela (`sumario.rs`).
+            filhos.extend(self.secao_do_sumario(chat, cx));
             filhos.push(self.mudancas(chat, window));
             filhos.extend(self.secao_git(chat, window, cx));
             filhos.push(self.este_chat(motor, chat, window, cx));

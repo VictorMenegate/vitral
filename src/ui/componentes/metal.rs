@@ -30,6 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::malha::{
@@ -315,6 +316,50 @@ pub fn custo_do_campo() -> Option<(u32, Duration)> {
     let nanos = NANOS_DOS_CAMPOS.swap(0, Ordering::Relaxed);
     (quantos > 0).then(|| (quantos, Duration::from_nanos(nanos / u64::from(quantos))))
 }
+
+/// Uma imagem pequena feita na CPU (a malha do botão do menu) e guardada: pintada de novo sem
+/// refazer enquanto o `estado` for o mesmo, e trocada (a nova entra no atlas antes de a velha sair)
+/// quando ele muda. Uma por `tamanho`. `fazer` devolve o BGRA de `tamanho.0` por `tamanho.1`.
+pub fn pintar_imagem_guardada(
+    limites: Bounds<Pixels>,
+    tamanho: (u32, u32, u32),
+    estado: (u64, Option<(u32, u32)>),
+    window: &mut Window,
+    cx: &mut App,
+    fazer: impl FnOnce() -> Vec<u8>,
+) {
+    let guardada = cx
+        .default_global::<ImagensGuardadas>()
+        .0
+        .iter()
+        .find(|m| m.tamanho == tamanho && m.estado == estado)
+        .map(|m| m.imagem.clone());
+    if let Some(imagem) = guardada {
+        let _ = window.paint_image(limites, limites, Corners::default(), imagem, 0, false);
+        return;
+    }
+    let Some(nova) = imagem_de_bgra(tamanho.0, tamanho.1, &fazer(), cx.svg_renderer()) else {
+        return;
+    };
+    let _ = window.paint_image(limites, limites, Corners::default(), nova.clone(), 0, false);
+    let guardadas = &mut cx.default_global::<ImagensGuardadas>().0;
+    if let Some(velha) = guardadas.iter().position(|m| m.tamanho == tamanho) {
+        let velha = guardadas.remove(velha);
+        let _ = window.drop_image(velha.imagem);
+    }
+    guardadas.push(ImagemGuardada { tamanho, estado, imagem: nova });
+}
+
+struct ImagemGuardada {
+    tamanho: (u32, u32, u32),
+    estado: (u64, Option<(u32, u32)>),
+    imagem: Arc<RenderImage>,
+}
+
+#[derive(Default)]
+struct ImagensGuardadas(Vec<ImagemGuardada>);
+
+impl Global for ImagensGuardadas {}
 
 /// A imagem que a placa recebe, a partir do BGRA: passa pelo BMP e pelo decodificador do GPUI.
 fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
@@ -750,4 +795,36 @@ mod testes {
             }
         }
     }
+}
+
+/// O fundo da lista numa caixa (absoluto, enchendo o pai): a chapa na opacidade da base, o véu e
+/// o fosco, e a sombra de buraco. É o desenho dos balões seus na conversa, das colunas do quadro de
+/// ideias e das listas dos diálogos de escolha (dono, 17 e 18/11/2026: "igual o fundo da lista",
+/// "como se tivesse um buraco", "nas cores e estilos do resto").
+pub fn fundo_da_lista(raio: Pixels) -> Div {
+    let cantos = Corners::all(raio);
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        // A chapa na mesma opacidade da base (o nível de Transparência), e o véu por cima, à parte.
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .opacity(crate::tema::opacidade_do_metal())
+                .child(abertura(Encaixe::Continuo, None, cantos)),
+        )
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::vidro_leitura()))
+        .when(crate::tema::transparencia() > 0, |s| s.child(fosco(cantos)))
+        // Um buraco no cartão (dono, 17/11/2026: "faz como se tivesse um buraco"): a sombra cai da
+        // beirada de cima para dentro, o corte tem um fio escuro e a quina de baixo pega luz.
+        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(vec![
+            BoxShadow::new(px(0.), px(4.), Cores::preto_puro().opacity(0.7)).blur_radius(px(8.)).inset(),
+            BoxShadow::new(px(0.), px(0.), Cores::preto_puro().opacity(0.5)).spread_radius(px(1.)).inset(),
+            BoxShadow::new(px(0.), px(-1.), Cores::forte().opacity(0.08)).inset(),
+        ]))
 }

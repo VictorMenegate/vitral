@@ -20,7 +20,7 @@ use gpui_kit::*;
 
 use super::Janela;
 use super::componentes::{
-    Anel, BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
+    BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
     popover, variante_fantasma,
 };
 use super::movimento::{self, Curva, com_estado};
@@ -929,8 +929,16 @@ impl Janela {
         // a 90%). Também na caixa estreita, mais justa: só o anel, com a fenda e o arco azul
         // parcial, ficava igual ao anel girando de "rodando", e com 3 painéis a porcentagem nunca
         // aparecia (relatório de design, 16/11/2026).
-        let anel = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(20.);
+        // Um medidor deitado, e não um anel: o anel com um pedaço azul lia como o "carregando"
+        // (dono, 18/11/2026: "melhora o design dessa parte de usos e contexto").
         let cor_arco = cor_da_faixa(fracao, Cores::destaque());
+        let barra = div()
+            .flex_none()
+            .w(r(if estreita { 16. } else { 24. }))
+            .h(r(4.))
+            .rounded_full()
+            .bg(Cores::traco())
+            .child(div().h_full().w(relative(fracao.clamp(0.06, 1.))).rounded_full().bg(cor_arco));
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
         let dica: SharedString = format!(
             "Contexto: {} de {}\nO custo, o modelo e o Compactar",
@@ -948,7 +956,7 @@ impl Janela {
             .child(
                 h_flex()
                     .gap(if estreita { esp::E4 } else { esp::E6 })
-                    .child(anel)
+                    .child(barra)
                     .child(div().etiqueta().text_color(cor_numero).child(format!("{numero}%"))),
             );
         let (motor, janela_e, chat_id, painel) = (self.motor.clone(), cx.entity().downgrade(), chat.id.clone(), b.painel);
@@ -960,6 +968,11 @@ impl Janela {
                 .content(move |_, window, cx| {
                     let pop = cx.entity().downgrade();
                     let janela_e = janela_e.clone();
+                    // A linha que vem depois dos tokens: o que o último turno gastou.
+                    let extras: Vec<AnyElement> = motor
+                        .as_ref()
+                        .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
+                        .unwrap_or_default();
                     let compactar = botao_fantasma(
                         ("compactar", painel as usize),
                         Some(Lucide::Minimize.into()),
@@ -979,7 +992,7 @@ impl Janela {
                         return div().into_any_element();
                     };
                     match m.chat(&chat_id) {
-                        Some(c) => super::conversa::uso_da_conversa(m, c, compactar.into_any_element()).into_any_element(),
+                        Some(c) => super::conversa::uso_da_conversa(m, c, extras, compactar.into_any_element()).into_any_element(),
                         None => div().into_any_element(),
                     }
                 })

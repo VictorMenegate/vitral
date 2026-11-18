@@ -41,6 +41,8 @@ pub struct Aba {
     fim: Option<AnyElement>,
     so_simbolo: bool,
     quadrada: bool,
+    /// O estado do chat no contorno da aba (e a chave da vista do contorno que respira).
+    borda: Option<(Sinal, String)>,
 }
 
 impl Aba {
@@ -59,7 +61,17 @@ impl Aba {
             fim: None,
             so_simbolo: false,
             quadrada: false,
+            borda: None,
         }
+    }
+
+    /// O estado do chat no fio preto da aba (dono, 18/11/2026: "colocar algo de quando tá rodando e
+    /// quando acaba algo, faz na borda preta"): trabalhando, o fio azul respira; terminou e você não
+    /// leu, verde; esperando você, âmbar; erro, vermelho. `chave` nomeia a vista do contorno que
+    /// respira (uma por aba).
+    pub fn borda(mut self, sinal: Option<Sinal>, chave: impl Into<String>) -> Self {
+        self.borda = sinal.map(|s| (s, chave.into()));
+        self
     }
 
     /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
@@ -150,6 +162,17 @@ impl Aba {
             TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
+        // O estado no contorno (dono, 18/11/2026: "faz na borda preta", "tenta não fazer muito
+        // chamativo" e, com o fio de 1 px apagado, "dá pra ver nada"): um fio de 2 px na cor do
+        // estado por cima do preto, com um véu de 6% da mesma cor no miolo, sem halo. Trabalhando,
+        // o azul respira devagar, numa vista própria; os outros ficam acesos, parados.
+        let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
+        let respira = self.borda.map(|(s, chave)| ContornoDeEstado {
+            chave,
+            raio: raio::de(32.),
+            cor: cor_da_borda(s),
+            respira: s == Sinal::Rodando,
+        });
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
         let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
         let tem_fechar = self.fechar.is_some();
@@ -266,6 +289,7 @@ impl Aba {
                             .group_hover(GRUPO_DA_ABA, |s| s.visible()),
                     )
             })
+            .children(respira.filter(|_| !self.arrastando))
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
                 s.track_focus(&foco)
@@ -404,7 +428,10 @@ impl FaixaCaixa {
     }
 }
 
-/// Coluna de leitura (até 860 px) menos a margem de 16 de cada lado: a largura nominal da caixa.
+/// A largura nominal da caixa, que escolhe a faixa dela: a do painel (até 860 px) menos a margem
+/// de 16 de cada lado. A caixa de verdade para antes, na coluna de leitura (675 px); a faixa larga
+/// continua valendo no painel largo, e os controles dela cabem nessa largura (conferido na
+/// bancada, 18/11/2026).
 fn caixa_nominal(rem: f32) -> f32 {
     rem.min(860. / 15.) - 32. / 15.
 }
@@ -482,5 +509,38 @@ mod testes {
         assert!(medida.atualizar(px(900.), px(22.5)));
         assert_eq!(medida.nivel, LarguraPainel::Largo);
         assert_eq!(medida.faixa, FaixaCaixa::Media);
+    }
+}
+
+/// O estado do chat no contorno da aba: um fio de 2 px na cor do estado, em cima do fio preto, com
+/// um véu de 6% da mesma cor no miolo (por baixo do título). Trabalhando, ele respira devagar (de
+/// 0,5 a 1 em 2,4 s), numa vista própria (a batida redesenha só ele, e não a janela); os outros, e
+/// todos com o movimento reduzido, ficam acesos, parados.
+#[derive(IntoElement)]
+struct ContornoDeEstado {
+    chave: String,
+    raio: Pixels,
+    cor: Hsla,
+    respira: bool,
+}
+
+impl RenderOnce for ContornoDeEstado {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (raio, cor) = (self.raio, self.cor);
+        // Em cima do fio de 1 px da aba (o absoluto conta de dentro dele).
+        let lugar = div().absolute().top(px(-1.)).left(px(-1.)).right(px(-1.)).bottom(px(-1.));
+        let fio = move |alfa: f32| {
+            div().size_full().rounded(raio).border_2().border_color(cor.opacity(alfa)).bg(cor.opacity(0.06 * alfa))
+        };
+        if !self.respira || cx.reduce_motion() {
+            return lugar.child(fio(0.9));
+        }
+        let versao = u64::from(Rgba::from(cor).b.to_bits()) ^ u64::from(raio.as_f32().to_bits()) << 32;
+        lugar.child(super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), versao, cx, move |window, cx| {
+            let fase = crate::ui::movimento::laco_a(window, cx, crate::ui::movimento::QPS_DO_LACO);
+            let t = (fase / 2.4).fract() as f32;
+            let alfa = 0.5 + 0.5 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
+            fio(alfa).into_any_element()
+        }))
     }
 }

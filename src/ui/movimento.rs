@@ -7,7 +7,7 @@
 //! A exceção é o `laco_a` (12/11/2026, o dono pediu "mais shader" e depois "tenta focar em vez de
 //! glass esse metal líquido"): o metal (a chapa atrás da janela, as aberturas e a malha do botão do
 //! menu) anda sem parar, devagar, e só com a janela em primeiro plano e o movimento ligado. Quem
-//! pede diz o ritmo: `QPS_DO_LACO` (20 por segundo) com um chat da tela trabalhando,
+//! pede diz o ritmo: `QPS_DO_LACO` (30 por segundo) com um chat da tela trabalhando,
 //! `QPS_EM_REPOUSO` no resto do tempo (hoje 0: em repouso o metal fica parado e nada redesenha;
 //! o porquê está na constante). O ponteiro mexendo na janela não acorda o metal. Continua sendo a
 //! única outra porta.
@@ -445,9 +445,9 @@ fn pedir_quadro(animando: Rc<Cell<bool>>, window: &mut Window, cx: &mut App) {
 }
 
 /// Quantas vezes por segundo um laço vivo pede para redesenhar a janela (um chat da tela
-/// trabalhando, o ponteiro em cima do botão do menu). Está acima do compasso dos spinners, então
-/// na prática o laço bate junto com ele, a 12 por segundo (ver `laco_a`).
-pub const QPS_DO_LACO: f32 = 20.;
+/// trabalhando, o ponteiro em cima do botão do menu). No ritmo do compasso dos spinners (30), o
+/// laço bate junto com ele, numa grade só (ver `laco_a`).
+pub const QPS_DO_LACO: f32 = 30.;
 /// O ritmo do metal em repouso (ninguém trabalhando na tela). Uma constante só, para o fundo da
 /// janela e para o botão do menu. Em `0.` o metal fica PARADO em repouso e nada redesenha; ele
 /// anda só com um chat da tela trabalhando ou com o ponteiro em cima do botão do menu. O ponteiro
@@ -551,7 +551,7 @@ pub fn laco_a(window: &mut Window, cx: &mut App, qps: f32) -> f64 {
         return lacos.fase;
     }
     let fase = lacos.andar(agora);
-    // No ritmo do compasso dos spinners (12 por segundo) ou acima dele, o laço não arma batida
+    // No ritmo do compasso dos spinners (30 por segundo) ou acima dele, o laço não arma batida
     // própria: entra na do compasso. Cada batida redesenha a janela inteira (uns 20 a 30 ms de
     // processador no release, medido em 13/11/2026), e as duas grades somadas davam até 28
     // redesenhos por segundo com um chat trabalhando: metade da thread da interface, com a

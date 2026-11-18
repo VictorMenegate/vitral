@@ -19,7 +19,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AlternarLista, Filtro, Gaveta, Janela,
+    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirQuadroDeIdeias, AlternarLista, Filtro, Gaveta, Janela,
     NovaConversa, ProximaPendencia,
     componentes::{
         BotaoRedondo, Selo, Simbolo,
@@ -417,7 +417,7 @@ impl Janela {
             Some(nome) => format!("Pasta de trabalho: {}…", nome.to_string_lossy()).into(),
             None => "Escolher a pasta de trabalho…".into(),
         };
-        Rc::new(move |menu, window, _| {
+        Rc::new(move |menu, window, cx| {
             let gerenciador = raiz.clone();
             menu.min_w(tam(window, 260.))
                 .max_w(tam(window, 360.))
@@ -447,6 +447,12 @@ impl Janela {
                 .item(item(rotulo_da_pasta.clone(), Lucide::FolderInput, &janela, |this, window, cx| {
                     this.trocar_pasta_de_trabalho(window, cx)
                 }))
+                .item(
+                    item("Quadro de ideias", Lucide::Kanban, &janela, |this, window, cx| this.abrir_quadro_de_ideias(window, cx))
+                        .action(Box::new(AbrirQuadroDeIdeias)),
+                )
+                .item(item("Resumo de hoje", Lucide::CalendarClock, &janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx)))
+                .map(|menu| super::arranjo::salvos::no_menu(menu, &janela, window, cx))
                 .item(item("Importar do Claude Code…", Lucide::Download, &janela, |this, _, cx| {
                     if let Some(motor) = this.motor.clone() {
                         motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));
@@ -483,6 +489,10 @@ impl Janela {
                         this.abrir_configuracoes(window, cx)
                     })
                     .action(Box::new(AbrirConfiguracoes)),
+                )
+                .item(
+                    item(super::paleta::ROTULO_DA_PALETA, Lucide::Search, &janela, |this, window, cx| this.abrir_paleta(window, cx))
+                        .action(Box::new(super::paleta::AbrirPaleta)),
                 )
                 .item(
                     PopupMenuItem::new("Atalhos do teclado")

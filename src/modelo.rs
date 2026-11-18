@@ -288,6 +288,21 @@ impl Parceiro {
     }
 }
 
+/// De onde o próximo turno de um chat continua numa cópia de sessão (`motor/bifurcar.rs`): a sessão
+/// do Claude Code de origem (a do chat de onde ele foi bifurcado, ou a dele mesmo antes de uma
+/// correção) e, quando a cópia não leva a sessão inteira, o uuid da entrada em que ela para
+/// (`--resume-session-at`). Só vale até a sessão nova nascer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bifurcacao {
+    pub sessao: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ate: Option<String>,
+    /// A cópia não é de outro chat: é a sessão deste, de volta ao ponto antes de uma mensagem
+    /// corrigida (`Motor::retirar_mensagem`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub correcao: bool,
+}
+
 fn eh_zero(n: &u64) -> bool {
     *n == 0
 }
@@ -382,6 +397,9 @@ pub struct Chat {
     /// A conversa do Claude Code que este chat continua (o histórico vem do arquivo dela).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importada: Option<crate::importar::Importada>,
+    /// O chat nasceu de outro, a partir de um ponto da conversa: de onde o primeiro turno continua.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bifurcado_de: Option<Bifurcacao>,
     /// Campos de versões mais novas, regravados como vieram.
     #[serde(flatten)]
     pub resto: serde_json::Map<String, serde_json::Value>,
@@ -428,6 +446,7 @@ impl Chat {
             memoria_pedida_em: 0,
             criado_por: String::new(),
             importada: None,
+            bifurcado_de: None,
             resto: Default::default(),
             itens: Vec::new(),
         }
@@ -742,6 +761,10 @@ pub struct Entrada {
     /// Vai só ao Claude, sem aparecer na conversa (o que as referências da mensagem resolveram).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub extra: String,
+    /// Mensagem com hora marcada (segundos Unix): espera na fila até lá, mesmo com o chat livre
+    /// (`motor/agendadas.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agendada: Option<u64>,
 }
 
 impl Entrada {

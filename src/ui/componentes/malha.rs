@@ -176,46 +176,57 @@ pub const FASE_INICIAL_DA_MALHA: f64 = 4.;
 pub fn malha_viva(fase: f64, raio: Pixels, luz: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},
-        move |limites, _, window, _| {
+        move |limites, _, window, cx| {
             let (largura, altura) = (limites.size.width.as_f32(), limites.size.height.as_f32());
             if largura < 1. || altura < 1. {
                 return;
             }
-            // Um quadrado por pixel do aparelho, até 2 por pixel de desenho (o teto da receita).
+            // Um ponto por pixel do aparelho, até 2 por pixel de desenho (o teto da receita).
             let escala = window.scale_factor().max(0.5);
             let por_pixel = escala.clamp(1., 2.);
             let colunas = (largura * por_pixel).round().clamp(1., MAXIMO_POR_LADO);
             let linhas = (altura * por_pixel).round().clamp(1., MAXIMO_POR_LADO);
-            // As bordas, já no pixel do aparelho: a direita de um quadrado é, bit a bit, a esquerda
-            // do vizinho, e não sobra fresta nem coluna dobrada em escala fracionária (125%).
-            let borda = |i: usize, n: f32, total: f32| ((i as f32 * total / n) * escala).round() / escala;
             // O ponteiro, na caixa e com o y para cima, como o shader espera.
             let ponteiro = Some(window.mouse_position()).filter(|p| luz && limites.contains(p)).map(|p| {
                 let (x, y) = ((p.x - limites.origin.x).as_f32(), (p.y - limites.origin.y).as_f32());
                 (x * colunas / largura, (altura - y) * linhas / altura)
             });
-            let quadro = Quadro::em(fase);
             let raio = raio.as_f32();
-            let celula = (largura / colunas).max(altura / linhas);
-            for linha in 0..linhas as usize {
-                let (cima, baixo) = (borda(linha, linhas, altura), borda(linha + 1, linhas, altura));
-                for coluna in 0..colunas as usize {
-                    let (esquerda, direita) = (borda(coluna, colunas, largura), borda(coluna + 1, colunas, largura));
-                    let cobertura = cobertura_do_canto((esquerda + direita) / 2., (cima + baixo) / 2., largura, altura, raio, celula);
-                    if cobertura <= 0. || direita <= esquerda || baixo <= cima {
-                        continue;
-                    }
-                    let [r, g, b] = cor_no_ponto(&quadro, coluna as f32 + 0.5, linhas - linha as f32 - 0.5, colunas, linhas, ponteiro);
-                    let caixa = Bounds::from_corners(
-                        point(limites.origin.x + px(esquerda), limites.origin.y + px(cima)),
-                        point(limites.origin.x + px(direita), limites.origin.y + px(baixo)),
-                    );
-                    window.paint_quad(fill(caixa, Hsla::from(Rgba { r, g, b, a: cobertura })));
-                }
-            }
+            let tamanho = (colunas as u32, linhas as u32, (raio * escala).to_bits());
+            let estado = (fase.to_bits(), ponteiro.map(|(x, y)| (x.to_bits(), y.to_bits())));
+            // A malha vira UMA imagem, refeita só quando a fase ou o ponteiro mudam: pintada ponto
+            // a ponto, eram uns 3.700 quadrados por quadro (o botão a 160%), e cada quadro da janela
+            // redesenhava todos, parado ou não (medido na bancada em 17/11/2026: ~10% do tempo da
+            // thread da janela com um chat trabalhando).
+            super::metal::pintar_imagem_guardada(limites, tamanho, estado, window, cx, || {
+                pintar_malha(fase, colunas, linhas, largura, altura, raio, ponteiro)
+            });
         },
     )
     .size_full()
+}
+
+/// A malha em BGRA, `colunas` por `linhas`, com a cobertura do canto arredondado no alfa.
+fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32, raio: f32, ponteiro: Option<(f32, f32)>) -> Vec<u8> {
+    let quadro = Quadro::em(fase);
+    let celula = (largura / colunas).max(altura / linhas);
+    let (n_col, n_lin) = (colunas as usize, linhas as usize);
+    let mut bgra = Vec::with_capacity(n_col * n_lin * 4);
+    for linha in 0..n_lin {
+        let y = (linha as f32 + 0.5) * altura / linhas;
+        for coluna in 0..n_col {
+            let x = (coluna as f32 + 0.5) * largura / colunas;
+            let cobertura = cobertura_do_canto(x, y, largura, altura, raio, celula);
+            let [r, g, b] = if cobertura > 0. {
+                cor_no_ponto(&quadro, coluna as f32 + 0.5, linhas - linha as f32 - 0.5, colunas, linhas, ponteiro)
+            } else {
+                [0., 0., 0.]
+            };
+            let canal = |v: f32| (v.clamp(0., 1.) * 255. + 0.5) as u8;
+            bgra.extend_from_slice(&[canal(b), canal(g), canal(r), canal(cobertura)]);
+        }
+    }
+    bgra
 }
 
 #[cfg(test)]

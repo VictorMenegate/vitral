@@ -17,6 +17,13 @@ use smol::channel::{Sender, unbounded};
 
 mod importacao;
 mod conversas;
+mod ideias;
+mod agendadas;
+pub mod gasto;
+mod memoria;
+pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
+mod bifurcar;
+pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
 use conversas::{Ciclos, MotivoPassagem};
@@ -254,6 +261,12 @@ pub struct Motor {
     pub falha_gravacao: Option<(String, u64)>,
     /// O que avisar ao abrir (estado restaurado, a migração, o que mudou nos chats).
     pub avisos_ao_abrir: Vec<String>,
+    /// O quadro de ideias (`ideias.json`; ver `motor/ideias.rs`).
+    quadro: crate::ideias::Quadro,
+    /// O texto de um cartão mudou na edição: vai para o disco na próxima passada de `gravar_sujos`.
+    quadro_sujo: bool,
+    /// O Linear do quadro (a chave, o time e o que está a caminho).
+    linear: ideias::EstadoDoLinear,
     /// Pedidos de abertura (`vitral <pasta>`, `--nova`, os de outra abertura pelo socket) que a
     /// janela ainda não atendeu.
     pub aberturas: Vec<crate::instancia::Abertura>,
@@ -271,6 +284,12 @@ pub struct Motor {
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
+    /// As últimas leituras do uso de cada conta, para a previsão de quando o limite acaba.
+    historico_uso: HashMap<String, contas::previsao::Historico>,
+    /// O livro dos turnos terminados: custo e tokens por chat e por pasta (`motor/gasto.rs`).
+    gastos: gasto::Livro,
+    /// A memória de cada chat trabalhando, lida do escopo dele (`motor/memoria.rs`).
+    memorias: memoria::Leituras,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -491,7 +510,12 @@ impl Motor {
         // popover aberto e com a janela sem foco); a primeira rodada sai logo na abertura.
         cx.spawn(async move |motor, cx| {
             loop {
-                if motor.update(cx, |m, cx| m.rotina_uso(cx)).is_err() {
+                // Na mesma volta, as mensagens com hora marcada cuja hora chegou.
+                let volta = motor.update(cx, |m, cx| {
+                    m.rotina_uso(cx);
+                    m.entregar_agendadas(cx);
+                });
+                if volta.is_err() {
                     break;
                 }
                 cx.background_executor()
@@ -541,7 +565,23 @@ impl Motor {
             });
         })
         .detach();
+        // O quadro de ideias. Ilegível, o arquivo fica copiado ao lado e o quadro começa vazio.
+        let mut quadro = match dados.ler_ideias() {
+            Ok(quadro) => quadro,
+            Err(erro) => {
+                avisos_ao_abrir.push(format!("Não deu para ler o quadro de ideias ({erro:#})."));
+                Default::default()
+            }
+        };
+        quadro.acertar_ordens();
+        let linear = ideias::EstadoDoLinear::da_config(&dados.config);
+        let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
         let mut motor = Self {
+            gastos,
+            memorias: Default::default(),
+            quadro,
+            quadro_sujo: false,
+            linear,
             dados,
             config,
             chats,
@@ -560,6 +600,7 @@ impl Motor {
             rodadas: HashMap::new(),
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
+            historico_uso: HashMap::new(),
             limite_ate: HashMap::new(),
             sem_login: contas::ler_sem_login(),
             recusadas: HashSet::new(),
@@ -1371,7 +1412,7 @@ impl Motor {
         if self.processos.contains_key(chat) || self.na_fila(chat) == 0 {
             return;
         }
-        if let Some(fila) = self.filas.remove(chat) {
+        if let Some(fila) = self.tirar_prontas(chat) {
             self.comecar_turno(chat, fila, cx);
         }
     }
@@ -1599,10 +1640,12 @@ impl Motor {
         matches!(self.execucao(chat), Execucao::Erro(_)) && self.ultima_entrada.contains_key(chat)
     }
 
-    /// Tira da conversa a última mensagem do usuário e o que veio depois dela, e devolve o que
-    /// estava nela para a caixa. A sessão do Claude Code não volta atrás: ela é trocada por uma
-    /// nova, e o próximo turno começa com o bloco de passagem do que ficou na tela — senão o
-    /// Claude continuaria lembrando da mensagem que saiu. Os arquivos da pasta não voltam.
+    /// Tira da conversa uma mensagem do usuário e o que veio depois dela, e devolve o que estava
+    /// nela para a caixa. Para o Claude não continuar lembrando do que saiu, o próximo turno roda
+    /// numa sessão nova: uma cópia da de agora até o ponto antes da mensagem
+    /// (`--resume-session-at`, ver `motor/bifurcar.rs`), que guarda o contexto exato; quando o
+    /// ponto não é achado na sessão, uma sessão vazia com o bloco de passagem do que ficou na
+    /// tela. Os arquivos da pasta não voltam.
     pub fn retirar_mensagem(&mut self, chat_id: &str, ix: usize, cx: &mut Context<Self>) -> Option<Retirada> {
         if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
             return None;
@@ -1611,6 +1654,8 @@ impl Motor {
             return None;
         }
         self.rodadas.remove(chat_id);
+        // A sessão até o ponto antes da mensagem, lida antes de a mensagem sair da conversa.
+        let volta = self.sessao_antes_da_mensagem(chat_id, ix);
         let c = self.chat_mut(chat_id)?;
         let mut saindo = c.itens.split_off(ix);
         let Item::Usuario { texto, anexos, ultrathink, ultracode, .. } = saindo.remove(0) else {
@@ -1620,11 +1665,10 @@ impl Motor {
         };
         c.atualizado_em = agora();
         c.turno_aberto = false;
-        // Com sessão criada, o próximo turno abre uma nova com a passagem; sem ela, nada a trocar.
-        if c.sessao_criada {
-            c.sessao = uuid::Uuid::new_v4().to_string();
-            c.sessao_criada = false;
-            c.contexto = None;
+        // Com o ponto achado na sessão, o próximo turno sai numa cópia dela até ali (o agente
+        // fica com o contexto exato, sem resumo); sem ele, abre uma nova com a passagem. Sem
+        // sessão, nada a trocar (`bifurcar::sessao_depois_da_correcao`).
+        if bifurcar::sessao_depois_da_correcao(c, volta) {
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::Reenvio);
         }
         // Na dupla, o outro agente também viu o que saiu: ele recomeça numa sessão nova e recebe a
@@ -2075,7 +2119,11 @@ impl Motor {
             sessao: chat.sessao.clone(),
             retomar: chat.sessao_criada,
             // A conversa importada é do Claude Code: no Codex ela entra pelo bloco de passagem.
-            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada).filter(|_| !codex),
+            // O chat bifurcado de outro também começa numa cópia: a da sessão do chat de origem.
+            bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada)
+                .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada).map(|b| b.sessao.clone()))
+                .filter(|_| !codex),
+            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && !codex).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
             modelo: self.modelo_do_turno(chat),
@@ -2659,6 +2707,10 @@ impl Motor {
     /// Erro de sessão logo no começo do turno: ela existe e o Vitral achava que não (queda logo
     /// depois de criá-la), ou sumiu. Acerta a marca e repete o turno uma vez. Diz se repetiu.
     fn consertar_sessao(&mut self, chat_id: &str, erro: &str, cx: &mut Context<Self>) -> bool {
+        // O chat bifurcado cuja cópia da sessão o Claude Code recusou (`motor/bifurcar.rs`).
+        if self.consertar_bifurcacao(chat_id, erro, cx) {
+            return true;
+        }
         let Some(chat) = self.chat(chat_id) else {
             return false;
         };
@@ -2723,6 +2775,11 @@ impl Motor {
         uso
     }
 
+    /// No ritmo das últimas leituras, se cada janela da conta enche antes de renovar.
+    pub fn previsao_da_conta(&self, conta: &str) -> contas::previsao::Previsoes {
+        self.historico_uso.get(conta).map(|h| h.prever(agora() as i64)).unwrap_or_default()
+    }
+
     /// Quando a conta no limite volta a receber turnos (None se ela não está no limite).
     pub fn limite_vence(&self, conta: &str) -> Option<u64> {
         self.uso_da_conta(conta).bloqueado.then(|| self.limite_ate.get(conta).copied()).flatten()
@@ -2772,6 +2829,7 @@ impl Motor {
     /// que mudou.
     fn juntar_uso_da_conta(&mut self, id: &str, lido: Uso, plano: Plano, agora: i64) -> Mudanca {
         let antes = self.uso_por_conta.get(id).copied().unwrap_or_default();
+        self.historico_uso.entry(id.to_string()).or_default().registrar(&lido);
         let depois = antes.juntar(lido, agora);
         let velho = self.plano_por_conta.get(id);
         let novo = velho.cloned().unwrap_or_default().juntar(plano);
@@ -3289,9 +3347,11 @@ impl Motor {
                     renova_semana,
                     medido_em: Some(agora() as i64),
                 };
+                self.historico_uso.entry(conta.clone()).or_default().registrar(&medido);
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
+            Evento::Gasto(tokens) => self.somar_tokens(chat_id, tokens),
             Evento::Sugestao(texto) => {
                 // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
                 if !self.processos.contains_key(chat_id) {
@@ -3391,6 +3451,7 @@ impl Motor {
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
+                let custo_antes = self.chat(chat_id).map_or(0.0, |c| c.custo_usd);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;
@@ -3399,6 +3460,7 @@ impl Motor {
                         c.janela = janela;
                     }
                 }
+                self.registrar_gasto(chat_id, custo_antes);
                 // Parado pelo usuário: o Claude Code fecha o turno com erro, mas não é falha (o
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {
@@ -3575,7 +3637,7 @@ impl Motor {
                 let _ = self.dados.salvar_chat(c);
             }
             if self.na_fila(chat_id) > 0
-                && let Some(fila) = self.filas.remove(chat_id)
+                && let Some(fila) = self.tirar_prontas(chat_id)
             {
                 self.comecar_turno(chat_id, fila, cx);
             }
@@ -3598,7 +3660,7 @@ impl Motor {
             self.rodadas.remove(chat_id);
         }
         if self.na_fila(chat_id) > 0
-            && let Some(fila) = self.filas.remove(chat_id)
+            && let Some(fila) = self.tirar_prontas(chat_id)
         {
             self.comecar_turno(chat_id, fila, cx);
         } else if !erro && self.passar_a_vez(chat_id, cx) {
@@ -3799,6 +3861,9 @@ impl Motor {
             }
         }
         self.estado_sujo = false;
+        if std::mem::take(&mut self.quadro_sujo) {
+            self.salvar_quadro();
+        }
         // A hora da saída, para o "Enquanto você esteve fora" da próxima abertura (grava o estado).
         self.visto_em = agora();
         self.salvar();
@@ -3931,6 +3996,9 @@ impl Motor {
         // O lido que mudou desde a última passada (`marcar_lido`).
         if std::mem::take(&mut self.estado_sujo) {
             self.salvar();
+        }
+        if std::mem::take(&mut self.quadro_sujo) {
+            self.salvar_quadro();
         }
         match (self.dados.falha_de_gravacao(), self.falha_gravacao.is_some()) {
             (Some(erro), false) => {
@@ -4523,6 +4591,13 @@ fn bloco_de_passagem(itens: &[Item], pular: usize, motivo: MotivoPassagem) -> St
             "[Vitral] Passagem de sessão: a sessão anterior do Claude Code desta conversa expirou, e esta é \
              uma nova. As últimas mensagens, para continuar de onde parou (a conversa inteira continua na \
              tela do usuário):",
+        // As falas abaixo vieram copiadas do chat de origem, que segue o caminho dele.
+        MotivoPassagem::Bifurcou =>
+            "[Vitral] Passagem de conversa: esta conversa é um ramo de outra. O usuário escolheu um ponto \
+             dela e abriu este chat para seguir por outro caminho a partir dali; a conversa de origem \
+             continua à parte e você não vê o que acontecer nela. O que já estava mudado nos arquivos \
+             continua como está na pasta. As últimas mensagens até o ponto escolhido, para continuar de \
+             lá (a conversa inteira até ali está na tela do usuário):",
         // Nas falas abaixo, "Você" foi o outro agente: o que ele fez nos arquivos continua lá.
         MotivoPassagem::TrocouDeAgente =>
             "[Vitral] Passagem de conversa: até aqui quem respondia nesta conversa era outro agente de \

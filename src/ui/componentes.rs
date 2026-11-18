@@ -10,6 +10,7 @@ mod graficos;
 mod listas;
 mod malha;
 pub mod metal;
+pub mod vista_viva;
 mod paineis;
 mod superficies;
 mod textos;

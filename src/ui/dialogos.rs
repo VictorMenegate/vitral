@@ -36,7 +36,8 @@ pub(super) fn moldura(dialogo: Dialog, largura: f32, window: &Window) -> Dialog 
     dialogo
         .bg(Cores::dialogo())
         .w(tam(window, largura))
-        .p(r(24.))
+        // 16 de margem, como o quadro de ideias: o espaço é do conteúdo.
+        .p(r(16.))
         .rounded(raio::PECA)
         .border_color(Cores::borda_forte())
         .close_button(false)
@@ -57,9 +58,9 @@ pub(super) fn cabecalho(titulo: impl Into<SharedString>, subtitulo: Option<Strin
     }
 }
 
-/// O cabeçalho no topo do diálogo, a 16 do corpo (8 aqui e os 8 do kit).
+/// O cabeçalho no topo do diálogo, a 12 do corpo (4 aqui e os 8 do kit).
 pub(super) fn topo(cabecalho: CabecalhoDialogo) -> impl IntoElement {
-    div().pb(r(8.)).child(cabecalho)
+    div().pb(r(4.)).child(cabecalho)
 }
 
 /// Caminho com a pasta pessoal como "~".
@@ -111,9 +112,10 @@ impl PastaNaPaleta {
     }
 }
 
-/// As pastas que já têm chat (as mais recentes primeiro, com a busca no nome ou no caminho),
-/// "Outra pasta…", que escolhe uma no disco, e "Sem pasta".
-fn grupos_da_paleta(pastas: &[PastaNaPaleta], busca: &str) -> Vec<GrupoDeEscolha> {
+/// As pastas que já têm chat (as mais recentes primeiro, com a busca no nome ou no caminho), os
+/// worktrees dos repositórios delas (`copias.rs`), "Outra pasta…", que escolhe uma no disco, e
+/// "Sem pasta".
+fn grupos_da_paleta(pastas: &[PastaNaPaleta], copias: &[crate::git::Copia], busca: &str) -> Vec<GrupoDeEscolha> {
     let termo = busca.trim().to_lowercase();
     let sem_pasta = "sem pasta avulso só conversar".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
@@ -139,6 +141,8 @@ fn grupos_da_paleta(pastas: &[PastaNaPaleta], busca: &str) -> Vec<GrupoDeEscolha
     if !itens.is_empty() {
         grupos.push(GrupoDeEscolha { titulo: Some("Pastas".into()), itens });
     }
+    let listadas: Vec<PathBuf> = pastas.iter().map(|p| p.caminho.clone()).collect();
+    grupos.extend(super::copias::grupo_das_copias(copias, &listadas, busca));
     let resto: Vec<ItemDeEscolha> = outra.into_iter().chain(sem_pasta).collect();
     if !resto.is_empty() {
         grupos.push(GrupoDeEscolha { titulo: None, itens: resto });
@@ -252,12 +256,15 @@ impl Janela {
             .collect();
         let realce = aberta.or_else(|| self.ultimo_destino.clone()).map(|p| SharedString::from(p.display().to_string()));
         let pastas = Rc::new(pastas);
+        // Os worktrees chegam depois, lidos em segundo plano (o `git worktree list` de cada pasta).
+        let copias: Rc<RefCell<Vec<crate::git::Copia>>> = Rc::default();
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar pasta…", window, cx);
-            lista.definir(grupos_da_paleta(&pastas, ""), realce, cx);
-            let filtro = pastas.clone();
-            lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, busca));
+            let mut lista = ListaDeEscolha::new("Buscar pasta ou ramo…", window, cx);
+            lista.em_dialogo();
+            lista.definir(grupos_da_paleta(&pastas, &[], ""), realce.clone(), cx);
+            let (filtro, lidas) = (pastas.clone(), copias.clone());
+            lista.filtro_proprio(move |busca| grupos_da_paleta(&filtro, &lidas.borrow(), busca));
             lista.rodape(move |window, _| {
                 let largo = tam(window, 420.) < window.viewport_size().width - px(32.);
                 // O fio de pontos em cima das teclas, como no rodapé dos popovers da caixa.
@@ -280,6 +287,24 @@ impl Janela {
             });
             lista
         });
+        {
+            let onde: Vec<PathBuf> = pastas.iter().map(|p| p.caminho.clone()).collect();
+            let leitura = cx.background_spawn(async move { crate::git::copias_das_pastas(&onde) });
+            let (alvo, guardadas, pastas) = (lista.downgrade(), copias.clone(), pastas.clone());
+            cx.spawn_in(window, async move |_, cx| {
+                let lidas = leitura.await;
+                if lidas.is_empty() {
+                    return;
+                }
+                *guardadas.borrow_mut() = lidas;
+                // Com o que já estiver escrito na busca: a lista não volta inteira por baixo dela.
+                let _ = alvo.update(cx, |l, cx| {
+                    let busca = l.busca(cx);
+                    l.definir(grupos_da_paleta(&pastas, &guardadas.borrow(), &busca), realce, cx);
+                });
+            })
+            .detach();
+        }
         self._assinatura_dialogo = Some(cx.subscribe_in(&lista, window, |this, _, evento: &EventoEscolha, window, cx| {
             let EventoEscolha::Escolheu(chave) = evento else {
                 return;
@@ -452,6 +477,9 @@ impl Janela {
             return;
         };
         let painel = cx.new(|cx| PainelContas::new(motor.clone(), window, cx));
+        // "Onde o uso foi" fica embaixo das contas; no diálogo aberto direto no login, não.
+        let janela = cx.entity().downgrade();
+        let onde = (!entrar).then(|| cx.new(|cx| super::onde_uso::OndeOUsoFoi::new(motor.clone(), janela, cx)));
         if entrar {
             painel.update(cx, |p, cx| p.entrar(window, cx));
         } else if let Some(conta) = de_novo {
@@ -474,6 +502,7 @@ impl Janela {
             moldura(dialogo, largura::M, window)
                 .title(topo(cabecalho("Contas do Claude", Some(conectadas))))
                 .child(painel.clone())
+                .children(onde.clone())
                 // O Enter do código entra pelo próprio campo; o diálogo não fecha com ele.
                 .on_ok(|_, _, _| false)
         });
@@ -488,6 +517,7 @@ impl Janela {
         let arquivos: Rc<RefCell<Option<Rc<Vec<String>>>>> = Rc::default();
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar arquivo…", window, cx);
+            lista.em_dialogo();
             lista.definir(seletor_arquivos::grupos_de_arquivos(None, ""), None, cx);
             let lidos = arquivos.clone();
             lista.filtro_proprio(move |busca| {
@@ -622,6 +652,7 @@ impl Janela {
         let grupos = grupos_de_conversas(motor.read(cx), &chat);
         let lista = cx.new(|cx| {
             let mut lista = ListaDeEscolha::new("Buscar conversa…", window, cx);
+            lista.em_dialogo();
             lista.definir(grupos, None, cx);
             lista
         });
@@ -675,7 +706,7 @@ mod testes {
     fn paleta_mostra_as_pastas_outra_e_sem_pasta() {
         let pastas = [PastaNaPaleta::new(PathBuf::from("/p/loja-api"), true), PastaNaPaleta::new(PathBuf::from("/p/site-ninee"), false)];
         let chaves = |busca: &str| -> Vec<String> {
-            grupos_da_paleta(&pastas, busca).iter().flat_map(|g| g.itens.iter().map(|i| i.chave.to_string())).collect()
+            grupos_da_paleta(&pastas, &[], busca).iter().flat_map(|g| g.itens.iter().map(|i| i.chave.to_string())).collect()
         };
         assert_eq!(chaves(""), ["/p/loja-api", "/p/site-ninee", OUTRA_PASTA, SEM_PASTA]);
         assert_eq!(chaves("NINEE"), ["/p/site-ninee"]);
@@ -684,11 +715,29 @@ mod testes {
         assert_eq!(chaves("outra"), [OUTRA_PASTA]);
         // Nada de criar projeto: sem pasta que bata, a lista fica vazia.
         assert!(chaves(" ops ").is_empty());
-        let grupos = grupos_da_paleta(&pastas, "");
+        let grupos = grupos_da_paleta(&pastas, &[], "");
         assert_eq!(grupos[0].titulo.as_deref(), Some("Pastas"));
         assert_eq!(grupos[0].itens[0].titulo.as_ref(), "loja-api");
         assert_eq!(grupos[0].itens[0].selos.len(), 1, "a pasta do chat aberto vem marcada");
         assert!(grupos[0].itens[1].selos.is_empty());
+        // Os worktrees entram depois das pastas e antes de "Outra pasta…", sem a pasta que já está em cima.
+        let copia = |caminho: &str, ramo: &str| crate::git::Copia {
+            caminho: PathBuf::from(caminho),
+            ramo: Some(ramo.into()),
+            commit: "1a2b3c4".into(),
+            apagada: false,
+            principal: false,
+        };
+        let copias = [copia("/p/loja-api", "main"), copia("/p/wt/frete", "feat/frete")];
+        let grupos = grupos_da_paleta(&pastas, &copias, "");
+        let titulos: Vec<Option<&str>> = grupos.iter().map(|g| g.titulo.as_deref()).collect();
+        assert_eq!(titulos, [Some("Pastas"), Some("Worktrees"), None]);
+        assert_eq!(grupos[1].itens.len(), 1);
+        assert_eq!(grupos[1].itens[0].chave.as_ref(), "/p/wt/frete");
+        // A busca pelo ramo acha o worktree.
+        let pelo_ramo = grupos_da_paleta(&pastas, &copias, "feat/fre");
+        assert_eq!(pelo_ramo.len(), 1);
+        assert_eq!(pelo_ramo[0].itens[0].titulo.as_ref(), "frete");
     }
 
     #[test]

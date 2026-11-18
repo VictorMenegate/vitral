@@ -82,10 +82,19 @@ impl RenderOnce for PontoDeSinal {
 pub struct IconeDeEstado {
     sinal: Option<Sinal>,
     lado: f32,
+    vivo: Option<String>,
 }
 
 pub fn icone_de_estado(sinal: Option<Sinal>, lado: f32) -> IconeDeEstado {
-    IconeDeEstado { sinal, lado }
+    IconeDeEstado { sinal, lado, vivo: None }
+}
+
+impl IconeDeEstado {
+    /// O anel de "trabalhando" gira numa vista própria de `chave` (ver `AnelGirando::vivo`).
+    pub fn vivo(mut self, chave: impl Into<String>) -> Self {
+        self.vivo = Some(chave.into());
+        self
+    }
 }
 
 impl RenderOnce for IconeDeEstado {
@@ -95,7 +104,13 @@ impl RenderOnce for IconeDeEstado {
         // de aparência, 16/11/2026, V10). O ponto continua do mesmo tamanho.
         let caixa = div().flex_none().size(r(self.lado)).flex().items_center().justify_center();
         match self.sinal {
-            Some(Sinal::Rodando) => caixa.child(super::graficos::AnelGirando::new(self.lado * 0.8).cor(Cores::destaque())),
+            Some(Sinal::Rodando) => {
+                let anel = super::graficos::AnelGirando::new(self.lado * 0.8).cor(Cores::destaque());
+                caixa.child(match self.vivo {
+                    Some(chave) => anel.vivo(chave),
+                    None => anel,
+                })
+            }
             Some(sinal) => caixa.child(
                 div()
                     .size(r(self.lado * 0.8))
