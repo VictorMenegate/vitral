@@ -167,7 +167,7 @@ impl Aba {
         // azul que respira devagar vai por cima, numa vista própria.
         let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
         if let Some((s, _)) = self.borda.as_ref().filter(|(s, _)| *s != Sinal::Rodando) {
-            borda = cor_da_borda(*s).opacity(0.55);
+            borda = cor_da_borda(*s).opacity(0.75);
         }
         let respira = self.borda.filter(|(s, _)| *s == Sinal::Rodando).map(|(s, chave)| BordaQueRespira {
             chave,
@@ -513,7 +513,7 @@ mod testes {
     }
 }
 
-/// O contorno da aba de um chat trabalhando: o fio azul que respira devagar (de 0,15 a 0,6 em 2,4 s),
+/// O contorno da aba de um chat trabalhando: o fio azul que respira devagar (de 0,35 a 0,9 em 2,4 s),
 /// em cima do fio preto, sem halo, numa vista própria (a batida redesenha só ele, e não a janela).
 /// Com o movimento reduzido, fica parado, a meia luz.
 #[derive(IntoElement)]
@@ -530,13 +530,13 @@ impl RenderOnce for BordaQueRespira {
         let lugar = div().absolute().top(px(-1.)).left(px(-1.)).right(px(-1.)).bottom(px(-1.));
         let fio = move |alfa: f32| div().size_full().rounded(raio).border_1().border_color(cor.opacity(alfa));
         if cx.reduce_motion() {
-            return lugar.child(fio(0.45));
+            return lugar.child(fio(0.65));
         }
         let versao = u64::from(Rgba::from(cor).b.to_bits()) ^ u64::from(raio.as_f32().to_bits()) << 32;
         lugar.child(super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), versao, cx, move |window, cx| {
             let fase = crate::ui::movimento::laco_a(window, cx, crate::ui::movimento::QPS_DO_LACO);
             let t = (fase / 2.4).fract() as f32;
-            let alfa = 0.15 + 0.45 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
+            let alfa = 0.35 + 0.55 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
             fio(alfa).into_any_element()
         }))
     }
