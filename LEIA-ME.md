@@ -1131,23 +1131,6 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 - O que veio do histórico de uma conversa trazida do Claude Code não está nos itens do chat e
   fica de fora do sumário.
 
-**Desfazer só um trecho** (`src/ui/desfazer_trecho.rs`, `src/git/remendo.rs`). No diff aberto
-pela seção Na pasta, cada bloco de mudança (as linhas seguidas que saem e entram) volta sozinho ao
-último commit: com o ponteiro numa linha mudada, um botão pequeno aparece ao lado do número, por
-cima da coluna do sinal; a faixa da edição tem o mesmo botão para a mudança à vista (a das setas).
-Pergunta antes, como o Desfazer do arquivo, e depois relê o diff e a contagem de linhas da lista.
-
-- O remendo sai do `git diff HEAD` do arquivo: o trecho ("@@") do bloco, com as outras mudanças
-  do mesmo trecho como estão no arquivo de agora (o que entrou vira contexto, o que saiu não
-  aparece), e vai pela entrada padrão para o `git apply -R`. O git aplica tudo ou nada: se o
-  remendo não casar, o aviso diz por quê e o arquivo fica como estava.
-- Antes de aplicar, o diff é relido e conferido com o que a tela mostrava: se o arquivo mudou
-  nesse meio tempo (o agente continuou editando), nada é feito, e o visor mostra o diff novo.
-- Só no diff do git de um arquivo rastreado. O arquivo novo abre sem diff (para ele, o Desfazer
-  inteiro da lista), e a edição de uma chamada do chat (aberta pelas Mudanças ou pela conversa)
-  não é a do disco inteiro, então fica sem o botão. Mexe só no arquivo de trabalho: o que estava
-  preparado para commit (`git add`) continua preparado.
-
 **Comentar linhas e mandar tudo de uma vez** (`src/ui/comentarios.rs`). No arquivo aberto à
 direita (pelas Mudanças, pela seção Na pasta ou por um link da conversa), o clique no número da
 linha escolhe um trecho (Shift+clique estende). Com o trecho escolhido, uma faixa embaixo do

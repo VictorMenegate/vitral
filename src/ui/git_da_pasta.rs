@@ -1,8 +1,7 @@
 //! "Na pasta": o que o git vê mudado desde o último commit no repositório do chat, inclusive o que
 //! um comando mudou (a lista de Mudanças só vê as ferramentas de edição). O clique abre o arquivo
 //! com o diff por cima, no mesmo visor das edições, onde o número da linha escolhe um trecho para
-//! mencionar; o Desfazer volta um arquivo ao último commit, depois de perguntar (um trecho só,
-//! no visor: `desfazer_trecho.rs`).
+//! mencionar; o Desfazer volta um arquivo ao último commit, depois de perguntar.
 
 use std::{
     path::{Path, PathBuf},
@@ -33,13 +32,6 @@ pub(super) struct GitDaPasta {
     lido_em: Option<Instant>,
     retrato: Option<RetratoDaPasta>,
     lendo: bool,
-}
-
-impl GitDaPasta {
-    /// O retrato envelheceu agora (um trecho foi desfeito): o próximo desenho relê o git.
-    pub(super) fn pedir_releitura(&mut self) {
-        self.lido_em = None;
-    }
 }
 
 impl Janela {
@@ -132,8 +124,18 @@ impl Janela {
             self.abrir_arquivo(raiz, caminho, window, cx);
             return;
         }
-        // O diff fica guardado com o arquivo aberto: o visor desfaz um trecho só (`desfazer_trecho.rs`).
-        self.abrir_diff_lido_do_git(raiz, caminho, None, window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let (r, c) = (raiz.clone(), caminho.clone());
+            let diff = cx.background_spawn(async move { crate::git::diff_do_arquivo(&r, &c) }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let trechos = super::edicao::trechos(&diff);
+                let (entram, saem) = super::edicao::contar(&trechos);
+                let sem_registro = trechos.is_empty();
+                this.edicao_pedida = Some(std::rc::Rc::new(super::edicao::Edicao { trechos, entram, saem, sem_registro }));
+                this.abrir_arquivo(raiz, caminho, window, cx);
+            });
+        })
+        .detach();
     }
 
     /// Pergunta e volta um arquivo ao último commit.

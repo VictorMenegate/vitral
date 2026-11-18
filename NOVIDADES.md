@@ -45,9 +45,6 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   com a hora, o começo do texto e o que o turno fez ("3 editados · 12 comandos"). O clique rola a
   conversa até a mensagem (trazendo as anteriores, se for preciso) e a realça por um instante; a
   que você está lendo fica marcada enquanto a conversa rola.
-- **Desfazer só um trecho.** No diff aberto pela seção Na pasta, cada bloco de mudança volta
-  sozinho ao último commit: o botão aparece com o ponteiro na linha mudada, e a faixa da edição
-  tem o mesmo para a mudança à vista. O resto do arquivo fica, e o Vitral pergunta antes.
 - **Comentar linhas e mandar tudo de uma vez.** No arquivo ou no diff aberto à direita, escolha
   um trecho pelo número da linha e escreva o comentário no campo que aparece: ele fica preso
   àquelas linhas, e o trecho fica marcado. Os comentários se acumulam por chat, em vários
