@@ -7,6 +7,24 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Conversa com duas bordas só.** O texto da resposta, o ícone de cada linha do que o agente fez,
+  o do erro e o de quem entregou começam todos na mesma borda; o texto dessas linhas e tudo o que
+  elas abrem (a saída, o diff, o raciocínio, o relatório) começam numa segunda, 24 depois. Eram
+  cinco começos diferentes. O grupo aberto virou uma linha do tempo: os ícones um embaixo do
+  outro, ligados por um fio fino, sem o recuo e sem os ramos em curva.
+- **Avisos num desenho só.** O dia, "Trazida do Claude Code", "Turno interrompido" e a troca de
+  conta são a mesma nota: centrada, pequena e tênue, sem fio e sem ícone. Só o "Novo" continua com
+  o desenho dele.
+- **Copiar e hora sem cobrir a resposta.** A barra que aparece com o ponteiro na resposta fica
+  embaixo do texto, no vão até a próxima mensagem; antes ela cobria o fim da última linha.
+- **Espaços em três passos.** 32 entre turnos e no fim da conversa, 12 dentro do turno e nada
+  entre as linhas da trilha. Saíram os passos de 16 e de 4.
+- **Linha mais curta no painel largo.** A coluna de leitura passa a ter uns 80 caracteres por
+  linha (eram perto de 100); a caixa de mensagem acompanha.
+- **Menos tamanhos e menos peso.** O nome de quem entregou e a frase do erro usam o tamanho do
+  balão; a chamada que falhou perde o fundo vermelho da linha inteira e fica com o ícone e a
+  palavra "falhou" em vermelho, em qualquer largura; a prévia da entrega tem duas linhas também
+  na coluna estreita.
 - **Código que não embaralha na coluna estreita.** O bloco de código da resposta não quebra mais
   as linhas: quebrada, a linha voltava à margem e a indentação se perdia (com três conversas lado
   a lado, seis linhas de código viravam catorze). Agora ele rola de lado, como a saída de comando
