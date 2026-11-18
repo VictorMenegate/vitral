@@ -644,20 +644,6 @@ ferramentas, vale por painel).
   caixa do painel ativo, sem enviar: com algo escrito, junta ao fim depois de uma linha em branco
   (o Ctrl+Z desfaz, como no × da fila). Mostra 60 por vez; a busca estreita o resto. Tudo em
   `src/ui/enviadas.rs`.
-- **Comando seu ("!").** Uma mensagem que começa com "!" (`!git status`) não vai ao agente: o
-  comando roda na pasta do chat, pelo `bash -c` (no Windows, `cmd /C`), num escopo de
-  `src/processos/`, e aparece na conversa como **Comando seu**, na caixa de saída da trilha: o
-  comando no cabeçalho, como ele ficou ("Pronto em 1,2 s", "Saiu com 2", "Interrompido"), o
-  Copiar e a saída chegando enquanto roda (as duas saídas juntas, sem as cores do terminal, só os
-  últimos 200 mil bytes). Não abre turno, não muda o custo nem a hora do chat, e a saída não entra
-  na sessão do agente: **Mandar ao agente** a põe como a citação da próxima mensagem (o cartão em
-  cima do campo, com o comando e o fim da saída). O **Esc** (ou o Parar da linha) derruba o
-  comando e o que ele abriu; o que ele deixar no fundo também sai quando ele termina. Um por chat
-  de cada vez, e pode rodar com o turno do agente em andamento. O comando com trecho arriscado (a
-  lista dos pedidos de permissão, `trechos_perigosos`) entra na conversa parado, com os trechos em
-  vermelho, **Descartar** e **Segure para rodar**. O item é o `Item::Comando` (`src/modelo.rs`); o
-  processo e as funções puras ficam em `src/motor/comando_seu.rs` e o desenho em
-  `src/ui/mensagens/comando_seu.rs`. Fica de fora do bloco de passagem e da conversa exportada.
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
   (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,

@@ -1634,7 +1634,7 @@ impl Janela {
         let (menu_aberto, ocupado) = {
             let m = motor.read(cx);
             let menu = m.chat(chat).is_some_and(|c| self.menu_da_caixa(ix, c, cx).is_some());
-            (menu, m.execucao(chat).rodando() || m.comando_seu_rodando(chat))
+            (menu, m.execucao(chat).rodando())
         };
         if menu_aberto {
             self.paineis[ix].menu_dispensado = true;

@@ -25,8 +25,6 @@ pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod ramo;
 mod bifurcar;
-mod comando_seu;
-pub use comando_seu::{COMANDO_COMECOU, SituacaoDoComando, citacao_do_comando};
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -395,8 +393,6 @@ pub struct Motor {
     /// Os chats cujo turno de agora é a revisão da memória (rodada de uso, item 6.1): por fora eles
     /// contam como parados (o "Terminou" sai na hora), por dentro ainda trabalham.
     revisando: HashMap<String, Revisao>,
-    /// O comando que você rodou com "!" em cada chat e ainda não acabou (`motor/comando_seu.rs`).
-    comandos_seus: HashMap<String, comando_seu::ComandoSeu>,
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
@@ -651,7 +647,6 @@ impl Motor {
             estado_sujo: false,
             parados_por_voce: HashMap::new(),
             revisando: HashMap::new(),
-            comandos_seus: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
             avisos: Arc::default(),
@@ -919,7 +914,6 @@ impl Motor {
             self.dirigidos.remove(id);
             self.revisando.remove(id);
             self.parados_por_voce.remove(id);
-            self.esquecer_comando_seu(id);
             self.visiveis.remove(id);
         }
         self.interrompidos.retain(|c| !saiu(c));
@@ -3848,7 +3842,7 @@ impl Motor {
                 }
                 Item::Ferramenta { resumo, .. } => texto.push_str(&format!("- (ferramenta) {resumo}\n")),
                 Item::Vez { agente, .. } => texto.push_str(&format!("### Vez do {}\n\n", agente.nome())),
-                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Comando { .. } | Item::Desconhecido(_) => {}
+                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Desconhecido(_) => {}
             }
         }
         let pasta = self.dados.pasta_exportadas();

@@ -48,7 +48,6 @@ use crate::{
 };
 
 pub(super) mod historico;
-mod comando_seu;
 mod erros;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
@@ -777,9 +776,6 @@ impl Janela {
             }
             Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
-            Item::Comando { id, comando, saida, codigo, milis, em } => {
-                (Bloco::Recebida, self.cartao_do_comando(contexto, &chave, id, comando, saida, *codigo, *milis, *em, window, cx))
-            }
             Item::Desconhecido(_) => {
                 aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
             }
@@ -2337,8 +2333,6 @@ pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
         Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
         Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
-        // O comando seu rodado no meio do turno não é trabalho do agente.
-        Item::Comando { .. } => true,
         _ => false,
     }
 }

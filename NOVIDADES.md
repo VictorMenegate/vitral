@@ -68,9 +68,6 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Suas mensagens já enviadas (Ctrl+R).** Uma lista das mensagens que você mandou em todos os
   chats, com busca sem acento: as do chat aberto e as da mesma pasta vêm primeiro, sem repetir. O
   Enter põe a escolhida na caixa, sem enviar.
-- **Comando com "!" sem gastar turno.** `!git status` na caixa roda o comando na pasta do chat e
-  mostra a saída na conversa, sem chamar o agente e sem mudar o custo. **Mandar ao agente** cita a
-  saída na próxima mensagem; o Esc para um comando longo, e o arriscado pede para segurar o botão.
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o
