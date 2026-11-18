@@ -197,12 +197,15 @@ struct Momento {
     memoria_ligada: bool,
     codex_instalado: bool,
     versao_pronta: Option<String>,
+    /// Os arranjos de painéis salvos (`arranjo/salvos.rs`) e o que está em uso.
+    arranjos: Vec<String>,
+    arranjo_em_uso: Option<String>,
 }
 
 /// Uma linha da paleta.
 #[derive(Clone, Debug, PartialEq)]
 struct Entrada {
-    /// "atalho:<posição na tabela>" ou "direto:<posição em `Direto::TODOS`>".
+    /// "atalho:<posição na tabela>", "direto:<posição em `Direto::TODOS`>" ou "arranjo:<nome>".
     chave: String,
     titulo: String,
     grupo: Grupo,
@@ -258,6 +261,18 @@ fn entradas(m: &Momento) -> Vec<Entrada> {
             motivo: d.motivo(m),
         }
     }));
+    // Um "ir para" por arranjo salvo: trocar de frente de trabalho sem passar pelo menu do logo.
+    todas.extend(m.arranjos.iter().map(|nome| {
+        let titulo = format!("Arranjo: {nome}");
+        Entrada {
+            chave: format!("arranjo:{nome}"),
+            busca: busca_de(&titulo, "painéis trocar frente de trabalho", Grupo::Paineis),
+            titulo,
+            grupo: Grupo::Paineis,
+            teclas: None,
+            motivo: (m.arranjo_em_uso.as_ref() == Some(nome)).then(|| "É o arranjo em uso".to_string()),
+        }
+    }));
     // Estável: dentro de cada metade, a ordem da tabela.
     todas.sort_by_key(|e| e.motivo.is_some());
     todas
@@ -303,6 +318,7 @@ impl Janela {
             return Momento::default();
         };
         let m = motor.read(cx);
+        let arranjos = self.arranjos_salvos();
         let painel = self.paineis.get(self.ativo);
         let chat = painel.and_then(|p| m.chat(p.chat.as_deref()?).map(|c| (p, c))).map(|(p, c)| {
             let caixa = p.composer.read(cx).value();
@@ -324,6 +340,8 @@ impl Janela {
             memoria_ligada: !m.config.memoria_da_equipe.is_empty() && crate::memoria_equipe::ler_chave(&m.dados.config).is_some(),
             codex_instalado: crate::agente_codex::instalado(),
             versao_pronta: self.atualizacao_pronta.clone(),
+            arranjos: arranjos.salvos.into_iter().map(|s| s.nome).collect(),
+            arranjo_em_uso: arranjos.em_uso,
         }
     }
 
@@ -382,6 +400,10 @@ impl Janela {
             if let Some(acao) = atalhos::acoes().into_iter().nth(i) {
                 window.dispatch_action(acao, cx);
             }
+            return;
+        }
+        if let Some(nome) = chave.strip_prefix("arranjo:") {
+            self.trocar_de_arranjo(nome, window, cx);
             return;
         }
         let Some(direto) = chave.strip_prefix("direto:").and_then(|n| n.parse::<usize>().ok()).and_then(|i| Direto::TODOS.get(i)) else {
@@ -517,6 +539,17 @@ mod testes {
             let da_secao: Vec<bool> = vazio.iter().filter(|e| e.grupo == grupo).map(|e| e.motivo.is_some()).collect();
             assert!(da_secao.is_sorted(), "{grupo:?}: {da_secao:?}");
         }
+    }
+
+    #[test]
+    fn cada_arranjo_salvo_vira_uma_linha_e_o_em_uso_fica_apagado() {
+        let m = Momento { arranjos: vec!["Central".into(), "Vitral".into()], arranjo_em_uso: Some("Vitral".into()), ..Default::default() };
+        let todas = entradas(&m);
+        assert_eq!((acha(&todas, "Arranjo: Central").chave.as_str(), &acha(&todas, "Arranjo: Central").motivo), ("arranjo:Central", &None));
+        assert_eq!(acha(&todas, "Arranjo: Vitral").motivo.as_deref(), Some("É o arranjo em uso"));
+        // Salvar e andar pelos arranjos vêm da tabela de atalhos.
+        acha(&todas, "Salvar o arranjo de painéis atual…");
+        acha(&todas, "Arranjo de painéis seguinte (dá a volta)");
     }
 
     #[test]

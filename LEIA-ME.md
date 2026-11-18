@@ -1134,6 +1134,20 @@ que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igu
   não rola: a roda do mouse em cima dela não faz nada. Toda
   aba tem fundo, e com o ponteiro em cima ganha um aro de metal. Na largura mínima, só a aba à
   vista. As abas não são lembradas ao fechar o app.
+- **Arranjos de painéis salvos** (`src/ui/arranjo/salvos.rs`). O que a janela já grava ao fechar
+  (`Arranjo`: os chats de cada painel, as abas, a aba à vista, a divisão das conversas, as
+  larguras e a lista recolhida) pode ser guardado com um nome, um por frente de trabalho
+  ("Central", "Vitral"), na chave `arranjos` do interface.json (até 12). No menu do logo,
+  **Arranjos**: a lista (o em uso com o visto), **Salvar o arranjo atual…** (Ctrl+Alt+S; o mesmo
+  nome salva por cima) e um **Apagar** para cada um. Trocar guarda antes o arranjo em uso, como a
+  janela está, para a volta ser de onde parou, fecha os painéis de agora (o rascunho de cada caixa
+  fica guardado, e as abas não vão para o Ctrl+Shift+T) e recoloca os do escolhido pelo mesmo
+  `reabrir_arranjo` da abertura; o tamanho da janela não muda. **Ctrl+Alt+PageDown** e
+  **Ctrl+Alt+PageUp** andam pelos arranjos, dando a volta, e a paleta de comandos tem um "Arranjo:
+  nome" para cada. Chat arquivado ou apagado some do arranjo sem erro (`Arranjo::reabrivel`); se
+  não sobrou nenhum, a troca avisa e não acontece. Os chats que saem da tela continuam rodando.
+  Depois de fechar e abrir, a janela volta como estava (a chave `arranjo` de sempre) e o "em uso"
+  continua o mesmo.
 - **Conversas lado a lado** (até 4, conforme a largura): arraste uma conversa da lista, ou qualquer
   aba de um painel, como no VS Code: solta no **meio** de outro painel, ela vira mais uma aba dele
   ("Abrir aqui, como aba"; sai do painel de origem, que fecha se era a única aba); solta na

@@ -417,7 +417,7 @@ impl Janela {
             Some(nome) => format!("Pasta de trabalho: {}…", nome.to_string_lossy()).into(),
             None => "Escolher a pasta de trabalho…".into(),
         };
-        Rc::new(move |menu, window, _| {
+        Rc::new(move |menu, window, cx| {
             let gerenciador = raiz.clone();
             menu.min_w(tam(window, 260.))
                 .max_w(tam(window, 360.))
@@ -451,6 +451,7 @@ impl Janela {
                     item("Quadro de ideias", Lucide::Kanban, &janela, |this, window, cx| this.abrir_quadro_de_ideias(window, cx))
                         .action(Box::new(AbrirQuadroDeIdeias)),
                 )
+                .map(|menu| super::arranjo::salvos::no_menu(menu, &janela, window, cx))
                 .item(item("Importar do Claude Code…", Lucide::Download, &janela, |this, _, cx| {
                     if let Some(motor) = this.motor.clone() {
                         motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));

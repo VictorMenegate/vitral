@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Arranjos de painéis com nome.** No menu do logo, **Arranjos** guarda os painéis, as abas e as
+  larguras de agora com um nome ("Central", "Vitral") e troca entre eles; a volta é de onde você
+  parou. Ctrl+Alt+PageDown e PageUp andam pelos arranjos, e os chats fora de vista continuam
+  rodando.
 - **Paleta de comandos (Ctrl+Shift+P).** Tudo o que o Vitral faz numa lista com busca: os atalhos
   (com as teclas ao lado) e o que só existia em menu, como Compactar, Servidores MCP e Contas. O
   Enter faz no painel ativo; o que não vale no momento aparece apagado, com o motivo.

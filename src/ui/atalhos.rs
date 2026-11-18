@@ -154,6 +154,9 @@ tabela! {
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
     "ctrl-shift-pagedown", super::MoverPainelDireita, None, Grupo::Paineis, "Mover o painel para a direita", "";
+    "ctrl-alt-pagedown", super::arranjo::salvos::ArranjoSeguinte, None, Grupo::Paineis, "Arranjo de painéis seguinte (dá a volta)", "";
+    "ctrl-alt-pageup", super::arranjo::salvos::ArranjoAnterior, None, Grupo::Paineis, "Arranjo de painéis anterior", "";
+    "ctrl-alt-s", super::arranjo::salvos::SalvarArranjo, None, Grupo::Paineis, "Salvar o arranjo de painéis atual…", "";
 
     // ---------- janela ----------
     "ctrl-=", super::AumentarZoom, None, Grupo::Janela, "Aumentar o zoom", "";
