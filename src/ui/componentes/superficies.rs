@@ -793,12 +793,22 @@ impl RenderOnce for CartaoDeErro {
                     .flex_1()
                     .min_w_0()
                     .gap(esp::E4)
-                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover).
+                    // Cabeçalho: o ícone de 16, o título e o Copiar (só no hover). O ícone fica na
+                    // primeira linha do título (a caixa dele tem os 20 da linha): na coluna
+                    // estreita o título quebra em duas, e centrado ele boiava entre elas.
                     .child(
                         h_flex()
-                            .items_center()
+                            .items_start()
                             .gap(esp::E8)
-                            .child(div().flex_none().text_color(cor_do_icone).child(self.icone.with_size(tam(window, 16.))))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .h(r(20.))
+                                    .flex()
+                                    .items_center()
+                                    .text_color(cor_do_icone)
+                                    .child(self.icone.with_size(tam(window, 16.))),
+                            )
                             .child(
                                 div()
                                     .flex_1()

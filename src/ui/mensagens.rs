@@ -1327,7 +1327,11 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
                 Some(l) => format!("Copiar código {l}"),
                 None => "Copiar código".to_string(),
             };
-            BotaoCopiar::new("copiar", bloco.code()).dica(dica)
+            // Opaco, no preto do poço: o código não quebra mais a linha e passa por baixo do botão
+            // (o fundo que o kit põe em volta dele é translúcido, e a letra aparecia através). A
+            // tampa vai até 2 da borda do bloco e sobra 6 à esquerda, para não ficar um pedaço de
+            // letra de cada lado do ícone.
+            div().bg(Cores::preto()).px(esp::E6).mr(r(-6.)).child(BotaoCopiar::new("copiar", bloco.code()).dica(dica))
         })
 }
 
@@ -1373,15 +1377,8 @@ fn estilo_do_balao(vista: TextView, cx: &App) -> TextView {
     // A menção de arquivo ("@src/x.rs#L3-9") é uma pílula no meio do texto (dono, 16/11/2026).
     estilo_da_resposta(vista, cx).plugin(super::mencao::PilulaDeMencao).style(
         estilo_com_titulos(cx, [15., 14., 14.])
-            .code_block(
-                StyleRefinement::default()
-                    .p(dentro_da_borda(12.))
-                    .pr(COLUNA_DO_COPIAR)
-                    .bg(Cores::preto())
-                    .border_color(Cores::borda())
-                    // 16 de fora menos 16 de padding: o mínimo, 10.
-                    .rounded(raio::CONTROLE),
-            )
+            // 16 de fora menos 16 de padding: o mínimo, 10.
+            .code_block(poco_de_codigo(raio::CONTROLE))
             .inline_code(HighlightStyle {
                 color: Some(Cores::codigo()),
                 // O branco de 8% sumia no azul.
@@ -1583,20 +1580,41 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
                 _ => titulos[2] / 15.,
             }
         })
-        .code_block(
-            StyleRefinement::default()
-                .p(dentro_da_borda(12.))
-                .pr(COLUNA_DO_COPIAR)
-                .bg(Cores::preto())
-                .border_color(Cores::borda())
-                .rounded(raio::CARTAO),
-        )
+        .code_block(poco_de_codigo(raio::CARTAO))
         .inline_code(HighlightStyle {
             color: Some(Cores::codigo()),
             background_color: Some(Cores::hover()),
             ..Default::default()
         })
         .table(StyleRefinement::default().rounded(raio::CARTAO).border_color(Cores::borda()))
+        // O kit mede as colunas contando 24 px de padding por célula, mas desenha o padding em rem
+        // (0,75): com o zoom, a célula ficava mais estreita que o texto medido e a última palavra
+        // caía para a linha de baixo, com a tabela sobrando de largura. Com o padding dito aqui, a
+        // medida e o desenho usam o mesmo número em qualquer zoom.
+        .table_cell(StyleRefinement::default().px(esp::E12))
+}
+
+/// O bloco de código das mensagens: o poço preto com o conteúdo a 12 da borda e a coluna do Copiar
+/// à direita. As linhas não quebram, como na saída de comando e no diff: quebrada no meio, a linha
+/// voltava à coluna zero e a indentação se perdia (numa coluna estreita, seis linhas de código
+/// viravam catorze). O bloco rola de lado; a roda em pé continua levando a conversa, porque ele
+/// nunca tem o que rolar para baixo.
+fn poco_de_codigo(raio: Rems) -> StyleRefinement {
+    let mut poco = StyleRefinement::default()
+        // Em linha (flex), o texto fica com a largura da linha mais longa, e é essa largura que o
+        // bloco rola; em bloco, ele seria esticado até a borda e o resto ficaria cortado.
+        .flex()
+        .p(dentro_da_borda(12.))
+        .pr(COLUNA_DO_COPIAR)
+        .bg(Cores::preto())
+        .border_color(Cores::borda())
+        .rounded(raio)
+        .whitespace_nowrap();
+    // Os dois eixos: só com o de pé o kit põe o Copiar fora do que rola (ele fica no canto), e só
+    // com os dois a roda em pé não é desviada para o lado.
+    poco.overflow.x = Some(Overflow::Scroll);
+    poco.overflow.y = Some(Overflow::Scroll);
+    poco
 }
 
 /// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
@@ -2512,6 +2530,51 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
     partes.join(" · ")
 }
 
+/// O resumo de uma linha da trilha ("Rodou 1 comando · editou x.rs · leu 3 arquivos") com as partes
+/// inteiras: a parte que não cabe some inteira, com as que vêm depois dela, em vez de o texto
+/// acabar em reticências no meio de uma palavra ("fez 1 bus…"). As partes quebram para uma segunda
+/// linha, que a altura de uma linha só esconde. Uma parte sozinha maior que a linha é a única que
+/// ainda se corta.
+fn partes_inteiras(resumo: &str) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .flex_shrink(1.)
+        .min_w_0()
+        .h(r(16.))
+        .overflow_hidden()
+        .gap_x(esp::E4)
+        .children(resumo.split(" · ").enumerate().map(|(i, parte)| {
+            let texto = if i == 0 { parte.to_string() } else { format!("· {parte}") };
+            div().flex_none().max_w_full().truncate().child(texto)
+        }))
+}
+
+/// O que o subagente gastou ("18,4 mil tokens · 7 ferramentas · 00:48"), na ponta da linha dele
+/// (numa chamada comum que demora, só o relógio). A tarefa vale mais que a conta: sem lugar para os dois, quem cede é a conta, uma parte inteira
+/// por vez, dos tokens para o relógio, e a tarefa só começa a ser cortada depois que a conta saiu
+/// toda. Em ordem invertida, a última parte (o relógio) é a primeira a ganhar lugar na linha, e as
+/// que não cabem vão para a linha de baixo, escondida.
+fn conta_do_subagente(partes: &[String]) -> Div {
+    let ultima = partes.len().saturating_sub(1);
+    div()
+        .flex()
+        .flex_row_reverse()
+        .flex_wrap()
+        // Encolhe muito antes da tarefa, que tem fator 1.
+        .flex_shrink(1000.)
+        .min_w_0()
+        .h(r(16.))
+        .overflow_hidden()
+        .gap_x(esp::E6)
+        .font_family(FONTE_MONO)
+        .text_color(Cores::apagado())
+        .children(partes.iter().enumerate().rev().map(|(i, parte)| {
+            let texto = if i == ultima { parte.clone() } else { format!("{parte} ·") };
+            div().flex_none().child(texto)
+        }))
+}
+
 /// Trilho de 1 px que liga os ícones de linhas de log seguidas: no centro do ícone (12 + 7),
 /// de 2 px abaixo dele até 1 px antes do ícone da linha de baixo.
 fn trilho_do_log(continua: bool) -> Div {
@@ -2594,8 +2657,13 @@ impl Janela {
                         .child(icone_de(Lucide::ListTree, 14.)),
                 )
                 // Sem o brilho andando: dentro das mensagens, cada batida dele redesenhava a conversa
-                // inteira (ver `vista_mensagens`); o que anda é o anel da linha do turno.
-                .child(div().min_w_0().truncate().text_color(if ao_vivo { Cores::texto() } else { Cores::tenue() }).child(resumo))
+                // inteira (ver `vista_mensagens`); o que anda é o anel da linha do turno. Parado, o
+                // resumo corta em partes inteiras.
+                .child(if ao_vivo {
+                    div().min_w_0().truncate().text_color(Cores::texto()).child(resumo).into_any_element()
+                } else {
+                    partes_inteiras(&resumo).text_color(Cores::tenue()).into_any_element()
+                })
                 .when(falhas > 0, |s| {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
@@ -2686,7 +2754,7 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
-            .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(resumo))
+            .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
@@ -2765,7 +2833,8 @@ impl Janela {
     }
 
     /// A linha de um arquivo editado: o ícone (criou ou editou), o verbo quando é uma linha da
-    /// trilha, o nome no chip, o +N −M e o "novo". O clique abre o arquivo no painel da direita já
+    /// trilha (tênue e sem peso, como o das chamadas; com `true`, na coluna de 56 do grupo), o nome
+    /// em mono, o +N −M e o "novo". O clique abre o arquivo no painel da direita já
     /// na edição, rolado até a primeira mudança; no registro antigo, sem o diff, o arquivo como
     /// está agora, com um aviso. Um arquivo que saiu do disco fica apagado e sem clique.
     fn linha_de_editado(
@@ -2774,7 +2843,7 @@ impl Janela {
         chave: String,
         editado: &Editado,
         recuo: Rems,
-        verbo: Option<&'static str>,
+        verbo: Option<(&'static str, bool)>,
     ) -> AnyElement {
         let existe = super::links_arquivo::resolver(&contexto.chat.cwd, &editado.caminho).is_some();
         let nome = Path::new(&editado.caminho).file_name().map_or_else(|| editado.caminho.clone(), |n| n.to_string_lossy().into_owned());
@@ -2798,7 +2867,9 @@ impl Janela {
             .rounded(raio::CONTROLE)
             .metadado()
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(icone_de(icone, 14.)))
-            .when_some(verbo, |s, verbo| s.child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(verbo)))
+            .when_some(verbo, |s, (verbo, em_grupo)| {
+                s.child(div().flex_none().when(em_grupo, |s| s.min_w(r(56.))).text_color(Cores::tenue()).child(verbo))
+            })
             .child(
                 div()
                     .flex_shrink(1.)
@@ -2896,7 +2967,10 @@ impl Janela {
             .rounded(raio::CONTROLE)
             .metadado()
             .child(div().flex_none().size(r(14.)).flex().items_center().justify_center().child(icone_de(Lucide::Brain, 14.).text_color(Cores::tenue())))
-            .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child("Pensou"))
+            // O verbo como o das chamadas: tênue e sem peso, na coluna de 56 dentro de um grupo, com
+            // a duração na coluna dos detalhes. Em negrito branco, o "Pensou" era a linha mais
+            // forte da trilha, e é a que menos importa.
+            .child(div().flex_none().when(ramo.is_some(), |s| s.min_w(r(56.))).text_color(Cores::tenue()).child("Pensou"))
             // Sem `flex_1`: o chevron vem logo depois do texto, como na chamada.
             .child(
                 div()
@@ -2910,7 +2984,7 @@ impl Janela {
             .when(tem_texto, |s| {
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
-                    .child(div().flex_none().text_color(Cores::tenue()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+                    .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
                     .on_click(alternar(chave.clone(), cx))
             });
         v_flex()
@@ -2927,7 +3001,8 @@ impl Janela {
                             .overflow_y_scroll()
                             .py(esp::E8)
                             .px(esp::E12)
-                            .rounded(raio::CONTROLE)
+                            // O raio das caixas da conversa, como o relatório e o código.
+                            .rounded(raio::CARTAO)
                             .bg(Cores::hover())
                             .metadado()
                             .text_color(Cores::tenue())
@@ -2992,7 +3067,7 @@ impl Janela {
                     v_flex()
                         .relative()
                         .w_full()
-                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some(verbo)))
+                        .child(self.linha_de_editado(contexto, format!("{chave}:{k}"), &editado, recuo, Some((verbo, ramo.is_some()))))
                         .children(ramo.map(|continua| trilho_do_log(continua || k + 1 < n)))
                 }))
                 .into_any_element();
@@ -3007,9 +3082,13 @@ impl Janela {
         // "testa essa parte de agents").
         let do_sub = sub.as_ref().map(|s| {
             let segundos = if s.fim > 0 { s.fim.saturating_sub(*em) } else { crate::modelo::agora().saturating_sub(*em) };
-            let ferramentas = contagem(s.ferramentas as usize, "ferramenta", "ferramentas");
-            let tokens = if s.tokens > 0 { format!("{} tokens · ", super::mapa_agentes::em_mil(s.tokens)) } else { String::new() };
-            (format!("{tokens}{ferramentas} · {}", relogio(segundos)), s)
+            let mut partes = Vec::new();
+            if s.tokens > 0 {
+                partes.push(format!("{} tokens", super::mapa_agentes::em_mil(s.tokens)));
+            }
+            partes.push(contagem(s.ferramentas as usize, "ferramenta", "ferramentas"));
+            partes.push(relogio(segundos));
+            (partes, s)
         });
         let atividade_viva = do_sub.as_ref().filter(|(_, s)| pendente && !s.atividade.is_empty()).map(|(_, s)| {
             h_flex()
@@ -3026,18 +3105,18 @@ impl Janela {
                     .py(esp::E8)
                     .px(esp::E12)
                     .gap(esp::E2)
-                    .rounded(raio::CONTROLE)
+                    .rounded(raio::CARTAO)
                     .bg(Cores::hover())
                     .mono_pequeno()
                     .text_color(Cores::tenue())
                     .children(s.passos.iter().map(|p| div().min_w_0().truncate().child(detalhe_do_passo(p)))),
             )
         });
-        let meta_do_sub = do_sub.map(|(texto, _)| texto);
+        let meta_do_sub = do_sub.map(|(partes, _)| partes);
         // Há quanto tempo a chamada roda, na ponta da linha (depois de 3 s, para as rápidas não
         // piscarem um relógio): num comando longo é o que diz que ela segue viva.
         let rodando_ha = (pendente && item.em() > 0).then(|| crate::modelo::agora().saturating_sub(item.em())).filter(|s| *s >= 3);
-        let meta_do_sub = meta_do_sub.or_else(|| rodando_ha.map(relogio));
+        let meta_do_sub = meta_do_sub.or_else(|| rodando_ha.map(|s| vec![relogio(s)]));
         // O arquivo que a chamada leu ou mudou, se ainda está no disco: abre ao lado pelo ícone
         // que aparece no hover da linha.
         let abrir = arquivo
@@ -3138,9 +3217,7 @@ impl Janela {
                         Path::new(arquivo).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(detalhe)
                     } else { detalhe }, &no_resumo)),
             )
-            .when_some(meta_do_sub.filter(|_| !minima), |s, texto| {
-                s.child(div().flex_none().font_family(FONTE_MONO).text_color(Cores::apagado()).child(texto))
-            })
+            .when_some(meta_do_sub.filter(|_| !minima), |s, partes| s.child(conta_do_subagente(&partes)))
             // Numa edição, quanto entrou e quanto saiu, na própria linha ("+5 −2"), como na trilha
             // de referência que o dono mandou (21st.dev, "AI Thinking and Tool calls", 13/11/2026).
             .when_some(linhas_do_diff.filter(|_| !minima && !*erro), |s, (entram, saem)| {
@@ -3232,7 +3309,7 @@ impl Janela {
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
-                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, arquivo.as_deref(), pedido)))
+                    s.child(div().pl(recuo_aberto).pt(esp::E4).child(cartao_de_edicao(&chave, pedido)))
                 })
                 .when_some(comando, |s, comando| {
                     s.child(div().pl(recuo_aberto).py(esp::E4).child(
@@ -3242,7 +3319,9 @@ impl Janela {
                             // e a caixa rola até ele (conferência na bancada, 16/11/2026).
                             .realce(&no_resultado)
                             .comando(comando.to_string()).raio_chat().erro(*erro)
-                            .tempo(if pendente { "Em execução" } else if *erro { "Falhou" } else { "Concluído" }),
+                            // O "Concluído" em toda saída não dizia nada: o comando que terminou bem
+                            // é o caso comum, e a linha acima já marca o que falhou.
+                            .when(pendente || *erro, |c| c.tempo(if pendente { "Em execução" } else { "Falhou" })),
                     ))
                 })
                 // Rodando ainda não há saída: em vez da caixa do resultado vazia, com o Copiar e
@@ -3335,14 +3414,33 @@ pub(super) fn alternar(
 /// Quantas linhas do pedido de uma chamada aparecem; o resto vira "… mais N linhas".
 const LINHAS_DO_PEDIDO: usize = 600;
 
-fn cartao_de_edicao(chave: &str, arquivo: Option<&str>, pedido: &str) -> Div {
-    div().w_full().rounded(raio::CARTAO).border_1().border_color(Cores::borda()).bg(Cores::preto()).overflow_hidden()
-        .child(h_flex().gap(esp::E8).px(esp::E8).h(r(28.))
-            .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
-            .child(div().flex_1().min_w_0().truncate().mono_pequeno().text_color(Cores::texto()).child(
-                arquivo.and_then(|a| Path::new(a).file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Alteração".into())))
-            .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string())))
+/// O diff de uma edição aberto na trilha: o poço preto das caixas de código, com o Copiar no canto
+/// só com o ponteiro em cima. Sem cabeçalho: ele repetia o nome do arquivo, que já está na linha
+/// logo acima, e deixava o Copiar sempre à vista (nas outras caixas ele só aparece no hover).
+fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
+    let grupo = SharedString::from(format!("diff-{chave}"));
+    div()
+        .relative()
+        .group(grupo.clone())
+        .w_full()
+        .rounded(raio::CARTAO)
+        .border_1()
+        .border_color(Cores::borda())
+        .bg(Cores::preto())
+        .overflow_hidden()
         .child(bloco_do_pedido(pedido))
+        .child(
+            // Opaco: fica por cima do começo da primeira linha longa.
+            div()
+                .absolute()
+                .top(esp::E4)
+                .right(esp::E4)
+                .rounded(raio::CONTROLE)
+                .bg(Cores::preto())
+                .invisible()
+                .group_hover(grupo, |s| s.visible())
+                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string()).dica("Copiar o diff")),
+        )
 }
 
 /// O que a chamada pediu (`Item::Ferramenta::detalhe`): o que saiu em vermelho, o que entrou em
@@ -3377,12 +3475,12 @@ fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
         .when(total > LINHAS_DO_PEDIDO, |s| {
             s.child(div().px(esp::E12).text_color(Cores::apagado()).child(format!("… mais {} linhas", total - LINHAS_DO_PEDIDO)))
         });
+    // Sem fundo nem raio próprios: quem desenha a caixa é o cartão em volta (era uma caixa cinza
+    // dentro da preta).
     div()
         .id("pedido-da-chamada")
         .w_full()
         .max_h(r(300.))
-        .rounded(raio::CONTROLE)
-        .bg(Cores::hover())
         .mono_pequeno()
         .flex()
         .child(miolo)
