@@ -15,6 +15,7 @@ mod caixa_entrada;
 mod composer;
 mod configuracoes;
 mod conversa;
+mod copias;
 mod dialogos;
 mod este_chat;
 mod edicao;

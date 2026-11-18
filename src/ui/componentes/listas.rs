@@ -908,6 +908,11 @@ impl ListaDeEscolha {
         cx.notify();
     }
 
+    /// O que está escrito na busca agora (para redefinir a lista sem perder o filtro).
+    pub fn busca(&self, cx: &App) -> String {
+        self.estado.read(cx).query(cx).to_string()
+    }
+
     /// Busca própria (arquivos: o nome antes da pasta); a lista mostra o que ela devolver.
     pub fn filtro_proprio(&mut self, f: impl Fn(&str) -> Vec<GrupoDeEscolha> + 'static) {
         self.filtro = Some(Rc::new(f));

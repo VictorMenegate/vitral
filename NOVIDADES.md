@@ -7,6 +7,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Novo chat direto num worktree.** A paleta "Novo chat · Em qual pasta?" ganhou o grupo
+  Worktrees: as cópias dos repositórios das pastas que já têm chat, com o ramo embaixo do nome. A
+  busca acha pela pasta e pelo ramo, e escolher abre o chat já na cópia.
 - **Ramo do git à vista.** A seção Na pasta do Este chat mostra no cabeçalho o ramo em que a pasta
   está (ou o commit, com a cabeça solta) e se ela é um worktree; a dica da linha do chat na lista e
   a da aba dizem o mesmo. Se a pasta trocar de ramo desde o último turno do chat, uma faixa acima

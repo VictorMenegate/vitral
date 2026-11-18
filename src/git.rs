@@ -302,6 +302,80 @@ pub fn repositorio_da_copia(copia: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Uma cópia (worktree) de um repositório, como o `git worktree list` a conta.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Copia {
+    pub caminho: PathBuf,
+    /// O ramo; `None` com a cabeça solta.
+    pub ramo: Option<String>,
+    /// O commit curto em que ela está.
+    pub commit: String,
+    /// A pasta dela não existe mais (o git a marca "prunable").
+    pub apagada: bool,
+    /// A primeira da lista: o repositório de onde as outras saíram.
+    pub principal: bool,
+}
+
+/// As cópias de uma saída do `git worktree list --porcelain`: um bloco por cópia ("worktree
+/// <pasta>", "HEAD <commit>", "branch refs/heads/<ramo>" ou "detached", e "prunable" na que teve a
+/// pasta apagada), separados por uma linha vazia. O repositório sem pasta de trabalho ("bare")
+/// fica de fora: não há onde um chat trabalhar nele.
+fn ler_copias(saida: &str) -> Vec<Copia> {
+    let mut copias: Vec<Copia> = Vec::new();
+    let mut sem_pasta_de_trabalho = false;
+    let mut primeira = true;
+    for linha in saida.lines().chain([""]) {
+        let (chave, valor) = linha.split_once(' ').unwrap_or((linha, ""));
+        match chave {
+            "worktree" => {
+                copias.push(Copia { caminho: PathBuf::from(valor), ramo: None, commit: String::new(), apagada: false, principal: primeira });
+                (primeira, sem_pasta_de_trabalho) = (false, false);
+            }
+            // O fim do bloco.
+            "" => {
+                if std::mem::take(&mut sem_pasta_de_trabalho) {
+                    copias.pop();
+                }
+            }
+            "bare" => sem_pasta_de_trabalho = true,
+            _ => {
+                let Some(copia) = copias.last_mut() else { continue };
+                match chave {
+                    "HEAD" => copia.commit = valor.chars().take(COMMIT_CURTO).collect(),
+                    "branch" => copia.ramo = Some(valor.strip_prefix("refs/heads/").unwrap_or(valor).to_string()),
+                    "prunable" => copia.apagada = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    copias
+}
+
+/// As cópias do repositório da pasta que ainda estão no disco (vazio fora de um repositório).
+pub fn copias_do_repositorio(pasta: &Path) -> Vec<Copia> {
+    let saida = git(pasta, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    ler_copias(&saida).into_iter().filter(|c| !c.apagada && c.caminho.is_dir()).collect()
+}
+
+/// As cópias dos repositórios de várias pastas, sem repetir. A pasta que já apareceu como cópia
+/// não chama o git de novo; a que está dentro de uma cópia chama, porque pode ser outro
+/// repositório (o `central/` dentro da raiz do workspace, que também é um).
+pub fn copias_das_pastas(pastas: &[PathBuf]) -> Vec<Copia> {
+    let mut copias: Vec<Copia> = Vec::new();
+    for pasta in pastas {
+        if copias.iter().any(|c| c.caminho == *pasta) {
+            continue;
+        }
+        for copia in copias_do_repositorio(pasta) {
+            if !copias.iter().any(|c| c.caminho == copia.caminho) {
+                copias.push(copia);
+            }
+        }
+    }
+    copias
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -421,6 +495,78 @@ mod testes {
 
         // Fora de um repositório, nada.
         assert_eq!(ramo_no_disco(&base.join("wt")), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn le_o_worktree_list_com_ramo_cabeca_solta_e_copia_apagada() {
+        let saida = "worktree /p/central\nHEAD 1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbranch refs/heads/main\n\n\
+                     worktree /p/wt/pesagem\nHEAD 2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nbranch refs/heads/feat/pesagem\nlocked\n\n\
+                     worktree /p/wt/solta\nHEAD 3333333ccccccccccccccccccccccccccccccccc\ndetached\n\n\
+                     worktree /p/wt/sumiu\nHEAD 4444444ddddddddddddddddddddddddddddddddd\nbranch refs/heads/velho\nprunable gitdir file points to non-existent location\n";
+        let copia = |caminho: &str, ramo: Option<&str>, commit: &str, apagada: bool, principal: bool| Copia {
+            caminho: PathBuf::from(caminho),
+            ramo: ramo.map(str::to_string),
+            commit: commit.into(),
+            apagada,
+            principal,
+        };
+        assert_eq!(
+            ler_copias(saida),
+            [
+                copia("/p/central", Some("main"), "1111111", false, true),
+                copia("/p/wt/pesagem", Some("feat/pesagem"), "2222222", false, false),
+                copia("/p/wt/solta", None, "3333333", false, false),
+                copia("/p/wt/sumiu", Some("velho"), "4444444", true, false),
+            ]
+        );
+        // O repositório sem pasta de trabalho sai; as cópias dele ficam. Sem a linha vazia no fim também lê.
+        let nu = "worktree /p/central.git\nbare\n\nworktree /p/wt/a\nHEAD 5555555eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\nbranch refs/heads/a";
+        assert_eq!(ler_copias(nu), [copia("/p/wt/a", Some("a"), "5555555", false, false)]);
+        assert!(ler_copias("").is_empty());
+    }
+
+    /// As cópias de um repositório de verdade, de qualquer uma delas, sem a que foi apagada.
+    #[test]
+    fn copias_de_um_repositorio_de_verdade() {
+        let base = std::env::temp_dir().join(format!("vitral-git-copias-{}", crate::modelo::novo_id()));
+        let pasta = base.join("repo");
+        std::fs::create_dir_all(pasta.join("src")).unwrap();
+        git(&pasta, &["init", "-q"]).unwrap();
+        git(&pasta, &["checkout", "-q", "-b", "principal"]).unwrap();
+        std::fs::write(pasta.join("src/a.txt"), "um\n").unwrap();
+        git(&pasta, &["add", "."]).unwrap();
+        git(&pasta, &["commit", "-q", "-m", "primeiro"]).unwrap();
+        let (um, dois) = (base.join("wt").join("um"), base.join("wt").join("dois"));
+        git(&pasta, &["worktree", "add", "-q", "-b", "feat/um", &um.to_string_lossy()]).unwrap();
+        git(&pasta, &["worktree", "add", "-q", "--detach", &dois.to_string_lossy()]).unwrap();
+        // O git escreve o caminho canônico (no macOS, o /tmp é um link).
+        let (pasta, um, dois) = (dunce::canonicalize(&pasta).unwrap(), dunce::canonicalize(&um).unwrap(), dunce::canonicalize(&dois).unwrap());
+        let resumo = |copias: &[Copia]| -> Vec<(PathBuf, Option<String>, bool)> {
+            copias.iter().map(|c| (dunce::canonicalize(&c.caminho).unwrap(), c.ramo.clone(), c.principal)).collect()
+        };
+        // O git lista o repositório primeiro e as cópias pelo nome.
+        let esperado = vec![
+            (pasta.clone(), Some("principal".to_string()), true),
+            (dois.clone(), None, false),
+            (um.clone(), Some("feat/um".to_string()), false),
+        ];
+        // De dentro de uma cópia a lista é a mesma, e várias pastas do mesmo repositório não repetem.
+        assert_eq!(resumo(&copias_do_repositorio(&um)), esperado);
+        assert_eq!(resumo(&copias_das_pastas(&[pasta.join("src"), um.clone(), pasta.clone()])), esperado);
+        assert!(copias_do_repositorio(&dois).iter().all(|c| c.commit.len() == 7));
+        // Um repositório dentro de outro é outro repositório: as cópias dele entram também.
+        let dentro = pasta.join("dentro");
+        std::fs::create_dir_all(&dentro).unwrap();
+        git(&dentro, &["init", "-q"]).unwrap();
+        let dentro = dunce::canonicalize(&dentro).unwrap();
+        let com_o_de_dentro = copias_das_pastas(&[pasta.clone(), dentro.clone()]);
+        assert_eq!(com_o_de_dentro.len(), 4);
+        assert_eq!(dunce::canonicalize(&com_o_de_dentro[3].caminho).unwrap(), dentro);
+        // A cópia com a pasta apagada some da lista.
+        std::fs::remove_dir_all(&um).unwrap();
+        assert_eq!(resumo(&copias_do_repositorio(&pasta)), [esperado[0].clone(), esperado[1].clone()]);
+        assert!(copias_do_repositorio(&base).is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 

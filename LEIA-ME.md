@@ -28,8 +28,14 @@ componentes do GPUI Kit.
   aberto, na última pasta usada (a do último chat criado, guardada como
   `ultimo_destino` no `interface.json`, ou a do chat mexido por último); sem nenhuma, a paleta
   pergunta. **Novo chat em outra pasta…**, no menu do logo, abre a paleta "Em qual pasta?": as
-  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), **Outra
-  pasta…** (o seletor do sistema) e **Sem pasta**. Quem cria é `Motor::novo_chat(pasta:
+  pastas que já têm chat (a usada há menos tempo primeiro, com a busca no nome e no caminho), os
+  **Worktrees**, **Outra pasta…** (o seletor do sistema) e **Sem pasta**. O grupo Worktrees
+  (`src/ui/copias.rs`) traz as cópias dos repositórios dessas pastas: o que o `git worktree list
+  --porcelain` de cada uma devolve (`copias_das_pastas`, em `src/git.rs`), lido em segundo plano
+  ao abrir a paleta, com o nome da pasta e, embaixo, o ramo (ou "cabeça solta em <commit>") e o
+  caminho; a busca acha pelo nome, pelo ramo e pelo caminho. A cópia que já tem chat fica só em
+  Pastas, a que teve a pasta apagada não aparece, e o Vitral só lista e abre: não cria nem apaga
+  worktree. Quem cria é `Motor::novo_chat(pasta:
   Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
   `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
   "- ", "- [ ] ", "1. "), até 7 palavras.
