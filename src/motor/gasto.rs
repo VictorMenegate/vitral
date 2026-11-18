@@ -216,11 +216,13 @@ fn mes_anterior(mes: &str) -> Option<String> {
     Some(if numero <= 1 { format!("{:04}-12", ano - 1) } else { format!("{ano:04}-{:02}", numero - 1) })
 }
 
-/// O livro na memória: os turnos em ordem de hora e, por chat, os tokens dos `result` do turno
-/// que ainda não terminou.
+/// O livro na memória: os turnos em ordem de hora, onde estão os de cada chat (a conversa
+/// pergunta por turno a cada desenho) e, por chat, os tokens dos `result` do turno que ainda não
+/// terminou.
 #[derive(Debug, Default)]
 pub struct Livro {
     turnos: Vec<Turno>,
+    por_chat: HashMap<String, Vec<usize>>,
     pendentes: HashMap<String, Tokens>,
 }
 
@@ -236,7 +238,11 @@ impl Livro {
             }
         }
         turnos.sort_by_key(|t| t.em);
-        Livro { turnos, pendentes: HashMap::new() }
+        let mut por_chat: HashMap<String, Vec<usize>> = HashMap::new();
+        for (indice, turno) in turnos.iter().enumerate() {
+            por_chat.entry(turno.chat.clone()).or_default().push(indice);
+        }
+        Livro { turnos, por_chat, pendentes: HashMap::new() }
     }
 
     pub fn turnos(&self) -> &[Turno] {
@@ -256,6 +262,7 @@ impl Livro {
             return None;
         }
         let mes = mes_de(turno.em);
+        self.por_chat.entry(turno.chat.clone()).or_default().push(self.turnos.len());
         self.turnos.push(turno);
         let mut bytes = Vec::new();
         for linha in self.turnos.iter().filter(|t| mes_de(t.em) == mes) {
@@ -264,6 +271,24 @@ impl Livro {
             }
         }
         Some((mes, bytes))
+    }
+
+    fn do_chat<'a>(&'a self, chat: &str) -> impl DoubleEndedIterator<Item = &'a Turno> + 'a {
+        self.por_chat.get(chat).into_iter().flatten().map(|&indice| &self.turnos[indice])
+    }
+
+    /// O gasto do turno que a mensagem `item` (com a hora `item_em`) abriu, se foi anotado.
+    pub fn do_turno(&self, chat: &str, item: usize, item_em: u64) -> Option<Gasto> {
+        let mut gasto = Gasto::default();
+        for turno in self.do_chat(chat).filter(|t| t.item == item && t.item_em == item_em) {
+            gasto.somar(turno);
+        }
+        (gasto.turnos > 0).then_some(gasto)
+    }
+
+    /// O último turno anotado do chat.
+    pub fn ultimo(&self, chat: &str) -> Option<&Turno> {
+        self.do_chat(chat).next_back()
     }
 }
 
@@ -405,7 +430,12 @@ mod testes {
         livro.somar_pendente("a", Tokens { cache_lido: 100, saida: 2, ..Tokens::default() });
         let (mes, bytes) = livro.fechar(Turno { item: 4, item_em: 77, ..turno(agora, "a", "/p/central", 0.42, 0) }).unwrap();
         assert_eq!(mes, mes_de(agora));
-        assert_eq!(livro.turnos()[0].tokens, Tokens { entrada: 10, cache_lido: 100, cache_criado: 0, saida: 3 });
+        assert_eq!(livro.ultimo("a").unwrap().tokens, Tokens { entrada: 10, cache_lido: 100, cache_criado: 0, saida: 3 });
+        // O turno é achado pela mensagem que o abriu (índice e hora); outro índice ou outra hora, não.
+        assert_eq!(livro.do_turno("a", 4, 77).map(|g| g.tokens.total()), Some(113));
+        assert_eq!(livro.do_turno("a", 4, 78), None);
+        assert_eq!(livro.do_turno("b", 4, 77), None);
+        assert!(livro.ultimo("b").is_none());
         // Os pendentes foram consumidos: o turno seguinte, sem custo e sem token, não entra.
         assert_eq!(livro.fechar(turno(agora + 5, "a", "/p/central", 0.0, 0)), None);
         // O que foi para o disco volta igual, e a linha estragada é pulada.
@@ -415,6 +445,7 @@ mod testes {
         std::fs::write(pasta.join(format!("{mes}.jsonl")), conteudo).unwrap();
         let relido = Livro::ler(&pasta, agora);
         assert_eq!(relido.turnos(), livro.turnos());
+        assert_eq!(relido.do_turno("a", 4, 77), livro.do_turno("a", 4, 77));
         assert_eq!(String::from_utf8(bytes).unwrap().lines().count(), 1);
         let _ = std::fs::remove_dir_all(&pasta);
     }

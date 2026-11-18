@@ -2765,8 +2765,12 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let chave = turno.chave(&contexto.chat.id);
-        let resumo = resumo_do_turno(&contexto.chat.itens, turno);
-        let dica = SharedString::from(if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" });
+        // Os tokens e o custo do turno, quando o livro dos gastos os tem (`motor/gasto.rs`): no fim
+        // da linha e na dica.
+        let gasto = contexto.motor.gastos().do_turno(&contexto.chat.id, turno.mensagem, contexto.chat.itens[turno.mensagem].em());
+        let resumo = super::onde_uso::resumo_com_gasto(resumo_do_turno(&contexto.chat.itens, turno), gasto.as_ref());
+        let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
+        let dica = SharedString::from(super::onde_uso::dica_com_gasto(dica, gasto.as_ref()));
         let linha = h_flex()
             .id(SharedString::from(format!("turno-{chave}")))
             .map(linha_de_log)

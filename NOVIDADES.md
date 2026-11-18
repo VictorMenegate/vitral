@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Tokens e custo de cada turno.** A linha "Trabalhou 6 min · 13 comandos" do turno recolhido
+  termina com o que ele gastou, "182 mil tokens · US$ 0,84", e a dica abre em entrada nova, cache
+  lido e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
+  turnos de antes desta versão continuam como eram.
 - **Quanto custa abrir um chat na pasta.** O popover do contexto ganhou a linha **Começa com**:
   os tokens que um chat novo já carrega naquela pasta, medidos no primeiro turno. O clique lista
   os arquivos de instrução (CLAUDE.md, os @imports, o índice da memória) com o tamanho de cada um

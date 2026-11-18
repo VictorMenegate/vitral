@@ -642,7 +642,13 @@ ferramentas, vale por painel).
   falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
   0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
-  dentro. O histórico importado do Claude Code não recolhe. O clique numa
+  dentro. O histórico importado do Claude Code não recolhe. No fim da linha vão os tokens e o
+  custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
+  `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela); por serem as
+  últimas partes, são as primeiras a ceder lugar na coluna estreita. A dica da linha repete o
+  gasto e abre os tokens em três números: a entrada nova (a sem desconto mais a gravada no
+  cache), o que foi lido do cache e a saída. O turno sem linha no livro (os de antes disto, e os
+  de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
@@ -1034,6 +1040,10 @@ cinco chats que mais gastaram nela, e o clique num chat fecha o diálogo e abre 
 barras medem o custo; num período só de Codex, os tokens. Na abertura o Vitral lê o mês de agora e
 o anterior (o que os 7 dias e as conversas recentes precisam). Só entra o que rodou depois desta
 versão: o que veio antes não tem linha no livro.
+
+**Último turno**, no popover do contexto da caixa (`ultimo_turno`, em `src/ui/onde_uso.rs`):
+depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
+lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
 
 **Peso fixo da pasta** (`src/motor/peso.rs` e `src/ui/peso_da_pasta.rs`). No popover do contexto
 da caixa, depois dos tokens, a linha **Começa com** diz com quantos tokens um chat novo já começa

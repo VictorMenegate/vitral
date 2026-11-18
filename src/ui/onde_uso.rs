@@ -16,7 +16,7 @@ use super::{
 use crate::{
     modelo::agora,
     motor::{
-        Motor,
+        Motor, Tokens,
         gasto::{Gasto, GastoDaPasta, comeco_do_dia, resumir},
     },
     tema::{Cores, Lucide, Tipo as _, esp, r, raio},
@@ -26,16 +26,77 @@ use crate::{
 const PASTAS: usize = 8;
 const CHATS: usize = 5;
 
+/// "850", "1,8 mil", "8 mil", "182 mil", "1,2 mi": uma quantidade de tokens em poucas letras.
+pub(super) fn quantia_curta(n: u64) -> String {
+    // Uma casa, sem o ",0" de enfeite.
+    let decimal = |valor: f64| format!("{valor:.1}").trim_end_matches(".0").replace('.', ",");
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=9_949 => format!("{} mil", decimal(n as f64 / 1e3)),
+        9_950..=999_499 => format!("{} mil", (n as f64 / 1e3).round() as u64),
+        999_500..=9_949_999 => format!("{} mi", decimal(n as f64 / 1e6)),
+        _ => format!("{} mi", (n as f64 / 1e6).round() as u64),
+    }
+}
+
 /// "850 tokens", "1,8 mil tokens", "182 mil tokens", "1,2 mi tokens".
 pub(super) fn tokens_curtos(n: u64) -> String {
-    let decimal = |valor: f64| format!("{valor:.1}").replace('.', ",");
-    match n {
-        0..=999 => contagem(n as usize, "token", "tokens"),
-        1_000..=9_949 => format!("{} mil tokens", decimal(n as f64 / 1e3)),
-        9_950..=999_499 => format!("{} mil tokens", (n as f64 / 1e3).round() as u64),
-        999_500..=9_949_999 => format!("{} mi tokens", decimal(n as f64 / 1e6)),
-        _ => format!("{} mi tokens", (n as f64 / 1e6).round() as u64),
+    format!("{} {}", quantia_curta(n), if n == 1 { "token" } else { "tokens" })
+}
+
+/// Os três números de um turno: a entrada nova (a sem desconto e a que foi gravada no cache), o
+/// que foi lido do cache e a saída.
+pub(super) fn partes_dos_tokens(tokens: &Tokens) -> [String; 3] {
+    [
+        format!("{} de entrada nova", quantia_curta(tokens.entrada + tokens.cache_criado)),
+        format!("{} lidos do cache", quantia_curta(tokens.cache_lido)),
+        format!("{} de saída", quantia_curta(tokens.saida)),
+    ]
+}
+
+/// A linha "Trabalhou 6 min · 13 comandos" com o gasto do turno no fim, "· 182 mil tokens · US$
+/// 0,84". Por ser o fim, é a primeira parte a ceder lugar na coluna estreita (`partes_inteiras`).
+/// Sem o dado (conversa de antes do livro), a linha fica como veio.
+pub(super) fn resumo_com_gasto(resumo: String, gasto: Option<&Gasto>) -> String {
+    match gasto {
+        Some(gasto) => format!("{resumo} · {}", gasto_curto(gasto)),
+        None => resumo,
     }
+}
+
+/// A dica da linha do turno, com o gasto e os três números dos tokens embaixo.
+pub(super) fn dica_com_gasto(dica: &str, gasto: Option<&Gasto>) -> String {
+    let Some(gasto) = gasto else {
+        return dica.to_string();
+    };
+    let mut linhas = vec![dica.to_string(), gasto_curto(gasto)];
+    if gasto.tokens.total() > 0 {
+        linhas.push(partes_dos_tokens(&gasto.tokens).join(" · "));
+    }
+    linhas.join("\n")
+}
+
+/// "Último turno", no popover do contexto: a entrada nova, o cache lido e a saída do último turno
+/// anotado da conversa, um embaixo do outro. Nada sem turno anotado ou sem os tokens dele.
+pub(super) fn ultimo_turno(motor: &Motor, chat: &str) -> Option<AnyElement> {
+    let turno = motor.gastos().ultimo(chat).filter(|t| t.tokens.total() > 0)?;
+    Some(
+        h_flex()
+            .items_start()
+            .gap(esp::E8)
+            .py(esp::E4)
+            .child(div().flex_none().w(r(104.)).metadado().line_height(r(18.)).text_color(Cores::tenue()).child("Último turno"))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(r(13.))
+                    .line_height(r(18.))
+                    .text_color(Cores::texto())
+                    .children(partes_dos_tokens(&turno.tokens).map(|parte| div().child(parte))),
+            )
+            .into_any_element(),
+    )
 }
 
 /// "182 mil tokens · US$ 0,84": o gasto numa linha. Sem custo (o Codex não diz), só os tokens;
@@ -271,7 +332,7 @@ impl Render for OndeOUsoFoi {
 
 #[cfg(test)]
 mod testes {
-    use super::{desde, gasto_curto, tokens_curtos};
+    use super::{desde, dica_com_gasto, gasto_curto, partes_dos_tokens, resumo_com_gasto, tokens_curtos};
     use crate::motor::{Tokens, gasto::Gasto};
 
     #[test]
@@ -282,7 +343,8 @@ mod testes {
         assert_eq!(tokens_curtos(1_849), "1,8 mil tokens");
         assert_eq!(tokens_curtos(9_960), "10 mil tokens");
         assert_eq!(tokens_curtos(182_400), "182 mil tokens");
-        assert_eq!(tokens_curtos(999_700), "1,0 mi tokens");
+        assert_eq!(tokens_curtos(999_700), "1 mi tokens");
+        assert_eq!(tokens_curtos(8_000), "8 mil tokens");
         assert_eq!(tokens_curtos(1_240_000), "1,2 mi tokens");
         assert_eq!(tokens_curtos(48_600_000), "49 mi tokens");
     }
@@ -294,6 +356,29 @@ mod testes {
         // O Codex não diz custo; um `result` antigo não diz tokens.
         assert_eq!(gasto_curto(&Gasto { custo: 0.0, tokens, turnos: 1 }), "182 mil tokens");
         assert_eq!(gasto_curto(&Gasto { custo: 1.5, tokens: Tokens::default(), turnos: 1 }), "US$ 1,50");
+    }
+
+    #[test]
+    fn linha_e_dica_do_turno_com_o_gasto() {
+        let tokens = Tokens { entrada: 2_000, cache_lido: 170_000, cache_criado: 6_000, saida: 4_000 };
+        let gasto = Gasto { custo: 0.84, tokens, turnos: 1 };
+        // O gasto vai no fim: são as partes que a coluna estreita tira primeiro.
+        assert_eq!(
+            resumo_com_gasto("Trabalhou 6 min 12 s · 13 comandos".into(), Some(&gasto)),
+            "Trabalhou 6 min 12 s · 13 comandos · 182 mil tokens · US$ 0,84"
+        );
+        // A entrada nova soma a sem desconto e a que foi para o cache.
+        assert_eq!(partes_dos_tokens(&tokens), ["8 mil de entrada nova", "170 mil lidos do cache", "4 mil de saída"]);
+        assert_eq!(
+            dica_com_gasto("Ver o que o agente fez neste turno", Some(&gasto)),
+            "Ver o que o agente fez neste turno\n182 mil tokens · US$ 0,84\n8 mil de entrada nova · 170 mil lidos do cache · 4 mil de saída"
+        );
+        // Conversa antiga, sem o dado: tudo como hoje.
+        assert_eq!(resumo_com_gasto("Trabalhou 45 s".into(), None), "Trabalhou 45 s");
+        assert_eq!(dica_com_gasto("Ver o que o agente fez neste turno", None), "Ver o que o agente fez neste turno");
+        // Só o custo (um `result` sem os tokens): a dica não inventa os três números.
+        let so_custo = Gasto { custo: 0.5, tokens: Tokens::default(), turnos: 1 };
+        assert_eq!(dica_com_gasto("Ver", Some(&so_custo)), "Ver\nUS$ 0,50");
     }
 
     #[test]

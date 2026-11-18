@@ -6,7 +6,6 @@
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::{h_flex, popover::PopoverState, tooltip::Tooltip, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
