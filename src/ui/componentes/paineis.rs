@@ -162,13 +162,13 @@ impl Aba {
             TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
             TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
         };
-        // O estado no contorno: parado (verde, âmbar, vermelho) é a cor do próprio fio, com um halo
-        // curto; trabalhando, o fio azul que respira vai por cima, numa vista própria.
+        // O estado no contorno, discreto (dono, 18/11/2026: "tenta não fazer muito chamativo"):
+        // parado (verde, âmbar, vermelho), a cor apagada no próprio fio, sem halo; trabalhando, o fio
+        // azul que respira devagar vai por cima, numa vista própria.
         let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
-        let halo = self.borda.as_ref().filter(|(s, _)| *s != Sinal::Rodando).map(|(s, _)| {
-            borda = cor_da_borda(*s);
-            vec![BoxShadow::new(px(0.), px(0.), cor_da_borda(*s).opacity(0.35)).blur_radius(px(6.))]
-        });
+        if let Some((s, _)) = self.borda.as_ref().filter(|(s, _)| *s != Sinal::Rodando) {
+            borda = cor_da_borda(*s).opacity(0.55);
+        }
         let respira = self.borda.filter(|(s, _)| *s == Sinal::Rodando).map(|(s, chave)| BordaQueRespira {
             chave,
             raio: raio::de(32.),
@@ -290,7 +290,6 @@ impl Aba {
                             .group_hover(GRUPO_DA_ABA, |s| s.visible()),
                     )
             })
-            .when_some(halo.filter(|_| !self.arrastando), |s, halo| s.shadow(halo))
             .children(respira.filter(|_| !self.arrastando))
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
@@ -514,9 +513,9 @@ mod testes {
     }
 }
 
-/// O contorno da aba de um chat trabalhando: o fio azul que respira (de 0,4 a 1 em 1,6 s), em cima
-/// do fio preto, numa vista própria (a batida redesenha só ele, e não a janela). Com o movimento
-/// reduzido, fica aceso, parado.
+/// O contorno da aba de um chat trabalhando: o fio azul que respira devagar (de 0,15 a 0,6 em 2,4 s),
+/// em cima do fio preto, sem halo, numa vista própria (a batida redesenha só ele, e não a janela).
+/// Com o movimento reduzido, fica parado, a meia luz.
 #[derive(IntoElement)]
 struct BordaQueRespira {
     chave: String,
@@ -529,22 +528,15 @@ impl RenderOnce for BordaQueRespira {
         let (raio, cor) = (self.raio, self.cor);
         // Em cima do fio de 1 px da aba (o absoluto conta de dentro dele).
         let lugar = div().absolute().top(px(-1.)).left(px(-1.)).right(px(-1.)).bottom(px(-1.));
-        let fio = move |alfa: f32| {
-            div()
-                .size_full()
-                .rounded(raio)
-                .border_1()
-                .border_color(cor.opacity(alfa))
-                .shadow(vec![BoxShadow::new(px(0.), px(0.), cor.opacity(0.4 * alfa)).blur_radius(px(6.))])
-        };
+        let fio = move |alfa: f32| div().size_full().rounded(raio).border_1().border_color(cor.opacity(alfa));
         if cx.reduce_motion() {
-            return lugar.child(fio(1.));
+            return lugar.child(fio(0.45));
         }
         let versao = u64::from(Rgba::from(cor).b.to_bits()) ^ u64::from(raio.as_f32().to_bits()) << 32;
         lugar.child(super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), versao, cx, move |window, cx| {
             let fase = crate::ui::movimento::laco_a(window, cx, crate::ui::movimento::QPS_DO_LACO);
-            let t = (fase / 1.6).fract() as f32;
-            let alfa = 0.4 + 0.6 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
+            let t = (fase / 2.4).fract() as f32;
+            let alfa = 0.15 + 0.45 * (0.5 + 0.5 * (t * std::f32::consts::TAU).cos());
             fio(alfa).into_any_element()
         }))
     }
