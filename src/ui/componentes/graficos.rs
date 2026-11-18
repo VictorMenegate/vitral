@@ -332,6 +332,7 @@ pub struct AnelDeUso {
     bloqueado: bool,
     apagado: bool,
     encher: bool,
+    atencao: bool,
 }
 
 impl AnelDeUso {
@@ -345,7 +346,14 @@ impl AnelDeUso {
             bloqueado: false,
             apagado: false,
             encher: false,
+            atencao: false,
         }
+    }
+
+    /// No ritmo de agora o limite acaba antes de renovar: o arco fica âmbar mesmo abaixo de 70%.
+    pub fn atencao(mut self, sim: bool) -> Self {
+        self.atencao = sim;
+        self
     }
 
     /// Os arcos enchem de 0 ao aparecer (popover de uso aberto); depois, deslizam.
@@ -399,7 +407,13 @@ impl RenderOnce for AnelDeUso {
         } else {
             apertada
         };
-        let cor_fora = if self.bloqueado { Cores::vermelho() } else { cor_da_faixa(fora.unwrap_or(0.), base) };
+        let cor_fora = if self.bloqueado {
+            Cores::vermelho()
+        } else if self.atencao && (fora.unwrap_or(0.) * 100.).round() < 70. {
+            Cores::ambar()
+        } else {
+            cor_da_faixa(fora.unwrap_or(0.), base)
+        };
         // Sem número, sem arco.
         let alvo = fora.unwrap_or(0.).clamp(0., 1.);
         let chave = movimento::chave(&self.id, "arcos");

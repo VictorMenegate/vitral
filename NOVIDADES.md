@@ -7,6 +7,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o que o agente faz.
 
+- **Previsão de quando o limite acaba.** No popover do uso do Claude, cada janela diz se o ritmo
+  de agora chega a 100% antes de renovar ("No ritmo de agora, chega a 100% às 15:10") ou se "Dá
+  até a renovação". Quando as 5 h vão acabar antes da hora, o anel do canto fica âmbar e a dica
+  dele diz a hora, mesmo abaixo de 70%.
 - **Quadro de ideias (Ctrl+I).** Um kanban do app inteiro, com Ideias, Próximas, Fazendo e
   Feitas. A ideia se anota no alto de Ideias, os cartões se arrastam entre as colunas e o clique
   abre o título, o pedido e a pasta. **Abrir chat** cria a conversa na pasta do cartão, já com o

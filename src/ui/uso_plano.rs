@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     codex::Codex,
-    contas::{self, Conta, Creditos, Parada, Plano},
+    contas::{self, Conta, Creditos, Parada, Plano, previsao::Previsao},
     modelo::agora,
     motor::{Motor, Uso},
     sistema,
@@ -119,6 +119,7 @@ impl Janela {
                     varias,
                     m.config.conta == contas::AUTOMATICA,
                     m.limite_vence(&conta.id),
+                    m.previsao_da_conta(&conta.id).cinco_horas.estoura(),
                 ),
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
             )
@@ -231,7 +232,8 @@ impl RenderOnce for BotaoUso {
                     .semana(l.dentro.map(|f| f as f32))
                     .diametro(self.diametro)
                     .bloqueado(l.bloqueado)
-                    .apagado(l.apagado),
+                    .apagado(l.apagado)
+                    .atencao(l.atencao),
             )
             .when_some(l.selo, |s, letra| s.child(inicial_da_conta(letra, self.diametro <= 24.)))
     }
@@ -260,8 +262,8 @@ fn inicial_da_conta(letra: String, pequena: bool) -> impl IntoElement + use<> {
 }
 
 /// O que o botão de um serviço mostra: o anel de fora, o de dentro, a dica, se está no limite,
-/// se está apagado (sem o serviço ou ainda sem leitura) e, no Claude com várias contas, a
-/// inicial da conta em uso.
+/// se está apagado (sem o serviço ou ainda sem leitura), no Claude com várias contas, a inicial
+/// da conta em uso e, quando o ritmo de agora estoura as 5 h antes de renovar, a atenção (âmbar).
 #[derive(Clone, Debug, PartialEq)]
 struct Leitura {
     fora: Option<f64>,
@@ -270,6 +272,7 @@ struct Leitura {
     selo: Option<String>,
     bloqueado: bool,
     apagado: bool,
+    atencao: bool,
 }
 
 impl Leitura {
@@ -280,8 +283,11 @@ impl Leitura {
 }
 
 /// Claude: 5 h fora e semana dentro. Com `conta` (há mais de uma), a dica diz qual está em uso
-/// e o botão ganha o selo com a inicial dela. No limite, a dica diz quando ela volta.
-fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Option<u64>) -> Leitura {
+/// e o botão ganha o selo com a inicial dela. No limite, a dica diz quando ela volta. `estoura`
+/// é a hora em que as 5 h chegam a 100% no ritmo de agora, quando isso cai antes da renovação:
+/// o anel fica âmbar e a dica diz a hora.
+fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Option<u64>, estoura: Option<i64>) -> Leitura {
+    let estoura = estoura.filter(|_| !uso.bloqueado);
     let nome = match conta {
         Some(c) if automatica => format!("{} · conta {} (automática)", Marca::Claude.nome(), c.nome),
         Some(c) => format!("{} · conta {}", Marca::Claude.nome(), c.nome),
@@ -292,12 +298,16 @@ fn leitura_claude(uso: &Uso, conta: Option<&Conta>, automatica: bool, volta: Opt
         dentro: uso.semana,
         dica: if uso.bloqueado {
             format!("{nome} · {}", limite_atingido(volta))
+        } else if let Some(hora) = estoura {
+            let agora = agora() as i64;
+            format!("{} · no ritmo de agora, 100% {}", dica_janelas(&nome, uso), quando(local(hora), local(agora).0))
         } else {
             dica_janelas(&nome, uso)
         },
         selo: conta.map(inicial),
         bloqueado: uso.bloqueado,
         apagado: false,
+        atencao: estoura.is_some(),
     }
 }
 
@@ -312,6 +322,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
         selo: None,
         bloqueado: false,
         apagado,
+        atencao: false,
     };
     let Some(codex) = codex else {
         return so_dica(
@@ -329,6 +340,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
                 selo: None,
                 bloqueado: uso.bloqueado,
                 apagado: false,
+                atencao: false,
             };
         }
         if codex.sem_limites {
@@ -342,6 +354,7 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
         selo: None,
         bloqueado: uso.bloqueado,
         apagado: false,
+        atencao: false,
     }
 }
 
@@ -399,6 +412,8 @@ fn detalhes_claude(
     let conta = motor.conta_padrao();
     let uso = motor.uso_da_conta(&conta.id);
     let volta = motor.limite_vence(&conta.id);
+    // No limite, o alerta já diz tudo: a previsão some.
+    let previsoes = if uso.bloqueado { Default::default() } else { motor.previsao_da_conta(&conta.id) };
     let plano = motor.plano_da_conta(&conta.id).cloned().unwrap_or_default();
     let plano_em_uso = nome_do_plano(Some(&plano), &conta);
     let contexto = if motor.config.conta == contas::AUTOMATICA {
@@ -430,12 +445,12 @@ fn detalhes_claude(
             selo: plano_em_uso.map(Selo::neutro),
         })
         .when(uso.bloqueado, |s| s.child(Alerta::new(Tom::Erro, maiuscula(&limite_atingido(volta)))))
-        .child(linha_janela("Sessão de 5 h".into(), uso.cinco_horas, uso.renova_5h, base, agora))
-        .child(linha_janela("Semana".into(), uso.semana, uso.renova_semana, base, agora))
+        .child(linha_janela("Sessão de 5 h".into(), uso.cinco_horas, uso.renova_5h, previsoes.cinco_horas, base, agora))
+        .child(linha_janela("Semana".into(), uso.semana, uso.renova_semana, previsoes.semana, base, agora))
         .children(plano.por_modelo.into_iter().map(move |(modelo, fracao, renova)| {
             // A mesma regra do `Uso::juntar`: o limite que já renovou volta a zero.
             let fracao = if renova.is_some_and(|r| r <= agora) { 0.0 } else { fracao };
-            linha_janela(format!("Semana · {modelo}").into(), Some(fracao), renova, base, agora)
+            linha_janela(format!("Semana · {modelo}").into(), Some(fracao), renova, Previsao::SemDado, base, agora)
         }))
         .when_some(plano.creditos, |s, creditos| s.child(linha_creditos(&creditos)))
         .child(separador())
@@ -491,16 +506,16 @@ fn detalhes_codex(
         })
         .when(uso.bloqueado, |s| s.child(Alerta::new(Tom::Erro, "Limite atingido")))
         .when_some(uso.cinco_horas, |s, fracao| {
-            s.child(linha_janela("Sessão de 5 h".into(), Some(fracao), uso.renova_5h, base, agora))
+            s.child(linha_janela("Sessão de 5 h".into(), Some(fracao), uso.renova_5h, Previsao::SemDado, base, agora))
         })
         .when_some(uso.semana, |s, fracao| {
-            s.child(linha_janela("Semana".into(), Some(fracao), uso.renova_semana, base, agora))
+            s.child(linha_janela("Semana".into(), Some(fracao), uso.renova_semana, Previsao::SemDado, base, agora))
         })
         .children(
             codex
                 .outras
                 .into_iter()
-                .map(move |(rotulo, fracao, renova)| linha_janela(rotulo.into(), Some(fracao), renova, base, agora)),
+                .map(move |(rotulo, fracao, renova)| linha_janela(rotulo.into(), Some(fracao), renova, Previsao::SemDado, base, agora)),
         )
         .when(!sem_dado, |s| {
             s.child(texto(
@@ -522,11 +537,14 @@ fn barra(fracao: f64, cor: Hsla) -> Div {
 
 /// Uma janela no popover: o anel com fenda de 44 (enche de 0 ao abrir) com a porcentagem no
 /// meio (em âmbar ou vermelho a partir de 70%, como o arco) e, à direita, o rótulo e quando
-/// renova. Sem dado, só o rótulo e "sem dado": o anel vazio diria 0%.
+/// renova. Sem dado, só o rótulo e "sem dado": o anel vazio diria 0%. Com a previsão, mais uma
+/// linha embaixo da renovação: a hora em que chega a 100% no ritmo de agora (em âmbar) ou "Dá até
+/// a renovação".
 fn linha_janela(
     rotulo: SharedString,
     fracao: Option<f64>,
     renova: Option<i64>,
+    previsao: Previsao,
     base: Hsla,
     agora: i64,
 ) -> impl IntoElement + use<> {
@@ -559,6 +577,10 @@ fn linha_janela(
                 .when(fracao.is_none(), |s| s.child(div().metadado().text_color(Cores::apagado()).child("sem dado")))
                 .when_some(texto_renovacao(renova, agora), |s, t| {
                     s.child(div().metadado().text_color(Cores::tenue()).child(t))
+                })
+                .when_some(texto_previsao(previsao, agora), |s, t| {
+                    let cor = if previsao.estoura().is_some() { Cores::ambar() } else { Cores::tenue() };
+                    s.child(div().metadado().text_color(cor).child(t))
                 }),
         )
 }
@@ -869,6 +891,18 @@ fn texto_renovacao(renova: Option<i64>, agora: i64) -> Option<String> {
     Some(format!("renova em {} · {horario}", duracao(renova.saturating_sub(agora))))
 }
 
+/// "No ritmo de agora, chega a 100% às 15:10" (ou "qui. às 09:40", na semana) quando isso cai
+/// antes da renovação; "Dá até a renovação" quando não; nada sem leituras bastantes.
+fn texto_previsao(previsao: Previsao, agora: i64) -> Option<String> {
+    match previsao {
+        Previsao::SemDado => None,
+        Previsao::AteRenovar => Some("Dá até a renovação".into()),
+        Previsao::Estoura(hora) => {
+            Some(format!("No ritmo de agora, chega a 100% {}", quando(local(hora), local(agora).0)))
+        }
+    }
+}
+
 /// Tempo até renovar, arredondado para cima no minuto: "42 min", "2 h 13 min", "1 dia 15 h".
 fn duracao(segundos: i64) -> String {
     let minutos = segundos.max(0).saturating_add(59) / 60;
@@ -960,11 +994,11 @@ mod testes {
     // Sem `use super::*`: o `gpui_kit::*` traz um `test` próprio que encobriria o da biblioteca.
     use super::{
         atualizado, dinheiro, duracao, inicial, legenda_creditos, leitura_claude, leitura_codex,
-        linha_marcada, nome_do_plano, porcentagem, quando, resumo_conta, texto_renovacao,
+        linha_marcada, nome_do_plano, porcentagem, quando, resumo_conta, texto_previsao, texto_renovacao,
     };
     use crate::{
         codex::Codex,
-        contas::{self, Conta, Creditos, Parada, Plano},
+        contas::{self, Conta, Creditos, Parada, Plano, previsao::Previsao},
         motor::Uso,
         ui::painel_contas::valor_da_config,
     };
@@ -1003,7 +1037,7 @@ mod testes {
             ..Uso::default()
         };
         assert_eq!(porcentagem(0.07), 7);
-        assert_eq!(leitura_claude(&uso, None, false, None).dica, "Claude · 5 h 7% · semana 38%");
+        assert_eq!(leitura_claude(&uso, None, false, None, None).dica, "Claude · 5 h 7% · semana 38%");
         assert_eq!(resumo_conta(&uso), "5 h 7% · semana 38%");
         // A janela sem leitura fica de fora, como no menu de conta.
         assert_eq!(resumo_conta(&Uso { semana: Some(0.73), ..Uso::default() }), "semana 73%");
@@ -1045,11 +1079,39 @@ mod testes {
             bloqueado: true,
             ..Uso::default()
         };
-        let leitura = leitura_claude(&uso, None, false, None);
+        let leitura = leitura_claude(&uso, None, false, None, None);
         assert!(leitura.bloqueado);
         assert_eq!(leitura.dica, "Claude · limite atingido");
-        let volta = leitura_claude(&uso, None, false, Some(crate::modelo::agora()));
+        let volta = leitura_claude(&uso, None, false, Some(crate::modelo::agora()), None);
         assert!(volta.dica.starts_with("Claude · limite atingido, volta às "), "{}", volta.dica);
+    }
+
+    #[test]
+    fn previsao_na_dica_do_anel_e_na_linha_da_janela() {
+        let uso = Uso {
+            cinco_horas: Some(0.45),
+            semana: Some(0.38),
+            ..Uso::default()
+        };
+        // Sem previsão de estouro, o anel e a dica ficam como sempre.
+        let calmo = leitura_claude(&uso, None, false, None, None);
+        assert!(!calmo.atencao);
+        assert_eq!(calmo.dica, "Claude · 5 h 45% · semana 38%");
+        // Estoura antes de renovar: âmbar mesmo em 45%, e a dica diz a hora.
+        let agora = crate::modelo::agora() as i64;
+        let aperto = leitura_claude(&uso, None, false, None, Some(agora + 600));
+        assert!(aperto.atencao);
+        assert!(aperto.dica.starts_with("Claude · 5 h 45% · semana 38% · no ritmo de agora, 100% "), "{}", aperto.dica);
+        // No limite, quem fala é o limite.
+        let cheio = Uso { bloqueado: true, ..uso };
+        let leitura = leitura_claude(&cheio, None, false, None, Some(agora + 600));
+        assert!(!leitura.atencao);
+        assert_eq!(leitura.dica, "Claude · limite atingido");
+        assert_eq!(texto_previsao(Previsao::SemDado, 100), None);
+        assert_eq!(texto_previsao(Previsao::AteRenovar, 100).as_deref(), Some("Dá até a renovação"));
+        let texto = texto_previsao(Previsao::Estoura(1_000_000 + 1800), 1_000_000).unwrap();
+        assert!(texto.starts_with("No ritmo de agora, chega a 100% "), "{texto}");
+        assert!(texto.contains("às "), "{texto}");
     }
 
     #[test]
@@ -1078,11 +1140,11 @@ mod testes {
         let principal = conta(contas::PRINCIPAL, "Principal", "", "");
         let extra = conta("x1", "victor", "victor@exemplo.com", "max");
         // Uma conta só: nem selo nem conta na dica.
-        assert_eq!(leitura_claude(&uso, None, false, None).selo, None);
-        let leitura = leitura_claude(&uso, Some(&principal), false, None);
+        assert_eq!(leitura_claude(&uso, None, false, None, None).selo, None);
+        let leitura = leitura_claude(&uso, Some(&principal), false, None, None);
         assert_eq!(leitura.dica, "Claude · conta Principal · 5 h 7% · semana 38%");
         assert_eq!(leitura.selo.as_deref(), Some("P"));
-        let leitura = leitura_claude(&uso, Some(&extra), true, None);
+        let leitura = leitura_claude(&uso, Some(&extra), true, None, None);
         assert_eq!(leitura.dica, "Claude · conta victor (automática) · 5 h 7% · semana 38%");
         assert_eq!(leitura.selo.as_deref(), Some("V"));
         assert_eq!(inicial(&conta("x2", "", "", "")), "?");

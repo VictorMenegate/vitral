@@ -1006,6 +1006,19 @@ esperar mais antes de tentar de novo, sem aviso. Contam também o que o Claude C
 guardam no disco (relido a cada 30 s) e os avisos de limite durante os turnos; o Codex só por
 esses dois caminhos.
 
+**Previsão de quando o limite acaba** (`src/contas/previsao.rs`). O motor guarda na memória, por
+conta, as leituras cruas do uso (`Motor::historico_uso`, alimentado em `juntar_uso_da_conta` e no
+`Evento::Limite`), e a inclinação entre a mais velha do trecho recente e a última diz quando a
+janela chega a 100%. No popover do Claude, embaixo de "renova em…", cada janela ganha uma linha:
+"No ritmo de agora, chega a 100% às 15:10", em âmbar, quando isso cai antes da renovação, ou "Dá
+até a renovação". Quando a previsão das 5 h cai antes da renovação, o anel do canto fica âmbar
+mesmo abaixo de 70% e a dica dele diz a hora. O trecho é de 30 min nas 5 h (com pelo menos 5 min
+entre as leituras) e de 6 h na semana (pelo menos 30 min): meia hora de trabalho pesado esticada
+por dias diria sempre que a semana estoura, e por isso a semana também não pinta o anel. Sem
+leituras bastantes, com a última leitura mais velha que o trecho, logo depois de a janela renovar
+(as leituras da janela anterior não contam) ou no limite, a linha não aparece. As leituras não vão
+para o disco: depois de abrir o Vitral a previsão leva alguns minutos para aparecer.
+
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
 anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso

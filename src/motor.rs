@@ -279,6 +279,8 @@ pub struct Motor {
     /// Contas do Claude (a principal primeiro) e o uso do plano de cada uma.
     pub contas: Vec<Conta>,
     uso_por_conta: HashMap<String, Uso>,
+    /// As últimas leituras do uso de cada conta, para a previsão de quando o limite acaba.
+    historico_uso: HashMap<String, contas::previsao::Historico>,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -581,6 +583,7 @@ impl Motor {
             rodadas: HashMap::new(),
             contas: contas::carregar(),
             uso_por_conta: HashMap::new(),
+            historico_uso: HashMap::new(),
             limite_ate: HashMap::new(),
             sem_login: contas::ler_sem_login(),
             recusadas: HashSet::new(),
@@ -2744,6 +2747,11 @@ impl Motor {
         uso
     }
 
+    /// No ritmo das últimas leituras, se cada janela da conta enche antes de renovar.
+    pub fn previsao_da_conta(&self, conta: &str) -> contas::previsao::Previsoes {
+        self.historico_uso.get(conta).map(|h| h.prever(agora() as i64)).unwrap_or_default()
+    }
+
     /// Quando a conta no limite volta a receber turnos (None se ela não está no limite).
     pub fn limite_vence(&self, conta: &str) -> Option<u64> {
         self.uso_da_conta(conta).bloqueado.then(|| self.limite_ate.get(conta).copied()).flatten()
@@ -2793,6 +2801,7 @@ impl Motor {
     /// que mudou.
     fn juntar_uso_da_conta(&mut self, id: &str, lido: Uso, plano: Plano, agora: i64) -> Mudanca {
         let antes = self.uso_por_conta.get(id).copied().unwrap_or_default();
+        self.historico_uso.entry(id.to_string()).or_default().registrar(&lido);
         let depois = antes.juntar(lido, agora);
         let velho = self.plano_por_conta.get(id);
         let novo = velho.cloned().unwrap_or_default().juntar(plano);
@@ -3310,6 +3319,7 @@ impl Motor {
                     renova_semana,
                     medido_em: Some(agora() as i64),
                 };
+                self.historico_uso.entry(conta.clone()).or_default().registrar(&medido);
                 let junto = self.uso_da_conta(&conta).juntar(medido, agora() as i64);
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
