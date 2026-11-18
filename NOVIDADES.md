@@ -20,8 +20,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **Todo anel da conversa gira.** A chamada rodando ("Rodando npm test"), o grupo com uma chamada
   rodando e a revisão da memória giram como o "Pensando…": todos numa camada só, por cima da
   conversa, que não se redesenha a cada volta. Parados, eles pareciam travados.
-- **Copiar e hora só na resposta que fecha o turno.** No texto do meio do turno, a barra ficava por
-  cima da linha da trilha logo abaixo.
+- **Copiar e hora só na resposta que fecha o turno, e por cima.** No texto do meio do turno, a barra
+  ficava por cima da linha da trilha logo abaixo; e a linha de baixo (a revisão da memória) era
+  pintada por cima dela, que parecia transparente. Agora ela é pintada por último, opaca.
 
 ## 0.9.0
 

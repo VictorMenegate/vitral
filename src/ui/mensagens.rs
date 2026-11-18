@@ -1250,7 +1250,10 @@ impl Janela {
             // era um terço da linha. O seu balão continua com ela em cima. Só no texto que fecha o
             // turno: no do meio, a trilha vem a 12 e a barra ficava em cima dela (dono, 18/11/2026:
             // "o hover tá em cima da parte de copiar e hora").
-            .when(cabe_a_barra, |s| s.child(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
+            // Pintada depois de tudo (`deferred`): a linha logo abaixo (a revisão da memória) não
+            // passa por cima dela, e a barra não parece transparente (dono, 18/11/2026: "faz ser
+            // menos transparente isso").
+            .when(cabe_a_barra, |s| s.child(deferred(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 grupo.clone(),
                 hora_na_barra(em)
                     .into_iter()
@@ -1262,7 +1265,7 @@ impl Janela {
                     .chain([copiar(chave, texto).into_any_element()])
                     .collect(),
                 cx,
-            ))));
+            ))).with_priority(1)));
         div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()
     }
 
