@@ -21,7 +21,6 @@ mod ideias;
 mod agendadas;
 pub mod gasto;
 mod memoria;
-pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod ramo;
 mod bifurcar;
@@ -290,8 +289,6 @@ pub struct Motor {
     historico_uso: HashMap<String, contas::previsao::Historico>,
     /// O livro dos turnos terminados: custo e tokens por chat e por pasta (`motor/gasto.rs`).
     gastos: gasto::Livro,
-    /// Com quanto contexto um chat novo começa em cada pasta (`motor/peso.rs`).
-    pesos: peso::Pesos,
     /// A memória de cada chat trabalhando, lida do escopo dele (`motor/memoria.rs`).
     memorias: memoria::Leituras,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
@@ -580,10 +577,8 @@ impl Motor {
         quadro.acertar_ordens();
         let linear = ideias::EstadoDoLinear::da_config(&dados.config);
         let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
-        let pesos = peso::Pesos::ler(&dados.arquivo_pesos());
         let mut motor = Self {
             gastos,
-            pesos,
             memorias: Default::default(),
             quadro,
             quadro_sujo: false,
@@ -3141,10 +3136,7 @@ impl Motor {
                     self.salvar();
                 }
             }
-            Evento::Carga(carga) => self.anotar_carga(chat_id, carga),
             Evento::Contexto(tokens) => {
-                // Antes de gravar no chat: o primeiro contexto de um chat novo é a base da pasta.
-                self.medir_peso(chat_id, tokens);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.contexto = Some(tokens);
                 }

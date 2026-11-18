@@ -478,7 +478,7 @@ fn menu_do_painel(
 
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
 /// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
-/// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o peso da pasta).
+/// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o último turno).
 pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement>, acao: AnyElement) -> CorpoPopover {
     let linha = |rotulo: &'static str, valor: AnyElement| {
         h_flex()

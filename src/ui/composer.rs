@@ -968,15 +968,10 @@ impl Janela {
                 .content(move |_, window, cx| {
                     let pop = cx.entity().downgrade();
                     let janela_e = janela_e.clone();
-                    // As linhas que vêm depois dos tokens: o que o último turno gastou e com quanto um
-                    // chat novo começa na pasta.
+                    // A linha que vem depois dos tokens: o que o último turno gastou.
                     let extras: Vec<AnyElement> = motor
                         .as_ref()
-                        .map(|m| {
-                            let ultimo = super::onde_uso::ultimo_turno(m.read(cx), &chat_id);
-                            let peso = super::peso_da_pasta::secao(m, &chat_id, janela_e.clone(), pop.clone(), window, cx);
-                            ultimo.into_iter().chain(peso).collect()
-                        })
+                        .map(|m| super::onde_uso::ultimo_turno(m.read(cx), &chat_id).into_iter().collect())
                         .unwrap_or_default();
                     let compactar = botao_fantasma(
                         ("compactar", painel as usize),

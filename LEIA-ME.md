@@ -1164,54 +1164,6 @@ versão: o que veio antes não tem linha no livro.
 depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
 lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
 
-**Peso fixo da pasta** (`src/motor/peso.rs` e `src/ui/peso_da_pasta.rs`). No popover do contexto
-da caixa, depois dos tokens, a linha **Começa com** diz com quantos tokens um chat novo já começa
-na pasta da conversa, antes de qualquer pergunta: as instruções, os servidores MCP, as skills e as
-ferramentas. A base é medida: o primeiro `Evento::Contexto` de um chat que começa do zero no
-Claude, menos a estimativa da primeira mensagem (3,5 caracteres por token), guardada a última por
-pasta em `peso-das-pastas.json`. Não medem a sessão retomada, a conversa trazida do Claude Code, a
-que já tem mais de uma mensagem (o bloco de passagem inclusive) nem a mensagem com anexo; sem
-medida, a linha diz "sem medida ainda". O clique abre a lista dos arquivos de instrução que a
-pasta carrega, lida do disco pelas regras do Claude Code (`instrucoes`): o `CLAUDE.md` do usuário,
-o `CLAUDE.md`, o `.claude/CLAUDE.md` e o `CLAUDE.local.md` da pasta e das pastas de cima até a
-raiz do repositório, os `@imports` de cada um (até 5 níveis, fora de bloco de código e de crases,
-cada arquivo uma vez; é por eles que o `AGENTS.md` aparece) e o índice da memória (o `MEMORY.md`
-do `autoMemoryDirectory` do `settings.json` ou de `projects/<pasta>/memory`), cada um com o
-tamanho; o clique num arquivo o abre à direita. Embaixo, o que a sessão medida ligou, tirado do
-`init` do Claude Code (`Evento::Carga`): "3 de 4 servidores MCP ligados · 42 ferramentas · 12
-skills". Chats do Codex não têm a linha.
-
-No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
-linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
-anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso
-embaixo, "5 h 7% · semana 38%", sem a janela que ainda não foi lida) a torna a padrão, e o check
-fica nela; **Entrar com outra conta…** conecta uma nova e o **…** de uma conta extra tem
-**Desconectar…**. **Contas…**, no rodapé, abre o diálogo das contas (também no menu do logo,
-**Contas do Claude**, ou em **Gerenciar contas…**, no chip da conta na caixa de mensagem). Ele
-repete o seletor do popover, maior: em **Conta padrão**, a Automática e uma linha por conta com o
-mesmo anel do canto (a janela mais apertada), o login e o plano, o uso ("5 h 23% ·
-semana 41%", com a hora de renovar na dica, ou "no limite · volta às 14:30") e o check na padrão; o
-clique numa linha a torna a padrão. O **…** de cada conta tem **Usar como padrão**,
-**Copiar o e-mail** e, nas extras, **Desconectar…**. **Entrar com outra conta…** mostra dois passos:
-o navegador (com **Abrir de novo** e **Copiar endereço**, que vira "Copiado" por um instante) e o
-código da página, com **Entrar**; se falhar, o erro aparece ali com **Tentar de novo**.
-
-A conta que perdeu o login mostra a pílula **sem login** no lugar do uso e o botão **Entrar de
-novo** à vista. Ele refaz o login nessa mesma conta (na principal, o login padrão do Claude Code),
-pelos mesmos dois passos, e a conta volta para a escolha; o nome se mantém. Se o login falhar, a
-pasta da conta fica (só a de uma conta nova é apagada). Se o login voltar com outro e-mail, o
-Vitral avisa e não troca nada. O **Entrar de novo** do cartão de erro e o da faixa do turno abrem
-este diálogo já no login da conta que caiu.
-
-Cada conta extra tem uma pasta própria só com o login; CLAUDE.md, configurações, skills, plugins
-e o histórico das conversas são compartilhados com o seu Claude Code, então uma conversa continua
-em qualquer conta. Na escolha **Automática**, cada turno vai para a conta com mais folga e, se uma
-chegar ao limite, o mesmo turno roda de novo em outra. A conta no limite volta sozinha na hora em
-que o plano renova (o painel de uso e o de contas dizem quando: "limite atingido, volta às
-15:42"); uma janela que já renovou volta a 0%. Se todas estiverem no limite, o turno vai para a
-que volta primeiro, e a conversa avisa a hora. Fora do painel, o uso aparece igual em todo lugar:
-"7% do limite de 5 h".
-
 ## Organização
 
 - **O alto da lista** (a área vazia arrasta a janela, o clique duplo maximiza e o clique direito

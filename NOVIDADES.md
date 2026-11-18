@@ -26,10 +26,6 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
   termina com o que ele gastou, "182 mil tokens · US$ 0,84", e a dica abre em entrada nova, cache
   lido e saída. O popover do contexto ganhou **Último turno**, com os mesmos três números. Os
   turnos de antes desta versão continuam como eram.
-- **Quanto custa abrir um chat na pasta.** O popover do contexto ganhou a linha **Começa com**:
-  os tokens que um chat novo já carrega naquela pasta, medidos no primeiro turno. O clique lista
-  os arquivos de instrução (CLAUDE.md, os @imports, o índice da memória) com o tamanho de cada um
-  e quantos servidores MCP a sessão ligou; clicar num arquivo o abre à direita.
 - **Onde o uso foi.** Em Contas do Claude, uma seção nova mostra o gasto de hoje ou dos últimos
   7 dias por pasta, em barras, e dentro de cada pasta os chats que mais gastaram, com os tokens e
   o custo estimado; o clique num chat abre a conversa. Conta o que rodou a partir desta versão.
