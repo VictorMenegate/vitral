@@ -4052,7 +4052,8 @@ impl Janela {
         let (retomar, tentar, entregar) = (
             acao(|m, id, cx| m.retomar(id, cx)),
             acao(|m, id, cx| m.tentar_de_novo(id, cx)),
-            acao(|m, id, cx| m.entregar_fila(id, cx)),
+            // O "Entregar agora" manda tudo, as mensagens com hora marcada também.
+            acao(|m, id, cx| m.entregar_fila_agora(id, cx)),
         );
         let texto = |t: String| div().min_w_0().truncate().text_size(r(13.)).line_height(r(18.)).child(t);
         let (esquerda, direita): (AnyElement, Option<AnyElement>) = match situacao {

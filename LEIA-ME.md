@@ -558,7 +558,19 @@ ferramentas, vale por painel).
   nada é trocado) e, com o chat parado, **Entregar agora** no rodapé (a faixa acima da caixa não
   repete o botão com a fila aberta). Com o turno rodando, a caixa vazia e algo seu na fila, a seta
   para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
-  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3). A
+  a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3).
+  **Mensagem com hora marcada** (`src/motor/agendadas.rs` e `src/ui/agendar.rs`): no **…** da
+  caixa, **Mandar quando a janela de 5 h renovar** (a renovação da conta em que o chat roda, ou a
+  do Codex, mais 30 s de folga; o item some sem essa hora lida) e **Mandar às…** (um diálogo com
+  a hora: "15:10", "15h", "830"; a que já passou hoje vale para amanhã) mandam o que está na caixa
+  para a fila do chat com a hora (`Entrada::agendada`, gravada no estado: sobrevive ao reinício).
+  A fila abre com o cartão dela, que leva o selo "sai às 15:10"; o ×, o lápis, a ordem e o
+  **Mandar agora** valem como nas outras, e o **Entregar agora** do chat parado manda tudo, com
+  hora ou sem. Até a hora, ela não entra em turno nenhum, mesmo com o chat livre: quem tira
+  mensagens da fila para um turno passa por `Motor::tirar_prontas`. Na hora, a rotina de 15 s do
+  motor (`entregar_agendadas`) abre o turno do chat livre, junto com o que mais esperava na fila;
+  com o chat ocupado, a mensagem entra quando o turno acabar. Só sai com o Vitral aberto: a hora
+  que passou com ele fechado sai logo na abertura. A
   lista mostra umas três mensagens antes de rolar e guarda à direita o lugar da barra de rolagem,
   que segurava o clique do ×; o que a fila faz fica na dica do título. Fora do painel largo, o
   **Mandar agora** de cada linha é só a seta, para a fileira de botões caber. **?**, com o foco fora de um campo de texto, abre os **Atalhos do

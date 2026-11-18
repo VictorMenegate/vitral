@@ -18,6 +18,7 @@ use smol::channel::{Sender, unbounded};
 mod importacao;
 mod conversas;
 mod ideias;
+mod agendadas;
 pub mod gasto;
 pub mod peso;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
@@ -508,7 +509,12 @@ impl Motor {
         // popover aberto e com a janela sem foco); a primeira rodada sai logo na abertura.
         cx.spawn(async move |motor, cx| {
             loop {
-                if motor.update(cx, |m, cx| m.rotina_uso(cx)).is_err() {
+                // Na mesma volta, as mensagens com hora marcada cuja hora chegou.
+                let volta = motor.update(cx, |m, cx| {
+                    m.rotina_uso(cx);
+                    m.entregar_agendadas(cx);
+                });
+                if volta.is_err() {
                     break;
                 }
                 cx.background_executor()
@@ -1406,7 +1412,7 @@ impl Motor {
         if self.processos.contains_key(chat) || self.na_fila(chat) == 0 {
             return;
         }
-        if let Some(fila) = self.filas.remove(chat) {
+        if let Some(fila) = self.tirar_prontas(chat) {
             self.comecar_turno(chat, fila, cx);
         }
     }
@@ -3623,7 +3629,7 @@ impl Motor {
                 let _ = self.dados.salvar_chat(c);
             }
             if self.na_fila(chat_id) > 0
-                && let Some(fila) = self.filas.remove(chat_id)
+                && let Some(fila) = self.tirar_prontas(chat_id)
             {
                 self.comecar_turno(chat_id, fila, cx);
             }
@@ -3646,7 +3652,7 @@ impl Motor {
             self.rodadas.remove(chat_id);
         }
         if self.na_fila(chat_id) > 0
-            && let Some(fila) = self.filas.remove(chat_id)
+            && let Some(fila) = self.tirar_prontas(chat_id)
         {
             self.comecar_turno(chat_id, fila, cx);
         } else if !erro && self.passar_a_vez(chat_id, cx) {
