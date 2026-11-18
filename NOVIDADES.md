@@ -8,6 +8,7 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **A mensagem presa não cobre a seguinte.** A sua mensagem seguinte, chegando no alto da
   conversa, empurra a faixa da mensagem presa para cima, como no VS Code; antes ela passava por
   baixo da faixa e ficava escondida.
+- **Sem a sombra embaixo da mensagem presa.** A faixa termina seca, sem a sombra escura de antes.
 
 ## 0.9.0
 

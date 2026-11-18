@@ -632,8 +632,8 @@ impl Janela {
                 let raio = crate::tema::raio_da_peca();
                 // Uma faixa por trás, do topo até a mensagem, com as mesmas camadas do cartão (o
                 // metal, o véu, o fosco e o cartão): fica transparente como ele e tapa o texto que
-                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Embaixo, uma
-                // sombra curta separa a faixa do que rola, como o "sticky" do VS Code.
+                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Sem sombra
+                // embaixo: a de 8 px escura ficava "bem ruim" (dono, 18/11/2026).
                 // A seguinte, chegando no alto, empurra a faixa para cima (`empurrao_da_presa`); a
                 // altura dela é medida aqui, para o prepaint da lista saber quanto empurrar.
                 div()
@@ -646,12 +646,6 @@ impl Janela {
                     .on_prepaint(move |limites, _, _| altura_da_presa.set(limites.size.height))
                     .child(fundo_do_cartao())
                     .child(
-                    div().absolute().left_0().right_0().bottom(-esp::E8).h(esp::E8).bg(linear_gradient(
-                        180.,
-                        linear_color_stop(Cores::preto_puro().opacity(0.22), 0.),
-                        linear_color_stop(Cores::preto_puro().opacity(0.), 1.),
-                    )),
-                ).child(
                     div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
