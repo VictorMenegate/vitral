@@ -715,20 +715,6 @@ ferramentas, vale por painel).
   vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
   no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
   perigoso, o segurar).
-- **Sempre nesta pasta.** A regra da caixa "Não perguntar de novo" vale só para o chat
-  (`Chat.permitidas`): um chat novo na mesma pasta perguntava tudo de novo. Embaixo dela, o
-  cartão do pedido tem **Sempre nesta pasta**, que permite na hora e grava a mesma regra
-  (`modelo::regra_de_permissao`: "edicoes", "bash:<comando exato>", "ferramenta:<nome>") para a
-  pasta do chat: passa a valer em todos os chats dela, os abertos (os pedidos iguais que já
-  esperavam em qualquer um deles são respondidos junto) e os novos. O motor consulta as duas
-  (`Motor::permitido_sempre`, no atendimento da ferramenta `permissao`). O mapa de pasta para
-  regras mora em `permissoes-da-pasta.json`, na pasta de dados, e o código em
-  `src/motor/permissoes_da_pasta.rs`. No menu do modo, embaixo da caixa, as regras aparecem em
-  dois grupos, **Deste chat** e **Desta pasta**: o clique numa regra tira só ela, e cada grupo
-  tem o seu "Voltar a perguntar". O comando com trecho arriscado continua sem a caixa e sem o
-  botão, a edição fora da pasta também, e o chat Sem pasta (a pasta dele é só dele) não oferece
-  a regra da pasta. Diferente da caixa do chat, a regra de edições da pasta não muda o modo de
-  nenhuma conversa.
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",

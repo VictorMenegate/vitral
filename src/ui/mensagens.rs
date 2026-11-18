@@ -4424,7 +4424,6 @@ impl Janela {
             .map(|p| (p.id.clone(), p.ferramenta.clone(), p.entrada.clone()))
             .collect();
         let manual = motor.permissao_de(chat) == "manual";
-        let sem_pasta = motor.sem_pasta(chat);
         let (nivel, faixa) = self
             .paineis
             .iter()
@@ -4461,7 +4460,7 @@ impl Janela {
                     return self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx);
                 }
                 let posicao = (quantos > 1).then_some((k + 1, quantos));
-                self.cartao_permissao(chat, sem_pasta, manual, &id, &ferramenta, &entrada, corpo, posicao, nivel, window, cx)
+                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, corpo, posicao, nivel, window, cx)
             }))
     }
 
@@ -4473,7 +4472,6 @@ impl Janela {
     fn cartao_permissao(
         &self,
         chat: &Chat,
-        sem_pasta: bool,
         manual: bool,
         id: &str,
         ferramenta: &str,
@@ -4520,15 +4518,6 @@ impl Janela {
                 }
             }
         };
-        let na_pasta = {
-            let id = id.to_string();
-            cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                if let Some(m) = &this.motor {
-                    m.update(cx, |m, cx| m.permitir_sempre_na_pasta(&id, cx));
-                }
-            })
-        };
         let marcar = {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, marcado: &bool, _, cx| {
@@ -4565,7 +4554,6 @@ impl Janela {
             nivel,
             manual,
             marcado: self.sempre_marcado.contains(id),
-            na_pasta: (!sem_pasta).then(|| super::dialogos::nome_da_pasta(&chat.cwd)),
             explicando,
         };
         let respostas = RespostasDoPedido {
@@ -4573,7 +4561,6 @@ impl Janela {
             permitir: Rc::new(permitir),
             uma_vez: Rc::new(uma_vez),
             marcar: Rc::new(marcar),
-            na_pasta: Rc::new(na_pasta),
             explicar: Rc::new(explicar),
             cancelar_explicacao: Rc::new(cancelar_explicacao),
             enviar_explicacao: Rc::new(cx.listener(|this, _: &ClickEvent, _, cx| this.negar_explicando(cx))),
@@ -5074,8 +5061,6 @@ pub(super) struct Pedido {
     pub manual: bool,
     /// A caixa "Não perguntar de novo" marcada.
     pub marcado: bool,
-    /// O pedido oferece o "Sempre nesta pasta" (o chat tem pasta de verdade): o nome dela.
-    pub na_pasta: Option<String>,
     /// O campo de "negar e explicar" aberto.
     pub explicando: Option<Entity<InputState>>,
 }
@@ -5089,8 +5074,6 @@ pub(super) struct RespostasDoPedido {
     pub permitir: AoClicar,
     pub uma_vez: Rc<dyn Fn(&mut App)>,
     pub marcar: Rc<dyn Fn(&bool, &mut Window, &mut App)>,
-    /// "Sempre nesta pasta": permite e grava a regra para todos os chats da pasta.
-    pub na_pasta: AoClicar,
     pub explicar: AoClicar,
     pub cancelar_explicacao: AoClicar,
     pub enviar_explicacao: AoClicar,
@@ -5223,13 +5206,6 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
             .on_click(botao(&r_.explicar));
             let negar =
                 botao_fantasma(id_texto("negar"), None, "Negar", TamanhoBotao::Controle, window, cx).on_click(botao(&r_.negar));
-            // "Sempre nesta pasta": a mesma regra, para todos os chats da pasta. Existe onde a
-            // caixa existe (fora do perigoso, com regra) e o chat tem pasta de verdade.
-            let regra_crua = regra.as_ref().and_then(|_| crate::modelo::regra_de_permissao(&p.ferramenta, entrada, &p.pasta));
-            let na_pasta = regra_crua.zip(p.na_pasta.as_ref()).map(|(regra, pasta)| {
-                fantasma(id_texto("na-pasta"), Some(Lucide::Folder), "Sempre nesta pasta", TamanhoBotao::Linha, botao(&r_.na_pasta), window, cx)
-                    .tooltip(dica_da_regra_da_pasta(&regra, pasta))
-            });
             // A caixa "Não perguntar de novo: ..." só existe fora do perigoso e quando há regra.
             let caixa = regra.map(|(objeto, dica)| {
                 let marcar = r_.marcar.clone();
@@ -5241,10 +5217,6 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                     .text_color(Cores::tenue())
                     .metadado()
             });
-            // As duas escolhas de "sempre" ficam juntas, à esquerda: a caixa (este chat) em cima
-            // e o botão da pasta embaixo.
-            let caixa = (caixa.is_some() || na_pasta.is_some())
-                .then(|| v_flex().items_start().gap(esp::E4).children(caixa).children(na_pasta));
             let principal = if perigoso {
                 segurar(id_texto("segurar"), TamanhoBotao::Controle).map(|b| if minima { b.largo() } else { b }).into_any_element()
             } else {
@@ -5263,7 +5235,6 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                     .into_any_element()
             } else {
                 h_flex()
-                    .items_end()
                     .gap(esp::E8)
                     .child(div().flex_1().min_w_0().children(caixa))
                     .child(explicar)
@@ -5400,21 +5371,6 @@ fn rotulo_da_regra(regra: &str, manual: bool) -> (String, String) {
     (
         nome.to_string(),
         format!("{nome} passa sem perguntar nesta conversa. {DESFAZER}"),
-    )
-}
-
-/// A dica do "Sempre nesta pasta": o que a regra passa a deixar e onde se desfaz.
-fn dica_da_regra_da_pasta(regra: &str, pasta: &str) -> String {
-    let o_que = if regra == "edicoes" {
-        "as edições de arquivos passam".to_string()
-    } else if regra.starts_with("bash:") {
-        "este comando, exatamente igual, passa".to_string()
-    } else {
-        format!("{} passa", nome_curto(regra.strip_prefix("ferramenta:").unwrap_or(regra)))
-    };
-    format!(
-        "Permite agora e, em todos os chats da pasta {pasta} (os abertos e os novos), {o_que} sem perguntar. \
-         Para desfazer, use o menu do modo, embaixo da caixa de mensagem."
     )
 }
 
@@ -5797,15 +5753,6 @@ mod testes {
     }
 
     /// O comando perigoso nunca vira regra (nem com a caixa marcada); o comum vira "este comando".
-    #[test]
-    fn a_dica_da_regra_da_pasta_diz_o_que_passa_e_em_qual_pasta() {
-        let dica = super::dica_da_regra_da_pasta("bash:npm test", "loja");
-        assert!(dica.contains("em todos os chats da pasta loja"), "{dica}");
-        assert!(dica.contains("este comando, exatamente igual, passa sem perguntar"), "{dica}");
-        assert!(super::dica_da_regra_da_pasta("edicoes", "loja").contains("as edições de arquivos passam"));
-        assert!(super::dica_da_regra_da_pasta("ferramenta:mcp__vitral__listar_chats", "loja").contains("listar_chats passa"));
-    }
-
     #[test]
     fn perigoso_nunca_vira_regra() {
         let pasta = Path::new("/home/v/loja");

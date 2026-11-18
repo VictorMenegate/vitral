@@ -26,7 +26,6 @@ pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod ramo;
 mod bifurcar;
 mod comando_seu;
-mod permissoes_da_pasta;
 pub use comando_seu::{COMANDO_COMECOU, SituacaoDoComando, citacao_do_comando};
 pub use ideias::SituacaoDoLinear;
 
@@ -396,9 +395,6 @@ pub struct Motor {
     /// Os chats cujo turno de agora é a revisão da memória (rodada de uso, item 6.1): por fora eles
     /// contam como parados (o "Terminou" sai na hora), por dentro ainda trabalham.
     revisando: HashMap<String, Revisao>,
-    /// As regras de "sempre nesta pasta", que valem para todos os chats de cada pasta
-    /// (`motor/permissoes_da_pasta.rs`).
-    regras_da_pasta: permissoes_da_pasta::RegrasPorPasta,
     /// O comando que você rodou com "!" em cada chat e ainda não acabou (`motor/comando_seu.rs`).
     comandos_seus: HashMap<String, comando_seu::ComandoSeu>,
     pub janela_ativa: bool,
@@ -589,12 +585,10 @@ impl Motor {
         let linear = ideias::EstadoDoLinear::da_config(&dados.config);
         let gastos = gasto::Livro::ler(&dados.pasta_gastos(), agora());
         let pesos = peso::Pesos::ler(&dados.arquivo_pesos());
-        let regras_da_pasta = permissoes_da_pasta::ler(&dados);
         let mut motor = Self {
             gastos,
             pesos,
             memorias: Default::default(),
-            regras_da_pasta,
             quadro,
             quadro_sujo: false,
             linear,
@@ -3811,8 +3805,8 @@ impl Motor {
 
         let resposta = match chamada.ferramenta.as_str() {
             "permissao" => {
-                // "Permitir sempre" desta conversa ou da pasta dela: vale já no turno em andamento.
-                if self.permitido_sempre(&chat, a["tool_name"].as_str().unwrap_or("?"), &a["input"]) {
+                // "Permitir sempre" desta conversa: vale já no turno em andamento.
+                if chat.permite(a["tool_name"].as_str().unwrap_or("?"), &a["input"]) {
                     let resposta = json!({"behavior": "allow", "updatedInput": a["input"]});
                     let _ = chamada.resposta.try_send(Resposta::ok(resposta.to_string()));
                     return;

@@ -147,16 +147,12 @@ struct DadosModo {
     chat: String,
     atual: String,
     permitidas: Vec<String>,
-    /// As regras de "sempre nesta pasta" que valem para o chat, e a pasta delas.
-    da_pasta: Vec<String>,
-    pasta: std::path::PathBuf,
     /// O campo da caixa: o Shift+Tab só vale nele ("Composer > Input").
     foco_caixa: FocusHandle,
 }
 
-/// Uma regra permitida nesta conversa ou, com `da_pasta`, em todos os chats da pasta dela: o
-/// clique tira só ela.
-fn item_de_regra(regra: &str, d: &Rc<DadosModo>, da_pasta: bool) -> PopupMenuItem {
+/// Uma regra permitida nesta conversa: o clique tira só ela.
+fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
     let (icone, comando) = if regra.starts_with("bash:") {
         (Lucide::Terminal, true)
     } else if regra == "edicoes" {
@@ -164,8 +160,7 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>, da_pasta: bool) -> PopupMenuIte
     } else {
         (Lucide::Wrench, false)
     };
-    let texto: SharedString =
-        if da_pasta && regra == "edicoes" { "Edições de arquivos nesta pasta".into() } else { descricao_regra(regra).into() };
+    let texto: SharedString = descricao_regra(regra).into();
     let (regra, d) = (regra.to_string(), d.clone());
     PopupMenuItem::element(move |window, _| {
         div()
@@ -192,61 +187,8 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>, da_pasta: bool) -> PopupMenuIte
     })
     .on_click(move |_, _, cx| {
         let regra = regra.clone();
-        if da_pasta {
-            if let Some(m) = &d.motor {
-                m.update(cx, |m, cx| m.tirar_regra_da_pasta(&d.pasta, &regra, cx));
-            }
-            return;
-        }
         mudar(&d.motor, &d.chat, cx, move |c| c.permitidas.retain(|r| *r != regra));
     })
-}
-
-/// Um grupo de regras de permitir sempre no menu do modo ("Deste chat" ou "Desta pasta"): até
-/// quatro à vista (com mais, três e o "Ver todas") e, no fim, o que tira todas.
-fn grupo_de_regras(
-    mut menu: PopupMenu,
-    d: &Rc<DadosModo>,
-    da_pasta: bool,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
-    let regras = if da_pasta { &d.da_pasta } else { &d.permitidas };
-    if regras.is_empty() {
-        return menu;
-    }
-    let (titulo, limpar) = if da_pasta {
-        ("Permitido sempre · Desta pasta", "Voltar a perguntar nesta pasta")
-    } else {
-        ("Permitido sempre · Deste chat", "Voltar a perguntar neste chat")
-    };
-    menu = menu.separator().label(titulo);
-    let n = regras.len();
-    let mostradas = if n > 4 { 3 } else { n };
-    for regra in &regras[..mostradas] {
-        menu = menu.item(item_de_regra(regra, d, da_pasta));
-    }
-    if n > 4 {
-        let d2 = d.clone();
-        menu = menu.submenu(format!("Ver todas ({n})"), window, cx, move |mut sub, window, _| {
-            let largura = tam(window, 360.);
-            sub = sub.min_w(largura).max_w(largura).scrollable(true);
-            for regra in if da_pasta { &d2.da_pasta } else { &d2.permitidas } {
-                sub = sub.item(item_de_regra(regra, &d2, da_pasta));
-            }
-            sub
-        });
-    }
-    let d2 = d.clone();
-    menu.item(item_com_icone(Lucide::Undo2, limpar).on_click(move |_, _, cx| {
-        if da_pasta {
-            if let Some(m) = &d2.motor {
-                m.update(cx, |m, cx| m.limpar_regras_da_pasta(&d2.pasta, cx));
-            }
-            return;
-        }
-        mudar(&d2.motor, &d2.chat, cx, |c| c.permitidas.clear());
-    }))
 }
 
 fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
@@ -269,9 +211,30 @@ fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx:
                 }),
         );
     }
-    // Os dois grupos de "permitir sempre": o do chat e o da pasta (todos os chats dela).
-    menu = grupo_de_regras(menu, d, false, window, cx);
-    menu = grupo_de_regras(menu, d, true, window, cx);
+    if !d.permitidas.is_empty() {
+        menu = menu.separator().label("Permitido sempre nesta conversa");
+        let n = d.permitidas.len();
+        let mostradas = if n > 4 { 3 } else { n };
+        for regra in &d.permitidas[..mostradas] {
+            menu = menu.item(item_de_regra(regra, d));
+        }
+        if n > 4 {
+            let d2 = d.clone();
+            menu = menu.submenu(format!("Ver todas ({n})"), window, cx, move |mut sub, window, _| {
+                let largura = tam(window, 360.);
+                sub = sub.min_w(largura).max_w(largura).scrollable(true);
+                for regra in &d2.permitidas {
+                    sub = sub.item(item_de_regra(regra, &d2));
+                }
+                sub
+            });
+        }
+        let d2 = d.clone();
+        menu = menu.item(
+            item_com_icone(Lucide::Undo2, "Voltar a perguntar sobre tudo")
+                .on_click(move |_, _, cx| mudar(&d2.motor, &d2.chat, cx, |c| c.permitidas.clear())),
+        );
+    }
     menu
 }
 
@@ -809,8 +772,6 @@ impl Janela {
             chat: chat.id.clone(),
             atual: atual.clone(),
             permitidas: chat.permitidas.clone(),
-            da_pasta: motor.regras_da_pasta(chat).to_vec(),
-            pasta: chat.cwd.clone(),
             foco_caixa: b.composer.read(cx).focus_handle(cx),
         });
         GatilhoChip::new(chip(false), chip(true))
