@@ -102,6 +102,9 @@ pub struct Painel {
     /// texto e onde cada uma ficou neste desenho (alto e pé, na tela), para a mensagem presa no
     /// alto. O alto da lista na tela fica em `topo_da_lista`.
     pub presa_do_historico: std::rc::Rc<std::cell::RefCell<Vec<(String, Pixels, Pixels)>>>,
+    /// Onde a linha "Pensando…" deixou o lugar do anel (na janela): ele gira por cima das mensagens,
+    /// numa vista própria (`AnelDoPensando`), e a conversa não se redesenha a cada batida.
+    pub pensando_em: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     pub topo_da_lista: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A mensagem presa no alto: a sua mais recente que já subiu além do topo (o texto, o alto
     /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
@@ -461,6 +464,7 @@ impl Janela {
             novo_desde: None,
             posicoes: Default::default(),
             presa_do_historico: Default::default(),
+            pensando_em: Default::default(),
             topo_da_lista: Default::default(),
             presa: None,
         };

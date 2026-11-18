@@ -314,8 +314,9 @@ Um app mais enxuto, o Codex ao lado do Claude e uma conversa que mostra melhor o
 - **Mais leve com um chat trabalhando.** As mensagens de cada painel e a lista viraram partes que
   só se redesenham quando mudam: o anel girando, o metal e a rolagem de um painel não refazem o
   resto. Medido na bancada com um chat rodando: a thread da janela caiu de 48% para 34% de um
-  núcleo, e montar a janela, de 3,3 ms para 0,8 ms por quadro. Dentro da conversa o anel e o
-  "Pensando…" ficam parados; o que gira é o anel da linha do turno, embaixo.
+  núcleo, e montar a janela, de 3,3 ms para 0,8 ms por quadro. O anel do "Pensando…" gira por cima
+  da conversa, numa parte só dele, e não a redesenha a cada volta; os anéis das linhas de
+  ferramenta dentro dela ficam parados.
 - **Títulos sem reticências.** As abas e os chats da lista cortam o título seco, sem os três
   pontinhos, e o número da aba fica colado nele. O "Este chat" perdeu o número do painel, e com o
   painel da direita estreito a aba à vista mantém o nome.

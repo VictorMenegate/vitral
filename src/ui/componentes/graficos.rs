@@ -585,3 +585,44 @@ mod testes {
         assert_eq!(cor_da_faixa(1.2, base), Cores::vermelho());
     }
 }
+
+/// O anel girando pintado num lugar que outra vista mediu (`onde`, na janela): o da linha
+/// "Pensando…", que gira por cima das mensagens numa vista própria e não as redesenha a cada batida.
+/// `ativo`: o turno está rodando (só então a batida anda); sem o lugar, nada aparece.
+#[derive(IntoElement)]
+pub struct AnelDoPensando {
+    pub chave: String,
+    pub onde: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    pub ativo: bool,
+}
+
+impl RenderOnce for AnelDoPensando {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (onde, ativo) = (self.onde, self.ativo);
+        super::vista_viva::em_vista_propria(self.chave, StyleRefinement::default().size_full(), u64::from(ativo), cx, move |window, cx| {
+            let lado = 14.;
+            let parado = std::f32::consts::PI + TAU * 0.14;
+            let giro = if ativo && !cx.reduce_motion() {
+                let fase = movimento::laco_a(window, cx, movimento::QPS_DO_LACO);
+                parado + ((fase / 1.2).fract() as f32) * TAU
+            } else {
+                parado
+            };
+            let onde = onde.clone();
+            canvas(
+                |_, _, _| {},
+                move |limites, _, window, _| {
+                    let Some(b) = onde.get().filter(|b| ativo && limites.intersects(b)) else {
+                        return;
+                    };
+                    let escala = b.size.width.as_f32() / lado;
+                    let raio_fora = b.size.width.min(b.size.height).as_f32() / 2.;
+                    let espessura = (lado * 0.16).max(1.5) * escala;
+                    pintar_arco(b, raio_fora, espessura, giro, giro + TAU * 0.72, Cores::destaque(), window);
+                },
+            )
+            .size_full()
+            .into_any_element()
+        })
+    }
+}

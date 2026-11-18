@@ -583,9 +583,26 @@ impl Janela {
         // As mensagens são uma vista em cache (`vista_mensagens`): a Janela redesenhando por outra
         // coisa (o spinner da caixa, a lista, outro painel) não refaz o layout nem a pintura delas.
         let corpo = match (&chat, ix) {
-            (Some(_), Some(ix)) => AnyView::from(self.paineis[ix].vista.clone())
-                .cached(StyleRefinement::default().flex_1().w_full().min_h(super::mensagens::MINIMO_MENSAGENS).flex().flex_col())
-                .into_any_element(),
+            (Some(c), Some(ix)) => {
+                let mensagens = AnyView::from(self.paineis[ix].vista.clone())
+                    .cached(StyleRefinement::default().flex_1().w_full().min_h(super::mensagens::MINIMO_MENSAGENS).flex().flex_col());
+                // O anel do "Pensando…" gira por cima delas, numa vista própria (`AnelDoPensando`).
+                let anel = super::componentes::AnelDoPensando {
+                    chave: format!("pensando-{painel_id}"),
+                    onde: self.paineis[ix].pensando_em.clone(),
+                    ativo: motor.execucao(&c.id).rodando(),
+                };
+                div()
+                    .relative()
+                    .flex_1()
+                    .w_full()
+                    .min_h(super::mensagens::MINIMO_MENSAGENS)
+                    .flex()
+                    .flex_col()
+                    .child(mensagens)
+                    .child(div().absolute().inset_0().child(anel))
+                    .into_any_element()
+            }
             _ => self.sem_conversa(window, cx).into_any_element(),
         };
 
