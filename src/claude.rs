@@ -139,6 +139,8 @@ pub enum Evento {
     Comandos(Vec<(String, String)>),
     /// A conversa do lado do agente ganhou este id (o `thread_id` do Codex): é ele que retoma.
     Sessao(String),
+    /// O que o `init` diz ter carregado (servidores MCP, ferramentas, skills), depois do `Inicio`.
+    Carga(crate::motor::peso::Carga),
     /// Tokens que a conversa ocupa no contexto agora.
     Contexto(u64),
     TextoParcial(String),
@@ -1308,7 +1310,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
     }
     let texto = |v: &Value| v.as_str().unwrap_or_default().to_string();
     match valor["type"].as_str().unwrap_or_default() {
-        "system" if valor["subtype"] == "init" => vec![Evento::Inicio {
+        "system" if valor["subtype"] == "init" => [Evento::Inicio {
             modelo: texto(&valor["model"]),
             comandos: valor["slash_commands"]
                 .as_array()
@@ -1322,7 +1324,10 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .as_array()
                 .filter(|f| !f.is_empty())
                 .map(|f| f.iter().any(|n| n == "Workflow")),
-        }],
+        }]
+        .into_iter()
+        .chain(crate::motor::peso::carga_do_init(valor).map(Evento::Carga))
+        .collect(),
         // Só o que o Claude Code espera antes de sair: fluxos e subagentes em segundo plano (os
         // comandos de shell ele encerra sozinho).
         "system" if valor["subtype"] == "background_tasks_changed" => {

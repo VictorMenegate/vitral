@@ -143,6 +143,15 @@ impl Dados {
         self.gravador.gravar(self.pasta_gastos().join(format!("{mes}.jsonl")), Some(bytes), false);
     }
 
+    /// A base medida de cada pasta (`motor/peso.rs`): com quanto contexto um chat novo começa nela.
+    pub fn arquivo_pesos(&self) -> PathBuf {
+        self.pasta.join("peso-das-pastas.json")
+    }
+
+    pub fn salvar_pesos(&self, bytes: Vec<u8>) {
+        self.gravador.gravar(self.arquivo_pesos(), Some(bytes), false);
+    }
+
     pub fn arquivo_config(&self) -> PathBuf {
         self.config.join("config.json")
     }

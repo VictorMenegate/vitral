@@ -1035,6 +1035,23 @@ barras medem o custo; num período só de Codex, os tokens. Na abertura o Vitral
 o anterior (o que os 7 dias e as conversas recentes precisam). Só entra o que rodou depois desta
 versão: o que veio antes não tem linha no livro.
 
+**Peso fixo da pasta** (`src/motor/peso.rs` e `src/ui/peso_da_pasta.rs`). No popover do contexto
+da caixa, depois dos tokens, a linha **Começa com** diz com quantos tokens um chat novo já começa
+na pasta da conversa, antes de qualquer pergunta: as instruções, os servidores MCP, as skills e as
+ferramentas. A base é medida: o primeiro `Evento::Contexto` de um chat que começa do zero no
+Claude, menos a estimativa da primeira mensagem (3,5 caracteres por token), guardada a última por
+pasta em `peso-das-pastas.json`. Não medem a sessão retomada, a conversa trazida do Claude Code, a
+que já tem mais de uma mensagem (o bloco de passagem inclusive) nem a mensagem com anexo; sem
+medida, a linha diz "sem medida ainda". O clique abre a lista dos arquivos de instrução que a
+pasta carrega, lida do disco pelas regras do Claude Code (`instrucoes`): o `CLAUDE.md` do usuário,
+o `CLAUDE.md`, o `.claude/CLAUDE.md` e o `CLAUDE.local.md` da pasta e das pastas de cima até a
+raiz do repositório, os `@imports` de cada um (até 5 níveis, fora de bloco de código e de crases,
+cada arquivo uma vez; é por eles que o `AGENTS.md` aparece) e o índice da memória (o `MEMORY.md`
+do `autoMemoryDirectory` do `settings.json` ou de `projects/<pasta>/memory`), cada um com o
+tamanho; o clique num arquivo o abre à direita. Embaixo, o que a sessão medida ligou, tirado do
+`init` do Claude Code (`Evento::Carga`): "3 de 4 servidores MCP ligados · 42 ferramentas · 12
+skills". Chats do Codex não têm a linha.
+
 No painel do Claude também se escolhe a conta padrão, em **Conta padrão**: clicar numa
 linha (**Automática**, "a de menor uso em cada turno", ou uma conta, com o disco da marca e o
 anel da janela mais apertada, como no canto, o e-mail inteiro em cima e o uso

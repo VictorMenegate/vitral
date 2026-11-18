@@ -43,6 +43,7 @@ mod reenvio;
 mod seletor_arquivos;
 mod trilho;
 mod onde_uso;
+mod peso_da_pasta;
 mod uso_plano;
 mod visor_imagem;
 mod vista_mensagens;
