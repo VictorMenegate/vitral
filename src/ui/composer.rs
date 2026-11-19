@@ -1180,7 +1180,7 @@ impl Janela {
                             .bg(Cores::preto())
                             .overflow_hidden()
                             .cursor_pointer()
-                            .child(img(caminho).size_full().object_fit(ObjectFit::Contain))
+                            .child(img(caminho).size_full().rounded(raio::CARTAO).object_fit(ObjectFit::Contain))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.ilha = None;
                                 this.abrir_visor(&chat_visor, &alvo, window, cx);
@@ -1251,7 +1251,7 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .bg(Cores::preto())
                         .overflow_hidden()
-                        .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                        .child(img(caminho.clone()).size_full().rounded(raio::CONTROLE).object_fit(ObjectFit::Cover))
                 });
                 // O clique na pílula de uma imagem abre a ilha em cima da caixa (e fecha, se é a
                 // dela que está aberta).

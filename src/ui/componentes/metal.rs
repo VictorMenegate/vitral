@@ -302,6 +302,14 @@ struct DaJanela {
     fase_vista: f64,
     /// Se o metal está no ritmo vivo (um chat à vista trabalhando).
     vivo: bool,
+    /// Um quadro parado do campo, no tamanho da janela, para o que mora em vista guardada (os
+    /// balões e a faixa presa da conversa): a vista guardada repinta o quadro de quando foi
+    /// desenhada, e o metal que anda deixava cada balão num quadro, trocando quando o ponteiro
+    /// passava e redesenhava um deles (dono, 19/11/2026: "quando fico mexendo o mouse o fundo das
+    /// mensagens que mandei fica mudando"). Refeito só quando o tamanho muda.
+    parada: Option<Arc<RenderImage>>,
+    parada_de: Option<(u32, u32, u32, u32)>,
+    onde_parada: Bounds<Pixels>,
 }
 
 /// O tempo gasto para fazer os campos (conta, BMP e decodificação) e quantos foram, para o
@@ -465,14 +473,24 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
         size(px(colunas as f32 * PX_POR_TEXEL), px(linhas as f32 * PX_POR_TEXEL)),
     );
     estado.onde = onde;
+    let tamanho = (colunas, linhas, largura.to_bits(), altura.to_bits());
+    if estado.vinheta_de != tamanho {
+        estado.vinheta = tabela_da_vinheta(colunas, linhas, largura, altura);
+        estado.vinheta_de = tamanho;
+    }
+    if estado.parada_de != Some(tamanho) || estado.parada.is_none() {
+        let bgra = pintar_campo(colunas, linhas, largura, altura, &Quadro::em(FASE_INICIAL_DO_METAL), None, &estado.vinheta);
+        if let Some(nova) = imagem_de_bgra(colunas, linhas, &bgra, svg.clone()) {
+            if let Some(velha) = estado.parada.replace(nova) {
+                let _ = window.drop_image(velha);
+            }
+            estado.parada_de = Some(tamanho);
+            estado.onde_parada = onde;
+        }
+    }
     // Igual ao guardado, a imagem de antes serve: parado, o custo é zero.
     if estado.chave != Some(chave) || estado.imagem.is_none() {
         let inicio = Instant::now();
-        let vinheta_de = (colunas, linhas, largura.to_bits(), altura.to_bits());
-        if estado.vinheta_de != vinheta_de {
-            estado.vinheta = tabela_da_vinheta(colunas, linhas, largura, altura);
-            estado.vinheta_de = vinheta_de;
-        }
         let quadro = Quadro::em(tempo + FASE_INICIAL_DO_METAL);
         let luz = ponteiro.map(|(coluna, linha)| (centro_do_texel(coluna as u32), altura - centro_do_texel(linha as u32)));
         let bgra = pintar_campo(colunas, linhas, largura, altura, &quadro, luz, &estado.vinheta);
@@ -547,13 +565,19 @@ fn pintar_o_grao(limites: Bounds<Pixels>, raios: Corners<Pixels>, grao: Option<&
 /// debaixo de ícone). `raios`: os cantos da caixa. Numa janela sem `fundo` (ou antes do primeiro
 /// quadro), pinta a reserva: o azul liso, com o mesmo véu.
 pub fn abertura(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>) -> impl IntoElement {
-    abertura_com_grao(encaixe, veu, raios, false)
+    abertura_com_grao(encaixe, veu, raios, false, false)
+}
+
+/// A abertura com o quadro parado do metal (`DaJanela::parada`): para o que mora numa vista
+/// guardada, que não acompanha o metal andando.
+pub fn abertura_parada(encaixe: Encaixe, raios: Corners<Pixels>) -> impl IntoElement {
+    abertura_com_grao(encaixe, None, raios, false, true)
 }
 
 /// A abertura das áreas grandes (a doca da conversa): o mesmo recorte, com o grão leve. Com o
 /// grão cheio, numa faixa de 1000 px o metal lê como chuvisco, e não como degradê.
 pub fn abertura_lisa(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>) -> impl IntoElement {
-    abertura_com_grao(encaixe, veu, raios, true)
+    abertura_com_grao(encaixe, veu, raios, true, false)
 }
 
 /// O fosco: o grão mais fino do metal e um véu leitoso bem leve, enchendo o pai (absoluto, sem
@@ -580,7 +604,7 @@ pub fn fosco(raios: Corners<Pixels>) -> impl IntoElement {
     .size_full()
 }
 
-fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>, leve: bool) -> impl IntoElement {
+fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>, leve: bool, parada: bool) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |limites, _, window, cx| {
@@ -592,7 +616,10 @@ fn abertura_com_grao(encaixe: Encaixe, veu: Option<Hsla>, raios: Corners<Pixels>
             let janela = window.window_handle().window_id();
             let (chapa, grao) = cx.try_global::<Metal>().map_or((None, None), |metal| {
                 let grao = if leve { metal.grao_leve.clone() } else { metal.grao.clone() };
-                (metal.janelas.get(&janela).and_then(|j| Some((j.imagem.clone()?, j.onde))), grao)
+                let chapa = metal.janelas.get(&janela).and_then(|j| {
+                    if parada { Some((j.parada.clone()?, j.onde_parada)) } else { Some((j.imagem.clone()?, j.onde)) }
+                });
+                (chapa, grao)
             });
             match chapa {
                 Some((imagem, onde)) => {
@@ -816,7 +843,7 @@ pub fn fundo_da_lista(raio: Pixels) -> Div {
                 .left_0()
                 .size_full()
                 .opacity(crate::tema::opacidade_do_metal())
-                .child(abertura(Encaixe::Continuo, None, cantos)),
+                .child(abertura_parada(Encaixe::Continuo, cantos)),
         )
         .child(div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::vidro_leitura()))
         .when(crate::tema::transparencia() > 0, |s| s.child(fosco(cantos)))
