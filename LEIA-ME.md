@@ -899,7 +899,11 @@ azul-marinho de antes continua em `superficie::MARINHO`, e trocar o `ATUAL` volt
   encolhe a chapa inteira até cobrir a caixa, para botões e placas), e o `metal::aro_de_metal` é
   uma abertura de 2 a 4 px em volta de um miolo opaco. O teste `metal_so_pelo_motor` barra
   `paint_image(` e `drop_image(` no resto do `src/ui`. Nenhuma abertura dentro de view com
-  `.cached()` (a dica do kit usa): a textura troca a cada batida. No Windows o renderizador do
+  `.cached()` (a dica do kit usa): a textura troca a cada batida. O que mora numa view guardada (os
+  balões seus e a faixa presa da conversa, pelo `metal::fundo_da_lista`) usa a
+  `metal::abertura_parada`, um quadro parado do campo que só é refeito quando a janela muda de
+  tamanho: com a chapa que anda, cada balão ficava no quadro em que foi desenhado e trocava quando
+  o ponteiro passava por ele. No Windows o renderizador do
   GPUI (Direct3D) amostra o sprite com filtro linear e devolve o espaço do atlas ao soltar a
   imagem, como o do Linux (lido no fonte; falta ver rodando lá).
 - **Quando o metal anda.** É a exceção ao "nada anima em repouso", com custo medido. Cada batida do

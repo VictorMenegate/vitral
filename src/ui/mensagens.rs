@@ -1736,7 +1736,7 @@ fn fundo_do_cartao() -> Div {
                 .left_0()
                 .size_full()
                 .opacity(crate::tema::opacidade_do_metal())
-                .child(super::componentes::metal::abertura(super::componentes::metal::Encaixe::Continuo, None, sem_cantos)),
+                .child(super::componentes::metal::abertura_parada(super::componentes::metal::Encaixe::Continuo, sem_cantos)),
         )
         .child(div().absolute().top_0().left_0().size_full().bg(Cores::vidro_leitura()))
         .when(crate::tema::transparencia() > 0, |s| s.child(super::componentes::metal::fosco(sem_cantos)))
@@ -2026,7 +2026,7 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
                     .border_color(Cores::cartao_opaco())
                     .bg(Cores::preto())
                     .overflow_hidden()
-                    .child(img(caminho.clone()).size_full().object_fit(ObjectFit::Cover))
+                    .child(img(caminho.clone()).size_full().rounded(raio::CONTROLE).object_fit(ObjectFit::Cover))
             })))
             .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, "imagem", "imagens")))
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat_id, &primeira, window, cx)))
@@ -2077,7 +2077,9 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
             .rounded(raio::CONTROLE)
             .bg(Cores::preto())
             .overflow_hidden()
-            .child(img(caminho.to_path_buf()).size_full().object_fit(ObjectFit::Cover))
+            // O canto vai na própria imagem: o `overflow_hidden` corta reto, e a miniatura saía
+            // quadrada dentro da caixa redonda (dono, 19/11/2026: "faz as mensagens ficar redonda").
+            .child(img(caminho.to_path_buf()).size_full().rounded(raio::CONTROLE).object_fit(ObjectFit::Cover))
             .into_any_element()
     } else {
         let (icone, cor) = match (imagem, lido.existe) {
