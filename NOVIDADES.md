@@ -8,6 +8,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **Mensagem num chat arquivado começa na hora.** Escrever num chat arquivado, ou apertar o
   **Entregar agora** da fila dele, o tira das Arquivadas e a mensagem entra; antes ela ficava
   esperando na fila, e o botão não fazia nada.
+- **A imagem anexada abre por cima de tudo.** A imagem aberta em cima da caixa saía cortada na
+  borda do painel e passava por baixo do painel vizinho; agora ela flutua por cima, como os menus,
+  sem sair da janela.
 
 ## 0.9.2
 
