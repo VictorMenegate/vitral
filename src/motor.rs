@@ -999,6 +999,11 @@ impl Motor {
         if texto.is_empty() && anexos.is_empty() {
             return;
         }
+        // Escrever num chat arquivado é voltar a usar ele: ele sai das Arquivadas e o que esperava
+        // por isso entra (dono, 19/11/2026: "mandei a mensagem aqui e não começou").
+        if self.chat(chat).is_some_and(|c| c.arquivado) {
+            self.alternar_arquivado(chat, cx);
+        }
         // Comandos que o Vitral resolve sozinho.
         if matches!(texto.as_str(), "/clear" | "/nova" | "/new") {
             self.nova_sessao(chat, cx);

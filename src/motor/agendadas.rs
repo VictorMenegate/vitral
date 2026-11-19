@@ -107,6 +107,13 @@ impl Motor {
                 entrada.agendada = None;
             }
         }
+        // O "Entregar agora" num chat arquivado: o arquivado segurava a fila, e o botão não fazia
+        // nada (dono, 19/11/2026: "o entregar agora não vai"). Ele sai das Arquivadas, e o
+        // desarquivar já entrega o que esperava.
+        if self.chat(chat).is_some_and(|c| c.arquivado) {
+            self.alternar_arquivado(chat, cx);
+            return;
+        }
         self.entregar_fila(chat, cx);
     }
 

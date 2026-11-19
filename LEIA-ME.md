@@ -1341,7 +1341,9 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   dica do campo (que não aparece enquanto se digita nele). Na busca, quando o termo não está no
   título, a linha de baixo mostra a pasta e o trecho que casou ("loja · Você: valide o **frete**
   grátis…", com o termo em forte), e as arquivadas que casam aparecem no fim, numa seção
-  **Arquivadas** (com o número) e com o cartão tênue. Fora da busca, elas continuam só em
+  **Arquivadas** (com o número) e com o cartão tênue. Escrever num chat arquivado (ou o **Entregar
+  agora** da fila dele) o tira das Arquivadas, e a mensagem entra na hora; antes ela esperava na
+  fila até desarquivar à mão (dono, 19/11/2026). Fora da busca, elas continuam só em
   Arquivadas, que tem os títulos das faixas de data (**Recentes**, até 7 dias, e **Mais antigas**,
   recolhida no começo). Estreitando a lista (ou com o zoom alto, porque a conta é a mesma), ela abre
   mão do que é menos importante antes de cortar o título: abaixo de uns 290 px (a 100%), no hover

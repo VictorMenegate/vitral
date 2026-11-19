@@ -3,6 +3,12 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.3
+
+- **Mensagem num chat arquivado começa na hora.** Escrever num chat arquivado, ou apertar o
+  **Entregar agora** da fila dele, o tira das Arquivadas e a mensagem entra; antes ela ficava
+  esperando na fila, e o botão não fazia nada.
+
 ## 0.9.2
 
 O modo foco para todos os chats e o fundo da conversa vazia sem emenda.
