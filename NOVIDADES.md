@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.4
 
+A mensagem presa no alto da conversa sem cobrir as abas.
+
 - **A mensagem presa não sobe por cima das abas.** Empurrada pela mensagem seguinte, a faixa da
   mensagem presa no alto subia por cima do cabeçalho do painel e cobria as abas; agora ela sai
   cortada no alto da conversa.
