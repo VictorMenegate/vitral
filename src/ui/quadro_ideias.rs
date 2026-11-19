@@ -564,7 +564,7 @@ impl QuadroDeIdeias {
                     }),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.editar(&id_clique, window, cx)))
-            .on_drag(arrasto, |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: Simbolo::icone(Lucide::Lightbulb) }))
+            .on_drag(arrasto, |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: Some(Simbolo::icone(Lucide::Lightbulb)) }))
             // Solto em cima de um cartão, o arrastado entra logo antes dele.
             .drag_over::<ArrastoIdeia>(|s, _, _, _| s.border_color(Cores::destaque()))
             .on_drop(cx.listener(move |this, a: &ArrastoIdeia, _, cx| {

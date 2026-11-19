@@ -40,6 +40,10 @@ pub(crate) struct WindowState {
     pending_focus_restore: Option<WeakFocusHandle>,
     /// Source of stable dialog identities, including their rendered subtrees.
     next_dialog_id: usize,
+    /// Vitral: o escopo da seleção de texto quando não há diálogo nem gaveta aberta. Cada painel
+    /// de conversa do Vitral tem o seu, escolhido no clique (`definir_escopo_de_selecao`): a
+    /// seleção de um painel não pega o texto dos vizinhos.
+    base_selection_scope: TextSelectionScopeId,
 }
 
 #[derive(Clone)]
@@ -117,6 +121,7 @@ impl WindowState {
             sheet_size: None,
             pending_focus_restore: None,
             next_dialog_id: 0,
+            base_selection_scope: TextSelectionScopeId::default(),
         }
     }
 
@@ -139,7 +144,7 @@ impl WindowState {
                     .as_ref()
                     .map(|sheet| sheet.selection_scope)
             })
-            .unwrap_or_default()
+            .unwrap_or(self.base_selection_scope)
     }
 
     pub fn update<F, R>(window: &mut Window, cx: &mut App, f: F) -> R
@@ -705,6 +710,19 @@ impl WindowState {
     ) -> Option<Entity<FallbackMenuOverlay>> {
         let root = Self::entity(window, cx)?;
         Some(root.read(cx).native_menu_overlay.clone())
+    }
+}
+
+/// Vitral: escolhe o escopo da seleção de texto de fora dos diálogos e o ativa na hora. Chamado no
+/// clique, antes da camada de seleção começar a marcar (ela trata o clique por último): só o texto
+/// registrado com este escopo (`ElementExt::text_selection_scope`) entra na seleção.
+pub fn definir_escopo_de_selecao(scope: TextSelectionScopeId, window: &mut Window, cx: &mut App) {
+    let ativo = WindowState::try_update(window, cx, |root, _, _| {
+        root.base_selection_scope = scope;
+        root.active_text_selection_scope()
+    });
+    if let Some(ativo) = ativo {
+        TextSelection::activate_scope(ativo, window, cx);
     }
 }
 

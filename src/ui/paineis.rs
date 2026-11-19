@@ -51,6 +51,9 @@ pub struct Painel {
     pub medida: MedidaPainel,
     /// A aba no Tab (Enter foca a caixa, Delete fecha, Shift+F10 abre o menu).
     pub foco_aba: FocusHandle,
+    /// O escopo da seleção de texto das mensagens deste painel: uma seleção começada aqui não
+    /// pega o texto dos outros (`conversa::aplicar_escopo_do_clique`).
+    pub escopo_selecao: gpui_kit::base::TextSelectionScopeId,
     /// O menu "⋯" do painel está aberto (o Shift+F10 na aba abre o mesmo).
     pub menu_aberto: bool,
     /// A largura da faixa das abas no quadro anterior (zero antes de medir): decide quais abas de
@@ -442,6 +445,7 @@ impl Janela {
             manter_lugar: false,
             medida: MedidaPainel::default(),
             foco_aba,
+            escopo_selecao: gpui_kit::base::TextSelectionScopeId::new(),
             menu_aberto: false,
             largura_abas: px(0.),
             indice_menu: 0,

@@ -1261,10 +1261,14 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   cada um tem um número em forma de tecla (na aba, na lista e na direita), Alt+1…4 vai para ele, e
   o selecionado é marcado pela **luz de baixo** (a doca de metal no pé do cartão, ver
   **Acabamento**), que acende suave (180 ms; apaga em 120); clicar na aba (ou em qualquer parte do
-  painel) ativa o painel e põe o cursor na caixa dele. O × fica dentro da aba, no lugar do ponto de
-  estado (azul rodando, âmbar pedido ou parada, vermelho erro): aparece no hover, no foco e sempre
-  no painel ativo; fechar pelo × ou pelo clique do meio põe o cursor na caixa do painel que fica,
-  como o Ctrl+W. A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10 abre o menu.
+  painel) ativa o painel e põe o cursor na caixa dele. O estado do chat vai no contorno da aba (azul
+  respirando rodando, âmbar pedido ou parada, vermelho erro, verde novidade). O × aparece por cima
+  do fim da aba, sem guardar lugar, no hover e no foco (segurar a aba já dá o foco); a aba só com o
+  símbolo não o mostra (o clique nela trocaria de aba fechando), e fecha pelo clique do meio. Fechar
+  pelo × ou pelo clique do meio põe o cursor na caixa do painel que fica, como o Ctrl+W. A seleção
+  de texto fica no painel em que começou: cada um tem o seu escopo (`Painel.escopo_selecao`), que o
+  clique ativa (`conversa::aplicar_escopo_do_clique`, com o `definir_escopo_de_selecao` do
+  gpui-component vendorizado). A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10 abre o menu.
   As divisórias não têm linha fixa: o indicador aparece ao passar o mouse, e é só arrastar para
   redimensionar; **dois cliques** na divisória entre duas conversas deixam todas com a mesma
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo

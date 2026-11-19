@@ -4,6 +4,7 @@
 
 use std::{collections::HashMap, rc::Rc};
 
+use gpui_kit::base::TextSelectionScopeId;
 use gpui_kit::base::actions::SelectDown;
 use gpui_kit::component::{
     ElementExt as _, h_flex,
@@ -184,11 +185,6 @@ fn dica_da_aba(motor: &Motor, chat: &Chat) -> String {
     format!("{}\n{segunda}", chat.titulo)
 }
 
-/// O símbolo da conversa: o balão, o mesmo em todo chat.
-fn simbolo_da_conversa() -> Simbolo {
-    Simbolo::icone_cor(Lucide::MessageCircle, Cores::tenue())
-}
-
 /// A largura de um título de aba (o `rotulo()`: 13, médio), em px de agora.
 fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     let mut fonte = window.text_style().font();
@@ -198,14 +194,18 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     window.text_system().shape_line(texto.into(), tam(window, 13.), &[corrida], None).width
 }
 
-/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (8), o ícone
-/// (16), o vão até o título (6) e a folga da direita (12). O × aparece por cima, no hover, sem
-/// guardar lugar: contado aqui (eram 74, com os 20 dele e mais um vão), a conta via a faixa
-/// 26 px mais cheia por aba e mandava a aba de fundo para o ícone com espaço sobrando (dono,
-/// 17/11/2026: "por que tá ficando só o logo aqui?").
-const ABA_SEM_TITULO: f32 = 44.;
+/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (8) e a da
+/// direita (12). O × aparece por cima, no hover, sem guardar lugar: contado aqui (eram 74, com os
+/// 20 dele e mais um vão), a conta via a faixa 26 px mais cheia por aba e mandava a aba de fundo
+/// para o ícone com espaço sobrando (dono, 17/11/2026: "por que tá ficando só o logo aqui?"). O
+/// ícone (16 e o vão de 6) saiu das abas em 18/11/2026 e ficou nesta conta: a peça em volta de
+/// cada aba, com o mínimo dela, guardava 22 px vazios depois de um título curto (dono, 19/11/2026:
+/// "tá ficando bugado o espaçamento lá em cima").
+const ABA_SEM_TITULO: f32 = 22.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
 const ABA_SO_ICONE: f32 = 32.;
+/// O lápis do rascunho numa aba de fundo: o vão de 6 e os 11 do ícone.
+const LAPIS_NA_ABA: f32 = 17.;
 /// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
 const NUMERO_NA_ABA: f32 = 26.;
 /// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
@@ -545,6 +545,29 @@ fn grupo_das_acoes(painel_id: u64) -> SharedString {
     SharedString::from(format!("acoes-cabecalho-{painel_id}"))
 }
 
+thread_local! {
+    /// O escopo de seleção do painel em que caiu o clique de agora: a captura do cartão anota, e a
+    /// base da janela aplica na volta (`aplicar_escopo_do_clique`).
+    static ESCOPO_DO_CLIQUE: std::cell::Cell<Option<TextSelectionScopeId>> = const { std::cell::Cell::new(None) };
+}
+
+/// Na captura do clique, pela base da janela: até um cartão anotar o escopo dele, o clique é de
+/// fora dos painéis.
+pub(super) fn clique_comecou() {
+    ESCOPO_DO_CLIQUE.set(None);
+}
+
+/// Na volta do clique, pela base da janela: a seleção de texto fica só no painel clicado (ou no
+/// que está fora deles). A camada de seleção trata o clique por último, e começa a marcar já no
+/// escopo certo. Com a ordem dos textos da janela, uma seleção de um painel pegava a faixa da mesma
+/// altura nos vizinhos (dono, 19/11/2026: "tento marcar só uma coisa de uma página e fica pegando
+/// das outras abas").
+pub(super) fn aplicar_escopo_do_clique(evento: &MouseDownEvent, window: &mut Window, cx: &mut App) {
+    if evento.button == MouseButton::Left {
+        gpui_kit::component::definir_escopo_de_selecao(ESCOPO_DO_CLIQUE.take().unwrap_or_default(), window, cx);
+    }
+}
+
 impl Janela {
     /// Um painel de conversa (`ix` em `self.paineis`); sem painel, a tela de começar.
     /// O que há à esquerda do painel `ix` da fileira (`None`: a tela de começar, sozinha): a
@@ -597,6 +620,8 @@ impl Janela {
                     .flex_col()
                     .child(mensagens)
                     .child(div().absolute().inset_0().child(anel))
+                    // O texto deste painel só entra numa seleção começada nele (`aplicar_escopo_do_clique`).
+                    .text_selection_scope(self.paineis[ix].escopo_selecao)
                     .into_any_element()
             }
             _ => self.sem_conversa(window, cx).into_any_element(),
@@ -678,6 +703,13 @@ impl Janela {
             .capture_any_mouse_down(
                 cx.listener(move |this, _, _, cx| this.clique_no_painel(painel_id, cx)),
             )
+            .when_some(ix.map(|ix| self.paineis[ix].escopo_selecao), |s, escopo| {
+                s.capture_any_mouse_down(move |evento: &MouseDownEvent, _, _| {
+                    if evento.button == MouseButton::Left {
+                        ESCOPO_DO_CLIQUE.set(Some(escopo));
+                    }
+                })
+            })
             .when_some(medida, |s, medir| s.on_prepaint(medir))
             .when_some(chat.map(|c| c.id.clone()), |s, chat_id| {
                 // Arquivos arrastados do gerenciador viram anexos da próxima mensagem.
@@ -991,7 +1023,10 @@ impl Janela {
             .iter()
             .map(|c| {
                 let titulo = largura_do_rotulo(window, &c.titulo);
-                let resto = tam(window, ABA_SEM_TITULO);
+                // O lápis do rascunho (o vão de 6 e os 11 dele) também ocupa a aba: fora da conta,
+                // o título dela ficava com uma ou duas letras.
+                let lapis = if self.rascunho_fora_de_vista(&c.id).is_some() { LAPIS_NA_ABA } else { 0. };
+                let resto = tam(window, ABA_SEM_TITULO + lapis);
                 ((resto + titulo).min(teto_natural).as_f32(), (resto + titulo.min(quatro)).as_f32())
             })
             .unzip();
@@ -1017,6 +1052,9 @@ impl Janela {
                 .chain(jeitos.iter().zip(&naturais).filter(|(j, _)| **j == JeitoDaAba::Titulo).map(|(_, n)| *n))
                 .collect();
             let teto = teto_por_igual(livre, &com_titulo);
+            // Antes da primeira medida da faixa (o painel acabou de abrir), o título inteiro: com a
+            // largura zero, o teto zerava e as abas de fundo piscavam encolhidas por um quadro.
+            let teto = if painel.largura_abas <= px(0.) { f32::INFINITY } else { teto };
             px(if teto.is_finite() { teto } else { teto_natural.as_f32() }.floor())
         };
         let a_vista_maxima = teto.max(minima_a_vista);
@@ -1048,7 +1086,6 @@ impl Janela {
                 // Toda aba arrasta: para outro painel (vira aba dele) ou para a borda de um painel
                 // (vira um painel novo daquele lado).
                 let arrasto = ArrastoChat { chat: id.clone(), titulo: outro.titulo.clone().into(), de_painel: Some(painel_id) };
-                let previa = simbolo_da_conversa();
                 let mut aba = Aba::new(SharedString::from(format!("aba-{painel_id}-{id}")), outro.titulo.clone())
                     // As outras abas do painel são peças lisas, só com o contorno.
                     .tom(TomAba::Inativa)
@@ -1087,8 +1124,7 @@ impl Janela {
                     })
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
-                        let simbolo = previa.copia().unwrap_or_else(simbolo_da_conversa);
-                        cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
+                        cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo: None })
                     })
                     // O botão direito na aba de fundo: o menu do painel, com as ações daquele chat.
                     .context_menu({
@@ -1143,7 +1179,6 @@ impl Janela {
             (true, false) => TomAba::Ativa,
         };
         let arrastando = self.arrastando_aba == Some(painel_id);
-        let previa = Some(simbolo_da_conversa());
         let janela = cx.entity().downgrade();
         let fechar = janela.clone();
         // O × aparece no hover e no foco pelo teclado, também na aba selecionada (dono, 16/11/2026:
@@ -1208,8 +1243,7 @@ impl Janela {
                 }
             }))
             .on_drag(arrasto, move |arrasto, _, _, cx| {
-                let simbolo = previa.as_ref().and_then(Simbolo::copia).unwrap_or_else(simbolo_da_conversa);
-                cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo })
+                cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo: None })
             })
             .context_menu(move |menu, window, cx| {
                 menu_do_painel(menu, menu_janela.clone(), menu_motor.clone(), painel_id, None, window, cx)

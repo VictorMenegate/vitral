@@ -1637,7 +1637,10 @@ impl Janela {
             // O grão que faz o transparente ler como fosco; no opaco não há o que foscar.
             .when(crate::tema::transparencia() > 0, |base| base.child(metal::fosco(Corners::default())))
             .child(zoom::captura_roda())
-            .children(zoom::pilula(cx));
+            .children(zoom::pilula(cx))
+            // A seleção de texto fica no painel em que o clique caiu (`conversa::aplicar_escopo_do_clique`).
+            .capture_any_mouse_down(|_, _, _| conversa::clique_comecou())
+            .on_any_mouse_down(conversa::aplicar_escopo_do_clique);
         base.text_style().font_fallbacks =
             Some(FontFallbacks::from_fonts(crate::tema::FONTES_DE_RESERVA.map(String::from).to_vec()));
         // No Wayland, o ponteiro que sai da janela não mexe na posição guardada, e o hover do

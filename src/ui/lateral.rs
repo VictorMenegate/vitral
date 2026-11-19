@@ -28,7 +28,7 @@ use super::{
     AbaLateral, Buscar, Filtro, Gaveta, Janela, NovaConversa,
     componentes::{
         BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, barra_de_rolagem, ControleSegmentado, EstadoVazio,
-        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Simbolo, Sinal, TamanhoBotao, Tom,
+        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Sinal, TamanhoBotao, Tom,
         VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
         contagem, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
@@ -1583,7 +1583,7 @@ impl Janela {
     }
 
     /// Arrastar para um painel, clique do meio e clique direito. Todo cartão leva 2 em cima.
-    fn envolver(&self, cartao: CartaoDeLista, chat: &Chat, simbolo: Simbolo, ctx: &Contexto, cx: &Context<Self>) -> AnyElement {
+    fn envolver(&self, cartao: CartaoDeLista, chat: &Chat, ctx: &Contexto, cx: &Context<Self>) -> AnyElement {
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: None };
         let id_meio = chat.id.clone();
         let (janela, entidade, id_menu) = (ctx.janela.clone(), ctx.motor.clone(), chat.id.clone());
@@ -1597,10 +1597,7 @@ impl Janela {
             .when_some(pasta_da_dica, |s, pasta| {
                 s.tooltip(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
             })
-            .on_drag(arrasto, move |a, _, _, cx| {
-                let simbolo = simbolo.copia().unwrap_or_else(|| Simbolo::icone(Lucide::MessagesSquare));
-                cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo })
-            })
+            .on_drag(arrasto, move |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: None }))
             .on_aux_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                 if ev.is_middle_click() {
                     this.abrir_ao_lado(id_meio.clone(), None, window, cx);
@@ -1772,7 +1769,7 @@ impl Janela {
         if let Some(titulo) = titulo_rico(&chat.titulo, &ctx.busca, nao_lido) {
             cartao = cartao.titulo_rico(titulo);
         }
-        self.envolver(cartao, chat, Simbolo::icone(Lucide::MessageCircle), ctx, cx)
+        self.envolver(cartao, chat, ctx, cx)
     }
 
     /// Põe o cursor na caixa de mensagem do painel ativo.

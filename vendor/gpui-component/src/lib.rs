@@ -99,6 +99,8 @@ pub use crate::Disableable;
 pub use element_ext::*;
 pub use global_state::GlobalState;
 pub use gpui_base::Root;
+// Vitral: o escopo da seleção de texto de cada painel (ver root.rs).
+pub use root::definir_escopo_de_selecao;
 pub use gpui_base::animation;
 pub use gpui_base::{
     AxisExt, Edges, FocusTrapElement, InteractiveElementExt, LengthExt, Measure, OngoingScrollExt,
