@@ -1635,7 +1635,9 @@ importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdad
 bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat, antes das ferramentas; leva 10 s com
-`[demora]`; com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
+`[demora]`; `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
+Claude Code de verdade enquanto sobe (é como se confere que a janela não trava no envio de um
+print); com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
 Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um trecho de mentira,
 para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os segundos de
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
@@ -1881,7 +1883,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
 | `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]` |
-| `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`) |
+| `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |

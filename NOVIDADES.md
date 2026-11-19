@@ -5,6 +5,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.3
 
+- **Mandar mensagem não trava mais a janela.** A mensagem ia para o Claude Code pela própria
+  janela, e uma com print anexado (mais de 1 MB) esperava ele terminar de subir para ser lida: a
+  janela ficava parada de 2 a 6 s, e às vezes o GNOME perguntava se era para forçar a saída.
+  Agora ela segue por fora, e a conversa responde na hora.
 - **Mensagem num chat arquivado começa na hora.** Escrever num chat arquivado, ou apertar o
   **Entregar agora** da fila dele, o tira das Arquivadas e a mensagem entra; antes ela ficava
   esperando na fila, e o botão não fazia nada.

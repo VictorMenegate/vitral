@@ -214,7 +214,8 @@ pub enum Evento {
 
 pub struct Processo {
     filho: Child,
-    entrada: Option<ChildStdin>,
+    /// Escrita numa thread própria (`EntradaDeFundo`): o processo pode demorar a ler.
+    entrada: Option<processos::EntradaDeFundo>,
     codex: Option<Arc<Mutex<crate::agente_codex::servidor::Canal>>>,
     escopo: Escopo,
     parado: bool,
@@ -263,7 +264,7 @@ impl Processo {
         let pid = filho.id();
         let saida = filho.stdout.take().unwrap();
         let erros = filho.stderr.take().unwrap();
-        let mut entrada = filho.stdin.take();
+        let mut entrada = filho.stdin.take().map(processos::EntradaDeFundo::nova);
         let canal_codex = if codex {
             entrada.take().map(|stdin| Arc::new(Mutex::new(crate::agente_codex::servidor::Canal::novo(Box::new(stdin)))))
         } else { None };
@@ -1265,7 +1266,7 @@ pub fn instalou_versao_nova(a: &Atualizacao) -> bool {
     a.ok && a.linhas.iter().any(|l| l.contains("Successfully updated") || l.contains("Successfully downgraded"))
 }
 
-fn escrever_mensagem(entrada: &mut ChildStdin, mensagem: Mensagem) -> Result<()> {
+fn escrever_mensagem(entrada: &mut processos::EntradaDeFundo, mensagem: Mensagem) -> Result<()> {
     let mut conteudo = vec![json!({ "type": "text", "text": mensagem.texto })];
     for caminho in mensagem.imagens {
         let Some(tipo) = tipo_imagem(caminho) else {

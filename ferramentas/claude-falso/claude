@@ -134,6 +134,9 @@ except (ValueError, KeyError, TypeError):
     url = None
 papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else ""
 
+# O Claude Code de verdade só lê a entrada depois de subir (1,5 a 5 s, mais hooks e MCP):
+# CLAUDE_FALSO_SOBE=<segundos> encena essa espera, para ver que a janela não trava no envio.
+time.sleep(float(os.environ.get("CLAUDE_FALSO_SOBE", "0") or 0))
 linha = sys.stdin.readline()
 
 
