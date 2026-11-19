@@ -1,6 +1,6 @@
 [package]
 name = "vitral"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/VictorMenegate/vitral"
@@ -90,8 +90,10 @@ lto = "thin"
 # aparece e some seca, sem o fade que pedia quadros no ritmo do monitor, e some 1,2 s depois do
 # último uso (src/theme/mod.rs, `SCROLLBAR_*`, e `scrollbar_motion` pública para o teste do tema).
 # O véu dos diálogos cobre só o quadro da janela, sem a margem da sombra (src/dialog/dialog.rs);
-# a dica não reabre com o ponteiro fora da janela (src/tooltip.rs); e, com a janela sem foco, o
-# compasso não bate e devolve a fase parada (src/spinner.rs). Do plano visual: a cantoneira azul, a
+# a dica não reabre com o ponteiro fora da janela (src/tooltip.rs); com a janela sem foco, o
+# compasso não bate e devolve a fase parada (src/spinner.rs); e o escopo da seleção de texto de fora
+# dos diálogos é o que o app escolhe (src/root.rs, `definir_escopo_de_selecao`), para cada painel de
+# conversa ter o seu. Do plano visual: a cantoneira azul, a
 # trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`, `fio_de_pontos`), o desenho único
 # de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
 # em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).

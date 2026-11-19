@@ -1261,10 +1261,14 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   cada um tem um número em forma de tecla (na aba, na lista e na direita), Alt+1…4 vai para ele, e
   o selecionado é marcado pela **luz de baixo** (a doca de metal no pé do cartão, ver
   **Acabamento**), que acende suave (180 ms; apaga em 120); clicar na aba (ou em qualquer parte do
-  painel) ativa o painel e põe o cursor na caixa dele. O × fica dentro da aba, no lugar do ponto de
-  estado (azul rodando, âmbar pedido ou parada, vermelho erro): aparece no hover, no foco e sempre
-  no painel ativo; fechar pelo × ou pelo clique do meio põe o cursor na caixa do painel que fica,
-  como o Ctrl+W. A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10 abre o menu.
+  painel) ativa o painel e põe o cursor na caixa dele. O estado do chat vai no contorno da aba (azul
+  respirando rodando, âmbar pedido ou parada, vermelho erro, verde novidade). O × aparece por cima
+  do fim da aba, sem guardar lugar, no hover e no foco (segurar a aba já dá o foco); a aba só com o
+  símbolo não o mostra (o clique nela trocaria de aba fechando), e fecha pelo clique do meio. Fechar
+  pelo × ou pelo clique do meio põe o cursor na caixa do painel que fica, como o Ctrl+W. A seleção
+  de texto fica no painel em que começou: cada um tem o seu escopo (`Painel.escopo_selecao`), que o
+  clique ativa (`conversa::aplicar_escopo_do_clique`, com o `definir_escopo_de_selecao` do
+  gpui-component vendorizado). A aba entra no Tab: Enter vai para a caixa, Delete fecha e Shift+F10 abre o menu.
   As divisórias não têm linha fixa: o indicador aparece ao passar o mouse, e é só arrastar para
   redimensionar; **dois cliques** na divisória entre duas conversas deixam todas com a mesma
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
@@ -1341,7 +1345,9 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   dica do campo (que não aparece enquanto se digita nele). Na busca, quando o termo não está no
   título, a linha de baixo mostra a pasta e o trecho que casou ("loja · Você: valide o **frete**
   grátis…", com o termo em forte), e as arquivadas que casam aparecem no fim, numa seção
-  **Arquivadas** (com o número) e com o cartão tênue. Fora da busca, elas continuam só em
+  **Arquivadas** (com o número) e com o cartão tênue. Escrever num chat arquivado (ou o **Entregar
+  agora** da fila dele) o tira das Arquivadas, e a mensagem entra na hora; antes ela esperava na
+  fila até desarquivar à mão (dono, 19/11/2026). Fora da busca, elas continuam só em
   Arquivadas, que tem os títulos das faixas de data (**Recentes**, até 7 dias, e **Mais antigas**,
   recolhida no começo). Estreitando a lista (ou com o zoom alto, porque a conta é a mesma), ela abre
   mão do que é menos importante antes de cortar o título: abaixo de uns 290 px (a 100%), no hover
@@ -1633,7 +1639,9 @@ importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdad
 bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat, antes das ferramentas; leva 10 s com
-`[demora]`; com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
+`[demora]`; `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
+Claude Code de verdade enquanto sobe (é como se confere que a janela não trava no envio de um
+print); com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
 Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um trecho de mentira,
 para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os segundos de
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
@@ -1879,7 +1887,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
 | `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]` |
-| `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`) |
+| `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |

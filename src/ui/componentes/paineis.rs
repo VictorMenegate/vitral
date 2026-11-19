@@ -174,7 +174,9 @@ impl Aba {
             respira: s == Sinal::Rodando,
         });
         let focada = self.foco.as_ref().is_some_and(|f| f.is_focused(window));
-        let fechar_a_vista = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre || focada);
+        let sempre = self.fechar.as_ref().is_some_and(|(_, sempre, _)| *sempre);
+        let fechar_a_vista = sempre || (self.fechar.is_some() && focada);
+        let tem_estado = self.estado.is_some();
         let tem_fechar = self.fechar.is_some();
         let fechar_meio = self.fechar.as_ref().map(|(_, _, f)| f.clone());
         let fechar = self.fechar.map(|(dica, _, f)| {
@@ -214,9 +216,14 @@ impl Aba {
         // (dono, 16/11/2026: "esse espaço pro x não ter, e ficar quando passar o mouse em cima,
         // sem crescer o tamanho"). O lugar só fica reservado quando o × está sempre à vista ou
         // quando há o ponto do estado, que divide o lugar com ele.
-        let reserva = !self.quadrada && (fechar_a_vista || ponto.is_some());
+        // Com o foco (o clique na aba já o dá), o × aparece por cima como no hover, sem guardar
+        // lugar (dono, 19/11/2026: "quando segura o × fica do lado igual tinha tirado já").
+        let reserva = !self.quadrada && (sempre || tem_estado);
+        // A aba só com o símbolo não tem o × por cima: ele cobriria o símbolo inteiro, e o clique
+        // para trocar de aba fecharia ela. Fecha no clique do meio ou depois de ativa.
+        let so_simbolo = self.so_simbolo || self.quadrada;
         let (fechar_no_lugar, fechar_por_cima) = match fechar {
-            Some(f) if !reserva && !self.quadrada => (None, Some(f)),
+            Some(f) if !reserva && !so_simbolo => (None, Some(f)),
             outro => (outro, None),
         };
         let fim = (reserva && (fechar_no_lugar.is_some() || ponto.is_some()))
@@ -230,11 +237,10 @@ impl Aba {
                 .right(esp::E4)
                 .flex()
                 .items_center()
-                .invisible()
-                .group_hover(GRUPO_DA_ABA, |s| s.visible())
+                // Focada, à vista; não na aba que está sendo arrastada, que fica apagada.
+                .when(!focada || self.arrastando, |s| s.invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
                 .child(div().rounded(raio::de(24.)).bg(fundo_do_x).p(esp::E2).child(f))
         });
-        let so_simbolo = self.so_simbolo || self.quadrada;
         // Ícone solto em 16; o círculo do chat em 18.
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
@@ -336,15 +342,17 @@ pub fn casca_da_aba() -> Div {
     div().flex().items_center().min_w_0().rounded(raio::de(32.))
 }
 
-/// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280.
+/// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280. O chat
+/// vai sem símbolo, como a aba e a linha da lista (dono, 19/11/2026: "quando arrasta aparece o
+/// logo").
 pub struct PreviaArrasto {
     pub titulo: SharedString,
-    pub simbolo: Simbolo,
+    pub simbolo: Option<Simbolo>,
 }
 
 impl Render for PreviaArrasto {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let simbolo = self.simbolo.copia().map(|s| s.desenhar(16., window));
+        let simbolo = self.simbolo.as_ref().and_then(Simbolo::copia).map(|s| s.desenhar(16., window));
         div()
             .flex()
             .items_center()

@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod entrada;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
@@ -31,6 +32,7 @@ mod windows;
 #[cfg(windows)]
 use windows as plataforma;
 
+pub use entrada::EntradaDeFundo;
 pub use plataforma::{Escopo, abrir, codigo_de_saida, colher, comando, comando_leve, encerrar_todos, limpar_sobras};
 
 /// Um processo pronto para [`abrir`]: argumentos, pasta, ambiente e pipes vão no `Command` de

@@ -125,7 +125,7 @@ impl Vitrine {
         });
         let previa = cx.new(|_| PreviaArrasto {
             titulo: "Cupons de desconto na API".into(),
-            simbolo: Simbolo::Papel(Papel::Avulso),
+            simbolo: None,
         });
         let _escolha = cx.subscribe(&lista, |vitrine, _, evento, cx| {
             vitrine.escolhido = match evento {

@@ -1150,12 +1150,14 @@ impl Janela {
                     .hover(|s| s.bg(gpui_kit::rgba(0x000000cc)))
                     .child(super::mensagens::icone_de(icone, 14.))
             };
-            s.child(
+            // Por cima de tudo e fora do recorte do painel (`deferred` + `anchored`, como os menus):
+            // dentro do cartão, que corta reto, a imagem larga saía cortada e passava por baixo do
+            // painel vizinho (dono, 19/11/2026: "tá bugado a imagem aqui, tem que ficar por cima").
+            // O canto de baixo dela fica no alto da caixa, e ela não sai da janela.
+            s.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window_with_margin(px(8.)).child(
                 div()
                     .id("ilha-do-anexo")
-                    .absolute()
-                    .bottom(esp::E8)
-                    .left_0()
+                    .mb(esp::E8)
                     .p(esp::E6)
                     .rounded(raio::PECA)
                     .bg(Cores::flutuante())
@@ -1204,7 +1206,7 @@ impl Janela {
                                     }))),
                             ),
                     ),
-            )
+            )).with_priority(1))
         })
     }
 

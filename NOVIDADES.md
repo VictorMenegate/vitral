@@ -3,6 +3,28 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.3
+
+O envio sem travar a janela, as abas, a seleção de texto por painel, o chat arquivado que volta a
+andar e a imagem anexada por cima.
+
+- **Mandar mensagem não trava mais a janela.** A mensagem ia para o Claude Code pela própria
+  janela, e uma com print anexado (mais de 1 MB) esperava ele terminar de subir para ser lida: a
+  janela ficava parada de 2 a 6 s, e às vezes o GNOME perguntava se era para forçar a saída.
+  Agora ela segue por fora, e a conversa responde na hora.
+- **A seleção fica no painel.** Marcar um trecho num painel pegava também a faixa da mesma altura
+  nos outros painéis abertos.
+- **As abas sem sobras.** Uma aba de título curto deixava um vão vazio antes da seguinte; segurar a
+  aba punha o × ao lado do título, fazendo ela crescer; o arrasto mostrava o balão que as abas não
+  têm mais; a aba de fundo com rascunho ficava com uma ou duas letras do título; e, no painel da
+  direita estreito, clicar na aba do arquivo só com o ícone fechava o arquivo.
+- **Mensagem num chat arquivado começa na hora.** Escrever num chat arquivado, ou apertar o
+  **Entregar agora** da fila dele, o tira das Arquivadas e a mensagem entra; antes ela ficava
+  esperando na fila, e o botão não fazia nada.
+- **A imagem anexada abre por cima de tudo.** A imagem aberta em cima da caixa saía cortada na
+  borda do painel e passava por baixo do painel vizinho; agora ela flutua por cima, como os menus,
+  sem sair da janela.
+
 ## 0.9.2
 
 O modo foco para todos os chats e o fundo da conversa vazia sem emenda.
