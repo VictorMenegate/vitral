@@ -712,7 +712,9 @@ impl Janela {
                     .mode(ScrollbarMode::Always).viewport_from_layout(),
             ))
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
-            .children(presa)
+            // Empurrada para cima, a faixa sai pelo alto da lista, cortada nele: solta, ela subia por
+            // cima das abas do cabeçalho (dono, 19/11/2026: "a mensagem ficou em cima das abas").
+            .children(presa.map(|faixa| div().absolute().inset_0().overflow_hidden().child(faixa)))
             // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
             .children(barra_busca)
     }
