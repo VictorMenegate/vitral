@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.5
 
+O fundo das suas mensagens parado e as imagens delas com o canto redondo.
+
 - **O fundo das suas mensagens parado.** Com um chat trabalhando, o fundo dos balões trocava de
   tom quando o ponteiro passava pela conversa.
 - **As imagens das mensagens com o canto redondo.** A miniatura de uma imagem anexada saía de
