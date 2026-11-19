@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.3
 
+O envio sem travar a janela, o chat arquivado que volta a andar e a imagem anexada por cima.
+
 - **Mandar mensagem não trava mais a janela.** A mensagem ia para o Claude Code pela própria
   janela, e uma com print anexado (mais de 1 MB) esperava ele terminar de subir para ser lida: a
   janela ficava parada de 2 a 6 s, e às vezes o GNOME perguntava se era para forçar a saída.
