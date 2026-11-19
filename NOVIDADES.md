@@ -3,6 +3,14 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.4
+
+A mensagem presa no alto da conversa sem cobrir as abas.
+
+- **A mensagem presa não sobe por cima das abas.** Empurrada pela mensagem seguinte, a faixa da
+  mensagem presa no alto subia por cima do cabeçalho do painel e cobria as abas; agora ela sai
+  cortada no alto da conversa.
+
 ## 0.9.3
 
 O envio sem travar a janela, as abas, a seleção de texto por painel, o chat arquivado que volta a
