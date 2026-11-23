@@ -61,10 +61,10 @@ pub struct Ocorrencia {
     pub faixa: Range<usize>,
 }
 
-/// A chamada de ferramenta aparece na conversa (as buscas de ferramenta nunca; no modo foco,
-/// nenhuma). Segue o filtro de `mensagens::mensagens`.
-fn ferramenta_visivel(nome: &str, foco: bool) -> bool {
-    nome != "ToolSearch" && !foco
+/// A chamada de ferramenta aparece na conversa (as buscas de ferramenta nunca; no modo foco, dentro
+/// da linha do turno, que a busca abre). Segue o filtro de `mensagens::mensagens`.
+fn ferramenta_visivel(nome: &str, _foco: bool) -> bool {
+    nome != "ToolSearch"
 }
 
 /// Todas as ocorrências de `termo` nos itens, na ordem da conversa. `foco` é o modo foco do
@@ -142,7 +142,7 @@ pub fn chaves_para_abrir(chat: &str, itens: &[Item], indice: usize, foco: bool) 
         chaves.push(format!("{chat}:{}:grupo", primeira_da_trilha(itens, indice, foco)));
     }
     // Dentro de um turno recolhido na linha "Trabalhou…", a linha abre (rodada de uso, 2.1).
-    if !foco && let Some(turno) = super::mensagens::turnos_recolhiveis(itens, false).into_iter().find(|t| t.contem(indice)) {
+    if let Some(turno) = super::mensagens::turnos_da_conversa(itens, foco, false).into_iter().find(|t| t.contem(indice)) {
         chaves.push(turno.chave(chat));
     }
     chaves
@@ -767,8 +767,8 @@ mod testes {
         assert_eq!((achados[3].item, achados[3].campo), (2, Campo::Resumo));
         assert_eq!((achados[4].item, achados[4].campo), (2, Campo::Resultado));
         assert_eq!(achados[5].item, 4);
-        // No modo foco as chamadas comuns saem da tela e da conta.
-        assert_eq!(ocorrencias(&itens, "cupom", true).len(), 4);
+        // No modo foco as chamadas ficam dentro da linha do turno, que a busca abre: contam.
+        assert_eq!(ocorrencias(&itens, "cupom", true).len(), 6);
         assert!(ocorrencias(&itens, "", false).is_empty());
     }
 

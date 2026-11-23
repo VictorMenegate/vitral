@@ -14,6 +14,13 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **Sem o brilho no topo.** A linha de luz no alto das abas, da caixa de mensagem, dos cartões e
   dos menus saiu.
 - **O título das abas no meio.** Sem o ícone, o título ficava mais perto da borda da esquerda.
+- **Mensagem com agentes no fundo.** Com os agentes trabalhando em segundo plano, a mensagem que
+  você manda entra na hora; antes ela esperava na fila até todos acabarem.
+- **Modo foco como no VS Code.** Cada turno vira uma linha só com o que o agente fez, que abre no
+  clique: rodando, "Buscando cupom · 2 chamadas"; pronto, "Trabalhou 16 s · 1 comando", com a
+  resposta embaixo. Antes as ferramentas sumiam de vez.
+- **A tela dos agentes.** A lista de todos os agentes à esquerda e o escolhido à direita, com os
+  passos numerados e o resultado. Antes só dois cabiam, e os outros ficavam escondidos.
 
 ## 0.9.5
 

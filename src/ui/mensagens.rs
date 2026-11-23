@@ -280,14 +280,14 @@ impl Janela {
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push((Bloco::Texto, None, self.dica_inicial(motor, chat, window, cx)));
         }
-        // Conversas antigas guardaram as buscas de ferramenta; não interessam. O modo foco tira
-        // todas as ferramentas.
+        // Conversas antigas guardaram as buscas de ferramenta; não interessam. No modo foco as
+        // ferramentas ficam, recolhidas na linha do turno (`turnos_do_foco`).
         let mut visiveis: Vec<(usize, &Item)> = chat
             .itens
             .iter()
             .enumerate()
             .filter(|(i, item)| match item {
-                Item::Ferramenta { nome, .. } => nome != "ToolSearch" && !foco,
+                Item::Ferramenta { nome, .. } => nome != "ToolSearch",
                 Item::Assistente { .. } => !resposta_repete_o_erro(&chat.itens, *i),
                 _ => true,
             })
@@ -325,9 +325,9 @@ impl Janela {
             .novo_desde
             .and_then(|lido| item_do_separador_novo(&chat.itens, lido))
             .filter(|n| escondidos == 0 || visiveis.first().is_some_and(|(i, _)| i <= n));
-        // Os turnos prontos recolhem numa linha "Trabalhou…" (rodada de uso, 2.1). No modo foco as
-        // ferramentas já saíram, e não há o que recolher.
-        let turnos = if foco { Vec::new() } else { turnos_recolhiveis(&chat.itens, contexto.rodando) };
+        // Os turnos prontos recolhem numa linha "Trabalhou…" (rodada de uso, 2.1). No modo foco,
+        // todo turno, também o que roda, vira uma linha só (`turnos_do_foco`).
+        let turnos = turnos_da_conversa(&chat.itens, foco, contexto.rodando);
         let mut turno_posto: Option<usize> = None;
         // Onde o separador "Novo" entrou (a posição entre os blocos) e o índice do bloco logo depois
         // dele: a abertura no começo da resposta o deixa à vista no alto (conferência, 16/11/2026).
@@ -734,9 +734,8 @@ impl Janela {
         let Some(ix) = self.paineis.iter().position(|p| p.id == painel_id) else { return; };
         let p = &self.paineis[ix];
         if p.rolagem.offset().y < -px(240.) || p.preservar_topo.is_some() || p.busca.aberta { return; }
-        let foco = self.modo_foco(cx);
         let nativos = self.motor.as_ref().and_then(|m| m.read(cx).chat(p.chat.as_deref()?)).map_or(0, |chat| {
-            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch" || foco)).count()
+            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch")).count()
         });
         let tem_mais = if p.mostrar < nativos {
             self.paineis[ix].mostrar += ITENS_NA_TELA;
@@ -2308,7 +2307,10 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TurnoRecolhivel {
     pub mensagem: usize,
+    /// A resposta final, que fica embaixo da linha; no turno `ao_vivo`, o fim da conversa.
     pub resposta: usize,
+    /// O turno que roda agora (só no modo foco): a linha diz o que ele faz e quantas chamadas fez.
+    pub ao_vivo: bool,
 }
 
 impl TurnoRecolhivel {
@@ -2348,10 +2350,70 @@ pub(super) fn turnos_recolhiveis(itens: &[Item], rodando: bool) -> Vec<TurnoReco
         let trilha = antes.iter().any(|i| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. }));
         let texto = antes.iter().any(|i| matches!(i, Item::Assistente { .. }));
         if trilha && texto {
-            saida.push(TurnoRecolhivel { mensagem, resposta });
+            saida.push(TurnoRecolhivel { mensagem, resposta, ao_vivo: false });
         }
     }
     saida
+}
+
+/// Os turnos que recolhem nesta conversa: os do modo foco, ou os de sempre.
+pub(super) fn turnos_da_conversa(itens: &[Item], foco: bool, rodando: bool) -> Vec<TurnoRecolhivel> {
+    if foco { turnos_do_foco(itens, rodando) } else { turnos_recolhiveis(itens, rodando) }
+}
+
+/// Os turnos do modo foco, como a extensão do Claude Code no VS Code (dono, 23/11/2026: "tem que
+/// ser igual aqui no VS Code"): de depois da mensagem até a resposta final, tudo o que o agente fez
+/// (as chamadas, o raciocínio, as falas do meio) vira uma linha só, que abre no clique, e a
+/// resposta fica embaixo. O turno que roda também, ao vivo: "Rodando cargo test · 18 chamadas".
+pub(super) fn turnos_do_foco(itens: &[Item], rodando: bool) -> Vec<TurnoRecolhivel> {
+    let marcos: Vec<usize> = itens
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }))
+        .map(|(k, _)| k)
+        .collect();
+    let trabalho = |i: &Item| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. } | Item::Assistente { .. });
+    let mut saida = Vec::new();
+    for (n, &mensagem) in marcos.iter().enumerate() {
+        let fim = marcos.get(n + 1).copied().unwrap_or(itens.len());
+        if crate::motor::e_revisao_da_memoria(&itens[mensagem]) {
+            continue;
+        }
+        if rodando && fim == itens.len() {
+            if itens[mensagem + 1..].iter().any(|i| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. })) {
+                saida.push(TurnoRecolhivel { mensagem, resposta: fim, ao_vivo: true });
+            }
+            continue;
+        }
+        let Some(resposta) = itens[mensagem + 1..fim].iter().rposition(|i| matches!(i, Item::Assistente { .. })).map(|k| mensagem + 1 + k)
+        else {
+            continue;
+        };
+        if itens[mensagem + 1..resposta].iter().any(trabalho) {
+            saida.push(TurnoRecolhivel { mensagem, resposta, ao_vivo: false });
+        }
+    }
+    saida
+}
+
+/// A linha do turno que roda, no modo foco: o que ele faz agora e quantas chamadas fez.
+fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
+    let trecho = &itens[turno.mensagem + 1..turno.resposta.min(itens.len())];
+    let chamadas = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { .. })).count();
+    let agora = trecho.iter().rev().find_map(|i| match i {
+        Item::Ferramenta { nome, resumo, .. } => {
+            let detalhe = detalhe_da_chamada(nome, resumo);
+            let verbo = verbo_da_ferramenta(nome, true);
+            Some(if detalhe.is_empty() { verbo.to_string() } else { format!("{verbo} {detalhe}") })
+        }
+        Item::Raciocinio { .. } => Some("Pensando".to_string()),
+        _ => None,
+    });
+    let mut partes = vec![agora.unwrap_or_else(|| "Trabalhando".to_string())];
+    if chamadas > 0 {
+        partes.push(contagem(chamadas, "chamada", "chamadas"));
+    }
+    partes.join(" · ")
 }
 
 /// O que fica à vista com o turno recolhido: o texto intermediário que termina em pergunta, o
@@ -2813,7 +2875,7 @@ impl Janela {
         // Os tokens e o custo do turno, quando o livro dos gastos os tem (`motor/gasto.rs`): só na
         // dica, para a linha continuar curta (dono, 18/11/2026).
         let gasto = contexto.motor.gastos().do_turno(&contexto.chat.id, turno.mensagem, contexto.chat.itens[turno.mensagem].em());
-        let resumo = resumo_do_turno(&contexto.chat.itens, turno);
+        let resumo = if turno.ao_vivo { resumo_ao_vivo(&contexto.chat.itens, turno) } else { resumo_do_turno(&contexto.chat.itens, turno) };
         let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
         let dica = SharedString::from(super::onde_uso::dica_com_gasto(dica, gasto.as_ref()));
         let linha = h_flex()
@@ -2823,8 +2885,12 @@ impl Janela {
             .hover(|s| s.bg(Cores::hover()))
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
-            .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
+            .child(coluna_do_icone().text_color(Cores::tenue()).child(if turno.ao_vivo {
+                super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+            } else {
+                icone_de(Lucide::Clock, 14.).into_any_element()
+            }))
+            .child(partes_inteiras(&resumo).text_color(if turno.ao_vivo { Cores::texto() } else { Cores::tenue() }))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
@@ -6100,7 +6166,7 @@ mod testes {
             em(assistente("Pronto."), 1_372),
         ];
         let turnos = turnos_recolhiveis(&itens, false);
-        assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7 }]);
+        assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7, ao_vivo: false }]);
         assert!(turnos[0].contem(1) && turnos[0].contem(6) && !turnos[0].contem(7) && !turnos[0].contem(0));
         assert_eq!(resumo_do_turno(&itens, turnos[0]), "Trabalhou 6 min 12 s · 2 comandos · editou carrinho.py e motor.rs");
         // Com o turno ainda rodando, o último não recolhe.

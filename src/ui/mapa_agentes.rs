@@ -12,21 +12,22 @@ use super::{
     componentes::{AnelGirando, contagem, largura, relogio},
     composer::nome_curto_modelo,
     dialogos::{cabecalho, moldura, topo},
-    mensagens::{detalhe_da_chamada, detalhe_do_passo, duracao_curta, icone_de, nome_curto},
+    mensagens::{detalhe_da_chamada, detalhe_do_passo, duracao_curta, nome_curto},
 };
 use crate::{
     modelo::{Agente as QuemResponde, Chat, Execucao, Item, agora},
     motor::Motor,
-    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, r, raio},
+    tema::{Cores, FONTE_MONO, Tipo as _, esp, r, raio},
 };
 
-/// A altura da linha de cima de um nó (o título e a linha de baixo), a 100%.
+/// A altura da linha de um agente (o título e a linha de baixo), a 100%.
 const ALTURA_DO_NO: f32 = 52.;
-/// Onde passa o fio que liga os nós: o meio da linha de cima, contando a borda.
-const MEIO_DO_NO: f32 = ALTURA_DO_NO / 2. + 1.;
-/// A largura do nó da conversa e de cada trecho do fio.
-const LARGURA_DA_RAIZ: f32 = 200.;
-const FIO: f32 = 20.;
+/// A largura da coluna da lista dos agentes, a 100%.
+const LARGURA_DA_LISTA: f32 = 300.;
+/// A altura da lista e do painel do agente escolhido, a 100%.
+const ALTURA_DO_CORPO: f32 = 460.;
+/// O diálogo é mais largo que o G: a lista e o agente escolhido lado a lado.
+const LARGURA_DO_DIALOGO: f32 = 900.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Estado {
@@ -173,43 +174,81 @@ fn linha_do_no(ponto: AnyElement, titulo: SharedString, meta: SharedString, fort
         .children(direita)
 }
 
-/// Os passos e o resultado de um agente, embaixo da linha dele.
-fn detalhe(i: usize, a: &Agente) -> Div {
-    let passos = (!a.passos.is_empty()).then(|| {
+/// O painel da direita: o agente escolhido, com o que ele está fazendo (ou quanto levou), os
+/// passos dele e o resultado, cada parte com a sua rolagem. Passo vazio não entra (deixava um
+/// buraco em branco em cima do resultado; dono, 23/11/2026).
+fn painel_do_agente(i: usize, a: &Agente) -> Div {
+    let passos: Vec<String> = a.passos.iter().map(|p| detalhe_do_passo(p)).map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+    let titulo_de_secao = |texto: &'static str| div().etiqueta().text_color(Cores::apagado()).child(texto);
+    let lista_de_passos = (!passos.is_empty()).then(|| {
+        let n = passos.len();
         v_flex()
-            .id(("passos-do-agente", i))
-            .max_h(r(180.))
-            .overflow_y_scroll()
-            .gap(esp::E2)
-            .metadado()
-            .font_family(FONTE_MONO)
-            .text_color(Cores::tenue())
-            .children(a.passos.iter().map(|p| div().truncate().child(detalhe_do_passo(p))))
+            .gap(esp::E4)
+            .child(titulo_de_secao(if n == 1 { "1 passo" } else { "Passos" }))
+            .child(
+                v_flex()
+                    .id(("passos-do-agente", i))
+                    .max_h(r(200.))
+                    .overflow_y_scroll()
+                    .gap(esp::E2)
+                    .children(passos.into_iter().enumerate().map(|(k, p)| {
+                        h_flex()
+                            .gap(esp::E8)
+                            .items_start()
+                            .child(div().flex_none().w(r(22.)).metadado().text_color(Cores::apagado()).child(format!("{}", k + 1)))
+                            .child(div().flex_1().min_w_0().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(p))
+                    })),
+            )
     });
     let resultado = a.resultado.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|texto| {
-        let curto: String = texto.chars().take(4_000).collect();
-        div()
-            .id(("resultado-do-agente", i))
-            .max_h(r(200.))
-            .overflow_y_scroll()
-            .p(esp::E8)
-            .rounded(raio::CONTROLE)
-            .bg(Cores::preto())
-            .metadado()
-            .text_color(Cores::texto())
-            .child(curto)
+        let curto: String = texto.chars().take(8_000).collect();
+        v_flex().gap(esp::E4).min_h_0().child(titulo_de_secao("Resultado")).child(
+            div()
+                .id(("resultado-do-agente", i))
+                .max_h(r(300.))
+                .overflow_y_scroll()
+                .p(esp::E12)
+                .rounded(raio::CONTROLE)
+                .bg(Cores::preto())
+                .corpo_ui()
+                .text_color(Cores::texto())
+                .child(curto),
+        )
     });
-    let vazio = (passos.is_none() && resultado.is_none()).then(|| {
-        div().metadado().text_color(Cores::apagado()).child(match a.estado {
+    let vazio = (lista_de_passos.is_none() && resultado.is_none()).then(|| {
+        div().corpo_ui().text_color(Cores::tenue()).child(match a.estado {
             Estado::Rodando => "Ainda não usou nenhuma ferramenta.",
             _ => "A conversa não guardou os passos deste agente.",
         })
     });
-    v_flex().gap(esp::E8).px(esp::E12).pb(esp::E12).children(passos).children(resultado).children(vazio)
+    v_flex()
+        .size_full()
+        .gap(esp::E12)
+        .child(
+            h_flex().gap(esp::E8).items_start().child(div().flex_none().pt(esp::E4).child(ponto(a.estado))).child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(esp::E2)
+                    .child(div().corpo_ui().font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child(a.titulo.clone()))
+                    .child(div().metadado().text_color(Cores::tenue()).child(meta_do_agente(a))),
+            ),
+        )
+        .children(lista_de_passos)
+        .children(resultado)
+        .children(vazio)
 }
 
-/// O mapa: a conversa, o fio e a coluna dos agentes. O fio sai do meio da linha de cima do nó da
-/// conversa e desce pela esquerda da coluna, com um ramo para cada agente.
+/// O agente que abre escolhido: o que está trabalhando, ou o último.
+fn escolhido_padrao(agentes: &[Agente]) -> Option<String> {
+    agentes.iter().find(|a| a.estado == Estado::Rodando).or_else(|| agentes.last()).map(|a| a.id.clone())
+}
+
+/// A tela dos agentes: em cima, a conversa (o modelo e o contexto) e a conta de quantos
+/// trabalham, terminaram e falharam; embaixo, a lista de todos à esquerda, com a sua rolagem, e o
+/// escolhido à direita, com os passos e o resultado. Era uma árvore com o agente aberto dentro
+/// dela: com 10 agentes, só dois cabiam e o resto ficava escondido embaixo (dono, 23/11/2026:
+/// "tem que melhorar bastante essa parte pra ver os agents").
 fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, estado: &Entity<Option<String>>) -> AnyElement {
     let execucao = motor.execucao(&chat.id);
     let rodando = matches!(execucao, Execucao::Rodando { .. });
@@ -229,67 +268,90 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
         Execucao::Erro(_) => Estado::Falhou,
         _ => Estado::Terminou,
     };
-    let fio = Cores::borda_forte();
-    let no = |conteudo: Div| conteudo.rounded(raio::CARTAO).border_1().border_color(Cores::borda()).bg(Cores::recuo());
-    let raiz = no(v_flex().flex_none().w(r(LARGURA_DA_RAIZ)).child(linha_do_no(
-        ponto(estado_da_raiz),
-        chat.titulo.clone().into(),
-        meta_da_raiz.into(),
-        true,
-        None,
-    )));
-    let total = agentes.len();
-    let linhas = agentes.iter().enumerate().map(|(i, a)| {
-        let (primeiro, ultimo) = (i == 0, i + 1 == total);
-        let esta_aberto = aberto == Some(a.id.as_str());
-        let relogio_vivo = (a.estado == Estado::Rodando)
-            .then(|| a.segundos.map(|s| div().flex_none().etiqueta().text_color(Cores::apagado()).child(relogio(s)).into_any_element()))
-            .flatten();
-        let seta = icone_de(if esta_aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 14.).text_color(Cores::apagado());
-        let direita = h_flex().flex_none().gap(esp::E8).children(relogio_vivo).child(seta).into_any_element();
-        let (estado, id) = (estado.clone(), a.id.clone());
-        let cartao = no(v_flex())
-            .id(("agente", i))
-            .cursor_pointer()
-            .hover(|s| s.border_color(Cores::borda_forte()))
-            .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_do_agente(a).into(), false, Some(direita)))
-            .when(esta_aberto, |s| s.child(detalhe(i, a)))
-            .on_click(move |_, window, cx| {
-                estado.update(cx, |aberto, cx| {
-                    *aberto = if aberto.as_deref() == Some(id.as_str()) { None } else { Some(id.clone()) };
-                    cx.notify();
-                });
-                window.refresh();
-            });
-        h_flex()
-            .items_stretch()
-            .child(
-                v_flex()
-                    .flex_none()
-                    .w(r(FIO))
-                    .child(div().h(r(MEIO_DO_NO)).border_b_1().when(!primeiro, |s| s.border_l_1()).border_color(fio))
-                    .child(div().flex_1().when(!ultimo, |s| s.border_l_1()).border_color(fio)),
-            )
-            .child(div().flex_1().min_w_0().pb(esp::E8).child(cartao))
-    });
-    let vazio = (total == 0).then(|| {
-        div().flex_1().min_w_0().pl(esp::E16).pt(esp::E8).corpo_ui().text_color(Cores::tenue()).child(if rodando {
+    let conta = |e: Estado| agentes.iter().filter(|a| a.estado == e).count();
+    let resumo: Vec<String> = [
+        (conta(Estado::Rodando), "trabalhando", "trabalhando"),
+        (conta(Estado::Terminou), "terminou", "terminaram"),
+        (conta(Estado::Falhou), "falhou", "falharam"),
+        (conta(Estado::Interrompido), "interrompido", "interrompidos"),
+    ]
+    .into_iter()
+    .filter(|(n, ..)| *n > 0)
+    .map(|(n, um, varios)| format!("{n} {}", if n == 1 { um } else { varios }))
+    .collect();
+    let conversa = h_flex()
+        .gap(esp::E8)
+        .px(esp::E12)
+        .py(esp::E8)
+        .rounded(raio::CARTAO)
+        .bg(Cores::recuo())
+        .child(ponto(estado_da_raiz))
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(div().truncate().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(chat.titulo.clone()))
+                .child(div().truncate().metadado().text_color(Cores::tenue()).child(meta_da_raiz)),
+        )
+        .when(!resumo.is_empty(), |s| s.child(div().flex_none().metadado().text_color(Cores::tenue()).child(resumo.join(" · "))));
+    if agentes.is_empty() {
+        let aviso = if rodando {
             "Este turno ainda não abriu nenhum agente. Quando o Claude dividir o trabalho com subagentes, eles aparecem aqui."
         } else {
             "Esta conversa não abriu nenhum agente. Quando o Claude divide o trabalho com subagentes, eles aparecem aqui."
-        })
+        };
+        return v_flex().gap(esp::E12).child(conversa).child(div().px(esp::E4).corpo_ui().text_color(Cores::tenue()).child(aviso)).into_any_element();
+    }
+    let escolhido = aberto.filter(|id| agentes.iter().any(|a| a.id == *id)).map(str::to_string).or_else(|| escolhido_padrao(agentes));
+    let linhas = agentes.iter().enumerate().map(|(i, a)| {
+        let selecionado = escolhido.as_deref() == Some(a.id.as_str());
+        let relogio_vivo = (a.estado == Estado::Rodando)
+            .then(|| a.segundos.map(|s| div().flex_none().etiqueta().text_color(Cores::apagado()).child(relogio(s)).into_any_element()))
+            .flatten();
+        let (estado, id) = (estado.clone(), a.id.clone());
+        div()
+            .id(("agente", i))
+            .rounded(raio::CARTAO)
+            .border_1()
+            .border_color(if selecionado { Cores::destaque_borda() } else { transparent_black() })
+            .when(selecionado, |s| s.bg(Cores::selecao()))
+            .when(!selecionado, |s| s.hover(|s| s.bg(Cores::hover())))
+            .cursor_pointer()
+            .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_do_agente(a).into(), false, relogio_vivo))
+            .on_click(move |_, window, cx| {
+                estado.update(cx, |aberto, cx| {
+                    *aberto = Some(id.clone());
+                    cx.notify();
+                });
+                window.refresh();
+            })
     });
-    h_flex()
-        .id("mapa-de-agentes")
-        .items_start()
-        .max_h(r(520.))
-        .overflow_y_scroll()
-        .child(raiz)
-        .when(total > 0, |s| {
-            s.child(div().flex_none().w(r(FIO)).h(r(MEIO_DO_NO)).border_b_1().border_color(fio))
-                .child(v_flex().flex_1().min_w_0().children(linhas))
-        })
-        .children(vazio)
+    let painel = agentes
+        .iter()
+        .enumerate()
+        .find(|(_, a)| escolhido.as_deref() == Some(a.id.as_str()))
+        .map(|(i, a)| painel_do_agente(i, a));
+    v_flex()
+        .gap(esp::E12)
+        .child(conversa)
+        .child(
+            h_flex()
+                .items_start()
+                .gap(esp::E12)
+                .h(r(ALTURA_DO_CORPO))
+                .child(
+                    v_flex()
+                        .id("lista-de-agentes")
+                        .flex_none()
+                        .w(r(LARGURA_DA_LISTA))
+                        .h_full()
+                        .overflow_y_scroll()
+                        .gap(esp::E2)
+                        .children(linhas),
+                )
+                .child(div().flex_none().w(px(1.)).h_full().bg(Cores::linha()))
+                .child(div().flex_1().min_w_0().h_full().children(painel)),
+        )
         .into_any_element()
 }
 
@@ -313,12 +375,12 @@ impl Janela {
             let vivos = agentes.iter().filter(|a| a.estado == Estado::Rodando).count();
             let subtitulo = match (agentes.len(), vivos) {
                 (0, _) => "Os subagentes que a conversa abre".to_string(),
-                (n, 0) => format!("{} · clique num agente para ver os passos", contagem(n, "agente", "agentes")),
-                (n, v) => format!("{} · {v} trabalhando · clique num agente para ver os passos", contagem(n, "agente", "agentes")),
+                (n, 0) => format!("{} · clique num para ver os passos", contagem(n, "agente", "agentes")),
+                (n, v) => format!("{} · {v} trabalhando · clique num para ver os passos", contagem(n, "agente", "agentes")),
             };
             let qual = aberto.read(cx).clone();
             let corpo = mapa(m, c, &agentes, qual.as_deref(), &aberto);
-            moldura(dialogo, largura::G, window).title(topo(cabecalho("Agentes desta conversa", Some(subtitulo)))).child(corpo)
+            moldura(dialogo, LARGURA_DO_DIALOGO, window).title(topo(cabecalho("Agentes desta conversa", Some(subtitulo)))).child(corpo)
         });
     }
 }

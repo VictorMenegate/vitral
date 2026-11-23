@@ -165,11 +165,14 @@ componentes do GPUI Kit.
   painel ao lado (`Janela::enviar_aos_dois`, `Motor::abrir_raia`). O chat novo nasce em Planejar,
   que só lê: dois agentes mexendo nos mesmos arquivos se atropelam. O título dele leva o nome de
   quem responde na frente ("Codex · …").
-- **Mapa de agentes.** `src/ui/mapa_agentes.rs`: um diálogo com a conversa à esquerda e, ligados
-  por um fio, os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`), com o
-  estado (trabalhando, terminou, falhou, interrompido), o tempo e as ferramentas usadas (o
-  `Subagente` de `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números). O
-  clique num agente abre os passos e o resultado. Abre pela pílula "N agentes" da linha de estado
+- **Mapa de agentes.** `src/ui/mapa_agentes.rs`: um diálogo largo com a conversa em cima (o
+  modelo, o contexto e a conta de quantos trabalham, terminaram e falharam) e, embaixo, a lista de
+  todos os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`) à esquerda, com
+  a sua rolagem, e o escolhido à direita (`painel_do_agente`): o estado (trabalhando, terminou,
+  falhou, interrompido), o tempo, os tokens e as ferramentas usadas (o `Subagente` de
+  `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números), os passos
+  numerados (sem os vazios) e o resultado. Abre no que está trabalhando, ou no último. Era uma
+  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre pela pílula "N agentes" da linha de estado
   da caixa (só com agente vivo) e por **Agentes desta conversa**, no "…" da caixa. Um agente sem
   resultado só conta como vivo com o turno rodando e sem aviso depois dele na conversa.
 - **Mensagem no meio do turno.** O Enviar com o turno rodando manda a mensagem para dentro dele
@@ -404,7 +407,11 @@ componentes do GPUI Kit.
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
   ainda rodando, o turno não acaba ali: o chat continua rodando, a conversa ganha o aviso "Os
   agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e o turno só
-  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai). Se o processo sai com eles ainda rodando, com o teto da espera
+  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai).
+  Nessa espera a entrada do processo fica aberta: a mensagem que você manda entra no Claude Code na
+  hora (`Motor::dirigir_turno`, `agentes_no_fundo_com_entrada`), em vez de esperar na fila até os
+  agentes acabarem, e a entrada fecha quando o último termina (`Evento::Fundo(0)`) sem mensagem
+  pendente (dono, 23/11/2026: uma mensagem ficou 53 min na fila). Se o processo sai com eles ainda rodando, com o teto da espera
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
   terminaram. Parar continua valendo e, nessa espera, derruba o processo com os agentes. Um turno
   que termina com erro ou parado enquanto há agentes em segundo plano também derruba o processo, em
@@ -574,9 +581,12 @@ itálico, código, título; o link vira "texto (endereço)"), com as linhas e os
 tem gancho para as ações da citação: a resposta com citação é partida em trechos
 (`trechos_com_citacoes`, em `src/ui/mensagens.rs`) e cada citação é desenhada à parte, com o
 mesmo estilo; a busca conta as ocorrências trecho a trecho (`Realce::trecho`), e a seleção vale
-dentro de cada trecho. Modo foco (esconde as
-ferramentas, vale para todos os chats: `Config::modo_foco`, no menu do painel e na paleta, sem botão
-no cabeçalho; dono, 18/11/2026).
+dentro de cada trecho. Modo foco (vale para todos os chats: `Config::modo_foco`, no menu do painel e
+na paleta, sem botão no cabeçalho; dono, 18/11/2026): como a extensão do Claude Code no VS Code,
+cada turno vira uma linha só com o que o agente fez (`turnos_do_foco`): pronto, "Trabalhou 16 s ·
+1 comando", com a resposta final embaixo; rodando, ao vivo, "Buscando cupom · 2 chamadas", com o
+anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o que está lá dentro
+(dono, 23/11/2026).
 
 - **Ler a conversa.** A **hora** de cada mensagem aparece no hover, na mesma barra flutuante do
   Copiar (`hora_na_barra`; a barra é uma tecla em relevo, opaca, com fio claro e a luz em cima, sem

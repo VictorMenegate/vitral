@@ -1438,9 +1438,10 @@ impl Motor {
         if self.somente_leitura.is_some() || !self.processos.contains_key(chat_id) {
             return Dirigido::NaFila(None);
         }
-        // Esperando os agentes do fundo não há turno a dirigir (a entrada já está fechada), e um
-        // turno sendo parado está indo embora.
-        if self.fim_adiado.contains_key(chat_id) || self.interrompidos.iter().any(|c| c == chat_id) {
+        // Um turno sendo parado está indo embora. Esperando os agentes do fundo, a entrada fica
+        // aberta e a mensagem entra (o Claude Code abre um turno com ela); sem agentes, o fim
+        // adiado é o da mensagem dirigida, e a entrada pode já ter fechado.
+        if self.interrompidos.iter().any(|c| c == chat_id) || (self.fim_adiado.contains_key(chat_id) && !self.agentes_no_fundo_com_entrada(chat_id)) {
             return Dirigido::NaFila(None);
         }
         if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
@@ -1528,11 +1529,17 @@ impl Motor {
         }
     }
 
+    /// Os agentes do fundo ainda trabalham e a entrada do processo segue aberta: dá para mandar
+    /// mensagem nesse tempo.
+    fn agentes_no_fundo_com_entrada(&self, chat: &str) -> bool {
+        self.fundo.get(chat).copied().unwrap_or(0) > 0 && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
+    }
+
     /// O turno que roda neste chat recebe mensagem agora (o Enviar e o "Mandar agora" entram nele).
     pub fn turno_recebe_mensagem(&self, chat: &str) -> bool {
         self.somente_leitura.is_none()
             && matches!(self.execucao(chat), Execucao::Rodando { .. })
-            && !self.fim_adiado.contains_key(chat)
+            && (!self.fim_adiado.contains_key(chat) || self.agentes_no_fundo_com_entrada(chat))
             && !self.interrompidos.iter().any(|c| c == chat)
             && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
     }
@@ -3195,6 +3202,16 @@ impl Motor {
             }
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
+                // O último agente do fundo terminou com o turno já adiado: a entrada, que ficou
+                // aberta para as mensagens desse tempo, fecha (sem nenhuma esperando), e o Claude
+                // Code fecha o turno e sai, como antes.
+                if n == 0
+                    && self.fim_adiado.contains_key(chat_id)
+                    && !self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty())
+                    && let Some(processo) = self.processos.get_mut(chat_id)
+                {
+                    processo.fechar_entrada();
+                }
             }
             Evento::Comandos(comandos) => {
                 if comandos.is_empty() {
@@ -3460,19 +3477,16 @@ impl Motor {
                 let interrompido = self.interrompidos.iter().any(|c| c == chat_id);
                 let agentes = self.fundo.get(chat_id).copied().unwrap_or(0);
                 let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
-                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido)
-                    && let Some(processo) = self.processos.get_mut(chat_id)
-                {
+                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido) && self.processos.contains_key(chat_id) {
                     // O fluxo (ou subagente) segue em segundo plano e o Claude Code abre outro
-                    // turno quando ele acaba: com a entrada fechada, ele espera os agentes e sai,
-                    // e o turno só termina no último `result`. Só com a mensagem dirigida
-                    // engatilhada, a entrada fica aberta: o turno dela começa na hora, no mesmo
-                    // processo, e continua recebendo mensagens (fechada, o que o usuário mandasse
-                    // durante esse turno inteiro ia para a fila; dono, 13/11/2026). Se esse turno
-                    // não começar, a vigia fecha a entrada e o processo sai.
-                    if agentes > 0 {
-                        processo.fechar_entrada();
-                    } else {
+                    // turno quando ele acaba; o turno só termina no último `result`. A entrada fica
+                    // aberta enquanto os agentes trabalham: a mensagem que o usuário manda nesse
+                    // tempo entra no Claude Code na hora, em vez de esperar na fila até eles
+                    // acabarem (dono, 23/11/2026: "essa mensagem não tá indo", depois de 53 min de
+                    // agentes no fundo). Ela fecha quando o último agente termina (`Fundo(0)`). Sem
+                    // agentes, só com a mensagem dirigida engatilhada: o turno dela começa na hora,
+                    // no mesmo processo; se não começar, a vigia fecha a entrada e o processo sai.
+                    if agentes == 0 {
                         self.vigiar_turno_dirigido(chat_id, cx);
                     }
                     let primeiro = self
