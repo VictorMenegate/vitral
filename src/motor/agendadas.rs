@@ -60,7 +60,7 @@ impl Motor {
         cx: &mut Context<Self>,
     ) {
         let texto = texto.trim().to_string();
-        if (texto.is_empty() && anexos.is_empty()) || self.chat(chat).is_none() {
+        if (texto.is_empty() && anexos.is_empty()) || self.chat_gravado(chat).is_none() {
             return;
         }
         // O título sai da primeira mensagem, como no envio comum.
@@ -110,7 +110,7 @@ impl Motor {
         // O "Entregar agora" num chat arquivado: o arquivado segurava a fila, e o botão não fazia
         // nada (dono, 19/11/2026: "o entregar agora não vai"). Ele sai das Arquivadas, e o
         // desarquivar já entrega o que esperava.
-        if self.chat(chat).is_some_and(|c| c.arquivado) {
+        if self.chat_gravado(chat).is_some_and(|c| c.arquivado) {
             self.alternar_arquivado(chat, cx);
             return;
         }
@@ -120,7 +120,7 @@ impl Motor {
     /// Quando mandar a mensagem "quando a janela de 5 h renovar": a renovação da conta em que o
     /// chat roda (ou a do Codex), com a folga. `None` sem a hora lida ou com ela já passada.
     pub fn renovacao_do_chat(&self, chat: &str) -> Option<u64> {
-        let c = self.chat(chat)?;
+        let c = self.chat_gravado(chat)?;
         let renova = match c.agente {
             Agente::Codex => self.codex.as_ref()?.uso.renova_5h,
             Agente::Claude => self.uso_da_conta(&self.conta_para(c).id).renova_5h,

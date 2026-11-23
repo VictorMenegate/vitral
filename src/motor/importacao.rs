@@ -197,7 +197,7 @@ impl Motor {
         registro.gravar(&mut self.resto_estado);
         self.salvar();
         for id in &criados {
-            if let Some(c) = self.chat(id) {
+            if let Some(c) = self.chat_gravado(id) {
                 let _ = self.dados.salvar_chat(c);
             }
         }

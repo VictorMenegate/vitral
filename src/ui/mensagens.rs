@@ -1065,6 +1065,18 @@ impl Janela {
 
     /// Conversa vazia: o chat diz onde trabalha.
     fn dica_inicial(&self, motor: &Motor, chat: &Chat, _window: &Window, _cx: &Context<Self>) -> AnyElement {
+        // A conversa de um subagente que ainda não tem nada: a leitura do arquivo dele não voltou,
+        // ou ele acabou de abrir.
+        if let Some(sub) = motor.subconversa(&chat.id) {
+            let (titulo, texto) = if motor.execucao(&chat.id).rodando() {
+                ("O subagente está começando", "O que ele ler, rodar e responder aparece aqui.")
+            } else if sub.fonte == crate::motor::subconversa::Fonte::Lendo {
+                ("Lendo a conversa do subagente…", "Ela vem do arquivo que o Claude Code gravou.")
+            } else {
+                ("Sem conversa guardada", "O Claude Code não tem mais o arquivo deste subagente, e o cartão dele não guardou nada.")
+            };
+            return EstadoVazio::new(Lucide::Workflow, titulo).texto(texto).amplo().into_any_element();
+        }
         EstadoVazio::new(Lucide::MessagesSquare, "Converse com este chat")
             .texto(onde_o_chat_trabalha(motor, chat))
             .amplo()
@@ -1575,8 +1587,9 @@ impl Janela {
                     .into_iter()
                     // "Continuar daqui em outro chat", só nas respostas da própria conversa.
                     .chain(
-                        matches!(contexto.chat.itens.get(indice), Some(Item::Assistente { texto: t, .. }) if t == texto)
-                            .then(|| super::bifurcar::botao(chave, contexto.painel, indice, window, cx).into_any_element()),
+                        (matches!(contexto.chat.itens.get(indice), Some(Item::Assistente { texto: t, .. }) if t == texto)
+                            && crate::motor::subconversa::partes_do_id(&contexto.chat.id).is_none())
+                        .then(|| super::bifurcar::botao(chave, contexto.painel, indice, window, cx).into_any_element()),
                     )
                     .chain([copiar(chave, texto).into_any_element()])
                     .collect(),
@@ -3408,6 +3421,7 @@ impl Janela {
             return self.raciocinio(contexto, indice, texto, *milis, ramo, cx);
         }
         let Item::Ferramenta {
+            id: id_da_chamada,
             nome,
             resumo,
             resultado,
@@ -3508,6 +3522,14 @@ impl Janela {
         // mostra o diff aqui mesmo.
         let edicao = (!*erro && !pendente && abrir.is_some() && matches!(nome_curto(nome), "Edit" | "MultiEdit" | "Write" | "NotebookEdit"))
             .then(|| super::edicao::AbrirEdicao { chat: contexto.chat.id.clone(), itens: vec![indice], caminho: None });
+        // O subagente (Task/Agent): o clique na linha abre a conversa inteira dele numa aba, só para
+        // ler, e o cartão fica aqui como o marco de quando ele saiu; o chevron, sozinho, mostra os
+        // passos e o relatório aqui mesmo (como na edição). Dentro da conversa de um subagente não
+        // há o que abrir: o Claude Code não grava a de um subagente de subagente à parte.
+        let subagente = (matches!(nome_curto(nome), "Task" | "Agent")
+            && contexto.chat.agente == crate::modelo::Agente::Claude
+            && crate::motor::subconversa::partes_do_id(&contexto.chat.id).is_none())
+        .then(|| (contexto.painel, contexto.chat.id.clone(), id_da_chamada.clone()));
         let grupo = SharedString::from(format!("chamada-{chave}"));
         // Sem resultado e fora do turno que está rodando: foi interrompida.
         let interrompida = resultado.is_none() && !pendente;
@@ -3548,7 +3570,13 @@ impl Janela {
             "{verbo} ({})\n{detalhe}{}{}",
             nome_curto(nome),
             meta.map(|(m, _)| format!(" · {m}")).unwrap_or_default(),
-            if edicao.is_some() { "\nClique para ver a edição no arquivo" } else { "" }
+            if edicao.is_some() {
+                "\nClique para ver a edição no arquivo"
+            } else if subagente.is_some() {
+                "\nClique para abrir a conversa dele numa aba"
+            } else {
+                ""
+            }
         ));
         // O detalhe: o que é código (comando, caminho, padrão de busca, endereço, ferramenta MCP)
         // sai em mono dentro do chip; a prosa (a tarefa do Agent, a busca na web, a lista de
@@ -3617,12 +3645,18 @@ impl Janela {
             .group(grupo.clone())
             .map(|s| {
                 let chevron = icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.).text_color(Cores::apagado());
-                if edicao.is_none() {
+                if edicao.is_none() && subagente.is_none() {
                     return s.child(chevron);
                 }
                 // Na edição, o chevron é um botão à parte: a linha abre o arquivo; ele, o diff aqui.
+                // No subagente também: a linha abre a conversa dele; ele, os passos e o relatório.
                 let alterna = alternar(chave.clone(), cx);
-                let dica_chevron = if aberto { "Recolher o diff" } else { "Mostrar o diff aqui" };
+                let dica_chevron = match (edicao.is_some(), aberto) {
+                    (true, true) => "Recolher o diff",
+                    (true, false) => "Mostrar o diff aqui",
+                    (false, true) => "Recolher os passos e o relatório",
+                    (false, false) => "Mostrar os passos e o relatório aqui",
+                };
                 s.child(
                     div()
                         .id(SharedString::from(format!("diff-aqui-{chave}")))
@@ -3665,9 +3699,12 @@ impl Janela {
                 )
             })
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-            .map(|s| match edicao.clone() {
-                Some(pedido) => s.on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx)),
-                None => s.on_click(alternar(chave.clone(), cx)),
+            .map(|s| match (edicao.clone(), subagente.clone()) {
+                (Some(pedido), _) => s.on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx)),
+                (None, Some((painel, chat, chamada))) => s.on_click(cx.listener(move |this, _, window, cx| {
+                    this.abrir_subagente(painel, chat.clone(), chamada.clone(), window, cx);
+                })),
+                (None, None) => s.on_click(alternar(chave.clone(), cx)),
             });
         // Aberta, a linha mostra primeiro o que a chamada pediu (o diff, o que gravou). O resultado
         // de uma edição que deu certo é só "o arquivo foi atualizado": fica de fora.

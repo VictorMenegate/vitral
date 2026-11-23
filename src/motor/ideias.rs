@@ -394,7 +394,7 @@ impl Motor {
         if texto.is_empty() {
             return Err("o cartão está vazio".into());
         }
-        let existente = ideia.chat.clone().filter(|c| !novo && self.chat(c).is_some_and(|c| !c.arquivado));
+        let existente = ideia.chat.clone().filter(|c| !novo && self.chat_gravado(c).is_some_and(|c| !c.arquivado));
         if let Some(chat) = existente {
             self.enviar_do_usuario(&chat, texto, Vec::new(), Reforco { depois: true, ..Default::default() }, cx);
             if ideia.coluna != Coluna::Fazendo {

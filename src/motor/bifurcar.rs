@@ -180,7 +180,7 @@ impl Motor {
     /// dela (`Some`), ou só dá para recomeçar numa sessão nova com o bloco de passagem (`None`:
     /// Codex, conversa de antes das marcas, a primeira mensagem da sessão, arquivo que sumiu).
     pub(super) fn sessao_antes_da_mensagem(&self, chat_id: &str, ix: usize) -> Option<Bifurcacao> {
-        let chat = self.chat(chat_id)?;
+        let chat = self.chat_gravado(chat_id)?;
         (ix < chat.itens.len()).then(|| self.origem_da_bifurcacao(chat, ix)).flatten().map(|b| Bifurcacao { correcao: true, ..b })
     }
 
@@ -192,7 +192,7 @@ impl Motor {
     /// Cria o chat novo com a conversa de `chat_id` até o ponto do item `ix` (ver `fim_da_copia`).
     /// O original não muda.
     pub fn bifurcar_chat(&mut self, chat_id: &str, ix: usize, cx: &mut Context<Self>) -> Result<Bifurcado, String> {
-        let origem = self.chat(chat_id).ok_or("a conversa não existe mais")?;
+        let origem = self.chat_gravado(chat_id).ok_or("a conversa não existe mais")?;
         let fim = fim_da_copia(&origem.itens, ix).ok_or("só dá para continuar a partir de uma mensagem sua ou de uma resposta")?;
         // O começo de uma conversa trazida do Claude Code (e já continuada aqui) vem do arquivo dela.
         let trazida = origem.importada.as_ref().is_some_and(|i| i.continuada);
@@ -238,7 +238,7 @@ impl Motor {
         if !com_sessao {
             self.passagens.insert(id.clone(), MotivoPassagem::Bifurcou);
         }
-        if let Some(c) = self.chat(&id) {
+        if let Some(c) = self.chat_gravado(&id) {
             let _ = self.dados.salvar_chat(c);
         }
         self.salvar();
@@ -250,7 +250,7 @@ impl Motor {
     /// corte (ou a sessão de origem): a cópia da sessão é abandonada e o mesmo turno roda de novo
     /// numa sessão nova, com o bloco de passagem. Uma vez só; devolve `true` quando repetiu.
     pub(super) fn consertar_bifurcacao(&mut self, chat_id: &str, erro: &str, cx: &mut Context<Self>) -> bool {
-        let Some(chat) = self.chat(chat_id) else {
+        let Some(chat) = self.chat_gravado(chat_id) else {
             return false;
         };
         if chat.bifurcado_de.is_none() || chat.sessao_criada || !(erro.contains(SEM_O_PONTO) || erro.contains(SEM_A_SESSAO)) {

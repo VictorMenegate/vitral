@@ -608,6 +608,10 @@ impl Janela {
             return;
         };
         let chat = self.selecionado.clone();
+        // A conversa de um subagente é só para ler (a caixa nem aparece nela).
+        if chat.as_deref().is_some_and(|c| crate::motor::subconversa::partes_do_id(c).is_some()) {
+            return;
+        }
         let anexos = |this: &Self| {
             chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()))
         };
@@ -854,6 +858,36 @@ impl Janela {
             None => "Este chat ainda não tem resposta para copiar",
         };
         window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, aviso), cx);
+    }
+
+    /// Abre numa aba do painel a conversa inteira do subagente que a chamada `chamada` do chat
+    /// `chat` abriu, só para ler: o motor a monta com o arquivo que o Claude Code gravou. A aba do
+    /// chat continua no painel; se a conversa já está à vista noutro painel, só ativa ele.
+    pub(super) fn abrir_subagente(&mut self, painel_id: u64, chat: String, chamada: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let Some(id) = motor.update(cx, |m, cx| m.abrir_subconversa(&chat, &chamada, cx)) else {
+            return;
+        };
+        self.abrir_aba(painel_id, id, window, cx);
+    }
+
+    /// Chamado a cada `render`, depois do `acertar_abas`: a conversa de subagente que não está
+    /// mais em aba nenhuma sai da memória do motor (o arquivo dela continua no Claude Code).
+    pub(super) fn soltar_subconversas(&mut self, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let sem_aba: Vec<String> = motor
+            .read(cx)
+            .subconversas_abertas()
+            .filter(|id| !self.paineis.iter().any(|p| p.chat.as_deref() == Some(*id) || p.abas.iter().any(|a| a.as_str() == *id)))
+            .map(str::to_string)
+            .collect();
+        if !sem_aba.is_empty() {
+            motor.update(cx, |m, _| sem_aba.iter().for_each(|id| m.fechar_subconversa(id)));
+        }
     }
 
     /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.

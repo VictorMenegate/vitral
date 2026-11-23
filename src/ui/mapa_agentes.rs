@@ -53,7 +53,7 @@ pub(super) struct Agente {
     pub resultado: Option<String>,
 }
 
-fn e_agente(item: &Item) -> bool {
+pub(super) fn e_agente(item: &Item) -> bool {
     matches!(item, Item::Ferramenta { nome, .. } if matches!(nome_curto(nome), "Task" | "Agent"))
 }
 
@@ -120,7 +120,7 @@ pub(super) fn em_mil(n: u64) -> String {
 }
 
 /// A linha de baixo do nó de um agente: o que ele faz agora, ou quanto levou e quanto usou.
-fn meta_do_agente(a: &Agente) -> String {
+pub(super) fn meta_do_agente(a: &Agente) -> String {
     let ferramentas = a.ferramentas.map(|n| contagem(n as usize, "ferramenta", "ferramentas"));
     let tempo = a.segundos.map(|s| duracao_curta(s * 1_000));
     let tokens = (a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
@@ -138,7 +138,7 @@ fn meta_do_agente(a: &Agente) -> String {
 }
 
 /// O ponto do estado, na coluna da esquerda do nó.
-fn ponto(estado: Estado) -> AnyElement {
+pub(super) fn ponto(estado: Estado) -> AnyElement {
     let disco = |cor: Hsla| div().size(r(8.)).rounded(raio::de(8.)).bg(cor).into_any_element();
     let dentro = match estado {
         Estado::Rodando => AnelGirando::new(12.).cor(Cores::destaque()).into_any_element(),

@@ -150,11 +150,19 @@ pub enum Evento {
     Pensando,
     /// O raciocínio do bloco que terminou. O texto vem vazio quando o Claude Code não o entrega.
     Pensamento(String),
-    /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta.
+    /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta; `id` é
+    /// o da chamada dele (é o que um pedido de permissão dele traz).
     SubFerramenta {
         pai: String,
+        id: String,
         nome: String,
         entrada: Value,
+    },
+    /// O subagente entregou o relatório a quem o abriu pela chamada `SubagentHandback` (2.1.271
+    /// em diante, no modo automático): o resultado da chamada `pai` só diz que ele foi entregue.
+    SubRelatorio {
+        pai: String,
+        texto: String,
     },
     /// Um subagente disse o que está fazendo.
     SubTexto {
@@ -1339,8 +1347,16 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             .into_iter()
             .flatten()
             .filter_map(|bloco| match bloco["type"].as_str()? {
+                // O relatório que o subagente entrega a quem o abriu (2.1.271 em diante, no modo
+                // automático) não é uma ferramenta dele: é a resposta, e o resultado da chamada
+                // `pai` só vai dizer que ela foi entregue (medido na 2.1.328).
+                "tool_use" if bloco["name"] == crate::importar::subagente::RELATORIO => bloco["input"]["message"]
+                    .as_str()
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| Evento::SubRelatorio { pai: pai.to_string(), texto: t.to_string() }),
                 "tool_use" => Some(Evento::SubFerramenta {
                     pai: pai.to_string(),
+                    id: bloco["id"].as_str().unwrap_or_default().to_string(),
                     nome: bloco["name"].as_str().unwrap_or_default().to_string(),
                     entrada: bloco["input"].clone(),
                 }),
@@ -1598,6 +1614,23 @@ pub fn arquivo_da_sessao(pasta_conta: Option<&std::path::Path>, cwd: &std::path:
         .flatten()
         .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())).join(format!("{sessao}.jsonl")))
         .find(|arquivo| arquivo.is_file())
+}
+
+/// As pastas em que o Claude Code grava as sessões de quem trabalha em `cwd`: a da conta do chat
+/// e a normal (as contas extras ligam o mesmo `projects`, mas uma conta montada à mão pode não
+/// ligar), com o caminho como veio e com o resolvido. Na bancada, a normal só com um
+/// `CLAUDE_CONFIG_DIR` de mentira (`importar::pasta_do_claude`). Só as que existem.
+pub fn pastas_do_projeto(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path) -> Vec<PathBuf> {
+    let mut pastas: Vec<PathBuf> = Vec::new();
+    for config in [pasta_conta.map(|p| p.to_path_buf()), crate::importar::pasta_do_claude()].into_iter().flatten() {
+        for caminho in [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()].into_iter().flatten() {
+            let pasta = config.join("projects").join(nome_do_projeto(&caminho.to_string_lossy()));
+            if pasta.is_dir() && !pastas.contains(&pasta) {
+                pastas.push(pasta);
+            }
+        }
+    }
+    pastas
 }
 
 /// Nome da pasta do projeto em `projects`, como o Claude Code monta: o que não é letra ou número
@@ -2340,6 +2373,30 @@ mod testes_dos_modelos {
         let resultado_do_sub = json!({ "type": "user", "parent_tool_use_id": "toolu_pai", "message": { "content": [
             { "type": "tool_result", "tool_use_id": "x", "content": "ok" } ] } });
         assert!(interpretar(&resultado_do_sub).is_empty());
+    }
+
+    /// Item 2: cada chamada do subagente traz o id dela (é por ele que se sabe qual subagente
+    /// espera uma permissão), e o relatório que ele entrega pela chamada `SubagentHandback` sobe
+    /// como relatório, e não como mais uma ferramenta (medido na 2.1.328, modo automático).
+    #[test]
+    fn a_chamada_do_subagente_traz_o_id_e_o_relatorio_entregue_nao_e_ferramenta() {
+        use super::{Evento, interpretar};
+        let chamada = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "agent_id": "a1ef", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_ler", "name": "Read", "input": { "file_path": "notas.txt" } }] } });
+        match interpretar(&chamada).as_slice() {
+            [Evento::SubFerramenta { pai, id, nome, .. }] => assert_eq!((pai.as_str(), id.as_str(), nome.as_str()), ("toolu_pai", "toolu_ler", "Read")),
+            outro => panic!("{outro:?}"),
+        }
+        let entrega = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "agent_id": "a1ef", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_entrega", "name": "SubagentHandback", "input": { "message": "A última palavra é banana." } }] } });
+        match interpretar(&entrega).as_slice() {
+            [Evento::SubRelatorio { pai, texto }] => assert_eq!((pai.as_str(), texto.as_str()), ("toolu_pai", "A última palavra é banana.")),
+            outro => panic!("{outro:?}"),
+        }
+        // A entrega ainda sem o texto (a chamada chegando aos pedaços) não vira nada.
+        let vazia = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_entrega", "name": "SubagentHandback", "input": {} }] } });
+        assert!(interpretar(&vazia).is_empty());
     }
 
     /// O subagente em segundo plano, como o Claude Code 2.1.322 o mostrou (16/11/2026): a chamada

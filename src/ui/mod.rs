@@ -807,6 +807,10 @@ impl Janela {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     let rodando = this.motor.as_ref().is_some_and(|m| m.read(cx).trabalhando() > 0);
+                    // A conversa de um subagente aberta numa aba acompanha o arquivo dele.
+                    if rodando && let Some(motor) = this.motor.clone() {
+                        motor.update(cx, |m, cx| m.conferir_subconversas(cx));
+                    }
                     if rodando && compasso_recente(cx).is_none() {
                         cx.notify();
                     } else if rodando {
@@ -1881,6 +1885,7 @@ impl Janela {
             let motor = motor.read(cx);
             self.acertar_abas(motor);
         }
+        self.soltar_subconversas(cx);
         // A conversa selecionada pode ter sumido (ex.: troca de pasta).
         if let Some(id) = &self.selecionado
             && motor.read(cx).chat(id).is_none()

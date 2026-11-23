@@ -17,6 +17,8 @@ use serde_json::{Map, Value};
 
 use crate::modelo::Item;
 
+pub mod subagente;
+
 /// Arquivo mudado há menos que isso conta como conversa aberta no Claude Code.
 pub const EM_USO_SEGUNDOS: u64 = 300;
 /// Quantos itens do histórico aparecem de cada vez ("Carregar mais" traz outros tantos). Eram
@@ -494,6 +496,25 @@ pub fn historico_com_maximo(arquivo: &Path, ate: Option<u64>, maximo: usize) -> 
 }
 
 fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
+    itens_do_fio(leitor, maximo, Fio::Principal)
+}
+
+/// De quem são as linhas de um arquivo de sessão que viram itens.
+#[derive(Clone, Copy)]
+enum Fio<'a> {
+    /// A conversa: as linhas dos subagentes (`isSidechain`) ficam de fora.
+    Principal,
+    /// O arquivo de um subagente (`subagents/agent-<id>.jsonl`): todas as linhas são dele. O que
+    /// chega como mensagem do usuário foi entregue por `de` (quem o abriu), e o resultado de cada
+    /// chamada fica até `resultado` caracteres.
+    Subagente { de: &'a str, resultado: usize },
+}
+
+fn itens_do_fio(leitor: impl BufRead, maximo: usize, fio: Fio) -> Historico {
+    let max_resultado = match fio {
+        Fio::Principal => MAX_RESULTADO,
+        Fio::Subagente { resultado, .. } => resultado,
+    };
     let mut itens: Vec<Item> = Vec::new();
     // As chamadas pelo id, com o índice contado desde o começo (os cortados saem da frente).
     let mut chamadas: HashMap<String, usize> = HashMap::new();
@@ -503,7 +524,7 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
     // verdade); sem ele, o item fica sem hora.
     let aviso = |texto: &str, erro: bool, em: u64| Item::Aviso { texto: texto.to_string(), erro, em };
     for linha in linhas(leitor) {
-        if linha.is_sidechain {
+        if linha.is_sidechain && matches!(fio, Fio::Principal) {
             continue;
         }
         let em = segundos(&linha.timestamp).unwrap_or(0);
@@ -521,12 +542,14 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                     if let Some(Item::Ferramenta { resultado, erro: e, .. }) =
                         chamadas.get(&id).and_then(|&i| i.checked_sub(cortados)).and_then(|i| itens.get_mut(i))
                     {
-                        *resultado = Some(crate::git::inicio_do_texto(&texto, MAX_RESULTADO));
+                        *resultado = Some(crate::git::inicio_do_texto(&texto, max_resultado));
                         *e = erro;
                     }
                 }
-                match u.fala {
-                    Fala::Mensagem(texto) => itens.push(Item::Usuario {
+                match (u.fala, fio) {
+                    // O pedido que o subagente recebeu: quem fala com ele é o agente que o abriu.
+                    (Fala::Mensagem(texto), Fio::Subagente { de, .. }) => itens.push(Item::Entrega { de: de.to_string(), texto, em }),
+                    (Fala::Mensagem(texto), Fio::Principal) => itens.push(Item::Usuario {
                         texto,
                         anexos: Vec::new(),
                         ultrathink: false,
@@ -534,9 +557,9 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                         em,
                         marca: None,
                     }),
-                    Fala::Comando(comando) => itens.push(aviso(&format!("Comando {comando}"), false, em)),
-                    Fala::Interrompido => itens.push(aviso("Interrompido pelo usuário.", false, em)),
-                    Fala::Nada => continue,
+                    (Fala::Comando(comando), _) => itens.push(aviso(&format!("Comando {comando}"), false, em)),
+                    (Fala::Interrompido, _) => itens.push(aviso("Interrompido pelo usuário.", false, em)),
+                    (Fala::Nada, _) => continue,
                 }
                 resposta = None;
             }
@@ -576,6 +599,16 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                         "tool_use" => {
                             let nome = bloco["name"].as_str().unwrap_or_default();
                             if nome.is_empty() || nome == "ToolSearch" || nome == "mcp__vitral__permissao" {
+                                continue;
+                            }
+                            // O relatório que o subagente entrega a quem o abriu é a resposta dele
+                            // (ver `subagente::RELATORIO`): entra como texto, e não como chamada.
+                            if nome == subagente::RELATORIO && matches!(fio, Fio::Subagente { .. }) {
+                                let texto = bloco["input"]["message"].as_str().unwrap_or_default().trim();
+                                if !texto.is_empty() {
+                                    itens.push(Item::Assistente { texto: texto.to_string(), em });
+                                    resposta = None;
+                                }
                                 continue;
                             }
                             let id = bloco["id"].as_str().unwrap_or_default().to_string();

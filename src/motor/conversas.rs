@@ -294,7 +294,7 @@ impl Motor {
         Resposta::ok(format!(
             "Chat {id} \"{titulo}\" aberto em {}, já com o pedido. O usuário o vê na lista e continua por lá; conte a \
              ele o título. Nada volta para você sozinho.",
-            com_til(&self.chat(&id).map_or_else(|| chat.cwd.clone(), |c| c.cwd.clone()))
+            com_til(&self.chat_gravado(&id).map_or_else(|| chat.cwd.clone(), |c| c.cwd.clone()))
         ))
     }
 

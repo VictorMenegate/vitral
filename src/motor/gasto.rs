@@ -496,7 +496,7 @@ impl Motor {
     /// O turno terminou: anota no livro o que ele custou (`custo_antes` é o custo do chat antes
     /// de somar o `result`) e manda o arquivo do mês para o gravador.
     pub(super) fn registrar_gasto(&mut self, chat_id: &str, custo_antes: f64) {
-        let Some(c) = self.chat(chat_id) else {
+        let Some(c) = self.chat_gravado(chat_id) else {
             return;
         };
         let marco = c.itens.iter().rposition(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }));

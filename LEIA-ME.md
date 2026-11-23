@@ -154,6 +154,46 @@ componentes do GPUI Kit.
   clique num agente abre os passos e o resultado. Abre pela pílula "N agentes" da linha de estado
   da caixa (só com agente vivo) e por **Agentes desta conversa**, no "…" da caixa. Um agente sem
   resultado só conta como vivo com o turno rodando e sem aviso depois dele na conversa.
+- **Conversa do subagente em aba** (`src/motor/subconversa.rs`, `src/importar/subagente.rs`). O
+  clique no cartão de um subagente (a linha da chamada Task ou Agent) abre numa aba do painel a
+  conversa INTEIRA dele, só para ler: o pedido que ele
+  recebeu, o raciocínio, cada chamada com o resultado e o que ele respondeu, com o desenho da
+  conversa normal. O cartão continua na conversa de quem o abriu, como o marco de quando ele
+  saiu, e o chevron dele (agora um botão à parte, como na edição) mostra os passos e o relatório
+  ali mesmo. **De onde vem.** Do arquivo que o Claude Code grava para cada subagente:
+  `projects/<pasta>/<sessão>/subagents/agent-<id>.jsonl`, com o `agent-<id>.meta.json` dizendo
+  qual chamada o abriu (`toolUseId`). Medido na 2.1.328 com a CLI de verdade (Haiku, 23/11/2026):
+  o stream-json entrega do subagente só as chamadas e os resultados delas (o texto e o raciocínio
+  só com `--forward-subagent-text`) e mais nada depois que o processo sai; o arquivo tem tudo, é
+  gravado aos poucos enquanto ele trabalha e continua lá depois. Por isso a conversa vem sempre
+  do arquivo, ao vivo e depois de reabrir o Vitral, sem a opção nova do Claude Code:
+  `importar::subagente::transcript` acha o arquivo pela chamada (primeiro na sessão do chat,
+  depois nas outras sessões da mesma pasta de projeto, para o chat que continuou noutra sessão)
+  e `importar::subagente::conversa` o lê com o leitor do histórico trazido (`itens_do_fio`, que
+  agora serve aos dois fios). O pedido entra como mensagem entregue pelo chat que o abriu (dá
+  para voltar a ele por ali). No modo automático (2.1.271 em diante) o subagente entrega o
+  relatório pela chamada `SubagentHandback` e o resultado da chamada Task só diz "This agent's
+  report was delivered…": na conversa dele a entrega vira a resposta, e o cartão fica com o
+  relatório de verdade (`Evento::SubRelatorio`, `subconversa::relatorio_do_cartao`; antes o
+  cartão mostrava o aviso em inglês). A conta de ferramentas do cartão também foi acertada: o
+  `task_progress` chega antes da chamada e já a conta, e somar mais uma na chamada dava uma a
+  mais (agora ela sai das chamadas vistas, pelo id). **Como mora no motor.** A conversa aberta é um `Chat` de
+  mentira (`Subconversa`, id `sub:<chat>:<chamada>`) guardado fora do estado: não é gravado, não
+  entra na lista e sai da memória quando a aba fecha (`Janela::soltar_subconversas`).
+  `Motor::chat` acha os dois (é o que a interface desenha); dentro do motor tudo usa
+  `chat_gravado`, que só acha os de verdade, então nada age sobre ela (enviar, renomear,
+  arquivar e gravar não a alcançam). A execução dela é a do subagente (`Motor::execucao`: a
+  chamada em curso gira, a aba fica azul). **Ao vivo.** A leitura vai em segundo plano e é
+  refeita quando chega um evento daquele subagente (`subconversa_andou`) e, uma vez por segundo
+  com algum chat trabalhando, quando o arquivo cresceu (`conferir_subconversas`: é o que traz o
+  texto entre uma chamada e outra); quem redesenha são só os painéis que a mostram
+  (`TextoChegando`). **Sem o arquivo** (o Claude Code apaga as sessões velhas; a bancada sem
+  `CLAUDE_CONFIG_DIR`), a aba mostra o que o cartão guardou, dizendo que é só isso
+  (`conversa_do_cartao`). No pé, no lugar da caixa, uma linha diz "Conversa do subagente, só
+  leitura" e em que pé ele está (o que faz agora, ou quanto levou); se ele espera uma permissão sua, o pedido aparece ali também. A aba não é
+  lembrada ao fechar o Vitral (o painel volta na conversa de quem o abriu), e o subagente de um
+  subagente não abre: o Claude Code não grava a conversa dele à parte. Referência: o painel de
+  subagente do Paseo (`provider-subagent-panel.tsx`, `sidechain-tracker.ts`), 23/11/2026.
 - **Mensagem no meio do turno.** O Enviar com o turno rodando manda a mensagem para dentro dele
   (`Motor::dirigir_turno`). Quando o turno termina sem ter absorvido a mensagem, o Claude Code abre
   outro turno com ela no mesmo processo: nesse caso a entrada do processo fica aberta, para o
@@ -1769,8 +1809,17 @@ Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um
 para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os segundos de
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
-bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); o `[ferramenta Diz
+bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`, que vai para o segundo
+plano) encena um subagente como o de verdade (2.1.328): o `task_started`, o pedido e cada chamada
+com o resultado presos à chamada dele (`parent_tool_use_id` e `agent_id`), o texto e o raciocínio
+só no arquivo (no stream, só com `--forward-subagent-text`) e, com um `CLAUDE_CONFIG_DIR` de
+mentira, o arquivo dele gravado aos poucos em `projects/<pasta>/<sessão>/subagents/` com o
+`.meta.json` (é o que a aba do subagente lê); com "(pede)" na descrição, o comando dele pede
+permissão ao Vitral (o subagente que "espera você"), e com "(entrega)" o relatório vai pela
+chamada `SubagentHandback`, como no modo automático; com `[juntas]` e só chamadas `Task`, os
+subagentes trabalham ao mesmo tempo; o `[ferramenta Fundo <comando> | 20]` é um comando de fundo
+que não segura mais o turno (vários rodam juntos, e o `stop_task` para só o dele), e o id de cada
+chamada leva uma marca do processo, para não se repetir de um turno para o outro; o `[ferramenta Diz
 <texto>]` é um texto no meio do turno (com ele e uma chamada, o turno pronto recolhe na linha
 "Trabalhou…"); com `[juntas]` as chamadas comuns saem numa resposta só e cada resultado chega
 quando a dela termina, como as chamadas em paralelo de verdade; o `[ferramenta Estourou <comando>
@@ -2017,11 +2066,12 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | --- | --- |
 | `src/motor.rs` | Os chats (criar com `novo_chat(pasta)`, a lista em `chats_da_lista`, renomear, fixar, arquivar, o que espera você), os turnos e a fila, contas, retomadas, Ultracode e agentes em segundo plano, os pedidos de permissão e a passagem de sessão |
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
+| `src/motor/subconversa.rs` | A conversa de um subagente aberta numa aba: o chat de mentira, só de leitura, fora do estado; achar e reler o arquivo dele em segundo plano enquanto ele trabalha; qual subagente espera uma permissão sua e o relatório entregue que vai para o cartão |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
 | `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
 | `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova <pasta>`) e a reexecução da tela de recuperação |
-| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio |
+| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio; `importar/subagente.rs` acha e lê o arquivo que o Claude Code grava para cada subagente (`subagents/agent-<id>.jsonl`) |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
 | `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]` |
