@@ -64,6 +64,9 @@ citados abrem em mais lugares.
   "relatório.md"), e isso vale também para o "@" da caixa.
 - **A paleta acha conversas e arquivos.** Na paleta de comandos (Ctrl+Shift+P), o que você
   escreve acha também as conversas pelo título e os arquivos da pasta do chat, além dos comandos.
+- **Buscar dentro do arquivo (Ctrl+F).** Com um clique no arquivo aberto à direita, o Ctrl+F
+  busca dentro dele, com "3 de 12", as setas e o Enter para o próximo. Também está no "…" do
+  arquivo. O arquivo em markdown aparece em linhas enquanto a busca está aberta.
 - **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
   que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
 - **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)

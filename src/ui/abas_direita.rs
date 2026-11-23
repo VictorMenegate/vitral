@@ -129,6 +129,7 @@ impl Janela {
         self.arquivo_aberto = None;
         self.arquivo_edicao = None;
         self.arquivo_selecao = None;
+        self.busca_arquivo.aberta = false;
         if matches!(self.aba_direita, AbaDireita::Arquivo(_)) {
             self.aba_direita = AbaDireita::Chat;
         }

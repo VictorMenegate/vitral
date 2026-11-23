@@ -3,11 +3,14 @@
 //! número de linha, a imagem (o SVG também) e o aviso de quando não dá para mostrar, com o Abrir
 //! fora do binário. Aberto por uma linha de edição da
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
-//! (`edicao.rs`). O número da linha escolhe linhas para mencionar.
+//! (`edicao.rs`). O número da linha escolhe linhas para mencionar. Com o foco no painel, o Ctrl+F
+//! busca dentro do arquivo (`BuscaNoArquivo`): a barra flutua no alto do conteúdo, com "3 de 12"
+//! e as setas, e o markdown passa para as linhas enquanto ela está aberta.
 
 use gpui_kit::component::{
-    ActiveTheme as _, ElementExt as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, ElementExt as _, WindowExt as _, h_flex,
     highlighter::highlight_code,
+    input::{Escape, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::{ScrollableElement as _, ScrollbarAxis},
     text::TextView,
@@ -18,6 +21,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use std::{
+    cell::{Cell, RefCell},
     io::ErrorKind,
     ops::Range,
     path::{Path, PathBuf},
@@ -27,16 +31,79 @@ use std::{
 
 use super::{
     Gaveta, Janela,
+    busca_conversa::{AchadoAnterior, AchadoSeguinte},
     componentes::{
-        EstadoVazio, Reflexo as _, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone,
+        EstadoVazio, Flutuante as _, Reflexo as _, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, campo_de_busca,
         contagem,
     },
     edicao::{Edicao, Fileira, Marca, Vista},
+    movimento::{self, De},
 };
 use crate::{
     motor::Motor,
     tema::{Cores, FONTE_MONO, Lucide, Tipo as _, altura, esp, r, raio},
 };
+
+// Ctrl+F com o foco no painel do arquivo, e o Esc que fecha a barra.
+actions!(vitral, [BuscarNoArquivo, FecharBuscaNoArquivo]);
+
+/// A busca dentro do arquivo aberto: o campo da barra, se ela está aberta e os achados. Dura
+/// enquanto a janela existe: fechar a barra guarda o termo para o próximo Ctrl+F.
+pub(super) struct BuscaNoArquivo {
+    pub(super) campo: Entity<InputState>,
+    pub(super) aberta: bool,
+    /// A barra já estava na tela no quadro anterior (ela entra uma vez por abertura).
+    vista: Cell<bool>,
+    indice: RefCell<IndiceDoArquivo>,
+    /// O painel rola até o achado atual no próximo quadro.
+    rolar: Cell<bool>,
+}
+
+impl BuscaNoArquivo {
+    pub(super) fn nova(campo: Entity<InputState>) -> Self {
+        BuscaNoArquivo { campo, aberta: false, vista: Cell::new(false), indice: Default::default(), rolar: Cell::new(false) }
+    }
+}
+
+/// Os achados do termo nas linhas do arquivo, refeitos só quando o termo ou o arquivo mudam.
+#[derive(Default)]
+struct IndiceDoArquivo {
+    termo: String,
+    /// De quais linhas é o índice (o endereço delas: o arquivo relido tem outras).
+    linhas: usize,
+    achados: Vec<(usize, usize)>,
+    atual: usize,
+}
+
+impl IndiceDoArquivo {
+    /// Põe o índice em dia; `true` quando o termo é outro (aí o painel rola até o primeiro achado).
+    fn atualizar(&mut self, termo: &str, linhas: &Rc<Vec<SharedString>>) -> bool {
+        let endereco = Rc::as_ptr(linhas) as usize;
+        let mesmo_termo = self.termo == termo;
+        if mesmo_termo && self.linhas == endereco {
+            return false;
+        }
+        self.termo = termo.to_string();
+        self.linhas = endereco;
+        self.achados = achados_nas_linhas(linhas, termo);
+        // O arquivo relido com o mesmo termo fica no achado em que estava.
+        self.atual = if mesmo_termo { self.atual.min(self.achados.len().saturating_sub(1)) } else { 0 };
+        !mesmo_termo
+    }
+}
+
+/// Onde o termo (já normalizado, sem acento) aparece nas linhas: a linha e a posição do achado
+/// entre os dela, na ordem do arquivo.
+fn achados_nas_linhas(linhas: &[SharedString], termo: &str) -> Vec<(usize, usize)> {
+    if termo.is_empty() {
+        return Vec::new();
+    }
+    linhas
+        .iter()
+        .enumerate()
+        .flat_map(|(linha, texto)| (0..super::acentos::faixas(texto, termo).len()).map(move |k| (linha, k)))
+        .collect()
+}
 
 /// Maior arquivo que abre aqui (o resto fica para o VS Code).
 const LIMITE: u64 = 400_000;
@@ -271,8 +338,11 @@ fn fileira_de_codigo(
     largura_numero: Rems,
     fundo: Fundo,
     sinal: Option<&'static str>,
+    achados: Vec<(Range<usize>, HighlightStyle)>,
     janela: WeakEntity<Janela>,
 ) -> AnyElement {
+    // Os achados da busca (o fundo âmbar) por cima das cores da sintaxe.
+    let cores: Vec<_> = if achados.is_empty() { cores } else { combine_highlights(cores, achados).collect() };
     // Uma faixa fora da linha derrubaria o desenho do texto.
     let cores: Vec<_> = cores
         .into_iter()
@@ -492,8 +562,9 @@ impl Janela {
             None => nome_da_raiz(motor.read(cx), &raiz),
         };
         // Na edição, o markdown e o SVG saem em linhas, como o código: o diff é por linha.
+        // Com a busca aberta também: ela é pelas linhas.
         let edicao = self.arquivo_edicao.clone();
-        let rico = edicao.is_none();
+        let rico = edicao.is_none() && !self.busca_arquivo.aberta;
         let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, rico, cx);
         let janela = cx.entity().downgrade();
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
@@ -514,6 +585,8 @@ impl Janela {
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, reserva, na_gaveta, window, cx);
         let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
+        // O achado atual e quantos são, para a barra da busca (só o arquivo em linhas tem).
+        let mut contagem_da_busca: Option<(usize, usize)> = None;
         let corpo = match conteudo {
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
             // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
@@ -585,6 +658,26 @@ impl Janela {
                 let escolhida = move |n: usize| {
                     selecao.is_some_and(|(a, b)| (a as usize..=b as usize).contains(&n)) || marcada == Some(n as u32)
                 };
+                // A busca no arquivo: o termo e o achado atual (a linha e qual achado dela).
+                let busca = self.busca_arquivo.aberta.then(|| {
+                    let termo = super::acentos::normalizar(&self.busca_arquivo.campo.read(cx).value());
+                    let mut indice = self.busca_arquivo.indice.borrow_mut();
+                    if indice.atualizar(&termo, &linhas) {
+                        self.busca_arquivo.rolar.set(true);
+                    }
+                    contagem_da_busca = Some((indice.atual, indice.achados.len()));
+                    (SharedString::from(termo), indice.achados.get(indice.atual).copied())
+                });
+                let achado_atual = busca.as_ref().and_then(|(_, atual)| *atual);
+                let rolar_ao_achado = self.busca_arquivo.rolar.replace(false);
+                // O fundo de cada achado numa linha do arquivo (o do atual, mais forte).
+                let achados_da_linha = move |linha: usize, texto: &str| match &busca {
+                    Some((termo, atual)) if !termo.is_empty() => {
+                        let na_linha = atual.filter(|(l, _)| *l == linha).map(|(_, k)| k);
+                        super::busca_conversa::destaques_do_trecho(texto, termo, na_linha)
+                    }
+                    _ => Vec::new(),
+                };
                 let id = SharedString::from(format!("codigo-{caminho}"));
                 let lista = match vista {
                     // A edição: as fileiras da vista, com as saídas entre as linhas do arquivo. Ao
@@ -594,6 +687,13 @@ impl Janela {
                             && let Some(mudanca) = vista.mudancas.get(self.edicao_atual.min(vista.mudancas.len().saturating_sub(1)))
                         {
                             rolagem_codigo.scroll_to_item(mudanca.fileira.saturating_sub(4), ScrollStrategy::Top);
+                        }
+                        // O achado atual da busca, pela fileira em que a linha dele está.
+                        if rolar_ao_achado
+                            && let Some((linha, _)) = achado_atual
+                            && let Some(fileira) = vista.fileiras.iter().position(|f| matches!(f, Fileira::Arquivo { linha: l, .. } if *l == linha))
+                        {
+                            rolagem_codigo.scroll_to_item(fileira, ScrollStrategy::Center);
                         }
                         let janela = janela.clone();
                         uniform_list(id, vista.fileiras.len(), move |faixa, _, _| {
@@ -608,10 +708,11 @@ impl Janela {
                                         };
                                         let sinal = if *entrou { "+" } else { " " };
                                         let texto = linhas.get(*linha).cloned().unwrap_or_default();
-                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), janela.clone())
+                                        let achados = achados_da_linha(*linha, &texto);
+                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), achados, janela.clone())
                                     }
                                     Fileira::Saiu(texto) => {
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), Vec::new(), janela.clone())
                                     }
                                     Fileira::Solta(marca, texto) => {
                                         let (fundo, sinal) = match marca {
@@ -619,7 +720,7 @@ impl Janela {
                                             Marca::Sai => (Fundo::Saiu, "−"),
                                             Marca::Igual => (Fundo::Nenhum, " "),
                                         };
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), janela.clone())
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
                                 })
@@ -628,13 +729,17 @@ impl Janela {
                         .with_width_from_item(Some(mais_longa))
                     }
                     None => {
+                        if rolar_ao_achado && let Some((linha, _)) = achado_atual {
+                            rolagem_codigo.scroll_to_item(linha, ScrollStrategy::Center);
+                        }
                         let janela = janela.clone();
                         uniform_list(id, linhas.len(), move |faixa, _, _| {
                             faixa
                                 .map(|i| {
                                     let cores_linha = cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
                                     let fundo = if escolhida(i + 1) { Fundo::Escolhida } else { Fundo::Nenhum };
-                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, janela.clone())
+                                    let achados = achados_da_linha(i, &linhas[i]);
+                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, achados, janela.clone())
                                 })
                                 .collect()
                         })
@@ -657,11 +762,26 @@ impl Janela {
                     .into_any_element()
             }
         };
+        // A barra da busca flutua no alto do conteúdo, à direita, e nunca mais larga que o painel.
+        let barra_da_busca = self.barra_da_busca_no_arquivo(contagem_da_busca, window, cx).map(|(barra, nova)| {
+            div().absolute().top(esp::E8).right(esp::E8).left(esp::E8).flex().justify_end().child(
+                div().w(r(340.)).max_w(relative(1.)).child(movimento::entrada("entra-busca-no-arquivo", nova, De::Cima, barra)),
+            )
+        });
         div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
+            // O clique no painel leva o foco para ele: daí o Ctrl+F é do arquivo, e não da conversa.
+            .key_context("Arquivo")
+            .track_focus(&self.foco_arquivo)
+            .on_action(cx.listener(|this, _: &BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
+            // O campo da barra liga o Ctrl+F ao `Search` do kit: com o foco nele, a busca continua a do arquivo.
+            .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| this.abrir_busca_no_arquivo(window, cx)))
+            .on_action(cx.listener(|this, _: &FecharBuscaNoArquivo, window, cx| this.fechar_busca_no_arquivo(window, cx)))
+            .on_action(cx.listener(|this, _: &AchadoSeguinte, _, cx| this.f3_no_arquivo(1, cx)))
+            .on_action(cx.listener(|this, _: &AchadoAnterior, _, cx| this.f3_no_arquivo(-1, cx)))
             // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
             // janela e emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(na_gaveta, |s| s.rounded(crate::tema::raio_da_peca()))
@@ -670,7 +790,7 @@ impl Janela {
             .child(cabecalho)
             .child(barra)
             .children(faixa)
-            .child(corpo)
+            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(corpo).children(barra_da_busca))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
             .into_any_element()
@@ -765,6 +885,7 @@ impl Janela {
             // Com um trecho em vista (a seleção ou a mudança), o arquivo inteiro também se menciona.
             let com_trecho = self.alvo_da_mencao().is_some();
             // No diff de "Na pasta", a opção de deixar de fora o que só mudou de espaço.
+            let com_texto = linhas.is_some();
             let sem_espaco = match self.arquivo_edicao.as_deref().map(|e| &e.origem) {
                 Some(super::edicao::Origem::Git { sem_espaco }) => Some(*sem_espaco),
                 _ => None,
@@ -795,6 +916,12 @@ impl Janela {
                         cx.write_to_clipboard(ClipboardItem::new_string(relativo.clone()));
                         window.push_notification(aviso(Tom::Pronto, "Caminho copiado."), cx);
                     }))
+                    .when(com_texto, |menu| {
+                        let janela = janela.clone();
+                        menu.separator().item(PopupMenuItem::new("Buscar no arquivo").icon(Lucide::Search).on_click(move |_, window, cx| {
+                            let _ = janela.update(cx, |this, cx| this.abrir_busca_no_arquivo(window, cx));
+                        }))
+                    })
                     .when_some(sem_espaco, |menu, ligado| {
                         let janela = janela.clone();
                         menu.separator().item(PopupMenuItem::new("Ignorar espaço em branco").checked(ligado).on_click(
@@ -1131,6 +1258,134 @@ impl Janela {
         }
     }
 
+    /// Ctrl+F com o foco no arquivo (ou "Buscar no arquivo", no "…" e na paleta): abre a barra da
+    /// busca, ou volta o foco a ela, com o termo de antes selecionado. A imagem não tem o que buscar.
+    pub(super) fn abrir_busca_no_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((raiz, caminho)) = self.arquivo_aberto.clone() else {
+            window.push_notification(aviso(Tom::Info, "Abra um arquivo à direita para buscar nele."), cx);
+            return;
+        };
+        if crate::claude::tipo_imagem(&raiz.join(&caminho)).is_some() {
+            return;
+        }
+        // Pela paleta, a direita pode estar fechada ou na outra aba.
+        if !matches!(self.aba_direita, super::abas_direita::AbaDireita::Arquivo(_)) || !(self.direita_visivel() || self.gaveta == Some(Gaveta::Direita)) {
+            self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
+            self.mostrar_direita(window, cx);
+        }
+        self.busca_arquivo.aberta = true;
+        self.busca_arquivo.rolar.set(true);
+        let campo = self.busca_arquivo.campo.clone();
+        campo.update(cx, |campo, cx| campo.select_all(window, cx));
+        window.focus(&campo.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Esc (ou o ×): fecha a barra e devolve o foco ao painel do arquivo; o termo fica guardado, e
+    /// o markdown volta a aparecer renderizado.
+    fn fechar_busca_no_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.busca_arquivo.aberta {
+            // Sem barra aberta, o Esc é de quem vem depois (recolher a gaveta, parar o turno).
+            cx.propagate();
+            return;
+        }
+        self.busca_arquivo.aberta = false;
+        window.focus(&self.foco_arquivo, cx);
+        cx.notify();
+    }
+
+    /// Enter e as setas da barra (e o F3): o achado seguinte ou o anterior, dando a volta.
+    pub(super) fn andar_na_busca_do_arquivo(&mut self, passo: i32, cx: &mut Context<Self>) {
+        {
+            let mut indice = self.busca_arquivo.indice.borrow_mut();
+            if indice.achados.is_empty() {
+                return;
+            }
+            indice.atual = super::busca_conversa::andar(indice.achados.len(), indice.atual, passo);
+        }
+        self.busca_arquivo.rolar.set(true);
+        cx.notify();
+    }
+
+    /// F3 e Shift+F3 com o foco no arquivo: andam na busca dele quando ela está aberta; fechada,
+    /// são da busca da conversa.
+    fn f3_no_arquivo(&mut self, passo: i32, cx: &mut Context<Self>) {
+        if self.busca_arquivo.aberta {
+            self.andar_na_busca_do_arquivo(passo, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    /// O foco está no painel do arquivo ou no campo da busca dele.
+    pub(super) fn foco_no_arquivo(&self, window: &Window, cx: &App) -> bool {
+        self.foco_arquivo.is_focused(window) || self.busca_arquivo.campo.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    /// O arquivo está aberto na gaveta da direita, por cima das conversas: aí o Ctrl+F é dele.
+    pub(super) fn arquivo_na_gaveta(&self, cx: &App) -> bool {
+        self.gaveta == Some(Gaveta::Direita)
+            && self.arquivo_aberto.is_some()
+            && self.motor.as_ref().is_some_and(|m| matches!(self.aba_visivel(m.read(cx)), super::abas_direita::AbaDireita::Arquivo(_)))
+    }
+
+    /// A barra da busca no arquivo: o campo, "3 de 12" ("3/12" no painel estreito), as setas e o
+    /// fechar; com ela, se acabou de abrir (entra uma vez). `contagem` é o achado atual e quantos são.
+    fn barra_da_busca_no_arquivo(&self, contagem: Option<(usize, usize)>, window: &Window, cx: &Context<Self>) -> Option<(Stateful<Div>, bool)> {
+        let busca = &self.busca_arquivo;
+        if !busca.aberta {
+            busca.vista.set(false);
+            return None;
+        }
+        let nova = !busca.vista.replace(true);
+        let total = contagem.map_or(0, |(_, total)| total);
+        let estreita = self.direita_estreita;
+        let com_termo = !busca.campo.read(cx).value().trim().is_empty();
+        let contador = com_termo.then(|| match contagem {
+            Some((atual, total)) if total > 0 && estreita => format!("{}/{}", atual + 1, total),
+            Some((atual, total)) if total > 0 => format!("{} de {}", atual + 1, total),
+            _ if estreita => "0".to_string(),
+            _ => "nenhum achado".to_string(),
+        });
+        let seta = |id: &'static str, icone: Lucide, dica: &'static str, acao: &dyn Action, passo: i32| {
+            botao_icone(id, icone, dica, TamanhoBotao::Barra, window, cx)
+                .tooltip_with_action(dica, acao, None)
+                .disabled(total == 0)
+                .on_click(cx.listener(move |this, _, _, cx| this.andar_na_busca_do_arquivo(passo, cx)))
+        };
+        let barra = h_flex()
+            .id("busca-no-arquivo")
+            .relative()
+            .w_full()
+            .p(esp::E8)
+            .gap(esp::E4)
+            .rounded(raio::PECA)
+            .flutuante(cx)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(r(96.))
+                    .on_action(cx.listener(|this, _: &Escape, window, cx| this.fechar_busca_no_arquivo(window, cx)))
+                    .child(campo_de_busca("campo-busca-no-arquivo", &busca.campo, None, window, cx).bg(Cores::recuo_no_flutuante())),
+            )
+            .children(contador.map(|texto| {
+                div()
+                    .flex_none()
+                    .px(esp::E4)
+                    .whitespace_nowrap()
+                    .metadado()
+                    .text_color(if total == 0 { Cores::ambar() } else { Cores::tenue() })
+                    .child(texto)
+            }))
+            .child(seta("achado-anterior-no-arquivo", Lucide::ChevronUp, "Achado anterior", &AchadoAnterior, -1))
+            .child(seta("achado-seguinte-no-arquivo", Lucide::ChevronDown, "Próximo achado", &AchadoSeguinte, 1))
+            .child(
+                botao_icone("fechar-busca-no-arquivo", Lucide::X, "Fechar a busca (Esc)", TamanhoBotao::Barra, window, cx)
+                    .on_click(cx.listener(|this, _, window, cx| this.fechar_busca_no_arquivo(window, cx))),
+            );
+        Some((barra, nova))
+    }
+
     /// O × da faixa da edição: o arquivo fica aberto, sem as marcas.
     fn sair_da_edicao(&mut self, cx: &mut Context<Self>) {
         self.arquivo_edicao = None;
@@ -1248,8 +1503,8 @@ fn colorir(
 #[cfg(test)]
 mod testes {
     use super::{
-        Aviso, Conteudo, Passo, Saida, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor, nome_da_linguagem,
-        passo_da_revisao, saidas_do_aviso, tamanho, titulo_do_binario,
+        Aviso, Conteudo, Passo, Saida, achados_nas_linhas, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor,
+        nome_da_linguagem, passo_da_revisao, saidas_do_aviso, tamanho, titulo_do_binario,
     };
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
@@ -1370,5 +1625,15 @@ mod testes {
         assert_eq!(passo_da_revisao(0, 0, Some((0, 1)), 1), None);
         // A posição que passou do fim (o arquivo encolheu) vale como a última.
         assert_eq!(passo_da_revisao(9, 3, Some((0, 2)), 1), Some(Passo::Arquivo { indice: 1, no_fim: false }));
+    }
+
+    #[test]
+    fn a_busca_no_arquivo_acha_sem_acento_e_conta_cada_achado() {
+        let linhas: Vec<SharedString> =
+            vec!["// Configuração da loja".into(), "let configuracao = configuracao_padrao();".into(), "fim".into()];
+        let termo = crate::ui::acentos::normalizar("CONFIGURACAO");
+        assert_eq!(achados_nas_linhas(&linhas, &termo), [(0, 0), (1, 0), (1, 1)]);
+        assert!(achados_nas_linhas(&linhas, "").is_empty());
+        assert!(achados_nas_linhas(&linhas, "nada").is_empty());
     }
 }

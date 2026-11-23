@@ -472,6 +472,10 @@ pub struct Janela {
     arquivo_ancora: Option<u32>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
+    foco_arquivo: FocusHandle,
+    /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
+    busca_arquivo: painel_arquivo::BuscaNoArquivo,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
     /// O que está marcado em cada pergunta com opções esperando resposta (AskUserQuestion), pelo
@@ -683,6 +687,13 @@ impl Janela {
                 cx.notify();
             }
         })];
+        // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
+        let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
+        assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
+            InputEvent::PressEnter { shift, .. } => this.andar_na_busca_do_arquivo(if *shift { -1 } else { 1 }, cx),
+            InputEvent::Change => cx.notify(),
+            _ => {}
+        }));
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
             // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
@@ -791,6 +802,8 @@ impl Janela {
             arquivo_ancora: None,
             cache_arquivos: Default::default(),
             arquivo_lido: Default::default(),
+            foco_arquivo: cx.focus_handle(),
+            busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
             feedback_plano: HashMap::new(),
             perguntas: HashMap::new(),
             expandidos: HashSet::new(),
@@ -949,7 +962,10 @@ impl Janela {
         let contextos = window.context_stack();
         let na_conversa = contextos.iter().any(|c| c.contains(mensagens::CONTEXTO_DA_CONVERSA))
             && !contextos.iter().any(|c| c.contains("Input"));
-        if !(self.foco.is_focused(window) || numa_aba || na_conversa) || window.has_active_dialog(cx) || self.flutuante_aberto() {
+        // O clique no arquivo aberto à direita leva o foco para ele (é o que faz o Ctrl+F buscar
+        // nele); digitar ali continua escrevendo na caixa.
+        let no_arquivo = self.foco_arquivo.is_focused(window);
+        if !(self.foco.is_focused(window) || numa_aba || na_conversa || no_arquivo) || window.has_active_dialog(cx) || self.flutuante_aberto() {
             return;
         }
         self.tecla_para_a_caixa(ev, window, cx);
@@ -1809,6 +1825,13 @@ impl Janela {
         {
             cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
         }
+        // O mesmo com o arquivo da direita: fechado ou escondido com o foco nele (ou na busca dele).
+        let arquivo_a_vista = self.arquivo_aberto.is_some()
+            && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_))
+            && (self.direita_visivel() || self.gaveta == Some(Gaveta::Direita));
+        if !arquivo_a_vista && self.foco_no_arquivo(window, cx) {
+            cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
+        }
         // A gaveta fecha quando a parte volta a caber ao lado (ou some) e durante um arrasto,
         // em que ela cobriria as zonas de soltura.
         let fecha_gaveta = self.gaveta.is_some_and(|g| gaveta_fecha_sozinha(g, &self.orcamento));
@@ -1830,12 +1853,19 @@ impl Janela {
             }))
             // Ctrl+F e F3: buscar dentro da conversa aberta. O `Search` é o que o campo do kit
             // liga ao Ctrl+F; sem atender aqui, o Ctrl+F na caixa de mensagem se perderia.
+            // Com o arquivo aberto na gaveta, por cima das conversas, o Ctrl+F é dele.
             .on_action(cx.listener(|this, _: &busca_conversa::BuscarNaConversa, window, cx| {
-                this.abrir_busca_na_conversa(window, cx)
+                if this.arquivo_na_gaveta(cx) {
+                    this.abrir_busca_no_arquivo(window, cx)
+                } else {
+                    this.abrir_busca_na_conversa(window, cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| {
                 this.abrir_busca_na_conversa(window, cx)
             }))
+            // Pela paleta de comandos (a tecla, com o foco no arquivo, é atendida no painel dele).
+            .on_action(cx.listener(|this, _: &painel_arquivo::BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoSeguinte, _, cx| this.andar_na_busca(1, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoAnterior, _, cx| this.andar_na_busca(-1, cx)))
             // Esc com o foco fora da caixa (um clique na conversa leva o foco para cá): para o
