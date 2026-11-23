@@ -698,7 +698,9 @@ impl Janela {
                         this.avisar_vista(painel_id, cx);
                         this.acompanhar_sumario(painel_id, cx);
                     }))
-                    .child(lista),
+                    // Só as mensagens crescem com a letra da conversa (Configurações > Aparência):
+                    // a barra de rolagem, a pílula do fim e a busca ficam no tamanho da interface.
+                    .child(super::vista_mensagens::na_letra_da_conversa(lista)),
             )
             // Fora do fim, o pé da área rolável esmaece em 24 até o cartão: a última linha não
             // fica cortada a seco logo acima da faixa ou da caixa. No topo, nada: ali o cartão é
@@ -714,7 +716,9 @@ impl Janela {
             .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
             // Empurrada para cima, a faixa sai pelo alto da lista, cortada nele: solta, ela subia por
             // cima das abas do cabeçalho (dono, 19/11/2026: "a mensagem ficou em cima das abas").
-            .children(presa.map(|faixa| div().absolute().inset_0().overflow_hidden().child(faixa)))
+            .children(presa.map(|faixa| {
+                div().absolute().inset_0().overflow_hidden().child(super::vista_mensagens::na_letra_da_conversa(faixa))
+            }))
             // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
             .children(barra_busca)
     }
@@ -1637,8 +1641,9 @@ fn estilo_texto(cx: &App) -> TextViewStyle {
 
 /// O estilo das mensagens com os títulos de nível 1, 2 e dos outros em px a 100%.
 fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
-    // O rem do tema já vem com o zoom: os títulos crescem junto.
-    let rem = cx.theme().font_size;
+    // O rem do tema já vem com o zoom: os títulos crescem junto. Eles são dados em px, então a
+    // letra da conversa entra aqui (o resto do texto a recebe pelo rem, em `na_letra_da_conversa`).
+    let rem = cx.theme().font_size * crate::tema::fator_da_conversa();
     TextViewStyle::default()
         .paragraph_gap(esp::E12)
         .heading_font_size(move |nivel, _| {

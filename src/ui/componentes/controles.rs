@@ -1112,17 +1112,24 @@ pub struct Contador {
     id: ElementId,
     valor: u32,
     faixa: RangeInclusive<u32>,
+    sufixo: Option<&'static str>,
     ao_mudar: Rc<dyn Fn(u32, &mut Window, &mut App)>,
 }
 
 impl Contador {
+    /// A unidade colada ao número ("%").
+    pub fn sufixo(mut self, s: &'static str) -> Self {
+        self.sufixo = Some(s);
+        self
+    }
+
     pub fn new(
         id: impl Into<ElementId>,
         valor: u32,
         faixa: RangeInclusive<u32>,
         ao_mudar: impl Fn(u32, &mut Window, &mut App) + 'static,
     ) -> Self {
-        Contador { id: id.into(), valor, faixa, ao_mudar: Rc::new(ao_mudar) }
+        Contador { id: id.into(), valor, faixa, sufixo: None, ao_mudar: Rc::new(ao_mudar) }
     }
 }
 
@@ -1159,12 +1166,14 @@ impl RenderOnce for Contador {
             .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
             .child(
                 div()
-                    .min_w(r(24.))
+                    // Com unidade, a largura do maior número: o − e o + não andam de 90% para 100%.
+                    .min_w(r(if self.sufixo.is_some() { 44. } else { 24. }))
                     .text_center()
                     .text_size(r(13.))
                     .font_semibold()
+                    .tabular()
                     .text_color(Cores::texto())
-                    .child(valor.to_string()),
+                    .child(format!("{valor}{}", self.sufixo.unwrap_or_default())),
             )
             .child(botao("mais", Lucide::Plus, "Aumentar", (valor < max).then(|| valor + 1)))
     }

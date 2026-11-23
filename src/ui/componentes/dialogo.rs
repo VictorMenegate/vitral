@@ -15,6 +15,8 @@ pub mod largura {
     pub const P: f32 = 440.;
     pub const M: f32 = 560.;
     pub const G: f32 = 640.;
+    /// As Configurações: a coluna das seções e, ao lado, as linhas com o controle à direita.
+    pub const CONFIGURACOES: f32 = 800.;
 }
 
 /// Numa linha: o título 15/600, o subtítulo 13 tênue ao lado (cortado na borda) e o × de 24.

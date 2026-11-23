@@ -161,7 +161,16 @@ fn rolar(delta: ScrollDelta, cx: &mut App) {
     }
 }
 
-fn mudar(passos: i32, cx: &mut App) {
+/// O zoom de agora em %, para a linha das Configurações (100 antes de o zoom iniciar).
+pub(super) fn porcentagem(cx: &App) -> u32 {
+    cx.try_global::<Zoom>().map_or(100, |zoom| (zoom.fator * 100.).round() as u32)
+}
+
+/// A faixa do zoom em %, para o − e o + das Configurações desligarem na ponta.
+pub(super) const FAIXA: std::ops::RangeInclusive<u32> = (MINIMO * 100.) as u32..=(MAXIMO * 100.) as u32;
+
+/// Um passo de 10% para cima ou para baixo (o Ctrl+= e o Ctrl+-, e o − e o + das Configurações).
+pub(super) fn mudar(passos: i32, cx: &mut App) {
     if let Some(zoom) = cx.try_global::<Zoom>() {
         definir(passo(zoom.fator, passos), cx);
     }

@@ -380,7 +380,7 @@ impl Janela {
                 .font_weight(FontWeight::NORMAL)
                 .child("Valem para todos os chats")
                 .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
-            moldura(dialogo, largura::G, window)
+            moldura(dialogo, largura::CONFIGURACOES, window)
                 .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
                 .child(vista.clone())
         });

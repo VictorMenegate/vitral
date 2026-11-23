@@ -660,6 +660,12 @@ impl LinhaDeOpcao {
         self
     }
 
+    /// A marca do agente (Claude, Codex) antes do título.
+    pub fn marca(mut self, s: Simbolo) -> Self {
+        self.marca = Some(s);
+        self
+    }
+
     /// Uma linha em âmbar embaixo da descrição (custo, carga); some com a linha desabilitada.
     pub fn aviso(mut self, a: impl Into<SharedString>) -> Self {
         self.aviso = Some(a.into());
