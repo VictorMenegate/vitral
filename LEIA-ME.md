@@ -2447,8 +2447,9 @@ na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reinicia
 
 `VITRAL_AGENTES_PUBLICADOS="claude=2.1.400,codex=0.200.0"` responde no lugar da consulta das versões
 publicadas dos agentes (na bancada, com a atualização desligada, nada é consultado): é como se vê o
-"há a X" do grupo Instalados. O roteiro `ferramentas/roteiros/config-secoes.txt` (com o comando no
-topo) passa pelas seis seções das Configurações.
+"há a X" das linhas do Claude Code e do Codex. O roteiro
+`ferramentas/roteiros/config-partes.txt` (com o comando no topo) passa pelas sete partes das
+Configurações.
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. Quando o metal refez o campo nesse
