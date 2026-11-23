@@ -41,15 +41,16 @@ fn soltar(comando: &mut Command, console: bool) {
 }
 
 /// O `Code.exe` da instalação do usuário (a padrão), depois o de todos os usuários; sem nenhum, o
-/// `code` do PATH, que é um `.cmd` e precisa do cmd (sem janela).
-pub fn abrir_no_editor(pasta: &Path) {
+/// `code` do PATH, que é um `.cmd` e precisa do cmd (sem janela). Com a linha, o arquivo abre
+/// nela (`--goto caminho:linha`).
+pub fn abrir_no_editor(pasta: &Path, linha: Option<u32>) {
     let instalado = [("LOCALAPPDATA", r"Programs\Microsoft VS Code\Code.exe"), ("ProgramFiles", r"Microsoft VS Code\Code.exe")]
         .into_iter()
         .filter_map(|(variavel, dentro)| Some(PathBuf::from(std::env::var_os(variavel)?).join(dentro)))
         .find(|code| code.is_file());
     match instalado {
-        Some(code) => soltar(novo_comando(code).arg(pasta), false),
-        None => soltar(novo_comando("cmd.exe").arg("/c").arg("code").arg(pasta), false),
+        Some(code) => soltar(novo_comando(code).args(super::argumentos_do_editor(pasta, linha)), false),
+        None => soltar(novo_comando("cmd.exe").arg("/c").arg("code").args(super::argumentos_do_editor(pasta, linha)), false),
     }
 }
 

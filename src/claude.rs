@@ -2251,6 +2251,13 @@ pub fn tipo_imagem(caminho: &std::path::Path) -> Option<&'static str> {
     })
 }
 
+/// O que o visor e o painel do arquivo desenham como imagem: os formatos do anexo e o SVG, que o
+/// `img` do GPUI também desenha. O SVG fica fora do `tipo_imagem` porque a API não o aceita como
+/// imagem: anexado, ele segue como arquivo de texto.
+pub fn imagem_de_ver(caminho: &std::path::Path) -> bool {
+    tipo_imagem(caminho).is_some() || caminho.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
 fn base64(bytes: &[u8]) -> String {
     const ALFABETO: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut saida = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -2270,6 +2277,15 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod testes {
+    #[test]
+    fn o_svg_se_ve_como_imagem_mas_nao_vai_como_anexo_de_imagem() {
+        use std::path::Path;
+        assert!(super::imagem_de_ver(Path::new("assets/logo.SVG")));
+        assert!(super::imagem_de_ver(Path::new("print.png")));
+        assert!(!super::imagem_de_ver(Path::new("relatorio.pdf")));
+        assert_eq!(super::tipo_imagem(Path::new("assets/logo.svg")), None);
+    }
+
     use super::*;
 
     #[test]

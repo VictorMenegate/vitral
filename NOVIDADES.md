@@ -59,6 +59,13 @@ citados abrem em mais lugares.
   caminho inteiro.
 - **Comando de barra citado vira link.** Quando o agente escreve `/compact` ou outro comando do
   chat, o clique põe o comando na caixa de mensagem. Quem envia é você.
+- **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
+  que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
+- **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)
+  ganhou o Abrir fora, que abre no aplicativo do sistema. Antes só havia Abrir no VS Code, que
+  não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
+- **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
+  como código.
 
 ## 0.9.5
 

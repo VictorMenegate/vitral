@@ -1,6 +1,7 @@
 //! Painel da direita com um arquivo da pasta aberto: aba com o nome, o cabeçalho do arquivo (o
 //! nome, as linhas e a linguagem, a pasta, Mencionar, VS Code), markdown renderizado ou código com
-//! número de linha, e o aviso de quando não dá para mostrar. Aberto por uma linha de edição da
+//! número de linha, a imagem (o SVG também) e o aviso de quando não dá para mostrar, com o Abrir
+//! fora do binário. Aberto por uma linha de edição da
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
 //! (`edicao.rs`). O número da linha escolhe linhas para mencionar.
 
@@ -57,8 +58,9 @@ pub(super) struct ArquivoLido {
     cores: Option<CoresDasLinhas>,
     rolagem: UniformListScrollHandle,
     _colorindo: Option<Task<()>>,
-    /// Lido como markdown (renderizado) ou como linhas; a edição pede as linhas mesmo no .md.
-    como_markdown: bool,
+    /// Lido para mostrar pronto (o markdown renderizado, o SVG desenhado) ou em linhas; a edição
+    /// pede as linhas mesmo no .md e no .svg.
+    rico: bool,
     /// A edição posta nas linhas (a do pedido, pelo endereço dele), com a fileira mais longa (dá
     /// a largura da rolagem para o lado): refeita só quando o arquivo ou a edição mudam.
     vista: Option<(usize, Rc<Vista>, usize)>,
@@ -94,15 +96,31 @@ fn erro_de_leitura(erro: std::io::Error) -> Aviso {
     }
 }
 
-fn ler_arquivo(completo: &Path, markdown: bool) -> Conteudo {
+/// O começo do arquivo tem um byte nulo: é binário (PDF, planilha, zip), e não texto grande.
+fn comeco_binario(completo: &Path) -> bool {
+    use std::io::Read as _;
+    let mut comeco = Vec::new();
+    std::fs::File::open(completo).is_ok_and(|arquivo| arquivo.take(8192).read_to_end(&mut comeco).is_ok()) && comeco.contains(&0)
+}
+
+/// Lê o arquivo para o painel. `rico`: pronto para ler (o markdown renderizado, o SVG desenhado);
+/// sem ele, em linhas, que é o que a edição mostra.
+fn ler_arquivo(completo: &Path, rico: bool) -> Conteudo {
+    let extensao = completo.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    let markdown = rico && extensao == "md";
+    // O SVG é texto e também é imagem: desenhado quando se abre para ver.
+    let imagem = crate::claude::tipo_imagem(completo).is_some() || (rico && extensao == "svg");
     // O tamanho antes: um arquivo grande não precisa ser lido para dizer que não abre.
     match std::fs::metadata(completo) {
         Ok(m) if m.is_dir() => return Conteudo::Aviso(Aviso::Erro("É uma pasta, não um arquivo.".into())),
         // Um .png da pasta aparece como imagem; antes caía no "arquivo binário".
-        Ok(m) if crate::claude::tipo_imagem(completo).is_some() => {
+        Ok(m) if imagem => {
             return if m.len() > LIMITE_IMAGEM { Conteudo::Aviso(Aviso::Grande(m.len())) } else { Conteudo::Imagem };
         }
-        Ok(m) if m.len() > LIMITE => return Conteudo::Aviso(Aviso::Grande(m.len())),
+        // O PDF de 2 MB é binário, e não "grande demais": a saída dele é o aplicativo do sistema.
+        Ok(m) if m.len() > LIMITE => {
+            return Conteudo::Aviso(if comeco_binario(completo) { Aviso::Binario } else { Aviso::Grande(m.len()) });
+        }
         Ok(_) => {}
         Err(erro) => return Conteudo::Aviso(erro_de_leitura(erro)),
     }
@@ -189,7 +207,7 @@ fn nome_da_linguagem(caminho: &str) -> Option<&'static str> {
 
 /// Ícone da aba: imagem, código, texto (markdown e .txt) ou um arquivo qualquer.
 pub(super) fn icone_do_arquivo(caminho: &str) -> Lucide {
-    if crate::claude::tipo_imagem(Path::new(caminho)).is_some() {
+    if crate::claude::imagem_de_ver(Path::new(caminho)) {
         return Lucide::FileImage;
     }
     match nome_da_linguagem(caminho) {
@@ -327,6 +345,51 @@ fn nota_de_codigo(texto: SharedString, largura_numero: Rems) -> AnyElement {
         .into_any_element()
 }
 
+/// O que o aviso de um arquivo que não abre aqui oferece.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Saida {
+    /// O aplicativo padrão do sistema (o leitor de PDF, a planilha).
+    Fora,
+    Editor,
+    Fechar,
+}
+
+/// As saídas de cada aviso, na ordem dos botões. O binário (PDF, planilha, zip) só tem o que
+/// fazer fora: o VS Code não o mostra. O grande demais pode ser texto (VS Code) ou não (fora).
+fn saidas_do_aviso(aviso: &Aviso) -> &'static [Saida] {
+    match aviso {
+        Aviso::Binario => &[Saida::Fora],
+        Aviso::Grande(_) => &[Saida::Editor, Saida::Fora],
+        Aviso::NaoExiste | Aviso::Erro(_) => &[Saida::Fechar],
+        Aviso::Vazio => &[],
+    }
+}
+
+/// O nome do tipo no aviso do binário, pela extensão ("Arquivo PDF", "Planilha"); sem saber,
+/// "Arquivo binário".
+fn titulo_do_binario(caminho: &Path) -> &'static str {
+    let extensao = caminho.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    match extensao.as_str() {
+        "pdf" => "Arquivo PDF",
+        "xlsx" | "xls" | "ods" | "numbers" => "Planilha",
+        "docx" | "doc" | "odt" | "rtf" | "pages" => "Documento",
+        "pptx" | "ppt" | "odp" | "key" => "Apresentação",
+        "zip" | "gz" | "tgz" | "tar" | "rar" | "7z" | "xz" | "bz2" | "zst" => "Arquivo compactado",
+        "mp4" | "mov" | "mkv" | "webm" | "avi" => "Vídeo",
+        "mp3" | "wav" | "ogg" | "flac" | "m4a" | "opus" => "Áudio",
+        "bmp" | "ico" | "avif" | "tiff" | "tif" | "heic" | "psd" => "Imagem",
+        "ttf" | "otf" | "woff" | "woff2" => "Fonte",
+        "dwg" | "dxf" => "Desenho do CAD",
+        _ => "Arquivo binário",
+    }
+}
+
+/// A linha em que o VS Code abre: a primeira das escolhidas; na edição, a da mudança à vista; ou
+/// a que o link da conversa marcou.
+fn linha_do_editor(selecao: Option<(u32, u32)>, mudanca: Option<(u32, u32)>, marcada: Option<u32>) -> Option<u32> {
+    selecao.or(mudanca).map(|(a, _)| a).or(marcada)
+}
+
 /// O nome que a barra do arquivo mostra para a pasta: "Sem pasta" na pasta vazia de um chat, senão
 /// o da pasta.
 fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
@@ -342,7 +405,7 @@ impl Janela {
     fn conteudo_arquivo(
         &self,
         completo: &Path,
-        markdown: bool,
+        rico: bool,
         cx: &Context<Self>,
     ) -> (Conteudo, Option<CoresDasLinhas>, UniformListScrollHandle) {
         let mut lido = self.arquivo_lido.borrow_mut();
@@ -350,7 +413,7 @@ impl Janela {
         let visto = |l: &ArquivoLido| (l.conteudo.clone(), l.cores.clone(), l.rolagem.clone());
         if let Some(l) = lido.as_mut()
             && l.caminho == completo
-            && l.como_markdown == markdown
+            && l.rico == rico
         {
             if l.conferido.elapsed() < Duration::from_secs(1) {
                 return visto(l);
@@ -367,7 +430,7 @@ impl Janela {
             .map(|l| l.rolagem.clone())
             .unwrap_or_default();
         let modificado = data();
-        let conteudo = ler_arquivo(completo, markdown);
+        let conteudo = ler_arquivo(completo, rico);
         let colorindo = match &conteudo {
             Conteudo::Codigo(linhas, _) => Some(colorir(completo, modificado, linhas, cx)),
             _ => None,
@@ -380,7 +443,7 @@ impl Janela {
             cores: None,
             rolagem,
             _colorindo: colorindo,
-            como_markdown: markdown,
+            rico,
             vista: None,
         };
         let resposta = visto(&novo);
@@ -398,10 +461,10 @@ impl Janela {
             Some((d, _)) => format!("{d}/"),
             None => nome_da_raiz(motor.read(cx), &raiz),
         };
-        // Na edição, o markdown sai em linhas, como o código: o diff é por linha.
+        // Na edição, o markdown e o SVG saem em linhas, como o código: o diff é por linha.
         let edicao = self.arquivo_edicao.clone();
-        let markdown = caminho.ends_with(".md") && edicao.is_none();
-        let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, markdown, cx);
+        let rico = edicao.is_none();
+        let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, rico, cx);
         let janela = cx.entity().downgrade();
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
         let medir = self.medir_direita(cx);
@@ -658,16 +721,23 @@ impl Janela {
             None => "Mencionar o arquivo na conversa".to_string(),
         });
         let editor = completo.to_path_buf();
+        // Com uma linha em vista (a escolhida, a da mudança ou a do link), o VS Code abre nela.
+        let linha_editor = linha_do_editor(self.arquivo_selecao, self.alvo_da_mencao(), self.arquivo_marcada.get());
+        let dica_editor = SharedString::from(match linha_editor {
+            Some(linha) => format!("Abrir no VS Code, na linha {linha}"),
+            None => "Abrir no VS Code".to_string(),
+        });
         let menu = {
-            let (conteudo, relativo, inteiro) = (completo.to_path_buf(), caminho.to_string(), completo.to_path_buf());
+            let (conteudo, relativo, inteiro, fora) =
+                (completo.to_path_buf(), caminho.to_string(), completo.to_path_buf(), completo.to_path_buf());
             let onde = completo.parent().map(Path::to_path_buf).unwrap_or_else(|| completo.to_path_buf());
             let janela = janela.clone();
             // Com um trecho em vista (a seleção ou a mudança), o arquivo inteiro também se menciona.
             let com_trecho = self.alvo_da_mencao().is_some();
             botao_icone("menu-arquivo", Lucide::Ellipsis, "Mais opções do arquivo", TamanhoBotao::Barra, window, cx)
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let (conteudo, relativo, onde, inteiro, janela) =
-                        (conteudo.clone(), relativo.clone(), onde.clone(), inteiro.clone(), janela.clone());
+                    let (conteudo, relativo, onde, inteiro, janela, fora) =
+                        (conteudo.clone(), relativo.clone(), onde.clone(), inteiro.clone(), janela.clone(), fora.clone());
                     menu.when(com_trecho, |menu| {
                         menu.item(PopupMenuItem::new("Mencionar o arquivo inteiro").icon(Lucide::AtSign).on_click(
                             move |_, window, cx| {
@@ -690,6 +760,13 @@ impl Janela {
                         window.push_notification(aviso(Tom::Pronto, "Caminho copiado."), cx);
                     }))
                     .separator()
+                    // O aplicativo padrão do sistema: o navegador para o .html, a planilha para o .csv.
+                    .item(
+                        PopupMenuItem::new("Abrir fora")
+                            .icon(Lucide::ExternalLink)
+                            .external()
+                            .on_click(move |_, _, cx| crate::sistema::abrir_fora(&fora, cx)),
+                    )
                     .item(
                         PopupMenuItem::new("Mostrar na pasta")
                             .icon(Lucide::FolderOpen)
@@ -766,8 +843,8 @@ impl Janela {
                         let _ = j_mencionar.update(cx, |this, cx| this.mencionar_do_painel(window, cx));
                     }))
                     .child(
-                        botao("editor-arquivo", Lucide::CodeXml, "VS Code", "Abrir no VS Code".into())
-                            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&editor)),
+                        botao("editor-arquivo", Lucide::CodeXml, "VS Code", dica_editor)
+                            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&editor, linha_editor)),
                     )
                     .child(menu),
             )
@@ -945,7 +1022,8 @@ impl Janela {
     }
 }
 
-/// O aviso no lugar do conteúdo, centralizado, com o que dá para fazer.
+/// O aviso no lugar do conteúdo, centralizado, com o que dá para fazer: o binário (PDF, planilha)
+/// abre fora, no aplicativo do sistema; o texto grande demais, no VS Code ou fora.
 fn aviso_do_arquivo(
     aviso: Aviso,
     janela: WeakEntity<Janela>,
@@ -953,40 +1031,48 @@ fn aviso_do_arquivo(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let editor = || {
-        botao_fantasma("aviso-editor", Some(Lucide::CodeXml.into()), "Abrir no VS Code", TamanhoBotao::Barra, window, cx)
-            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo))
-            .into_any_element()
-    };
-    let fechar = || {
-        botao_fantasma("aviso-fechar", None, "Fechar", TamanhoBotao::Barra, window, cx)
-            .on_click(move |_, _, cx| {
-                let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
-            })
-            .into_any_element()
-    };
-    let (icone, titulo, texto, acao): (Lucide, &str, Option<String>, Option<AnyElement>) = match aviso {
+    let botoes: Vec<AnyElement> = saidas_do_aviso(&aviso)
+        .iter()
+        .map(|saida| match saida {
+            Saida::Fora => {
+                let alvo = completo.clone();
+                botao_fantasma("aviso-fora", Some(Lucide::ExternalLink.into()), "Abrir fora", TamanhoBotao::Barra, window, cx)
+                    .tooltip("Abrir no aplicativo padrão do sistema")
+                    .on_click(move |_, _, cx| crate::sistema::abrir_fora(&alvo, cx))
+                    .into_any_element()
+            }
+            Saida::Editor => {
+                let alvo = completo.clone();
+                botao_fantasma("aviso-editor", Some(Lucide::CodeXml.into()), "Abrir no VS Code", TamanhoBotao::Barra, window, cx)
+                    .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&alvo, None))
+                    .into_any_element()
+            }
+            Saida::Fechar => {
+                let janela = janela.clone();
+                botao_fantasma("aviso-fechar", None, "Fechar", TamanhoBotao::Barra, window, cx)
+                    .on_click(move |_, _, cx| {
+                        let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
+                    })
+                    .into_any_element()
+            }
+        })
+        .collect();
+    let (icone, titulo, texto): (Lucide, &str, Option<String>) = match aviso {
         Aviso::Grande(bytes) => (
             Lucide::File,
             "Arquivo grande demais",
             Some(format!("Tem {}; aqui abrem arquivos de até {}.", tamanho(bytes), tamanho(LIMITE))),
-            Some(editor()),
         ),
         Aviso::Binario => (
             Lucide::Binary,
-            "Arquivo binário",
-            Some("Não dá para mostrar o conteúdo aqui.".into()),
-            Some(editor()),
+            titulo_do_binario(&completo),
+            Some("Não dá para mostrar aqui. Ele abre no aplicativo do sistema.".into()),
         ),
-        Aviso::NaoExiste => (
-            Lucide::FileX,
-            "O arquivo não existe mais",
-            Some("Ele pode ter sido apagado ou renomeado.".into()),
-            Some(fechar()),
-        ),
-        Aviso::Erro(erro) => (Lucide::FileX, "Não deu para ler o arquivo", Some(erro), Some(fechar())),
-        Aviso::Vazio => (Lucide::File, "Arquivo vazio", None, None),
+        Aviso::NaoExiste => (Lucide::FileX, "O arquivo não existe mais", Some("Ele pode ter sido apagado ou renomeado.".into())),
+        Aviso::Erro(erro) => (Lucide::FileX, "Não deu para ler o arquivo", Some(erro)),
+        Aviso::Vazio => (Lucide::File, "Arquivo vazio", None),
     };
+    let acao = (!botoes.is_empty()).then(|| div().flex().flex_wrap().justify_center().gap(esp::E4).children(botoes));
     div()
         .flex_1()
         .min_h_0()
@@ -1036,7 +1122,10 @@ fn colorir(
 
 #[cfg(test)]
 mod testes {
-    use super::{Aviso, Conteudo, cores_por_linha, icone_do_arquivo, ler_arquivo, nome_da_linguagem, tamanho};
+    use super::{
+        Aviso, Conteudo, Saida, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor, nome_da_linguagem, saidas_do_aviso,
+        tamanho, titulo_do_binario,
+    };
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
 
@@ -1090,5 +1179,49 @@ mod testes {
         assert!(matches!(ler_arquivo(&pasta.join("sumiu.rs"), false), Conteudo::Aviso(Aviso::NaoExiste)));
         assert!(matches!(ler_arquivo(&pasta, false), Conteudo::Aviso(Aviso::Erro(_))));
         let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn binario_grande_e_binario_e_abre_fora() {
+        let pasta = std::env::temp_dir().join(format!("vitral-teste-fora-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        // Um PDF de 500 KB: antes era "grande demais", com o VS Code como saída.
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        pdf.extend(std::iter::repeat_n([0u8, 1, 2, 255], 125_000).flatten());
+        std::fs::write(pasta.join("relatorio.pdf"), &pdf).unwrap();
+        assert!(matches!(ler_arquivo(&pasta.join("relatorio.pdf"), false), Conteudo::Aviso(Aviso::Binario)));
+        // O texto grande continua "grande demais".
+        std::fs::write(pasta.join("dados.csv"), vec![b'a'; 500_000]).unwrap();
+        assert!(matches!(ler_arquivo(&pasta.join("dados.csv"), false), Conteudo::Aviso(Aviso::Grande(500_000))));
+        assert_eq!(saidas_do_aviso(&Aviso::Binario), [Saida::Fora]);
+        assert_eq!(saidas_do_aviso(&Aviso::Grande(500_000)), [Saida::Editor, Saida::Fora]);
+        assert_eq!(saidas_do_aviso(&Aviso::NaoExiste), [Saida::Fechar]);
+        assert_eq!(saidas_do_aviso(&Aviso::Erro("x".into())), [Saida::Fechar]);
+        assert!(saidas_do_aviso(&Aviso::Vazio).is_empty());
+        assert_eq!(titulo_do_binario(&pasta.join("relatorio.PDF")), "Arquivo PDF");
+        assert_eq!(titulo_do_binario(&pasta.join("vendas.xlsx")), "Planilha");
+        assert_eq!(titulo_do_binario(&pasta.join("dump.bin")), "Arquivo binário");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn o_svg_abre_como_imagem_e_em_linhas_quando_se_pede_o_texto() {
+        let pasta = std::env::temp_dir().join(format!("vitral-teste-svg-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let svg = pasta.join("logo.svg");
+        std::fs::write(&svg, "<svg xmlns=\"http://www.w3.org/2000/svg\">\n<circle r=\"4\"/>\n</svg>\n").unwrap();
+        assert!(matches!(ler_arquivo(&svg, true), Conteudo::Imagem));
+        // Na edição e na busca (Ctrl+F), o painel pede as linhas.
+        assert!(matches!(ler_arquivo(&svg, false), Conteudo::Codigo(linhas, _) if linhas.len() == 3));
+        assert_eq!(icone_do_arquivo("assets/logo.svg"), Lucide::FileImage);
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn o_vs_code_abre_na_linha_escolhida_na_da_mudanca_ou_na_do_link() {
+        assert_eq!(linha_do_editor(None, None, None), None);
+        assert_eq!(linha_do_editor(None, None, Some(120)), Some(120));
+        assert_eq!(linha_do_editor(None, Some((40, 44)), Some(120)), Some(40));
+        assert_eq!(linha_do_editor(Some((7, 9)), Some((40, 44)), Some(120)), Some(7));
     }
 }

@@ -545,7 +545,7 @@ impl super::Janela {
             return;
         }
         let chat = self.paineis.get(self.ativo).and_then(|p| p.chat.clone());
-        if crate::claude::tipo_imagem(&inteiro).is_some()
+        if crate::claude::imagem_de_ver(&inteiro)
             && let Some(chat) = &chat
         {
             self.abrir_visor(chat, &inteiro, window, cx);

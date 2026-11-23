@@ -745,7 +745,7 @@ fn menu_do_arquivo(
         PopupMenuItem::new("Abrir no VS Code")
             .icon(Lucide::CodeXml)
             .external()
-            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo)),
+            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo, None)),
     )
     .item(PopupMenuItem::new("Copiar o caminho").icon(Lucide::Copy).on_click(move |_, window, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(copia.clone()));
@@ -828,7 +828,7 @@ fn linha_da_arvore(
         (true, true) => Lucide::FolderOpen,
         (true, false) => Lucide::Folder,
         // Uma imagem se acha na árvore pelo ícone, antes de abrir.
-        _ if crate::claude::tipo_imagem(Path::new(&caminho)).is_some() => Lucide::FileImage,
+        _ if crate::claude::imagem_de_ver(Path::new(&caminho)) => Lucide::FileImage,
         _ => Lucide::FileText,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));

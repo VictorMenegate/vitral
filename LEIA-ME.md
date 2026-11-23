@@ -1606,7 +1606,7 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   caminho até o arquivo aberto), com o caminho dela em cima e o ↻ para reler. Com busca, uma lista
   plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel
   da direita: a aba com o nome e o ícone do tipo, e uma barra com a pasta, o número de linhas e a
-  linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, mostrar na pasta).
+  linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, abrir fora, mostrar na pasta).
   O **cabeçalho do arquivo** (`cabecalho_do_arquivo`) tem o ícone e o nome, as linhas e a
   linguagem ("59 linhas · JavaScript"), a pasta em tom tênue cortada no começo e, à direita, as
   ações. Nada passa por baixo de nada: a conta (`o_que_cabe`) é pela largura do painel e pelo
@@ -1627,9 +1627,19 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   se acha mais (o arquivo mudou depois) aparece solto no fim, com uma nota. O painel abre rolado
   até a primeira mudança. O registro antigo, sem o diff, abre o arquivo como está, com o aviso
   "Este registro não guardou a edição" na faixa.
-  O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. Arquivo grande
-  (mais de 400 KB), binário, vazio ou que sumiu dá um aviso no lugar, com **Abrir no VS Code** ou
-  **Fechar**. Na lista, no hover, **@** menciona o arquivo na conversa e **…** (ou o
+  O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. O **SVG**
+  abre desenhado, como as outras imagens (o `img` do GPUI o desenha; `claude::imagem_de_ver`), e o
+  clique o leva ao visor; na edição ele sai em linhas, e anexado segue como arquivo de texto (o
+  `tipo_imagem` continua sem ele: a API não aceita SVG como imagem). O **VS Code** do cabeçalho
+  abre na linha que está em vista (`code --goto arquivo:linha`, `sistema::argumentos_do_editor`):
+  a primeira das escolhidas, a da mudança à vista na edição ou a que o link da conversa marcou; a
+  dica do botão diz qual. Arquivo que não dá para mostrar tem um aviso no lugar, com a saída que
+  serve (`saidas_do_aviso`): o **binário** (PDF, planilha, zip; o aviso diz o tipo pela extensão)
+  tem o **Abrir fora**, que abre no aplicativo padrão do sistema (`sistema::abrir_fora`); o
+  **grande demais** (mais de 400 KB) tem **Abrir no VS Code** e **Abrir fora**; o que sumiu,
+  **Fechar**. O arquivo grande com um byte nulo no começo é binário, e não "grande demais" (antes
+  um PDF de 2 MB só oferecia o VS Code). O **…** do cabeçalho também tem o **Abrir fora**, para
+  qualquer arquivo (o .html no navegador, o .csv na planilha). Na lista, no hover, **@** menciona o arquivo na conversa e **…** (ou o
   clique direito) abre no VS Code, copia o caminho ou mostra na pasta. A lista é relida a cada 20 s
   em segundo plano, sem travar a tela.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
