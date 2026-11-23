@@ -707,7 +707,19 @@ no cabeçalho; dono, 18/11/2026).
   "Só com o menu “/” da caixa à vista"): a lista é montada de uma foto do momento
   (`paleta::Momento`). O Esc devolve o foco à caixa. Um teste garante que toda linha com rótulo
   da tabela de atalhos está na paleta; atalho novo entra sozinho, e comando novo de menu entra em
-  `Direto::TODOS`.
+  `Direto::TODOS`. **Com algo escrito**, a paleta acha também as conversas pelo título (todas menos a do
+  painel ativo, com a pasta embaixo; o Enter a abre no painel ativo) e os arquivos da pasta do
+  chat ativo pelo nome (o Enter abre à direita), em duas seções depois dos comandos, **Ir para a
+  conversa** e **Abrir arquivo**, com até 6 linhas cada (`grupos_com_achados`); sem nada
+  escrito, só os comandos, como antes.
+- **Abrir arquivo pelo nome (Ctrl+P)** (`paleta::abrir_arquivo_pelo_nome`; também na paleta). A
+  lista dos arquivos da pasta do chat do painel ativo, na mesma lista de escolha do "@"
+  (`seletor_arquivos::grupos_de_arquivos`: o nome em cima, a pasta embaixo, o nome batendo antes
+  da pasta e o mais curto antes), e o Enter abre o arquivo no painel da direita. A lista é a que
+  a aba Arquivos e o "@" já leram (`cache_arquivos`), então abre na hora; na primeira vez da
+  pasta, é lida em segundo plano ("Lendo os arquivos…"). A busca de arquivo, aqui, no "@" e no
+  Mencionar, não liga para acento nem para caixa ("relatorio" acha "relatório.md"), com a peça de
+  `acentos.rs`. Sem conversa no painel ativo, um aviso pede uma.
 - **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
   `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
   fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.

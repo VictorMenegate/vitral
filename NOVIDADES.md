@@ -59,6 +59,11 @@ citados abrem em mais lugares.
   caminho inteiro.
 - **Comando de barra citado vira link.** Quando o agente escreve `/compact` ou outro comando do
   chat, o clique põe o comando na caixa de mensagem. Quem envia é você.
+- **Abrir arquivo pelo nome (Ctrl+P).** O Ctrl+P abre a lista dos arquivos da pasta do chat, com
+  busca; o Enter abre o arquivo à direita. A busca não liga para acento ("relatorio" acha
+  "relatório.md"), e isso vale também para o "@" da caixa.
+- **A paleta acha conversas e arquivos.** Na paleta de comandos (Ctrl+Shift+P), o que você
+  escreve acha também as conversas pelo título e os arquivos da pasta do chat, além dos comandos.
 - **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
   que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
 - **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)

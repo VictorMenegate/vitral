@@ -10,7 +10,8 @@ use crate::tema::Lucide;
 const LIMITE: usize = 200;
 
 /// Os arquivos com todas as palavras da busca no caminho; o nome batendo vem antes da pasta
-/// batendo, e o mais curto antes.
+/// batendo, e o mais curto antes. Sem acento e sem caixa dos dois lados, como as outras buscas
+/// (`acentos.rs`): "relatorio" acha "relatório.md".
 pub(super) fn filtrar_arquivos<'a>(arquivos: &'a [String], busca: &str, limite: usize) -> Vec<&'a String> {
     filtrar_mencoes(arquivos, &[], busca, limite)
 }
@@ -18,20 +19,19 @@ pub(super) fn filtrar_arquivos<'a>(arquivos: &'a [String], busca: &str, limite: 
 /// O mesmo filtro sobre os arquivos e as pastas ("central/src/") do "@" da caixa (item 1.2). A
 /// chave de cada um é calculada uma vez (são milhares com os repositórios de dentro).
 pub(super) fn filtrar_mencoes<'a>(arquivos: &'a [String], pastas: &'a [String], busca: &str, limite: usize) -> Vec<&'a String> {
-    let busca = busca.to_lowercase();
-    let termos: Vec<&str> = busca.split_whitespace().collect();
+    let termos = super::acentos::palavras(busca);
     let todos = arquivos.iter().chain(pastas.iter());
     let Some(ultimo) = termos.last() else {
         return todos.take(limite).collect();
     };
     let mut lista: Vec<(bool, usize, &String)> = todos
         .filter_map(|a| {
-            let baixo = a.to_lowercase();
-            if !termos.iter().all(|t| baixo.contains(t)) {
+            let baixo = super::acentos::normalizar(a);
+            if !super::acentos::tem_todas(&baixo, &termos) {
                 return None;
             }
             let nome = baixo.trim_end_matches('/').rsplit('/').next().unwrap_or(&baixo);
-            Some((!nome.contains(ultimo), a.len(), a))
+            Some((!nome.contains(ultimo.as_str()), a.len(), a))
         })
         .collect();
     if lista.len() > limite {
@@ -287,5 +287,14 @@ mod testes {
         assert_eq!((item.chave.as_ref(), item.titulo.as_ref()), ("src/checkout/cupom.rs", "cupom.rs"));
         assert_eq!(item.descricao.as_ref().map(|d| d.to_string()), Some("src/checkout".to_string()));
         assert!(grupos_de_arquivos(Some(&arquivos), "nada").is_empty());
+    }
+
+    #[test]
+    fn a_busca_de_arquivo_nao_liga_para_acento() {
+        let arquivos: Vec<String> = ["docs/relatório.md", "src/configuração/mod.rs", "src/main.rs"].map(String::from).to_vec();
+        assert_eq!(filtrar_arquivos(&arquivos, "relatorio", 10), ["docs/relatório.md"]);
+        assert_eq!(filtrar_arquivos(&arquivos, "CONFIGURACAO mod", 10), ["src/configuração/mod.rs"]);
+        // E quem escreve com acento acha o nome sem ele.
+        assert_eq!(filtrar_arquivos(&["docs/relatorio.md".to_string()], "relatório", 10), ["docs/relatorio.md"]);
     }
 }

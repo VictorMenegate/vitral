@@ -150,6 +150,8 @@ tabela! {
     "ctrl-tab", super::AbaSeguinte, None, Grupo::Paineis, "Aba seguinte do painel ativo (com Shift, a anterior)", "";
     "ctrl-shift-tab", super::AbaAnterior, None, Grupo::Paineis, "", "";
     "ctrl-shift-t", super::ReabrirAba, None, Grupo::Paineis, "Reabrir a última aba fechada", "";
+    // Como o Ctrl+P do VS Code: a lista dos arquivos da pasta do chat ativo, e o Enter abre à direita.
+    "ctrl-p", super::paleta::AbrirArquivoPeloNome, None, Grupo::Paineis, "Abrir um arquivo da pasta pelo nome", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";

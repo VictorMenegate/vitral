@@ -1883,6 +1883,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
             .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
             .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirArquivoPeloNome, window, cx| this.abrir_arquivo_pelo_nome(window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoSeguinte, window, cx| this.andar_nos_arranjos(1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoAnterior, window, cx| this.andar_nos_arranjos(-1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::SalvarArranjo, window, cx| this.dialogo_salvar_arranjo(window, cx)))
