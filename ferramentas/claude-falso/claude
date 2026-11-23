@@ -238,6 +238,15 @@ ferramenta_rodando = threading.Event()
 # As mensagens do usuário na fila: (uuid, texto).
 fila_de_mensagens = []
 trava_da_fila = threading.Lock()
+# Os agentes de `[ferramenta AgenteFundo ...]` que ainda rodam: eles seguem depois do `result`, e o
+# processo só sai quando acabam (como o de verdade, com a entrada aberta ou fechada).
+agentes_de_fundo = {}
+trava_dos_agentes = threading.Lock()
+# O turno principal (ou um aberto depois, no mesmo processo) está rodando: a mensagem que chega
+# com ele parado abre outro turno, como no de verdade (medido no 2.1.328).
+turno_rodando = threading.Event()
+turno_rodando.set()
+trava_do_turno = threading.Lock()
 # O que foi trocado pela entrada no meio do turno: modo, modelo, esforço.
 ao_vivo = {}
 MODOS = ("acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan")
@@ -307,6 +316,64 @@ def turno_da_fila():
         emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}]}})
         emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0})
         emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "completed", "session_id": sessao})
+
+
+def turno_no_mesmo_processo(texto, uuid=None, de_agente=False):
+    """Outro turno no processo que já deu o `result`: a mensagem que o usuário mandou com os
+    agentes ainda em segundo plano, ou o aviso de um agente que terminou. Como no de verdade
+    (2.1.328): `command_lifecycle`, o `init` de novo, a resposta e o `result`."""
+    with trava_do_turno:
+        turno_rodando.set()
+        if uuid:
+            emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "queued", "session_id": sessao})
+            emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "started", "session_id": sessao})
+        emitir({"type": "system", "subtype": "init", "model": ao_vivo.get("modelo", "claude-falso"), "session_id": sessao,
+                "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
+        if not de_agente:
+            fingir_ferramentas(texto)
+        ultima = next((l.strip() for l in reversed(texto.splitlines()) if l.strip() and not l.startswith("[")), "")
+        resposta = (f"(claude falso) o agente terminou: {ultima[:120]}" if de_agente
+                    else f"(claude falso) turno novo no mesmo processo: {ultima[:120]}")
+        anotar({"turno_no_mesmo_processo": ultima[:200], "de_agente": de_agente, "pid": os.getpid()})
+        emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}]}})
+        emitir({"type": "result", "subtype": "success", "is_error": False, "result": resposta, "num_turns": 1,
+                "total_cost_usd": 0.0})
+        if uuid:
+            emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "completed", "session_id": sessao})
+        turno_rodando.clear()
+    # A sugestão da próxima mensagem depois do último turno (sem agente rodando), como no de
+    # verdade: 1 s depois do `result`, só com a entrada ainda aberta.
+    with trava_dos_agentes:
+        sem_agentes = not agentes_de_fundo
+    if sem_agentes and "--prompt-suggestions" in args and not fim_da_entrada.wait(1):
+        emitir({"type": "prompt_suggestion", "suggestion": "(sugestão) e depois do agente?", "uuid": "falso",
+                "session_id": sessao})
+
+
+def tarefas_de_fundo():
+    with trava_dos_agentes:
+        return [{"task_id": id_, "task_type": "local_agent", "subagent_type": "general-purpose", "description": d}
+                for id_, d in agentes_de_fundo.items()]
+
+
+def agente_de_fundo(tarefa, id_, detalhe, segundos):
+    """O agente de `[ferramenta AgenteFundo ...]`: trabalha os segundos pedidos sem prender o turno,
+    avisa que terminou e o Claude Code abre um turno para dizer o que ele fez."""
+    passos = ({"type": "tool_use", "id": id_ + "a", "name": "Grep", "input": {"pattern": "cupom"}},
+              {"type": "tool_use", "id": id_ + "b", "name": "Read", "input": {"file_path": "produtos/views.py"}})
+    for n, passo in enumerate(passos, start=1):
+        time.sleep(segundos / 3)
+        emitir({"type": "assistant", "parent_tool_use_id": id_, "message": {"content": [passo]}})
+        emitir({"type": "system", "subtype": "task_progress", "task_id": tarefa, "tool_use_id": id_,
+                "description": "Running " + passo["name"], "usage": {"tool_uses": n}})
+    time.sleep(segundos / 3)
+    emitir({"type": "system", "subtype": "task_notification", "task_id": tarefa, "tool_use_id": id_,
+            "status": "completed", "summary": f"(claude falso) {detalhe}: dois lugares mexem no cupom.",
+            "usage": {"tool_uses": len(passos)}})
+    with trava_dos_agentes:
+        agentes_de_fundo.pop(tarefa, None)
+    emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": tarefas_de_fundo()})
+    turno_no_mesmo_processo(detalhe, de_agente=True)
 
 
 def absorver_fila():
@@ -403,6 +470,10 @@ def ouvir_entrada():
                     fila_de_mensagens.append((uuid, dirigida))
                 anotar({"dirigida": dirigida[:200], "na_fila": uuid})
                 emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "queued", "session_id": sessao})
+            elif dirigida and not turno_rodando.is_set():
+                # Nenhum turno rodando (o `result` já saiu e o processo espera os agentes, ou a
+                # sugestão): a mensagem abre outro turno, no mesmo processo.
+                threading.Thread(target=turno_no_mesmo_processo, args=(dirigida, pedido.get("uuid")), daemon=True).start()
             elif dirigida:
                 anotar({"dirigida": dirigida[:200]})
                 emitir({"type": "assistant", "message": {"content": [
@@ -436,6 +507,56 @@ anotar({
     "prompt": open(prompt).read()[:600] if prompt else None,
     "pedido": pedido,
 })
+
+# O `uuid` com que a mensagem veio: é com ele que o de verdade (2.1.328) diz a vez dela
+# (`command_lifecycle` queued, started e completed).
+try:
+    uuid_da_mensagem = json.loads(linha).get("uuid")
+except (ValueError, AttributeError):
+    uuid_da_mensagem = None
+# O processo anterior desta sessão foi derrubado com um agente em segundo plano (o Parar de quem
+# esperava os agentes): como o de verdade (2.1.328, medido em 23/11/2026), a retomada avisa que
+# ele não terminou e solta um `result` vazio, com `num_turns` 0, ANTES de a mensagem começar. O
+# Vitral tomava esse `result` pelo fim do turno. CLAUDE_FALSO_AGENTE_CORTADO=1 encena sem o corte.
+marca_do_corte = os.path.join(estado, "claude-falso-cortado-" + re.sub(r"[^A-Za-z0-9-]", "", sessao))
+cortado = os.environ.get("CLAUDE_FALSO_AGENTE_CORTADO") == "1" or (valor_de("--resume") and os.path.exists(marca_do_corte))
+if uuid_da_mensagem:
+    if cortado:
+        emitir({"type": "system", "subtype": "task_notification", "task_id": "falsocortado", "status": "stopped",
+                "summary": "Background agent \"(claude falso)\" didn't finish before the previous session ended",
+                "session_id": sessao})
+    emitir({"type": "command_lifecycle", "command_uuid": uuid_da_mensagem, "state": "queued", "session_id": sessao})
+    if cortado:
+        emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_id": sessao,
+                "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(),
+                "tools": ["Read", "Edit", "Bash"]})
+        emitir({"type": "result", "subtype": "success", "is_error": False, "result": "", "num_turns": 0,
+                "total_cost_usd": 0.0})
+        anotar({"result_antes_da_vez": True, "pid": os.getpid()})
+    emitir({"type": "command_lifecycle", "command_uuid": uuid_da_mensagem, "state": "started", "session_id": sessao})
+try:
+    os.remove(marca_do_corte)
+except OSError:
+    pass
+
+
+def ao_ser_derrubado(*_):
+    """SIGTERM (o Parar do Vitral em quem espera os agentes, ou fechar o Vitral): se havia agente
+    em segundo plano, a próxima retomada desta sessão avisa que ele não terminou."""
+    with trava_dos_agentes:
+        havia = bool(agentes_de_fundo)
+    anotar({"derrubado": True, "pid": os.getpid(), "agentes": havia})
+    if havia:
+        try:
+            open(marca_do_corte, "w").close()
+        except OSError:
+            pass
+    os._exit(143)
+
+
+import signal
+signal.signal(signal.SIGTERM, ao_ser_derrubado)
+anotar({"pid": os.getpid(), "sessao": sessao, "abriu": True})
 
 emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_id": sessao,
         "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
@@ -645,6 +766,25 @@ def fingir_ferramentas(texto):
             resumido = valor_de("--thinking-display") == "summarized"
             emitir({"type": "assistant", "message": {"content": [
                 {"type": "thinking", "thinking": detalhe if resumido else "", "signature": "falsa"}]}})
+            continue
+        # `[ferramenta AgenteFundo confere os testes | 30]`: um Agent com run_in_background que
+        # segue trabalhando DEPOIS do `result` do turno (os segundos pedidos), como no de verdade
+        # (2.1.328): a chamada volta na hora, o turno termina e o processo fica esperando por ele.
+        if nome == "AgenteFundo":
+            tarefa = f"falso{os.getpid()}x{i}"
+            emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_, "name": "Agent",
+                    "input": {"description": detalhe, "prompt": detalhe, "subagent_type": "general-purpose",
+                              "run_in_background": True}}]}})
+            with trava_dos_agentes:
+                agentes_de_fundo[tarefa] = detalhe
+            emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": tarefas_de_fundo()})
+            emitir({"type": "system", "subtype": "task_started", "task_id": tarefa, "tool_use_id": id_,
+                    "task_type": "local_agent", "description": detalhe})
+            emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
+                    "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
+                    "tool_use_result": {"isAsync": True, "status": "async_launched", "agentId": tarefa}})
+            threading.Thread(target=agente_de_fundo, args=(tarefa, id_, detalhe, int(segundos) if segundos else 30),
+                             daemon=True).start()
             continue
         # `[ferramenta Fundo npm run dev | 20]`: um Bash com run_in_background, como o de verdade
         # (2.1.325): volta na hora, a tarefa aparece em background_tasks_changed e some quando acaba
@@ -1026,10 +1166,26 @@ emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd
         "usage": {"input_tokens": 1200, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 800,
                   "output_tokens": 300},
         "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+if uuid_da_mensagem:
+    emitir({"type": "command_lifecycle", "command_uuid": uuid_da_mensagem, "state": "completed", "session_id": sessao})
+turno_rodando.clear()
+with trava_dos_agentes:
+    lancou_agente = bool(agentes_de_fundo)
 # Com --prompt-suggestions, como o de verdade (2.1.325): a próxima mensagem provável depois do
 # `result`, só com a entrada ainda aberta (fechada antes, ele não sugere).
-if "--prompt-suggestions" in args and not fim_da_entrada.wait(1.5):
+if "--prompt-suggestions" in args and not lancou_agente and not fim_da_entrada.wait(1.5):
     emitir({"type": "prompt_suggestion", "suggestion": f"(sugestão) continua o {pedido[:30]}", "uuid": "falso",
             "session_id": sessao})
-# O Vitral fecha a entrada no fim do turno; sem isso, sai sozinho depois de um tempo.
-fim_da_entrada.wait(30)
+# O Vitral fecha a entrada no fim do turno; sem isso, sai sozinho depois de um tempo. Com agente em
+# segundo plano, como o de verdade: o processo fica (com a entrada aberta ou fechada) enquanto houver
+# agente ou turno rodando, e só sai com a entrada fechada.
+if not lancou_agente:
+    fim_da_entrada.wait(30)
+else:
+    while True:
+        with trava_dos_agentes:
+            agentes = bool(agentes_de_fundo)
+        if fim_da_entrada.is_set() and not agentes and not turno_rodando.is_set():
+            break
+        time.sleep(0.1)
+anotar({"saiu": True, "pid": os.getpid()})

@@ -182,8 +182,9 @@ componentes do GPUI Kit.
   (`Motor::dirigir_turno`). Quando o turno termina sem ter absorvido a mensagem, o Claude Code abre
   outro turno com ela no mesmo processo: nesse caso a entrada do processo fica aberta, para o
   turno seguinte também receber mensagens (o `Inicio` dele desfaz o fim adiado; se em 8 s ele não
-  começa, `vigiar_turno_dirigido` fecha a entrada e o processo sai). A entrada só fecha no fim
-  adiado quando há agentes em segundo plano. `Motor::turno_recebe_mensagem` diz se o Enviar entra
+  começa, `vigiar_turno_dirigido` fecha a entrada e o processo sai). Com agentes em segundo plano
+  a entrada também fica aberta (até a 0.9.5 ela fechava): a mensagem mandada nessa espera entra
+  no mesmo processo, como outro turno. `Motor::turno_recebe_mensagem` diz se o Enviar entra
   no turno ou vai para a fila, e **Mandar agora**, na lista da fila
   (`Motor::mandar_da_fila_agora`), tira uma mensagem da fila e a põe no turno que roda. Cada
   mensagem dirigida vai com um `uuid` (`Processo::dirigir`): **o Parar a tira da fila interna do
@@ -457,7 +458,15 @@ componentes do GPUI Kit.
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
   ainda rodando, o turno não acaba ali: o chat continua rodando, a conversa ganha o aviso "Os
   agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e o turno só
-  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai). Se o processo sai com eles ainda rodando, com o teto da espera
+  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai).
+  **A mensagem que você manda nessa espera entra no mesmo processo**, como outro turno (medido no
+  Claude Code 2.1.328 em 23/11/2026, com o Haiku: com a entrada aberta, o `init` do turno dela sai
+  0,15 s depois, com o agente ainda rodando; o agente que termina abre o turno do aviso dele, e
+  com a entrada fechada o processo espera os agentes e sai). O `Inicio` de cada um desses turnos
+  desfaz o fim adiado, o `result` dele adia de novo enquanto houver agente (o aviso é um só por
+  processo, `avisou_do_fundo`), e quando o último agente sai sem abrir turno a vigia fecha a
+  entrada. O que não pode ser dirigido (Ultrathink, Ultracode, comando de barra, "Mandar depois")
+  continua esperando na fila até o processo sair. Se o processo sai com eles ainda rodando, com o teto da espera
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
   terminaram. Parar continua valendo e, nessa espera, derruba o processo com os agentes. Um turno
   que termina com erro ou parado enquanto há agentes em segundo plano também derruba o processo, em
@@ -2405,6 +2414,35 @@ só quando ligados; a fila guarda e sobrevive a um reinício), `Reforco { ultrat
 envio, `motivo_sem_ultracode`, `aceita_ultracode`, um Ultracode por vez (`ultracode_rodando`), o
 fim do turno adiado enquanto há agentes em segundo plano (`fim_adiado`; `agentes_cortados` quando o
 processo sai antes deles) e `entrada_para_repetir` na repetição automática da troca de conta.
+
+Um chat, um processo (0.9.6): nunca há dois processos do agente na mesma conversa. Em 23/11/2026
+um chat chegou a ter três `claude -p --resume` da mesma sessão, cada um achando que era o único.
+O que disparou, medido no Claude Code 2.1.328: ao retomar uma sessão cujo processo anterior foi
+derrubado com um agente em segundo plano (o Parar de quem esperava os agentes), ele manda o aviso
+do agente cortado, põe a mensagem na fila (`command_lifecycle` `queued`), manda um `init` e um
+`result` de sucesso vazio, com `num_turns` 0, e só depois começa a mensagem (`started`). O motor
+tomava esse `result` pelo fim do turno: o chat parecia parado com o processo no meio do turno, e a
+mensagem seguinte (ou a revisão da memória, ou o Continuar) abria outro processo, deixando o
+primeiro rodando por fora, com agentes, sem que o Parar o alcançasse. São três consertos:
+`claude::VezDaMensagem` (na thread que lê a saída) tira o `result` que chega antes da vez da
+mensagem com que o processo abriu; `motor/saidas.rs` guarda POR CHAT o processo que já terminou o
+turno e está saindo (o que espera a sugestão continua em `sugerindo`), e `comecar_turno_com`,
+o único lugar que abre processo de chat, não abre outro enquanto um deles vive
+(`esperar_o_anterior_sair`: as mensagens ficam em `a_abrir`, o chat conta como rodando e
+`abrir_quando_sair` abre o turno quando o anterior sai, o que leva de 0,5 a 1,6 s no Claude Code,
+ou uns 7 s com um comando de fundo); e quem não sai no prazo é derrubado (`PRAZO_DE_SAIDA`, 12 s;
+5 s para o que foi parado ou deu erro; SIGKILL 5 s depois do SIGTERM). O processo que já tinha
+terminado e manda o `init` de outro turno (um aviso de tarefa de fundo abre um sozinho) volta a
+ser o processo do chat (`Motor::acordou`), menos o que foi parado ou o que tem turno novo
+esperando por ele, que é derrubado. O Parar desfaz o turno que esperava (`desistir_de_abrir`: o
+que você escreveu volta para a fila) e derruba o que ainda saía; fechar o Vitral derruba todos
+(`encerrar_tudo`). No claude de mentira, `[ferramenta AgenteFundo <descrição> | <segundos>]` é o
+agente que segue depois do `result` (o processo fica vivo por ele, a mensagem que chega com o
+turno parado abre outro turno no mesmo processo, e o SIGTERM com agente rodando deixa a marca que
+faz a retomada seguinte soltar o `result` vazio, como o de verdade;
+`CLAUDE_FALSO_AGENTE_CORTADO=1` encena sem o corte); o roteiro é o
+`ferramentas/roteiros/um-chat-um-processo.txt`, que conta os processos vivos por sessão a cada
+passo (com o 0.9.5 o passo 06 dá 2).
 
 Custo: o `total_cost_usd` do `result` é o total da sessão até ali, não o do turno. Ele cresce a
 cada `result` do mesmo processo e, numa retomada (`--resume`), já vem com o dos turnos anteriores,

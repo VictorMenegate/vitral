@@ -83,6 +83,13 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   8". Antes as setas davam a volta dentro do mesmo arquivo.
 - **Diff sem espaço em branco.** No diff de "Na pasta", o "…" do arquivo tem Ignorar espaço em
   branco: o que só mudou de recuo sai do diff. Começa desligado.
+- **Um chat nunca abre o Claude duas vezes.** Com agentes em segundo plano, parar e mandar outra
+  mensagem podia deixar dois ou três processos do Claude na mesma conversa, cada um respondendo e
+  soltando agentes por conta própria. Agora cada conversa tem um processo só, e o Parar derruba
+  também o que ainda estava saindo.
+- **Mensagem com os agentes ainda rodando entra na hora.** Depois da resposta, com agentes em
+  segundo plano, a mensagem nova ficava na fila até o último agente acabar. Agora o Claude a
+  responde em seguida, no mesmo processo, sem parar os agentes.
 
 ## 0.9.5
 

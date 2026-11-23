@@ -385,6 +385,45 @@ pub enum Evento {
     },
 }
 
+/// A vez da mensagem com que o processo abriu, pelo que o Claude Code diz dela na saída
+/// (`command_lifecycle`: `queued`, `started`, `completed`). Serve para uma coisa só: reconhecer o
+/// `result` que chega ANTES de ela começar, que não é o fim do turno dela.
+///
+/// Medido no 2.1.328 em 23/11/2026 (Haiku, pasta em /tmp): ao retomar uma sessão cujo processo
+/// anterior foi derrubado com um agente em segundo plano (o Parar de quem esperava os agentes), o
+/// Claude Code manda o aviso do agente cortado (`task_notification` com `stopped`), põe a mensagem
+/// na fila (`queued`), manda um `init` e um `result` de sucesso vazio, com `num_turns` 0, e só
+/// depois começa a mensagem (`started`, outro `init`, a resposta, o `result` dela). O motor tomava
+/// o primeiro `result` pelo fim do turno: o chat ficava parado com o processo no meio do turno, e
+/// a mensagem seguinte (ou a revisão da memória) abria OUTRO processo da mesma sessão.
+pub(crate) struct VezDaMensagem {
+    uuid: Option<String>,
+    na_fila: bool,
+}
+
+impl VezDaMensagem {
+    pub(crate) fn nova(uuid: Option<&str>) -> Self {
+        Self { uuid: uuid.map(str::to_string), na_fila: false }
+    }
+
+    /// Lê uma linha da saída e diz se ela é um `result` de antes da vez da mensagem (a tirar).
+    pub(crate) fn result_de_antes(&mut self, valor: &Value) -> bool {
+        let Some(uuid) = self.uuid.as_deref() else {
+            return false;
+        };
+        match valor["type"].as_str() {
+            Some("command_lifecycle") if valor["command_uuid"] == uuid => {
+                self.na_fila = valor["state"] == "queued";
+                false
+            }
+            // Só o `result` vazio que foi medido: sem turno do modelo e sem erro. Um Claude Code
+            // que nunca dissesse o `started` não prende o turno: o `result` de verdade passa.
+            Some("result") => self.na_fila && valor["num_turns"] == 0 && valor["is_error"] != true,
+            _ => false,
+        }
+    }
+}
+
 pub struct Processo {
     filho: Child,
     /// Escrita numa thread própria (`EntradaDeFundo`): o processo pode demorar a ler.
@@ -480,6 +519,7 @@ impl Processo {
                 }
             }
         });
+        let mut vez = VezDaMensagem::nova(mensagem.marca.filter(|_| !codex));
         std::thread::spawn(move || {
             // O Codex fala outro formato, traduzido para os mesmos eventos.
             let mut do_codex = protocolo_codex;
@@ -488,6 +528,10 @@ impl Processo {
                 let Ok(valor) = serde_json::from_str::<Value>(&linha) else {
                     continue;
                 };
+                // O `result` de antes da vez da mensagem não é o fim do turno dela.
+                if vez.result_de_antes(&valor) {
+                    continue;
+                }
                 let eventos = match &mut do_codex {
                     Some(leitor) => leitor.linha(&valor),
                     None => interpretar(&valor),
@@ -693,6 +737,15 @@ impl Processo {
         if !self.parado && self.esperar().is_none() {
             self.parado = true;
             self.escopo.parar();
+        }
+    }
+
+    /// SIGKILL nele e no que abriu: para o processo que não saiu nem com o SIGTERM do `matar`.
+    pub fn matar_de_vez(&mut self) {
+        self.fechar_entrada();
+        if self.esperar().is_none() {
+            self.parado = true;
+            self.escopo.matar();
         }
     }
 
@@ -3362,6 +3415,11 @@ mod testes_do_turno_ao_vivo {
     #[cfg(unix)]
     impl Turno {
         fn abrir(texto: &str, opcoes: impl FnOnce(Opcoes) -> Opcoes, ambiente: &[(&str, &str)]) -> Self {
+            Self::abrir_marcado(texto, None, opcoes, ambiente)
+        }
+
+        /// Como o motor abre: a mensagem vai com o `uuid` dela (a `marca`).
+        fn abrir_marcado(texto: &str, marca: Option<&str>, opcoes: impl FnOnce(Opcoes) -> Opcoes, ambiente: &[(&str, &str)]) -> Self {
             let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
             let pasta = std::env::temp_dir().join(format!("vitral-ao-vivo-{}", crate::modelo::novo_id()));
             std::fs::create_dir_all(&pasta).unwrap();
@@ -3372,7 +3430,7 @@ mod testes_do_turno_ao_vivo {
                 comando.env(chave, valor);
             }
             let (manda, eventos) = mpsc::channel();
-            let mensagem = Mensagem { texto, imagens: &[], marca: None };
+            let mensagem = Mensagem { texto, imagens: &[], marca };
             let processo = Processo::com_o_comando(comando, &opcoes, mensagem, move |evento| {
                 let _ = manda.send(evento);
             })
@@ -3529,6 +3587,109 @@ mod testes_do_turno_ao_vivo {
         let mut sem = Turno::abrir(pedido, |o| Opcoes { raciocinio_resumido: false, ..o }, &[]);
         sem.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
         assert!(matches!(sem.vistos.last(), Some(Evento::Pensamento(t)) if t.is_empty()), "{:?}", sem.vistos);
+    }
+
+    // ---------- um chat, um processo (23/11/2026) ----------
+
+    /// O que o Claude Code 2.1.328 mandou ao retomar uma sessão cujo processo anterior foi
+    /// derrubado com um agente em segundo plano (medido em 23/11/2026, Haiku, pasta em /tmp): o
+    /// aviso do agente cortado, a mensagem na fila, um `init` e um `result` vazio com `num_turns`
+    /// 0, e só então a mensagem começa. Esse primeiro `result` não é o fim do turno dela.
+    #[test]
+    fn o_result_de_antes_da_vez_da_mensagem_nao_e_o_fim_do_turno() {
+        let uuid = "d22bde2c-4f94-40cd-92c9-de002c9d90f2";
+        let vez = |estado: &str| json!({ "type": "command_lifecycle", "command_uuid": uuid, "state": estado });
+        let aviso = json!({ "type": "system", "subtype": "task_notification", "task_id": "a3eaeeaf23ca00f7c", "status": "stopped",
+            "summary": "Background agent \"x\" didn't finish before the previous session ended" });
+        let init = json!({ "type": "system", "subtype": "init", "model": "claude-haiku-4-5" });
+        let vazio = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "", "num_turns": 0 });
+        let resposta = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "15", "num_turns": 1 });
+        let mut da_mensagem = VezDaMensagem::nova(Some(uuid));
+        let saida = [&aviso, &vez("queued"), &init, &vazio, &vez("started"), &init, &resposta, &vez("completed")];
+        let de_antes: Vec<bool> = saida.iter().map(|linha| da_mensagem.result_de_antes(linha)).collect();
+        assert_eq!(de_antes, [false, false, false, true, false, false, false, false], "só o `result` vazio é de antes");
+        // Depois que a mensagem começou, todo `result` é de um turno do processo (o dela, o de uma
+        // mensagem dirigida, o que um agente abriu ao terminar).
+        assert!(!da_mensagem.result_de_antes(&vazio));
+        // A vez de OUTRA mensagem (uma dirigida, com o uuid dela) não mexe na da primeira.
+        let mut outra = VezDaMensagem::nova(Some(uuid));
+        let da_outra = json!({ "type": "command_lifecycle", "command_uuid": "outro", "state": "queued" });
+        assert!(!outra.result_de_antes(&da_outra) && !outra.result_de_antes(&vazio), "sem a fila da mensagem, vale o `result`");
+        // Num Claude Code que não diz a vez (ou no turno sem uuid), nada é tirado: como antes.
+        let mut sem = VezDaMensagem::nova(None);
+        assert!(!sem.result_de_antes(&vez("queued")) && !sem.result_de_antes(&vazio));
+        // O turno interrompido antes de começar fecha com erro DEPOIS do `started` (medido): vale.
+        let mut parado = VezDaMensagem::nova(Some(uuid));
+        let erro = json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 0 });
+        assert!(!parado.result_de_antes(&vez("queued")) && !parado.result_de_antes(&vez("started")) && !parado.result_de_antes(&erro));
+    }
+
+    /// O critério do defeito de 23/11: a retomada depois do corte dá UM fim de turno, e ele vem
+    /// depois da resposta. Antes, o `result` vazio chegava ao motor como o fim: o chat parecia
+    /// parado com o processo ainda no meio do turno, e a mensagem seguinte abria outro processo
+    /// da mesma sessão.
+    #[cfg(unix)]
+    #[test]
+    fn a_retomada_depois_do_corte_termina_uma_vez_so_depois_da_resposta() {
+        let marca = uuid::Uuid::new_v4().to_string();
+        let ambiente = [("CLAUDE_FALSO_AGENTE_CORTADO", "1")];
+        let mut turno = Turno::abrir_marcado("[ferramenta Bash cargo build | 1]\nfaz o build", Some(&marca), |o| o, &ambiente);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(turno.disse("Anotei"), "o fim chegou antes da resposta: {:?}", turno.vistos);
+        assert!(matches!(turno.vistos.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto.contains("Anotei")), "{:?}", turno.vistos);
+        turno.processo.fechar_entrada();
+        turno.ate_sair();
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
+    }
+
+    /// A mensagem nova entra no processo que espera os agentes (medido no 2.1.328: com a entrada
+    /// aberta, o Claude Code abre outro turno com ela na hora, no mesmo processo), o agente que
+    /// termina abre o turno dele, e só com a entrada fechada o processo sai.
+    #[cfg(unix)]
+    #[test]
+    fn a_mensagem_nova_entra_no_processo_que_espera_os_agentes() {
+        let marca = uuid::Uuid::new_v4().to_string();
+        let mut turno = Turno::abrir_marcado("[ferramenta AgenteFundo confere os testes | 6]\nfaz o build", Some(&marca), |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fundo(1))), 1, "o agente segue em segundo plano: {:?}", turno.vistos);
+        assert!(turno.processo.entrada_aberta());
+        assert!(turno.processo.dirigir(Mensagem { texto: "e mais essa", imagens: &[], marca: None }));
+        turno.ate("a resposta da mensagem nova", |e| matches!(e, Evento::Texto(t) if t.contains("turno novo no mesmo processo: e mais essa")));
+        turno.ate("o fim do turno dela", |e| matches!(e, Evento::Fim { erro: false, .. }));
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fundo(0))), 0, "o agente ainda roda: {:?}", turno.vistos);
+        turno.ate("o agente terminar", |e| matches!(e, Evento::Fundo(0)));
+        turno.ate("o turno que o agente abre", |e| matches!(e, Evento::Texto(t) if t.contains("o agente terminou")));
+        turno.ate("o fim dele", |e| matches!(e, Evento::Fim { erro: false, .. }));
+        turno.processo.fechar_entrada();
+        assert_eq!(turno.ate_sair(), Some(0), "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 3, "três turnos, um processo: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 3, "{:?}", turno.vistos);
+    }
+
+    /// Com a entrada fechada, o processo espera o agente, abre o turno dele e sai (o que o Vitral
+    /// fazia antes; continua valendo para o que não pode ser dirigido).
+    #[cfg(unix)]
+    #[test]
+    fn com_a_entrada_fechada_o_processo_espera_o_agente_e_sai() {
+        let mut turno = Turno::abrir("[ferramenta AgenteFundo confere os testes | 3]\nfaz o build", |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        turno.processo.fechar_entrada();
+        assert!(!turno.processo.dirigir(Mensagem { texto: "tarde demais", imagens: &[], marca: None }));
+        assert_eq!(turno.ate_sair(), Some(0), "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 2, "o turno e o do agente: {:?}", turno.vistos);
+    }
+
+    /// O Parar (e fechar o Vitral) em quem espera os agentes derruba o processo com eles: nada
+    /// continua rodando por fora.
+    #[cfg(unix)]
+    #[test]
+    fn parar_derruba_o_processo_que_espera_os_agentes() {
+        let mut turno = Turno::abrir("[ferramenta AgenteFundo confere os testes | 120]\nfaz o build", |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        turno.processo.matar();
+        assert_eq!(turno.ate_sair(), Some(143), "derrubado pelo SIGTERM: {:?}", turno.vistos);
+        assert!(turno.processo.esperar().is_some(), "o processo ainda roda");
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
     }
 }
 

@@ -22,6 +22,7 @@ mod agendadas;
 pub mod gasto;
 mod memoria;
 mod pedidos_de_hook;
+mod saidas;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
 pub use ideias::SituacaoDoLinear;
@@ -323,8 +324,16 @@ pub struct Motor {
     pub codex_lido: bool,
     /// Conta usada no turno atual (ou no último) de cada chat.
     conta_do_turno: HashMap<String, String>,
-    /// Processos que já entregaram o resultado e estão terminando de gravar a sessão.
-    encerrando: Vec<Processo>,
+    /// Processos que já entregaram o resultado e estão terminando de gravar a sessão, por chat:
+    /// enquanto um deles vive, o chat não abre outro (`motor/saidas.rs`: um chat, um processo).
+    encerrando: saidas::Saidas<Processo>,
+    /// O turno que espera o processo anterior do chat sair para abrir: as mensagens dele, já como
+    /// vão entrar. Abre sozinho quando o anterior sai (`abrir_quando_sair`); o Parar o desfaz.
+    a_abrir: HashMap<String, Vec<Entrada>>,
+    /// Os chats cujo processo de agora já ganhou o aviso de que os agentes seguem em segundo
+    /// plano: com a entrada aberta, cada turno no meio da espera termina adiado de novo, e o
+    /// aviso é um só por processo.
+    avisou_do_fundo: HashSet<String>,
     /// A trava que segura a suspensão automática enquanto algum chat trabalha (`acertar_trava`).
     trava_de_suspensao: Option<std::process::Child>,
     /// Quando a trava foi pedida pela última vez: sem `systemd-inhibit` (ou com ele saindo na hora),
@@ -561,7 +570,12 @@ impl Motor {
                 cx.background_executor()
                     .timer(std::time::Duration::from_secs(5))
                     .await;
-                if motor.update(cx, |m, cx| m.gravar_sujos(cx)).is_err() {
+                // Na mesma volta, quem terminou o turno e não saiu no prazo é derrubado.
+                let volta = motor.update(cx, |m, cx| {
+                    m.encerrando.vencer(std::time::Instant::now());
+                    m.gravar_sujos(cx)
+                });
+                if volta.is_err() {
                     break;
                 }
             }
@@ -649,7 +663,9 @@ impl Motor {
             codex: None,
             codex_lido: false,
             conta_do_turno: HashMap::new(),
-            encerrando: Vec::new(),
+            encerrando: Default::default(),
+            a_abrir: HashMap::new(),
+            avisou_do_fundo: HashSet::new(),
             trava_de_suspensao: None,
             trava_pedida_em: None,
             ultimo_sinal: HashMap::new(),
@@ -930,6 +946,12 @@ impl Motor {
             if let Some(mut processo) = self.processos.remove(id) {
                 processo.matar();
             }
+            if let Some((mut processo, _)) = self.sugerindo.remove(id) {
+                processo.matar();
+            }
+            self.encerrando.derrubar_do_chat(id);
+            self.a_abrir.remove(id);
+            self.avisou_do_fundo.remove(id);
             self.execucao.remove(id);
             self.geracao_atual.remove(id);
             self.ultima_entrada.remove(id);
@@ -1057,6 +1079,17 @@ impl Motor {
         // revisão ainda não escreveu nada, ela é cortada e a mensagem abre um turno normal (a
         // revisão volta a ser pedida no próximo fim); se já escreveu, a mensagem espera na fila,
         // para não cortar um arquivo pela metade.
+        // A revisão que ainda esperava para abrir (o processo do turno anterior saindo) dá a vez à
+        // sua mensagem: sai da espera e volta a ser pedida no próximo fim.
+        if self.revisando.contains_key(chat) && self.a_abrir.contains_key(chat) {
+            if let Some(esperando) = self.a_abrir.get_mut(chat) {
+                esperando.retain(|e| e.de.as_deref() != Some("Vitral"));
+            }
+            self.revisando.remove(chat);
+            if let Some(c) = self.chat_mut(chat) {
+                c.memoria_da_sessao = None;
+            }
+        }
         if self.revisando.contains_key(chat) && self.processos.contains_key(chat) {
             let escreveu = self.chat(chat).is_some_and(|c| {
                 let desde = self.revisando.get(chat).map_or(c.itens.len(), |r| r.desde_item);
@@ -1096,6 +1129,14 @@ impl Motor {
         // (`Processo::retirar_dirigidas`) e ela volta para a fila do Vitral; o Claude Code fecha o
         // turno e grava a sessão, como em qualquer Parar. Só num Claude Code que não conhece o
         // pedido (ou no Codex) o processo ainda sai inteiro, com SIGTERM.
+        // Um chat, um processo: o Parar alcança também o processo do turno anterior que ainda não
+        // saiu (ou que ficou trabalhando por fora), e o turno que esperava por ele não abre mais.
+        self.desistir_de_abrir(chat);
+        if let Some((mut processo, geracao)) = self.sugerindo.remove(chat) {
+            processo.matar();
+            self.encerrando.guardar(chat, geracao, processo, true, std::time::Instant::now());
+        }
+        self.encerrando.derrubar_do_chat(chat);
         let dirigida_esperando = self.dirigidas.get(chat).is_some_and(|d| !d.is_empty());
         let pode_retirar = self.chat(chat).is_some_and(|c| retira_dirigidas(c.agente, self.versao_do_claude()));
         let parada = como_parar(self.fim_adiado.contains_key(chat), dirigida_esperando, pode_retirar);
@@ -1437,9 +1478,137 @@ impl Motor {
 
     /// Fecha a entrada do processo que esperava a sugestão do chat: ele sai sozinho.
     fn parar_de_esperar_sugestao(&mut self, chat_id: &str) {
-        if let Some((mut processo, _)) = self.sugerindo.remove(chat_id) {
+        if let Some((mut processo, geracao)) = self.sugerindo.remove(chat_id) {
             processo.fechar_entrada();
-            self.encerrando.push(processo);
+            self.encerrando.guardar(chat_id, geracao, processo, false, std::time::Instant::now());
+        }
+    }
+
+    // ---------- um chat, um processo ----------
+
+    /// O turno novo só abre com o processo anterior do chat fora. Se ele ainda está saindo (o
+    /// Claude Code leva de 0,5 a 1,6 s gravando a sessão e rodando os hooks de fim; uns 7 s com
+    /// um comando de fundo), as mensagens ficam guardadas e o turno abre sozinho quando ele sair
+    /// (`abrir_quando_sair`). Quem não sai no prazo é derrubado (`saidas::PRAZO_DE_SAIDA`).
+    /// Devolve `true` quando o turno ficou esperando.
+    fn esperar_o_anterior_sair(&mut self, chat_id: &str, mensagens: &[Entrada], cx: &mut Context<Self>) -> bool {
+        // O que ainda esperava a sugestão fecha a entrada e passa a contar como saindo.
+        self.parar_de_esperar_sugestao(chat_id);
+        if !self.encerrando.vivo(chat_id) {
+            return false;
+        }
+        let ja_esperava = self.a_abrir.contains_key(chat_id);
+        self.a_abrir.entry(chat_id.to_string()).or_default().extend(mensagens.iter().cloned());
+        // O anterior fica calado daqui em diante: o que ele ainda mandar (a sugestão, um turno
+        // que abra sozinho) não mexe mais na conversa; se abrir turno, é derrubado (`tratar`).
+        self.geracao += 1;
+        self.geracao_atual.insert(chat_id.to_string(), self.geracao);
+        self.sugestoes.remove(chat_id);
+        self.execucao.insert(chat_id.to_string(), Execucao::Rodando { desde: agora() });
+        if !ja_esperava {
+            self.abrir_quando_sair(chat_id, cx);
+        }
+        cx.notify();
+        true
+    }
+
+    /// Confere de pouco em pouco se o processo anterior do chat saiu e abre o turno que esperava.
+    fn abrir_quando_sair(&self, chat_id: &str, cx: &mut Context<Self>) {
+        let id = chat_id.to_string();
+        cx.spawn(async move |motor, cx| {
+            loop {
+                cx.background_executor().timer(saidas::PASSO_DA_ESPERA).await;
+                let segue = motor.update(cx, |m, cx| {
+                    m.encerrando.vencer(std::time::Instant::now());
+                    // O Parar (ou a conversa apagada) desfez a espera.
+                    if !m.a_abrir.contains_key(&id) {
+                        return false;
+                    }
+                    if m.encerrando.vivo(&id) {
+                        return true;
+                    }
+                    let mensagens = m.a_abrir.remove(&id).unwrap_or_default();
+                    m.execucao.insert(id.clone(), Execucao::Parado);
+                    if mensagens.is_empty() {
+                        cx.notify();
+                    } else {
+                        m.comecar_turno_com(&id, mensagens, true, cx);
+                    }
+                    false
+                });
+                if !matches!(segue, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// O turno que esperava o processo anterior sair não abre mais (o Parar, ou fechar o Vitral):
+    /// o que você escreveu volta para a fila, na frente; o que era do próprio Vitral (a vez do
+    /// outro agente, a revisão da memória, o "continue de onde parou") some.
+    fn desistir_de_abrir(&mut self, chat: &str) {
+        let Some(mensagens) = self.a_abrir.remove(chat) else {
+            return;
+        };
+        let suas: Vec<Entrada> = mensagens.into_iter().filter(|e| e.de.as_deref() != Some("Vitral")).collect();
+        if !suas.is_empty() {
+            let fila = self.filas.entry(chat.to_string()).or_default();
+            fila.splice(0..0, suas);
+        }
+        self.revisando.remove(chat);
+        self.rodadas.remove(chat);
+        self.execucao.insert(chat.to_string(), Execucao::Parado);
+        self.salvar();
+    }
+
+    /// O chat tem turno rodando ou esperando para abrir: as ações que abrem turno (tentar de
+    /// novo, continuar) não entram por cima.
+    fn com_turno(&self, chat: &str) -> bool {
+        self.processos.contains_key(chat) || self.a_abrir.contains_key(chat)
+    }
+
+    /// Um processo que já tinha terminado o turno mandou o `init` de outro (um aviso de tarefa
+    /// de fundo, por exemplo, abre um turno sozinho). Ele volta a ser o processo do chat, para o
+    /// turno aparecer, receber mensagem e o Parar o alcançar; se foi parado por você, é derrubado
+    /// (`saidas::ao_acordar`). Devolve se os eventos dele continuam valendo.
+    fn acordou(&mut self, chat_id: &str, geracao: u64) -> bool {
+        let agora_mesmo = std::time::Instant::now();
+        let (mut processo, parado) = match self.sugerindo.remove(chat_id) {
+            Some((processo, g)) if g == geracao => (processo, false),
+            outro => {
+                if let Some(volta) = outro {
+                    self.sugerindo.insert(chat_id.to_string(), volta);
+                }
+                let Some(parado) = self.encerrando.parado(chat_id, geracao) else {
+                    return true;
+                };
+                match self.encerrando.tirar(chat_id, geracao) {
+                    Some(processo) => (processo, parado),
+                    None => return true,
+                }
+            }
+        };
+        match saidas::ao_acordar(parado, self.a_abrir.contains_key(chat_id)) {
+            saidas::Acordou::Adotar => {
+                self.processos.insert(chat_id.to_string(), processo);
+                self.sugestoes.remove(chat_id);
+                self.interrompidos.retain(|c| c != chat_id);
+                self.execucao.insert(chat_id.to_string(), Execucao::Rodando { desde: agora() });
+                if let Some(c) = self.chat_mut(chat_id) {
+                    c.turno_aberto = true;
+                }
+                self.acertar_trava();
+                true
+            }
+            saidas::Acordou::Derrubar => {
+                processo.matar();
+                self.encerrando.guardar(chat_id, geracao, processo, true, agora_mesmo);
+                // Calado: o que ele ainda mandar antes de morrer não entra na conversa.
+                self.geracao += 1;
+                self.geracao_atual.insert(chat_id.to_string(), self.geracao);
+                false
+            }
         }
     }
 
@@ -1451,6 +1620,12 @@ impl Motor {
         self.acertar_trava();
         for (_, (mut processo, _)) in self.sugerindo.drain() {
             processo.matar();
+        }
+        // Os que ainda saíam (ou que ficaram trabalhando por fora) também, e o turno que esperava
+        // por um deles volta para a fila, para não se perder.
+        self.encerrando.derrubar_todos();
+        for chat in self.a_abrir.keys().cloned().collect::<Vec<_>>() {
+            self.desistir_de_abrir(&chat);
         }
         // O que os processos deixaram em segundo plano.
         crate::processos::encerrar_todos();
@@ -1632,9 +1807,11 @@ impl Motor {
         if self.somente_leitura.is_some() || !self.processos.contains_key(chat_id) {
             return Dirigido::NaFila(None);
         }
-        // Esperando os agentes do fundo não há turno a dirigir (a entrada já está fechada), e um
-        // turno sendo parado está indo embora.
-        if self.fim_adiado.contains_key(chat_id) || self.interrompidos.iter().any(|c| c == chat_id) {
+        // Um turno sendo parado está indo embora. Esperando os agentes do fundo, a entrada fica
+        // aberta e a mensagem entra: o Claude Code abre outro turno com ela na hora, no mesmo
+        // processo (medido no 2.1.328 em 23/11/2026). Só com a entrada já fechada (um Codex, um
+        // processo que a vigia fechou) ela espera a vez, mais abaixo (`Processo::dirigir`).
+        if self.interrompidos.iter().any(|c| c == chat_id) {
             return Dirigido::NaFila(None);
         }
         if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
@@ -1687,6 +1864,7 @@ impl Motor {
             let _ = motor.update(cx, |m, _| {
                 if m.geracao_atual.get(&chat).copied() == geracao
                     && m.fim_adiado.contains_key(&chat)
+                    && m.fundo.get(&chat).copied().unwrap_or(0) == 0
                     && let Some(processo) = m.processos.get_mut(&chat)
                 {
                     processo.fechar_entrada();
@@ -1726,7 +1904,6 @@ impl Motor {
     pub fn turno_recebe_mensagem(&self, chat: &str) -> bool {
         self.somente_leitura.is_none()
             && matches!(self.execucao(chat), Execucao::Rodando { .. })
-            && !self.fim_adiado.contains_key(chat)
             && !self.interrompidos.iter().any(|c| c == chat)
             && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
     }
@@ -1756,7 +1933,7 @@ impl Motor {
 
     /// Repete o último turno de um chat que falhou.
     pub fn tentar_de_novo(&mut self, chat: &str, cx: &mut Context<Self>) {
-        if self.processos.contains_key(chat) {
+        if self.com_turno(chat) {
             return;
         }
         if let Some((_, mensagens)) = self.ultima_entrada.get(chat).cloned() {
@@ -2069,6 +2246,11 @@ impl Motor {
             cx.notify();
             return;
         }
+        // Um chat, um processo: com o processo do turno anterior ainda saindo, este turno espera
+        // por ele e abre sozinho em seguida (nunca dois processos na mesma sessão).
+        if self.esperar_o_anterior_sair(chat_id, &mensagens, cx) {
+            return;
+        }
         // O @claude ou @codex do começo chama aquele agente: num chat que ainda não tem o outro, a
         // dupla nasce aqui, sem precisar ligar nada (dono, 17/11/2026: "automático quando chamo
         // com o @"), e o chamado recebe a conversa inteira.
@@ -2246,6 +2428,7 @@ impl Motor {
                 self.acertar_trava();
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
+                self.avisou_do_fundo.remove(chat_id);
                 self.dirigidas.remove(chat_id);
                 self.retiradas.remove(chat_id);
                 // O processo novo já abre com o que a conversa pede: a troca que esperava não vai.
@@ -2683,7 +2866,7 @@ impl Motor {
 
     /// "Continuar" depois de um Esc: manda a mesma frase do Retomar (item 6.2).
     pub fn continuar_depois_do_esc(&mut self, chat: &str, cx: &mut Context<Self>) {
-        if self.parados_por_voce.remove(chat).is_none() || self.processos.contains_key(chat) {
+        if self.parados_por_voce.remove(chat).is_none() || self.com_turno(chat) {
             return;
         }
         let texto = "O turno anterior parou antes de terminar (você o parou). Continue de onde parou.".to_string();
@@ -2797,7 +2980,7 @@ impl Motor {
     /// mostra, e é por lá que se volta) e o mesmo turno roda de novo nela, sem o Ultracode, como a
     /// troca automática (rodada de uso, item 3.2).
     pub fn continuar_em_outra_conta(&mut self, chat_id: &str, conta: &str, cx: &mut Context<Self>) {
-        if self.processos.contains_key(chat_id) || !self.pode_tentar_de_novo(chat_id) {
+        if self.com_turno(chat_id) || !self.pode_tentar_de_novo(chat_id) {
             return;
         }
         let nome_de = |id: &str| self.contas.iter().find(|c| c.id == id).map_or_else(|| id.to_string(), |c| c.nome.clone());
@@ -3241,13 +3424,23 @@ impl Motor {
     /// que nenhum painel mostra só conta quando é o primeiro (a lista e a Equipe não leem o texto
     /// parcial, mas "escrevendo" muda o tamanho da conversa).
     fn tratar(&mut self, sinal: Sinal, cx: &mut Context<Self>) -> bool {
-        self.encerrando.retain_mut(|p| p.esperar().is_none());
+        self.encerrando.vencer(std::time::Instant::now());
         self.acertar_trava();
         match sinal {
             // Eventos atrasados de um processo anterior (ex.: a saída dele depois que o turno
             // seguinte já começou) não podem mexer no processo novo.
             Sinal::Claude(chat, geracao, evento) => {
-                if self.geracao_atual.get(&chat) == Some(&geracao) {
+                let abriu_turno = matches!(evento, Evento::Inicio { .. });
+                if self.geracao_atual.get(&chat) != Some(&geracao) {
+                    // Um processo antigo, já calado, abrindo outro turno por conta própria: com
+                    // o chat em outro processo (ou esperando para abrir), ele não pode continuar.
+                    if abriu_turno && let Some(mut processo) = self.encerrando.tirar(&chat, geracao) {
+                        processo.matar();
+                        self.encerrando.guardar(&chat, geracao, processo, true, std::time::Instant::now());
+                    }
+                } else if abriu_turno && !self.processos.contains_key(&chat) && !self.acordou(&chat, geracao) {
+                    // O processo que tinha sido parado voltou a trabalhar: derrubado.
+                } else {
                     self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
                     if let Evento::TextoParcial(pedaco) = &evento {
                         return juntar_parcial(&mut self.parcial, &self.visiveis, &chat, pedaco);
@@ -3285,11 +3478,11 @@ impl Motor {
                 // Turno começando no mesmo processo: a mensagem dirigida saiu da fila interna do
                 // Claude Code e é ela que está rodando agora.
                 self.dirigidas.remove(chat_id);
-                // Com a entrada aberta e sem agentes no fundo, é um turno como outro qualquer: o
-                // fim que estava adiado por causa dela deixa de valer, e dá para dirigir de novo.
-                if self.fundo.get(chat_id).copied().unwrap_or(0) == 0
-                    && self.processos.get(chat_id).is_some_and(Processo::entrada_aberta)
-                {
+                // Com a entrada aberta é um turno como outro qualquer, mesmo com agentes no fundo
+                // (a mensagem que você mandou com eles rodando, ou o aviso de um que terminou): o
+                // fim que estava adiado deixa de valer, e dá para dirigir de novo. Só o processo
+                // de entrada fechada continua contando como "esperando os agentes" até sair.
+                if self.processos.get(chat_id).is_some_and(Processo::entrada_aberta) {
                     self.fim_adiado.remove(chat_id);
                 }
                 // Os fluxos só contam como desligados num turno que os pediu (no plano Pro eles
@@ -3368,6 +3561,12 @@ impl Motor {
             }
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
+                // Os agentes acabaram com o processo de entrada aberta à espera deles: o Claude
+                // Code abre o turno do aviso em seguida (o `Inicio` tira o fim adiado). Se não
+                // abrir, a vigia fecha a entrada e o processo sai, com o fim que estava adiado.
+                if n == 0 && self.fim_adiado.contains_key(chat_id) {
+                    self.vigiar_turno_dirigido(chat_id, cx);
+                }
             }
             Evento::Comandos(comandos) => {
                 if comandos.is_empty() {
@@ -3675,25 +3874,21 @@ impl Motor {
                 let interrompido = self.interrompidos.iter().any(|c| c == chat_id);
                 let agentes = self.fundo.get(chat_id).copied().unwrap_or(0);
                 let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
-                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido)
-                    && let Some(processo) = self.processos.get_mut(chat_id)
-                {
+                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido) && self.processos.contains_key(chat_id) {
                     // O fluxo (ou subagente) segue em segundo plano e o Claude Code abre outro
-                    // turno quando ele acaba: com a entrada fechada, ele espera os agentes e sai,
-                    // e o turno só termina no último `result`. Só com a mensagem dirigida
-                    // engatilhada, a entrada fica aberta: o turno dela começa na hora, no mesmo
-                    // processo, e continua recebendo mensagens (fechada, o que o usuário mandasse
-                    // durante esse turno inteiro ia para a fila; dono, 13/11/2026). Se esse turno
-                    // não começar, a vigia fecha a entrada e o processo sai.
-                    if agentes > 0 {
-                        processo.fechar_entrada();
-                    } else {
+                    // turno quando ele acaba; o turno só termina no último `result`. A entrada
+                    // fica aberta enquanto isso (até a 0.9.5 ela fechava aqui): a mensagem que
+                    // você manda com os agentes rodando entra neste mesmo processo, como outro
+                    // turno, em vez de esperar na fila até o último agente acabar (medido no
+                    // 2.1.328 em 23/11/2026: o `init` dela sai 0,15 s depois). Quando os agentes
+                    // acabam, o turno do aviso é o último, e é o fim dele que fecha a entrada.
+                    // Só com a mensagem dirigida engatilhada (sem agentes), a vigia fecha a
+                    // entrada se o turno dela não começar, e o processo sai.
+                    if agentes == 0 {
                         self.vigiar_turno_dirigido(chat_id, cx);
                     }
-                    let primeiro = self
-                        .fim_adiado
-                        .insert(chat_id.to_string(), (texto, custo_usd))
-                        .is_none();
+                    self.fim_adiado.insert(chat_id.to_string(), (texto, custo_usd));
+                    let primeiro = agentes > 0 && self.avisou_do_fundo.insert(chat_id.to_string());
                     if let Some(c) = self.chat_mut(chat_id)
                         && janela.is_some()
                     {
@@ -3741,7 +3936,15 @@ impl Motor {
                             if sai_inteiro(fundo, dirigidas_perdidas, retiradas) {
                                 processo.matar();
                             }
-                            self.encerrando.push(processo);
+                            // Guardado por chat até sair: o turno seguinte espera por ele, e o
+                            // que foi parado (ou deu erro) não pode voltar a trabalhar por fora.
+                            self.encerrando.guardar(
+                                chat_id,
+                                geracao.unwrap_or(0),
+                                processo,
+                                erro || interrompido,
+                                std::time::Instant::now(),
+                            );
                         }
                     }
                 }
@@ -4092,8 +4295,9 @@ impl Motor {
         };
         self.revisando.insert(chat_id.to_string(), revisao);
         self.entregar_entrada(chat_id, entrada, cx);
-        // Não abriu (a pasta sumiu, por exemplo): nada a rever.
-        if !self.processos.contains_key(chat_id) {
+        // Não abriu (a pasta sumiu, por exemplo): nada a rever. O turno que espera o processo
+        // anterior sair (`a_abrir`) vai abrir.
+        if !self.com_turno(chat_id) {
             self.revisando.remove(chat_id);
         }
         true
