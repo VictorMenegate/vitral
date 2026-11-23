@@ -100,8 +100,8 @@ impl Janela {
                 .tom(tom(ativa))
                 .so_simbolo(compacta && !ativa)
                 .simbolo(Simbolo::icone_cor(painel_arquivo::icone_do_arquivo(&caminho), Cores::tenue()))
-                .fechar("Fechar o arquivo", !compacta || ativa, move |_, cx| {
-                    let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
+                .fechar("Fechar o arquivo", !compacta || ativa, move |window, cx| {
+                    let _ = janela.update(cx, |this, cx| this.fechar_arquivo(window, cx));
                 })
                 .construir(window, cx);
             if n > 1 && !ativa {
@@ -124,11 +124,14 @@ impl Janela {
             .child(self.botoes_da_direita(false, window, cx))
     }
 
-    /// Fecha o arquivo da direita; a aba volta à do chat.
-    pub(super) fn fechar_arquivo(&mut self, cx: &mut Context<Self>) {
+    /// Fecha o arquivo da direita; a aba volta à do chat. O editor grava o que falta antes de sair.
+    pub(super) fn fechar_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.largar_editor(window, cx);
+        self.arquivo_fonte = false;
         self.arquivo_aberto = None;
         self.arquivo_edicao = None;
         self.arquivo_selecao = None;
+        self.busca_arquivo.aberta = false;
         if matches!(self.aba_direita, AbaDireita::Arquivo(_)) {
             self.aba_direita = AbaDireita::Chat;
         }

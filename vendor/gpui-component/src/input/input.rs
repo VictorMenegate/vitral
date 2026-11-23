@@ -139,6 +139,10 @@ pub struct Input {
     /// An optional paste handler. If set, it is invoked with the clipboard item
     /// before the default text insertion. Return `true` if handled.
     paste_handler: Option<Rc<dyn Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool>>,
+
+    /// Vitral: a cor da calha dos números de linha deste editor, no lugar da do tema (ver
+    /// `Editor::gutter_background`).
+    gutter_background: Option<gpui::Hsla>,
 }
 
 impl Sizable for Input {
@@ -244,6 +248,7 @@ impl Input {
             aria_label: None,
             context_menu_builder: None,
             paste_handler: None,
+            gutter_background: None,
             token_renderer: None,
             token_click_listener: None,
             token_hover_listener: None,
@@ -259,6 +264,12 @@ impl Input {
 
     pub(crate) fn is_disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Vitral: a cor da calha dos números de linha (ver `Editor::gutter_background`).
+    pub(crate) fn gutter_background(mut self, color: gpui::Hsla) -> Self {
+        self.gutter_background = Some(color);
+        self
     }
 
     pub fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
@@ -552,7 +563,10 @@ impl RenderOnce for Input {
                 highlight_styles: cx.theme().highlight_theme.clone(),
                 editor_invisible: cx.theme().highlight_theme.style.editor_invisible,
                 editor_active_line: cx.theme().highlight_theme.style.editor_active_line,
-                editor_gutter_background: cx.theme().highlight_theme.style.editor_gutter_background,
+                // Vitral: a calha pode ter a cor da superfície em que o editor está.
+                editor_gutter_background: self
+                    .gutter_background
+                    .or(cx.theme().highlight_theme.style.editor_gutter_background),
                 fold_icon_renderer: Some(Rc::new(|ix, is_folded| {
                     Button::new(("fold-icon", ix))
                         .ghost()

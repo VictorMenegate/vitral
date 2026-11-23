@@ -3,6 +3,100 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.7
+
+O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
+o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
+continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
+aparecem na conversa. O chat ganha um título de verdade, o aviso de fim sai legível e os arquivos
+citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, Ctrl+F dentro do
+arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa. E
+o arquivo aberto à direita agora se edita ali mesmo.
+
+- **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
+  ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
+  andamento em menos de um segundo.
+- **Responder a um pedido de permissão escrevendo.** Com um pedido aberto, o Enter na caixa nega
+  o pedido e manda ao Claude o que você escreveu, em vez de deixar a mensagem na fila. O
+  Ctrl+Enter continua mandando para a fila.
+- **Parar com mensagem esperando não derruba mais o Claude Code.** Parar um turno logo depois de
+  mandar uma mensagem para dentro dele encerrava o processo à força, antes de ele fechar o turno
+  e gravar a conversa. Agora o turno fecha direito e a mensagem volta para a fila.
+- **"Sem sinal" só quando o turno travou.** Um comando demorado (um build, uma suíte de testes)
+  ganhava o aviso de sem sinal depois de 10 minutos. Agora o aviso só aparece se o Claude Code
+  parar mesmo de responder.
+- **O raciocínio aparece com o texto.** O "Pensou por…" da conversa vinha vazio; agora abre com o
+  resumo do que o modelo pensou (Claude Code 2.1.323 ou mais novo).
+- **O que um hook manda perguntar vira o cartão de permissão, até em Sem perguntar.** Quando um
+  hook seu do Claude Code pedia confirmação antes de um comando (a trava de um deploy, por
+  exemplo), o cartão não aparecia no modo Sem perguntar: o comando voltava recusado e o agente
+  insistia. Agora o cartão aparece em qualquer modo, com o motivo que o hook deu, e esse pedido
+  não tem "Não perguntar de novo".
+- **Pergunta com opções.** Quando o Claude pergunta algo com alternativas, a pergunta aparece
+  num cartão com as opções para clicar (uma ou várias), a descrição de cada uma, "Outra…" para
+  escrever a sua e Enviar. Antes ela vinha como um pedido de permissão comum, e o Permitir
+  devolvia a pergunta sem resposta.
+- **O plano continua na conversa.** Depois de aprovado ou recusado, o plano fica no ponto em que
+  foi proposto, num cartão recolhido ("Plano aprovado" ou "Plano recusado") que abre o texto
+  dele. Antes ele sumia da conversa assim que você respondia.
+- **Marco de compactação.** Enquanto o Claude Code resume a conversa, a linha do turno diz
+  "Compactando…". Quando termina, a conversa ganha o marco "Contexto compactado", com o tamanho
+  de antes e se foi automático ou pelo Compactar.
+- **As imagens que as ferramentas devolvem aparecem na conversa.** O print do navegador (por
+  MCP), a imagem gerada e a imagem que o agente foi olhar vinham só como o texto "(image/png)".
+  Agora a chamada mostra a miniatura, que abre no visor junto com as outras imagens da conversa;
+  no Codex, o view_image e os prints por MCP também. As imagens ficam guardadas no computador,
+  até 100 MB por conversa (as mais antigas saem primeiro).
+- **O chat ganha um título de verdade.** O título do chat era o começo da sua primeira mensagem
+  ("olha esse erro aqui que deu no"). Depois do primeiro turno ele passa a ser um nome curto do
+  assunto, gerado pelo Claude Code. O que você renomeou fica como está, e no Codex nada muda.
+- **Aviso de fim legível.** A notificação de um chat que terminou mostrava a primeira linha crua
+  da resposta ("Terminou: ## Resumo"). Agora mostra o começo do texto, sem as marcas de markdown,
+  com até 220 letras. O "Enquanto você esteve fora" usa o mesmo texto.
+- **Mais arquivos citados viram link.** `arquivo#L10-L20` abre com as linhas marcadas,
+  `arquivo:12:5` e `file:///caminho` também abrem, e o nome citado sem a pasta (`mensagens.rs:120`)
+  abre o arquivo da pasta do chat que termina assim, quando é um só.
+- **Links na saída de comando.** `src/x.rs:120:5` no erro do cargo, `src/x.ts(12,5)` no do tsc e
+  `"x.py", line 12` no do Python abrem o arquivo na linha. O ponteiro parado no link mostra o
+  caminho inteiro.
+- **Comando de barra citado vira link.** Quando o agente escreve `/compact` ou outro comando do
+  chat, o clique põe o comando na caixa de mensagem. Quem envia é você.
+- **Abrir arquivo pelo nome (Ctrl+P).** O Ctrl+P abre a lista dos arquivos da pasta do chat, com
+  busca; o Enter abre o arquivo à direita. A busca não liga para acento ("relatorio" acha
+  "relatório.md"), e isso vale também para o "@" da caixa.
+- **A paleta acha conversas e arquivos.** Na paleta de comandos (Ctrl+Shift+P), o que você
+  escreve acha também as conversas pelo título e os arquivos da pasta do chat, além dos comandos.
+- **Buscar dentro do arquivo (Ctrl+F).** Com um clique no arquivo aberto à direita, o Ctrl+F
+  busca dentro dele, com "3 de 12", as setas e o Enter para o próximo. Também está no "…" do
+  arquivo. O arquivo em markdown aparece em linhas enquanto a busca está aberta.
+- **Mostrar ignorados na aba Arquivos.** O olho ao lado do ↻ mostra também o que o git ignora
+  (as pastas arquivo/, dados/ e tarefas/, com prints e exports), que antes nunca apareciam. As
+  pastas ignoradas só são lidas quando você as abre. Começa desligado.
+- **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
+  que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
+- **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)
+  ganhou o Abrir fora, que abre no aplicativo do sistema. Antes só havia Abrir no VS Code, que
+  não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
+- **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
+  como código.
+- **Editar o arquivo no painel.** Um clique no texto do arquivo aberto à direita abre o editor
+  ali, com a cor da sintaxe. O que você escreve se salva sozinho quando você para de digitar, e o
+  Ctrl+S salva na hora. O Esc volta à leitura. O número da linha continua escolhendo linhas para
+  mencionar.
+- **Aviso quando o agente muda o arquivo que você está editando.** Se o arquivo muda no disco com
+  texto seu ainda não salvo, uma faixa pergunta: Recarregar (fica o do disco) ou Manter o meu
+  (o seu passa por cima ao salvar). Sem texto seu por salvar, o editor só passa a mostrar o novo.
+- **Arquivo grande abre para ler.** Arquivos de 400 KB a 5 MB (um log, um export) abriam só no
+  VS Code. Agora abrem aqui, só para ler, com a busca e a escolha de linhas.
+- **Markdown: Prévia ou Fonte.** O .md aberto à direita tem um seletor Prévia | Fonte. Na prévia,
+  o cabeçalho do arquivo (o nome e a descrição de uma skill, por exemplo) aparece numa tabelinha,
+  e os links para outros arquivos abrem o arquivo no painel. Na Fonte, um clique edita.
+- **Rever as mudanças do turno em sequência.** Na edição aberta à direita, a seta da última
+  mudança passa ao próximo arquivo da lista de Mudanças do chat, e a faixa mostra "arquivo 2 de
+  8". Antes as setas davam a volta dentro do mesmo arquivo.
+- **Diff sem espaço em branco.** No diff de "Na pasta", o "…" do arquivo tem Ignorar espaço em
+  branco: o que só mudou de recuo sai do diff. Começa desligado.
+
 ## 0.9.6
 
 O Gemini como terceiro agente, o modo foco como no VS Code e as configurações por partes.

@@ -1,0 +1,26 @@
+# Responder a um pedido de permissão escrevendo: com o cartão aberto, o Enter na caixa nega o
+# pedido e manda o texto ao Claude como a resposta (antes, a mensagem ia para a fila). A dica do
+# Enviar diz o que o Enter vai fazer.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele e @PASTA@ uma pasta
+# vazia qualquer, trocados antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-pedido BANCADA=3 CLAUDE_FALSO=1 \
+#     CLAUDE_FALSO_VERSAO=2.1.328 ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS (as boas-vindas pedem uma pasta pelo seletor do sistema): a bancada precisa já
+# ter um chat; na primeira vez, rode antes com `@BIN@ --nova @PASTA@ "oi"` no lugar do comando.
+# A mensagem entra por uma segunda abertura (o `texto` da bancada não digita aspas nem acentos
+# com segurança; por isso a resposta digitada vai sem acento).
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta.
+
+espera 8
+roda @BIN@ --nova @PASTA@ "[hook Bash ./publicar.sh producao | Publicar em produção no expediente do galpão derruba a separação em andamento.] Publica a versão nova."
+espera 8
+print 01-pedido-aberto         # o cartão "Rodar um comando" esperando a resposta
+clique 1040 838                # a caixa de mensagem
+texto Agora nao. Publica so depois das 18h.
+espera 1
+mover 1422 895                 # o ponteiro no Enviar
+espera 2
+print 02-dica-do-enviar        # "Nega o pedido aberto e manda isto ao Claude como resposta" e o Ctrl+Enter da fila
+tecla Return
+espera 5
+print 03-respondido            # o cartão saiu, a mensagem está na conversa, a chamada voltou negada com o texto e o turno terminou

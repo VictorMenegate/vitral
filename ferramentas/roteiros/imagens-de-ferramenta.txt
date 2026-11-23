@@ -1,0 +1,58 @@
+# As imagens que as ferramentas devolvem: o print de um MCP de navegador (o base64 no tool_result),
+# o Read de uma imagem e, no Codex, o view_image e o print de um MCP, com o claude e o codex de
+# mentira encenando cada um. A chamada mostra a miniatura, o grupo recolhido a pilha, e o clique
+# abre o visor com as outras imagens da conversa.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele, @PASTA@ uma pasta
+# vazia qualquer e @REPO@ a raiz do repositório, trocados antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-imagens BANCADA=3 CLAUDE_FALSO=1 \
+#     ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS (as boas-vindas pedem uma pasta pelo seletor do sistema): a bancada precisa já
+# ter um chat; na primeira vez, rode antes com `@BIN@ --nova @PASTA@ "oi"` no lugar do comando.
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta e cada mensagem num chat novo (o
+# `--nova`). Para o layout estreito a 150% (como com três painéis lado a lado), comece por
+# `arrastar 1497 500 1000 500` e leve os cliques da conversa para x = 700 (a pilha fica em y = 573).
+
+espera 8
+# 1. O print de um MCP: uma imagem numa chamada, uma leitura comum e duas imagens noutra chamada.
+roda @BIN@ --nova @PASTA@ "[ferramenta Print 1280x800 inicio | 2] [ferramenta Read src/carrinho.py | 1] [ferramenta Prints 1280x800 carrinho | 3] Tira os prints da loja."
+espera 4
+mover 900 200
+print 01-rodando               # a miniatura embaixo da chamada que já voltou
+espera 11
+mover 900 200
+print 02-recolhido             # o grupo recolhido com a pilha e "3 imagens"
+clique 700 627                 # a pilha abre o visor na primeira
+espera 2
+print 03-visor                 # "1 de 3", o nome e as medidas
+tecla Right
+espera 1
+print 04-visor-segunda         # as setas passam pelas outras imagens da conversa
+tecla Escape
+espera 1
+clique 800 578                 # abre o grupo
+espera 1
+mover 900 200
+print 05-grupo-aberto          # cada chamada com as miniaturas dela (duas lado a lado na segunda)
+# 2. O Read de uma imagem: a do disco enquanto existe; apagada, a que o Vitral guardou.
+roda mkdir -p @PASTA@/prints && cp @REPO@/assets/vitral-256.png @PASTA@/prints/tela.png
+roda @BIN@ --nova @PASTA@ "[ferramenta Read prints/tela.png | 2] Olha o print da tela."
+espera 9
+mover 900 200
+print 06-read-do-disco
+roda rm @PASTA@/prints/tela.png
+espera 8
+mover 900 300
+espera 1
+mover 900 200
+print 07-read-guardada         # a miniatura continua, agora da cópia guardada
+# 3. O Codex: o view_image (o caminho do arquivo) e o print de um MCP (a imagem em base64).
+roda cp @REPO@/assets/vitral-256.png @PASTA@/prints/tela.png
+roda @BIN@ --nova @PASTA@ "@codex [ferramenta Ver prints/tela.png | 2] [ferramenta Print loja | 2] Olha a tela."
+espera 12
+mover 900 200
+print 08-codex                 # "Leu 1 arquivo · usou 1 ferramenta" e a pilha com as duas
+# 4. Onde as imagens ficaram, e a conferência de que o base64 não foi para a conversa nem para o
+#    estado (todo PNG em base64 começa por iVBORw0KGgo). A saída vai para o roda.log.
+roda ls -la "$XDG_DATA_HOME"/vitral/imagens/*/
+roda du -sh "$XDG_DATA_HOME"/vitral/imagens
+roda grep -l iVBORw0KGgo "$XDG_DATA_HOME"/vitral/chats/*.json "$XDG_DATA_HOME"/vitral/estado.json; echo "arquivos com base64 acima (nenhum é o certo)"

@@ -1,0 +1,23 @@
+# O "ask" de um hook PreToolUse vira o cartão de permissão, até em "Sem perguntar" (o padrão): o
+# cartão com o motivo que o hook deu, sem a caixa "Não perguntar de novo", e o Permitir.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele e @PASTA@ uma pasta
+# vazia qualquer, trocados antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-ask BANCADA=3 CLAUDE_FALSO=1 \
+#     CLAUDE_FALSO_VERSAO=2.1.328 ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS (as boas-vindas pedem uma pasta pelo seletor do sistema): a bancada precisa já
+# ter um chat; na primeira vez, rode antes com `@BIN@ --nova @PASTA@ "oi"` no lugar do comando.
+# O CLAUDE_FALSO_VERSAO é obrigatório: abaixo do 2.1.323 o Vitral não pede os eventos de hook e o
+# cartão sai sem o motivo. A mensagem entra por uma segunda abertura, depois de a versão ser lida
+# (o `texto` da bancada não digita aspas nem acentos com segurança).
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta.
+
+espera 8
+roda @BIN@ --nova @PASTA@ "[hook Bash ./publicar.sh producao | Publicar em produção no expediente do galpão derruba a separação em andamento. Confirme só se for urgente.] Publica a versão nova."
+espera 8
+print 01-cartao-com-o-motivo   # "Rodar um comando", o comando, a linha do escudo com o motivo, sem a caixa de marcar
+mover 1384 736
+espera 1
+print 02-ponteiro-no-permitir
+clique 1384 736                # Permitir
+espera 5
+print 03-permitido             # a chamada rodou ("Rodou ./publicar.sh producao") e o turno terminou

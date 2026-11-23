@@ -28,7 +28,7 @@ const RAJADA: usize = 3;
 /// A chave de um aviso: o pedido, ou a falha com o texto dela (uma falha nova volta a avisar).
 pub(super) fn chave_do_aviso(p: &Pendencia) -> Option<String> {
     match p {
-        Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } => Some(pedido.clone()),
+        Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } | Pendencia::Pergunta { pedido, .. } => Some(pedido.clone()),
         Pendencia::Erro { chat, texto, .. } => Some(format!("erro-{chat}-{texto}")),
         Pendencia::Parada { .. } | Pendencia::Nova { .. } => None,
     }
@@ -120,6 +120,7 @@ impl Janela {
         let (icone, cor, detalhe) = match p {
             Pendencia::Permissao { ferramenta, resumo, .. } => (Lucide::ShieldAlert, Cores::espera(), format!("Permissão · {ferramenta} · {resumo}")),
             Pendencia::Plano { .. } => (Lucide::Map, Cores::espera(), "Plano pronto para aprovar".to_string()),
+            Pendencia::Pergunta { pergunta, .. } => (Lucide::MessageCircleQuestionMark, Cores::espera(), format!("Pergunta · {pergunta}")),
             Pendencia::Erro { texto, .. } => (
                 Lucide::CircleX,
                 Cores::vermelho(),
@@ -161,6 +162,10 @@ impl Janela {
             }
             Pendencia::Plano { .. } => botoes.push(
                 botao_primario(id("aviso-plano"), None, "Ver plano", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
+            ),
+            // A pergunta se responde no cartão dela, na conversa.
+            Pendencia::Pergunta { .. } => botoes.push(
+                botao_primario(id("aviso-pergunta"), None, "Ver pergunta", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element(),
             ),
             Pendencia::Erro { pode_tentar, .. } => {
                 botoes.push(botao_fantasma(id("aviso-abrir"), None, "Abrir", TamanhoBotao::Barra, window, cx).on_click(abrir()).into_any_element());

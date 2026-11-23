@@ -98,7 +98,7 @@ fn larga(nivel: LarguraPainel) -> bool {
     nivel == LarguraPainel::Largo
 }
 
-fn minima(nivel: LarguraPainel) -> bool {
+pub(super) fn minima(nivel: LarguraPainel) -> bool {
     matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo)
 }
 
@@ -373,7 +373,9 @@ impl Janela {
                 if !aberto {
                     // Recolhido, só o que não pode sumir: a pergunta, o aviso de erro e o cartão.
                     for &(k, escondido) in &visiveis[i..fim] {
-                        if fica_fora_do_recolhido(escondido) {
+                        if let Some(plano) = plano_na_conversa(escondido) {
+                            blocos.push((Bloco::Texto, Some(k), self.plano_respondido(&contexto, k, plano, cx)));
+                        } else if fica_fora_do_recolhido(escondido) {
                             let (bloco, elemento) = self.item(&contexto, k, escondido, window, cx);
                             blocos.push((bloco, Some(k), elemento));
                         }
@@ -387,12 +389,24 @@ impl Janela {
                 lugar_do_novo = Some((blocos.len(), indice));
                 blocos.push((Bloco::Dia, None, separador_novo()));
             }
+            // O plano fica na conversa, no ponto em que foi proposto: um cartão recolhido que diz
+            // o que você respondeu e abre o texto dele. Enquanto espera a resposta, quem aparece é
+            // o pedido, logo abaixo das mensagens.
+            if let Some(plano) = plano_na_conversa(item) {
+                i += 1;
+                if !plano_esperando(motor, &chat.id, item) {
+                    blocos.push((Bloco::Texto, Some(indice), self.plano_respondido(&contexto, indice, plano, cx)));
+                }
+                continue;
+            }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
             if matches!(item, Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
                 let mut fim = i + 1;
                 // Uma trilha que passa da meia-noite se parte: o separador do dia novo entra nela.
+                // O cartão do plano também a parte.
                 while fim < visiveis.len()
                     && matches!(visiveis[fim].1, Item::Ferramenta { .. } | Item::Raciocinio { .. })
+                    && plano_na_conversa(visiveis[fim].1).is_none()
                     && !datas.contains_key(&fim)
                 {
                     fim += 1;
@@ -459,7 +473,7 @@ impl Janela {
             && matches!(motor.execucao(&chat.id), Execucao::Rodando { .. })
             && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
         {
-            let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
+            let rotulo = rotulo_do_turno_calado(motor.compactando(&chat.id), motor.esperando_agentes(&chat.id));
             blocos.push((Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
         }
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
@@ -921,7 +935,8 @@ impl Janela {
                             // As menções que existem viram pílula (o texto que foi ao agente segue
                             // com o caminho inteiro); depois, os caminhos soltos viram link.
                             let mencoes = super::mencao::ligar_mencoes(texto, &mut |c| super::links_arquivo::resolver_mencao(cwd, c));
-                            let ligado = super::links_arquivo::ligar_arquivos(&mencoes, &mut |c| super::links_arquivo::resolver(cwd, c));
+                            let ligador = self.ligador(cwd, cx);
+                            let ligado = super::links_arquivo::ligar_arquivos(&mencoes, &mut |c| ligador.resolver(c));
                             let cortado = longo && !tudo;
                             s.child(
                                 div()
@@ -1193,9 +1208,13 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
-        // Os arquivos citados que estão no disco viram links: abrem no painel da direita.
-        let cwd = &contexto.chat.cwd;
-        let ligado = super::links_arquivo::ligar_arquivos(texto, &mut |c| super::links_arquivo::resolver(cwd, c));
+        // Os arquivos citados que estão no disco viram links: abrem no painel da direita. O
+        // comando de barra citado em código em linha (`/revisar`) vai para a caixa.
+        let ligador = self.ligador(&contexto.chat.cwd, cx);
+        let ligado = super::links_arquivo::ligar_resposta(texto, &mut |c| ligador.resolver(c), &mut |nome| {
+            let existe = self.comandos_de(contexto.chat).iter().any(|c| c == nome);
+            existe.then(|| super::links_arquivo::link_do_comando(&contexto.chat.id, nome))
+        });
         let realce = contexto.busca.realce(indice, Campo::Texto);
         // As imagens que a resposta aponta em `![](…)`: o kit desenha a imagem do markdown na
         // altura de uma linha de texto (tamanho de ícone) ou, sozinha num parágrafo, sem teto
@@ -2041,16 +2060,6 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
     .into_any_element()
 }
 
-/// A imagem que uma chamada leu ou gravou (um Read ou Write de um .png, .jpg…), se ainda está no
-/// disco: é o progresso do trabalho à vista (uma captura de tela que o chat tirou e foi olhar).
-fn imagem_da_chamada(item: &Item, cwd: &Path) -> Option<PathBuf> {
-    let Item::Ferramenta { arquivo: Some(arquivo), erro: false, .. } = item else {
-        return None;
-    };
-    let inteiro = PathBuf::from(super::links_arquivo::resolver(cwd, arquivo)?);
-    crate::claude::tipo_imagem(&inteiro).is_some().then_some(inteiro)
-}
-
 /// Um arquivo na conversa, como a extensão do Claude Code mostra (dono, 16/11/2026: "faz as
 /// imagens que mando e a que você usa ficar igual fica aqui"): uma pílula com a miniatura (ou o
 /// ícone), o nome e as medidas da imagem (ou o tamanho do arquivo). Serve aos anexos das suas
@@ -2423,8 +2432,66 @@ fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
 pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
         Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
-        Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
+        // O marco de compactação diz onde o contexto foi cortado: fica à vista.
+        Item::Aviso { texto, erro, .. } => {
+            *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta || texto.starts_with(crate::motor::CONTEXTO_COMPACTADO)
+        }
+        Item::Ferramenta { .. } => plano_na_conversa(item).is_some(),
         _ => false,
+    }
+}
+
+/// O plano de uma chamada ExitPlanMode como fica na conversa depois de respondido.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PlanoNaConversa<'a> {
+    /// "Plano aprovado", "Plano recusado" ou, sem resposta (o turno parou antes), "Plano proposto".
+    pub titulo: &'static str,
+    pub texto: &'a str,
+    pub aprovado: bool,
+    /// O que você pediu para mudar ao recusar, se escreveu.
+    pub mudancas: Option<&'a str>,
+}
+
+/// O cartão do plano de um item da conversa: só a chamada ExitPlanMode que guardou o texto do
+/// plano (as de antes disto seguem como linha da trilha). É também o que parte a trilha: a busca
+/// (`busca_conversa`) usa a mesma regra.
+pub(super) fn plano_na_conversa(item: &Item) -> Option<PlanoNaConversa<'_>> {
+    let Item::Ferramenta { nome, detalhe: Some(texto), resultado, erro, .. } = item else {
+        return None;
+    };
+    if nome != "ExitPlanMode" || texto.trim().is_empty() {
+        return None;
+    }
+    let (titulo, aprovado) = match (resultado, erro) {
+        (None, _) => ("Plano proposto", false),
+        (Some(_), false) => ("Plano aprovado", true),
+        (Some(_), true) => ("Plano recusado", false),
+    };
+    let mudancas = resultado.as_deref().filter(|_| *erro).and_then(pedido_de_mudancas);
+    Some(PlanoNaConversa { titulo, texto, aprovado, mudancas })
+}
+
+/// O comentário com que o plano foi devolvido, tirado da recusa que o modelo leu
+/// (`motor::recusa_explicada`); `None` na recusa sem comentário.
+pub(super) fn pedido_de_mudancas(resultado: &str) -> Option<&str> {
+    resultado.trim().strip_prefix("O usuário pediu mudanças no plano:").map(str::trim).filter(|t| !t.is_empty())
+}
+
+/// O plano ainda espera a sua resposta: o pedido dele está aberto, logo abaixo das mensagens.
+fn plano_esperando(motor: &Motor, chat: &str, item: &Item) -> bool {
+    matches!(item, Item::Ferramenta { resultado: None, .. })
+        && motor.permissoes.iter().any(|p| p.chat == chat && p.ferramenta == "ExitPlanMode")
+}
+
+/// A linha viva do turno que não tem chamada rodando nem texto chegando: o Claude Code resumindo
+/// a conversa, os agentes do fluxo trabalhando depois da resposta, ou o modelo pensando.
+pub(super) fn rotulo_do_turno_calado(compactando: bool, esperando_agentes: bool) -> &'static str {
+    if compactando {
+        "Compactando…"
+    } else if esperando_agentes {
+        "Agentes trabalhando em segundo plano…"
+    } else {
+        "Pensando…"
     }
 }
 
@@ -2813,10 +2880,10 @@ impl Janela {
         let escondidas = &chamadas[..chamadas.len() - mostradas.len()];
         let mut imagens_do_grupo: Vec<(usize, PathBuf)> = Vec::new();
         for (indice, item) in escondidas {
-            if let Some(imagem) = imagem_da_chamada(item, &contexto.chat.cwd)
-                && !imagens_do_grupo.iter().any(|(_, outra)| *outra == imagem)
-            {
-                imagens_do_grupo.push((*indice, imagem));
+            for imagem in imagens::da_chamada(item, &contexto.chat.cwd) {
+                if !imagens_do_grupo.iter().any(|(_, outra)| *outra == imagem) {
+                    imagens_do_grupo.push((*indice, imagem));
+                }
             }
         }
         // Uma imagem só fica na pílula dela. Mais de uma vira uma linha só: a pilha de até 4
@@ -2896,17 +2963,17 @@ impl Janela {
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
-        let mut imagens: Vec<(usize, PathBuf)> = Vec::new();
+        let mut da_linha: Vec<(usize, PathBuf)> = Vec::new();
         if !aberto {
             for (indice, item) in escondidos {
-                if let Some(imagem) = imagem_da_chamada(item, &contexto.chat.cwd)
-                    && !imagens.iter().any(|(_, outra)| *outra == imagem)
-                {
-                    imagens.push((*indice, imagem));
+                for imagem in imagens::da_chamada(item, &contexto.chat.cwd) {
+                    if !da_linha.iter().any(|(_, outra)| *outra == imagem) {
+                        da_linha.push((*indice, imagem));
+                    }
                 }
             }
         }
-        let fileira = match imagens.as_slice() {
+        let fileira = match da_linha.as_slice() {
             [] => None,
             [(indice, imagem)] => Some(
                 h_flex()
@@ -3084,6 +3151,76 @@ impl Janela {
 
     /// Um bloco de raciocínio na trilha: "Pensou" e quanto durou; o clique mostra o texto, quando
     /// o Claude Code o entrega (referência do dono: 21st.dev, "AI Thinking and Tool calls").
+    /// O plano depois de respondido, no ponto da conversa em que foi proposto: um cartão recolhido
+    /// com o que você respondeu ("Plano aprovado", "Plano recusado") e o título do plano; o clique
+    /// abre o texto inteiro e, no recusado, o que você pediu para mudar. Antes disto o plano só
+    /// existia no pedido: respondido, sobrava uma chamada "ExitPlanMode" sem texto, escondida no
+    /// "Trabalhou…".
+    fn plano_respondido(&self, contexto: &Contexto, indice: usize, plano: PlanoNaConversa, cx: &Context<Self>) -> AnyElement {
+        let chave = format!("{}:{indice}", contexto.chat.id);
+        let realce = contexto.busca.realce(indice, Campo::Texto);
+        let aberto = self.expandidos.contains(&chave);
+        let (icone, cor) = match (plano.aprovado, plano.titulo) {
+            (true, _) => (Lucide::CircleCheck, Cores::verde()),
+            (false, "Plano recusado") => (Lucide::CircleX, Cores::tenue()),
+            _ => (Lucide::Map, Cores::tenue()),
+        };
+        // O título do plano (a primeira linha dele, sem a marcação), para saber qual é sem abrir.
+        let previa = sem_marcacao(plano.texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default().trim_start_matches('#').trim());
+        let cabecalho = h_flex()
+            .id(SharedString::from(format!("plano-{chave}")))
+            .h(r(36.))
+            .px(esp::E12)
+            .gap(esp::E8)
+            .rounded(raio::CARTAO)
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::hover()))
+            .tab_index(0)
+            .focus_visible(|s| s.shadow(halo_foco()))
+            .child(coluna_do_icone().child(icone_de(icone, 14.).text_color(cor)))
+            .child(div().flex_none().rotulo().text_color(Cores::forte()).child(plano.titulo))
+            .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(if aberto { String::new() } else { previa }))
+            .when(aberto, |s| {
+                s.child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(
+                    BotaoCopiar::new(SharedString::from(format!("copiar-plano-{chave}")), plano.texto.to_string()).dica("Copiar o plano"),
+                ))
+            })
+            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .on_click(alternar(chave.clone(), cx));
+        let cartao = v_flex()
+            .w_full()
+            .rounded(raio::CARTAO)
+            .bg(Cores::hover())
+            .child(cabecalho)
+            .when(aberto, |s| {
+                s.child(
+                    v_flex()
+                        .px(esp::E12)
+                        .pb(esp::E12)
+                        .gap(esp::E8)
+                        .child(div().corpo().text_color(Cores::texto()).child(markdown_achado(
+                            contexto,
+                            format!("{chave}-plano").into(),
+                            plano.texto.to_string(),
+                            realce.clone(),
+                        )))
+                        .when_some(plano.mudancas, |s, mudancas| {
+                            s.child(
+                                h_flex()
+                                    .items_start()
+                                    .gap(esp::E6)
+                                    .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::MessageSquareQuote, 14.).text_color(Cores::tenue())))
+                                    .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(format!("Você pediu: {}", sem_marcacao(mudancas)))),
+                            )
+                        }),
+                )
+            })
+            .into_any_element();
+        // Aberto, o próprio texto pede para aparecer; fechado, quem rola até o cartão é o bloco.
+        let realce = if aberto { Realce::default() } else { realce };
+        RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, cartao).into_any_element()
+    }
+
     fn raciocinio(&self, contexto: &Contexto, indice: usize, texto: &str, milis: u64, ramo: Option<bool>, cx: &Context<Self>) -> AnyElement {
         let chave = format!("{}:{indice}", contexto.chat.id);
         let tem_texto = !texto.trim().is_empty();
@@ -3415,9 +3552,11 @@ impl Janela {
         let so_o_pedido = pedido.is_some() && !*erro && resultado.is_some() && matches!(nome.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
         // A imagem que a chamada leu ou gravou fica à vista embaixo da linha, sem precisar abrir
         // (dono, 13/11/2026: "dar pra ver as imagens que ele tá acessando… isso é o progresso
-        // dele"). O resultado de ler uma imagem não tem texto: a caixa vazia não aparece.
-        let imagem = imagem_da_chamada(item, &contexto.chat.cwd);
-        let sem_texto = imagem.is_some() && resultado.as_deref().is_some_and(|r| r.trim().is_empty());
+        // dele"). Entram também as que o resultado trouxe (o print do navegador por MCP, a imagem
+        // gerada), que o Vitral guardou: mais de uma, lado a lado. O resultado de ler uma imagem
+        // não tem texto: a caixa vazia não aparece.
+        let da_chamada = imagens::da_chamada(item, &contexto.chat.cwd);
+        let sem_texto = !da_chamada.is_empty() && resultado.as_deref().is_some_and(|r| r.trim().is_empty());
         let comando = (nome == "Bash").then(|| pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo));
         let bloco = v_flex()
             .id(SharedString::from(format!("bloco-chamada-{chave}")))
@@ -3425,8 +3564,11 @@ impl Janela {
             .w_full()
             .child(linha)
             .children(atividade_viva)
-            .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, false, cx)))
+            .when(!da_chamada.is_empty(), |s| {
+                s.child(h_flex().flex_wrap().gap(esp::E4).pl(RECUO_DO_LOG).py(esp::E4).children(da_chamada.iter().enumerate().map(|(k, imagem)| {
+                    let id = if k == 0 { format!("img-{chave}") } else { format!("img-{chave}:{k}") };
+                    pilula_de_arquivo(id, imagem, &contexto.chat.id, false, cx)
+                })))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
@@ -3439,6 +3581,8 @@ impl Janela {
                             // A busca da conversa conta a saída do comando: o achado ganha o realce
                             // e a caixa rola até ele (conferência na bancada, 16/11/2026).
                             .realce(&no_resultado)
+                            // "src/x.rs:120:5" na saída abre o arquivo na linha.
+                            .arquivos(self.ligador(&contexto.chat.cwd, cx))
                             .comando(comando.to_string()).raio_chat().erro(*erro)
                             // O "Concluído" em toda saída não dizia nada: o comando que terminou bem
                             // é o caso comum, e a linha acima já marca o que falhou.
@@ -3499,7 +3643,9 @@ impl Janela {
                         && !(matches!(nome.as_str(), "Agent" | "Task") && !*erro && resultado.as_deref().is_some_and(|r| !crate::claude::relatorio_do_subagente(r).is_empty())),
                     |s| {
                         s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
-                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
+                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)")
+                                .realce(&no_resultado)
+                                .arquivos(self.ligador(&contexto.chat.cwd, cx)),
                         ))
                     },
                 )
@@ -3633,6 +3779,9 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
         "Task" | "Agent" => Lucide::Bot,
         "Workflow" => Lucide::Workflow,
         "TodoWrite" => Lucide::ListChecks,
+        "AskUserQuestion" => Lucide::MessageCircleQuestionMark,
+        "ExitPlanMode" => Lucide::Map,
+        "ImageGeneration" => Lucide::Image,
         "listar_tarefas" => Lucide::ListTree,
         "anotar_decisao" => Lucide::ScrollText,
         "mensagem_para_chat" | "listar_chats" => Lucide::MessagesSquare,
@@ -3666,6 +3815,10 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "Task" | "Agent" => ("Subagente", "Subagente"),
         "Workflow" => ("Fluxo de agentes", "Fluxo de agentes"),
         "TodoWrite" => ("Atualizou os passos", "Atualizando os passos"),
+        "AskUserQuestion" => ("Perguntou", "Perguntando"),
+        "ExitPlanMode" => ("Propôs um plano", "Propondo um plano"),
+        // A imagem que o Codex gera (`imageGeneration`).
+        "ImageGeneration" => ("Gerou uma imagem", "Gerando uma imagem"),
         "listar_tarefas" => ("Listou os ajudantes", "Listando os ajudantes"),
         "listar_chats" => ("Listou as conversas", "Listando as conversas"),
         "anotar_decisao" => ("Anotou", "Anotando"),
@@ -3752,13 +3905,14 @@ fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
     if texto.starts_with(SESSAO_ANTIGA) {
         return ClasseAvisoChat::Marco;
     }
-    const MARCOS: [&str; 6] = [
+    const MARCOS: [&str; 7] = [
         "Sessão nova",
         "Interrompido",
         "Saiu do modo Planejar",
         "Retomando a sessão",
         crate::importar::MARCO,
         VITRAL_FECHADO,
+        crate::motor::CONTEXTO_COMPACTADO,
     ];
     if erro {
         ClasseAvisoChat::Alerta
@@ -3941,9 +4095,10 @@ impl Janela {
             Situacao::Rodando { desde, fila, dirigidas } => {
                 let escrevendo = motor.parcial(&chat.id).is_some();
                 let atividade = texto_atividade(&chat.itens, escrevendo, dirigidas);
-                // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
-                let atividade = if !escrevendo && atividade == "Pensando…" && motor.esperando_agentes(&chat.id) {
-                    "Agentes trabalhando em segundo plano…".to_string()
+                // O Claude Code resume a conversa, ou a resposta já veio e os agentes do fluxo
+                // seguem trabalhando.
+                let atividade = if !escrevendo && atividade == "Pensando…" {
+                    rotulo_do_turno_calado(motor.compactando(&chat.id), motor.esperando_agentes(&chat.id)).to_string()
                 } else {
                     sem_marcacao(&atividade)
                 };
@@ -4509,11 +4664,11 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        let pedidos: Vec<(String, String, serde_json::Value)> = motor
+        let pedidos: Vec<(String, String, serde_json::Value, Option<String>)> = motor
             .permissoes
             .iter()
             .filter(|p| p.chat == chat.id)
-            .map(|p| (p.id.clone(), p.ferramenta.clone(), p.entrada.clone()))
+            .map(|p| (p.id.clone(), p.ferramenta.clone(), p.entrada.clone(), p.motivo_do_hook.clone()))
             .collect();
         let manual = motor.permissao_de(chat) == "manual";
         let (nivel, faixa) = self
@@ -4546,13 +4701,18 @@ impl Janela {
                         .child(CabecalhoDeSecao::new("Pedidos").contagem(quantos).tingida(Cores::espera()).primeira(true)),
                 )
             })
-            .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada))| {
+            .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada, motivo_do_hook))| {
                 let corpo = aberto.as_deref() == Some(id.as_str());
                 if ferramenta == "ExitPlanMode" {
                     return self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx);
                 }
                 let posicao = (quantos > 1).then_some((k + 1, quantos));
-                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, corpo, posicao, nivel, window, cx)
+                // A pergunta com opções tem o cartão dela (sem pergunta legível, o pedido comum).
+                let perguntas = if ferramenta == "AskUserQuestion" { super::pergunta::perguntas_de(&entrada) } else { Vec::new() };
+                if !perguntas.is_empty() {
+                    return self.cartao_pergunta(&id, &perguntas, corpo, posicao, nivel, window, cx);
+                }
+                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, motivo_do_hook, corpo, posicao, nivel, window, cx)
             }))
     }
 
@@ -4568,6 +4728,7 @@ impl Janela {
         id: &str,
         ferramenta: &str,
         entrada: &serde_json::Value,
+        motivo_do_hook: Option<String>,
         corpo_aberto: bool,
         posicao: Option<(usize, usize)>,
         nivel: LarguraPainel,
@@ -4584,8 +4745,9 @@ impl Janela {
                 }
             })
         };
-        // A regra só existe fora do perigoso: o mesmo filtro do desenho.
-        let com_regra = regra_do_pedido(ferramenta, entrada, &chat.cwd, manual).is_some();
+        // A regra só existe fora do perigoso e do que um hook mandou perguntar: o mesmo filtro do
+        // desenho.
+        let com_regra = regra_do_cartao(ferramenta, entrada, &chat.cwd, manual, motivo_do_hook.is_some()).is_some();
         let permitir = {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
@@ -4645,6 +4807,7 @@ impl Janela {
             posicao,
             nivel,
             manual,
+            motivo_do_hook,
             marcado: self.sempre_marcado.contains(id),
             explicando,
         };
@@ -4687,8 +4850,8 @@ impl Janela {
             return;
         };
         let texto = explicacao.campo.read(cx).value().trim().to_string();
-        let mensagem = (!texto.is_empty())
-            .then(|| format!("O usuário negou esta ação e explicou o que fazer: {texto}"));
+        // A mesma frase do Enter na caixa com o pedido aberto (`Motor::responder_pedido_escrevendo`).
+        let mensagem = (!texto.is_empty()).then(|| crate::motor::recusa_explicada("", &texto));
         if let Some(m) = &self.motor {
             m.update(cx, |m, cx| m.responder_permissao(&explicacao.pedido, false, mensagem, cx));
         }
@@ -5047,6 +5210,8 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
             None => "Cancelando um pedido…".into(),
         },
         "perguntar_coordenador" => "Perguntando a quem pediu…".into(),
+        "AskUserQuestion" => "Esperando a sua resposta…".into(),
+        "ExitPlanMode" => "Esperando a sua aprovação…".into(),
         "mensagem_para_chat" => "Mandando mensagem a outra conversa…".into(),
         "TodoWrite" | "listar_tarefas" | "listar_chats" | "anotar_decisao" | "informar_progresso" => {
             format!("{verbo}…")
@@ -5151,6 +5316,9 @@ pub(super) struct Pedido {
     pub posicao: Option<(usize, usize)>,
     pub nivel: LarguraPainel,
     pub manual: bool,
+    /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
+    /// o cartão mostra a linha do hook e não oferece a caixa "Não perguntar de novo".
+    pub motivo_do_hook: Option<String>,
     /// A caixa "Não perguntar de novo" marcada.
     pub marcado: bool,
     /// O campo de "negar e explicar" aberto.
@@ -5184,6 +5352,30 @@ fn regra_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path, 
     crate::modelo::regra_de_permissao(ferramenta, entrada, pasta).map(|regra| rotulo_da_regra(&regra, manual))
 }
 
+/// A regra que a caixa do cartão oferece: a do pedido, menos no que um hook mandou perguntar (quem
+/// pôs o hook quer ser perguntado toda vez; o motor também não deixa a regra valer para ele).
+fn regra_do_cartao(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path, manual: bool, do_hook: bool) -> Option<(String, String)> {
+    if do_hook {
+        return None;
+    }
+    regra_do_pedido(ferramenta, entrada, pasta, manual)
+}
+
+/// O maior motivo de hook que o cartão mostra inteiro.
+const MAX_MOTIVO_DO_HOOK: usize = 600;
+
+/// A linha do cartão que diz por que um pedido apareceu: um hook do usuário mandou perguntar, com
+/// o motivo que ele deu, numa linha só e sem a marcação.
+fn linha_do_hook(motivo: &str) -> String {
+    let motivo = sem_marcacao(&motivo.split_whitespace().collect::<Vec<_>>().join(" "));
+    if motivo.is_empty() {
+        return "Um hook pediu a sua confirmação.".into();
+    }
+    let cortado: String = motivo.chars().take(MAX_MOTIVO_DO_HOOK).collect();
+    let reticencias = if cortado.len() < motivo.len() { "…" } else { "" };
+    format!("Um hook pediu a sua confirmação: {cortado}{reticencias}")
+}
+
 /// O comando tem um trecho que apaga, força ou roda algo difícil de desfazer.
 fn pedido_perigoso(ferramenta: &str, entrada: &serde_json::Value) -> bool {
     ferramenta == "Bash" && !trechos_perigosos(entrada["command"].as_str().unwrap_or_default()).is_empty()
@@ -5206,7 +5398,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
         .as_str()
         .or(entrada["notebook_path"].as_str())
         .is_some_and(|c| caminho_no_chat(c, &p.pasta).1);
-    let regra = regra_do_pedido(&p.ferramenta, entrada, &p.pasta, p.manual);
+    let regra = regra_do_cartao(&p.ferramenta, entrada, &p.pasta, p.manual, p.motivo_do_hook.is_some());
     let minima = minima(p.nivel);
     let cabecalho = h_flex()
         .id(id_texto("cab"))
@@ -5359,6 +5551,17 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                             )
                         }),
                 )
+                // Por que o pedido apareceu, quando foi um hook do usuário: a linha inteira, com
+                // quebra (o motivo é o que ele precisa ler para decidir).
+                .when_some(p.motivo_do_hook.as_deref().map(linha_do_hook), |s, linha| {
+                    s.child(
+                        h_flex()
+                            .items_start()
+                            .gap(esp::E6)
+                            .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::ShieldAlert, 14.).text_color(Cores::ambar())))
+                            .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(linha)),
+                    )
+                })
                 .when(perigoso, |s| {
                     s.child(
                         h_flex()
@@ -5618,7 +5821,8 @@ mod testes {
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
-        titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
+        MAX_MOTIVO_DO_HOOK, linha_do_hook, regra_do_cartao,
+        titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta, fica_fora_do_recolhido,
     };
     use crate::modelo::{Chat, Item, regra_de_permissao};
     use serde_json::json;
@@ -5657,6 +5861,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -5852,6 +6057,37 @@ mod testes {
         assert_eq!(regra_do_pedido("Bash", &json!({"command": "git push --force"}), pasta, true), None);
         let comum = regra_do_pedido("Bash", &json!({"command": "cargo test"}), pasta, true);
         assert_eq!(comum.map(|(objeto, _)| objeto), Some("este comando".to_string()));
+    }
+
+    /// O que um hook mandou perguntar não oferece "Não perguntar de novo"; o resto, como antes.
+    #[test]
+    fn pedido_de_hook_nunca_vira_regra() {
+        let pasta = Path::new("/home/v/loja");
+        let deploy = json!({"command": "easypanel deploy central-worker"});
+        assert_eq!(regra_do_cartao("Bash", &deploy, pasta, false, true), None);
+        assert_eq!(regra_do_cartao("mcp__x__y", &json!({}), pasta, true, true), None);
+        assert_eq!(regra_do_cartao("Bash", &deploy, pasta, false, false), regra_do_pedido("Bash", &deploy, pasta, false));
+        assert_eq!(
+            regra_do_cartao("Bash", &deploy, pasta, false, false).map(|(objeto, _)| objeto),
+            Some("este comando".to_string())
+        );
+        // O perigoso continua sem regra, com hook ou sem.
+        assert_eq!(regra_do_cartao("Bash", &json!({"command": "rm -rf build"}), pasta, true, false), None);
+    }
+
+    #[test]
+    fn o_cartao_diz_o_motivo_que_o_hook_deu() {
+        assert_eq!(
+            linha_do_hook("Deploy do `central-worker` no expediente do galpão.\n  Confirme com o **dono**. "),
+            "Um hook pediu a sua confirmação: Deploy do central-worker no expediente do galpão. Confirme com o dono."
+        );
+        // O hook que não disse por quê.
+        assert_eq!(linha_do_hook(""), "Um hook pediu a sua confirmação.");
+        assert_eq!(linha_do_hook(" \n "), "Um hook pediu a sua confirmação.");
+        // Um motivo enorme não toma o cartão.
+        let enorme = linha_do_hook(&"palavra ".repeat(500));
+        assert!(enorme.ends_with('…'), "{enorme}");
+        assert_eq!(enorme.chars().count(), "Um hook pediu a sua confirmação: ".chars().count() + MAX_MOTIVO_DO_HOOK + 1);
     }
 
     #[test]
@@ -6159,6 +6395,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let itens = vec![
             em(usuario("faz"), 1_000),
@@ -6234,6 +6471,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let pedido = Item::Entrega { de: "Vitral".into(), texto: crate::motor::PEDIDO_DE_REVISAO.into(), em: 0 };
         let nada = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), assistente("Não há nada a registrar.")];
@@ -6264,6 +6502,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: Some(Mudanca { entram, saem, novo }),
+            imagens: Vec::new(),
         };
         let itens = vec![
             usuario("um"),
@@ -6284,6 +6523,80 @@ mod testes {
         assert_eq!(total_das_mudancas(&neste), (2, 15, 1));
     }
 
+    fn chamada_do_plano(resultado: Option<&str>, erro: bool, detalhe: Option<&str>) -> Item {
+        Item::Ferramenta {
+            id: "p1".into(),
+            em: 0,
+            nome: "ExitPlanMode".into(),
+            resumo: "ExitPlanMode".into(),
+            resultado: resultado.map(str::to_string),
+            erro,
+            detalhe: detalhe.map(str::to_string),
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            imagens: Vec::new(),
+        }
+    }
+
+    /// O plano continua na conversa depois de respondido: um cartão recolhido no ponto em que
+    /// foi proposto, com o título dizendo o que você respondeu, que abre o texto do plano.
+    #[test]
+    fn o_plano_respondido_fica_na_conversa_como_cartao() {
+        use super::{PlanoNaConversa, pedido_de_mudancas, plano_na_conversa};
+        let texto = "# Trocar o cupom\n\n1. Ler.\n2. Aplicar.";
+        let aprovado = chamada_do_plano(Some("User has approved your plan."), false, Some(texto));
+        assert_eq!(
+            plano_na_conversa(&aprovado),
+            Some(PlanoNaConversa { titulo: "Plano aprovado", texto, aprovado: true, mudancas: None })
+        );
+        let recusado = chamada_do_plano(Some("O usuário pediu mudanças no plano: começa pelos testes"), true, Some(texto));
+        assert_eq!(
+            plano_na_conversa(&recusado),
+            Some(PlanoNaConversa { titulo: "Plano recusado", texto, aprovado: false, mudancas: Some("começa pelos testes") })
+        );
+        // Recusado sem comentário (o "Pedir mudanças" vazio, o Negar do sino).
+        assert_eq!(plano_na_conversa(&chamada_do_plano(Some("O usuário pediu para revisar o plano."), true, Some(texto))).unwrap().mudancas, None);
+        assert_eq!(pedido_de_mudancas("O usuário negou esta ação."), None);
+        // O turno parou antes da resposta: o plano fica, sem dizer que foi aprovado.
+        assert_eq!(plano_na_conversa(&chamada_do_plano(None, false, Some(texto))).unwrap().titulo, "Plano proposto");
+        // Sem o texto do plano (conversa de antes disto) e nas outras chamadas, a linha da trilha.
+        assert_eq!(plano_na_conversa(&chamada_do_plano(Some("ok"), false, None)), None);
+        assert_eq!(plano_na_conversa(&ferramenta("Bash", "Bash · ls", Some("ok"), false)), None);
+        assert_eq!(plano_na_conversa(&usuario("oi")), None);
+        // Com o turno recolhido em "Trabalhou…", o cartão fica à vista.
+        assert!(fica_fora_do_recolhido(&aprovado) && fica_fora_do_recolhido(&recusado));
+        assert!(!fica_fora_do_recolhido(&chamada_do_plano(Some("ok"), false, None)));
+        assert!(!fica_fora_do_recolhido(&ferramenta("Bash", "Bash · ls", Some("ok"), false)));
+        // A linha de quando não há o texto, e o que o turno espera enquanto o pedido está aberto.
+        assert_eq!(verbo_da_ferramenta("ExitPlanMode", false), "Propôs um plano");
+        assert_eq!(texto_atividade(&[usuario("oi"), chamada_do_plano(None, false, None)], false, 0), "Esperando a sua aprovação…");
+    }
+
+    #[test]
+    fn a_pergunta_respondida_e_uma_linha_da_trilha() {
+        assert_eq!(verbo_da_ferramenta("AskUserQuestion", false), "Perguntou");
+        assert_eq!(verbo_da_ferramenta("AskUserQuestion", true), "Perguntando");
+        let pendente = ferramenta("AskUserQuestion", "AskUserQuestion · Qual cor você prefere?", None, false);
+        assert_eq!(texto_atividade(&[usuario("oi"), pendente], false, 0), "Esperando a sua resposta…");
+        assert_eq!(super::detalhe_da_chamada("AskUserQuestion", "AskUserQuestion · Qual cor você prefere?"), "Qual cor você prefere?");
+    }
+
+    /// O marco de compactação: uma nota da conversa, que fica à vista com o turno recolhido, e a
+    /// linha viva do turno dizendo "Compactando…" enquanto dura.
+    #[test]
+    fn o_marco_de_compactacao_e_a_linha_compactando() {
+        use super::rotulo_do_turno_calado;
+        let texto = crate::motor::marco_da_compactacao(false, Some(168_432));
+        assert_eq!(tipo_aviso(&texto, false), ClasseAvisoChat::Marco);
+        assert!(fica_fora_do_recolhido(&Item::Aviso { em: 0, texto, erro: false }));
+        assert!(!fica_fora_do_recolhido(&Item::Aviso { em: 0, texto: "Nova tentativa".into(), erro: false }));
+        assert_eq!(rotulo_do_turno_calado(true, false), "Compactando…");
+        assert_eq!(rotulo_do_turno_calado(true, true), "Compactando…");
+        assert_eq!(rotulo_do_turno_calado(false, true), "Agentes trabalhando em segundo plano…");
+        assert_eq!(rotulo_do_turno_calado(false, false), "Pensando…");
+    }
+
     #[test]
     fn resumo_da_trilha_diz_o_nome_ate_dois_arquivos() {
         use super::{Item, resumo_das_chamadas};
@@ -6298,6 +6611,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let dois = [editar("carrinho.py"), editar("motor.rs"), ferramenta("Bash", "ls", Some("ok"), false)];
         let chamadas: Vec<(usize, &Item)> = dois.iter().enumerate().collect();

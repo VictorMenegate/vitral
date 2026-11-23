@@ -280,9 +280,15 @@ fn linhas_do_numstat(numstat: &str) -> Vec<(String, u32, u32)> {
     saida
 }
 
-/// O diff unificado de um arquivo desde o último commit (vazio se não há o que mostrar).
-pub fn diff_do_arquivo(raiz: &Path, caminho: &str) -> String {
-    git(raiz, &["diff", "HEAD", "-U3", "--no-color", "--", caminho]).unwrap_or_default()
+/// O diff unificado de um arquivo desde o último commit (vazio se não há o que mostrar). Com
+/// `sem_espaco`, o `-w` do git: a linha que só mudou de recuo ou de espaço no fim fica de fora.
+pub fn diff_do_arquivo(raiz: &Path, caminho: &str, sem_espaco: bool) -> String {
+    let mut args = vec!["diff", "HEAD", "-U3", "--no-color"];
+    if sem_espaco {
+        args.push("-w");
+    }
+    args.extend(["--", caminho]);
+    git(raiz, &args).unwrap_or_default()
 }
 
 /// Desfaz o que mudou num arquivo que o git conhece: ele volta ao último commit (o que estava
@@ -434,7 +440,7 @@ mod testes {
         let a = retrato.mudancas.iter().find(|m| m.caminho == "a.txt").unwrap();
         assert_eq!((a.estado, a.entram, a.saem), (EstadoNoGit::Mudado, 2, 1));
         assert!(retrato.mudancas.iter().any(|m| m.caminho == "b.txt" && m.estado == EstadoNoGit::Novo));
-        assert!(diff_do_arquivo(&retrato.raiz, "a.txt").contains("+tres"));
+        assert!(diff_do_arquivo(&retrato.raiz, "a.txt", false).contains("+tres"));
         desfazer_arquivo(&retrato.raiz, "a.txt").unwrap();
         assert_eq!(std::fs::read_to_string(pasta.join("a.txt")).unwrap(), "um\ndois\n");
         let _ = std::fs::remove_dir_all(&pasta);
@@ -574,5 +580,29 @@ mod testes {
     fn caminho_relativo_com_barra_normal() {
         assert_eq!(caminho_em_texto(&Path::new("src").join("ui").join("mod.rs")), "src/ui/mod.rs");
         assert_eq!(caminho_em_texto(Path::new("relatório.md")), "relatório.md");
+    }
+
+    #[test]
+    fn o_diff_sem_espaco_em_branco_deixa_de_fora_o_que_so_mudou_de_recuo() {
+        let pasta = std::env::temp_dir().join(format!("vitral-git-espaco-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        git(&pasta, &["init", "-q"]).unwrap();
+        git(&pasta, &["config", "core.autocrlf", "false"]).unwrap();
+        let longe: String = (0..20).map(|i| format!("linha {i}\n")).collect();
+        std::fs::write(pasta.join("a.txt"), format!("um\n{longe}dois\n")).unwrap();
+        std::fs::write(pasta.join("b.txt"), "se x {\nfaz\n}\n").unwrap();
+        git(&pasta, &["add", "."]).unwrap();
+        git(&pasta, &["commit", "-q", "-m", "primeiro"]).unwrap();
+        // No a.txt, uma linha só ganhou recuo e outra, longe dela, mudou de verdade; no b.txt, só recuo.
+        std::fs::write(pasta.join("a.txt"), format!("    um\n{longe}tres\n")).unwrap();
+        std::fs::write(pasta.join("b.txt"), "se x {\n\tfaz  \n}\n").unwrap();
+        let raiz = retrato_da_pasta(&pasta).unwrap().raiz;
+        let inteiro = diff_do_arquivo(&raiz, "a.txt", false);
+        assert!(inteiro.contains("+    um") && inteiro.contains("+tres"), "{inteiro}");
+        let enxuto = diff_do_arquivo(&raiz, "a.txt", true);
+        assert!(!enxuto.contains("+    um") && enxuto.contains("+tres"), "{enxuto}");
+        assert!(!diff_do_arquivo(&raiz, "b.txt", false).is_empty());
+        assert_eq!(diff_do_arquivo(&raiz, "b.txt", true), "");
+        let _ = std::fs::remove_dir_all(&pasta);
     }
 }

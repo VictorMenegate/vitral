@@ -150,6 +150,14 @@ tabela! {
     "ctrl-tab", super::AbaSeguinte, None, Grupo::Paineis, "Aba seguinte do painel ativo (com Shift, a anterior)", "";
     "ctrl-shift-tab", super::AbaAnterior, None, Grupo::Paineis, "", "";
     "ctrl-shift-t", super::ReabrirAba, None, Grupo::Paineis, "Reabrir a última aba fechada", "";
+    // Como o Ctrl+P do VS Code: a lista dos arquivos da pasta do chat ativo, e o Enter abre à direita.
+    "ctrl-p", super::paleta::AbrirArquivoPeloNome, None, Grupo::Paineis, "Abrir um arquivo da pasta pelo nome", "";
+    // Com o foco no painel do arquivo (um clique nele), o Ctrl+F é dele: registrado depois do da
+    // conversa e num contexto mais fundo, ganha dela. O Esc fecha a barra antes de parar o turno.
+    "ctrl-f", super::painel_arquivo::BuscarNoArquivo, Some("Arquivo"), Grupo::Paineis, "Buscar no arquivo aberto (com o foco nele)", "";
+    "escape", super::painel_arquivo::FecharBuscaNoArquivo, Some("Arquivo"), Grupo::Paineis, "", "";
+    // Um clique no texto do arquivo abre o editor: ele grava sozinho, e o Ctrl+S grava na hora.
+    "ctrl-s", super::painel_arquivo::SalvarArquivo, Some("Arquivo"), Grupo::Paineis, "Salvar o arquivo que você está editando (ele também se salva sozinho)", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
@@ -359,5 +367,24 @@ mod testes {
         assert_eq!(acha("Imagem anterior e seguinte no visor"), ["←", "→"]);
         assert_eq!(acha("Corrigir a última mensagem (caixa vazia)"), ["↑"]);
         assert_eq!(acha("Esta lista de atalhos"), ["?"]);
+    }
+
+    #[test]
+    fn abrir_arquivo_pelo_nome_e_buscar_dentro_dele_estao_na_tabela() {
+        let acha = |teclas: &str, contexto: Option<&str>| linhas().into_iter().find(|l| l.teclas == teclas && l.contexto == contexto);
+        let abrir = acha("ctrl-p", None).expect("o Ctrl+P não está na tabela");
+        assert_eq!((abrir.rotulo, abrir.grupo), ("Abrir um arquivo da pasta pelo nome", Grupo::Paineis));
+        // O Ctrl+F com o foco no painel do arquivo busca nele; registrado depois do da conversa.
+        let no_arquivo = acha("ctrl-f", Some("Arquivo")).expect("o Ctrl+F do arquivo não está na tabela");
+        assert_eq!(no_arquivo.rotulo, "Buscar no arquivo aberto (com o foco nele)");
+        let posicao = |contexto: Option<&str>| linhas().iter().position(|l| l.teclas == "ctrl-f" && l.contexto == contexto).unwrap();
+        assert!(posicao(Some("Arquivo")) > posicao(None));
+    }
+
+    #[test]
+    fn salvar_o_arquivo_editado_esta_na_tabela() {
+        let salvar = linhas().into_iter().find(|l| l.teclas == "ctrl-s").expect("o Ctrl+S não está na tabela");
+        assert_eq!(salvar.contexto, Some("Arquivo"));
+        assert_eq!((salvar.rotulo, salvar.grupo), ("Salvar o arquivo que você está editando (ele também se salva sozinho)", Grupo::Paineis));
     }
 }

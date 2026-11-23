@@ -6,7 +6,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gpui_kit::SharedString;
+use gpui_kit::{Hsla, SharedString, hsla};
+
+use crate::modelo::Item;
 
 /// Altura da miniatura dentro do chip da caixa de mensagem (o chip tem 28 de alto).
 /// 24 de altura num chip de 28: a miniatura ocupa quase tudo, com 2 de folga em volta (dono,
@@ -62,7 +64,12 @@ fn ler(caminho: &Path) -> Anexo {
     let Ok(dados) = std::fs::metadata(caminho) else {
         return Anexo::default();
     };
-    let medidas = crate::claude::tipo_imagem(caminho).and_then(|_| medidas_de(&comeco(caminho)));
+    let svg = caminho.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    let medidas = if svg {
+        medidas_svg(&comeco(caminho))
+    } else {
+        crate::claude::tipo_imagem(caminho).and_then(|_| medidas_de(&comeco(caminho)))
+    };
     Anexo { existe: true, tamanho: Some(tamanho_curto(dados.len()).into()), medidas }
 }
 
@@ -107,6 +114,44 @@ pub fn medidas_de(bytes: &[u8]) -> Option<(u32, u32)> {
         return medidas_jpeg(bytes);
     }
     None
+}
+
+/// As medidas de um SVG, pela tag `<svg>`: o `width` e o `height` em px ou, sem eles (ou em %), o
+/// `viewBox`. Com elas, o visor mostra o desenho no tamanho dele, em vez de esticá-lo até a área:
+/// o GPUI desenha o SVG no tamanho de origem, e esticado ele borra.
+pub fn medidas_svg(bytes: &[u8]) -> Option<(u32, u32)> {
+    let texto = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]);
+    let inicio = texto.find("<svg")?;
+    let tag = &texto[inicio..inicio + texto[inicio..].find('>')?];
+    let atributo = |nome: &str| -> Option<&str> {
+        // Com o espaço antes: "stroke-width" não é "width".
+        let chave = format!(" {nome}=");
+        let resto = &tag[tag.find(&chave)? + chave.len()..];
+        let aspa = resto.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        resto[1..].split(aspa).next()
+    };
+    let numero = |valor: &str| valor.trim().trim_end_matches("px").parse::<f32>().ok().filter(|n| *n >= 1.);
+    match (atributo("width").and_then(numero), atributo("height").and_then(numero)) {
+        (Some(largura), Some(altura)) => Some((largura.round() as u32, altura.round() as u32)),
+        _ => {
+            let caixa: Vec<f32> = atributo("viewBox")?
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|parte| !parte.is_empty())
+                .filter_map(|parte| parte.parse().ok())
+                .collect();
+            (caixa.len() == 4 && caixa[2] >= 1. && caixa[3] >= 1.).then(|| (caixa[2].round() as u32, caixa[3].round() as u32))
+        }
+    }
+}
+
+/// O fundo atrás de uma imagem no visor e no painel do arquivo: o preto do app, sobre o qual a
+/// transparência de um print não some. No SVG, um cinza médio: o desenho costuma ser um traço
+/// escuro sem fundo (um ícone, um logo), que no preto não aparecia; no cinza, o claro também se vê.
+pub fn fundo_da_imagem(caminho: &Path) -> Hsla {
+    match caminho.extension().and_then(|e| e.to_str()) {
+        Some(e) if e.eq_ignore_ascii_case("svg") => hsla(0., 0., 0.46, 1.),
+        _ => crate::tema::Cores::preto(),
+    }
 }
 
 /// WebP tem três formas: a estendida (VP8X, com a tela em 24 bits), a com perdas (VP8, 14 bits
@@ -179,6 +224,29 @@ pub fn medida_da_miniatura(medidas: Option<(u32, u32)>, altura: f32, largura_max
     // Nunca aumentar: uma imagem de 24 px continua com 24, nítida.
     let escala = (altura / alta).min(largura_max / largura).min(1.);
     ((largura * escala).round().max(1.), (alta * escala).round().max(1.))
+}
+
+/// As imagens de uma chamada, para as miniaturas embaixo da linha dela, para a pilha do grupo
+/// recolhido e para o visor: a que ela leu ou gravou (um Read ou Write de um .png) e as que o
+/// resultado trouxe e o Vitral guardou (`imagens_recebidas`: o print do navegador por MCP, a
+/// imagem gerada). O Read de uma imagem tem as duas, e são a mesma: vale a do disco, inteira,
+/// enquanto ela está lá; quando sai (um print em /tmp), fica a guardada, que é a que o modelo viu.
+pub fn da_chamada(item: &Item, cwd: &Path) -> Vec<PathBuf> {
+    let Item::Ferramenta { arquivo, erro, imagens, .. } = item else {
+        return Vec::new();
+    };
+    let do_disco = arquivo
+        .as_deref()
+        .filter(|_| !*erro)
+        // Só o que está no disco agora (`resolver`).
+        .and_then(|arquivo| super::links_arquivo::resolver(cwd, arquivo))
+        .map(PathBuf::from)
+        .filter(|caminho| crate::claude::tipo_imagem(caminho).is_some());
+    match do_disco {
+        Some(caminho) => vec![caminho],
+        // Das guardadas, as que continuam lá: o teto do chat tira as mais antigas.
+        None => imagens.iter().filter(|caminho| super::links_arquivo::resolver(cwd, &caminho.to_string_lossy()).is_some()).cloned().collect(),
+    }
 }
 
 /// O nome do arquivo, ou o caminho inteiro quando ele não tem nome (raiz, "..").
@@ -304,6 +372,20 @@ mod testes {
     }
 
     #[test]
+    fn medidas_do_svg_pela_tag() {
+        use super::medidas_svg;
+        let svg = |tag: &str| format!("<?xml version=\"1.0\"?>\n{tag}<circle r=\"4\" stroke-width=\"9\"/></svg>");
+        // O width e o height, com ou sem "px"; o stroke-width de dentro não conta.
+        assert_eq!(medidas_svg(svg(r#"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120px" viewBox="0 0 24 12">"#).as_bytes()), Some((240, 120)));
+        assert_eq!(medidas_svg(svg("<svg width='16' height='16'>").as_bytes()), Some((16, 16)));
+        // Sem eles, ou em %, vale o viewBox.
+        assert_eq!(medidas_svg(svg(r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2">"#).as_bytes()), Some((24, 24)));
+        assert_eq!(medidas_svg(svg(r#"<svg width="100%" height="100%" viewBox="0,0,300,150.4">"#).as_bytes()), Some((300, 150)));
+        assert_eq!(medidas_svg(svg("<svg>").as_bytes()), None);
+        assert_eq!(medidas_svg(b"nada disso"), None);
+    }
+
+    #[test]
     fn miniatura_cabe_na_caixa_sem_esticar() {
         // Captura larga: a altura manda, a largura sai da proporção.
         assert_eq!(medida_da_miniatura(Some((1200, 700)), 120., 260.), (206., 120.));
@@ -349,6 +431,53 @@ mod testes {
             vec![pasta.join("um.png"), pasta.join("dois.png")]
         );
         assert!(imagens_do_texto("sem imagem nenhuma", Some(&pasta)).is_empty());
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    fn chamada(nome: &str, arquivo: Option<&str>, erro: bool, imagens: &[&Path]) -> Item {
+        Item::Ferramenta {
+            id: "t1".into(),
+            nome: nome.into(),
+            resumo: nome.into(),
+            resultado: Some(String::new()),
+            erro,
+            em: 0,
+            detalhe: None,
+            arquivo: arquivo.map(str::to_string),
+            sub: None,
+            mudanca: None,
+            imagens: imagens.iter().map(|c| c.to_path_buf()).collect(),
+        }
+    }
+
+    #[test]
+    fn as_imagens_da_chamada_sao_a_do_disco_ou_as_guardadas() {
+        let pasta = std::env::temp_dir().join(format!("vitral-img-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(pasta.join("guardadas")).unwrap();
+        let (um, dois) = (pasta.join("guardadas").join("um.png"), pasta.join("guardadas").join("dois.png"));
+        for caminho in [&um, &dois, &pasta.join("print.png")] {
+            std::fs::write(caminho, b"\x89PNG\r\n\x1a\n").unwrap();
+        }
+
+        // O print de um MCP: não há arquivo da chamada, só o que o resultado trouxe, na ordem.
+        let do_mcp = chamada("mcp__chrome-devtools__take_screenshot", None, false, &[&um, &dois]);
+        assert_eq!(da_chamada(&do_mcp, &pasta), vec![um.clone(), dois.clone()]);
+
+        // O Read de uma imagem que está no disco: a do disco, uma vez só.
+        let leu = chamada("Read", Some("print.png"), false, &[&um]);
+        assert_eq!(da_chamada(&leu, &pasta), vec![pasta.join("print.png")]);
+        // O arquivo saiu do disco: fica a que o Vitral guardou.
+        let leu_e_sumiu = chamada("Read", Some("sumiu.png"), false, &[&um]);
+        assert_eq!(da_chamada(&leu_e_sumiu, &pasta), vec![um.clone()]);
+        // Sem nada guardado (as conversas de antes), a imagem que saiu do disco não aparece,
+        // como sempre foi (`links_arquivo::resolver` só devolve o que está lá).
+        let antiga = chamada("Read", Some("sumiu.png"), false, &[]);
+        assert!(da_chamada(&antiga, &pasta).is_empty());
+
+        // O que não tem imagem: outro tipo de arquivo, a leitura que falhou, outro item.
+        assert!(da_chamada(&chamada("Read", Some("notas.md"), false, &[]), &pasta).is_empty());
+        assert!(da_chamada(&chamada("Read", Some("print.png"), true, &[]), &pasta).is_empty());
+        assert!(da_chamada(&Item::Assistente { texto: "![](print.png)".into(), em: 0 }, &pasta).is_empty());
         let _ = std::fs::remove_dir_all(&pasta);
     }
 

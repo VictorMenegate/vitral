@@ -38,7 +38,16 @@ componentes do GPUI Kit.
   worktree. Quem cria é `Motor::novo_chat(pasta:
   Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
   `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
-  "- ", "- [ ] ", "1. "), até 7 palavras.
+  "- ", "- [ ] ", "1. "), até 7 palavras. Depois de um turno, esse título automático dá lugar ao
+  que o Claude Code gerou para a sessão (a linha `ai-title` do arquivo dela, lida do fim dele por
+  `importar::titulos_da_sessao`), uma vez só: `titulo_automatico` compara o título com o da
+  primeira fala, então o que você renomeou (F2), o do ramo e o da raia ficam como estão, e o
+  título trocado não troca de novo. A sessão renomeada no Claude Code (`/rename`, a linha
+  `custom-title`) e o chat do Codex também não mudam. Num `-p` o Claude Code não gera esse título
+  sozinho (medido no 2.1.328: ele só o faz no terminal, no VS Code e pelo SDK), então o turno o
+  pede pela entrada: o `generate_session_title` com a primeira fala e o `persist`
+  (`Processo::pedir_titulo`), até duas vezes por chat em cada abertura do app, num Claude Code 2.1.323
+  ou mais novo. É uma chamada pequena a mais do Claude Code por chat novo.
 - **Claude ou Codex.** Cada chat diz quem responde (`Chat.agente`, em `src/modelo.rs`): o Claude
   Code ou o Codex, a CLI da OpenAI. Escolhe-se no seletor de modelo, que tem as abas **Claude** e **Codex**
   (trocar de aba só mostra os modelos do outro; quem responde muda ao escolher um; a aba do Codex tem
@@ -152,6 +161,21 @@ componentes do GPUI Kit.
   que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
   custo, modelo, conta e Compactar) já existia, no anel da caixa.
+- **Marco de compactação.** Enquanto o Claude Code resume a conversa (o `/compact`, ou sozinho com
+  o contexto cheio), a linha viva do turno diz "Compactando…" no lugar do "Pensando…", na conversa
+  e na linha de estado da caixa (`mensagens::rotulo_do_turno_calado`, `Motor::compactando`). Ao
+  terminar, entra na conversa o marco "Contexto compactado (automático, 168 mil tokens antes)"
+  (ou "manual", no `/compact`; `motor::marco_da_compactacao`), uma nota da conversa como o
+  "Turno interrompido", que fica à vista também com o turno recolhido em "Trabalhou…", e o anel
+  do contexto desce para o que a conversa ocupa depois do resumo. Medido no Claude Code 2.1.328
+  em 23/11/2026 com um `/compact`: a saída traz `system/status` com `status: "compacting"`,
+  depois `status: null` com `compact_result: "success"`, um `init` de novo e o
+  `system/compact_boundary` com `compact_metadata` (`trigger` "manual" ou "auto", `pre_tokens`,
+  `post_tokens`); o `claude::interpretar` os vira `Evento::Compactando` e `Evento::Compactou`
+  (mais o `Evento::Contexto` com o `post_tokens`). O `status` da troca de modo, que só traz o
+  `permissionMode`, não diz nada. O marco é um `Item::Aviso` que começa com
+  `motor::CONTEXTO_COMPACTADO`; a conversa trazida do Claude Code segue com "A conversa foi
+  resumida aqui", que vem do arquivo dela (`src/importar.rs`).
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
   no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
   as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
@@ -182,7 +206,53 @@ componentes do GPUI Kit.
   começa, `vigiar_turno_dirigido` fecha a entrada e o processo sai). A entrada só fecha no fim
   adiado quando há agentes em segundo plano. `Motor::turno_recebe_mensagem` diz se o Enviar entra
   no turno ou vai para a fila, e **Mandar agora**, na lista da fila
-  (`Motor::mandar_da_fila_agora`), tira uma mensagem da fila e a põe no turno que roda.
+  (`Motor::mandar_da_fila_agora`), tira uma mensagem da fila e a põe no turno que roda. Cada
+  mensagem dirigida vai com um `uuid` (`Processo::dirigir`): **o Parar a tira da fila interna do
+  Claude Code** antes do `interrupt` (o pedido de controle `cancel_async_message`, que não está no
+  tipo público do SDK; `Processo::retirar_dirigidas`), em vez de matar o processo, que era o
+  jeito de ele não abrir outro turno com ela depois do Parar. Medido no Claude Code 2.1.328 em
+  23/11/2026: o pedido responde `{"cancelled": true}`, o `interrupt` passa a responder
+  `still_queued: []`, o turno fecha com o `result` de erro, o processo sai sozinho menos de 1 s
+  depois de a entrada fechar e a sessão retomada não tem a mensagem (ela volta para a fila do
+  Vitral, como antes). Se a resposta do `interrupt` ainda trouxer alguma mensagem
+  (`Evento::FicouNaFila`), ou num Claude Code anterior ao 2.1.323 (`VERSAO_RETIRAR_DIRIGIDA`),
+  ou no Codex, vale o de antes: SIGTERM no processo (`motor::como_parar`).
+- **Responder a um pedido de permissão escrevendo.** Com um pedido aberto no chat, o Enter na
+  caixa nega o pedido (todos os abertos daquele chat) e entrega o texto ao modelo como a
+  explicação da recusa, pelo mesmo caminho do **Negar e explicar…** do cartão
+  (`Motor::responder_pedido_escrevendo`, `motor::recusa_explicada`; no pedido de aprovar um
+  plano, o texto é o pedido de mudanças; na pergunta com opções o texto não nega nada, é a
+  resposta dela). A mensagem entra na conversa como sua, antes do
+  resultado negado da chamada. Com imagem anexada, que a recusa não leva, os pedidos são negados
+  com "O usuário respondeu com uma mensagem…" e a mensagem entra no turno pela entrada. O que
+  vale para o turno inteiro (comando de barra, Ultrathink, Ultracode) continua indo para a fila,
+  sem negar nada, e o **Ctrl+Enter** (Mandar depois) também. A dica do Enviar diz o que o Enter
+  vai fazer (`composer::dica_do_enviar`).
+- **Modo, modelo e esforço no turno que roda.** Trocar o modo (Shift+Tab ou o seletor), o modelo
+  ou o esforço com o turno rodando vale nele, e não só no seguinte: o Vitral manda pela entrada
+  do processo os pedidos de controle `set_permission_mode`, `set_model` e `apply_flag_settings`
+  (com o `effortLevel`), como já mandava o `interrupt` e o `stop_task` (`Processo::acertar`, com
+  o que o processo tem em `claude::AoVivo`). Medido no 2.1.328, no meio de um comando: o modo
+  responde `{"mode": …}` e o Write seguinte do mesmo turno passou sem perguntar; o modelo
+  responde `{"model": <id>}` e a chamada seguinte ao modelo já sai nele (a conversa passa a
+  mostrá-lo em uso, `Evento::ModeloEmUso`); o esforço responde sucesso e o `get_settings` diz o
+  nível novo (`null` volta ao automático). A troca só vai depois de 0,6 s parada
+  (`Motor::acertar_turno_depois`): o Shift+Tab passa pelos modos do caminho, e nenhum deles (o
+  "Sem perguntar" entre o Automático e o Manual, por exemplo) pode valer no turno nem por um
+  instante. Para o "Sem perguntar" poder entrar no meio de um turno, todo turno abre com
+  `--allow-dangerously-skip-permissions` (sem ela o pedido volta `bypass_not_launched`), menos
+  com o Vitral rodando como root, em que o Claude Code nem abre com a opção. O turno com
+  Ultrathink ou Ultracode fica com o esforço dele até o fim. Com a entrada já fechada, no Codex,
+  ou se o Claude Code recusar o pedido, nada aparece na tela: a escolha fica gravada na conversa
+  e vale no turno seguinte, como sempre valeu.
+- **Sinal de vida e raciocínio.** Enquanto uma ferramenta roda, o Claude Code manda a cada 30 s
+  um `tool_progress` com `heartbeat` (medido no 2.1.328 com um comando de 75 s): ele conta como
+  sinal de vida (`Evento::Vivo`), e o "sem sinal há N min" da linha de estado (`Motor::silencio`,
+  10 minutos calado) só aparece quando o processo parou mesmo de falar, não num build longo. O
+  texto do raciocínio só vem na saída com `--thinking-display summarized` (fora do `--help`; sem
+  ela o bloco chega vazio no 2.1.328): o Vitral passa a opção a partir do Claude Code 2.1.323
+  (`VERSAO_RACIOCINIO_RESUMIDO`, a mais antiga em que foi conferida; num que não a conhecesse
+  ela derrubaria o turno), e o "Pensou por…" da conversa abre com o resumo.
 - **Esforço automático.** No Auto, o seletor diz o nível que vale: o Vitral pergunta ao Claude
   Code (`get_settings`, o `applied.effort`), uma vez por conta e modelo, em segundo plano
   (`claude::atualizar_esforco_padrao`); no Codex vem do catálogo (`default_reasoning_level`).
@@ -270,7 +340,7 @@ componentes do GPUI Kit.
   mensagens automáticas seguidas entre dois chats sem você no meio, a próxima fica guardada e os dois
   avisam "muitas mensagens seguidas entre X e Y; esperando você"; escrever para um dos dois zera. O
   servidor MCP (`src/mcp.rs`) só tem essas três ferramentas e a `permissao`, a do cartão de pedido
-  de permissão (`--permission-prompt-tool mcp__vitral__permissao`).
+  de permissão (`--permission-prompt-tool mcp__vitral__permissao`, em todos os modos).
 - **Enquanto você esteve fora.** Ao voltar à janela depois de 15 min fora (**Resumo ao voltar
   depois de**), ou ao abrir o Vitral, o topo da lista mostra o que terminou, o que precisa de você e
   o que falhou ou parou desde que você saiu, cada linha abrindo o chat (Ctrl+clique, ao lado), com
@@ -324,7 +394,8 @@ componentes do GPUI Kit.
   cada pasta continua lá, como a 0.2.0 o deixou.
 - **Onde fica cada coisa.** Os dados em `~/.local/share/vitral`: `estado.json` (com `.anterior` e,
   vindo de uma versão de antes, `estado.versao-2.json`), `chats/<id>.json`, `avulsos/<chat>/` (as
-  pastas dos chats Sem pasta), `exportadas/`, `anexos/`, `migracao.json` e o `formato` dos dados; ao
+  pastas dos chats Sem pasta), `exportadas/`, `anexos/`, `imagens/<chat>/` (as imagens que as
+  ferramentas devolveram, ver **Ferramentas**), `migracao.json` e o `formato` dos dados; ao
   lado deles, em `app/`, o app instalado pelo atualizador (as versões e os links `atual` e
   `anterior`). As preferências em `~/.config/vitral` (`config.json`, `interface.json`, as contas,
   `atualizacoes.json`; o `recentes.json` antigo, que só a migração lê) e o prompt de cada turno em
@@ -490,7 +561,8 @@ texto escrito, "Shift Enter" quebra a linha (na caixa estreita, só a direita). 
 trabalhando, ela diz o que ele faz (ver **Faixa do turno**, abaixo). As mensagens, a fila, a faixa
 do turno e a caixa vão até a mesma borda em todos os painéis: os anéis de uso flutuam no canto,
 num disco opaco, e nada guarda folga para eles. Vazia, a caixa diz "Mensagem para este chat…" no chat
-com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. Na caixa estreita, em que os
+com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo, também no turno que está
+rodando (ver **Modo, modelo e esforço no turno que roda**). Na caixa estreita, em que os
 chips são só ícones, trocar o modo pelo Shift+Tab ou escolher um modelo mostra um aviso curto
 ("Modo: Manual", "Modelo: Claude Fable 5.2", `avisar_na_estreita`). O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
@@ -663,7 +735,19 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   "Só com o menu “/” da caixa à vista"): a lista é montada de uma foto do momento
   (`paleta::Momento`). O Esc devolve o foco à caixa. Um teste garante que toda linha com rótulo
   da tabela de atalhos está na paleta; atalho novo entra sozinho, e comando novo de menu entra em
-  `Direto::TODOS`.
+  `Direto::TODOS`. **Com algo escrito**, a paleta acha também as conversas pelo título (todas menos a do
+  painel ativo, com a pasta embaixo; o Enter a abre no painel ativo) e os arquivos da pasta do
+  chat ativo pelo nome (o Enter abre à direita), em duas seções depois dos comandos, **Ir para a
+  conversa** e **Abrir arquivo**, com até 6 linhas cada (`grupos_com_achados`); sem nada
+  escrito, só os comandos, como antes.
+- **Abrir arquivo pelo nome (Ctrl+P)** (`paleta::abrir_arquivo_pelo_nome`; também na paleta). A
+  lista dos arquivos da pasta do chat do painel ativo, na mesma lista de escolha do "@"
+  (`seletor_arquivos::grupos_de_arquivos`: o nome em cima, a pasta embaixo, o nome batendo antes
+  da pasta e o mais curto antes), e o Enter abre o arquivo no painel da direita. A lista é a que
+  a aba Arquivos e o "@" já leram (`cache_arquivos`), então abre na hora; na primeira vez da
+  pasta, é lida em segundo plano ("Lendo os arquivos…"). A busca de arquivo, aqui, no "@" e no
+  Mencionar, não liga para acento nem para caixa ("relatorio" acha "relatório.md"), com a peça de
+  `acentos.rs`. Sem conversa no painel ativo, um aviso pede uma.
 - **Mensagens já enviadas (Ctrl+R).** A lista das suas mensagens de todos os chats (os
   `Item::Usuario` que o motor tem na memória; o histórico de uma conversa trazida do Claude Code
   fica de fora), na paleta de escolha, com a busca sem acento e por palavras de `acentos.rs`.
@@ -704,7 +788,23 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   sai do Planejar e volta ao modo de antes (sem modo anterior, o padrão da pasta; se também for
   Planejar, Aceitar edições); a seta ao lado aprova em outro modo (**Aprovar e aceitar edições** ou
   **Aprovar e perguntar antes**). O campo embaixo leva o que mudar: Enter (ou
-  **Enviar mudanças**) devolve o plano com o comentário.
+  **Enviar mudanças**) devolve o plano com o comentário. Respondido, o plano **continua na
+  conversa**, no ponto em que foi proposto: um cartão recolhido com o que você respondeu
+  ("Plano aprovado", com o visto verde, ou "Plano recusado") e o título do plano, que abre o
+  texto inteiro em markdown, com o Copiar, e, no recusado, o "Você pediu: …" com o comentário
+  (`Janela::plano_respondido`, `mensagens::plano_na_conversa`). O cartão fica à vista com o
+  turno recolhido em "Trabalhou…", parte a trilha das chamadas e o Ctrl+F acha no texto dele; se
+  o turno parou antes da resposta, diz "Plano proposto". Enquanto o pedido espera, quem aparece é
+  só o pedido. Medido no Claude Code 2.1.328 (23/11/2026, Haiku em modo `plan`): a chamada
+  `ExitPlanMode` vem **vazia** na saída; o plano só vem no pedido de permissão (`input.plan`,
+  com o `planFilePath` e o `tool_use_id` da chamada) e, aprovado, no resultado ("User has
+  approved your plan…" e, depois de "## Approved Plan:", o plano). O motor guarda o texto do
+  pedido no `detalhe` da chamada (`motor::guardar_plano`, até `claude::MAX_PLANO`, 60 mil
+  caracteres; como o pedido vem pelo MCP e a chamada pela saída, o que chegar primeiro espera o
+  outro) e, na falta dele, tira do resultado aprovado (`claude::plano_do_resultado`), que é
+  também de onde sai o plano da conversa trazida do Claude Code. A chamada sem o texto (as
+  conversas de antes disto, o plano recusado de uma conversa trazida) segue como linha da
+  trilha, "Propôs um plano". No modo foco, que tira as ferramentas, o cartão também sai.
 - **Pedidos de permissão** num cartão de moldura dupla (`cartao_de_pedido`, em
   `src/ui/mensagens.rs`; `moldura_dupla`, em `src/ui/componentes/controles.rs`): por fora, a
   moldura de canto 20; dentro, com 4 de folga, o cartão opaco. No pedido aberto que espera você, a
@@ -716,7 +816,9 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   com "$" na frente, um mini-diff no Edit e as primeiras linhas no Write; o motivo (a descrição do
   comando, o caminho) vai embaixo. A caixa do comando mostra umas 11 linhas e rola: com mais que
   isso (ou mais de 900 caracteres), o cartão avisa "Comando comprido: role a caixa para ler tudo
-  antes de permitir.". No rodapé, **Negar e explicar…** (o ícone; o texto vai ao Claude),
+  antes de permitir.". Escrever na caixa de mensagem e dar Enter nega o pedido e manda o texto
+  ao Claude (ver **Responder a um pedido de permissão escrevendo**). No rodapé, **Negar e
+  explicar…** (o ícone; o texto vai ao Claude),
   **Negar** e **Permitir**, e à esquerda a caixa de marcar **Não perguntar de novo: edições nesta
   conversa** (ou "este comando", ou o nome da ferramenta): marcada, o Permitir grava a regra, que
   vale já no turno em andamento (`permitir_sempre`); desmarcada, permite só esta vez. Com um
@@ -730,6 +832,64 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
   no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
   perigoso, o segurar).
+- **O que um hook seu manda perguntar.** Um hook `PreToolUse` do Claude Code pode devolver
+  `permissionDecision: "ask"` (a trava de um deploy, por exemplo): a chamada vira o mesmo cartão,
+  em **todos os modos, até em Sem perguntar**, com uma linha a mais embaixo do comando, com o
+  escudo em âmbar: "Um hook pediu a sua confirmação: <o motivo que o hook deu>", inteira e com
+  quebra de linha (até 600 caracteres). Esse cartão não tem a caixa **Não perguntar de novo**, e
+  uma regra já gravada na conversa não vale para ele: quem pôs o hook quer ser perguntado toda
+  vez. O mesmo cartão (sem a linha) aparece para uma regra `ask` das configurações do Claude Code.
+  Como funciona, medido no Claude Code 2.1.328 em 23/11/2026 com um hook de teste: com o "ask",
+  ele chama a ferramenta do `--permission-prompt-tool` em qualquer `--permission-mode`, mas só
+  com `tool_name`, `input` e `tool_use_id`; sem essa ferramenta ele recusa a chamada e devolve o
+  motivo do hook ao modelo como erro. Era o caso do Sem perguntar, que abria sem ela: o cartão
+  nunca aparecia e o agente insistia. Em `bypassPermissions` só chega à ferramenta o que o
+  próprio usuário mandou perguntar (hook ou regra `ask`): gravar em `.git`, `.claude`, `.vscode`
+  ou fora da pasta e comandos com `$(...)` passam direto, como antes. O motivo vem por outro
+  caminho, o `hook_response` da saída (`--include-hook-events`), que não traz o id da chamada,
+  só o nome da ferramenta, e sai logo antes do pedido: o `claude::interpretar` o vira
+  `Evento::HookPediu`, o motor guarda (`src/motor/pedidos_de_hook.rs`) e o pedido seguinte da
+  mesma ferramenta, no mesmo chat, o leva. Sem o id, o par é pela ordem: duas chamadas da mesma
+  ferramenta ao mesmo tempo, com motivos diferentes, podem sair com o motivo trocado; o motivo que
+  ninguém veio buscar (outro hook negou, o turno parou) vence em 60 s e some quando o processo
+  sai. A opção dos eventos só vai a partir do Claude Code 2.1.323 (`VERSAO_EVENTOS_DE_HOOK`, a
+  mais antiga em que foi conferida; num que não a conhecesse ela derrubaria o turno): abaixo
+  disso o cartão aparece como um pedido comum, sem a linha do hook e com a caixa (no turno que
+  começa antes de a versão ser lida, vale a do link do instalador nativo,
+  `claude::versao_pelo_link`). O `--permission-prompt-tool stdio` traria o motivo no próprio pedido (`decision_reason`,
+  `decision_reason_type`), mas a resposta teria de ir pela entrada do processo, que o Vitral fecha
+  enquanto os agentes em segundo plano ainda trabalham.
+- **Pergunta com opções (AskUserQuestion).** Quando o agente pergunta algo com alternativas, a
+  pergunta aparece num cartão dos pedidos (`Janela::cartao_pergunta`, em `src/ui/pergunta.rs`),
+  na moldura dupla: cada pergunta com o cabeçalho curto em mono, o texto e as opções para clicar,
+  uma por linha, com o marcador redondo (escolha única) ou quadrado ("Dá para marcar mais de
+  uma.", o `multiSelect`), o rótulo e a descrição embaixo; por último a **Outra…**, que abre um
+  campo de texto livre. No rodapé, **Não responder** e **Enviar**, que só liga com todas as
+  perguntas respondidas (o Enter no campo da "Outra…" também envia; com várias perguntas, o
+  rodapé diz "1 de 2 respondidas", e as perguntas rolam dentro do cartão quando falta altura).
+  O **Não responder** devolve a pergunta sem resposta (o modelo lê que ninguém respondeu), sem
+  marcar a chamada como falha. Escrever na caixa de mensagem e dar Enter responde sem escolher
+  opção: o texto vale como a "Outra…" de cada pergunta (`motor::respostas_escritas`; a dica do
+  Enviar diz "Responde à pergunta com isto, sem escolher opção"). No sino, no aviso do
+  canto e na lista ela aparece como "Pergunta · <texto>", com **Ver pergunta**, e nunca tem
+  "Não perguntar de novo" (`modelo::regra_de_permissao`). Respondida, fica na trilha como
+  "Perguntou <a primeira pergunta>", que abre as perguntas, as opções e a resposta. Medido no
+  Claude Code 2.1.328 em 23/11/2026 (Haiku, numa pasta em /tmp): em `-p`, a AskUserQuestion (e
+  também `EnterPlanMode` e `ExitPlanMode`) só entra na lista de ferramentas do `init` **com o
+  `--permission-prompt-tool`**; sem ele (ou com `--permission-prompts none`) ela some, e o
+  `--permission-prompts host` sozinho não a traz. Era por isso que as sessões abertas pelo
+  Vitral em "Sem perguntar" nunca a chamavam: até o commit do "ask" de hook, esse modo abria sem
+  a ferramenta de permissão. Agora ela existe em todos os modos, e o pedido chega à
+  `mcp__vitral__permissao` até em `bypassPermissions`, com `tool_name`, `input` (as `questions`:
+  `question`, `header`, `options` com `label` e `description`, `multiSelect`) e `tool_use_id`. A
+  resposta volta pelo mesmo caminho da permissão, como `allow` com o `updatedInput` igual à
+  entrada mais `answers`, um objeto com o **texto inteiro da pergunta** como chave e a resposta
+  como valor: o rótulo da opção, os rótulos separados por ", " quando são várias, ou o texto
+  livre (`motor::resposta_da_pergunta`, `Motor::responder_pergunta`; `pergunta::respostas_de`).
+  O modelo recebe "Your questions have been answered: "pergunta"="resposta"…". Com o
+  `updatedInput` sem `answers` (era o Permitir do cartão genérico) ele recebe "The user did not
+  answer the questions."; só com as `answers`, sem as `questions`, o Claude Code recusa o
+  `updatedInput` por não bater com o esquema; negado, a mensagem volta como erro da chamada.
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
@@ -750,6 +910,36 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   dela; mais de uma, numa linha só (`pilha_de_imagens`): a pilha de até 4 miniaturas quadradas de
   22, sobrepostas como avatares, e "9 imagens", com os nomes na dica (até 10); o clique abre o
   visor na primeira, e as setas passam pelas outras. Aberto, cada chamada mostra a pílula dela.
+  **Imagem que a ferramenta devolve** (`src/imagens_recebidas.rs`; a ideia veio do Paseo). O
+  print de um MCP de navegador (chrome-devtools, playwright), a imagem gerada e o Read de uma
+  imagem chegam em base64 dentro do `tool_result`; a conversa mostrava só "(image/png)". Agora o
+  leitor separa o resultado em texto e imagens (`partes_do_resultado`, que lê o bloco da API do
+  Claude, `source.data`, e o do MCP, `data` e `mimeType`), as imagens saem num evento à parte
+  (`Evento::ImagensDoResultado`, logo depois do `ResultadoFerramenta`) e o motor as grava em
+  `~/.local/share/vitral/imagens/<chat>/imagem-<hash>.<ext>` (`guardar_na_chamada`): a
+  `Item::Ferramenta` guarda só os caminhos (`imagens`), e o base64 nunca vai para o
+  `chats/<id>.json` nem para o `estado.json`. O nome é o começo do SHA-256 do conteúdo, então a
+  mesma imagem de novo não grava outro arquivo; a extensão segue a assinatura dos bytes (PNG,
+  JPEG, GIF, WebP), e o que a conversa não sabe mostrar continua como a marca no texto
+  ("(image/svg+xml)"). A pasta do chat é só do dono (0700, os arquivos 0600). A chamada mostra a
+  miniatura de cada imagem (`imagens::da_chamada`; mais de uma, lado a lado), que entra na pilha
+  do grupo recolhido e na fila do visor junto com as anexadas, sempre como miniatura que abre no
+  visor, nunca como imagem grande no meio do texto (dono, 17/11/2026). No Read de uma imagem
+  vale a do disco, inteira, enquanto ela está lá; apagada (um print em /tmp), fica a guardada,
+  que é a que o modelo viu. **Tetos e limpeza:** 10 MB por imagem (`TETO_POR_IMAGEM`; a maior não
+  é guardada e o resultado diz "passa do teto de 10 MB e não foi guardada"), 100 MB por chat
+  (`TETO_POR_CHAT`; passou, saem as mais antigas daquela pasta, e a miniatura delas some) e 1 GB
+  de todas as conversas juntas (`TETO_TOTAL`, conferido ao abrir o Vitral, tirando as mais
+  antigas de qualquer chat). O chat que sai do Vitral leva a pasta dele (`Dados::apagar_chat`),
+  e ao abrir saem as pastas de chats que não estão no estado nem têm mais o `chats/<id>.json`
+  (`varrer`). As conversas importadas do Claude Code e as de antes desta versão não têm as
+  imagens (o importador lê só o texto do resultado). **No Codex** (conferido no app-server do
+  0.169.0 com um turno de verdade, 23/11/2026): o `view_image` não devolve base64, e sim o item
+  `imageView` com o caminho do arquivo, que vira a leitura dele ("Leu a.png", com a miniatura do
+  disco); o resultado de uma ferramenta MCP (`mcpToolCall.result.content`) traz os blocos do
+  MCP, e a imagem deles é guardada como a do Claude (antes ia para a conversa o JSON inteiro do
+  resultado, com o começo do base64); e a imagem gerada (`imageGeneration`, só pelo schema, sem
+  turno de verdade) aponta para o `savedPath` ou, sem ele, é guardada a partir do `result`.
   **Turno pronto.** Quando o turno termina, tudo o que veio antes da resposta final recolhe numa
   linha só, "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs" (o nome dos
   arquivos editados até dois; acima disso, a contagem), com a resposta logo embaixo; o clique na
@@ -1087,7 +1277,23 @@ caminho
 (`[a janela](src/ui/mod.rs#L120)`) e, no texto corrido, a palavra com barra e extensão. O clique
 abre o arquivo aqui, rolado até a linha, que fica marcada; uma imagem abre no visor. O caminho
 relativo parte da pasta do chat. Só abre o que está numa pasta que o Vitral conhece (a de algum
-chat); o resto avisa e fica para o VS Code.
+chat); o resto avisa e fica para o VS Code. As linhas vêm de `arquivo:12`, `arquivo:12:5` (a
+coluna fica de fora), `arquivo:12-20`, `arquivo#L10` e `arquivo#L10-L20`: com duas, o arquivo abre
+com elas marcadas, como a menção de um trecho (`vitral:arquivo/10-20/<caminho>`). O
+`file:///caminho` de um arquivo que existe também vira link (o `%20` do endereço é desfeito). O
+caminho que não existe como foi escrito é procurado pelo fim dele entre os arquivos da pasta do
+chat (a lista do "@", lida em segundo plano quando faz falta): `mensagens.rs:120` abre o
+`src/ui/mensagens.rs` se só um arquivo termina assim; com dois (`mod.rs`), fica como texto
+(`Ligador` e `pelo_fim`). **Na saída de um comando** (a caixa de `componentes/codigo.rs`, no Bash e
+no resultado das outras ferramentas), `src/x.rs:120:5` (cargo, vitest, go), `src/x.ts(12,5)` (tsc)
+e `"x.py", line 12` (Python) abrem o arquivo na linha, e o ponteiro parado no link mostra o
+caminho inteiro; sem a linha, só o caminho com barra e extensão (o `git status`). Só as últimas 40
+linhas da saída são conferidas (as que a caixa mostra fechada), e a resposta fica guardada por 5 s
+(`links_da_saida`, com teste). **O comando de barra citado** em código em linha (`/compact`), quando
+está na lista de comandos do chat (a do menu "/"), vira link (`vitral:comando/<chat>/<nome>`): o
+clique põe o comando na caixa do painel em que a conversa está, com o rascunho que estava lá como
+argumento, e quem envia é você. No texto da resposta o kit não tem como mostrar uma dica ao parar o ponteiro num link: a
+dica com o caminho inteiro só existe na saída de comando.
 
 **Este chat** (`src/ui/este_chat.rs`) abre com a seção **Mudanças**: os arquivos que o chat editou
 ou criou, separados em **Neste turno** (desde a sua última mensagem) e **Antes**, cada um com o
@@ -1118,6 +1324,12 @@ worktree"), lido quando a dica aparece.
   poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
   repositório que os arquivos não contam (o formato reftable).
 - Não há aviso quando a pasta troca de ramo (dono, 18/11/2026: nada de avisos novos).
+- **Ignorar espaço em branco.** Com o diff de "Na pasta" aberto, o **…** do arquivo tem
+  **Ignorar espaço em branco** (marcado quando ligado): o diff é refeito com o `-w` do git
+  (`git::diff_do_arquivo`), e o que só mudou de recuo ou de espaço no fim da linha sai. A faixa
+  diz "sem espaço em branco" (um funil, com a frase na dica, quando ela não cabe) e, se não
+  sobrou nada, "Só mudou espaço em branco". Começa
+  desligado e vale até fechar o Vitral (`Janela::diff_sem_espaco`).
 
 **Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
 mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas
@@ -1440,7 +1652,7 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   caminho até o arquivo aberto), com o caminho dela em cima e o ↻ para reler. Com busca, uma lista
   plana sem limite, com o trecho achado em destaque e a pasta cortada no meio. Clicar abre no painel
   da direita: a aba com o nome e o ícone do tipo, e uma barra com a pasta, o número de linhas e a
-  linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, mostrar na pasta).
+  linguagem, **Mencionar**, **VS Code** e o **…** (copiar o conteúdo ou o caminho, abrir fora, mostrar na pasta).
   O **cabeçalho do arquivo** (`cabecalho_do_arquivo`) tem o ícone e o nome, as linhas e a
   linguagem ("59 linhas · JavaScript"), a pasta em tom tênue cortada no começo e, à direita, as
   ações. Nada passa por baixo de nada: a conta (`o_que_cabe`) é pela largura do painel e pelo
@@ -1453,19 +1665,119 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   escolhe a linha (o segundo a desfaz) e Shift+clique estende a escolha; as escolhidas ficam em
   azul, e o cabeçalho diz quais são ("linhas 12 a 18"), com o × que desfaz. Aberto pela edição
   (ver **Ver a edição**, em Ferramentas), o arquivo ganha a faixa da edição embaixo do cabeçalho:
-  "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra (dão a volta) e o ×
-  que volta ao arquivo sem as marcas. As linhas que entraram ficam com o fundo verde, a faixa
+  "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra e o ×
+  que volta ao arquivo sem as marcas. **Rever o turno em sequência:** aberto pelas Mudanças de um
+  chat (ou por uma edição da conversa) com mais de um arquivo na lista, a faixa diz também
+  "arquivo 2 de 8" ("2/8" quando a frase não cabe na faixa, como no painel na largura mínima com
+  os anéis de uso no canto; a frase vai na dica), e a seta, na última mudança, passa ao arquivo
+  seguinte da lista em que ele está ("Neste turno" ou "Antes"), na ordem dela; a de cima, na
+  primeira mudança, volta ao arquivo anterior, na última mudança dele. Nas pontas da lista, dá a
+  volta. A dica da seta diz se o próximo passo é outra mudança ou outro arquivo
+  (`passo_da_revisao` e `edicao::lugar_na_revisao`, com teste). Fora de uma lista (o diff de "Na
+  pasta") ou com um arquivo só, as setas dão a volta dentro do arquivo, como antes; com uma
+  mudança só e sem outro arquivo, a faixa não tem setas. As linhas que entraram ficam com o fundo verde, a faixa
   verde na borda e o "+"; as que saíram aparecem entre elas, sem número, em vermelho, com o "−"
   (o markdown sai em linhas nesse modo). Cada trecho da edição é achado no arquivo de agora pelo
   lado novo (o contexto e o que entrou; no diff do Codex, perto da linha que ele diz); o que não
   se acha mais (o arquivo mudou depois) aparece solto no fim, com uma nota. O painel abre rolado
   até a primeira mudança. O registro antigo, sem o diff, abre o arquivo como está, com o aviso
   "Este registro não guardou a edição" na faixa.
-  O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. Arquivo grande
-  (mais de 400 KB), binário, vazio ou que sumiu dá um aviso no lugar, com **Abrir no VS Code** ou
-  **Fechar**. Na lista, no hover, **@** menciona o arquivo na conversa e **…** (ou o
+  **Editar no painel** (`src/ui/editor_arquivo.rs`). Um clique no texto do arquivo abre o editor
+  por cima da leitura, com o cursor na linha e na coluna do clique e a mesma rolagem; o número da
+  linha continua escolhendo linhas para mencionar. É o editor de código do kit (`EditorState`, com
+  a cor da sintaxe, o desfazer e o recuo que o arquivo usa: `recuo_do_texto`), sem quebra de linha,
+  como a leitura. O texto **se grava sozinho 800 ms depois da última tecla** (`Agenda`) e o
+  **Ctrl+S** grava na hora (contexto `Arquivo`). No cabeçalho, o lápis toma o lugar do símbolo do
+  arquivo, "editando" o das linhas e da linguagem, um ponto âmbar marca o que ainda não foi para
+  o disco (vermelho se a gravação falhou, com o erro na dica) e o × (ou o **Esc**) volta à
+  leitura, gravando o que falta. Abrir outro arquivo, fechar a aba, a Prévia do .md e fechar o
+  Vitral também gravam antes. O Ctrl+F continua o da barra do painel: ele grava, volta à leitura
+  e busca (o editor do kit não tem busca nem substituir aqui). Na edição do agente (a faixa
+  "Edição"), o clique numa linha do arquivo sai dela e abre o editor ali. Só entra no editor o
+  texto em UTF-8 de até 400 KB (`Sessao::abrir`): o arquivo em outra codificação avisa e fica só
+  para ler (gravar daqui trocaria as letras dele), a tabulação e o fim de linha do Windows voltam
+  ao disco como vieram, e o **arquivo vazio** tem o botão **Escrever nele**. O texto do editor
+  fica onde estava o da leitura (o painel compensa as margens do campo do kit, que não crescem
+  com o zoom); os números de linha ficam 10 px mais perto do texto. A calha dos números é pintada
+  por cima do texto que rola para o lado, e o tema do Vitral a tem transparente: o editor recebe
+  a cor opaca da superfície em que está (`gutter_background`, mudança marcada no kit de `vendor/`).
+  **Mudou no disco.** Com o editor aberto, o arquivo é conferido a cada segundo (a data e o
+  tamanho; o conteúdo só quando eles mudam: `Sessao::conferir`). Se o agente grava o arquivo e
+  você não tem nada por gravar, o editor passa a mostrar o texto novo, com o cursor e a rolagem
+  onde estavam. Com texto seu por gravar, aparece a faixa âmbar **"O arquivo mudou no disco."**,
+  e nada é gravado até você escolher: **Recarregar** fica com o do disco (o seu se perde) e
+  **Manter o meu** fica com o seu, que passa por cima na gravação seguinte (os 800 ms de sempre,
+  ou o Ctrl+S). A gravação também confere o disco antes de escrever, para o caso de o agente ter
+  gravado entre duas conferências. O **arquivo apagado** enquanto você edita mantém o texto no
+  editor, com a faixa "O arquivo foi apagado. O seu texto continua aqui." e o Manter o meu, que
+  cria o arquivo de novo. O conflito some sozinho se o disco fica igual ao que você escreveu. No
+  painel estreito os botões da faixa descem para a linha de baixo. Sair do editor com um conflito
+  sem resposta (ou com a gravação falhando) não grava nada: o que você escreveu vai para a área
+  de transferência, e o aviso "Texto não salvo" diz isso.
+  **Arquivo grande.** Acima de 400 KB o arquivo abre **só para ler**, até 5 MB
+  (`TETO_DE_LEITURA`), com a faixa discreta "Só leitura: arquivo grande (612 KB)" embaixo do
+  cabeçalho: em linhas, sem a cor da sintaxe (colorir alguns MB levaria dezenas de segundos), sem
+  a prévia do markdown e com a linha de mais de 2 mil letras cortada no desenho (o JSON
+  minificado). A escolha de linhas e o Ctrl+F continuam (a busca conta as linhas só com ASCII
+  sem dobrar o texto: `achados_na_linha`). Medido na bancada, no binário de depuração, com um log
+  de 5 MB e 99,8 mil linhas: um quadro de 0,5 s ao abrir, a rolagem sem custo e até 0,34 s por
+  tecla da busca; o binário de release é várias vezes mais rápido. Acima de 5 MB continua o aviso.
+  **Prévia | Fonte.** O .md e o .svg têm no cabeçalho o seletor **Prévia | Fonte** (o olho e as
+  chaves quando os rótulos não cabem): a Prévia é o markdown renderizado ou o SVG desenhado, e a
+  Fonte, o texto em linhas, que um clique edita. Outro arquivo abre na Prévia. Na prévia do .md,
+  o **frontmatter** YAML do alto vira uma tabelinha de chave e valor (o nome e a descrição de um
+  SKILL.md; `previa_markdown::frontmatter` lê as chaves do primeiro nível, o texto dobrado e o
+  literal, a lista e o mapa de dentro, e o que não é uma lista de chaves fica no texto), e os
+  **links para arquivos** abrem o arquivo no painel, na linha quando o link a traz
+  (`[o carrinho](../loja/carrinho.py#L18)`): o caminho relativo parte da pasta do próprio .md e,
+  se não existe ali, da pasta do chat (`previa_markdown::ligar_links`, que usa o mesmo ligador da
+  conversa). A prévia é montada uma vez por leitura do arquivo. O link da web abre no navegador; o
+  resto (`file://`, um comando de barra) não abre.
+  O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. O **SVG**
+  abre desenhado, como as outras imagens (o `img` do GPUI o desenha; `claude::imagem_de_ver`), e o
+  clique o leva ao visor, no tamanho que a tag `<svg>` diz (`imagens::medidas_svg`: o `width` e o
+  `height` ou o `viewBox`; o GPUI desenha o SVG no tamanho de origem, e esticado até a área ele
+  borrava) e sobre um cinza médio em vez do preto (`imagens::fundo_da_imagem`: o traço escuro sem
+  fundo de um ícone sumia no preto); na edição ele sai em linhas, e anexado segue como arquivo de texto (o
+  `tipo_imagem` continua sem ele: a API não aceita SVG como imagem). O **VS Code** do cabeçalho
+  abre na linha que está em vista (`code --goto arquivo:linha`, `sistema::argumentos_do_editor`):
+  a primeira das escolhidas, a da mudança à vista na edição ou a que o link da conversa marcou; a
+  dica do botão diz qual. Arquivo que não dá para mostrar tem um aviso no lugar, com a saída que
+  serve (`saidas_do_aviso`): o **binário** (PDF, planilha, zip; o aviso diz o tipo pela extensão)
+  tem o **Abrir fora**, que abre no aplicativo padrão do sistema (`sistema::abrir_fora`); o
+  **grande demais** (mais de 5 MB) tem **Abrir no VS Code** e **Abrir fora**; o que sumiu,
+  **Fechar**. O arquivo grande com um byte nulo no começo é binário, e não "grande demais" (antes
+  um PDF de 2 MB só oferecia o VS Code). O **…** do cabeçalho também tem o **Abrir fora**, para
+  qualquer arquivo (o .html no navegador, o .csv na planilha).
+  **Buscar no arquivo (Ctrl+F).** Um clique no painel do arquivo leva o foco para ele
+  (`foco_arquivo`, contexto `Arquivo` no keymap), e aí o Ctrl+F busca dentro do arquivo, e não na
+  conversa; com o arquivo na gaveta, por cima das conversas, o Ctrl+F já é dele. Também está no
+  **…** do cabeçalho (**Buscar no arquivo**) e na paleta. A barra flutua no alto do conteúdo, como
+  a da conversa: o campo, "3 de 12" ("3/12" no painel estreito; "nenhum achado" em âmbar), as
+  setas e o ×. O Enter e o F3 vão ao achado seguinte, o Shift com eles ao anterior, dando a volta,
+  e o Esc fecha (com a barra aberta, antes de recolher a gaveta ou parar o turno). A busca não
+  liga para acento nem para caixa (`acentos.rs`), marca todos os achados em âmbar (o atual, mais
+  forte) por cima das cores da sintaxe e rola até o atual, no meio da tela. A barra guarda o lugar
+  dos anéis de uso, e as primeiras linhas descem para não ficar atrás dela. Ela é pelas linhas:
+  com a barra aberta, o markdown e o SVG saem em linhas, e voltam a aparecer prontos ao fechar;
+  na edição, acha nas linhas do arquivo (não nas que saíram). O índice (`IndiceDoArquivo`: a
+  linha e a posição de cada achado) só é refeito quando o termo ou o arquivo mudam. Digitar com
+  o foco no painel continua escrevendo na caixa; abrir outro arquivo fecha a barra. Não rola
+  para o lado até um achado numa linha muito comprida. Na lista, no hover, **@** menciona o arquivo na conversa e **…** (ou o
   clique direito) abre no VS Code, copia o caminho ou mostra na pasta. A lista é relida a cada 20 s
   em segundo plano, sem travar a tela.
+  **Mostrar ignorados.** Ao lado do ↻, o olho (fechado por padrão; aberto e em destaque quando
+  ligado) põe na árvore o que o git deixa de fora, em tom tênue: é como aparecem `arquivo/`,
+  `dados/` e `tarefas/` (prints, exports), que o workspace mantém fora do git. Uma pasta ignorada
+  entra só com o nome, e o que há dentro é lido um nível por vez, quando ela é aberta na árvore
+  ("Lendo…" até chegar; "Pasta vazia" se não tem nada): `node_modules` e `target` nunca são
+  varridos sem pedir. A lista vem de `seletor_arquivos::listar_com_ignorados` (`git ls-files
+  --others --ignored --exclude-standard --directory`, descendo nos repositórios de dentro como a
+  lista normal; sem git, o que a varredura pula: as pastas ocultas e de dependências), com o
+  mesmo teto de 20 mil entradas somando tudo. As pastas abertas ficam em
+  `ArquivosLidos::ignoradas_abertas`, e a releitura de 20 s e o ↻ as releem também. A busca da
+  aba acha os ignorados que já estão na árvore; o "@", o Ctrl+P e os links continuam só com o que
+  o git acompanha. Vale até fechar o Vitral.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
@@ -1501,7 +1813,11 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   título selecionado e não salva vazio.
 - Notificação do sistema, só com a janela em segundo plano, quando um chat termina, quando um chat
   pede permissão ou quando um chat cai: com o ícone do Vitral, o título do chat e uma linha só
-  ("Precisa da sua permissão: Bash, $ cargo test", "Terminou: …", "Parou com erro: ..."). Clicar nela abre
+  ("Precisa da sua permissão: Bash, $ cargo test", "Terminou: …", "Parou com erro: ..."). O
+  "Terminou" leva o começo do que o agente disse, sem as marcas de markdown (título, lista,
+  negrito, crases, link, cerca de código) e com até 220 letras, cortado numa palavra
+  (`previa_da_resposta`, em `src/motor.rs`; antes ia a primeira linha crua, e o aviso saía
+  "Terminou: ## Resumo"); a linha do "Enquanto você esteve fora" sai da mesma prévia. Clicar nela abre
   a conversa no painel ativo e traz a janela para a frente (ou o GNOME avisa que o Vitral está
   pronto). Uma notificação nova do mesmo chat substitui a anterior em vez de empilhar. A permissão se
   responde dentro do app, nunca na notificação. O pedido de permissão e a queda com erro saem com
@@ -1683,9 +1999,45 @@ para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os seg
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
 bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
+três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); o `[ferramenta Print
+<LxA> <nome>]` encena o print de um MCP de navegador (a chamada
+`mcp__chrome-devtools__take_screenshot` e um `tool_result` com um bloco de texto e um PNG gerado
+na hora em base64; `Prints` devolve duas imagens no mesmo resultado) e o `[ferramenta Read
+<arquivo>]` de uma imagem que existe devolve só o bloco de imagem dela, como o Read de verdade (o
+roteiro é o `ferramentas/roteiros/imagens-de-ferramenta.txt`, que também confere com o `grep` que
+o base64 não foi para a conversa nem para o estado); com `[hook <Nome>
+<detalhe> | <motivo>]` encena uma chamada que um hook `PreToolUse` mandou perguntar, como o Claude
+Code 2.1.328: o `tool_use`, o `hook_response` com o motivo (só com `--include-hook-events`) e o
+pedido à `permissao` do Vitral, sem o motivo (sem o `--permission-prompt-tool` nos argumentos, a
+chamada volta recusada com o motivo como erro, sem perguntar a ninguém; para o motivo aparecer no
+cartão, a bancada precisa de `CLAUDE_FALSO_VERSAO=2.1.328`, porque o Vitral só pede os eventos de
+hook a partir do 2.1.323 e o padrão do claude de mentira é 2.1.300, a mesma versão que ele diz no
+`init`; o roteiro é o `ferramentas/roteiros/ask-de-hook.txt`); pela entrada, no meio do turno,
+responde como o 2.1.328 ao `set_permission_mode`, ao `set_model` e ao `apply_flag_settings` e
+termina a resposta com "no meio do turno: modo acceptEdits, …", para a bancada ver que a troca
+chegou; a mensagem que chega com uma ferramenta rodando fica na fila dele até ela voltar, o
+`cancel_async_message` a tira de lá e o `interrupt` responde com o `still_queued` e, se sobrou
+mensagem, abre outro turno com ela; a ferramenta que demora manda o `tool_progress` com
+`heartbeat` a cada 30 s (`CLAUDE_FALSO_BATIDA=<segundos>` encurta); e o texto do `Pensa` só vem
+com `--thinking-display summarized` nos argumentos, que o Vitral só passa a partir do 2.1.323
+(com o padrão 2.1.300 o bloco chega vazio, como no de verdade sem a opção; os roteiros são o
+`ferramentas/roteiros/responder-pedido.txt` e o `ferramentas/roteiros/troca-no-turno.txt`); com
+`[pergunta <Cabeçalho> | <pergunta> | <opção>: <descrição>; <opção>]` (e `[pergunta+ …]` para a
+que aceita várias) encena a AskUserQuestion como o 2.1.328, todas as perguntas da mensagem numa
+chamada só, e a resposta do turno termina com "respostas: …"; com `[plano <texto>]` (um `\n`
+escrito vira quebra de linha) encena o plano, com a chamada ExitPlanMode vazia, o plano no pedido
+de permissão e, aprovado, no resultado; com `[compacta <auto|manual> <tokens antes> | <segundos>]`
+encena uma compactação no meio do turno, e a mensagem "/compact" faz a manual e termina sem texto,
+como o de verdade (`CLAUDE_FALSO_COMPACTA=<segundos>`; o roteiro dos três é o
+`ferramentas/roteiros/pergunta-plano-compactacao.txt`); com `[responde <arquivo>]` a resposta do
+turno é o conteúdo desse arquivo da pasta do chat (markdown, arquivos e comandos citados) e com
+`[saida <arquivo>]` o resultado das ferramentas encenadas na mensagem é o conteúdo do arquivo (a
+saída de um build com erro); ao `generate_session_title` responde com o título do `[titulo <nome>]`
+da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras palavras) e, com o `persist` e um
+`CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
+tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
@@ -1925,11 +2277,13 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | Arquivo | O que faz |
 | --- | --- |
 | `src/motor.rs` | Os chats (criar com `novo_chat(pasta)`, a lista em `chats_da_lista`, renomear, fixar, arquivar, o que espera você), os turnos e a fila, contas, retomadas, Ultracode e agentes em segundo plano, os pedidos de permissão e a passagem de sessão |
+| `src/motor/pedidos_de_hook.rs` | O que os hooks `PreToolUse` do usuário mandaram perguntar: o motivo de cada um, do evento do hook até o pedido de permissão da chamada, e a regra de que esse pedido nunca passa pelo "Não perguntar de novo" |
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
 | `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
 | `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova <pasta>`) e a reexecução da tela de recuperação |
+| `src/imagens_recebidas.rs` | As imagens que uma ferramenta devolve no resultado: o bloco em base64 (o da API do Claude e o do MCP) vira `ImagemRecebida`, que o motor grava em `imagens/<chat>/` com o hash do conteúdo no nome (`guardar`, `guardar_na_chamada`); os tetos por imagem, por chat e de todas (`podar`), e a faxina de quando o Vitral abre (`varrer`) |
 | `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
@@ -1944,7 +2298,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão, o do plano que ficou na conversa e a linha de estado da caixa, `pergunta.rs` o cartão da pergunta com opções (AskUserQuestion) e as respostas dele, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição, a escolha de linhas e o Ctrl+F dentro do arquivo), `editor_arquivo.rs` (o editor do arquivo aberto: a conta com o disco, a gravação sozinha e o conflito quando o agente grava o mesmo arquivo), `previa_markdown.rs` (o frontmatter e os links da prévia de um .md), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@` e os ignorados da aba Arquivos), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

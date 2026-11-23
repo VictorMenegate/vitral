@@ -54,8 +54,10 @@ impl Dobrado {
 }
 
 /// O termo pronto para `faixas`: dobrado e sem os espaços das pontas. Vazio quer dizer sem busca.
+/// É o texto de `dobrar` sem o mapa de volta ao original: a lista de arquivos dobra milhares de
+/// caminhos a cada letra digitada.
 pub fn normalizar(termo: &str) -> String {
-    dobrar(termo.trim()).texto
+    termo.trim().chars().flat_map(|c| sem_acento(c).to_lowercase()).collect()
 }
 
 /// Onde `termo` (já normalizado) aparece em `texto`, em bytes de `texto`, sem se sobrepor.

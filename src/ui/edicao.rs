@@ -377,6 +377,19 @@ pub struct Edicao {
     pub entram: usize,
     pub saem: usize,
     pub sem_registro: bool,
+    pub origem: Origem,
+}
+
+/// De onde a edição que o painel mostra veio.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Origem {
+    #[default]
+    Avulsa,
+    /// Das chamadas de edição de um chat (o pedido do `AbrirEdicao`): com elas as setas acham o
+    /// arquivo na lista de Mudanças e passam ao seguinte.
+    Chat { chat: String, itens: Vec<usize>, caminho: Option<String> },
+    /// Do git da pasta ("Na pasta"), com ou sem as mudanças só de espaço em branco.
+    Git { sem_espaco: bool },
 }
 
 /// Abre no painel da direita o arquivo de uma ou mais chamadas de edição de um chat, já na edição:
@@ -388,6 +401,22 @@ pub struct AbrirEdicao {
     pub chat: String,
     pub itens: Vec<usize>,
     pub caminho: Option<String>,
+}
+
+/// Onde o arquivo de uma edição aberta está na lista de Mudanças de "Este chat": a lista em que
+/// ele aparece ("Neste turno" ou "Antes") e a posição nela, para as setas da edição passarem ao
+/// arquivo seguinte. O arquivo é o da chamada `itens[0]` (com o `caminho`, quando o pedido o diz).
+pub(super) fn lugar_na_revisao<'a>(
+    neste: &'a [super::mensagens::ArquivoMudado],
+    antes: &'a [super::mensagens::ArquivoMudado],
+    itens: &[usize],
+    caminho: Option<&str>,
+) -> Option<(&'a [super::mensagens::ArquivoMudado], usize)> {
+    let primeiro = itens.first()?;
+    [neste, antes].into_iter().find_map(|lista| {
+        let posicao = lista.iter().position(|a| a.itens.contains(primeiro) && caminho.is_none_or(|c| a.caminho == c))?;
+        Some((lista, posicao))
+    })
 }
 
 impl super::Janela {
@@ -424,7 +453,8 @@ impl super::Janela {
             (entram, saem) = gravados.iter().fold((0, 0), |(e, s), (e2, s2)| (e + e2, s + s2));
         }
         let sem_registro = trechos.is_empty();
-        self.edicao_pedida = Some(std::rc::Rc::new(Edicao { trechos, entram, saem, sem_registro }));
+        let origem = Origem::Chat { chat: pedido.chat.clone(), itens: pedido.itens.clone(), caminho: pedido.caminho.clone() };
+        self.edicao_pedida = Some(std::rc::Rc::new(Edicao { trechos, entram, saem, sem_registro, origem }));
         self.abrir_arquivo(raiz, relativo, window, cx);
     }
 }
@@ -544,5 +574,26 @@ mod testes {
         // Tabulação e branco no fim não atrapalham.
         let v = vista(&trechos("- x\n+ \tfoo  "), &["    foo"]);
         assert_eq!(v.perdidos, 0);
+    }
+
+    #[test]
+    fn o_arquivo_aberto_tem_lugar_na_lista_de_mudancas_do_turno() {
+        use crate::ui::mensagens::ArquivoMudado;
+        let mudado = |caminho: &str, itens: &[usize]| ArquivoMudado { caminho: caminho.into(), entram: 1, saem: 0, novo: false, itens: itens.to_vec() };
+        let neste = [mudado("src/a.rs", &[5, 9]), mudado("src/b.rs", &[7]), mudado("LEIA-ME.md", &[8])];
+        let antes = [mudado("src/velho.rs", &[2])];
+        // A linha de Mudanças abre com todas as chamadas do arquivo; a da trilha, com uma só.
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[5, 9], None).unwrap();
+        assert_eq!((lista.len(), posicao), (3, 0));
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[7], None).unwrap();
+        assert_eq!((lista.len(), posicao, lista[posicao].caminho.as_str()), (3, 1, "src/b.rs"));
+        // O que mudou antes deste turno anda na lista "Antes".
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[2], None).unwrap();
+        assert_eq!((lista.len(), posicao), (1, 0));
+        // Com o caminho no pedido, vale o arquivo dele; a chamada que não é de edição não tem lugar.
+        assert_eq!(lugar_na_revisao(&neste, &antes, &[9], Some("src/a.rs")).map(|(_, p)| p), Some(0));
+        assert_eq!(lugar_na_revisao(&neste, &antes, &[9], Some("src/outro.rs")).map(|(_, p)| p), None);
+        assert!(lugar_na_revisao(&neste, &antes, &[4], None).is_none());
+        assert!(lugar_na_revisao(&neste, &antes, &[], None).is_none());
     }
 }

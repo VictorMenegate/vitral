@@ -471,6 +471,48 @@ pub fn ler_sessao(arquivo: &Path) -> std::io::Result<Lida> {
     Ok(lida)
 }
 
+/// Os títulos que o Claude Code gravou numa sessão.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TitulosDaSessao {
+    /// O que o usuário deu (`/rename`: a linha `custom-title`).
+    pub proprio: Option<String>,
+    /// O que o Claude Code gerou (a linha `ai-title`).
+    pub gerado: Option<String>,
+}
+
+/// Quanto do fim do arquivo de uma sessão é lido atrás dos títulos dela.
+const FIM_DOS_TITULOS: u64 = 512 * 1024;
+
+/// Os títulos de uma sessão que pode estar em andamento, lidos só do fim do arquivo (uma sessão
+/// longa passa de 200 mil linhas): o Claude Code repete as linhas `ai-title` e `custom-title` a
+/// cada gravação, então as últimas estão sempre perto do fim, e a última de cada uma vale. Sem
+/// arquivo ou sem título, vazio. O título vem limpo, numa linha, com até 80 letras.
+pub fn titulos_da_sessao(arquivo: &Path) -> TitulosDaSessao {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut titulos = TitulosDaSessao::default();
+    let Ok(mut aberto) = fs::File::open(arquivo) else {
+        return titulos;
+    };
+    let tamanho = aberto.metadata().map_or(0, |m| m.len());
+    let mut fim = Vec::new();
+    if aberto.seek(SeekFrom::Start(tamanho.saturating_sub(FIM_DOS_TITULOS))).is_err() || aberto.take(FIM_DOS_TITULOS).read_to_end(&mut fim).is_err() {
+        return titulos;
+    }
+    // A linha cortada no começo da janela e a estragada não se leem como JSON: ficam de fora.
+    for linha in fim.split(|b| *b == b'\n').filter(|l| l.windows(7).any(|w| w == b"-title\"")) {
+        let Ok(linha) = serde_json::from_slice::<Linha>(linha) else {
+            continue;
+        };
+        let limpo = |t: &Option<String>| t.as_deref().map(|t| titulo_de(t, 80)).filter(|t| !t.is_empty());
+        match linha.tipo.as_str() {
+            "ai-title" => titulos.gerado = limpo(&linha.ai_title).or(titulos.gerado),
+            "custom-title" => titulos.proprio = limpo(&linha.custom_title).or(titulos.proprio),
+            _ => {}
+        }
+    }
+    titulos
+}
+
 /// O histórico de uma sessão como itens da conversa (fala do usuário, texto do assistente,
 /// ferramentas resumidas com o resultado cortado, comandos e interrupções como avisos), até `ate`
 /// bytes do arquivo. Guarda os `MAX_ITENS` mais novos; `cortados` diz quantos ficaram de fora.
@@ -518,9 +560,14 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
             "user" if !linha.is_meta => {
                 let u = do_usuario(&mensagem.content);
                 for (id, texto, erro) in u.resultados {
-                    if let Some(Item::Ferramenta { resultado, erro: e, .. }) =
+                    if let Some(Item::Ferramenta { nome, resultado, erro: e, detalhe, .. }) =
                         chamadas.get(&id).and_then(|&i| i.checked_sub(cortados)).and_then(|i| itens.get_mut(i))
                     {
+                        // O plano aprovado: desde o 2.1.328 a chamada vem sem ele, e o resultado o
+                        // traz (é o que o cartão "Plano aprovado" abre).
+                        if nome == "ExitPlanMode" && detalhe.is_none() && !erro {
+                            *detalhe = crate::claude::plano_do_resultado(&texto).and_then(crate::claude::plano_guardado);
+                        }
                         *resultado = Some(crate::git::inicio_do_texto(&texto, MAX_RESULTADO));
                         *e = erro;
                     }
@@ -592,6 +639,7 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                                 arquivo,
                                 sub: None,
                                 mudanca: None,
+                                imagens: Vec::new(),
                             });
                             resposta = None;
                         }
@@ -1007,6 +1055,42 @@ mod testes {
         .to_string()
     }
 
+    /// Os títulos de uma sessão em andamento, lidos do fim do arquivo: o Claude Code repete as
+    /// linhas `ai-title` e `custom-title` a cada gravação, e a última vale.
+    #[test]
+    fn os_titulos_da_sessao_saem_do_fim_do_arquivo() {
+        let raiz = pasta_de_teste("titulos");
+        let arquivo = raiz.join("s.jsonl");
+        let fala = usuario(&raiz, "2026-11-23T16:25:36.368Z", serde_json::json!("olha esse erro aqui"));
+        let gerado = |t: &str| serde_json::json!({"type": "ai-title", "aiTitle": t, "sessionId": "x"}).to_string();
+        let proprio = |t: &str| serde_json::json!({"type": "custom-title", "customTitle": t, "sessionId": "x"}).to_string();
+        // Sem arquivo e sem título: nada.
+        assert_eq!(titulos_da_sessao(&arquivo), TitulosDaSessao::default());
+        fs::write(&arquivo, format!("{fala}\n")).unwrap();
+        assert_eq!(titulos_da_sessao(&arquivo), TitulosDaSessao::default());
+        // O `ai-title` (repetido a cada gravação): o último, limpo e numa linha só.
+        fs::write(&arquivo, [fala.clone(), gerado("Erro antigo"), fala.clone(), gerado("  Erro na função\nsoma "), fala.clone()].join("\n")).unwrap();
+        assert_eq!(titulos_da_sessao(&arquivo), TitulosDaSessao { proprio: None, gerado: Some("Erro na função soma".into()) });
+        // O `/rename` do Claude Code grava o `custom-title`: os dois vêm, cada um no seu campo.
+        fs::write(&arquivo, [fala.clone(), gerado("Erro na função soma"), proprio("Soma"), fala.clone()].join("\n")).unwrap();
+        assert_eq!(
+            titulos_da_sessao(&arquivo),
+            TitulosDaSessao { proprio: Some("Soma".into()), gerado: Some("Erro na função soma".into()) }
+        );
+        // Título vazio não conta; a linha estragada e a de outro tipo que cita "ai-title" também não.
+        fs::write(&arquivo, [gerado("  "), "{\"type\":\"ai-title\",\"aiTitle\":estragada".to_string(), usuario(&raiz, "2026-11-23T16:25:36.368Z", serde_json::json!("o que é \"ai-title\"?"))].join("\n")).unwrap();
+        assert_eq!(titulos_da_sessao(&arquivo), TitulosDaSessao::default());
+        // Sessão grande: só o fim é lido, e a linha cortada no começo da janela não atrapalha. O
+        // título que ficou para trás (antes de 2 MB de conversa) não é achado; o do fim, sim.
+        let enchimento = usuario(&raiz, "2026-11-23T16:25:36.368Z", serde_json::json!("x".repeat(4096)));
+        let muito: String = std::iter::repeat_n(format!("{enchimento}\n"), 512).collect();
+        fs::write(&arquivo, format!("{}\n{muito}", gerado("Ficou para trás"))).unwrap();
+        assert_eq!(titulos_da_sessao(&arquivo), TitulosDaSessao::default());
+        fs::write(&arquivo, format!("{}\n{muito}{}\n{fala}\n", gerado("Ficou para trás"), gerado("Erro na função soma"))).unwrap();
+        assert_eq!(titulos_da_sessao(&arquivo).gerado.as_deref(), Some("Erro na função soma"));
+        let _ = fs::remove_dir_all(&raiz);
+    }
+
     /// A pasta da conversa é a da pasta de projeto onde o arquivo mora, mesmo que ela tenha
     /// começado numa pasta que não existe mais e andado por outras (o chat "WMS" do dono nasceu
     /// em `~/Documents/Central…`, que mudou de lugar, e ficava de fora por "pasta sumiu").
@@ -1354,6 +1438,34 @@ mod testes {
         assert_eq!(ampliado.itens.len(), MAX_ITENS + 11);
         assert!(matches!(ampliado.itens.first(), Some(Item::Usuario { texto, .. }) if texto == "m0"));
         let _ = fs::remove_dir_all(&raiz);
+    }
+
+    /// O plano aprovado na conversa trazida: a chamada vem sem o plano (2.1.328) e ele sai do
+    /// resultado, para o cartão "Plano aprovado" ter o que abrir. O de antes, com o plano na
+    /// chamada, fica com ele mesmo recusado.
+    #[test]
+    fn o_plano_da_conversa_trazida_fica_na_chamada() {
+        let cwd = PathBuf::from("/tmp/casa");
+        let quando = "2026-11-23T10:00:00.000Z";
+        let resultado = "User has approved your plan. You can now start coding.\n\n## Approved Plan:\n# Trocar o cupom\n\n1. Ler.\n2. Aplicar.\n";
+        let linhas = [
+            usuario(&cwd, quando, serde_json::json!("planeja a troca do cupom")),
+            assistente(&cwd, quando, "a", serde_json::json!([{"type": "tool_use", "id": "p1", "name": "ExitPlanMode", "input": {}}])),
+            usuario(&cwd, quando, serde_json::json!([{"type": "tool_result", "tool_use_id": "p1", "content": resultado}])),
+            assistente(&cwd, quando, "b", serde_json::json!([{"type": "tool_use", "id": "p2", "name": "ExitPlanMode", "input": {"plan": "# Antigo\n\n1. Um."}}])),
+            usuario(&cwd, quando, serde_json::json!([{"type": "tool_result", "tool_use_id": "p2", "content": "O usuário pediu mudanças no plano: menos", "is_error": true}])),
+        ]
+        .join("\n");
+        let h = historico_limitado_de(linhas.as_bytes(), MAX_ITENS);
+        let planos: Vec<(Option<&str>, bool)> = h
+            .itens
+            .iter()
+            .filter_map(|i| match i {
+                Item::Ferramenta { nome, detalhe, erro, .. } if nome == "ExitPlanMode" => Some((detalhe.as_deref(), *erro)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(planos, [(Some("# Trocar o cupom\n\n1. Ler.\n2. Aplicar."), false), (Some("# Antigo\n\n1. Um."), true)]);
     }
 
     #[test]

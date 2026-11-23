@@ -21,6 +21,7 @@ mod copias;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod editor_arquivo;
 mod enviadas;
 mod falas;
 mod fila;
@@ -39,6 +40,8 @@ mod painel_contas;
 mod fechar;
 mod painel_arquivo;
 mod paleta;
+mod pergunta;
+mod previa_markdown;
 mod quadro_ideias;
 mod ramo;
 pub(crate) mod paineis;
@@ -403,6 +406,12 @@ struct ArquivosLidos {
     lidos_em: Option<std::time::Instant>,
     /// A pasta da releitura em andamento, uma por vez.
     relendo: Option<PathBuf>,
+    /// Com o "Mostrar ignorados" da aba Arquivos: o que o git ignora (as pastas com a barra no
+    /// fim) e a lista da árvore com eles juntos, a mesma enquanto nada muda (a árvore não é
+    /// refeita à toa).
+    ignorados: Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)>,
+    /// As pastas ignoradas que a pessoa abriu na árvore: só elas são lidas por dentro.
+    ignoradas_abertas: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -458,14 +467,38 @@ pub struct Janela {
     /// próximo quadro.
     edicao_atual: usize,
     edicao_rolar: std::cell::Cell<bool>,
+    /// Onde o arquivo da edição aberta está na lista de Mudanças do chat (a posição e quantos a
+    /// lista tem), guardado pela edição e pelo tamanho da conversa: as setas passam ao arquivo
+    /// seguinte, e a faixa diz "arquivo 2 de 8".
+    lugar_no_turno: std::cell::Cell<Option<(usize, usize, Option<(usize, usize)>)>>,
+    /// O diff de "Na pasta" sem as mudanças só de espaço em branco (o `-w` do git). Desligado ao
+    /// abrir o Vitral; liga e desliga no "…" do arquivo aberto com o diff.
+    diff_sem_espaco: bool,
     /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
     /// mencionar o trecho, e a ponta de onde a escolha começou.
     arquivo_selecao: Option<(u32, u32)>,
     arquivo_ancora: Option<u32>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
+    /// "Mostrar ignorados" na aba Arquivos: o que o git deixa de fora (arquivo/, dados/, tarefas/)
+    /// entra na árvore. Desligado ao abrir o Vitral.
+    mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
+    /// agente muda o mesmo arquivo. `None`, o arquivo está só para ler.
+    editor_arquivo: Option<editor_arquivo::Editor>,
+    /// O .md ou o .svg aberto mostra a fonte, e não a prévia (o seletor do cabeçalho).
+    arquivo_fonte: bool,
+    /// A esquerda da lista do código na janela, para o clique no texto saber a coluna.
+    codigo_esquerda: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
+    foco_arquivo: FocusHandle,
+    /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
+    busca_arquivo: painel_arquivo::BuscaNoArquivo,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
+    /// O que está marcado em cada pergunta com opções esperando resposta (AskUserQuestion), pelo
+    /// id do pedido.
+    perguntas: HashMap<String, pergunta::EstadoDaPergunta>,
     expandidos: HashSet<String>,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
@@ -672,6 +705,13 @@ impl Janela {
                 cx.notify();
             }
         })];
+        // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
+        let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
+        assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
+            InputEvent::PressEnter { shift, .. } => this.andar_na_busca_do_arquivo(if *shift { -1 } else { 1 }, cx),
+            InputEvent::Change => cx.notify(),
+            _ => {}
+        }));
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
             // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
@@ -711,6 +751,8 @@ impl Janela {
             // O que você escreveu e não enviou vai para o disco antes de tudo: é o que você
             // espera encontrar na caixa quando o Vitral abrir de novo.
             this.gravar_ao_sair(cx);
+            // O que falta gravar no editor do arquivo também.
+            this.gravar_editor_ao_sair(cx);
             // E como a janela estava, para ela voltar igual.
             this.gravar_arranjo_ao_sair();
             if let Some(motor) = &this.motor {
@@ -774,11 +816,20 @@ impl Janela {
             arquivo_edicao: None,
             edicao_atual: 0,
             edicao_rolar: Default::default(),
+            lugar_no_turno: Default::default(),
+            diff_sem_espaco: false,
             arquivo_selecao: None,
             arquivo_ancora: None,
             cache_arquivos: Default::default(),
+            mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            editor_arquivo: None,
+            arquivo_fonte: false,
+            codigo_esquerda: Default::default(),
+            foco_arquivo: cx.focus_handle(),
+            busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
             feedback_plano: HashMap::new(),
+            perguntas: HashMap::new(),
             expandidos: HashSet::new(),
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
@@ -935,7 +986,10 @@ impl Janela {
         let contextos = window.context_stack();
         let na_conversa = contextos.iter().any(|c| c.contains(mensagens::CONTEXTO_DA_CONVERSA))
             && !contextos.iter().any(|c| c.contains("Input"));
-        if !(self.foco.is_focused(window) || numa_aba || na_conversa) || window.has_active_dialog(cx) || self.flutuante_aberto() {
+        // O clique no arquivo aberto à direita leva o foco para ele (é o que faz o Ctrl+F buscar
+        // nele); digitar ali continua escrevendo na caixa.
+        let no_arquivo = self.foco_arquivo.is_focused(window);
+        if !(self.foco.is_focused(window) || numa_aba || na_conversa || no_arquivo) || window.has_active_dialog(cx) || self.flutuante_aberto() {
             return;
         }
         self.tecla_para_a_caixa(ev, window, cx);
@@ -1097,18 +1151,29 @@ impl Janela {
             pastas: Default::default(),
             lidos_em: None,
             relendo: None,
+            ignorados: None,
+            ignoradas_abertas: Default::default(),
         });
         let vencida = lidos.lidos_em.is_none_or(|q| q.elapsed() >= Duration::from_secs(20));
         if vencida && lidos.relendo.is_none() {
             lidos.relendo = Some(pasta.to_path_buf());
             let pasta = pasta.to_path_buf();
+            // Com o "Mostrar ignorados", a leitura traz também o que o git ignora e o que há
+            // dentro das pastas ignoradas que estão abertas na árvore.
+            let com_ignorados = self.mostrar_ignorados;
+            let abertas = lidos.ignoradas_abertas.clone();
             cx.spawn(async move |this, cx| {
-                let (lida, pastas) = {
-                    let pasta = pasta.clone();
+                let (lida, pastas, ignorados) = {
+                    let (pasta, abertas) = (pasta.clone(), abertas.clone());
                     cx.background_spawn(async move {
-                        let lida = seletor_arquivos::listar(&pasta);
+                        let (lida, ignorados) = if com_ignorados {
+                            let (lida, ignorados) = seletor_arquivos::listar_com_ignorados(&pasta, &abertas, seletor_arquivos::TETO);
+                            (lida, Some(ignorados))
+                        } else {
+                            (seletor_arquivos::listar(&pasta), None)
+                        };
                         let pastas = seletor_arquivos::pastas_dos_arquivos(&lida);
-                        (lida, pastas)
+                        (lida, pastas, ignorados)
                     })
                     .await
                 };
@@ -1121,14 +1186,26 @@ impl Janela {
                         };
                         lidos.relendo = None;
                         let primeira = lidos.lidos_em.is_none() && lidos.lista.is_empty();
-                        lidos.lidos_em = Some(std::time::Instant::now());
+                        // O que foi pedido enquanto ela rodava (ligar os ignorados, abrir uma
+                        // pasta ignorada) pede outra leitura já.
+                        let em_dia = this.mostrar_ignorados == com_ignorados && lidos.ignoradas_abertas == abertas;
+                        lidos.lidos_em = em_dia.then(std::time::Instant::now);
                         // A mesma lista fica com o mesmo Rc: a árvore não é refeita à toa.
                         let mudou = *lidos.lista != lida;
                         if mudou {
                             lidos.lista = std::rc::Rc::new(lida);
                             lidos.pastas = std::rc::Rc::new(pastas);
                         }
-                        mudou || primeira
+                        let mudaram_os_ignorados = lidos.ignorados.as_ref().map(|(i, _)| i.as_ref()) != ignorados.as_ref();
+                        if mudou || mudaram_os_ignorados {
+                            lidos.ignorados = ignorados.map(|ignorados| {
+                                // A lista da árvore: os arquivos e os ignorados juntos.
+                                let mut juntos = lidos.lista.as_ref().clone();
+                                juntos.extend(ignorados.entradas.iter().cloned());
+                                (std::rc::Rc::new(ignorados), std::rc::Rc::new(juntos))
+                            });
+                        }
+                        mudou || mudaram_os_ignorados || primeira || !em_dia
                     };
                     if mudou {
                         cx.notify();
@@ -1136,6 +1213,52 @@ impl Janela {
                 });
             })
             .detach();
+        }
+    }
+
+    /// Os ignorados de uma pasta e a lista da árvore com eles, quando o "Mostrar ignorados" está
+    /// ligado e a leitura já chegou.
+    pub(super) fn ignorados_da_pasta(
+        &self,
+        pasta: &std::path::Path,
+    ) -> Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)> {
+        if !self.mostrar_ignorados {
+            return None;
+        }
+        self.cache_arquivos.borrow().get(pasta)?.ignorados.clone()
+    }
+
+    /// O botão "Mostrar ignorados" da aba Arquivos: liga ou desliga e relê a pasta.
+    pub(super) fn alternar_ignorados(&mut self, pasta: &std::path::Path, cx: &mut Context<Self>) {
+        self.mostrar_ignorados = !self.mostrar_ignorados;
+        self.reler_arquivos(pasta);
+        cx.notify();
+    }
+
+    /// Uma pasta foi aberta na árvore: se é uma ignorada ainda não lida, a próxima leitura traz o
+    /// que há dentro dela (um nível).
+    pub(super) fn pasta_aberta_na_arvore(&mut self, pasta: &std::path::Path, id: &str, cx: &mut Context<Self>) {
+        if !self.mostrar_ignorados {
+            return;
+        }
+        let chave = format!("{id}/");
+        let pedir = {
+            let mut cache = self.cache_arquivos.borrow_mut();
+            let Some(lidos) = cache.get_mut(pasta) else {
+                return;
+            };
+            let por_ler = lidos
+                .ignorados
+                .as_ref()
+                .is_some_and(|(i, _)| i.entradas.binary_search(&chave).is_ok() && !i.carregadas.contains(&chave));
+            let pedir = por_ler && lidos.ignoradas_abertas.insert(chave);
+            if pedir {
+                lidos.lidos_em = None;
+            }
+            pedir
+        };
+        if pedir {
+            cx.notify();
         }
     }
 
@@ -1773,6 +1896,17 @@ impl Janela {
                 })
             });
         }
+        // E o estado de cada pergunta com opções esperando resposta.
+        let perguntas: Vec<(String, usize)> = motor
+            .read(cx)
+            .permissoes
+            .iter()
+            .filter(|p| p.ferramenta == "AskUserQuestion")
+            .map(|p| (p.id.clone(), pergunta::perguntas_de(&p.entrada).len()))
+            .collect();
+        if !perguntas.is_empty() || !self.perguntas.is_empty() {
+            self.acertar_perguntas(perguntas, window, cx);
+        }
         self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
         // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
@@ -1782,6 +1916,13 @@ impl Janela {
             && self.gaveta != Some(Gaveta::Lista)
             && (self.foco_lista.is_focused(window) || self.busca.read(cx).focus_handle(cx).is_focused(window))
         {
+            cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
+        }
+        // O mesmo com o arquivo da direita: fechado ou escondido com o foco nele (ou na busca dele).
+        let arquivo_a_vista = self.arquivo_aberto.is_some()
+            && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_))
+            && (self.direita_visivel() || self.gaveta == Some(Gaveta::Direita));
+        if !arquivo_a_vista && self.foco_no_arquivo(window, cx) {
             cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
         }
         // A gaveta fecha quando a parte volta a caber ao lado (ou some) e durante um arrasto,
@@ -1805,12 +1946,19 @@ impl Janela {
             }))
             // Ctrl+F e F3: buscar dentro da conversa aberta. O `Search` é o que o campo do kit
             // liga ao Ctrl+F; sem atender aqui, o Ctrl+F na caixa de mensagem se perderia.
+            // Com o arquivo aberto na gaveta, por cima das conversas, o Ctrl+F é dele.
             .on_action(cx.listener(|this, _: &busca_conversa::BuscarNaConversa, window, cx| {
-                this.abrir_busca_na_conversa(window, cx)
+                if this.arquivo_na_gaveta(cx) {
+                    this.abrir_busca_no_arquivo(window, cx)
+                } else {
+                    this.abrir_busca_na_conversa(window, cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| {
                 this.abrir_busca_na_conversa(window, cx)
             }))
+            // Pela paleta de comandos (a tecla, com o foco no arquivo, é atendida no painel dele).
+            .on_action(cx.listener(|this, _: &painel_arquivo::BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoSeguinte, _, cx| this.andar_na_busca(1, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoAnterior, _, cx| this.andar_na_busca(-1, cx)))
             // Esc com o foco fora da caixa (um clique na conversa leva o foco para cá): para o
@@ -1858,6 +2006,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
             .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
             .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirArquivoPeloNome, window, cx| this.abrir_arquivo_pelo_nome(window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoSeguinte, window, cx| this.andar_nos_arranjos(1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoAnterior, window, cx| this.andar_nos_arranjos(-1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::SalvarArranjo, window, cx| this.dialogo_salvar_arranjo(window, cx)))

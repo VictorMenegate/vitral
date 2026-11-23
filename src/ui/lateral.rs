@@ -18,7 +18,7 @@ use gpui_kit::component::{
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     tooltip::{ManagedTooltipExt as _, Tooltip},
-    tree::{TreeEntry, TreeItem, TreeState, tree},
+    tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -148,6 +148,8 @@ pub(super) enum Causa {
     /// O resumo da ferramenta ("Bash · npm test").
     Permissao(String),
     Plano,
+    /// A pergunta com opções que o agente fez (o texto dela).
+    Pergunta(String),
     /// O motivo já curto ("Vitral fechou").
     Parada(String),
     /// O texto do erro: vale a primeira linha.
@@ -160,6 +162,7 @@ impl Causa {
         Some(match p {
             PendenciaDoMotor::Permissao { resumo, .. } => Causa::Permissao(resumo.clone()),
             PendenciaDoMotor::Plano { .. } => Causa::Plano,
+            PendenciaDoMotor::Pergunta { pergunta, .. } => Causa::Pergunta(pergunta.clone()),
             PendenciaDoMotor::Parada { motivo, .. } => Causa::Parada(motivo_curto(motivo)),
             PendenciaDoMotor::Erro { texto, .. } => Causa::Erro(texto.clone()),
             PendenciaDoMotor::Nova { .. } => return None,
@@ -171,6 +174,7 @@ impl Causa {
         match self {
             Causa::Permissao(resumo) => (Sinal::Pedido, "Permissão", resumo.clone()),
             Causa::Plano => (Sinal::Pedido, "Plano para aprovar", String::new()),
+            Causa::Pergunta(pergunta) => (Sinal::Pedido, "Pergunta", pergunta.clone()),
             Causa::Parada(porque) => (Sinal::Parada, "Parada", porque.clone()),
             Causa::Erro(texto) => (Sinal::Erro, "Erro", primeira_linha(texto)),
         }
@@ -498,16 +502,43 @@ fn montar_arvore(caminhos: &[String]) -> Vec<No> {
     let mut raiz = Pasta::default();
     for caminho in caminhos {
         let mut partes: Vec<&str> = caminho.split('/').filter(|p| !p.is_empty()).collect();
-        let Some(arquivo) = partes.pop() else {
+        // Com a barra no fim é uma pasta sem nada dentro ainda (a ignorada, lida ao abrir).
+        let arquivo = if caminho.ends_with('/') { None } else { partes.pop() };
+        if arquivo.is_none() && partes.is_empty() {
             continue;
-        };
+        }
         let mut atual = &mut raiz;
         for parte in partes {
             atual = atual.pastas.entry(parte.to_string()).or_default();
         }
-        atual.arquivos.push(arquivo.to_string());
+        if let Some(arquivo) = arquivo {
+            atual.arquivos.push(arquivo.to_string());
+        }
     }
     converter(raiz, "")
+}
+
+/// No fim do caminho de uma linha da árvore que só avisa ("Lendo…", "Pasta vazia"): não é
+/// arquivo, não abre e não tem ações.
+const MARCA_DE_AVISO: char = '\u{1}';
+
+/// Põe uma linha de aviso em cada pasta sem nada dentro (só acontece com as ignoradas, que são
+/// lidas ao abrir): "Lendo…" até a leitura chegar e "Pasta vazia" na que foi lida e não tem nada.
+/// Sem um filho, a árvore do kit a trataria como arquivo, e não haveria como abri-la.
+fn avisos_das_pastas_vazias(nos: &mut [No], carregadas: &std::collections::BTreeSet<String>) {
+    for no in nos.iter_mut().filter(|n| n.pasta) {
+        if no.filhos.is_empty() {
+            let lida = carregadas.contains(&format!("{}/", no.caminho));
+            no.filhos.push(No {
+                nome: if lida { "Pasta vazia" } else { "Lendo…" }.to_string(),
+                caminho: format!("{}/{MARCA_DE_AVISO}", no.caminho),
+                pasta: false,
+                filhos: Vec::new(),
+            });
+        } else {
+            avisos_das_pastas_vazias(&mut no.filhos, carregadas);
+        }
+    }
 }
 
 /// Os itens do `Tree` do kit: abertas as pastas que já estavam e o caminho até o arquivo aberto.
@@ -604,6 +635,8 @@ impl Montagem {
 struct Arquivos {
     pasta: Option<PathBuf>,
     lista: Rc<Vec<String>>,
+    /// Com o "Mostrar ignorados" e a leitura já feita: o que o git ignora.
+    ignorados: Option<Rc<super::seletor_arquivos::Ignorados>>,
     achados: Option<Rc<Vec<String>>>,
     arvore: Option<Entity<TreeState>>,
     rolagem: UniformListScrollHandle,
@@ -729,7 +762,7 @@ fn menu_do_arquivo(
         PopupMenuItem::new("Abrir no VS Code")
             .icon(Lucide::CodeXml)
             .external()
-            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo)),
+            .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&completo, None)),
     )
     .item(PopupMenuItem::new("Copiar o caminho").icon(Lucide::Copy).on_click(move |_, window, cx| {
         cx.write_to_clipboard(ClipboardItem::new_string(copia.clone()));
@@ -799,20 +832,31 @@ fn linha_da_arvore(
     entrada: &TreeEntry,
     pasta: &Path,
     aberto: Option<&str>,
+    ignorados: Option<&super::seletor_arquivos::Ignorados>,
     janela: &WeakEntity<Janela>,
     window: &Window,
     cx: &App,
 ) -> ListItem {
     const GRUPO: &str = "linha-da-arvore";
     let caminho = entrada.item().id.to_string();
+    // A linha que só avisa, dentro de uma pasta ignorada: "Lendo…" ou "Pasta vazia".
+    if caminho.ends_with(MARCA_DE_AVISO) {
+        return ListItem::new(ix).h(r(28.)).py_0().pl(r(8. + 16. * entrada.depth() as f32 + 18.)).pr(esp::E4).child(
+            div().metadado().text_color(Cores::apagado()).child(entrada.item().label.clone()),
+        );
+    }
     let e_pasta = entrada.is_folder();
     let expandida = entrada.is_expanded();
+    // O que o git ignora aparece em tom tênue: é o que não vai para o commit.
+    let ignorado = ignorados.is_some_and(|i| {
+        i.entradas.binary_search(&caminho).is_ok() || i.entradas.binary_search(&format!("{caminho}/")).is_ok()
+    });
     let escolhido = aberto == Some(caminho.as_str());
     let simbolo = match (e_pasta, expandida) {
         (true, true) => Lucide::FolderOpen,
         (true, false) => Lucide::Folder,
         // Uma imagem se acha na árvore pelo ícone, antes de abrir.
-        _ if crate::claude::tipo_imagem(Path::new(&caminho)).is_some() => Lucide::FileImage,
+        _ if crate::claude::imagem_de_ver(Path::new(&caminho)) => Lucide::FileImage,
         _ => Lucide::FileText,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));
@@ -840,7 +884,7 @@ fn linha_da_arvore(
                         .text_size(r(13.))
                         .line_height(r(18.))
                         .font_weight(if e_pasta { FontWeight::MEDIUM } else { FontWeight::NORMAL })
-                        .text_color(Cores::texto())
+                        .text_color(if ignorado { Cores::tenue() } else { Cores::texto() })
                         .child(entrada.item().label.clone()),
                 )
                 .when(!e_pasta, |d| {
@@ -1202,6 +1246,20 @@ impl Janela {
                         cx.notify();
                     }))
             };
+            // "Mostrar ignorados": o que o git deixa de fora (arquivo/, dados/, tarefas/) entra na
+            // árvore, em tom tênue. Desligado por padrão; ligado, o olho fica aberto e em destaque.
+            let ignorados = {
+                let pasta = pasta.clone();
+                let ligado = self.mostrar_ignorados;
+                let (simbolo, dica) = if ligado {
+                    (Lucide::Eye, "Esconder os ignorados\nVolta a mostrar só o que o git acompanha")
+                } else {
+                    (Lucide::EyeOff, "Mostrar ignorados\nOs arquivos e as pastas que o git deixa de fora, como prints e exports")
+                };
+                botao_icone("escopo-ignorados", simbolo, dica, TamanhoBotao::Linha, window, cx)
+                    .when(ligado, |b| b.text_color(Cores::destaque_texto()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.alternar_ignorados(&pasta, cx)))
+            };
             let caminho = div()
                 .flex_1()
                 .min_w_0()
@@ -1218,7 +1276,9 @@ impl Janela {
                     .h(r(36.))
                     .gap(esp::E8)
                     .child(caminho)
-                    .when(!ctx.aperto.estreita, |s| s.child(sem_arrastar().flex_none().child(recarregar)))
+                    .when(!ctx.aperto.estreita, |s| {
+                        s.child(sem_arrastar().flex().flex_none().items_center().gap(esp::E2).child(ignorados).child(recarregar))
+                    })
                     .into_any_element(),
             );
         }
@@ -1869,6 +1929,8 @@ impl Janela {
     }
 
     pub(super) fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
+        // O editor é do arquivo que estava aberto: grava o que falta e sai.
+        self.largar_editor(window, cx);
         // A marca de linha é do link que a pediu: outro arquivo (ou o mesmo, pela árvore) abre sem ela.
         if self.arquivo_linha.get().is_none() {
             self.arquivo_marcada.set(None);
@@ -1877,10 +1939,17 @@ impl Janela {
         // arquivo como está. A escolha de linhas não passa de uma abertura para a outra.
         self.arquivo_edicao = self.edicao_pedida.take();
         self.esquecer_vista();
+        self.lugar_no_turno.set(None);
         self.edicao_atual = 0;
         self.edicao_rolar.set(self.arquivo_edicao.is_some());
         self.arquivo_selecao = None;
         self.arquivo_ancora = None;
+        // A busca é do arquivo em que foi aberta: outro arquivo abre sem ela (e o markdown, renderizado).
+        if self.arquivo_aberto.as_ref().is_some_and(|(p, c)| *p != pasta || *c != caminho) {
+            self.busca_arquivo.aberta = false;
+            // Outro arquivo abre na prévia.
+            self.arquivo_fonte = false;
+        }
         self.arquivo_aberto = Some((pasta, caminho));
         self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
         self.mostrar_direita(window, cx);
@@ -1905,13 +1974,19 @@ impl Janela {
             Some(p) => self.arquivos_da_pasta(p, cx),
             None => Rc::new(Vec::new()),
         };
+        // Com o "Mostrar ignorados", a árvore e a busca levam também o que o git ignora (as
+        // pastas ignoradas entram com a barra no fim e só são lidas por dentro quando abertas).
+        let (ignorados, da_arvore) = match pasta.as_deref().and_then(|p| self.ignorados_da_pasta(p)) {
+            Some((ignorados, juntos)) => (Some(ignorados), juntos),
+            None => (None, lista.clone()),
+        };
         let termos: Vec<&str> = busca.split_whitespace().collect();
         let achados = (!termos.is_empty()).then(|| {
-            let mut achados: Vec<String> = lista
+            let mut achados: Vec<String> = da_arvore
                 .iter()
                 .filter(|a| {
-                    let a = a.to_lowercase();
-                    termos.iter().all(|t| a.contains(t))
+                    let baixo = a.to_lowercase();
+                    !a.ends_with('/') && termos.iter().all(|t| baixo.contains(t))
                 })
                 .cloned()
                 .collect();
@@ -1919,10 +1994,10 @@ impl Janela {
             Rc::new(achados)
         });
         let arvore = match (&pasta, &achados) {
-            (Some(p), None) if !lista.is_empty() => Some(self.arvore(p, &lista, window, cx)),
+            (Some(p), None) if !da_arvore.is_empty() => Some(self.arvore(p, &da_arvore, ignorados.as_deref(), window, cx)),
             _ => None,
         };
-        Arquivos { pasta, lista, achados, arvore, rolagem }
+        Arquivos { pasta, lista, ignorados, achados, arvore, rolagem }
     }
 
     /// A árvore da pasta, refeita quando a lista de arquivos é relida (as pastas abertas ficam).
@@ -1930,6 +2005,7 @@ impl Janela {
         &mut self,
         pasta: &Path,
         lista: &Rc<Vec<String>>,
+        ignorados: Option<&super::seletor_arquivos::Ignorados>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<TreeState> {
@@ -1945,7 +2021,11 @@ impl Janela {
         }
         let abertas = self.arvores.get(&chave).map(|a| pastas_abertas(a.read(cx))).unwrap_or_default();
         let aberto = self.arquivo_aberto.as_ref().filter(|(p, _)| p == pasta).map(|(_, c)| c.clone());
-        let itens = itens_da_arvore(montar_arvore(lista), &abertas, aberto.as_deref());
+        let mut nos = montar_arvore(lista);
+        if let Some(ignorados) = ignorados {
+            avisos_das_pastas_vazias(&mut nos, &ignorados.carregadas);
+        }
+        let itens = itens_da_arvore(nos, &abertas, aberto.as_deref());
         let arvore = match self.arvores.get(&chave) {
             Some(a) => {
                 a.update(cx, |a, cx| a.set_items(itens, cx));
@@ -1953,6 +2033,13 @@ impl Janela {
             }
             None => {
                 let a = cx.new(|cx| TreeState::new(cx).items(itens));
+                // Abrir uma pasta ignorada pede a leitura do que há dentro dela.
+                let da_arvore = pasta.to_path_buf();
+                self._assinaturas.push(cx.subscribe(&a, move |this, _, evento: &TreeEvent, cx| {
+                    if let TreeEvent::Expanded(id) = evento {
+                        this.pasta_aberta_na_arvore(&da_arvore, id, cx);
+                    }
+                }));
                 self.arvores.insert(chave, a.clone());
                 a
             }
@@ -2032,10 +2119,15 @@ impl Janela {
         };
         let (janela, janela_menu) = (ctx.janela.clone(), ctx.janela.clone());
         let pasta_menu = pasta.clone();
+        let ignorados = a.ignorados.clone();
         let arvore = tree(arvore, move |ix, entrada, _, window, cx| {
-            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), &janela, window, cx)
+            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), ignorados.as_deref(), &janela, window, cx)
         })
         .context_menu(move |_, entrada, menu, _, _| {
+            // A linha que só avisa ("Lendo…") não tem o que fazer.
+            if entrada.item().id.ends_with(MARCA_DE_AVISO) {
+                return menu;
+            }
             menu_do_arquivo(menu, janela_menu.clone(), pasta_menu.clone(), entrada.item().id.to_string(), entrada.is_folder())
         });
         div().flex_1().min_h_0().pb(esp::E8).child(arvore).into_any_element()
@@ -2162,6 +2254,10 @@ mod testes {
         assert_eq!(partes(Causa::Parada("Vitral fechou".into())), (Some("Parada".into()), "· Vitral fechou".into()));
         assert_eq!(partes(Causa::Permissao("Bash · npm test".into())), (Some("Permissão".into()), "· Bash · npm test".into()));
         assert_eq!(partes(Causa::Plano), (Some("Plano para aprovar".into()), String::new()));
+        // A pergunta com opções (AskUserQuestion) diz o que foi perguntado.
+        assert_eq!(partes(Causa::Pergunta("Qual cor você prefere?".into())), (Some("Pergunta".into()), "· Qual cor você prefere?".into()));
+        let pergunta = PendenciaDoMotor::Pergunta { pedido: "p1".into(), chat: "c1".into(), pergunta: "Qual cor?".into() };
+        assert!(matches!(Causa::da_pendencia(&pergunta), Some(Causa::Pergunta(texto)) if texto == "Qual cor?"));
         assert_eq!(partes(Causa::Erro("\n# deu ruim\nresto".into())), (Some("Erro".into()), "· deu ruim".into()));
         let do_motor = PendenciaDoMotor::Parada { chat: "c1".into(), motivo: "o Vitral foi fechado no meio do turno".into() };
         let causa = Causa::da_pendencia(&do_motor).unwrap();
@@ -2315,5 +2411,38 @@ mod testes {
         assert_eq!(dica_da_busca(AbaLateral::Conversas, true), "Buscar");
         assert_eq!(dica_da_busca(AbaLateral::Arquivos, false), "Buscar arquivos");
         assert_eq!(dica_da_busca(AbaLateral::Arquivos, true), "Buscar");
+    }
+
+    #[test]
+    fn pasta_ignorada_entra_na_arvore_fechada_e_avisa_o_que_tem_dentro() {
+        let caminhos: Vec<String> =
+            ["src/a.rs", "arquivo/", "node_modules/", "node_modules/pacote/", "arquivo/print.png", "vazia/"].map(String::from).to_vec();
+        let mut arvore = montar_arvore(&caminhos);
+        let esperado = [
+            ("arquivo", true),
+            ("arquivo/print.png", false),
+            ("node_modules", true),
+            ("node_modules/pacote", true),
+            ("src", true),
+            ("src/a.rs", false),
+            ("vazia", true),
+        ]
+        .map(|(c, p)| (c.to_string(), p));
+        assert_eq!(achatar(&arvore), esperado.to_vec());
+        // A pasta sem nada dentro ganha uma linha de aviso: lendo, ou vazia se já foi lida.
+        let carregadas = ["arquivo/", "node_modules/", "vazia/"].map(String::from).into_iter().collect();
+        super::avisos_das_pastas_vazias(&mut arvore, &carregadas);
+        let aviso = |caminho: &str| {
+            achatar_nomes(&arvore).into_iter().find(|(c, _)| c.starts_with(caminho) && c.ends_with(super::MARCA_DE_AVISO)).map(|(_, n)| n)
+        };
+        assert_eq!(aviso("node_modules/pacote/").as_deref(), Some("Lendo…"));
+        assert_eq!(aviso("vazia/").as_deref(), Some("Pasta vazia"));
+        assert_eq!(aviso("arquivo/"), None);
+    }
+
+    fn achatar_nomes(nos: &[No]) -> Vec<(String, String)> {
+        nos.iter()
+            .flat_map(|n| std::iter::once((n.caminho.clone(), n.nome.clone())).chain(achatar_nomes(&n.filhos)))
+            .collect()
     }
 }

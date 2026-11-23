@@ -150,6 +150,10 @@ pub enum Item {
         /// têm (rodada de uso, item 5.1).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mudanca: Option<Mudanca>,
+        /// As imagens que o resultado trouxe (o print do navegador por MCP, a imagem gerada), já
+        /// gravadas na pasta do chat: só os caminhos, nunca o base64 (`imagens_recebidas`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        imagens: Vec<PathBuf>,
     },
     /// Um bloco de raciocínio do modelo: o texto (pode vir vazio, quando o Claude Code não o
     /// entrega) e quanto durou, em milissegundos (0: não medido).
@@ -518,7 +522,9 @@ pub fn regra_de_permissao(
     pasta: &Path,
 ) -> Option<String> {
     match ferramenta {
-        "ExitPlanMode" => None,
+        // O plano e a pergunta com opções pedem uma resposta de cada vez: uma regra responderia
+        // por você (e a pergunta voltaria ao modelo sem resposta nenhuma).
+        "ExitPlanMode" | "AskUserQuestion" => None,
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
             let caminho = entrada["file_path"].as_str().or(entrada["notebook_path"].as_str());
             dentro_da_pasta(Path::new(caminho?), pasta).then(|| "edicoes".to_string())

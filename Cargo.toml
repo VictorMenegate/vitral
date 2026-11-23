@@ -99,7 +99,9 @@ lto = "thin"
 # cantoneira azul, a trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`,
 # `fio_de_pontos`), o desenho único de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e
 # o rótulo de grupo da lista com busca em mono 11 caixa alta com o tracinho (src/command/state.rs,
-# `heading_row`).
+# `heading_row`). O editor de código aceita a cor da calha dos números de linha por instância
+# (src/input/editor.rs e src/input/input.rs, `gutter_background`): a calha é pintada por cima do
+# texto que rola para o lado, e o tema do Vitral a tem transparente.
 #
 # Cópia do gpui-pre-linux (o backend Linux do GPUI), com as mudanças marcadas com "Vitral:": no
 # Wayland, a janela com `Blurred` usa também o desfoque padrão, o ext-background-effect-v1 (o do

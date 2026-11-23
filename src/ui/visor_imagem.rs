@@ -322,8 +322,9 @@ impl Render for VisorImagem {
                     .h(area.height)
                     .flex()
                     .rounded(raio::CARTAO)
-                    // O xadrez não cabe aqui: o preto do app já é o fundo neutro do resto.
-                    .bg(Cores::preto())
+                    // O xadrez não cabe aqui: o preto do app já é o fundo neutro do resto (no SVG,
+                    // um cinza: o traço escuro sem fundo sumia no preto).
+                    .bg(imagens::fundo_da_imagem(self.caminho()))
                     .overflow_hidden()
                     .child(corpo),
             )
@@ -379,8 +380,8 @@ impl Janela {
 }
 
 /// As imagens de uma conversa, na ordem e sem repetir: é por elas que as setas andam. Entram os
-/// anexos das suas mensagens e as que a resposta aponta em `![](…)`, as mesmas que ganham
-/// miniatura na conversa. O que saiu do disco fica de fora: na conversa ele é um chip, e a seta
+/// anexos das suas mensagens, as que a resposta aponta em `![](…)` e as das chamadas (as lidas ou
+/// gravadas e as que o resultado devolveu), as mesmas que ganham miniatura na conversa. O que saiu do disco fica de fora: na conversa ele é um chip, e a seta
 /// não deve parar num aviso.
 fn imagens_dos_itens(itens: &[Item], base: &Path) -> Vec<PathBuf> {
     let mut lista: Vec<PathBuf> = Vec::new();
@@ -403,12 +404,11 @@ fn imagens_dos_itens(itens: &[Item], base: &Path) -> Vec<PathBuf> {
                     juntar(caminho);
                 }
             }
-            // As que uma chamada leu ou gravou (a captura de tela que o chat foi olhar).
-            Item::Ferramenta { arquivo: Some(arquivo), erro: false, .. } => {
-                if let Some(inteiro) = super::links_arquivo::resolver(base, arquivo).map(PathBuf::from)
-                    && crate::claude::tipo_imagem(&inteiro).is_some()
-                {
-                    juntar(inteiro);
+            // As que uma chamada leu ou gravou (a captura de tela que o chat foi olhar) e as que
+            // o resultado dela trouxe (o print do navegador por MCP).
+            Item::Ferramenta { .. } => {
+                for caminho in imagens::da_chamada(item, base) {
+                    juntar(caminho);
                 }
             }
             _ => {}
@@ -482,6 +482,41 @@ mod testes {
         assert_eq!(
             imagens_dos_itens(&itens, &pasta),
             vec![pasta.join("um.png"), pasta.join("tres.png"), pasta.join("dois.jpg")]
+        );
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    /// As imagens que as ferramentas devolveram (o print do navegador) entram na fila do visor,
+    /// na ordem da conversa, junto com as anexadas e as que uma chamada leu do disco.
+    #[test]
+    fn as_imagens_que_as_ferramentas_devolveram_entram_no_visor() {
+        let pasta = std::env::temp_dir().join(format!("vitral-visor-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(pasta.join("guardadas")).unwrap();
+        for nome in ["anexo.png", "lida.png", "guardadas/print-1.png", "guardadas/print-2.png"] {
+            std::fs::write(pasta.join(nome), b"\x89PNG\r\n\x1a\n").unwrap();
+        }
+        let chamada = |nome: &str, arquivo: Option<&str>, imagens: &[&str]| Item::Ferramenta {
+            id: nome.into(),
+            nome: nome.into(),
+            resumo: nome.into(),
+            resultado: Some(String::new()),
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: arquivo.map(str::to_string),
+            sub: None,
+            mudanca: None,
+            imagens: imagens.iter().map(|i| pasta.join(i)).collect(),
+        };
+        let itens = vec![
+            usuario(&[&pasta.join("anexo.png").display().to_string()]),
+            chamada("mcp__playwright__browser_take_screenshot", None, &["guardadas/print-1.png", "guardadas/sumiu.png"]),
+            chamada("Read", Some("lida.png"), &[]),
+            chamada("mcp__playwright__browser_take_screenshot", None, &["guardadas/print-2.png", "guardadas/print-1.png"]),
+        ];
+        assert_eq!(
+            imagens_dos_itens(&itens, &pasta),
+            vec![pasta.join("anexo.png"), pasta.join("guardadas/print-1.png"), pasta.join("lida.png"), pasta.join("guardadas/print-2.png")]
         );
         let _ = std::fs::remove_dir_all(&pasta);
     }

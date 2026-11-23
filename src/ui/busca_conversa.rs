@@ -87,6 +87,12 @@ pub fn ocorrencias(itens: &[Item], termo: &str, foco: bool) -> Vec<Ocorrencia> {
             | Item::Assistente { texto, .. }
             | Item::Entrega { texto, .. }
             | Item::Aviso { texto, .. } => achar(Campo::Texto, texto),
+            // O plano que ficou na conversa é um cartão com o texto dele, não uma linha da trilha.
+            Item::Ferramenta { nome, .. } if ferramenta_visivel(nome, foco) && super::mensagens::plano_na_conversa(dado).is_some() => {
+                if let Some(plano) = super::mensagens::plano_na_conversa(dado) {
+                    achar(Campo::Texto, plano.texto);
+                }
+            }
             Item::Ferramenta { nome, resumo, resultado, .. } if ferramenta_visivel(nome, foco) => {
                 achar(Campo::Resumo, resumo);
                 if let Some(resultado) = resultado {
@@ -126,7 +132,13 @@ fn primeira_da_trilha(itens: &[Item], indice: usize, foco: bool) -> usize {
     };
     let horas: Vec<u64> = visiveis.iter().map(|i| itens[*i].em()).collect();
     let dias: Vec<usize> = super::mensagens::separadores_de_data(&horas, 0).into_iter().map(|(p, _)| p).collect();
-    let da_trilha = |i: usize| matches!(itens[i], Item::Ferramenta { .. } | Item::Raciocinio { .. });
+    // O cartão do plano não é da trilha, e a parte.
+    let da_trilha = |i: usize| {
+        matches!(itens[i], Item::Ferramenta { .. } | Item::Raciocinio { .. }) && super::mensagens::plano_na_conversa(&itens[i]).is_none()
+    };
+    if !da_trilha(indice) {
+        return indice;
+    }
     while p > 0 && da_trilha(visiveis[p - 1]) && !dias.contains(&p) {
         p -= 1;
     }
@@ -324,7 +336,17 @@ pub fn realcar_trecho(texto: String, termo: &str, atual: Option<usize>) -> Style
     if termo.is_empty() {
         return StyledText::new(texto);
     }
-    let destaques: Vec<(Range<usize>, HighlightStyle)> = faixas(&texto, termo)
+    let destaques = destaques_do_trecho(&texto, termo, atual);
+    StyledText::new(texto).with_highlights(destaques)
+}
+
+/// O fundo de cada ocorrência de `termo` no pedaço (o da `atual` mais forte), para quem junta o
+/// realce da busca a outros destaques do mesmo texto (os links da saída de comando).
+pub fn destaques_do_trecho(texto: &str, termo: &str, atual: Option<usize>) -> Vec<(Range<usize>, HighlightStyle)> {
+    if termo.is_empty() {
+        return Vec::new();
+    }
+    faixas(texto, termo)
         .into_iter()
         .enumerate()
         .map(|(i, faixa)| {
@@ -334,8 +356,7 @@ pub fn realcar_trecho(texto: String, termo: &str, atual: Option<usize>) -> Style
             };
             (faixa, estilo)
         })
-        .collect();
-    StyledText::new(texto).with_highlights(destaques)
+        .collect()
 }
 
 /// O que já foi pedido à vista do texto: o realce e o desenho em que ele foi aplicado. Sem isso,
@@ -721,6 +742,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -825,6 +847,35 @@ mod testes {
             ferramenta("Bash", "parar", None),
         ];
         assert!(chaves_para_abrir("c1", &com_dia, 3, false).contains(&"c1:2:grupo".to_string()));
+    }
+
+    /// O plano que ficou na conversa é um cartão: a busca acha no texto dele (e abre o cartão,
+    /// pela chave do bloco), ele parte a trilha, e o nome da ferramenta não é achado em lugar
+    /// nenhum da tela.
+    #[test]
+    fn o_plano_na_conversa_e_achado_pelo_texto_e_parte_a_trilha() {
+        let plano = Item::Ferramenta {
+            em: 0,
+            id: "p1".into(),
+            nome: "ExitPlanMode".into(),
+            resumo: "ExitPlanMode".into(),
+            resultado: Some("User has approved your plan.".into()),
+            erro: false,
+            detalhe: Some("# Trocar o cupom\n\n1. Ler o carrinho.".into()),
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            imagens: Vec::new(),
+        };
+        let itens = vec![item_usuario("oi"), ferramenta("Read", "a", None), plano, ferramenta("Edit", "c", None), ferramenta("Bash", "d", None)];
+        let achados = ocorrencias(&itens, "carrinho", false);
+        assert_eq!(achados.iter().map(|o| (o.item, o.campo)).collect::<Vec<_>>(), [(2, Campo::Texto)]);
+        assert!(ocorrencias(&itens, "exitplanmode", false).is_empty());
+        assert!(ocorrencias(&itens, "approved", false).is_empty());
+        assert!(chaves_para_abrir("c1", &itens, 2, false).contains(&"c1:2".to_string()));
+        // A trilha de depois do cartão começa depois dele, e a de antes não passa por ele.
+        assert!(chaves_para_abrir("c1", &itens, 4, false).contains(&"c1:3:grupo".to_string()));
+        assert!(chaves_para_abrir("c1", &itens, 1, false).contains(&"c1:1:grupo".to_string()));
     }
 
     #[test]

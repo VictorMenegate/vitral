@@ -30,6 +30,7 @@ use crate::{
 enum Pedido {
     Permissao { pedido: String, ferramenta: String, comando: Option<String> },
     Plano,
+    Pergunta,
     Parada,
     Erro { pode_tentar: bool },
     Nova,
@@ -69,7 +70,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
         };
         // A mesma conversa pode ter mais de um pedido, ou estar parada e com erro.
         let chave = match &p {
-            Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } => pedido.clone(),
+            Pendencia::Permissao { pedido, .. } | Pendencia::Plano { pedido, .. } | Pendencia::Pergunta { pedido, .. } => pedido.clone(),
             Pendencia::Parada { chat, .. } => format!("parada-{chat}"),
             Pendencia::Erro { chat, .. } => format!("erro-{chat}"),
             Pendencia::Nova { chat } => format!("nova-{chat}"),
@@ -95,6 +96,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
                 Pedido::Permissao { pedido, ferramenta, comando }
             }
             Pendencia::Plano { .. } => Pedido::Plano,
+            Pendencia::Pergunta { .. } => Pedido::Pergunta,
             Pendencia::Parada { .. } => Pedido::Parada,
             Pendencia::Erro { pode_tentar, .. } => Pedido::Erro { pode_tentar },
             Pendencia::Nova { .. } => Pedido::Nova,
@@ -111,7 +113,7 @@ fn ler_secoes(janela: &Janela, motor: &Motor) -> Secoes {
             pedido,
         };
         match linha.pedido {
-            Pedido::Permissao { .. } | Pedido::Plano => secoes.pedidos.push(linha),
+            Pedido::Permissao { .. } | Pedido::Plano | Pedido::Pergunta => secoes.pedidos.push(linha),
             Pedido::Parada => secoes.paradas.push(linha),
             Pedido::Erro { .. } => secoes.erros.push(linha),
             Pedido::Nova => secoes.novas.push(linha),
@@ -231,6 +233,7 @@ fn rotulo_da_pendencia(p: &Pendencia) -> &'static str {
     match p {
         Pendencia::Permissao { .. } => "Permissão",
         Pendencia::Plano { .. } => "Plano para aprovar",
+        Pendencia::Pergunta { .. } => "Pergunta",
         Pendencia::Erro { .. } => "Erro",
         Pendencia::Parada { .. } => "Parada",
         Pendencia::Nova { .. } => "Resposta nova",
@@ -512,6 +515,8 @@ fn linha_de_pedido(
             };
             (comando.clone(), vec![negar.into_any_element(), segundo])
         }
+        // A pergunta se responde no cartão dela, na conversa.
+        Pedido::Pergunta => (None, vec![ver("Ver pergunta").into_any_element()]),
         _ => (None, vec![ver("Ver plano").into_any_element()]),
     };
     v_flex()
