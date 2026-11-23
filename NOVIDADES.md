@@ -154,6 +154,21 @@ e quanto cache cada turno gastou.
   copia a tabela em Markdown, e com Shift copia pronta para colar numa planilha.
 - **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
   mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
+- **Letra da conversa.** Em Configurações > Aparência, o tamanho das mensagens muda sem mexer no
+  resto: de 80% a 150% da interface. O zoom (Ctrl+roda) continua valendo para tudo e agora também
+  aparece ali.
+- **Suas instruções para todos os chats.** Em Configurações > Agentes, um texto seu que vai junto
+  do que o Vitral já diz ao Claude e ao Codex ("rode os testes antes de dizer que terminou"). Vale
+  a partir da próxima mensagem.
+- **Perfis de agente.** Um nome para quem responde, o modelo, o modo e o esforço, com uma nota de
+  quando usar. Ficam na parte nova **Perfis** das Configurações, aparecem no alto do seletor de
+  modelo, e escolher um ajusta tudo de uma vez.
+- **Versão do Claude Code e do Codex.** Nas Configurações, a versão instalada de cada um (a do
+  Codex, em Agentes); quando sai uma mais nova, a linha avisa.
+- **Testar a notificação.** Em Configurações > Chats, um botão manda uma notificação do sistema na
+  hora.
+- **Diagnóstico para pedir ajuda.** Em Configurações > Atualizações, **Copiar** junta as versões, o
+  sistema, as pastas dos dados e o fim do registro de quedas, sem chaves, tokens nem conversas.
 
 ## 0.9.6
 

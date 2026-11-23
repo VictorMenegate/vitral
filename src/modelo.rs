@@ -696,6 +696,14 @@ pub struct Config {
     /// O aviso dentro do app, no canto de baixo à direita, quando um chat fora de vista precisa de
     /// você (pedido de permissão, plano, falha). Começa ligado (rodada de uso, item 3.1).
     pub avisos_no_app: bool,
+    /// O tamanho da letra das mensagens em relação ao resto da interface, em % (100 é igual; os
+    /// degraus são `tema::LETRAS_DA_CONVERSA`). O zoom geral continua valendo por cima.
+    pub letra_da_conversa: u32,
+    /// As instruções de quem usa, para todos os chats: entram no fim do prompt de sistema, depois
+    /// do que o Vitral manda (`prompts::com_instrucoes`). Vazio é sem instruções.
+    pub instrucoes: String,
+    /// Os perfis de agente, na ordem em que aparecem no seletor de modelo (`crate::perfis`).
+    pub perfis: Vec<crate::perfis::Perfil>,
 }
 
 /// Um instante Unix no fuso local (o do sistema, como o `localtime_r`); fora do alcance do chrono,
@@ -790,6 +798,9 @@ impl Default for Config {
             sugerir_resposta: true,
             memoria_da_equipe: String::new(),
             avisos_no_app: true,
+            letra_da_conversa: 100,
+            instrucoes: String::new(),
+            perfis: Vec::new(),
         }
     }
 }
@@ -1024,6 +1035,19 @@ mod testes {
         assert!(matches!(&lido, Item::Assistente { texto, em: 0 } if texto == "oi"));
         assert_eq!(lido.em(), 0);
         assert_eq!(Item::Desconhecido(serde_json::json!({ "Coisa": {} })).em(), 0);
+    }
+
+    #[test]
+    fn config_de_antes_abre_com_a_letra_igual_sem_instrucoes_e_sem_perfis() {
+        let antiga: Config = serde_json::from_value(serde_json::json!({ "permissao": "manual", "transparencia": 2 })).unwrap();
+        assert_eq!(antiga.letra_da_conversa, 100);
+        assert_eq!(antiga.instrucoes, "");
+        assert!(antiga.perfis.is_empty());
+        // O que já estava gravado não muda.
+        assert_eq!((antiga.permissao.as_str(), antiga.transparencia), ("manual", 2));
+        let nova = Config { letra_da_conversa: 120, instrucoes: "Rode os testes antes de dizer que terminou.".into(), ..Config::default() };
+        let volta: Config = serde_json::from_str(&serde_json::to_string(&nova).unwrap()).unwrap();
+        assert_eq!((volta.letra_da_conversa, volta.instrucoes), (120, nova.instrucoes));
     }
 
     fn chat_de_teste() -> Chat {

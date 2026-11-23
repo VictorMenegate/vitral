@@ -1,0 +1,24 @@
+# As seis seções das Configurações a 150%, na janela de 1400 da bancada (a navegação à esquerda).
+# ZOOM=1.5 CLAUDE_FALSO=1 VITRAL_SEM_ANIMACAO=1 VITRAL_AGENTES_PUBLICADOS="claude=9.9.9,codex=9.9.9" \
+#   ferramentas/bancada.sh ferramentas/roteiros/config-secoes.txt prints/ ./target/debug/vitral <pasta>
+# Os cliques são os itens da navegação; conferir o y se a altura do diálogo mudar.
+
+espera 9                  # o Vitral abre
+tecla Control_L+comma     # Configurações
+espera 2                  # o diálogo desenha
+print s1-chats            # quem responde, modelo e modo no alto
+clique 310 256            # Agentes
+espera 4                  # o codex --version e as versões publicadas respondem
+print s2-agentes          # instruções, o que os agentes carregam, Instalados com "há a 9.9.9"
+clique 310 307            # Perfis
+espera 1
+print s3-perfis           # a lista e o Novo perfil
+clique 310 358            # Aparência
+espera 1
+print s4-aparencia        # zoom e letra da conversa em %
+clique 310 409            # Avisos
+espera 1
+print s5-avisos           # o Testar da notificação
+clique 310 460            # Vitral
+espera 1
+print s6-vitral           # Atualizações e o Copiar do diagnóstico

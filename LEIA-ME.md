@@ -787,7 +787,8 @@ outro rodando, a linha avisa ("O Ultracode roda em outra conversa: esta mensagem
 mensagem vai sem o Ultracode, com o motivo na conversa. Quando a conta chega ao limite e o turno
 continua na próxima, a repetição vai sem ele; só o **Tentar de novo** o repete. Fora do Ultracode, a ferramenta
 Workflow fica bloqueada: nem um chat nem um "Continue de onde parou" relançam um fluxo sozinhos. O
-**modelo** abre um seletor com busca: Padrão (o das Configurações) e as famílias do Claude,
+**modelo** abre um seletor com busca: no alto, os seus perfis de agente, se houver (grupo **Perfis**;
+ver **Perfis de agente**, em Organização); depois, Padrão (o das Configurações) e as famílias do Claude,
 com a versão num selo à direita (a que está rodando, quando a conversa segue a família, ou a que o
 apelido pega hoje no Claude Code instalado); o logo do Claude fica só no rótulo do grupo e
 o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está em uso ("Padrão · Opus
@@ -1322,8 +1323,8 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   1 px e uma sombra curta, como um botão flutuante: a conversa vai até a borda por baixo deles, sem
   folga (dono, 16/11/2026: eles passaram pelo cabeçalho e voltaram no mesmo dia, "o de uso tem que
   ficar onde eu tinha falado, embaixo do ×"): o do Claude sempre e o do Codex
-  quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
-  Configurações > Chats
+  quando ele está instalado e tem uso lido. **Uso do plano no canto da janela**, em
+  Configurações > Aparência
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
 - **O cabeçalho da conversa tem pouca coisa:** as abas e o **+** (novo
   chat ou histórico). O resto do painel, inclusive abrir e fechar a direita, mora no menu do botão
@@ -1617,7 +1618,7 @@ instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (
 embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,
 âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel fica cheio em vermelho. As duas
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
-conta em uso. **Mostrar o uso do plano no canto da janela**, em Configurações > Chats
+conta em uso. **Uso do plano no canto da janela**, em Configurações > Aparência
 (`Config.uso_no_canto`, ligada por padrão), esconde os anéis; o uso continua em **Contas do
 Claude**. Sem o Codex instalado, o anel dele não aparece: **Instalar o Codex…**, no menu do logo,
 abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
@@ -2076,18 +2077,51 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
-  Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à direita,
-  as opções da parte escolhida, que rolam sozinhas numa altura fixa. As opções, antes em quatro
-  grupos: **Chats** (**Resumo ao voltar depois
-  de**, **Mostrar o uso do plano no canto da janela**, ligada por padrão, o modo de permissão
-  padrão, o modelo dos chats, **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os
-  chats já lidos e não fixados e sem fila, e **Servidores MCP do Claude Code**, os do seu Claude
-  Code nos chats), **Interface**, **Claude Code** (a versão instalada, a que os turnos abrem, e
-  **Atualizar**, que roda `claude update` fora de qualquer turno, espera os chats que estão
-  trabalhando ou com mensagem na fila e mostra o que ele respondeu, em âmbar se falhar; a versão
-  nova vale no turno seguinte, sem reiniciar o Vitral) e **Atualizações**. Em Interface,
-  **Animações** (Seguir o GNOME ou Desligadas) vale para o app todo e muda na hora; seguindo um
-  GNOME sem animações, a linha diz isso.
+  Perfis, Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à
+  direita, as opções da parte escolhida, que rolam sozinhas numa altura fixa. O que mora em cada
+  parte (`src/ui/configuracoes.rs`):
+  - **Chats:** **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
+    sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
+    o que falta), **Arquivar chats parados depois de** (nunca, 3, 7 ou 30 dias; só os chats já
+    lidos, não fixados e sem fila) e **Sugerir a próxima mensagem**.
+  - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos** e o **Modelo
+    dos chats do Claude**; as **Instruções para todos os chats** (um texto seu, de até 4.000
+    caracteres, que entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do
+    que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e o
+    **Codex** (a versão instalada, ou **Instalar…** sem ele).
+  - **Perfis:** os perfis de agente (ver **Perfis de agente**, abaixo).
+  - **Memória:** **Memória da equipe** e **Rever a memória ao terminar**.
+  - **Aparência:** **Zoom da interface** (o mesmo do Ctrl+roda), **Letra da conversa** (de 80% a
+    150% do resto: só as mensagens crescem, com o texto, o código e os cartões delas; a lista, a
+    caixa e os menus seguem o zoom), **Mostrar o uso do plano no canto da janela**, ligada por
+    padrão, **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
+    seguindo um GNOME sem animações, a linha diz isso) e **Transparência dos fundos**.
+  - **Claude Code:** a versão instalada, a que os turnos abrem, e **Atualizar**, que roda `claude
+    update` fora de qualquer turno, espera os chats que estão trabalhando ou com mensagem na fila
+    e mostra o que ele respondeu, em âmbar se falhar (a versão nova vale no turno seguinte, sem
+    reiniciar o Vitral), e **Servidores MCP do Claude Code**, os do seu Claude Code nos chats.
+    Quando o pacote do Claude Code ou do Codex anuncia versão mais nova que a instalada, a linha
+    diz ("Há a 2.1.330. O Atualizar instala.", "0.169.0 · há a 0.171.0"); em dia, não diz nada. A
+    consulta são as etiquetas do pacote de cada um no npm (a `stable` para quem escolheu esse
+    canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes ou a do Claude
+    Code abre e guardada por uma hora (`src/versoes_agentes.rs`).
+  - **Atualizações:** as atualizações do Vitral e o **Diagnóstico para pedir ajuda**: o **Copiar**
+    põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex), o sistema,
+    as pastas dos dados, as opções ligadas e as últimas 40 linhas do `queda.log`. O que tem cara de
+    chave ou token é coberto, a pasta pessoal vira `~`, as suas instruções entram só pelo tamanho,
+    o endereço da memória da equipe só como "ligada", e nenhuma conversa entra
+    (`src/diagnostico.rs`).
+  A organização é a das partes da 0.9.6. O ramo que desenhou as Configurações em seis seções
+  (Chats, Agentes, Perfis, Aparência, Avisos e Vitral, com a lista em `Secao::grupos`) trouxe as
+  opções novas, que entraram dentro das partes; as seções dele não ficaram.
+- **Perfis de agente.** Um perfil guarda, com um nome, quem responde, o modelo, o modo de
+  permissão e o esforço, mais uma nota de quando usar. Cria-se em Configurações > Perfis (**Novo
+  perfil…**; **Editar…** troca ou exclui, e as setas mudam a ordem). Os perfis de quem responde na
+  aba aparecem no alto do seletor de modelo da caixa, no grupo **Perfis**, com a nota (ou o resumo,
+  "Claude · Opus · Planejar") embaixo do nome e o selo "em uso" no que bate com o chat. Escolher um
+  deixa o chat como ele diz, de uma vez: o que o perfil deixa no padrão volta ao padrão no chat. A
+  troca de agente segue a regra de sempre (com um turno rodando, espera). Ficam no `config.json`
+  (`Config.perfis`, `src/perfis.rs`); não há perfil padrão.
   **Atualizações** também vale para o app todo: o modo (**Automáticas**, o padrão, **Só avisar** ou
   **Desligadas**), a **Versão** ("0.3.0 · procurada hoje às 14:02", "Procurando…", "Baixando 0.3.1 ·
   12 de 21 MB", "é a mais nova", "A 0.3.1 está pronta; vale quando reiniciar") com o botão do
@@ -2099,7 +2133,7 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   sem atualização automática", com **Instalar a 0.3.1 como app**. Os menus mostram o ícone e a cor do
   modo, ou a marca do Claude e uma linha sobre cada modelo; os prazos são escolhas lado a lado; o (i)
   explica o resto. Com o diálogo estreito (zoom alto ou janela pequena), os controles descem para
-  baixo do texto.
+  baixo do texto. Cada linha tem uma descrição de uma frase; o detalhe mora no (i).
 - **Diálogos** opacos, com cantos de 20, o título grande e o × com a dica; o rodapé fica sempre à
   vista e só o meio rola. **Mencionar arquivo** e **Conversa como contexto** são listas com busca
   e teclado (os arquivos são lidos em segundo plano, com o ícone do tipo e a pasta embaixo; as
@@ -2364,7 +2398,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
-os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`) e o `ferramentas/claude-falso/agy`, o
+os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
 termina com erro, um `session/prompt` com o turno rodando entra nele, `agy models` dá a lista, e os
@@ -2406,6 +2440,11 @@ caminho inteiro no app, do "ainda não procurou" ao ponto no logo. A vitrine abr
 dia, baixando, pronta, só avisar, sem conexão, assinatura recusada, compilado no PC e formato novo
 na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reiniciar com 2 conversas
 (o "mesmo assim" deixa um aviso, para conferir que o Enter não o aciona).
+
+`VITRAL_AGENTES_PUBLICADOS="claude=2.1.400,codex=0.200.0"` responde no lugar da consulta das versões
+publicadas dos agentes (na bancada, com a atualização desligada, nada é consultado): é como se vê o
+"há a X" do grupo Instalados. O roteiro `ferramentas/roteiros/config-secoes.txt` (com o comando no
+topo) passa pelas seis seções das Configurações.
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. Quando o metal refez o campo nesse
@@ -2623,7 +2662,10 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio; `importar/subagente.rs` acha e lê o arquivo que o Claude Code grava para cada subagente (`subagents/agent-<id>.jsonl`) |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
-| `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]` |
+| `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]`; no fim dele, as instruções de quem usa (`com_instrucoes`) |
+| `src/perfis.rs` | Os perfis de agente (`Config.perfis`): o que cada um guarda, guardar, remover e mudar de ordem, o que ele põe no chat e quando ele bate com o chat |
+| `src/versoes_agentes.rs` | A versão do Codex instalado e a mais nova publicada do Claude Code e do Codex (as etiquetas do pacote no npm, guardadas por uma hora), para o grupo Instalados das Configurações |
+| `src/diagnostico.rs` | O texto do diagnóstico para pedir ajuda e a cobertura do que tem cara de segredo (`cobrir`) |
 | `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |

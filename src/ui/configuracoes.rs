@@ -1,7 +1,9 @@
 //! Configurações da pasta de trabalho (valem para as conversas que não escolheram outra coisa),
 //! em grupos de linhas como as preferências do GNOME: o texto à esquerda e o controle à direita
-//! (embaixo do texto no diálogo estreito). Grava na hora. As Animações e as Atualizações, no fim,
-//! valem para o app todo (ficam em `interface.json` e em `atualizacoes.json`).
+//! (embaixo do texto no diálogo estreito). Grava na hora. As Animações, o zoom e as Atualizações
+//! valem para o app todo (ficam em `interface.json` e em `atualizacoes.json`). A organização é a
+//! das partes (`Parte`, a coluna da esquerda); as instruções, os perfis, a letra da conversa, o
+//! teste da notificação, a versão do Codex e o diagnóstico entraram dentro delas.
 
 use std::rc::Rc;
 
@@ -24,6 +26,7 @@ use super::{
     atualizacao::{Vista, grupo as grupo_de_atualizacoes},
     dialogos::estreito,
     movimento::{self, Animacoes},
+    zoom,
 };
 use crate::{
     atualizacao::{self, Acompanhando, Atualizacoes},
@@ -31,7 +34,14 @@ use crate::{
     modelo::Config,
     motor::{self, Motor},
     tema::{Cores, Lucide, Tipo as _, esp, r, raio, tam},
+    versoes_agentes::{self, Publicadas},
 };
+
+mod instrucoes;
+pub(in crate::ui) mod perfis;
+
+/// "100%": o rótulo de um tamanho em relação ao resto.
+const SUFIXO_DE_PORCENTO: &str = "%";
 
 const PRAZOS_ARQUIVAR: [(u32, &str); 4] = [(0, "Nunca"), (3, "3 dias"), (7, "7 dias"), (30, "30 dias")];
 
@@ -90,6 +100,7 @@ pub(super) fn linha_do_claude(
 enum Parte {
     Chats,
     Agentes,
+    Perfis,
     Memoria,
     Aparencia,
     ClaudeCode,
@@ -97,12 +108,14 @@ enum Parte {
 }
 
 impl Parte {
-    const TODAS: [Parte; 6] = [Parte::Chats, Parte::Agentes, Parte::Memoria, Parte::Aparencia, Parte::ClaudeCode, Parte::Atualizacoes];
+    const TODAS: [Parte; 7] =
+        [Parte::Chats, Parte::Agentes, Parte::Perfis, Parte::Memoria, Parte::Aparencia, Parte::ClaudeCode, Parte::Atualizacoes];
 
     fn nome(self) -> &'static str {
         match self {
             Parte::Chats => "Chats",
             Parte::Agentes => "Agentes",
+            Parte::Perfis => "Perfis",
             Parte::Memoria => "Memória",
             Parte::Aparencia => "Aparência",
             Parte::ClaudeCode => "Claude Code",
@@ -114,6 +127,7 @@ impl Parte {
         match self {
             Parte::Chats => Lucide::MessagesSquare,
             Parte::Agentes => Lucide::Bot,
+            Parte::Perfis => Lucide::UsersRound,
             Parte::Memoria => Lucide::Brain,
             Parte::Aparencia => Lucide::Palette,
             Parte::ClaudeCode => Lucide::Terminal,
@@ -131,6 +145,14 @@ pub(super) const LARGURA_DAS_CONFIGURACOES: f32 = 860.;
 pub struct Configuracoes {
     motor: Entity<Motor>,
     parte: Parte,
+    /// A versão do Codex instalado (`None` até a leitura em segundo plano responder).
+    codex: Option<Option<Versao>>,
+    /// As versões mais novas publicadas, quando a consulta responde.
+    publicadas: Publicadas,
+    /// O que o Testar da notificação deu, depois do clique.
+    teste_da_notificacao: Option<Result<(), String>>,
+    /// O diagnóstico acabou de ser copiado.
+    diagnostico_copiado: bool,
     _observa: Subscription,
     _atualizacoes: Subscription,
     /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
@@ -145,7 +167,41 @@ impl Configuracoes {
         // A linha do Claude Code mostra a versão instalada: ela pode ter mudado por fora (ou pelo
         // próprio Atualizar, numa abertura anterior) desde a leitura da abertura do app.
         motor.update(cx, |m, cx| m.reler_versao_claude(cx));
-        Self { motor, parte: Parte::Chats, _observa, _atualizacoes, _acompanhando }
+        Self {
+            motor,
+            parte: Parte::Chats,
+            codex: None,
+            publicadas: versoes_agentes::guardadas().unwrap_or_default(),
+            teste_da_notificacao: None,
+            diagnostico_copiado: false,
+            _observa,
+            _atualizacoes,
+            _acompanhando,
+        }
+    }
+
+    fn ir_para(&mut self, parte: Parte, cx: &mut Context<Self>) {
+        self.parte = parte;
+        // As linhas do Claude Code e do Codex dizem a versão instalada e a nova, quando há.
+        if matches!(parte, Parte::Agentes | Parte::ClaudeCode) {
+            self.ler_os_instalados(cx);
+        }
+        cx.notify();
+    }
+
+    /// A versão do Codex e as mais novas publicadas, em segundo plano, quando a parte Agentes ou a
+    /// do Claude Code abre: o `codex --version` leva um instante e a consulta vai à rede (guardada
+    /// por uma hora).
+    fn ler_os_instalados(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |vista, cx| {
+            let (codex, publicadas) =
+                cx.background_spawn(async move { (versoes_agentes::versao_do_codex(), versoes_agentes::consultar()) }).await;
+            let _ = vista.update(cx, |vista, cx| {
+                (vista.codex, vista.publicadas) = (Some(codex), publicadas);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// O grupo Claude Code das Configurações: a versão que os turnos abrem e o Atualizar.
@@ -158,6 +214,9 @@ impl Configuracoes {
             motor.resposta_do_claude.as_ref(),
         );
         let falhou = linha.falhou;
+        // Depois de um Atualizar que respondeu, quem fala é a resposta dele.
+        let nova = versoes_agentes::frase_da_nova_do_claude(motor.versao_claude, self.publicadas.claude)
+            .filter(|_| !linha.andando && linha.resposta.is_empty());
         let descricao = div()
             .flex()
             .flex_col()
@@ -171,6 +230,7 @@ impl Configuracoes {
                     })
                     .child(linha.texto.clone()),
             )
+            .children(nova.map(|frase| div().text_color(Cores::texto()).child(frase)))
             .children(linha.resposta.iter().map(|t| {
                 div()
                     .when(falhou, |d| d.text_color(Cores::ambar()))
@@ -203,6 +263,71 @@ impl Configuracoes {
         };
         let opcao = if estreito { opcao.campo(botao) } else { opcao.controle(botao) };
         GrupoDeOpcoes::new(Some("Claude Code".into())).linha(opcao)
+    }
+
+    /// A linha do Codex: a versão instalada e a nova quando há; sem ele, o Instalar.
+    fn linha_do_codex(&self, estreito: bool, window: &Window, cx: &Context<Self>) -> LinhaDeOpcao {
+        let instalado = crate::agente_codex::instalado();
+        let texto = match self.codex {
+            None if instalado => "Lendo a versão…".to_string(),
+            lida => versoes_agentes::linha_do_codex(instalado, lida.flatten(), self.publicadas.codex),
+        };
+        let opcao = LinhaDeOpcao::new("cfg-codex", "Versão instalada")
+            .marca(Simbolo::Marca(Marca::Codex))
+            .info(
+                "O agente de código da OpenAI. Ele usa o login e o plano do próprio Codex. A versão nova é a que o \
+                 pacote dele anuncia; quem atualiza é o instalador do Codex, fora do Vitral.",
+            )
+            .descricao(texto);
+        // O instalador oficial do Codex é um script do sh: no Windows não há o botão.
+        if instalado || cfg!(windows) {
+            return opcao;
+        }
+        let botao = botao_fantasma("cfg-codex-instalar", Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
+            .bg(Cores::recuo())
+            .on_click(|_, _, _| super::uso_plano::instalar_codex());
+        if estreito { opcao.campo(botao) } else { opcao.controle(botao) }
+    }
+
+    /// O texto do diagnóstico de agora, já coberto (`crate::diagnostico`).
+    fn diagnostico(&self, cx: &App) -> String {
+        let motor = self.motor.read(cx);
+        let c = &motor.config;
+        let ligado = |sim: bool| if sim { "ligado" } else { "desligado" }.to_string();
+        let (animacoes, _) = movimento::animacoes(cx);
+        let opcoes = vec![
+            ("Quem responde".to_string(), c.agente_padrao.nome().to_string()),
+            ("Modelo do Claude".to_string(), if c.modelo_chats.is_empty() { "padrão".to_string() } else { c.modelo_chats.clone() }),
+            ("Modo de permissão".to_string(), c.permissao.clone()),
+            ("Servidores MCP do Claude Code".to_string(), ligado(c.mcp_trabalhadores)),
+            ("Memória da equipe".to_string(), if c.memoria_da_equipe.is_empty() { "desligada" } else { "ligada" }.to_string()),
+            ("Rever a memória ao terminar".to_string(), ligado(c.memoria_ao_terminar)),
+            ("Sugerir a próxima mensagem".to_string(), ligado(c.sugerir_resposta)),
+            ("Suas instruções".to_string(), format!("{} caracteres", c.instrucoes.trim().chars().count())),
+            ("Perfis".to_string(), c.perfis.len().to_string()),
+            ("Zoom".to_string(), format!("{}%", zoom::porcentagem(cx))),
+            ("Letra da conversa".to_string(), format!("{}%", c.letra_da_conversa)),
+            ("Transparência".to_string(), crate::tema::NOMES_DA_TRANSPARENCIA[usize::from(c.transparencia.min(3))].to_string()),
+            ("Animações".to_string(), if animacoes == Animacoes::Desligadas { "desligadas" } else { "seguem o sistema" }.to_string()),
+            ("Arquivar parados".to_string(), if c.arquivar_apos_dias == 0 { "nunca".to_string() } else { format!("{} dias", c.arquivar_apos_dias) }),
+            ("Pasta de trabalho".to_string(), c.pasta_de_trabalho.as_ref().map_or_else(|| "nenhuma".to_string(), |p| p.display().to_string())),
+        ];
+        let pasta = motor.dados.pasta.clone();
+        crate::diagnostico::texto(&crate::diagnostico::Entrada {
+            vitral: format!("{} · {} · {}", atualizacao::VERSAO, atualizacao::origem(), atualizacao::plataforma()),
+            sistema: crate::diagnostico::sistema(),
+            claude: motor.versao_claude.map(motor::texto_da_versao),
+            codex: self.codex.flatten().map(motor::texto_da_versao).or_else(|| {
+                crate::agente_codex::instalado().then(|| "instalado".to_string())
+            }),
+            quedas: std::fs::read_to_string(pasta.join("queda.log")).ok(),
+            dados: pasta,
+            config: motor.dados.config.clone(),
+            cache: motor.dados.cache.clone(),
+            chats: motor.chats.len(),
+            opcoes,
+            casa: dirs::home_dir(),
+        })
     }
 }
 
@@ -324,6 +449,12 @@ fn contador(
     })
 }
 
+/// O contador no tamanho dele: embaixo do texto (diálogo estreito), a linha o esticaria de ponta a
+/// ponta.
+fn solto(contador: Contador) -> AnyElement {
+    div().flex().child(contador).into_any_element()
+}
+
 /// Grava o valor escolhido num menu na configuração da pasta.
 fn gravar(motor: Entity<Motor>, aplicar: fn(&mut Config, String)) -> impl Fn(String, &mut Window, &mut App) + 'static {
     move |valor, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| aplicar(c, valor), cx))
@@ -428,6 +559,28 @@ impl Render for Configuracoes {
                         alternar_avisos.update(cx, |m, cx| m.mudar_config(|c| c.avisos_no_app = ligado, cx))
                     }),
             )
+            .linha({
+                let botao = botao_fantasma("cfg-notificacao-testar", Some(Lucide::Bell.into()), "Testar", TamanhoBotao::Controle, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.teste_da_notificacao = Some(this.motor.read(cx).testar_notificacao());
+                        cx.notify();
+                    }));
+                let linha = LinhaDeOpcao::new("cfg-notificacao", "Notificação do sistema")
+                    .info(
+                        "Clicar na notificação abre a conversa. A permissão se responde dentro do app, nunca na \
+                         notificação. O pedido de permissão e a queda com erro ficam na tela até o clique.",
+                    )
+                    .descricao(match &self.teste_da_notificacao {
+                        Some(Ok(())) => "Enviada. Não apareceu? Veja o Não perturbe do sistema.",
+                        _ => "Com a janela atrás, quando um chat termina, pede permissão ou cai.",
+                    });
+                let linha = match &self.teste_da_notificacao {
+                    Some(Err(erro)) => linha.aviso(erro.clone()),
+                    _ => linha,
+                };
+                com(linha, botao.into_any_element())
+            })
             .linha(com(
                 LinhaDeOpcao::new("cfg-arquivar", "Arquivar chats parados depois de")
                     .info(
@@ -506,6 +659,23 @@ impl Render for Configuracoes {
                     cx,
                 ),
             ));
+        let instrucoes_grupo = GrupoDeOpcoes::new(Some("Suas instruções".into())).linha({
+            let abrir = m();
+            let vazio = config.instrucoes.trim().is_empty();
+            let botao = botao_fantasma("cfg-instrucoes-editar", None, if vazio { "Escrever…" } else { "Editar…" }, TamanhoBotao::Controle, window, cx)
+                .bg(Cores::recuo())
+                .on_click(move |_, window, cx| instrucoes::abrir(abrir.clone(), window, cx));
+            com(
+                LinhaDeOpcao::new("cfg-instrucoes", "Instruções para todos os chats")
+                    .info(
+                        "O texto entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do que o \
+                         Vitral já manda (a pasta do chat e as regras dele). Vale a partir da próxima mensagem.",
+                    )
+                    .descricao(div().line_clamp(2).child(crate::prompts::resumo_das_instrucoes(&config.instrucoes))),
+                botao.into_any_element(),
+            )
+        });
+        let codex_grupo = GrupoDeOpcoes::new(Some("Codex".into())).linha(self.linha_do_codex(estreito, window, cx));
         let memoria_grupo = GrupoDeOpcoes::new(Some("Memória".into()))
             .linha({
                 let ligada = !config.memoria_da_equipe.is_empty();
@@ -604,16 +774,63 @@ impl Render for Configuracoes {
             .into_any_element(),
         ));
 
+        let zoom_de_agora = zoom::porcentagem(cx);
+        let tamanho = GrupoDeOpcoes::new(Some("Tamanho".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-zoom", "Zoom da interface")
+                    .info("O mesmo zoom do Ctrl+roda, do Ctrl+= e do Ctrl+-: a lista, a caixa de mensagem, os menus e as conversas.")
+                    .descricao("Tudo cresce junto, como no Ctrl+roda e no Ctrl+=."),
+                Contador::new("cfg-zoom", zoom_de_agora, zoom::FAIXA, move |novo, _, cx| zoom::mudar(if novo > zoom_de_agora { 1 } else { -1 }, cx))
+                    .sufixo(SUFIXO_DE_PORCENTO)
+                    .map(solto),
+            ))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-letra", "Letra da conversa")
+                    .info("Muda só as mensagens: o texto, o código e os cartões delas. A lista, a caixa de mensagem e os menus seguem o zoom.")
+                    .descricao("O tamanho das mensagens em relação ao resto."),
+                contador("cfg-letra", &crate::tema::LETRAS_DA_CONVERSA, config.letra_da_conversa, m(), |c, v| c.letra_da_conversa = v)
+                    .sufixo(SUFIXO_DE_PORCENTO)
+                    .map(solto),
+            ));
+
+        // O diagnóstico para pedir ajuda, na parte das Atualizações (é do Vitral, não dos chats).
+        let ajuda = GrupoDeOpcoes::new(Some("Ajuda".into())).linha({
+            let botao = botao_fantasma("cfg-diagnostico-copiar", Some(Lucide::Copy.into()), "Copiar", TamanhoBotao::Controle, window, cx)
+                .bg(Cores::recuo())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(this.diagnostico(cx)));
+                    this.diagnostico_copiado = true;
+                    cx.notify();
+                }));
+            com(
+                LinhaDeOpcao::new("cfg-diagnostico", "Diagnóstico para pedir ajuda")
+                    .info(
+                        "Um texto com a versão do Vitral, do Claude Code e do Codex, o sistema, onde ficam os dados, as \
+                         opções ligadas e as últimas 40 linhas do registro de quedas. O que tem cara de chave ou token é \
+                         coberto, a pasta pessoal vira ~, e nenhuma conversa entra.",
+                    )
+                    .descricao(if self.diagnostico_copiado {
+                        "Copiado. Cole no pedido de ajuda."
+                    } else {
+                        "Versões, sistema, caminhos e quedas. Sem chaves nem conversas."
+                    }),
+                botao.into_any_element(),
+            )
+        });
+
         let trabalhando = self.motor.read(cx).trabalhando();
         let atualizacoes = Vista::da_global(cx).map(|vista| grupo_de_atualizacoes(&vista, trabalhando, estreito, window, cx));
 
         let grupos: Vec<AnyElement> = match self.parte {
             Parte::Chats => vec![conversas.into_any_element()],
-            Parte::Agentes => vec![agentes.into_any_element()],
+            Parte::Agentes => vec![agentes.into_any_element(), instrucoes_grupo.into_any_element(), codex_grupo.into_any_element()],
+            Parte::Perfis => vec![perfis::grupo(&self.motor, window, cx).into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
-            Parte::Aparencia => vec![interface.into_any_element()],
+            Parte::Aparencia => vec![tamanho.into_any_element(), interface.into_any_element()],
             Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
-            Parte::Atualizacoes => atualizacoes.into_iter().map(IntoElement::into_any_element).collect(),
+            Parte::Atualizacoes => {
+                atualizacoes.into_iter().map(IntoElement::into_any_element).chain([ajuda.into_any_element()]).collect()
+            }
         };
         // A coluna das partes: o ícone e o nome (no diálogo estreito, só o ícone, com o nome na
         // dica); a escolhida com o fundo da seleção, como as linhas da lista.
@@ -635,10 +852,7 @@ impl Render for Configuracoes {
                 .child(Icon::new(parte.icone()).with_size(tam(window, 16.)))
                 .when(!estreito, |s| s.child(div().rotulo().child(parte.nome())))
                 .when(estreito, |s| s.dica_no_ponteiro(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.parte = parte;
-                    cx.notify();
-                }))
+                .on_click(cx.listener(move |this, _, _, cx| this.ir_para(parte, cx)))
         });
         div()
             .flex()
@@ -662,7 +876,20 @@ impl Render for Configuracoes {
 
 #[cfg(test)]
 mod testes {
-    use super::{Atualizacao, linha_do_claude, vizinhos};
+    use super::{Atualizacao, Parte, linha_do_claude, vizinhos};
+
+    /// As partes da 0.9.6 continuam as mesmas, na mesma ordem, e os Perfis entraram depois dos
+    /// Agentes; cada nome é um só, e cabe na coluna.
+    #[test]
+    fn as_partes_da_coluna_com_os_perfis() {
+        let nomes: Vec<&str> = Parte::TODAS.into_iter().map(Parte::nome).collect();
+        assert_eq!(nomes, ["Chats", "Agentes", "Perfis", "Memória", "Aparência", "Claude Code", "Atualizações"]);
+    }
+
+    #[test]
+    fn o_zoom_das_configuracoes_anda_na_mesma_faixa_dos_atalhos() {
+        assert_eq!(super::zoom::FAIXA, 70..=200);
+    }
 
     #[test]
     fn contador_anda_pela_lista_e_para_nas_pontas() {

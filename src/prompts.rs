@@ -40,9 +40,72 @@ português do Brasil, sem emojis.",
     texto
 }
 
+/// Até quanto as instruções de quem usa podem ter (o diálogo não salva acima disso): elas vão em
+/// todo turno de todo chat.
+pub const LIMITE_DAS_INSTRUCOES: usize = 4000;
+
+/// A frase que separa o que o Vitral manda do que quem usa escreveu.
+const CABECALHO_DAS_INSTRUCOES: &str = "Instruções de quem usa o Vitral, para todos os chats:";
+
+/// O prompt do chat com as instruções de quem usa (Configurações > Agentes) no fim: elas somam ao
+/// que o Vitral manda, nunca entram no lugar. Sem instruções (ou só espaço), o prompt não muda.
+pub fn com_instrucoes(prompt: String, instrucoes: &str) -> String {
+    let instrucoes = instrucoes.trim();
+    if instrucoes.is_empty() {
+        return prompt;
+    }
+    format!("{prompt}\n\n{CABECALHO_DAS_INSTRUCOES}\n{instrucoes}")
+}
+
+/// "Nenhuma", ou o começo do texto entre aspas e o tamanho: o que a linha das Configurações diz.
+pub fn resumo_das_instrucoes(instrucoes: &str) -> String {
+    let texto = instrucoes.trim();
+    let Some(primeira) = texto.lines().find(|l| !l.trim().is_empty()) else {
+        return "Nenhuma".to_string();
+    };
+    let primeira = primeira.trim();
+    let comeco: String = primeira.chars().take(60).collect();
+    let cortou = comeco.len() < primeira.len() || texto.lines().filter(|l| !l.trim().is_empty()).count() > 1;
+    let total = texto.chars().count();
+    format!("“{}{}” · {total} {}", comeco.trim_end(), if cortou { "…" } else { "" }, if total == 1 { "caractere" } else { "caracteres" })
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn as_instrucoes_de_quem_usa_somam_ao_prompt_do_vitral() {
+        let do_vitral = do_chat(Path::new("/p/loja"), Onde::Direta, true);
+        let com = com_instrucoes(do_vitral.clone(), "  Rode os testes antes de dizer que terminou.\nCommits em português.  ");
+        // O que o Vitral manda continua inteiro, na frente; as instruções vêm depois, aparadas.
+        assert!(com.starts_with(&do_vitral), "{com}");
+        assert!(com.ends_with(
+            "\n\nInstruções de quem usa o Vitral, para todos os chats:\nRode os testes antes de dizer que terminou.\nCommits em português."
+        ));
+        // Vale para os três jeitos de chat.
+        for onde in [Onde::SemPasta, Onde::Continuada] {
+            let base = do_chat(Path::new("/x"), onde, false);
+            assert!(com_instrucoes(base.clone(), "Seja breve.").starts_with(&base));
+        }
+    }
+
+    #[test]
+    fn sem_instrucoes_o_prompt_nao_muda() {
+        let do_vitral = do_chat(Path::new("/p/loja"), Onde::Direta, false);
+        assert_eq!(com_instrucoes(do_vitral.clone(), ""), do_vitral);
+        assert_eq!(com_instrucoes(do_vitral.clone(), "  \n\t "), do_vitral);
+    }
+
+    #[test]
+    fn a_linha_das_configuracoes_resume_as_instrucoes() {
+        assert_eq!(resumo_das_instrucoes(""), "Nenhuma");
+        assert_eq!(resumo_das_instrucoes("  \n "), "Nenhuma");
+        assert_eq!(resumo_das_instrucoes("Seja breve."), "“Seja breve.” · 11 caracteres");
+        assert_eq!(resumo_das_instrucoes("Seja breve.\nCommits em português."), "“Seja breve.…” · 33 caracteres");
+        let longa = "a".repeat(200);
+        assert_eq!(resumo_das_instrucoes(&longa), format!("“{}…” · 200 caracteres", "a".repeat(60)));
+    }
 
     #[test]
     fn o_chat_diz_onde_trabalha() {

@@ -1871,6 +1871,7 @@ impl Janela {
         self.sumario.desenhado = false;
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
+            crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
         }
         // O desfoque do sistema acompanha o nível (sem desfoque no Opaco).
         crate::acompanhar_o_fundo(window, crate::tema::transparencia());

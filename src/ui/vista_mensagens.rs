@@ -86,3 +86,90 @@ impl Render for VistaDaCasca {
         self.janela.update(cx, |janela, cx| janela.montar_casca(window, cx)).unwrap_or_else(|_| div().into_any_element())
     }
 }
+
+/// O filho desenhado com outro rem: é como a letra da conversa cresce sem o resto da interface
+/// (`Config.letra_da_conversa`). As mensagens medem tudo em rem (`tema::r`), então a letra, o
+/// respiro e os ícones crescem juntos, como um zoom só delas. O rem trocado vale nas três fases
+/// (o tamanho do texto e as medidas saem no layout; os raios e as sombras, na pintura). O que as
+/// mensagens abrem por cima (menu, dica) é pintado depois, fora daqui: mede com a letra da
+/// conversa e pinta os cantos com a da interface, diferença que não se nota.
+pub struct NaLetraDaConversa {
+    fator: f32,
+    filho: AnyElement,
+}
+
+/// `filho` na letra da conversa de agora (`tema::fator_da_conversa`). Em 100%, é o próprio filho.
+pub fn na_letra_da_conversa(filho: impl IntoElement) -> AnyElement {
+    let fator = crate::tema::fator_da_conversa();
+    if (fator - 1.).abs() < 0.001 {
+        return filho.into_any_element();
+    }
+    NaLetraDaConversa { fator, filho: filho.into_any_element() }.into_any_element()
+}
+
+impl NaLetraDaConversa {
+    /// O rem de dentro: o da janela (que já leva o zoom) vezes o fator. Lido fora do bloco de
+    /// dentro, é sempre o da janela, e as três fases chegam ao mesmo número.
+    fn rem(&self, window: &Window) -> Pixels {
+        window.rem_size() * self.fator
+    }
+}
+
+impl IntoElement for NaLetraDaConversa {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for NaLetraDaConversa {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let rem = self.rem(window);
+        (window.with_rem_size(Some(rem), |window| self.filho.request_layout(window, cx)), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let rem = self.rem(window);
+        window.with_rem_size(Some(rem), |window| self.filho.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let rem = self.rem(window);
+        window.with_rem_size(Some(rem), |window| self.filho.paint(window, cx));
+    }
+}
