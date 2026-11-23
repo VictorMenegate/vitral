@@ -1041,7 +1041,7 @@ impl Janela {
             })
             // Uma linha só no alto: o logo (o menu do Vitral, também na gaveta) e as abas. A busca e
             // o "+" moram no pé da lista (pedido do dono, 12/11/2026).
-            .child(self.topo_enxuto(motor_entidade, Some(abas), cx))
+            .child(self.topo_enxuto(motor_entidade, Some(abas), window, cx))
             .child(div().flex_none().h(esp::E4))
             .children(escopo)
             .child(conteudo)

@@ -87,7 +87,7 @@ fn abrir_ou_fechar(janela: &WeakEntity<Janela>, painel: u64, qual: PopCaixa, abr
 }
 
 /// Item de menu com o ícone dentro do conteúdo: num menu de itens descritos, o `.icon()` do kit
-/// reservaria uma coluna vazia antes de todos. O texto cai na coluna dos títulos descritos (28).
+/// reservaria uma coluna vazia antes de todos. O texto cai na coluna dos títulos descritos (40).
 fn item_com_icone(icone: Lucide, rotulo: &'static str) -> PopupMenuItem {
     PopupMenuItem::element(move |window, _| {
         div()
@@ -95,7 +95,12 @@ fn item_com_icone(icone: Lucide, rotulo: &'static str) -> PopupMenuItem {
             .items_center()
             .gap(esp::E12)
             .min_w_0()
-            .child(div().flex_none().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))))
+            .child(
+                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
+                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
+                // (folha dimensional, 23/11/2026).
+                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
+            )
             .child(div().flex_1().min_w_0().truncate().child(rotulo))
     })
 }
@@ -169,7 +174,12 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
             .items_center()
             .gap(esp::E12)
             .min_w_0()
-            .child(div().flex_none().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))))
+            .child(
+                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
+                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
+                // (folha dimensional, 23/11/2026).
+                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
+            )
             .child(
                 div()
                     .flex_1()
@@ -982,16 +992,17 @@ impl Janela {
                             }),
                     )
                 });
-                // As teclas na coluna do texto das linhas (8 do item).
+                // O aviso e as teclas na coluna do texto das linhas: os 8 do item mais os ~4 da lista
+                // do kit (eram 8 e ficavam 4 px fora; folha dimensional, 23/11/2026).
                 let aviso = aviso_de_troca
                     .clone()
-                    .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
+                    .map(|a| div().px(esp::E12).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
                 div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).children(dupla).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolhe"),
                         dica_de_tecla(&["Enter"], "usa"),
                     ], window);
-                    s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E8).child(teclas))
+                    s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E12).child(teclas))
                 })
             })
             .into_any_element()

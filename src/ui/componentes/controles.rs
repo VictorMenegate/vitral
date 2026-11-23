@@ -1260,9 +1260,13 @@ impl RenderOnce for Campo {
     }
 }
 
-/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A lupa
-/// fica a 8 da borda de fora (o contorno, 6 e a folga do desenho dela): numa peça de 8, cai na
-/// guia de 16 da lista.
+/// Da borda de fora do campo de busca à caixa da lupa. Fora da escala de propósito: com a folga do
+/// desenho da lupa, a tinta fica a 8 da borda, na coluna do ícone de arquivar logo acima. Era 8,
+/// sobra da época do contorno de 1, e a tinta ficava 1 px depois (folha dimensional, 23/11/2026).
+const RECUO_DA_LUPA: f32 = 7.;
+
+/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A tinta
+/// da lupa fica a 8 da borda de fora (`RECUO_DA_LUPA`).
 pub fn campo_de_busca(
     id: impl Into<ElementId>,
     estado: &Entity<InputState>,
@@ -1295,7 +1299,7 @@ pub fn campo_de_busca_de(
         .flex()
         .items_center()
         .h(r(altura))
-        .pl(esp::E8)
+        .pl(r(RECUO_DA_LUPA))
         .pr(esp::E6)
         // Um poço de canto arredondado, sem fio: quem o desenha é a sombra que cai de cima para
         // dentro e o 1 px de luz na quina de baixo. Com o foco, um aro de metal de 2 px em volta

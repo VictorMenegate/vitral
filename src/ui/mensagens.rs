@@ -43,7 +43,7 @@ use crate::{
     modelo::{Agente, Chat, Execucao, Item, Reforco},
     motor::Motor,
     tema::{
-        Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, halo_foco, r, raio, tam,
+        Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, halo_foco, r, raio,
     },
 };
 
@@ -100,6 +100,12 @@ fn larga(nivel: LarguraPainel) -> bool {
 
 fn minima(nivel: LarguraPainel) -> bool {
     matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo)
+}
+
+/// A folga dos lados do balão do usuário: 12, e 10 no painel mínimo (eram 16; dono, 17/11/2026:
+/// "diminui o padding disso"). O texto do balão e a barra de ações em cima dele medem daqui.
+fn folga_do_balao(nivel: LarguraPainel) -> f32 {
+    if minima(nivel) { 10. } else { 12. }
 }
 
 /// Fundos da linha que sai e da que entra num trecho de código.
@@ -273,6 +279,7 @@ impl Janela {
         let rolagem = self.paineis[ix].rolagem.clone();
         let foco = motor.config.modo_foco;
         let nivel = self.paineis[ix].medida.nivel;
+        let caixa_estreita = self.paineis[ix].medida.faixa == FaixaCaixa::Estreita;
         let contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
         let agora = crate::modelo::agora();
         // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
@@ -469,10 +476,9 @@ impl Janela {
             // 18/11/2026: o "Pensando…" lá em cima ficava "muito longe de baixo"). A margem automática
             // só ocupa a sobra: com a conversa maior que a tela, ela é zero e a rolagem segue igual.
             .mt_auto()
-            .map(coluna)
-            // No painel estreito, 16 dos lados (eram 12; dono, 17/11/2026: "aumenta um pouco o
+            // Na caixa estreita, 16 dos lados (eram 12; dono, 17/11/2026: "aumenta um pouco o
             // padding de dentro da parte do texto").
-            .when(minima(nivel), |s| s.px(esp::E16))
+            .map(|s| coluna(s, caixa_estreita))
             .pt(esp::E12)
             // 32 no fim, o passo de entre turnos: a caixa começa o próximo turno, e a barra de
             // ações da última resposta cabe embaixo dela.
@@ -651,12 +657,13 @@ impl Janela {
                     .on_prepaint(move |limites, _, _| altura_da_presa.set(limites.size.height))
                     .child(fundo_do_cartao())
                     .child(
-                    div().map(coluna).when(minima(nivel), |s| s.px(esp::E16)).child(
+                    div().map(|s| coluna(s, caixa_estreita)).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
                             .relative()
                             .w_full()
-                            .px(dentro_da_borda(12.))
+                            // A folga dos balões, também no painel mínimo (lá ficava 2 px fora).
+                            .px(dentro_da_borda(folga_do_balao(nivel)))
                             .py(dentro_da_borda(8.))
                             .rounded(raio)
                             .cursor_pointer()
@@ -881,9 +888,9 @@ impl Janela {
                 // Claude Code (dono, 16/11/2026), no poço escuro do balão.
                 // Mais justo: 12 dos lados e 8 em cima e embaixo (eram 16 e 12; dono, 17/11/2026:
                 // "diminui o padding disso").
-                let folga = if minima(contexto.nivel) { 10. } else { 12. };
-                // As pílulas chegam a 8 da borda do balão, e não aos 16 do texto: em volta delas
-                // sobrava muito (dono, 17/11/2026).
+                let folga = folga_do_balao(contexto.nivel);
+                // As pílulas chegam a 5 da borda de fora do balão, e não aos 11 do texto: em volta
+                // delas sobrava muito (dono, 17/11/2026).
                 let pilulas = (!anexos.is_empty()).then(|| {
                     h_flex().flex_wrap().gap(esp::E6).ml(r(-(folga - 6.))).children(
                         anexos.iter().enumerate().map(|(i, a)| pilula_de_arquivo(format!("anexo-{chave}-{i}"), a, &contexto.chat.id, true, cx)),
@@ -902,7 +909,7 @@ impl Janela {
                         .w_full()
                         .when_some(alternar_tudo, |s, f| s.cursor_pointer().on_click(f))
                         .px(dentro_da_borda(folga))
-                        // Com pílulas no alto, 8 em cima (o mesmo dos lados delas) e 6 até o texto.
+                        // Com pílulas no alto, 5 em cima (o mesmo dos lados delas) e 6 até o texto.
                         .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
                         .pb(dentro_da_borda(8.))
                         .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
@@ -971,11 +978,12 @@ impl Janela {
             acoes.push(super::reenvio::botao_voltar_arquivos(chave, &contexto.chat.id, marca, window, cx).into_any_element());
         }
         acoes.push(copiar(chave, texto).into_any_element());
-        // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, no trecho reto
-        // da borda (a 16, na coluna do texto); no canto ela montava na curva. Sobe 22, e não 14:
-        // com 8 de respiro no balão, ela entrava 6 px na primeira linha do texto (revisão de
-        // design, 23/11/2026).
-        let barra = div().absolute().top(r(-22.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
+        // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, com a beirada
+        // da direita na coluna do fim do texto (a mesma folga do balão). Era 16 fixo,
+        // a folga de antes de 17/11, e ficava 5 px antes do fim do texto (folha dimensional,
+        // 23/11/2026). Sobe 22, e não 14: com 8 de respiro no balão, ela entrava 6 px na primeira
+        // linha do texto (revisão de design, 23/11/2026).
+        let barra = div().absolute().top(r(-22.)).right(dentro_da_borda(folga_do_balao(contexto.nivel)));
         v_flex()
             .w_full()
             .map(com_alcance_da_barra)
@@ -4152,7 +4160,7 @@ impl Janela {
         // Alinha com o texto da caixa (a margem da coluna mais o recuo do texto nela) e, à direita,
         // com o enviar.
         let caixa_estreita = medida.faixa == FaixaCaixa::Estreita;
-        let margem = tam(window, if caixa_estreita { 12. } else { 16. });
+        let margem = composer::margem_da_caixa(caixa_estreita).to_pixels(window.rem_size());
         let (recuo, fim) = (margem + composer::recuo_do_texto(caixa_estreita, window), margem + composer::borda_ao_conteudo(caixa_estreita, window));
         // A fila é da conversa, não do turno: depois de um reinício (ou de uma parada, ou de uma
         // falha) o chat não está mais rodando e ela continua esperando, à vista.
@@ -4444,7 +4452,7 @@ impl Janela {
         };
         Some(
             h_flex()
-                .map(coluna)
+                .map(|s| coluna(s, caixa_estreita))
                 .pl(recuo)
                 .pr(fim)
                 .h(r(28.))
@@ -4533,8 +4541,7 @@ impl Janela {
         // da tela; vários de uma vez (chamadas em paralelo) nunca passam de 400 px.
         v_flex()
             .id(SharedString::from(format!("permissoes-{}", chat.id)))
-            .map(coluna)
-            .when(faixa == FaixaCaixa::Estreita, |s| s.px(r(12.)))
+            .map(|s| coluna(s, faixa == FaixaCaixa::Estreita))
             .gap(r(8.))
             .min_h_0()
             .overflow_y_scroll()
@@ -4777,11 +4784,13 @@ impl Janela {
             .map(|nome| SharedString::from(format!("{nome}-{id}")));
         let [id_cab, id_rolagem, id_aprovar, id_mais, id_mudar, id_copiar] = ids;
         // O cabeçalho de azulejo, sem a faixa tingida: o âmbar vai no ícone.
+        // Tudo no cartão a 12 cheios, como os pedidos de permissão: o miolo da moldura não tem
+        // borda para descontar (era dentro_da_borda, 11; folha dimensional, 23/11/2026).
         let cabecalho = h_flex()
             .id(id_cab)
             .flex_none()
             .h(r(44.))
-            .px(dentro_da_borda(12.))
+            .px(esp::E12)
             .gap(esp::E8)
             .child(azulejo(Lucide::Map, Cores::ambar()))
             .child(
@@ -4860,7 +4869,7 @@ impl Janela {
                     .id(id_rolagem.clone())
                     .flex_1()
                     .min_h_0()
-                    .px(dentro_da_borda(12.))
+                    .px(esp::E12)
                     .py(esp::E12)
                     .corpo()
                     .text_color(Cores::texto())
@@ -4870,7 +4879,7 @@ impl Janela {
             )
             .when_some(campo, |s, campo| {
                 s.child(
-                    div().flex_none().px(dentro_da_borda(12.)).child(
+                    div().flex_none().px(esp::E12).child(
                         div()
                             .h(r(32.))
                             .px(esp::E4)
@@ -4883,7 +4892,7 @@ impl Janela {
                     ),
                 )
             })
-            .child(div().flex_none().px(dentro_da_borda(12.)).pt(esp::E12).pb(dentro_da_borda(12.)).child(rodape));
+            .child(div().flex_none().px(esp::E12).pt(esp::E12).pb(esp::E12).child(rodape));
         moldura_dupla(EstadoDaMoldura::Esperando).min_h_0().child(cartao.flex_1().min_h_0()).into_any_element()
     }
 }
@@ -4892,7 +4901,7 @@ impl Janela {
 /// (eram 806 px e perto de 100, linha longa demais para ler no painel único). Em rem, para o zoom
 /// não mudar quantas letras cabem na linha.
 const COLUNA: Rems = rems(45.);
-/// Margem da coluna de leitura de cada lado (16 na largura mínima e na caixa estreita). 24: com as
+/// Margem da coluna de leitura de cada lado (16 na faixa estreita da caixa). 24: com as
 /// conversas emendadas e encostadas na janela, os 16 deixavam o texto e a caixa colados na
 /// divisória e na beirada (dono, 17/11/2026: "melhora o espaçamento dessas partes").
 pub(super) const MARGEM_DA_COLUNA: Rems = esp::E24;
@@ -4901,10 +4910,13 @@ pub(super) const MINIMO_MENSAGENS: Rems = rems(7.5);
 /// Até aqui o plano encolhe: título, umas linhas do texto, o campo e os botões (200 px).
 const MINIMO_PLANO: Rems = rems(12.5);
 
-/// Coluna de leitura comum: mensagens, pedidos de permissão, plano e caixa de mensagem alinham
-/// pelas mesmas bordas em qualquer largura de painel.
-pub(super) fn coluna<E: Styled>(elemento: E) -> E {
-    elemento.w_full().max_w(COLUNA).mx_auto().px(MARGEM_DA_COLUNA)
+/// Coluna de leitura comum: mensagens, pedidos de permissão, plano, fila e caixa de mensagem
+/// alinham pelas mesmas bordas em qualquer largura de painel. A margem é a da caixa (24, e 16 na
+/// faixa estreita dela) para todos: as mensagens iam a 16 só com o painel abaixo de 400 px e a
+/// caixa abaixo de ~557, e entre os dois o texto ficava 8 px fora do da caixa (dono, 23/11/2026:
+/// "pode usar a mesma regra da caixa nas mensagens").
+pub(super) fn coluna<E: Styled>(elemento: E, caixa_estreita: bool) -> E {
+    elemento.w_full().max_w(COLUNA).mx_auto().px(composer::margem_da_caixa(caixa_estreita))
 }
 
 /// O painel está no fim da conversa (ou a menos de 48 px dele).
