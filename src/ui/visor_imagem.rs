@@ -322,8 +322,9 @@ impl Render for VisorImagem {
                     .h(area.height)
                     .flex()
                     .rounded(raio::CARTAO)
-                    // O xadrez não cabe aqui: o preto do app já é o fundo neutro do resto.
-                    .bg(Cores::preto())
+                    // O xadrez não cabe aqui: o preto do app já é o fundo neutro do resto (no SVG,
+                    // um cinza: o traço escuro sem fundo sumia no preto).
+                    .bg(imagens::fundo_da_imagem(self.caminho()))
                     .overflow_hidden()
                     .child(corpo),
             )

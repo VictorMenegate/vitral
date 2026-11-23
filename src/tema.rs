@@ -496,6 +496,7 @@ gpui_kit::assets::icon_assets!(
         FolderPlus,
         FolderSearch,
         FolderX,
+        Funnel,
         Gauge,
         GitBranch,
         GitCommitHorizontal,

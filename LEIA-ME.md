@@ -1299,7 +1299,8 @@ worktree"), lido quando a dica aparece.
 - **Ignorar espaço em branco.** Com o diff de "Na pasta" aberto, o **…** do arquivo tem
   **Ignorar espaço em branco** (marcado quando ligado): o diff é refeito com o `-w` do git
   (`git::diff_do_arquivo`), e o que só mudou de recuo ou de espaço no fim da linha sai. A faixa
-  diz "sem espaço em branco" e, se não sobrou nada, "Só mudou espaço em branco". Começa
+  diz "sem espaço em branco" (um funil, com a frase na dica, quando ela não cabe) e, se não
+  sobrou nada, "Só mudou espaço em branco". Começa
   desligado e vale até fechar o Vitral (`Janela::diff_sem_espaco`).
 
 **Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
@@ -1639,12 +1640,14 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra e o ×
   que volta ao arquivo sem as marcas. **Rever o turno em sequência:** aberto pelas Mudanças de um
   chat (ou por uma edição da conversa) com mais de um arquivo na lista, a faixa diz também
-  "arquivo 2 de 8" ("2/8" no painel estreito), e a seta, na última mudança, passa ao arquivo
+  "arquivo 2 de 8" ("2/8" quando a frase não cabe na faixa, como no painel na largura mínima com
+  os anéis de uso no canto; a frase vai na dica), e a seta, na última mudança, passa ao arquivo
   seguinte da lista em que ele está ("Neste turno" ou "Antes"), na ordem dela; a de cima, na
   primeira mudança, volta ao arquivo anterior, na última mudança dele. Nas pontas da lista, dá a
   volta. A dica da seta diz se o próximo passo é outra mudança ou outro arquivo
   (`passo_da_revisao` e `edicao::lugar_na_revisao`, com teste). Fora de uma lista (o diff de "Na
-  pasta") ou com um arquivo só, as setas dão a volta dentro do arquivo, como antes. As linhas que entraram ficam com o fundo verde, a faixa
+  pasta") ou com um arquivo só, as setas dão a volta dentro do arquivo, como antes; com uma
+  mudança só e sem outro arquivo, a faixa não tem setas. As linhas que entraram ficam com o fundo verde, a faixa
   verde na borda e o "+"; as que saíram aparecem entre elas, sem número, em vermelho, com o "−"
   (o markdown sai em linhas nesse modo). Cada trecho da edição é achado no arquivo de agora pelo
   lado novo (o contexto e o que entrou; no diff do Codex, perto da linha que ele diz); o que não
@@ -1653,7 +1656,10 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   "Este registro não guardou a edição" na faixa.
   O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. O **SVG**
   abre desenhado, como as outras imagens (o `img` do GPUI o desenha; `claude::imagem_de_ver`), e o
-  clique o leva ao visor; na edição ele sai em linhas, e anexado segue como arquivo de texto (o
+  clique o leva ao visor, no tamanho que a tag `<svg>` diz (`imagens::medidas_svg`: o `width` e o
+  `height` ou o `viewBox`; o GPUI desenha o SVG no tamanho de origem, e esticado até a área ele
+  borrava) e sobre um cinza médio em vez do preto (`imagens::fundo_da_imagem`: o traço escuro sem
+  fundo de um ícone sumia no preto); na edição ele sai em linhas, e anexado segue como arquivo de texto (o
   `tipo_imagem` continua sem ele: a API não aceita SVG como imagem). O **VS Code** do cabeçalho
   abre na linha que está em vista (`code --goto arquivo:linha`, `sistema::argumentos_do_editor`):
   a primeira das escolhidas, a da mudança à vista na edição ou a que o link da conversa marcou; a
@@ -1672,7 +1678,8 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   setas e o ×. O Enter e o F3 vão ao achado seguinte, o Shift com eles ao anterior, dando a volta,
   e o Esc fecha (com a barra aberta, antes de recolher a gaveta ou parar o turno). A busca não
   liga para acento nem para caixa (`acentos.rs`), marca todos os achados em âmbar (o atual, mais
-  forte) por cima das cores da sintaxe e rola até o atual, no meio da tela. Ela é pelas linhas:
+  forte) por cima das cores da sintaxe e rola até o atual, no meio da tela. A barra guarda o lugar
+  dos anéis de uso, e as primeiras linhas descem para não ficar atrás dela. Ela é pelas linhas:
   com a barra aberta, o markdown e o SVG saem em linhas, e voltam a aparecer prontos ao fechar;
   na edição, acha nas linhas do arquivo (não nas que saíram). O índice (`IndiceDoArquivo`: a
   linha e a posição de cada achado) só é refeito quando o termo ou o arquivo mudam. Digitar com

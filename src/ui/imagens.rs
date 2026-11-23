@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use gpui_kit::SharedString;
+use gpui_kit::{Hsla, SharedString, hsla};
 
 use crate::modelo::Item;
 
@@ -64,7 +64,12 @@ fn ler(caminho: &Path) -> Anexo {
     let Ok(dados) = std::fs::metadata(caminho) else {
         return Anexo::default();
     };
-    let medidas = crate::claude::tipo_imagem(caminho).and_then(|_| medidas_de(&comeco(caminho)));
+    let svg = caminho.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    let medidas = if svg {
+        medidas_svg(&comeco(caminho))
+    } else {
+        crate::claude::tipo_imagem(caminho).and_then(|_| medidas_de(&comeco(caminho)))
+    };
     Anexo { existe: true, tamanho: Some(tamanho_curto(dados.len()).into()), medidas }
 }
 
@@ -109,6 +114,44 @@ pub fn medidas_de(bytes: &[u8]) -> Option<(u32, u32)> {
         return medidas_jpeg(bytes);
     }
     None
+}
+
+/// As medidas de um SVG, pela tag `<svg>`: o `width` e o `height` em px ou, sem eles (ou em %), o
+/// `viewBox`. Com elas, o visor mostra o desenho no tamanho dele, em vez de esticá-lo até a área:
+/// o GPUI desenha o SVG no tamanho de origem, e esticado ele borra.
+pub fn medidas_svg(bytes: &[u8]) -> Option<(u32, u32)> {
+    let texto = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]);
+    let inicio = texto.find("<svg")?;
+    let tag = &texto[inicio..inicio + texto[inicio..].find('>')?];
+    let atributo = |nome: &str| -> Option<&str> {
+        // Com o espaço antes: "stroke-width" não é "width".
+        let chave = format!(" {nome}=");
+        let resto = &tag[tag.find(&chave)? + chave.len()..];
+        let aspa = resto.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        resto[1..].split(aspa).next()
+    };
+    let numero = |valor: &str| valor.trim().trim_end_matches("px").parse::<f32>().ok().filter(|n| *n >= 1.);
+    match (atributo("width").and_then(numero), atributo("height").and_then(numero)) {
+        (Some(largura), Some(altura)) => Some((largura.round() as u32, altura.round() as u32)),
+        _ => {
+            let caixa: Vec<f32> = atributo("viewBox")?
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|parte| !parte.is_empty())
+                .filter_map(|parte| parte.parse().ok())
+                .collect();
+            (caixa.len() == 4 && caixa[2] >= 1. && caixa[3] >= 1.).then(|| (caixa[2].round() as u32, caixa[3].round() as u32))
+        }
+    }
+}
+
+/// O fundo atrás de uma imagem no visor e no painel do arquivo: o preto do app, sobre o qual a
+/// transparência de um print não some. No SVG, um cinza médio: o desenho costuma ser um traço
+/// escuro sem fundo (um ícone, um logo), que no preto não aparecia; no cinza, o claro também se vê.
+pub fn fundo_da_imagem(caminho: &Path) -> Hsla {
+    match caminho.extension().and_then(|e| e.to_str()) {
+        Some(e) if e.eq_ignore_ascii_case("svg") => hsla(0., 0., 0.46, 1.),
+        _ => crate::tema::Cores::preto(),
+    }
 }
 
 /// WebP tem três formas: a estendida (VP8X, com a tela em 24 bits), a com perdas (VP8, 14 bits
@@ -326,6 +369,20 @@ mod testes {
         // Um DHT na faixa dos SOF não pode ser confundido com um.
         assert_eq!(medidas_de(&[0xFF, 0xD8, 0xFF, 0xC4, 0x00, 0x04, 0, 0, 0, 0, 0]), None);
         assert_eq!(medidas_de(b"nada disso"), None);
+    }
+
+    #[test]
+    fn medidas_do_svg_pela_tag() {
+        use super::medidas_svg;
+        let svg = |tag: &str| format!("<?xml version=\"1.0\"?>\n{tag}<circle r=\"4\" stroke-width=\"9\"/></svg>");
+        // O width e o height, com ou sem "px"; o stroke-width de dentro não conta.
+        assert_eq!(medidas_svg(svg(r#"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120px" viewBox="0 0 24 12">"#).as_bytes()), Some((240, 120)));
+        assert_eq!(medidas_svg(svg("<svg width='16' height='16'>").as_bytes()), Some((16, 16)));
+        // Sem eles, ou em %, vale o viewBox.
+        assert_eq!(medidas_svg(svg(r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2">"#).as_bytes()), Some((24, 24)));
+        assert_eq!(medidas_svg(svg(r#"<svg width="100%" height="100%" viewBox="0,0,300,150.4">"#).as_bytes()), Some((300, 150)));
+        assert_eq!(medidas_svg(svg("<svg>").as_bytes()), None);
+        assert_eq!(medidas_svg(b"nada disso"), None);
     }
 
     #[test]

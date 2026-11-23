@@ -612,7 +612,7 @@ impl Janela {
                             .items_center()
                             .justify_center()
                             .rounded(raio::CARTAO)
-                            .bg(Cores::preto())
+                            .bg(super::imagens::fundo_da_imagem(&completo))
                             .overflow_hidden()
                             .child(img(completo.clone()).max_w_full().max_h_full().object_fit(ObjectFit::Contain)),
                     )
@@ -746,6 +746,8 @@ impl Janela {
                         .with_width_from_item(Some(mais_longa))
                     }
                 };
+                // Com a barra da busca aberta, as primeiras linhas descem para não ficar atrás dela.
+                let respiro_de_cima = if self.busca_arquivo.aberta { r(60.) } else { esp::E8 };
                 div()
                     .relative()
                     .flex_1()
@@ -756,15 +758,18 @@ impl Janela {
                             .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                             .track_scroll(&rolagem_codigo)
                             .size_full()
-                            .py(esp::E8),
+                            .pt(respiro_de_cima)
+                            .pb(esp::E8),
                     )
                     .scrollbar(&rolagem_codigo, ScrollbarAxis::Both)
                     .into_any_element()
             }
         };
         // A barra da busca flutua no alto do conteúdo, à direita, e nunca mais larga que o painel.
+        // Com os anéis de uso no canto da janela, ela guarda o lugar deles, como as fileiras de cima.
         let barra_da_busca = self.barra_da_busca_no_arquivo(contagem_da_busca, window, cx).map(|(barra, nova)| {
-            div().absolute().top(esp::E8).right(esp::E8).left(esp::E8).flex().justify_end().child(
+            let direita = reserva.unwrap_or(esp::E8.to_pixels(window.rem_size()));
+            div().absolute().top(esp::E8).right(direita).left(esp::E8).flex().justify_end().child(
                 div().w(r(340.)).max_w(relative(1.)).child(movimento::entrada("entra-busca-no-arquivo", nova, De::Cima, barra)),
             )
         });
@@ -796,6 +801,10 @@ impl Janela {
             .into_any_element()
     }
 }
+
+/// A largura livre da faixa da edição (em px a 100%) a partir da qual "arquivo 2 de 8" cabe por
+/// extenso ao lado de "Edição +N −M 2 de 5", das setas e do ×; abaixo dela, "2/8".
+const FAIXA_COM_A_FRASE: f32 = 400.;
 
 /// Quanto ocupam as ações do cabeçalho do arquivo (em px a 100%): só os ícones (Mencionar, VS
 /// Code e o "⋯", de 28, com 4 entre eles) ou com os rótulos.
@@ -1043,7 +1052,8 @@ impl Janela {
             .on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)));
         // A dica diz para onde a seta vai: outra mudança ou outro arquivo.
         let seta = |id: &'static str, icone: Lucide, passo: isize| {
-            let destino = passo_da_revisao(atual, mudancas, lugar, passo)?;
+            // Com uma mudança só e sem outro arquivo, a seta não levaria a lugar nenhum.
+            let destino = passo_da_revisao(atual, mudancas, lugar, passo).filter(|d| *d != Passo::Mudanca(atual))?;
             let dica = match (destino, passo > 0) {
                 (Passo::Mudanca(_), true) => "Próxima mudança",
                 (Passo::Mudanca(_), false) => "Mudança anterior",
@@ -1058,10 +1068,15 @@ impl Janela {
         let (anterior, seguinte) = (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1));
         let setas = (anterior.is_some() || seguinte.is_some())
             .then(|| div().flex().flex_none().items_center().gap(esp::E2).children(anterior).children(seguinte));
-        // "arquivo 2 de 8"; no painel estreito, "2/8", com a frase na dica.
+        // Quando a faixa não tem lugar para as frases (o painel na largura mínima, os anéis de
+        // uso no canto), elas encolhem: "2/8" e um ícone, com a frase na dica.
+        let escala = window.rem_size().as_f32() / 15.;
+        let livre = self.direita_largura * 15. - reserva.map_or(8., |r| r.as_f32() / escala);
+        let curto = self.direita_estreita || livre < FAIXA_COM_A_FRASE;
+        // "arquivo 2 de 8".
         let do_turno = lugar.map(|(posicao, total)| {
             let longo = SharedString::from(format!("arquivo {} de {}", posicao + 1, total));
-            let texto = if self.direita_estreita { SharedString::from(format!("{}/{}", posicao + 1, total)) } else { longo.clone() };
+            let texto = if curto { SharedString::from(format!("{}/{}", posicao + 1, total)) } else { longo.clone() };
             div()
                 .id("arquivo-do-turno")
                 .flex()
@@ -1114,8 +1129,16 @@ impl Janela {
                         .when(edicao.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", edicao.saem)))),
                 )
                 .children(posicao.map(|p| div().flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue()).child(p)))
+                // O diff está filtrado: a frase, ou o funil com a frase na dica.
                 .when(so_espaco, |s| {
-                    s.child(div().flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue()).child("sem espaço em branco"))
+                    let marca = div().id("diff-sem-espaco").flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue());
+                    s.child(if curto {
+                        marca
+                            .child(super::componentes::icone(Lucide::Funnel, 12., window))
+                            .tooltip(|window, cx| Tooltip::new("Sem as mudanças só de espaço em branco").build(window, cx))
+                    } else {
+                        marca.child("sem espaço em branco")
+                    })
                 })
                 .child(div().flex_1())
                 .children(do_turno)
