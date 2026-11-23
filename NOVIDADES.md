@@ -3,6 +3,28 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.6
+
+As Configurações em seções, a letra da conversa separada do zoom, as suas instruções para todos os
+chats e os perfis de agente.
+
+- **Configurações em seções.** A lista corrida virou seis seções, com a navegação ao lado: Chats,
+  Agentes, Perfis, Aparência, Avisos e Vitral. Nenhuma opção saiu; cada uma foi para a seção do
+  assunto dela, e as descrições ficaram numa frase.
+- **Letra da conversa.** Em Aparência, o tamanho das mensagens muda sem mexer no resto: de 80% a
+  150% da interface. O zoom (Ctrl+roda) continua valendo para tudo e agora também aparece ali.
+- **Suas instruções para todos os chats.** Em Agentes, um texto seu que vai junto do que o Vitral
+  já diz ao Claude e ao Codex ("rode os testes antes de dizer que terminou"). Vale a partir da
+  próxima mensagem.
+- **Perfis de agente.** Um nome para quem responde, o modelo, o modo e o esforço, com uma nota de
+  quando usar. Os perfis aparecem no alto do seletor de modelo, e escolher um ajusta tudo de uma
+  vez.
+- **Versão do Claude Code e do Codex.** Em Agentes, a versão instalada de cada um; quando sai uma
+  mais nova, a linha avisa.
+- **Testar a notificação.** Em Avisos, um botão manda uma notificação do sistema na hora.
+- **Diagnóstico para pedir ajuda.** Em Vitral, **Copiar** junta as versões, o sistema, as pastas
+  dos dados e o fim do registro de quedas, sem chaves, tokens nem conversas.
+
 ## 0.9.5
 
 O fundo das suas mensagens parado e as imagens delas com o canto redondo.
