@@ -5,10 +5,12 @@
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
 //! (`edicao.rs`). O número da linha escolhe linhas para mencionar. Com o foco no painel, o Ctrl+F
 //! busca dentro do arquivo (`BuscaNoArquivo`): a barra flutua no alto do conteúdo, com "3 de 12"
-//! e as setas, e o markdown passa para as linhas enquanto ela está aberta.
+//! e as setas, e o markdown passa para as linhas enquanto ela está aberta. O .md e o .svg têm o
+//! seletor Prévia | Fonte, e a prévia do .md mostra o frontmatter numa tabelinha
+//! (`previa_markdown.rs`).
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, ElementExt as _, WindowExt as _, h_flex,
+    ActiveTheme as _, Disableable as _, ElementExt as _, Sizable as _, Size, WindowExt as _, h_flex,
     highlighter::highlight_code,
     input::{Escape, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -33,8 +35,8 @@ use super::{
     Gaveta, Janela,
     busca_conversa::{AchadoAnterior, AchadoSeguinte},
     componentes::{
-        EstadoVazio, Flutuante as _, Reflexo as _, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, campo_de_busca,
-        contagem,
+        ControleSegmentado, EstadoVazio, Flutuante as _, Reflexo as _, Segmento, TamanhoBotao, Tom, aviso, botao_fantasma,
+        botao_icone, campo_de_busca, contagem,
     },
     edicao::{Edicao, Fileira, Marca, Vista},
     movimento::{self, De},
@@ -121,7 +123,7 @@ fn achados_na_linha(texto: &str, termo: &str) -> usize {
     achados
 }
 
-/// Maior arquivo que abre inteiro (com cor e, no .md, renderizado); acima dele, só para ler.
+/// Maior arquivo que abre inteiro (com cor e prévia); acima dele, só para ler.
 const LIMITE: u64 = 400_000;
 
 /// Maior arquivo que abre para ler (o resto fica para o VS Code ou para o aplicativo do sistema).
@@ -156,6 +158,12 @@ fn largura_do_numero(linhas: usize) -> f32 {
 /// O avanço de uma letra do código (em px a 100%): 0,6 em do mono de 13.
 const LETRA_DO_CODIGO: f32 = 7.8;
 
+/// O arquivo tem prévia além do texto: o .md renderizado e o .svg desenhado.
+fn tem_previa(caminho: &Path) -> bool {
+    let extensao = caminho.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+    extensao == "md" || extensao == "svg"
+}
+
 /// O limite das imagens é outro: o de texto barraria um print comum, e desenhar uma imagem custa
 /// a memória dela decodificada, não o tamanho do arquivo.
 const LIMITE_IMAGEM: u64 = 20_000_000;
@@ -171,6 +179,8 @@ pub(super) struct ArquivoLido {
     conteudo: Conteudo,
     /// O tamanho do arquivo lido: acima do limite da edição ele abre só para ler.
     bytes: u64,
+    /// A prévia do .md (o frontmatter e o texto com os links ligados).
+    previa: Option<Rc<PreviaLida>>,
     /// Chegam do segundo plano pouco depois da leitura; até lá o código sai sem cor.
     cores: Option<CoresDasLinhas>,
     rolagem: UniformListScrollHandle,
@@ -546,18 +556,26 @@ fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
 }
 
 /// O que o painel mostra do arquivo lido: o conteúdo, as cores do código se já chegaram, a
-/// rolagem e o tamanho do arquivo.
+/// rolagem, o tamanho do arquivo e, no .md, a prévia pronta.
 struct Visto {
     conteudo: Conteudo,
     cores: Option<CoresDasLinhas>,
     rolagem: UniformListScrollHandle,
     bytes: u64,
+    previa: Option<Rc<PreviaLida>>,
+}
+
+/// A prévia de um .md: as linhas do frontmatter e o texto com os links de arquivo já ligados.
+/// Feita uma vez por leitura do arquivo, e não a cada quadro.
+struct PreviaLida {
+    alto: Vec<(SharedString, SharedString)>,
+    corpo: SharedString,
 }
 
 impl Janela {
     /// O conteúdo do arquivo aberto, relido só quando ele muda (a data é conferida no máximo a
     /// cada segundo), com as cores do código se já chegaram e a rolagem.
-    fn conteudo_arquivo(&self, completo: &Path, rico: bool, cx: &Context<Self>) -> Visto {
+    fn conteudo_arquivo(&self, raiz: &Path, completo: &Path, rico: bool, cx: &Context<Self>) -> Visto {
         let mut lido = self.arquivo_lido.borrow_mut();
         let data = || std::fs::metadata(completo).and_then(|m| m.modified()).ok();
         let visto = |l: &ArquivoLido| Visto {
@@ -565,6 +583,7 @@ impl Janela {
             cores: l.cores.clone(),
             rolagem: l.rolagem.clone(),
             bytes: l.bytes,
+            previa: l.previa.clone(),
         };
         if let Some(l) = lido.as_mut()
             && l.caminho == completo
@@ -592,12 +611,22 @@ impl Janela {
             Conteudo::Codigo(linhas, _) if bytes <= LIMITE => Some(colorir(completo, modificado, linhas, cx)),
             _ => None,
         };
+        let previa = match &conteudo {
+            Conteudo::Markdown(texto, _) => {
+                let (alto, corpo) = super::previa_markdown::frontmatter(texto);
+                let corpo = super::previa_markdown::ligar_links(corpo, completo.parent().unwrap_or(raiz), raiz);
+                let alto = alto.into_iter().map(|(chave, valor)| (chave.into(), valor.into())).collect();
+                Some(Rc::new(PreviaLida { alto, corpo: corpo.into() }))
+            }
+            _ => None,
+        };
         let novo = ArquivoLido {
             caminho: completo.to_path_buf(),
             modificado,
             conferido: Instant::now(),
             conteudo,
             bytes,
+            previa,
             cores: None,
             rolagem,
             _colorindo: colorindo,
@@ -620,10 +649,13 @@ impl Janela {
             None => nome_da_raiz(motor.read(cx), &raiz),
         };
         // Na edição, o markdown e o SVG saem em linhas, como o código: o diff é por linha.
-        // Com a busca aberta também: ela é pelas linhas.
+        // Com a busca aberta também (ela é pelas linhas), e quando você escolhe a Fonte.
         let edicao = self.arquivo_edicao.clone();
-        let rico = edicao.is_none() && !self.busca_arquivo.aberta;
-        let Visto { conteudo, cores, rolagem: rolagem_codigo, bytes } = self.conteudo_arquivo(&completo, rico, cx);
+        let com_previa = tem_previa(&completo);
+        let rico = edicao.is_none() && !self.busca_arquivo.aberta && !(com_previa && self.arquivo_fonte);
+        let Visto { conteudo, cores, rolagem: rolagem_codigo, bytes, previa } = self.conteudo_arquivo(&raiz, &completo, rico, cx);
+        // O arquivo grande abre só em linhas, sem prévia.
+        let editavel = bytes <= LIMITE;
         let janela = cx.entity().downgrade();
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
         let medir = self.medir_direita(cx);
@@ -641,7 +673,10 @@ impl Janela {
         // fileiras de cima do painel guardam o lugar deles; o conteúdo, não.
         let reserva = self.reserva_dos_aneis(window, cx);
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
-        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, reserva, na_gaveta, window, cx);
+        // O seletor Prévia | Fonte só existe para o que tem prévia e abre inteiro, fora da edição
+        // do agente e da busca (que são pelas linhas).
+        let seletor = com_previa && edicao.is_none() && !self.busca_arquivo.aberta && editavel;
+        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor, reserva, na_gaveta, window, cx);
         let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
         // O aviso discreto do arquivo que abre só para ler.
         let faixa_de_leitura = match &conteudo {
@@ -685,25 +720,40 @@ impl Janela {
                     .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor("", &alvo, window, cx)))
                     .into_any_element()
             }
-            Conteudo::Markdown(texto, _) => div()
-                .id("conteudo-arquivo")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .child(
-                    div()
-                        .w_full()
-                        .max_w(r(720.))
-                        .mx_auto()
-                        .px(esp::E16)
-                        .py(esp::E16)
-                        .corpo_ui()
-                        .child(
-                            TextView::markdown(SharedString::from(format!("arquivo-{caminho}")), texto)
-                                .selectable(true),
-                        ),
-                )
-                .into_any_element(),
+            Conteudo::Markdown(texto, _) => {
+                // O frontmatter vira a tabelinha do alto; o resto, com os links de arquivo ligados.
+                let (alto, corpo) = match previa.as_deref() {
+                    Some(previa) => (tabela_do_frontmatter(&previa.alto), previa.corpo.clone()),
+                    None => (None, texto),
+                };
+                div()
+                    .id("conteudo-arquivo")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(r(720.))
+                            .mx_auto()
+                            .px(esp::E16)
+                            .py(esp::E16)
+                            .corpo_ui()
+                            .children(alto)
+                            .child(
+                                TextView::markdown(SharedString::from(format!("arquivo-{caminho}")), corpo)
+                                    .selectable(true)
+                                    .on_link_click(|url, _, window, cx| match super::previa_markdown::destino_do_link(url) {
+                                        super::previa_markdown::Destino::Arquivo => {
+                                            window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(url.to_string())), cx)
+                                        }
+                                        super::previa_markdown::Destino::Web => cx.open_url(url),
+                                        super::previa_markdown::Destino::Nenhum => {}
+                                    }),
+                            ),
+                    )
+                    .into_any_element()
+            }
             // Só as linhas visíveis são montadas: arquivos de milhares de linhas não pesam.
             Conteudo::Codigo(linhas, mais_longa) => {
                 let largura_numero = r(largura_do_numero(linhas.len()));
@@ -871,6 +921,10 @@ const FAIXA_COM_A_FRASE: f32 = 400.;
 /// Quanto ocupam as ações do cabeçalho do arquivo (em px a 100%): só os ícones (Mencionar, VS
 /// Code e o "⋯", de 28, com 4 entre eles) ou com os rótulos.
 const ACOES_SO_ICONES: f32 = 3. * 28. + 2. * 4.;
+
+/// Quanto ocupa o seletor Prévia | Fonte no cabeçalho (em px a 100%): com os nomes ou só os símbolos.
+const SELETOR_COM_ROTULOS: f32 = 138.;
+const SELETOR_SO_ICONES: f32 = 70.;
 const ACOES_COM_ROTULOS: f32 = 116. + 96. + 28. + 2. * 4.;
 
 /// O que cabe no cabeçalho do arquivo: os rótulos das ações, as linhas e a linguagem. A conta é
@@ -898,6 +952,7 @@ impl Janela {
         caminho: &str,
         pasta: String,
         linhas: Option<usize>,
+        seletor: bool,
         reserva: Option<Pixels>,
         na_gaveta: bool,
         window: &Window,
@@ -924,7 +979,14 @@ impl Janela {
         let escala = window.rem_size().as_f32() / 15.;
         let aneis = reserva.map_or(8., |r| r.as_f32() / escala);
         let livre = largura - 12. - aneis - 16. - 8.;
-        let (com_rotulos, com_info) = o_que_cabe(livre, &nome, info.as_deref());
+        // O seletor Prévia | Fonte fica antes das ações, com rótulo quando elas também têm.
+        let (com_rotulos, com_info) = match seletor {
+            false => o_que_cabe(livre, &nome, info.as_deref()),
+            true => match o_que_cabe(livre - SELETOR_COM_ROTULOS - 4., &nome, info.as_deref()) {
+                (true, com_info) => (true, com_info),
+                (false, _) => (false, o_que_cabe(livre - SELETOR_SO_ICONES - 4., &nome, info.as_deref()).1),
+            },
+        };
         let absoluto = SharedString::from(completo.display().to_string());
         let botao = |id: &'static str, icone: Lucide, rotulo: &'static str, dica: SharedString| {
             if com_rotulos {
@@ -1025,6 +1087,20 @@ impl Janela {
                     cx.notify();
                 }))
         });
+        let seletor = seletor.then(|| {
+            let janela = janela.clone();
+            // Estreito, só os símbolos (o nome vai na dica).
+            let opcoes = if com_rotulos {
+                [Segmento::new("Prévia"), Segmento::new("Fonte")]
+            } else {
+                [Segmento::new("Prévia").icone(Lucide::Eye), Segmento::new("Fonte").icone(Lucide::Braces)]
+            };
+            ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, _, cx| {
+                let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, cx));
+            })
+            .with_size(Size::Small)
+            .so_icone(!com_rotulos)
+        });
         let j_mencionar = janela.clone();
         div()
             .flex()
@@ -1092,6 +1168,7 @@ impl Janela {
                     .flex_none()
                     .items_center()
                     .gap(esp::E4)
+                    .children(seletor)
                     .child(botao("mencionar-arquivo", Lucide::AtSign, "Mencionar", dica_mencao).on_click(move |_, window, cx| {
                         let _ = j_mencionar.update(cx, |this, cx| this.mencionar_do_painel(window, cx));
                     }))
@@ -1102,6 +1179,12 @@ impl Janela {
                     .child(menu),
             )
             .into_any_element()
+    }
+
+    /// O seletor Prévia | Fonte do .md e do .svg.
+    fn escolher_vista_do_arquivo(&mut self, fonte: bool, cx: &mut Context<Self>) {
+        self.arquivo_fonte = fonte;
+        cx.notify();
     }
 
     /// A faixa da edição, embaixo do cabeçalho: "Edição", o +N −M e "2 de 5", com as setas que
@@ -1582,6 +1665,31 @@ fn faixa_de_nota(texto: String, reserva: Option<Pixels>, na_gaveta: bool, window
         .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::Info, 14., window)))
         .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto))
         .into_any_element()
+}
+
+/// O frontmatter de um .md, no alto da prévia: uma linha por chave, com a chave em mono tênue e o
+/// valor ao lado. Sem frontmatter, nada.
+fn tabela_do_frontmatter(linhas: &[(SharedString, SharedString)]) -> Option<Div> {
+    if linhas.is_empty() {
+        return None;
+    }
+    // A coluna das chaves tem a largura da maior delas (o mono de 12 anda 7,2 por letra), até 150.
+    let largura = (linhas.iter().map(|(chave, _)| chave.chars().count()).max().unwrap_or(0) as f32 * 7.2 + 2.).min(150.);
+    Some(
+        v_flex().mb(esp::E16).rounded(raio::CONTROLE).border_1().border_color(Cores::linha()).overflow_hidden().children(
+            linhas.iter().enumerate().map(|(i, (chave, valor))| {
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(esp::E12)
+                    .px(esp::E12)
+                    .py(esp::E6)
+                    .when(i > 0, |s| s.border_t_1().border_color(Cores::linha()))
+                    .child(div().flex_none().w(r(largura)).truncate().mono_pequeno().line_height(r(18.)).text_color(Cores::tenue()).child(chave.clone()))
+                    .child(div().flex_1().min_w_0().text_size(r(13.)).line_height(r(18.)).text_color(Cores::texto()).child(valor.clone()))
+            }),
+        ),
+    )
 }
 
 /// Calcula as cores do código em segundo plano (o syntect leva centenas de milissegundos num

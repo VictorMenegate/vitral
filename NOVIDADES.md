@@ -80,6 +80,9 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   como código.
 - **Arquivo grande abre para ler.** Arquivos de 400 KB a 5 MB (um log, um export) abriam só no
   VS Code. Agora abrem aqui, só para ler, com a busca e a escolha de linhas.
+- **Markdown: Prévia ou Fonte.** O .md aberto à direita tem um seletor Prévia | Fonte. Na prévia,
+  o cabeçalho do arquivo (o nome e a descrição de uma skill, por exemplo) aparece numa tabelinha,
+  e os links para outros arquivos abrem o arquivo no painel. Na Fonte, um clique edita.
 - **Rever as mudanças do turno em sequência.** Na edição aberta à direita, a seta da última
   mudança passa ao próximo arquivo da lista de Mudanças do chat, e a faixa mostra "arquivo 2 de
   8". Antes as setas davam a volta dentro do mesmo arquivo.

@@ -1936,6 +1936,8 @@ impl Janela {
         // A busca é do arquivo em que foi aberta: outro arquivo abre sem ela (e o markdown, renderizado).
         if self.arquivo_aberto.as_ref().is_some_and(|(p, c)| *p != pasta || *c != caminho) {
             self.busca_arquivo.aberta = false;
+            // Outro arquivo abre na prévia.
+            self.arquivo_fonte = false;
         }
         self.arquivo_aberto = Some((pasta, caminho));
         self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);

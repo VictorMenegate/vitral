@@ -40,6 +40,7 @@ mod fechar;
 mod painel_arquivo;
 mod paleta;
 mod pergunta;
+mod previa_markdown;
 mod quadro_ideias;
 mod ramo;
 pub(crate) mod paineis;
@@ -481,6 +482,8 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O .md ou o .svg aberto mostra a fonte, e não a prévia (o seletor do cabeçalho).
+    arquivo_fonte: bool,
     /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
     foco_arquivo: FocusHandle,
     /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
@@ -812,6 +815,7 @@ impl Janela {
             cache_arquivos: Default::default(),
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            arquivo_fonte: false,
             foco_arquivo: cx.focus_handle(),
             busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
             feedback_plano: HashMap::new(),

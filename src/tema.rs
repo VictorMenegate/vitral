@@ -459,6 +459,7 @@ gpui_kit::assets::icon_assets!(
         AtSign,
         BellOff,
         Binary,
+        Braces,
         Brain,
         CalendarClock,
         ChartColumn,
