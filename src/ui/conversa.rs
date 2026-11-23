@@ -604,6 +604,9 @@ impl Janela {
         let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
         // A conversa de um subagente aberta numa aba: só para ler, sem caixa nem fila.
         let subagente = chat.and_then(|c| motor.subconversa(&c.id));
+        // A linha de pílulas (o que roda no fundo, os subagentes, os passos, as mudanças): flutua
+        // sobre o pé da conversa, logo acima da caixa, e só existe quando há pílula.
+        let pilulas = chat.zip(ix).and_then(|(c, _)| self.linha_de_pilulas(motor, c, painel_id, cx));
         // As mensagens são uma vista em cache (`vista_mensagens`): a Janela redesenhando por outra
         // coisa (o spinner da caixa, a lista, outro painel) não refaz o layout nem a pintura delas.
         let corpo = match (&chat, ix) {
@@ -626,6 +629,9 @@ impl Janela {
                     .flex_col()
                     .child(mensagens)
                     .child(div().absolute().inset_0().child(anel))
+                    // Fora do fluxo: a linha aparece e some sem empurrar a caixa (a lista de
+                    // mensagens guarda o lugar dela no pé; ver `pilulas::ALTURA_DA_LINHA`).
+                    .children(pilulas.map(|linha| div().absolute().left_0().right_0().bottom(esp::E4).child(linha)))
                     // O texto deste painel só entra numa seleção começada nele (`aplicar_escopo_do_clique`).
                     .text_selection_scope(self.paineis[ix].escopo_selecao)
                     .into_any_element()

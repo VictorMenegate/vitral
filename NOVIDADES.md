@@ -26,7 +26,14 @@ e quanto cache cada turno gastou.
 - **Digitar e passar o ponteiro não refazem as conversas.** Cada tecla na caixa de mensagem e
   cada passada do ponteiro por um botão refaziam as conversas de todos os painéis; com três
   conversas longas abertas, a digitação atrasava.
-- **A conversa inteira do subagente, numa aba.** Clicar no cartão de um subagente abre numa aba tudo o que ele leu, rodou e respondeu, com o desenho da
+- **O que o chat está fazendo, numa linha acima da caixa.** Quando há o que mostrar, uma linha de
+  pílulas aparece logo acima da caixa de mensagem: os comandos que o agente deixou rodando no
+  fundo (o clique lista cada um, com Parar), os subagentes por estado ("2 trabalhando · 1
+  esperando você"), os passos dele ("3/5") e o que o turno mudou ("+40 −12", que abre a lista à
+  direita). Sem nada disso, a linha não existe, e ela não empurra a caixa. O "N arquivos mudados",
+  que ficava numa faixa acima da caixa, virou a pílula das mudanças.
+- **A conversa inteira do subagente, numa aba.** Clicar no cartão de um subagente (ou nele, na
+  pílula dos subagentes) abre numa aba tudo o que ele leu, rodou e respondeu, com o desenho da
   conversa normal, só para ler. Ela acompanha o subagente enquanto ele trabalha e continua
   disponível depois de fechar e abrir o Vitral. O cartão fica na conversa, e a setinha dele
   mostra os passos e o relatório ali mesmo.

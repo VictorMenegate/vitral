@@ -76,9 +76,11 @@ pub struct Painel {
     pub base_animacao: usize,
     /// Até onde os blocos já apareceram: um índice daqui para a frente é novo neste quadro.
     pub vistos: usize,
-    /// A faixa do turno e a pílula do fim estavam à vista no quadro anterior (entram uma vez).
+    /// A faixa do turno, a pílula do fim e a linha de pílulas estavam à vista no quadro anterior
+    /// (entram uma vez).
     pub faixa_vista: bool,
     pub pilula_vista: bool,
+    pub pilulas_vistas: bool,
     /// Acabou de abrir ao lado: o conteúdo entra com fade no primeiro quadro.
     pub entra: bool,
     /// Sobe a cada envio, para o pulso do enviar.
@@ -464,6 +466,7 @@ impl Janela {
             vistos: 0,
             faixa_vista: false,
             pilula_vista: false,
+            pilulas_vistas: false,
             entra: false,
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
@@ -568,6 +571,7 @@ impl Janela {
         painel.vistos = tamanho;
         painel.faixa_vista = false;
         painel.pilula_vista = false;
+        painel.pilulas_vistas = false;
     }
 
     /// O fundo da caixa de cada painel: logo depois de um Esc, "O que fazer em vez disso? Enter

@@ -36,6 +36,7 @@ mod mensagens;
 mod menus;
 pub mod movimento;
 mod painel_contas;
+mod pilulas;
 mod fechar;
 mod painel_arquivo;
 mod paleta;

@@ -129,9 +129,10 @@ componentes do GPUI Kit.
   pelo envio normal, sem tocar na caixa (o rascunho fica); com o turno rodando, ele entra na fila.
   Para compactar com foco, escreve-se "/compact <instrução>" na caixa, como a dica lembra
   (`compactar_conversa`, rodada de uso, item 6.3). Turno rodando, parada, falha, pasta sumida, fila de
-  mensagens e o "Você parou" (item 6.2) vêm antes dela; depois dela, por último, `Situacao::Mudou`: quando o último turno
-  mudou arquivos e nada roda, a faixa diz "3 arquivos mudados · +40 −12" com **Ver mudanças**,
-  que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
+  mensagens e o "Você parou" (item 6.2) vêm antes dela. O que o último turno mudou ("3 arquivos
+  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.9.6 a pílula das mudanças, na
+  linha de pílulas (ver **Linha de pílulas**): o clique abre a direita em "Este chat", na seção
+  Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
   custo, modelo, conta e Compactar) já existia, no anel da caixa.
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
@@ -151,12 +152,39 @@ componentes do GPUI Kit.
   por um fio, os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`), com o
   estado (trabalhando, terminou, falhou, interrompido), o tempo e as ferramentas usadas (o
   `Subagente` de `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números). O
-  clique num agente abre os passos e o resultado. Abre pela pílula "N agentes" da linha de estado
-  da caixa (só com agente vivo) e por **Agentes desta conversa**, no "…" da caixa. Um agente sem
-  resultado só conta como vivo com o turno rodando e sem aviso depois dele na conversa.
+  clique num agente abre os passos e o resultado. Abre por **Agentes desta conversa**, no "…" da
+  caixa, e pela paleta (a pílula "N agentes" da linha de estado, que o abria, virou a pílula dos
+  subagentes da linha de pílulas, que lista os do turno). Um agente sem resultado só conta como
+  vivo com o turno rodando e sem aviso depois dele na conversa.
+- **Linha de pílulas** (`src/ui/pilulas.rs`). Uma linha só, logo acima da caixa de cada painel,
+  com o que acontece naquele chat. Só existe quando há pílula, flutua sobre o pé da conversa
+  (`Janela::conversa` a põe por cima da área das mensagens, fora do fluxo) e não empurra a caixa;
+  enquanto ela existe, a lista de mensagens guarda 32 px a mais no fim (`ALTURA_DA_LINHA`), para a
+  última linha (a chamada que roda) não ficar atrás dela, e a pílula de voltar ao fim sobe o
+  mesmo tanto. As pílulas, nesta ordem (`pilulas::montar`, pura e com teste): **os comandos no
+  fundo** (o `run_in_background` do Bash e o comando que passou do tempo; "2 comandos no fundo",
+  e o clique lista cada um com **Parar**, o `stop_task` dele, e **Parar todos**; antes o clique
+  parava todos de uma vez; o comando que você para não fica marcado como falho, e o aviso de fim
+  de um comando de fundo não põe mais a conta de subagente na linha dele, o "0 ferramentas ·
+  falhou"); **os subagentes por estado**, cada estado com a marca dele (o anel de quem trabalha, o
+  ponto de quem espera: "2 trabalhando", "1 esperando você", e "1 falhou" enquanto o turno roda;
+  o clique lista os subagentes deste turno, com o que cada um faz, e o clique num deles abre a
+  conversa dele numa aba); **os passos do
+  agente** ("3/5", o TodoWrite; a lista inteira na dica e, no clique, com o que ele faz agora em
+  destaque); e **as mudanças do turno** ("2 arquivos +40 −12", pelas chamadas de edição desde a
+  sua última mensagem; o clique abre a lista à direita, em "Este chat"). As três primeiras só
+  com o turno rodando; a das mudanças fica depois dele, até a próxima mensagem. No painel
+  estreito ficam o ícone e o número. "Esperando você" é o subagente que fez um pedido de
+  permissão ainda sem resposta: cada chamada de subagente chega com o id dela
+  (`Evento::SubFerramenta.id`), o motor guarda de qual subagente ela é
+  (`Motor.chamadas_dos_subs`) e o pedido de permissão traz o id da chamada que o fez
+  (`Motor::subagentes_esperando`). De onde cada uma saiu: os comandos no fundo, o "3/7" dos
+  passos e a pílula "N agentes" estavam na linha de estado da caixa (só com o turno rodando),
+  e o "N arquivos mudados" numa faixa acima da caixa (que empurrava a conversa ao aparecer).
+  Referência: as "tracks" do Paseo (`composer/tracks.tsx`), 23/11/2026.
 - **Conversa do subagente em aba** (`src/motor/subconversa.rs`, `src/importar/subagente.rs`). O
-  clique no cartão de um subagente (a linha da chamada Task ou Agent) abre numa aba do painel a
-  conversa INTEIRA dele, só para ler: o pedido que ele
+  clique no cartão de um subagente (a linha da chamada Task ou Agent) ou nele na pílula dos
+  subagentes abre numa aba do painel a conversa INTEIRA dele, só para ler: o pedido que ele
   recebeu, o raciocínio, cada chamada com o resultado e o que ele respondeu, com o desenho da
   conversa normal. O cartão continua na conversa de quem o abriu, como o marco de quando ele
   saiu, e o chevron dele (agora um botão à parte, como na edição) mostra os passos e o relatório
@@ -277,6 +305,11 @@ componentes do GPUI Kit.
     esse relógio avisa só as mensagens dos painéis cujo chat tem chamada sem resultado
     (`Janela::andar_os_relogios_das_chamadas`): um desenho por segundo do painel que trabalha, e
     a Janela, a lista e os outros painéis ficam no cache.
+  - **A linha de pílulas é montada com a casca**, em todo quadro de cada painel: por isso
+    `pilulas::montar` só conta (os subagentes sem resultado, as edições do turno), sem copiar
+    nada da conversa. Tudo o que muda uma pílula chega por um evento do motor que não é texto,
+    e esses avisam a Janela; a conversa de um subagente que cresce avisa só os painéis que a
+    mostram (`TextoChegando`, emitido por `Motor::subconversa_lida`).
   - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
     layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
     com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
@@ -749,7 +782,8 @@ no cabeçalho; dono, 18/11/2026).
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
   (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
-  "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
+  "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar"
+  (os comandos no fundo, os passos e os agentes saíram dela para a **Linha de pílulas**).
   Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
   segundo plano…". **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
   agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
@@ -2084,7 +2118,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir, e `mensagens/a_vista.rs` a conta de quais blocos da conversa são montados e as alturas guardadas dos outros; `vista_mensagens.rs` as mensagens de cada painel e a lista como vistas com cache; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir, e `mensagens/a_vista.rs` a conta de quais blocos da conversa são montados e as alturas guardadas dos outros; `vista_mensagens.rs` as mensagens de cada painel e a lista como vistas com cache; `pilulas.rs` a linha de pílulas acima da caixa; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

@@ -97,11 +97,11 @@ fn botao_so_icone(
 }
 
 /// Largo = Larga, Médio = Estreita, Estreito e Mínimo = Mínima (seção 2.5 do plano).
-fn larga(nivel: LarguraPainel) -> bool {
+pub(super) fn larga(nivel: LarguraPainel) -> bool {
     nivel == LarguraPainel::Largo
 }
 
-fn minima(nivel: LarguraPainel) -> bool {
+pub(super) fn minima(nivel: LarguraPainel) -> bool {
     matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo)
 }
 
@@ -461,6 +461,9 @@ impl Janela {
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, window, cx)));
         }
+        // A linha de pílulas flutua sobre o fim da conversa: enquanto ela existe, a lista guarda
+        // o lugar dela no pé, para a última linha (a chamada que roda) não ficar atrás.
+        let tem_pilulas = !super::pilulas::pilulas_do_chat(motor, chat).vazia();
         if let Some((importada, lido)) = &lido {
             blocos.extend(eu.blocos_do_historico(&contexto_do_historico, importada, lido, ix, window, cx));
         }
@@ -796,7 +799,10 @@ impl Janela {
         // Embaixo, os 32 só depois de uma resposta, onde a barra de copiar e da hora aparece; depois
         // da trilha ("Pensou por 5 s") ou de um aviso, 12, colado na caixa (dono, 18/11/2026: "tá
         // muito longe o pensou da parte das mensagens em baixo").
-        if !matches!(anterior, Some(Bloco::Texto)) {
+        if tem_pilulas {
+            let base = if matches!(anterior, Some(Bloco::Texto)) { 32. } else { 12. };
+            lista = lista.pb(r(base + super::pilulas::ALTURA_DA_LINHA));
+        } else if !matches!(anterior, Some(Bloco::Texto)) {
             lista = lista.pb(esp::NO_TURNO);
         }
         let janela = cx.entity().downgrade();
@@ -1024,7 +1030,7 @@ impl Janela {
                 Scrollbar::vertical(&rolagem).id(("barra-conversa", painel_id as usize))
                     .mode(ScrollbarMode::Always).viewport_from_layout(),
             ))
-            .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
+            .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, tem_pilulas, cx)))
             // Empurrada para cima, a faixa sai pelo alto da lista, cortada nele: solta, ela subia por
             // cima das abas do cabeçalho (dono, 19/11/2026: "a mensagem ficou em cima das abas").
             .children(presa.map(|faixa| div().absolute().inset_0().overflow_hidden().child(faixa)))
@@ -2861,7 +2867,10 @@ pub(super) fn editados(chamadas: &[(usize, &Item)]) -> Vec<Editado> {
 /// Quantos arquivos editados aparecem embaixo de um recolhido; o resto vira "e mais N arquivos".
 const EDITADOS_NO_RECOLHIDO: usize = 5;
 
-/// Quanto o turno de agora mudou: arquivos e o total de linhas que entraram e saíram.
+/// Quanto o turno de agora mudou: arquivos e o total de linhas que entraram e saíram. Quem mostra
+/// o total é a pílula das mudanças, que faz a própria conta sem copiar a conversa
+/// (`pilulas::montar`, a cada quadro); esta é a régua com que os testes a conferem.
+#[cfg(test)]
 pub(super) fn total_das_mudancas(arquivos: &[ArquivoMudado]) -> (usize, usize, usize) {
     arquivos.iter().fold((0, 0, 0), |(n, e, s), a| (n + 1, e + a.entram, s + a.saem))
 }
@@ -4117,8 +4126,6 @@ enum Situacao {
     Fila(usize),
     /// A conversa grande ficou parada: a próxima mensagem relê estes tokens por inteiro.
     Fria { tokens: u64 },
-    /// O último turno mudou arquivos e nada roda (item 5.1): quantos e as linhas.
-    Mudou { arquivos: usize, entram: usize, saem: usize },
     /// Você parou o turno há pouco: "Você parou · Continuar" (item 6.2).
     VocePorou,
 }
@@ -4293,87 +4300,8 @@ impl Janela {
                                 .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
                                 .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
-                        // Os comandos que o agente deixou rodando no fundo (um servidor, um build):
-                        // à vista, e o clique para (o `stop_task` de cada um).
-                        .children({
-                            let comandos = motor.comandos_no_fundo(&chat.id);
-                            (!comandos.is_empty()).then(|| {
-                                let n = comandos.len();
-                                let lista = comandos.iter().map(|(_, d)| format!("• {d}")).collect::<Vec<_>>().join("\n");
-                                let dica = format!(
-                                    "Rodando no fundo:\n{lista}\nClique para parar {}.",
-                                    if n == 1 { "o comando" } else { "todos" }
-                                );
-                                let (motor_e, id) = (self.motor.clone(), chat.id.clone());
-                                Button::new(("pilula-comandos", painel_id as usize))
-                                    .custom(super::componentes::variante_fantasma(cx))
-                                    .h(r(22.))
-                                    .px(r(6.))
-                                    .rounded(raio::de(22.))
-                                    .tooltip(dica)
-                                    .child(
-                                        h_flex()
-                                            .gap(r(4.))
-                                            .metadado()
-                                            .text_color(Cores::tenue())
-                                            .child(icone_de(Lucide::Terminal, 12.))
-                                            .child(if estreita {
-                                                n.to_string()
-                                            } else {
-                                                super::componentes::contagem(n, "comando no fundo", "comandos no fundo")
-                                            }),
-                                    )
-                                    .on_click(move |_, _, cx| {
-                                        if let Some(m) = &motor_e {
-                                            m.update(cx, |m, cx| m.parar_comandos_no_fundo(&id, cx));
-                                        }
-                                    })
-                            })
-                        })
-                        // A lista de passos do agente: "3/7", com a lista inteira na dica.
-                        .children({
-                            let passos = motor.passos(&chat.id);
-                            (!passos.is_empty()).then(|| {
-                                let feitos = passos.iter().filter(|p| p.estado == crate::motor::EstadoDoPasso::Feito).count();
-                                let dica: SharedString = texto_dos_passos(passos).into();
-                                div()
-                                    .id(("passos", painel_id as usize))
-                                    .flex_none()
-                                    .child(
-                                        h_flex()
-                                            .gap(r(4.))
-                                            .metadado()
-                                            .text_color(Cores::tenue())
-                                            .child(icone_de(Lucide::ListChecks, 12.))
-                                            .child(format!("{feitos}/{}", passos.len())),
-                                    )
-                                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-                            })
-                        })
-                        // Os subagentes que trabalham agora: o clique abre o mapa deles.
-                        .when(agentes > 0, |s| {
-                            let chat_id = chat.id.clone();
-                            let rotulo = if estreita { agentes.to_string() } else { super::componentes::contagem(agentes, "agente", "agentes") };
-                            s.child(
-                                Button::new(("pilula-agentes", painel_id as usize))
-                                    .custom(super::componentes::variante_fantasma(cx))
-                                    .h(r(22.))
-                                    .px(r(6.))
-                                    .rounded(raio::de(22.))
-                                    .tooltip("Ver os agentes desta conversa: o que cada um está fazendo")
-                                    .child(
-                                        h_flex()
-                                            .gap(r(4.))
-                                            .metadado()
-                                            .text_color(Cores::tenue())
-                                            .child(icone_de(Lucide::Workflow, 12.))
-                                            .child(rotulo),
-                                    )
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.abrir_mapa_de_agentes(chat_id.clone(), window, cx)
-                                    })),
-                            )
-                        })
+                        // Os comandos no fundo, os passos do agente e os subagentes saíram daqui
+                        // para a linha de pílulas acima da caixa (`pilulas.rs`).
                         // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
                         .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
                         // A fila é um controle: o clique abre a lista do que espera, para tirar o
@@ -4423,16 +4351,13 @@ impl Janela {
         let situacao = match situacao_do_turno(motor, &chat.id) {
             Some(Situacao::Fila(n)) => situacao_do_chat(motor, chat).unwrap_or(Situacao::Fila(n)),
             Some(s) => s,
-            // Por último, e só com o chat quieto: a conversa grande que esfriou e, depois, o que o
-            // último turno mudou (o lugar onde o dono aprovou "N arquivos mudados", 12/11; item 5.1).
+            // Por último, e só com o chat quieto: a conversa grande que esfriou. O que o último
+            // turno mudou ("N arquivos mudados", que morava aqui desde 12/11) é agora a pílula das
+            // mudanças, na linha de pílulas (`pilulas.rs`), que não empurra a caixa.
             None => situacao_do_chat(motor, chat)
                 // Logo depois de um Esc: o Continuar (não entra no sino; item 6.2).
                 .or_else(|| motor.parou_por_voce(&chat.id).then_some(Situacao::VocePorou))
-                .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))
-                .or_else(|| {
-                    let (arquivos, entram, saem) = total_das_mudancas(&mudancas_do_chat(&chat.itens).0);
-                    (arquivos > 0).then_some(Situacao::Mudou { arquivos, entram, saem })
-                })?,
+                .or_else(|| chat.fria(crate::modelo::agora()).map(|tokens| Situacao::Fria { tokens }))?,
         };
         // O turno em andamento mora na linha de estado da caixa, dentro da moldura
         // (`linha_de_estado`): acima da caixa só fica o que pede um botão seu.
@@ -4679,37 +4604,6 @@ impl Janela {
                         })
                         .into_any_element()
                 }),
-            ),
-            // "3 arquivos mudados · +40 −12": o clique abre a direita em "Este chat", na seção
-            // Mudanças (item 5.1).
-            Situacao::Mudou { arquivos, entram, saem } => (
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(r(8.))
-                    .child(icone_de(Lucide::FileDiff, 14.).text_color(Cores::tenue()))
-                    .child(texto(contagem(arquivos, "arquivo mudado", "arquivos mudados")))
-                    .when(entram + saem > 0, |s| {
-                        s.child(
-                            h_flex()
-                                .flex_none()
-                                .gap(esp::E6)
-                                .font_family(FONTE_MONO)
-                                .metadado()
-                                .when(entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{entram}"))))
-                                .when(saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{saem}")))),
-                        )
-                    })
-                    .into_any_element(),
-                Some(
-                    botao_fantasma("faixa-mudancas", Some(Lucide::PanelRight.into()), "Ver mudanças", TamanhoBotao::Barra, window, cx)
-                        .tooltip("Abrir a lista do que este chat mudou, à direita. O que um comando mudou não aparece aqui.")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.aba_direita = super::abas_direita::AbaDireita::Chat;
-                            this.mostrar_direita(window, cx);
-                        }))
-                        .into_any_element(),
-                ),
             ),
             Situacao::Fila(n) => (
                 h_flex()
@@ -5219,6 +5113,7 @@ fn pilula_do_fim(
     novidade: bool,
     minima: bool,
     nova: bool,
+    acima_das_pilulas: bool,
     cx: &Context<Janela>,
 ) -> impl IntoElement + use<> {
     let com_rotulo = novidade && !minima;
@@ -5245,7 +5140,8 @@ fn pilula_do_fim(
         .absolute()
         .left_0()
         .right_0()
-        .bottom(esp::E12)
+        // Com a linha de pílulas no pé da conversa, ela sobe para não ficar por cima delas.
+        .bottom(r(if acima_das_pilulas { 12. + super::pilulas::ALTURA_DA_LINHA } else { 12. }))
         .flex()
         .justify_center()
         .child(movimento::entrada(("entra-pilula-fim", painel_id as usize), nova, De::Baixo, pilula))

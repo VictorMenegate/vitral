@@ -1622,6 +1622,15 @@ impl Motor {
         self.comandos_no_fundo.get(chat).map_or(&[], Vec::as_slice)
     }
 
+    /// Para um dos comandos de fundo do chat (o `stop_task` dele).
+    pub fn parar_comando_no_fundo(&mut self, chat: &str, tarefa: &str, cx: &mut Context<Self>) {
+        if let Some(processo) = self.processos.get_mut(chat) {
+            processo.parar_tarefa(tarefa);
+            self.comandos_parados.insert(chat.to_string(), std::time::Instant::now());
+        }
+        cx.notify();
+    }
+
     /// Para os comandos de fundo do chat (o `stop_task` de cada um).
     pub fn parar_comandos_no_fundo(&mut self, chat: &str, cx: &mut Context<Self>) {
         let ids: Vec<String> = self.comandos_no_fundo(chat).iter().map(|(id, _)| id.clone()).collect();
