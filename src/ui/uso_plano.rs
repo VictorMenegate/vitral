@@ -1,9 +1,10 @@
 //! Uso dos planos no pé do trilho: um botão por serviço (Claude e Codex), o disco da marca com o
 //! anel da janela de 5 h por fora e o da semana por dentro. O clique abre o popover com os
 //! detalhes; no do Claude também se escolhe a conta padrão, entra com outra ou desconecta uma.
-//! Sem o Codex, o botão dele fica apagado e o popover oferece a instalação. No modo recolhido, os
-//! mesmos botões, de 24, ficam no cabeçalho do 1º painel, logo depois do logo (o Codex só quando
-//! está instalado e tem uso lido).
+//! Cada botão só aparece com a conta daquele serviço conectada (`aneis_a_mostrar`): o do Claude
+//! com uma conta com login guardado e não perdido (`Motor::claude_conectado`), o do Codex com o
+//! `auth.json` dele e uso lido. Sem conta, o "Entrar" e o "Instalar o Codex…" seguem no menu do
+//! logo, e a fileira do painel da direita não guarda lugar para anel nenhum.
 
 use gpui_kit::component::{
     Icon, Selectable, StyledExt as _, h_flex,
@@ -115,7 +116,12 @@ impl Janela {
     /// arquivo e a primeira linha do código ficavam por baixo dos anéis). A folga conta da borda
     /// da direita da janela: a distância dos anéis até ela, o diâmetro e 8 de respiro.
     pub(super) fn reserva_dos_aneis(&self, window: &Window, cx: &App) -> Option<Pixels> {
-        let ligado = self.motor.as_ref().is_some_and(|m| m.read(cx).config.uso_no_canto);
+        // Sem anel (nenhuma conta conectada), não há o que guardar.
+        let ligado = self.motor.as_ref().is_some_and(|m| {
+            let m = m.read(cx);
+            let (claude, codex) = aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido));
+            m.config.uso_no_canto && (claude || codex)
+        });
         // A cápsula soma 4 de cada lado e o fio.
         ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 10. + 8.))
     }
@@ -125,7 +131,7 @@ impl Janela {
             return Vec::new();
         };
         let janela = cx.entity().downgrade();
-        let (claude, codex) = {
+        let (claude, codex, (com_claude, com_codex)) = {
             let m = motor.read(cx);
             let conta = m.conta_padrao();
             // Com uma conta só não há o que distinguir: sem selo e sem a conta na dica.
@@ -139,11 +145,16 @@ impl Janela {
                     m.previsao_da_conta(&conta.id).cinco_horas.estoura(),
                 ),
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
+                aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido)),
             )
         };
-        let mut botoes = vec![popover_uso(Marca::Claude, claude, motor.clone(), janela.clone()).into_any_element()];
-        // O Codex só aparece instalado e com uso lido (o "Instalar o Codex…" fica no menu do logo).
-        if codex.em_uso() {
+        // Cada anel só com a conta do serviço conectada; o do Codex, também com uso lido. Sem
+        // conta, o "Entrar" e o "Instalar o Codex…" ficam no menu do logo.
+        let mut botoes = Vec::new();
+        if com_claude {
+            botoes.push(popover_uso(Marca::Claude, claude, motor.clone(), janela.clone()).into_any_element());
+        }
+        if com_codex {
             botoes.push(popover_uso(Marca::Codex, codex, motor, janela).into_any_element());
         }
         botoes
@@ -297,6 +308,14 @@ impl Leitura {
     fn em_uso(&self) -> bool {
         !self.apagado && (self.fora.is_some() || self.dentro.is_some())
     }
+}
+
+/// Quais anéis aparecem, o do Claude e o do Codex: cada um só com a conta daquele serviço
+/// conectada (dono, 23/11/2026: "faz isso só aparecer quando tem a conta conectada"). O do Codex
+/// continua pedindo também o uso lido. Sem conta, o "Entrar" e o "Instalar o Codex…" seguem no
+/// menu do logo.
+fn aneis_a_mostrar(claude_conectado: bool, codex_logado: bool, codex: &Leitura) -> (bool, bool) {
+    (claude_conectado, codex_logado && codex.em_uso())
 }
 
 /// Claude: 5 h fora e semana dentro. Com `conta` (há mais de uma), a dica diz qual está em uso
@@ -1010,7 +1029,7 @@ pub(super) fn quando((dia, semana, hora, minuto): (i64, usize, i32, i32), hoje: 
 mod testes {
     // Sem `use super::*`: o `gpui_kit::*` traz um `test` próprio que encobriria o da biblioteca.
     use super::{
-        atualizado, dinheiro, duracao, inicial, legenda_creditos, leitura_claude, leitura_codex,
+        aneis_a_mostrar, atualizado, dinheiro, duracao, inicial, legenda_creditos, leitura_claude, leitura_codex,
         linha_marcada, nome_do_plano, porcentagem, quando, resumo_conta, texto_previsao, texto_renovacao,
     };
     use crate::{
@@ -1059,6 +1078,14 @@ mod testes {
         // A janela sem leitura fica de fora, como no menu de conta.
         assert_eq!(resumo_conta(&Uso { semana: Some(0.73), ..Uso::default() }), "semana 73%");
         assert_eq!(resumo_conta(&Uso::default()), "uso ainda não lido");
+        // Cada anel só com a conta do serviço conectada (item 5 da rodada de 23/11).
+        let com_uso = leitura_codex(Some(&Codex { uso: Uso { semana: Some(0.5), ..Uso::default() }, ..Codex::default() }), true);
+        assert!(com_uso.em_uso());
+        assert_eq!(aneis_a_mostrar(true, true, &com_uso), (true, true));
+        assert_eq!(aneis_a_mostrar(false, true, &com_uso), (false, true), "sem conta do Claude, o anel dele some");
+        assert_eq!(aneis_a_mostrar(true, false, &com_uso), (true, false), "uso lido de antes, mas sem conta do Codex");
+        assert_eq!(aneis_a_mostrar(false, false, &com_uso), (false, false), "sem conta nenhuma, sem anel (e sem reserva)");
+        assert_eq!(aneis_a_mostrar(true, true, &leitura_codex(None, true)), (true, false), "o Codex sem uso lido continua de fora");
         // O Codex sem instalar (ou ainda sendo lido) fica apagado, mas aparece.
         let ausente = leitura_codex(None, true);
         assert_eq!(ausente.dica, "Codex · não instalado");

@@ -13,8 +13,10 @@ citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, 
 arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa. E
 o arquivo aberto à direita agora se edita ali mesmo.
 
-A conversa mais leve (rolar, digitar e acompanhar a resposta chegando pesam menos) e quanto tempo
-e quanto cache cada turno gastou.
+A conversa mais leve (rolar, digitar e acompanhar a resposta chegando pesam menos), quanto tempo e
+quanto cache cada turno gastou, o que cada agente em segundo plano está fazendo e a conversa do
+subagente numa aba. Nas Configurações, a letra da conversa separada do zoom, as suas instruções
+para todos os chats e os perfis de agente. E cada conversa abre um processo do Claude só.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -169,6 +171,13 @@ e quanto cache cada turno gastou.
   hora.
 - **Diagnóstico para pedir ajuda.** Em Configurações > Atualizações, **Copiar** junta as versões, o
   sistema, as pastas dos dados e o fim do registro de quedas, sem chaves, tokens nem conversas.
+- **Um chat nunca abre o Claude duas vezes.** Com agentes em segundo plano, parar e mandar outra
+  mensagem podia deixar dois ou três processos do Claude na mesma conversa, cada um respondendo e
+  soltando agentes por conta própria. Agora cada conversa tem um processo só, e o Parar derruba
+  também o que ainda estava saindo.
+- **Uso do plano só de quem está conectado.** O anel de uso do Claude e o do Codex, no canto da
+  janela, aparecem só com a conta daquele serviço conectada. Sem conta, o anel some; entrar e
+  instalar continuam no menu do logo.
 
 ## 0.9.6
 

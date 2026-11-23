@@ -101,6 +101,20 @@ fn ler_credencial(pasta: &Path) -> Option<Credencial> {
     Some(Credencial { token: Token(token), vence_em, perfil })
 }
 
+/// A conta tem login do Claude Code guardado (o `.credentials.json` com token): é o que decide se
+/// o anel de uso do Claude aparece (`Motor::claude_conectado`). Não diz se o token ainda vale: o
+/// que a Anthropic recusou aparece em `Busca::Recusado`. Lê arquivo: fora da thread da interface,
+/// ou uma vez só, ao abrir.
+pub fn tem_login(conta: &Conta) -> bool {
+    // Nos testes, nunca o login de verdade.
+    !cfg!(test) && pasta_do_login(conta).is_some_and(|pasta| tem_login_em(&pasta))
+}
+
+/// O login está na pasta: o token existe, mesmo sem a permissão de ler o uso.
+fn tem_login_em(pasta: &Path) -> bool {
+    ler_credencial(pasta).is_some()
+}
+
 /// Busca o uso de uma conta na Anthropic. `recusado` é a marca do token que o servidor já
 /// recusou (esse não vai de novo). Lê arquivos e espera a rede (até 5 s): rodar fora da thread
 /// da interface.
@@ -409,6 +423,21 @@ mod testes {
         fn drop(&mut self) {
             self.servidor.unblock();
         }
+    }
+
+    /// O critério do anel do Claude (item 5 da rodada de 23/11): conta conectada é a que tem o
+    /// login guardado. Sem o arquivo, ou com o token vazio, não tem; o login sem a permissão de
+    /// ler o uso continua sendo login.
+    #[test]
+    fn a_conta_com_login_guardado_esta_conectada() {
+        assert!(tem_login_em(&pasta("com-login", login(AGORA_MS + 3_600_000, &["user:profile"]))));
+        assert!(tem_login_em(&pasta("vencido", login(AGORA_MS - 1, &["user:profile"]))), "vencido, o Claude Code renova");
+        assert!(tem_login_em(&pasta("sem-perfil", login(AGORA_MS + 3_600_000, &["user:inference"]))));
+        assert!(!tem_login_em(&pasta("sem-token", json!({ "claudeAiOauth": { "accessToken": "" } }))));
+        assert!(!tem_login_em(&pasta("outra-coisa", json!({ "mcpOAuth": {} }))));
+        let vazia = std::env::temp_dir().join(format!("vitral-busca-sem-login-{}", uuid::Uuid::new_v4().simple()));
+        assert!(!tem_login_em(&vazia));
+        assert!(!tem_login(&conta(crate::contas::PRINCIPAL)), "nos testes, nunca o login de verdade");
     }
 
     /// Uma pasta de conta de mentira com o login do Claude Code (e, se pedido, o `.claude.json`).

@@ -178,7 +178,7 @@ componentes do GPUI Kit.
   Para compactar com foco, escreve-se "/compact <instrução>" na caixa, como a dica lembra
   (`compactar_conversa`, rodada de uso, item 6.3). Turno rodando, parada, falha, pasta sumida, fila de
   mensagens e o "Você parou" (item 6.2) vêm antes dela. O que o último turno mudou ("3 arquivos
-  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.9.6 a pílula das mudanças, na
+  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.9.7 a pílula das mudanças, na
   linha de pílulas (ver **Linha de pílulas**): o clique abre a direita em "Este chat", na seção
   Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
@@ -1322,8 +1322,12 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   do outro (`uso_no_canto`, em `src/ui/uso_plano.rs`), cada um no disco opaco da peça, com o fio de
   1 px e uma sombra curta, como um botão flutuante: a conversa vai até a borda por baixo deles, sem
   folga (dono, 16/11/2026: eles passaram pelo cabeçalho e voltaram no mesmo dia, "o de uso tem que
-  ficar onde eu tinha falado, embaixo do ×"): o do Claude sempre e o do Codex
-  quando ele está instalado e tem uso lido. **Uso do plano no canto da janela**, em
+  ficar onde eu tinha falado, embaixo do ×"): cada um só com a conta
+  daquele serviço conectada (0.9.7; `aneis_a_mostrar`): o do Claude com uma conta com o login
+  guardado e não perdido (`Motor::claude_conectado`, de `busca::tem_login`, lido ao abrir e a cada
+  busca do uso), o do Codex com o `auth.json` dele e uso lido. Sem conta, o anel some, a fileira
+  do painel da direita não guarda lugar (`reserva_dos_aneis`) e o "Entrar" e o "Instalar o
+  Codex…" seguem no menu do logo. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Aparência
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
 - **O cabeçalho da conversa tem pouca coisa:** as abas e o **+** (novo
@@ -1613,8 +1617,8 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 ## Contas e uso dos planos
 
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
-outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
-instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (com a fenda
+outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
+também com uso lido). Cada um é o disco da marca com **um** anel em volta (com a fenda
 embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,
 âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel fica cheio em vermelho. As duas
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
@@ -2883,6 +2887,41 @@ só quando ligados; a fila guarda e sobrevive a um reinício), `Reforco { ultrat
 envio, `motivo_sem_ultracode`, `aceita_ultracode`, um Ultracode por vez (`ultracode_rodando`), o
 fim do turno adiado enquanto há agentes em segundo plano (`fim_adiado`; `agentes_cortados` quando o
 processo sai antes deles) e `entrada_para_repetir` na repetição automática da troca de conta.
+
+Um chat, um processo (0.9.7): nunca há dois processos do agente na mesma conversa. Em 23/11/2026
+um chat chegou a ter três `claude -p --resume` da mesma sessão, cada um achando que era o único.
+O que disparou, medido no Claude Code 2.1.328: ao retomar uma sessão cujo processo anterior foi
+derrubado com um agente em segundo plano (o Parar de quem esperava os agentes), ele manda o aviso
+do agente cortado, põe a mensagem na fila (`command_lifecycle` `queued`), manda um `init` e um
+`result` de sucesso vazio, com `num_turns` 0, e só depois começa a mensagem (`started`). O motor
+tomava esse `result` pelo fim do turno: o chat parecia parado com o processo no meio do turno, e a
+mensagem seguinte (ou a revisão da memória, ou o Continuar) abria outro processo, deixando o
+primeiro rodando por fora, com agentes, sem que o Parar o alcançasse. A mensagem que entra no
+processo vivo com agentes em segundo plano é do commit `d4691c3` (a entrada fica aberta na
+espera; medido aqui no 2.1.328, com o Haiku: o `init` do turno dela sai 0,15 s depois, com o
+agente ainda rodando). Aqui são três consertos:
+`claude::VezDaMensagem` (na thread que lê a saída) tira o `result` que chega antes da vez da
+mensagem com que o processo abriu; `motor/saidas.rs` guarda POR CHAT o processo que já terminou o
+turno e está saindo (o que espera a sugestão continua em `sugerindo`), e `comecar_turno_com`,
+o único lugar que abre processo de chat, não abre outro enquanto um deles vive
+(`esperar_o_anterior_sair`: com o processo do chat ainda no mapa, o que ia abrir volta para a
+frente da fila em vez de trocar o processo por outro; com um saindo, as mensagens ficam em
+`a_abrir`, o chat conta como rodando e
+`abrir_quando_sair` abre o turno quando o anterior sai, o que leva de 0,5 a 1,6 s no Claude Code,
+ou uns 7 s com um comando de fundo); e quem não sai no prazo é derrubado (`PRAZO_DE_SAIDA`, 12 s;
+5 s para o que foi parado ou deu erro; SIGKILL 5 s depois do SIGTERM). O processo que já tinha
+terminado e manda o `init` de outro turno (um aviso de tarefa de fundo abre um sozinho) volta a
+ser o processo do chat (`Motor::acordou`), menos o que foi parado ou o que tem turno novo
+esperando por ele, que é derrubado. O Parar desfaz o turno que esperava (`desistir_de_abrir`: o
+que você escreveu volta para a fila) e derruba o que ainda saía; fechar o Vitral derruba todos
+(`encerrar_tudo`). O Continuar, o Tentar de novo e o "Continuar na outra conta" não entram por
+cima de um turno rodando nem de um que espera para abrir (`com_turno`). No claude de mentira, `[ferramenta AgenteFundo <descrição> | <segundos>]` é o
+agente que segue depois do `result` (o processo fica vivo por ele, a mensagem que chega com o
+turno parado abre outro turno no mesmo processo, e o SIGTERM com agente rodando deixa a marca que
+faz a retomada seguinte soltar o `result` vazio, como o de verdade;
+`CLAUDE_FALSO_AGENTE_CORTADO=1` encena sem o corte); o roteiro é o
+`ferramentas/roteiros/um-chat-um-processo.txt`, que conta os processos vivos por sessão a cada
+passo (com o 0.9.5 o passo 06 dá 2).
 
 Custo: o `total_cost_usd` do `result` é o total da sessão até ali, não o do turno. Ele cresce a
 cada `result` do mesmo processo e, numa retomada (`--resume`), já vem com o dos turnos anteriores,

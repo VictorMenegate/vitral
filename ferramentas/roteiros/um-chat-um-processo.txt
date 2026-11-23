@@ -1,0 +1,53 @@
+# Um chat, um processo (o defeito de 23/11/2026): um turno termina com um agente em segundo plano,
+# você manda mensagem com ele rodando, para tudo e manda outra. Em nenhum momento pode haver dois
+# processos do claude no mesmo chat: o `roda` de cada passo conta os vivos (tem de dar 1, e 0 no
+# fim). Até a 0.9.5 o passo 05 dava 2: a retomada depois do Parar soltava um `result` vazio antes
+# da vez da mensagem (o claude de mentira faz igual ao 2.1.328), o Vitral dava o turno por
+# terminado e a mensagem seguinte abria outro processo da mesma sessão.
+# Uso (de dentro do worktree; @BIN@ é o binário compilado e @PASTA@ uma pasta vazia, trocados
+# antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-processo BANCADA=3 CLAUDE_FALSO=1 \
+#     CLAUDE_FALSO_VERSAO=2.1.328 ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS: a bancada precisa já ter um chat (na primeira vez, rode antes com
+# `@BIN@ --nova @PASTA@ "oi"` no lugar do comando e feche as boas-vindas).
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta.
+
+espera 8
+roda @BIN@ --nova @PASTA@ "[ferramenta AgenteFundo confere os testes | 30] Lança o agente."
+espera 8
+print 01-esperando-o-agente    # a resposta já saiu e o agente segue em segundo plano
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+clique 1040 838
+texto E quanto falta para ele acabar?
+tecla Return                   # entra no processo vivo: outro turno, no mesmo processo
+espera 4
+print 02-mensagem-com-o-agente-rodando
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+espera 22                      # o agente termina e abre o turno dele; o processo sai
+print 03-o-agente-terminou
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+
+clique 1040 838
+texto [ferramenta AgenteFundo confere de novo | 300] Lança outro agente.
+tecla Return
+espera 6
+tecla Escape                   # o primeiro Esc só arma (pararia o agente)
+tecla Escape                   # o Parar de quem espera os agentes: derruba o processo com eles
+espera 4
+print 04-parado
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+texto [ferramenta Bash cargo build | 20] Faz o build.
+tecla Return                   # a retomada: o `result` vazio vem antes da vez da mensagem
+espera 5
+print 05-retomada              # o turno continua rodando ("Rodando: cargo build…")
+texto Outra mensagem, com o build ainda andando.
+tecla Return
+espera 3
+print 06-mensagem-no-turno
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+espera 22
+print 07-fim
+espera 8
+roda pgrep -af 'claude-fals[o]/claude -p' | grep -o -- '--resume [^ ]*\|--session-id [^ ]*' | sed 's/.* //' | sort | uniq -c
+roda grep -c '"abriu": true' "$XDG_STATE_HOME/claude-falso.log"
+roda grep -h -o '"result_antes_da_vez.*\|"turno_no_mesmo_processo.*\|"derrubado.*' "$XDG_STATE_HOME/claude-falso.log"
