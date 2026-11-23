@@ -40,7 +40,7 @@ fn marca_do_arquivo(i: &Importada) -> Marca {
 }
 
 /// O que desenhar agora.
-struct Vista {
+pub(super) struct Vista {
     itens: Option<Rc<Vec<Item>>>,
     cortados: usize,
     erro: Option<String>,
@@ -48,7 +48,7 @@ struct Vista {
 
 impl Janela {
     /// O histórico guardado, e a leitura (ou a releitura, quando o arquivo mudou) em segundo plano.
-    fn historico_de(&self, chat: &Chat, importada: &Importada, cx: &Context<Self>) -> Vista {
+    pub(super) fn historico_de(&self, chat: &Chat, importada: &Importada, cx: &Context<Self>) -> Vista {
         let mut todos = self.historicos.0.borrow_mut();
         let lido = todos.entry(chat.id.clone()).or_insert_with(|| Lido {
             itens: None,
@@ -100,21 +100,18 @@ impl Janela {
     }
 
     /// Os blocos do histórico, antes dos da conversa: a janela de itens pedida por este painel,
-    /// desenhada como os itens do chat, sem ações de edição nem entrada animada.
-    pub(super) fn blocos_do_historico(
-        &self,
-        motor: &Motor,
-        chat: &Chat,
-        nivel: LarguraPainel,
+    /// planejada como os itens do chat (só o que está à vista é montado), sem ações de edição nem
+    /// entrada animada. O `contexto` é o do histórico: sem busca e sem nada a corrigir.
+    pub(super) fn blocos_do_historico<'a>(
+        &'a self,
+        contexto: &'a Contexto<'a>,
+        importada: &Importada,
+        vista: &'a Vista,
         ix: usize,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> Vec<(Bloco, Option<usize>, AnyElement)> {
-        let Some(importada) = &chat.importada else {
-            return Vec::new();
-        };
-        let vista = self.historico_de(chat, importada, cx);
-        let Some(itens) = vista.itens else {
+        window: &'a Window,
+        cx: &'a Context<Self>,
+    ) -> Vec<Planejado<'a>> {
+        let Some(itens) = &vista.itens else {
             let texto = match &vista.erro {
                 Some(erro) => format!(
                     "Não deu para ler a conversa do Claude Code em {} ({erro}).",
@@ -123,62 +120,46 @@ impl Janela {
                 None => "Lendo a conversa do Claude Code…".to_string(),
             };
             let (bloco, elemento) = aviso_do_chat(&texto, false, &Realce::default());
-            return vec![(bloco, None, elemento)];
+            return vec![Planejado::pronto(bloco, None, elemento)];
         };
         // O histórico do Claude Code fica fora da busca e da rolagem da conversa: ele é lido do
         // arquivo sob demanda, e nem todo ele está em memória para ser varrido.
-        let sem_busca = busca_conversa::Indice::default();
-        let contexto = Contexto {
-            motor,
-            chat,
-            rodando: false,
-            nivel,
-            // O histórico trazido do Claude Code é só para ler: nada dele se corrige aqui.
-            painel: self.paineis[ix].id,
-            editavel: None,
-            marco: None,
-            // A busca da conversa não varre o histórico do Claude Code: ele é lido do arquivo,
-            // sob demanda, e nem todo ele está em memória.
-            busca: &sem_busca,
-            rolagem: &self.paineis[ix].rolagem,
-        };
         let inicio = itens.len().saturating_sub(self.paineis[ix].mostrar_historico);
-        let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
-        let mostrados: Vec<(usize, &Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + vista.cortados + i, item)).collect();
+        let mut blocos: Vec<Planejado<'a>> = Vec::new();
+        let mostrados: Vec<(usize, &'a Item)> = itens.iter().enumerate().skip(inicio).map(|(i, item)| (BASE + vista.cortados + i, item)).collect();
         // A conversa trazida tem a hora de cada linha do arquivo dela: os dias também se separam.
         let horas: Vec<u64> = mostrados.iter().map(|(_, item)| item.em()).collect();
         let datas: HashMap<usize, String> = super::separadores_de_data(&horas, crate::modelo::agora()).into_iter().collect();
-        // As mensagens suas do histórico: o prepaint de cada uma diz onde ela ficou, e a mensagem
-        // presa no alto escolhe entre elas e as do chat (ver `mensagens`).
-        let presa = self.paineis[ix].presa_do_historico.clone();
-        presa.borrow_mut().clear();
         let mut i = 0;
         while i < mostrados.len() {
             if let Some(dia) = datas.get(&i) {
-                blocos.push((Bloco::Dia, None, super::separador_de_dia(dia)));
+                let chave = ChaveDoBloco { tipo: TipoDaChave::Dia, inicio: mostrados[i].0, fim: mostrados[i].0, marca: dia.len() as u64 };
+                let dia = dia.clone();
+                blocos.push(Planejado::de_tipo(Bloco::Dia, None, Some(chave), move || super::separador_de_dia(&dia)));
             }
             if matches!(mostrados[i].1, Item::Ferramenta { .. }) {
                 let mut fim = i + 1;
                 while fim < mostrados.len() && matches!(mostrados[fim].1, Item::Ferramenta { .. }) && !datas.contains_key(&fim) {
                     fim += 1;
                 }
-                blocos.push((Bloco::Log, None, self.trilha(&contexto, &mostrados[i..fim], false, cx)));
+                let chamadas: Vec<(usize, &'a Item)> = mostrados[i..fim].to_vec();
+                let chave = super::chave_da_faixa(TipoDaChave::TrilhaDoHistorico, &chamadas, &[chamadas.len() as u64]);
+                let fica = super::fica_montado(chamadas.iter().map(|(_, item)| *item));
+                blocos.push(Planejado::de_tipo(Bloco::Log, None, chave, move || self.trilha(contexto, &chamadas, false, cx)).fica_montado(fica));
                 i = fim;
                 continue;
             }
             let (indice, item) = mostrados[i];
-            let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
-            let elemento = match item {
-                Item::Usuario { texto, .. } if !texto.trim().is_empty() => {
-                    let (presa, texto) = (presa.clone(), super::texto_da_presa(texto));
-                    div()
-                        .child(elemento)
-                        .on_prepaint(move |limites, _, _| presa.borrow_mut().push((texto.clone(), limites.top(), limites.bottom())))
-                        .into_any_element()
-                }
-                _ => elemento,
-            };
-            blocos.push((bloco, None, elemento));
+            let chave = super::chave_do_item(TipoDaChave::Historico, indice, item, &[]);
+            let mut bloco = Planejado::novo(None, chave, move || self.item(contexto, indice, item, window, cx)).fica_montado(super::fica_montado([item]));
+            // As mensagens suas do histórico: o prepaint de cada uma diz onde ela ficou, e a
+            // mensagem presa no alto escolhe entre elas e as do chat (ver `mensagens`).
+            if let Item::Usuario { texto, .. } = item
+                && !texto.trim().is_empty()
+            {
+                bloco.presa = Some(super::texto_da_presa(texto));
+            }
+            blocos.push(bloco);
             i += 1;
         }
         blocos

@@ -398,6 +398,8 @@ pub struct Motor {
     /// Chats que algum painel aberto mostra (a Janela atualiza a cada quadro): o texto parcial
     /// dos outros não redesenha a janela.
     pub visiveis: HashSet<String>,
+    /// Os chats abertos cujo texto cresceu no lote de sinais em curso (ver `aviso_do_lote`).
+    texto_chegando: Vec<String>,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -457,13 +459,11 @@ impl Motor {
         };
 
         // Trata de uma vez o que chegou junto, com um redesenho só. Pedaço de texto vem a cada
-        // token: espera um pouco pelos próximos (no máximo 20 redesenhos por segundo).
+        // token: espera um pouco pelos próximos (`JANELA_DO_TEXTO`: uns 16 redesenhos por segundo).
         let _recebedor = cx.spawn(async move |motor, cx| {
             while let Ok(sinal) = recebe.recv().await {
                 if matches!(sinal, Sinal::Claude(_, _, Evento::TextoParcial(_))) {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(50))
-                        .await;
+                    cx.background_executor().timer(JANELA_DO_TEXTO).await;
                 }
                 let mut sinais = vec![sinal];
                 while sinais.len() < 512
@@ -471,15 +471,18 @@ impl Motor {
                 {
                     sinais.push(outro);
                 }
-                // Texto chegando numa conversa que não está aberta não redesenha a janela.
+                // Texto chegando numa conversa que não está aberta não redesenha a janela, e o que
+                // só cresce numa conversa aberta redesenha só os painéis dela.
                 if motor
                     .update(cx, |motor, cx| {
                         let mut redesenhar = false;
                         for sinal in sinais {
                             redesenhar |= motor.tratar(sinal, cx);
                         }
-                        if redesenhar {
-                            cx.notify();
+                        match aviso_do_lote(redesenhar, std::mem::take(&mut motor.texto_chegando)) {
+                            AvisoDoLote::Tudo => cx.notify(),
+                            AvisoDoLote::Texto(chats) => cx.emit(TextoChegando { chats }),
+                            AvisoDoLote::Nada => {}
                         }
                     })
                     .is_err()
@@ -652,6 +655,7 @@ impl Motor {
             pedido_de_abrir: None,
             avisos: Arc::default(),
             visiveis: HashSet::new(),
+            texto_chegando: Vec::new(),
             servidor,
             sinais,
             _recebedor,
@@ -3034,7 +3038,14 @@ impl Motor {
                 if self.geracao_atual.get(&chat) == Some(&geracao) {
                     self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
                     if let Evento::TextoParcial(pedaco) = &evento {
-                        return juntar_parcial(&mut self.parcial, &self.visiveis, &chat, pedaco);
+                        return match pedaco_de_texto(&mut self.parcial, &self.visiveis, &chat, pedaco) {
+                            Pedaco::Nada => false,
+                            Pedaco::Cresceu => {
+                                self.texto_chegando.push(chat);
+                                false
+                            }
+                            Pedaco::Comecou => true,
+                        };
                     }
                     self.tratar_evento(&chat, evento, cx)
                 }
@@ -4877,6 +4888,69 @@ fn juntar_parcial(
     primeiro || visiveis.contains(chat)
 }
 
+/// Quanto o motor espera por mais pedaços de texto antes de avisar a tela: os que chegam nesse
+/// tempo saem juntos, num desenho só (no máximo uns 16 por segundo).
+pub(crate) const JANELA_DO_TEXTO: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// O que um pedaço de texto mudou na tela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pedaco {
+    /// Nada: o chat não está em nenhum painel e já escrevia.
+    Nada,
+    /// O texto que já aparecia cresceu: só o painel do chat muda.
+    Cresceu,
+    /// A conversa passou a escrever: a faixa do turno, a lista e o painel mudam.
+    Comecou,
+}
+
+/// Junta um pedaço ao texto parcial do chat e diz o que ele mudou na tela.
+fn pedaco_de_texto(
+    parcial: &mut HashMap<String, String>,
+    visiveis: &HashSet<String>,
+    chat: &str,
+    pedaco: &str,
+) -> Pedaco {
+    // O texto que a tela já mostrava (o `Motor::parcial` não conta o vazio).
+    let escrevia = parcial.get(chat).is_some_and(|texto| !texto.is_empty());
+    match (juntar_parcial(parcial, visiveis, chat, pedaco), escrevia) {
+        (false, _) => Pedaco::Nada,
+        (true, true) => Pedaco::Cresceu,
+        (true, false) => Pedaco::Comecou,
+    }
+}
+
+/// O aviso que um lote de sinais dá à tela.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AvisoDoLote {
+    Nada,
+    /// Só texto crescendo nestes chats (sem repetir): os painéis deles redesenham, o resto não.
+    Texto(Vec<String>),
+    Tudo,
+}
+
+/// `redesenhar`: algum sinal do lote mudou mais que texto; `texto`: os chats cujo texto cresceu.
+pub(crate) fn aviso_do_lote(redesenhar: bool, texto: Vec<String>) -> AvisoDoLote {
+    if redesenhar {
+        return AvisoDoLote::Tudo;
+    }
+    let mut chats: Vec<String> = Vec::new();
+    for chat in texto {
+        if !chats.contains(&chat) {
+            chats.push(chat);
+        }
+    }
+    if chats.is_empty() { AvisoDoLote::Nada } else { AvisoDoLote::Texto(chats) }
+}
+
+/// O texto de uma resposta cresceu nestes chats, e mais nada mudou: a Janela redesenha só os
+/// painéis deles (`Janela::texto_chegando`), e não a janela inteira como no `notify`.
+#[derive(Clone, Debug)]
+pub struct TextoChegando {
+    pub chats: Vec<String>,
+}
+
+impl gpui_kit::EventEmitter<TextoChegando> for Motor {}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -5437,6 +5511,42 @@ mod testes {
         assert_eq!(parcial["fundo"], "Olá");
         assert!(juntar_parcial(&mut parcial, &visiveis, "aberto", "a"));
         assert!(juntar_parcial(&mut parcial, &visiveis, "aberto", "b"));
+    }
+
+    // O aceite do texto chegando: o primeiro pedaço muda o estado da conversa (ela passa a
+    // "escrevendo") e redesenha tudo; os seguintes só fazem o texto crescer, e isso interessa só
+    // ao painel que mostra o chat.
+    #[test]
+    fn so_o_primeiro_pedaco_de_texto_redesenha_a_janela_inteira() {
+        let mut parcial = HashMap::new();
+        let visiveis = HashSet::from(["aberto".to_string()]);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", "Ol"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", "á"), Pedaco::Cresceu);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", ", tudo bem?"), Pedaco::Cresceu);
+        assert_eq!(parcial["aberto"], "Olá, tudo bem?");
+        // Fora dos painéis: o primeiro redesenha (a lista passa a dizer que ele escreve), os
+        // outros não avisam ninguém.
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "fundo", "a"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "fundo", "b"), Pedaco::Nada);
+        assert_eq!(parcial["fundo"], "ab");
+        // Um primeiro pedaço vazio ainda não mostra texto nenhum: o que vier depois é que começa.
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", ""), Pedaco::Comecou);
+        let visiveis = HashSet::from(["aberto2".to_string()]);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", "x"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", "y"), Pedaco::Cresceu);
+    }
+
+    // Os pedaços que chegam dentro da janela de 60 ms saem num aviso só: de texto (só os painéis
+    // desses chats) quando o lote não trouxe mais nada, e da janela inteira no resto.
+    #[test]
+    fn o_lote_de_texto_vira_um_aviso_so_e_estreito() {
+        assert_eq!(JANELA_DO_TEXTO, std::time::Duration::from_millis(60));
+        assert_eq!(aviso_do_lote(false, Vec::new()), AvisoDoLote::Nada);
+        let texto = vec!["a".to_string(), "a".to_string(), "b".to_string(), "a".to_string()];
+        assert_eq!(aviso_do_lote(false, texto.clone()), AvisoDoLote::Texto(vec!["a".to_string(), "b".to_string()]));
+        // Veio outra coisa junto (uma ferramenta, o fim do turno): a janela inteira.
+        assert_eq!(aviso_do_lote(true, texto), AvisoDoLote::Tudo);
+        assert_eq!(aviso_do_lote(true, Vec::new()), AvisoDoLote::Tudo);
     }
 
     #[test]

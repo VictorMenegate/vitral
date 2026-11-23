@@ -176,13 +176,67 @@ componentes do GPUI Kit.
   sozinho); desligar um servidor e entrar num conector continuam no Claude Code. Uma conta extra
   guarda a lista de servidores de quando foi criada (`contas::preparar_pasta` copia o `mcpServers`
   do `~/.claude.json`): servidor acrescentado depois não aparece nela.
-- **Custo de um redesenho.** A janela é uma vista só: qualquer batida de animação redesenha tudo,
-  uns 20 a 30 ms de processador no release (medido em 13/11/2026 com `VITRAL_QUADROS=1` e o tempo
-  da thread principal em `/proc`). Por isso o laço do metal e do anel girando bate junto com o
-  compasso dos spinners, 12 vezes por segundo (`movimento::laco_a`), e não numa grade própria: as
-  duas somavam até 28 redesenhos por segundo com um chat trabalhando. O tamanho da conversa pesa
-  pouco nisso (três painéis longos custam 10% a mais que dois curtos); o que baixaria de verdade é
-  cada painel virar uma vista própria com cache.
+- **Custo de um redesenho.** A Janela é a raiz e é remontada em todo quadro; o que pesa fica em
+  vistas com cache, que só se refazem quando elas mesmas são avisadas: as mensagens de cada painel
+  e a lista (`src/ui/vista_mensagens.rs`) e o que anima sozinho, o metal e os anéis
+  (`componentes/vista_viva.rs`). O laço do metal e do anel girando bate junto com o compasso dos
+  spinners, 30 vezes por segundo (`movimento::laco_a`), e não numa grade própria. Estas coisas
+  seguram o custo, medidas em 23/11/2026 no binário otimizado, na bancada, com três conversas de
+  450 itens lado a lado a 150% (`VITRAL_QUADROS=1` e o tempo da thread principal em `/proc`; a
+  máquina estava ocupada, então vale a diferença). Por quadro, de antes para depois: rolar um
+  painel, de 35 a 58 ms para 28 a 30; rolar com o texto chegando, de 76 a 90 para 36 a 59; o
+  texto chegando, de 41 a 55 para 36; cada tecla na caixa de mensagem, de uns 69 ms para uns 14;
+  parado, 0% nos dois. Com um chat só rodando ferramenta (o anel e o metal batendo, nada
+  chegando) nada mudou: uns 21 ms por quadro, que é a casca.
+  - **Só o que está à vista é montado** (`src/ui/mensagens/a_vista.rs`). A conversa continua uma
+    coluna só dentro de uma área que rola (a âncora de leitura, a mensagem presa no alto, a busca
+    e o sumário contam em pixels), mas o bloco longe da vista entra como um espaço da altura que
+    mediu da última vez, sem montar o markdown, o layout nem a pintura dele. A conversa é
+    planejada primeiro (`Planejado`: o que cada bloco é e como montá-lo), depois
+    `a_vista::blocos_a_montar` escolhe os que estão na vista e na sobra em volta dela (meia vista
+    para cada lado, 300 px no mínimo), e só esses são montados. A altura guardada vale para o
+    mesmo bloco mostrando a mesma coisa (`ChaveDoBloco`: o tipo, os itens e uma marca do conteúdo,
+    que muda quando o resultado de uma chamada chega ou a mensagem é corrigida), na mesma largura
+    e no mesmo zoom (`Alturas`); sem altura guardada o bloco é montado, e a conta é sempre para o
+    lado seguro. Ficam sempre montados: tudo, com a busca da conversa aberta, com texto
+    selecionado na janela ou no desenho que abre o chat; o cartão de erro e o texto que está
+    chegando. O texto de mais de 3 KB tem regra própria (`texto_que_chega_depois`): o kit o lê em
+    segundo plano, e o primeiro desenho sai sem ele; a altura dele só vale depois de ficar igual
+    por 400 ms (`Alturas::assentada`) e, quando ele volta à vista depois de ter sido espaço, a
+    caixa fica na altura guardada até o texto relido chegar (`Alturas::segurar`). Quando um bloco montado
+    mede outra altura que a usada na conta (recolheu uma saída, o texto chegou), a conversa pede
+    mais um desenho: os de depois dele saíram do lugar, e um espaço pode ter entrado na vista. O `list()` do GPUI não serviu: ele rola por item, e a âncora, a
+    mensagem presa, o "abrir no começo da resposta" e a rolagem até o achado da busca contam em
+    pixels a partir do alto da conversa. As páginas de 60 itens continuam (`ITENS_NA_TELA`):
+    um bloco só vira espaço depois de medido uma vez.
+  - **O texto chegando redesenha só o painel dele.** O motor junta os pedaços que chegam em 60 ms
+    (`motor::JANELA_DO_TEXTO`) e, quando o lote só fez o texto crescer, emite `TextoChegando` em
+    vez do `notify` (`motor::aviso_do_lote`): a Janela avisa só as mensagens dos painéis desse
+    chat (`Janela::texto_chegando`), e a lista e os outros painéis saem do cache. O primeiro
+    pedaço de uma resposta ainda redesenha tudo (a faixa do turno passa a "escrevendo"). O
+    markdown do texto que cresce não é relido inteiro: o kit recebe só o que foi acrescentado
+    (`TextViewState::set_text` vira `push_str` quando o texto novo começa pelo antigo).
+  - **A casca é uma vista própria, sem cache** (`vista_mensagens::VistaDaCasca`): tudo o que a
+    Janela desenha fora das vistas em cache é montado por ela (`Janela::montar_casca`). O GPUI
+    avisa a vista em que o elemento está a cada hover, dica, quadro de transição
+    (`movimento::pedir_quadro`) e estado guardado que muda (`use_keyed_state`); quando essa vista
+    era a Janela, cada aviso desses passava pelo `Janela::avisar_vistas` e refazia as mensagens
+    dos três painéis e a lista (de 13 a 25 ms por painel). Agora só o que o código do Vitral muda
+    avisa a Janela (`cx.notify()` num `Context<Janela>`), e aí as vistas se refazem todas, porque
+    o estado delas mora nela. Três avisos ficaram mais estreitos: a tecla na caixa de mensagem
+    redesenha só a casca (`Janela::redesenhar_a_casca`: o texto da caixa não aparece nas
+    mensagens nem na lista), o redesenho que o prepaint da conversa pede (a mensagem presa que
+    troca a cada passo da roda) avisa só a vista do painel, e a rolagem só avisa a Janela pelo
+    sumário quando o sumário está na tela (com a direita fechada, cada passo da roda no painel
+    ativo refazia a janela inteira). **Quem escreve um listener que muda o estado da Janela
+    precisa do `cx.notify()`**: antes o hover do clique refazia tudo de carona.
+  - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
+    layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
+    com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
+    vistas com cache, irmãs da das mensagens (aninhadas não servem: a vista que se refaz refaz as
+    de dentro), com os spinners deles em vistas vivas. E um aviso da Janela (`cx.notify()`)
+    ainda refaz as mensagens de todos os painéis: saber qual painel mudou pede uma assinatura do
+    que cada um desenha.
 - **Boas-vindas.** Na primeira abertura (sem pasta de trabalho e sem chat nenhum; `VITRAL_BOAS_VINDAS=1`
   força), `src/ui/boas_vindas.rs` mostra quatro passos: a apresentação, a pasta de trabalho (as
   pastas em que o Claude Code já tem conversas vêm como sugestão) e o básico (permissões, quem
@@ -788,6 +842,8 @@ no cabeçalho; dono, 18/11/2026).
 - **Rolagem.** Barra visível por painel quando o conteúdo transborda, com identidade própria e
   desenhada sobre a área fixa, fora do conteúdo rolado. Os itens anteriores aparecem em páginas
   de 60 ao chegar perto do topo; a compensação da altura acrescentada mantém a leitura no lugar.
+  Dos itens que já entraram, só os blocos à vista são montados (ver **Custo de um redesenho**):
+  rolar uma conversa em que já se subiu muito custa o mesmo que rolar uma recém-aberta.
   O histórico importado amplia a janela de leitura do arquivo quando necessário. A suavização
   antiga foi retirada em 16/11/2026: ela restaurava o deslocamento antes de detectar a subida,
   mantendo o painel preso ao fim. No fim, a conversa continua colada no fim também
@@ -1630,8 +1686,9 @@ antigo aberto adia sem gravar nada.
 
 Bancada: o comando é o Vitral com uma pasta opcional, que ele importa (no primeiro uso, uma pasta do
 Vitral antigo) ou abre (depois, o chat dela ou um novo nela). `FUNDO=branco` (ou `FUNDO=<imagem>`)
-troca o papel de parede (com o metal opaco, ele só aparece fora da janela) e `ZOOM=1.5` abre com
-esse zoom. `DADOS_NOVOS=1` abre como primeiro uso
+troca o papel de parede (com o metal opaco, ele só aparece fora da janela), `ZOOM=1.5` abre com
+esse zoom e `TELA=2400x1300` troca o tamanho do monitor de mentira (o padrão é 1600x1000; a 150%,
+três conversas lado a lado só cabem numa tela mais larga). `DADOS_NOVOS=1` abre como primeiro uso
 (afasta para `$B/afastados/<hora>` os dados, a configuração e o `interface.json` da bancada; o `app/`
 que a atualização da bancada instalou fica) e `RAIZ_SINTETICA=1` é a migração de ponta a ponta: gera
 com o `demo_vitral.py` uma pasta do Vitral antigo dentro da bancada (com os `cwd` dentro dela e
@@ -1643,7 +1700,8 @@ importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdad
 bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat, antes das ferramentas; leva 10 s com
-`[demora]`; `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
+`[demora]`; com `[escreve 20]` a resposta chega aos pedaços durante esses segundos, uns 40 por
+segundo, como o texto do Claude Code de verdade (é como se mede a conversa com o texto chegando); `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
 Claude Code de verdade enquanto sobe (é como se confere que a janela não trava no envio de um
 print); com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
 Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um trecho de mentira,
@@ -1688,7 +1746,14 @@ na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reinicia
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. Quando o metal refez o campo nesse
-segundo, a linha leva o tempo médio de um campo: "quadros/s: 18 · campo: 2,1 ms".
+segundo, a linha leva o tempo médio de um campo: "quadros/s: 18 · campo: 2,1 ms". Depois vêm as
+médias por quadro da montagem da casca, do tempo do começo do desenho até o fim do layout e até
+o fim da pintura (o que sobra do tempo da thread da janela é o GPUI fechando a cena) e, se
+alguma conversa foi refeita, quantas, quantos blocos cada uma montou e quanto levou: "montagem:
+média 2.4 ms, pior 4.1 ms · até o layout: 12.0 ms · até a pintura: 19.0 ms · conversas: 12 ·
+blocos: 14 de 28 · 9.5 ms cada". Com as conversas em cache, o número de conversas por quadro
+diz quem está refazendo o quê: 1 por quadro é só o painel mexido; 3 por quadro com três painéis
+é a Janela avisada.
 `VITRAL_SEM_ANIMACAO=1` abre como se as animações do GNOME estivessem desligadas (o metal fica
 parado na fase inicial, igual em toda máquina: é como se tiram as capturas). A vitrine (`--vitrine`) ganhou as seções **Movimento**
 (um botão para cada efeito) e **Espaçamento** (a escala e as guias da lista, da direita e da
@@ -1900,7 +1965,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir, e `mensagens/a_vista.rs` a conta de quais blocos da conversa são montados e as alturas guardadas dos outros; `vista_mensagens.rs` as mensagens de cada painel e a lista como vistas com cache; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
@@ -2018,7 +2083,9 @@ não redesenha quando o compasso já está batendo.
 
 Motor e redesenho: o `Motor.visiveis` (as conversas que algum painel mostra) é atualizado no render
 da Janela sem notify; `tratar` devolve se o lote pede redesenho, e texto parcial de uma conversa
-fora da vista só redesenha no primeiro pedaço (`juntar_parcial`, com teste). `salvar_estado` e
+fora da vista só redesenha no primeiro pedaço (`juntar_parcial`, com teste). Numa conversa aberta,
+o primeiro pedaço redesenha a janela e os seguintes só os painéis dela (`pedaco_de_texto` e
+`aviso_do_lote`, com teste; ver **Custo de um redesenho**). `salvar_estado` e
 `salvar_config` serializam na hora e entregam os bytes à fila do gravador. A notificação é
 `Motor::notificar`: `notify-send -a Vitral -i vitral -A default=Abrir -p`, numa thread que guarda
 o id por conversa para o `--replace-id` seguinte; o clique manda `Sinal::Abrir`, e o observer da

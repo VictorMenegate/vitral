@@ -3,6 +3,20 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.6
+
+A conversa mais leve: rolar, digitar e acompanhar a resposta chegando pesam menos.
+
+- **Rolar a conversa pesa menos.** O Vitral desenha só as mensagens que estão à vista (e um pouco
+  em volta); as outras entram como espaço. Antes, cada passo da roda refazia as 60 últimas
+  mensagens do painel, e mais ainda depois de subir bastante na conversa.
+- **A resposta chegando não mexe nos outros painéis.** O texto que vai chegando redesenha só a
+  conversa dele: a lista e as conversas ao lado ficam paradas. Antes, cada pedaço de texto refazia
+  a janela inteira.
+- **Digitar e passar o ponteiro não refazem as conversas.** Cada tecla na caixa de mensagem e
+  cada passada do ponteiro por um botão refaziam as conversas de todos os painéis; com três
+  conversas longas abertas, a digitação atrasava.
+
 ## 0.9.5
 
 O fundo das suas mensagens parado e as imagens delas com o canto redondo.

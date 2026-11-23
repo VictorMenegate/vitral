@@ -116,6 +116,9 @@ pub struct Painel {
     pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
+    /// A altura que cada bloco da conversa mediu neste painel: o que está longe da vista entra
+    /// como um espaço dessa altura, sem ser montado (ver `mensagens::a_vista`).
+    pub(in crate::ui) alturas: std::rc::Rc<std::cell::RefCell<super::mensagens::a_vista::Alturas>>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -398,7 +401,10 @@ impl Janela {
                         }
                         this.ler_arquivos(&cwd, cx);
                     }
-                    cx.notify();
+                    // Só a casca: o texto da caixa não aparece nas mensagens nem na lista (o
+                    // rascunho só vai para a lista com o chat fora dos painéis), e avisar a
+                    // Janela refazia as conversas de todos os painéis a cada tecla.
+                    this.redesenhar_a_casca(cx);
                 }
                 _ => {}
             },
@@ -472,6 +478,7 @@ impl Janela {
             presa: None,
             empurrao_da_presa: px(0.),
             altura_da_presa: Default::default(),
+            alturas: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);

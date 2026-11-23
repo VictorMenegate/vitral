@@ -47,7 +47,10 @@ use crate::{
     },
 };
 
+pub(super) mod a_vista;
 pub(super) mod historico;
+
+use a_vista::{Assinatura, ChaveDoBloco, Medida, TipoDaChave, Vista};
 mod erros;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
@@ -113,7 +116,7 @@ pub(super) fn fundo_entra() -> Hsla {
 
 /// O tipo de cada bloco da conversa, para o espaço entre eles.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Bloco {
+pub(in crate::ui) enum Bloco {
     Balao,
     Texto,
     /// Trilha de ferramentas e avisos de uma linha.
@@ -123,6 +126,130 @@ enum Bloco {
     /// O separador de dia ("Hoje"): começa um turno, com o espaço de entre turnos antes dele.
     Dia,
     Alerta,
+}
+
+/// Um bloco da conversa antes de montar: o que já se sabe dele e como montá-lo. O bloco longe da
+/// vista que já foi medido não é montado; entra um espaço da altura dele (ver `a_vista`).
+pub(in crate::ui) struct Planejado<'a> {
+    /// O tipo, quando se sabe sem montar (o de um item sai da montagem ou da altura guardada).
+    bloco: Option<Bloco>,
+    /// O índice do (primeiro) item dele: identifica a entrada, a posição e o realce do sumário.
+    indice: Option<usize>,
+    /// A identidade para a altura guardada; `None`: sempre montado, e sem altura.
+    chave: Option<ChaveDoBloco>,
+    /// O bloco de um texto longo, que o kit lê em segundo plano: a altura dele só vale depois de
+    /// assentar, e ao voltar à vista a caixa fica nela até o texto chegar (`a_vista::Alturas`).
+    fica_montado: bool,
+    sem_entrada: bool,
+    /// No separador "Novo": o índice do bloco que vem logo depois dele.
+    antes_de: Option<usize>,
+    /// Numa mensagem sua do histórico trazido: o texto dela, para a mensagem presa no alto.
+    presa: Option<String>,
+    montar: Box<dyn FnOnce() -> (Bloco, AnyElement) + 'a>,
+}
+
+impl<'a> Planejado<'a> {
+    fn novo(indice: Option<usize>, chave: Option<ChaveDoBloco>, montar: impl FnOnce() -> (Bloco, AnyElement) + 'a) -> Self {
+        Planejado { bloco: None, indice, chave, fica_montado: false, sem_entrada: false, antes_de: None, presa: None, montar: Box::new(montar) }
+    }
+
+    /// Um bloco de tipo sabido antes de montar.
+    fn de_tipo(bloco: Bloco, indice: Option<usize>, chave: Option<ChaveDoBloco>, montar: impl FnOnce() -> AnyElement + 'a) -> Self {
+        Planejado { bloco: Some(bloco), ..Self::novo(indice, chave, move || (bloco, montar())) }
+    }
+
+    /// Já montado, e sempre montado: o que não tem altura a guardar (a dica, o texto chegando).
+    fn pronto(bloco: Bloco, indice: Option<usize>, elemento: AnyElement) -> Self {
+        Self::de_tipo(bloco, indice, None, move || elemento)
+    }
+
+    fn sem_entrada(mut self) -> Self {
+        self.sem_entrada = true;
+        self
+    }
+
+    /// O bloco de um texto longo (`texto_que_chega_depois`).
+    fn fica_montado(mut self, fica: bool) -> Self {
+        self.fica_montado = fica;
+        self
+    }
+}
+
+/// O que um item mostra, em números: o que muda a altura do bloco dele.
+fn partes_do_item(item: &Item, partes: &mut Vec<u64>) {
+    let n = |texto: &str| texto.len() as u64;
+    match item {
+        Item::Usuario { texto, anexos, .. } => partes.extend([1, n(texto), anexos.len() as u64]),
+        Item::Entrega { de, texto, .. } => partes.extend([2, n(de), n(texto)]),
+        Item::Assistente { texto, .. } => partes.extend([3, n(texto)]),
+        Item::Ferramenta { resumo, resultado, erro, detalhe, sub, mudanca, .. } => {
+            partes.extend([4, n(resumo), resultado.as_deref().map_or(0, |r| 1 + n(r)), u64::from(*erro)]);
+            partes.extend([detalhe.as_deref().map_or(0, |d| 1 + n(d)), u64::from(mudanca.is_some())]);
+            if let Some(sub) = sub {
+                partes.extend([u64::from(sub.ferramentas), sub.passos.len() as u64, n(&sub.atividade), sub.fim]);
+            }
+        }
+        Item::Raciocinio { texto, milis, .. } => partes.extend([5, n(texto), *milis]),
+        Item::Aviso { texto, erro, .. } => partes.extend([6, n(texto), u64::from(*erro)]),
+        Item::Cartao { id, .. } => partes.extend([7, *id]),
+        Item::Vez { .. } => partes.push(8),
+        Item::Desconhecido(_) => partes.push(9),
+    }
+    partes.push(item.em());
+}
+
+/// A marca do conteúdo de uma faixa de itens, com o que mais o bloco deles mostra (`extras`).
+fn marca_da_faixa<'i>(itens: impl IntoIterator<Item = &'i Item>, extras: &[u64]) -> u64 {
+    let mut partes = extras.to_vec();
+    for item in itens {
+        partes_do_item(item, &mut partes);
+    }
+    a_vista::marca(&partes)
+}
+
+/// Acima deste tamanho, o kit lê o markdown em segundo plano (4 KB; aqui com folga, porque o
+/// texto ganha as quebras duras e os links antes de ir para ele): o primeiro desenho do bloco sai
+/// sem o texto, e a altura medida nele não é a de verdade.
+const TEXTO_LIDO_NA_HORA: usize = 3000;
+
+/// O item tem um texto longo, que o kit lê em segundo plano: o primeiro desenho do bloco sai sem
+/// o texto. Por isso a altura dele só vale depois de ficar igual por um tempo
+/// (`a_vista::Alturas::assentada`), e, quando ele volta à vista depois de ter sido espaço, a caixa
+/// fica na altura guardada até o texto relido chegar (`Alturas::segurar`): sem isso ele encolhia
+/// e crescia na frente de quem lê.
+pub(super) fn texto_que_chega_depois(item: &Item) -> bool {
+    match item {
+        Item::Usuario { texto, .. }
+        | Item::Assistente { texto, .. }
+        | Item::Entrega { texto, .. }
+        | Item::Aviso { texto, .. }
+        | Item::Raciocinio { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
+        // O relatório de um subagente abre em markdown.
+        Item::Ferramenta { resultado, sub, .. } => sub.is_some() && resultado.as_deref().is_some_and(|r| r.len() > TEXTO_LIDO_NA_HORA),
+        Item::Cartao { .. } | Item::Vez { .. } | Item::Desconhecido(_) => false,
+    }
+}
+
+/// A chave do bloco de um item sozinho. O cartão de erro e o cartão interativo não têm: o que
+/// eles mostram muda com o estado do turno e das contas, e são poucos; ficam sempre montados e
+/// sem altura guardada.
+fn chave_do_item(tipo: TipoDaChave, indice: usize, item: &Item, extras: &[u64]) -> Option<ChaveDoBloco> {
+    match item {
+        Item::Aviso { texto, erro, .. } if *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta => None,
+        Item::Cartao { .. } => None,
+        _ => Some(ChaveDoBloco { tipo, inicio: indice, fim: indice + 1, marca: marca_da_faixa([item], extras) }),
+    }
+}
+
+/// A chave de um bloco que junta vários itens (a trilha).
+fn chave_da_faixa(tipo: TipoDaChave, itens: &[(usize, &Item)], extras: &[u64]) -> Option<ChaveDoBloco> {
+    let (primeiro, ultimo) = (itens.first()?.0, itens.last()?.0);
+    Some(ChaveDoBloco { tipo, inicio: primeiro, fim: ultimo + 1, marca: marca_da_faixa(itens.iter().map(|(_, item)| *item), extras) })
+}
+
+/// O bloco destes itens tem texto longo (ver `texto_que_chega_depois`).
+fn fica_montado<'i>(itens: impl IntoIterator<Item = &'i Item>) -> bool {
+    itens.into_iter().any(texto_que_chega_depois)
 }
 
 /// Espaço antes de um bloco, numa escala de três passos (18/11/2026): 32 entre turnos (antes do
@@ -275,11 +402,6 @@ impl Janela {
         let nivel = self.paineis[ix].medida.nivel;
         let contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
         let agora = crate::modelo::agora();
-        // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
-        let mut blocos: Vec<(Bloco, Option<usize>, AnyElement)> = Vec::new();
-        if chat.itens.is_empty() && chat.importada.is_none() {
-            blocos.push((Bloco::Texto, None, self.dica_inicial(motor, chat, window, cx)));
-        }
         // Conversas antigas guardaram as buscas de ferramenta; não interessam. O modo foco tira
         // todas as ferramentas.
         let mut visiveis: Vec<(usize, &Item)> = chat
@@ -312,10 +434,39 @@ impl Janela {
         self.paineis[ix].presa_do_historico.borrow_mut().clear();
         if escondidos > 0 {
             visiveis.drain(..escondidos);
-        } else if chat.importada.is_some() {
-            // A conversa trazida do Claude Code: o que foi dito lá vem antes, lido do arquivo dela.
-            blocos.extend(self.blocos_do_historico(motor, chat, nivel, ix, window, cx));
         }
+        // A conversa trazida do Claude Code: o que foi dito lá vem antes, lido do arquivo dela. O
+        // que foi lido, a busca vazia e o contexto dela ficam aqui, à frente dos blocos, que só
+        // são montados depois de decidido quais estão à vista.
+        let lido = chat.importada.as_ref().filter(|_| escondidos == 0).map(|importada| (importada, self.historico_de(chat, importada, cx)));
+        let sem_busca = busca_conversa::Indice::default();
+        let contexto_do_historico = Contexto {
+            motor,
+            chat,
+            rodando: false,
+            nivel,
+            // O histórico trazido do Claude Code é só para ler: nada dele se corrige aqui.
+            painel: painel_id,
+            editavel: None,
+            marco: None,
+            // A busca da conversa não varre o histórico do Claude Code: ele é lido do arquivo, sob
+            // demanda, e nem todo ele está em memória.
+            busca: &sem_busca,
+            rolagem: &rolagem,
+        };
+        // Daqui até a montagem, a Janela só é lida: os blocos guardam como se montar.
+        let (eu, ctx) = (&*self, &contexto);
+        // Cada bloco com o índice do (primeiro) item dele, que identifica a entrada.
+        let mut blocos: Vec<Planejado> = Vec::new();
+        if chat.itens.is_empty() && chat.importada.is_none() {
+            blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, window, cx)));
+        }
+        if let Some((importada, lido)) = &lido {
+            blocos.extend(eu.blocos_do_historico(&contexto_do_historico, importada, lido, ix, window, cx));
+        }
+        // O que mais muda a cara de um bloco além dos itens dele: o turno em curso.
+        let n_itens_da_conversa = chat.itens.len();
+        let extras_de = |indice: usize| [u64::from(indice + 1 == n_itens_da_conversa), u64::from(contexto.rodando)];
         // O dia de cada turno: o separador entra onde a data muda (pela posição em `visiveis`).
         let horas: Vec<u64> = visiveis.iter().map(|(_, item)| item.em()).collect();
         let datas: HashMap<usize, String> = separadores_de_data(&horas, agora).into_iter().collect();
@@ -329,16 +480,19 @@ impl Janela {
         // ferramentas já saíram, e não há o que recolher.
         let turnos = if foco { Vec::new() } else { turnos_recolhiveis(&chat.itens, contexto.rodando) };
         let mut turno_posto: Option<usize> = None;
-        // Onde o separador "Novo" entrou (a posição entre os blocos) e o índice do bloco logo depois
-        // dele: a abertura no começo da resposta o deixa à vista no alto (conferência, 16/11/2026).
-        let mut lugar_do_novo: Option<(usize, usize)> = None;
-        // A linha do turno não entra com fade: o primeiro item dele, aberto, já usa o índice.
-        let mut sem_entrada: std::collections::HashSet<usize> = Default::default();
+        // O separador "Novo" leva o índice do bloco logo depois dele: a abertura no começo da
+        // resposta o deixa à vista no alto (conferência, 16/11/2026).
+        let separador_do_novo = |seguinte: usize| {
+            let chave = ChaveDoBloco { tipo: TipoDaChave::Novo, inicio: seguinte, fim: seguinte, marca: 0 };
+            Planejado { antes_de: Some(seguinte), ..Planejado::de_tipo(Bloco::Dia, None, Some(chave), separador_novo) }
+        };
         let mut i = 0;
         while i < visiveis.len() {
             let (indice, item) = visiveis[i];
             if let Some(dia) = datas.get(&i) {
-                blocos.push((Bloco::Dia, None, separador_de_dia(dia)));
+                let chave = ChaveDoBloco { tipo: TipoDaChave::Dia, inicio: indice, fim: indice, marca: dia.len() as u64 };
+                let dia = dia.clone();
+                blocos.push(Planejado::de_tipo(Bloco::Dia, None, Some(chave), move || separador_de_dia(&dia)));
             }
             // A revisão da memória vira uma linha: "Revendo a memória…" enquanto roda, e depois
             // "Memória revista · nada a guardar" ou "Memória: editou AGENTS.md" (item 6.1).
@@ -350,8 +504,20 @@ impl Janela {
                 let chave = format!("{}:{indice}:memoria", chat.id);
                 let aberta = self.expandidos.contains(&chave);
                 let rodando = fim_item == chat.itens.len() && motor.revendo_memoria(&chat.id);
-                sem_entrada.insert(blocos.len());
-                blocos.push((Bloco::Log, Some(indice), self.linha_da_memoria(&contexto, &chave, &chat.itens[indice..fim_item], rodando, aberta, window, cx)));
+                let itens_da_revisao = &chat.itens[indice..fim_item];
+                let chave_do_bloco = ChaveDoBloco {
+                    tipo: TipoDaChave::Memoria,
+                    inicio: indice,
+                    fim: fim_item,
+                    marca: marca_da_faixa(itens_da_revisao, &[u64::from(rodando), u64::from(aberta)]),
+                };
+                blocos.push(
+                    Planejado::de_tipo(Bloco::Log, Some(indice), Some(chave_do_bloco), move || {
+                        eu.linha_da_memoria(ctx, &chave, itens_da_revisao, rodando, aberta, window, cx)
+                    })
+                    // A linha não entra com fade: o primeiro item dela, aberta, já usa o índice.
+                    .sem_entrada(),
+                );
                 if !aberta {
                     i = visiveis[i..].iter().position(|(k, _)| *k >= fim_item).map_or(visiveis.len(), |p| i + p);
                     continue;
@@ -364,18 +530,30 @@ impl Janela {
                 // O separador "Novo" de um item lá dentro fica antes da linha.
                 if novo.is_some_and(|n| n < turno.resposta) {
                     novo = None;
-                    lugar_do_novo = Some((blocos.len(), indice));
-                    blocos.push((Bloco::Dia, None, separador_novo()));
+                    blocos.push(separador_do_novo(indice));
                 }
-                sem_entrada.insert(blocos.len());
-                let elemento = self.linha_do_turno(&contexto, turno, aberto, &visiveis[i..fim], cx);
-                blocos.push((Bloco::Log, Some(indice), elemento));
+                let do_turno = &visiveis[i..fim];
+                let chave_do_bloco = ChaveDoBloco {
+                    tipo: TipoDaChave::Turno,
+                    inicio: turno.mensagem,
+                    fim: turno.resposta,
+                    marca: marca_da_faixa(do_turno.iter().map(|(_, item)| *item), &[u64::from(aberto), do_turno.len() as u64]),
+                };
+                blocos.push(
+                    Planejado::de_tipo(Bloco::Log, Some(indice), Some(chave_do_bloco), move || {
+                        eu.linha_do_turno(ctx, turno, aberto, do_turno, cx)
+                    })
+                    // A linha do turno não entra com fade: o primeiro item dele, aberto, já usa o índice.
+                    .sem_entrada(),
+                );
                 if !aberto {
                     // Recolhido, só o que não pode sumir: a pergunta, o aviso de erro e o cartão.
-                    for &(k, escondido) in &visiveis[i..fim] {
+                    for &(k, escondido) in do_turno {
                         if fica_fora_do_recolhido(escondido) {
-                            let (bloco, elemento) = self.item(&contexto, k, escondido, window, cx);
-                            blocos.push((bloco, Some(k), elemento));
+                            let chave = chave_do_item(TipoDaChave::Item, k, escondido, &extras_de(k));
+                            blocos.push(
+                                Planejado::novo(Some(k), chave, move || eu.item(ctx, k, escondido, window, cx)).fica_montado(fica_montado([escondido])),
+                            );
                         }
                     }
                     i = fim;
@@ -384,8 +562,7 @@ impl Janela {
             }
             if novo.is_some_and(|n| indice >= n) {
                 novo = None;
-                lugar_do_novo = Some((blocos.len(), indice));
-                blocos.push((Bloco::Dia, None, separador_novo()));
+                blocos.push(separador_do_novo(indice));
             }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
             if matches!(item, Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
@@ -398,8 +575,13 @@ impl Janela {
                     fim += 1;
                 }
                 let ao_vivo = contexto.rodando && fim == visiveis.len();
-                let elemento = self.trilha(&contexto, &visiveis[i..fim], ao_vivo, cx);
-                blocos.push((Bloco::Log, Some(indice), elemento));
+                let chamadas = &visiveis[i..fim];
+                let chave_do_bloco =
+                    chave_da_faixa(TipoDaChave::Trilha, chamadas, &[u64::from(ao_vivo), chamadas.len() as u64, u64::from(contexto.rodando)]);
+                blocos.push(
+                    Planejado::de_tipo(Bloco::Log, Some(indice), chave_do_bloco, move || eu.trilha(ctx, chamadas, ao_vivo, cx))
+                        .fica_montado(fica_montado(chamadas.iter().map(|(_, item)| *item))),
+                );
                 i = fim;
                 continue;
             }
@@ -414,8 +596,10 @@ impl Janela {
                 && !datas.contains_key(&(i + 1))
             {
                 let chave = format!("{}:{indice_erro}", chat.id);
-                let elemento = self.cartao_de_erro(&contexto, &chave, indice_erro, texto, Some((indice, antes.as_str())), window, cx);
-                blocos.push((Bloco::Alerta, Some(indice), elemento));
+                // Sem altura guardada: o cartão de erro muda com o turno e as contas (`chave_do_item`).
+                blocos.push(Planejado::de_tipo(Bloco::Alerta, Some(indice), None, move || {
+                    eu.cartao_de_erro(ctx, &chave, indice_erro, texto, Some((indice, antes.as_str())), window, cx)
+                }));
                 i += 2;
                 continue;
             }
@@ -432,8 +616,8 @@ impl Janela {
                 continue;
             }
             i += 1;
-            let (bloco, elemento) = self.item(&contexto, indice, item, window, cx);
-            blocos.push((bloco, Some(indice), elemento));
+            let chave = chave_do_item(TipoDaChave::Item, indice, item, &extras_de(indice));
+            blocos.push(Planejado::novo(Some(indice), chave, move || eu.item(ctx, indice, item, window, cx)).fica_montado(fica_montado([item])));
         }
         let parcial = motor.parcial(&chat.id);
         if let Some(parcial) = parcial {
@@ -441,7 +625,7 @@ impl Janela {
             // entrada não se repete quando ele pousa.
             let indice = chat.itens.len();
             let id = SharedString::from(format!("{}:{indice}", chat.id));
-            blocos.push((
+            blocos.push(Planejado::pronto(
                 Bloco::Texto,
                 Some(indice),
                 div()
@@ -460,7 +644,61 @@ impl Janela {
             && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
         {
             let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
-            blocos.push((Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
+            blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
+        }
+        // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
+        // altura que mediu da última vez (ver `a_vista`). Com a busca aberta, uma seleção de
+        // texto na janela ou a abertura do chat por decidir, tudo é montado, como antes.
+        let alturas = eu.paineis[ix].alturas.clone();
+        let rem = window.rem_size();
+        alturas.borrow_mut().comecar(Assinatura { chat: chat.id.clone(), rem, foco, estreito: minima(nivel) });
+        let altura_da_vista = rolagem.bounds().size.height;
+        let vista = {
+            let p = &eu.paineis[ix];
+            if p.busca.aberta || eu.selecionando || p.alvo.is_some() {
+                Vista::Tudo
+            } else if p.seguindo && !p.manter_lugar {
+                Vista::NoFim { altura: altura_da_vista }
+            } else {
+                Vista::Em { topo: -rolagem.offset().y, altura: altura_da_vista }
+            }
+        };
+        let agora_mesmo = std::time::Instant::now();
+        let guardadas: Vec<Option<(Pixels, Bloco)>> = {
+            let alturas = alturas.borrow();
+            blocos
+                .iter()
+                .map(|b| {
+                    let chave = b.chave.as_ref()?;
+                    // O texto longo só entra na conta com a altura assentada.
+                    if b.fica_montado { alturas.assentada(chave, agora_mesmo) } else { alturas.de(chave) }
+                })
+                .collect()
+        };
+        let medidas: Vec<Medida> = {
+            // O tipo de cada bloco, quando já se sabe; sem ele, o espaço antes conta zero (a conta
+            // é sempre para o lado seguro).
+            let tipos: Vec<Option<Bloco>> = blocos.iter().zip(&guardadas).map(|(b, g)| b.bloco.or(g.map(|(_, bloco)| bloco))).collect();
+            (0..blocos.len())
+                .map(|k| {
+                    let margem = match (k.checked_sub(1).map(|a| tipos[a]), tipos[k]) {
+                        (None, Some(_)) => px(0.),
+                        (Some(Some(anterior)), Some(atual)) => espaco_antes(Some(anterior), atual).to_pixels(rem),
+                        _ => px(0.),
+                    };
+                    Medida { altura: guardadas[k].map(|(altura, _)| altura), margem }
+                })
+                .collect()
+        };
+        let (sobra, antes, depois) = (a_vista::sobra_da_vista(altura_da_vista), esp::E12.to_pixels(rem), esp::NO_TURNO.to_pixels(rem));
+        let mut a_montar = a_vista::blocos_a_montar(&medidas, vista, sobra, antes, depois);
+        // No fim, monta também o que está onde a rolagem está agora: se ela ainda não chegou lá
+        // (ou saiu de lá pela barra neste instante), não aparece um vazio no lugar.
+        if matches!(vista, Vista::NoFim { .. }) {
+            let aqui = Vista::Em { topo: -rolagem.offset().y, altura: altura_da_vista };
+            for (montar, tambem) in a_montar.iter_mut().zip(a_vista::blocos_a_montar(&medidas, aqui, sobra, antes, depois)) {
+                *montar |= tambem;
+            }
         }
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let mut lista = v_flex()
@@ -482,18 +720,73 @@ impl Janela {
         // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
         let medidos: Rc<std::cell::RefCell<Vec<(usize, Pixels, Pixels)>>> = Default::default();
         let alto_do_novo: Rc<std::cell::Cell<Option<(usize, Pixels)>>> = Default::default();
-        for (k, (bloco, indice, elemento)) in blocos.into_iter().enumerate() {
-            // A mensagem para a qual o sumário do Este chat acabou de levar fica realçada um instante.
-            let mut caixa = self.com_realce_do_sumario(div().mt(espaco_antes(anterior, bloco)).child(elemento), &chat.id, indice);
+        let presa_do_historico = eu.paineis[ix].presa_do_historico.clone();
+        // Um bloco montado mediu outra altura que a usada na conta deste desenho.
+        let outra_altura: Rc<std::cell::Cell<bool>> = Default::default();
+        // Quantos blocos entraram como espaço: se a largura mudou, eles usaram altura velha.
+        let mut espacos = 0usize;
+        let (n_blocos, inicio_do_desenho) = (blocos.len(), std::time::Instant::now());
+        for (k, planejado) in blocos.into_iter().enumerate() {
+            let Planejado { indice, chave, fica_montado, sem_entrada, antes_de, presa: sua, montar, .. } = planejado;
+            // Longe da vista e já medido: um espaço da altura dele. Senão, o bloco de verdade.
+            let (bloco, montado) = match guardadas[k].filter(|_| !a_montar[k]) {
+                Some((altura, bloco)) => (bloco, Err(altura)),
+                None => {
+                    let (bloco, elemento) = montar();
+                    (bloco, Ok(elemento))
+                }
+            };
+            let margem = espaco_antes(anterior, bloco);
+            let mut caixa = match montado {
+                // A mensagem para a qual o sumário do Este chat acabou de levar fica realçada um instante.
+                Ok(elemento) => {
+                    // O texto longo que voltou à vista: a caixa fica na altura guardada enquanto
+                    // o kit relê o markdown dele (`Alturas::segurar`).
+                    let segura = chave.filter(|_| fica_montado).and_then(|chave| alturas.borrow_mut().segurar(&chave, agora_mesmo));
+                    let caixa = div().mt(margem).when_some(segura, |caixa, altura| caixa.min_h(altura)).child(elemento);
+                    let mut caixa = eu.com_realce_do_sumario(caixa, &chat.id, indice);
+                    if let Some(chave) = chave {
+                        let (alturas, contada, outra_altura) = (alturas.clone(), guardadas[k].map(|(altura, _)| altura), outra_altura.clone());
+                        caixa = caixa.on_prepaint(move |limites, _, _| {
+                            // O bloco mediu outra coisa que a conta usou (abriu, recolheu, o texto
+                            // chegou): os de depois dele não estão onde a conta os pôs.
+                            if contada.is_some_and(|contada| contada != limites.size.height) {
+                                outra_altura.set(true);
+                            }
+                            let mut alturas = alturas.borrow_mut();
+                            if fica_montado {
+                                alturas.anotar_assentando(chave, limites.size.height, bloco, std::time::Instant::now());
+                            } else {
+                                alturas.anotar(chave, limites.size.height, bloco);
+                            }
+                        });
+                    }
+                    caixa
+                }
+                Err(altura) => {
+                    espacos += 1;
+                    if let Some(chave) = chave.filter(|_| fica_montado) {
+                        alturas.borrow_mut().virou_espaco(chave);
+                    }
+                    div().mt(margem).h(altura).flex_none()
+                }
+            };
+            let montado = a_montar[k] || guardadas[k].is_none();
             if let Some(i) = indice {
                 let medidos = medidos.clone();
                 caixa = caixa.on_prepaint(move |limites, _, _| medidos.borrow_mut().push((i, limites.top(), limites.bottom())));
             }
-            if let Some((_, seguinte)) = lugar_do_novo.filter(|(lugar, _)| *lugar == k) {
+            if let Some(seguinte) = antes_de {
                 let alto_do_novo = alto_do_novo.clone();
                 caixa = caixa.on_prepaint(move |limites, _, _| alto_do_novo.set(Some((seguinte, limites.top()))));
             }
-            let entrada = if sem_entrada.contains(&k) { None } else { entrada_do_bloco(indice, base, vistos) };
+            // As mensagens suas do histórico trazido: onde cada uma ficou, para a presa no alto
+            // (montada ou não: a de cima da vista é justamente a que prende).
+            if let Some(texto) = sua {
+                let presa = presa_do_historico.clone();
+                caixa = caixa.on_prepaint(move |limites, _, _| presa.borrow_mut().push((texto.clone(), limites.top(), limites.bottom())));
+            }
+            let entrada = if sem_entrada || !montado { None } else { entrada_do_bloco(indice, base, vistos) };
             lista = match (indice, entrada) {
                 (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
                 _ => lista.child(caixa),
@@ -512,11 +805,26 @@ impl Janela {
         let suas: Rc<Vec<(usize, String)>> = Rc::new(mensagens_do_usuario(&chat.itens));
         let busca_aberta = self.paineis[ix].busca.aberta;
         lista = lista.on_prepaint(move |bounds, window, cx| {
-            let mut redesenhar = false;
+            super::medir_conversa(n_blocos, n_blocos - espacos, inicio_do_desenho.elapsed());
+            // `redesenhar`: as mensagens deste painel precisam de mais um desenho (a mensagem
+            // presa mudou, a leitura foi reposta). `tudo`: a Janela inteira (a abertura do chat
+            // mexe no que a lista e a caixa mostram).
+            let (mut redesenhar, mut tudo) = (false, false);
             let _ = janela.update(cx, |j, cx| {
                 let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel_id) else { return; };
                 p.altura_conteudo = bounds.size.height;
                 p.topo_da_lista.set(bounds.top());
+                // A coluna mudou de largura: as alturas guardadas eram da outra. Se algum espaço
+                // deste desenho usou uma delas, desenha de novo, com tudo o que falta montado.
+                if alturas.borrow_mut().conferir_largura(bounds.size.width, espacos) {
+                    redesenhar = true;
+                }
+                // Um bloco montado mudou de altura (recolheu uma saída de 2 mil pixels, por
+                // exemplo): os de depois dele subiram, e algum que a conta deixou como espaço
+                // pode ter entrado na vista. Mais um desenho, já com a altura nova.
+                if outra_altura.get() && espacos > 0 {
+                    redesenhar = true;
+                }
                 // A mensagem presa, como o "sticky" do VS Code: a sua mensagem mais recente que já
                 // subiu além do alto da vista gruda lá (a de verdade fica por baixo da faixa).
                 // Subindo além dela, gruda a anterior. Com a rolagem e as posições deste quadro.
@@ -590,6 +898,7 @@ impl Janela {
                         }
                     }
                     redesenhar = true;
+                    tudo = true;
                     // Coube na tela: o fim já está à vista, e o chat conta como lido.
                     if lido && let Some(motor) = j.motor.clone() {
                         motor.update(cx, |m, _| m.marcar_lido(&chat_id));
@@ -597,7 +906,11 @@ impl Janela {
                 }
             });
             if redesenhar {
-                window.on_next_frame(move |_, cx| { let _ = janela.update(cx, |_, cx| cx.notify()); });
+                // Só as mensagens deste painel: a mensagem presa troca a cada passo da roda, e
+                // avisar a Janela refazia a lista e as conversas ao lado junto.
+                window.on_next_frame(move |_, cx| {
+                    let _ = janela.update(cx, |j, cx| if tudo { cx.notify() } else { j.avisar_vista(painel_id, cx) });
+                });
             }
         });
 
@@ -1976,10 +2289,11 @@ fn contagem_do_diff(pedido: &str) -> Option<(usize, usize)> {
 }
 
 /// Quantos itens entram por página: começa pelos últimos e acrescenta os anteriores ao subir.
-/// A conversa não é virtualizada: cada redesenho da janela monta e mede todos
-/// os blocos de todos os painéis, e isso custa a cada passo da roda, a cada movimento do
-/// ponteiro e a cada letra. Medido em 13/11/2026 no binário otimizado, com duas conversas de 400
-/// itens lado a lado: 6,2 s de processador para 80 passos de rolagem (78 ms por passo).
+/// Dos itens que entraram, só os blocos à vista são montados (ver `a_vista`, 23/11/2026); a
+/// página continua porque um bloco só vira espaço depois de medido uma vez, e medir a conversa
+/// inteira ao abrir custaria o que a página evita. Medido em 13/11/2026 no binário otimizado,
+/// antes das duas coisas, com duas conversas de 400 itens lado a lado: 6,2 s de processador para
+/// 80 passos de rolagem (78 ms por passo).
 pub(super) const ITENS_NA_TELA: usize = 60;
 
 /// Quantas miniaturas a pilha do grupo recolhido mostra (abrir o grupo mostra todas, cada uma na
@@ -6231,5 +6545,59 @@ mod testes {
         let chamadas: Vec<(usize, &Item)> = tres.iter().enumerate().collect();
         assert_eq!(resumo_das_chamadas(&chamadas, false), "Editou 3 arquivos");
         assert_eq!(resumo_das_chamadas(&chamadas, true), "3 editados");
+    }
+
+    // A altura guardada de um bloco só vale enquanto ele mostra a mesma coisa: a chave muda
+    // quando o resultado de uma chamada chega, quando a mensagem é corrigida e quando a conversa
+    // segue adiante dele.
+    #[test]
+    fn a_chave_do_bloco_muda_com_o_que_ele_mostra() {
+        use super::{Item, TipoDaChave, chave_da_faixa, chave_do_item};
+        let rodando = ferramenta("Read", "Read · a.rs", None, false);
+        let pronta = ferramenta("Read", "Read · a.rs", Some("fn a() {}"), false);
+        let trilha = |item: &Item, extras: &[u64]| chave_da_faixa(TipoDaChave::Trilha, &[(3, item)], extras).unwrap();
+        assert_eq!(trilha(&pronta, &[0, 1]), trilha(&pronta.clone(), &[0, 1]));
+        assert_ne!(trilha(&rodando, &[0, 1]), trilha(&pronta, &[0, 1]));
+        // A trilha ao vivo e a mesma depois de pronta.
+        assert_ne!(trilha(&pronta, &[1, 1]), trilha(&pronta, &[0, 1]));
+        // Mais uma chamada na trilha: outro fim, outra chave.
+        let duas = [(3, &pronta), (4, &rodando)];
+        assert_ne!(chave_da_faixa(TipoDaChave::Trilha, &duas, &[0, 2]).unwrap(), trilha(&pronta, &[0, 1]));
+        // A mensagem corrigida fica no mesmo índice com outro texto.
+        let item = |item: &Item, extras: &[u64]| chave_do_item(TipoDaChave::Item, 7, item, extras).unwrap();
+        assert_ne!(item(&usuario("deu erro"), &[0, 0]), item(&usuario("deu erro no carrinho"), &[0, 0]));
+        // A última resposta ganha a barra embaixo; quando a conversa segue, é outro bloco.
+        assert_ne!(item(&assistente("pronto"), &[1, 0]), item(&assistente("pronto"), &[0, 0]));
+        // O mesmo item no histórico trazido e na conversa não dividem a altura.
+        assert_ne!(chave_do_item(TipoDaChave::Historico, 7, &assistente("pronto"), &[]), chave_do_item(TipoDaChave::Item, 7, &assistente("pronto"), &[]));
+    }
+
+    // O que não tem altura confiável: o texto longo (o kit o lê em segundo plano, e o primeiro
+    // desenho sai sem ele; a altura dele passa pelo assento) e os cartões que mudam com o turno
+    // (sem chave: sempre montados).
+    #[test]
+    fn texto_longo_e_marcado_e_cartao_de_erro_fica_sempre_montado() {
+        use super::{Item, TipoDaChave, chave_da_faixa, chave_do_item, fica_montado, texto_que_chega_depois};
+        let longo = "linha de um relatório comprido\n".repeat(200);
+        assert!(longo.len() > 4096);
+        assert!(texto_que_chega_depois(&assistente(&longo)));
+        assert!(texto_que_chega_depois(&usuario(&longo)));
+        assert!(!texto_que_chega_depois(&assistente("curto")));
+        // A saída longa de uma ferramenta vai numa caixa de código, lida na hora.
+        assert!(!texto_que_chega_depois(&ferramenta("Read", "Read · a.rs", Some(&longo), false)));
+        // O texto longo é marcado, e tem chave: a altura assentada dele vale como a dos outros.
+        assert!(fica_montado([&assistente(&longo)]));
+        assert!(!fica_montado([&assistente("curto")]));
+        assert!(chave_do_item(TipoDaChave::Item, 2, &assistente(&longo), &[]).is_some());
+        assert!(chave_do_item(TipoDaChave::Item, 2, &assistente("curto"), &[]).is_some());
+        let raciocinio = Item::Raciocinio { texto: longo.clone(), milis: 0, em: 0 };
+        let pronta = ferramenta("Read", "Read · a.rs", Some("ok"), false);
+        assert!(fica_montado([&pronta, &raciocinio]));
+        assert!(!fica_montado([&pronta]));
+        assert!(chave_da_faixa(TipoDaChave::Trilha, &[(1, &pronta), (2, &raciocinio)], &[]).is_some());
+        assert!(chave_da_faixa(TipoDaChave::Trilha, &[], &[]).is_none());
+        let erro = Item::Aviso { texto: "O turno falhou: sem conexão".into(), erro: true, em: 0 };
+        assert!(chave_do_item(TipoDaChave::Item, 2, &erro, &[]).is_none());
+        assert!(chave_do_item(TipoDaChave::Item, 2, &Item::Cartao { id: 1, em: 0 }, &[]).is_none());
     }
 }
