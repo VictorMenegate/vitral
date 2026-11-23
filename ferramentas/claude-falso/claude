@@ -32,6 +32,18 @@ subagente que vai para o segundo plano (a chamada volta na hora). O `[ferramenta
 20]` é o comando deixado no fundo: volta na hora, não segura as chamadas seguintes (vários rodam
 juntos; o turno espera por eles no fim) e o `stop_task` para só o dele.
 
+Para a trilha (rodada do Paseo, 23/11/2026): o `[ferramenta Edit <arquivo> (palavra)]` troca uma
+palavra num trecho de 10 linhas (o diff aberto mostra uma linha saindo e uma entrando, com a
+palavra marcada), e com "(pede)" a edição pede permissão ao Vitral antes (o cartão de permissão
+com o mesmo diff). O `[ferramenta Falha <comando>]` é o Bash que saiu com erro (`is_error` e "Exit
+code 101"). O `[ferramenta TodoWrite fap]` manda a lista com um passo por letra (f feito, a em
+andamento, p pendente; sem letras, a lista fixa de 3). O `TaskCreate <assunto>`, o `TaskUpdate <id>
+<estado>` (in_progress, completed, deleted) e o `TaskList x` são as ferramentas de tarefas que o
+Claude Code 2.1.328 dá no `-p` com CLAUDE_CODE_ENABLE_TODO_TOOLS=1, com o texto e o
+`tool_use_result` medidos nele; a lista fica por sessão no $XDG_STATE_HOME e, com um
+CLAUDE_CONFIG_DIR de mentira, em `tasks/<sessão>/<id>.json`, como a de verdade. Com `[tabela]`, a
+resposta leva uma tabela em Markdown.
+
 O `result` leva os tempos que o de verdade leva (2.1.328): `duration_ms` e `ttft_ms` deste `result`,
 `duration_api_ms` (o tempo de modelo, que no de verdade é o total do processo), `num_turns` (uma ida
 ao modelo por ferramenta, mais a resposta) e o `usage.cache_creation` com o cache de 1 h (ou o de
@@ -334,11 +346,87 @@ ID_DAS_CHAMADAS = f"toolu_falso_{int(time.time() * 10) & 0xfffff:05x}_"
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
 
 
+DEZ_LINHAS = """def total(carrinho, cupom):
+    subtotal = sum(i.preco for i in carrinho)
+    if cupom is None:
+        return subtotal
+    desconto = aplicar_cupom(cupom, subtotal)
+    total = subtotal - desconto
+    if total < 0:
+        total = 0
+    registrar(total)
+    return total"""
+
+PASSOS_DE_MENTIRA = [
+    ("Ler o código do cupom", "Lendo o código do cupom"),
+    ("Corrigir o desconto", "Corrigindo o desconto"),
+    ("Rodar os testes", "Rodando os testes"),
+    ("Conferir o total negativo", "Conferindo o total negativo"),
+    ("Escrever o relatório", "Escrevendo o relatório"),
+    ("Atualizar a documentação", "Atualizando a documentação"),
+]
+
+
+def resultado_da_tarefa(nome, entrada):
+    """O resultado de uma ferramenta de tarefas, como o Claude Code 2.1.328 o manda (medido em
+    23/11/2026, no `-p` com CLAUDE_CODE_ENABLE_TODO_TOOLS=1): o texto e o `tool_use_result`. A
+    lista fica por sessão, como a de verdade (que mora em `tasks/<sessão>/<id>.json` na pasta de
+    configuração e continua de um turno para o outro)."""
+    arquivo = os.path.join(estado, "claude-falso-tarefas-" + re.sub(r"[^A-Za-z0-9-]", "", sessao) + ".json")
+    try:
+        with open(arquivo) as guardadas:
+            tarefas = json.load(guardadas)
+    except (OSError, ValueError):
+        tarefas = {"proxima": 1, "lista": []}
+    achar = lambda id_: next((t for t in tarefas["lista"] if t["id"] == id_), None)  # noqa: E731
+    if nome == "TaskCreate":
+        tarefa = {"id": str(tarefas["proxima"]), "subject": entrada["subject"], "description": entrada["description"],
+                  "activeForm": entrada.get("activeForm"), "status": "pending"}
+        tarefas["proxima"] += 1
+        tarefas["lista"].append(tarefa)
+        texto_ = f"Task #{tarefa['id']} created successfully: {tarefa['subject']}"
+        estruturado = {"task": {"id": tarefa["id"], "subject": tarefa["subject"], "description": tarefa["description"]}}
+    elif nome == "TaskUpdate":
+        tarefa = achar(entrada["taskId"])
+        if tarefa is None:
+            return "Task not found", {"success": False, "taskId": entrada["taskId"], "updatedFields": [], "error": "Task not found"}
+        de, para = tarefa["status"], entrada["status"]
+        tarefa["status"] = para
+        if para == "deleted":
+            tarefas["lista"].remove(tarefa)
+        texto_ = f"Updated task #{tarefa['id']} {'deleted' if para == 'deleted' else 'status'}"
+        estruturado = {"success": True, "taskId": tarefa["id"], "updatedFields": ["deleted" if para == "deleted" else "status"],
+                       "statusChange": {"from": de, "to": para}}
+    else:
+        texto_ = "\n".join(f"#{t['id']} [{t['status']}] {t['subject']}" for t in tarefas["lista"]) or "No tasks found"
+        estruturado = {"tasks": [{"id": t["id"], "subject": t["subject"], "status": t["status"], "blockedBy": []} for t in tarefas["lista"]]}
+    try:
+        with open(arquivo, "w") as guardadas:
+            json.dump(tarefas, guardadas)
+        if os.environ.get("CLAUDE_CONFIG_DIR"):
+            pasta = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "tasks", sessao)
+            os.makedirs(pasta, exist_ok=True)
+            for antigo in os.listdir(pasta):
+                if antigo.endswith(".json"):
+                    os.remove(os.path.join(pasta, antigo))
+            for t in tarefas["lista"]:
+                with open(os.path.join(pasta, t["id"] + ".json"), "w") as saida:
+                    json.dump({**{k: v for k, v in t.items() if v is not None}, "blocks": [], "blockedBy": []}, saida, indent=2)
+    except OSError:
+        pass
+    return texto_, estruturado
+
+
 def entrada_da_ferramenta(nome, detalhe):
     """O campo que o Vitral lê para montar o resumo de cada ferramenta."""
     # O Edit e o Write levam o que mudou: é o que a conversa mostra ao abrir a linha.
     if nome == "Edit":
-        return {"file_path": detalhe,
+        caminho = detalhe.replace("(palavra)", "").replace("(pede)", "").strip()
+        # "(palavra)": uma palavra trocada num trecho de 10 linhas.
+        if "(palavra)" in detalhe:
+            return {"file_path": caminho, "old_string": DEZ_LINHAS,
+                    "new_string": DEZ_LINHAS.replace("subtotal - desconto", "subtotal - abatimento")}
+        return {"file_path": caminho,
                 "old_string": "    total = subtotal\n    return total",
                 "new_string": "    desconto = aplicar_cupom(cupom, subtotal)\n    total = subtotal - desconto\n    return total"}
     if nome == "Write":
@@ -355,6 +443,19 @@ def entrada_da_ferramenta(nome, detalhe):
         return {"query": detalhe}
     if nome in ("Task", "Agent", "Workflow"):
         return {"description": detalhe}
+    if nome == "TodoWrite" and re.fullmatch(r"[fap]+", detalhe):
+        # Um passo por letra: f feito, a em andamento, p pendente.
+        estados = {"f": "completed", "a": "in_progress", "p": "pending"}
+        return {"todos": [{"content": conteudo, "activeForm": fazendo, "status": estados[letra]}
+                          for letra, (conteudo, fazendo) in zip(detalhe, PASSOS_DE_MENTIRA)]}
+    if nome == "TaskCreate":
+        assunto, _, fazendo = (parte.strip() for parte in detalhe.partition("=>"))
+        return {"subject": assunto, "description": assunto, **({"activeForm": fazendo} if fazendo else {})}
+    if nome == "TaskUpdate":
+        id_, _, estado_novo = detalhe.partition(" ")
+        return {"taskId": id_, "status": estado_novo.strip() or "completed"}
+    if nome == "TaskList":
+        return {}
     if nome == "TodoWrite":
         return {"todos": [
             {"content": "Ler o código do cupom", "activeForm": "Lendo o código do cupom", "status": "completed"},
@@ -633,8 +734,35 @@ def fingir_ferramentas(texto):
             tempo_das_ferramentas += time.time() - antes
             emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
             continue
+        # `[ferramenta Falha cargo test]`: o Bash que saiu com erro, como o de verdade (o `is_error`
+        # e o "Exit code" na frente da saída). É com ele que a linha "Trabalhou…" mostra a
+        # checagem que falhou.
+        if nome == "Falha":
+            emitir({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": id_, "name": "Bash", "input": {"command": detalhe}}]}})
+            time.sleep(int(segundos) if segundos else 2)
+            tempo_das_ferramentas += int(segundos) if segundos else 2
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "is_error": True,
+                    "content": f"Exit code 101\n(claude falso) {detalhe} falhou"}]}})
+            continue
+        entrada = entrada_da_ferramenta(nome, detalhe)
         emitir({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
+            {"type": "tool_use", "id": id_, "name": nome, "input": entrada}]}})
+        # As ferramentas de tarefas (TaskCreate, TaskUpdate, TaskList): rápidas, com o texto e o
+        # `tool_use_result` do de verdade.
+        if nome in ("TaskCreate", "TaskUpdate", "TaskList"):
+            time.sleep(int(segundos) if segundos else 1)
+            tempo_das_ferramentas += int(segundos) if segundos else 1
+            texto_, estruturado = resultado_da_tarefa(nome, entrada)
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "content": texto_}]},
+                    "tool_use_result": estruturado})
+            continue
+        # `[ferramenta Edit a.py (pede)]`: a edição pede permissão ao Vitral antes, como no modo
+        # manual (o cartão de permissão mostra o mesmo diff da trilha).
+        if nome == "Edit" and "(pede)" in detalhe and not permissao_do_vitral(id_, nome, entrada):
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "is_error": True,
+                    "content": "The user doesn't want to proceed with this tool use."}]}})
+            continue
         # O Agent vai para o segundo plano, como no Claude Code 2.1.3xx: a chamada volta na hora com
         # "Async agent launched", o progresso conta as ferramentas e o fim vem num aviso à parte.
         if nome == "Agent":
@@ -773,6 +901,14 @@ if escreve and papel != "mestre":
                                                   "delta": {"type": "text_delta", "text": longa[i:i + passo]}}})
         time.sleep(1 / 40)
     resposta = longa + resposta
+# `[tabela]`: a resposta leva uma tabela em Markdown (é nela que aparece o Copiar da tabela).
+if "[tabela]" in texto and papel != "mestre":
+    resposta = ("O que mudou em cada arquivo:\n\n"
+                "| Arquivo | Linhas | O que mudou |\n"
+                "|---|---:|---|\n"
+                "| `produtos/views.py` | 12 | O total desconta o cupom |\n"
+                "| `produtos/tests.py` | 48 | Um teste para cada caso |\n"
+                "| `produtos/cupons.py` | 5 | Cupom vencido não vale |\n\n") + resposta
 anotar({"papel": papel, "chamadas": chamadas})
 emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
                                          "usage": {"input_tokens": 1200}}})
