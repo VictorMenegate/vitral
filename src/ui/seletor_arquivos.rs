@@ -86,7 +86,7 @@ pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Ve
 }
 
 /// Até quantos arquivos a lista guarda (a varredura e os repositórios de dentro param aqui).
-const TETO: usize = 20_000;
+pub(super) const TETO: usize = 20_000;
 
 /// Até quantos níveis de repositório dentro de repositório a lista desce.
 const NIVEIS_DE_REPOSITORIO: usize = 3;

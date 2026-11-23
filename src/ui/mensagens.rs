@@ -936,7 +936,8 @@ impl Janela {
                             // As menções que existem viram pílula (o texto que foi ao agente segue
                             // com o caminho inteiro); depois, os caminhos soltos viram link.
                             let mencoes = super::mencao::ligar_mencoes(texto, &mut |c| super::links_arquivo::resolver_mencao(cwd, c));
-                            let ligado = super::links_arquivo::ligar_arquivos(&mencoes, &mut |c| super::links_arquivo::resolver(cwd, c));
+                            let ligador = self.ligador(cwd, cx);
+                            let ligado = super::links_arquivo::ligar_arquivos(&mencoes, &mut |c| ligador.resolver(c));
                             let cortado = longo && !tudo;
                             s.child(
                                 div()
@@ -1198,9 +1199,13 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let grupo = SharedString::from(format!("msg-{chave}"));
-        // Os arquivos citados que estão no disco viram links: abrem no painel da direita.
-        let cwd = &contexto.chat.cwd;
-        let ligado = super::links_arquivo::ligar_arquivos(texto, &mut |c| super::links_arquivo::resolver(cwd, c));
+        // Os arquivos citados que estão no disco viram links: abrem no painel da direita. O
+        // comando de barra citado em código em linha (`/revisar`) vai para a caixa.
+        let ligador = self.ligador(&contexto.chat.cwd, cx);
+        let ligado = super::links_arquivo::ligar_resposta(texto, &mut |c| ligador.resolver(c), &mut |nome| {
+            let existe = self.comandos_de(contexto.chat).iter().any(|c| c == nome);
+            existe.then(|| super::links_arquivo::link_do_comando(&contexto.chat.id, nome))
+        });
         let realce = contexto.busca.realce(indice, Campo::Texto);
         // As imagens que a resposta aponta em `![](…)`: o kit desenha a imagem do markdown na
         // altura de uma linha de texto (tamanho de ícone) ou, sozinha num parágrafo, sem teto
@@ -3500,6 +3505,8 @@ impl Janela {
                             // A busca da conversa conta a saída do comando: o achado ganha o realce
                             // e a caixa rola até ele (conferência na bancada, 16/11/2026).
                             .realce(&no_resultado)
+                            // "src/x.rs:120:5" na saída abre o arquivo na linha.
+                            .arquivos(self.ligador(&contexto.chat.cwd, cx))
                             .comando(comando.to_string()).raio_chat().erro(*erro)
                             // O "Concluído" em toda saída não dizia nada: o comando que terminou bem
                             // é o caso comum, e a linha acima já marca o que falhou.
@@ -3560,7 +3567,9 @@ impl Janela {
                         && !(matches!(nome.as_str(), "Agent" | "Task") && !*erro && resultado.as_deref().is_some_and(|r| !crate::claude::relatorio_do_subagente(r).is_empty())),
                     |s| {
                         s.child(div().pl(RECUO_DO_LOG).py(esp::E4).child(
-                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)").realce(&no_resultado),
+                            bloco_resultado(&chave, resultado.as_deref(), *erro, "(interrompida, sem resultado)")
+                                .realce(&no_resultado)
+                                .arquivos(self.ligador(&contexto.chat.cwd, cx)),
                         ))
                     },
                 )

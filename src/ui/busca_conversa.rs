@@ -336,7 +336,17 @@ pub fn realcar_trecho(texto: String, termo: &str, atual: Option<usize>) -> Style
     if termo.is_empty() {
         return StyledText::new(texto);
     }
-    let destaques: Vec<(Range<usize>, HighlightStyle)> = faixas(&texto, termo)
+    let destaques = destaques_do_trecho(&texto, termo, atual);
+    StyledText::new(texto).with_highlights(destaques)
+}
+
+/// O fundo de cada ocorrência de `termo` no pedaço (o da `atual` mais forte), para quem junta o
+/// realce da busca a outros destaques do mesmo texto (os links da saída de comando).
+pub fn destaques_do_trecho(texto: &str, termo: &str, atual: Option<usize>) -> Vec<(Range<usize>, HighlightStyle)> {
+    if termo.is_empty() {
+        return Vec::new();
+    }
+    faixas(texto, termo)
         .into_iter()
         .enumerate()
         .map(|(i, faixa)| {
@@ -346,8 +356,7 @@ pub fn realcar_trecho(texto: String, termo: &str, atual: Option<usize>) -> Style
             };
             (faixa, estilo)
         })
-        .collect();
-    StyledText::new(texto).with_highlights(destaques)
+        .collect()
 }
 
 /// O que já foi pedido à vista do texto: o realce e o desenho em que ele foi aplicado. Sem isso,

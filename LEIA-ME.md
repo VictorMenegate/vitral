@@ -1237,7 +1237,23 @@ caminho
 (`[a janela](src/ui/mod.rs#L120)`) e, no texto corrido, a palavra com barra e extensão. O clique
 abre o arquivo aqui, rolado até a linha, que fica marcada; uma imagem abre no visor. O caminho
 relativo parte da pasta do chat. Só abre o que está numa pasta que o Vitral conhece (a de algum
-chat); o resto avisa e fica para o VS Code.
+chat); o resto avisa e fica para o VS Code. As linhas vêm de `arquivo:12`, `arquivo:12:5` (a
+coluna fica de fora), `arquivo:12-20`, `arquivo#L10` e `arquivo#L10-L20`: com duas, o arquivo abre
+com elas marcadas, como a menção de um trecho (`vitral:arquivo/10-20/<caminho>`). O
+`file:///caminho` de um arquivo que existe também vira link (o `%20` do endereço é desfeito). O
+caminho que não existe como foi escrito é procurado pelo fim dele entre os arquivos da pasta do
+chat (a lista do "@", lida em segundo plano quando faz falta): `mensagens.rs:120` abre o
+`src/ui/mensagens.rs` se só um arquivo termina assim; com dois (`mod.rs`), fica como texto
+(`Ligador` e `pelo_fim`). **Na saída de um comando** (a caixa de `componentes/codigo.rs`, no Bash e
+no resultado das outras ferramentas), `src/x.rs:120:5` (cargo, vitest, go), `src/x.ts(12,5)` (tsc)
+e `"x.py", line 12` (Python) abrem o arquivo na linha, e o ponteiro parado no link mostra o
+caminho inteiro; sem a linha, só o caminho com barra e extensão (o `git status`). Só as últimas 40
+linhas da saída são conferidas (as que a caixa mostra fechada), e a resposta fica guardada por 5 s
+(`links_da_saida`, com teste). **O comando de barra citado** em código em linha (`/compact`), quando
+está na lista de comandos do chat (a do menu "/"), vira link (`vitral:comando/<chat>/<nome>`): o
+clique põe o comando na caixa do painel em que a conversa está, com o rascunho que estava lá como
+argumento, e quem envia é você. No texto da resposta o kit não tem como mostrar uma dica ao parar o ponteiro num link: a
+dica com o caminho inteiro só existe na saída de comando.
 
 **Este chat** (`src/ui/este_chat.rs`) abre com a seção **Mudanças**: os arquivos que o chat editou
 ou criou, separados em **Neste turno** (desde a sua última mensagem) e **Antes**, cada um com o
@@ -1869,7 +1885,7 @@ turno é o conteúdo desse arquivo da pasta do chat (markdown, arquivos e comand
 saída de um build com erro); ao `generate_session_title` responde com o título do `[titulo <nome>]`
 da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras palavras) e, com o `persist` e um
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
-tem; ao lado dele mora o
+tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem

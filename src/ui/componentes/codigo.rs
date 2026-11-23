@@ -3,15 +3,27 @@
 
 use gpui_kit::component::ElementExt as _;
 use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarAxis};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use std::{
+    ops::Range,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
 use super::controles::BotaoCopiar;
 use crate::tema::{Cores, Tipo as _, dentro_da_borda, esp, r, raio};
-use crate::ui::busca_conversa::{Realce, faixas, realcar, realcar_trecho};
+use crate::ui::busca_conversa::{Realce, destaques_do_trecho, faixas};
+use crate::ui::links_arquivo::{AbrirLinkVitral, Ligador, LinkNaSaida, links_da_saida};
 
 /// Quantas linhas do fim aparecem antes de "Mostrar tudo".
 const LINHAS_DO_FIM: usize = 40;
+
+/// Por quanto tempo valem os links de uma saída que não mudou: o arquivo que ela cita pode nascer
+/// (ou sumir) depois.
+const VALIDADE_DOS_LINKS: Duration = Duration::from_secs(5);
 
 /// Cabeçalho de 28 (comando, tempo e copiar) e o corpo em mono 12/18, com as últimas 40 linhas
 /// e "Mostrar tudo"; altura máxima de 240, rolando. Sem comando e sem tempo não há cabeçalho (era
@@ -26,6 +38,8 @@ pub struct CaixaDeCodigo {
     raio_chat: bool,
     /// A busca na conversa achou aqui: as ocorrências ficam em âmbar, como no resto da conversa.
     realce: Realce,
+    /// Quem acha os arquivos citados na saída (ver `arquivos`).
+    ligador: Option<Ligador>,
 }
 
 impl CaixaDeCodigo {
@@ -38,7 +52,17 @@ impl CaixaDeCodigo {
             erro: false,
             raio_chat: false,
             realce: Realce::default(),
+            ligador: None,
         }
+    }
+
+    /// Os arquivos citados na saída viram links: "src/x.rs:120:5" (cargo, vitest, go),
+    /// "src/x.ts(12,5)" (tsc) e `"x.py", line 12` (Python) abrem no painel da direita, na linha, e
+    /// a dica mostra o caminho inteiro. Só nas últimas 40 linhas (as que a caixa mostra fechada),
+    /// e com a resposta guardada: conferir o disco a cada linha, a cada quadro, pesaria.
+    pub fn arquivos(mut self, ligador: Ligador) -> Self {
+        self.ligador = Some(ligador);
+        self
     }
 
     pub fn comando(mut self, c: impl Into<SharedString>) -> Self {
@@ -102,10 +126,17 @@ impl RenderOnce for CaixaDeCodigo {
         if let Some(s) = rolar_agora {
             rolado.update(cx, |r, _| *r = s);
         }
+        let links = match &self.ligador {
+            Some(ligador) => links_guardados(&self.id, &corpo, ligador, window, cx),
+            None => Rc::default(),
+        };
         let conteudo = match self.realce.atual {
             // A atual está aqui: linha por linha, para saber onde fica a dela e rolar até lá.
-            Some(atual) => linhas_com_realce(&corpo, &self.realce.termo, atual, rolar_agora.map(|_| rolagem.clone())),
-            None => realcar(corpo, &self.realce).into_any_element(),
+            Some(atual) => linhas_com_realce(&corpo, &self.realce.termo, atual, rolar_agora.map(|_| rolagem.clone()), &links),
+            None => {
+                let destaques = destaques_do_trecho(&corpo, &self.realce.termo, None);
+                texto_ligado(0, corpo, destaques, &links)
+            }
         };
         let cor_tempo = if self.erro { Cores::vermelho() } else { Cores::tenue() };
         let para_copiar = self.comando.as_ref().map(|c| format!("$ {c}\n\n{}", self.texto)).unwrap_or_else(|| self.texto.to_string());
@@ -193,16 +224,78 @@ impl RenderOnce for CaixaDeCodigo {
     }
 }
 
+/// O que a caixa guarda dos links da saída: para qual texto e qual lista de arquivos valem, e
+/// desde quando.
+#[derive(Default)]
+struct LinksGuardados {
+    texto: String,
+    marca: (usize, usize),
+    quando: Option<Instant>,
+    links: Rc<Vec<LinkNaSaida>>,
+}
+
+/// Os links das últimas linhas da saída (`links_da_saida`), refeitos só quando o texto ou a lista
+/// de arquivos da pasta muda, ou depois de `VALIDADE_DOS_LINKS`.
+fn links_guardados(id: &ElementId, corpo: &str, ligador: &Ligador, window: &mut Window, cx: &mut App) -> Rc<Vec<LinkNaSaida>> {
+    let guardados = window.use_keyed_state((id.clone(), "links-da-saida"), cx, |_, _| LinksGuardados::default());
+    {
+        let g = guardados.read(cx);
+        if g.quando.is_some_and(|q| q.elapsed() < VALIDADE_DOS_LINKS) && g.marca == ligador.marca() && g.texto == corpo {
+            return g.links.clone();
+        }
+    }
+    let links = Rc::new(links_da_saida(corpo, LINHAS_DO_FIM, &mut |escrito| ligador.resolver(escrito)));
+    let novo = LinksGuardados { texto: corpo.to_string(), marca: ligador.marca(), quando: Some(Instant::now()), links: links.clone() };
+    guardados.update(cx, |g, _| *g = novo);
+    links
+}
+
+/// O texto da saída com o realce da busca e, nos arquivos citados, a cor de link, o clique (abre
+/// o arquivo na linha) e a dica com o caminho inteiro. Sem link nenhum, o texto de sempre.
+fn texto_ligado(id: usize, texto: String, destaques: Vec<(Range<usize>, HighlightStyle)>, links: &[LinkNaSaida]) -> AnyElement {
+    if links.is_empty() {
+        return match destaques.is_empty() {
+            true => StyledText::new(texto).into_any_element(),
+            false => StyledText::new(texto).with_highlights(destaques).into_any_element(),
+        };
+    }
+    let cor = HighlightStyle { color: Some(Cores::destaque_texto()), ..Default::default() };
+    let todos: Vec<(Range<usize>, HighlightStyle)> = combine_highlights(destaques, links.iter().map(|l| (l.faixa.clone(), cor))).collect();
+    let faixas: Vec<Range<usize>> = links.iter().map(|l| l.faixa.clone()).collect();
+    let alvos: Vec<String> = links.iter().map(|l| l.alvo.clone()).collect();
+    let dicas: Vec<SharedString> = links.iter().map(|l| SharedString::from(l.inteiro.clone())).collect();
+    let faixas_da_dica = faixas.clone();
+    InteractiveText::new(("saida-ligada", id), StyledText::new(texto).with_highlights(todos))
+        .on_click(faixas, move |i, window, cx| {
+            if let Some(alvo) = alvos.get(i) {
+                window.dispatch_action(Box::new(AbrirLinkVitral(alvo.clone())), cx);
+            }
+        })
+        .tooltip(move |indice, window, cx| {
+            let i = faixas_da_dica.iter().position(|faixa| faixa.contains(&indice))?;
+            Some(Tooltip::new(dicas[i].clone()).build(window, cx))
+        })
+        .into_any_element()
+}
+
 /// A saída linha por linha, com o realce de cada uma e, na linha da ocorrência `atual` (contada
-/// no texto todo), o pedido de rolar a caixa até ela, centrada.
-fn linhas_com_realce(texto: &str, termo: &str, atual: usize, rolar: Option<ScrollHandle>) -> AnyElement {
+/// no texto todo), o pedido de rolar a caixa até ela, centrada. Os links (`texto_ligado`) vêm com
+/// a faixa no texto todo: cada linha fica com os dela.
+fn linhas_com_realce(texto: &str, termo: &str, atual: usize, rolar: Option<ScrollHandle>, links: &[LinkNaSaida]) -> AnyElement {
     let mut antes = 0;
     let mut rolar = rolar;
-    let linhas = texto.split('\n').map(|linha| {
+    let mut comeco = 0;
+    let linhas = texto.split('\n').enumerate().map(|(numero, linha)| {
         let n = faixas(linha, termo).len();
         let aqui = (atual >= antes && atual < antes + n).then(|| atual - antes);
         antes += n;
-        let mut d = div().min_h(r(18.)).child(realcar_trecho(linha.to_string(), termo, aqui));
+        let da_linha: Vec<LinkNaSaida> = links
+            .iter()
+            .filter(|l| l.faixa.start >= comeco && l.faixa.end <= comeco + linha.len())
+            .map(|l| LinkNaSaida { faixa: l.faixa.start - comeco..l.faixa.end - comeco, ..l.clone() })
+            .collect();
+        comeco += linha.len() + 1;
+        let mut d = div().min_h(r(18.)).child(texto_ligado(numero, linha.to_string(), destaques_do_trecho(linha, termo, aqui), &da_linha));
         if let Some(rolagem) = aqui.and(rolar.take()) {
             d = d.on_prepaint(move |limites, window, _| {
                 let vista = rolagem.bounds();

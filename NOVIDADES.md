@@ -8,7 +8,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
 continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
-aparecem na conversa. O chat ganha um título de verdade e o aviso de fim sai legível.
+aparecem na conversa. O chat ganha um título de verdade, o aviso de fim sai legível e os arquivos
+citados abrem em mais lugares.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -50,6 +51,14 @@ aparecem na conversa. O chat ganha um título de verdade e o aviso de fim sai le
 - **Aviso de fim legível.** A notificação de um chat que terminou mostrava a primeira linha crua
   da resposta ("Terminou: ## Resumo"). Agora mostra o começo do texto, sem as marcas de markdown,
   com até 220 letras. O "Enquanto você esteve fora" usa o mesmo texto.
+- **Mais arquivos citados viram link.** `arquivo#L10-L20` abre com as linhas marcadas,
+  `arquivo:12:5` e `file:///caminho` também abrem, e o nome citado sem a pasta (`mensagens.rs:120`)
+  abre o arquivo da pasta do chat que termina assim, quando é um só.
+- **Links na saída de comando.** `src/x.rs:120:5` no erro do cargo, `src/x.ts(12,5)` no do tsc e
+  `"x.py", line 12` no do Python abrem o arquivo na linha. O ponteiro parado no link mostra o
+  caminho inteiro.
+- **Comando de barra citado vira link.** Quando o agente escreve `/compact` ou outro comando do
+  chat, o clique põe o comando na caixa de mensagem. Quem envia é você.
 
 ## 0.9.5
 
