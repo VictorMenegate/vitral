@@ -891,9 +891,23 @@ no cabeçalho; dono, 18/11/2026).
   abrir o Claude Code"). Cada linha só aparece com o dado dela; ver **Estatística do turno**, em
   **Contas e uso dos planos**. O turno sem linha no livro (os de antes disto, e os
   de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
-  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
-  pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
-  lado ficam guardadas na conversa). **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
+  chamada mostra primeiro o que ela pediu, numa caixa em mono: o diff de um Edit, o começo do que um
+  Write gravou e o comando inteiro de um Bash (até 60 linhas de cada lado ficam guardadas na
+  conversa). O diff mostra só o que mudou (`edicao::diff_da_trilha`): as linhas que saíram em
+  vermelho e as que entraram em verde, com 3 linhas iguais em volta de cada mudança, "… 9 linhas
+  iguais" no que ficou de fora entre duas mudanças, e a palavra trocada com o fundo mais forte
+  dentro da linha. Antes o lado antigo vinha inteiro em vermelho e o novo inteiro em verde: uma
+  palavra trocada em 10 linhas eram 20 linhas coloridas. As linhas são casadas pela subsequência
+  comum que já punha a edição sobre o arquivo (`edicao::casar`, com o mesmo teto de 250 mil
+  comparações: acima dele ficam o começo e o fim iguais, e o meio sai e entra). A palavra é
+  marcada quando saíram e entraram o mesmo número de linhas seguidas (a primeira com a primeira),
+  comparando palavras, brancos e sinais; linhas com menos da metade das palavras em comum, ou
+  que somam mais de 1024 bytes, ficam sem marca, porque a linha inteira já diz que mudou. O
+  Copiar do diff leva o que a tela mostra. O pedido de permissão de um Edit ou MultiEdit usa o
+  mesmo diff, com 2 linhas de contexto (`diff_da_troca`). Numa troca com mais de 60 linhas de
+  um lado, o começo igual dos dois lados não é guardado (ficam 3 linhas antes da primeira
+  diferença, `claude::sem_o_comeco_igual`): sem isso a mudança da linha 150 ficava depois do
+  corte e o diff abria sem mudança nenhuma. **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
   certo (Edit, MultiEdit, Write, NotebookEdit; o `fileChange` do Codex), o clique na linha abre o
   arquivo no painel da direita já na edição, e o chevron do fim, sozinho, mostra o diff ali
   mesmo. O Codex entrega um arquivo por linha, cada um com o diff dele (o `changes[].diff` do
@@ -1861,7 +1875,14 @@ quando a dela termina, como as chamadas em paralelo de verdade; o `[ferramenta E
 `timedOutAfterMs` no resultado); o `result` leva o `duration_ms`, o `duration_api_ms`, o
 `ttft_ms`, o `num_turns` e o `usage.cache_creation` como o de verdade (cache de 1 h, ou de 5 min
 com `[cache 5m]`), e `[ttft 1.8]` espera esses segundos antes da primeira palavra (com o
-`CLAUDE_FALSO_SOBE`, a dica do turno mostra o "para abrir o Claude Code"); ao lado dele mora o
+`CLAUDE_FALSO_SOBE`, a dica do turno mostra o "para abrir o Claude Code"); o `[ferramenta Edit
+<arquivo> (palavra)]` troca uma palavra num trecho de 10 linhas (o diff de uma linha só), e com
+"(pede)" a edição pede permissão antes; o `[ferramenta Falha <comando>]` é o Bash que saiu com
+erro (`is_error` e "Exit code 101"), para as checagens da linha "Trabalhou…"; o `[ferramenta
+TodoWrite fap]` manda a lista com um passo por letra (f feito, a em andamento, p pendente), e o
+`TaskCreate <assunto>`, o `TaskUpdate <id> <estado>` e o `TaskList x` são as ferramentas de
+tarefas do Claude Code, com o texto e o `tool_use_result` medidos na 2.1.328 e a lista guardada
+por sessão; com `[tabela]` a resposta leva uma tabela em Markdown; ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem

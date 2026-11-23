@@ -1746,13 +1746,33 @@ pub fn write_criou(resultado: &str) -> bool {
     resultado.to_ascii_lowercase().contains("created successfully") || resultado.starts_with("criou ")
 }
 
-/// O que saiu e o que entrou numa troca, cada linha com o seu sinal.
+/// Quantas linhas iguais ficam antes da mudança quando o começo igual de uma troca longa sai.
+const CONTEXTO_DA_TROCA: usize = 3;
+
+/// O que saiu e o que entrou numa troca, cada linha com o seu sinal. Numa troca que passa das
+/// linhas guardadas, o começo igual dos dois lados fica de fora (menos 3 linhas de contexto): sem
+/// isso, uma palavra trocada na linha 150 de um trecho de 200 ficava depois do corte, e o diff
+/// aberto na conversa não mostrava mudança nenhuma.
 fn troca(antes: &str, depois: &str) -> String {
+    let (antes, depois) = sem_o_comeco_igual(antes, depois);
     match (antes.is_empty(), depois.is_empty()) {
         (true, _) => com_prefixo(depois, "+ "),
         (_, true) => com_prefixo(antes, "- "),
         _ => format!("{}\n{}", com_prefixo(antes, "- "), com_prefixo(depois, "+ ")),
     }
+}
+
+/// Os dois lados de uma troca a partir de 3 linhas antes da primeira que difere, quando algum
+/// deles passa das linhas guardadas; a troca curta fica como veio.
+fn sem_o_comeco_igual<'a>(antes: &'a str, depois: &'a str) -> (&'a str, &'a str) {
+    if antes.lines().count() <= LINHAS_DO_DETALHE && depois.lines().count() <= LINHAS_DO_DETALHE {
+        return (antes, depois);
+    }
+    let iguais = antes.lines().zip(depois.lines()).take_while(|(a, d)| a == d).count();
+    let pular = iguais.saturating_sub(CONTEXTO_DA_TROCA);
+    // Do byte em que começa a linha `pular` em diante.
+    let a_partir = |texto: &'a str| &texto[texto.split_inclusive('\n').take(pular).map(str::len).sum::<usize>()..];
+    (a_partir(antes), a_partir(depois))
 }
 
 fn com_prefixo(texto: &str, prefixo: &str) -> String {
@@ -2284,6 +2304,32 @@ mod testes {
         assert_eq!(*bloqueado_ate, Some(1_790_000_000));
         assert_eq!(*uso_5h, Some(1.0));
     }
+
+    /// Rodada do Paseo, item 1: a mudança lá embaixo de uma troca longa tem de caber no que fica
+    /// guardado, senão o diff aberto na conversa não tem o que mostrar.
+    #[test]
+    fn a_troca_longa_guarda_a_mudanca_e_nao_o_comeco_igual() {
+        let antes: String = (1..=200).map(|i| format!("linha {i}\n")).collect();
+        let depois = antes.replace("linha 150\n", "linha cento e cinquenta\n");
+        let (detalhe, _) = detalhe_ferramenta("Edit", &json!({ "file_path": "a.rs", "old_string": antes, "new_string": depois }));
+        let detalhe = detalhe.unwrap();
+        assert!(detalhe.starts_with("- linha 147\n- linha 148\n- linha 149\n- linha 150\n- linha 151\n"), "{detalhe}");
+        assert!(detalhe.contains("\n+ linha 147\n+ linha 148\n+ linha 149\n+ linha cento e cinquenta\n+ linha 151\n"), "{detalhe}");
+        // 54 linhas de cada lado, da 147 à 200: nada passou do corte.
+        assert!(!detalhe.contains("… mais"), "{detalhe}");
+        // A troca curta fica inteira, com o começo igual (é por ele que o painel acha o lugar no arquivo).
+        let curta = json!({ "file_path": "a.rs", "old_string": "a\nb\nc\nd\ne\nx", "new_string": "a\nb\nc\nd\ne\ny" });
+        assert_eq!(detalhe_ferramenta("Edit", &curta).0.as_deref(), Some("- a\n- b\n- c\n- d\n- e\n- x\n+ a\n+ b\n+ c\n+ d\n+ e\n+ y"));
+        // O MultiEdit também, troca por troca.
+        let varias = json!({ "file_path": "a.rs", "edits": [{ "old_string": antes, "new_string": depois }, { "old_string": "c", "new_string": "d" }] });
+        let detalhe = detalhe_ferramenta("MultiEdit", &varias).0.unwrap();
+        assert!(detalhe.starts_with("- linha 147\n") && detalhe.ends_with("\n…\n- c\n+ d"), "{detalhe}");
+        // Uma troca longa que muda desde a primeira linha não perde nada do começo.
+        let do_topo = antes.replace("linha 1\n", "primeira\n");
+        let detalhe = detalhe_ferramenta("Edit", &json!({ "file_path": "a.rs", "old_string": antes, "new_string": do_topo })).0.unwrap();
+        assert!(detalhe.starts_with("- linha 1\n- linha 2\n"), "{detalhe}");
+    }
+
     #[test]
     fn detalhe_do_que_a_chamada_pediu() {
         let edit = json!({ "file_path": "/p/a.rs", "old_string": "a\nb", "new_string": "c" });

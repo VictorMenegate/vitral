@@ -37,6 +37,10 @@ e quanto cache cada turno gastou.
   conversa normal, só para ler. Ela acompanha o subagente enquanto ele trabalha e continua
   disponível depois de fechar e abrir o Vitral. O cartão fica na conversa, e a setinha dele
   mostra os passos e o relatório ali mesmo.
+- **O diff da edição mostra só o que mudou.** Ao abrir uma edição na conversa, aparecem as linhas
+  que mudaram, com 3 linhas em volta, e a palavra trocada vem marcada dentro da linha. Antes o
+  trecho antigo vinha inteiro em vermelho e o novo inteiro em verde. O pedido de permissão de uma
+  edição mostra o mesmo diff.
 - **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
   mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
 

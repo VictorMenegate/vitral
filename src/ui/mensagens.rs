@@ -35,6 +35,7 @@ use super::{
     },
     busca_conversa::{self, Campo, Realce, RolarAoAchado, TextoAchado},
     composer::{self, PararTurno, nome_do_modo},
+    edicao::LinhaDoDiff,
     imagens,
     movimento::{self, De},
     paineis::tamanho_da_conversa,
@@ -112,6 +113,13 @@ pub(super) fn fundo_sai() -> Hsla {
 
 pub(super) fn fundo_entra() -> Hsla {
     rgba(0x4ade8014).into()
+}
+
+/// O fundo do trecho trocado dentro da linha que sai e da que entra: o mesmo tom da linha, mais
+/// forte, para a palavra se ver sem ler as duas linhas inteiras.
+fn fundo_do_trecho(entra: bool) -> HighlightStyle {
+    let cor: Hsla = if entra { rgba(0x4ade8047).into() } else { rgba(0xf8717147).into() };
+    HighlightStyle { background_color: Some(cor), ..Default::default() }
 }
 
 /// O tipo de cada bloco da conversa, para o espaço entre eles.
@@ -3845,6 +3853,9 @@ const LINHAS_DO_PEDIDO: usize = 600;
 /// logo acima, e deixava o Copiar sempre à vista (nas outras caixas ele só aparece no hover).
 fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
     let grupo = SharedString::from(format!("diff-{chave}"));
+    // Só o que mudou, com contexto e a palavra trocada marcada; o Copiar leva o que a tela mostra.
+    let diff = super::edicao::diff_da_trilha(pedido);
+    let copiar = if diff.is_empty() { pedido.to_string() } else { super::edicao::texto_do_diff(&diff) };
     div()
         .relative()
         .group(grupo.clone())
@@ -3854,7 +3865,7 @@ fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
         .border_color(Cores::borda())
         .bg(Cores::preto())
         .overflow_hidden()
-        .child(bloco_do_pedido(pedido))
+        .child(bloco_do_pedido(pedido, &diff))
         .child(
             // Opaco: fica por cima do começo da primeira linha longa.
             div()
@@ -3865,29 +3876,51 @@ fn cartao_de_edicao(chave: &str, pedido: &str) -> Div {
                 .bg(Cores::preto())
                 .invisible()
                 .group_hover(grupo, |s| s.visible())
-                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), pedido.to_string()).dica("Copiar o diff")),
+                .child(BotaoCopiar::new(SharedString::from(format!("copiar-diff-{chave}")), copiar).dica("Copiar o diff")),
         )
 }
 
-/// O que a chamada pediu (`Item::Ferramenta::detalhe`): o que saiu em vermelho, o que entrou em
-/// verde, o comando e o resto no tom do texto, em mono, numa caixa que rola de lado.
-fn bloco_do_pedido(pedido: &str) -> impl IntoElement + use<> {
-    let total = pedido.lines().count();
-    let linhas = pedido.lines().take(LINHAS_DO_PEDIDO).map(|linha| {
-        let (cor, fundo) = match linha.as_bytes().first() {
-            Some(b'+') => (Cores::verde(), Some(fundo_entra())),
-            Some(b'-') => (Cores::vermelho(), Some(fundo_sai())),
-            Some(b'$') => (Cores::texto(), None),
-            _ => (Cores::tenue(), None),
-        };
+/// O que a chamada pediu (`Item::Ferramenta::detalhe`), em mono, numa caixa que rola de lado. Uma
+/// edição sai como diff (`edicao::diff_da_trilha`): só as linhas que mudaram, com 3 de contexto,
+/// o que saiu em vermelho, o que entrou em verde e a palavra trocada com o fundo mais forte.
+/// Antes o lado antigo vinha inteiro em vermelho e o novo inteiro em verde (rodada do Paseo, item
+/// 1). O que não é diff sai linha a linha, como veio.
+fn bloco_do_pedido(pedido: &str, diff: &[LinhaDoDiff]) -> impl IntoElement + use<> {
+    let linha = |texto: String, cor: Hsla, fundo: Option<Hsla>, trechos: Vec<(std::ops::Range<usize>, HighlightStyle)>| {
         div()
             .px(esp::E12)
             .whitespace_nowrap()
             .text_color(cor)
             .when_some(fundo, |s, fundo| s.bg(fundo))
             // A linha vazia mantém a altura.
-            .child(if linha.is_empty() { SharedString::from(" ") } else { SharedString::from(linha.to_string()) })
-    });
+            .child(StyledText::new(if texto.is_empty() { SharedString::from(" ") } else { SharedString::from(texto) }).with_highlights(trechos))
+    };
+    let (total, linhas): (usize, Vec<Div>) = if diff.is_empty() {
+        let linhas = pedido.lines().take(LINHAS_DO_PEDIDO).map(|texto| {
+            let (cor, fundo) = match texto.as_bytes().first() {
+                Some(b'+') => (Cores::verde(), Some(fundo_entra())),
+                Some(b'-') => (Cores::vermelho(), Some(fundo_sai())),
+                Some(b'$') => (Cores::texto(), None),
+                _ => (Cores::tenue(), None),
+            };
+            linha(texto.to_string(), cor, fundo, Vec::new())
+        });
+        (pedido.lines().count(), linhas.collect())
+    } else {
+        // O sinal e um espaço vão na frente do texto: os trechos andam 2 bytes.
+        let marcados = |trechos: &[std::ops::Range<usize>], entra: bool| {
+            trechos.iter().map(|t| (t.start + 2..t.end + 2, fundo_do_trecho(entra))).collect::<Vec<_>>()
+        };
+        let linhas = diff.iter().take(LINHAS_DO_PEDIDO).map(|l| match l {
+            LinhaDoDiff::Igual(texto) => linha(format!("  {texto}"), Cores::tenue(), None, Vec::new()),
+            LinhaDoDiff::Sai(texto, trechos) => linha(format!("- {texto}"), Cores::vermelho(), Some(fundo_sai()), marcados(trechos, false)),
+            LinhaDoDiff::Entra(texto, trechos) => linha(format!("+ {texto}"), Cores::verde(), Some(fundo_entra()), marcados(trechos, true)),
+            LinhaDoDiff::Pulo(0) => linha("…".into(), Cores::apagado(), None, Vec::new()),
+            LinhaDoDiff::Pulo(n) => linha(format!("… {}", contagem(*n, "linha igual", "linhas iguais")), Cores::apagado(), None, Vec::new()),
+            LinhaDoDiff::Nota(texto) => linha(texto.clone(), Cores::apagado(), None, Vec::new()),
+        });
+        (diff.len(), linhas.collect())
+    };
     // O miolo tem a largura da linha mais longa (e ao menos a da caixa), e o fundo verde ou
     // vermelho de cada linha vai até o fim dele: antes a linha era cortada na beirada, sem como
     // ver o resto (dono, 17/11/2026: "tá bem zuado essas partes").
@@ -5250,33 +5283,13 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum MarcaDeLinha {
-    Igual,
-    Sai,
-    Entra,
-    /// Divisa entre as edições de um MultiEdit.
-    Separador,
-}
+/// Quantas linhas iguais ficam em volta de cada mudança no pedido de permissão de uma edição.
+const CONTEXTO_DO_PEDIDO: usize = 2;
 
 /// As linhas de uma edição para o pedido de permissão: o que sai e o que entra, com até duas
-/// linhas iguais de cada lado como contexto.
-fn linhas_da_edicao<'a>(antigo: &'a str, novo: &'a str) -> Vec<(MarcaDeLinha, &'a str)> {
-    let a: Vec<&str> = antigo.lines().collect();
-    let b: Vec<&str> = novo.lines().collect();
-    let comeco = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let fim = a[comeco..]
-        .iter()
-        .rev()
-        .zip(b[comeco..].iter().rev())
-        .take_while(|(x, y)| x == y)
-        .count();
-    let mut linhas: Vec<(MarcaDeLinha, &str)> = Vec::new();
-    linhas.extend(a[comeco.saturating_sub(2)..comeco].iter().map(|l| (MarcaDeLinha::Igual, *l)));
-    linhas.extend(a[comeco..a.len() - fim].iter().map(|l| (MarcaDeLinha::Sai, *l)));
-    linhas.extend(b[comeco..b.len() - fim].iter().map(|l| (MarcaDeLinha::Entra, *l)));
-    linhas.extend(a[a.len() - fim..].iter().take(2).map(|l| (MarcaDeLinha::Igual, *l)));
-    linhas
+/// linhas iguais de cada lado como contexto e a palavra trocada marcada (o mesmo diff da trilha).
+fn linhas_da_edicao(antigo: &str, novo: &str) -> Vec<LinhaDoDiff> {
+    super::edicao::diff_da_troca(antigo, novo, CONTEXTO_DO_PEDIDO)
 }
 
 /// Trechos (em bytes) de um comando que apagam, forçam ou rodam algo difícil de desfazer. A caixa
@@ -5705,7 +5718,7 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
             let mut linhas = Vec::new();
             for (i, edicao) in entrada["edits"].as_array().into_iter().flatten().enumerate() {
                 if i > 0 {
-                    linhas.push((MarcaDeLinha::Separador, ""));
+                    linhas.push(LinhaDoDiff::Pulo(0));
                 }
                 linhas.extend(linhas_da_edicao(
                     edicao["old_string"].as_str().unwrap_or_default(),
@@ -5715,17 +5728,17 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
             bloco_de_linhas(id, &linhas, 80).into_any_element()
         }
         "Write" => {
-            let linhas: Vec<_> = campo("content").lines().map(|l| (MarcaDeLinha::Entra, l)).collect();
+            let linhas: Vec<_> = campo("content").lines().map(|l| LinhaDoDiff::Entra(l.to_string(), Vec::new())).collect();
             bloco_de_linhas(id, &linhas, 20).into_any_element()
         }
         "NotebookEdit" if campo("edit_mode") == "delete" => nota("Apaga a célula.").into_any_element(),
         "NotebookEdit" => {
-            let linhas: Vec<_> = campo("new_source").lines().map(|l| (MarcaDeLinha::Entra, l)).collect();
+            let linhas: Vec<_> = campo("new_source").lines().map(|l| LinhaDoDiff::Entra(l.to_string(), Vec::new())).collect();
             bloco_de_linhas(id, &linhas, 20).into_any_element()
         }
         _ => {
             let json = serde_json::to_string_pretty(entrada).unwrap_or_default();
-            let linhas: Vec<(MarcaDeLinha, &str)> = json.lines().map(|l| (MarcaDeLinha::Igual, l)).collect();
+            let linhas: Vec<LinhaDoDiff> = json.lines().map(|l| LinhaDoDiff::Igual(l.to_string())).collect();
             if entrada.as_object().is_some_and(|o| !o.is_empty()) {
                 bloco_de_linhas(id, &linhas, 40).into_any_element()
             } else {
@@ -5751,20 +5764,28 @@ fn caixa_de_codigo(id: &str) -> Stateful<Div> {
 }
 
 /// Linhas com o sinal de cada uma ("−" sai, "+" entra) na caixa de código; passando de
-/// `limite`, diz quantas ficaram de fora. O sinal vai na cor e o texto em `texto`.
-fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> impl IntoElement + use<> {
+/// `limite`, diz quantas ficaram de fora. O sinal vai na cor, o texto em `texto` e o trecho
+/// trocado dentro da linha com o fundo mais forte.
+fn bloco_de_linhas(id: &str, linhas: &[LinhaDoDiff], limite: usize) -> impl IntoElement + use<> {
     let resto = linhas.len().saturating_sub(limite);
     caixa_de_codigo(id)
-        .children(linhas.iter().take(limite).map(|(marca, texto)| {
-            if *marca == MarcaDeLinha::Separador {
-                return div().my(r(4.)).h(px(1.)).bg(Cores::traco()).into_any_element();
-            }
-            let (sinal, cor, fundo): (&str, Hsla, Option<Hsla>) = match marca {
-                MarcaDeLinha::Sai => ("−", Cores::vermelho(), Some(fundo_sai())),
-                MarcaDeLinha::Entra => ("+", Cores::verde(), Some(fundo_entra())),
-                _ => (" ", Cores::tenue(), None),
+        .children(linhas.iter().take(limite).map(|linha| {
+            let (sinal, cor, fundo, texto, trechos): (&str, Hsla, Option<Hsla>, &str, &[std::ops::Range<usize>]) = match linha {
+                LinhaDoDiff::Pulo(0) => return div().my(r(4.)).h(px(1.)).bg(Cores::traco()).into_any_element(),
+                LinhaDoDiff::Pulo(n) => {
+                    return div().px(r(4.)).text_color(Cores::apagado()).child(format!("… {}", contagem(*n, "linha igual", "linhas iguais"))).into_any_element();
+                }
+                LinhaDoDiff::Nota(texto) => return div().px(r(4.)).text_color(Cores::apagado()).child(texto.clone()).into_any_element(),
+                LinhaDoDiff::Sai(texto, trechos) => ("−", Cores::vermelho(), Some(fundo_sai()), texto, trechos),
+                LinhaDoDiff::Entra(texto, trechos) => ("+", Cores::verde(), Some(fundo_entra()), texto, trechos),
+                LinhaDoDiff::Igual(texto) => (" ", Cores::tenue(), None, texto, &[]),
             };
-            let texto = if texto.is_empty() { " ".to_string() } else { texto.replace('\t', "    ") };
+            let entra = matches!(linha, LinhaDoDiff::Entra(..));
+            // A tabulação vira 4 espaços aqui (o diff de uma troca já vem assim; o Write e o JSON,
+            // não), e os trechos só valem para o texto que não mudou de tamanho.
+            let mostrado = if texto.is_empty() { " ".to_string() } else { texto.replace('\t', "    ") };
+            let marcados: Vec<_> =
+                if mostrado.len() == texto.len() { trechos.iter().map(|t| (t.clone(), fundo_do_trecho(entra))).collect() } else { Vec::new() };
             h_flex()
                 .items_start()
                 .gap(r(8.))
@@ -5772,7 +5793,7 @@ fn bloco_de_linhas(id: &str, linhas: &[(MarcaDeLinha, &str)], limite: usize) -> 
                 .text_color(if fundo.is_some() { Cores::texto() } else { Cores::tenue() })
                 .when_some(fundo, |s, f| s.bg(f))
                 .child(div().flex_none().w(r(8.)).text_color(cor).child(sinal))
-                .child(div().flex_1().min_w_0().child(texto))
+                .child(div().flex_1().min_w_0().child(StyledText::new(mostrado).with_highlights(marcados)))
                 .into_any_element()
         }))
         .when(linhas.is_empty(), |s| s.child(div().text_color(Cores::tenue()).child("(vazio)")))
@@ -5806,7 +5827,7 @@ mod testes {
     }
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
-        Bloco, ClasseAvisoChat, MarcaDeLinha, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
+        Bloco, ClasseAvisoChat, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
@@ -6186,22 +6207,31 @@ mod testes {
     fn edicao_mostra_o_que_sai_e_o_que_entra_com_pouco_contexto() {
         let antigo = "a\nb\nc\nvelho\nd\ne\nf";
         let novo = "a\nb\nc\nnovo\noutro\nd\ne\nf";
+        // As mesmas linhas de antes do diff da trilha valer aqui (rodada do Paseo, item 1); o que
+        // mudou foi o tipo, que agora leva o trecho trocado dentro da linha.
+        use crate::ui::edicao::LinhaDoDiff::{Entra, Igual, Sai};
+        let t = |texto: &str| texto.to_string();
         assert_eq!(
             linhas_da_edicao(antigo, novo),
             vec![
-                (MarcaDeLinha::Igual, "b"),
-                (MarcaDeLinha::Igual, "c"),
-                (MarcaDeLinha::Sai, "velho"),
-                (MarcaDeLinha::Entra, "novo"),
-                (MarcaDeLinha::Entra, "outro"),
-                (MarcaDeLinha::Igual, "d"),
-                (MarcaDeLinha::Igual, "e"),
+                Igual(t("b")),
+                Igual(t("c")),
+                Sai(t("velho"), vec![]),
+                Entra(t("novo"), vec![]),
+                Entra(t("outro"), vec![]),
+                Igual(t("d")),
+                Igual(t("e")),
             ]
         );
-        assert_eq!(linhas_da_edicao("", "x"), vec![(MarcaDeLinha::Entra, "x")]);
-        assert_eq!(linhas_da_edicao("x\ny", "x"), vec![(MarcaDeLinha::Igual, "x"), (MarcaDeLinha::Sai, "y")]);
+        assert_eq!(linhas_da_edicao("", "x"), vec![Entra(t("x"), vec![])]);
+        assert_eq!(linhas_da_edicao("x\ny", "x"), vec![Igual(t("x")), Sai(t("y"), vec![])]);
         // Linhas repetidas no começo e no fim não se cruzam.
-        assert_eq!(linhas_da_edicao("a\na", "a"), vec![(MarcaDeLinha::Igual, "a"), (MarcaDeLinha::Sai, "a")]);
+        assert_eq!(linhas_da_edicao("a\na", "a"), vec![Igual(t("a")), Sai(t("a"), vec![])]);
+        // Uma palavra trocada no meio de um trecho: uma linha sai, uma entra, com o trecho marcado.
+        assert_eq!(
+            linhas_da_edicao("a\nb\ntotal = 1\nc\nd", "a\nb\ntotal = 2\nc\nd"),
+            vec![Igual(t("a")), Igual(t("b")), Sai(t("total = 1"), vec![8..9]), Entra(t("total = 2"), vec![8..9]), Igual(t("c")), Igual(t("d"))]
+        );
     }
 
     #[test]
