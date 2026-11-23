@@ -70,7 +70,7 @@ pub(super) fn montar(rodando: bool, comandos: &[(String, String)], esperando: &[
     if rodando {
         // Quem trabalha: a chamada sem resultado e sem aviso depois dela (o turno que para ou
         // falha deixa um aviso), como no `agentes_do_chat`. O que falhou só conta neste turno.
-        let ultimo_aviso = itens.iter().rposition(|i| matches!(i, Item::Aviso { .. }));
+        let ultimo_aviso = itens.iter().rposition(Item::aviso_que_fecha);
         let marco = inicio_do_turno(itens);
         let (mut trabalham, mut esperam, mut falharam) = (0, 0, 0);
         for (posicao, item) in itens.iter().enumerate().filter(|(_, item)| e_agente(item)) {
@@ -129,6 +129,15 @@ pub(super) fn pilulas_do_chat(motor: &Motor, chat: &Chat) -> Pilulas {
     let rodando = motor.execucao(&chat.id).rodando();
     let esperando = if rodando { motor.subagentes_esperando(&chat.id) } else { Vec::new() };
     montar(rodando, motor.comandos_no_fundo(&chat.id), &esperando, motor.passos(&chat.id), &chat.itens, agora())
+}
+
+/// A linha de baixo de um subagente na lista da pílula: o que ele faz agora, com as mesmas
+/// palavras da linha dele na conversa; depois de terminar, quanto levou e quanto usou.
+fn meta_na_lista(a: &super::mapa_agentes::Agente) -> String {
+    match a.estado {
+        Estado::Rodando => super::mensagens::no_fundo::acao_ao_vivo(&a.atividade),
+        _ => meta_do_agente(a),
+    }
 }
 
 /// "2 comandos no fundo"; no painel estreito, só o número (o ícone diz o resto).
@@ -324,7 +333,7 @@ impl Janela {
                 .enumerate()
                 .map(|(i, a)| {
                     let espera = a.estado == Estado::Rodando && esperando.contains(&a.id);
-                    let (meta, cor) = if espera { ("Esperando a sua resposta".to_string(), Cores::espera()) } else { (meta_do_agente(a), Cores::tenue()) };
+                    let (meta, cor) = if espera { ("Esperando a sua resposta".to_string(), Cores::espera()) } else { (meta_na_lista(a), Cores::tenue()) };
                     let (janela, pop, chat, chamada) = (janela.clone(), pop.clone(), chat.clone(), a.id.clone());
                     h_flex()
                         .id(("agente-do-turno", i))
@@ -495,6 +504,58 @@ mod testes {
         // Todos terminaram bem: nada a dizer. E com o turno parado ninguém trabalha.
         assert!(montar(true, &[], &[], &[], &[sua("agora"), agente("d", Some("pronto"), false)], 200).agentes.is_empty());
         assert!(montar(false, &[], &[], &[], &conversa, 200).agentes.is_empty());
+    }
+
+    /// Item 2: a pílula "N trabalhando" conta os agentes que continuam em segundo plano depois da
+    /// resposta do turno (o `result`), quando a conversa já tem a resposta e o aviso de que eles
+    /// seguem.
+    #[test]
+    fn os_agentes_que_seguem_depois_da_resposta_contam_como_trabalhando() {
+        let resposta = |texto: &str| Item::Assistente { texto: texto.into(), em: 110 };
+        let segue = Item::Aviso { texto: crate::modelo::AGENTES_SEGUEM.into(), erro: false, em: 111 };
+        let conversa = [sua("lance os dois"), agente("a", None, false), agente("b", None, false), resposta("Lancei os dois."), segue.clone()];
+        let p = montar(true, &[], &[], &[], &conversa, 200);
+        assert_eq!(p.agentes, [(NaPilula::Trabalhando, 2)]);
+        assert_eq!(rotulo_dos_agentes(&p.agentes, false), "2 trabalhando");
+        // Um terminou (a linha do fim dele entrou na conversa, e o Claude comentou): o outro segue.
+        let um_terminou = [
+            sua("lance os dois"),
+            agente("a", Some("Dois lugares mexem no cupom."), false),
+            agente("b", None, false),
+            resposta("Lancei os dois."),
+            segue.clone(),
+            Item::FimDoAgente { chamada: "a".into(), descricao: "Explorar o carrinho".into(), erro: false, durou: 60, em: 170 },
+            resposta("O primeiro terminou."),
+        ];
+        assert_eq!(montar(true, &[], &[], &[], &um_terminou, 200).agentes, [(NaPilula::Trabalhando, 1)]);
+        // O turno que parou de verdade deixa outro aviso, e aí ninguém mais trabalha.
+        let parou = [sua("lance os dois"), agente("a", None, false), segue, Item::Aviso { texto: "Interrompido.".into(), erro: false, em: 180 }];
+        assert!(montar(true, &[], &[], &[], &parou, 200).agentes.is_empty());
+    }
+
+    /// Item 2: "a lista dela deve mostrar a mesma última ação" que a linha da conversa.
+    #[test]
+    fn a_lista_da_pilula_diz_a_mesma_ultima_acao_da_linha() {
+        use crate::ui::{
+            mapa_agentes::{Agente, Estado},
+            mensagens::no_fundo::acao_ao_vivo,
+        };
+        let rodando = Agente {
+            id: "a".into(),
+            titulo: "Mapear o carrinho".into(),
+            estado: Estado::Rodando,
+            ferramentas: Some(3),
+            tokens: 0,
+            segundos: Some(90),
+            atividade: "Bash · cargo test".into(),
+            passos: Vec::new(),
+            resultado: None,
+        };
+        assert_eq!(super::meta_na_lista(&rodando), "Rodando cargo test…");
+        assert_eq!(super::meta_na_lista(&rodando), acao_ao_vivo(&rodando.atividade));
+        assert_eq!(super::meta_na_lista(&Agente { atividade: String::new(), ..rodando.clone() }), "Começando…");
+        // Quem terminou diz quanto levou, como antes.
+        assert_eq!(super::meta_na_lista(&Agente { estado: Estado::Terminou, ..rodando }), "1 min 30 s · 3 ferramentas");
     }
 
     /// "Os passos/tarefas do agente (3/5)."

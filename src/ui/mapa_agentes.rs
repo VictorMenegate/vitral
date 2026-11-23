@@ -66,7 +66,7 @@ pub(super) fn tem_agentes(chat: &Chat) -> bool {
 /// (sem ele, quem não tem resultado foi interrompido). Um agente sem resultado só conta como vivo
 /// se nenhum aviso veio depois dele: o turno que para ou falha deixa um aviso na conversa.
 pub(super) fn agentes_do_chat(itens: &[Item], rodando: bool, agora: u64) -> Vec<Agente> {
-    let ultimo_aviso = itens.iter().rposition(|i| matches!(i, Item::Aviso { .. }));
+    let ultimo_aviso = itens.iter().rposition(Item::aviso_que_fecha);
     itens
         .iter()
         .enumerate()
@@ -383,6 +383,19 @@ mod testes {
         assert_eq!(agentes[1].titulo, "Explorar o carrinho");
         // Com o turno parado, quem não tem resultado foi interrompido.
         assert_eq!(agentes_do_chat(&itens, false, 345)[3].estado, Estado::Interrompido);
+    }
+
+    /// Item 2: o agente que segue em segundo plano depois da resposta continua rodando no mapa (o
+    /// aviso de que os agentes seguem não é o de um turno que parou).
+    #[test]
+    fn o_agente_que_segue_em_segundo_plano_continua_rodando() {
+        let itens = vec![
+            agente("a", None, false, 100, Some(sub(2, "Bash · cargo test", 0))),
+            Item::Assistente { texto: "Lancei.".into(), em: 105 },
+            Item::Aviso { texto: crate::modelo::AGENTES_SEGUEM.into(), erro: false, em: 106 },
+        ];
+        let agentes = agentes_do_chat(&itens, true, 160);
+        assert_eq!((agentes[0].estado, agentes[0].segundos), (Estado::Rodando, Some(60)));
     }
 
     #[test]

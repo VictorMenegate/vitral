@@ -50,6 +50,7 @@ use crate::{
 
 pub(super) mod a_vista;
 pub(super) mod historico;
+pub(super) mod no_fundo;
 
 use a_vista::{Assinatura, ChaveDoBloco, Medida, TipoDaChave, Vista};
 mod erros;
@@ -202,6 +203,7 @@ fn partes_do_item(item: &Item, partes: &mut Vec<u64>) {
         Item::Cartao { id, .. } => partes.extend([7, *id]),
         Item::Vez { .. } => partes.push(8),
         Item::Desconhecido(_) => partes.push(9),
+        Item::FimDoAgente { chamada, descricao, erro, durou, .. } => partes.extend([10, n(chamada), n(descricao), u64::from(*erro), *durou]),
     }
     partes.push(item.em());
 }
@@ -234,7 +236,7 @@ pub(super) fn texto_que_chega_depois(item: &Item) -> bool {
         | Item::Raciocinio { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
         // O relatório de um subagente abre em markdown.
         Item::Ferramenta { resultado, sub, .. } => sub.is_some() && resultado.as_deref().is_some_and(|r| r.len() > TEXTO_LIDO_NA_HORA),
-        Item::Cartao { .. } | Item::Vez { .. } | Item::Desconhecido(_) => false,
+        Item::Cartao { .. } | Item::Vez { .. } | Item::FimDoAgente { .. } | Item::Desconhecido(_) => false,
     }
 }
 
@@ -650,12 +652,20 @@ impl Janela {
         // aqui, no fim da conversa, no lugar onde a próxima coisa vai aparecer (dono, 13/11/2026:
         // "deixa o pensando no chat mesmo, quando fica em baixo parece que tá fazendo nada").
         super::componentes::limpar_aneis(painel_id);
-        if parcial.is_none()
-            && matches!(motor.execucao(&chat.id), Execucao::Rodando { .. })
-            && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
-        {
-            let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
-            blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
+        if matches!(motor.execucao(&chat.id), Execucao::Rodando { .. }) {
+            // A resposta já veio e os agentes seguem em segundo plano: uma linha por agente, com o
+            // que cada um faz agora (dono, 23/11/2026: "aparece isso mas não vejo em lugar nenhum
+            // o que eles estão fazendo", da frase "Agentes trabalhando em segundo plano…"). Ficam
+            // também enquanto o Claude comenta o agente que acabou de terminar: o texto chega
+            // acima delas, e elas não piscam.
+            let no_fundo = if motor.esperando_agentes(&chat.id) { motor.linhas_do_segundo_plano(&chat.id) } else { Vec::new() };
+            if !no_fundo.is_empty() {
+                // Um bloco só: as linhas ficam coladas, com o passo da trilha.
+                let linhas: Vec<AnyElement> = no_fundo.iter().enumerate().map(|(n, linha)| eu.linha_do_agente(ctx, n, linha, cx)).collect();
+                blocos.push(Planejado::pronto(Bloco::Log, None, v_flex().w_full().children(linhas).into_any_element()));
+            } else if parcial.is_none() && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…" {
+                blocos.push(Planejado::pronto(Bloco::Log, None, linha_pensando(painel_id, "Pensando…", cx.theme().font_family.clone())));
+            }
         }
         // Só o que está à vista (e a sobra em volta) é montado; o resto entra como um espaço da
         // altura que mediu da última vez (ver `a_vista`). Com a busca aberta, uma seleção de
@@ -1152,6 +1162,7 @@ impl Janela {
             }
             Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
+            Item::FimDoAgente { .. } => (Bloco::Log, self.fim_do_agente(contexto, indice, item, cx)),
             Item::Desconhecido(_) => {
                 aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
             }
@@ -2722,6 +2733,8 @@ pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
         Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
         Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
+        // O fim de cada agente em segundo plano: é por ele que se abre o relatório, e são poucos.
+        Item::FimDoAgente { .. } => true,
         _ => false,
     }
 }
@@ -3544,7 +3557,7 @@ impl Janela {
                 .h(r(22.))
                 .gap(esp::E6)
                 .metadado()
-                .child(div().min_w_0().truncate().text_color(Cores::texto()).child(sem_marcacao(&detalhe_do_passo(&s.atividade))))
+                .child(div().min_w_0().truncate().text_color(Cores::texto()).child(sem_marcacao(&no_fundo::acao_ao_vivo(&s.atividade))))
         });
         let passos = do_sub.as_ref().filter(|(_, s)| !s.passos.is_empty()).map(|(_, s)| {
             div().pl(RECUO_DO_LOG).pt(esp::E4).child(
@@ -4346,12 +4359,10 @@ impl Janela {
             Situacao::Rodando { desde, fila, dirigidas } => {
                 let escrevendo = motor.parcial(&chat.id).is_some();
                 let atividade = texto_atividade(&chat.itens, escrevendo, dirigidas);
-                // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
-                let atividade = if !escrevendo && atividade == "Pensando…" && motor.esperando_agentes(&chat.id) {
-                    "Agentes trabalhando em segundo plano…".to_string()
-                } else {
-                    sem_marcacao(&atividade)
-                };
+                // A resposta já veio, mas os agentes seguem trabalhando: o agente e o que ele faz
+                // (ou quantos são), como nas linhas do fim da conversa.
+                let no_fundo = if !escrevendo && motor.esperando_agentes(&chat.id) { motor.linhas_do_segundo_plano(&chat.id) } else { Vec::new() };
+                let atividade = if no_fundo.is_empty() { sem_marcacao(&atividade) } else { sem_marcacao(&no_fundo::atividade_no_fundo(&no_fundo)) };
                 let agentes = super::mapa_agentes::agentes_vivos(motor, chat);
                 (
                     h_flex()
@@ -5260,8 +5271,9 @@ fn marco_da_conversa(itens: &[Item], dirigidas: usize) -> Option<usize> {
             dirigidas -= 1;
             false
         }
-        Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. } => true,
-        _ => false,
+        Item::Usuario { .. } | Item::Entrega { .. } => true,
+        // O aviso de que os agentes seguem em segundo plano não fecha nada: eles continuam.
+        aviso => aviso.aviso_que_fecha(),
     })
 }
 
@@ -5279,8 +5291,8 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
                 dirigidas -= 1;
                 true
             }
-            Item::Usuario { .. } | Item::Entrega { .. } | Item::Aviso { .. } => false,
-            _ => true,
+            Item::Usuario { .. } | Item::Entrega { .. } => false,
+            outro => !outro.aviso_que_fecha(),
         })
         .find_map(|i| match i {
             Item::Ferramenta {
@@ -6271,6 +6283,34 @@ mod testes {
         let duas = [usuario("oi"), ler, usuario("mais uma"), usuario("e outra")];
         assert_eq!(texto_atividade(&duas, false, 2), "Lendo motor.rs…");
         assert_eq!(marco_da_conversa(&duas, 2), Some(0));
+    }
+
+    /// Item 2: depois da resposta, com os agentes ainda em segundo plano, a conversa ganha o aviso
+    /// de que eles seguem. Ele não fecha o que veio antes: o cartão do agente continua vivo (não
+    /// "interrompida"), e a linha de estado continua dizendo dele.
+    #[test]
+    fn o_aviso_de_que_os_agentes_seguem_nao_interrompe_o_cartao_deles() {
+        let agente = ferramenta("Agent", "Agent · Mapear o carrinho", None, false);
+        let segue = Item::Aviso { texto: crate::modelo::AGENTES_SEGUEM.into(), erro: false, em: 0 };
+        let itens = [usuario("lance o agente"), agente.clone(), Item::Assistente { texto: "Lancei.".into(), em: 0 }, segue];
+        assert_eq!(marco_da_conversa(&itens, 0), Some(0));
+        assert_eq!(texto_atividade(&itens, false, 0), "Subagente: Mapear o carrinho…");
+        // O aviso de que o turno parou continua fechando.
+        let parou = [usuario("lance o agente"), agente, Item::Aviso { texto: "Interrompido.".into(), erro: false, em: 0 }];
+        assert_eq!(marco_da_conversa(&parou, 0), Some(2));
+        assert_eq!(texto_atividade(&parou, false, 0), "Pensando…");
+    }
+
+    /// Item 3: no turno recolhido, a linha do fim de cada agente continua à vista, o que falhou e
+    /// o que terminou bem. (A primeira versão deste teste recolhia o que terminou bem; na bancada,
+    /// a linha "Terminou: …" sumia assim que o turno acabava, que é justo quando se quer abrir o
+    /// relatório.)
+    #[test]
+    fn o_fim_do_agente_fica_fora_do_turno_recolhido() {
+        use super::fica_fora_do_recolhido;
+        let fim = |erro: bool| Item::FimDoAgente { chamada: "t".into(), descricao: "Mapear o carrinho".into(), erro, durou: 60, em: 0 };
+        assert!(fica_fora_do_recolhido(&fim(true)));
+        assert!(fica_fora_do_recolhido(&fim(false)));
     }
 
     #[test]

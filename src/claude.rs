@@ -124,6 +124,17 @@ pub struct Mensagem<'a> {
     pub marca: Option<&'a str>,
 }
 
+/// Um agente (ou fluxo de agentes) que o Claude Code roda em segundo plano, como o
+/// `background_tasks_changed` o lista (medido na 2.1.328, 23/11/2026): o `task_id` é o id do
+/// agente, o mesmo do arquivo dele (`<sessão>/subagents/agent-<id>.jsonl`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TarefaDeFundo {
+    pub id: String,
+    pub descricao: String,
+    /// Um fluxo de agentes (`local_workflow`), e não um subagente só.
+    pub fluxo: bool,
+}
+
 #[derive(Debug)]
 pub enum Evento {
     Inicio {
@@ -137,6 +148,12 @@ pub enum Evento {
     /// Agentes e fluxos ainda rodando em segundo plano (o Claude Code abre outro turno quando
     /// eles terminam).
     Fundo(usize),
+    /// Os mesmos agentes e fluxos, um por um: o id e a descrição de cada (a lista vem sempre
+    /// inteira, e quem saiu dela terminou).
+    AgentesNoFundo(Vec<TarefaDeFundo>),
+    /// O Claude Code abriu o agente `id` pela chamada `pai` (`task_started`): é o que liga um
+    /// agente da lista do segundo plano ao cartão dele na conversa.
+    AgenteAbriu { id: String, pai: String },
     /// Os comandos de shell que o agente deixou rodando em segundo plano (`run_in_background`):
     /// o id da tarefa (para o `stop_task`) e a descrição. Vazio quando não há mais nenhum.
     Comandos(Vec<(String, String)>),
@@ -318,7 +335,11 @@ impl Processo {
                 };
                 let eventos = match &mut do_codex {
                     Some(leitor) => leitor.linha(&valor),
-                    None => interpretar(&valor),
+                    None => {
+                        let mut eventos = interpretar(&valor);
+                        eventos.extend(agentes_do_fundo(&valor));
+                        eventos
+                    }
                 };
                 let palavra = falta_a_primeira
                     && match do_codex.is_some() {
@@ -1335,6 +1356,36 @@ fn primeira_palavra(valor: &Value) -> bool {
     }
 }
 
+/// O que a linha diz dos agentes em segundo plano, um por um, além do que o `interpretar` já tira
+/// dela (quantos são, e o começo de cada subagente).
+fn agentes_do_fundo(valor: &Value) -> Vec<Evento> {
+    if valor["type"] != "system" {
+        return Vec::new();
+    }
+    let de_agente = |tipo: &Value| matches!(tipo.as_str(), Some("local_agent" | "local_workflow"));
+    let texto = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    match valor["subtype"].as_str() {
+        // Os mesmos que o `Fundo` conta: os que o Claude Code espera antes de sair.
+        Some("background_tasks_changed") => vec![Evento::AgentesNoFundo(
+            valor["tasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|t| t["ambient"] != true && de_agente(&t["task_type"]))
+                .filter_map(|t| {
+                    Some(TarefaDeFundo { id: t["task_id"].as_str()?.to_string(), descricao: texto(&t["description"]), fluxo: t["task_type"] == "local_workflow" })
+                })
+                .collect(),
+        )],
+        // O comando que um subagente roda também tem o `task_started` dele (`local_bash`).
+        Some("task_started") if de_agente(&valor["task_type"]) => match (valor["task_id"].as_str(), valor["tool_use_id"].as_str()) {
+            (Some(id), Some(pai)) => vec![Evento::AgenteAbriu { id: id.to_string(), pai: pai.to_string() }],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 fn interpretar(valor: &Value) -> Vec<Evento> {
     // Mensagens de subagentes (ferramenta Task/Agent): só o que ele faz (as ferramentas que usa e
     // o que diz) sobe, preso à chamada que o abriu; o resto do fio dele fica de fora.
@@ -2222,6 +2273,49 @@ mod testes {
         }
         let vazio = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
         assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0), Evento::Comandos(c)] if c.is_empty()));
+    }
+
+    /// Os agentes em segundo plano, um por um, como o Claude Code 2.1.328 os mostrou com a CLI de
+    /// verdade (Haiku, 23/11/2026): a lista traz o `task_id` e a descrição de cada `local_agent`, e
+    /// o `task_started` diz qual chamada abriu cada um.
+    #[test]
+    fn os_agentes_em_segundo_plano_vem_um_por_um_com_o_id_e_a_descricao() {
+        let lista = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [
+            { "task_id": "a21a9faa5262cf9ab", "run_id": "0mwtn4idn-1562673f", "task_type": "local_agent", "subagent_type": "general-purpose", "description": "Contar rápido" },
+            { "task_id": "a1d9cb59ea430972c", "run_id": "0mwtn4iqt-6fbbbd5b", "task_type": "local_agent", "subagent_type": "general-purpose", "description": "Contar devagar" },
+            { "task_id": "w1", "task_type": "local_workflow", "description": "Revisão em paralelo" },
+            { "task_id": "b9", "task_type": "local_bash", "description": "npm run dev" },
+            { "task_id": "d", "task_type": "local_agent", "description": "vigia", "ambient": true }
+        ], "uuid": "e686b32d", "session_id": "s" });
+        match agentes_do_fundo(&lista).as_slice() {
+            [Evento::AgentesNoFundo(agentes)] => assert_eq!(
+                agentes,
+                &[
+                    TarefaDeFundo { id: "a21a9faa5262cf9ab".into(), descricao: "Contar rápido".into(), fluxo: false },
+                    TarefaDeFundo { id: "a1d9cb59ea430972c".into(), descricao: "Contar devagar".into(), fluxo: false },
+                    TarefaDeFundo { id: "w1".into(), descricao: "Revisão em paralelo".into(), fluxo: true },
+                ]
+            ),
+            outro => panic!("{outro:?}"),
+        }
+        // A lista vazia também chega: é ela que diz que o último terminou.
+        let vazia = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
+        assert!(matches!(agentes_do_fundo(&vazia).as_slice(), [Evento::AgentesNoFundo(agentes)] if agentes.is_empty()));
+        // O começo de um agente diz a chamada que o abriu.
+        let comecou = json!({ "type": "system", "subtype": "task_started", "task_id": "a21a9faa5262cf9ab", "run_id": "0mwtn4idn-1562673f",
+            "tool_use_id": "toolu_01NMXF6gw8HjAGm1YojE6g2g", "description": "Contar rápido", "subagent_type": "general-purpose",
+            "is_backgrounded": true, "spawn_depth": 1, "task_type": "local_agent", "prompt": "Rode sleep 6" });
+        match agentes_do_fundo(&comecou).as_slice() {
+            [Evento::AgenteAbriu { id, pai }] => assert_eq!((id.as_str(), pai.as_str()), ("a21a9faa5262cf9ab", "toolu_01NMXF6gw8HjAGm1YojE6g2g")),
+            outro => panic!("{outro:?}"),
+        }
+        // O comando que o próprio subagente roda também tem um `task_started`: não é um agente.
+        let comando = json!({ "type": "system", "subtype": "task_started", "task_id": "br3aylza9", "owned_by_subagent": true,
+            "tool_use_id": "toolu_01LBsHTNtUz4L2ePxB3pvNqK", "description": "Run sleep 6 then echo um", "is_backgrounded": false,
+            "parent_task_id": "a21a9faa5262cf9ab", "task_type": "local_bash" });
+        assert!(agentes_do_fundo(&comando).is_empty());
+        // E o resto do stream não diz nada dos agentes.
+        assert!(agentes_do_fundo(&json!({ "type": "assistant", "message": { "content": [] } })).is_empty());
     }
 
     #[test]

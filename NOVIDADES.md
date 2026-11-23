@@ -37,6 +37,16 @@ e quanto cache cada turno gastou.
   conversa normal, só para ler. Ela acompanha o subagente enquanto ele trabalha e continua
   disponível depois de fechar e abrir o Vitral. O cartão fica na conversa, e a setinha dele
   mostra os passos e o relatório ali mesmo.
+- **O que cada agente em segundo plano está fazendo.** Quando a resposta já veio e os agentes
+  seguem trabalhando, a conversa mostra uma linha por agente, com a descrição, o que ele faz agora
+  ("Rodando cargo test…", "Lendo views.py…") e há quanto tempo foi lançado; o clique abre a
+  conversa dele numa aba. Antes havia só a frase "Agentes trabalhando em segundo plano…". A pílula
+  "N trabalhando" passou a contar esses agentes (ela zerava assim que a resposta chegava), e o
+  cartão deles não aparece mais como "interrompida".
+- **"Terminou: …" quando um agente em segundo plano acaba.** No ponto da conversa em que ele
+  termina entra uma linha, "Terminou: Mapear o carrinho · 25 min" (ou "Falhou: …"), e o clique
+  nela abre o relatório dele. Com vários agentes, o turno agora termina uma vez só: antes o
+  "Terminou" do chat podia sair uma vez por agente.
 - **O diff da edição mostra só o que mudou.** Ao abrir uma edição na conversa, aparecem as linhas
   que mudaram, com 3 linhas em volta, e a palavra trocada vem marcada dentro da linha. Antes o
   trecho antigo vinha inteiro em vermelho e o novo inteiro em verde. O pedido de permissão de uma

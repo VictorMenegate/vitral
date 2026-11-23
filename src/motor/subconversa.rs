@@ -31,7 +31,8 @@ pub fn partes_do_id(id: &str) -> Option<(&str, &str)> {
 }
 
 /// O subagente da chamada `chamada` ainda trabalha: o turno roda, a chamada não tem resultado e
-/// nenhum aviso veio depois dela (o turno que para ou falha deixa um aviso na conversa).
+/// nenhum aviso veio depois dela (o turno que para ou falha deixa um aviso na conversa; o de que
+/// os agentes seguem em segundo plano não conta, ver `Item::aviso_que_fecha`).
 pub fn subagente_vivo(itens: &[Item], rodando: bool, chamada: &str) -> bool {
     if !rodando {
         return false;
@@ -40,7 +41,7 @@ pub fn subagente_vivo(itens: &[Item], rodando: bool, chamada: &str) -> bool {
         return false;
     };
     matches!(&itens[posicao], Item::Ferramenta { resultado: None, .. })
-        && !itens[posicao..].iter().any(|item| matches!(item, Item::Aviso { .. }))
+        && !itens[posicao..].iter().any(Item::aviso_que_fecha)
 }
 
 /// O aviso que abre a conversa montada com o que o cartão guardou.
@@ -202,6 +203,7 @@ impl Motor {
     /// não vale mais.
     pub(super) fn esquecer_subagentes(&mut self, chat: &str) {
         self.chamadas_dos_subs.remove(chat);
+        self.segundo_plano.remove(chat);
         self.relatorios.retain(|(de, _), _| de != chat);
         self.comandos_parados.remove(chat);
     }
@@ -415,6 +417,19 @@ mod testes {
         // Com o chat parado ninguém trabalha; a chamada que não existe também não.
         assert!(!subagente_vivo(&itens, false, "vivo"));
         assert!(!subagente_vivo(&itens, true, "outra"));
+    }
+
+    /// O agente em segundo plano continua vivo depois da resposta do turno: a aba dele segue
+    /// acompanhando o arquivo. O aviso de que os agentes seguem não é o de um turno que parou.
+    #[test]
+    fn o_agente_em_segundo_plano_vive_depois_da_resposta() {
+        let itens = vec![
+            tarefa("vivo", None, None),
+            Item::Assistente { texto: "Lancei.".into(), em: 105 },
+            Item::Aviso { texto: crate::modelo::AGENTES_SEGUEM.into(), erro: false, em: 106 },
+        ];
+        assert!(subagente_vivo(&itens, true, "vivo"));
+        assert!(!subagente_vivo(&itens, false, "vivo"));
     }
 
     /// Sem o arquivo do Claude Code (ele apaga as sessões velhas), a aba mostra o que o cartão

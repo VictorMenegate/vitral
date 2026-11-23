@@ -24,6 +24,7 @@ mod memoria;
 pub use gasto::{Medida, Tokens, medida_do_resultado, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
 pub mod subconversa;
+pub mod fundo;
 pub mod passos;
 pub use ideias::SituacaoDoLinear;
 
@@ -376,6 +377,9 @@ pub struct Motor {
     fluxos_por_conta: HashMap<String, bool>,
     /// Fluxos e subagentes que o processo atual de cada chat ainda roda em segundo plano.
     fundo: HashMap<String, usize>,
+    /// Os mesmos, um por um: quem são, a chamada que abriu cada um e até onde o arquivo de cada
+    /// um foi lido (ver `motor::fundo`). Vale pelo processo do turno.
+    segundo_plano: HashMap<String, fundo::NoFundo>,
     /// As conversas de subagente abertas em aba, só para ler (ver `motor::subconversa`): ficam
     /// fora do estado e da lista, e saem daqui quando a aba fecha.
     subconversas: Vec<subconversa::Subconversa>,
@@ -665,6 +669,7 @@ impl Motor {
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             subconversas: Vec::new(),
+            segundo_plano: HashMap::new(),
             chamadas_dos_subs: HashMap::new(),
             relatorios: HashMap::new(),
             comandos_parados: HashMap::new(),
@@ -3222,6 +3227,12 @@ impl Motor {
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
             }
+            Evento::AgentesNoFundo(tarefas) => {
+                self.segundo_plano.entry(chat_id.to_string()).or_default().listar(tarefas, agora());
+            }
+            Evento::AgenteAbriu { id, pai } => {
+                self.segundo_plano.entry(chat_id.to_string()).or_default().abriu(&id, &pai);
+            }
             Evento::Comandos(comandos) => {
                 if comandos.is_empty() {
                     self.comandos_no_fundo.remove(chat_id);
@@ -3278,6 +3289,7 @@ impl Motor {
                     chamadas.values().filter(|de| **de == pai).count() as u32
                 });
                 self.subconversa_andou(chat_id, &pai, cx);
+                self.segundo_plano_andou(chat_id, &pai);
                 let passo = claude::resumo_ferramenta(&nome, &entrada);
                 self.no_subagente(chat_id, &pai, |sub| {
                     sub.ferramentas = match vistas {
@@ -3294,6 +3306,7 @@ impl Motor {
             Evento::SubTexto { pai, texto } => {
                 let linha: String = texto.trim().lines().next().unwrap_or_default().chars().take(160).collect();
                 self.subconversa_andou(chat_id, &pai, cx);
+                self.segundo_plano_andou(chat_id, &pai);
                 if !linha.is_empty() {
                     self.no_subagente(chat_id, &pai, |sub| sub.atividade = linha);
                 }
@@ -3372,11 +3385,10 @@ impl Motor {
             Evento::SubLancado { pai } => {
                 // Como no resultado de uma chamada: a mensagem dirigida já entrou no turno.
                 self.dirigidas.remove(chat_id);
-                self.no_subagente(chat_id, &pai, |sub| {
-                    if sub.atividade.is_empty() {
-                        sub.atividade = "Trabalhando em segundo plano".into();
-                    }
-                });
+                // É por aqui que se sabe que o fim deste agente vira uma linha na conversa.
+                self.segundo_plano.entry(chat_id.to_string()).or_default().lancada(&pai);
+                // Só abre o registro dele: até a primeira ação, a linha diz que ele está começando.
+                self.no_subagente(chat_id, &pai, |_| {});
             }
             Evento::SubInicio { pai } => {
                 // Só abre o registro dele: a linha passa a mostrar 0 ferramentas e o relógio.
@@ -3420,6 +3432,14 @@ impl Motor {
                             break;
                         }
                     }
+                }
+                // O agente que foi para o segundo plano avisa aqui, no ponto em que termina: a
+                // linha "Terminou: …" entra no fim da conversa (o que a conversa esperou termina
+                // no próprio cartão).
+                if self.segundo_plano.get(chat_id).is_some_and(|f| f.foi_lancada(&pai))
+                    && let Some(c) = self.chat_mut(chat_id)
+                {
+                    fundo::anotar_fim(&mut c.itens, &pai, erro, agora());
                 }
             }
             Evento::Limite {
@@ -3504,19 +3524,20 @@ impl Motor {
                         c.janela = janela;
                     }
                     if primeiro && agentes > 0 {
-                        self.avisar(
-                            chat_id,
-                            "Os agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem.",
-                            false,
-                        );
+                        self.avisar(chat_id, crate::modelo::AGENTES_SEGUEM, false);
                     }
                     return;
                 }
                 // O custo do `result` é o total da sessão até ali: vale o último.
-                let custo_usd = match self.fim_adiado.remove(chat_id) {
-                    Some((_, antes)) => custo_usd.max(antes),
-                    None => custo_usd,
+                let (custo_usd, adiado) = match self.fim_adiado.remove(chat_id) {
+                    Some((_, antes)) => (custo_usd.max(antes), true),
+                    None => (custo_usd, false),
                 };
+                // O Claude Code segura o `result` do turno que cada agente em segundo plano abre
+                // ao terminar e solta todos juntos no fim (medido na 2.1.328 com dois agentes:
+                // dois `result` seguidos). O primeiro deles fecha o turno e tira o processo
+                // daqui; os seguintes só trazem o gasto deles.
+                let ja_terminou = !self.processos.contains_key(chat_id);
                 // O turno acabou mesmo: a mensagem que o usuário dirigiu e o Claude Code não
                 // recebeu (turno com erro, ou parado) volta para a fila, e o processo sai inteiro
                 // para ele não abrir um turno à parte com ela.
@@ -3560,6 +3581,9 @@ impl Motor {
                     }
                 }
                 self.registrar_gasto(chat_id, custo_antes);
+                if ja_terminou {
+                    return;
+                }
                 // Parado pelo usuário: o Claude Code fecha o turno com erro, mas não é falha (o
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {
@@ -3619,9 +3643,21 @@ impl Motor {
                 } else {
                     self.execucao.insert(chat_id.to_string(), Execucao::Parado);
                 }
+                // Depois de um fim adiado, este `result` pode ser o de um turno do meio (o do
+                // primeiro agente que terminou): o que vale como resposta do turno é o que o
+                // agente disse por último, que já está na conversa.
+                let dito_por_ultimo = || {
+                    self.chat_gravado(chat_id)?.itens.iter().rev().find_map(|item| match item {
+                        Item::Assistente { texto, .. } => Some(texto.clone()),
+                        _ => None,
+                    })
+                };
+                let texto = if adiado && !erro { dito_por_ultimo().unwrap_or(texto) } else { texto };
                 self.fim_de_turno(chat_id, erro, texto, cx);
             }
             Evento::Saiu { stderr, codigo } => {
+                // O processo saiu: o que ele rodava em segundo plano foi junto.
+                self.segundo_plano.remove(chat_id);
                 // Saiu depois de um `result` adiado, sem outro: os agentes acabaram sem outro turno
                 // (o fim normal, com o texto daquele `result`) ou foram cortados junto com o
                 // processo (teto da espera, queda), e aí o turno termina com erro.
@@ -3929,7 +3965,7 @@ impl Motor {
                 }
                 Item::Ferramenta { resumo, .. } => texto.push_str(&format!("- (ferramenta) {resumo}\n")),
                 Item::Vez { agente, .. } => texto.push_str(&format!("### Vez do {}\n\n", agente.nome())),
-                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Desconhecido(_) => {}
+                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::FimDoAgente { .. } | Item::Desconhecido(_) => {}
             }
         }
         let pasta = self.dados.pasta_exportadas();
