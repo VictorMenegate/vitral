@@ -2864,6 +2864,18 @@ pub(super) fn duracao_do_turno(segundos: u64) -> String {
     }
 }
 
+/// A partir de quantos segundos a linha de uma chamada terminada diz quanto ela levou.
+pub(super) const CHAMADA_DEMORADA: u64 = 10;
+
+/// "2 min 14 s": quanto a chamada levou, para a ponta da linha dela, quando foi demorada. Nada
+/// para a que não terminou, para a rápida e para o subagente, que já mostra a conta dele.
+pub(super) fn demora_da_chamada(item: &Item) -> Option<String> {
+    match item {
+        Item::Ferramenta { durou, resultado: Some(_), sub: None, .. } if *durou >= CHAMADA_DEMORADA => Some(duracao_do_turno(*durou)),
+        _ => None,
+    }
+}
+
 /// Os arquivos editados ou gravados, pelo nome, na ordem em que apareceram (sem repetir).
 fn editados_nas_chamadas<'a>(chamadas: impl IntoIterator<Item = &'a Item>) -> Vec<String> {
     let mut nomes: Vec<String> = Vec::new();
@@ -3121,10 +3133,13 @@ impl Janela {
         let chave = turno.chave(&contexto.chat.id);
         // Os tokens e o custo do turno, quando o livro dos gastos os tem (`motor/gasto.rs`): só na
         // dica, para a linha continuar curta (dono, 18/11/2026).
-        let gasto = contexto.motor.gastos().do_turno(&contexto.chat.id, turno.mensagem, contexto.chat.itens[turno.mensagem].em());
+        // Junto vão o modelo, os tempos e quanto da entrada veio do cache (`Livro::estatistica`).
+        let (livro, quando) = (contexto.motor.gastos(), contexto.chat.itens[turno.mensagem].em());
+        let gasto = livro.do_turno(&contexto.chat.id, turno.mensagem, quando);
+        let estatistica = gasto.and_then(|_| livro.estatistica(&contexto.chat.id, turno.mensagem, quando));
         let resumo = resumo_do_turno(&contexto.chat.itens, turno);
         let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
-        let dica = SharedString::from(super::onde_uso::dica_com_gasto(dica, gasto.as_ref()));
+        let dica = SharedString::from(super::onde_uso::dica_do_turno(dica, gasto.as_ref(), estatistica.as_ref()));
         let linha = h_flex()
             .id(SharedString::from(format!("turno-{chave}")))
             .map(linha_de_log)
@@ -3479,6 +3494,9 @@ impl Janela {
         // piscarem um relógio): num comando longo é o que diz que ela segue viva.
         let rodando_ha = (pendente && item.em() > 0).then(|| crate::modelo::agora().saturating_sub(item.em())).filter(|s| *s >= 3);
         let meta_do_sub = meta_do_sub.or_else(|| rodando_ha.map(|s| vec![relogio(s)]));
+        // Terminada, a que demorou diz quanto levou ("· 2 min 14 s") no lugar do relógio. Em Inter
+        // e com o ponto: em mono, colado no comando, o "14 s" parecia um argumento dele.
+        let demorou = demora_da_chamada(item);
         // O arquivo que a chamada leu ou mudou, se ainda está no disco: abre ao lado pelo ícone
         // que aparece no hover da linha.
         let abrir = arquivo
@@ -3577,6 +3595,9 @@ impl Janela {
                     } else { detalhe }, &no_resumo)),
             )
             .when_some(meta_do_sub.filter(|_| !minima), |s, partes| s.child(conta_do_subagente(&partes)))
+            .when_some(demorou.filter(|_| !minima), |s, durou| {
+                s.child(div().flex_none().text_color(Cores::apagado()).child(format!("· {durou}")))
+            })
             // Numa edição, quanto entrou e quanto saiu, na própria linha ("+5 −2"), como na trilha
             // de referência que o dono mandou (21st.dev, "AI Thinking and Tool calls", 13/11/2026).
             .when_some(linhas_do_diff.filter(|_| !minima && !*erro), |s, (entram, saem)| {
@@ -5895,6 +5916,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            durou: 0,
         }
     }
 
@@ -6397,6 +6419,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         let itens = vec![
             em(usuario("faz"), 1_000),
@@ -6428,6 +6451,38 @@ mod testes {
             outro => outro.clone(),
         }).collect();
         assert!(resumo_do_turno(&sem_hora, turnos[0]).starts_with("Trabalhou · 2 comandos"));
+    }
+
+    #[test]
+    fn a_chamada_demorada_diz_quanto_levou() {
+        use super::{CHAMADA_DEMORADA, Item, demora_da_chamada};
+        use crate::modelo::Subagente;
+        let chamada = |durou: u64, resultado: Option<&str>, erro: bool| match ferramenta("Bash", "cargo test", resultado, erro) {
+            Item::Ferramenta { id, nome, resumo, resultado, erro, em, detalhe, arquivo, sub, mudanca, .. } => {
+                Item::Ferramenta { id, nome, resumo, resultado, erro, em, detalhe, arquivo, sub, mudanca, durou }
+            }
+            outro => outro,
+        };
+        assert_eq!(CHAMADA_DEMORADA, 10);
+        assert_eq!(demora_da_chamada(&chamada(134, Some("ok"), false)).as_deref(), Some("2 min 14 s"));
+        assert_eq!(demora_da_chamada(&chamada(10, Some("ok"), false)).as_deref(), Some("10 s"));
+        assert_eq!(demora_da_chamada(&chamada(3_780, Some("ok"), false)).as_deref(), Some("1 h 3 min"));
+        // A que falhou depois de muito tempo também diz.
+        assert_eq!(demora_da_chamada(&chamada(45, Some("erro"), true)).as_deref(), Some("45 s"));
+        // A rápida, a não medida (a que foi para o segundo plano, a de antes disto) e a que ainda
+        // não tem resultado ficam como eram.
+        assert_eq!(demora_da_chamada(&chamada(9, Some("ok"), false)), None);
+        assert_eq!(demora_da_chamada(&chamada(0, Some("ok"), false)), None);
+        assert_eq!(demora_da_chamada(&chamada(134, None, false)), None);
+        // O subagente já mostra as ferramentas e o relógio dele na linha.
+        let sub = match chamada(134, Some("ok"), false) {
+            Item::Ferramenta { id, nome, resumo, resultado, erro, em, detalhe, arquivo, mudanca, durou, .. } => {
+                Item::Ferramenta { id, nome, resumo, resultado, erro, em, detalhe, arquivo, sub: Some(Subagente::default()), mudanca, durou }
+            }
+            outro => outro,
+        };
+        assert_eq!(demora_da_chamada(&sub), None);
+        assert_eq!(demora_da_chamada(&usuario("oi")), None);
     }
 
     #[test]
@@ -6472,6 +6527,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         let pedido = Item::Entrega { de: "Vitral".into(), texto: crate::motor::PEDIDO_DE_REVISAO.into(), em: 0 };
         let nada = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), assistente("Não há nada a registrar.")];
@@ -6502,6 +6558,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: Some(Mudanca { entram, saem, novo }),
+            durou: 0,
         };
         let itens = vec![
             usuario("um"),
@@ -6536,6 +6593,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         let dois = [editar("carrinho.py"), editar("motor.rs"), ferramenta("Bash", "ls", Some("ok"), false)];
         let chamadas: Vec<(usize, &Item)> = dois.iter().enumerate().collect();

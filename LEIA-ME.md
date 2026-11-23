@@ -230,6 +230,13 @@ componentes do GPUI Kit.
     sumário quando o sumário está na tela (com a direita fechada, cada passo da roda no painel
     ativo refazia a janela inteira). **Quem escreve um listener que muda o estado da Janela
     precisa do `cx.notify()`**: antes o hover do clique refazia tudo de carona.
+  - **O relógio da chamada que roda anda sozinho, uma vez por segundo.** O compasso dos spinners
+    redesenha a casca e os anéis, não as mensagens, e o relógio de 1 s da Janela se cala enquanto
+    o compasso bate: desde que as mensagens viraram vista em cache, o "00:42" da linha de uma
+    chamada (e o do subagente) parava no valor do último desenho. Agora, com o compasso batendo,
+    esse relógio avisa só as mensagens dos painéis cujo chat tem chamada sem resultado
+    (`Janela::andar_os_relogios_das_chamadas`): um desenho por segundo do painel que trabalha, e
+    a Janela, a lista e os outros painéis ficam no cache.
   - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
     layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
     com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
@@ -762,7 +769,21 @@ no cabeçalho; dono, 18/11/2026).
   "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. O detalhe que é código
   (comando, arquivo, padrão do Grep e do Glob, endereço do WebFetch, ferramenta MCP) vai em mono
   num chip; o que é prosa (a tarefa do Agent, a busca na web, a lista de tarefas) vai em Inter, sem
-  chip. Um fluxo de agentes (a
+  chip. **Quanto a chamada levou.** A que ainda roda mostra o relógio na ponta da linha depois
+  de 3 s ("Rodando cargo test 00:42"); terminada, a que levou 10 s ou mais
+  (`mensagens::CHAMADA_DEMORADA`) fica com a duração no mesmo lugar ("Rodou cargo test · 2 min
+  14 s", `demora_da_chamada`; em Inter e com o ponto, para não parecer argumento do comando). O número é o `durou` de `Item::Ferramenta`, em segundos, anotado
+  quando o resultado chega (`motor::anotar_resultado` e `duracao_da_chamada`): do pedido ao
+  resultado de cada chamada, pelo id dela, então as que rodam em paralelo têm cada uma o seu (o
+  Claude Code manda o resultado de cada uma quando ela termina, fora de ordem; medido na
+  2.1.328). A que esperou uma permissão conta de quando você permitiu (`Motor.liberadas`, pelo
+  `tool_use_id` do pedido). A que foi para o segundo plano, pedida assim ou porque passou do
+  tempo dela, não ganha duração: o resultado traz o `tool_use_result.backgroundTaskId`
+  (`ResultadoFerramenta.no_fundo`) e o comando segue rodando. O subagente continua com a conta
+  dele (tokens, ferramentas e relógio). As chamadas de antes disto não têm o número. O relógio
+  da que roda mora nas mensagens, que são uma vista em cache: uma vez por segundo a Janela avisa
+  só as mensagens dos painéis cujo chat tem chamada sem resultado
+  (`Janela::andar_os_relogios_das_chamadas`, `motor::tem_chamada_rodando`). Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
   resumo ("Rodou 2 comandos · editou views.py · leu 3 arquivos", com o nome dos arquivos editados
   até dois e a contagem acima disso; fora do painel largo, a forma curta, "2 comandos · editou
@@ -788,7 +809,13 @@ no cabeçalho; dono, 18/11/2026).
   custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
   `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela), e abre os
   tokens em três números: a entrada nova (a sem desconto mais a gravada no cache), o que foi lido
-  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). O turno sem linha no livro (os de antes disto, e os
+  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). Embaixo, na mesma
+  dica (`onde_uso::dica_do_turno`, com o `Livro::estatistica`): quanto da entrada veio do cache
+  ("96% da entrada veio do cache": o lido do cache sobre a entrada nova, a gravada e a lida), o
+  modelo com as idas ao modelo ("Opus 5.5 · 12 passos"), os tempos ("6 min 12 s no total · 4 min
+  3 s de modelo · 1,8 s até a primeira palavra") e quanto custou subir o Claude Code ("1,6 s para
+  abrir o Claude Code"). Cada linha só aparece com o dado dela; ver **Estatística do turno**, em
+  **Contas e uso dos planos**. O turno sem linha no livro (os de antes disto, e os
   de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
   chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
   pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
@@ -1223,7 +1250,41 @@ versão: o que veio antes não tem linha no livro.
 
 **Último turno**, no popover do contexto da caixa (`ultimo_turno`, em `src/ui/onde_uso.rs`):
 depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
-lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
+lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece. Embaixo
+deles, a linha **Cache**, o cache esfriando: "quente por mais 3 min" (os minutos arredondam para
+cima; no último minuto, os segundos) ou "frio" (`linha_do_cache` e `estado_do_cache`, que dão a
+frase inteira, "cache quente por mais 3 min"; a palavra "cache" vai na coluna dos rótulos porque
+a frase não cabia na dos valores). A conta é o fim do último turno mais a validade do cache do prompt menos
+agora (`gasto::cache_restante`), feita quando o popover abre: nada de relógio nem de cor no anel.
+A validade vem do `result`: o `usage.cache_creation` separa o que o turno gravou com 5 min
+(`ephemeral_5m_input_tokens`) do que gravou com 1 h (`ephemeral_1h_input_tokens`), e vale a do
+que mais gravou (na assinatura medida em 23/11/2026, tudo com 1 h). O turno que não gravou nada
+usa a última validade que o chat viu, ou a última da mesma conta; sem nenhuma, a linha não
+aparece. Também não aparece com o chat trabalhando (o cache está em uso), no Codex e nos turnos
+anotados antes disto. O que a linha não sabe: se o próximo turno for por outra conta ou outro
+modelo, o cache não serve, quente ou não.
+
+**Estatística do turno** (`Tempos`, em `src/motor/gasto.rs`). A linha do livro guarda também os
+tempos, tirados do mesmo `result` (`Evento::Medida`, de `medida_do_resultado`; nomes conferidos
+na saída de verdade do Claude Code 2.1.328): `total_ms` é o `duration_ms`, `modelo_ms` o
+`duration_api_ms`, `ttft_ms` o `ttft_ms`, `passos` o `num_turns` e `cache_ttl` a validade do
+cache em segundos. O `duration_ms`, o `ttft_ms` e o `num_turns` são de cada `result`; o
+`duration_api_ms` é o total do processo, como o `total_cost_usd` (dois `result` no mesmo
+processo deram 1518 e depois 1943), então o livro soma a diferença para o `result` anterior
+(`Livro::somar_medida`), ou o valor inteiro quando ele baixa (o turno trocou de processo). Num
+turno com vários `result`, o total e os passos somam e a primeira palavra é a do primeiro. O
+`duration_ms` não conta o processo subindo nem a espera pelos agentes em segundo plano entre dois
+`result`: por isso pode ser menor que o "Trabalhou" da linha, que é pela hora dos itens.
+`espera_ms` é medido aqui: do instante em que o `Processo::iniciar` vai abrir o processo até a
+primeira linha da resposta (`claude::primeira_palavra`: o começo de um bloco ou um pedaço dele;
+`Evento::PrimeiraPalavra`, uma vez por processo, que não redesenha nada). A espera menos o
+`ttft_ms` é quanto custou subir o Claude Code (`Tempos::subida_ms`): num turno de verdade, 2967
+ms de espera para 1405 de `ttft_ms`, 1,5 s de subida; no segundo `result` do mesmo processo, 9
+ms. É o número que mede uma futura melhoria de manter o processo aberto. Zero não vai para o
+arquivo, e as linhas de antes disto são lidas sem os tempos. O Codex não informa nenhum deles.
+Limite conhecido: o turno que termina com o processo saindo depois de um fim adiado (os agentes
+acabaram sem outro `result`) não passa pelo `registrar_gasto`; os tokens dele ficam para a linha
+do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 
 ## Organização
 
@@ -1709,7 +1770,15 @@ para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os seg
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
 bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
+três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); o `[ferramenta Diz
+<texto>]` é um texto no meio do turno (com ele e uma chamada, o turno pronto recolhe na linha
+"Trabalhou…"); com `[juntas]` as chamadas comuns saem numa resposta só e cada resultado chega
+quando a dela termina, como as chamadas em paralelo de verdade; o `[ferramenta Estourou <comando>
+| 12]` é o Bash que passou do tempo e foi para o segundo plano (`backgroundTaskId` e
+`timedOutAfterMs` no resultado); o `result` leva o `duration_ms`, o `duration_api_ms`, o
+`ttft_ms`, o `num_turns` e o `usage.cache_creation` como o de verdade (cache de 1 h, ou de 5 min
+com `[cache 5m]`), e `[ttft 1.8]` espera esses segundos antes da primeira palavra (com o
+`CLAUDE_FALSO_SOBE`, a dica do turno mostra o "para abrir o Claude Code"); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem

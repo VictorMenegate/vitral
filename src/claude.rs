@@ -170,6 +170,9 @@ pub enum Evento {
         id: String,
         conteudo: String,
         erro: bool,
+        /// O comando foi para o segundo plano e segue rodando lá (pedido assim, ou porque passou
+        /// do tempo dele): o resultado chegou, mas não é o fim do comando.
+        no_fundo: bool,
     },
     /// O subagente da chamada `pai` foi para o segundo plano: o resultado da chamada é só o aviso
     /// de que ele começou, e o de verdade chega no `SubFim`.
@@ -189,6 +192,11 @@ pub enum Evento {
     /// Os tokens que um `result` declara (os do turno; ver `motor::tokens_do_resultado`). Vem
     /// antes do `Fim` do mesmo `result`.
     Gasto(crate::motor::Tokens),
+    /// Os tempos que um `result` declara (ver `motor::medida_do_resultado`), também antes do `Fim`.
+    Medida(crate::motor::Medida),
+    /// A primeira palavra do modelo chegou, tantos milissegundos depois de o processo abrir (uma
+    /// vez por processo). Menos o `ttft_ms` do `result`, é quanto custou subir o Claude Code.
+    PrimeiraPalavra(u64),
     Fim {
         erro: bool,
         texto: String,
@@ -259,6 +267,8 @@ impl Processo {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // O relógio da primeira palavra começa aqui, antes de o processo existir.
+        let abriu = Instant::now();
         let (mut filho, escopo) =
             processos::abrir(comando).with_context(|| if codex { "não abriu o codex" } else { "não abriu o claude" })?;
         let pid = filho.id();
@@ -291,6 +301,8 @@ impl Processo {
         std::thread::spawn(move || {
             // O Codex fala outro formato, traduzido para os mesmos eventos.
             let mut do_codex = protocolo_codex;
+            // A primeira palavra do modelo, contada de quando o processo abriu: uma vez só.
+            let mut falta_a_primeira = true;
             for linha in BufReader::new(saida).lines() {
                 let Ok(linha) = linha else { break };
                 let Ok(valor) = serde_json::from_str::<Value>(&linha) else {
@@ -300,6 +312,17 @@ impl Processo {
                     Some(leitor) => leitor.linha(&valor),
                     None => interpretar(&valor),
                 };
+                let palavra = falta_a_primeira
+                    && match do_codex.is_some() {
+                        true => eventos.iter().any(|e| {
+                            matches!(e, Evento::TextoParcial(_) | Evento::Texto(_) | Evento::Pensando | Evento::Pensamento(_) | Evento::Ferramenta { .. })
+                        }),
+                        false => primeira_palavra(&valor),
+                    };
+                if palavra {
+                    falta_a_primeira = false;
+                    enviar(Evento::PrimeiraPalavra(abriu.elapsed().as_millis() as u64));
+                }
                 for evento in eventos {
                     enviar(evento);
                 }
@@ -1290,6 +1313,20 @@ fn escrever_mensagem(entrada: &mut processos::EntradaDeFundo, mensagem: Mensagem
     Ok(())
 }
 
+/// A linha é a primeira palavra do modelo: o começo de um bloco da resposta (texto, raciocínio ou
+/// chamada) ou um pedaço dele, com `--include-partial-messages`; sem os pedaços, a mensagem
+/// inteira. As linhas dos subagentes não contam.
+fn primeira_palavra(valor: &Value) -> bool {
+    if !valor["parent_tool_use_id"].is_null() {
+        return false;
+    }
+    match valor["type"].as_str() {
+        Some("stream_event") => matches!(valor["event"]["type"].as_str(), Some("content_block_start" | "content_block_delta")),
+        Some("assistant") => true,
+        _ => false,
+    }
+}
+
 fn interpretar(valor: &Value) -> Vec<Evento> {
     // Mensagens de subagentes (ferramenta Task/Agent): só o que ele faz (as ferramentas que usa e
     // o que diz) sobe, preso à chamada que o abriu; o resto do fio dele fica de fora.
@@ -1407,6 +1444,9 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             // Desde o 2.1.3xx a chamada Agent devolve na hora "Async agent launched": o subagente
             // segue trabalhando, e não terminou (medido em 16/11/2026).
             let lancado = valor["tool_use_result"]["status"] == "async_launched";
+            // O comando pedido em segundo plano, ou o que passou do tempo dele e foi mandado para
+            // lá: o resultado traz o `backgroundTaskId` (medido na 2.1.328) e o comando segue.
+            let no_fundo = valor["tool_use_result"]["backgroundTaskId"].is_string();
             valor["message"]["content"]
                 .as_array()
                 .into_iter()
@@ -1418,11 +1458,16 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                         id: texto(&bloco["tool_use_id"]),
                         conteudo: conteudo_resultado(&bloco["content"]),
                         erro: bloco["is_error"].as_bool().unwrap_or(false),
+                        no_fundo,
                     },
                 })
                 .collect()
         }
-        "result" => crate::motor::tokens_do_resultado(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
+        "result" => crate::motor::tokens_do_resultado(valor)
+            .map(Evento::Gasto)
+            .into_iter()
+            .chain(crate::motor::medida_do_resultado(valor).map(Evento::Medida))
+            .chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
                 .as_str()
@@ -2321,6 +2366,61 @@ mod testes_dos_modelos {
         assert!(matches!(interpretar(&comecou).as_slice(), [Evento::SubInicio { pai }] if pai == "toolu_pai"));
         let falhou = json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "toolu_pai", "status": "failed" });
         assert!(matches!(interpretar(&falhou).as_slice(), [Evento::SubFim { erro: true, .. }]));
+    }
+
+    /// O `result` e os resultados de comando como o Claude Code 2.1.328 os mostrou (23/11/2026).
+    #[test]
+    fn o_result_traz_os_tempos_e_o_comando_diz_se_foi_para_o_segundo_plano() {
+        use super::{Evento, interpretar};
+        let fim = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "feito",
+            "duration_ms": 7004, "duration_api_ms": 2699, "ttft_ms": 1421, "num_turns": 2, "total_cost_usd": 0.01,
+            "usage": { "input_tokens": 4, "output_tokens": 72, "cache_read_input_tokens": 31050, "cache_creation_input_tokens": 7470,
+                "cache_creation": { "ephemeral_1h_input_tokens": 7470, "ephemeral_5m_input_tokens": 0 } } });
+        match interpretar(&fim).as_slice() {
+            [Evento::Gasto(tokens), Evento::Medida(medida), Evento::Fim { erro: false, texto, .. }] => {
+                assert_eq!(tokens.cache_lido, 31050);
+                assert_eq!((medida.duracao_ms, medida.modelo_acumulado_ms, medida.ttft_ms, medida.passos, medida.cache_ttl), (7004, 2699, 1421, 2, 3600));
+                assert_eq!(texto, "feito");
+            }
+            outro => panic!("{outro:?}"),
+        }
+        // O `result` sem tempo nenhum (o de uma versão velha) segue só com o fim.
+        let velho = json!({ "type": "result", "is_error": false, "result": "ok", "total_cost_usd": 0.0 });
+        assert!(matches!(interpretar(&velho).as_slice(), [Evento::Fim { .. }]));
+        // O comando que terminou.
+        let terminou = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_a", "type": "tool_result", "content": "lento" }] },
+            "tool_use_result": { "stdout": "lento", "stderr": "", "interrupted": false } });
+        assert!(matches!(interpretar(&terminou).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: false, .. }] if id == "toolu_a"));
+        // O que foi pedido em segundo plano volta na hora, e o que passou do tempo volta quando
+        // passa: nos dois o `backgroundTaskId` diz que o comando segue rodando.
+        let pedido = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_b", "type": "tool_result",
+            "content": "Command running in background with ID: bdotu4uvf." }] },
+            "tool_use_result": { "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "bdotu4uvf" } });
+        assert!(matches!(interpretar(&pedido).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: true, .. }] if id == "toolu_b"));
+        let estourou = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_c", "type": "tool_result",
+            "content": "Command did not complete within its 3s timeout and was moved to the background (ID: bakp5fylo)." }] },
+            "tool_use_result": { "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "bakp5fylo", "timedOutAfterMs": 3000 } });
+        assert!(matches!(interpretar(&estourou).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: true, .. }] if id == "toolu_c"));
+        // O resultado de erro vem com o `tool_use_result` em texto, não em objeto.
+        let erro = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_d", "type": "tool_result", "content": "x", "is_error": true }] },
+            "tool_use_result": "Error: Blocked" });
+        assert!(matches!(interpretar(&erro).as_slice(), [Evento::ResultadoFerramenta { erro: true, no_fundo: false, .. }]));
+    }
+
+    #[test]
+    fn a_primeira_palavra_e_o_primeiro_bloco_da_resposta() {
+        use super::primeira_palavra;
+        // Com os pedaços: o começo de um bloco (até o de uma chamada, que não vira evento) e o pedaço.
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_start", "content_block": { "type": "tool_use" } } })));
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_start", "content_block": { "type": "thinking" } } })));
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "O" } } })));
+        // Sem eles (o claude falso), a mensagem inteira.
+        assert!(primeira_palavra(&json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "oi" }] } })));
+        // O que vem antes da palavra não conta, nem o que é de um subagente.
+        assert!(!primeira_palavra(&json!({ "type": "system", "subtype": "init", "model": "claude-opus-5-5" })));
+        assert!(!primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "message_start" } })));
+        assert!(!primeira_palavra(&json!({ "type": "rate_limit_event", "rate_limit_info": {} })));
+        assert!(!primeira_palavra(&json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "message": { "content": [{ "type": "text", "text": "oi" }] } })));
     }
 
     /// A resposta do `mcp_status` como o Claude Code 2.1.322 a deu.

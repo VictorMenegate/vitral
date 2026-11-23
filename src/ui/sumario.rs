@@ -343,6 +343,7 @@ mod testes {
             arquivo: arquivo.map(str::to_string),
             sub: None,
             mudanca: None,
+            durou: 0,
         }
     }
 

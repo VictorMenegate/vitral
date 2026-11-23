@@ -21,7 +21,7 @@ mod ideias;
 mod agendadas;
 pub mod gasto;
 mod memoria;
-pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
+pub use gasto::{Medida, Tokens, medida_do_resultado, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
 pub use ideias::SituacaoDoLinear;
 
@@ -79,6 +79,8 @@ pub struct PedidoPermissao {
     pub chat: String,
     pub ferramenta: String,
     pub entrada: Value,
+    /// O id da chamada que espera a resposta (o `tool_use_id` que o Claude Code manda junto).
+    chamada: Option<String>,
     resposta: Sender<Resposta>,
 }
 
@@ -328,6 +330,9 @@ pub struct Motor {
     retomar_as: HashMap<String, u64>,
     /// Os avisos de "outro chat também editou" já dados nesta sessão: (chat, arquivo, outro chat).
     avisos_de_arquivo: HashSet<(String, PathBuf, String)>,
+    /// As chamadas que esperaram uma permissão sua, por (chat, id da chamada): quando você
+    /// permitiu. A duração da chamada conta daí, não do pedido (`duracao_da_chamada`).
+    liberadas: HashMap<(String, String), u64>,
     /// A lista de passos que o agente mantém (o TodoWrite do Claude Code), a última de cada chat.
     /// Só na memória: some ao fechar o Vitral.
     passos: HashMap<String, Vec<Passo>>,
@@ -645,6 +650,7 @@ impl Motor {
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             pensando: HashMap::new(),
+            liberadas: HashMap::new(),
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             dirigidos: HashMap::new(),
@@ -1120,6 +1126,10 @@ impl Motor {
             return;
         };
         let pedido = self.permissoes.remove(posicao);
+        // A chamada só começa a rodar agora: o tempo que ela esperou por você não é dela.
+        if let (true, Some(chamada)) = (permitir, &pedido.chamada) {
+            self.liberadas.insert((pedido.chat.clone(), chamada.clone()), agora());
+        }
         // Aprovar o plano sai do Planejar, como na extensão: o resto do turno e os próximos rodam
         // no modo de antes (sem isso o Claude Code voltaria ao Manual e o turno seguinte, ao plano).
         // O plano que o próprio Claude abriu, ou com o modo trocado no meio, volta ao da conversa.
@@ -2044,6 +2054,8 @@ impl Motor {
             Ok(processo) => {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
+                self.gastos.abrir(chat_id);
+                self.liberadas.retain(|(chat, _), _| chat != chat_id);
                 self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
                 // Um turno começou (mandado por você ou pela retomada): a volta agendada cai.
                 self.retomar_as.remove(chat_id);
@@ -3037,6 +3049,11 @@ impl Motor {
             Sinal::Claude(chat, geracao, evento) => {
                 if self.geracao_atual.get(&chat) == Some(&geracao) {
                     self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
+                    // Só uma anotação para a estatística do turno: nada na tela muda.
+                    if let Evento::PrimeiraPalavra(milis) = evento {
+                        self.gastos.anotar_espera(&chat, milis);
+                        return false;
+                    }
                     if let Evento::TextoParcial(pedaco) = &evento {
                         return match pedaco_de_texto(&mut self.parcial, &self.visiveis, &chat, pedaco) {
                             Pedaco::Nada => false,
@@ -3261,6 +3278,7 @@ impl Motor {
                         arquivo,
                         sub: None,
                         mudanca,
+                        durou: 0,
                     });
                 }
                 for (caminho, outro) in mexidos {
@@ -3268,45 +3286,14 @@ impl Motor {
                     self.avisar(chat_id, &format!("O chat «{outro}» também editou {nome} nas últimas horas, na mesma pasta: confira se um não desfaz o outro."), false);
                 }
             }
-            Evento::ResultadoFerramenta { id, conteudo, erro } => {
+            Evento::ResultadoFerramenta { id, conteudo, erro, no_fundo } => {
                 self.chats_sujos.insert(chat_id.to_string());
                 // É aqui que o Claude Code absorve no turno a mensagem dirigida (medido na
                 // 2.1.278): daqui em diante ela não volta mais como turno à parte.
                 self.dirigidas.remove(chat_id);
+                let liberada = self.liberadas.remove(&(chat_id.to_string(), id.clone()));
                 if let Some(c) = self.chat_mut(chat_id) {
-                    for item in c.itens.iter_mut().rev() {
-                        if let Item::Ferramenta {
-                            id: id_item,
-                            nome,
-                            resultado,
-                            erro: erro_item,
-                            sub,
-                            mudanca,
-                            ..
-                        } = item
-                            && *id_item == id
-                        {
-                            // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
-                            if nome == "Write" && !erro && claude::write_criou(&conteudo)
-                                && let Some(m) = mudanca
-                            {
-                                m.novo = true;
-                            }
-                            // O relatório do subagente sem a moldura que o Claude Code põe nele.
-                            let conteudo = if matches!(nome.as_str(), "Agent" | "Task") {
-                                claude::relatorio_do_subagente(&conteudo)
-                            } else {
-                                conteudo
-                            };
-                            *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
-                            *erro_item = erro;
-                            // O subagente terminou: o cartão dele dobra numa linha com a duração.
-                            if let Some(sub) = sub {
-                                sub.fim = agora();
-                            }
-                            break;
-                        }
-                    }
+                    anotar_resultado(&mut c.itens, &id, conteudo, erro, no_fundo, liberada, agora());
                 }
             }
             Evento::SubLancado { pai } => {
@@ -3375,6 +3362,8 @@ impl Motor {
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
             Evento::Gasto(tokens) => self.somar_tokens(chat_id, tokens),
+            Evento::Medida(medida) => self.somar_medida(chat_id, medida),
+            Evento::PrimeiraPalavra(milis) => self.gastos.anotar_espera(chat_id, milis),
             Evento::Sugestao(texto) => {
                 // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
                 if !self.processos.contains_key(chat_id) {
@@ -3820,6 +3809,7 @@ impl Motor {
                     chat: chat.id.clone(),
                     ferramenta: a["tool_name"].as_str().unwrap_or("?").to_string(),
                     entrada: a["input"].clone(),
+                    chamada: a["tool_use_id"].as_str().filter(|id| !id.is_empty()).map(str::to_string),
                     resposta: chamada.resposta,
                 });
                 self.execucao
@@ -4371,6 +4361,70 @@ fn entrada_do_usuario(texto: String, anexos: Vec<PathBuf>, reforco: Reforco) -> 
 /// limita os subagentes; nada impede dois fluxos, ou um fluxo e vários subagentes, juntos.
 const UM_FLUXO_POR_VEZ: &str = "[Vitral] Rode um fluxo de agentes por vez e não abra outros agentes \
 enquanto ele roda: este computador não aguenta muita carga ao mesmo tempo.";
+
+/// O turno em andamento tem uma chamada sem resultado: a linha dela mostra um relógio, que só
+/// anda se a conversa for redesenhada (as mensagens são uma vista em cache).
+pub fn tem_chamada_rodando(itens: &[Item]) -> bool {
+    itens
+        .iter()
+        .rev()
+        .take_while(|i| !matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }))
+        .any(|i| matches!(i, Item::Ferramenta { resultado: None, .. }))
+}
+
+/// Quanto uma chamada levou, em segundos: do pedido (`em`) ao resultado (`agora`). A que esperou
+/// uma permissão conta de quando ela foi dada (`liberada`): o tempo de você responder não é dela.
+/// A que foi para o segundo plano (`no_fundo`) não terminou, e a sem hora não tem de onde contar:
+/// as duas ficam em 0, que é "não medido".
+fn duracao_da_chamada(em: u64, liberada: Option<u64>, agora: u64, no_fundo: bool) -> u64 {
+    if no_fundo || em == 0 {
+        return 0;
+    }
+    agora.saturating_sub(liberada.map_or(em, |quando| quando.max(em)))
+}
+
+/// O resultado de uma chamada chegou: entra na chamada com esse `id`, a mais nova primeiro, com
+/// quanto ela levou. Cada chamada tem o próprio começo e o próprio resultado, então as que rodam
+/// em paralelo não se misturam (o Claude Code manda o resultado de cada uma quando ela termina,
+/// fora de ordem; medido na 2.1.328).
+fn anotar_resultado(itens: &mut [Item], id: &str, conteudo: String, erro: bool, no_fundo: bool, liberada: Option<u64>, agora: u64) {
+    for item in itens.iter_mut().rev() {
+        if let Item::Ferramenta {
+            id: id_item,
+            nome,
+            resultado,
+            erro: erro_item,
+            sub,
+            mudanca,
+            em,
+            durou,
+            ..
+        } = item
+            && id_item == id
+        {
+            // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
+            if nome == "Write" && !erro && claude::write_criou(&conteudo)
+                && let Some(m) = mudanca
+            {
+                m.novo = true;
+            }
+            // O relatório do subagente sem a moldura que o Claude Code põe nele.
+            let conteudo = if matches!(nome.as_str(), "Agent" | "Task") {
+                claude::relatorio_do_subagente(&conteudo)
+            } else {
+                conteudo
+            };
+            *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
+            *erro_item = erro;
+            *durou = duracao_da_chamada(*em, liberada, agora, no_fundo);
+            // O subagente terminou: o cartão dele dobra numa linha com a duração.
+            if let Some(sub) = sub {
+                sub.fim = agora;
+            }
+            break;
+        }
+    }
+}
 
 /// O texto que vai ao Claude Code num turno (as entradas separadas por traço, com quem mandou e
 /// os anexos que não são imagem) e as imagens. Com Ultracode, o pedido de um fluxo por vez; com
@@ -5006,6 +5060,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: Some(crate::modelo::Mudanca::default()),
+            durou: 0,
         };
         let mut a = chat("a");
         let mut b = chat("b");
@@ -5075,6 +5130,7 @@ mod testes {
             arquivo: Some("src/ui/fila.rs".into()),
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         let itens = vec![
             usuario("antes da dupla"),
@@ -5133,6 +5189,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         assert!(!editou_arquivo_desde(&[ferramenta("Read", 10, false), ferramenta("Bash", 11, false)], 0));
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 10, true)], 0));
@@ -5155,6 +5212,105 @@ mod testes {
     }
 
     #[test]
+    fn a_chamada_guarda_quanto_levou() {
+        // Do pedido ao resultado.
+        assert_eq!(duracao_da_chamada(1000, None, 1134, false), 134);
+        assert_eq!(duracao_da_chamada(1000, None, 1000, false), 0);
+        // A que esperou a permissão conta de quando ela foi dada: os 3 min de você responder não
+        // são do comando.
+        assert_eq!(duracao_da_chamada(1000, Some(1180), 1194, false), 14);
+        // A permissão anotada antes do pedido (relógio torto) não aumenta a conta.
+        assert_eq!(duracao_da_chamada(1000, Some(900), 1134, false), 134);
+        // A que foi para o segundo plano segue rodando: o resultado dela não é o fim do comando.
+        assert_eq!(duracao_da_chamada(1000, None, 1120, true), 0);
+        // Sem hora (conversa trazida de antes) e com o relógio voltando: não medido.
+        assert_eq!(duracao_da_chamada(0, None, 1134, false), 0);
+        assert_eq!(duracao_da_chamada(1000, None, 990, false), 0);
+
+        let chamada = |id: &str, nome: &str, em: u64| Item::Ferramenta {
+            id: id.into(),
+            nome: nome.into(),
+            resumo: String::new(),
+            resultado: None,
+            erro: false,
+            em,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            durou: 0,
+        };
+        let lido = |itens: &[Item], id: &str| {
+            itens
+                .iter()
+                .find_map(|i| match i {
+                    Item::Ferramenta { id: outro, resultado, durou, erro, .. } if outro == id => Some((resultado.clone(), *durou, *erro)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        // Três comandos pedidos juntos, como o Claude Code 2.1.328 os mostrou: o do segundo plano
+        // volta na hora, o rápido em 1 s e o lento só no fim. Cada um fica com o próprio tempo.
+        let mut itens = vec![
+            Item::Usuario { texto: "roda".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 1000, marca: None },
+            chamada("lento", "Bash", 1000),
+            chamada("rapido", "Bash", 1000),
+            chamada("fundo", "Bash", 1000),
+        ];
+        anotar_resultado(&mut itens, "fundo", "Command running in background with ID: b1.".into(), false, true, None, 1000);
+        anotar_resultado(&mut itens, "rapido", "rapido".into(), false, false, None, 1001);
+        assert_eq!(lido(&itens, "lento"), (None, 0, false));
+        anotar_resultado(&mut itens, "lento", "lento".into(), false, false, None, 1134);
+        assert_eq!(lido(&itens, "lento"), (Some("lento".into()), 134, false));
+        assert_eq!(lido(&itens, "rapido"), (Some("rapido".into()), 1, false));
+        assert_eq!(lido(&itens, "fundo").1, 0);
+        // O comando que passou do tempo e foi para o segundo plano depois de 2 min: o resultado
+        // chega, mas a linha não diz que ele levou 2 min (ele segue rodando).
+        itens.push(chamada("estourou", "Bash", 2000));
+        anotar_resultado(&mut itens, "estourou", "Command did not complete within its 120s timeout".into(), false, true, None, 2120);
+        assert_eq!(lido(&itens, "estourou").1, 0);
+        // O que esperou a permissão, e o que falhou (a falha também diz quanto levou).
+        itens.push(chamada("pedido", "Bash", 3000));
+        anotar_resultado(&mut itens, "pedido", "erro".into(), true, false, Some(3200), 3215);
+        assert_eq!(lido(&itens, "pedido"), (Some("erro".into()), 15, true));
+        // O resultado de uma chamada que a conversa não tem não mexe em nada.
+        anotar_resultado(&mut itens, "outra", "x".into(), false, false, None, 4000);
+        assert_eq!(lido(&itens, "lento").1, 134);
+        // A duração vai para o disco e volta; a de antes disto (sem o campo) é lida como não medida.
+        let gravado = serde_json::to_value(&itens[1]).unwrap();
+        assert_eq!(gravado["Ferramenta"]["durou"], 134);
+        assert!(serde_json::to_value(&itens[3]).unwrap()["Ferramenta"].get("durou").is_none());
+        let mut antigo = gravado.clone();
+        antigo["Ferramenta"].as_object_mut().unwrap().remove("durou");
+        assert!(matches!(serde_json::from_value::<Item>(antigo).unwrap(), Item::Ferramenta { durou: 0, .. }));
+        assert!(matches!(serde_json::from_value::<Item>(gravado).unwrap(), Item::Ferramenta { durou: 134, .. }));
+    }
+
+    #[test]
+    fn so_a_chamada_sem_resultado_do_turno_de_agora_tem_relogio() {
+        let chamada = |id: &str, resultado: Option<&str>| Item::Ferramenta {
+            id: id.into(),
+            nome: "Bash".into(),
+            resumo: String::new(),
+            resultado: resultado.map(str::to_string),
+            erro: false,
+            em: 1000,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            durou: 0,
+        };
+        let usuario = Item::Usuario { texto: "roda".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 1000, marca: None };
+        assert!(!tem_chamada_rodando(&[]));
+        assert!(!tem_chamada_rodando(&[usuario.clone(), chamada("a", Some("ok"))]));
+        // Duas em paralelo: enquanto uma não volta, há um relógio para andar.
+        assert!(tem_chamada_rodando(&[usuario.clone(), chamada("a", None), chamada("b", Some("ok"))]));
+        // A que ficou sem resultado num turno anterior (interrompida) não conta no de agora.
+        assert!(!tem_chamada_rodando(&[usuario.clone(), chamada("velha", None), usuario.clone(), chamada("a", Some("ok"))]));
+    }
+
+    #[test]
     fn revisao_da_memoria_que_ja_escreveu_nao_se_corta() {
         let ferramenta = |nome: &str| Item::Ferramenta {
             id: "f".into(),
@@ -5167,6 +5323,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            durou: 0,
         };
         assert!(ferramenta_de_escrita("Edit") && ferramenta_de_escrita("Write") && ferramenta_de_escrita("MultiEdit"));
         assert!(ferramenta_de_escrita("mcp__ai-memory__memory_write_page"));

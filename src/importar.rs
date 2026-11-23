@@ -592,6 +592,7 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
                                 arquivo,
                                 sub: None,
                                 mudanca: None,
+                                durou: 0,
                             });
                             resposta = None;
                         }

@@ -150,6 +150,11 @@ pub enum Item {
         /// têm (rodada de uso, item 5.1).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mudanca: Option<Mudanca>,
+        /// Quanto a chamada levou, em segundos, do pedido (ou da permissão dada) ao resultado.
+        /// 0: não medido (a de antes disto, a que não terminou, a que foi para o segundo plano e
+        /// segue rodando lá).
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        durou: u64,
     },
     /// Um bloco de raciocínio do modelo: o texto (pode vir vazio, quando o Claude Code não o
     /// entrega) e quanto durou, em milissegundos (0: não medido).

@@ -11,7 +11,17 @@ Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFet
 que encena um bloco de raciocínio), faz de
 conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[ferramenta ... | 8]`) e
 manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
-test…") sem chamar a API.
+test…") sem chamar a API. Com `[juntas]`, as chamadas comuns saem todas de uma vez e cada resultado
+chega quando a dela termina, como as chamadas em paralelo do de verdade (medido na 2.1.328). O
+`[ferramenta Estourou <comando> | 12]` é o Bash que passou do tempo: o resultado chega depois desses
+segundos dizendo que o comando foi para o segundo plano (`backgroundTaskId` e `timedOutAfterMs`).
+O `[ferramenta Diz <texto>]` é um texto no meio do turno: com ele e uma chamada, o turno pronto
+recolhe na linha "Trabalhou…".
+
+O `result` leva os tempos que o de verdade leva (2.1.328): `duration_ms` e `ttft_ms` deste `result`,
+`duration_api_ms` (o tempo de modelo, que no de verdade é o total do processo), `num_turns` (uma ida
+ao modelo por ferramenta, mais a resposta) e o `usage.cache_creation` com o cache de 1 h (ou o de
+5 min, com `[cache 5m]` na mensagem). `[ttft 1.8]` espera esses segundos antes da primeira palavra.
 
 Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
 vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
@@ -124,6 +134,9 @@ if "--json-schema" in args:
 
 
 def emitir(valor):
+    global primeira_palavra
+    if primeira_palavra is None and valor.get("type") in ("assistant", "stream_event") and "comeco_do_turno" in globals():
+        primeira_palavra = time.time()
     print(json.dumps(valor, ensure_ascii=False), flush=True)
 
 
@@ -141,6 +154,12 @@ papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else
 # CLAUDE_FALSO_SOBE=<segundos> encena essa espera, para ver que a janela não trava no envio.
 time.sleep(float(os.environ.get("CLAUDE_FALSO_SOBE", "0") or 0))
 linha = sys.stdin.readline()
+# O relógio do turno, como o do de verdade: começa quando a mensagem chega (o tempo de subir fica
+# de fora), e o `result` diz quanto levou, quanto foi de modelo e quando saiu a primeira palavra.
+comeco_do_turno = time.time()
+tempo_das_ferramentas = 0.0
+primeira_palavra = None
+idas_ao_modelo = 1
 
 
 def responder_controle(pedido):
@@ -239,6 +258,10 @@ emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_i
         "slash_commands": ["clear", "compact"], "claude_code_version": "2.1.300", "tools": ["Read", "Edit", "Bash"]})
 if "[demora]" in texto:
     time.sleep(10)
+# `[ttft 1.8]`: o modelo leva esses segundos até a primeira palavra.
+ttft_pedido = re.search(r"\[ttft (\d+(?:\.\d+)?)\]", texto)
+if ttft_pedido:
+    time.sleep(float(ttft_pedido.group(1)))
 # `[limite]`: a primeira vez, o turno cai no limite do plano, que volta em 60 s (o formato
 # "...|<segundos>" do Claude Code); a seguinte (a retomada) passa.
 marca_do_limite = os.path.join(os.environ.get("XDG_STATE_HOME", "/tmp"), "claude-falso-limite")
@@ -310,7 +333,30 @@ def entrada_da_ferramenta(nome, detalhe):
 def fingir_ferramentas(texto):
     """Faz de conta que usa cada ferramenta pedida, uma de cada vez, com a espera entre o
     tool_use e o tool_result: é nessa janela que a conversa mostra o que ele está fazendo."""
-    for i, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(texto), start=1):
+    global tempo_das_ferramentas, idas_ao_modelo
+    pedidas = FERRAMENTA.findall(texto)
+    # `[juntas]`: as chamadas comuns saem numa resposta só e cada resultado chega quando a dela
+    # termina (a mais rápida primeiro), como as chamadas em paralelo do de verdade.
+    especiais = ("Pensa", "Fundo", "Agent", "Task", "Estourou")
+    if "[juntas]" in texto and pedidas and not any(nome in especiais for nome, _, _ in pedidas):
+        # O que ele diz no meio do turno vem antes das chamadas.
+        for _, detalhe, _ in (p for p in pedidas if p[0] == "Diz"):
+            emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": detalhe.strip()}]}})
+        pedidas = [p for p in pedidas if p[0] != "Diz"]
+        antes = time.time()
+        idas_ao_modelo += 1
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"toolu_falso_f{i}", "name": nome, "input": entrada_da_ferramenta(nome, detalhe.strip())}
+            for i, (nome, detalhe, _) in enumerate(pedidas, start=1)]}})
+        passou = 0
+        for segundos, i, nome, detalhe in sorted((int(s) if s else 4, i, n, d.strip()) for i, (n, d, s) in enumerate(pedidas, start=1)):
+            time.sleep(max(0, segundos - passou))
+            passou = max(passou, segundos)
+            emitir({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"toolu_falso_f{i}", "content": f"(claude falso) {nome} em {detalhe}"}]}})
+        tempo_das_ferramentas += time.time() - antes
+        return
+    for i, (nome, detalhe, segundos) in enumerate(pedidas, start=1):
         detalhe = detalhe.strip()
         id_ = f"toolu_falso_f{i}"
         # `[ferramenta Pensa texto | 2]` não é ferramenta: é um bloco de raciocínio, que começa
@@ -319,6 +365,11 @@ def fingir_ferramentas(texto):
             emitir({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "thinking"}}})
             time.sleep(int(segundos) if segundos else 2)
             emitir({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": detalhe}]}})
+            continue
+        # `[ferramenta Diz Vou olhar o carrinho.]`: um texto no meio do turno, entre as chamadas. É
+        # ele que faz o turno pronto recolher na linha "Trabalhou…".
+        if nome == "Diz":
+            emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": detalhe}]}})
             continue
         # `[ferramenta Fundo npm run dev | 20]`: um Bash com run_in_background, como o de verdade
         # (2.1.325): volta na hora, a tarefa aparece em background_tasks_changed e some quando acaba
@@ -333,6 +384,27 @@ def fingir_ferramentas(texto):
             parou = tarefa_parada.wait(int(segundos) if segundos else 20)
             emitir({"type": "system", "subtype": "task_notification", "task_id": f"bfalso{i}", "tool_use_id": id_,
                     "status": "killed" if parou else "completed", "summary": f"Background command \"{detalhe}\""})
+            emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+            continue
+        idas_ao_modelo += 1
+        # `[ferramenta Estourou npm run dev | 12]`: o Bash que passou do tempo dele. Como no de
+        # verdade (2.1.328), o resultado chega nessa hora dizendo que o comando foi para o segundo
+        # plano, com o `backgroundTaskId` e o `timedOutAfterMs`, e o comando segue rodando.
+        if nome == "Estourou":
+            espera = int(segundos) if segundos else 12
+            emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_, "name": "Bash",
+                    "input": {"command": detalhe, "timeout": espera * 1000}}]}})
+            time.sleep(espera)
+            tempo_das_ferramentas += espera
+            emitir({"type": "system", "subtype": "background_tasks_changed",
+                    "tasks": [{"task_id": f"bfalso{i}", "task_type": "local_bash", "description": detalhe}]})
+            emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
+                    "content": f"Command did not complete within its {espera}s timeout and was moved to the background (ID: bfalso{i})."}]},
+                    "tool_use_result": {"stdout": "", "stderr": "", "interrupted": False, "backgroundTaskId": f"bfalso{i}",
+                                        "timedOutAfterMs": espera * 1000}})
+            antes = time.time()
+            tarefa_parada.wait(4)
+            tempo_das_ferramentas += time.time() - antes
             emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
             continue
         emitir({"type": "assistant", "message": {"content": [
@@ -374,6 +446,7 @@ def fingir_ferramentas(texto):
                 {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {detalhe}: dois lugares mexem no cupom."}]}})
             continue
         time.sleep(int(segundos) if segundos else 4)
+        tempo_das_ferramentas += int(segundos) if segundos else 4
         emitir({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})
 
@@ -502,9 +575,19 @@ try:
         guardado.write(str(custo_da_sessao))
 except OSError:
     pass
+# Os tempos, com os nomes do `result` de verdade (2.1.328). O tempo de modelo é o do turno menos o
+# das ferramentas, com 0,3 s por ida ao modelo de piso (aqui ninguém pensa de verdade).
+agora_ = time.time()
+duracao_ms = int((agora_ - comeco_do_turno) * 1000)
+modelo_ms = min(duracao_ms, max(int((agora_ - comeco_do_turno - tempo_das_ferramentas) * 1000), 300 * idas_ao_modelo))
+ttft_ms = int(((primeira_palavra or agora_) - comeco_do_turno) * 1000)
+cache_5m = "[cache 5m]" in texto
 emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": custo_da_sessao,
+        "duration_ms": duracao_ms, "duration_api_ms": modelo_ms, "ttft_ms": ttft_ms, "num_turns": idas_ao_modelo,
         "usage": {"input_tokens": 1200, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 800,
-                  "output_tokens": 300},
+                  "output_tokens": 300,
+                  "cache_creation": {"ephemeral_1h_input_tokens": 0 if cache_5m else 800,
+                                     "ephemeral_5m_input_tokens": 800 if cache_5m else 0}},
         "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
 # Com --prompt-suggestions, como o de verdade (2.1.325): a próxima mensagem provável depois do
 # `result`, só com a entrada ainda aberta (fechada antes, ele não sugere).

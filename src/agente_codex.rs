@@ -178,7 +178,7 @@ impl Leitor {
                 eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.to_string(), entrada });
             }
             if terminou {
-                eventos.push(Evento::ResultadoFerramenta { id: id.clone(), conteudo: resultado, erro });
+                eventos.push(Evento::ResultadoFerramenta { id: id.clone(), conteudo: resultado, erro, no_fundo: false });
             }
             eventos
         };
@@ -205,7 +205,7 @@ impl Leitor {
                     if self.abertos.insert(id.clone()) {
                         eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.into(), entrada });
                     }
-                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou });
+                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou, no_fundo: false });
                 }
                 eventos
             }
@@ -478,7 +478,7 @@ mod testes {
                 Evento::Sessao(id) => format!("S:{id}"),
                 Evento::Texto(t) => format!("T:{}", t.trim()),
                 Evento::Ferramenta { id, nome, entrada } => format!("F:{id}:{nome}:{}", entrada["command"].as_str().or(entrada["file_path"].as_str()).unwrap_or_default()),
-                Evento::ResultadoFerramenta { id, conteudo, erro } => format!("R:{id}:{}:{erro}", conteudo.trim()),
+                Evento::ResultadoFerramenta { id, conteudo, erro, .. } => format!("R:{id}:{}:{erro}", conteudo.trim()),
                 Evento::Gasto(tokens) => format!("G:{}:{}", tokens.entrada, tokens.saida),
                 Evento::Fim { erro, texto, .. } => format!("FIM:{erro}:{texto}"),
                 _ => "?".into(),

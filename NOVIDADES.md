@@ -5,7 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.6
 
-A conversa mais leve: rolar, digitar e acompanhar a resposta chegando pesam menos.
+A conversa mais leve (rolar, digitar e acompanhar a resposta chegando pesam menos) e quanto tempo
+e quanto cache cada turno gastou.
 
 - **Rolar a conversa pesa menos.** O Vitral desenha só as mensagens que estão à vista (e um pouco
   em volta); as outras entram como espaço. Antes, cada passo da roda refazia as 60 últimas
@@ -13,6 +14,15 @@ A conversa mais leve: rolar, digitar e acompanhar a resposta chegando pesam meno
 - **A resposta chegando não mexe nos outros painéis.** O texto que vai chegando redesenha só a
   conversa dele: a lista e as conversas ao lado ficam paradas. Antes, cada pedaço de texto refazia
   a janela inteira.
+- **Quanto tempo o turno levou, e onde.** A dica da linha "Trabalhou…" diz também o modelo,
+  quantos passos o turno teve, o tempo total, o tempo de modelo, o tempo até a primeira palavra,
+  quanto levou para abrir o Claude Code e quanto da entrada veio do cache.
+- **A chamada demorada diz quanto levou.** O comando que levou 10 s ou mais fica com a duração na
+  linha dele, "Rodou cargo test · 2 min 14 s". O que foi para o segundo plano não ganha número: ele
+  segue rodando.
+- **O cache esfriando.** O popover do contexto ganhou a linha **Cache**, que diz por quanto tempo
+  o cache do último turno ainda vale: "quente por mais 3 min" ou "frio". Com ele frio, a próxima
+  mensagem relê a conversa inteira pelo preço cheio.
 - **Digitar e passar o ponteiro não refazem as conversas.** Cada tecla na caixa de mensagem e
   cada passada do ponteiro por um botão refaziam as conversas de todos os painéis; com três
   conversas longas abertas, a digitação atrasava.

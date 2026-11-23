@@ -809,6 +809,8 @@ impl Janela {
                     let rodando = this.motor.as_ref().is_some_and(|m| m.read(cx).trabalhando() > 0);
                     if rodando && compasso_recente(cx).is_none() {
                         cx.notify();
+                    } else if rodando {
+                        this.andar_os_relogios_das_chamadas(cx);
                     }
                 }) else {
                     break;
@@ -1237,6 +1239,29 @@ impl Janela {
             self.ultimo_chat = self.selecionado.clone();
             let valor = serde_json::Value::String(self.ultimo_chat.clone().unwrap_or_default());
             gravar_interface("ultimo_chat", valor, cx);
+        }
+    }
+
+    /// O relógio da chamada que roda ("Rodando cargo test 00:42", o do subagente) mora nas
+    /// mensagens, que são uma vista em cache: o compasso dos spinners redesenha a casca e os anéis,
+    /// não ela. Uma vez por segundo, só as mensagens dos painéis cujo chat tem uma chamada rodando
+    /// são avisadas; a Janela, a lista e os outros painéis ficam no cache.
+    fn andar_os_relogios_das_chamadas(&self, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.as_ref().map(|m| m.read(cx)) else {
+            return;
+        };
+        let com_relogio: Vec<_> = self
+            .paineis
+            .iter()
+            .filter(|painel| {
+                painel.chat.as_ref().is_some_and(|id| {
+                    motor.execucao(id).rodando() && motor.chat(id).is_some_and(|c| crate::motor::tem_chamada_rodando(&c.itens))
+                })
+            })
+            .map(|painel| painel.vista.clone())
+            .collect();
+        for vista in com_relogio {
+            vista.update(cx, |_, cx| cx.notify());
         }
     }
 

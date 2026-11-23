@@ -721,6 +721,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            durou: 0,
         }
     }
 
