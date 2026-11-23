@@ -1741,6 +1741,25 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
             // letra de cada lado do ícone.
             div().bg(Cores::preto()).px(esp::E6).mr(r(-6.)).child(BotaoCopiar::new("copiar", bloco.code()).dica(dica))
         })
+        // O Copiar de cada tabela (rodada do Paseo, item 4), com o desenho do Copiar do código. O
+        // kit põe o que este gancho devolve numa fileira logo abaixo da tabela, e não por cima
+        // dela: o botão fica no canto direito dessa fileira. O clique copia a tabela em Markdown;
+        // com Shift, separada por tabulação, que é o que uma planilha cola em colunas.
+        .table_actions(|tabela, _, _| {
+            h_flex().w_full().justify_end().child(
+                BotaoCopiar::new("copiar-tabela", tabela.markdown.clone())
+                    .com_shift(tabela_para_planilha(&tabela.headers, &tabela.rows))
+                    .dica("Copiar a tabela (com Shift, para colar em planilha)"),
+            )
+        })
+}
+
+/// A tabela separada por tabulação, uma linha por fileira, com o cabeçalho na primeira: é o que
+/// uma planilha cola em colunas. A tabulação e a quebra de linha dentro de uma célula viram
+/// espaço, para a célula não se partir em duas.
+pub(super) fn tabela_para_planilha(cabecalho: &[String], linhas: &[Vec<String>]) -> String {
+    let fileira = |celulas: &[String]| celulas.iter().map(|c| c.replace(['\t', '\n', '\r'], " ")).collect::<Vec<_>>().join("\t");
+    std::iter::once(cabecalho).chain(linhas.iter().map(Vec::as_slice)).map(fileira).collect::<Vec<_>>().join("\n")
 }
 
 /// A resposta do índice `i` é o próprio erro com que o turno terminou: o Claude Code manda o erro
@@ -3630,8 +3649,9 @@ impl Janela {
             || matches!(nome.as_str(), "Bash" | "BashOutput" | "KillShell" | "Grep" | "Glob" | "WebFetch")
             || nome.starts_with("mcp__");
         // A coluna do verbo (56) só alinha os detalhes dentro de um grupo; na solta, ela deixava
-        // uns 35 px entre "Rodou" e o chip.
-        let em_grupo = ramo.is_some();
+        // uns 35 px entre "Rodou" e o chip. A linha dos passos é uma frase ("Criou 5 passos",
+        // "Começou: rodar os testes"): sem a coluna, que abria um vão no meio dela.
+        let em_grupo = ramo.is_some() && !crate::motor::passos::e_de_passos(nome);
         let linha = h_flex()
             .id(SharedString::from(format!("ferramenta-{chave}")))
             .map(linha_de_log)
@@ -6614,6 +6634,23 @@ mod testes {
         // O que mudou de novo neste turno sai de "Antes".
         assert_eq!(nomes(&antes), [("src/b.rs".to_string(), 2, 0, false)]);
         assert_eq!(total_das_mudancas(&neste), (2, 15, 1));
+    }
+
+    /// Rodada do Paseo, item 4: a tabela para colar em planilha.
+    #[test]
+    fn a_tabela_separada_por_tabulacao_para_a_planilha() {
+        use super::tabela_para_planilha;
+        let t = |celulas: &[&str]| celulas.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        let cabecalho = t(&["Arquivo", "Linhas", "O que mudou"]);
+        let linhas = vec![t(&["produtos/views.py", "12", "O total desconta o cupom"]), t(&["produtos/tests.py", "48", "Um teste para cada caso"])];
+        assert_eq!(
+            tabela_para_planilha(&cabecalho, &linhas),
+            "Arquivo\tLinhas\tO que mudou\nprodutos/views.py\t12\tO total desconta o cupom\nprodutos/tests.py\t48\tUm teste para cada caso"
+        );
+        // A tabulação e a quebra dentro da célula não partem a célula; a fileira incompleta (a
+        // tabela ainda chegando) sai com as células que tem.
+        assert_eq!(tabela_para_planilha(&t(&["a\tb", "c"]), &[t(&["um\ndois"])]), "a b\tc\num dois");
+        assert_eq!(tabela_para_planilha(&t(&["só"]), &[]), "só");
     }
 
     /// Rodada do Paseo, item 2: a linha da trilha diz o que a chamada mudou nos passos.

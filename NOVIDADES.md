@@ -49,6 +49,8 @@ e quanto cache cada turno gastou.
   o typecheck, o lint e o build que ele rodou: "tsc passou · vitest falhou 2×, passou · cargo test
   passou". Vale a última execução de cada um. Quando não dá para saber o resultado (o comando
   atrás de um `| tail`, sem nada na saída que diga), a checagem não aparece.
+- **Copiar tabela.** Cada tabela de uma resposta ganhou um Copiar no canto de baixo: o clique
+  copia a tabela em Markdown, e com Shift copia pronta para colar numa planilha.
 - **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
   mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
 

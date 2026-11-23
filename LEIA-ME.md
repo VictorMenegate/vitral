@@ -1022,7 +1022,13 @@ no cabeçalho; dono, 18/11/2026).
   aberto. Se o Corrigir tirou o item, a conversa abre no fim.
 - Mensagens, pedidos e caixa ficam numa coluna de leitura centrada (até 860 px, com 16 de margem).
   Em janela baixa, o plano e os pedidos encolhem e rolam, e a caixa cresce menos. Blocos de código
-  têm cor de sintaxe.
+  têm cor de sintaxe. **Copiar tabela:** cada tabela de uma mensagem tem o Copiar dos blocos de
+  código (`BotaoCopiar`, tênue) no canto direito, logo abaixo dela: o clique copia a tabela em
+  Markdown, e com Shift copia separada por tabulação, que uma planilha cola em colunas
+  (`mensagens::tabela_para_planilha`; a tabulação e a quebra dentro de uma célula viram espaço).
+  É o gancho `table_actions` do kit, que desenha o que recebe numa fileira abaixo da tabela, e
+  não por cima dela como no bloco de código: por isso o botão fica embaixo, e o texto depois de
+  uma tabela desce uns 28 px.
 
 
 ## O que fica à vista
