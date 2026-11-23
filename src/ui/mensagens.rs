@@ -1080,7 +1080,7 @@ impl Janela {
         let outro = chat.agente.outro();
         let pode_continuar = lido.agente == chat.agente
             && contexto.motor.pode_tentar_de_novo(&chat.id)
-            && (outro != Agente::Codex || crate::agente_codex::instalado());
+            && outro.instalado();
         let continuar = |acoes: &mut Vec<AnyElement>| {
             if !pode_continuar {
                 return;
@@ -1118,6 +1118,11 @@ impl Janela {
             fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_codex(), window, cx)
                 .into_any_element()
         };
+        // O instalador do Gemini também faz o login (`agy acp --login`), e sem instalar só entra.
+        let gemini = |rotulo: &str, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_gemini(), window, cx)
+                .into_any_element()
+        };
         match (lido.tipo, lido.agente) {
             (TipoDeErro::Limite, Agente::Codex) => {
                 if let Some(url) = lido.url_de_uso.clone() {
@@ -1132,6 +1137,9 @@ impl Janela {
                 acoes.push(contas("Contas do Claude", Lucide::CircleUserRound, "contas"));
                 continuar(&mut acoes);
             }
+            (TipoDeErro::Limite, Agente::Gemini) => continuar(&mut acoes),
+            (TipoDeErro::Login, Agente::Gemini) => acoes.push(gemini("Entrar no Gemini", Lucide::KeyRound, "entrar")),
+            (TipoDeErro::SemAgente, Agente::Gemini) => acoes.push(gemini("Instalar o Gemini", Lucide::Download, "instalar")),
             // As Contas já no login da conta que caiu, e não na lista (rodada de uso, item 8.3).
             (TipoDeErro::Login, Agente::Claude) => {
                 let conta = conta_que_caiu(contexto.motor, chat);
@@ -1149,7 +1157,7 @@ impl Janela {
                 );
             }
             (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar("Entrar no Codex", Lucide::KeyRound, "entrar")),
-            (TipoDeErro::SemCodex, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
+            (TipoDeErro::SemAgente, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
             (TipoDeErro::Contexto, Agente::Claude) => {
                 let painel = contexto.painel;
                 acoes.push(
@@ -1840,10 +1848,7 @@ pub(super) fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, Stri
 /// Num chat com o Claude e o Codex juntos, quem trabalha daqui em diante: a marca na coluna de 16
 /// da primeira borda e o nome na segunda, como as linhas da trilha.
 fn marca_da_vez(agente: Agente) -> AnyElement {
-    let marca = match agente {
-        Agente::Claude => Marca::Claude,
-        Agente::Codex => Marca::Codex,
-    };
+    let marca = Marca::do_agente(agente);
     h_flex()
         .h(r(24.))
         .gap(r(8.))

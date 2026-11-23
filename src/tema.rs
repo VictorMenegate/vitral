@@ -1289,6 +1289,10 @@ impl Cores {
     pub fn codex() -> Hsla {
         rgba(0x5b6cf9ff).into()
     }
+    /// O roxo do meio do degradê do Gemini.
+    pub fn gemini() -> Hsla {
+        rgba(0x9177c7ff).into()
+    }
     pub fn linear() -> Hsla {
         rgba(0x5e6ad2ff).into()
     }

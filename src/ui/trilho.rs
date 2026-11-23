@@ -476,6 +476,14 @@ impl Janela {
                             .on_click(|_, _, _| uso_plano::instalar_codex()),
                     )
                 })
+                // O Gemini, pelo instalador oficial do Antigravity CLI, que também faz o login.
+                .when(!crate::agente_gemini::instalado() && cfg!(not(windows)), |menu| {
+                    menu.item(
+                        PopupMenuItem::new("Instalar o Gemini…")
+                            .icon(Lucide::Download)
+                            .on_click(|_, _, _| uso_plano::instalar_gemini()),
+                    )
+                })
                 .when_some(pronta.clone(), |menu, versao| {
                     let janela = janela.clone();
                     menu.item(PopupMenuItem::new(format!("Reiniciar para a {versao}")).icon(Lucide::RotateCw).on_click(

@@ -215,6 +215,8 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
     let rodando = matches!(execucao, Execucao::Rodando { .. });
     let modelo = match (chat.agente, chat.modelo_atual.as_deref().filter(|m| !m.is_empty())) {
         (QuemResponde::Codex, _) => "Codex".to_string(),
+        (QuemResponde::Gemini, Some(m)) => crate::agente_gemini::nome_do_modelo(m),
+        (QuemResponde::Gemini, None) => "Gemini".to_string(),
         (_, Some(m)) => nome_curto_modelo(m),
         _ => "Claude".to_string(),
     };

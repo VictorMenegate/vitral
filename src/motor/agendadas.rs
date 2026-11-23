@@ -124,6 +124,8 @@ impl Motor {
         let renova = match c.agente {
             Agente::Codex => self.codex.as_ref()?.uso.renova_5h,
             Agente::Claude => self.uso_da_conta(&self.conta_para(c).id).renova_5h,
+            // O Antigravity não diz quando a cota renova.
+            Agente::Gemini => None,
         }?;
         let renova = u64::try_from(renova).ok().filter(|r| *r > agora())?;
         Some(renova + FOLGA_DA_RENOVACAO)

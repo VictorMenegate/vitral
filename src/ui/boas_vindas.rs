@@ -41,7 +41,8 @@ pub(super) struct BoasVindas {
     pasta: Option<PathBuf>,
     modo: usize,
     modelo: usize,
-    /// Quem responde nos chats novos: 0 o Claude, 1 o Codex (só aparece com o Codex instalado).
+    /// Quem responde nos chats novos: o índice em `Agente::instalados()` (0 é o Claude; a escolha
+    /// só aparece com outro agente instalado).
     agente: usize,
     importar: bool,
 }
@@ -132,7 +133,7 @@ impl Janela {
                     |c| {
                         c.permissao = modo.to_string();
                         c.modelo_chats = modelo.to_string();
-                        c.agente_padrao = if tela.agente == 1 { crate::modelo::Agente::Codex } else { crate::modelo::Agente::Claude };
+                        c.agente_padrao = crate::modelo::Agente::instalados().get(tela.agente).copied().unwrap_or_default();
                         c.pasta_de_trabalho = pasta;
                         c.importar_da_pasta = tela.importar;
                     },
@@ -519,7 +520,10 @@ impl Janela {
         };
         let janela = cx.entity().downgrade();
         let (j1, j2, j3, j4) = (janela.clone(), janela.clone(), janela.clone(), janela);
-        let (agente, tem_codex) = (tela.agente.min(1), crate::agente_codex::instalado());
+        let agentes = crate::modelo::Agente::instalados();
+        let agente = tela.agente.min(agentes.len().saturating_sub(1));
+        let escolhido = agentes.get(agente).copied().unwrap_or_default();
+        let nomes_dos_agentes: Vec<&'static str> = agentes.iter().map(|a| a.nome()).collect();
         let modo = tela.modo.min(MODOS.len() - 1);
         let modelo = tela.modelo.min(MODELOS.len() - 1);
         let nomes_dos_modos: Vec<&'static str> = MODOS.iter().map(|(_, nome, _)| *nome).collect();
@@ -543,15 +547,18 @@ impl Janela {
                 .largura_total(true)
                 .into_any_element(),
             ))
-            .when(tem_codex, |s| {
+            .when(agentes.len() > 1, |s| {
                 s.child(grupo(
                     "Quem responde",
-                    if agente == 1 {
-                        "Os chats novos começam no Codex, com o login e o plano dele. Cada chat pode trocar no seletor de modelo.".to_string()
+                    if escolhido == crate::modelo::Agente::Claude {
+                        "Os chats novos começam no Claude. Cada chat pode passar para outro agente no seletor de modelo.".to_string()
                     } else {
-                        "Os chats novos começam no Claude. Cada chat pode passar para o Codex no seletor de modelo.".to_string()
+                        format!(
+                            "Os chats novos começam no {}, com o login e o plano dele. Cada chat pode trocar no seletor de modelo.",
+                            escolhido.nome()
+                        )
                     },
-                    ControleSegmentado::new("bv-agente", vec!["Claude", "Codex"], agente, move |novo, _, cx| {
+                    ControleSegmentado::new("bv-agente", nomes_dos_agentes, agente, move |novo, _, cx| {
                         let _ = j4.update(cx, |this, cx| {
                             if let Some(tela) = &mut this.boas_vindas {
                                 tela.agente = novo;

@@ -26,7 +26,7 @@ use super::metal::{Encaixe, abertura};
 use super::textos::etiqueta_de_secao;
 use crate::tema::{
     Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, aresta_de_vidro, dentro_da_borda, esp,
-    gradiente_reflexo, linha_de_luz, r, raio, tam,
+    gradiente_reflexo, r, raio, tam,
 };
 
 /// Superfície desenhada à mão que flutua sobre texto: a mesma do `popover_style` do kit
@@ -100,7 +100,6 @@ pub fn camada_de_reflexo(raio: Pixels) -> Div {
         .max_h(relative(1.))
         .rounded_t((raio - px(1.)).max(px(0.)))
         .bg(gradiente_reflexo())
-        .shadow(vec![linha_de_luz(1.)])
 }
 
 /// O material de vidro de uma peça, numa camada por cima de tudo: o fio claro de 1 px na volta

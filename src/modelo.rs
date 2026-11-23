@@ -211,37 +211,58 @@ pub struct Mudanca {
     pub novo: bool,
 }
 
-/// Quem responde num chat: o Claude Code ou o Codex (CLI da OpenAI).
+/// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI) ou o Gemini (o Antigravity CLI
+/// do Google, `agy`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Agente {
     #[default]
     Claude,
     Codex,
+    Gemini,
 }
 
 impl Agente {
-    /// O nome de mostrar do programa que roda os turnos.
-    /// O outro agente: o Codex para o Claude, e o contrário.
+    /// Os três, na ordem das abas e dos menus.
+    pub const TODOS: [Agente; 3] = [Agente::Claude, Agente::Codex, Agente::Gemini];
+
+    /// O parceiro padrão de uma dupla: o Codex para o Claude, e o Claude para os outros dois.
     pub fn outro(self) -> Agente {
         match self {
             Agente::Claude => Agente::Codex,
-            Agente::Codex => Agente::Claude,
+            Agente::Codex | Agente::Gemini => Agente::Claude,
         }
     }
 
-    /// O nome curto, de conversa: "Claude", "Codex".
+    /// O nome curto, de conversa: "Claude", "Codex", "Gemini".
     pub fn nome(self) -> &'static str {
         match self {
             Agente::Claude => "Claude",
             Agente::Codex => "Codex",
+            Agente::Gemini => "Gemini",
         }
     }
 
+    /// O nome de mostrar do programa que roda os turnos.
     pub fn programa(self) -> &'static str {
         match self {
             Agente::Claude => "Claude Code",
             Agente::Codex => "Codex",
+            Agente::Gemini => "Antigravity CLI",
+        }
+    }
+
+    /// Os agentes que dá para escolher neste computador: o Claude sempre, e os outros instalados.
+    pub fn instalados() -> Vec<Agente> {
+        Agente::TODOS.into_iter().filter(|a| a.instalado()).collect()
+    }
+
+    /// O programa deste agente está instalado (o Claude Code o Vitral não confere aqui).
+    pub fn instalado(self) -> bool {
+        match self {
+            Agente::Claude => true,
+            Agente::Codex => crate::agente_codex::instalado(),
+            Agente::Gemini => crate::agente_gemini::instalado(),
         }
     }
 }

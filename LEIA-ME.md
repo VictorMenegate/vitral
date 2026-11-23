@@ -58,6 +58,24 @@ componentes do GPUI Kit.
   pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
+- **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
+  (`agy`), o sucessor do Gemini CLI, que parou de atender as contas pessoais em 18/06/2026. Ele
+  aparece na aba **Gemini** do seletor quando o `agy` está instalado (`agente_gemini::instalado`:
+  o PATH ou `~/.local/bin`). Roda um `agy acp` por turno, com o ACP (Agent Client Protocol), em
+  `src/agente_gemini.rs`: `initialize`, `session/new` (ou `session/resume` com o id guardado em
+  `Chat.sessao`; uma conversa que o agy não tem mais abre uma nova), as opções `model`,
+  `thought_level` e `mode` por `session/set_config_option` antes do primeiro `session/prompt`, e o
+  prompt de sistema em `_meta.antigravity.systemPrompt.append`. Uma mensagem com o turno rodando é
+  outro `session/prompt`, que o agy absorve no mesmo turno (o anterior responde `end_turn` na hora;
+  o fim espera a resposta do último). O pedido de permissão (`session/request_permission`) vira
+  `Evento::Permissao` e cai no mesmo cartão dos pedidos do Claude Code; a resposta volta ao agy por
+  uma thread (sem resposta, `cancelled`). Parar é o `session/cancel`. O "Sem perguntar" é o
+  `--dangerously-skip-permissions` do processo; os outros modos viram os do agy (`modo_de`). Os
+  modelos vêm do `agy models` (as variantes de nível juntam num modelo só; o nível é o esforço da
+  caixa, até Alto) e das opções da sessão. Sem anel de uso (o Antigravity não expõe a cota), sem
+  conta, sem comandos de barra nem `/compact`, e sem as ferramentas do Vitral: o agy só aceita
+  servidor MCP local. Instalar e entrar (`uso_plano::instalar_gemini`) abre o terminal com o
+  instalador oficial e o `agy acp --login`. Conferido no agy 1.5.15 com uma conta pessoal.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
@@ -1654,7 +1672,11 @@ bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encen
 três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
-os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
+os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`) e o `ferramentas/claude-falso/agy`, o
+Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
+rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
+termina com erro, um `session/prompt` com o turno rodando entra nele, `agy models` dá a lista, e os
+pedidos ficam em `$XDG_STATE_HOME/agy-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
 (fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; no `--fork-session`, copia a sessão original para a nova ao lado dela (só nesse `CLAUDE_CONFIG_DIR`); e
 grava os argumentos, o ambiente e as chamadas em `$XDG_STATE_HOME/claude-falso.log`. No roteiro,
 `roda <comando>` (saída em `roda.log`, sem comentário na linha; os XDG são os da bancada) e `reabre
@@ -1895,6 +1917,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
+| `src/agente_gemini.rs` | O Gemini como agente de um chat, pelo `agy acp` (ACP): o canal da entrada, a tradução da saída para os eventos do Claude Code, o pedido de permissão, os modos e o catálogo de modelos |
 | `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do processo e o protocolo JSON-RPC em `src/agente_codex/servidor.rs`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |
 | `src/git.rs` | O comando do git (`novo_git`, o único jeito de abrir o git), o caminho relativo em texto e de onde saiu uma cópia isolada das versões de antes (para a carga pôr o chat de volta na origem) |
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |

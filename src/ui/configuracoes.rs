@@ -391,7 +391,7 @@ impl Render for Configuracoes {
             ))
             .linha(com(
                 LinhaDeOpcao::new("cfg-agente", "Quem responde nos chats novos")
-                    .info("O Codex é o agente de código da OpenAI. Ele usa o login e o plano do próprio Codex, e precisa estar instalado neste computador.")
+                    .info("O Codex é o agente de código da OpenAI, e o Gemini, o do Google (pelo Antigravity CLI). Cada um usa o login e o plano dele, e precisa estar instalado neste computador.")
                     .descricao("Cada chat pode trocar o agente no seletor de modelo."),
                 menu_escolha(
                     "cfg-agente",
@@ -401,10 +401,23 @@ impl Render for Configuracoes {
                         Opcao::new("codex", "Codex")
                             .descricao(if crate::agente_codex::instalado() { "Codex, da OpenAI" } else { "Não achei o Codex neste computador" })
                             .simbolo(Simbolo::Marca(Marca::Codex)),
+                        Opcao::new("gemini", "Gemini")
+                            .descricao(if crate::agente_gemini::instalado() { "Gemini, do Google, pelo Antigravity CLI" } else { "Não achei o Antigravity CLI (agy) neste computador" })
+                            .simbolo(Simbolo::Marca(Marca::Gemini)),
                     ],
-                    if config.agente_padrao == crate::modelo::Agente::Codex { "codex" } else { "claude" },
+                    match config.agente_padrao {
+                        crate::modelo::Agente::Claude => "claude",
+                        crate::modelo::Agente::Codex => "codex",
+                        crate::modelo::Agente::Gemini => "gemini",
+                    },
                     "claude",
-                    gravar(m(), |c, v| c.agente_padrao = if v == "codex" { crate::modelo::Agente::Codex } else { crate::modelo::Agente::Claude }),
+                    gravar(m(), |c, v| {
+                        c.agente_padrao = match v.as_str() {
+                            "codex" => crate::modelo::Agente::Codex,
+                            "gemini" => crate::modelo::Agente::Gemini,
+                            _ => crate::modelo::Agente::Claude,
+                        }
+                    }),
                     window,
                     cx,
                 ),

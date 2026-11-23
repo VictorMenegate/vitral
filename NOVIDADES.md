@@ -3,6 +3,18 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.6
+
+- **O Gemini no Vitral.** Ao lado do Claude e do Codex, um chat pode responder pelo Gemini, do
+  Google, pelo Antigravity CLI (o `agy`, o sucessor do Gemini CLI). Ele aparece na aba **Gemini**
+  do seletor de modelo quando o `agy` está instalado, com os modelos da sua conta. Lê imagens,
+  recebe mensagem no meio do turno, retoma a conversa, mostra as edições e pede permissão no mesmo
+  cartão do Claude. Sem ele, o menu do logo tem **Instalar o Gemini…**, que instala e faz o login
+  com a conta Google. A dupla aceita `@gemini`.
+- **Sem o brilho no topo.** A linha de luz no alto das abas, da caixa de mensagem, dos cartões e
+  dos menus saiu.
+- **O título das abas no meio.** Sem o ícone, o título ficava mais perto da borda da esquerda.
+
 ## 0.9.5
 
 O fundo das suas mensagens parado e as imagens delas com o canto redondo.

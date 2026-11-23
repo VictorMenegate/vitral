@@ -90,7 +90,8 @@ pub(crate) fn popover_shadow(ring: Hsla, strength: f32) -> Vec<BoxShadow> {
         BoxShadow::new(px(0.), px(0.), ring.alpha(ring.a * strength))
             .blur_radius(px(0.))
             .spread_radius(px(1.)),
-        BoxShadow::new(px(0.), px(1.), branco(0.16)).inset(),
+        // Vitral: sem a luz de 1 px no topo de dentro (dono, 23/11/2026: "tira esse brilho de cima
+        // das coisas").
         BoxShadow::new(px(0.), px(-1.), preto(0.40)).inset(),
         BoxShadow::new(px(0.), px(28.), branco(0.03))
             .blur_radius(px(12.))

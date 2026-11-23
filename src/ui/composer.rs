@@ -595,7 +595,8 @@ impl Janela {
         let citacao = self.citacoes.get(&chat.id).map(|trecho| self.cartao_da_citacao(&chat.id, trecho, window, cx).into_any_element());
         let tem_anexos = !anexos.is_empty();
         let pilulas = self.anexos_pendentes(&chat.id, anexos, window, cx);
-        // O miolo: o campo opaco, um degrau mais claro que a moldura, com a linha de luz no topo.
+        // O miolo: o campo opaco, um degrau mais claro que a moldura. Sem a linha de luz no topo
+        // (dono, 23/11/2026: "tira esse brilho de cima das coisas").
         let miolo = div()
             .relative()
             .flex()
@@ -605,7 +606,6 @@ impl Janela {
             .border_1()
             .border_color(Cores::borda())
             .bg(gradiente_quente())
-            .shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])
             .map(|s| if estreita { s.pt(esp::E8).pb(esp::E6).px(esp::E6) } else { s.pt(esp::E12).pb(esp::E8).px(esp::E8) })
             .child(
                 // Só o campo da mensagem fica em "Composer": o Shift+Tab troca o modo aqui, e não
@@ -1374,8 +1374,8 @@ impl Janela {
     /// Enquanto a pasta é lida, uma linha "Lendo a pasta…".
     fn mencoes_da_caixa(&self, chat: &Chat, digitado: &str, inicio: usize) -> Vec<Sugestao> {
         let mut lista: Vec<Sugestao> = Vec::new();
-        if chat.parceiro.is_some() && inicio == 0 {
-            for agente in [crate::modelo::Agente::Claude, crate::modelo::Agente::Codex] {
+        if let Some(parceiro) = chat.parceiro.as_ref().map(|p| p.agente).filter(|_| inicio == 0) {
+            for agente in [chat.agente, parceiro] {
                 let nome = agente.nome().to_lowercase();
                 if nome.starts_with(&digitado.to_lowercase()) {
                     lista.push(Sugestao {
@@ -1590,9 +1590,9 @@ impl Janela {
     }
 
     pub(super) fn comandos_de(&self, chat: &Chat) -> Vec<String> {
-        // Os comandos de barra e as skills são do Claude Code; no Codex fica só o `/clear`, que é
-        // do Vitral.
-        if chat.agente == crate::modelo::Agente::Codex {
+        // Os comandos de barra e as skills são do Claude Code; no Codex e no Gemini fica só o
+        // `/clear`, que é do Vitral.
+        if chat.agente != crate::modelo::Agente::Claude {
             return vec!["clear".into()];
         }
         // Antes do primeiro turno do chat no Vitral, vale o que o Claude Code disse que oferece

@@ -194,14 +194,14 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
     window.text_system().shape_line(texto.into(), tam(window, 13.), &[corrida], None).width
 }
 
-/// O que uma aba ocupa além do título (a 100%): a borda (2), a folga da esquerda (8) e a da
-/// direita (12). O × aparece por cima, no hover, sem guardar lugar: contado aqui (eram 74, com os
-/// 20 dele e mais um vão), a conta via a faixa 26 px mais cheia por aba e mandava a aba de fundo
-/// para o ícone com espaço sobrando (dono, 17/11/2026: "por que tá ficando só o logo aqui?"). O
-/// ícone (16 e o vão de 6) saiu das abas em 18/11/2026 e ficou nesta conta: a peça em volta de
-/// cada aba, com o mínimo dela, guardava 22 px vazios depois de um título curto (dono, 19/11/2026:
-/// "tá ficando bugado o espaçamento lá em cima").
-const ABA_SEM_TITULO: f32 = 22.;
+/// O que uma aba ocupa além do título (a 100%): a borda (2) e a folga de 12 de cada lado. O ×
+/// aparece por cima, no hover, sem guardar lugar: contado aqui (eram 74, com os 20 dele e mais um
+/// vão), a conta via a faixa 26 px mais cheia por aba e mandava a aba de fundo para o ícone com
+/// espaço sobrando (dono, 17/11/2026: "por que tá ficando só o logo aqui?"). O ícone (16 e o vão
+/// de 6) saiu das abas em 18/11/2026 e ficou nesta conta até 19/11: a peça em volta de cada aba,
+/// com o mínimo dela, guardava 22 px vazios depois de um título curto ("tá ficando bugado o
+/// espaçamento lá em cima").
+const ABA_SEM_TITULO: f32 = 26.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
 const ABA_SO_ICONE: f32 = 32.;
 /// O lápis do rascunho numa aba de fundo: o vão de 6 e os 11 do ícone.
