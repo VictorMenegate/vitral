@@ -38,7 +38,16 @@ componentes do GPUI Kit.
   worktree. Quem cria é `Motor::novo_chat(pasta:
   Option<&Path>, …)`; a pasta chega canônica. O título vem da primeira mensagem (`titulo_de`, em
   `src/motor.rs`): a primeira linha com texto, sem as marcas de markdown do começo ("## ", "> ",
-  "- ", "- [ ] ", "1. "), até 7 palavras.
+  "- ", "- [ ] ", "1. "), até 7 palavras. Depois de um turno, esse título automático dá lugar ao
+  que o Claude Code gerou para a sessão (a linha `ai-title` do arquivo dela, lida do fim dele por
+  `importar::titulos_da_sessao`), uma vez só: `titulo_automatico` compara o título com o da
+  primeira fala, então o que você renomeou (F2), o do ramo e o da raia ficam como estão, e o
+  título trocado não troca de novo. A sessão renomeada no Claude Code (`/rename`, a linha
+  `custom-title`) e o chat do Codex também não mudam. Num `-p` o Claude Code não gera esse título
+  sozinho (medido no 2.1.328: ele só o faz no terminal, no VS Code e pelo SDK), então o turno o
+  pede pela entrada: o `generate_session_title` com a primeira fala e o `persist`
+  (`Processo::pedir_titulo`), até duas vezes por chat em cada abertura do app, num Claude Code 2.1.323
+  ou mais novo. É uma chamada pequena a mais do Claude Code por chat novo.
 - **Claude ou Codex.** Cada chat diz quem responde (`Chat.agente`, em `src/modelo.rs`): o Claude
   Code ou o Codex, a CLI da OpenAI. Escolhe-se no seletor de modelo, que tem as abas **Claude** e **Codex**
   (trocar de aba só mostra os modelos do outro; quem responde muda ao escolher um; a aba do Codex tem
@@ -1638,7 +1647,11 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   título selecionado e não salva vazio.
 - Notificação do sistema, só com a janela em segundo plano, quando um chat termina, quando um chat
   pede permissão ou quando um chat cai: com o ícone do Vitral, o título do chat e uma linha só
-  ("Precisa da sua permissão: Bash, $ cargo test", "Terminou: …", "Parou com erro: ..."). Clicar nela abre
+  ("Precisa da sua permissão: Bash, $ cargo test", "Terminou: …", "Parou com erro: ..."). O
+  "Terminou" leva o começo do que o agente disse, sem as marcas de markdown (título, lista,
+  negrito, crases, link, cerca de código) e com até 220 letras, cortado numa palavra
+  (`previa_da_resposta`, em `src/motor.rs`; antes ia a primeira linha crua, e o aviso saía
+  "Terminou: ## Resumo"); a linha do "Enquanto você esteve fora" sai da mesma prévia. Clicar nela abre
   a conversa no painel ativo e traz a janela para a frente (ou o GNOME avisa que o Vitral está
   pronto). Uma notificação nova do mesmo chat substitui a anterior em vez de empilhar. A permissão se
   responde dentro do app, nunca na notificação. O pedido de permissão e a queda com erro saem com
@@ -1850,7 +1863,13 @@ escrito vira quebra de linha) encena o plano, com a chamada ExitPlanMode vazia, 
 de permissão e, aprovado, no resultado; com `[compacta <auto|manual> <tokens antes> | <segundos>]`
 encena uma compactação no meio do turno, e a mensagem "/compact" faz a manual e termina sem texto,
 como o de verdade (`CLAUDE_FALSO_COMPACTA=<segundos>`; o roteiro dos três é o
-`ferramentas/roteiros/pergunta-plano-compactacao.txt`); ao lado dele mora o
+`ferramentas/roteiros/pergunta-plano-compactacao.txt`); com `[responde <arquivo>]` a resposta do
+turno é o conteúdo desse arquivo da pasta do chat (markdown, arquivos e comandos citados) e com
+`[saida <arquivo>]` o resultado das ferramentas encenadas na mensagem é o conteúdo do arquivo (a
+saída de um build com erro); ao `generate_session_title` responde com o título do `[titulo <nome>]`
+da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras palavras) e, com o `persist` e um
+`CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
+tem; ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem

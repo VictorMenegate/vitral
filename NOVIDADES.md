@@ -8,7 +8,7 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
 continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
-aparecem na conversa.
+aparecem na conversa. O chat ganha um título de verdade e o aviso de fim sai legível.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -44,6 +44,12 @@ aparecem na conversa.
   Agora a chamada mostra a miniatura, que abre no visor junto com as outras imagens da conversa;
   no Codex, o view_image e os prints por MCP também. As imagens ficam guardadas no computador,
   até 100 MB por conversa (as mais antigas saem primeiro).
+- **O chat ganha um título de verdade.** O título do chat era o começo da sua primeira mensagem
+  ("olha esse erro aqui que deu no"). Depois do primeiro turno ele passa a ser um nome curto do
+  assunto, gerado pelo Claude Code. O que você renomeou fica como está, e no Codex nada muda.
+- **Aviso de fim legível.** A notificação de um chat que terminou mostrava a primeira linha crua
+  da resposta ("Terminou: ## Resumo"). Agora mostra o começo do texto, sem as marcas de markdown,
+  com até 220 letras. O "Enquanto você esteve fora" usa o mesmo texto.
 
 ## 0.9.5
 

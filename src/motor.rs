@@ -354,6 +354,9 @@ pub struct Motor {
     /// Mensagens que chegaram com o chat ocupado: entram juntas no próximo turno.
     filas: Filas,
     interrompidos: Vec<String>,
+    /// Quantas vezes cada chat já pediu o título gerado ao Claude Code nesta abertura do app
+    /// (`titulo_a_pedir`).
+    titulos_pedidos: HashMap<String, u8>,
     /// Chats com mensagens ainda não gravadas: vão para o disco a cada poucos segundos.
     chats_sujos: HashSet<String>,
     /// Chats cujo turno já foi repetido depois de um erro de sessão (uma vez só).
@@ -659,6 +662,7 @@ impl Motor {
             parcial: HashMap::new(),
             filas,
             interrompidos: Vec::new(),
+            titulos_pedidos: HashMap::new(),
             chats_sujos: HashSet::new(),
             repetidos_sessao: HashSet::new(),
             passagens: HashMap::new(),
@@ -2227,7 +2231,12 @@ impl Motor {
         match Processo::iniciar(&opcoes, mensagem, move |evento| {
             let _ = sinais.send_blocking(Sinal::Claude(id.clone(), geracao, evento));
         }) {
-            Ok(processo) => {
+            Ok(mut processo) => {
+                // O título gerado: o Claude Code só o cria sozinho no terminal e no VS Code, então
+                // o turno o pede enquanto o título for o automático (`titulo_a_pedir`).
+                if let Some(descricao) = self.titulo_a_pedir(chat_id) {
+                    processo.pedir_titulo(&descricao);
+                }
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.motivos_de_hook.esquecer(chat_id);
@@ -3907,8 +3916,48 @@ impl Motor {
         }
     }
 
+    /// A descrição com que o turno que abre agora pede ao Claude Code o título da sessão
+    /// (`Processo::pedir_titulo`), ou `None` quando não é o caso: o título do chat não é mais o
+    /// automático, o chat é do Codex, a primeira fala é curta demais, o Claude Code instalado é
+    /// anterior ao pedido ou este chat já pediu duas vezes nesta abertura do app. A segunda vez
+    /// cobre o turno que acabou antes de o título chegar (o processo sai e o pedido se perde); mais
+    /// que isso seria uma chamada ao modelo a cada turno de um chat que ele não soube titular.
+    fn titulo_a_pedir(&mut self, chat_id: &str) -> Option<String> {
+        const VEZES: u8 = 2;
+        if !self.versao_do_claude().is_some_and(|v| v >= claude::VERSAO_TITULO_GERADO) {
+            return None;
+        }
+        let descricao = descricao_para_o_titulo(self.chat(chat_id)?)?;
+        let pedidos = self.titulos_pedidos.entry(chat_id.to_string()).or_default();
+        (*pedidos < VEZES).then(|| {
+            *pedidos += 1;
+            descricao
+        })
+    }
+
+    /// Depois de um turno: o título que ainda é o das primeiras palavras dá lugar ao que o Claude
+    /// Code gravou na sessão (`ai-title`), se houver. Uma vez só, e nunca por cima de um nome dado
+    /// à mão (`titulo_gerado_para`). Lê só o fim do arquivo da sessão.
+    fn trocar_pelo_titulo_gerado(&mut self, chat_id: &str) {
+        let Some(chat) = self.chat(chat_id).filter(|c| c.agente == Agente::Claude && titulo_automatico(c)) else {
+            return;
+        };
+        let pasta_conta = self.conta_para(chat).pasta();
+        let Some(arquivo) = claude::arquivo_da_sessao(pasta_conta.as_deref(), &chat.cwd, &chat.sessao) else {
+            return;
+        };
+        let Some(titulo) = titulo_gerado_para(chat, &crate::importar::titulos_da_sessao(&arquivo)) else {
+            return;
+        };
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.titulo = titulo;
+        }
+    }
+
     fn fim_de_turno(&mut self, chat_id: &str, erro: bool, texto: String, cx: &mut Context<Self>) {
         self.parcial.remove(chat_id);
+        // Antes de tudo: o aviso e a linha do "Enquanto você esteve fora" já saem com o título novo.
+        self.trocar_pelo_titulo_gerado(chat_id);
         if !erro {
             self.repetidos_sessao.remove(chat_id);
         }
@@ -3944,10 +3993,8 @@ impl Motor {
             return;
         };
         // Para o resumo de quando o usuário volta ("Enquanto você esteve fora").
-        let (tipo, fim) = if erro { ("falhou", "Parou com erro") } else { ("terminou", "Terminou") };
-        let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
-        let resumo = if linha.is_empty() { format!("{}: {fim}", chat.titulo) } else { format!("{}: {linha}", chat.titulo) };
-        self.registrar(tipo, &chat.id, &chat.id, &resumo);
+        let tipo = if erro { "falhou" } else { "terminou" };
+        self.registrar(tipo, &chat.id, &chat.id, &linha_do_fim(&chat.titulo, &texto, erro));
         // Mensagens que chegaram durante o turno viram o próximo (as notas esperam uma de verdade).
         if erro {
             self.rodadas.remove(chat_id);
@@ -4533,6 +4580,342 @@ fn titulo_de(texto: &str) -> String {
         titulo = format!("{}…", titulo.chars().take(47).collect::<String>());
     }
     titulo
+}
+
+/// A primeira fala do usuário que não é um comando de barra: é dela que o título do chat sai.
+fn primeira_fala(chat: &Chat) -> Option<&str> {
+    chat.itens.iter().find_map(|item| match item {
+        Item::Usuario { texto, .. } if !texto.trim().is_empty() && !texto.trim_start().starts_with('/') => Some(texto.as_str()),
+        _ => None,
+    })
+}
+
+/// O título ainda é o que o Vitral deu sozinho: as primeiras palavras da primeira fala (`titulo_de`)
+/// ou o "Nova conversa" de quem começou por um comando. O renomeado à mão, o do ramo ("… (ramo)") e
+/// o da raia ("Codex · …") não são, e o que já foi trocado pelo gerado também não: é assim que a
+/// troca acontece uma vez só, sem marca nenhuma gravada no chat.
+fn titulo_automatico(chat: &Chat) -> bool {
+    primeira_fala(chat).is_some_and(|fala| chat.titulo == "Nova conversa" || chat.titulo == titulo_de(fala))
+}
+
+/// Com menos letras que isto na descrição o Claude Code não titula (medido no 2.1.328: responde
+/// `{"title": null}` sem chamar o modelo).
+const MENOR_DESCRICAO_DO_TITULO: usize = 10;
+
+/// Até quantas letras da primeira fala vão no pedido do título.
+const MAX_DESCRICAO_DO_TITULO: usize = 2000;
+
+/// O que vai no pedido do título gerado (`Processo::pedir_titulo`): a primeira fala, num chat do
+/// Claude cujo título ainda é o automático. `None` quando não há o que pedir.
+fn descricao_para_o_titulo(chat: &Chat) -> Option<String> {
+    if chat.agente != Agente::Claude || !titulo_automatico(chat) {
+        return None;
+    }
+    let fala = primeira_fala(chat)?.trim();
+    (fala.chars().count() >= MENOR_DESCRICAO_DO_TITULO).then(|| fala.chars().take(MAX_DESCRICAO_DO_TITULO).collect())
+}
+
+/// O título que o Claude Code gerou para a sessão (a linha `ai-title`), se é hora de pô-lo no
+/// chat: só no lugar do título automático, nunca num chat do Codex nem numa sessão que o usuário
+/// renomeou no Claude Code (`/rename`, a linha `custom-title`).
+fn titulo_gerado_para(chat: &Chat, titulos: &crate::importar::TitulosDaSessao) -> Option<String> {
+    if chat.agente != Agente::Claude || titulos.proprio.is_some() || !titulo_automatico(chat) {
+        return None;
+    }
+    titulos.gerado.as_deref().map(str::trim).filter(|t| !t.is_empty() && *t != chat.titulo).map(str::to_string)
+}
+
+/// Até quantas letras do que o agente disse vão num aviso (o mesmo teto do Paseo).
+const MAX_DA_PREVIA: usize = 220;
+
+/// O que o agente disse, para caber num aviso do sistema e numa linha do "Enquanto você esteve
+/// fora": sem as marcas de markdown (as do começo da linha, as cercas de código, as réguas, os
+/// links, a ênfase e as crases), numa linha só e com até `limite` letras, cortado numa palavra. O
+/// título ganha dois pontos antes do que vem depois dele, e os itens de lista ficam separados por
+/// " · ". Antes ia a primeira linha crua, e o aviso saía "Terminou: ## Resumo".
+fn previa_da_resposta(resposta: &str, limite: usize) -> String {
+    let mut previa = String::new();
+    // O que a última linha aproveitada era.
+    let (mut depois_de_titulo, mut depois_de_item) = (false, false);
+    for linha in resposta.lines() {
+        let linha = linha.trim();
+        if linha.starts_with("```") || linha.starts_with("~~~") || regua(linha) {
+            continue;
+        }
+        let limpa = sem_marcas_em_linha(sem_marca_de_markdown(linha));
+        let limpa = limpa.split_whitespace().collect::<Vec<_>>().join(" ");
+        if limpa.is_empty() {
+            continue;
+        }
+        let cerquilhas = linha.len() - linha.trim_start_matches('#').len();
+        let titulo = (1..=6).contains(&cerquilhas) && linha[cerquilhas..].starts_with(' ');
+        let item = item_de_lista(linha);
+        if !previa.is_empty() {
+            let pontuada = previa.ends_with(['.', '!', '?', ':', ';', ',', '…']);
+            previa.push_str(match (pontuada, depois_de_titulo, item || depois_de_item) {
+                (false, true, _) => ": ",
+                (false, false, true) => " · ",
+                _ => " ",
+            });
+        }
+        previa.push_str(&limpa);
+        (depois_de_titulo, depois_de_item) = (titulo, item);
+        if previa.chars().count() > limite {
+            break;
+        }
+    }
+    cortar_em_palavra(&previa, limite)
+}
+
+/// A régua ("---", "***", "___") e a linha que separa o cabeçalho de uma tabela ("|---|:--|").
+fn regua(linha: &str) -> bool {
+    let so_de = |marcas: &[char]| linha.chars().all(|c| c.is_whitespace() || marcas.contains(&c));
+    linha.chars().filter(|c| !c.is_whitespace()).count() >= 3
+        && (so_de(&['-']) || so_de(&['*']) || so_de(&['_']) || (linha.contains('-') && so_de(&['|', '-', ':'])))
+}
+
+/// A linha é um item de lista ("- ", "* ", "+ ", "1. ", "1) "), dentro ou fora de uma citação.
+fn item_de_lista(linha: &str) -> bool {
+    let resto = linha.trim_start_matches(['>', ' ']);
+    let digitos = resto.chars().take_while(char::is_ascii_digit).count();
+    ["- ", "* ", "+ "].iter().any(|marca| resto.starts_with(marca))
+        || (digitos > 0 && (resto[digitos..].starts_with(". ") || resto[digitos..].starts_with(") ")))
+}
+
+/// A linha sem as marcas de markdown do meio dela: `[texto](url)` e `![texto](url)` viram o texto;
+/// somem as crases do código em linha (o que está dentro fica como está), o `**`, o `__`, o `*`,
+/// o `_` e o `~~` da ênfase que abre e fecha (o sublinhado de `nome_assim` e o asterisco de
+/// "2 * 3" ficam) e os `<` `>` de um endereço.
+fn sem_marcas_em_linha(linha: &str) -> String {
+    let letras: Vec<char> = linha.chars().collect();
+    let mut saida = String::with_capacity(linha.len());
+    limpar_marcas(&letras, &mut saida);
+    saida
+}
+
+fn limpar_marcas(l: &[char], saida: &mut String) {
+    let repetidas = |i: usize| l[i..].iter().take_while(|c| **c == l[i]).count();
+    // Onde começa a sequência de `n` letras `c` que fecha a marca aberta antes de `de`. A da
+    // ênfase fecha colada na palavra de antes e sem letra logo depois.
+    let fecho = |de: usize, c: char, n: usize, enfase: bool| {
+        let mut i = de;
+        while i < l.len() {
+            if l[i] != c {
+                i += 1;
+                continue;
+            }
+            let m = repetidas(i);
+            if m == n && i > de && (!enfase || (!l[i - 1].is_whitespace() && l.get(i + m).is_none_or(|d| !d.is_alphanumeric()))) {
+                return Some(i);
+            }
+            i += m;
+        }
+        None
+    };
+    // "[texto](url)" aberto em `abre`: onde estão o "](" e o ")" que fecha.
+    let link = |abre: usize| {
+        let meio = (abre + 1..l.len().saturating_sub(1)).find(|&j| l[j] == ']' && l[j + 1] == '(')?;
+        let fim = (meio + 2..l.len()).find(|&j| l[j] == ')')?;
+        Some((meio, fim))
+    };
+    let mut i = 0;
+    while i < l.len() {
+        let c = l[i];
+        if c == '`' {
+            let n = repetidas(i);
+            if let Some(f) = fecho(i + n, '`', n, false) {
+                saida.extend(&l[i + n..f]);
+                i = f + n;
+            } else {
+                i += n;
+            }
+            continue;
+        }
+        let imagem = c == '!' && l.get(i + 1) == Some(&'[');
+        if (c == '[' || imagem)
+            && let Some((meio, fim)) = link(i + usize::from(imagem))
+        {
+            limpar_marcas(&l[i + 1 + usize::from(imagem)..meio], saida);
+            i = fim + 1;
+            continue;
+        }
+        if c == '<'
+            && let Some(f) = l[i..].iter().position(|x| *x == '>').map(|p| i + p)
+            && !l[i + 1..f].iter().any(|x| x.is_whitespace())
+            && l[i + 1..f].windows(3).any(|w| w == [':', '/', '/'])
+        {
+            saida.extend(&l[i + 1..f]);
+            i = f + 1;
+            continue;
+        }
+        if matches!(c, '*' | '_' | '~') {
+            let n = repetidas(i);
+            let abre = n <= 3
+                && (c != '~' || n == 2)
+                && l.get(i + n).is_some_and(|d| !d.is_whitespace())
+                && (i == 0 || !l[i - 1].is_alphanumeric());
+            if abre && let Some(f) = fecho(i + n, c, n, true) {
+                limpar_marcas(&l[i + n..f], saida);
+                i = f + n;
+            } else {
+                saida.extend(&l[i..i + n]);
+                i += n;
+            }
+            continue;
+        }
+        saida.push(c);
+        i += 1;
+    }
+}
+
+/// O texto com até `limite` letras: o que passa é cortado no fim de uma palavra, com reticências.
+/// Uma palavra sozinha maior que o limite é cortada nele.
+fn cortar_em_palavra(texto: &str, limite: usize) -> String {
+    if texto.chars().count() <= limite {
+        return texto.to_string();
+    }
+    let cabe: String = texto.chars().take(limite.saturating_sub(1)).collect();
+    let no_fim_da_palavra = texto.chars().nth(limite.saturating_sub(1)).is_some_and(char::is_whitespace);
+    let corte = match cabe.rfind(char::is_whitespace) {
+        Some(i) if !no_fim_da_palavra && i >= cabe.len() / 2 => &cabe[..i],
+        _ => cabe.as_str(),
+    };
+    format!("{}…", corte.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '·' | '-')))
+}
+
+#[cfg(test)]
+mod testes_do_titulo_gerado_e_do_aviso {
+    use super::*;
+    use crate::importar::TitulosDaSessao;
+
+    const PRIMEIRA: &str = "olha esse erro aqui que deu no teste: a função soma devolve 1 para soma(3, 2)";
+
+    fn fala(texto: &str) -> Item {
+        Item::Usuario { texto: texto.into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 0, marca: None }
+    }
+
+    /// Um chat como o `enviar_do_usuario` o deixa depois da primeira mensagem.
+    fn chat_com(primeira: &str) -> Chat {
+        let mut c = Chat::novo("c".into(), "Nova conversa", PathBuf::from("/tmp"));
+        c.titulo = titulo_de(primeira);
+        c.itens.push(fala(primeira));
+        c
+    }
+
+    fn gerado(titulo: &str) -> TitulosDaSessao {
+        TitulosDaSessao { proprio: None, gerado: Some(titulo.into()) }
+    }
+
+    #[test]
+    fn o_titulo_das_primeiras_palavras_e_o_automatico() {
+        let c = chat_com(PRIMEIRA);
+        assert_eq!(c.titulo, "olha esse erro aqui que deu no");
+        assert!(titulo_automatico(&c));
+        // Renomeado à mão (F2): não é mais.
+        let renomeado = Chat { titulo: "Bug da soma".into(), ..c.clone() };
+        assert!(!titulo_automatico(&renomeado));
+        // Sem nenhuma fala sua não há de onde o título automático teria saído.
+        let vazio = Chat::novo("v".into(), "Nova conversa", PathBuf::from("/tmp"));
+        assert!(!titulo_automatico(&vazio));
+        // A conversa que começou por um comando ficou "Nova conversa": a primeira fala de verdade
+        // é a que conta.
+        let mut por_comando = Chat::novo("p".into(), "Nova conversa", PathBuf::from("/tmp"));
+        por_comando.itens.extend([fala("/compact"), fala(PRIMEIRA)]);
+        assert!(titulo_automatico(&por_comando));
+        // O ramo de outro chat ("… (ramo)") e a raia ("Codex · …") têm nome próprio.
+        let ramo = Chat { titulo: format!("{} (ramo)", c.titulo), ..c.clone() };
+        assert!(!titulo_automatico(&ramo));
+    }
+
+    #[test]
+    fn o_titulo_gerado_entra_uma_vez_e_so_no_lugar_do_automatico() {
+        let mut c = chat_com(PRIMEIRA);
+        assert_eq!(titulo_gerado_para(&c, &gerado("Erro na função soma")).as_deref(), Some("Erro na função soma"));
+        // Trocado: daí em diante o título é o gerado, e outro `ai-title` não o troca de novo.
+        c.titulo = "Erro na função soma".into();
+        assert_eq!(titulo_gerado_para(&c, &gerado("Soma que subtrai")), None);
+        // Renomeado à mão (F2) fica como está.
+        let renomeado = Chat { titulo: "Bug da soma".into(), ..chat_com(PRIMEIRA) };
+        assert_eq!(titulo_gerado_para(&renomeado, &gerado("Erro na função soma")), None);
+        // Renomeado no Claude Code (`/rename` grava o `custom-title`): também.
+        let com_proprio = TitulosDaSessao { proprio: Some("Soma".into()), gerado: Some("Erro na função soma".into()) };
+        assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &com_proprio), None);
+        // O chat do Codex não tem `ai-title`: nunca.
+        let codex = Chat { agente: Agente::Codex, ..chat_com(PRIMEIRA) };
+        assert_eq!(titulo_gerado_para(&codex, &gerado("Erro na função soma")), None);
+        // Sem `ai-title` na sessão, nada; vazio também não.
+        assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &TitulosDaSessao::default()), None);
+        assert_eq!(titulo_gerado_para(&chat_com(PRIMEIRA), &gerado("  ")), None);
+    }
+
+    #[test]
+    fn a_descricao_do_pedido_do_titulo_e_a_primeira_fala() {
+        assert_eq!(descricao_para_o_titulo(&chat_com(PRIMEIRA)).as_deref(), Some(PRIMEIRA));
+        // O Claude Code não titula com menos de 10 letras (medido no 2.1.328): nem pede.
+        assert_eq!(descricao_para_o_titulo(&chat_com("oi, tudo?")), None);
+        // Comando de barra não é assunto; vale a primeira fala de verdade.
+        let mut c = Chat::novo("p".into(), "Nova conversa", PathBuf::from("/tmp"));
+        c.itens.push(fala("/compact"));
+        assert_eq!(descricao_para_o_titulo(&c), None);
+        c.itens.push(fala(PRIMEIRA));
+        assert_eq!(descricao_para_o_titulo(&c).as_deref(), Some(PRIMEIRA));
+        // Título que não é o automático não pede nada.
+        let renomeado = Chat { titulo: "Bug da soma".into(), ..chat_com(PRIMEIRA) };
+        assert_eq!(descricao_para_o_titulo(&renomeado), None);
+        let codex = Chat { agente: Agente::Codex, ..chat_com(PRIMEIRA) };
+        assert_eq!(descricao_para_o_titulo(&codex), None);
+        // A mensagem enorme vai cortada (num limite de letra, não no meio de uma).
+        let longa = format!("{PRIMEIRA} {}", "ação ".repeat(2000));
+        let c = chat_com(&longa);
+        let descricao = descricao_para_o_titulo(&c).unwrap();
+        assert!(descricao.chars().count() <= 2000, "{}", descricao.chars().count());
+        assert!(longa.starts_with(&descricao));
+    }
+
+    #[test]
+    fn o_aviso_do_fim_vai_sem_markdown_e_cortado_em_palavra() {
+        // O título de markdown não é mais o aviso inteiro ("Terminou: ## Resumo").
+        assert_eq!(texto_do_fim("## Resumo\n\nMudei o `motor.rs` e **dois** testes."), "Terminou: Resumo: Mudei o motor.rs e dois testes.");
+        // Link, imagem, itálico, riscado e a cerca de código saem; o que estava dentro fica.
+        assert_eq!(
+            texto_do_fim("Veja [o relatório](docs/x.md), a ![tela](print.png) e _isto_ ~~não~~.\n```sh\ncargo test\n```"),
+            "Terminou: Veja o relatório, a tela e isto não. cargo test"
+        );
+        // Os itens de lista ficam separados; a régua e a linha de separação da tabela somem.
+        assert_eq!(
+            texto_do_fim("Pronto.\n\n- [x] Corrigi o `soma`\n- Rodei os testes\n\n---\n\nFalta o deploy."),
+            "Terminou: Pronto. Corrigi o soma · Rodei os testes · Falta o deploy."
+        );
+        assert_eq!(texto_do_fim("> **Nota:** 1. primeiro\n2) segundo"), "Terminou: Nota: 1. primeiro · segundo");
+        // O sublinhado de um nome e o asterisco de uma conta não são ênfase.
+        assert_eq!(texto_do_fim("O `snake_case_aqui` e 2 * 3 * 4 e a_b_c ficam."), "Terminou: O snake_case_aqui e 2 * 3 * 4 e a_b_c ficam.");
+        // Até 220 letras, cortado numa palavra, com reticências.
+        let longa = "palavra ".repeat(60);
+        let aviso = texto_do_fim(&longa);
+        let corpo = aviso.strip_prefix("Terminou: ").unwrap();
+        assert!(corpo.chars().count() <= 220, "{}", corpo.chars().count());
+        assert!(corpo.chars().count() > 200, "{}", corpo.chars().count());
+        assert!(corpo.ends_with("palavra…"), "{corpo}");
+        // Uma palavra só, maior que o limite, é cortada no limite.
+        let colada = "x".repeat(400);
+        assert_eq!(texto_do_fim(&colada).chars().count(), "Terminou: ".chars().count() + 220);
+        // Acento não quebra o corte.
+        let acentos = "ação ".repeat(100);
+        assert!(texto_do_fim(&acentos).ends_with("ação…"));
+        // Sem texto (ou só marcas), só o "Terminou"; o título sozinho não ganha os dois pontos.
+        assert_eq!(texto_do_fim("  \n"), "Terminou");
+        assert_eq!(texto_do_fim("```\n```\n---"), "Terminou");
+        assert_eq!(texto_do_fim("## Resumo"), "Terminou: Resumo");
+        assert_eq!(texto_do_fim("## Feito!\nTudo certo."), "Terminou: Feito! Tudo certo.");
+    }
+
+    #[test]
+    fn a_linha_do_esteve_fora_e_a_mesma_previa() {
+        assert_eq!(linha_do_fim("Loja", "## Resumo\n\nMudei o `motor.rs`.", false), "Loja: Resumo: Mudei o motor.rs.");
+        assert_eq!(linha_do_fim("Loja", "", false), "Loja: Terminou");
+        assert_eq!(linha_do_fim("Loja", "", true), "Loja: Parou com erro");
+        assert_eq!(linha_do_fim("Loja", "API Error: 529\nresto", true), "Loja: API Error: 529 resto");
+    }
 }
 
 /// Ao abrir: o turno que o Vitral fechado (ou uma queda de energia) cortou fica parado até
@@ -5345,9 +5728,22 @@ fn texto_do_erro(erro: &str) -> String {
     }
 }
 
+/// O aviso de um turno que terminou: "Terminou: " e o começo do que o agente disse, legível
+/// (`previa_da_resposta`).
 fn texto_do_fim(resposta: &str) -> String {
-    let linha = resposta.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
-    if linha.is_empty() { "Terminou".into() } else { format!("Terminou: {linha}") }
+    let previa = previa_da_resposta(resposta, MAX_DA_PREVIA);
+    if previa.is_empty() { "Terminou".into() } else { format!("Terminou: {previa}") }
+}
+
+/// A linha de um turno que acabou no "Enquanto você esteve fora": o título do chat e a mesma
+/// prévia do aviso (a tela mostra a primeira frase dela).
+fn linha_do_fim(titulo: &str, texto: &str, erro: bool) -> String {
+    let previa = previa_da_resposta(texto, MAX_DA_PREVIA);
+    match (previa.is_empty(), erro) {
+        (false, _) => format!("{titulo}: {previa}"),
+        (true, true) => format!("{titulo}: Parou com erro"),
+        (true, false) => format!("{titulo}: Terminou"),
+    }
 }
 
 /// Junta um pedaço ao texto parcial do chat e diz se a janela precisa redesenhar: o primeiro
@@ -5905,7 +6301,9 @@ mod testes {
         assert_eq!(texto_do_fim(""), "Terminou");
         assert_eq!(texto_do_erro("\nYou've hit your usage limit\nresto"), "Parou com erro: You've hit your usage limit");
         assert_eq!(texto_do_erro(""), "Parou com erro");
-        assert_eq!(texto_do_fim("\n  Feito: o bug sumiu.\nresto"), "Terminou: Feito: o bug sumiu.");
+        // Desde a 0.9.6 o aviso leva o texto, e não só a primeira linha (ver o teste
+        // `o_aviso_do_fim_vai_sem_markdown_e_cortado_em_palavra`).
+        assert_eq!(texto_do_fim("\n  Feito: o bug sumiu.\nresto"), "Terminou: Feito: o bug sumiu. resto");
     }
 
     #[test]

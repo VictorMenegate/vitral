@@ -17,6 +17,11 @@ Claude Code o repassa. `[ferramenta Prints <LxA> <nome>]` devolve duas imagens n
 E o `[ferramenta Read <arquivo>]` de uma imagem que existe (.png, .jpg, .gif, .webp) devolve só o
 bloco de imagem dela, como o Read de verdade.
 
+Com `[responde <arquivo>]`, a resposta do turno é o conteúdo desse arquivo da pasta do chat (para
+ver na bancada markdown, links de arquivo e comandos citados); com `[saida <arquivo>]`, o resultado
+das ferramentas encenadas na mensagem é o conteúdo do arquivo (a saída de um `cargo build` com
+erro, por exemplo).
+
 Com `[hook <Nome> <detalhe> | <motivo>]`, encena uma chamada que um hook `PreToolUse` do usuário
 mandou perguntar (`permissionDecision: "ask"`), como o Claude Code 2.1.328 faz: manda o tool_use,
 os eventos do hook (só com `--include-hook-events`) e pede a permissão à ferramenta do
@@ -56,7 +61,12 @@ Pela entrada, no meio do turno, como o Claude Code 2.1.328 (medido em 23/11/2026
 - a ferramenta que demora manda um `tool_progress` com `heartbeat` a cada 30 s
   (CLAUDE_FALSO_BATIDA=<segundos> encurta);
 - o texto do raciocínio (`[ferramenta Pensa ...]`) só vem com `--thinking-display summarized`; sem
-  a opção, o bloco chega vazio.
+  a opção, o bloco chega vazio;
+- o `generate_session_title` responde com o título (o do `[titulo <nome>]` da mensagem, o de
+  CLAUDE_FALSO_TITULO, ou "Sobre" e as três primeiras palavras) e, com `persist` e um
+  CLAUDE_CONFIG_DIR de mentira, grava a linha `ai-title` na sessão, em
+  `projects/<pasta>/<sessão>.jsonl`. O arquivo só tem essa linha: outro chat da mesma pasta que
+  não pediu título parece ao Vitral ter a sessão expirada.
 
 Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
 vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
@@ -309,6 +319,28 @@ def absorver_fila():
             {"type": "text", "text": f"(claude falso) dirigido no meio do turno: {dirigida[:120]}"}]}})
 
 
+def titular(pedido):
+    """O `generate_session_title` como o 2.1.328 (medido em 23/11/2026): responde com o título e,
+    com `persist`, grava a linha `ai-title` no arquivo da sessão. Com menos de 10 letras na
+    descrição ele não titula (`{"title": null}`)."""
+    corpo = pedido.get("request", {})
+    descricao = (corpo.get("description") or "").strip()
+    titulo = None
+    if len(descricao) >= 10:
+        pedido_na_mensagem = re.search(r"\[titulo ([^\]]+)\]", descricao)
+        titulo = (pedido_na_mensagem.group(1).strip() if pedido_na_mensagem else os.environ.get("CLAUDE_FALSO_TITULO")) \
+            or "Sobre " + " ".join(descricao.split()[:3])
+    anotar({"generate_session_title": descricao[:120], "persist": corpo.get("persist"), "titulo": titulo})
+    # Só numa pasta de configuração de mentira: o ~/.claude de verdade nunca é tocado.
+    pasta_de_config = os.environ.get("CLAUDE_CONFIG_DIR")
+    if titulo and corpo.get("persist") and pasta_de_config:
+        projeto = os.path.join(pasta_de_config, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.getcwd()))
+        os.makedirs(projeto, exist_ok=True)
+        with open(os.path.join(projeto, sessao + ".jsonl"), "a") as gravada:
+            gravada.write(json.dumps({"type": "ai-title", "aiTitle": titulo, "sessionId": sessao}) + "\n")
+    responder(pedido, {"title": titulo})
+
+
 def ouvir_entrada():
     """O Parar do Vitral: o `interrupt` pela entrada (como no de verdade, 2.1.328) responde com o
     que ainda está na fila, fecha o turno com erro e sai; com mensagem na fila, abre outro turno
@@ -335,6 +367,9 @@ def ouvir_entrada():
                 responder(pedido, {"cancelled": True, "message_uuid": uuid})
             else:
                 responder(pedido, {"cancelled": False})
+            continue
+        if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "generate_session_title":
+            titular(pedido)
             continue
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "stop_task":
             anotar({"stop_task": pedido["request"].get("task_id")})
@@ -581,9 +616,23 @@ def esperar_a_ferramenta(id_, nome, segundos):
     ferramenta_rodando.clear()
 
 
+def arquivo_da_diretiva(nome, texto):
+    """`[responde resposta.md]` e `[saida erro.txt]`: o conteúdo do arquivo citado (na pasta do
+    chat), ou None sem a diretiva ou sem o arquivo."""
+    achado = re.search(r"\[" + nome + r" ([^\]\s]+)\]", texto)
+    if not achado:
+        return None
+    try:
+        with open(achado.group(1)) as citado:
+            return citado.read().rstrip("\n")
+    except OSError:
+        return None
+
+
 def fingir_ferramentas(texto):
     """Faz de conta que usa cada ferramenta pedida, uma de cada vez, com a espera entre o
     tool_use e o tool_result: é nessa janela que a conversa mostra o que ele está fazendo."""
+    saida_do_arquivo = arquivo_da_diretiva("saida", texto)
     for i, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(texto), start=1):
         detalhe = detalhe.strip()
         id_ = f"toolu_falso_f{i}"
@@ -673,8 +722,9 @@ def fingir_ferramentas(texto):
         esperar_a_ferramenta(id_, nome, int(segundos) if segundos else 4)
         # O Read de uma imagem que existe devolve só o bloco de imagem dela, como o de verdade.
         lida = imagem_lida(detalhe) if nome == "Read" else None
+        resultado = saida_do_arquivo if saida_do_arquivo is not None else f"(claude falso) {nome} em {detalhe}"
         emitir({"type": "user", "message": {"content": [
-            {"type": "tool_result", "tool_use_id": id_, "content": [lida] if lida else f"(claude falso) {nome} em {detalhe}"}]}})
+            {"type": "tool_result", "tool_use_id": id_, "content": [lida] if lida else resultado}]}})
         absorver_fila()
 
 
@@ -947,6 +997,8 @@ else:
     resposta = f"(claude falso) Anotei em {arquivo}, na pasta {pasta}: {pedido[:80]}"
     if chamadas:
         resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+    # `[responde resposta.md]`: a resposta é o que está no arquivo (markdown, links, o que for).
+    resposta = arquivo_da_diretiva("responde", texto) or resposta
 if respondidas:
     resposta += " | respostas: " + "; ".join(respondidas)
 if ao_vivo:

@@ -146,6 +146,26 @@ fn pedido_de_retirar(uuid: &str) -> Value {
     json!({ "subtype": "cancel_async_message", "message_uuid": uuid })
 }
 
+/// O pedido do título da sessão: o Claude Code gera um nome curto para a conversa a partir da
+/// `description` (a primeira fala) e, com o `persist`, grava a linha `ai-title` no arquivo da
+/// sessão, de onde o motor a lê depois do turno. É o `generateSessionTitle` do SDK, e o que a
+/// extensão do VS Code usa. Medido no 2.1.328 em 23/11/2026, com o Haiku, numa pasta de `/tmp`:
+/// - num `-p` o Claude Code não gera o título sozinho: num turno inteiro o arquivo da sessão ficou
+///   com 65 linhas e nenhuma `ai-title`. O título automático dele fica desligado quando o
+///   `CLAUDE_CODE_ENTRYPOINT` é `sdk-cli` e não há `CLAUDE_AGENT_SDK_VERSION` no ambiente (o SDK a
+///   define; o Vitral não finge ser o SDK), e também em toda sessão retomada;
+/// - com o pedido na entrada logo depois da mensagem, a resposta `{"title": "Erro na função soma
+///   em soma.rs"}` chegou 0,3 s depois do `init`, e a linha estava no arquivo 0,1 s depois dela,
+///   com o turno ainda rodando; daí em diante o Claude Code a repete a cada gravação;
+/// - numa sessão que já tem título (o segundo turno, retomado), volta o que ela tem, sem gerar
+///   outro; e, pelo código dele (não medido), a descrição com menos de 10 letras ou que é só um
+///   comando de barra volta `{"title": null}` sem chamar o modelo.
+///
+/// O tratamento do pedido é o mesmo no 2.1.323 (conferido no código dele, sem rodar).
+fn pedido_do_titulo(descricao: &str) -> Value {
+    json!({ "subtype": "generate_session_title", "description": descricao, "persist": true })
+}
+
 /// A linha de um pedido de controle; `nome` entra no id (`vitral-<nome>-<uuid>`), que é como a
 /// resposta é reconhecida na saída (`resposta_de_controle`).
 fn linha_do_pedido(nome: &str, corpo: Value) -> Value {
@@ -163,6 +183,7 @@ fn nome_do_pedido(corpo: &Value) -> &'static str {
         Some("set_model") => "modelo",
         Some("apply_flag_settings") => "esforco",
         Some("cancel_async_message") => "retirar",
+        Some("generate_session_title") => "titulo",
         _ => "pedido",
     }
 }
@@ -532,6 +553,12 @@ impl Processo {
     /// de permissão): o próximo `acertar` não o pede de novo.
     pub fn anotar_modo(&mut self, modo: &str) {
         self.ao_vivo.modo = modo.to_string();
+    }
+
+    /// Pede ao Claude Code o título da sessão, gravado no arquivo dela (`pedido_do_titulo`). O
+    /// turno segue enquanto ele responde. `false` sem entrada, no Codex ou se a escrita falhou.
+    pub fn pedir_titulo(&mut self, descricao: &str) -> bool {
+        self.pedir(pedido_do_titulo(descricao))
     }
 
     /// Tira da fila interna do Claude Code as mensagens dirigidas a este processo que ele ainda não
@@ -1832,6 +1859,11 @@ pub const VERSAO_EVENTOS_DE_HOOK: Versao = (2, 1, 323);
 /// medido no 2.1.328). Num Claude Code que não conhecesse o pedido, a mensagem ficaria na fila e
 /// rodaria como turno novo depois do Parar.
 pub const VERSAO_RETIRAR_DIRIGIDA: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Vitral pede o título gerado da sessão (`pedido_do_titulo`): a mais
+/// antiga em que o pedido foi conferido (23/11/2026, no código dela; o turno foi medido no
+/// 2.1.328). Um Claude Code que não o conhecesse responderia com erro, sem título.
+pub const VERSAO_TITULO_GERADO: Versao = (2, 1, 323);
 
 /// A versão a partir da qual o Vitral pede o texto do raciocínio (`--thinking-display
 /// summarized`, que não aparece no `--help`): a mais antiga em que a opção foi conferida
@@ -3157,6 +3189,53 @@ mod testes_do_turno_ao_vivo {
         let retirar = pedido_de_retirar("8b82d03c-d4b3-4238-9531-17dc4a1df43e");
         assert_eq!(retirar, json!({ "subtype": "cancel_async_message", "message_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e" }));
         assert_eq!(nome_do_pedido(&retirar), "retirar");
+    }
+
+    /// O pedido do título da sessão, como medido no 2.1.328 em 23/11/2026: a primeira fala na
+    /// `description` e o `persist`, que manda gravar a linha `ai-title` na sessão. A resposta (o
+    /// título, ou `null` quando ele não soube titular) não vira evento: o motor lê o título do
+    /// arquivo da sessão, depois do turno.
+    #[test]
+    fn o_pedido_do_titulo_leva_a_primeira_fala_e_manda_gravar() {
+        let corpo = pedido_do_titulo("olha esse erro aqui que deu no teste");
+        assert_eq!(
+            corpo,
+            json!({ "subtype": "generate_session_title", "description": "olha esse erro aqui que deu no teste", "persist": true })
+        );
+        let linha = linha_do_pedido(nome_do_pedido(&corpo), corpo.clone());
+        assert_eq!(linha["type"], "control_request");
+        assert_eq!(linha["request"], corpo);
+        assert!(linha["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-titulo-")), "{linha}");
+        for miolo in [json!({ "title": "Erro na função soma" }), json!({ "title": null })] {
+            let resposta = json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "vitral-titulo-1", "response": miolo } });
+            assert!(interpretar(&resposta).is_empty(), "{resposta}");
+        }
+        // O pedido existe igual desde a 2.1.323 (o claude de mentira da bancada diz 2.1.300 por padrão).
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_TITULO_GERADO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_TITULO_GERADO));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_TITULO_GERADO));
+    }
+
+    /// De ponta a ponta com o claude de mentira, que encena o pedido como o 2.1.328: o título pedido
+    /// no meio do turno fica gravado na sessão (só numa pasta de configuração de mentira), e é de
+    /// lá que o motor o lê.
+    #[cfg(unix)]
+    #[test]
+    fn o_titulo_pedido_no_turno_fica_gravado_na_sessao() {
+        let config = std::env::temp_dir().join(format!("vitral-titulo-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&config).unwrap();
+        let ambiente = [("CLAUDE_CONFIG_DIR", config.to_str().unwrap()), ("CLAUDE_FALSO_TITULO", "Erro na função soma")];
+        let mut turno = Turno::abrir("[ferramenta Bash cargo test | 1]\nolha esse erro aqui que deu no teste", |o| o, &ambiente);
+        assert!(turno.processo.pedir_titulo("olha esse erro aqui que deu no teste"));
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        let sessao = "11111111-1111-4111-8111-111111111111";
+        let arquivo = arquivo_da_sessao(Some(&config), &turno.pasta, sessao).expect("a sessão gravada pelo claude de mentira");
+        assert_eq!(crate::importar::titulos_da_sessao(&arquivo).gerado.as_deref(), Some("Erro na função soma"));
+        // Com a entrada fechada (o turno acabou) não há a quem pedir.
+        turno.processo.fechar_entrada();
+        assert!(!turno.processo.pedir_titulo("olha esse erro aqui que deu no teste"));
+        drop(turno);
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     /// Medido no 2.1.328: aberto sem a `--allow-dangerously-skip-permissions`, o processo recusa
