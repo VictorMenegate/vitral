@@ -10,7 +10,7 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::{ScrollableElement as _, ScrollbarAxis},
     text::TextView,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -754,7 +754,7 @@ impl Janela {
                             .text_color(Cores::tenue())
                             .child(pasta),
                     )
-                    .tooltip(move |window, cx| Tooltip::new(absoluto.clone()).build(window, cx)),
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(absoluto.clone()).build(window, cx)),
             )
             .child(
                 div()

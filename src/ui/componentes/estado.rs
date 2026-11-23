@@ -3,7 +3,7 @@
 
 use std::{rc::Rc, time::Duration};
 
-use gpui_kit::component::{Icon, Sizable as _, spinner::compasso_recente, tooltip::Tooltip};
+use gpui_kit::component::{Icon, Sizable as _, spinner::compasso_recente, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -250,7 +250,7 @@ impl RenderOnce for PilulaDeEstado {
                 .items_center()
                 .justify_center()
                 .child(ponto)
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element();
         }
         div()
@@ -440,7 +440,7 @@ impl RenderOnce for Selo {
                             .h_full()
                             .when(i + 1 < n, |s| s.border_r_1().border_color(Cores::borda()))
                             .child(icone.with_size(tam(window, 14.)).text_color(cor))
-                            .tooltip(move |window, cx| Tooltip::new(dica).build(window, cx))
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
                     }))
                     .into_any_element()
             }

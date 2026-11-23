@@ -77,9 +77,13 @@ espera 2
 print 14c-configuracoes-atualizacoes
 tecla Escape
 espera 1
-# Os itens do menu do logo (as posições são as do menu aberto com o zoom 1,6).
+# Os itens do menu do logo (as posições são as do menu aberto com o zoom 1,6). Na janela da
+# bancada o menu não cabe e rola: os Atalhos só aparecem depois de rolar até o fim.
 clique 145 122
 espera 1
+rolar 400 700 8
+espera 1
+print 01b-menu-do-logo-rolado
 clique 300 800
 espera 2
 print 15-atalhos
@@ -87,42 +91,42 @@ tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 756
+clique 300 879
 espera 2
 print 16-paleta
 tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 584
+clique 300 663
 espera 2
 print 17-contas
 tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 668
+clique 300 771
 espera 2
 print 18-memoria-da-equipe
 tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 372
+clique 300 422
 espera 3
 print 19-quadro-de-ideias
 tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 284
+clique 300 314
 espera 2
 print 20-novo-chat-com-outra-pasta
 tecla Escape
 espera 1
 clique 145 122
 espera 1
-clique 300 516
+clique 300 584
 espera 2
 print 21-importar
 tecla Escape

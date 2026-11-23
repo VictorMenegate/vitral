@@ -9,7 +9,7 @@ use gpui_kit::component::{
     Disableable as _, Icon, Size, Sizable as _,
     menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -185,6 +185,8 @@ impl Configuracoes {
             window,
             cx,
         )
+        // Na caixa escura dos outros controles: solto, parecia texto (revisão de design, 23/11/2026).
+        .bg(Cores::recuo())
         .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
         .on_click(move |_, _, cx| motor_e.update(cx, |m, cx| m.atualizar_claude(cx)));
         let opcao = LinhaDeOpcao::new("cfg-claude", "Versão instalada")
@@ -441,7 +443,7 @@ impl Render for Configuracoes {
                 LinhaDeOpcao::new("cfg-sugerir", "Sugerir a próxima mensagem")
                     .info(
                         "Depois de cada resposta do Claude, o Claude Code adivinha o que você escreveria em seguida \
-                         (\"roda os testes\", \"commita\"). A sugestão aparece apagada na caixa vazia, e o Tab a põe na \
+                         (“roda os testes”, “commita”). A sugestão aparece apagada na caixa vazia, e o Tab a põe na \
                          caixa. Quando o próximo passo não é óbvio, ele não sugere nada. É uma chamada curta, que \
                          reaproveita o cache da conversa.",
                     )
@@ -517,6 +519,7 @@ impl Render for Configuracoes {
                     .descricao(if ligada { format!("Ligada a {}", config.memoria_da_equipe) } else { "Desligada".to_string() })
                     .controle(
                         botao_fantasma("cfg-memoria-equipe-abrir", None, if ligada { "Trocar…" } else { "Ligar…" }, TamanhoBotao::Controle, window, cx)
+                            .bg(Cores::recuo())
                             .on_click(move |_, window, cx| super::memoria_equipe::abrir(abrir.clone(), window, cx)),
                     )
             })
@@ -532,7 +535,8 @@ impl Render for Configuracoes {
                         alternar_memoria.update(cx, |m, cx| m.mudar_config(|c| c.memoria_ao_terminar = ligado, cx))
                     }),
             );
-        let mcp_grupo = GrupoDeOpcoes::new(None)
+        // A versão do Claude Code e os servidores MCP dele num cartão só, como as outras partes.
+        let claude_grupo = self.grupo_do_claude(estreito, window, cx)
             .linha(
                 LinhaDeOpcao::new("cfg-mcp", "Servidores MCP do Claude Code")
                     .info("No Haiku, muitos servidores MCP estouram o contexto.")
@@ -608,7 +612,7 @@ impl Render for Configuracoes {
             Parte::Agentes => vec![agentes.into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
             Parte::Aparencia => vec![interface.into_any_element()],
-            Parte::ClaudeCode => vec![self.grupo_do_claude(estreito, window, cx).into_any_element(), mcp_grupo.into_any_element()],
+            Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
             Parte::Atualizacoes => atualizacoes.into_iter().map(IntoElement::into_any_element).collect(),
         };
         // A coluna das partes: o ícone e o nome (no diálogo estreito, só o ícone, com o nome na
@@ -630,7 +634,7 @@ impl Render for Configuracoes {
                 .when(!escolhida, |s| s.hover(|s| s.bg(Cores::hover()).text_color(Cores::texto())))
                 .child(Icon::new(parte.icone()).with_size(tam(window, 16.)))
                 .when(!estreito, |s| s.child(div().rotulo().child(parte.nome())))
-                .when(estreito, |s| s.tooltip(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
+                .when(estreito, |s| s.dica_no_ponteiro(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.parte = parte;
                     cx.notify();

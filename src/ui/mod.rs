@@ -2181,7 +2181,7 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
                         WindowButton::Maximize => "Maximizar",
                         WindowButton::Close => "Fechar o Vitral",
                     };
-                    b.tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(dica).build(window, cx))
+                    gpui_kit::component::tooltip::ManagedTooltipExt::dica_no_ponteiro(b, move |window, cx| gpui_kit::component::tooltip::Tooltip::new(dica).build(window, cx))
                 })
                 .child(Icon::new(icone).size(r(14.)).text_color(Cores::tenue()))
                 .map(|b| {

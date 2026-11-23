@@ -72,7 +72,7 @@ impl Janela {
                     None => self.nova_conversa_na_pasta(Some(pasta), window, cx),
                 }
             } else {
-                window.push_notification(aviso(Tom::Atencao, format!("\"{destino}\" não é uma pasta.")), cx);
+                window.push_notification(aviso(Tom::Atencao, format!("“{destino}” não é uma pasta.")), cx);
             }
         }
         cx.notify();

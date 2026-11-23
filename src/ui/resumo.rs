@@ -2,7 +2,7 @@
 //! chats parados no freio de ciclo (em "Esperando você" e no sino) e a faixa "Enquanto você esteve
 //! fora".
 
-use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{Icon, h_flex, tooltip::{ManagedTooltipExt as _, Tooltip}, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -207,7 +207,7 @@ impl Janela {
                                 .rotulo()
                                 .text_color(Cores::forte())
                                 .child("Enquanto você esteve fora")
-                                .tooltip(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
                         )
                         .child(div().flex_none().relative().top(r(-3.)).child(fechar)),
                 )

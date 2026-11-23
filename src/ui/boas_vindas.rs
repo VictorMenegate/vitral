@@ -45,6 +45,9 @@ pub(super) struct BoasVindas {
     /// só aparece com outro agente instalado).
     agente: usize,
     importar: bool,
+    /// Para onde foi a última troca de passo (true: adiante). O passo novo entra deslizando
+    /// desse lado (dono, 23/11/2026: "slide the next step in from the direction you're going").
+    indo: Option<bool>,
 }
 
 /// A pasta com o `~` no lugar da pasta do usuário, para caber e ler melhor.
@@ -72,7 +75,7 @@ impl Janela {
                 MODELOS.iter().position(|(valor, _)| *valor == config.modelo_chats).unwrap_or(0),
             )
         });
-        self.boas_vindas = Some(BoasVindas { passo: 0, sugestoes: Vec::new(), pasta: None, modo, modelo, agente: 0, importar: true });
+        self.boas_vindas = Some(BoasVindas { passo: 0, sugestoes: Vec::new(), pasta: None, modo, modelo, agente: 0, importar: true, indo: None });
         let raizes = crate::importar::raizes(std::iter::empty());
         cx.spawn(async move |this, cx| {
             let achadas = cx
@@ -231,6 +234,15 @@ impl Janela {
             2 => self.passo_das_preferencias(tela, cx).into_any_element(),
             _ => self.passo_da_memoria(window, cx).into_any_element(),
         };
+        // O passo novo desliza do lado para onde se vai: Continuar traz da direita, Voltar da
+        // esquerda. O id leva o passo, para tocar a cada troca.
+        let corpo = match tela.indo {
+            Some(adiante) => {
+                let de = if adiante { super::movimento::De::Direita } else { super::movimento::De::Esquerda };
+                super::movimento::entrar(div().relative().child(corpo), ("bv-passo", passo), de).into_any_element()
+            }
+            None => corpo,
+        };
         let rodape = h_flex()
             .w_full()
             .justify_between()
@@ -241,6 +253,7 @@ impl Janela {
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(tela) = &mut this.boas_vindas {
                             tela.passo = tela.passo.saturating_sub(1);
+                            tela.indo = Some(false);
                             cx.notify();
                         }
                     }))
@@ -264,6 +277,7 @@ impl Janela {
                         this.concluir_boas_vindas(cx);
                     } else if let Some(tela) = &mut this.boas_vindas {
                         tela.passo += 1;
+                        tela.indo = Some(true);
                         cx.notify();
                     }
                 })),

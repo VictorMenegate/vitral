@@ -19,7 +19,7 @@ use gpui_kit::component::{
     scroll::{ScrollableElement as _, Scrollbar, ScrollbarMode},
     shimmer::ShimmerText,
     text::{TextView, TextViewStyle},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -663,7 +663,7 @@ impl Janela {
                             // O mesmo buraco dos balões da conversa, por cima da faixa.
                             .child(fundo_da_lista(raio))
                             .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
-                            .tooltip(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
+                            .dica_no_ponteiro(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
                             }),
@@ -2036,7 +2036,7 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
             })))
             .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, "imagem", "imagens")))
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat_id, &primeira, window, cx)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
     )
     .into_any_element()
 }
@@ -2111,7 +2111,7 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
             .hover(|s| s.border_color(Cores::destaque()))
             .child(simbolo)
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .into_any_element();
     }
     h_flex()
@@ -2135,7 +2135,7 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
                 .hover(|s| s.bg(Cores::hover()))
                 .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
         })
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -2894,7 +2894,7 @@ impl Janela {
             }))
             .child(partes_inteiras(&resumo).text_color(if turno.ao_vivo { Cores::texto() } else { Cores::tenue() }))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
         let mut imagens: Vec<(usize, PathBuf)> = Vec::new();
         if !aberto {
@@ -3006,7 +3006,10 @@ impl Janela {
                 div()
                     .flex_shrink(1.)
                     .min_w_0()
-                    .truncate()
+                    // Corta no meio: a extensão fica à vista.
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
                     // Mono solto na cor do código, como o detalhe das chamadas (sem o chip).
                     .font_family(FONTE_MONO)
                     .text_color(if existe { Cores::codigo() } else { Cores::apagado() })
@@ -3028,7 +3031,7 @@ impl Janela {
                     .hover(|s| s.bg(Cores::hover()))
                     .on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx))
             })
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .into_any_element()
     }
 
@@ -3372,7 +3375,7 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .hover(|s| s.bg(Cores::hover()))
                         .child(chevron)
-                        .tooltip(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
                         .on_click(move |evento, window, cx| {
                             cx.stop_propagation();
                             alterna(evento, window, cx);
@@ -3394,7 +3397,7 @@ impl Janela {
                         .group_hover(grupo.clone(), |s| s.opacity(1.))
                         .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                         .child(icone_de(Lucide::PanelRight, 13.))
-                        .tooltip(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
+                        .dica_no_ponteiro(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
                         .on_click(move |_, window, cx| {
                             // Não abre nem fecha o detalhe da linha.
                             cx.stop_propagation();
@@ -3402,7 +3405,7 @@ impl Janela {
                         }),
                 )
             })
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .map(|s| match edicao.clone() {
                 Some(pedido) => s.on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx)),
                 None => s.on_click(alternar(chave.clone(), cx)),
@@ -3850,7 +3853,7 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
                 .child(icone_de(Lucide::MessageSquarePlus, 12.))
                 .when(!estreita, |s| s.child(rotulo)),
         )
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -3975,7 +3978,7 @@ impl Janela {
                                     .etiqueta()
                                     .text_color(Cores::apagado())
                                     .child(relogio(crate::modelo::agora().saturating_sub(desde)))
-                                    .when_some(memoria, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
+                                    .when_some(memoria, |s, dica| s.dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
                             )
                         })
                         // Muito tempo sem evento: um comando longo, ou o processo travou. Só avisa;
@@ -3992,7 +3995,7 @@ impl Janela {
                                 .etiqueta()
                                 .text_color(Cores::espera())
                                 .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
-                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
                         // Os comandos que o agente deixou rodando no fundo (um servidor, um build):
                         // à vista, e o clique para (o `stop_task` de cada um).
@@ -4048,7 +4051,7 @@ impl Janela {
                                             .child(icone_de(Lucide::ListChecks, 12.))
                                             .child(format!("{feitos}/{}", passos.len())),
                                     )
-                                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                             })
                         })
                         // Os subagentes que trabalham agora: o clique abre o mapa deles.
@@ -4200,7 +4203,7 @@ impl Janela {
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .child(format!("Parada · {curto}"))
-                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     })
                     .into_any_element(),
                 Some(
@@ -4324,7 +4327,7 @@ impl Janela {
                                 .text_size(r(13.))
                                 .line_height(r(18.))
                                 .child(rotulo)
-                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
                         )
                         .into_any_element(),
                     Some(acao),
@@ -4940,7 +4943,7 @@ fn pilula_do_fim(
         .child(icone_de(Lucide::ArrowDown, 14.))
         .when(novidade, |s| s.child(div().flex_none().size(r(6.)).rounded_full().bg(Cores::destaque())))
         .when(com_rotulo, |s| s.child(div().rotulo().child("Novas mensagens")))
-        .tooltip(|window, cx| Tooltip::new("Ir para o fim").action(&IrAoFim, None).build(window, cx))
+        .dica_no_ponteiro(|window, cx| Tooltip::new("Ir para o fim").action(&IrAoFim, None).build(window, cx))
         .on_click(cx.listener(move |this, _, _, cx| this.ir_para_o_fim(painel_id, cx)));
     div()
         .absolute()

@@ -6,7 +6,7 @@ use std::f32::consts::TAU;
 use gpui_kit::component::ElementExt as _;
 
 use gpui_kit::base::plot::shape::{Arc as Arco, ArcData};
-use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -246,7 +246,7 @@ impl RenderOnce for Anel {
             )
             .children(self.centro)
             .when_some(self.dica, |s, dica| {
-                s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                s.dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
     }
 }
@@ -558,7 +558,7 @@ impl RenderOnce for BarraSegmentada {
                         .w(relative(n as f32 / total as f32))
                         .rounded(raio::PILULA)
                         .bg(cor)
-                        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 },
             ))
     }

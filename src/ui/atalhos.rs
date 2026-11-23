@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use super::{
     busca_conversa,
-    componentes::{CabecalhoDialogo, RodapeDialogo, TamanhoBotao, botao_primario, desenho_teclas, largura},
+    componentes::{CabecalhoDialogo, desenho_teclas},
     composer, visor_imagem,
 };
 use crate::tema::{Cores, Tipo as _, esp, r, raio};
@@ -225,13 +225,15 @@ pub fn do_grupo(grupo: Grupo) -> Vec<(Vec<SharedString>, &'static str)> {
 /// O diálogo "Atalhos do teclado": as seções na ordem dos grupos, em duas colunas quando cabe.
 /// Abre com `?` fora de um campo de texto e pelo menu do logo.
 pub fn abrir(window: &mut Window, cx: &mut App) {
-    window.open_dialog(cx, move |dialogo, window, cx| {
-        let duas = !super::dialogos::estreito(window, largura::G);
+    window.open_dialog(cx, move |dialogo, window, _| {
+        // Largo como as Configurações: em duas colunas de 320, as frases quebravam em duas linhas.
+        let largura_do_dialogo = super::configuracoes::LARGURA_DAS_CONFIGURACOES;
+        let duas = !super::dialogos::estreito(window, largura_do_dialogo);
         let secoes: Vec<AnyElement> = Grupo::TODOS
             .iter()
             .map(|grupo| secao(*grupo, do_grupo(*grupo)))
             .collect();
-        super::dialogos::moldura(dialogo, largura::G, window)
+        super::dialogos::moldura(dialogo, largura_do_dialogo, window)
             .title(super::dialogos::topo(
                 CabecalhoDialogo::new("Atalhos do teclado")
                     .subtitulo(div().font_weight(FontWeight::NORMAL).child("Com o foco fora de um campo de texto, ? abre esta lista")),
@@ -246,16 +248,18 @@ pub fn abrir(window: &mut Window, cx: &mut App) {
                             .flex()
                             .flex_wrap()
                             .items_start()
-                            .gap_x(esp::E24)
-                            .children(secoes.into_iter().map(move |s| {
-                                div().when(duas, |d| d.w(relative(0.5)).max_w(relative(0.5))).child(s)
+                            // Metade cada, com o vão dentro dela: 50% mais um vão de fora passavam de
+                            // 100%, e a quebra jogava cada seção para baixo da outra (revisão de
+                            // design, 23/11/2026).
+                            .children(secoes.into_iter().enumerate().map(move |(i, s)| {
+                                div()
+                                    .when(duas, |d| {
+                                        d.w(relative(0.5)).max_w(relative(0.5)).map(|d| if i % 2 == 0 { d.pr(esp::E12) } else { d.pl(esp::E12) })
+                                    })
+                                    .child(s)
                             })),
                     ),
             )
-            .footer(RodapeDialogo::new().principal(
-                botao_primario("atalhos-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
-                    .on_click(|_, window, cx| window.close_dialog(cx)),
-            ))
     });
 }
 

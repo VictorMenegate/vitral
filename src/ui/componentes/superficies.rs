@@ -11,7 +11,7 @@ use gpui_kit::component::{
     menu::PopupMenuItem,
     notification::{Notification, NotificationType},
     popover::Popover,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -369,7 +369,7 @@ pub fn cabecalho_objeto_com_dica(
         let dica = dica.clone();
         placa_de_cabecalho(simbolo.copia().map(|s| s.desenhar(20., window)), nome.clone(), detalhe.clone())
             .id("cabecalho-objeto")
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
 }
 
@@ -549,7 +549,7 @@ pub fn rodape_menu_com_dica(texto: impl Into<SharedString>, dica: impl Into<Shar
             .text_color(Cores::apagado())
             .id("rodape-menu")
             .child(div().flex_1().min_w_0().truncate().child(texto.clone()))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
     })
 }
 

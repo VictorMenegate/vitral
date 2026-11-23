@@ -9,7 +9,7 @@ use gpui_kit::component::{
     input::{Input, InputState},
     kbd::Kbd,
     menu::DropdownMenu,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -741,19 +741,33 @@ impl RenderOnce for BotaoRedondo {
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
             .when(interativo, |s| {
                 s.cursor_pointer()
-                    .on_hover(ponteiro.ouvinte())
                     .active(move |s| if de_metal { s.opacity(0.82) } else { s.bg(ativo) })
                     .when_some(self.ao_clicar, |s, f| s.on_click(move |ev, window, cx| f(ev, window, cx)))
             })
             .when(self.focavel && interativo, |s| s.tab_index(0).focus_visible(|s| s.shadow(halo_foco())))
             .when(self.desabilitado, |s| s.opacity(0.45))
-            // Com o popover dele aberto, a dica sairia por cima do popover.
-            .when(!self.selecionado, |s| {
-                s.tooltip(move |window, cx| {
-                    Tooltip::new(dica.clone())
-                        .when_some(acao.clone(), |t, (acao, contexto)| t.action(acao.as_ref(), contexto))
-                        .build(window, cx)
-                })
+            // O hover acende o botão; a dica é a gerenciada, a mesma dos botões do kit (espera só
+            // na primeira). Com o popover dele aberto, a dica sairia por cima do popover.
+            .map(|s| {
+                let ouvinte = interativo.then(|| ponteiro.ouvinte());
+                if self.selecionado {
+                    return match ouvinte {
+                        Some(ouvinte) => s.on_hover(ouvinte),
+                        None => s,
+                    };
+                }
+                s.dica_com_hover(
+                    move |dentro, window, cx| {
+                        if let Some(ouvinte) = &ouvinte {
+                            ouvinte(dentro, window, cx);
+                        }
+                    },
+                    move |window, cx| {
+                        Tooltip::new(dica.clone())
+                            .when_some(acao.clone(), |t, (acao, contexto)| t.action(acao.as_ref(), contexto))
+                            .build(window, cx)
+                    },
+                )
             })
             .when_some(self.selo, |s, selo| s.child(div().absolute().top(r(-2.)).right(r(-2.)).child(selo)))
     }
@@ -767,6 +781,17 @@ pub fn anel_do_pulso(cor: Hsla, t: f32) -> Div {
         .inset_0()
         .rounded(raio::de(36.))
         .shadow(vec![BoxShadow::new(px(0.), px(0.), cor.opacity(0.4 * (1. - t))).spread_radius(px(6. * t))])
+}
+
+/// O rótulo do segmento com a largura do semibold reservada: o escolhido engrossa a letra sem
+/// mudar de largura, então os vizinhos e a pílula que desliza não andam ao trocar. A cópia em
+/// semibold, invisível, dá a largura; o rótulo de verdade fica por cima, centrado, no peso que o
+/// segmento pôs.
+fn rotulo_de_largura_fixa(rotulo: SharedString) -> Div {
+    div()
+        .relative()
+        .child(div().invisible().font_weight(FontWeight::SEMIBOLD).child(rotulo.clone()))
+        .child(div().absolute().top_0().left_0().size_full().flex().justify_center().child(rotulo))
 }
 
 /// Uma opção do controle segmentado.
@@ -1097,10 +1122,10 @@ impl RenderOnce for ControleSegmentado {
                         s.child(super::superficies::ficha_do_escolhido(raio::de(altura) - px(2.)))
                     })
                     .when_some(seg.icone, |s, icone| s.child(icone.with_size(tam(window, 14.))))
-                    .when(!self.so_icone, |s| s.child(seg.rotulo.clone()))
+                    .when(!self.so_icone, |s| s.child(rotulo_de_largura_fixa(seg.rotulo.clone())))
                     .when_some(seg.ponto, |s, c| s.child(div().size(r(6.)).rounded_full().bg(c)))
                     .when_some(seg.dica.or_else(|| self.so_icone.then_some(seg.rotulo)), |s, dica| {
-                        s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                        s.dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     })
             }))
     }
@@ -1454,11 +1479,6 @@ impl RenderOnce for BotaoDeSegurar {
             })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| soltar.soltar(cx))
             .on_mouse_up_out(MouseButton::Left, move |_, _, cx| soltar_fora.soltar(cx))
-            .on_hover(move |dentro, _, cx| {
-                if !*dentro {
-                    sair.soltar(cx);
-                }
-            })
             .on_key_down(move |evento, _, cx| {
                 // Só o Enter solto e sozinho: a repetição da tecla segurada mandaria o segundo
                 // Enter (o que confirma) sem o usuário soltar o primeiro, e Ctrl ou Shift com
@@ -1470,7 +1490,15 @@ impl RenderOnce for BotaoDeSegurar {
                     }
                 }
             })
-            .tooltip(|window, cx| Tooltip::new("Segure por 1 segundo (ou Enter duas vezes)").build(window, cx))
+            // Sair de cima solta o aperto; a dica é a gerenciada.
+            .dica_com_hover(
+                move |dentro, _, cx| {
+                    if !*dentro {
+                        sair.soltar(cx);
+                    }
+                },
+                |window, cx| Tooltip::new("Segure por 1 segundo (ou Enter duas vezes)").build(window, cx),
+            )
     }
 }
 

@@ -10,7 +10,7 @@ use gpui_kit::component::{
     ElementExt as _, h_flex,
     menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem},
     popover::Popover,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -1106,7 +1106,7 @@ impl Janela {
                             .flex_none()
                             .text_color(Cores::apagado())
                             .child(super::componentes::icone(Lucide::Pencil, 11., window))
-                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
                     );
                 }
                 let aba = aba
@@ -1115,7 +1115,7 @@ impl Janela {
                     })
                     .construir(window, cx)
                     .max_w(teto)
-                    .tooltip(move |window, cx| {
+                    .dica_no_ponteiro(move |window, cx| {
                         let texto = match &pasta_da_dica {
                             Some(pasta) => super::ramo::com_ramo(&dica, pasta),
                             None => dica.to_string(),

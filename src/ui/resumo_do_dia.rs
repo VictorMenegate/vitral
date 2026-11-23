@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use gpui_kit::component::{WindowExt as _, h_flex, scroll::ScrollableElement as _, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{WindowExt as _, h_flex, scroll::ScrollableElement as _, tooltip::{ManagedTooltipExt as _, Tooltip}, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -353,7 +353,7 @@ impl ResumoDoDia {
                     .cursor_pointer()
                     .hover(|s| s.text_color(Cores::destaque_texto()))
                     .child(chat.titulo.clone())
-                    .tooltip(|window, cx| Tooltip::new("Abrir este chat").build(window, cx))
+                    .dica_no_ponteiro(|window, cx| Tooltip::new("Abrir este chat").build(window, cx))
                     .on_click(move |_, window, cx| {
                         window.close_dialog(cx);
                         let _ = janela.update(cx, |this, cx| this.selecionar(Some(id.clone()), window, cx));

@@ -17,7 +17,7 @@ use gpui_kit::component::{
     input::{Enter, Escape, InputState, MoveDown, MoveUp},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     tree::{TreeEntry, TreeItem, TreeState, tree},
     v_flex,
 };
@@ -659,7 +659,7 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
     campo_de_busca_de("busca-lista", estado, atalho, 40., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
-            s.tooltip(move |window, cx| {
+            s.dica_no_ponteiro(move |window, cx| {
                 if conversas {
                     Tooltip::new("Buscar nas conversas\nNos títulos e nas mensagens, também das arquivadas").action(&Buscar, None).build(window, cx)
                 } else {
@@ -835,7 +835,8 @@ fn linha_da_arvore(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
+                        // O arquivo corta no meio, para a extensão ficar à vista; a pasta, no fim.
+                        .map(|s| if e_pasta { s.truncate() } else { s.overflow_hidden().whitespace_nowrap().text_ellipsis_middle() })
                         .text_size(r(13.))
                         .line_height(r(18.))
                         .font_weight(if e_pasta { FontWeight::MEDIUM } else { FontWeight::NORMAL })
@@ -918,7 +919,7 @@ fn linha_achada(
                 .child(dir),
         )
         .child(acoes_do_arquivo(GRUPO, ix, janela.clone(), pasta.to_path_buf(), caminho.to_string(), window, cx))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .on_click(move |_, window, cx| {
             let _ = j_clique.update(cx, |this, cx| this.abrir_arquivo(p_clique.clone(), c_clique.clone(), window, cx));
         })
@@ -1600,7 +1601,7 @@ impl Janela {
             .mt(esp::E2)
             .child(cartao)
             .when_some(pasta_da_dica, |s, pasta| {
-                s.tooltip(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
+                s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
             })
             .on_drag(arrasto, move |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: None }))
             .on_aux_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {

@@ -290,6 +290,7 @@ fn controles(v: &Vista, window: &Window, cx: &App) -> AnyElement {
     let principal: Option<Button> = match botao {
         Botao::Procurar { ocupado } => Some(
             botao_fantasma("cfg-procurar", Some(Lucide::RefreshCw.into()), "Procurar agora", TamanhoBotao::Barra, window, cx)
+                .bg(Cores::recuo())
                 .when(ocupado, |b| b.disabled(true))
                 .on_click(|_, _, cx| atualizacao::procurar_agora(cx)),
         ),

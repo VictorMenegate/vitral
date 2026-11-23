@@ -8,7 +8,7 @@ use gpui_kit::component::{
     command::{Command, CommandGroup, CommandItem, CommandState},
     scroll::{Scrollbar, ScrollbarHandle},
     switch::Switch,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -551,7 +551,7 @@ fn coluna_da_arvore(
                 .items_center()
                 .justify_center()
                 .child(ponto)
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element(),
         ),
         (ponto, _) => ponto,
@@ -694,7 +694,7 @@ impl RenderOnce for LinhaDeOpcao {
                         .id("info")
                         .text_color(Cores::tenue())
                         .child(Icon::new(Lucide::Info).with_size(tam(window, 14.)))
-                        .tooltip(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
                 )
             });
         let mut controle_embaixo = None;

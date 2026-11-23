@@ -18,7 +18,7 @@ use gpui_kit::component::{
     Disableable as _, ElementExt as _, h_flex,
     input::{Escape, InputState},
     text::{RangeHighlight, RenderedText, TextView, TextViewState},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -659,7 +659,7 @@ impl Janela {
                     .text_color(if sem_achado { Cores::ambar() } else { Cores::tenue() })
                     .child(texto)
                     .when_some(contador_longo.filter(|_| estreita), |s, longo| {
-                        s.tooltip(move |window, cx| Tooltip::new(longo.clone()).build(window, cx))
+                        s.dica_no_ponteiro(move |window, cx| Tooltip::new(longo.clone()).build(window, cx))
                     })
             }))
             .child(seta("achado-anterior", Lucide::ChevronUp, "Achado anterior", &AchadoAnterior, -1))

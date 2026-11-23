@@ -5,6 +5,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.6
 
+O Gemini como terceiro agente, o modo foco como no VS Code e as configurações por partes.
+
 - **O Gemini no Vitral.** Ao lado do Claude e do Codex, um chat pode responder pelo Gemini, do
   Google, pelo Antigravity CLI (o `agy`, o sucessor do Gemini CLI). Ele aparece na aba **Gemini**
   do seletor de modelo quando o `agy` está instalado, com os modelos da sua conta. Lê imagens,
@@ -17,13 +19,13 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **Mensagem com agentes no fundo.** Com os agentes trabalhando em segundo plano, a mensagem que
   você manda entra na hora; antes ela esperava na fila até todos acabarem.
 - **Modo foco como no VS Code.** Cada turno vira uma linha só com o que o agente fez, que abre no
-  clique: rodando, "Buscando cupom · 2 chamadas"; pronto, "Trabalhou 16 s · 1 comando", com a
+  clique: rodando, “Buscando cupom · 2 chamadas”; pronto, “Trabalhou 16 s · 1 comando”, com a
   resposta embaixo. Antes as ferramentas sumiam de vez.
 - **A tela dos agentes.** A lista de todos os agentes à esquerda e o escolhido à direita, com os
   passos numerados e o resultado. Antes só dois cabiam, e os outros ficavam escondidos.
 - **O Permitir à vista.** No pedido de permissão, o botão Permitir saía quase apagado e só
   clareava com o ponteiro em cima; agora é claro desde o começo.
-- **O resumo da volta começa pelo que precisa de você.** No "Enquanto você esteve fora", os
+- **O resumo da volta começa pelo que precisa de você.** No “Enquanto você esteve fora”, os
   pedidos vêm primeiro e o que terminou vem por último, até 3 linhas por grupo, cada uma com o
   nome do chat.
 - **A lista mais limpa.** A linha do chat aberto fica só com o fundo, sem a barrinha azul na ponta;
@@ -33,10 +35,25 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   Claude Code e Atualizações, e as opções de cada parte à direita. Os seletores (modo, agente,
   modelo) ficam na mesma caixa escura do contador, alinhados, e toda linha tem o ⓘ.
 - **Acabamento.** A barra de ações do seu balão (hora, editar, copiar) não cobre mais a primeira
-  linha do texto; as linhas do "Enquanto você esteve fora" ficam alinhadas, sem o balão de cada
-  uma e com o que é pedido ("Bash: ls -la"); o "1 rodando" usa o mesmo aro da lista; os campos
-  sem reticências ("Mensagem para este chat"); e as dicas de tecla no mesmo tempo ("↑ ↓ escolhe",
-  "Enter abre").
+  linha do texto; as linhas do “Enquanto você esteve fora” ficam alinhadas, sem o balão de cada
+  uma e com o que é pedido (“Bash: ls -la”); o “1 rodando” usa o mesmo aro da lista; os campos
+  sem reticências (“Mensagem para este chat”); e as dicas de tecla no mesmo tempo (“↑ ↓ escolhe”,
+  “Enter abre”).
+- **Menus sem aperto.** Quando o menu não cabe na janela, ele rola; antes os itens se espremiam
+  até as letras encostarem. Os interruptores seguem o zoom, como o resto.
+- **Configurações mais arrumadas.** O Claude Code num cartão só; os botões Atualizar, Ligar e
+  Procurar agora na mesma caixa escura dos seletores; e o subtítulo diz que tudo grava na hora.
+- **Atalhos do teclado em duas colunas de verdade**, na largura das configurações, sem o botão
+  Fechar (o × e o Esc fecham).
+- **Tipografia.** O segmento escolhido (como “7 dias”) engrossa sem mudar de largura, então os
+  vizinhos não andam; o nome de arquivo corta no meio e a extensão fica à vista (na lista de
+  arquivos, nos anexos e nas edições do chat); as aspas são curvas; e o título de uma ideia no
+  quadro vai até 2 linhas. O menu de anexar ficou mais largo, para os rótulos não cortarem.
+- **Movimento.** A chave recusada (na Memória da equipe e no Linear) deixa o campo vermelho e o
+  faz tremer; o endereço que não responde aponta o campo dele. Nas boas-vindas, o passo novo
+  desliza do lado para onde você vai. Trocar a transparência ou o zoom não anima as cores do tema
+  velho para o novo. E todas as dicas seguem a regra dos botões: só a primeira espera; com uma
+  aberta, a próxima aparece na hora.
 - **As cores de estado iguais em todo lugar.** O que terminou e você ainda não viu é verde na
   lista também (era azul só nela); o azul fica para o que roda.
 

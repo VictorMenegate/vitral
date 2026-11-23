@@ -12,7 +12,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{InlineToken, InputContent, Textarea, TextareaState},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -1302,7 +1302,10 @@ impl Janela {
                     .when(!(imagem && lido.existe), |s| s.child(
                         div()
                             .max_w(r(220.))
-                            .truncate()
+                            // Corta no meio: a extensão fica à vista.
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
                             .metadado()
                             .text_color(if aberta {
                                 Cores::preto()
@@ -1336,7 +1339,7 @@ impl Janela {
                                 cx.stop_propagation();
                             })),
                     )
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             }))
     }
 

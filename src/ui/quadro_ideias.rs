@@ -550,7 +550,7 @@ impl QuadroDeIdeias {
             .child(
                 v_flex()
                     .gap(esp::E2)
-                    .child(div().rotulo().text_color(Cores::forte()).line_clamp(3).child(titulo.clone()))
+                    .child(div().rotulo().text_color(Cores::forte()).line_clamp(2).child(titulo.clone()))
                     .children(detalhe.map(|d| div().metadado().text_color(Cores::tenue()).line_clamp(2).child(d)))
                     .when(!fatos.is_empty(), |s| {
                         s.child(
@@ -576,9 +576,17 @@ impl QuadroDeIdeias {
     }
 
     fn tela_da_conexao(&self, campo: &Entity<InputState>, m: &Motor, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let (ligando, erro) = match m.situacao_do_linear() {
-            SituacaoDoLinear::Desligado { ligando, erro } => (ligando, erro),
-            SituacaoDoLinear::Ligado { .. } => (false, None),
+        let (ligando, erro, recusas) = match m.situacao_do_linear() {
+            SituacaoDoLinear::Desligado { ligando, erro, recusas } => (ligando, erro, recusas),
+            SituacaoDoLinear::Ligado { .. } => (false, None, 0),
+        };
+        // A chave recusada: o campo fica vermelho e treme (de novo a cada recusa).
+        let recusada = erro.as_deref() == Some(crate::linear::RECUSOU_A_CHAVE);
+        let caixa = Input::new(campo).when(recusada, |c| c.focus_bordered(false).border_color(Cores::vermelho()));
+        let caixa = if recusada {
+            super::movimento::tremer(div().relative().child(caixa), ("chave-linear", recusas as usize)).into_any_element()
+        } else {
+            caixa.into_any_element()
         };
         let campo_ligar = campo.clone();
         let ligar = botao_primario("testar-linear", None, if ligando { "Testando" } else { "Testar e ligar" }, TamanhoBotao::Controle, window, cx)
@@ -605,7 +613,7 @@ impl QuadroDeIdeias {
                         "Cole a sua chave pessoal do Linear (Settings, Security & access, Personal API keys). As ideias passam a ser \
                          as issues com a etiqueta Ideia do time EFI, e o que você muda aqui muda lá.",
                     ))
-                    .child(Input::new(campo))
+                    .child(caixa)
                     .children(erro.map(|e| div().metadado().text_color(Cores::vermelho()).child(e)))
                     .child(div().metadado().text_color(Cores::apagado()).child(format!(
                         "Fica em {}, só para você.",

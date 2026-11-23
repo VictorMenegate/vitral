@@ -149,12 +149,15 @@ fn pedir(chave: &str, consulta: &str, variaveis: Value) -> Result<Value, String>
     resultado(codigo, valor)
 }
 
+/// A chave errada: o campo dela treme e fica vermelho.
+pub const RECUSOU_A_CHAVE: &str = "O Linear recusou a chave.";
+
 fn resultado(codigo: u16, valor: Value) -> Result<Value, String> {
     if let Some(erro) = valor["errors"].as_array().and_then(|e| e.first()) {
         let texto = erro["message"].as_str().unwrap_or("erro sem mensagem");
         let tipo = erro["extensions"]["code"].as_str().unwrap_or_default();
         return Err(match tipo {
-            "AUTHENTICATION_ERROR" => "O Linear recusou a chave.".into(),
+            "AUTHENTICATION_ERROR" => RECUSOU_A_CHAVE.into(),
             "RATELIMITED" => "O Linear pediu para esperar (limite de pedidos).".into(),
             _ => format!("O Linear respondeu: {texto}"),
         });
@@ -162,7 +165,7 @@ fn resultado(codigo: u16, valor: Value) -> Result<Value, String> {
     match codigo {
         200 if valor["data"].is_object() => Ok(valor["data"].clone()),
         200 => Err("O Linear respondeu algo que não entendi.".into()),
-        400 | 401 => Err("O Linear recusou a chave.".into()),
+        400 | 401 => Err(RECUSOU_A_CHAVE.into()),
         429 => Err("O Linear pediu para esperar (limite de pedidos).".into()),
         outro => Err(format!("O Linear respondeu com o código {outro}.")),
     }

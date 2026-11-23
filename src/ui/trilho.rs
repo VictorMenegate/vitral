@@ -13,7 +13,7 @@ use gpui_kit::component::{
     Selectable, h_flex,
     menu::{PopupMenu, PopupMenuItem},
     popover::Popover,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -210,7 +210,6 @@ impl RenderOnce for BotaoLogo {
             .relative()
             .flex_none()
             .size(r(self.lado))
-            .on_hover(pairando.ouvinte())
             .flex()
             .items_center()
             .justify_center()
@@ -222,12 +221,16 @@ impl RenderOnce for BotaoLogo {
             .focus_visible(|s| s.shadow(halo_foco()))
             .border_2()
             .border_color(if self.aberto { Cores::borda_forte() } else { transparent_black() })
-            .when(!self.aberto, |s| {
+            // O hover acende a malha; com o menu fechado, ele divide o ouvinte com a dica.
+            .map(|s| {
+                if self.aberto {
+                    return s.on_hover(pairando.ouvinte());
+                }
                 let dica = match &self.pronta {
                     Some(versao) => format!("Menu do Vitral\nVersão {versao} pronta"),
                     None => "Menu do Vitral".to_string(),
                 };
-                s.hover(|s| s.border_color(Cores::borda())).tooltip(move |window, cx| {
+                s.hover(|s| s.border_color(Cores::borda())).dica_com_hover(pairando.ouvinte(), move |window, cx| {
                     Tooltip::new(dica.clone()).action(&AbrirMenuVitral, None).build(window, cx)
                 })
             })

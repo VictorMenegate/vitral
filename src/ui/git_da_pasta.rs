@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui_kit::component::{WindowExt as _, tooltip::Tooltip};
+use gpui_kit::component::{WindowExt as _, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -198,7 +198,7 @@ fn selo_do_ramo(ramo: &RamoDaPasta, window: &Window) -> AnyElement {
         .child(div().min_w_0().truncate().font_family(FONTE_MONO).metadado().text_color(Cores::texto()).child(ramo.nome.clone()))
         .when(ramo.solta, |s| s.child(div().flex_none().metadado().text_color(Cores::tenue()).child("cabeça solta")))
         .when(ramo.worktree, |s| s.child(Selo::cor("worktree", Cores::tenue())))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -262,7 +262,7 @@ fn linha_git(raiz: &Path, m: &MudancaNaPasta, i: usize, window: &Window, cx: &Co
         )
         .children(selo.map(|(t, cor)| Selo::cor(t, cor)))
         .children(desfazer)
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .when(!apagado, |s| {
             s.on_click(cx.listener(move |this, _, window, cx| {
                 this.abrir_diff_do_git(raiz_a.clone(), caminho_a.clone(), novo, window, cx)

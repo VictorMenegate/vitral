@@ -264,7 +264,13 @@ struct TooltipTrigger {
     bounds: Bounds<Pixels>,
 }
 
-pub(crate) trait ManagedTooltipExt:
+/// Vitral: um ouvinte de hover a mais, para o elemento que já tem o seu (o GPUI aceita um só).
+type OuvinteDeHover = Rc<dyn Fn(&bool, &mut Window, &mut App)>;
+
+/// Vitral: pública, para o app pendurar nos elementos dele a mesma dica dos botões: uma só por
+/// janela, com espera só na primeira; com uma aberta (ou fechada há menos da graça), a próxima
+/// troca na hora.
+pub trait ManagedTooltipExt:
     StatefulInteractiveElement + crate::ElementExt + Sized
 {
     fn managed_tooltip(
@@ -286,6 +292,33 @@ pub(crate) trait ManagedTooltipExt:
         self,
         preferred_placement: Option<Placement>,
         show_delay: Option<Duration>,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.dica_gerenciada(preferred_placement, show_delay, false, None, build_tooltip)
+    }
+
+    /// Vitral: a dica perto do ponteiro, como a do GPUI puro (para a linha larga, em que a dica
+    /// no meio da linha ficaria longe de onde se apontou).
+    fn dica_no_ponteiro(self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.dica_gerenciada(Some(Placement::Bottom), None, true, None, build_tooltip)
+    }
+
+    /// Vitral: a dica de um elemento que já ouve o hover: o ouvinte dele roda antes do da dica.
+    fn dica_com_hover(
+        self,
+        ao_passar: impl Fn(&bool, &mut Window, &mut App) + 'static,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.dica_gerenciada(None, None, false, Some(Rc::new(ao_passar)), build_tooltip)
+    }
+
+    /// Vitral: o corpo comum das dicas gerenciadas.
+    fn dica_gerenciada(
+        self,
+        preferred_placement: Option<Placement>,
+        show_delay: Option<Duration>,
+        no_ponteiro: bool,
+        ao_passar: Option<OuvinteDeHover>,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
         let build_tooltip = Rc::new(build_tooltip);
@@ -310,11 +343,21 @@ pub(crate) trait ManagedTooltipExt:
             let trigger = trigger.clone();
             let build_tooltip = build_tooltip.clone();
             move |hovered, window, cx| {
+                if let Some(ao_passar) = &ao_passar {
+                    ao_passar(hovered, window, cx);
+                }
                 let trigger = trigger.borrow();
                 let Some(id) = trigger.id.as_ref() else {
                     return;
                 };
                 let bounds = trigger.bounds;
+                // Vitral: no ponteiro, a dica se ancora num traço da altura do cursor onde ele
+                // entrou; o press e a saída continuam medidos pela caixa inteira.
+                let ancora = if no_ponteiro {
+                    Bounds::new(window.mouse_position(), gpui::size(px(1.), px(18.)))
+                } else {
+                    bounds
+                };
                 // A press keeps the tooltip dismissed until the pointer leaves
                 // the trigger. This also drops the hover-enter that a click
                 // removing the trigger dispatches to the stale frame.
@@ -336,7 +379,7 @@ pub(crate) trait ManagedTooltipExt:
                     if *hovered {
                         overlay.update(cx, |o: &mut BaseTooltipOverlay, cx| {
                             let build = build_tooltip.clone();
-                            let request = BaseTooltipRequest::new(bounds, move |window, cx| {
+                            let request = BaseTooltipRequest::new(ancora, move |window, cx| {
                                 build(window, cx)
                             });
                             let request = match preferred_placement {

@@ -1986,7 +1986,10 @@ quem tem contorno de 1 px usa `dentro_da_borda(12.)` para o conteúdo ficar a 12
 atalhos do Tailwind (`gap_2()`, `p_3()`) medem em rem e, com 1 rem = 15 px, saem fora da grade (7,5
 e 11,25). O teste `espacos_na_escala` barra os dois casos em todo o `src/ui`, sem exceção, e o
 `movimento_com_teto` barra animação feita fora de `src/ui/movimento.rs`. O `metal_so_pelo_motor`
-barra `paint_image(` e `drop_image(` fora de `src/ui/componentes/metal.rs`.
+barra `paint_image(` e `drop_image(` fora de `src/ui/componentes/metal.rs`. O `dica_pela_gerenciada`
+barra o `.tooltip(closure)` puro do GPUI: toda dica vai pela gerenciada do kit (`dica_no_ponteiro`
+para linha larga, `dica_com_hover` para quem já ouve o hover, ou a dos botões), que espera só na
+primeira e, com uma aberta, mostra a próxima na hora (dono, 23/11/2026).
 
 Raios (`tema::raio`, em Pixels fixos): nos controles, um padrão só, `raio::de(altura)`, 45% da
 altura (16 num botão de 36, 14 num de 32, 9 num chip de 20; bem arredondado, nunca redondo, o

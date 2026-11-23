@@ -132,7 +132,7 @@ pub fn testar(digitado: &str, chave: &str) -> Result<String, String> {
 fn pedir(digitado: &str, chave: &str, pedido: Value) -> Result<(u16, String), String> {
     let endereco = endereco_do_mcp(digitado).ok_or("O endereço precisa começar com https:// (ou http://).")?;
     if chave.trim().is_empty() {
-        return Err("Falta a chave.".into());
+        return Err(FALTA_A_CHAVE.into());
     }
     let agente = ureq::Agent::config_builder()
         .user_agent(&format!("Vitral/{}", crate::atualizacao::VERSAO))
@@ -161,6 +161,15 @@ fn json_da_resposta(corpo: &str) -> Option<Value> {
     })
 }
 
+const RECUSOU_A_CHAVE: &str = "O servidor recusou a chave.";
+const CHAVE_SEM_ACESSO: &str = "A chave não tem acesso a esse servidor.";
+const FALTA_A_CHAVE: &str = "Falta a chave.";
+
+/// Se a falha do teste é da chave (e não do endereço): é o campo dela que treme e fica vermelho.
+pub fn erro_da_chave(motivo: &str) -> bool {
+    [RECUSOU_A_CHAVE, CHAVE_SEM_ACESSO, FALTA_A_CHAVE].contains(&motivo)
+}
+
 /// O que o código e o corpo da resposta do `initialize` querem dizer.
 fn resultado_do_teste(codigo: u16, corpo: &str) -> Result<String, String> {
     match codigo {
@@ -172,11 +181,11 @@ fn resultado_do_teste(codigo: u16, corpo: &str) -> Result<String, String> {
                 _ => Err("O endereço respondeu, mas não parece um servidor ai-memory.".into()),
             }
         }
-        401 => Err("O servidor recusou a chave.".into()),
+        401 => Err(RECUSOU_A_CHAVE.into()),
         403 if corpo.contains("forbidden host") => {
             Err("O servidor não aceita esse endereço (falta ele na lista de endereços permitidos do servidor).".into())
         }
-        403 => Err("A chave não tem acesso a esse servidor.".into()),
+        403 => Err(CHAVE_SEM_ACESSO.into()),
         404 => Err("Não há um servidor ai-memory nesse endereço.".into()),
         outro => Err(format!("O servidor respondeu com o código {outro}.")),
     }

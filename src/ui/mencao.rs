@@ -7,7 +7,7 @@
 use std::ops::Range;
 
 use gpui_kit::component::text::{InlineElement, InlineRenderContext, MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast};
-use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -263,7 +263,7 @@ pub fn pilula_de_mencao(
         .child(div().flex_none().text_color(Cores::tenue()).child(super::mensagens::icone_de(icone, 12.)))
         .child(div().flex_none().whitespace_nowrap().text_color(Cores::texto()).child(rotulo))
         .when_some(faixa, |s, faixa| s.child(div().flex_none().whitespace_nowrap().text_color(Cores::tenue()).child(faixa)))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
 }
 
 #[cfg(test)]

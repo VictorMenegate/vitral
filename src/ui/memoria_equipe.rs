@@ -29,14 +29,22 @@ enum Situacao {
 struct Estado {
     situacao: Situacao,
     fechada: bool,
+    /// Quantos testes falharam: o campo culpado treme de novo a cada um.
+    falhas: u32,
 }
 
-/// O rótulo em cima de um campo.
-fn campo(rotulo: &'static str, ajuda: &'static str, entrada: &Entity<InputState>) -> Div {
+/// O rótulo em cima de um campo. Com `errou` (a contagem de falhas, quando a culpa é dele), o
+/// campo fica vermelho e treme.
+fn campo(rotulo: &'static str, ajuda: &'static str, entrada: &Entity<InputState>, errou: Option<u32>) -> Div {
+    // O anel do foco pintaria por cima do vermelho: no erro, a borda vermelha fica com foco ou sem.
+    let caixa = Input::new(entrada).when(errou.is_some(), |c| c.focus_bordered(false).border_color(Cores::vermelho()));
     v_flex()
         .gap(esp::E4)
         .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(rotulo))
-        .child(Input::new(entrada))
+        .child(match errou {
+            Some(n) => super::movimento::tremer(div().relative().child(caixa), (rotulo, n as usize)).into_any_element(),
+            None => caixa.into_any_element(),
+        })
         .child(div().metadado().text_color(Cores::tenue()).child(ajuda))
 }
 
@@ -53,8 +61,15 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
     let estado = cx.new(|_| Estado::default());
     let foco = endereco.read(cx).focus_handle(cx);
     window.open_dialog(cx, move |dialogo, window, cx| {
-        let situacao = estado.read(cx).situacao.clone();
+        let (situacao, falhas) = { let e = estado.read(cx); (e.situacao.clone(), e.falhas) };
         let testando = matches!(situacao, Situacao::Testando);
+        // A falha do teste aponta o campo: a chave recusada ou o endereço que não respondeu.
+        let (errou_endereco, errou_chave) = match &situacao {
+            Situacao::Falhou(motivo) if crate::memoria_equipe::erro_da_chave(motivo) => (None, Some(falhas)),
+            // "Não consegui guardar/remover a chave" é do disco daqui, não de um campo.
+            Situacao::Falhou(motivo) if !motivo.starts_with("Não consegui") => (Some(falhas), None),
+            _ => (None, None),
+        };
         let ligada_agora = !motor.read(cx).config.memoria_da_equipe.is_empty() && crate::memoria_equipe::ler_chave(&config).is_some();
         let linha = match &situacao {
             Situacao::Parada if ligada => Some((Cores::tenue(), "Ligada. Para trocar, preencha e teste de novo.".to_string())),
@@ -82,11 +97,12 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                                 .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(if ligada_agora { "Conectada à equipe" } else { "Conecte a memória da sua equipe" }))
                                 .child(div().corpo_ui().text_color(Cores::tenue()).child("Decisões, procedimentos e aprendizados compartilhados entre o Claude e o Codex. Não precisa instalar o ai-memory neste computador."))),
                     )
-                    .child(campo("Endereço do servidor", "Quem cuida do servidor passa o endereço.", &endereco))
+                    .child(campo("Endereço do servidor", "Quem cuida do servidor passa o endereço.", &endereco, errou_endereco))
                     .child(campo(
                         "Sua chave de acesso",
                         "Peça sua chave a quem administra a memória. Ela fica guardada só neste computador.",
                         &chave,
+                        errou_chave,
                     ))
                     .child(div().metadado().text_color(Cores::tenue()).child(
                         "Só os aprendizados que o agente registra são compartilhados. O histórico do chat não é enviado automaticamente.",
@@ -150,7 +166,12 @@ pub fn abrir(motor: Entity<Motor>, window: &mut Window, cx: &mut App) {
                                             },
                                             Err(motivo) => Situacao::Falhou(motivo),
                                         };
-                                        estado.update(cx, |s, _| s.situacao = situacao);
+                                        estado.update(cx, |s, _| {
+                                            if matches!(situacao, Situacao::Falhou(_)) {
+                                                s.falhas += 1;
+                                            }
+                                            s.situacao = situacao;
+                                        });
                                         cx.refresh_windows();
                                     });
                                 })

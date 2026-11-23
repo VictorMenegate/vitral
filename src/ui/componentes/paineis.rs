@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::{Icon, Sizable as _, tooltip::Tooltip};
+use gpui_kit::component::{Icon, Sizable as _, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -192,7 +192,7 @@ impl Aba {
                 .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                 .when(!fechar_a_vista, |s| s.invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
                 .child(Icon::new(Lucide::X).with_size(tam(window, 14.)))
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     f(window, cx);

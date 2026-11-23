@@ -82,7 +82,7 @@ lto = "thin"
 # src/notification.rs, src/styled.rs, src/dialog/dialog.rs, src/kbd.rs e src/diff/mod.rs). Do
 # polimento: popovers e menus entram com fade e 6 px do lado do gatilho, em 160 ms a no máximo 60
 # quadros por segundo (src/popover.rs, `entrada_flutuante`, e src/menu/context_menu.rs); os
-# flutuantes têm a linha de luz de 1 px no topo (src/styled.rs); os avisos animam a no máximo 60
+# flutuantes não têm a linha de luz de 1 px no topo (src/styled.rs); os avisos animam a no máximo 60
 # quadros por segundo (src/notification.rs); o compasso dos spinners diz se está batendo, para o
 # ponto de "rodando" respirar de carona (src/spinner.rs, `compasso_recente`); e a lista com busca
 # tem o rótulo de grupo de 24 com um símbolo antes e a linha sem margem vertical
@@ -94,10 +94,12 @@ lto = "thin"
 # compasso não bate e devolve a fase parada (src/spinner.rs); e o escopo da seleção de texto de fora
 # dos diálogos é o que o app escolhe (src/root.rs, `definir_escopo_de_selecao`), para cada painel de
 # conversa ter o seu; e o botão de variante própria pinta a cor dele inteira, e não a 20%
-# (src/button/button.rs). Do plano visual: a cantoneira azul, a
-# trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`, `fio_de_pontos`), o desenho único
-# de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
-# em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).
+# (src/button/button.rs); o interruptor segue o zoom do app (src/switch.rs); e o item de menu não
+# encolhe quando o menu não cabe, que então rola (src/menu/popup_menu.rs). Do plano visual: a
+# cantoneira azul, a trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`,
+# `fio_de_pontos`), o desenho único de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e
+# o rótulo de grupo da lista com busca em mono 11 caixa alta com o tracinho (src/command/state.rs,
+# `heading_row`).
 #
 # Cópia do gpui-pre-linux (o backend Linux do GPUI), com as mudanças marcadas com "Vitral:": no
 # Wayland, a janela com `Blurred` usa também o desfoque padrão, o ext-background-effect-v1 (o do

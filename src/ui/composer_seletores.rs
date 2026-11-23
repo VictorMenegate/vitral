@@ -1098,7 +1098,8 @@ impl Janela {
         let dica = "Anexar arquivo ou contexto";
         botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                let largura = tam(window, 300.);
+                // 360: com 300, os próprios rótulos saíam cortados ("Arquivo ou imagem do computad…").
+                let largura = tam(window, 360.);
                 let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
                 itens_de_anexar(menu, &dados, true)
                     .separator()

@@ -9,7 +9,7 @@ use gpui_kit::component::{
     Icon, Selectable, StyledExt as _, h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
     popover::PopoverState,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -242,7 +242,7 @@ impl RenderOnce for BotaoUso {
             .when(self.aberto, |s| s.bg(Cores::pressionado()))
             .when(!self.aberto, |s| {
                 s.hover(|s| s.bg(Cores::hover()))
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(
                 AnelDeUso::new(("uso-anel", id), self.marca, l.fora.map(|f| f as f32))
