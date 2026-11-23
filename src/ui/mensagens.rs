@@ -4614,8 +4614,8 @@ impl Janela {
             return;
         };
         let texto = explicacao.campo.read(cx).value().trim().to_string();
-        let mensagem = (!texto.is_empty())
-            .then(|| format!("O usuário negou esta ação e explicou o que fazer: {texto}"));
+        // A mesma frase do Enter na caixa com o pedido aberto (`Motor::responder_pedido_escrevendo`).
+        let mensagem = (!texto.is_empty()).then(|| crate::motor::recusa_explicada("", &texto));
         if let Some(m) = &self.motor {
             m.update(cx, |m, cx| m.responder_permissao(&explicacao.pedido, false, mensagem, cx));
         }

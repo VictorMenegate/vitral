@@ -5,8 +5,23 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.6
 
-O pedido de permissão de um hook seu aparece em todos os modos.
+O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo
+e o de um hook seu aparece em todos os modos.
 
+- **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
+  ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
+  andamento em menos de um segundo.
+- **Responder a um pedido de permissão escrevendo.** Com um pedido aberto, o Enter na caixa nega
+  o pedido e manda ao Claude o que você escreveu, em vez de deixar a mensagem na fila. O
+  Ctrl+Enter continua mandando para a fila.
+- **Parar com mensagem esperando não derruba mais o Claude Code.** Parar um turno logo depois de
+  mandar uma mensagem para dentro dele encerrava o processo à força, antes de ele fechar o turno
+  e gravar a conversa. Agora o turno fecha direito e a mensagem volta para a fila.
+- **"Sem sinal" só quando o turno travou.** Um comando demorado (um build, uma suíte de testes)
+  ganhava o aviso de sem sinal depois de 10 minutos. Agora o aviso só aparece se o Claude Code
+  parar mesmo de responder.
+- **O raciocínio aparece com o texto.** O "Pensou por…" da conversa vinha vazio; agora abre com o
+  resumo do que o modelo pensou (Claude Code 2.1.323 ou mais novo).
 - **O que um hook manda perguntar vira o cartão de permissão, até em Sem perguntar.** Quando um
   hook seu do Claude Code pedia confirmação antes de um comando (a trava de um deploy, por
   exemplo), o cartão não aparecia no modo Sem perguntar: o comando voltava recusado e o agente

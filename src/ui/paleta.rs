@@ -336,7 +336,9 @@ impl Janela {
                 codex: c.agente == Agente::Codex,
                 com_sessao: c.sessao_criada,
                 rodando: m.execucao(&c.id).rodando(),
-                dirige: m.turno_recebe_mensagem(&c.id),
+                // Também com um pedido de permissão aberto: aí o Enter responde a ele, e a fila
+                // é a outra escolha.
+                dirige: m.turno_recebe_mensagem(&c.id) || m.enviar_responde_pedido(&c.id),
                 fixado: c.fixado,
                 arquivado: c.arquivado,
                 tem_agentes: super::mapa_agentes::tem_agentes(c),

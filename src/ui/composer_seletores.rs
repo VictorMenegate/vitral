@@ -1067,9 +1067,10 @@ impl Janela {
         let estreita = b.estreita();
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
-        // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
-        // Quem já ia pela fila de qualquer jeito não precisa da opção.
-        let depois = composer::dirige_o_turno(motor, &chat.id)
+        // Com o turno rodando, o Enviar entra nele (ou responde ao pedido de permissão aberto); a
+        // escolha de esperar a vez na fila fica aqui. Quem já ia pela fila de qualquer jeito não
+        // precisa da opção.
+        let depois = (composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila)
             .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
         let agendar = crate::ui::agendar::DadosDoMenu {

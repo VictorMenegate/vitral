@@ -385,6 +385,13 @@ pub struct Motor {
     /// esperando na fila interna dele (ver `Processo::dirigir`): saem daqui quando ele as absorve
     /// (a primeira volta de ferramenta) ou quando abre outro turno com elas.
     dirigidas: HashMap<String, Vec<Entrada>>,
+    /// Os chats em que o Parar pediu ao Claude Code para tirar da fila as mensagens dirigidas
+    /// (`Parada::RetirarEInterromper`): no fim do turno parado elas voltam para a fila do Vitral e
+    /// o processo sai sozinho, sem precisar morrer para não abrir outro turno com elas.
+    retiradas: HashSet<String>,
+    /// A vez de cada chat nas trocas de modo, modelo e esforço feitas com o turno rodando: só a
+    /// última vai para o processo, depois de `ASSENTAR_A_TROCA` parada (`acertar_turno_depois`).
+    trocas: HashMap<String, u64>,
     /// Quantas mensagens o usuário dirigiu ao turno que está rodando em cada chat, para a faixa
     /// dizer que ele foi dirigido. Zera a cada turno novo.
     dirigidos: HashMap<String, usize>,
@@ -652,6 +659,8 @@ impl Motor {
             pensando: HashMap::new(),
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
+            retiradas: HashSet::new(),
+            trocas: HashMap::new(),
             dirigidos: HashMap::new(),
             estado_sujo: false,
             parados_por_voce: HashMap::new(),
@@ -920,6 +929,8 @@ impl Motor {
             self.fundo.remove(id);
             self.fim_adiado.remove(id);
             self.dirigidas.remove(id);
+            self.retiradas.remove(id);
+            self.trocas.remove(id);
             self.dirigidos.remove(id);
             self.revisando.remove(id);
             self.parados_por_voce.remove(id);
@@ -1048,8 +1059,12 @@ impl Motor {
             return;
         }
         // Com o turno rodando, a mensagem do usuário entra nele (o "Mandar depois" é que escolhe a
-        // fila). Só a dele: o que vem de outro chat continua esperando a vez.
+        // fila). Só a dele: o que vem de outro chat continua esperando a vez. Com um pedido de
+        // permissão aberto, ela é a resposta ao pedido.
         if !reforco.depois {
+            if self.responder_pedido_escrevendo(chat, &entrada, cx) {
+                return;
+            }
             match self.dirigir_turno(chat, &entrada, cx) {
                 Dirigido::Foi => return,
                 Dirigido::NaFila(motivo) => {
@@ -1065,17 +1080,28 @@ impl Motor {
     pub fn parar(&mut self, chat: &str, cx: &mut Context<Self>) {
         // A fila fica guardada: entra junto com a próxima mensagem (ou em "Entregar agora").
         // Mensagem dirigida ainda engatilhada na fila interna do Claude Code: o `interrupt` não a
-        // descarta (ele a rodaria como turno novo, depois do Parar), então o processo sai inteiro e
-        // ela volta para a fila do Vitral.
+        // descarta (ele a rodaria como turno novo, depois do Parar). O Parar a tira de lá antes
+        // (`Processo::retirar_dirigidas`) e ela volta para a fila do Vitral; o Claude Code fecha o
+        // turno e grava a sessão, como em qualquer Parar. Só num Claude Code que não conhece o
+        // pedido (ou no Codex) o processo ainda sai inteiro, com SIGTERM.
         let dirigida_esperando = self.dirigidas.get(chat).is_some_and(|d| !d.is_empty());
+        let pode_retirar = self.chat(chat).is_some_and(|c| retira_dirigidas(c.agente, self.versao_do_claude()));
+        let parada = como_parar(self.fim_adiado.contains_key(chat), dirigida_esperando, pode_retirar);
         if let Some(processo) = self.processos.get_mut(chat) {
-            // Esperando os agentes em segundo plano, não há turno para interromper: o processo
-            // sai com eles (SIGTERM em tudo que ele abriu).
-            if self.fim_adiado.contains_key(chat) || dirigida_esperando {
-                processo.matar();
-            } else {
-                processo.interromper();
-                self.conferir_parada(chat, cx);
+            match parada {
+                // Esperando os agentes em segundo plano, não há turno para interromper: o processo
+                // sai com eles (SIGTERM em tudo que ele abriu).
+                Parada::Matar => processo.matar(),
+                Parada::RetirarEInterromper if !processo.retirar_dirigidas() => processo.matar(),
+                Parada::RetirarEInterromper => {
+                    self.retiradas.insert(chat.to_string());
+                    processo.interromper();
+                    self.conferir_parada(chat, cx);
+                }
+                Parada::Interromper => {
+                    processo.interromper();
+                    self.conferir_parada(chat, cx);
+                }
             }
             self.interrompidos.push(chat.to_string());
         }
@@ -1145,12 +1171,16 @@ impl Motor {
             json!({"behavior": "deny", "message": mensagem})
         };
         let _ = pedido.resposta.try_send(Resposta::ok(resposta.to_string()));
-        if let Some(modo) = modo
-            && let Some(c) = self.chat_mut(&pedido.chat)
-        {
-            c.permissao = Some(modo);
-            c.modo_antes_do_plano = None;
-            self.salvar();
+        if let Some(modo) = modo {
+            // O processo já sai do plano pela resposta: a próxima troca não pede o modo de novo.
+            if let Some(processo) = self.processos.get_mut(&pedido.chat) {
+                processo.anotar_modo(&modo);
+            }
+            if let Some(c) = self.chat_mut(&pedido.chat) {
+                c.permissao = Some(modo);
+                c.modo_antes_do_plano = None;
+                self.salvar();
+            }
         }
         if !self.permissoes.iter().any(|p| p.chat == pedido.chat)
             && self.execucao(&pedido.chat) == Execucao::EsperandoVoce
@@ -1439,6 +1469,110 @@ impl Motor {
         }
         if let Some(fila) = self.tirar_prontas(chat) {
             self.comecar_turno(chat, fila, cx);
+        }
+    }
+
+    /// O Enter responde a um pedido de permissão aberto neste chat (ver
+    /// `responder_pedido_escrevendo`), em vez de dirigir o turno ou esperar na fila.
+    pub fn enviar_responde_pedido(&self, chat: &str) -> bool {
+        self.pedidos_abertos(chat) > 0
+    }
+
+    /// Quantos pedidos de permissão deste chat esperam resposta agora, num turno que os pode
+    /// receber (não na revisão da memória, nem com o Vitral só para leitura).
+    pub fn pedidos_abertos(&self, chat: &str) -> usize {
+        if self.somente_leitura.is_some() || self.revisando.contains_key(chat) || !self.processos.contains_key(chat) {
+            return 0;
+        }
+        self.permissoes.iter().filter(|p| p.chat == chat).count()
+    }
+
+    /// Escrever com um pedido de permissão aberto é responder a ele: o Enter nega os pedidos
+    /// abertos do chat e o texto vai ao modelo como a explicação da recusa, pelo mesmo caminho do
+    /// "Negar e explicar…" do cartão (`responder_permissao` com a mensagem). A mensagem entra na
+    /// conversa como a de quem escreveu. Com imagem anexada (que a recusa não leva), os pedidos são
+    /// negados com `RESPONDEU_ESCREVENDO` e a mensagem segue para dentro do turno, pela entrada.
+    /// Devolve se a mensagem já foi entregue; `false` também para o que vale para o turno inteiro
+    /// (comando de barra, Ultrathink, Ultracode), que continua indo para a fila sem negar nada.
+    fn responder_pedido_escrevendo(&mut self, chat_id: &str, entrada: &Entrada, cx: &mut Context<Self>) -> bool {
+        if !self.enviar_responde_pedido(chat_id) {
+            return false;
+        }
+        let resposta = resposta_ao_pedido(entrada);
+        if resposta == RespostaAoPedido::Fila {
+            return false;
+        }
+        let pedidos: Vec<(String, String)> =
+            self.permissoes.iter().filter(|p| p.chat == chat_id).map(|p| (p.id.clone(), p.ferramenta.clone())).collect();
+        let RespostaAoPedido::Explicacao(texto) = resposta else {
+            for (id, _) in pedidos {
+                self.responder_permissao(&id, false, Some(RESPONDEU_ESCREVENDO.to_string()), cx);
+            }
+            return false;
+        };
+        // Antes da recusa: o resultado negado da chamada vem depois da mensagem, na conversa.
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.itens.extend(itens_das_entradas(vec![entrada.clone()], None));
+            c.atualizado_em = agora();
+        }
+        *self.dirigidos.entry(chat_id.to_string()).or_default() += 1;
+        for (id, ferramenta) in pedidos {
+            self.responder_permissao(&id, false, Some(recusa_explicada(&ferramenta, &texto)), cx);
+        }
+        if let Some(c) = self.chat(chat_id) {
+            let _ = self.dados.salvar_chat(c);
+        }
+        self.salvar();
+        cx.notify();
+        true
+    }
+
+    /// A versão do Claude Code que os turnos abrem; antes de a leitura de fundo voltar, a do link
+    /// do instalador nativo.
+    fn versao_do_claude(&self) -> Option<Versao> {
+        self.versao_claude.or_else(|| claude::versao_pelo_link(&claude::binario_claude()))
+    }
+
+    /// O modo, o modelo ou o esforço da conversa mudou com o turno rodando: a escolha vai para o
+    /// processo dele (`acertar_turno`) quando ficar `ASSENTAR_A_TROCA` parada. O Shift+Tab passa
+    /// pelos modos do caminho (do Planejar ao Manual, pelo Automático e pelo "Sem perguntar"), e
+    /// nenhum deles pode valer no turno nem por um instante: só o último vai.
+    fn acertar_turno_depois(&mut self, chat: &str, cx: &mut Context<Self>) {
+        if !self.processos.get(chat).is_some_and(Processo::entrada_aberta) {
+            return;
+        }
+        let vez = self.trocas.entry(chat.to_string()).or_default();
+        *vez += 1;
+        let (id, vez) = (chat.to_string(), *vez);
+        cx.spawn(async move |motor, cx| {
+            cx.background_executor().timer(ASSENTAR_A_TROCA).await;
+            let _ = motor.update(cx, |m, _| {
+                if m.trocas.get(&id) == Some(&vez) {
+                    m.trocas.remove(&id);
+                    m.acertar_turno(&id);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Leva ao turno que roda o modo, o modelo e o esforço que a conversa pede agora, pela entrada
+    /// do processo (`Processo::acertar`; só no Claude Code). O turno com Ultrathink ou Ultracode
+    /// fica com o esforço dele até o fim. Sem processo, com a entrada fechada ou com o pedido
+    /// recusado, nada acontece: a escolha vale no turno seguinte, que abre com ela.
+    fn acertar_turno(&mut self, chat_id: &str) {
+        let Some(chat) = self.chat(chat_id).filter(|c| c.agente == Agente::Claude) else {
+            return;
+        };
+        let pedido = claude::AoVivo {
+            modo: self.permissao_de(chat),
+            modelo: self.modelo_do_turno(chat).unwrap_or_default(),
+            esforco: chat.esforco.clone().filter(|e| !e.is_empty()),
+        };
+        let reforco = self.ultima_entrada.get(chat_id).is_some_and(|(_, m)| m.iter().any(|e| e.ultrathink || e.ultracode));
+        if let Some(processo) = self.processos.get_mut(chat_id) {
+            let quer = quer_ao_vivo(pedido, processo.ao_vivo(), reforco);
+            processo.acertar(&quer);
         }
     }
 
@@ -2061,6 +2195,9 @@ impl Motor {
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
                 self.dirigidas.remove(chat_id);
+                self.retiradas.remove(chat_id);
+                // O processo novo já abre com o que a conversa pede: a troca que esperava não vai.
+                self.trocas.remove(chat_id);
                 self.dirigidos.remove(chat_id);
                 self.execucao
                     .insert(chat_id.to_string(), Execucao::Rodando { desde: agora() });
@@ -2139,6 +2276,7 @@ impl Motor {
             gravou.then_some(arquivo)
         });
         let codex = chat.agente == Agente::Codex;
+        let versao = self.versao_do_claude();
         Opcoes {
             agente: chat.agente,
             cwd: chat.cwd.clone(),
@@ -2170,10 +2308,8 @@ impl Motor {
             mcp_da_equipe,
             // No turno que começa antes de a leitura de fundo da versão voltar, vale a do link
             // do instalador nativo.
-            eventos_de_hook: self
-                .versao_claude
-                .or_else(|| claude::versao_pelo_link(&claude::binario_claude()))
-                .is_some_and(|v| v >= claude::VERSAO_EVENTOS_DE_HOOK),
+            eventos_de_hook: versao.is_some_and(|v| v >= claude::VERSAO_EVENTOS_DE_HOOK),
+            raciocinio_resumido: versao.is_some_and(|v| v >= claude::VERSAO_RACIOCINIO_RESUMIDO),
         }
     }
 
@@ -3002,7 +3138,8 @@ impl Motor {
         cx.notify();
     }
 
-    /// Muda uma opção da conversa (modelo, modo, esforço, conta); vale a partir do próximo turno.
+    /// Muda uma opção da conversa (modelo, modo, esforço, conta). O modo, o modelo e o esforço
+    /// valem já no turno que está rodando (`acertar_turno_depois`); o resto, a partir do próximo.
     pub fn mudar_chat(&mut self, chat: &str, f: impl FnOnce(&mut Chat), cx: &mut Context<Self>) {
         let antes = self.chat(chat).map(|c| self.permissao_de(c));
         let padrao = self.config.permissao.clone();
@@ -3015,6 +3152,7 @@ impl Motor {
                 c.modo_antes_do_plano = Some(antes);
             }
         }
+        self.acertar_turno_depois(chat, cx);
         self.salvar();
         cx.notify();
     }
@@ -3208,6 +3346,26 @@ impl Motor {
                 self.chats_sujos.insert(chat_id.to_string());
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.itens.push(Item::Raciocinio { texto: git::inicio_do_texto(texto, 20_000), milis, em: agora() });
+                }
+            }
+            // Só o sinal de vida, que o `tratar` já anotou: nada muda na conversa.
+            Evento::Vivo => return,
+            // O Parar não tirou a mensagem dirigida da fila do Claude Code (ele não achou o uuid,
+            // ou ela chegou depois): ele abriria outro turno com ela. O processo sai inteiro, como
+            // saía antes de o Parar retirar, e ela volta para a fila do Vitral no fim do turno.
+            Evento::FicouNaFila(quantas) => {
+                if quantas > 0 && self.interrompidos.iter().any(|c| c == chat_id) {
+                    self.retiradas.remove(chat_id);
+                    if let Some(processo) = self.processos.get_mut(chat_id) {
+                        processo.matar();
+                    }
+                }
+                return;
+            }
+            // O modelo trocado no meio do turno passou a valer: é ele que a conversa mostra em uso.
+            Evento::ModeloEmUso(modelo) => {
+                if let Some(c) = self.chat_mut(chat_id).filter(|_| !modelo.is_empty()) {
+                    c.modelo_atual = Some(modelo);
                 }
             }
             // Um hook do usuário mandou perguntar: o motivo espera o pedido de permissão dessa
@@ -3458,8 +3616,10 @@ impl Motor {
                 };
                 // O turno acabou mesmo: a mensagem que o usuário dirigiu e o Claude Code não
                 // recebeu (turno com erro, ou parado) volta para a fila, e o processo sai inteiro
-                // para ele não abrir um turno à parte com ela.
+                // para ele não abrir um turno à parte com ela. Menos quando o Parar já a tirou da
+                // fila dele: aí ele sai sozinho, com a sessão gravada.
                 let dirigidas_perdidas = self.devolver_dirigidas(chat_id);
+                let retiradas = self.retiradas.remove(chat_id);
                 self.dirigidos.remove(chat_id);
                 if let Some(mut processo) = self.processos.remove(chat_id) {
                     // Turno com erro ou parado e agentes ainda em segundo plano: com a entrada
@@ -3479,7 +3639,7 @@ impl Motor {
                         Some(geracao) => self.esperar_sugestao(chat_id, processo, geracao, cx),
                         None => {
                             processo.fechar_entrada();
-                            if fundo || dirigidas_perdidas > 0 {
+                            if sai_inteiro(fundo, dirigidas_perdidas, retiradas) {
                                 processo.matar();
                             }
                             self.encerrando.push(processo);
@@ -3562,6 +3722,8 @@ impl Motor {
             }
             Evento::Saiu { stderr, codigo } => {
                 self.motivos_de_hook.esquecer(chat_id);
+                self.retiradas.remove(chat_id);
+                self.trocas.remove(chat_id);
                 // Saiu depois de um `result` adiado, sem outro: os agentes acabaram sem outro turno
                 // (o fim normal, com o texto daquele `result`) ou foram cortados junto com o
                 // processo (teto da espera, queda), e aí o turno termina com erro.
@@ -4718,6 +4880,91 @@ enum Dirigido {
     NaFila(Option<&'static str>),
 }
 
+/// Como a mensagem escrita com um pedido de permissão aberto responde a ele.
+#[derive(Debug, PartialEq)]
+enum RespostaAoPedido {
+    /// Não responde: o que vale para o turno inteiro (comando de barra, Ultrathink, Ultracode)
+    /// espera na fila, e o pedido continua aberto.
+    Fila,
+    /// O texto vai ao modelo como a explicação da recusa (com os arquivos anexados, pelo caminho).
+    Explicacao(String),
+    /// Tem imagem, que a recusa não leva: os pedidos são negados com `RESPONDEU_ESCREVENDO` e a
+    /// mensagem entra no turno pela entrada do processo.
+    Mensagem,
+}
+
+fn resposta_ao_pedido(entrada: &Entrada) -> RespostaAoPedido {
+    if entrada.de.is_some() || entrada.nota || entrada.ultrathink || entrada.ultracode || entrada.texto.starts_with('/') {
+        return RespostaAoPedido::Fila;
+    }
+    match texto_do_turno(std::slice::from_ref(entrada)) {
+        (texto, imagens) if imagens.is_empty() => RespostaAoPedido::Explicacao(texto),
+        _ => RespostaAoPedido::Mensagem,
+    }
+}
+
+/// O que o modelo lê na chamada negada quando a resposta vem logo depois, como mensagem (a que
+/// tem imagem).
+const RESPONDEU_ESCREVENDO: &str = "O usuário respondeu com uma mensagem em vez de permitir esta ação. A mensagem dele vem a seguir.";
+
+/// A recusa de um pedido de permissão com o que o usuário escreveu, como o modelo a lê: é o texto
+/// do "Negar e explicar…" do cartão, e o do Enter com o pedido aberto. No plano, é o pedido de
+/// mudanças.
+pub fn recusa_explicada(ferramenta: &str, texto: &str) -> String {
+    let texto = texto.trim();
+    if ferramenta == "ExitPlanMode" {
+        format!("O usuário pediu mudanças no plano: {texto}")
+    } else {
+        format!("O usuário negou esta ação e explicou o que fazer: {texto}")
+    }
+}
+
+/// Como o Parar encerra o turno.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Parada {
+    /// O `interrupt` pela entrada: o Claude Code fecha o turno, grava a sessão e sai.
+    Interromper,
+    /// Antes do `interrupt`, tira da fila do Claude Code as mensagens dirigidas que ele ainda não
+    /// começou (senão ele abriria outro turno com elas).
+    RetirarEInterromper,
+    /// SIGTERM no processo e em tudo o que ele abriu.
+    Matar,
+}
+
+/// `esperando_agentes`: o turno já deu o `result` e o processo só espera os agentes do fundo (não
+/// há turno a interromper). `pode_retirar`: `retira_dirigidas`.
+fn como_parar(esperando_agentes: bool, dirigida_esperando: bool, pode_retirar: bool) -> Parada {
+    match (esperando_agentes, dirigida_esperando) {
+        (true, _) => Parada::Matar,
+        (false, false) => Parada::Interromper,
+        (false, true) if pode_retirar => Parada::RetirarEInterromper,
+        (false, true) => Parada::Matar,
+    }
+}
+
+/// O Parar pode tirar a mensagem dirigida da fila do agente: só no Claude Code que conhece o
+/// pedido (`claude::VERSAO_RETIRAR_DIRIGIDA`). Sem saber a versão, não.
+fn retira_dirigidas(agente: Agente, versao: Option<Versao>) -> bool {
+    agente == Agente::Claude && versao.is_some_and(|v| v >= claude::VERSAO_RETIRAR_DIRIGIDA)
+}
+
+/// No fim do turno, o processo sai inteiro (SIGTERM) em vez de sair sozinho: com agentes ainda em
+/// segundo plano, ou com mensagem dirigida que ele não recebeu e que o Parar não tirou da fila
+/// dele (`retiradas`).
+fn sai_inteiro(fundo: bool, dirigidas_perdidas: usize, retiradas: bool) -> bool {
+    fundo || (dirigidas_perdidas > 0 && !retiradas)
+}
+
+/// O que vai para o turno que roda: o que a conversa pede agora, menos o esforço num turno com
+/// Ultrathink ou Ultracode (`reforco`), que fica com o dele até o fim.
+fn quer_ao_vivo(pedido: claude::AoVivo, tem: &claude::AoVivo, reforco: bool) -> claude::AoVivo {
+    if reforco { claude::AoVivo { esforco: tem.esforco.clone(), ..pedido } } else { pedido }
+}
+
+/// Quanto a troca de modo, modelo ou esforço tem de ficar parada antes de ir para o turno que
+/// roda (`Motor::acertar_turno_depois`).
+const ASSENTAR_A_TROCA: std::time::Duration = std::time::Duration::from_millis(600);
+
 /// O turno não termina neste `result`: os agentes seguem em segundo plano (o Claude Code abre
 /// outro turno quando eles acabam) ou uma mensagem dirigida pode ainda estar na fila interna dele,
 /// e aí o turno seguinte vem na hora, no mesmo processo (ver `Processo::dirigir`).
@@ -5569,5 +5816,96 @@ mod testes {
         assert_eq!(Mudanca::entre((uso, junto), (Some(&plano), &plano_junto)), Mudanca::Hora);
         // A primeira leitura de uma conta é número novo.
         assert_eq!(Mudanca::entre((Uso::default(), uso), (None, &plano)), Mudanca::Numeros);
+    }
+}
+
+/// O Enter com um pedido de permissão aberto responde a ele; o Parar com mensagem dirigida na
+/// fila do Claude Code a retira em vez de matar o processo; e o modo, o modelo e o esforço
+/// trocados no meio do turno vão para ele. As decisões, sem a janela.
+#[cfg(test)]
+mod testes_do_turno_que_roda {
+    use super::*;
+
+    fn entrada(texto: &str, anexos: &[&str], reforco: Reforco) -> Entrada {
+        entrada_do_usuario(texto.into(), anexos.iter().map(PathBuf::from).collect(), reforco)
+    }
+
+    /// O critério do pedido: com o pedido aberto, o Enter entrega o texto ao modelo como a
+    /// explicação da recusa. O que não cabe na recusa (imagem) entra pela entrada do processo, e
+    /// o que vale para o turno inteiro continua indo para a fila, sem negar nada.
+    #[test]
+    fn a_mensagem_escrita_com_o_pedido_aberto_e_a_resposta_a_ele() {
+        let simples = entrada("usa o pnpm, não o npm", &[], Reforco::default());
+        assert_eq!(resposta_ao_pedido(&simples), RespostaAoPedido::Explicacao("usa o pnpm, não o npm".into()));
+        // O arquivo anexado vai pelo caminho, no texto, como em qualquer mensagem.
+        let com_arquivo = entrada("olha o log", &["/tmp/erro.log"], Reforco::default());
+        match resposta_ao_pedido(&com_arquivo) {
+            RespostaAoPedido::Explicacao(texto) => {
+                assert!(texto.starts_with("olha o log") && texto.contains("/tmp/erro.log"), "{texto}")
+            }
+            outra => panic!("{outra:?}"),
+        }
+        // A imagem não cabe numa recusa: a mensagem inteira entra no turno.
+        let com_imagem = entrada("olha o print", &["/tmp/tela.png"], Reforco::default());
+        assert_eq!(resposta_ao_pedido(&com_imagem), RespostaAoPedido::Mensagem);
+        // O que vale para o turno inteiro espera a vez, como antes.
+        assert_eq!(resposta_ao_pedido(&entrada("/compact", &[], Reforco::default())), RespostaAoPedido::Fila);
+        let ultrathink = Reforco { ultrathink: true, ..Reforco::default() };
+        assert_eq!(resposta_ao_pedido(&entrada("pensa melhor", &[], ultrathink)), RespostaAoPedido::Fila);
+        let ultracode = Reforco { ultracode: true, ..Reforco::default() };
+        assert_eq!(resposta_ao_pedido(&entrada("faz tudo", &[], ultracode)), RespostaAoPedido::Fila);
+        // O que não é do usuário (a entrega de outro chat) nunca responde a um pedido.
+        let de_outro = Entrada { de: Some("Loja".into()), texto: "terminei".into(), ..Default::default() };
+        assert_eq!(resposta_ao_pedido(&de_outro), RespostaAoPedido::Fila);
+    }
+
+    /// O mesmo caminho do "Negar e explicar…" do cartão: o modelo lê a mesma frase.
+    #[test]
+    fn a_recusa_escrita_e_a_do_negar_e_explicar() {
+        assert_eq!(recusa_explicada("Bash", "usa o pnpm"), "O usuário negou esta ação e explicou o que fazer: usa o pnpm");
+        assert_eq!(recusa_explicada("mcp__easypanel__deploy", " espera o galpão fechar \n"), "O usuário negou esta ação e explicou o que fazer: espera o galpão fechar");
+        // Responder ao plano escrevendo é pedir mudanças nele.
+        assert_eq!(recusa_explicada("ExitPlanMode", "começa pelos testes"), "O usuário pediu mudanças no plano: começa pelos testes");
+        assert!(RESPONDEU_ESCREVENDO.contains("mensagem"));
+    }
+
+    /// O critério do Parar: com mensagem dirigida esperando, ele a retira e interrompe; o SIGTERM
+    /// fica para quando não há turno a interromper (os agentes do fundo) ou não dá para retirar.
+    #[test]
+    fn o_parar_so_mata_o_processo_quando_nao_da_para_retirar() {
+        assert_eq!(como_parar(false, false, true), Parada::Interromper);
+        assert_eq!(como_parar(false, false, false), Parada::Interromper);
+        assert_eq!(como_parar(false, true, true), Parada::RetirarEInterromper);
+        assert_eq!(como_parar(false, true, false), Parada::Matar);
+        assert_eq!(como_parar(true, false, true), Parada::Matar);
+        assert_eq!(como_parar(true, true, true), Parada::Matar);
+        // Só o Claude Code que conhece o pedido (conferido a partir do 2.1.323).
+        assert!(retira_dirigidas(Agente::Claude, Some((2, 1, 328))));
+        assert!(retira_dirigidas(Agente::Claude, Some((2, 1, 323))));
+        assert!(!retira_dirigidas(Agente::Claude, Some((2, 1, 300))));
+        assert!(!retira_dirigidas(Agente::Claude, None));
+        assert!(!retira_dirigidas(Agente::Codex, Some((2, 1, 328))));
+        // No fim do turno parado, o processo que teve a mensagem retirada sai sozinho.
+        assert!(!sai_inteiro(false, 1, true));
+        assert!(sai_inteiro(false, 1, false));
+        assert!(sai_inteiro(true, 0, false));
+        assert!(sai_inteiro(true, 1, true));
+        assert!(!sai_inteiro(false, 0, false));
+    }
+
+    /// O turno com Ultrathink ou Ultracode abriu com o esforço dele: trocar o modo ou o modelo no
+    /// meio não o desfaz, e o esforço escolhido na caixa vale no turno seguinte.
+    #[test]
+    fn o_esforco_do_turno_reforcado_fica_ate_o_fim() {
+        let ao_vivo = |modo: &str, modelo: &str, esforco: Option<&str>| claude::AoVivo {
+            modo: modo.into(),
+            modelo: modelo.into(),
+            esforco: esforco.map(str::to_string),
+        };
+        let tem = ao_vivo("manual", "opus", Some("xhigh"));
+        let pedido = ao_vivo("plan", "haiku", Some("low"));
+        assert_eq!(quer_ao_vivo(pedido.clone(), &tem, false), pedido);
+        assert_eq!(quer_ao_vivo(pedido.clone(), &tem, true), ao_vivo("plan", "haiku", Some("xhigh")));
+        assert_eq!(quer_ao_vivo(ao_vivo("manual", "opus", None), &tem, true), tem);
     }
 }

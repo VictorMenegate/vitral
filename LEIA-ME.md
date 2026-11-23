@@ -161,7 +161,52 @@ componentes do GPUI Kit.
   começa, `vigiar_turno_dirigido` fecha a entrada e o processo sai). A entrada só fecha no fim
   adiado quando há agentes em segundo plano. `Motor::turno_recebe_mensagem` diz se o Enviar entra
   no turno ou vai para a fila, e **Mandar agora**, na lista da fila
-  (`Motor::mandar_da_fila_agora`), tira uma mensagem da fila e a põe no turno que roda.
+  (`Motor::mandar_da_fila_agora`), tira uma mensagem da fila e a põe no turno que roda. Cada
+  mensagem dirigida vai com um `uuid` (`Processo::dirigir`): **o Parar a tira da fila interna do
+  Claude Code** antes do `interrupt` (o pedido de controle `cancel_async_message`, que não está no
+  tipo público do SDK; `Processo::retirar_dirigidas`), em vez de matar o processo, que era o
+  jeito de ele não abrir outro turno com ela depois do Parar. Medido no Claude Code 2.1.328 em
+  23/11/2026: o pedido responde `{"cancelled": true}`, o `interrupt` passa a responder
+  `still_queued: []`, o turno fecha com o `result` de erro, o processo sai sozinho menos de 1 s
+  depois de a entrada fechar e a sessão retomada não tem a mensagem (ela volta para a fila do
+  Vitral, como antes). Se a resposta do `interrupt` ainda trouxer alguma mensagem
+  (`Evento::FicouNaFila`), ou num Claude Code anterior ao 2.1.323 (`VERSAO_RETIRAR_DIRIGIDA`),
+  ou no Codex, vale o de antes: SIGTERM no processo (`motor::como_parar`).
+- **Responder a um pedido de permissão escrevendo.** Com um pedido aberto no chat, o Enter na
+  caixa nega o pedido (todos os abertos daquele chat) e entrega o texto ao modelo como a
+  explicação da recusa, pelo mesmo caminho do **Negar e explicar…** do cartão
+  (`Motor::responder_pedido_escrevendo`, `motor::recusa_explicada`; no pedido de aprovar um
+  plano, o texto é o pedido de mudanças). A mensagem entra na conversa como sua, antes do
+  resultado negado da chamada. Com imagem anexada, que a recusa não leva, os pedidos são negados
+  com "O usuário respondeu com uma mensagem…" e a mensagem entra no turno pela entrada. O que
+  vale para o turno inteiro (comando de barra, Ultrathink, Ultracode) continua indo para a fila,
+  sem negar nada, e o **Ctrl+Enter** (Mandar depois) também. A dica do Enviar diz o que o Enter
+  vai fazer (`composer::dica_do_enviar`).
+- **Modo, modelo e esforço no turno que roda.** Trocar o modo (Shift+Tab ou o seletor), o modelo
+  ou o esforço com o turno rodando vale nele, e não só no seguinte: o Vitral manda pela entrada
+  do processo os pedidos de controle `set_permission_mode`, `set_model` e `apply_flag_settings`
+  (com o `effortLevel`), como já mandava o `interrupt` e o `stop_task` (`Processo::acertar`, com
+  o que o processo tem em `claude::AoVivo`). Medido no 2.1.328, no meio de um comando: o modo
+  responde `{"mode": …}` e o Write seguinte do mesmo turno passou sem perguntar; o modelo
+  responde `{"model": <id>}` e a chamada seguinte ao modelo já sai nele (a conversa passa a
+  mostrá-lo em uso, `Evento::ModeloEmUso`); o esforço responde sucesso e o `get_settings` diz o
+  nível novo (`null` volta ao automático). A troca só vai depois de 0,6 s parada
+  (`Motor::acertar_turno_depois`): o Shift+Tab passa pelos modos do caminho, e nenhum deles (o
+  "Sem perguntar" entre o Automático e o Manual, por exemplo) pode valer no turno nem por um
+  instante. Para o "Sem perguntar" poder entrar no meio de um turno, todo turno abre com
+  `--allow-dangerously-skip-permissions` (sem ela o pedido volta `bypass_not_launched`), menos
+  com o Vitral rodando como root, em que o Claude Code nem abre com a opção. O turno com
+  Ultrathink ou Ultracode fica com o esforço dele até o fim. Com a entrada já fechada, no Codex,
+  ou se o Claude Code recusar o pedido, nada aparece na tela: a escolha fica gravada na conversa
+  e vale no turno seguinte, como sempre valeu.
+- **Sinal de vida e raciocínio.** Enquanto uma ferramenta roda, o Claude Code manda a cada 30 s
+  um `tool_progress` com `heartbeat` (medido no 2.1.328 com um comando de 75 s): ele conta como
+  sinal de vida (`Evento::Vivo`), e o "sem sinal há N min" da linha de estado (`Motor::silencio`,
+  10 minutos calado) só aparece quando o processo parou mesmo de falar, não num build longo. O
+  texto do raciocínio só vem na saída com `--thinking-display summarized` (fora do `--help`; sem
+  ela o bloco chega vazio no 2.1.328): o Vitral passa a opção a partir do Claude Code 2.1.323
+  (`VERSAO_RACIOCINIO_RESUMIDO`, a mais antiga em que foi conferida; num que não a conhecesse
+  ela derrubaria o turno), e o "Pensou por…" da conversa abre com o resumo.
 - **Esforço automático.** No Auto, o seletor diz o nível que vale: o Vitral pergunta ao Claude
   Code (`get_settings`, o `applied.effort`), uma vez por conta e modelo, em segundo plano
   (`claude::atualizar_esforco_padrao`); no Codex vem do catálogo (`default_reasoning_level`).
@@ -465,7 +510,8 @@ texto escrito, "Shift Enter" quebra a linha (na caixa estreita, só a direita). 
 trabalhando, ela diz o que ele faz (ver **Faixa do turno**, abaixo). As mensagens, a fila, a faixa
 do turno e a caixa vão até a mesma borda em todos os painéis: os anéis de uso flutuam no canto,
 num disco opaco, e nada guarda folga para eles. Vazia, a caixa diz "Mensagem para este chat…" no chat
-com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo. Na caixa estreita, em que os
+com pasta e "Mensagem…" no Sem pasta. **Shift+Tab** troca o modo, também no turno que está
+rodando (ver **Modo, modelo e esforço no turno que roda**). Na caixa estreita, em que os
 chips são só ícones, trocar o modo pelo Shift+Tab ou escolher um modelo mostra um aviso curto
 ("Modo: Manual", "Modelo: Claude Fable 5.2", `avisar_na_estreita`). O menu do modo lista o que foi permitido nesta conversa: o clique numa regra tira só ela, e
 **Voltar a perguntar sobre tudo** tira todas. O **esforço** abre um popover com o nível num
@@ -688,7 +734,9 @@ no cabeçalho; dono, 18/11/2026).
   com "$" na frente, um mini-diff no Edit e as primeiras linhas no Write; o motivo (a descrição do
   comando, o caminho) vai embaixo. A caixa do comando mostra umas 11 linhas e rola: com mais que
   isso (ou mais de 900 caracteres), o cartão avisa "Comando comprido: role a caixa para ler tudo
-  antes de permitir.". No rodapé, **Negar e explicar…** (o ícone; o texto vai ao Claude),
+  antes de permitir.". Escrever na caixa de mensagem e dar Enter nega o pedido e manda o texto
+  ao Claude (ver **Responder a um pedido de permissão escrevendo**). No rodapé, **Negar e
+  explicar…** (o ícone; o texto vai ao Claude),
   **Negar** e **Permitir**, e à esquerda a caixa de marcar **Não perguntar de novo: edições nesta
   conversa** (ou "este comando", ou o nome da ferramenta): marcada, o Permitir grava a regra, que
   vale já no turno em andamento (`permitir_sempre`); desmarcada, permite só esta vez. Com um
@@ -1685,7 +1733,16 @@ pedido à `permissao` do Vitral, sem o motivo (sem o `--permission-prompt-tool` 
 chamada volta recusada com o motivo como erro, sem perguntar a ninguém; para o motivo aparecer no
 cartão, a bancada precisa de `CLAUDE_FALSO_VERSAO=2.1.328`, porque o Vitral só pede os eventos de
 hook a partir do 2.1.323 e o padrão do claude de mentira é 2.1.300, a mesma versão que ele diz no
-`init`; o roteiro é o `ferramentas/roteiros/ask-de-hook.txt`); ao lado dele mora o
+`init`; o roteiro é o `ferramentas/roteiros/ask-de-hook.txt`); pela entrada, no meio do turno,
+responde como o 2.1.328 ao `set_permission_mode`, ao `set_model` e ao `apply_flag_settings` e
+termina a resposta com "no meio do turno: modo acceptEdits, …", para a bancada ver que a troca
+chegou; a mensagem que chega com uma ferramenta rodando fica na fila dele até ela voltar, o
+`cancel_async_message` a tira de lá e o `interrupt` responde com o `still_queued` e, se sobrou
+mensagem, abre outro turno com ela; a ferramenta que demora manda o `tool_progress` com
+`heartbeat` a cada 30 s (`CLAUDE_FALSO_BATIDA=<segundos>` encurta); e o texto do `Pensa` só vem
+com `--thinking-display summarized` nos argumentos, que o Vitral só passa a partir do 2.1.323
+(com o padrão 2.1.300 o bloco chega vazio, como no de verdade sem a opção; os roteiros são o
+`ferramentas/roteiros/responder-pedido.txt` e o `ferramentas/roteiros/troca-no-turno.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem

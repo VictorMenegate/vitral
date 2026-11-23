@@ -16,6 +16,20 @@ os eventos do hook (só com `--include-hook-events`) e pede a permissão à ferr
 `--permission-prompt-tool`, sem o motivo (ele só vem no evento do hook). Sem essa ferramenta nos
 argumentos, a chamada volta recusada com o motivo do hook como erro, sem perguntar a ninguém.
 
+Pela entrada, no meio do turno, como o Claude Code 2.1.328 (medido em 23/11/2026):
+- `set_permission_mode`, `set_model` e `apply_flag_settings` (o `effortLevel`) respondem como o de
+  verdade e passam a valer no turno que roda: a resposta do turno termina com "no meio do turno:
+  modo acceptEdits, ..." para a bancada ver que a troca chegou. O `bypassPermissions` só entra num
+  processo aberto com `--allow-dangerously-skip-permissions` (ou já nesse modo);
+- a mensagem do usuário que chega com uma ferramenta rodando fica na fila dele (`command_lifecycle
+  queued`) e entra no turno quando a ferramenta volta; o `cancel_async_message` a tira da fila; o
+  `interrupt` responde com o que ainda está na fila (`still_queued`), fecha o turno com erro e, se
+  sobrou mensagem, abre outro turno com ela (é por isso que o Parar a retira antes);
+- a ferramenta que demora manda um `tool_progress` com `heartbeat` a cada 30 s
+  (CLAUDE_FALSO_BATIDA=<segundos> encurta);
+- o texto do raciocínio (`[ferramenta Pensa ...]`) só vem com `--thinking-display summarized`; sem
+  a opção, o bloco chega vazio.
+
 Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
 vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
 tool_result no stream. E, sem precisar pedir:
@@ -127,6 +141,9 @@ if "--json-schema" in args:
 
 
 def emitir(valor):
+    # Depois do `interrupt`, quem fala é só a thread que o atendeu: o turno cortado fica calado.
+    if threading.current_thread() is threading.main_thread() and "interrompido" in globals() and interrompido.is_set():
+        threading.Event().wait()
     print(json.dumps(valor, ensure_ascii=False), flush=True)
 
 
@@ -176,17 +193,120 @@ if isinstance(primeiro, dict) and primeiro.get("type") == "control_request":
 fim_da_entrada = threading.Event()
 # O `stop_task` do Vitral (o clique na pílula dos comandos de fundo) para o comando de `[ferramenta Fundo ...]`.
 tarefa_parada = threading.Event()
+# O `interrupt` chegou: o que o turno ainda ia mandar não sai mais (ver `emitir`).
+interrompido = threading.Event()
+# Uma ferramenta está rodando: a mensagem que chega agora espera na fila até ela voltar.
+ferramenta_rodando = threading.Event()
+# As mensagens do usuário na fila: (uuid, texto).
+fila_de_mensagens = []
+trava_da_fila = threading.Lock()
+# O que foi trocado pela entrada no meio do turno: modo, modelo, esforço.
+ao_vivo = {}
+MODOS = ("acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan")
+
+
+def responder(pedido, resposta=None, erro=None, **mais):
+    """A resposta a um pedido de controle, como o Claude Code a escreve."""
+    corpo = {"subtype": "error" if erro else "success", "request_id": pedido.get("request_id")}
+    if erro:
+        corpo["error"] = erro
+    elif resposta is not None:
+        corpo["response"] = resposta
+    corpo.update(mais)
+    emitir({"type": "control_response", "response": corpo})
+
+
+def trocar_ao_vivo(pedido, corpo):
+    """`set_permission_mode`, `set_model` e `apply_flag_settings` no meio do turno. Devolve se o
+    pedido era um deles."""
+    subtipo = corpo.get("subtype")
+    if subtipo == "set_permission_mode":
+        modo = corpo.get("mode")
+        modo = "default" if modo == "manual" else modo
+        liberado = any(a in args for a in ("--allow-dangerously-skip-permissions", "--dangerously-skip-permissions")) \
+            or valor_de("--permission-mode") == "bypassPermissions"
+        if modo not in MODOS:
+            responder(pedido, erro="Cannot set permission mode: must be one of " + ", ".join(MODOS), error_code="invalid_mode")
+        elif modo == "bypassPermissions" and not liberado:
+            responder(pedido, erro="Cannot set permission mode to bypassPermissions because the session was not "
+                                   "launched with --dangerously-skip-permissions", error_code="bypass_not_launched")
+        else:
+            ao_vivo["modo"] = modo
+            responder(pedido, {"mode": modo})
+            emitir({"type": "system", "subtype": "status", "status": None, "permissionMode": modo, "session_id": sessao})
+        anotar({"set_permission_mode": corpo.get("mode"), "valeu": ao_vivo.get("modo") == modo})
+        return True
+    if subtipo == "set_model":
+        modelo = corpo.get("model") or "claude-falso"
+        ao_vivo["modelo"] = modelo
+        emitir({"type": "user", "message": {"role": "user", "content":
+                f"<local-command-stdout>Set model to `{modelo}`</local-command-stdout>"},
+                "session_id": sessao, "parent_tool_use_id": None, "isReplay": True})
+        responder(pedido, {"model": modelo})
+        anotar({"set_model": corpo.get("model")})
+        return True
+    if subtipo == "apply_flag_settings":
+        ajustes = corpo.get("settings") or {}
+        if "effortLevel" in ajustes:
+            ao_vivo["esforço"] = ajustes["effortLevel"] or "automático"
+        # Como o de verdade: sucesso sem corpo, até para um nível que ele não conhece.
+        responder(pedido)
+        anotar({"apply_flag_settings": ajustes})
+        return True
+    return False
+
+
+def turno_da_fila():
+    """Depois do `interrupt`, o Claude Code abre outro turno com a mensagem que ficou na fila."""
+    with trava_da_fila:
+        pendentes = list(fila_de_mensagens)
+        fila_de_mensagens.clear()
+    for uuid, dirigida in pendentes:
+        emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "started", "session_id": sessao})
+        emitir({"type": "system", "subtype": "init", "model": ao_vivo.get("modelo", "claude-falso"), "session_id": sessao,
+                "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
+        resposta = f"(claude falso) turno novo com a mensagem que ficou na fila: {dirigida[:120]}"
+        emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}]}})
+        emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": 0.0})
+        emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "completed", "session_id": sessao})
+
+
+def absorver_fila():
+    """A ferramenta voltou: as mensagens que esperavam entram no turno que roda."""
+    with trava_da_fila:
+        pendentes = list(fila_de_mensagens)
+        fila_de_mensagens.clear()
+    for _, dirigida in pendentes:
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": f"(claude falso) dirigido no meio do turno: {dirigida[:120]}"}]}})
 
 
 def ouvir_entrada():
-    """O Parar do Vitral: o `interrupt` pela entrada (como no de verdade, 2.1.278) responde, fecha o
-    turno com erro e sai. Outra mensagem do usuário no meio do turno (o Enviar com ele rodando) é
-    absorvida nele, como no de verdade, e só responde uma linha dizendo que foi dirigida. A entrada
-    fechada (o fim do turno) solta o fim lá embaixo."""
+    """O Parar do Vitral: o `interrupt` pela entrada (como no de verdade, 2.1.328) responde com o
+    que ainda está na fila, fecha o turno com erro e sai; com mensagem na fila, abre outro turno
+    com ela antes. Outra mensagem do usuário no meio do turno (o Enviar com ele rodando) entra
+    nele: com uma ferramenta rodando, espera na fila até ela voltar; sem, entra na hora. Cada uma
+    só responde uma linha dizendo que foi dirigida. A entrada fechada (o fim do turno) solta o fim
+    lá embaixo."""
     for pedido in sys.stdin:
         try:
             pedido = json.loads(pedido)
         except ValueError:
+            continue
+        if pedido.get("type") == "control_request" and trocar_ao_vivo(pedido, pedido.get("request", {})):
+            continue
+        if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "cancel_async_message":
+            uuid = pedido["request"].get("message_uuid")
+            with trava_da_fila:
+                achada = next((m for m in fila_de_mensagens if m[0] == uuid), None)
+                if achada:
+                    fila_de_mensagens.remove(achada)
+            anotar({"cancel_async_message": uuid, "retirou": bool(achada)})
+            if achada:
+                emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "cancelled", "session_id": sessao})
+                responder(pedido, {"cancelled": True, "message_uuid": uuid})
+            else:
+                responder(pedido, {"cancelled": False})
             continue
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "stop_task":
             anotar({"stop_task": pedido["request"].get("task_id")})
@@ -194,23 +314,40 @@ def ouvir_entrada():
             tarefa_parada.set()
             continue
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "interrupt":
-            anotar({"interrupt": pedido.get("request_id")})
-            emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"), "response": {}}})
+            with trava_da_fila:
+                na_fila = [uuid for uuid, _ in fila_de_mensagens]
+            anotar({"interrupt": pedido.get("request_id"), "still_queued": na_fila})
+            # O que o turno ainda ia mandar (o resultado da ferramenta, a resposta) não sai mais.
+            interrompido.set()
+            responder(pedido, {"still_queued": na_fila})
             emitir({"type": "result", "subtype": "error_during_execution", "is_error": True, "result": "", "total_cost_usd": 0.0})
-            os._exit(1)
+            if not na_fila:
+                os._exit(1)
+            # Com mensagem na fila, o de verdade abre outro turno com ela e só sai com a entrada fechada.
+            turno_da_fila()
+            for _ in sys.stdin:
+                pass
+            os._exit(0)
         if pedido.get("type") == "user":
             try:
                 partes = pedido["message"]["content"]
                 dirigida = "\n".join(b.get("text", "") for b in partes if b.get("type") == "text").strip()
             except (KeyError, TypeError):
                 dirigida = ""
-            if dirigida:
+            if dirigida and ferramenta_rodando.is_set():
+                uuid = pedido.get("uuid") or f"falso-{len(fila_de_mensagens) + 1}"
+                with trava_da_fila:
+                    fila_de_mensagens.append((uuid, dirigida))
+                anotar({"dirigida": dirigida[:200], "na_fila": uuid})
+                emitir({"type": "command_lifecycle", "command_uuid": uuid, "state": "queued", "session_id": sessao})
+            elif dirigida:
                 anotar({"dirigida": dirigida[:200]})
                 emitir({"type": "assistant", "message": {"content": [
                     {"type": "text", "text": f"(claude falso) dirigido no meio do turno: {dirigida[:120]}"}]}})
     fim_da_entrada.set()
 
 
+sessao = valor_de("--session-id") or valor_de("--resume") or "falsa"
 threading.Thread(target=ouvir_entrada, daemon=True).start()
 try:
     conteudo = json.loads(linha)["message"]["content"]
@@ -219,7 +356,6 @@ except (ValueError, KeyError, TypeError):
     texto = ""
 pedido = next((l.strip() for l in reversed(texto.splitlines()) if l.strip() and not l.startswith("[")), "")
 prompt = valor_de("--append-system-prompt-file")
-sessao = valor_de("--session-id") or valor_de("--resume") or "falsa"
 # A conversa trazida do Claude Code continua numa cópia (--resume <id> --fork-session --session-id
 # <nova>): como no de verdade, a sessão nova nasce com o que a original tinha, ao lado dela. Só com
 # um CLAUDE_CONFIG_DIR de mentira: o ~/.claude de verdade nunca é tocado.
@@ -310,6 +446,26 @@ def entrada_da_ferramenta(nome, detalhe):
     return {"detalhe": detalhe}
 
 
+def esperar_a_ferramenta(id_, nome, segundos):
+    """A espera entre o tool_use e o tool_result. Enquanto ela dura, a mensagem que chega fica na
+    fila, e a cada 30 s (CLAUDE_FALSO_BATIDA) sai o `tool_progress` com `heartbeat`, como no de
+    verdade (2.1.328), preso à chamada pelo `parent_tool_use_id`."""
+    batida = float(os.environ.get("CLAUDE_FALSO_BATIDA", "30") or 30)
+    ferramenta_rodando.set()
+    fim, n = time.time() + segundos, 0
+    while True:
+        falta = fim - time.time()
+        if falta <= 0:
+            break
+        time.sleep(min(batida, falta))
+        if fim - time.time() > 0:
+            emitir({"type": "tool_progress", "tool_use_id": f"{id_}-heartbeat-{n}", "tool_name": nome,
+                    "parent_tool_use_id": id_, "elapsed_time_seconds": int(batida * (n + 1)), "heartbeat": True,
+                    "session_id": sessao})
+            n += 1
+    ferramenta_rodando.clear()
+
+
 def fingir_ferramentas(texto):
     """Faz de conta que usa cada ferramenta pedida, uma de cada vez, com a espera entre o
     tool_use e o tool_result: é nessa janela que a conversa mostra o que ele está fazendo."""
@@ -321,7 +477,10 @@ def fingir_ferramentas(texto):
         if nome == "Pensa":
             emitir({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "thinking"}}})
             time.sleep(int(segundos) if segundos else 2)
-            emitir({"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": detalhe}]}})
+            # Como o de verdade (2.1.328): o texto só vem com `--thinking-display summarized`.
+            resumido = valor_de("--thinking-display") == "summarized"
+            emitir({"type": "assistant", "message": {"content": [
+                {"type": "thinking", "thinking": detalhe if resumido else "", "signature": "falsa"}]}})
             continue
         # `[ferramenta Fundo npm run dev | 20]`: um Bash com run_in_background, como o de verdade
         # (2.1.325): volta na hora, a tarefa aparece em background_tasks_changed e some quando acaba
@@ -338,6 +497,10 @@ def fingir_ferramentas(texto):
                     "status": "killed" if parou else "completed", "summary": f"Background command \"{detalhe}\""})
             emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
             continue
+        # A chamada conta como rodando desde o tool_use: a mensagem que o Vitral manda ao vê-lo já
+        # espera na fila (o subagente tem o caminho dele, abaixo).
+        if nome not in ("Task", "Agent"):
+            ferramenta_rodando.set()
         emitir({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
         # O Agent vai para o segundo plano, como no Claude Code 2.1.3xx: a chamada volta na hora com
@@ -376,9 +539,10 @@ def fingir_ferramentas(texto):
             emitir({"type": "user", "message": {"content": [
                 {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {detalhe}: dois lugares mexem no cupom."}]}})
             continue
-        time.sleep(int(segundos) if segundos else 4)
+        esperar_a_ferramenta(id_, nome, int(segundos) if segundos else 4)
         emitir({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})
+        absorver_fila()
 
 
 # `[hook Nome detalhe | motivo]`: a chamada que um hook PreToolUse mandou perguntar.
@@ -414,6 +578,8 @@ def encenar_hooks(texto):
         argumentos = {"tool_name": nome, "input": entrada, "tool_use_id": id_}
         corpo = json.dumps({"jsonrpc": "2.0", "id": 9000 + i, "method": "tools/call",
                             "params": {"name": "permissao", "arguments": argumentos}}).encode()
+        # Esperando a resposta, a chamada está em curso: a mensagem que chega fica na fila.
+        ferramenta_rodando.set()
         try:
             req = urllib.request.Request(url, data=corpo, headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=3600) as r:
@@ -427,8 +593,10 @@ def encenar_hooks(texto):
             resultado = f"(claude falso) {nome} em {detalhe}"
         else:
             resultado = decisao.get("message") or "negado"
+        ferramenta_rodando.clear()
         emitir({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id_, "content": resultado, "is_error": not permitiu}]}})
+        absorver_fila()
 
 
 def diretivas(texto):
@@ -520,6 +688,8 @@ else:
     resposta = f"(claude falso) Anotei em {arquivo}, na pasta {pasta}: {pedido[:80]}"
     if chamadas:
         resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+if ao_vivo:
+    resposta += " | no meio do turno: " + ", ".join(f"{chave} {valor}" for chave, valor in ao_vivo.items())
 anotar({"papel": papel, "chamadas": chamadas})
 emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
                                          "usage": {"input_tokens": 1200}}})

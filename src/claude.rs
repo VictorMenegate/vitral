@@ -65,6 +65,124 @@ pub struct Opcoes {
     /// sem ele. Só num Claude Code que conhece a opção (`VERSAO_EVENTOS_DE_HOOK`): sem ela, o
     /// cartão aparece igual, sem o motivo.
     pub eventos_de_hook: bool,
+    /// `--thinking-display summarized`: o texto do raciocínio vem na saída (`Evento::Pensamento`).
+    /// Sem a opção, o Claude Code 2.1.328 manda o bloco vazio. Só num Claude Code que a conhece
+    /// (`VERSAO_RACIOCINIO_RESUMIDO`).
+    pub raciocinio_resumido: bool,
+}
+
+/// O que dá para trocar num turno que já está rodando, pela entrada do processo: o modo de
+/// permissão, o modelo e o esforço. Medido no Claude Code 2.1.328 em 23/11/2026, com o Haiku, no
+/// meio de um `sleep` do Bash:
+/// - `set_permission_mode` responde `{"mode": "acceptEdits"}` e manda um `system`/`status` com o
+///   `permissionMode`; o Write que o modelo pediu em seguida, no mesmo turno, passou sem perguntar
+///   (sem o pedido, voltou negado). `manual` é aceito e respondido como `default`; um nome que não
+///   existe volta erro (`invalid_mode`); o `bypassPermissions` volta erro (`bypass_not_launched`)
+///   num processo aberto sem `--allow-dangerously-skip-permissions`, e com ela entra;
+/// - `set_model` responde `{"model": "<id resolvido>"}` e a chamada seguinte ao modelo, no mesmo
+///   turno, já sai no modelo novo (o `model` da mensagem); um nome que não existe volta erro
+///   (`not_found`), e sem `model` ele volta ao padrão;
+/// - `apply_flag_settings` com `{"effortLevel": "low"}` responde sucesso sem corpo, e o
+///   `get_settings` passa a dizer `applied.effort: "low"`; `null` volta ao automático; um nível
+///   que não existe também responde sucesso e não muda nada.
+///
+/// Na 2.1.323 os três pedidos respondem igual (conferido sem mandar mensagem). Uma recusa não vira
+/// nada na tela: a troca fica gravada na conversa e vale no turno seguinte, como sempre valeu.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AoVivo {
+    /// O `--permission-mode` (`manual`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`).
+    pub modo: String,
+    /// O `--model`; vazio é o padrão do Claude Code.
+    pub modelo: String,
+    /// O `--effort`; `None` é o automático.
+    pub esforco: Option<String>,
+}
+
+impl AoVivo {
+    /// O que o processo tem ao abrir. O turno com Ultracode fica marcado: o esforço dele não se
+    /// troca no meio (ver `pedidos_ao_vivo`).
+    fn das_opcoes(opcoes: &Opcoes) -> Self {
+        Self {
+            modo: opcoes.permissao.clone(),
+            modelo: opcoes.modelo.clone().unwrap_or_default(),
+            esforco: if opcoes.ultracode { Some("ultracode".into()) } else { opcoes.esforco.clone().filter(|e| !e.is_empty()) },
+        }
+    }
+}
+
+/// Os pedidos de controle (o `request` de cada um) que levam o processo do que ele tem para o que
+/// a conversa pede agora; vazio quando nada mudou. O Ultracode é do turno inteiro (os fluxos de
+/// agentes entram pelos argumentos do processo): com ele de um lado ou do outro, o esforço não
+/// vai, e vale no turno seguinte.
+fn pedidos_ao_vivo(tem: &AoVivo, quer: &AoVivo) -> Vec<Value> {
+    let mut pedidos = Vec::new();
+    if quer.modo != tem.modo {
+        // O Manual do Vitral é o `default` do pedido: o 2.1.328 aceita `manual` e responde
+        // `default`, e a lista de modos do erro dele só tem `default`.
+        let modo = if quer.modo == "manual" { "default" } else { quer.modo.as_str() };
+        pedidos.push(json!({ "subtype": "set_permission_mode", "mode": modo }));
+    }
+    if quer.modelo != tem.modelo {
+        // Sem `model`, o Claude Code volta ao padrão dele.
+        pedidos.push(match quer.modelo.as_str() {
+            "" => json!({ "subtype": "set_model" }),
+            modelo => json!({ "subtype": "set_model", "model": modelo }),
+        });
+    }
+    let ultracode = |esforco: &Option<String>| esforco.as_deref() == Some("ultracode");
+    if quer.esforco != tem.esforco && !ultracode(&tem.esforco) && !ultracode(&quer.esforco) {
+        pedidos.push(json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": quer.esforco } }));
+    }
+    pedidos
+}
+
+/// O pedido que tira da fila interna do Claude Code a mensagem dirigida de `uuid` (o `uuid` com
+/// que ela foi escrita na entrada). Não está no tipo público do SDK; medido no 2.1.328: com a
+/// mensagem ainda na fila, responde `{"cancelled": true, "message_uuid": …}` e manda um
+/// `command_lifecycle` com `state: "cancelled"`, e a sessão gravada fica sem ela; com a mensagem
+/// já absorvida no turno (ou um uuid que ele não conhece), `{"cancelled": false}`. A 2.1.323
+/// responde igual.
+fn pedido_de_retirar(uuid: &str) -> Value {
+    json!({ "subtype": "cancel_async_message", "message_uuid": uuid })
+}
+
+/// A linha de um pedido de controle; `nome` entra no id (`vitral-<nome>-<uuid>`), que é como a
+/// resposta é reconhecida na saída (`resposta_de_controle`).
+fn linha_do_pedido(nome: &str, corpo: Value) -> Value {
+    json!({
+        "type": "control_request",
+        "request_id": format!("vitral-{nome}-{}", uuid::Uuid::new_v4()),
+        "request": corpo,
+    })
+}
+
+/// O nome que entra no id do pedido, pelo subtipo dele.
+fn nome_do_pedido(corpo: &Value) -> &'static str {
+    match corpo["subtype"].as_str() {
+        Some("set_permission_mode") => "modo",
+        Some("set_model") => "modelo",
+        Some("apply_flag_settings") => "esforco",
+        Some("cancel_async_message") => "retirar",
+        _ => "pedido",
+    }
+}
+
+/// A `--allow-dangerously-skip-permissions` vai em todo turno, para o "Sem perguntar" poder
+/// entrar no meio dele: sem ela, o `set_permission_mode` para `bypassPermissions` volta
+/// `bypass_not_launched` (medido no 2.1.328). Menos como root: aí o Claude Code nem abre com a
+/// opção ("cannot be used with root/sudo privileges"), e só o Planejar a leva, como já levava
+/// (aprovar o plano pode passar para "Sem perguntar").
+fn libera_o_bypass(modo: &str, root: bool) -> bool {
+    modo == "plan" || !root
+}
+
+/// O Vitral roda como root (no Windows não há o que conferir).
+fn sou_root() -> bool {
+    #[cfg(unix)]
+    // SAFETY: `geteuid` não tem pré-condição nem falha.
+    return unsafe { libc::geteuid() } == 0;
+    #[cfg(not(unix))]
+    false
 }
 
 /// O relatório que o subagente devolve, sem a moldura que o Claude Code põe em volta dele
@@ -153,8 +271,18 @@ pub enum Evento {
     Texto(String),
     /// O modelo começou um bloco de raciocínio (o motor mede quanto ele dura).
     Pensando,
-    /// O raciocínio do bloco que terminou. O texto vem vazio quando o Claude Code não o entrega.
+    /// O raciocínio do bloco que terminou. O texto vem vazio quando o Claude Code não o entrega
+    /// (sem `--thinking-display summarized`; ver `Opcoes::raciocinio_resumido`).
     Pensamento(String),
+    /// O processo está vivo e não há nada para mostrar: a batida que o Claude Code manda a cada
+    /// 30 s enquanto uma ferramenta roda (`tool_progress` com `heartbeat`). Só conta como sinal de
+    /// vida, para um build longo não ganhar o aviso "sem sinal" (`Motor::silencio`).
+    Vivo,
+    /// A resposta ao `interrupt` disse que ainda há mensagens dirigidas na fila interna do Claude
+    /// Code (`still_queued`): ele abriria outro turno com elas depois do Parar.
+    FicouNaFila(usize),
+    /// O `set_model` no meio do turno valeu: o id do modelo que o turno passa a usar.
+    ModeloEmUso(String),
     /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta.
     SubFerramenta {
         pai: String,
@@ -229,16 +357,22 @@ pub struct Processo {
     codex: Option<Arc<Mutex<crate::agente_codex::servidor::Canal>>>,
     escopo: Escopo,
     parado: bool,
+    /// O modo, o modelo e o esforço que o processo tem agora: os dos argumentos e o que foi
+    /// trocado depois pela entrada (`acertar`).
+    ao_vivo: AoVivo,
+    /// Os `uuid` das mensagens dirigidas a este processo (`dirigir`): é por eles que o Parar as
+    /// tira da fila interna do Claude Code (`retirar_dirigidas`).
+    dirigidas: Vec<String>,
 }
 
 impl Processo {
     pub fn iniciar(
         opcoes: &Opcoes,
         mensagem: Mensagem,
-        mut enviar: impl FnMut(Evento) + Send + 'static,
+        enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
         let codex = opcoes.agente == crate::modelo::Agente::Codex;
-        let mut comando = if codex {
+        let comando = if codex {
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
             comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
             if let Some((_, chave)) = opcoes.mcp_da_equipe.as_deref().and_then(crate::memoria_equipe::conexao_do_arquivo) {
@@ -256,6 +390,19 @@ impl Processo {
             }
             comando
         };
+        Self::com_o_comando(comando, opcoes, mensagem, enviar)
+    }
+
+    /// Abre o processo de `comando` (o `claude` ou o `codex`, já com os argumentos e o ambiente do
+    /// turno), escreve a mensagem e põe a leitura da saída para andar. À parte do `iniciar` para
+    /// os testes abrirem o claude de mentira no lugar do instalado.
+    fn com_o_comando(
+        mut comando: processos::Comando,
+        opcoes: &Opcoes,
+        mensagem: Mensagem,
+        mut enviar: impl FnMut(Evento) + Send + 'static,
+    ) -> Result<Self> {
+        let codex = opcoes.agente == crate::modelo::Agente::Codex;
         // Aberto de dentro de outra sessão do Claude Code, o filho herdaria a marca dela.
         for variavel in [
             "CLAUDECODE",
@@ -335,7 +482,65 @@ impl Processo {
             codex: canal_codex,
             escopo,
             parado: false,
+            ao_vivo: AoVivo::das_opcoes(opcoes),
+            dirigidas: Vec::new(),
         })
+    }
+
+    /// O modo, o modelo e o esforço que o processo tem agora.
+    pub fn ao_vivo(&self) -> &AoVivo {
+        &self.ao_vivo
+    }
+
+    /// Leva o turno que roda para o que a conversa pede agora (ver `AoVivo`): escreve na entrada os
+    /// pedidos do que mudou e devolve quantos foram. Zero sem entrada (o turno já acabou, ou o
+    /// Parar a levou), no Codex ou sem nada a trocar: aí a escolha vale no turno seguinte, que
+    /// abre com ela nos argumentos. A resposta de cada pedido chega depois, pela saída; uma recusa
+    /// não vira nada na tela.
+    pub fn acertar(&mut self, quer: &AoVivo) -> usize {
+        let mut foram = 0;
+        for pedido in pedidos_ao_vivo(&self.ao_vivo, quer) {
+            let subtipo = pedido["subtype"].as_str().unwrap_or_default().to_string();
+            if !self.pedir(pedido) {
+                break;
+            }
+            foram += 1;
+            match subtipo.as_str() {
+                "set_permission_mode" => self.ao_vivo.modo.clone_from(&quer.modo),
+                "set_model" => self.ao_vivo.modelo.clone_from(&quer.modelo),
+                _ => self.ao_vivo.esforco.clone_from(&quer.esforco),
+            }
+        }
+        foram
+    }
+
+    /// O modo do processo mudou por outro caminho (aprovar o plano o troca na resposta do pedido
+    /// de permissão): o próximo `acertar` não o pede de novo.
+    pub fn anotar_modo(&mut self, modo: &str) {
+        self.ao_vivo.modo = modo.to_string();
+    }
+
+    /// Tira da fila interna do Claude Code as mensagens dirigidas a este processo que ele ainda não
+    /// começou (`pedido_de_retirar`), para o `interrupt` que vem em seguida parar o turno sem ele
+    /// abrir outro com elas. `false` sem entrada ou se a escrita falhou: aí só matando o processo.
+    pub fn retirar_dirigidas(&mut self) -> bool {
+        if self.codex.is_some() || self.entrada.is_none() {
+            return false;
+        }
+        let dirigidas = std::mem::take(&mut self.dirigidas);
+        dirigidas.iter().all(|uuid| self.pedir(pedido_de_retirar(uuid)))
+    }
+
+    /// Escreve um pedido de controle na entrada. `false` sem ela, no Codex ou se a escrita falhou.
+    fn pedir(&mut self, corpo: Value) -> bool {
+        if self.codex.is_some() {
+            return false;
+        }
+        let Some(entrada) = self.entrada.as_mut() else {
+            return false;
+        };
+        let pedido = linha_do_pedido(nome_do_pedido(&corpo), corpo);
+        writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok()
     }
 
     /// Para uma tarefa de fundo do Claude Code (o comando deixado rodando): o `stop_task` do
@@ -382,7 +587,11 @@ impl Processo {
     ///   turno e abre outro na hora, no mesmo processo (uns 30 ms depois do `result`), mesmo com a
     ///   entrada já fechada;
     /// - o `interrupt` não a descarta: o turno fecha com erro e ela roda em seguida, como turno
-    ///   novo (por isso o Parar mata o processo quando há mensagem dirigida esperando).
+    ///   novo. Por isso o Parar a tira da fila antes, pelo `uuid` com que ela foi escrita
+    ///   (`retirar_dirigidas`; medido no 2.1.328: a resposta do `interrupt` passa a dizer
+    ///   `still_queued: []`, o turno fecha com o `result` de erro, o processo sai sozinho menos de
+    ///   1 s depois de a entrada fechar e a sessão retomada não tem a mensagem). Num Claude Code
+    ///   anterior ao 2.1.323 o Parar ainda mata o processo (`VERSAO_RETIRAR_DIRIGIDA`).
     ///
     /// Nada dela aparece na saída: quem põe a mensagem na conversa é o Vitral.
     pub fn dirigir(&mut self, mensagem: Mensagem) -> bool {
@@ -392,7 +601,19 @@ impl Processo {
         let Some(entrada) = self.entrada.as_mut() else {
             return false;
         };
-        escrever_mensagem(entrada, mensagem).is_ok()
+        // Com `uuid`, para o Parar poder tirá-la da fila dele (`retirar_dirigidas`).
+        let marca = mensagem.marca.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_string);
+        if escrever_mensagem(entrada, Mensagem { marca: Some(&marca), ..mensagem }).is_err() {
+            return false;
+        }
+        self.dirigidas.push(marca);
+        true
+    }
+
+    /// Os `uuid` das mensagens dirigidas a este processo, na ordem em que foram.
+    #[cfg(test)]
+    fn uuids_das_dirigidas(&self) -> &[String] {
+        &self.dirigidas
     }
 
     /// Para o turno: pede pela entrada o `interrupt` do protocolo do Agent SDK (o mesmo do botão de
@@ -400,7 +621,8 @@ impl Processo {
     /// com um `result` de erro, grava a conversa e sai, com tempo de limpar o que abriu. É o mesmo
     /// nos dois sistemas: no Windows, sem console, não há Ctrl+C para mandar. Sem a entrada (ou se a
     /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
-    /// saiu (`Motor::conferir_parada`).
+    /// saiu (`Motor::conferir_parada`) e, com mensagem dirigida esperando, a retira antes
+    /// (`retirar_dirigidas`).
     pub fn interromper(&mut self) {
         if let Some(canal) = &self.codex
             && canal.lock().unwrap_or_else(|e| e.into_inner()).interromper().is_ok() { return; }
@@ -481,6 +703,9 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if opcoes.eventos_de_hook {
         args.push("--include-hook-events".into());
     }
+    if opcoes.raciocinio_resumido {
+        args.extend(["--thinking-display", "summarized"].map(String::from));
+    }
     args.extend(["--allowedTools".to_string(), "mcp__vitral".to_string()]);
     match &opcoes.prompt_arquivo {
         Some(arquivo) => args.extend([
@@ -498,8 +723,9 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     // usuário mandou perguntar (um hook `PreToolUse` com "ask", uma regra `ask` das configurações
     // dele), e sem ter a quem perguntar ele recusa a chamada (medido no 2.1.328, 23/11/2026).
     args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
-    // Aprovar o plano pode passar para "Sem perguntar" já neste turno.
-    if opcoes.permissao == "plan" {
+    // Aprovar o plano pode passar para "Sem perguntar" já neste turno, e o seletor de modo
+    // também, no meio de qualquer turno (`libera_o_bypass`).
+    if libera_o_bypass(&opcoes.permissao, sou_root()) {
         args.push("--allow-dangerously-skip-permissions".into());
     }
     match (opcoes.retomar, &opcoes.bifurcar) {
@@ -1309,6 +1535,12 @@ fn escrever_mensagem(entrada: &mut processos::EntradaDeFundo, mensagem: Mensagem
 }
 
 fn interpretar(valor: &Value) -> Vec<Evento> {
+    // A batida de uma ferramenta que demora (a cada 30 s, com `heartbeat: true`; medido no 2.1.328
+    // com um comando de 75 s). Vem presa à chamada pelo `parent_tool_use_id`, como o que um
+    // subagente faz, e não é dele: só diz que o processo está vivo.
+    if valor["type"] == "tool_progress" {
+        return vec![Evento::Vivo];
+    }
     // Mensagens de subagentes (ferramenta Task/Agent): só o que ele faz (as ferramentas que usa e
     // o que diz) sobe, preso à chamada que o abriu; o resto do fio dele fica de fora.
     if let Some(pai) = valor["parent_tool_use_id"].as_str() {
@@ -1457,6 +1689,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
         }]).collect(),
+        "control_response" => resposta_de_controle(valor).into_iter().collect(),
         "prompt_suggestion" => valor["suggestion"]
             .as_str()
             .map(str::trim)
@@ -1489,6 +1722,23 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
         }
         _ => Vec::new(),
     }
+}
+
+/// O que a resposta a um pedido de controle do turno muda: o modelo que passou a valer (a do
+/// `set_model`, reconhecida pelo id do pedido) e a mensagem dirigida que o `interrupt` deixou na
+/// fila (`still_queued`). As outras, e toda recusa, não viram nada: o que foi pedido e não valeu
+/// fica para o turno seguinte, sem erro na tela.
+fn resposta_de_controle(valor: &Value) -> Option<Evento> {
+    let resposta = &valor["response"];
+    if resposta["subtype"] != "success" {
+        return None;
+    }
+    let miolo = &resposta["response"];
+    if let Some(na_fila) = miolo["still_queued"].as_array().filter(|f| !f.is_empty()) {
+        return Some(Evento::FicouNaFila(na_fila.len()));
+    }
+    let do_modelo = resposta["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-modelo-"));
+    miolo["model"].as_str().filter(|m| do_modelo && !m.is_empty()).map(|m| Evento::ModeloEmUso(m.to_string()))
 }
 
 /// O `hook_response` de um hook `PreToolUse` que mandou perguntar (`permissionDecision: "ask"` na
@@ -1556,6 +1806,18 @@ pub const VERSAO_PROMPT_POR_ARQUIVO: Versao = (2, 1, 278);
 /// antiga em que a opção foi conferida (23/11/2026; o changelog não diz quando ela entrou). Num
 /// Claude Code que não a conhecesse, a opção derrubaria todo turno.
 pub const VERSAO_EVENTOS_DE_HOOK: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Parar tira da fila as mensagens dirigidas em vez de matar o
+/// processo (`Processo::retirar_dirigidas`): a mais antiga em que o `cancel_async_message` e o
+/// `still_queued` da resposta do `interrupt` foram conferidos (23/11/2026; o turno inteiro foi
+/// medido no 2.1.328). Num Claude Code que não conhecesse o pedido, a mensagem ficaria na fila e
+/// rodaria como turno novo depois do Parar.
+pub const VERSAO_RETIRAR_DIRIGIDA: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Vitral pede o texto do raciocínio (`--thinking-display
+/// summarized`, que não aparece no `--help`): a mais antiga em que a opção foi conferida
+/// (23/11/2026). Num Claude Code que não a conhecesse, ela derrubaria todo turno.
+pub const VERSAO_RACIOCINIO_RESUMIDO: Versao = (2, 1, 323);
 
 /// A sessão gravada sumiu da pasta do projeto que ainda existe: o Claude Code a apagou (o
 /// `cleanupPeriodDays`, 30 dias por padrão). Sem a pasta do projeto não dá para saber, e quem
@@ -1999,6 +2261,7 @@ mod testes {
             sugestoes: false,
             mcp_da_equipe: None,
             eventos_de_hook: false,
+            raciocinio_resumido: false,
         }
     }
 
@@ -2302,6 +2565,7 @@ mod testes_do_ask_de_hook {
             sugestoes: false,
             mcp_da_equipe: None,
             eventos_de_hook: true,
+            raciocinio_resumido: true,
         }
     }
 
@@ -2696,5 +2960,403 @@ mod testes_da_mudanca {
         assert_eq!((m.entram, m.saem), (2, 1));
         assert!(write_criou("File created successfully at: /x/b.md"));
         assert!(!write_criou("The file /x/b.md has been updated successfully."));
+    }
+}
+
+/// O turno que roda recebe pela entrada o que antes só valia no seguinte (o modo, o modelo e o
+/// esforço); o Parar tira da fila a mensagem dirigida em vez de matar o processo; a batida de uma
+/// ferramenta que demora conta como sinal de vida; e o texto do raciocínio vem na saída. Os
+/// pedidos e as respostas são os medidos no Claude Code 2.1.328 em 23/11/2026, e o claude de
+/// mentira da bancada os encena.
+#[cfg(test)]
+mod testes_do_turno_ao_vivo {
+    use super::*;
+    #[cfg(unix)]
+    use std::sync::mpsc;
+
+    fn ao_vivo(modo: &str, modelo: &str, esforco: Option<&str>) -> AoVivo {
+        AoVivo { modo: modo.into(), modelo: modelo.into(), esforco: esforco.map(str::to_string) }
+    }
+
+    fn opcoes(pasta: &Path) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: pasta.to_path_buf(),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: Some("haiku".into()),
+            permissao: "manual".into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            // Sem "/mcp/" no endereço: o claude de mentira não chama servidor nenhum.
+            url_mcp: "http://127.0.0.1:1/nada".into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+            raciocinio_resumido: true,
+        }
+    }
+
+    fn valor_de<'a>(args: &'a [String], chave: &str) -> Option<&'a str> {
+        let i = args.iter().position(|a| a == chave)?;
+        args.get(i + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn cada_troca_vira_o_pedido_de_controle_dela() {
+        let tem = ao_vivo("manual", "opus", Some("high"));
+        assert!(pedidos_ao_vivo(&tem, &tem).is_empty(), "sem troca, nenhum pedido");
+        // O modo, com o nome que o Claude Code dá a cada um.
+        for modo in ["acceptEdits", "plan", "auto", "bypassPermissions"] {
+            assert_eq!(
+                pedidos_ao_vivo(&tem, &AoVivo { modo: modo.into(), ..tem.clone() }),
+                [json!({ "subtype": "set_permission_mode", "mode": modo })]
+            );
+        }
+        // O Manual do Vitral é o `default` do pedido (o 2.1.328 aceita `manual` e responde
+        // `default`; a lista de modos do erro dele só tem `default`).
+        let em_edicoes = ao_vivo("acceptEdits", "opus", Some("high"));
+        assert_eq!(pedidos_ao_vivo(&em_edicoes, &tem), [json!({ "subtype": "set_permission_mode", "mode": "default" })]);
+        // O modelo; vazio é o padrão do Claude Code, que o pedido sem `model` devolve.
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { modelo: "claude-haiku-4-5-20251001".into(), ..tem.clone() }),
+            [json!({ "subtype": "set_model", "model": "claude-haiku-4-5-20251001" })]
+        );
+        assert_eq!(pedidos_ao_vivo(&tem, &AoVivo { modelo: String::new(), ..tem.clone() }), [json!({ "subtype": "set_model" })]);
+        // O esforço; o automático é o `null`.
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { esforco: Some("low".into()), ..tem.clone() }),
+            [json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })]
+        );
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { esforco: None, ..tem.clone() }),
+            [json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": null } })]
+        );
+        // Tudo de uma vez: um pedido por troca.
+        let subtipos: Vec<String> = pedidos_ao_vivo(&tem, &ao_vivo("plan", "haiku", None))
+            .iter()
+            .map(|p| p["subtype"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(subtipos, ["set_permission_mode", "set_model", "apply_flag_settings"]);
+    }
+
+    /// O Ultracode entra pelos argumentos do processo (os fluxos de agentes, o `--settings`): com
+    /// ele de um lado ou do outro, o esforço fica para o turno seguinte. O resto troca igual.
+    #[test]
+    fn o_esforco_do_ultracode_nao_troca_no_meio() {
+        let no_ultracode = ao_vivo("manual", "opus", Some("ultracode"));
+        assert!(pedidos_ao_vivo(&no_ultracode, &ao_vivo("manual", "opus", Some("high"))).is_empty());
+        assert!(pedidos_ao_vivo(&no_ultracode, &ao_vivo("manual", "opus", None)).is_empty());
+        assert!(pedidos_ao_vivo(&ao_vivo("manual", "opus", Some("high")), &no_ultracode).is_empty());
+        assert_eq!(
+            pedidos_ao_vivo(&no_ultracode, &ao_vivo("plan", "opus", Some("high"))),
+            [json!({ "subtype": "set_permission_mode", "mode": "plan" })]
+        );
+        // O processo que abre com Ultracode já nasce marcado, e o comum com o esforço dele.
+        let pasta = PathBuf::from("/tmp/x");
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { ultracode: true, esforco: Some("max".into()), ..opcoes(&pasta) }).esforco.as_deref(), Some("ultracode"));
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { esforco: Some("max".into()), ..opcoes(&pasta) }), ao_vivo("manual", "haiku", Some("max")));
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { esforco: Some(String::new()), modelo: None, ..opcoes(&pasta) }), ao_vivo("manual", "", None));
+    }
+
+    #[test]
+    fn o_pedido_vai_como_control_request_com_o_id_do_vitral() {
+        let corpo = json!({ "subtype": "set_permission_mode", "mode": "plan" });
+        let linha = linha_do_pedido(nome_do_pedido(&corpo), corpo.clone());
+        assert_eq!(linha["type"], "control_request");
+        assert_eq!(linha["request"], corpo);
+        assert!(linha["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-modo-")), "{linha}");
+        assert_eq!(nome_do_pedido(&json!({ "subtype": "set_model" })), "modelo");
+        assert_eq!(nome_do_pedido(&json!({ "subtype": "apply_flag_settings" })), "esforco");
+        // O que tira da fila a mensagem dirigida, pelo uuid com que ela foi escrita.
+        let retirar = pedido_de_retirar("8b82d03c-d4b3-4238-9531-17dc4a1df43e");
+        assert_eq!(retirar, json!({ "subtype": "cancel_async_message", "message_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e" }));
+        assert_eq!(nome_do_pedido(&retirar), "retirar");
+    }
+
+    /// Medido no 2.1.328: aberto sem a `--allow-dangerously-skip-permissions`, o processo recusa
+    /// o `set_permission_mode` para `bypassPermissions` ("bypass_not_launched"); com ela, entra.
+    /// Como root ele nem abre com a opção, então ela só vai onde já ia (o Planejar).
+    #[test]
+    fn o_sem_perguntar_pode_entrar_no_meio_de_qualquer_turno() {
+        for modo in ["manual", "acceptEdits", "plan", "auto", "bypassPermissions"] {
+            assert!(libera_o_bypass(modo, false), "{modo}");
+            assert_eq!(libera_o_bypass(modo, true), modo == "plan", "{modo} como root");
+            let args = argumentos(&Opcoes { permissao: modo.into(), ..opcoes(Path::new("/tmp/x")) });
+            assert_eq!(args.iter().any(|a| a == "--allow-dangerously-skip-permissions"), libera_o_bypass(modo, sou_root()), "{modo}");
+        }
+    }
+
+    /// Medido no 2.1.328: sem a opção, o bloco de raciocínio chega com o texto vazio; com
+    /// `--thinking-display summarized` (fora do `--help`), chega com ele. A 2.1.323 aceita a opção.
+    #[test]
+    fn o_texto_do_raciocinio_e_pedido_a_quem_conhece_a_opcao() {
+        let pasta = Path::new("/tmp/x");
+        let args = argumentos(&opcoes(pasta));
+        assert_eq!(valor_de(&args, "--thinking-display"), Some("summarized"));
+        let args = argumentos(&Opcoes { raciocinio_resumido: false, ..opcoes(pasta) });
+        assert!(!args.iter().any(|a| a == "--thinking-display"));
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_RETIRAR_DIRIGIDA));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_RETIRAR_DIRIGIDA));
+        // O bloco como o 2.1.328 o manda, com a opção e sem ela.
+        let bloco = |texto: &str| {
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "model": "claude-haiku-5-5", "content": [
+                { "type": "thinking", "thinking": texto, "signature": "CAQS3AYKEAgUGAI4AUIIdGhpbmtpbmc" }] } })
+        };
+        let com = "I'm working out the timing: train A arrives 16:55 and train B arrives 16:45.";
+        assert!(matches!(interpretar(&bloco(com)).as_slice(), [Evento::Pensamento(t)] if t == com));
+        assert!(matches!(interpretar(&bloco("")).as_slice(), [Evento::Pensamento(t)] if t.is_empty()));
+    }
+
+    /// A linha é a que o 2.1.328 mandou aos 30 e aos 60 s de um comando de 75 s. Ela vem presa à
+    /// chamada (`parent_tool_use_id`), como os passos de um subagente, e não é um.
+    #[test]
+    fn a_batida_da_ferramenta_e_sinal_de_vida() {
+        let batida = json!({
+            "type": "tool_progress", "tool_use_id": "toolu_01FjUGWS8amto8qs5E2ZFmEn-heartbeat-0", "tool_name": "Bash",
+            "parent_tool_use_id": "toolu_01FjUGWS8amto8qs5E2ZFmEn", "elapsed_time_seconds": 30, "heartbeat": true,
+            "session_id": "a5102f2d-119f-4862-9d1a-ba981ad4fe47", "uuid": "382ed80b-e3a3-4bca-b4d3-247416d53245",
+        });
+        assert!(matches!(interpretar(&batida).as_slice(), [Evento::Vivo]), "{:?}", interpretar(&batida));
+    }
+
+    /// As respostas aos pedidos de controle e os avisos que os acompanham, copiados da saída do
+    /// 2.1.328. Uma recusa não vira nada: a troca vale no turno seguinte, sem erro na tela.
+    #[test]
+    fn as_respostas_de_controle_nao_viram_erro_na_tela() {
+        let resposta = |id: &str, corpo: Value| {
+            let mut r = json!({ "subtype": "success", "request_id": id });
+            if !corpo.is_null() {
+                r["response"] = corpo;
+            }
+            json!({ "type": "control_response", "response": r })
+        };
+        let recusa = |id: &str, erro: &str, codigo: &str| {
+            json!({ "type": "control_response", "response": { "subtype": "error", "request_id": id, "error": erro, "error_code": codigo } })
+        };
+        let nada = |valor: Value| assert!(interpretar(&valor).is_empty(), "{valor} virou {:?}", interpretar(&valor));
+        nada(resposta("vitral-modo-1", json!({ "mode": "acceptEdits" })));
+        nada(json!({ "type": "system", "subtype": "status", "status": null, "permissionMode": "acceptEdits",
+                     "uuid": "6e4618d7-111d-4d3e-b049-2172d5ef3f9e", "session_id": "b8610580-4229-4347-b29e-9e1b7eac4bca" }));
+        nada(recusa(
+            "vitral-modo-2",
+            "Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions",
+            "bypass_not_launched",
+        ));
+        nada(recusa("vitral-modo-3", "Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan", "invalid_mode"));
+        nada(json!({ "type": "control_response", "response": { "subtype": "error", "request_id": "vitral-modelo-1",
+                     "error": "Model 'bananinha-9' not found", "error_code": "not_found", "model": "claude-haiku-5-5" } }));
+        nada(resposta("vitral-esforco-1", Value::Null));
+        nada(resposta("vitral-retirar-1", json!({ "cancelled": true, "message_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e" })));
+        nada(resposta("vitral-retirar-2", json!({ "cancelled": false })));
+        nada(json!({ "type": "command_lifecycle", "command_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e", "state": "cancelled",
+                     "uuid": "7a6c96cf-b3ca-462e-9cb4-839d723d8da2", "session_id": "13c823ee-17a5-48fd-b566-9fae508dd5d5" }));
+        // O aviso que o `set_model` deixa na conversa do Claude Code não é mensagem de ninguém.
+        nada(json!({ "type": "user", "message": { "role": "user", "content": "<local-command-stdout>Set model to `claude-haiku-4-5-20251001`</local-command-stdout>" },
+                     "session_id": "b8610580-4229-4347-b29e-9e1b7eac4bca", "parent_tool_use_id": null, "isReplay": true }));
+        // O Parar que não deixou nada na fila.
+        nada(resposta("vitral-parar-1", json!({ "still_queued": [] })));
+        nada(resposta("vitral-parar-tarefa-1", json!({})));
+
+        // O que o motor precisa saber: o modelo que passou a valer, e a mensagem que o Parar não
+        // tirou da fila (o Claude Code abriria outro turno com ela).
+        let trocou = interpretar(&resposta("vitral-modelo-2", json!({ "model": "claude-haiku-4-5-20251001" })));
+        assert!(matches!(trocou.as_slice(), [Evento::ModeloEmUso(m)] if m == "claude-haiku-4-5-20251001"), "{trocou:?}");
+        let ficou = interpretar(&resposta("vitral-parar-2", json!({ "still_queued": ["8b82d03c-d4b3-4238-9531-17dc4a1df43e"] })));
+        assert!(matches!(ficou.as_slice(), [Evento::FicouNaFila(1)]), "{ficou:?}");
+    }
+
+    /// Um turno no claude de mentira, aberto pelo mesmo caminho dos turnos de verdade
+    /// (`Processo::com_o_comando`), com os argumentos de um turno em Manual.
+    #[cfg(unix)]
+    struct Turno {
+        processo: Processo,
+        eventos: mpsc::Receiver<Evento>,
+        vistos: Vec<Evento>,
+        pasta: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl Turno {
+        fn abrir(texto: &str, opcoes: impl FnOnce(Opcoes) -> Opcoes, ambiente: &[(&str, &str)]) -> Self {
+            let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+            let pasta = std::env::temp_dir().join(format!("vitral-ao-vivo-{}", crate::modelo::novo_id()));
+            std::fs::create_dir_all(&pasta).unwrap();
+            let opcoes = opcoes(self::opcoes(&pasta));
+            let mut comando = processos::comando_leve("python3", "teste");
+            comando.arg("-I").arg(&falso).args(argumentos(&opcoes)).current_dir(&pasta).env("XDG_STATE_HOME", &pasta);
+            for (chave, valor) in ambiente {
+                comando.env(chave, valor);
+            }
+            let (manda, eventos) = mpsc::channel();
+            let mensagem = Mensagem { texto, imagens: &[], marca: None };
+            let processo = Processo::com_o_comando(comando, &opcoes, mensagem, move |evento| {
+                let _ = manda.send(evento);
+            })
+            .expect("python3 para o claude de mentira");
+            Self { processo, eventos, vistos: Vec::new(), pasta }
+        }
+
+        /// Lê a saída até o evento que casa (ele fica por último em `vistos`).
+        fn ate(&mut self, o_que: &str, casa: impl Fn(&Evento) -> bool) {
+            let limite = Instant::now() + Duration::from_secs(30);
+            loop {
+                let Ok(evento) = self.eventos.recv_timeout(limite.saturating_duration_since(Instant::now())) else {
+                    panic!("não chegou {o_que}; chegou: {:?}", self.vistos);
+                };
+                let achou = casa(&evento);
+                let saiu = matches!(evento, Evento::Saiu { .. });
+                self.vistos.push(evento);
+                if achou {
+                    return;
+                }
+                assert!(!saiu, "o processo saiu antes de {o_que}: {:?}", self.vistos);
+            }
+        }
+
+        /// Lê até o processo sair e devolve o código de saída dele (-1 se morreu por sinal).
+        fn ate_sair(&mut self) -> Option<i32> {
+            self.ate("a saída do processo", |e| matches!(e, Evento::Saiu { .. }));
+            match self.vistos.last() {
+                Some(Evento::Saiu { codigo, .. }) => *codigo,
+                _ => None,
+            }
+        }
+
+        fn quantos(&self, casa: impl Fn(&Evento) -> bool) -> usize {
+            self.vistos.iter().filter(|e| casa(e)).count()
+        }
+
+        fn disse(&self, trecho: &str) -> bool {
+            self.vistos.iter().any(|e| matches!(e, Evento::Texto(t) if t.contains(trecho)))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Turno {
+        fn drop(&mut self) {
+            self.processo.matar();
+            let _ = std::fs::remove_dir_all(&self.pasta);
+        }
+    }
+
+    /// O critério do pedido: a troca feita com o turno rodando chega a ele (o claude de mentira
+    /// diz no fim da resposta o que recebeu no meio do turno), sem erro; com a entrada já
+    /// fechada, nada vai e nada falha (a escolha vale no turno seguinte, como antes).
+    #[cfg(unix)]
+    #[test]
+    fn a_troca_no_meio_do_turno_chega_ao_processo_que_roda() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 3]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert_eq!(turno.processo.ao_vivo(), &ao_vivo("manual", "haiku", None));
+        let quer = ao_vivo("acceptEdits", "claude-haiku-4-5-20251001", Some("low"));
+        assert_eq!(turno.processo.acertar(&quer), 3, "um pedido por troca");
+        assert_eq!(turno.processo.ao_vivo(), &quer);
+        assert_eq!(turno.processo.acertar(&quer), 0, "o que já foi não vai de novo");
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(matches!(turno.vistos.last(), Some(Evento::Fim { erro: false, .. })), "{:?}", turno.vistos);
+        assert!(
+            turno.disse("no meio do turno: modo acceptEdits, modelo claude-haiku-4-5-20251001, esforço low"),
+            "as trocas não chegaram ao turno: {:?}",
+            turno.vistos
+        );
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::ModeloEmUso(m) if m == "claude-haiku-4-5-20251001")), 1, "{:?}", turno.vistos);
+        // O turno acabou e a entrada fechou: a troca seguinte não vai a lugar nenhum, sem erro.
+        turno.processo.fechar_entrada();
+        assert_eq!(turno.processo.acertar(&ao_vivo("plan", "opus", None)), 0);
+        assert_eq!(turno.processo.ao_vivo(), &quer, "o que não foi não fica anotado");
+        turno.ate_sair();
+    }
+
+    /// O "Sem perguntar" entra no meio de um turno aberto em Manual: o claude de mentira, como o
+    /// de verdade, só aceita num processo aberto com a `--allow-dangerously-skip-permissions`.
+    #[cfg(unix)]
+    #[test]
+    fn o_sem_perguntar_entra_num_turno_aberto_em_manual() {
+        if sou_root() {
+            return;
+        }
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 2]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert_eq!(turno.processo.acertar(&ao_vivo("bypassPermissions", "haiku", None)), 1);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(turno.disse("no meio do turno: modo bypassPermissions"), "{:?}", turno.vistos);
+    }
+
+    /// O critério do Parar: com uma mensagem dirigida ainda na fila do Claude Code, o Parar a
+    /// retira e interrompe; o turno fecha com o `result` de erro e o processo sai sozinho (código
+    /// 1, e não morto por sinal), sem abrir outro turno com ela.
+    #[cfg(unix)]
+    #[test]
+    fn o_parar_retira_a_mensagem_dirigida_e_o_processo_sai_sozinho() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 20]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert!(turno.processo.dirigir(Mensagem { texto: "BANANA", imagens: &[], marca: None }));
+        let uuids = turno.processo.uuids_das_dirigidas().to_vec();
+        assert_eq!(uuids.len(), 1);
+        assert!(uuid::Uuid::parse_str(&uuids[0]).is_ok(), "{uuids:?}");
+        assert!(turno.processo.retirar_dirigidas());
+        turno.processo.interromper();
+        assert_eq!(turno.ate_sair(), Some(1), "saiu sozinho, depois de fechar o turno: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { erro: true, .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::FicouNaFila(_))), 0, "{:?}", turno.vistos);
+        assert!(!turno.disse("BANANA"), "a mensagem retirada rodou: {:?}", turno.vistos);
+        // Parado, não há mais o que retirar nem a quem pedir.
+        assert!(!turno.processo.retirar_dirigidas());
+    }
+
+    /// O que acontece sem retirar (por isso o Parar matava o processo): o `interrupt` fecha o
+    /// turno, avisa que a mensagem ficou na fila, e o Claude Code abre outro turno com ela.
+    #[cfg(unix)]
+    #[test]
+    fn sem_retirar_a_mensagem_dirigida_roda_depois_do_parar() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 20]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert!(turno.processo.dirigir(Mensagem { texto: "BANANA", imagens: &[], marca: None }));
+        turno.processo.interromper();
+        turno.ate_sair();
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::FicouNaFila(1))), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 2, "{:?}", turno.vistos);
+        assert!(turno.disse("BANANA"), "{:?}", turno.vistos);
+    }
+
+    /// A batida chega enquanto a ferramenta roda (aqui de segundo em segundo; no de verdade, a
+    /// cada 30 s), entre a chamada e o resultado dela.
+    #[cfg(unix)]
+    #[test]
+    fn a_batida_chega_enquanto_a_ferramenta_roda() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 3]\nfaz o build", |o| o, &[("CLAUDE_FALSO_BATIDA", "1")]);
+        turno.ate("o resultado da chamada", |e| matches!(e, Evento::ResultadoFerramenta { .. }));
+        let chamada = turno.vistos.iter().position(|e| matches!(e, Evento::Ferramenta { .. })).expect("a chamada");
+        let batidas = turno.vistos[chamada..].iter().filter(|e| matches!(e, Evento::Vivo)).count();
+        assert!(batidas >= 1, "sem batida entre a chamada e o resultado: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::SubFerramenta { .. } | Evento::SubTexto { .. })), 0);
+    }
+
+    /// O texto do raciocínio vem com a opção e não vem sem ela, como no Claude Code 2.1.328.
+    #[cfg(unix)]
+    #[test]
+    fn o_texto_do_raciocinio_vem_com_a_opcao() {
+        let pedido = "[ferramenta Pensa primeiro o build e depois os testes | 1]\nfaz o build";
+        let mut com = Turno::abrir(pedido, |o| o, &[]);
+        com.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
+        assert!(matches!(com.vistos.last(), Some(Evento::Pensamento(t)) if t == "primeiro o build e depois os testes"), "{:?}", com.vistos);
+        let mut sem = Turno::abrir(pedido, |o| Opcoes { raciocinio_resumido: false, ..o }, &[]);
+        sem.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
+        assert!(matches!(sem.vistos.last(), Some(Evento::Pensamento(t)) if t.is_empty()), "{:?}", sem.vistos);
     }
 }

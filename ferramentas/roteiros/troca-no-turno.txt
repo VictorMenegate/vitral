@@ -1,0 +1,36 @@
+# O turno que está rodando ouve o que muda nele: o modo trocado pelo Shift+Tab no meio do turno
+# chega ao processo (o claude de mentira termina a resposta com "no meio do turno: modo …"), e o
+# Esc com uma mensagem dirigida esperando a tira da fila do Claude Code em vez de matar o processo.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele e @PASTA@ uma pasta
+# vazia qualquer, trocados antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-troca BANCADA=3 CLAUDE_FALSO=1 \
+#     CLAUDE_FALSO_VERSAO=2.1.328 ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS: a bancada precisa já ter um chat (na primeira vez, rode antes com
+# `@BIN@ --nova @PASTA@ "oi"` no lugar do comando). O CLAUDE_FALSO_VERSAO é obrigatório: abaixo
+# do 2.1.323 o Parar ainda mata o processo e o texto do raciocínio não é pedido. O que o claude de
+# mentira recebeu fica em $XDG_STATE_HOME/claude-falso.log (o `roda` do fim copia as linhas).
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta; modo padrão "Sem perguntar".
+
+espera 8
+roda @BIN@ --nova @PASTA@ "[ferramenta Pensa Primeiro o build, depois os testes. | 2] [ferramenta Bash cargo build | 14] Faz o build."
+espera 6
+print 01-turno-rodando         # "Rodando: cargo build…" e o chip do modo em "Sem perguntar"
+clique 1040 838                # a caixa de mensagem (o Shift+Tab é dela)
+tecla Shift_L+Tab              # Sem perguntar -> Manual
+tecla Shift_L+Tab              # Manual -> Aceitar edições: só o último modo vai ao turno
+espera 3
+print 02-modo-trocado          # o chip em "Aceitar edições", com o turno ainda rodando
+espera 12
+print 03-fim-do-turno          # a resposta termina com "no meio do turno: modo acceptEdits"
+
+roda @BIN@ --nova @PASTA@ "[ferramenta Bash cargo test | 40] Roda os testes."
+espera 6
+clique 1040 838
+texto E confere o arredondamento do desconto.
+tecla Return                   # entra no turno: fica na fila do claude de mentira até a ferramenta voltar
+espera 2
+print 04-mensagem-dirigida     # a mensagem na conversa e "dirigido" na linha de estado
+tecla Escape                   # o Parar: retira a mensagem da fila dele e interrompe
+espera 4
+print 05-parado                # "Interrompido." e a mensagem de volta na fila do Vitral, sem turno novo
+roda grep -h -o '"set_permission_mode.*\|"cancel_async_message.*\|"interrupt.*' "$XDG_STATE_HOME/claude-falso.log" | tail -4

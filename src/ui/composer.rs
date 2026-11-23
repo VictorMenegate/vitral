@@ -535,6 +535,38 @@ pub(super) fn dirige_o_turno(motor: &Motor, chat: &str) -> bool {
     motor.turno_recebe_mensagem(chat)
 }
 
+/// O que o Enter (e o Enviar) faz com a mensagem escrita enquanto o chat trabalha.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Enter {
+    /// Entra no turno que está rodando (`dirige_o_turno`).
+    Dirige,
+    /// Há tantos pedidos de permissão abertos: nega e manda o texto ao Claude como a resposta
+    /// (`Motor::enviar_responde_pedido`).
+    RespondePedido(usize),
+    /// Espera a vez na fila.
+    Fila,
+}
+
+pub(super) fn enter_no_turno(motor: &Motor, chat: &str) -> Enter {
+    match motor.pedidos_abertos(chat) {
+        0 if dirige_o_turno(motor, chat) => Enter::Dirige,
+        0 => Enter::Fila,
+        pedidos => Enter::RespondePedido(pedidos),
+    }
+}
+
+/// A dica do Enviar com o chat trabalhando: o que o Enter vai fazer com a mensagem. `reforco`: o
+/// Ultrathink ou o Ultracode ligado na caixa, que valem para o turno inteiro.
+fn dica_do_enviar(enter: Enter, reforco: bool) -> &'static str {
+    match enter {
+        Enter::Fila => "Enviar\nEntra na fila: este turno não recebe mensagem agora",
+        _ if reforco => "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila",
+        Enter::Dirige => "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePedido(1) => "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePedido(_) => "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
+    }
+}
+
 fn envio(rodando: bool, vazio: bool) -> Envio {
     match (rodando, vazio) {
         (false, true) => Envio::Vazio,
@@ -844,7 +876,7 @@ impl Janela {
                     .when(b.faixa != FaixaCaixa::Media, |s| {
                         s.child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     })
-                    .children(self.botoes_de_envio(b, vazio, dirige_o_turno(motor, &chat.id), envios, cx)),
+                    .children(self.botoes_de_envio(b, vazio, enter_no_turno(motor, &chat.id), envios, cx)),
             )
     }
 
@@ -855,7 +887,7 @@ impl Janela {
         &self,
         b: &Barra,
         vazio: bool,
-        dirige: bool,
+        enter: Enter,
         envios: u64,
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
@@ -888,15 +920,10 @@ impl Janela {
                 }))
                 .into_any_element()
         };
-        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
-        // vale para o turno inteiro, e tudo o que não é um turno em andamento, vai pela fila.
-        let dica_dirigir = if !dirige {
-            "Enviar\nEntra na fila: este turno não recebe mensagem agora"
-        } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
-            "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
-        } else {
-            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
-        };
+        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code); com
+        // um pedido de permissão aberto, ela é a resposta ao pedido. O que vale para o turno
+        // inteiro, e tudo o que não é um turno em andamento, vai pela fila.
+        let dica_dirigir = dica_do_enviar(enter, self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat));
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
             Envio::Enviar => vec![enviar("Enviar")],
@@ -1911,8 +1938,8 @@ mod testes_sugestoes {
 #[cfg(test)]
 mod testes_caixa {
     use super::{
-        Envio, LINHAS_CAIXA, MODOS, com_claude, envio, gastar_chave, indice_esforco, linhas_da_caixa, milhares,
-        nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
+        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
+        milhares, nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
     };
 
     #[test]
@@ -2005,6 +2032,31 @@ mod testes_caixa {
         assert_eq!(tokens(200_000), "200 mil tokens");
         assert_eq!(tokens(1_000_000), "1 milhão de tokens");
         assert_eq!(tokens(2_000_000), "2 milhões de tokens");
+    }
+
+    /// O critério do pedido: com um pedido de permissão aberto, a dica diz que o Enter nega e
+    /// manda o texto como resposta (antes dizia "Entra na fila"); o Ctrl+Enter segue sendo a fila.
+    #[test]
+    fn a_dica_do_enviar_diz_o_que_o_enter_faz() {
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePedido(1), false),
+            "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePedido(3), false),
+            "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(
+            dica_do_enviar(Enter::Dirige, false),
+            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(dica_do_enviar(Enter::Fila, false), "Enviar\nEntra na fila: este turno não recebe mensagem agora");
+        // O Ultrathink e o Ultracode valem para o turno inteiro: a mensagem espera a vez, e o
+        // pedido continua aberto.
+        let reforco = "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila";
+        assert_eq!(dica_do_enviar(Enter::Dirige, true), reforco);
+        assert_eq!(dica_do_enviar(Enter::RespondePedido(1), true), reforco);
+        assert_eq!(dica_do_enviar(Enter::Fila, true), "Enviar\nEntra na fila: este turno não recebe mensagem agora");
     }
 
     #[test]
