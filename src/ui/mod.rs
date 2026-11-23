@@ -14,6 +14,7 @@ mod avisos_no_app;
 mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
+mod checagens;
 mod composer;
 mod configuracoes;
 mod conversa;
@@ -37,6 +38,7 @@ mod mensagens;
 mod menus;
 pub mod movimento;
 mod painel_contas;
+mod pilulas;
 mod fechar;
 mod painel_arquivo;
 mod paleta;
@@ -535,6 +537,8 @@ pub struct Janela {
     historicos: mensagens::historico::Historicos,
     _assinaturas: Vec<Subscription>,
     _assinatura_motor: Option<Subscription>,
+    /// O texto de uma resposta crescendo: só os painéis do chat redesenham (`texto_chegando`).
+    _assinatura_texto: Option<Subscription>,
     _assinatura_dialogo: Option<Subscription>,
     _relogio: Task<()>,
     /// Como a janela está (painéis, abas, larguras, tamanho), do jeito que vai para o
@@ -552,6 +556,9 @@ pub struct Janela {
     /// O trecho de texto selecionado na janela agora (uma parte de uma resposta, por exemplo):
     /// com ele, o painel ativo mostra o "Responder a este trecho", que o cita na caixa.
     trecho: Option<String>,
+    /// Há texto selecionado na janela (ou uma seleção em curso), conferido a cada desenho: com
+    /// ele, as conversas montam todos os blocos, para a seleção alcançar o que saiu da vista.
+    selecionando: bool,
     /// O trecho citado na próxima mensagem de cada chat: aparece num cartão em cima do campo e
     /// vai na frente do que for escrito, como citação.
     citacoes: HashMap<String, String>,
@@ -617,6 +624,8 @@ pub struct Janela {
     busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
     /// A lista como vista em cache (ver `vista_mensagens`).
     vista_da_lista: Entity<vista_mensagens::VistaDaLista>,
+    /// A casca da janela como vista própria (ver `vista_mensagens::VistaDaCasca`).
+    casca: Entity<vista_mensagens::VistaDaCasca>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -650,6 +659,57 @@ fn medir_montagem(tempo: Duration) {
     MONTAGEM_PIOR.fetch_max(micros, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// O `VITRAL_QUADROS` está ligado (o contador começou).
+static MEDINDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn medindo_quadros() -> bool {
+    MEDINDO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Do começo do `render` da Janela até o fim do layout (a montagem, o layout e o prepaint da
+/// árvore inteira, com as vistas que se refizeram) e até o fim da pintura: as somas do segundo, em
+/// microssegundos. O que sobra do tempo da thread da janela é o GPUI fechando a cena e mandando
+/// para a placa.
+static LAYOUT_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PINTURA_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn medir_etapa(soma: &std::sync::atomic::AtomicU64, tempo: Duration) {
+    soma.fetch_add(tempo.as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// As conversas desenhadas no segundo, para o `VITRAL_QUADROS`: quantas vezes as mensagens de um
+/// painel foram refeitas, quantos blocos elas tinham, quantos foram montados de verdade (os outros
+/// entraram como espaço; ver `mensagens::a_vista`) e o tempo do `render` ao fim do `prepaint` (a
+/// montagem e o layout delas; a pintura fica de fora), em microssegundos.
+static CONVERSAS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static BLOCOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static BLOCOS_MONTADOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static CONVERSAS_TEMPO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Conta uma conversa desenhada para o `VITRAL_QUADROS` (`mensagens` chama no prepaint da lista).
+pub(super) fn medir_conversa(blocos: usize, montados: usize, tempo: Duration) {
+    use std::sync::atomic::Ordering::Relaxed;
+    CONVERSAS.fetch_add(1, Relaxed);
+    BLOCOS.fetch_add(blocos as u32, Relaxed);
+    BLOCOS_MONTADOS.fetch_add(montados as u32, Relaxed);
+    CONVERSAS_TEMPO.fetch_add(tempo.as_micros() as u64, Relaxed);
+}
+
+/// O pedaço da linha do `VITRAL_QUADROS` sobre as conversas: "conversas: 12 · blocos: 9 de 31 ·
+/// 4.2 ms cada" (as médias por conversa desenhada). Vazio quando nenhuma foi desenhada.
+fn linha_das_conversas(conversas: u32, blocos: u32, montados: u32, micros: u64) -> String {
+    if conversas == 0 {
+        return String::new();
+    }
+    let n = f64::from(conversas);
+    format!(
+        " · conversas: {conversas} · blocos: {:.0} de {:.0} · {:.1} ms cada",
+        f64::from(montados) / n,
+        f64::from(blocos) / n,
+        micros as f64 / n / 1000.
+    )
+}
+
 /// Com `VITRAL_QUADROS=1`, escreve "quadros/s: N" no stderr a cada segundo em que a janela
 /// redesenhou: a conferência do orçamento de movimento. Quando o metal refez o campo nesse
 /// segundo, a linha leva o tempo médio de um campo (conta, BMP e decodificação):
@@ -662,6 +722,7 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
     if INICIADO.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    MEDINDO.store(true, std::sync::atomic::Ordering::Relaxed);
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -669,12 +730,23 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
             let campo = metal::custo_do_campo();
             let total = MONTAGEM_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
             let pior = MONTAGEM_PIOR.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let conversas = linha_das_conversas(
+                CONVERSAS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                BLOCOS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                BLOCOS_MONTADOS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                CONVERSAS_TEMPO.swap(0, std::sync::atomic::Ordering::Relaxed),
+            );
+            let layout = LAYOUT_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let pintura = PINTURA_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
             if n > 0 {
+                let por_quadro = |micros: u64| micros as f64 / f64::from(n) / 1000.;
                 eprintln!(
-                    "{} · montagem: média {:.1} ms, pior {:.1} ms",
+                    "{} · montagem: média {:.1} ms, pior {:.1} ms · até o layout: {:.1} ms · até a pintura: {:.1} ms{conversas}",
                     linha_dos_quadros(n, campo),
-                    total as f64 / f64::from(n) / 1000.,
-                    pior as f64 / 1000.
+                    por_quadro(total),
+                    pior as f64 / 1000.,
+                    por_quadro(layout),
+                    por_quadro(pintura),
                 );
             }
         }
@@ -779,8 +851,18 @@ impl Janela {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     let rodando = this.motor.as_ref().is_some_and(|m| m.read(cx).trabalhando() > 0);
+                    // A conversa de um subagente aberta numa aba acompanha o arquivo dele.
+                    if rodando && let Some(motor) = this.motor.clone() {
+                        motor.update(cx, |m, cx| {
+                            m.conferir_subconversas(cx);
+                            // E a última ação de cada agente em segundo plano, o fim do arquivo dele.
+                            m.conferir_segundo_plano(cx);
+                        });
+                    }
                     if rodando && compasso_recente(cx).is_none() {
                         cx.notify();
+                    } else if rodando {
+                        this.andar_os_relogios_das_chamadas(cx);
                     }
                 }) else {
                     break;
@@ -789,9 +871,11 @@ impl Janela {
         });
 
         let eu = cx.entity().downgrade();
+        let casca = cx.new(|_| vista_mensagens::VistaDaCasca::new(eu.clone()));
         let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu));
         let mut janela = Self {
             vista_da_lista,
+            casca,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -853,12 +937,14 @@ impl Janela {
             historicos: Default::default(),
             _assinaturas: assinaturas,
             _assinatura_motor: None,
+            _assinatura_texto: None,
             _assinatura_dialogo: None,
             _relogio,
             ilha: None,
             ilha_fechada: None,
             boas_vindas: None,
             trecho: None,
+            selecionando: false,
             citacoes: HashMap::new(),
             arranjo: None,
             arranjo_ligado: false,
@@ -1289,8 +1375,57 @@ impl Janela {
         }
     }
 
+    /// O relógio da chamada que roda ("Rodando cargo test 00:42", o do subagente) mora nas
+    /// mensagens, que são uma vista em cache: o compasso dos spinners redesenha a casca e os anéis,
+    /// não ela. Uma vez por segundo, só as mensagens dos painéis cujo chat tem uma chamada rodando
+    /// são avisadas; a Janela, a lista e os outros painéis ficam no cache.
+    fn andar_os_relogios_das_chamadas(&self, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.as_ref().map(|m| m.read(cx)) else {
+            return;
+        };
+        let com_relogio: Vec<_> = self
+            .paineis
+            .iter()
+            .filter(|painel| {
+                painel.chat.as_ref().is_some_and(|id| {
+                    motor.execucao(id).rodando() && motor.chat(id).is_some_and(|c| crate::motor::tem_chamada_rodando(&c.itens))
+                })
+            })
+            .map(|painel| painel.vista.clone())
+            .collect();
+        for vista in com_relogio {
+            vista.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// O texto de uma resposta cresceu nestes chats e nada mais mudou (`motor::TextoChegando`): só
+    /// as mensagens dos painéis que os mostram são redesenhadas. A Janela não é avisada, e por
+    /// isso a lista e os outros painéis saem do cache (eram os três painéis e a lista refeitos a
+    /// cada pedaço de texto, uns 20 por segundo).
+    fn texto_chegando(&mut self, chats: &[String], cx: &mut Context<Self>) {
+        // Uma rolagem pela barra ainda não desenhada não pode ser desfeita pelo fim abaixo.
+        self.acompanhar_rolagem(cx);
+        let motor = self.motor.clone();
+        for painel in &self.paineis {
+            let Some(id) = painel.chat.as_ref().filter(|id| chats.contains(id)) else {
+                continue;
+            };
+            if painel.seguindo {
+                painel.rolagem.scroll_to_bottom();
+                // O que chega nas conversas abertas já conta como visto (se o painel está no fim).
+                if let Some(motor) = &motor {
+                    motor.update(cx, |m, _| m.marcar_lido(id));
+                }
+            }
+            painel.vista.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     /// Liga a janela ao motor (uma vez, ao abrir) e abre na conversa mais recente.
     fn ligar_motor(&mut self, motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) {
+        self._assinatura_texto = Some(cx.subscribe(&motor, |this, _, evento: &crate::motor::TextoChegando, cx| {
+            this.texto_chegando(&evento.chats, cx);
+        }));
         self._assinatura_motor = Some(cx.observe_in(&motor, window, |this, motor, window, cx| {
             // O clique numa notificação: a conversa abre como no sino, e a janela vem para a frente
             // (ou o GNOME avisa que o Vitral está pronto).
@@ -1696,18 +1831,44 @@ impl Janela {
 }
 
 impl Render for Janela {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let inicio = std::time::Instant::now();
-        let janela = self.montar_janela(window, cx);
-        medir_montagem(inicio.elapsed());
-        janela
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Tudo o que a Janela desenha mora na vista da casca (ver `vista_mensagens::VistaDaCasca`).
+        AnyView::from(self.casca.clone())
     }
 }
 
 impl Janela {
+    /// A janela inteira, montada pela vista da casca a cada desenho.
+    pub(super) fn montar_casca(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let inicio = std::time::Instant::now();
+        let janela = self.montar_janela(window, cx);
+        medir_montagem(inicio.elapsed());
+        if !medindo_quadros() {
+            return janela;
+        }
+        // Com o `VITRAL_QUADROS`, uma caixa em volta da janela anota quando o layout da árvore
+        // inteira acabou (o prepaint dela vem depois do dos filhos) e quando a pintura acabou (a
+        // tela dela é o último filho a pintar).
+        use gpui_kit::component::ElementExt as _;
+        div()
+            .size_full()
+            .child(janela)
+            .on_prepaint(move |_, _, _| medir_etapa(&LAYOUT_TOTAL, inicio.elapsed()))
+            .child(canvas(|_, _, _| (), move |_, _, _, _| medir_etapa(&PINTURA_TOTAL, inicio.elapsed())).absolute().size_0())
+            .into_any_element()
+    }
+
+    /// Redesenha a casca sem avisar a Janela: para o que muda só fora das mensagens e da lista
+    /// (o texto da caixa de mensagem). As vistas em cache ficam como estão.
+    pub(super) fn redesenhar_a_casca(&self, cx: &mut Context<Self>) {
+        self.casca.update(cx, |_, cx| cx.notify());
+    }
+
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
+        // O sumário diz se foi desenhado neste desenho (`secao_do_sumario`).
+        self.sumario.desenhado = false;
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
         }
@@ -1840,7 +2001,9 @@ impl Janela {
         }
         // O texto selecionado na janela, guardado a cada desenho: o clique no "Responder a este
         // trecho" desfaz a seleção antes de chegar ao botão, e o que vale é o que estava marcado.
-        self.trecho = gpui_kit::base::TextSelection::has_selection(window, cx)
+        self.selecionando = gpui_kit::base::TextSelection::has_selection(window, cx);
+        self.trecho = self
+            .selecionando
             .then(|| gpui_kit::base::TextSelection::selected_text(window, cx))
             .filter(|t| !t.trim().is_empty());
         // Antes da lista, para ela já mostrar como lida a conversa que voltou ao fim.
@@ -1851,6 +2014,7 @@ impl Janela {
             let motor = motor.read(cx);
             self.acertar_abas(motor);
         }
+        self.soltar_subconversas(cx);
         // A conversa selecionada pode ter sumido (ex.: troca de pasta).
         if let Some(id) = &self.selecionado
             && motor.read(cx).chat(id).is_none()

@@ -17,7 +17,7 @@ use crate::{
     modelo::agora,
     motor::{
         Motor, Tokens,
-        gasto::{Gasto, GastoDaPasta, comeco_do_dia, resumir},
+        gasto::{Estatistica, Gasto, GastoDaPasta, Turno, cache_restante, comeco_do_dia, resumir},
     },
     tema::{Cores, Lucide, Tipo as _, esp, r, raio},
 };
@@ -82,16 +82,93 @@ pub(super) fn dica_com_gasto(dica: &str, gasto: Option<&Gasto>) -> String {
     linhas.join("\n")
 }
 
+/// "0,4 s", "1,8 s", "45 s", "6 min 12 s": um tempo medido em milissegundos. Abaixo de 10 s, com
+/// uma casa; daí em diante, como a duração do turno.
+pub(super) fn tempo_curto(milis: u64) -> String {
+    if milis < 9_950 {
+        return format!("{} s", format!("{:.1}", milis as f64 / 1e3).trim_end_matches(".0").replace('.', ","));
+    }
+    super::mensagens::duracao_do_turno((milis as f64 / 1e3).round() as u64)
+}
+
+/// Quanto dos tokens de entrada do turno veio do cache, em porcento (a entrada é a nova, a
+/// gravada no cache e a lida dele). Nada num turno sem entrada. Só diz 100 quando foi tudo.
+pub(super) fn fatia_do_cache(tokens: &Tokens) -> Option<u32> {
+    let entrada = tokens.entrada + tokens.cache_criado + tokens.cache_lido;
+    if entrada == 0 {
+        return None;
+    }
+    let porcento = (tokens.cache_lido as f64 * 100. / entrada as f64).round() as u32;
+    Some(if tokens.cache_lido < entrada { porcento.min(99) } else { 100 })
+}
+
+/// A dica da linha do turno inteira: o gasto (`dica_com_gasto`) e, embaixo, quanto da entrada
+/// veio do cache, o modelo com os passos, os tempos e quanto custou subir o Claude Code. Cada
+/// linha só aparece com o dado dela: o turno de antes disto fica com o modelo e o cache.
+pub(super) fn dica_do_turno(dica: &str, gasto: Option<&Gasto>, estatistica: Option<&Estatistica>) -> String {
+    let mut linhas = vec![dica_com_gasto(dica, gasto)];
+    let Some(Estatistica { modelo, tempos }) = estatistica else {
+        return linhas.join("\n");
+    };
+    if let Some(porcento) = gasto.and_then(|g| fatia_do_cache(&g.tokens)) {
+        linhas.push(format!("{porcento}% da entrada veio do cache"));
+    }
+    let mut do_modelo = Vec::new();
+    if !modelo.is_empty() {
+        do_modelo.push(nome_do_modelo(modelo));
+    }
+    if tempos.passos > 0 {
+        do_modelo.push(contagem(tempos.passos as usize, "passo", "passos"));
+    }
+    let do_tempo: Vec<String> = [(tempos.total_ms, "no total"), (tempos.modelo_ms, "de modelo"), (tempos.ttft_ms, "até a primeira palavra")]
+        .into_iter()
+        .filter(|(milis, _)| *milis > 0)
+        .map(|(milis, o_que)| format!("{} {o_que}", tempo_curto(milis)))
+        .collect();
+    linhas.extend([do_modelo, do_tempo].into_iter().filter(|partes| !partes.is_empty()).map(|partes| partes.join(" · ")));
+    if let Some(subida) = tempos.subida_ms() {
+        linhas.push(format!("{} para abrir o Claude Code", tempo_curto(subida)));
+    }
+    linhas.join("\n")
+}
+
+/// O nome de mostrar do modelo de um turno: "Opus 5.5" para os do Claude, o do catálogo para os
+/// do Codex (ou o nome cru).
+fn nome_do_modelo(modelo: &str) -> String {
+    if modelo.starts_with("claude-") { super::composer::nome_curto_modelo(modelo) } else { crate::agente_codex::nome_do_modelo(modelo) }
+}
+
+/// "cache quente por mais 3 min" ou "cache frio": o que sobra da validade do cache do prompt, em
+/// segundos. Os minutos arredondam para cima (com 2 min 10 s ainda são "3 min").
+pub(super) fn estado_do_cache(restante: u64) -> String {
+    match restante {
+        0 => "cache frio".to_string(),
+        1..60 => format!("cache quente por mais {restante} s"),
+        60..=3540 => format!("cache quente por mais {} min", restante.div_ceil(60)),
+        _ => format!("cache quente por mais {} h", restante.div_ceil(3600)),
+    }
+}
+
+/// A linha do cache no popover do contexto, a partir do último turno anotado. Nada quando o chat
+/// está trabalhando (o cache está em uso e o fim do último turno já não diz nada) e quando o
+/// turno não diz a validade (o Codex, o turno de antes disto).
+pub(super) fn linha_do_cache(turno: &Turno, rodando: bool, agora: u64) -> Option<String> {
+    let validade = turno.tempos.cache_ttl;
+    (!rodando && validade > 0).then(|| estado_do_cache(cache_restante(turno.em, validade, agora)))
+}
+
 /// "Último turno", no popover do contexto: a entrada nova, o cache lido e a saída do último turno
-/// anotado da conversa, um embaixo do outro. Nada sem turno anotado ou sem os tokens dele.
+/// anotado da conversa, um embaixo do outro, e a linha "Cache", com por quanto tempo o cache dele
+/// ainda vale (`linha_do_cache`, calculada quando o popover abre). Nada sem turno anotado ou sem
+/// os tokens dele.
 pub(super) fn ultimo_turno(motor: &Motor, chat: &str) -> Option<AnyElement> {
     let turno = motor.gastos().ultimo(chat).filter(|t| t.tokens.total() > 0)?;
-    Some(
+    let linha = |rotulo: &'static str, valores: Vec<String>| {
         h_flex()
             .items_start()
             .gap(esp::E8)
             .py(esp::E4)
-            .child(div().flex_none().w(r(104.)).metadado().line_height(r(18.)).text_color(Cores::tenue()).child("Último turno"))
+            .child(div().flex_none().w(r(104.)).metadado().line_height(r(18.)).text_color(Cores::tenue()).child(rotulo))
             .child(
                 v_flex()
                     .flex_1()
@@ -99,10 +176,14 @@ pub(super) fn ultimo_turno(motor: &Motor, chat: &str) -> Option<AnyElement> {
                     .text_size(r(13.))
                     .line_height(r(18.))
                     .text_color(Cores::texto())
-                    .children(partes_dos_tokens(&turno.tokens).map(|parte| div().child(parte))),
+                    .children(valores.into_iter().map(|valor| div().child(valor))),
             )
-            .into_any_element(),
-    )
+    };
+    // O cache tem a linha dele, com o rótulo na coluna dos rótulos: a frase inteira na coluna dos
+    // valores não cabia ("cache quente por mais 57 min" quebrava em duas linhas).
+    let cache = linha_do_cache(turno, motor.execucao(chat).rodando(), agora())
+        .map(|estado| linha("Cache", vec![estado.trim_start_matches("cache ").to_string()]));
+    Some(v_flex().child(linha("Último turno", partes_dos_tokens(&turno.tokens).to_vec())).children(cache).into_any_element())
 }
 
 /// "182 mil tokens · US$ 0,84": o gasto numa linha. Sem custo (o Codex não diz), só os tokens;
@@ -338,8 +419,14 @@ impl Render for OndeOUsoFoi {
 
 #[cfg(test)]
 mod testes {
-    use super::{desde, dica_com_gasto, dica_da_memoria, gasto_curto, memoria_curta, partes_dos_tokens, tokens_curtos};
-    use crate::motor::{Tokens, gasto::Gasto};
+    use super::{
+        desde, dica_com_gasto, dica_da_memoria, dica_do_turno, estado_do_cache, fatia_do_cache, gasto_curto, linha_do_cache, memoria_curta,
+        partes_dos_tokens, tempo_curto, tokens_curtos,
+    };
+    use crate::motor::{
+        Tokens,
+        gasto::{Estatistica, Gasto, Tempos, Turno},
+    };
 
     #[test]
     fn tokens_em_poucas_letras() {
@@ -379,6 +466,102 @@ mod testes {
         // Só o custo (um `result` sem os tokens): a dica não inventa os três números.
         let so_custo = Gasto { custo: 0.5, tokens: Tokens::default(), turnos: 1 };
         assert_eq!(dica_com_gasto("Ver", Some(&so_custo)), "Ver\nUS$ 0,50");
+    }
+
+    #[test]
+    fn tempo_em_poucas_letras() {
+        assert_eq!(tempo_curto(0), "0 s");
+        assert_eq!(tempo_curto(430), "0,4 s");
+        assert_eq!(tempo_curto(1_807), "1,8 s");
+        assert_eq!(tempo_curto(2_000), "2 s");
+        assert_eq!(tempo_curto(9_940), "9,9 s");
+        assert_eq!(tempo_curto(9_960), "10 s");
+        assert_eq!(tempo_curto(45_400), "45 s");
+        assert_eq!(tempo_curto(372_000), "6 min 12 s");
+        assert_eq!(tempo_curto(3_780_000), "1 h 3 min");
+    }
+
+    #[test]
+    fn quanto_da_entrada_veio_do_cache() {
+        let tokens = Tokens { entrada: 2_000, cache_lido: 170_000, cache_criado: 6_000, saida: 4_000 };
+        // 170 mil de 178 mil de entrada (a saída não entra na conta).
+        assert_eq!(fatia_do_cache(&tokens), Some(96));
+        assert_eq!(fatia_do_cache(&Tokens { entrada: 500, saida: 90, ..Tokens::default() }), Some(0));
+        assert_eq!(fatia_do_cache(&Tokens { cache_lido: 40_000, ..Tokens::default() }), Some(100));
+        // Quase tudo não é tudo.
+        assert_eq!(fatia_do_cache(&Tokens { entrada: 1, cache_lido: 999_999, ..Tokens::default() }), Some(99));
+        // Sem entrada (um `result` sem os tokens), não há do que tirar a porcentagem.
+        assert_eq!(fatia_do_cache(&Tokens { saida: 90, ..Tokens::default() }), None);
+        assert_eq!(fatia_do_cache(&Tokens::default()), None);
+    }
+
+    #[test]
+    fn dica_do_turno_com_o_modelo_os_tempos_e_o_cache() {
+        let tokens = Tokens { entrada: 2_000, cache_lido: 170_000, cache_criado: 6_000, saida: 4_000 };
+        let gasto = Gasto { custo: 0.84, tokens, turnos: 1 };
+        let tempos = Tempos { total_ms: 372_000, modelo_ms: 243_400, ttft_ms: 1_807, espera_ms: 3_369, passos: 12, cache_ttl: 3600 };
+        let estatistica = Estatistica { modelo: "claude-opus-5-5".into(), tempos };
+        // O que já havia fica igual, nas mesmas linhas; o novo vem embaixo.
+        assert_eq!(
+            dica_do_turno("Ver o que o agente fez neste turno", Some(&gasto), Some(&estatistica)),
+            "Ver o que o agente fez neste turno\n\
+             182 mil tokens · US$ 0,84\n\
+             8 mil de entrada nova · 170 mil lidos do cache · 4 mil de saída\n\
+             96% da entrada veio do cache\n\
+             Opus 5.5 · 12 passos\n\
+             6 min 12 s no total · 4 min 3 s de modelo · 1,8 s até a primeira palavra\n\
+             1,6 s para abrir o Claude Code"
+        );
+        // Um passo só, e a primeira palavra sem a espera medida daqui (ou com ela menor): sem a
+        // linha do Claude Code abrindo.
+        let curto = Estatistica { modelo: "claude-haiku-5-5".into(), tempos: Tempos { total_ms: 2_526, modelo_ms: 1_501, ttft_ms: 1_807, espera_ms: 0, passos: 1, cache_ttl: 300 } };
+        assert_eq!(
+            dica_do_turno("Ver", Some(&gasto), Some(&curto)),
+            "Ver\n182 mil tokens · US$ 0,84\n8 mil de entrada nova · 170 mil lidos do cache · 4 mil de saída\n\
+             96% da entrada veio do cache\nHaiku 5.5 · 1 passo\n2,5 s no total · 1,5 s de modelo · 1,8 s até a primeira palavra"
+        );
+        // O turno anotado antes disto (e o do Codex): o livro só tem o modelo e os tokens.
+        let antigo = Estatistica { modelo: "gpt-5".into(), tempos: Tempos::default() };
+        assert_eq!(
+            dica_do_turno("Ver", Some(&gasto), Some(&antigo)),
+            "Ver\n182 mil tokens · US$ 0,84\n8 mil de entrada nova · 170 mil lidos do cache · 4 mil de saída\n96% da entrada veio do cache\ngpt-5"
+        );
+        // Só o custo, sem modelo e sem tempo: nada de linha vazia.
+        let so_custo = Gasto { custo: 0.5, tokens: Tokens::default(), turnos: 1 };
+        assert_eq!(dica_do_turno("Ver", Some(&so_custo), Some(&Estatistica::default())), "Ver\nUS$ 0,50");
+        // Sem o tempo de modelo, a linha dos tempos fica com o que tem.
+        let so_total = Estatistica { modelo: String::new(), tempos: Tempos { total_ms: 45_000, ..Tempos::default() } };
+        assert_eq!(dica_do_turno("Ver", Some(&so_custo), Some(&so_total)), "Ver\nUS$ 0,50\n45 s no total");
+        // Conversa antiga, sem o turno no livro: tudo como antes.
+        assert_eq!(dica_do_turno("Ver o que o agente fez neste turno", None, None), "Ver o que o agente fez neste turno");
+        assert_eq!(dica_do_turno("Ver", Some(&gasto), None), dica_com_gasto("Ver", Some(&gasto)));
+    }
+
+    #[test]
+    fn cache_quente_ou_frio() {
+        assert_eq!(estado_do_cache(0), "cache frio");
+        assert_eq!(estado_do_cache(180), "cache quente por mais 3 min");
+        // Os minutos arredondam para cima: com 2 min 1 s ainda são "3 min", e nunca "0 min".
+        assert_eq!(estado_do_cache(121), "cache quente por mais 3 min");
+        assert_eq!(estado_do_cache(120), "cache quente por mais 2 min");
+        assert_eq!(estado_do_cache(60), "cache quente por mais 1 min");
+        assert_eq!(estado_do_cache(59), "cache quente por mais 59 s");
+        assert_eq!(estado_do_cache(1), "cache quente por mais 1 s");
+        // O cache longo, de 1 h.
+        assert_eq!(estado_do_cache(3_420), "cache quente por mais 57 min");
+        assert_eq!(estado_do_cache(3_600), "cache quente por mais 1 h");
+
+        let fim = 1_800_000_000;
+        let turno = |ttl: u64| Turno { em: fim, chat: "a".into(), tempos: Tempos { cache_ttl: ttl, ..Tempos::default() }, ..Turno::default() };
+        // 5 min de validade, contados do fim do último turno.
+        assert_eq!(linha_do_cache(&turno(300), false, fim + 120).as_deref(), Some("cache quente por mais 3 min"));
+        assert_eq!(linha_do_cache(&turno(300), false, fim + 300).as_deref(), Some("cache frio"));
+        assert_eq!(linha_do_cache(&turno(300), false, fim + 9_000).as_deref(), Some("cache frio"));
+        // A conta com o cache longo: aos 5 min ainda está quente.
+        assert_eq!(linha_do_cache(&turno(3_600), false, fim + 300).as_deref(), Some("cache quente por mais 55 min"));
+        // Com o chat trabalhando, e no turno que não diz a validade (o Codex, o de antes disto), nada.
+        assert_eq!(linha_do_cache(&turno(300), true, fim + 120), None);
+        assert_eq!(linha_do_cache(&turno(0), false, fim + 120), None);
     }
 
     #[test]

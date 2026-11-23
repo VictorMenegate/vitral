@@ -22,8 +22,11 @@ mod agendadas;
 pub mod gasto;
 mod memoria;
 mod pedidos_de_hook;
-pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
+pub use gasto::{Medida, Tokens, medida_do_resultado, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
+pub mod subconversa;
+pub mod fundo;
+pub mod passos;
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -83,6 +86,8 @@ pub struct PedidoPermissao {
     /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
     /// ver `pedidos_de_hook`.
     pub motivo_do_hook: Option<String>,
+    /// O id da chamada que espera a resposta (o `tool_use_id` que o Claude Code manda junto).
+    chamada: Option<String>,
     resposta: Sender<Resposta>,
 }
 
@@ -338,9 +343,12 @@ pub struct Motor {
     retomar_as: HashMap<String, u64>,
     /// Os avisos de "outro chat também editou" já dados nesta sessão: (chat, arquivo, outro chat).
     avisos_de_arquivo: HashSet<(String, PathBuf, String)>,
-    /// A lista de passos que o agente mantém (o TodoWrite do Claude Code), a última de cada chat.
-    /// Só na memória: some ao fechar o Vitral.
-    passos: HashMap<String, Vec<Passo>>,
+    /// As chamadas que esperaram uma permissão sua, por (chat, id da chamada): quando você
+    /// permitiu. A duração da chamada conta daí, não do pedido (`duracao_da_chamada`).
+    liberadas: HashMap<(String, String), u64>,
+    /// A lista de passos que o agente mantém (o TodoWrite e as ferramentas de tarefa do Claude
+    /// Code), a última de cada chat. Só na memória: some ao fechar o Vitral.
+    passos: HashMap<String, passos::Passos>,
     /// Os comandos que o agente de cada chat deixou rodando no fundo: id da tarefa e descrição.
     comandos_no_fundo: HashMap<String, Vec<(String, String)>>,
     /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
@@ -382,6 +390,22 @@ pub struct Motor {
     fluxos_por_conta: HashMap<String, bool>,
     /// Fluxos e subagentes que o processo atual de cada chat ainda roda em segundo plano.
     fundo: HashMap<String, usize>,
+    /// Os mesmos, um por um: quem são, a chamada que abriu cada um e até onde o arquivo de cada
+    /// um foi lido (ver `motor::fundo`). Vale pelo processo do turno.
+    segundo_plano: HashMap<String, fundo::NoFundo>,
+    /// As conversas de subagente abertas em aba, só para ler (ver `motor::subconversa`): ficam
+    /// fora do estado e da lista, e saem daqui quando a aba fecha.
+    subconversas: Vec<subconversa::Subconversa>,
+    /// De qual subagente é cada chamada feita por um subagente, por chat: o id da chamada e o id
+    /// da chamada (Task/Agent) que o abriu. É como um pedido de permissão diz qual subagente
+    /// espera você. Vale pelo processo do turno.
+    chamadas_dos_subs: HashMap<String, HashMap<String, String>>,
+    /// O relatório que um subagente entregou pela chamada de entrega (`SubRelatorio`), por chat
+    /// e chamada que o abriu, até o resultado dessa chamada chegar.
+    relatorios: HashMap<(String, String), String>,
+    /// Quando você mandou parar um comando de fundo de cada chat pela última vez: o aviso de fim
+    /// que chega logo depois ("killed") não marca o comando como falho.
+    comandos_parados: HashMap<String, std::time::Instant>,
     /// Quando cada chat começou o bloco de raciocínio em curso (para dizer quanto durou).
     pensando: HashMap<String, std::time::Instant>,
     /// Os chats em que o Claude Code está resumindo a conversa agora (`Evento::Compactando`).
@@ -423,6 +447,8 @@ pub struct Motor {
     /// Chats que algum painel aberto mostra (a Janela atualiza a cada quadro): o texto parcial
     /// dos outros não redesenha a janela.
     pub visiveis: HashSet<String>,
+    /// Os chats abertos cujo texto cresceu no lote de sinais em curso (ver `aviso_do_lote`).
+    texto_chegando: Vec<String>,
     servidor: Option<mcp::Servidor>,
     sinais: Sender<Sinal>,
     _recebedor: Task<()>,
@@ -488,13 +514,11 @@ impl Motor {
         };
 
         // Trata de uma vez o que chegou junto, com um redesenho só. Pedaço de texto vem a cada
-        // token: espera um pouco pelos próximos (no máximo 20 redesenhos por segundo).
+        // token: espera um pouco pelos próximos (`JANELA_DO_TEXTO`: uns 16 redesenhos por segundo).
         let _recebedor = cx.spawn(async move |motor, cx| {
             while let Ok(sinal) = recebe.recv().await {
                 if matches!(sinal, Sinal::Claude(_, _, Evento::TextoParcial(_))) {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(50))
-                        .await;
+                    cx.background_executor().timer(JANELA_DO_TEXTO).await;
                 }
                 let mut sinais = vec![sinal];
                 while sinais.len() < 512
@@ -502,15 +526,18 @@ impl Motor {
                 {
                     sinais.push(outro);
                 }
-                // Texto chegando numa conversa que não está aberta não redesenha a janela.
+                // Texto chegando numa conversa que não está aberta não redesenha a janela, e o que
+                // só cresce numa conversa aberta redesenha só os painéis dela.
                 if motor
                     .update(cx, |motor, cx| {
                         let mut redesenhar = false;
                         for sinal in sinais {
                             redesenhar |= motor.tratar(sinal, cx);
                         }
-                        if redesenhar {
-                            cx.notify();
+                        match aviso_do_lote(redesenhar, std::mem::take(&mut motor.texto_chegando)) {
+                            AvisoDoLote::Tudo => cx.notify(),
+                            AvisoDoLote::Texto(chats) => cx.emit(TextoChegando { chats }),
+                            AvisoDoLote::Nada => {}
                         }
                     })
                     .is_err()
@@ -674,9 +701,15 @@ impl Motor {
             resposta_do_claude: None,
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
+            subconversas: Vec::new(),
+            segundo_plano: HashMap::new(),
+            chamadas_dos_subs: HashMap::new(),
+            relatorios: HashMap::new(),
+            comandos_parados: HashMap::new(),
             pensando: HashMap::new(),
             compactando: HashSet::new(),
             planos_sem_chamada: HashMap::new(),
+            liberadas: HashMap::new(),
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             retiradas: HashSet::new(),
@@ -689,6 +722,7 @@ impl Motor {
             pedido_de_abrir: None,
             avisos: Arc::default(),
             visiveis: HashSet::new(),
+            texto_chegando: Vec::new(),
             servidor,
             sinais,
             _recebedor,
@@ -748,7 +782,10 @@ impl Motor {
         self.somente_leitura.as_ref()
     }
 
-    pub fn chat(&self, id: &str) -> Option<&Chat> {
+    /// O chat de verdade com este id: o que mora no estado e na lista. Dentro do motor é sempre
+    /// este que se procura: a conversa de um subagente aberta numa aba (`Motor::chat` a acha) é só
+    /// para ler, e nada do motor age sobre ela.
+    pub(crate) fn chat_gravado(&self, id: &str) -> Option<&Chat> {
         self.chats.iter().find(|c| c.id == id)
     }
 
@@ -758,8 +795,10 @@ impl Motor {
         let Some(c) = self.chat_mut(chat) else {
             return;
         };
+        // O comando de fundo (um Bash) também avisa quando termina, com o id da chamada dele: não
+        // é subagente, e não ganha registro de um.
         let achado = c.itens.iter_mut().rev().find_map(|item| match item {
-            Item::Ferramenta { id, sub, .. } if id == pai => Some(sub),
+            Item::Ferramenta { id, nome, sub, .. } if id == pai && nome != "Bash" => Some(sub),
             _ => None,
         });
         if let Some(sub) = achado {
@@ -775,6 +814,10 @@ impl Motor {
     /// A execução como a tela a vê: a revisão da memória conta como parada (o turno de trabalho já
     /// terminou, e o "Terminou" sai na hora; rodada de uso, item 6.1).
     pub fn execucao(&self, chat: &str) -> Execucao {
+        // A conversa de um subagente aberta numa aba roda enquanto ele trabalha.
+        if let Some((pai, chamada)) = subconversa::partes_do_id(chat) {
+            return self.execucao_do_subagente(pai, chamada);
+        }
         match self.execucao_real(chat) {
             Execucao::Rodando { .. } if self.revisando.contains_key(chat) => Execucao::Parado,
             outra => outra,
@@ -837,7 +880,7 @@ impl Motor {
 
     /// Por que o chat parou no meio, quando dá para retomar.
     pub fn parada(&self, chat_id: &str) -> Option<String> {
-        let chat = self.chat(chat_id)?;
+        let chat = self.chat_gravado(chat_id)?;
         let livre = !self.processos.contains_key(chat_id);
         (chat.turno_aberto && livre).then(|| CORTADO.to_string())
     }
@@ -878,7 +921,7 @@ impl Motor {
     /// Tudo o que espera você, um por linha: pedidos e planos na ordem em que chegaram, depois os
     /// erros, as paradas e as respostas novas (a mais recente primeiro). Sem os arquivados.
     pub fn pendencias(&self) -> Vec<Pendencia> {
-        let ativo = |id: &str| self.chat(id).is_some_and(|c| !c.arquivado);
+        let ativo = |id: &str| self.chat_gravado(id).is_some_and(|c| !c.arquivado);
         let mut lista: Vec<Pendencia> = self
             .permissoes
             .iter()
@@ -939,6 +982,8 @@ impl Motor {
             self.repetidos_sessao.remove(id);
             self.passagens.remove(id);
             self.fundo.remove(id);
+            self.esquecer_subagentes(id);
+            self.subconversas.retain(|s| s.pai != *id);
             self.fim_adiado.remove(id);
             self.dirigidas.remove(id);
             self.retiradas.remove(id);
@@ -1032,7 +1077,7 @@ impl Motor {
         }
         // Escrever num chat arquivado é voltar a usar ele: ele sai das Arquivadas e o que esperava
         // por isso entra (dono, 19/11/2026: "mandei a mensagem aqui e não começou").
-        if self.chat(chat).is_some_and(|c| c.arquivado) {
+        if self.chat_gravado(chat).is_some_and(|c| c.arquivado) {
             self.alternar_arquivado(chat, cx);
         }
         // Comandos que o Vitral resolve sozinho.
@@ -1058,7 +1103,7 @@ impl Motor {
         // revisão volta a ser pedida no próximo fim); se já escreveu, a mensagem espera na fila,
         // para não cortar um arquivo pela metade.
         if self.revisando.contains_key(chat) && self.processos.contains_key(chat) {
-            let escreveu = self.chat(chat).is_some_and(|c| {
+            let escreveu = self.chat_gravado(chat).is_some_and(|c| {
                 let desde = self.revisando.get(chat).map_or(c.itens.len(), |r| r.desde_item);
                 revisao_escreveu(&c.itens[desde.min(c.itens.len())..])
             });
@@ -1162,10 +1207,14 @@ impl Motor {
             return;
         };
         let pedido = self.permissoes.remove(posicao);
+        // A chamada só começa a rodar agora: o tempo que ela esperou por você não é dela.
+        if let (true, Some(chamada)) = (permitir, &pedido.chamada) {
+            self.liberadas.insert((pedido.chat.clone(), chamada.clone()), agora());
+        }
         // Aprovar o plano sai do Planejar, como na extensão: o resto do turno e os próximos rodam
         // no modo de antes (sem isso o Claude Code voltaria ao Manual e o turno seguinte, ao plano).
         // O plano que o próprio Claude abriu, ou com o modo trocado no meio, volta ao da conversa.
-        let modo = (permitir && pedido.ferramenta == "ExitPlanMode").then(|| match self.chat(&pedido.chat) {
+        let modo = (permitir && pedido.ferramenta == "ExitPlanMode").then(|| match self.chat_gravado(&pedido.chat) {
             Some(chat) => self.modo_ao_aprovar_plano(chat),
             None => modo_depois_do_plano(None, None, &self.config.permissao),
         });
@@ -1228,10 +1277,10 @@ impl Motor {
             return;
         };
         let chat_id = pedido.chat.clone();
-        let regra = self.chat(&chat_id).and_then(|c| {
+        let regra = self.chat_gravado(&chat_id).and_then(|c| {
             crate::modelo::regra_de_permissao(&pedido.ferramenta, &pedido.entrada, &c.cwd)
         });
-        let manual = self.chat(&chat_id).is_some_and(|c| self.permissao_de(c) == "manual");
+        let manual = self.chat_gravado(&chat_id).is_some_and(|c| self.permissao_de(c) == "manual");
         if let Some(regra) = regra
             && let Some(c) = self.chat_mut(&chat_id)
         {
@@ -1243,7 +1292,7 @@ impl Motor {
             }
             self.salvar();
         }
-        let chat = self.chat(&chat_id);
+        let chat = self.chat_gravado(&chat_id);
         let cobertos: Vec<String> = self
             .permissoes
             .iter()
@@ -1282,7 +1331,7 @@ impl Motor {
             trocar_arquivado(c, agora());
         }
         // O que esperou pelo desarquivado entra.
-        if self.chat(chat).is_some_and(|c| !c.arquivado) {
+        if self.chat_gravado(chat).is_some_and(|c| !c.arquivado) {
             self.entregar_fila(chat, cx);
         }
         self.salvar();
@@ -1292,19 +1341,19 @@ impl Motor {
     /// O chat que nunca rodou: sem sessão, só com os avisos do Vitral, sem fila e sem nada
     /// trabalhando.
     pub fn chat_vazio(&self, chat: &str) -> bool {
-        self.chat(chat).is_some_and(nunca_rodou) && self.filas.get(chat).is_none_or(Vec::is_empty) && self.chat_livre(chat)
+        self.chat_gravado(chat).is_some_and(nunca_rodou) && self.filas.get(chat).is_none_or(Vec::is_empty) && self.chat_livre(chat)
     }
 
     /// "Arquivar" no menu do chat: o chat vazio sai do Vitral em vez de ir para Arquivadas (com a
     /// pasta do chat sem pasta, se ela continua vazia). Devolve se apagou.
     pub fn arquivar_chat(&mut self, chat: &str, cx: &mut Context<Self>) -> bool {
         if !self.chat_vazio(chat) {
-            if self.chat(chat).is_some_and(|c| !c.arquivado) {
+            if self.chat_gravado(chat).is_some_and(|c| !c.arquivado) {
                 self.alternar_arquivado(chat, cx);
             }
             return false;
         }
-        let cwd = self.chat(chat).map(|c| c.cwd.clone());
+        let cwd = self.chat_gravado(chat).map(|c| c.cwd.clone());
         self.chats.retain(|c| c.id != chat);
         self.filas.remove(chat);
         self.esquecer(&[chat.to_string()]);
@@ -1670,7 +1719,7 @@ impl Motor {
             c.itens.extend(itens_das_entradas(vec![entrada.clone()], None));
             c.atualizado_em = agora();
         }
-        if let Some(c) = self.chat(chat_id) {
+        if let Some(c) = self.chat_gravado(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
         self.salvar();
@@ -1780,9 +1829,19 @@ impl Motor {
         self.comandos_no_fundo.get(chat).map_or(&[], Vec::as_slice)
     }
 
+    /// Para um dos comandos de fundo do chat (o `stop_task` dele).
+    pub fn parar_comando_no_fundo(&mut self, chat: &str, tarefa: &str, cx: &mut Context<Self>) {
+        if let Some(processo) = self.processos.get_mut(chat) {
+            processo.parar_tarefa(tarefa);
+            self.comandos_parados.insert(chat.to_string(), std::time::Instant::now());
+        }
+        cx.notify();
+    }
+
     /// Para os comandos de fundo do chat (o `stop_task` de cada um).
     pub fn parar_comandos_no_fundo(&mut self, chat: &str, cx: &mut Context<Self>) {
         let ids: Vec<String> = self.comandos_no_fundo(chat).iter().map(|(id, _)| id.clone()).collect();
+        self.comandos_parados.insert(chat.to_string(), std::time::Instant::now());
         if let Some(processo) = self.processos.get_mut(chat) {
             for id in ids {
                 processo.parar_tarefa(&id);
@@ -1793,13 +1852,13 @@ impl Motor {
 
     /// Os passos que o agente deste chat anotou por último (vazio sem lista).
     pub fn passos(&self, chat: &str) -> &[Passo] {
-        self.passos.get(chat).map_or(&[], Vec::as_slice)
+        self.passos.get(chat).map_or(&[], passos::Passos::lista)
     }
 
     /// O que é preciso para voltar os arquivos de um chat: a pasta, a pasta da conta e a sessão.
     /// `None` com o chat rodando (o processo vivo ainda mexe nos arquivos) ou sem sessão.
     pub fn onde_voltar_arquivos(&self, chat: &str) -> Option<(PathBuf, Option<PathBuf>, String)> {
-        let c = self.chat(chat)?;
+        let c = self.chat_gravado(chat)?;
         if self.processos.contains_key(chat) || self.execucao(chat).rodando() || !c.sessao_criada {
             return None;
         }
@@ -1809,7 +1868,7 @@ impl Motor {
     /// Um aviso do Vitral na conversa (gravado), fora de um turno.
     pub fn avisar_na_conversa(&mut self, chat: &str, texto: &str, cx: &mut Context<Self>) {
         self.avisar(chat, texto, false);
-        if let Some(c) = self.chat(chat) {
+        if let Some(c) = self.chat_gravado(chat) {
             let _ = self.dados.salvar_chat(c);
         }
         cx.notify();
@@ -1863,7 +1922,7 @@ impl Motor {
         if self.somente_leitura.is_some() || self.processos.contains_key(chat_id) {
             return None;
         }
-        if !editavel(&self.chat(chat_id)?.itens, ix) {
+        if !editavel(&self.chat_gravado(chat_id)?.itens, ix) {
             return None;
         }
         self.rodadas.remove(chat_id);
@@ -1896,7 +1955,7 @@ impl Motor {
         self.ultima_entrada.remove(chat_id);
         self.parcial.remove(chat_id);
         self.execucao.insert(chat_id.to_string(), Execucao::Parado);
-        if let Some(c) = self.chat(chat_id) {
+        if let Some(c) = self.chat_gravado(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
         self.salvar();
@@ -1970,7 +2029,7 @@ impl Motor {
         let Some(motivo) = self.parada(chat_id) else {
             return;
         };
-        let Some(chat) = self.chat(chat_id).cloned() else {
+        let Some(chat) = self.chat_gravado(chat_id).cloned() else {
             return;
         };
         if !recebeu_mensagem(&chat) && self.na_fila(chat_id) > 0 {
@@ -2133,7 +2192,7 @@ impl Motor {
                     chat = c.copia_sem_itens();
                 }
             }
-            let itens = self.chat(chat_id).map_or(&[][..], |c| c.itens.as_slice());
+            let itens = self.chat_gravado(chat_id).map_or(&[][..], |c| c.itens.as_slice());
             let outro = chat.parceiro.as_ref().map_or(chat.agente.outro(), |p| p.agente);
             o_que_o_outro_fez(itens, chat.agente, outro)
         } else {
@@ -2183,7 +2242,7 @@ impl Motor {
         }
         let passagem = self.passagens.remove(chat_id).map(|motivo| {
             let ja_na_conversa = mensagens.iter().filter(|e| e.registrada).count();
-            let itens = self.chat(chat_id).map_or(&[][..], |c| c.itens.as_slice());
+            let itens = self.chat_gravado(chat_id).map_or(&[][..], |c| c.itens.as_slice());
             bloco_de_passagem(itens, ja_na_conversa, motivo)
         });
 
@@ -2268,11 +2327,14 @@ impl Motor {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.motivos_de_hook.esquecer(chat_id);
+                self.gastos.abrir(chat_id);
+                self.liberadas.retain(|(chat, _), _| chat != chat_id);
                 self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
                 // Um turno começou (mandado por você ou pela retomada): a volta agendada cai.
                 self.retomar_as.remove(chat_id);
                 self.acertar_trava();
                 self.fundo.remove(chat_id);
+                self.esquecer_subagentes(chat_id);
                 self.fim_adiado.remove(chat_id);
                 self.dirigidas.remove(chat_id);
                 self.retiradas.remove(chat_id);
@@ -2295,7 +2357,7 @@ impl Motor {
                 self.desistir(chat_id);
             }
         }
-        if let Some(c) = self.chat(chat_id) {
+        if let Some(c) = self.chat_gravado(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
         self.salvar();
@@ -2417,7 +2479,7 @@ impl Motor {
     /// a conversa de um não abre no outro: o próximo turno começa numa sessão nova, com as últimas
     /// mensagens no bloco de passagem. Com um turno rodando não troca (devolve `false`).
     pub fn definir_agente(&mut self, chat_id: &str, agente: Agente, modelo: Option<String>, cx: &mut Context<Self>) -> bool {
-        let Some(antes) = self.chat(chat_id).map(|c| c.agente) else {
+        let Some(antes) = self.chat_gravado(chat_id).map(|c| c.agente) else {
             return false;
         };
         if antes == agente {
@@ -2431,7 +2493,7 @@ impl Motor {
         }
         // Na dupla, escolher um modelo do outro agente passa a vez para ele, com esse modelo: a
         // próxima mensagem vai para ele, e os dois seguem no chat.
-        if self.chat(chat_id).and_then(|c| c.parceiro.as_ref()).is_some_and(|p| p.agente == agente) {
+        if self.chat_gravado(chat_id).and_then(|c| c.parceiro.as_ref()).is_some_and(|p| p.agente == agente) {
             self.mudar_chat(
                 chat_id,
                 move |c| {
@@ -2447,7 +2509,7 @@ impl Motor {
         // Num chat que já conversou, trocar de agente junta os dois em vez de começar do zero: o
         // de antes guarda a sessão dele (o @ o chama de volta) e o novo recebe a conversa inteira
         // na primeira vez (dono, 17/11/2026: "automático quando troco").
-        let tem_conversa = self.chat(chat_id).is_some_and(|c| {
+        let tem_conversa = self.chat_gravado(chat_id).is_some_and(|c| {
             c.sessao_criada || c.importada.is_some() || c.itens.iter().any(|i| matches!(i, Item::Usuario { .. }))
         });
         // A dupla é de dois: com outro parceiro já no chat, o terceiro não entra.
@@ -2497,7 +2559,7 @@ impl Motor {
     /// um de cada vez, e um revisa o que o outro fez; "@claude" ou "@codex" no começo manda só para
     /// um. Cada um tem a própria sessão, e antes da vez dele recebe o que o outro fez.
     pub fn juntar_agentes(&mut self, chat_id: &str, juntos: bool, cx: &mut Context<Self>) -> bool {
-        let Some((agente, com_parceiro)) = self.chat(chat_id).map(|c| (c.agente, c.parceiro.is_some())) else {
+        let Some((agente, com_parceiro)) = self.chat_gravado(chat_id).map(|c| (c.agente, c.parceiro.is_some())) else {
             return false;
         };
         if com_parceiro == juntos {
@@ -2545,7 +2607,7 @@ impl Motor {
     /// aos dois, um de cada vez, e o outro entra no chat se ainda não estava; desligada, os dois
     /// continuam no chat e a mensagem vai só a quem está na vez.
     pub fn revisao_em_dupla(&mut self, chat_id: &str, ligar: bool, cx: &mut Context<Self>) -> bool {
-        let Some((com_parceiro, ligada)) = self.chat(chat_id).map(|c| (c.parceiro.is_some(), c.revisao_em_dupla)) else {
+        let Some((com_parceiro, ligada)) = self.chat_gravado(chat_id).map(|c| (c.parceiro.is_some(), c.revisao_em_dupla)) else {
             return false;
         };
         if ligada == ligar {
@@ -2566,7 +2628,7 @@ impl Motor {
     /// Planejar, que só lê: os dois trabalham na mesma pasta, e dois agentes mexendo nos mesmos
     /// arquivos se atropelam. Devolve o id do chat novo.
     pub fn abrir_raia(&mut self, de: &str, pedido: &str, cx: &mut Context<Self>) -> Result<String, String> {
-        let (pasta, agente) = self.chat(de).map(|c| (c.cwd.clone(), c.agente)).ok_or("o chat não existe mais")?;
+        let (pasta, agente) = self.chat_gravado(de).map(|c| (c.cwd.clone(), c.agente)).ok_or("o chat não existe mais")?;
         let outro = agente.outro();
         if !outro.instalado() {
             return Err(format!("o {} não está instalado neste computador", outro.nome()));
@@ -2987,7 +3049,7 @@ impl Motor {
         if self.consertar_bifurcacao(chat_id, erro, cx) {
             return true;
         }
-        let Some(chat) = self.chat(chat_id) else {
+        let Some(chat) = self.chat_gravado(chat_id) else {
             return false;
         };
         let da_sessao = erro.contains(&chat.sessao);
@@ -3249,7 +3311,7 @@ impl Motor {
     /// Muda uma opção da conversa (modelo, modo, esforço, conta). O modo, o modelo e o esforço
     /// valem já no turno que está rodando (`acertar_turno_depois`); o resto, a partir do próximo.
     pub fn mudar_chat(&mut self, chat: &str, f: impl FnOnce(&mut Chat), cx: &mut Context<Self>) {
-        let antes = self.chat(chat).map(|c| self.permissao_de(c));
+        let antes = self.chat_gravado(chat).map(|c| self.permissao_de(c));
         let padrao = self.config.permissao.clone();
         if let Some(c) = self.chat_mut(chat) {
             f(c);
@@ -3299,15 +3361,27 @@ impl Motor {
             Sinal::Claude(chat, geracao, evento) => {
                 if self.geracao_atual.get(&chat) == Some(&geracao) {
                     self.ultimo_sinal.insert(chat.clone(), std::time::Instant::now());
+                    // Só uma anotação para a estatística do turno: nada na tela muda.
+                    if let Evento::PrimeiraPalavra(milis) = evento {
+                        self.gastos.anotar_espera(&chat, milis);
+                        return false;
+                    }
                     if let Evento::TextoParcial(pedaco) = &evento {
-                        return juntar_parcial(&mut self.parcial, &self.visiveis, &chat, pedaco);
+                        return match pedaco_de_texto(&mut self.parcial, &self.visiveis, &chat, pedaco) {
+                            Pedaco::Nada => false,
+                            Pedaco::Cresceu => {
+                                self.texto_chegando.push(chat);
+                                false
+                            }
+                            Pedaco::Comecou => true,
+                        };
                     }
                     self.tratar_evento(&chat, evento, cx)
                 }
             }
             Sinal::Mcp(chamada) => self.tratar_ferramenta(chamada, cx),
             Sinal::Abrir(chat) => {
-                if self.chat(&chat).is_none() {
+                if self.chat_gravado(&chat).is_none() {
                     return false;
                 }
                 self.pedido_de_abrir = Some(chat);
@@ -3429,6 +3503,12 @@ impl Motor {
                     processo.fechar_entrada();
                 }
             }
+            Evento::AgentesNoFundo(tarefas) => {
+                self.segundo_plano.entry(chat_id.to_string()).or_default().listar(tarefas, agora());
+            }
+            Evento::AgenteAbriu { id, pai } => {
+                self.segundo_plano.entry(chat_id.to_string()).or_default().abriu(&id, &pai);
+            }
             Evento::Comandos(comandos) => {
                 if comandos.is_empty() {
                     self.comandos_no_fundo.remove(chat_id);
@@ -3506,13 +3586,32 @@ impl Motor {
                 self.motivos_de_hook.guardar(chat_id, &ferramenta, &motivo, std::time::Instant::now());
                 return;
             }
-            Evento::SubFerramenta { pai, nome, entrada } => {
+            Evento::SubRelatorio { pai, texto } => {
+                // O resultado da chamada dele só vai dizer que o relatório foi entregue: o cartão
+                // fica com este (ver `ResultadoFerramenta` e `SubFim`).
+                self.relatorios.insert((chat_id.to_string(), pai.clone()), texto);
+                self.subconversa_andou(chat_id, &pai, cx);
+            }
+            Evento::SubFerramenta { pai, id, nome, entrada } => {
                 if nome == "mcp__vitral__permissao" || nome == "ToolSearch" {
                     return;
                 }
+                // Quantas chamadas este subagente já fez, pelas que chegaram com id: o
+                // `task_progress` do Claude Code vem antes da chamada e já a conta (medido na
+                // 2.1.328), e somar mais uma aqui dava uma ferramenta a mais no cartão.
+                let vistas = (!id.is_empty()).then(|| {
+                    let chamadas = self.chamadas_dos_subs.entry(chat_id.to_string()).or_default();
+                    chamadas.insert(id, pai.clone());
+                    chamadas.values().filter(|de| **de == pai).count() as u32
+                });
+                self.subconversa_andou(chat_id, &pai, cx);
+                self.segundo_plano_andou(chat_id, &pai);
                 let passo = claude::resumo_ferramenta(&nome, &entrada);
                 self.no_subagente(chat_id, &pai, |sub| {
-                    sub.ferramentas += 1;
+                    sub.ferramentas = match vistas {
+                        Some(vistas) => sub.ferramentas.max(vistas),
+                        None => sub.ferramentas + 1,
+                    };
                     sub.atividade = passo.clone();
                     sub.passos.push(passo);
                     if sub.passos.len() > crate::modelo::PASSOS_DO_SUBAGENTE {
@@ -3522,6 +3621,8 @@ impl Motor {
             }
             Evento::SubTexto { pai, texto } => {
                 let linha: String = texto.trim().lines().next().unwrap_or_default().chars().take(160).collect();
+                self.subconversa_andou(chat_id, &pai, cx);
+                self.segundo_plano_andou(chat_id, &pai);
                 if !linha.is_empty() {
                     self.no_subagente(chat_id, &pai, |sub| sub.atividade = linha);
                 }
@@ -3532,10 +3633,13 @@ impl Motor {
                 if nome == "mcp__vitral__permissao" || nome == "ToolSearch" {
                     return;
                 }
-                if nome == "TodoWrite" {
-                    self.passos.insert(chat_id.to_string(), passos_da_lista(&entrada));
-                }
-                let resumo = claude::resumo_ferramenta(&nome, &entrada);
+                // As ferramentas de passos mudam a lista do chat e dizem na trilha o que mudou
+                // ("Começou: rodar os testes" no lugar de "Atualizou os passos").
+                let resumo = if passos::e_de_passos(&nome) {
+                    self.passos.entry(chat_id.to_string()).or_default().resumo(&id, &nome, &entrada)
+                } else {
+                    claude::resumo_ferramenta(&nome, &entrada)
+                };
                 let (mut detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
                 // O plano que o pedido de permissão trouxe antes de a chamada chegar.
                 if nome == "ExitPlanMode"
@@ -3548,7 +3652,7 @@ impl Motor {
                 let mudanca = claude::mudanca_da_ferramenta(&nome, &entrada);
                 // Outro chat mexeu no mesmo arquivo há pouco: sem cópias isoladas, os dois
                 // escrevem na mesma pasta, e um pode desfazer o outro sem saber.
-                let mexidos = match (&mudanca, &arquivo, self.chat(chat_id)) {
+                let mexidos = match (&mudanca, &arquivo, self.chat_gravado(chat_id)) {
                     (Some(_), Some(arquivo), Some(c)) => {
                         let caminho = caminho_do_arquivo(&c.cwd, arquivo);
                         let desde = agora().saturating_sub(JANELA_DE_EDICAO_CRUZADA);
@@ -3574,6 +3678,7 @@ impl Motor {
                         sub: None,
                         mudanca,
                         imagens: Vec::new(),
+                        durou: 0,
                     });
                 }
                 for (caminho, outro) in mexidos {
@@ -3581,52 +3686,25 @@ impl Motor {
                     self.avisar(chat_id, &format!("O chat «{outro}» também editou {nome} nas últimas horas, na mesma pasta: confira se um não desfaz o outro."), false);
                 }
             }
-            Evento::ResultadoFerramenta { id, conteudo, erro } => {
+            Evento::ResultadoFerramenta { id, conteudo, erro, no_fundo } => {
                 self.chats_sujos.insert(chat_id.to_string());
                 // É aqui que o Claude Code absorve no turno a mensagem dirigida (medido na
                 // 2.1.278): daqui em diante ela não volta mais como turno à parte.
                 self.dirigidas.remove(chat_id);
-                if let Some(c) = self.chat_mut(chat_id) {
-                    for item in c.itens.iter_mut().rev() {
-                        if let Item::Ferramenta {
-                            id: id_item,
-                            nome,
-                            resultado,
-                            erro: erro_item,
-                            sub,
-                            mudanca,
-                            detalhe,
-                            ..
-                        } = item
-                            && *id_item == id
-                        {
-                            // O plano aprovado que não veio na chamada nem no pedido (um Claude
-                            // Code que não mande o id da chamada no pedido): o resultado o traz.
-                            if nome == "ExitPlanMode" && detalhe.is_none() && !erro {
-                                *detalhe = claude::plano_do_resultado(&conteudo).and_then(claude::plano_guardado);
-                            }
-                            // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
-                            if nome == "Write" && !erro && claude::write_criou(&conteudo)
-                                && let Some(m) = mudanca
-                            {
-                                m.novo = true;
-                            }
-                            // O relatório do subagente sem a moldura que o Claude Code põe nele.
-                            let conteudo = if matches!(nome.as_str(), "Agent" | "Task") {
-                                claude::relatorio_do_subagente(&conteudo)
-                            } else {
-                                conteudo
-                            };
-                            *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
-                            *erro_item = erro;
-                            // O subagente terminou: o cartão dele dobra numa linha com a duração.
-                            if let Some(sub) = sub {
-                                sub.fim = agora();
-                            }
-                            break;
-                        }
-                    }
+                let liberada = self.liberadas.remove(&(chat_id.to_string(), id.clone()));
+                // O subagente que entregou o relatório pela chamada de entrega: é ele que fica no
+                // cartão, e não o aviso de que foi entregue.
+                let conteudo = subconversa::relatorio_do_cartao(conteudo, self.relatorios.remove(&(chat_id.to_string(), id.clone())));
+                // As ferramentas de tarefa só mudam a lista de passos com o resultado (o id do
+                // passo criado vem nele).
+                if let Some(lista) = self.passos.get_mut(chat_id) {
+                    lista.resultado(&id, &conteudo, erro);
                 }
+                if let Some(c) = self.chat_mut(chat_id) {
+                    anotar_resultado(&mut c.itens, &id, conteudo, erro, no_fundo, liberada, agora());
+                }
+                // Se a chamada era de um subagente com a conversa aberta, ela leu o fim dele.
+                self.subconversa_andou(chat_id, &id, cx);
             }
             // As imagens que o resultado trouxe vão para a pasta do chat nos dados do Vitral, e a
             // chamada guarda os caminhos: o base64 não entra no estado (`imagens_recebidas`).
@@ -3642,40 +3720,61 @@ impl Motor {
             Evento::SubLancado { pai } => {
                 // Como no resultado de uma chamada: a mensagem dirigida já entrou no turno.
                 self.dirigidas.remove(chat_id);
-                self.no_subagente(chat_id, &pai, |sub| {
-                    if sub.atividade.is_empty() {
-                        sub.atividade = "Trabalhando em segundo plano".into();
-                    }
-                });
+                // É por aqui que se sabe que o fim deste agente vira uma linha na conversa.
+                self.segundo_plano.entry(chat_id.to_string()).or_default().lancada(&pai);
+                // Só abre o registro dele: até a primeira ação, a linha diz que ele está começando.
+                self.no_subagente(chat_id, &pai, |_| {});
             }
             Evento::SubInicio { pai } => {
                 // Só abre o registro dele: a linha passa a mostrar 0 ferramentas e o relógio.
                 self.no_subagente(chat_id, &pai, |_| {});
             }
             Evento::SubProgresso { pai, ferramentas, tokens } => {
+                self.subconversa_andou(chat_id, &pai, cx);
                 self.no_subagente(chat_id, &pai, |sub| {
                     sub.ferramentas = sub.ferramentas.max(ferramentas);
                     sub.tokens = sub.tokens.max(tokens);
                 });
             }
             Evento::SubFim { pai, erro, resumo, ferramentas, tokens } => {
+                // O relatório entregue pela chamada de entrega vale mais que o resumo do aviso,
+                // que nesse caso só diz que ele foi entregue. Fica guardado para o resultado da
+                // chamada, que no subagente esperado pela conversa ainda vem depois.
+                let resumo = subconversa::relatorio_do_cartao(resumo, self.relatorios.get(&(chat_id.to_string(), pai.clone())).cloned());
+                self.subconversa_andou(chat_id, &pai, cx);
                 self.no_subagente(chat_id, &pai, |sub| {
                     sub.ferramentas = sub.ferramentas.max(ferramentas);
                     sub.tokens = sub.tokens.max(tokens);
                 });
                 self.chats_sujos.insert(chat_id.to_string());
+                let parado_por_voce = self.comandos_parados.get(chat_id).is_some_and(|quando| quando.elapsed() < std::time::Duration::from_secs(10));
                 if let Some(c) = self.chat_mut(chat_id) {
                     for item in c.itens.iter_mut().rev() {
-                        if let Item::Ferramenta { id, resultado, erro: erro_item, sub, .. } = item
+                        if let Item::Ferramenta { id, nome, resultado, erro: erro_item, sub, .. } = item
                             && *id == pai
                         {
                             let resumo = if resumo.trim().is_empty() { if erro { "Falhou" } else { "Terminou" }.to_string() } else { resumo };
                             *resultado = Some(git::inicio_do_texto(&resumo, 20_000));
+                            // O aviso de fim de um comando de fundo (um Bash) chega por aqui
+                            // também: ele não é subagente (não ganha a conta de um), e o que
+                            // você mesmo parou pela pílula não falhou.
+                            if nome == "Bash" {
+                                *erro_item = erro && !parado_por_voce;
+                                break;
+                            }
                             *erro_item = erro;
                             sub.get_or_insert_with(Default::default).fim = agora();
                             break;
                         }
                     }
+                }
+                // O agente que foi para o segundo plano avisa aqui, no ponto em que termina: a
+                // linha "Terminou: …" entra no fim da conversa (o que a conversa esperou termina
+                // no próprio cartão).
+                if self.segundo_plano.get(chat_id).is_some_and(|f| f.foi_lancada(&pai))
+                    && let Some(c) = self.chat_mut(chat_id)
+                {
+                    fundo::anotar_fim(&mut c.itens, &pai, erro, agora());
                 }
             }
             Evento::Limite {
@@ -3705,6 +3804,8 @@ impl Motor {
                 self.uso_por_conta.insert(conta, Uso { bloqueado, ..junto });
             }
             Evento::Gasto(tokens) => self.somar_tokens(chat_id, tokens),
+            Evento::Medida(medida) => self.somar_medida(chat_id, medida),
+            Evento::PrimeiraPalavra(milis) => self.gastos.anotar_espera(chat_id, milis),
             Evento::Sugestao(texto) => {
                 // Só vale com o chat parado: rodando de novo, ela já é do turno que passou.
                 if !self.processos.contains_key(chat_id) {
@@ -3740,6 +3841,7 @@ impl Motor {
                     entrada,
                     resposta,
                     motivo_do_hook: None,
+                    chamada: None,
                 });
                 self.execucao.insert(chat_id.to_string(), Execucao::EsperandoVoce);
                 self.registrar("permissao", chat_id, chat_id, &pedido);
@@ -3783,19 +3885,20 @@ impl Motor {
                         c.janela = janela;
                     }
                     if primeiro && agentes > 0 {
-                        self.avisar(
-                            chat_id,
-                            "Os agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem.",
-                            false,
-                        );
+                        self.avisar(chat_id, crate::modelo::AGENTES_SEGUEM, false);
                     }
                     return;
                 }
                 // O custo do `result` é o total da sessão até ali: vale o último.
-                let custo_usd = match self.fim_adiado.remove(chat_id) {
-                    Some((_, antes)) => custo_usd.max(antes),
-                    None => custo_usd,
+                let (custo_usd, adiado) = match self.fim_adiado.remove(chat_id) {
+                    Some((_, antes)) => (custo_usd.max(antes), true),
+                    None => (custo_usd, false),
                 };
+                // O Claude Code segura o `result` do turno que cada agente em segundo plano abre
+                // ao terminar e solta todos juntos no fim (medido na 2.1.328 com dois agentes:
+                // dois `result` seguidos). O primeiro deles fecha o turno e tira o processo
+                // daqui; os seguintes só trazem o gasto deles.
+                let ja_terminou = !self.processos.contains_key(chat_id);
                 // O turno acabou mesmo: a mensagem que o usuário dirigiu e o Claude Code não
                 // recebeu (turno com erro, ou parado) volta para a fila, e o processo sai inteiro
                 // para ele não abrir um turno à parte com ela. Menos quando o Parar já a tirou da
@@ -3814,7 +3917,7 @@ impl Motor {
                         && !fundo
                         && dirigidas_perdidas == 0
                         && self.config.sugerir_resposta
-                        && self.chat(chat_id).is_some_and(|c| c.agente == Agente::Claude);
+                        && self.chat_gravado(chat_id).is_some_and(|c| c.agente == Agente::Claude);
                     match geracao.filter(|_| sugerir) {
                         // A sugestão da próxima mensagem só sai com a entrada aberta: ela fica
                         // aberta um pouco mais, à espera dela.
@@ -3831,7 +3934,7 @@ impl Motor {
                 if dirigidas_perdidas > 0 {
                     self.avisar(chat_id, &voltou_para_a_fila(dirigidas_perdidas), false);
                 }
-                let custo_antes = self.chat(chat_id).map_or(0.0, |c| c.custo_usd);
+                let custo_antes = self.chat_gravado(chat_id).map_or(0.0, |c| c.custo_usd);
                 if let Some(c) = self.chat_mut(chat_id) {
                     c.somar_custo(custo_usd);
                     c.turno_aberto = false;
@@ -3841,6 +3944,9 @@ impl Motor {
                     }
                 }
                 self.registrar_gasto(chat_id, custo_antes);
+                if ja_terminou {
+                    return;
+                }
                 // Parado pelo usuário: o Claude Code fecha o turno com erro, mas não é falha (o
                 // usuário pode continuar a conversa).
                 if self.interrompidos.iter().any(|c| c == chat_id) {
@@ -3864,7 +3970,7 @@ impl Motor {
                             self.parados_por_voce.insert(chat_id.to_string(), agora());
                         }
                     }
-                    if let Some(c) = self.chat(chat_id) {
+                    if let Some(c) = self.chat_gravado(chat_id) {
                         let _ = self.dados.salvar_chat(c);
                     }
                     self.salvar();
@@ -3900,6 +4006,16 @@ impl Motor {
                 } else {
                     self.execucao.insert(chat_id.to_string(), Execucao::Parado);
                 }
+                // Depois de um fim adiado, este `result` pode ser o de um turno do meio (o do
+                // primeiro agente que terminou): o que vale como resposta do turno é o que o
+                // agente disse por último, que já está na conversa.
+                let dito_por_ultimo = || {
+                    self.chat_gravado(chat_id)?.itens.iter().rev().find_map(|item| match item {
+                        Item::Assistente { texto, .. } => Some(texto.clone()),
+                        _ => None,
+                    })
+                };
+                let texto = if adiado && !erro { dito_por_ultimo().unwrap_or(texto) } else { texto };
                 self.fim_de_turno(chat_id, erro, texto, cx);
             }
             Evento::Saiu { stderr, codigo } => {
@@ -3908,6 +4024,8 @@ impl Motor {
                 self.planos_sem_chamada.retain(|_, (chat, _)| chat != chat_id);
                 self.retiradas.remove(chat_id);
                 self.trocas.remove(chat_id);
+                // O processo saiu: o que ele rodava em segundo plano foi junto.
+                self.segundo_plano.remove(chat_id);
                 // Saiu depois de um `result` adiado, sem outro: os agentes acabaram sem outro turno
                 // (o fim normal, com o texto daquele `result`) ou foram cortados junto com o
                 // processo (teto da espera, queda), e aí o turno termina com erro.
@@ -3980,7 +4098,7 @@ impl Motor {
                     } else if self.consertar_sessao(chat_id, &stderr, cx) {
                         // Repetido com a sessão certa.
                     } else {
-                        let programa = self.chat(chat_id).map_or(Agente::Claude, |c| c.agente).programa();
+                        let programa = self.chat_gravado(chat_id).map_or(Agente::Claude, |c| c.agente).programa();
                         let detalhe = if stderr.trim().is_empty() {
                             format!("o processo do {programa} fechou sem resposta")
                         } else {
@@ -3990,7 +4108,7 @@ impl Motor {
                         self.execucao.insert(chat_id.to_string(), Execucao::Erro(detalhe));
                         self.desistir(chat_id);
                     }
-                    if let Some(c) = self.chat(chat_id) {
+                    if let Some(c) = self.chat_gravado(chat_id) {
                         let _ = self.dados.salvar_chat(c);
                     }
                     self.salvar();
@@ -4058,7 +4176,7 @@ impl Motor {
             {
                 c.lido_em = c.lido_em.max(c.atualizado_em);
             }
-            if let Some(c) = self.chat(chat_id) {
+            if let Some(c) = self.chat_gravado(chat_id) {
                 let _ = self.dados.salvar_chat(c);
             }
             if self.na_fila(chat_id) > 0
@@ -4069,7 +4187,7 @@ impl Motor {
             self.salvar();
             return;
         }
-        if let Some(c) = self.chat(chat_id) {
+        if let Some(c) = self.chat_gravado(chat_id) {
             let _ = self.dados.salvar_chat(c);
         }
         let Some(chat) = self.chat_mut(chat_id).map(Chat::copia_sem_itens) else {
@@ -4111,7 +4229,7 @@ impl Motor {
         let Some(restantes) = self.rodadas.get(chat_id).copied() else {
             return false;
         };
-        let Some((quem, sem_parceiro, acabou)) = self.chat(chat_id).map(|c| (c.agente, c.parceiro.is_none(), nada_a_acrescentar(&c.itens)))
+        let Some((quem, sem_parceiro, acabou)) = self.chat_gravado(chat_id).map(|c| (c.agente, c.parceiro.is_none(), nada_a_acrescentar(&c.itens)))
         else {
             self.rodadas.remove(chat_id);
             return false;
@@ -4238,6 +4356,7 @@ impl Motor {
                     ferramenta: ferramenta.to_string(),
                     entrada: a["input"].clone(),
                     motivo_do_hook,
+                    chamada: a["tool_use_id"].as_str().filter(|id| !id.is_empty()).map(str::to_string),
                     resposta: chamada.resposta,
                 });
                 self.execucao
@@ -4259,7 +4378,7 @@ impl Motor {
 
     /// Grava a conversa em markdown (em `.vitral/exportadas`) para outro chat ler como contexto.
     pub fn exportar_conversa(&self, id: &str) -> anyhow::Result<PathBuf> {
-        let chat = self.chat(id).ok_or_else(|| anyhow::anyhow!("conversa não encontrada"))?;
+        let chat = self.chat_gravado(id).ok_or_else(|| anyhow::anyhow!("conversa não encontrada"))?;
         let mut texto = format!("# Conversa \"{}\" (pasta {})\n\n", chat.titulo, chat.cwd.display());
         for item in &chat.itens {
             match item {
@@ -4270,7 +4389,7 @@ impl Motor {
                 }
                 Item::Ferramenta { resumo, .. } => texto.push_str(&format!("- (ferramenta) {resumo}\n")),
                 Item::Vez { agente, .. } => texto.push_str(&format!("### Vez do {}\n\n", agente.nome())),
-                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::Desconhecido(_) => {}
+                Item::Raciocinio { .. } | Item::Aviso { .. } | Item::Cartao { .. } | Item::FimDoAgente { .. } | Item::Desconhecido(_) => {}
             }
         }
         let pasta = self.dados.pasta_exportadas();
@@ -4297,7 +4416,7 @@ impl Motor {
             return;
         }
         for id in std::mem::take(&mut self.chats_sujos) {
-            if let Some(c) = self.chat(&id) {
+            if let Some(c) = self.chat_gravado(&id) {
                 let _ = self.dados.salvar_chat(c);
             }
         }
@@ -4430,7 +4549,7 @@ impl Motor {
             return;
         }
         for id in std::mem::take(&mut self.chats_sujos) {
-            if let Some(c) = self.chat(&id) {
+            if let Some(c) = self.chat_gravado(&id) {
                 let _ = self.dados.salvar_chat(c);
             }
         }
@@ -4537,6 +4656,9 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
 /// Um passo da lista do agente: o texto, o que ele diz enquanto faz e em que pé está.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Passo {
+    /// O id do passo nas ferramentas de tarefa (`TaskCreate` e `TaskUpdate`); vazio no `TodoWrite`,
+    /// que manda a lista inteira.
+    pub id: String,
     pub texto: String,
     pub fazendo: String,
     pub estado: EstadoDoPasso,
@@ -4547,26 +4669,6 @@ pub enum EstadoDoPasso {
     Falta,
     Fazendo,
     Feito,
-}
-
-/// Os passos da entrada do TodoWrite (`todos`: `content`, `activeForm`, `status`).
-fn passos_da_lista(entrada: &serde_json::Value) -> Vec<Passo> {
-    let Some(lista) = entrada.get("todos").and_then(|t| t.as_array()) else {
-        return Vec::new();
-    };
-    lista
-        .iter()
-        .filter_map(|p| {
-            let texto = p.get("content")?.as_str()?.trim().to_string();
-            let fazendo = p.get("activeForm").and_then(|a| a.as_str()).map(str::trim).unwrap_or(&texto).to_string();
-            let estado = match p.get("status").and_then(|s| s.as_str()) {
-                Some("completed") => EstadoDoPasso::Feito,
-                Some("in_progress") => EstadoDoPasso::Fazendo,
-                _ => EstadoDoPasso::Falta,
-            };
-            (!texto.is_empty()).then_some(Passo { texto, fazendo, estado })
-        })
-        .collect()
 }
 
 /// Até quanto tempo atrás uma edição de outro chat no mesmo arquivo gera o aviso (12 h).
@@ -5122,6 +5224,76 @@ fn entrada_do_usuario(texto: String, anexos: Vec<PathBuf>, reforco: Reforco) -> 
 /// limita os subagentes; nada impede dois fluxos, ou um fluxo e vários subagentes, juntos.
 const UM_FLUXO_POR_VEZ: &str = "[Vitral] Rode um fluxo de agentes por vez e não abra outros agentes \
 enquanto ele roda: este computador não aguenta muita carga ao mesmo tempo.";
+
+/// O turno em andamento tem uma chamada sem resultado: a linha dela mostra um relógio, que só
+/// anda se a conversa for redesenhada (as mensagens são uma vista em cache).
+pub fn tem_chamada_rodando(itens: &[Item]) -> bool {
+    itens
+        .iter()
+        .rev()
+        .take_while(|i| !matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }))
+        .any(|i| matches!(i, Item::Ferramenta { resultado: None, .. }))
+}
+
+/// Quanto uma chamada levou, em segundos: do pedido (`em`) ao resultado (`agora`). A que esperou
+/// uma permissão conta de quando ela foi dada (`liberada`): o tempo de você responder não é dela.
+/// A que foi para o segundo plano (`no_fundo`) não terminou, e a sem hora não tem de onde contar:
+/// as duas ficam em 0, que é "não medido".
+fn duracao_da_chamada(em: u64, liberada: Option<u64>, agora: u64, no_fundo: bool) -> u64 {
+    if no_fundo || em == 0 {
+        return 0;
+    }
+    agora.saturating_sub(liberada.map_or(em, |quando| quando.max(em)))
+}
+
+/// O resultado de uma chamada chegou: entra na chamada com esse `id`, a mais nova primeiro, com
+/// quanto ela levou. Cada chamada tem o próprio começo e o próprio resultado, então as que rodam
+/// em paralelo não se misturam (o Claude Code manda o resultado de cada uma quando ela termina,
+/// fora de ordem; medido na 2.1.328).
+fn anotar_resultado(itens: &mut [Item], id: &str, conteudo: String, erro: bool, no_fundo: bool, liberada: Option<u64>, agora: u64) {
+    for item in itens.iter_mut().rev() {
+        if let Item::Ferramenta {
+            id: id_item,
+            nome,
+            resultado,
+            erro: erro_item,
+            sub,
+            mudanca,
+            detalhe,
+            em,
+            durou,
+            ..
+        } = item
+            && id_item == id
+        {
+            // O plano aprovado que não veio na chamada nem no pedido (um Claude Code que não
+            // mande o id da chamada no pedido): o resultado o traz.
+            if nome == "ExitPlanMode" && detalhe.is_none() && !erro {
+                *detalhe = claude::plano_do_resultado(&conteudo).and_then(claude::plano_guardado);
+            }
+            // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
+            if nome == "Write" && !erro && claude::write_criou(&conteudo)
+                && let Some(m) = mudanca
+            {
+                m.novo = true;
+            }
+            // O relatório do subagente sem a moldura que o Claude Code põe nele.
+            let conteudo = if matches!(nome.as_str(), "Agent" | "Task") {
+                claude::relatorio_do_subagente(&conteudo)
+            } else {
+                conteudo
+            };
+            *resultado = Some(git::inicio_do_texto(&conteudo, 20_000));
+            *erro_item = erro;
+            *durou = duracao_da_chamada(*em, liberada, agora, no_fundo);
+            // O subagente terminou: o cartão dele dobra numa linha com a duração.
+            if let Some(sub) = sub {
+                sub.fim = agora;
+            }
+            break;
+        }
+    }
+}
 
 /// O texto que vai ao Claude Code num turno (as entradas separadas por traço, com quem mandou e
 /// os anexos que não são imagem) e as imagens. Com Ultracode, o pedido de um fluxo por vez; com
@@ -5835,6 +6007,69 @@ fn juntar_parcial(
     primeiro || visiveis.contains(chat)
 }
 
+/// Quanto o motor espera por mais pedaços de texto antes de avisar a tela: os que chegam nesse
+/// tempo saem juntos, num desenho só (no máximo uns 16 por segundo).
+pub(crate) const JANELA_DO_TEXTO: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// O que um pedaço de texto mudou na tela.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pedaco {
+    /// Nada: o chat não está em nenhum painel e já escrevia.
+    Nada,
+    /// O texto que já aparecia cresceu: só o painel do chat muda.
+    Cresceu,
+    /// A conversa passou a escrever: a faixa do turno, a lista e o painel mudam.
+    Comecou,
+}
+
+/// Junta um pedaço ao texto parcial do chat e diz o que ele mudou na tela.
+fn pedaco_de_texto(
+    parcial: &mut HashMap<String, String>,
+    visiveis: &HashSet<String>,
+    chat: &str,
+    pedaco: &str,
+) -> Pedaco {
+    // O texto que a tela já mostrava (o `Motor::parcial` não conta o vazio).
+    let escrevia = parcial.get(chat).is_some_and(|texto| !texto.is_empty());
+    match (juntar_parcial(parcial, visiveis, chat, pedaco), escrevia) {
+        (false, _) => Pedaco::Nada,
+        (true, true) => Pedaco::Cresceu,
+        (true, false) => Pedaco::Comecou,
+    }
+}
+
+/// O aviso que um lote de sinais dá à tela.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AvisoDoLote {
+    Nada,
+    /// Só texto crescendo nestes chats (sem repetir): os painéis deles redesenham, o resto não.
+    Texto(Vec<String>),
+    Tudo,
+}
+
+/// `redesenhar`: algum sinal do lote mudou mais que texto; `texto`: os chats cujo texto cresceu.
+pub(crate) fn aviso_do_lote(redesenhar: bool, texto: Vec<String>) -> AvisoDoLote {
+    if redesenhar {
+        return AvisoDoLote::Tudo;
+    }
+    let mut chats: Vec<String> = Vec::new();
+    for chat in texto {
+        if !chats.contains(&chat) {
+            chats.push(chat);
+        }
+    }
+    if chats.is_empty() { AvisoDoLote::Nada } else { AvisoDoLote::Texto(chats) }
+}
+
+/// O texto de uma resposta cresceu nestes chats, e mais nada mudou: a Janela redesenha só os
+/// painéis deles (`Janela::texto_chegando`), e não a janela inteira como no `notify`.
+#[derive(Clone, Debug)]
+pub struct TextoChegando {
+    pub chats: Vec<String>,
+}
+
+impl gpui_kit::EventEmitter<TextoChegando> for Motor {}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -5863,21 +6098,6 @@ mod testes {
     }
 
     #[test]
-    fn le_os_passos_do_todowrite() {
-        let entrada = serde_json::json!({"todos": [
-            {"content": "Ler o código", "activeForm": "Lendo o código", "status": "completed"},
-            {"content": "Corrigir", "activeForm": "Corrigindo", "status": "in_progress"},
-            {"content": "Testar", "status": "pending"},
-            {"content": "  ", "status": "pending"}
-        ]});
-        let passos = passos_da_lista(&entrada);
-        assert_eq!(passos.iter().map(|p| p.estado).collect::<Vec<_>>(), [EstadoDoPasso::Feito, EstadoDoPasso::Fazendo, EstadoDoPasso::Falta]);
-        assert_eq!(passos[1].fazendo, "Corrigindo");
-        assert_eq!(passos[2].fazendo, "Testar");
-        assert!(passos_da_lista(&serde_json::json!({})).is_empty());
-    }
-
-    #[test]
     fn acha_o_outro_chat_que_editou_o_mesmo_arquivo() {
         let edicao = |arquivo: &str, em: u64, erro: bool| Item::Ferramenta {
             id: "t".into(),
@@ -5891,6 +6111,7 @@ mod testes {
             sub: None,
             mudanca: Some(crate::modelo::Mudanca::default()),
             imagens: Vec::new(),
+            durou: 0,
         };
         let mut a = chat("a");
         let mut b = chat("b");
@@ -5961,6 +6182,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         };
         let itens = vec![
             usuario("antes da dupla"),
@@ -6020,6 +6242,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         };
         assert!(!editou_arquivo_desde(&[ferramenta("Read", 10, false), ferramenta("Bash", 11, false)], 0));
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 10, true)], 0));
@@ -6042,6 +6265,107 @@ mod testes {
     }
 
     #[test]
+    fn a_chamada_guarda_quanto_levou() {
+        // Do pedido ao resultado.
+        assert_eq!(duracao_da_chamada(1000, None, 1134, false), 134);
+        assert_eq!(duracao_da_chamada(1000, None, 1000, false), 0);
+        // A que esperou a permissão conta de quando ela foi dada: os 3 min de você responder não
+        // são do comando.
+        assert_eq!(duracao_da_chamada(1000, Some(1180), 1194, false), 14);
+        // A permissão anotada antes do pedido (relógio torto) não aumenta a conta.
+        assert_eq!(duracao_da_chamada(1000, Some(900), 1134, false), 134);
+        // A que foi para o segundo plano segue rodando: o resultado dela não é o fim do comando.
+        assert_eq!(duracao_da_chamada(1000, None, 1120, true), 0);
+        // Sem hora (conversa trazida de antes) e com o relógio voltando: não medido.
+        assert_eq!(duracao_da_chamada(0, None, 1134, false), 0);
+        assert_eq!(duracao_da_chamada(1000, None, 990, false), 0);
+
+        let chamada = |id: &str, nome: &str, em: u64| Item::Ferramenta {
+            id: id.into(),
+            nome: nome.into(),
+            resumo: String::new(),
+            resultado: None,
+            erro: false,
+            em,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            durou: 0,
+            imagens: Vec::new(),
+        };
+        let lido = |itens: &[Item], id: &str| {
+            itens
+                .iter()
+                .find_map(|i| match i {
+                    Item::Ferramenta { id: outro, resultado, durou, erro, .. } if outro == id => Some((resultado.clone(), *durou, *erro)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        // Três comandos pedidos juntos, como o Claude Code 2.1.328 os mostrou: o do segundo plano
+        // volta na hora, o rápido em 1 s e o lento só no fim. Cada um fica com o próprio tempo.
+        let mut itens = vec![
+            Item::Usuario { texto: "roda".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 1000, marca: None },
+            chamada("lento", "Bash", 1000),
+            chamada("rapido", "Bash", 1000),
+            chamada("fundo", "Bash", 1000),
+        ];
+        anotar_resultado(&mut itens, "fundo", "Command running in background with ID: b1.".into(), false, true, None, 1000);
+        anotar_resultado(&mut itens, "rapido", "rapido".into(), false, false, None, 1001);
+        assert_eq!(lido(&itens, "lento"), (None, 0, false));
+        anotar_resultado(&mut itens, "lento", "lento".into(), false, false, None, 1134);
+        assert_eq!(lido(&itens, "lento"), (Some("lento".into()), 134, false));
+        assert_eq!(lido(&itens, "rapido"), (Some("rapido".into()), 1, false));
+        assert_eq!(lido(&itens, "fundo").1, 0);
+        // O comando que passou do tempo e foi para o segundo plano depois de 2 min: o resultado
+        // chega, mas a linha não diz que ele levou 2 min (ele segue rodando).
+        itens.push(chamada("estourou", "Bash", 2000));
+        anotar_resultado(&mut itens, "estourou", "Command did not complete within its 120s timeout".into(), false, true, None, 2120);
+        assert_eq!(lido(&itens, "estourou").1, 0);
+        // O que esperou a permissão, e o que falhou (a falha também diz quanto levou).
+        itens.push(chamada("pedido", "Bash", 3000));
+        anotar_resultado(&mut itens, "pedido", "erro".into(), true, false, Some(3200), 3215);
+        assert_eq!(lido(&itens, "pedido"), (Some("erro".into()), 15, true));
+        // O resultado de uma chamada que a conversa não tem não mexe em nada.
+        anotar_resultado(&mut itens, "outra", "x".into(), false, false, None, 4000);
+        assert_eq!(lido(&itens, "lento").1, 134);
+        // A duração vai para o disco e volta; a de antes disto (sem o campo) é lida como não medida.
+        let gravado = serde_json::to_value(&itens[1]).unwrap();
+        assert_eq!(gravado["Ferramenta"]["durou"], 134);
+        assert!(serde_json::to_value(&itens[3]).unwrap()["Ferramenta"].get("durou").is_none());
+        let mut antigo = gravado.clone();
+        antigo["Ferramenta"].as_object_mut().unwrap().remove("durou");
+        assert!(matches!(serde_json::from_value::<Item>(antigo).unwrap(), Item::Ferramenta { durou: 0, .. }));
+        assert!(matches!(serde_json::from_value::<Item>(gravado).unwrap(), Item::Ferramenta { durou: 134, .. }));
+    }
+
+    #[test]
+    fn so_a_chamada_sem_resultado_do_turno_de_agora_tem_relogio() {
+        let chamada = |id: &str, resultado: Option<&str>| Item::Ferramenta {
+            id: id.into(),
+            nome: "Bash".into(),
+            resumo: String::new(),
+            resultado: resultado.map(str::to_string),
+            erro: false,
+            em: 1000,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            durou: 0,
+            imagens: Vec::new(),
+        };
+        let usuario = Item::Usuario { texto: "roda".into(), anexos: Vec::new(), ultrathink: false, ultracode: false, em: 1000, marca: None };
+        assert!(!tem_chamada_rodando(&[]));
+        assert!(!tem_chamada_rodando(&[usuario.clone(), chamada("a", Some("ok"))]));
+        // Duas em paralelo: enquanto uma não volta, há um relógio para andar.
+        assert!(tem_chamada_rodando(&[usuario.clone(), chamada("a", None), chamada("b", Some("ok"))]));
+        // A que ficou sem resultado num turno anterior (interrompida) não conta no de agora.
+        assert!(!tem_chamada_rodando(&[usuario.clone(), chamada("velha", None), usuario.clone(), chamada("a", Some("ok"))]));
+    }
+
+    #[test]
     fn revisao_da_memoria_que_ja_escreveu_nao_se_corta() {
         let ferramenta = |nome: &str| Item::Ferramenta {
             id: "f".into(),
@@ -6055,6 +6379,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         };
         assert!(ferramenta_de_escrita("Edit") && ferramenta_de_escrita("Write") && ferramenta_de_escrita("MultiEdit"));
         assert!(ferramenta_de_escrita("mcp__ai-memory__memory_write_page"));
@@ -6403,6 +6728,42 @@ mod testes {
         assert!(juntar_parcial(&mut parcial, &visiveis, "aberto", "b"));
     }
 
+    // O aceite do texto chegando: o primeiro pedaço muda o estado da conversa (ela passa a
+    // "escrevendo") e redesenha tudo; os seguintes só fazem o texto crescer, e isso interessa só
+    // ao painel que mostra o chat.
+    #[test]
+    fn so_o_primeiro_pedaco_de_texto_redesenha_a_janela_inteira() {
+        let mut parcial = HashMap::new();
+        let visiveis = HashSet::from(["aberto".to_string()]);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", "Ol"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", "á"), Pedaco::Cresceu);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto", ", tudo bem?"), Pedaco::Cresceu);
+        assert_eq!(parcial["aberto"], "Olá, tudo bem?");
+        // Fora dos painéis: o primeiro redesenha (a lista passa a dizer que ele escreve), os
+        // outros não avisam ninguém.
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "fundo", "a"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "fundo", "b"), Pedaco::Nada);
+        assert_eq!(parcial["fundo"], "ab");
+        // Um primeiro pedaço vazio ainda não mostra texto nenhum: o que vier depois é que começa.
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", ""), Pedaco::Comecou);
+        let visiveis = HashSet::from(["aberto2".to_string()]);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", "x"), Pedaco::Comecou);
+        assert_eq!(pedaco_de_texto(&mut parcial, &visiveis, "aberto2", "y"), Pedaco::Cresceu);
+    }
+
+    // Os pedaços que chegam dentro da janela de 60 ms saem num aviso só: de texto (só os painéis
+    // desses chats) quando o lote não trouxe mais nada, e da janela inteira no resto.
+    #[test]
+    fn o_lote_de_texto_vira_um_aviso_so_e_estreito() {
+        assert_eq!(JANELA_DO_TEXTO, std::time::Duration::from_millis(60));
+        assert_eq!(aviso_do_lote(false, Vec::new()), AvisoDoLote::Nada);
+        let texto = vec!["a".to_string(), "a".to_string(), "b".to_string(), "a".to_string()];
+        assert_eq!(aviso_do_lote(false, texto.clone()), AvisoDoLote::Texto(vec!["a".to_string(), "b".to_string()]));
+        // Veio outra coisa junto (uma ferramenta, o fim do turno): a janela inteira.
+        assert_eq!(aviso_do_lote(true, texto), AvisoDoLote::Tudo);
+        assert_eq!(aviso_do_lote(true, Vec::new()), AvisoDoLote::Tudo);
+    }
+
     #[test]
     fn precisa_de_voce_conta_pedidos_erros_e_paradas_e_nao_as_novas() {
         // Demonstração: 2 pedidos, 1 erro e 1 parada dão 4, em vermelho; as novas são só ponto.
@@ -6690,6 +7051,7 @@ mod testes_da_pergunta_do_plano_e_da_compactacao {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         }
     }
 

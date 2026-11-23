@@ -63,3 +63,26 @@ impl Render for VistaDaLista {
         div().size_full().flex().flex_col().child(lista)
     }
 }
+
+/// A casca da janela (tudo o que a Janela desenha fora das vistas em cache) como vista própria,
+/// sem cache: é ela, e não a Janela, a vista em que os elementos da casca estão. O GPUI avisa
+/// essa vista a cada hover, dica, quadro de transição e estado guardado que muda; quando ela era
+/// a Janela, cada um desses avisos passava pelo `Janela::avisar_vistas` e refazia as mensagens de
+/// todos os painéis e a lista (medido em 23/11/2026: de 13 a 25 ms por painel, a cada tecla na
+/// caixa e a cada passada do ponteiro por um botão). O que o código do Vitral muda continua
+/// avisando a Janela (`cx.notify()`), e aí sim as vistas se refazem.
+pub struct VistaDaCasca {
+    janela: WeakEntity<Janela>,
+}
+
+impl VistaDaCasca {
+    pub fn new(janela: WeakEntity<Janela>) -> Self {
+        Self { janela }
+    }
+}
+
+impl Render for VistaDaCasca {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.janela.update(cx, |janela, cx| janela.montar_casca(window, cx)).unwrap_or_else(|_| div().into_any_element())
+    }
+}

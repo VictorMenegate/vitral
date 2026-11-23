@@ -622,6 +622,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         }
     }
 

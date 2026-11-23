@@ -483,6 +483,7 @@ mod testes {
             sub: None,
             mudanca: mudanca.map(|(entram, saem, novo)| Mudanca { entram, saem, novo }),
             imagens: Vec::new(),
+            durou: 0,
         }
     }
 

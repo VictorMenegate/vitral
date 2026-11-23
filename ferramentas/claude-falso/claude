@@ -4,11 +4,57 @@
 ou a pasta direta) e responde em stream-json, sem chamar a API. Com "[demora]" na mensagem, leva
 10 s. Os argumentos e o ambiente de cada turno vão para $XDG_STATE_HOME/claude-falso.log.
 
+Com `[escreve 20]`, a resposta chega aos pedaços (uns 40 por segundo) durante esses segundos, como
+o texto do Claude Code de verdade.
+
 Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch, Task, e o Pensa,
 que encena um bloco de raciocínio), faz de
 conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[ferramenta ... | 8]`) e
 manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
-test…") sem chamar a API.
+test…") sem chamar a API. Com `[juntas]`, as chamadas comuns saem todas de uma vez e cada resultado
+chega quando a dela termina, como as chamadas em paralelo do de verdade (medido na 2.1.328). O
+`[ferramenta Estourou <comando> | 12]` é o Bash que passou do tempo: o resultado chega depois desses
+segundos dizendo que o comando foi para o segundo plano (`backgroundTaskId` e `timedOutAfterMs`).
+O `[ferramenta Diz <texto>]` é um texto no meio do turno: com ele e uma chamada, o turno pronto
+recolhe na linha "Trabalhou…".
+
+O `[ferramenta Task <tarefa> | 8]` encena um subagente como o de verdade (2.1.328, medido em
+23/11/2026): o `task_started`, o pedido dele e cada chamada com o resultado presos à chamada que o
+abriu (`parent_tool_use_id` e `agent_id`), o `task_progress` e o `task_notification`, e o resultado
+da chamada com a moldura do relatório. O texto e o raciocínio dele só vão ao stream com
+`--forward-subagent-text`; com um CLAUDE_CONFIG_DIR de mentira eles ficam, com todo o resto, no
+arquivo do subagente (`projects/<pasta>/<sessão>/subagents/agent-<id>.jsonl`, gravado aos poucos,
+e o `.meta.json` com a chamada que o abriu), que é o que a aba do subagente lê. Com "(pede)" na
+tarefa, o comando dele pede permissão ao Vitral e espera a resposta; com "(entrega)", o relatório
+vai pela chamada SubagentHandback e o resultado só diz que foi entregue, como no modo automático.
+Com `[juntas]` e só chamadas Task, os subagentes trabalham ao mesmo tempo. O `Agent` é o
+subagente que vai para o segundo plano (a chamada volta na hora). Com "(segue)" na tarefa, ele
+continua depois do `result`, como o `run_in_background` de verdade (2.1.328, medido em 23/11/2026
+com um agente e com dois): a resposta e o `result` saem na hora, o agente segue trabalhando (o
+`background_tasks_changed` com a lista, as chamadas dele presas à chamada que o abriu e o arquivo
+dele crescendo) e, quando ele acaba, vêm o `task_updated`, o `task_notification` com o relatório, a
+lista sem ele e um turno novo aberto pelo aviso (outro `init`, uma frase e outro `result`; com mais
+agentes ainda rodando, esse `result` fica guardado e só sai junto com o último). Com "(falha)", o
+aviso de fim vem `failed`. As duas marcas não aparecem na descrição. O `[ferramenta Fundo <comando> |
+20]` é o comando deixado no fundo: volta na hora, não segura as chamadas seguintes (vários rodam
+juntos; o turno espera por eles no fim) e o `stop_task` para só o dele.
+
+Para a trilha (rodada do Paseo, 23/11/2026): o `[ferramenta Edit <arquivo> (palavra)]` troca uma
+palavra num trecho de 10 linhas (o diff aberto mostra uma linha saindo e uma entrando, com a
+palavra marcada), e com "(pede)" a edição pede permissão ao Vitral antes (o cartão de permissão
+com o mesmo diff). O `[ferramenta Falha <comando>]` é o Bash que saiu com erro (`is_error` e "Exit
+code 101"). O `[ferramenta TodoWrite fap]` manda a lista com um passo por letra (f feito, a em
+andamento, p pendente; sem letras, a lista fixa de 3). O `TaskCreate <assunto>`, o `TaskUpdate <id>
+<estado>` (in_progress, completed, deleted) e o `TaskList x` são as ferramentas de tarefas que o
+Claude Code 2.1.328 dá no `-p` com CLAUDE_CODE_ENABLE_TODO_TOOLS=1, com o texto e o
+`tool_use_result` medidos nele; a lista fica por sessão no $XDG_STATE_HOME e, com um
+CLAUDE_CONFIG_DIR de mentira, em `tasks/<sessão>/<id>.json`, como a de verdade. Com `[tabela]`, a
+resposta leva uma tabela em Markdown.
+
+O `result` leva os tempos que o de verdade leva (2.1.328): `duration_ms` e `ttft_ms` deste `result`,
+`duration_api_ms` (o tempo de modelo, que no de verdade é o total do processo), `num_turns` (uma ida
+ao modelo por ferramenta, mais a resposta) e o `usage.cache_creation` com o cache de 1 h (ou o de
+5 min, com `[cache 5m]` na mensagem). `[ttft 1.8]` espera esses segundos antes da primeira palavra.
 
 Com `[ferramenta Print <LxA> <nome>]` (as medidas e o nome são opcionais: 1280x800), encena o print
 de um MCP de navegador: a chamada `mcp__chrome-devtools__take_screenshot` e um tool_result com um
@@ -89,13 +135,17 @@ reler a versão sem reiniciar. CLAUDE_FALSO_VERSAO escolhe a versão de antes (o
 com 2.1.278 as versões exatas de modelo aparecem desabilitadas).
 Como revisor (--json-schema), devolve o parecer "aprovar" (ou "ajustar", com "[revisor-ajustar]"
 no pedido) sem mexer em nada."""
+import datetime
+import hashlib
 import json
 import os
+import queue
 import re
 import sys
 import threading
 import time
 import urllib.request
+import uuid
 
 args = sys.argv[1:]
 # A versão que ele diz: a do CLAUDE_FALSO_VERSAO ou, depois de um `update` que instalou, a que o
@@ -178,11 +228,19 @@ if "--json-schema" in args:
     sys.exit(0)
 
 
+trava_da_saida = threading.Lock()
+
+
 def emitir(valor):
+    global primeira_palavra
     # Depois do `interrupt`, quem fala é só a thread que o atendeu: o turno cortado fica calado.
     if threading.current_thread() is threading.main_thread() and "interrompido" in globals() and interrompido.is_set():
         threading.Event().wait()
-    print(json.dumps(valor, ensure_ascii=False), flush=True)
+    if primeira_palavra is None and valor.get("type") in ("assistant", "stream_event") and "comeco_do_turno" in globals():
+        primeira_palavra = time.time()
+    # Os subagentes em paralelo e os comandos de fundo escrevem de outras threads: uma linha por vez.
+    with trava_da_saida:
+        print(json.dumps(valor, ensure_ascii=False), flush=True)
 
 
 def valor_de(chave):
@@ -199,6 +257,12 @@ papel = url.split("/mcp/", 1)[1].split("/", 1)[0] if url and "/mcp/" in url else
 # CLAUDE_FALSO_SOBE=<segundos> encena essa espera, para ver que a janela não trava no envio.
 time.sleep(float(os.environ.get("CLAUDE_FALSO_SOBE", "0") or 0))
 linha = sys.stdin.readline()
+# O relógio do turno, como o do de verdade: começa quando a mensagem chega (o tempo de subir fica
+# de fora), e o `result` diz quanto levou, quanto foi de modelo e quando saiu a primeira palavra.
+comeco_do_turno = time.time()
+tempo_das_ferramentas = 0.0
+primeira_palavra = None
+idas_ao_modelo = 1
 
 
 def responder_controle(pedido):
@@ -229,7 +293,9 @@ if isinstance(primeiro, dict) and primeiro.get("type") == "control_request":
             responder_controle(pedido)
     sys.exit(0)
 fim_da_entrada = threading.Event()
-# O `stop_task` do Vitral (o clique na pílula dos comandos de fundo) para o comando de `[ferramenta Fundo ...]`.
+# O `stop_task` do Vitral (o Parar da pílula dos comandos de fundo) para o comando de `[ferramenta
+# Fundo ...]` com aquele id: cada comando de fundo tem o seu aviso de parada em `comandos_de_fundo`.
+# O `tarefa_parada` é o do `Estourou`, que só tem um.
 tarefa_parada = threading.Event()
 # O `interrupt` chegou: o que o turno ainda ia mandar não sai mais (ver `emitir`).
 interrompido = threading.Event()
@@ -339,6 +405,9 @@ def titular(pedido):
         with open(os.path.join(projeto, sessao + ".jsonl"), "a") as gravada:
             gravada.write(json.dumps({"type": "ai-title", "aiTitle": titulo, "sessionId": sessao}) + "\n")
     responder(pedido, {"title": titulo})
+comandos_de_fundo = {}
+agentes_de_fundo = {}
+trava_do_fundo = threading.Lock()
 
 
 def ouvir_entrada():
@@ -374,7 +443,9 @@ def ouvir_entrada():
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "stop_task":
             anotar({"stop_task": pedido["request"].get("task_id")})
             emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"), "response": {}}})
-            tarefa_parada.set()
+            with trava_do_fundo:
+                parada = comandos_de_fundo.get(pedido["request"].get("task_id"), (None, tarefa_parada))[1]
+            parada.set()
             continue
         if pedido.get("type") == "control_request" and pedido.get("request", {}).get("subtype") == "interrupt":
             with trava_da_fila:
@@ -441,6 +512,10 @@ emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_i
         "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
 if "[demora]" in texto:
     time.sleep(10)
+# `[ttft 1.8]`: o modelo leva esses segundos até a primeira palavra.
+ttft_pedido = re.search(r"\[ttft (\d+(?:\.\d+)?)\]", texto)
+if ttft_pedido:
+    time.sleep(float(ttft_pedido.group(1)))
 # `[limite]`: a primeira vez, o turno cai no limite do plano, que volta em 60 s (o formato
 # "...|<segundos>" do Claude Code); a seguinte (a retomada) passa.
 marca_do_limite = os.path.join(os.environ.get("XDG_STATE_HOME", "/tmp"), "claude-falso-limite")
@@ -563,15 +638,95 @@ def imagem_lida(caminho):
         return None
 
 
+# O começo do id das chamadas deste processo: como no de verdade, o id de uma chamada não se repete
+# de um turno para o outro (é por ele que o Vitral acha o subagente de um cartão).
+ID_DAS_CHAMADAS = f"toolu_falso_{int(time.time() * 10) & 0xfffff:05x}_"
+
 # `[ferramenta Nome detalhe]` ou `[ferramenta Nome detalhe | 8]` (segundos até o resultado).
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
+
+
+DEZ_LINHAS = """def total(carrinho, cupom):
+    subtotal = sum(i.preco for i in carrinho)
+    if cupom is None:
+        return subtotal
+    desconto = aplicar_cupom(cupom, subtotal)
+    total = subtotal - desconto
+    if total < 0:
+        total = 0
+    registrar(total)
+    return total"""
+
+PASSOS_DE_MENTIRA = [
+    ("Ler o código do cupom", "Lendo o código do cupom"),
+    ("Corrigir o desconto", "Corrigindo o desconto"),
+    ("Rodar os testes", "Rodando os testes"),
+    ("Conferir o total negativo", "Conferindo o total negativo"),
+    ("Escrever o relatório", "Escrevendo o relatório"),
+    ("Atualizar a documentação", "Atualizando a documentação"),
+]
+
+
+def resultado_da_tarefa(nome, entrada):
+    """O resultado de uma ferramenta de tarefas, como o Claude Code 2.1.328 o manda (medido em
+    23/11/2026, no `-p` com CLAUDE_CODE_ENABLE_TODO_TOOLS=1): o texto e o `tool_use_result`. A
+    lista fica por sessão, como a de verdade (que mora em `tasks/<sessão>/<id>.json` na pasta de
+    configuração e continua de um turno para o outro)."""
+    arquivo = os.path.join(estado, "claude-falso-tarefas-" + re.sub(r"[^A-Za-z0-9-]", "", sessao) + ".json")
+    try:
+        with open(arquivo) as guardadas:
+            tarefas = json.load(guardadas)
+    except (OSError, ValueError):
+        tarefas = {"proxima": 1, "lista": []}
+    achar = lambda id_: next((t for t in tarefas["lista"] if t["id"] == id_), None)  # noqa: E731
+    if nome == "TaskCreate":
+        tarefa = {"id": str(tarefas["proxima"]), "subject": entrada["subject"], "description": entrada["description"],
+                  "activeForm": entrada.get("activeForm"), "status": "pending"}
+        tarefas["proxima"] += 1
+        tarefas["lista"].append(tarefa)
+        texto_ = f"Task #{tarefa['id']} created successfully: {tarefa['subject']}"
+        estruturado = {"task": {"id": tarefa["id"], "subject": tarefa["subject"], "description": tarefa["description"]}}
+    elif nome == "TaskUpdate":
+        tarefa = achar(entrada["taskId"])
+        if tarefa is None:
+            return "Task not found", {"success": False, "taskId": entrada["taskId"], "updatedFields": [], "error": "Task not found"}
+        de, para = tarefa["status"], entrada["status"]
+        tarefa["status"] = para
+        if para == "deleted":
+            tarefas["lista"].remove(tarefa)
+        texto_ = f"Updated task #{tarefa['id']} {'deleted' if para == 'deleted' else 'status'}"
+        estruturado = {"success": True, "taskId": tarefa["id"], "updatedFields": ["deleted" if para == "deleted" else "status"],
+                       "statusChange": {"from": de, "to": para}}
+    else:
+        texto_ = "\n".join(f"#{t['id']} [{t['status']}] {t['subject']}" for t in tarefas["lista"]) or "No tasks found"
+        estruturado = {"tasks": [{"id": t["id"], "subject": t["subject"], "status": t["status"], "blockedBy": []} for t in tarefas["lista"]]}
+    try:
+        with open(arquivo, "w") as guardadas:
+            json.dump(tarefas, guardadas)
+        if os.environ.get("CLAUDE_CONFIG_DIR"):
+            pasta = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "tasks", sessao)
+            os.makedirs(pasta, exist_ok=True)
+            for antigo in os.listdir(pasta):
+                if antigo.endswith(".json"):
+                    os.remove(os.path.join(pasta, antigo))
+            for t in tarefas["lista"]:
+                with open(os.path.join(pasta, t["id"] + ".json"), "w") as saida:
+                    json.dump({**{k: v for k, v in t.items() if v is not None}, "blocks": [], "blockedBy": []}, saida, indent=2)
+    except OSError:
+        pass
+    return texto_, estruturado
 
 
 def entrada_da_ferramenta(nome, detalhe):
     """O campo que o Vitral lê para montar o resumo de cada ferramenta."""
     # O Edit e o Write levam o que mudou: é o que a conversa mostra ao abrir a linha.
     if nome == "Edit":
-        return {"file_path": detalhe,
+        caminho = detalhe.replace("(palavra)", "").replace("(pede)", "").strip()
+        # "(palavra)": uma palavra trocada num trecho de 10 linhas.
+        if "(palavra)" in detalhe:
+            return {"file_path": caminho, "old_string": DEZ_LINHAS,
+                    "new_string": DEZ_LINHAS.replace("subtotal - desconto", "subtotal - abatimento")}
+        return {"file_path": caminho,
                 "old_string": "    total = subtotal\n    return total",
                 "new_string": "    desconto = aplicar_cupom(cupom, subtotal)\n    total = subtotal - desconto\n    return total"}
     if nome == "Write":
@@ -586,8 +741,24 @@ def entrada_da_ferramenta(nome, detalhe):
         return {"url": detalhe}
     if nome == "WebSearch":
         return {"query": detalhe}
-    if nome in ("Task", "Agent", "Workflow"):
+    if nome == "Agent":
+        # As marcas do agente em segundo plano não fazem parte da descrição.
+        return {"description": re.sub(r"\s*\((?:segue|falha)\)", "", detalhe).strip(), "run_in_background": True}
+    if nome in ("Task", "Workflow"):
         return {"description": detalhe}
+    if nome == "TodoWrite" and re.fullmatch(r"[fap]+", detalhe):
+        # Um passo por letra: f feito, a em andamento, p pendente.
+        estados = {"f": "completed", "a": "in_progress", "p": "pending"}
+        return {"todos": [{"content": conteudo, "activeForm": fazendo, "status": estados[letra]}
+                          for letra, (conteudo, fazendo) in zip(detalhe, PASSOS_DE_MENTIRA)]}
+    if nome == "TaskCreate":
+        assunto, _, fazendo = (parte.strip() for parte in detalhe.partition("=>"))
+        return {"subject": assunto, "description": assunto, **({"activeForm": fazendo} if fazendo else {})}
+    if nome == "TaskUpdate":
+        id_, _, estado_novo = detalhe.partition(" ")
+        return {"taskId": id_, "status": estado_novo.strip() or "completed"}
+    if nome == "TaskList":
+        return {}
     if nome == "TodoWrite":
         return {"todos": [
             {"content": "Ler o código do cupom", "activeForm": "Lendo o código do cupom", "status": "completed"},
@@ -629,13 +800,293 @@ def arquivo_da_diretiva(nome, texto):
         return None
 
 
+def avisar_do_fundo():
+    """O `background_tasks_changed` com tudo o que roda no fundo agora: os comandos e os
+    subagentes que foram para o segundo plano (como no de verdade, a lista vem sempre inteira)."""
+    with trava_do_fundo:
+        tarefas = [{"task_id": id_, "task_type": "local_bash", "description": descricao}
+                   for id_, (descricao, _) in comandos_de_fundo.items()]
+        tarefas += [{"task_id": id_, "task_type": "local_agent", "description": descricao}
+                    for id_, descricao in agentes_de_fundo.items()]
+    emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": tarefas})
+
+
+def comando_de_fundo(id_, chamada, descricao, segundos):
+    """Um comando de fundo, na thread dele: roda os segundos pedidos (ou até o `stop_task` dele),
+    avisa que terminou e sai da lista."""
+    parada = threading.Event()
+    with trava_do_fundo:
+        comandos_de_fundo[id_] = (descricao, parada)
+    avisar_do_fundo()
+
+    def rodar():
+        parou = parada.wait(segundos)
+        with trava_do_fundo:
+            comandos_de_fundo.pop(id_, None)
+        emitir({"type": "system", "subtype": "task_notification", "task_id": id_, "tool_use_id": chamada,
+                "status": "killed" if parou else "completed", "summary": f"Background command \"{descricao}\""})
+        avisar_do_fundo()
+
+    thread = threading.Thread(target=rodar, daemon=True)
+    thread.start()
+    return thread
+
+
+def nome_do_projeto(caminho):
+    """A pasta do projeto em `projects`, como o Claude Code a monta: o que não é letra ou número
+    vira `-` (os caminhos da bancada não passam de 200 caracteres, onde ele corta)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", caminho)
+
+
+def permissao_do_vitral(chamada, nome, entrada):
+    """O pedido de permissão de uma chamada, como o Claude Code faz ao `--permission-prompt-tool`:
+    espera a resposta do usuário e diz se ele deixou. Sem a ferramenta de permissão (o modo "sem
+    perguntar"), deixa."""
+    if "--permission-prompt-tool" not in args or not url:
+        return True
+    corpo = json.dumps({"jsonrpc": "2.0", "id": 9000, "method": "tools/call", "params": {
+        "name": "permissao", "arguments": {"tool_name": nome, "input": entrada, "tool_use_id": chamada}}}).encode()
+    try:
+        req = urllib.request.Request(url, data=corpo, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3600) as r:
+            resposta = json.loads(json.loads(r.read())["result"]["content"][0]["text"])
+        return resposta.get("behavior") == "allow"
+    except Exception as e:  # noqa: BLE001 (a bancada só anota)
+        anotar({"permissao_falhou": str(e)})
+        return False
+
+
+class Subagente:
+    """Um subagente de mentira, como o Claude Code 2.1.328 o mostra (medido em 23/11/2026): o
+    `task_started`, o pedido como mensagem do usuário presa à chamada (`parent_tool_use_id` e
+    `agent_id`), cada chamada dele e o resultado dela no stream, e o texto e o raciocínio só no
+    arquivo (no stream, só com `--forward-subagent-text`). O arquivo é o de verdade: com um
+    CLAUDE_CONFIG_DIR de mentira, `projects/<pasta>/<sessão>/subagents/agent-<id>.jsonl`, gravado
+    aos poucos, e o `agent-<id>.meta.json` com a chamada que o abriu (`toolUseId`)."""
+
+    def __init__(self, pai, descricao, fundo=False):
+        self.pai, self.descricao, self.fundo = pai, descricao, fundo
+        self.agente = "a" + hashlib.md5(f"{sessao}{pai}".encode()).hexdigest()[:16]
+        self.usadas, self.anterior, self.arquivo, self.meta = 0, None, None, None
+        self.comeco, self.comecou = time.time(), False
+        if config:
+            pasta = os.path.join(config, "projects", nome_do_projeto(os.getcwd()), sessao, "subagents")
+            os.makedirs(pasta, exist_ok=True)
+            self.arquivo = os.path.join(pasta, f"agent-{self.agente}.jsonl")
+            self.meta = os.path.join(pasta, f"agent-{self.agente}.meta.json")
+            self.gravar_meta(False)
+
+    def gravar_meta(self, terminou):
+        """O `agent-<id>.meta.json`, com os campos do de verdade (2.1.328): a descrição, a chamada
+        que o abriu, o modelo e, no fim, o `finished`."""
+        if not self.meta:
+            return
+        dados = {"agentType": "general-purpose", "isBuiltIn": True, "description": self.descricao,
+                 "toolUseId": self.pai, "spawnDepth": 1, "model": "claude-falso"}
+        if self.fundo:
+            dados["requestShape"] = "background"
+        if terminou:
+            dados["finished"] = True
+        with open(self.meta, "w") as meta:
+            json.dump(dados, meta, ensure_ascii=False)
+
+    def gravar_pedido_a_api(self):
+        """Entre o resultado de uma chamada e a chamada seguinte, o de verdade grava as linhas do
+        pedido à API (`api-request-blob`, `api-request`): o fim do arquivo nem sempre é uma chamada."""
+        if not self.arquivo:
+            return
+        agora_ = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        with open(self.arquivo, "a") as saida:
+            saida.write(json.dumps({"type": "api-request-blob", "sessionId": sessao, "agentId": self.agente,
+                                    "hash": uuid.uuid4().hex[:12], "content": [{"type": "text", "text": "…"}]}) + "\n")
+            saida.write(json.dumps({"type": "api-request", "sessionId": sessao, "agentId": self.agente,
+                                    "id": uuid.uuid4().hex[:12], "timestamp": agora_}) + "\n")
+
+    def gravar(self, tipo, mensagem):
+        if not self.arquivo:
+            return
+        linha = {"parentUuid": self.anterior, "isSidechain": True, "agentId": self.agente, "type": tipo,
+                 "uuid": str(uuid.uuid4()),
+                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                 "sessionId": sessao, "cwd": os.getcwd(), "version": "2.1.328", "message": mensagem}
+        self.anterior = linha["uuid"]
+        with open(self.arquivo, "a") as saida:
+            saida.write(json.dumps(linha, ensure_ascii=False) + "\n")
+
+    def no_stream(self, tipo, conteudo):
+        emitir({"type": tipo, "parent_tool_use_id": self.pai, "agent_id": self.agente, "message": {"content": conteudo}})
+
+    def pedido(self):
+        return f"{self.descricao}.\n\nProcure onde o cupom é aplicado, confira os testes e responda em duas frases."
+
+    def comecar(self, pedido):
+        self.comecou = True
+        emitir({"type": "system", "subtype": "task_started", "task_id": self.agente, "tool_use_id": self.pai,
+                "description": self.descricao, "subagent_type": "general-purpose", "is_backgrounded": self.fundo,
+                "task_type": "local_agent", "prompt": pedido})
+        self.gravar("user", {"role": "user", "content": pedido})
+        self.no_stream("user", [{"type": "text", "text": pedido}])
+
+    def falar(self, bloco):
+        """Um texto ou um raciocínio: sempre no arquivo; no stream, só com a opção de repassar."""
+        self.gravar("assistant", {"id": "msg_" + uuid.uuid4().hex[:12], "role": "assistant", "content": [bloco]})
+        if "--forward-subagent-text" in args:
+            self.no_stream("assistant", [bloco])
+
+    def usar(self, id_, nome, entrada, resultado, espera, pede=False):
+        """Uma chamada do subagente: o tool_use, a espera (e, com `pede`, a permissão do usuário
+        antes dela) e o tool_result."""
+        bloco = {"type": "tool_use", "id": id_, "name": nome, "input": entrada}
+        self.gravar("assistant", {"id": "msg_" + uuid.uuid4().hex[:12], "role": "assistant", "content": [bloco]})
+        # O progresso vem antes da chamada, como no de verdade; a entrega do relatório não conta.
+        if nome != "SubagentHandback":
+            self.usadas += 1
+            emitir({"type": "system", "subtype": "task_progress", "task_id": self.agente, "tool_use_id": self.pai,
+                    "description": "Running " + nome, "usage": {"tool_uses": self.usadas, "total_tokens": 35000 + 900 * self.usadas}})
+        self.no_stream("assistant", [bloco])
+        erro = False
+        if pede and not permissao_do_vitral(id_, nome, entrada):
+            resultado, erro = "The user doesn't want to proceed with this tool use.", True
+        else:
+            time.sleep(espera)
+        retorno = {"tool_use_id": id_, "type": "tool_result", "content": resultado, "is_error": erro}
+        self.gravar("user", {"role": "user", "content": [retorno]})
+        self.gravar_pedido_a_api()
+        self.no_stream("user", [retorno])
+
+    def trabalhar(self, espera):
+        """O que todo subagente de mentira faz: pensa, procura, lê, diz uma frase, roda os testes
+        e responde. Com "(pede)" na descrição, o comando dele pede permissão; com "(entrega)", o
+        relatório vai pela chamada SubagentHandback, como no modo automático. Devolve o relatório."""
+        pai = self.pai
+        if not self.comecou:
+            self.comecar(self.pedido())
+        self.falar({"type": "thinking", "thinking": "Preciso achar onde o cupom entra no total antes de olhar os testes."})
+        time.sleep(espera)
+        self.usar(pai + "a", "Grep", {"pattern": "cupom"},
+                  "produtos/views.py:42:    desconto = aplicar_cupom(cupom, subtotal)\nprodutos/tests.py:17:def test_cupom_percentual():", espera)
+        self.usar(pai + "b", "Read", {"file_path": "produtos/views.py"},
+                  "40\tdef total(carrinho, cupom):\n41\t    subtotal = sum(i.preco for i in carrinho)\n"
+                  "42\t    desconto = aplicar_cupom(cupom, subtotal)\n43\t    return subtotal - desconto", espera)
+        self.falar({"type": "text", "text": "Conferindo os testes do carrinho."})
+        self.usar(pai + "c", "Bash", {"command": "python3 manage.py test", "description": "Rodar os testes"},
+                  "Ran 12 tests in 0.8s\n\nOK", espera, pede="(pede)" in self.descricao)
+        relatorio = f"(claude falso) {self.descricao}: dois lugares mexem no cupom.\n\nOs 12 testes passam."
+        if "(entrega)" in self.descricao:
+            self.usar(pai + "d", "SubagentHandback", {"message": relatorio},
+                      [{"type": "text", "text": "{\"success\":true,\"message\":\"Report delivered to your caller.\"}"}], 0)
+        else:
+            self.falar({"type": "text", "text": relatorio})
+        return relatorio
+
+    def resultado(self, relatorio):
+        """O que a chamada que o abriu recebe: o relatório dentro da moldura do Claude Code ou, com
+        "(entrega)", só o aviso de que ele foi entregue."""
+        if "(entrega)" in self.descricao:
+            corpo = (f"  This agent's report was delivered to you as a message from \"{self.agente}\" (its SubagentHandback "
+                     "call). Read it there; it is not repeated here.\n  ")
+        else:
+            corpo = ("  <tools-used-before-summary>Grep, Read, Bash</tools-used-before-summary>\n  \n[Subagent hand-back] The text "
+                     "below is the final report of a subagent this session delegated to. The report follows:\n"
+                     + "\n".join("  " + l for l in relatorio.splitlines()))
+        return (f"{corpo}\nagentId: {self.agente} (use SendMessage with to: '{self.agente}' to continue this agent)\n"
+                f"<usage>subagent_tokens: {35000 + 900 * self.usadas}\ntool_uses: {self.usadas}\n"
+                f"duration_ms: {int((time.time() - self.comeco) * 1000)}</usage>")
+
+    def terminar(self, relatorio):
+        """O fim do subagente que a conversa esperou: o aviso de fim e o resultado da chamada."""
+        resumo = relatorio
+        if "(entrega)" in self.descricao:
+            resumo = f"This agent's report was delivered to you as a message from \"{self.agente}\" (its SubagentHandback call)."
+        emitir({"type": "system", "subtype": "task_notification", "task_id": self.agente, "tool_use_id": self.pai,
+                "status": "completed", "summary": resumo,
+                "usage": {"tool_uses": self.usadas, "total_tokens": 35000 + 900 * self.usadas}})
+        emitir({"type": "user", "message": {"content": [{"tool_use_id": self.pai, "type": "tool_result",
+                "content": [{"type": "text", "text": self.resultado(relatorio)}]}]},
+                "tool_use_result": {"status": "completed", "agentId": self.agente, "agentType": "general-purpose"}})
+
+
+# Os agentes que seguem trabalhando depois do `result` (`[ferramenta Agent <tarefa> (segue) | 40]`):
+# quantos foram lançados e, na ordem em que acabam, cada um que terminou.
+agentes_que_seguem = []
+agentes_terminados = queue.Queue()
+
+
+def agente_em_segundo_plano(sub, espera, falha=False):
+    """O agente que foi para o segundo plano trabalha e avisa o fim como o de verdade (2.1.328,
+    medido em 23/11/2026): o `task_updated`, o `task_notification` com o relatório no `summary` e a
+    lista do fundo sem ele. Com `falha`, o aviso vem `failed` (a frase do erro é inventada: a falha
+    de um agente de verdade não foi medida)."""
+    relatorio = sub.trabalhar(espera)
+    if falha:
+        relatorio = "(claude falso) O agente parou no meio: a API não respondeu a tempo."
+    sub.gravar_meta(True)
+    estado_final = "failed" if falha else "completed"
+    emitir({"type": "system", "subtype": "task_updated", "task_id": sub.agente,
+            "patch": {"status": estado_final, "end_time": int(time.time() * 1000)}})
+    emitir({"type": "system", "subtype": "task_notification", "task_id": sub.agente, "tool_use_id": sub.pai,
+            "status": estado_final, "summary": relatorio, "summary_is_report": not falha,
+            "usage": {"tool_uses": sub.usadas, "total_tokens": 35000 + 900 * sub.usadas,
+                      "duration_ms": int((time.time() - sub.comeco) * 1000)}})
+    with trava_do_fundo:
+        agentes_de_fundo.pop(sub.agente, None)
+    avisar_do_fundo()
+    agentes_terminados.put(sub)
+
+
 def fingir_ferramentas(texto):
     """Faz de conta que usa cada ferramenta pedida, uma de cada vez, com a espera entre o
     tool_use e o tool_result: é nessa janela que a conversa mostra o que ele está fazendo."""
+    global tempo_das_ferramentas, idas_ao_modelo
+    pedidas = FERRAMENTA.findall(texto)
+    # `[juntas]` só com subagentes: as chamadas Task saem numa resposta só e os subagentes
+    # trabalham ao mesmo tempo, cada um terminando quando o dele acaba.
+    if "[juntas]" in texto and pedidas and all(nome == "Task" for nome, _, _ in pedidas):
+        antes = time.time()
+        idas_ao_modelo += 1
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"{ID_DAS_CHAMADAS}f{i}", "name": "Task", "input": entrada_da_ferramenta("Task", detalhe.strip())}
+            for i, (_, detalhe, _) in enumerate(pedidas, start=1)]}})
+
+        def um(i, detalhe, segundos):
+            sub = Subagente(f"{ID_DAS_CHAMADAS}f{i}", detalhe)
+            sub.terminar(sub.trabalhar((int(segundos) if segundos else 8) / 4))
+
+        juntos = [threading.Thread(target=um, args=(i, detalhe.strip(), segundos), daemon=True)
+                  for i, (_, detalhe, segundos) in enumerate(pedidas, start=1)]
+        for thread in juntos:
+            thread.start()
+            time.sleep(0.2)
+        for thread in juntos:
+            thread.join()
+        tempo_das_ferramentas += time.time() - antes
+        return
+    de_fundo = []
+    # `[juntas]`: as chamadas comuns saem numa resposta só e cada resultado chega quando a dela
+    # termina (a mais rápida primeiro), como as chamadas em paralelo do de verdade.
+    especiais = ("Pensa", "Fundo", "Agent", "Task", "Estourou")
+    if "[juntas]" in texto and pedidas and not any(nome in especiais for nome, _, _ in pedidas):
+        # O que ele diz no meio do turno vem antes das chamadas.
+        for _, detalhe, _ in (p for p in pedidas if p[0] == "Diz"):
+            emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": detalhe.strip()}]}})
+        pedidas = [p for p in pedidas if p[0] != "Diz"]
+        antes = time.time()
+        idas_ao_modelo += 1
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"{ID_DAS_CHAMADAS}f{i}", "name": nome, "input": entrada_da_ferramenta(nome, detalhe.strip())}
+            for i, (nome, detalhe, _) in enumerate(pedidas, start=1)]}})
+        passou = 0
+        for segundos, i, nome, detalhe in sorted((int(s) if s else 4, i, n, d.strip()) for i, (n, d, s) in enumerate(pedidas, start=1)):
+            time.sleep(max(0, segundos - passou))
+            passou = max(passou, segundos)
+            emitir({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"{ID_DAS_CHAMADAS}f{i}", "content": f"(claude falso) {nome} em {detalhe}"}]}})
+        tempo_das_ferramentas += time.time() - antes
+        return
     saida_do_arquivo = arquivo_da_diretiva("saida", texto)
-    for i, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(texto), start=1):
+    for i, (nome, detalhe, segundos) in enumerate(pedidas, start=1):
         detalhe = detalhe.strip()
-        id_ = f"toolu_falso_f{i}"
+        id_ = f"{ID_DAS_CHAMADAS}f{i}"
         # `[ferramenta Pensa texto | 2]` não é ferramenta: é um bloco de raciocínio, que começa
         # (o evento parcial), dura os segundos pedidos e chega inteiro na mensagem.
         if nome == "Pensa":
@@ -646,6 +1097,11 @@ def fingir_ferramentas(texto):
             emitir({"type": "assistant", "message": {"content": [
                 {"type": "thinking", "thinking": detalhe if resumido else "", "signature": "falsa"}]}})
             continue
+        # `[ferramenta Diz Vou olhar o carrinho.]`: um texto no meio do turno, entre as chamadas. É
+        # ele que faz o turno pronto recolher na linha "Trabalhou…".
+        if nome == "Diz":
+            emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": detalhe}]}})
+            continue
         # `[ferramenta Fundo npm run dev | 20]`: um Bash com run_in_background, como o de verdade
         # (2.1.325): volta na hora, a tarefa aparece em background_tasks_changed e some quando acaba
         # (ou quando o Vitral manda o stop_task).
@@ -653,13 +1109,41 @@ def fingir_ferramentas(texto):
             emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_, "name": "Bash",
                     "input": {"command": detalhe, "run_in_background": True, "description": detalhe}}]}})
             emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
-                    "content": f"Command running in background with ID: bfalso{i}."}]}})
+                    "content": f"Command running in background with ID: bfalso{i}."}]},
+                    "tool_use_result": {"stdout": "", "stderr": "", "interrupted": False, "backgroundTaskId": f"bfalso{i}"}})
+            de_fundo.append(comando_de_fundo(f"bfalso{i}", id_, detalhe, int(segundos) if segundos else 20))
+            continue
+        idas_ao_modelo += 1
+        # `[ferramenta Estourou npm run dev | 12]`: o Bash que passou do tempo dele. Como no de
+        # verdade (2.1.328), o resultado chega nessa hora dizendo que o comando foi para o segundo
+        # plano, com o `backgroundTaskId` e o `timedOutAfterMs`, e o comando segue rodando.
+        if nome == "Estourou":
+            espera = int(segundos) if segundos else 12
+            emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_, "name": "Bash",
+                    "input": {"command": detalhe, "timeout": espera * 1000}}]}})
+            time.sleep(espera)
+            tempo_das_ferramentas += espera
             emitir({"type": "system", "subtype": "background_tasks_changed",
                     "tasks": [{"task_id": f"bfalso{i}", "task_type": "local_bash", "description": detalhe}]})
-            parou = tarefa_parada.wait(int(segundos) if segundos else 20)
-            emitir({"type": "system", "subtype": "task_notification", "task_id": f"bfalso{i}", "tool_use_id": id_,
-                    "status": "killed" if parou else "completed", "summary": f"Background command \"{detalhe}\""})
+            emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
+                    "content": f"Command did not complete within its {espera}s timeout and was moved to the background (ID: bfalso{i})."}]},
+                    "tool_use_result": {"stdout": "", "stderr": "", "interrupted": False, "backgroundTaskId": f"bfalso{i}",
+                                        "timedOutAfterMs": espera * 1000}})
+            antes = time.time()
+            tarefa_parada.wait(4)
+            tempo_das_ferramentas += time.time() - antes
             emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+            continue
+        # `[ferramenta Falha cargo test]`: o Bash que saiu com erro, como o de verdade (o `is_error`
+        # e o "Exit code" na frente da saída). É com ele que a linha "Trabalhou…" mostra a
+        # checagem que falhou.
+        if nome == "Falha":
+            emitir({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": id_, "name": "Bash", "input": {"command": detalhe}}]}})
+            time.sleep(int(segundos) if segundos else 2)
+            tempo_das_ferramentas += int(segundos) if segundos else 2
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "is_error": True,
+                    "content": f"Exit code 101\n(claude falso) {detalhe} falhou"}]}})
             continue
         # `[ferramenta Print 1280x800 inicio]`: o print de um MCP de navegador, com o texto e a
         # imagem em base64 no mesmo tool_result (`Prints` devolve duas imagens).
@@ -681,51 +1165,66 @@ def fingir_ferramentas(texto):
         # espera na fila (o subagente tem o caminho dele, abaixo).
         if nome not in ("Task", "Agent"):
             ferramenta_rodando.set()
+        entrada = entrada_da_ferramenta(nome, detalhe)
         emitir({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": id_, "name": nome, "input": entrada_da_ferramenta(nome, detalhe)}]}})
+            {"type": "tool_use", "id": id_, "name": nome, "input": entrada}]}})
+        # As ferramentas de tarefas (TaskCreate, TaskUpdate, TaskList): rápidas, com o texto e o
+        # `tool_use_result` do de verdade.
+        if nome in ("TaskCreate", "TaskUpdate", "TaskList"):
+            time.sleep(int(segundos) if segundos else 1)
+            tempo_das_ferramentas += int(segundos) if segundos else 1
+            texto_, estruturado = resultado_da_tarefa(nome, entrada)
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "content": texto_}]},
+                    "tool_use_result": estruturado})
+            # A chamada voltou: a mensagem que esperava entra no turno (ver `esperar_a_ferramenta`).
+            ferramenta_rodando.clear()
+            absorver_fila()
+            continue
+        # `[ferramenta Edit a.py (pede)]`: a edição pede permissão ao Vitral antes, como no modo
+        # manual (o cartão de permissão mostra o mesmo diff da trilha).
+        if nome == "Edit" and "(pede)" in detalhe and not permissao_do_vitral(id_, nome, entrada):
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "is_error": True,
+                    "content": "The user doesn't want to proceed with this tool use."}]}})
+            continue
         # O Agent vai para o segundo plano, como no Claude Code 2.1.3xx: a chamada volta na hora com
         # "Async agent launched", o progresso conta as ferramentas e o fim vem num aviso à parte.
         if nome == "Agent":
+            sub = Subagente(id_, entrada["description"], fundo=True)
+            # Na ordem do de verdade: a lista do fundo, o `task_started` e só então o resultado.
+            with trava_do_fundo:
+                agentes_de_fundo[sub.agente] = sub.descricao
+            avisar_do_fundo()
+            sub.comecar(sub.pedido())
             emitir({"type": "user", "message": {"content": [{"tool_use_id": id_, "type": "tool_result",
                     "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
-                    "tool_use_result": {"isAsync": True, "status": "async_launched", "agentId": "falso" + str(i)}})
-            emitir({"type": "system", "subtype": "background_tasks_changed",
-                    "tasks": [{"task_id": "falso" + str(i), "task_type": "local_agent", "description": detalhe}]})
-            espera = (int(segundos) if segundos else 8) / 4
-            usadas = 0
-            for passo in ({"type": "tool_use", "id": id_ + "a", "name": "Grep", "input": {"pattern": "cupom"}},
-                          {"type": "tool_use", "id": id_ + "b", "name": "Read", "input": {"file_path": "produtos/views.py"}},
-                          {"type": "text", "text": "Conferindo os testes do carrinho."},
-                          {"type": "tool_use", "id": id_ + "c", "name": "Bash", "input": {"command": "python3 manage.py test"}}):
-                time.sleep(espera)
-                emitir({"type": "assistant", "parent_tool_use_id": id_, "message": {"content": [passo]}})
-                if passo["type"] == "tool_use":
-                    usadas += 1
-                    emitir({"type": "system", "subtype": "task_progress", "task_id": "falso" + str(i), "tool_use_id": id_,
-                            "description": "Running " + passo["name"], "usage": {"tool_uses": usadas}})
-            emitir({"type": "system", "subtype": "task_notification", "task_id": "falso" + str(i), "tool_use_id": id_,
-                    "status": "completed", "summary": f"(claude falso) {detalhe}: dois lugares mexem no cupom."})
-            emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+                    "tool_use_result": {"isAsync": True, "status": "async_launched", "agentId": sub.agente}})
+            espera, falha = (int(segundos) if segundos else 8) / 4, "(falha)" in detalhe
+            # `(segue)`: ele continua depois do `result` deste turno, e o fim dele abre outro.
+            if "(segue)" in detalhe:
+                thread = threading.Thread(target=agente_em_segundo_plano, args=(sub, espera, falha), daemon=True)
+                thread.start()
+                agentes_que_seguem.append(thread)
+                continue
+            agente_em_segundo_plano(sub, espera, falha)
+            agentes_terminados.get()
             continue
-        # O subagente trabalha lá dentro: três ferramentas e uma frase, presas à chamada dele.
-        if nome in ("Task", "Agent"):
-            espera = (int(segundos) if segundos else 8) / 4
-            for passo in ({"type": "tool_use", "id": id_ + "a", "name": "Grep", "input": {"pattern": "cupom"}},
-                          {"type": "tool_use", "id": id_ + "b", "name": "Read", "input": {"file_path": "produtos/views.py"}},
-                          {"type": "text", "text": "Conferindo os testes do carrinho."},
-                          {"type": "tool_use", "id": id_ + "c", "name": "Bash", "input": {"command": "python3 manage.py test"}}):
-                time.sleep(espera)
-                emitir({"type": "assistant", "parent_tool_use_id": id_, "message": {"content": [passo]}})
-            emitir({"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {detalhe}: dois lugares mexem no cupom."}]}})
+        # O subagente trabalha lá dentro (ver `Subagente`), e a conversa espera por ele.
+        if nome == "Task":
+            sub = Subagente(id_, detalhe)
+            sub.terminar(sub.trabalhar((int(segundos) if segundos else 8) / 4))
             continue
         esperar_a_ferramenta(id_, nome, int(segundos) if segundos else 4)
+        tempo_das_ferramentas += int(segundos) if segundos else 4
         # O Read de uma imagem que existe devolve só o bloco de imagem dela, como o de verdade.
         lida = imagem_lida(detalhe) if nome == "Read" else None
         resultado = saida_do_arquivo if saida_do_arquivo is not None else f"(claude falso) {nome} em {detalhe}"
         emitir({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": id_, "content": [lida] if lida else resultado}]}})
         absorver_fila()
+    # Os comandos de fundo que ainda rodam seguram o turno até terminarem (ou até o Parar de cada
+    # um): é a janela em que a pílula deles aparece.
+    for thread in de_fundo:
+        thread.join()
 
 
 # `[hook Nome detalhe | motivo]`: a chamada que um hook PreToolUse mandou perguntar.
@@ -1003,6 +1502,31 @@ if respondidas:
     resposta += " | respostas: " + "; ".join(respondidas)
 if ao_vivo:
     resposta += " | no meio do turno: " + ", ".join(f"{chave} {valor}" for chave, valor in ao_vivo.items())
+# `[escreve 20]`: a resposta chega aos pedaços durante esses segundos (uns 40 por segundo, como o
+# texto do Claude Code de verdade), e no fim inteira. É como se mede a conversa enquanto o texto
+# chega, sem gastar a API.
+escreve = re.search(r"\[escreve(?: (\d+))?\]", texto)
+if escreve and papel != "mestre":
+    paragrafo = ("O desconto entra depois do subtotal, e o total nunca fica negativo. "
+                 "Conferi os três casos: cupom percentual, cupom fixo e cupom vencido.\n\n"
+                 "- `produtos/views.py`: o total passa a descontar o cupom.\n"
+                 "- `produtos/tests.py`: um teste para cada caso.\n\n")
+    segundos = int(escreve.group(1) or 20)
+    longa = "## O que mudou\n\n" + paragrafo * max(1, segundos // 2)
+    passo = max(1, len(longa) // (segundos * 40))
+    for i in range(0, len(longa), passo):
+        emitir({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                  "delta": {"type": "text_delta", "text": longa[i:i + passo]}}})
+        time.sleep(1 / 40)
+    resposta = longa + resposta
+# `[tabela]`: a resposta leva uma tabela em Markdown (é nela que aparece o Copiar da tabela).
+if "[tabela]" in texto and papel != "mestre":
+    resposta = ("O que mudou em cada arquivo:\n\n"
+                "| Arquivo | Linhas | O que mudou |\n"
+                "|---|---:|---|\n"
+                "| `produtos/views.py` | 12 | O total desconta o cupom |\n"
+                "| `produtos/tests.py` | 48 | Um teste para cada caso |\n"
+                "| `produtos/cupons.py` | 5 | Cupom vencido não vale |\n\n") + resposta
 anotar({"papel": papel, "chamadas": chamadas})
 emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
                                          "usage": {"input_tokens": 1200}}})
@@ -1022,10 +1546,46 @@ try:
         guardado.write(str(custo_da_sessao))
 except OSError:
     pass
+# Os tempos, com os nomes do `result` de verdade (2.1.328). O tempo de modelo é o do turno menos o
+# das ferramentas, com 0,3 s por ida ao modelo de piso (aqui ninguém pensa de verdade).
+agora_ = time.time()
+duracao_ms = int((agora_ - comeco_do_turno) * 1000)
+modelo_ms = min(duracao_ms, max(int((agora_ - comeco_do_turno - tempo_das_ferramentas) * 1000), 300 * idas_ao_modelo))
+ttft_ms = int(((primeira_palavra or agora_) - comeco_do_turno) * 1000)
+cache_5m = "[cache 5m]" in texto
+uso_do_turno = {"input_tokens": 1200, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 800,
+                "output_tokens": 300,
+                "cache_creation": {"ephemeral_1h_input_tokens": 0 if cache_5m else 800,
+                                   "ephemeral_5m_input_tokens": 800 if cache_5m else 0}}
 emitir({"type": "result", "is_error": False, "result": resposta, "total_cost_usd": custo_da_sessao,
-        "usage": {"input_tokens": 1200, "cache_read_input_tokens": 40000, "cache_creation_input_tokens": 800,
-                  "output_tokens": 300},
-        "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+        "duration_ms": duracao_ms, "duration_api_ms": modelo_ms, "ttft_ms": ttft_ms, "num_turns": idas_ao_modelo,
+        "usage": uso_do_turno, "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+# Os agentes que seguem em segundo plano (`(segue)`): quando um acaba, o aviso de fim abre um turno
+# novo no mesmo processo, com outro `init`, uma frase e outro `result`. Com mais agentes ainda
+# rodando, o `result` desse turno fica guardado e só sai junto com o do último (medido na 2.1.328
+# com dois agentes: os dois `result` saíram um atrás do outro, no fim).
+guardados = []
+for restam in range(len(agentes_que_seguem) - 1, -1, -1):
+    terminado = agentes_terminados.get()
+    emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_id": sessao,
+            "slash_commands": ["clear", "compact"], "claude_code_version": "2.1.300", "tools": ["Read", "Edit", "Bash"]})
+    time.sleep(1)
+    frase = f"(claude falso) O agente «{terminado.descricao}» terminou."
+    emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": frase}], "usage": {"input_tokens": 1200}}})
+    custo_da_sessao += 0.05
+    guardados.append({"type": "result", "is_error": False, "result": frase, "total_cost_usd": custo_da_sessao,
+                      "duration_ms": 1000, "duration_api_ms": 1000, "ttft_ms": 900, "num_turns": 1,
+                      "usage": uso_do_turno, "modelUsage": {"claude-falso": {"contextWindow": 200000}},
+                      "origin": {"kind": "task-notification", "producer": "session-task"}})
+    if restam == 0:
+        try:
+            with open(arquivo_do_custo, "w") as guardado:
+                guardado.write(str(custo_da_sessao))
+        except OSError:
+            pass
+        # Soltos juntos, todos com o total da sessão daquele instante (medido: o mesmo nos dois).
+        for resultado_guardado in guardados:
+            emitir({**resultado_guardado, "total_cost_usd": custo_da_sessao})
 # Com --prompt-suggestions, como o de verdade (2.1.325): a próxima mensagem provável depois do
 # `result`, só com a entrada ainda aberta (fechada antes, ele não sugere).
 if "--prompt-suggestions" in args and not fim_da_entrada.wait(1.5):

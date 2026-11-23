@@ -154,6 +154,11 @@ pub enum Item {
         /// gravadas na pasta do chat: só os caminhos, nunca o base64 (`imagens_recebidas`).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         imagens: Vec<PathBuf>,
+        /// Quanto a chamada levou, em segundos, do pedido (ou da permissão dada) ao resultado.
+        /// 0: não medido (a de antes disto, a que não terminou, a que foi para o segundo plano e
+        /// segue rodando lá).
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        durou: u64,
     },
     /// Um bloco de raciocínio do modelo: o texto (pode vir vazio, quando o Claude Code não o
     /// entrega) e quanto durou, em milissegundos (0: não medido).
@@ -182,10 +187,26 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
     },
+    /// Um agente em segundo plano terminou (ou falhou) neste ponto da conversa: a chamada (Agent)
+    /// que o abriu (é no cartão dela que está o relatório), a descrição dele e quanto levou, em
+    /// segundos (0: não medido).
+    FimDoAgente {
+        chamada: String,
+        descricao: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        erro: bool,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        durou: u64,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
+    },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
 }
+
+/// O aviso que entra na conversa quando a resposta chega com agentes ainda em segundo plano.
+pub const AGENTES_SEGUEM: &str = "Os agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem.";
 
 impl Item {
     /// O instante do item, ou 0 quando ele não tem hora (conversa de antes dela, ou item de uma
@@ -199,9 +220,17 @@ impl Item {
             | Item::Raciocinio { em, .. }
             | Item::Aviso { em, .. }
             | Item::Cartao { em, .. }
-            | Item::Vez { em, .. } => *em,
+            | Item::Vez { em, .. }
+            | Item::FimDoAgente { em, .. } => *em,
             Item::Desconhecido(_) => 0,
         }
+    }
+
+    /// Um aviso que fecha o que veio antes dele: o turno parou, falhou ou foi refeito, e a chamada
+    /// sem resultado de antes dele foi interrompida. O aviso de que os agentes seguem em segundo
+    /// plano diz o contrário, e não fecha nada.
+    pub fn aviso_que_fecha(&self) -> bool {
+        matches!(self, Item::Aviso { texto, .. } if texto != AGENTES_SEGUEM)
     }
 }
 
@@ -922,6 +951,33 @@ mod testes {
     /// e o teste não depende do fuso de quem o roda.
     const MEIO_DIA: u64 = 1_773_316_800;
     const DIA: u64 = 86_400;
+
+    /// O fim de um agente em segundo plano é um item da conversa, gravado com o nome dele: uma
+    /// versão de antes disto o guarda como veio (`Desconhecido`), e esta o lê de volta.
+    #[test]
+    fn o_fim_do_agente_vai_e_volta_do_disco() {
+        let item = Item::FimDoAgente { chamada: "toolu_pai".into(), descricao: "Explorar o carrinho".into(), erro: false, durou: 1500, em: 200 };
+        let gravado = serde_json::to_value(&item).unwrap();
+        assert_eq!(gravado, serde_json::json!({ "FimDoAgente": { "chamada": "toolu_pai", "descricao": "Explorar o carrinho", "durou": 1500, "em": 200 } }));
+        match serde_json::from_value::<Item>(gravado).unwrap() {
+            Item::FimDoAgente { chamada, descricao, erro: false, durou: 1500, em: 200 } => {
+                assert_eq!((chamada.as_str(), descricao.as_str()), ("toolu_pai", "Explorar o carrinho"));
+            }
+            outro => panic!("{outro:?}"),
+        }
+        assert_eq!(item.em(), 200);
+    }
+
+    /// O aviso de que os agentes seguem em segundo plano não fecha o que veio antes dele: quem
+    /// estava trabalhando continua. Os outros avisos (parou, falhou, refez) fecham.
+    #[test]
+    fn o_aviso_de_que_os_agentes_seguem_nao_fecha_nada() {
+        let aviso = |texto: &str| Item::Aviso { texto: texto.into(), erro: false, em: 0 };
+        assert!(!aviso(AGENTES_SEGUEM).aviso_que_fecha());
+        assert!(aviso("Interrompido.").aviso_que_fecha());
+        assert!(Item::Aviso { texto: "O turno terminou com erro: x".into(), erro: true, em: 0 }.aviso_que_fecha());
+        assert!(!Item::Assistente { texto: AGENTES_SEGUEM.into(), em: 0 }.aviso_que_fecha());
+    }
 
     #[test]
     fn nome_do_dia_de_cada_separador() {

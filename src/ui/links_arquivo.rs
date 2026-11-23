@@ -433,6 +433,28 @@ pub fn resolver_mencao(base: &Path, escrito: &str) -> Option<String> {
     }
 }
 
+/// O Markdown sem os links `vitral:…` que `ligar_arquivos` pôs nele, para copiar (a tabela de uma
+/// resposta, que o kit devolve em Markdown já com os links): o caminho volta a ser código em
+/// linha, como o agente costuma escrevê-lo, e o rótulo que não é caminho ("[o relatório](…)")
+/// fica só o texto. Os links da web ficam como estão.
+pub fn sem_links_do_vitral(markdown: &str) -> String {
+    let mut saida = String::with_capacity(markdown.len());
+    let mut resto = markdown;
+    while let Some(meio) = resto.find("](vitral:") {
+        let (Some(abre), Some(fecha)) = (resto[..meio].rfind('['), resto[meio..].find(')').map(|f| meio + f)) else { break };
+        let rotulo = &resto[abre + 1..meio];
+        saida.push_str(&resto[..abre]);
+        if !rotulo.contains('`') && parece_caminho(separar_linha(rotulo).0) {
+            saida.push_str(&format!("`{rotulo}`"));
+        } else {
+            saida.push_str(rotulo);
+        }
+        resto = &resto[fecha + 1..];
+    }
+    saida.push_str(resto);
+    saida
+}
+
 /// Um link `vitral:arquivo/…` clicado no texto do assistente (a janela abre o arquivo).
 #[derive(Clone, PartialEq, Debug, serde::Deserialize, gpui_kit::Action)]
 #[action(namespace = vitral, no_json)]
@@ -1083,6 +1105,23 @@ mod testes_dos_links_mais_espertos {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// Rodada do Paseo, item 4: a tabela copiada não leva os links internos do Vitral.
+    #[test]
+    fn o_markdown_copiado_sai_sem_os_links_do_vitral() {
+        use super::sem_links_do_vitral;
+        assert_eq!(
+            sem_links_do_vitral("| [produtos/views.py](vitral:arquivo/0/%2Fhome%2Fx%2Fprodutos%2Fviews.py) | 12 |\n| `produtos/cupons.py` | 5 |"),
+            "| `produtos/views.py` | 12 |\n| `produtos/cupons.py` | 5 |"
+        );
+        // Com a linha, com o código já no rótulo e com um rótulo que não é caminho.
+        assert_eq!(sem_links_do_vitral("ver [src/x.rs:42](vitral:arquivo/42/%2Fp%2Fsrc%2Fx.rs) e [`a/b.rs`](vitral:arquivo/0/%2Fp%2Fa%2Fb.rs)"), "ver `src/x.rs:42` e `a/b.rs`");
+        assert_eq!(sem_links_do_vitral("[o relatório](vitral:arquivo/0/%2Fp%2Fx.md) pronto"), "o relatório pronto");
+        // Os links da web e o texto sem link ficam como estão.
+        let web = "| [site](https://exemplo.com/a) | [x] |";
+        assert_eq!(sem_links_do_vitral(web), web);
+        assert_eq!(sem_links_do_vitral(""), "");
+    }
 
     fn ligar(texto: &str) -> String {
         let mut resolver = |c: &str| {

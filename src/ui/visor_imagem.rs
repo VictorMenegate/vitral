@@ -507,6 +507,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: imagens.iter().map(|i| pasta.join(i)).collect(),
+            durou: 0,
         };
         let itens = vec![
             usuario(&[&pasta.join("anexo.png").display().to_string()]),

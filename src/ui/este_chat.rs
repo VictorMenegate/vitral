@@ -332,28 +332,33 @@ mod testes {
     }
 }
 
+/// Um passo da lista do agente: o símbolo do estado e o texto (o que ele faz agora, no gerúndio
+/// dele e em destaque). É a linha da seção Passos e a do popover da pílula dos passos.
+pub(super) fn linha_do_passo(p: &crate::motor::Passo) -> Div {
+    use crate::motor::EstadoDoPasso::*;
+    let (simbolo, cor, texto) = match p.estado {
+        Feito => (Lucide::CircleCheck, Cores::verde(), p.texto.clone()),
+        Fazendo => (Lucide::CircleDot, Cores::destaque_texto(), p.fazendo.clone()),
+        Falta => (Lucide::Circle, Cores::apagado(), p.texto.clone()),
+    };
+    h_flex()
+        .items_start()
+        .gap(esp::E8)
+        .child(div().flex_none().mt(r(2.)).text_color(cor).child(Icon::new(simbolo).size(r(14.))))
+        .child(
+            div()
+                .min_w_0()
+                .corpo_ui()
+                .text_color(if p.estado == Fazendo { Cores::forte() } else if p.estado == Feito { Cores::tenue() } else { Cores::texto() })
+                .child(texto),
+        )
+}
+
 /// A seção Passos: a lista que o agente mantém (o TodoWrite), com o que está fazendo em destaque.
 fn passos(lista: &[crate::motor::Passo]) -> AnyElement {
     use crate::motor::EstadoDoPasso::*;
     let feitos = lista.iter().filter(|p| p.estado == Feito).count();
-    let linhas = lista.iter().map(|p| {
-        let (simbolo, cor, texto) = match p.estado {
-            Feito => (Lucide::CircleCheck, Cores::verde(), p.texto.clone()),
-            Fazendo => (Lucide::CircleDot, Cores::destaque_texto(), p.fazendo.clone()),
-            Falta => (Lucide::Circle, Cores::apagado(), p.texto.clone()),
-        };
-        h_flex()
-            .items_start()
-            .gap(esp::E8)
-            .child(div().flex_none().mt(r(2.)).text_color(cor).child(Icon::new(simbolo).size(r(14.))))
-            .child(
-                div()
-                    .min_w_0()
-                    .corpo_ui()
-                    .text_color(if p.estado == Fazendo { Cores::forte() } else if p.estado == Feito { Cores::tenue() } else { Cores::texto() })
-                    .child(texto),
-            )
-    });
+    let linhas = lista.iter().map(linha_do_passo);
     div()
         .flex()
         .flex_col()

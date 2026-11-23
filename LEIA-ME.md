@@ -102,6 +102,27 @@ componentes do GPUI Kit.
   `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
   fecha a chamada com o `summary` (`SubFim`). O `ferramentas/claude-falso/claude` encena isso no
   `[ferramenta Agent …]`; o `Task` segue no jeito antigo, que termina no próprio resultado.
+  **Quem são e o que fazem** (`src/motor/fundo.rs`, medido com a CLI de verdade, 2.1.328, Haiku,
+  em 23/11/2026, com um agente e com dois): o `background_tasks_changed` traz a lista inteira a
+  cada mudança, com o `task_id` (o id do agente) e a `description` de cada `local_agent`
+  (`Evento::AgentesNoFundo`, tirado pela `claude::agentes_do_fundo`, ao lado do `interpretar`), e
+  o `task_started` diz qual chamada abriu cada um (`Evento::AgenteAbriu`). O arquivo dele é
+  `<sessão>/subagents/agent-<id>.jsonl`, com o `agent-<id>.meta.json` ao lado (`description`,
+  `toolUseId`, `model` e, no fim, `finished`). O arquivo nasce com uns 230 KB (os anexos e o
+  pedido à API) e a última linha só é a chamada do agente enquanto ela roda: entre uma chamada e
+  outra, o fim são o resultado, anexos e as linhas `api-request-blob` e `api-request`. A última
+  ação mora no cartão da chamada (`Subagente::atividade`): chega pelo stream (as chamadas do
+  agente continuam vindo depois do `result`, presas à chamada que o abriu) e pelo fim do arquivo,
+  que traz o que ele diz entre uma chamada e outra. O fim é lido no máximo uma vez por segundo
+  (`Motor::conferir_segundo_plano`, no compasso de um segundo da Janela), só se o arquivo cresceu,
+  só o pedaço novo e nunca mais que 256 KB (`fundo::ler_o_fim`, com o ponto da leitura anterior
+  guardado), em segundo plano; o que ele acha só entra se for mais novo que o que o stream já
+  entregou (`fundo::anotar_acao`), e quem redesenha são só os painéis daquele chat
+  (`TextoChegando`), não a janela. Com mais de um agente, o Claude Code abre um turno a cada
+  agente que termina (outro `init`, uma frase) e **segura o `result` desses turnos até o último**,
+  soltando todos juntos: o primeiro fecha o turno no Vitral, com o que o agente disse por último,
+  e os seguintes só entram no livro dos gastos (antes, cada um fechava o turno de novo: um
+  "Terminou" por agente).
 - **Corrigir qualquer mensagem.** `motor::editaveis_desde` diz desde onde as mensagens do usuário
   dão para corrigir (depois da última entrega de outro chat, cartão ou item desconhecido; a entrega
   do próprio Vitral não tranca) e `motor::editavel` confere uma; `retirar_mensagem` tira a mensagem
@@ -156,9 +177,10 @@ componentes do GPUI Kit.
   pelo envio normal, sem tocar na caixa (o rascunho fica); com o turno rodando, ele entra na fila.
   Para compactar com foco, escreve-se "/compact <instrução>" na caixa, como a dica lembra
   (`compactar_conversa`, rodada de uso, item 6.3). Turno rodando, parada, falha, pasta sumida, fila de
-  mensagens e o "Você parou" (item 6.2) vêm antes dela; depois dela, por último, `Situacao::Mudou`: quando o último turno
-  mudou arquivos e nada roda, a faixa diz "3 arquivos mudados · +40 −12" com **Ver mudanças**,
-  que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
+  mensagens e o "Você parou" (item 6.2) vêm antes dela. O que o último turno mudou ("3 arquivos
+  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.9.6 a pílula das mudanças, na
+  linha de pílulas (ver **Linha de pílulas**): o clique abre a direita em "Este chat", na seção
+  Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
   custo, modelo, conta e Compactar) já existia, no anel da caixa.
 - **Marco de compactação.** Enquanto o Claude Code resume a conversa (o `/compact`, ou sozinho com
@@ -196,9 +218,102 @@ componentes do GPUI Kit.
   falhou, interrompido), o tempo, os tokens e as ferramentas usadas (o `Subagente` de
   `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números), os passos
   numerados (sem os vazios) e o resultado. Abre no que está trabalhando, ou no último. Era uma
-  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre pela pílula "N agentes" da linha de estado
-  da caixa (só com agente vivo) e por **Agentes desta conversa**, no "…" da caixa. Um agente sem
-  resultado só conta como vivo com o turno rodando e sem aviso depois dele na conversa.
+  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre por **Agentes desta conversa**, no "…" da
+  caixa, e pela paleta (a pílula "N agentes" da linha de estado, que o abria, virou a pílula dos
+  subagentes da linha de pílulas, que lista os do turno). Um agente sem resultado só conta como
+  vivo com o turno rodando e sem aviso depois dele na conversa.
+- **Linha de pílulas** (`src/ui/pilulas.rs`). Uma linha só, logo acima da caixa de cada painel,
+  com o que acontece naquele chat. Só existe quando há pílula, flutua sobre o pé da conversa
+  (`Janela::conversa` a põe por cima da área das mensagens, fora do fluxo) e não empurra a caixa;
+  enquanto ela existe, a lista de mensagens guarda 32 px a mais no fim (`ALTURA_DA_LINHA`), para a
+  última linha (a chamada que roda) não ficar atrás dela, e a pílula de voltar ao fim sobe o
+  mesmo tanto. As pílulas, nesta ordem (`pilulas::montar`, pura e com teste): **os comandos no
+  fundo** (o `run_in_background` do Bash e o comando que passou do tempo; "2 comandos no fundo",
+  e o clique lista cada um com **Parar**, o `stop_task` dele, e **Parar todos**; antes o clique
+  parava todos de uma vez; o comando que você para não fica marcado como falho, e o aviso de fim
+  de um comando de fundo não põe mais a conta de subagente na linha dele, o "0 ferramentas ·
+  falhou"); **os subagentes por estado**, cada estado com a marca dele (o anel de quem trabalha, o
+  ponto de quem espera: "2 trabalhando", "1 esperando você", e "1 falhou" enquanto o turno roda;
+  o clique lista os subagentes deste turno, com o que cada um faz, e o clique num deles abre a
+  conversa dele numa aba; os agentes em segundo plano continuam contando depois da resposta do
+  turno, e a lista diz a última ação de quem trabalha com as palavras da linha dele na conversa,
+  `meta_na_lista`); **os passos do
+  agente** ("3/5", o TodoWrite ou as ferramentas de tarefa; a lista inteira na dica e, no clique,
+  com o que ele faz agora em destaque); e **as mudanças do turno** ("2 arquivos +40 −12", pelas chamadas de edição desde a
+  sua última mensagem; o clique abre a lista à direita, em "Este chat"). As três primeiras só
+  com o turno rodando; a das mudanças fica depois dele, até a próxima mensagem. No painel
+  estreito ficam o ícone e o número. "Esperando você" é o subagente que fez um pedido de
+  permissão ainda sem resposta: cada chamada de subagente chega com o id dela
+  (`Evento::SubFerramenta.id`), o motor guarda de qual subagente ela é
+  (`Motor.chamadas_dos_subs`) e o pedido de permissão traz o id da chamada que o fez
+  (`Motor::subagentes_esperando`). De onde cada uma saiu: os comandos no fundo, o "3/7" dos
+  passos e a pílula "N agentes" estavam na linha de estado da caixa (só com o turno rodando),
+  e o "N arquivos mudados" numa faixa acima da caixa (que empurrava a conversa ao aparecer).
+  Referência: as "tracks" do Paseo (`composer/tracks.tsx`), 23/11/2026.
+- **Passos do agente** (`src/motor/passos.rs`). A lista de passos de cada chat (`Motor.passos`,
+  só na memória) vem de duas famílias de ferramenta do Claude Code. O `TodoWrite` manda a lista
+  inteira a cada chamada. O `TaskCreate`, o `TaskUpdate` e o `TaskList` mexem num passo por vez,
+  pelo id, e só mudam a lista quando o resultado chega (o id do passo criado vem nele: "Task #4
+  created successfully"; o "Task not found" não vem marcado como erro; o `TaskList` responde
+  "#4 [in_progress] passo x" por linha, e refaz a lista inteira). Medido no Claude Code 2.1.328
+  em 23/11/2026, com Haiku, Sonnet e Opus: no `-p`, sem nada no ambiente, ele não oferece
+  nenhuma das duas famílias (a lista de ferramentas do `init` só tem `Task` e `TaskStop`); com
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` oferece `TaskCreate`, `TaskGet`, `TaskList` e `TaskUpdate`,
+  e não o `TodoWrite`, que só aparece nas sessões de versões de antes (2.1.219 a 2.1.228, pela
+  extensão do VS Code). O Vitral não põe essa variável: com o Claude Code de hoje, a pílula e a
+  seção Passos só aparecem em quem a ligar por conta própria. A lista do Claude Code é da
+  sessão e continua de um turno para o outro (ela mora em `tasks/<sessão>/<id>.json`, na pasta
+  de configuração); a do Vitral se perde ao fechar, e volta no próximo `TaskList` (o passo de
+  antes que o agente mexer sem ela aparece como "Concluiu o passo 4"). Um `TaskCreate` que
+  devolve o id 1 é uma lista nova: a de antes sai. **Na trilha, cada chamada diz o que mudou**
+  (`Passos::chamada`, guardado no resumo da chamada: "TodoWrite · Começou: Rodar os testes"):
+  "Criou 5 passos", "Começou: …", "Concluiu: …", "Tirou: …", com vários juntos em número
+  ("Concluiu 2 passos") e mais de uma mudança na mesma chamada separadas por ponto ("Concluiu:
+  Ler o código · Começou: Corrigir"). No `TodoWrite` os passos são casados pelo texto com os da
+  lista de antes. A chamada que não mudou nada disso, as de antes desta versão e o `TaskList`
+  ficam com "Atualizou os passos" e "Conferiu os passos", sem detalhe. O histórico trazido do
+  Claude Code passa pela mesma conta (`importar.rs`). No cabeçalho de um grupo de chamadas
+  elas viram "atualizou os passos", em vez de contar como "usou N ferramentas".
+- **Conversa do subagente em aba** (`src/motor/subconversa.rs`, `src/importar/subagente.rs`). O
+  clique no cartão de um subagente (a linha da chamada Task ou Agent) ou nele na pílula dos
+  subagentes abre numa aba do painel a conversa INTEIRA dele, só para ler: o pedido que ele
+  recebeu, o raciocínio, cada chamada com o resultado e o que ele respondeu, com o desenho da
+  conversa normal. O cartão continua na conversa de quem o abriu, como o marco de quando ele
+  saiu, e o chevron dele (agora um botão à parte, como na edição) mostra os passos e o relatório
+  ali mesmo. **De onde vem.** Do arquivo que o Claude Code grava para cada subagente:
+  `projects/<pasta>/<sessão>/subagents/agent-<id>.jsonl`, com o `agent-<id>.meta.json` dizendo
+  qual chamada o abriu (`toolUseId`). Medido na 2.1.328 com a CLI de verdade (Haiku, 23/11/2026):
+  o stream-json entrega do subagente só as chamadas e os resultados delas (o texto e o raciocínio
+  só com `--forward-subagent-text`) e mais nada depois que o processo sai; o arquivo tem tudo, é
+  gravado aos poucos enquanto ele trabalha e continua lá depois. Por isso a conversa vem sempre
+  do arquivo, ao vivo e depois de reabrir o Vitral, sem a opção nova do Claude Code:
+  `importar::subagente::transcript` acha o arquivo pela chamada (primeiro na sessão do chat,
+  depois nas outras sessões da mesma pasta de projeto, para o chat que continuou noutra sessão)
+  e `importar::subagente::conversa` o lê com o leitor do histórico trazido (`itens_do_fio`, que
+  agora serve aos dois fios). O pedido entra como mensagem entregue pelo chat que o abriu (dá
+  para voltar a ele por ali). No modo automático (2.1.271 em diante) o subagente entrega o
+  relatório pela chamada `SubagentHandback` e o resultado da chamada Task só diz "This agent's
+  report was delivered…": na conversa dele a entrega vira a resposta, e o cartão fica com o
+  relatório de verdade (`Evento::SubRelatorio`, `subconversa::relatorio_do_cartao`; antes o
+  cartão mostrava o aviso em inglês). A conta de ferramentas do cartão também foi acertada: o
+  `task_progress` chega antes da chamada e já a conta, e somar mais uma na chamada dava uma a
+  mais (agora ela sai das chamadas vistas, pelo id). **Como mora no motor.** A conversa aberta é um `Chat` de
+  mentira (`Subconversa`, id `sub:<chat>:<chamada>`) guardado fora do estado: não é gravado, não
+  entra na lista e sai da memória quando a aba fecha (`Janela::soltar_subconversas`).
+  `Motor::chat` acha os dois (é o que a interface desenha); dentro do motor tudo usa
+  `chat_gravado`, que só acha os de verdade, então nada age sobre ela (enviar, renomear,
+  arquivar e gravar não a alcançam). A execução dela é a do subagente (`Motor::execucao`: a
+  chamada em curso gira, a aba fica azul). **Ao vivo.** A leitura vai em segundo plano e é
+  refeita quando chega um evento daquele subagente (`subconversa_andou`) e, uma vez por segundo
+  com algum chat trabalhando, quando o arquivo cresceu (`conferir_subconversas`: é o que traz o
+  texto entre uma chamada e outra); quem redesenha são só os painéis que a mostram
+  (`TextoChegando`). **Sem o arquivo** (o Claude Code apaga as sessões velhas; a bancada sem
+  `CLAUDE_CONFIG_DIR`), a aba mostra o que o cartão guardou, dizendo que é só isso
+  (`conversa_do_cartao`). No pé, no lugar da caixa, uma linha diz "Conversa do subagente, só
+  leitura" e em que pé ele está (o que faz agora, ou quanto levou); se ele espera uma permissão sua, o pedido aparece ali também. A aba não é
+  lembrada ao fechar o Vitral (o painel volta na conversa de quem o abriu), e o subagente de um
+  subagente não abre: o Claude Code não grava a conversa dele à parte. Referência: o painel de
+  subagente do Paseo (`provider-subagent-panel.tsx`, `sidechain-tracker.ts`), 23/11/2026.
 - **Mensagem no meio do turno.** O Enviar com o turno rodando manda a mensagem para dentro dele
   (`Motor::dirigir_turno`). Quando o turno termina sem ter absorvido a mensagem, o Claude Code abre
   outro turno com ela no mesmo processo: nesse caso a entrada do processo fica aberta, para o
@@ -267,13 +382,79 @@ componentes do GPUI Kit.
   sozinho); desligar um servidor e entrar num conector continuam no Claude Code. Uma conta extra
   guarda a lista de servidores de quando foi criada (`contas::preparar_pasta` copia o `mcpServers`
   do `~/.claude.json`): servidor acrescentado depois não aparece nela.
-- **Custo de um redesenho.** A janela é uma vista só: qualquer batida de animação redesenha tudo,
-  uns 20 a 30 ms de processador no release (medido em 13/11/2026 com `VITRAL_QUADROS=1` e o tempo
-  da thread principal em `/proc`). Por isso o laço do metal e do anel girando bate junto com o
-  compasso dos spinners, 12 vezes por segundo (`movimento::laco_a`), e não numa grade própria: as
-  duas somavam até 28 redesenhos por segundo com um chat trabalhando. O tamanho da conversa pesa
-  pouco nisso (três painéis longos custam 10% a mais que dois curtos); o que baixaria de verdade é
-  cada painel virar uma vista própria com cache.
+- **Custo de um redesenho.** A Janela é a raiz e é remontada em todo quadro; o que pesa fica em
+  vistas com cache, que só se refazem quando elas mesmas são avisadas: as mensagens de cada painel
+  e a lista (`src/ui/vista_mensagens.rs`) e o que anima sozinho, o metal e os anéis
+  (`componentes/vista_viva.rs`). O laço do metal e do anel girando bate junto com o compasso dos
+  spinners, 30 vezes por segundo (`movimento::laco_a`), e não numa grade própria. Estas coisas
+  seguram o custo, medidas em 23/11/2026 no binário otimizado, na bancada, com três conversas de
+  450 itens lado a lado a 150% (`VITRAL_QUADROS=1` e o tempo da thread principal em `/proc`; a
+  máquina estava ocupada, então vale a diferença). Por quadro, de antes para depois: rolar um
+  painel, de 35 a 58 ms para 28 a 30; rolar com o texto chegando, de 76 a 90 para 36 a 59; o
+  texto chegando, de 41 a 55 para 36; cada tecla na caixa de mensagem, de uns 69 ms para uns 14;
+  parado, 0% nos dois. Com um chat só rodando ferramenta (o anel e o metal batendo, nada
+  chegando) nada mudou: uns 21 ms por quadro, que é a casca.
+  - **Só o que está à vista é montado** (`src/ui/mensagens/a_vista.rs`). A conversa continua uma
+    coluna só dentro de uma área que rola (a âncora de leitura, a mensagem presa no alto, a busca
+    e o sumário contam em pixels), mas o bloco longe da vista entra como um espaço da altura que
+    mediu da última vez, sem montar o markdown, o layout nem a pintura dele. A conversa é
+    planejada primeiro (`Planejado`: o que cada bloco é e como montá-lo), depois
+    `a_vista::blocos_a_montar` escolhe os que estão na vista e na sobra em volta dela (meia vista
+    para cada lado, 300 px no mínimo), e só esses são montados. A altura guardada vale para o
+    mesmo bloco mostrando a mesma coisa (`ChaveDoBloco`: o tipo, os itens e uma marca do conteúdo,
+    que muda quando o resultado de uma chamada chega ou a mensagem é corrigida), na mesma largura
+    e no mesmo zoom (`Alturas`); sem altura guardada o bloco é montado, e a conta é sempre para o
+    lado seguro. Ficam sempre montados: tudo, com a busca da conversa aberta, com texto
+    selecionado na janela ou no desenho que abre o chat; o cartão de erro e o texto que está
+    chegando. O texto de mais de 3 KB tem regra própria (`texto_que_chega_depois`): o kit o lê em
+    segundo plano, e o primeiro desenho sai sem ele; a altura dele só vale depois de ficar igual
+    por 400 ms (`Alturas::assentada`) e, quando ele volta à vista depois de ter sido espaço, a
+    caixa fica na altura guardada até o texto relido chegar (`Alturas::segurar`). Quando um bloco montado
+    mede outra altura que a usada na conta (recolheu uma saída, o texto chegou), a conversa pede
+    mais um desenho: os de depois dele saíram do lugar, e um espaço pode ter entrado na vista. O `list()` do GPUI não serviu: ele rola por item, e a âncora, a
+    mensagem presa, o "abrir no começo da resposta" e a rolagem até o achado da busca contam em
+    pixels a partir do alto da conversa. As páginas de 60 itens continuam (`ITENS_NA_TELA`):
+    um bloco só vira espaço depois de medido uma vez.
+  - **O texto chegando redesenha só o painel dele.** O motor junta os pedaços que chegam em 60 ms
+    (`motor::JANELA_DO_TEXTO`) e, quando o lote só fez o texto crescer, emite `TextoChegando` em
+    vez do `notify` (`motor::aviso_do_lote`): a Janela avisa só as mensagens dos painéis desse
+    chat (`Janela::texto_chegando`), e a lista e os outros painéis saem do cache. O primeiro
+    pedaço de uma resposta ainda redesenha tudo (a faixa do turno passa a "escrevendo"). O
+    markdown do texto que cresce não é relido inteiro: o kit recebe só o que foi acrescentado
+    (`TextViewState::set_text` vira `push_str` quando o texto novo começa pelo antigo).
+  - **A casca é uma vista própria, sem cache** (`vista_mensagens::VistaDaCasca`): tudo o que a
+    Janela desenha fora das vistas em cache é montado por ela (`Janela::montar_casca`). O GPUI
+    avisa a vista em que o elemento está a cada hover, dica, quadro de transição
+    (`movimento::pedir_quadro`) e estado guardado que muda (`use_keyed_state`); quando essa vista
+    era a Janela, cada aviso desses passava pelo `Janela::avisar_vistas` e refazia as mensagens
+    dos três painéis e a lista (de 13 a 25 ms por painel). Agora só o que o código do Vitral muda
+    avisa a Janela (`cx.notify()` num `Context<Janela>`), e aí as vistas se refazem todas, porque
+    o estado delas mora nela. Três avisos ficaram mais estreitos: a tecla na caixa de mensagem
+    redesenha só a casca (`Janela::redesenhar_a_casca`: o texto da caixa não aparece nas
+    mensagens nem na lista), o redesenho que o prepaint da conversa pede (a mensagem presa que
+    troca a cada passo da roda) avisa só a vista do painel, e a rolagem só avisa a Janela pelo
+    sumário quando o sumário está na tela (com a direita fechada, cada passo da roda no painel
+    ativo refazia a janela inteira). **Quem escreve um listener que muda o estado da Janela
+    precisa do `cx.notify()`**: antes o hover do clique refazia tudo de carona.
+  - **O relógio da chamada que roda anda sozinho, uma vez por segundo.** O compasso dos spinners
+    redesenha a casca e os anéis, não as mensagens, e o relógio de 1 s da Janela se cala enquanto
+    o compasso bate: desde que as mensagens viraram vista em cache, o "00:42" da linha de uma
+    chamada (e o do subagente) parava no valor do último desenho. Agora, com o compasso batendo,
+    esse relógio avisa só as mensagens dos painéis cujo chat tem chamada sem resultado
+    (`Janela::andar_os_relogios_das_chamadas`): um desenho por segundo do painel que trabalha, e
+    a Janela, a lista e os outros painéis ficam no cache.
+  - **A linha de pílulas é montada com a casca**, em todo quadro de cada painel: por isso
+    `pilulas::montar` só conta (os subagentes sem resultado, as edições do turno), sem copiar
+    nada da conversa. Tudo o que muda uma pílula chega por um evento do motor que não é texto,
+    e esses avisam a Janela; a conversa de um subagente que cresce avisa só os painéis que a
+    mostram (`TextoChegando`, emitido por `Motor::subconversa_lida`).
+  - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
+    layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
+    com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
+    vistas com cache, irmãs da das mensagens (aninhadas não servem: a vista que se refaz refaz as
+    de dentro), com os spinners deles em vistas vivas. E um aviso da Janela (`cx.notify()`)
+    ainda refaz as mensagens de todos os painéis: saber qual painel mudou pede uma assinatura do
+    que cada um desenha.
 - **Boas-vindas.** Na primeira abertura (sem pasta de trabalho e sem chat nenhum; `VITRAL_BOAS_VINDAS=1`
   força), `src/ui/boas_vindas.rs` mostra quatro passos: a apresentação, a pasta de trabalho (as
   pastas em que o Claude Code já tem conversas vêm como sugestão) e o básico (permissões, quem
@@ -482,7 +663,23 @@ componentes do GPUI Kit.
   Nessa espera a entrada do processo fica aberta: a mensagem que você manda entra no Claude Code na
   hora (`Motor::dirigir_turno`, `agentes_no_fundo_com_entrada`), em vez de esperar na fila até os
   agentes acabarem, e a entrada fecha quando o último termina (`Evento::Fundo(0)`) sem mensagem
-  pendente (dono, 23/11/2026: uma mensagem ficou 53 min na fila). Se o processo sai com eles ainda rodando, com o teto da espera
+  pendente (dono, 23/11/2026: uma mensagem ficou 53 min na fila).
+  Esse aviso não fecha o que veio antes dele (`Item::aviso_que_fecha`): os outros avisos marcam o
+  turno que parou, e as chamadas sem resultado de antes deles contam como interrompidas; com este,
+  o cartão dos agentes aparecia como "interrompida", a pílula zerava e a aba do subagente parava de
+  acompanhar justo quando eles seguiam trabalhando. **Uma linha por agente**
+  (`src/ui/mensagens/no_fundo.rs`): enquanto a resposta já veio e eles seguem, o fim da conversa
+  tem uma linha para cada um, no lugar da frase "Agentes trabalhando em segundo plano…": o anel, a
+  descrição, a última ação no gerúndio ("Rodando cargo test…", "Lendo views.py…"; "Começando…"
+  antes da primeira; `acao_ao_vivo`, a mesma da lista da pílula e da linha viva do cartão) e o
+  relógio desde o lançamento, em mono. O clique abre a conversa dele numa aba, e a dica diz
+  também o modelo. As linhas ficam enquanto o Claude comenta o agente que acabou de terminar (o
+  texto chega acima delas). **O fim de cada um** é um item da conversa (`Item::FimDoAgente`, posto
+  pelo `fundo::anotar_fim` no `SubFim` da chamada que voltou com "Async agent launched"): a linha
+  "Terminou: Mapear o carrinho · 25 min", ou "Falhou: …" com a palavra em vermelho, no ponto em
+  que ele termina; o clique abre o relatório, que mora no cartão da chamada. No turno recolhido
+  essas linhas ficam à vista, com a linha "Trabalhou…". Um Vitral de antes disto guarda o item
+  como veio. Se o processo sai com eles ainda rodando, com o teto da espera
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
   terminaram. Parar continua valendo e, nessa espera, derruba o processo com os agentes. Um turno
   que termina com erro ou parado enquanto há agentes em segundo plano também derruba o processo, em
@@ -760,9 +957,12 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
 - **Faixa do turno.** O turno em andamento mora na linha de estado da caixa, dentro da moldura
   (`linha_de_estado`, em `src/ui/mensagens.rs`): à esquerda, o anel girando, o que o chat está
   fazendo ("Lendo motor.rs…", "Rodando: cargo test…", com o brilho que corre), o relógio em mm:ss,
-  "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar".
-  Com a resposta já dada e os agentes de um fluxo ainda rodando, ela diz "Agentes trabalhando em
-  segundo plano…". **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
+  "ação N" e, quando há, o "dirigido" e a pílula da fila; à direita, a tecla **Esc** e "para parar"
+  (os comandos no fundo, os passos e os agentes saíram dela para a **Linha de pílulas**).
+  Com a resposta já dada e os agentes ainda rodando, ela diz o agente e o que ele faz ("Mapear o
+  carrinho: Rodando cargo test…") ou, com mais de um, "3 agentes trabalhando em segundo plano…"
+  (a linha da caixa só diz o que o chat faz com a conversa rolada para cima; no fim, quem diz são
+  as linhas dos agentes). **Memória do chat**: no Linux, a dica do relógio diz quanto o turno ocupa
   agora, "Memória deste chat: 3,1 GB" (o agente e tudo o que ele abriu: comandos, testes,
   servidores). O número é o `memory.current` do cgroup do escopo do systemd em que o chat roda
   (`Escopo::memoria`, em `src/processos/unix.rs`, achado pelo `/proc/<pid>/cgroup` do processo e
@@ -896,7 +1096,21 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   "Rodou") e o detalhe; a falha tem fundo vermelho claro e "falhou" no fim. O detalhe que é código
   (comando, arquivo, padrão do Grep e do Glob, endereço do WebFetch, ferramenta MCP) vai em mono
   num chip; o que é prosa (a tarefa do Agent, a busca na web, a lista de tarefas) vai em Inter, sem
-  chip. Um fluxo de agentes (a
+  chip. **Quanto a chamada levou.** A que ainda roda mostra o relógio na ponta da linha depois
+  de 3 s ("Rodando cargo test 00:42"); terminada, a que levou 10 s ou mais
+  (`mensagens::CHAMADA_DEMORADA`) fica com a duração no mesmo lugar ("Rodou cargo test · 2 min
+  14 s", `demora_da_chamada`; em Inter e com o ponto, para não parecer argumento do comando). O número é o `durou` de `Item::Ferramenta`, em segundos, anotado
+  quando o resultado chega (`motor::anotar_resultado` e `duracao_da_chamada`): do pedido ao
+  resultado de cada chamada, pelo id dela, então as que rodam em paralelo têm cada uma o seu (o
+  Claude Code manda o resultado de cada uma quando ela termina, fora de ordem; medido na
+  2.1.328). A que esperou uma permissão conta de quando você permitiu (`Motor.liberadas`, pelo
+  `tool_use_id` do pedido). A que foi para o segundo plano, pedida assim ou porque passou do
+  tempo dela, não ganha duração: o resultado traz o `tool_use_result.backgroundTaskId`
+  (`ResultadoFerramenta.no_fundo`) e o comando segue rodando. O subagente continua com a conta
+  dele (tokens, ferramentas e relógio). As chamadas de antes disto não têm o número. O relógio
+  da que roda mora nas mensagens, que são uma vista em cache: uma vez por segundo a Janela avisa
+  só as mensagens dos painéis cujo chat tem chamada sem resultado
+  (`Janela::andar_os_relogios_das_chamadas`, `motor::tem_chamada_rodando`). Um fluxo de agentes (a
   ferramenta `Workflow`) aparece como **Fluxo de agentes**. Grupos de duas ou mais mostram o
   resumo ("Rodou 2 comandos · editou views.py · leu 3 arquivos", com o nome dos arquivos editados
   até dois e a contagem acima disso; fora do painel largo, a forma curta, "2 comandos · editou
@@ -947,16 +1161,53 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   intermediário; o texto intermediário que termina em pergunta, o aviso de erro e o cartão de
   falha ficam à vista, e as imagens das chamadas escondidas continuam embaixo da linha, na pilha.
   A duração é a hora do último item menos a da mensagem (sem número nas conversas de antes da
-  0.4.0). Na dupla, cada agente tem o seu recolhido. O Ctrl+F abre a linha ao achar algo lá
+  0.4.0). **Checagens do turno** (`src/ui/checagens.rs`): ao lado dos comandos, a linha diz como
+  terminou cada checagem que o turno rodou, "tsc passou · vitest falhou 2×, passou · cargo test
+  passou": vale a última execução de cada uma, e as falhas de antes viram "falhou N×" (o
+  "falhou" no vermelho da chamada que falhou; o resto no tom da linha; a lista inteira também
+  na dica, porque no painel estreito a parte que não cabe some inteira). Contam o `cargo test`,
+  `check`, `clippy`, `build` e `nextest`, o `tsc`, o `vitest`, o `jest`, o `pytest`, o `go
+  test`, `build` e `vet`, e os scripts `test`, `build`, `typecheck` e `lint` do npm, pnpm, yarn
+  e bun (com `test:unit` e parecidos), atrás de variáveis, `cd x &&`, `timeout`, `npx` e
+  parentes. O resultado é o `erro` da chamada de Bash quando o código de saída é o da checagem
+  (nada depois dela além de `&&`). Com um `|` depois (`cargo test 2>&1 | tail -40`), um `;` ou
+  um `||`, o código de saída é de outro comando: vale o que a saída diz ("test result:" do
+  cargo, "error TS" do tsc, "Test Files" do vitest, "Tests:" do jest, "N passed in" do pytest,
+  "ok"/"FAIL" do go), e sem sinal nenhum a checagem fica de fora, em vez de aparecer como
+  "passou" sem ter passado (os scripts do npm atrás de um pipe nunca aparecem). Numa cadeia de
+  `&&` que falhou, a última checagem que deixou sinal na saída rodou, então as de antes
+  passaram e as de depois de uma falha não aparecem; sem sinal de nenhuma, todas ficam como
+  falha. Um wrapper próprio (`./checar.sh`) não é reconhecido. Na dupla, cada agente tem o seu
+  recolhido. O Ctrl+F abre a linha ao achar algo lá
   dentro. O histórico importado do Claude Code não recolhe. A dica da linha diz os tokens e o
   custo do turno, "182 mil tokens · US$ 0,84", tirados do livro dos gastos (`Livro::do_turno`, em
   `src/motor/gasto.rs`, pela mensagem que abriu o turno: o índice e a hora dela), e abre os
   tokens em três números: a entrada nova (a sem desconto mais a gravada no cache), o que foi lido
-  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). O turno sem linha no livro (os de antes disto, e os
+  do cache e a saída. Só na dica: a linha continua curta (dono, 18/11/2026). Embaixo, na mesma
+  dica (`onde_uso::dica_do_turno`, com o `Livro::estatistica`): quanto da entrada veio do cache
+  ("96% da entrada veio do cache": o lido do cache sobre a entrada nova, a gravada e a lida), o
+  modelo com as idas ao modelo ("Opus 5.5 · 12 passos"), os tempos ("6 min 12 s no total · 4 min
+  3 s de modelo · 1,8 s até a primeira palavra") e quanto custou subir o Claude Code ("1,6 s para
+  abrir o Claude Code"). Cada linha só aparece com o dado dela; ver **Estatística do turno**, em
+  **Contas e uso dos planos**. O turno sem linha no livro (os de antes disto, e os
   de mais de dois meses atrás, que a abertura não lê) fica como era. O clique numa
-  chamada mostra primeiro o que ela pediu, numa caixa em mono: o que um Edit tirou em vermelho e o que
-  pôs em verde, o começo do que um Write gravou e o comando inteiro de um Bash (até 60 linhas de cada
-  lado ficam guardadas na conversa). **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
+  chamada mostra primeiro o que ela pediu, numa caixa em mono: o diff de um Edit, o começo do que um
+  Write gravou e o comando inteiro de um Bash (até 60 linhas de cada lado ficam guardadas na
+  conversa). O diff mostra só o que mudou (`edicao::diff_da_trilha`): as linhas que saíram em
+  vermelho e as que entraram em verde, com 3 linhas iguais em volta de cada mudança, "… 9 linhas
+  iguais" no que ficou de fora entre duas mudanças, e a palavra trocada com o fundo mais forte
+  dentro da linha. Antes o lado antigo vinha inteiro em vermelho e o novo inteiro em verde: uma
+  palavra trocada em 10 linhas eram 20 linhas coloridas. As linhas são casadas pela subsequência
+  comum que já punha a edição sobre o arquivo (`edicao::casar`, com o mesmo teto de 250 mil
+  comparações: acima dele ficam o começo e o fim iguais, e o meio sai e entra). A palavra é
+  marcada quando saíram e entraram o mesmo número de linhas seguidas (a primeira com a primeira),
+  comparando palavras, brancos e sinais; linhas com menos da metade das palavras em comum, ou
+  que somam mais de 1024 bytes, ficam sem marca, porque a linha inteira já diz que mudou. O
+  Copiar do diff leva o que a tela mostra. O pedido de permissão de um Edit ou MultiEdit usa o
+  mesmo diff, com 2 linhas de contexto (`diff_da_troca`). Numa troca com mais de 60 linhas de
+  um lado, o começo igual dos dois lados não é guardado (ficam 3 linhas antes da primeira
+  diferença, `claude::sem_o_comeco_igual`): sem isso a mudança da linha 150 ficava depois do
+  corte e o diff abria sem mudança nenhuma. **Ver a edição** (`src/ui/edicao.rs`): numa edição que deu
   certo (Edit, MultiEdit, Write, NotebookEdit; o `fileChange` do Codex), o clique na linha abre o
   arquivo no painel da direita já na edição, e o chevron do fim, sozinho, mostra o diff ali
   mesmo. O Codex entrega um arquivo por linha, cada um com o diff dele (o `changes[].diff` do
@@ -1006,6 +1257,8 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
 - **Rolagem.** Barra visível por painel quando o conteúdo transborda, com identidade própria e
   desenhada sobre a área fixa, fora do conteúdo rolado. Os itens anteriores aparecem em páginas
   de 60 ao chegar perto do topo; a compensação da altura acrescentada mantém a leitura no lugar.
+  Dos itens que já entraram, só os blocos à vista são montados (ver **Custo de um redesenho**):
+  rolar uma conversa em que já se subiu muito custa o mesmo que rolar uma recém-aberta.
   O histórico importado amplia a janela de leitura do arquivo quando necessário. A suavização
   antiga foi retirada em 16/11/2026: ela restaurava o deslocamento antes de detectar a subida,
   mantendo o painel preso ao fim. No fim, a conversa continua colada no fim também
@@ -1028,7 +1281,15 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   aberto. Se o Corrigir tirou o item, a conversa abre no fim.
 - Mensagens, pedidos e caixa ficam numa coluna de leitura centrada (até 860 px, com 16 de margem).
   Em janela baixa, o plano e os pedidos encolhem e rolam, e a caixa cresce menos. Blocos de código
-  têm cor de sintaxe.
+  têm cor de sintaxe. **Copiar tabela:** cada tabela de uma mensagem tem o Copiar dos blocos de
+  código (`BotaoCopiar`, tênue) no canto direito, logo abaixo dela: o clique copia a tabela em
+  Markdown, e com Shift copia separada por tabulação, que uma planilha cola em colunas
+  (`mensagens::tabela_para_planilha`; a tabulação e a quebra dentro de uma célula viram espaço).
+  O Markdown copiado sai sem os links internos que os caminhos de arquivo ganham na resposta
+  (`links_arquivo::sem_links_do_vitral`: o caminho volta a ser código em linha).
+  É o gancho `table_actions` do kit, que desenha o que recebe numa fileira abaixo da tabela, e
+  não por cima dela como no bloco de código: por isso o botão fica embaixo, e o texto depois de
+  uma tabela desce uns 28 px.
 
 
 ## O que fica à vista
@@ -1407,7 +1668,41 @@ versão: o que veio antes não tem linha no livro.
 
 **Último turno**, no popover do contexto da caixa (`ultimo_turno`, em `src/ui/onde_uso.rs`):
 depois dos tokens do contexto, os três números do último turno anotado da conversa (entrada nova,
-lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece.
+lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não aparece. Embaixo
+deles, a linha **Cache**, o cache esfriando: "quente por mais 3 min" (os minutos arredondam para
+cima; no último minuto, os segundos) ou "frio" (`linha_do_cache` e `estado_do_cache`, que dão a
+frase inteira, "cache quente por mais 3 min"; a palavra "cache" vai na coluna dos rótulos porque
+a frase não cabia na dos valores). A conta é o fim do último turno mais a validade do cache do prompt menos
+agora (`gasto::cache_restante`), feita quando o popover abre: nada de relógio nem de cor no anel.
+A validade vem do `result`: o `usage.cache_creation` separa o que o turno gravou com 5 min
+(`ephemeral_5m_input_tokens`) do que gravou com 1 h (`ephemeral_1h_input_tokens`), e vale a do
+que mais gravou (na assinatura medida em 23/11/2026, tudo com 1 h). O turno que não gravou nada
+usa a última validade que o chat viu, ou a última da mesma conta; sem nenhuma, a linha não
+aparece. Também não aparece com o chat trabalhando (o cache está em uso), no Codex e nos turnos
+anotados antes disto. O que a linha não sabe: se o próximo turno for por outra conta ou outro
+modelo, o cache não serve, quente ou não.
+
+**Estatística do turno** (`Tempos`, em `src/motor/gasto.rs`). A linha do livro guarda também os
+tempos, tirados do mesmo `result` (`Evento::Medida`, de `medida_do_resultado`; nomes conferidos
+na saída de verdade do Claude Code 2.1.328): `total_ms` é o `duration_ms`, `modelo_ms` o
+`duration_api_ms`, `ttft_ms` o `ttft_ms`, `passos` o `num_turns` e `cache_ttl` a validade do
+cache em segundos. O `duration_ms`, o `ttft_ms` e o `num_turns` são de cada `result`; o
+`duration_api_ms` é o total do processo, como o `total_cost_usd` (dois `result` no mesmo
+processo deram 1518 e depois 1943), então o livro soma a diferença para o `result` anterior
+(`Livro::somar_medida`), ou o valor inteiro quando ele baixa (o turno trocou de processo). Num
+turno com vários `result`, o total e os passos somam e a primeira palavra é a do primeiro. O
+`duration_ms` não conta o processo subindo nem a espera pelos agentes em segundo plano entre dois
+`result`: por isso pode ser menor que o "Trabalhou" da linha, que é pela hora dos itens.
+`espera_ms` é medido aqui: do instante em que o `Processo::iniciar` vai abrir o processo até a
+primeira linha da resposta (`claude::primeira_palavra`: o começo de um bloco ou um pedaço dele;
+`Evento::PrimeiraPalavra`, uma vez por processo, que não redesenha nada). A espera menos o
+`ttft_ms` é quanto custou subir o Claude Code (`Tempos::subida_ms`): num turno de verdade, 2967
+ms de espera para 1405 de `ttft_ms`, 1,5 s de subida; no segundo `result` do mesmo processo, 9
+ms. É o número que mede uma futura melhoria de manter o processo aberto. Zero não vai para o
+arquivo, e as linhas de antes disto são lidas sem os tempos. O Codex não informa nenhum deles.
+Limite conhecido: o turno que termina com o processo saindo depois de um fim adiado (os agentes
+acabaram sem outro `result`) não passa pelo `registrar_gasto`; os tokens dele ficam para a linha
+do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 
 ## Organização
 
@@ -1978,8 +2273,9 @@ antigo aberto adia sem gravar nada.
 
 Bancada: o comando é o Vitral com uma pasta opcional, que ele importa (no primeiro uso, uma pasta do
 Vitral antigo) ou abre (depois, o chat dela ou um novo nela). `FUNDO=branco` (ou `FUNDO=<imagem>`)
-troca o papel de parede (com o metal opaco, ele só aparece fora da janela) e `ZOOM=1.5` abre com
-esse zoom. `DADOS_NOVOS=1` abre como primeiro uso
+troca o papel de parede (com o metal opaco, ele só aparece fora da janela), `ZOOM=1.5` abre com
+esse zoom e `TELA=2400x1300` troca o tamanho do monitor de mentira (o padrão é 1600x1000; a 150%,
+três conversas lado a lado só cabem numa tela mais larga). `DADOS_NOVOS=1` abre como primeiro uso
 (afasta para `$B/afastados/<hora>` os dados, a configuração e o `interface.json` da bancada; o `app/`
 que a atualização da bancada instalou fica) e `RAIZ_SINTETICA=1` é a migração de ponta a ponta: gera
 com o `demo_vitral.py` uma pasta do Vitral antigo dentro da bancada (com os `cwd` dentro dela e
@@ -1991,15 +2287,45 @@ importar; sem ele, dentro da bancada, nada é importado (o `~/.claude` de verdad
 bancada, nem pelas contas extras). `CLAUDE_FALSO=1` põe na frente do PATH o
 `ferramentas/claude-falso/claude`, que não chama a API: ele anota a mensagem em `notas-do-chat.md`
 na pasta do chat, antes das ferramentas; leva 10 s com
-`[demora]`; `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
+`[demora]`; com `[escreve 20]` a resposta chega aos pedaços durante esses segundos, uns 40 por
+segundo, como o texto do Claude Code de verdade (é como se mede a conversa com o texto chegando); `CLAUDE_FALSO_SOBE=<segundos>` o faz esperar esse tempo antes de ler a entrada, como o
 Claude Code de verdade enquanto sobe (é como se confere que a janela não trava no envio de um
 print); com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch,
 Task…) finge usar a ferramenta, mandando o `tool_use` (o Edit e o Write com um trecho de mentira,
 para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os segundos de
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
-bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); o `[ferramenta Print
+bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`, que vai para o segundo
+plano) encena um subagente como o de verdade (2.1.328): o `task_started`, o pedido e cada chamada
+com o resultado presos à chamada dele (`parent_tool_use_id` e `agent_id`), o texto e o raciocínio
+só no arquivo (no stream, só com `--forward-subagent-text`) e, com um `CLAUDE_CONFIG_DIR` de
+mentira, o arquivo dele gravado aos poucos em `projects/<pasta>/<sessão>/subagents/` com o
+`.meta.json` (é o que a aba do subagente lê); com "(pede)" na descrição, o comando dele pede
+permissão ao Vitral (o subagente que "espera você"), e com "(entrega)" o relatório vai pela
+chamada `SubagentHandback`, como no modo automático; com "(segue)" na descrição de um `Agent`, ele
+continua depois do `result` como o `run_in_background` de verdade (a lista do
+`background_tasks_changed`, as chamadas dele presas à chamada que o abriu, o arquivo crescendo com
+as linhas do pedido à API entre as chamadas, o `task_notification` no fim e um turno novo aberto
+pelo aviso, com o `result` guardado até o último agente), e com "(falha)" o aviso de fim vem
+`failed` (as duas marcas saem da descrição); com `[juntas]` e só chamadas `Task`, os
+subagentes trabalham ao mesmo tempo; o `[ferramenta Fundo <comando> | 20]` é um comando de fundo
+que não segura mais o turno (vários rodam juntos, e o `stop_task` para só o dele), e o id de cada
+chamada leva uma marca do processo, para não se repetir de um turno para o outro; o `[ferramenta Diz
+<texto>]` é um texto no meio do turno (com ele e uma chamada, o turno pronto recolhe na linha
+"Trabalhou…"); com `[juntas]` as chamadas comuns saem numa resposta só e cada resultado chega
+quando a dela termina, como as chamadas em paralelo de verdade; o `[ferramenta Estourou <comando>
+| 12]` é o Bash que passou do tempo e foi para o segundo plano (`backgroundTaskId` e
+`timedOutAfterMs` no resultado); o `result` leva o `duration_ms`, o `duration_api_ms`, o
+`ttft_ms`, o `num_turns` e o `usage.cache_creation` como o de verdade (cache de 1 h, ou de 5 min
+com `[cache 5m]`), e `[ttft 1.8]` espera esses segundos antes da primeira palavra (com o
+`CLAUDE_FALSO_SOBE`, a dica do turno mostra o "para abrir o Claude Code"); o `[ferramenta Edit
+<arquivo> (palavra)]` troca uma palavra num trecho de 10 linhas (o diff de uma linha só), e com
+"(pede)" a edição pede permissão antes; o `[ferramenta Falha <comando>]` é o Bash que saiu com
+erro (`is_error` e "Exit code 101"), para as checagens da linha "Trabalhou…"; o `[ferramenta
+TodoWrite fap]` manda a lista com um passo por letra (f feito, a em andamento, p pendente), e o
+`TaskCreate <assunto>`, o `TaskUpdate <id> <estado>` e o `TaskList x` são as ferramentas de
+tarefas do Claude Code, com o texto e o `tool_use_result` medidos na 2.1.328 e a lista guardada
+por sessão; com `[tabela]` a resposta leva uma tabela em Markdown; o `[ferramenta Print
 <LxA> <nome>]` encena o print de um MCP de navegador (a chamada
 `mcp__chrome-devtools__take_screenshot` e um `tool_result` com um bloco de texto e um PNG gerado
 na hora em base64; `Prints` devolve duas imagens no mesmo resultado) e o `[ferramenta Read
@@ -2083,7 +2409,14 @@ na pasta) e botões de 200 para os avisos, as Novidades e a pergunta do Reinicia
 
 `VITRAL_QUADROS=1` escreve "quadros/s: N" no stderr a cada segundo em que a janela redesenhou
 (nada em repouso): é a conferência do custo dos efeitos. Quando o metal refez o campo nesse
-segundo, a linha leva o tempo médio de um campo: "quadros/s: 18 · campo: 2,1 ms".
+segundo, a linha leva o tempo médio de um campo: "quadros/s: 18 · campo: 2,1 ms". Depois vêm as
+médias por quadro da montagem da casca, do tempo do começo do desenho até o fim do layout e até
+o fim da pintura (o que sobra do tempo da thread da janela é o GPUI fechando a cena) e, se
+alguma conversa foi refeita, quantas, quantos blocos cada uma montou e quanto levou: "montagem:
+média 2.4 ms, pior 4.1 ms · até o layout: 12.0 ms · até a pintura: 19.0 ms · conversas: 12 ·
+blocos: 14 de 28 · 9.5 ms cada". Com as conversas em cache, o número de conversas por quadro
+diz quem está refazendo o quê: 1 por quadro é só o painel mexido; 3 por quadro com três painéis
+é a Janela avisada.
 `VITRAL_SEM_ANIMACAO=1` abre como se as animações do GNOME estivessem desligadas (o metal fica
 parado na fase inicial, igual em toda máquina: é como se tiram as capturas). A vitrine (`--vitrine`) ganhou as seções **Movimento**
 (um botão para cada efeito) e **Espaçamento** (a escala e as guias da lista, da direita e da
@@ -2279,12 +2612,15 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/motor.rs` | Os chats (criar com `novo_chat(pasta)`, a lista em `chats_da_lista`, renomear, fixar, arquivar, o que espera você), os turnos e a fila, contas, retomadas, Ultracode e agentes em segundo plano, os pedidos de permissão e a passagem de sessão |
 | `src/motor/pedidos_de_hook.rs` | O que os hooks `PreToolUse` do usuário mandaram perguntar: o motivo de cada um, do evento do hook até o pedido de permissão da chamada, e a regra de que esse pedido nunca passa pelo "Não perguntar de novo" |
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
+| `src/motor/passos.rs` | A lista de passos do agente de cada chat (o `TodoWrite` e as ferramentas de tarefa do Claude Code) e a frase do que cada chamada mudou nela, para a trilha |
+| `src/motor/fundo.rs` | Os agentes em segundo plano de cada chat: a lista do `background_tasks_changed`, a chamada que abriu cada um, o fim do arquivo de cada um lido aos poucos (a última ação), e o item que marca o fim deles na conversa |
+| `src/motor/subconversa.rs` | A conversa de um subagente aberta numa aba: o chat de mentira, só de leitura, fora do estado; achar e reler o arquivo dele em segundo plano enquanto ele trabalha; qual subagente espera uma permissão sua e o relatório entregue que vai para o cartão |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
 | `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
 | `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova <pasta>`) e a reexecução da tela de recuperação |
 | `src/imagens_recebidas.rs` | As imagens que uma ferramenta devolve no resultado: o bloco em base64 (o da API do Claude e o do MCP) vira `ImagemRecebida`, que o motor grava em `imagens/<chat>/` com o hash do conteúdo no nome (`guardar`, `guardar_na_chamada`); os tetos por imagem, por chat e de todas (`podar`), e a faxina de quando o Vitral abre (`varrer`) |
-| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio |
+| `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio; `importar/subagente.rs` acha e lê o arquivo que o Claude Code grava para cada subagente (`subagents/agent-<id>.jsonl`) |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
 | `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]` |
@@ -2298,7 +2634,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão, o do plano que ficou na conversa e a linha de estado da caixa, `pergunta.rs` o cartão da pergunta com opções (AskUserQuestion) e as respostas dele, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição, a escolha de linhas e o Ctrl+F dentro do arquivo), `editor_arquivo.rs` (o editor do arquivo aberto: a conta com o disco, a gravação sozinha e o conflito quando o agente grava o mesmo arquivo), `previa_markdown.rs` (o frontmatter e os links da prévia de um .md), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@` e os ignorados da aba Arquivos), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão, o do plano que ficou na conversa e a linha de estado da caixa, `pergunta.rs` o cartão da pergunta com opções (AskUserQuestion) e as respostas dele, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir, e `mensagens/a_vista.rs` a conta de quais blocos da conversa são montados e as alturas guardadas dos outros, e `mensagens/no_fundo.rs` as linhas dos agentes em segundo plano e a do fim de cada um; `vista_mensagens.rs` as mensagens de cada painel e a lista como vistas com cache; `pilulas.rs` a linha de pílulas acima da caixa; `checagens.rs` as checagens (teste, typecheck, lint, build) que o turno rodou, para a linha "Trabalhou…"; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição, a escolha de linhas e o Ctrl+F dentro do arquivo), `editor_arquivo.rs` (o editor do arquivo aberto: a conta com o disco, a gravação sozinha e o conflito quando o agente grava o mesmo arquivo), `previa_markdown.rs` (o frontmatter e os links da prévia de um .md), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@` e os ignorados da aba Arquivos), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |
@@ -2419,7 +2755,9 @@ não redesenha quando o compasso já está batendo.
 
 Motor e redesenho: o `Motor.visiveis` (as conversas que algum painel mostra) é atualizado no render
 da Janela sem notify; `tratar` devolve se o lote pede redesenho, e texto parcial de uma conversa
-fora da vista só redesenha no primeiro pedaço (`juntar_parcial`, com teste). `salvar_estado` e
+fora da vista só redesenha no primeiro pedaço (`juntar_parcial`, com teste). Numa conversa aberta,
+o primeiro pedaço redesenha a janela e os seguintes só os painéis dela (`pedaco_de_texto` e
+`aviso_do_lote`, com teste; ver **Custo de um redesenho**). `salvar_estado` e
 `salvar_config` serializam na hora e entregam os bytes à fila do gravador. A notificação é
 `Motor::notificar`: `notify-send -a Vitral -i vitral -A default=Abrir -p`, numa thread que guarda
 o id por conversa para o `--replace-id` seguinte; o clique manda `Sinal::Abrir`, e o observer da

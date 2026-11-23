@@ -28,12 +28,20 @@ use crate::ui::movimento::{self, Curva};
 pub struct BotaoCopiar {
     id: ElementId,
     valor: SharedString,
+    /// O que o clique com Shift copia no lugar do valor (a tabela separada por tabulação).
+    com_shift: Option<SharedString>,
     dica: SharedString,
 }
 
 impl BotaoCopiar {
     pub fn new(id: impl Into<ElementId>, valor: impl Into<SharedString>) -> Self {
-        BotaoCopiar { id: id.into(), valor: valor.into(), dica: "Copiar".into() }
+        BotaoCopiar { id: id.into(), valor: valor.into(), com_shift: None, dica: "Copiar".into() }
+    }
+
+    /// Outro texto para o clique com Shift.
+    pub fn com_shift(mut self, valor: impl Into<SharedString>) -> Self {
+        self.com_shift = Some(valor.into());
+        self
     }
 
     pub fn dica(mut self, dica: impl Into<SharedString>) -> Self {
@@ -47,10 +55,11 @@ impl RenderOnce for BotaoCopiar {
         let copiado = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
         let feito = *copiado.read(cx);
         let icone: Icon = if feito { Lucide::Check.into() } else { Lucide::Copy.into() };
-        let valor = self.valor;
+        let (valor, com_shift) = (self.valor, self.com_shift);
         botao_icone(self.id, icone.when(feito, |i| i.text_color(Cores::verde())), self.dica, TamanhoBotao::Linha, window, cx).on_click(
-            move |_, _, cx| {
+            move |evento, _, cx| {
                 cx.stop_propagation();
+                let valor = com_shift.as_ref().filter(|_| evento.modifiers().shift).unwrap_or(&valor);
                 cx.write_to_clipboard(ClipboardItem::new_string(valor.to_string()));
                 copiado.update(cx, |c, cx| {
                     *c = true;

@@ -180,7 +180,7 @@ impl Leitor {
                 eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.to_string(), entrada });
             }
             if terminou {
-                eventos.push(Evento::ResultadoFerramenta { id: id.clone(), conteudo: resultado, erro });
+                eventos.push(Evento::ResultadoFerramenta { id: id.clone(), conteudo: resultado, erro, no_fundo: false });
             }
             eventos
         };
@@ -207,7 +207,7 @@ impl Leitor {
                     if self.abertos.insert(id.clone()) {
                         eventos.push(Evento::Ferramenta { id: id.clone(), nome: nome.into(), entrada });
                     }
-                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou });
+                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: resumo_das_mudancas(std::slice::from_ref(mudanca)), erro: falhou, no_fundo: false });
                 }
                 eventos
             }
@@ -530,7 +530,7 @@ mod testes {
                 Evento::Sessao(id) => format!("S:{id}"),
                 Evento::Texto(t) => format!("T:{}", t.trim()),
                 Evento::Ferramenta { id, nome, entrada } => format!("F:{id}:{nome}:{}", entrada["command"].as_str().or(entrada["file_path"].as_str()).unwrap_or_default()),
-                Evento::ResultadoFerramenta { id, conteudo, erro } => format!("R:{id}:{}:{erro}", conteudo.trim()),
+                Evento::ResultadoFerramenta { id, conteudo, erro, .. } => format!("R:{id}:{}:{erro}", conteudo.trim()),
                 Evento::Gasto(tokens) => format!("G:{}:{}", tokens.entrada, tokens.saida),
                 Evento::Fim { erro, texto, .. } => format!("FIM:{erro}:{texto}"),
                 _ => "?".into(),
@@ -634,7 +634,7 @@ mod testes {
         assert!(matches!(comeco.as_slice(), [Evento::Ferramenta { id, nome, entrada }]
             if id == "exec-52a6" && nome == "Read" && entrada["file_path"] == "/p/prints/a.png"));
         let fim = leitor.linha(&json!({"type": "item.completed", "item": item}));
-        assert!(matches!(fim.as_slice(), [Evento::ResultadoFerramenta { id, conteudo, erro: false }] if id == "exec-52a6" && conteudo.is_empty()));
+        assert!(matches!(fim.as_slice(), [Evento::ResultadoFerramenta { id, conteudo, erro: false, .. }] if id == "exec-52a6" && conteudo.is_empty()));
         // A chamada guarda o arquivo: é por ele que a miniatura aparece.
         let (_, arquivo) = crate::claude::detalhe_ferramenta("Read", &json!({"file_path": "/p/prints/a.png"}));
         assert_eq!(arquivo.as_deref(), Some("/p/prints/a.png"));
@@ -668,7 +668,7 @@ mod testes {
         let mut leitor = Leitor::default();
         let eventos = leitor.linha(&json!({"type": "item.completed", "item": item}));
         match eventos.as_slice() {
-            [Evento::Ferramenta { nome, .. }, Evento::ResultadoFerramenta { id, conteudo, erro: false }, Evento::ImagensDoResultado { id: da_imagem, imagens }] => {
+            [Evento::Ferramenta { nome, .. }, Evento::ResultadoFerramenta { id, conteudo, erro: false, .. }, Evento::ImagensDoResultado { id: da_imagem, imagens }] => {
                 assert_eq!(nome, "mcp__chrome-devtools__take_screenshot");
                 assert_eq!((id.as_str(), da_imagem.as_str()), ("mcp-1", "mcp-1"));
                 assert_eq!(conteudo, "Took a screenshot.");

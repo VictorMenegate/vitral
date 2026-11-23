@@ -447,6 +447,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: imagens.iter().map(|c| c.to_path_buf()).collect(),
+            durou: 0,
         }
     }
 

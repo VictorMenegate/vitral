@@ -13,6 +13,9 @@ citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, 
 arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa. E
 o arquivo aberto à direita agora se edita ali mesmo.
 
+A conversa mais leve (rolar, digitar e acompanhar a resposta chegando pesam menos) e quanto tempo
+e quanto cache cada turno gastou.
+
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
   andamento em menos de um segundo.
@@ -96,6 +99,61 @@ o arquivo aberto à direita agora se edita ali mesmo.
   8". Antes as setas davam a volta dentro do mesmo arquivo.
 - **Diff sem espaço em branco.** No diff de "Na pasta", o "…" do arquivo tem Ignorar espaço em
   branco: o que só mudou de recuo sai do diff. Começa desligado.
+- **Rolar a conversa pesa menos.** O Vitral desenha só as mensagens que estão à vista (e um pouco
+  em volta); as outras entram como espaço. Antes, cada passo da roda refazia as 60 últimas
+  mensagens do painel, e mais ainda depois de subir bastante na conversa.
+- **A resposta chegando não mexe nos outros painéis.** O texto que vai chegando redesenha só a
+  conversa dele: a lista e as conversas ao lado ficam paradas. Antes, cada pedaço de texto refazia
+  a janela inteira.
+- **Quanto tempo o turno levou, e onde.** A dica da linha "Trabalhou…" diz também o modelo,
+  quantos passos o turno teve, o tempo total, o tempo de modelo, o tempo até a primeira palavra,
+  quanto levou para abrir o Claude Code e quanto da entrada veio do cache.
+- **A chamada demorada diz quanto levou.** O comando que levou 10 s ou mais fica com a duração na
+  linha dele, "Rodou cargo test · 2 min 14 s". O que foi para o segundo plano não ganha número: ele
+  segue rodando.
+- **O cache esfriando.** O popover do contexto ganhou a linha **Cache**, que diz por quanto tempo
+  o cache do último turno ainda vale: "quente por mais 3 min" ou "frio". Com ele frio, a próxima
+  mensagem relê a conversa inteira pelo preço cheio.
+- **Digitar e passar o ponteiro não refazem as conversas.** Cada tecla na caixa de mensagem e
+  cada passada do ponteiro por um botão refaziam as conversas de todos os painéis; com três
+  conversas longas abertas, a digitação atrasava.
+- **O que o chat está fazendo, numa linha acima da caixa.** Quando há o que mostrar, uma linha de
+  pílulas aparece logo acima da caixa de mensagem: os comandos que o agente deixou rodando no
+  fundo (o clique lista cada um, com Parar), os subagentes por estado ("2 trabalhando · 1
+  esperando você"), os passos dele ("3/5") e o que o turno mudou ("+40 −12", que abre a lista à
+  direita). Sem nada disso, a linha não existe, e ela não empurra a caixa. O "N arquivos mudados",
+  que ficava numa faixa acima da caixa, virou a pílula das mudanças.
+- **A conversa inteira do subagente, numa aba.** Clicar no cartão de um subagente (ou nele, na
+  pílula dos subagentes) abre numa aba tudo o que ele leu, rodou e respondeu, com o desenho da
+  conversa normal, só para ler. Ela acompanha o subagente enquanto ele trabalha e continua
+  disponível depois de fechar e abrir o Vitral. O cartão fica na conversa, e a setinha dele
+  mostra os passos e o relatório ali mesmo.
+- **O que cada agente em segundo plano está fazendo.** Quando a resposta já veio e os agentes
+  seguem trabalhando, a conversa mostra uma linha por agente, com a descrição, o que ele faz agora
+  ("Rodando cargo test…", "Lendo views.py…") e há quanto tempo foi lançado; o clique abre a
+  conversa dele numa aba. Antes havia só a frase "Agentes trabalhando em segundo plano…". A pílula
+  "N trabalhando" passou a contar esses agentes (ela zerava assim que a resposta chegava), e o
+  cartão deles não aparece mais como "interrompida".
+- **"Terminou: …" quando um agente em segundo plano acaba.** No ponto da conversa em que ele
+  termina entra uma linha, "Terminou: Mapear o carrinho · 25 min" (ou "Falhou: …"), e o clique
+  nela abre o relatório dele. Com vários agentes, o turno agora termina uma vez só: antes o
+  "Terminou" do chat podia sair uma vez por agente.
+- **O diff da edição mostra só o que mudou.** Ao abrir uma edição na conversa, aparecem as linhas
+  que mudaram, com 3 linhas em volta, e a palavra trocada vem marcada dentro da linha. Antes o
+  trecho antigo vinha inteiro em vermelho e o novo inteiro em verde. O pedido de permissão de uma
+  edição mostra o mesmo diff.
+- **Os passos dizem o que mudou.** Quando o agente mexe na lista de passos dele, a linha na
+  conversa diz o quê: "Criou 5 passos", "Começou: rodar os testes", "Concluiu: rodar os testes".
+  Antes toda chamada era "Atualizou os passos". O Vitral lê também as ferramentas de tarefa novas
+  do Claude Code (TaskCreate, TaskUpdate e TaskList), e a pílula "3/5" conta por elas.
+- **As checagens do turno na linha "Trabalhou…".** O turno pronto diz como terminaram os testes,
+  o typecheck, o lint e o build que ele rodou: "tsc passou · vitest falhou 2×, passou · cargo test
+  passou". Vale a última execução de cada um. Quando não dá para saber o resultado (o comando
+  atrás de um `| tail`, sem nada na saída que diga), a checagem não aparece.
+- **Copiar tabela.** Cada tabela de uma resposta ganhou um Copiar no canto de baixo: o clique
+  copia a tabela em Markdown, e com Shift copia pronta para colar numa planilha.
+- **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
+  mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
 
 ## 0.9.6
 

@@ -588,7 +588,7 @@ impl Protocolo {
                 }
                 if let status @ ("completed" | "failed") = u["status"].as_str().unwrap_or_default() {
                     let (conteudo, saiu_com_erro) = resultado_do_agy(u);
-                    eventos.push(Evento::ResultadoFerramenta { id, conteudo, erro: status == "failed" || saiu_com_erro });
+                    eventos.push(Evento::ResultadoFerramenta { id, conteudo, erro: status == "failed" || saiu_com_erro, no_fundo: false });
                 }
             }
             "usage_update" => {
@@ -845,7 +845,7 @@ mod testes {
         assert!(matches!(eventos[0], Evento::Pensando));
         assert!(matches!(&eventos[1], Evento::Pensamento(t) if t == "pensando"));
         assert!(matches!(&eventos[2], Evento::Ferramenta { id, nome, entrada } if id == "c1" && nome == "Edit" && entrada["old_string"] == "dois" && entrada["new_string"] == "2"));
-        assert!(matches!(&eventos[3], Evento::ResultadoFerramenta { id, conteudo, erro: false } if id == "c1" && conteudo == "mudou /casa/loja/c.txt"));
+        assert!(matches!(&eventos[3], Evento::ResultadoFerramenta { id, conteudo, erro: false, .. } if id == "c1" && conteudo == "mudou /casa/loja/c.txt"));
         assert!(matches!(&eventos[4], Evento::Ferramenta { nome, entrada, .. } if nome == "Bash" && entrada["command"] == "false"));
         assert!(matches!(&eventos[5], Evento::ResultadoFerramenta { erro: true, .. }));
         assert!(matches!(eventos[6], Evento::Contexto(9437)));

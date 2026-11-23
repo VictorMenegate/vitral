@@ -26,6 +26,8 @@
 # DADOS_NOVOS afastaria os dados da outra) já em uso, a bancada recusa começar.
 # FUNDO=branco (fundo branco liso, o pior caso de contraste) ou FUNDO=<imagem> troca o papel de
 # parede; sem ele, vale o da sessão.
+# TELA=2400x1300 troca o tamanho do monitor de mentira (o padrão é 1600x1000): a 150% de zoom, três
+# conversas lado a lado só cabem numa tela mais larga.
 # ZOOM=1.5 abre o Vitral com esse zoom (grava o interface.json da bancada antes de abrir).
 # DADOS_NOVOS=1 abre como primeiro uso: afasta os dados que a bancada tinha (em $B/data, nunca os de
 # verdade; o app/ que a atualização instalou fica), a configuração e o interface.json (a vista, o
@@ -128,7 +130,7 @@ J
     exec dbus-run-session -- "$0" "$ROTEIRO" "$PRINTS" "$@"
 fi
 
-gnome-shell --headless --wayland --virtual-monitor 1600x1000 --no-x11 > "$XDG_STATE_HOME/shell.log" 2>&1 7>&- 8>&- &
+gnome-shell --headless --wayland --virtual-monitor "${TELA:-1600x1000}" --no-x11 > "$XDG_STATE_HOME/shell.log" 2>&1 7>&- 8>&- &
 SHELL_PID=$!
 # O nome do socket sai no log: o lock velho de uma rodada que caiu faz o Shell ir para o wayland-1, e
 # o wayland-0 que sobrou não tem ninguém atrás (o app abria sem tela).

@@ -109,6 +109,9 @@ pub(super) struct Sumario {
     /// A mensagem marcada no último desenho (o chat e o item): a rolagem só avisa a janela quando
     /// ela muda.
     a_vista: Option<(String, usize)>,
+    /// O sumário foi desenhado no último desenho da Janela (o Este chat está à vista): sem isso a
+    /// rolagem não tem marca nenhuma a mudar.
+    pub(super) desenhado: bool,
     /// A mensagem para a qual o clique levou, realçada até a hora guardada.
     realce: Option<(String, usize, Instant)>,
     rolagem: ScrollHandle,
@@ -132,8 +135,13 @@ impl Janela {
     }
 
     /// A conversa de um painel rolou: se a mensagem lida passou a ser outra, a janela redesenha
-    /// (o sumário muda a marca). Só com o Este chat do mesmo chat.
+    /// (o sumário muda a marca). Só com o Este chat do mesmo chat, e só com o sumário na tela: com
+    /// a direita fechada a marca guardada nunca era atualizada, e cada passo da roda no painel
+    /// ativo redesenhava a janela inteira (visto em 23/11/2026).
     pub(super) fn acompanhar_sumario(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+        if !self.sumario.desenhado {
+            return;
+        }
         let Some(chat_id) = self.paineis.iter().find(|p| p.id == painel_id).and_then(|p| p.chat.clone()) else { return };
         if self.selecionado.as_deref() != Some(chat_id.as_str()) {
             return;
@@ -213,6 +221,7 @@ impl Janela {
         if linhas.len() < 2 {
             return None;
         }
+        self.sumario.desenhado = true;
         let a_vista = self.a_vista_no_painel(chat);
         // O dia entra como um título pequeno onde ele muda, quando a conversa não é só de hoje.
         let horas: Vec<u64> = linhas.iter().map(|l| l.em).collect();
@@ -335,6 +344,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         }
     }
 

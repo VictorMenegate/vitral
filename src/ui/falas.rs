@@ -186,6 +186,7 @@ mod testes {
             sub: None,
             mudanca: None,
             imagens: Vec::new(),
+            durou: 0,
         };
         chat.itens.push(ferramenta("Edit", Some("a.rs")));
         chat.itens.push(ferramenta("Edit", Some("a.rs")));
