@@ -1706,7 +1706,14 @@ antes de cada rodada. `python3 -I ferramentas/medir_print.py
 <print.png> X Y` (ou `--pontos <arquivo>`) mede o contraste de um texto no print. Os roteiros da
 linguagem visual ficam em `ferramentas/roteiros/` (`4c-antes.txt` tira todas as telas;
 `4c-zoom-larguras.txt` vai de 100% a 150% com a lista arrastada, os popovers do Claude e do sino, a
-janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista); no meio de um
+janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista). Para ver todos os
+menus, popovers e diálogos de uma vez: `ferramentas/galeria-de-menus.sh <pasta> [binário]` roda o
+roteiro `galeria-menus.txt` (zoom 1,6; o menu do logo, o sino, o uso, o menu do chat, os chips da
+caixa, Nova conversa, as seis partes das Configurações, Atalhos, Paleta, Contas, Memória da equipe,
+Quadro de ideias, Novo chat e Importar), grava um print inteiro de cada e monta a `folha.png` com
+todos em miniatura, com o nome; serve para as revisões de design (dono, 23/11/2026: "faz algo pra
+conseguir ver todos e analisar o que dá pra melhorar"). Os cliques são posições fixas: mudou o
+layout, confira a folha antes de confiar nela. No meio de um
 roteiro, `tecla Control_L+equal` muda o zoom, e `rolar X Y N` gira a roda N entalhes com o ponteiro
 em X, Y (N negativo sobe; serve para ver o fim de um diálogo que rola). A bancada usa o socket do
 Wayland que o Shell anuncia no log (um lock velho de uma rodada que caiu o leva ao `wayland-1`) e

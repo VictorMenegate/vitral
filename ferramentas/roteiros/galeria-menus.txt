@@ -1,0 +1,129 @@
+# Galeria dos menus, popovers e diálogos: abre um de cada vez e tira um print de cada, para
+# ver todos juntos (ferramentas/galeria-de-menus.sh monta a folha). Zoom 1,6 na bancada.
+espera 25
+clique 549 212
+espera 1
+print 00-principal
+clique 145 122
+espera 1
+print 01-menu-do-logo
+tecla Escape
+espera 1
+clique 562 829
+espera 1
+print 02-sino
+tecla Escape
+espera 1
+clique 1452 200
+espera 1
+print 03-uso-do-claude
+tecla Escape
+espera 1
+clique 1452 254
+espera 1
+print 04-uso-do-codex
+tecla Escape
+espera 1
+mover 300 211
+espera 1
+clique 559 211
+espera 1
+print 05-menu-do-chat
+tecla Escape
+espera 1
+clique 775 892
+espera 1
+print 06-modo
+tecla Escape
+espera 1
+clique 957 892
+espera 1
+print 07-modelo
+tecla Escape
+espera 1
+clique 1060 892
+espera 1
+print 08-esforco
+tecla Escape
+espera 1
+clique 1360 892
+espera 1
+print 09-anexar
+tecla Escape
+espera 1
+clique 1403 121
+espera 2
+print 10-nova-conversa
+tecla Escape
+espera 1
+clique 1000 600
+tecla Control_L+comma
+espera 2
+print 11-configuracoes
+clique 236 261
+espera 2
+print 12-configuracoes-agentes
+clique 236 315
+espera 2
+print 13-configuracoes-memoria
+clique 236 369
+espera 2
+print 14-configuracoes-aparencia
+clique 258 423
+espera 2
+print 14b-configuracoes-claude-code
+clique 258 477
+espera 2
+print 14c-configuracoes-atualizacoes
+tecla Escape
+espera 1
+# Os itens do menu do logo (as posições são as do menu aberto com o zoom 1,6).
+clique 145 122
+espera 1
+clique 300 800
+espera 2
+print 15-atalhos
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 756
+espera 2
+print 16-paleta
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 584
+espera 2
+print 17-contas
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 668
+espera 2
+print 18-memoria-da-equipe
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 372
+espera 3
+print 19-quadro-de-ideias
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 284
+espera 2
+print 20-novo-chat-com-outra-pasta
+tecla Escape
+espera 1
+clique 145 122
+espera 1
+clique 300 516
+espera 2
+print 21-importar
+tecla Escape
+espera 1
