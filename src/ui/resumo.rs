@@ -66,13 +66,20 @@ pub(super) fn precisa_em_tudo(motor: &Motor) -> PrecisaDeVoce {
 fn rotulo_e_frase(motor: &Motor, chat: &str, texto: &str) -> Vec<AnyElement> {
     let titulo = motor.chat(chat).map(|c| c.titulo.as_str());
     let frase = titulo.and_then(|t| texto.strip_prefix(t)).and_then(|r| r.strip_prefix(": "));
-    match (titulo, frase) {
-        (Some(titulo), Some(frase)) => vec![
-            div().flex_none().max_w(relative(0.45)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
-            div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(super::falas::primeira_frase(frase)).into_any_element(),
-        ],
-        _ => vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()],
-    }
+    // O nome do chat vai sempre na frente: "Precisa da sua permissão: Bash…" sozinho, três vezes,
+    // não dizia de qual chat era cada uma (revisão de design, 23/11/2026).
+    let frase = match (titulo, frase) {
+        (_, Some(frase)) => super::falas::primeira_frase(frase),
+        (Some(_), None) => uma_linha(texto),
+        (None, None) => {
+            return vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()];
+        }
+    };
+    let titulo = titulo.unwrap_or_default();
+    vec![
+        div().flex_none().max_w(relative(0.45)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
+        div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(frase).into_any_element(),
+    ]
 }
 
 impl Janela {
@@ -109,8 +116,12 @@ impl Janela {
     pub(super) fn faixa_do_resumo(&self, motor: &Motor, onde: &'static str, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
         let resumo = motor.resumo_volta.as_ref()?;
         let desde = crate::modelo::quando_local(resumo.desde);
-        // O que pede você vem primeiro, como na lista, no âmbar dos pedidos (o das abas e da lista).
-        let grupos = [("precisa", "Precisa de você", Cores::ambar()), ("falhou", "Falhou ou parou", Cores::vermelho()), ("terminou", "Terminou", Cores::verde())];
+        // O que pede você vem primeiro, como na lista, no azul-claro dos pedidos (o `Sinal::Pedido`).
+        let grupos = [
+            ("precisa", "Precisa de você", Sinal::Pedido.cor()),
+            ("falhou", "Falhou ou parou", Sinal::Erro.cor()),
+            ("terminou", "Terminou", Sinal::Nova.cor()),
+        ];
         let mut corpo = v_flex().gap(esp::E2);
         for (grupo, titulo, cor) in grupos {
             let linhas: Vec<_> = resumo.linhas.iter().filter(|l| l.grupo == grupo).collect();
@@ -125,7 +136,8 @@ impl Janela {
                     .child(div().rotulo().text_color(Cores::tenue()).child(titulo))
                     .child(div().metadado().text_color(Cores::apagado()).child(linhas.len().to_string())),
             );
-            let mostradas = linhas.len().min(4);
+            // Até 3 por grupo: com 9 linhas o cartão deixava a lista com uma linha e meia.
+            let mostradas = linhas.len().min(3);
             for (i, l) in linhas.iter().take(mostradas).enumerate() {
                 let chat = (!l.chat.is_empty() && motor.chat(&l.chat).is_some()).then(|| l.chat.clone());
                 corpo = corpo.child(

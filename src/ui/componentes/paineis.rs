@@ -165,7 +165,7 @@ impl Aba {
         // chamativo" e, com o fio de 1 px apagado, "dá pra ver nada"): um fio de 2 px na cor do
         // estado por cima do preto, com um véu de 6% da mesma cor no miolo, sem halo. Trabalhando,
         // o azul respira devagar, numa vista própria; os outros ficam acesos, parados.
-        let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
+        let cor_da_borda = Sinal::cor;
         let respira = self.borda.map(|(s, chave)| ContornoDeEstado {
             chave,
             raio: raio::de(32.),

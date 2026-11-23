@@ -669,18 +669,6 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
         })
 }
 
-/// Barra de 3 px da linha escolhida.
-fn barra_de_selecao() -> Div {
-    div()
-        .absolute()
-        .left(r(2.))
-        .top(r(6.))
-        .bottom(r(6.))
-        .w(px(3.))
-        .rounded_full()
-        .bg(Cores::destaque())
-}
-
 /// Botão pequeno de texto no cabeçalho de uma seção ("Retomar tudo"); na
 /// lista apertada, só o ícone, com o rótulo na dica.
 fn botao_de_secao(
@@ -835,7 +823,7 @@ fn linha_da_arvore(
         .pl(r(8. + 16. * entrada.depth() as f32))
         .pr(esp::E4)
         .rounded(raio::CONTROLE)
-        .when(escolhido, |l| l.bg(Cores::selecao()).child(barra_de_selecao()))
+        .when(escolhido, |l| l.bg(Cores::selecao()))
         .child(
             h_flex()
                 .w_full()
@@ -904,7 +892,7 @@ fn linha_achada(
         .px(esp::E8)
         .rounded(raio::CONTROLE)
         .cursor_pointer()
-        .when(escolhido, |d| d.bg(Cores::selecao()).child(barra_de_selecao()))
+        .when(escolhido, |d| d.bg(Cores::selecao()))
         .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
         .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::FileText, 16., window)))
         // O nome corta no meio para a extensão continuar à vista; a pasta some antes.
@@ -1002,7 +990,7 @@ impl Janela {
                         this.tecla_na_lista(&navegaveis, ev, window, cx)
                     }))
                     .children(montagem.itens)
-                    .child(div().flex_none().h(esp::E8));
+                    .child(div().flex_none().h(esp::E16));
                 // A área vai até a borda da peça (a barra fina fica ali) e devolve os 8 de margem.
                 // A barra é irmã da lista, como a dos achados: dentro dela, rolava junto com os
                 // cartões e o trilho saía do lugar (dono, 16/11/2026: "a barra de rolagem daqui
@@ -1014,6 +1002,21 @@ impl Janela {
                     .mr(r(-8.))
                     .pr(esp::PECA)
                     .child(lista)
+                    // O pé esmaece no tom da lista: a última linha não fica cortada a seco na
+                    // linha do rodapé (revisão de design, 23/11/2026).
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right(esp::PECA)
+                            .bottom_0()
+                            .h(esp::E24)
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(Cores::vidro_leitura().opacity(0.), 0.),
+                                linear_color_stop(Cores::vidro_leitura(), 1.),
+                            )),
+                    )
                     .child(barra_de_rolagem("barra-lista", &self.rolagem_lista))
                     .into_any_element()
             }
@@ -1709,8 +1712,11 @@ impl Janela {
                 let quando = tempo_relativo(chat.atualizado_em);
                 let dica = if quando == "agora" { "Atualizado agora".to_string() } else { format!("Atualizado há {quando}") };
                 // Tênue em repouso e texto na selecionada: o apagado ficava abaixo de 3:1
-                // (relatório de design, 16/11/2026).
-                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { Cores::tenue() }).child(quando), dica)
+                // (relatório de design, 16/11/2026). Com a janela transparente, o tênue sobre o
+                // papel de parede ficava entre 3,1 e 3,8:1; vai o texto a 70% (revisão de design,
+                // 23/11/2026).
+                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue() };
+                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { repouso }).child(quando), dica)
             }
         };
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a

@@ -212,6 +212,10 @@ pub(super) fn menu_escolha(
             None => chip,
         }
         .construir(window, cx)
+        // Na mesma caixa escura do contador e da escolha segmentada da coluna: solto, o seletor
+        // parecia o valor, e não um controle (revisão de design, 23/11/2026).
+        .bg(Cores::recuo())
+        .text_color(Cores::texto())
     };
     let gatilho = GatilhoChip::new(chip(false), chip(true));
     let (opcoes, atual, escolher) = (Rc::new(opcoes), atual.to_string(), Rc::new(escolher));
@@ -359,6 +363,7 @@ impl Render for Configuracoes {
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
+                    .info("O cartão “Enquanto você esteve fora” junta o que terminou, o que precisa de você e o que falhou desde que a janela saiu de foco. Ele some no × e volta na próxima saída.")
                     .descricao("Minutos com a janela fora de foco antes do “Enquanto você esteve fora”."),
                 contador("cfg-resumo", &[5, 10, 15, 30, 60, 120], config.minutos_para_resumo as u32, m(), |c, v| {
                     c.minutos_para_resumo = v as u64
@@ -376,6 +381,7 @@ impl Render for Configuracoes {
             )
             .linha(
                 LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
+                    .info("Cada anel é a janela de 5 horas por fora e a da semana por dentro. O clique abre os detalhes e as contas.")
                     // Os anéis voltaram para baixo do × no mesmo dia em que foram ao cabeçalho
                     // (dono, 16/11/2026).
                     .descricao("Os anéis ficam no canto de cima, à direita, embaixo do ×. Desligado, o uso fica só em Contas do Claude.")
@@ -423,7 +429,8 @@ impl Render for Configuracoes {
                 ),
             ))
             .linha(com(
-                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude").descricao("Cada chat pode trocar o modelo na caixa de mensagem."),
+                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude")
+                    .info("Padrão é o modelo que o seu Claude Code escolher. As versões exatas e as contas ficam no seletor de modelo da caixa.").descricao("Cada chat pode trocar o modelo na caixa de mensagem."),
                 menu_escolha(
                     "cfg-modelo-trab",
                     ancora,

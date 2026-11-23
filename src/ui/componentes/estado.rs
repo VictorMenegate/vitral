@@ -29,7 +29,11 @@ impl Sinal {
         match self {
             Sinal::Erro => Cores::vermelho(),
             Sinal::Pedido | Sinal::Parada => Cores::espera(),
-            Sinal::Nova | Sinal::Rodando => Cores::destaque(),
+            // A novidade (terminou e você ainda não viu) é verde em todo lugar: na lista era azul, e
+            // no resumo, nas abas e nos agentes, verde (revisão de design, 23/11/2026). O azul fica
+            // para o que roda.
+            Sinal::Nova => Cores::verde(),
+            Sinal::Rodando => Cores::destaque(),
         }
     }
 

@@ -24,7 +24,15 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **O Permitir à vista.** No pedido de permissão, o botão Permitir saía quase apagado e só
   clareava com o ponteiro em cima; agora é claro desde o começo.
 - **O resumo da volta começa pelo que precisa de você.** No "Enquanto você esteve fora", os
-  pedidos vêm primeiro, no âmbar dos pedidos, e o que terminou vem por último.
+  pedidos vêm primeiro e o que terminou vem por último, até 3 linhas por grupo, cada uma com o
+  nome do chat.
+- **A lista mais limpa.** A linha do chat aberto fica só com o fundo, sem a barrinha azul na ponta;
+  a hora fica mais legível com a janela transparente; e o pé da lista esmaece, em vez de cortar a
+  última linha a seco.
+- **Configurações com controles iguais.** Os seletores (modo, agente, modelo) ficam na mesma caixa
+  escura do contador, alinhados, e toda linha tem o ⓘ.
+- **As cores de estado iguais em todo lugar.** O que terminou e você ainda não viu é verde na
+  lista também (era azul só nela); o azul fica para o que roda.
 
 ## 0.9.5
 
