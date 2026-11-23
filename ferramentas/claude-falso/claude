@@ -4,6 +4,9 @@
 ou a pasta direta) e responde em stream-json, sem chamar a API. Com "[demora]" na mensagem, leva
 10 s. Os argumentos e o ambiente de cada turno vão para $XDG_STATE_HOME/claude-falso.log.
 
+Com `[escreve 20]`, a resposta chega aos pedaços (uns 40 por segundo) durante esses segundos, como
+o texto do Claude Code de verdade.
+
 Com `[ferramenta <Nome> <detalhe>]` (Read, Edit, Write, Bash, Grep, Glob, WebFetch, Task, e o Pensa,
 que encena um bloco de raciocínio), faz de
 conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[ferramenta ... | 8]`) e
@@ -463,6 +466,23 @@ else:
     resposta = f"(claude falso) Anotei em {arquivo}, na pasta {pasta}: {pedido[:80]}"
     if chamadas:
         resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+# `[escreve 20]`: a resposta chega aos pedaços durante esses segundos (uns 40 por segundo, como o
+# texto do Claude Code de verdade), e no fim inteira. É como se mede a conversa enquanto o texto
+# chega, sem gastar a API.
+escreve = re.search(r"\[escreve(?: (\d+))?\]", texto)
+if escreve and papel != "mestre":
+    paragrafo = ("O desconto entra depois do subtotal, e o total nunca fica negativo. "
+                 "Conferi os três casos: cupom percentual, cupom fixo e cupom vencido.\n\n"
+                 "- `produtos/views.py`: o total passa a descontar o cupom.\n"
+                 "- `produtos/tests.py`: um teste para cada caso.\n\n")
+    segundos = int(escreve.group(1) or 20)
+    longa = "## O que mudou\n\n" + paragrafo * max(1, segundos // 2)
+    passo = max(1, len(longa) // (segundos * 40))
+    for i in range(0, len(longa), passo):
+        emitir({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                  "delta": {"type": "text_delta", "text": longa[i:i + passo]}}})
+        time.sleep(1 / 40)
+    resposta = longa + resposta
 anotar({"papel": papel, "chamadas": chamadas})
 emitir({"type": "assistant", "message": {"content": [{"type": "text", "text": resposta}],
                                          "usage": {"input_tokens": 1200}}})
