@@ -118,20 +118,23 @@ impl Janela {
         )
     }
 
-    /// Abre o arquivo com o diff do git por cima (o novo, sem diff: só o arquivo).
-    fn abrir_diff_do_git(&mut self, raiz: PathBuf, caminho: String, novo: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// Abre o arquivo com o diff do git por cima (o novo, sem diff: só o arquivo). Com o "Ignorar
+    /// espaço em branco" ligado (`diff_sem_espaco`, no "…" do arquivo), o diff sai com o `-w`.
+    pub(super) fn abrir_diff_do_git(&mut self, raiz: PathBuf, caminho: String, novo: bool, window: &mut Window, cx: &mut Context<Self>) {
         if novo {
             self.abrir_arquivo(raiz, caminho, window, cx);
             return;
         }
+        let sem_espaco = self.diff_sem_espaco;
         cx.spawn_in(window, async move |this, cx| {
             let (r, c) = (raiz.clone(), caminho.clone());
-            let diff = cx.background_spawn(async move { crate::git::diff_do_arquivo(&r, &c) }).await;
+            let diff = cx.background_spawn(async move { crate::git::diff_do_arquivo(&r, &c, sem_espaco) }).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 let trechos = super::edicao::trechos(&diff);
                 let (entram, saem) = super::edicao::contar(&trechos);
                 let sem_registro = trechos.is_empty();
-                this.edicao_pedida = Some(std::rc::Rc::new(super::edicao::Edicao { trechos, entram, saem, sem_registro }));
+                let origem = super::edicao::Origem::Git { sem_espaco };
+                this.edicao_pedida = Some(std::rc::Rc::new(super::edicao::Edicao { trechos, entram, saem, sem_registro, origem }));
                 this.abrir_arquivo(raiz, caminho, window, cx);
             });
         })

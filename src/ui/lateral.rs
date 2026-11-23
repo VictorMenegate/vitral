@@ -1872,6 +1872,7 @@ impl Janela {
         // arquivo como está. A escolha de linhas não passa de uma abertura para a outra.
         self.arquivo_edicao = self.edicao_pedida.take();
         self.esquecer_vista();
+        self.lugar_no_turno.set(None);
         self.edicao_atual = 0;
         self.edicao_rolar.set(self.arquivo_edicao.is_some());
         self.arquivo_selecao = None;

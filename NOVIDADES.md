@@ -66,6 +66,11 @@ citados abrem em mais lugares.
   não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
 - **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
   como código.
+- **Rever as mudanças do turno em sequência.** Na edição aberta à direita, a seta da última
+  mudança passa ao próximo arquivo da lista de Mudanças do chat, e a faixa mostra "arquivo 2 de
+  8". Antes as setas davam a volta dentro do mesmo arquivo.
+- **Diff sem espaço em branco.** No diff de "Na pasta", o "…" do arquivo tem Ignorar espaço em
+  branco: o que só mudou de recuo sai do diff. Começa desligado.
 
 ## 0.9.5
 

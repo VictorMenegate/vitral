@@ -390,6 +390,36 @@ fn linha_do_editor(selecao: Option<(u32, u32)>, mudanca: Option<(u32, u32)>, mar
     selecao.or(mudanca).map(|(a, _)| a).or(marcada)
 }
 
+/// Para onde a seta da edição leva.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Passo {
+    /// Outra mudança do mesmo arquivo.
+    Mudanca(usize),
+    /// Outro arquivo da lista de Mudanças: na primeira mudança dele, ou na última (`no_fim`,
+    /// quando se volta).
+    Arquivo { indice: usize, no_fim: bool },
+}
+
+/// O passo das setas da edição. `arquivos` é a posição do arquivo aberto na lista de Mudanças em
+/// que ele está e quantos ela tem: com mais de um, a seta passa da última mudança ao arquivo
+/// seguinte (e da primeira ao anterior), dando a volta na lista; sem lista, dá a volta dentro do
+/// arquivo. `None`: não há para onde ir.
+fn passo_da_revisao(atual: usize, mudancas: usize, arquivos: Option<(usize, usize)>, passo: isize) -> Option<Passo> {
+    let atual = atual.min(mudancas.saturating_sub(1));
+    let alvo = atual as isize + passo;
+    if (0..mudancas as isize).contains(&alvo) {
+        return Some(Passo::Mudanca(alvo as usize));
+    }
+    match arquivos.filter(|(_, total)| *total > 1) {
+        Some((posicao, total)) => {
+            let indice = (posicao as isize + passo.signum()).rem_euclid(total as isize) as usize;
+            Some(Passo::Arquivo { indice, no_fim: passo < 0 })
+        }
+        None if mudancas > 0 => Some(Passo::Mudanca(alvo.rem_euclid(mudancas as isize) as usize)),
+        None => None,
+    }
+}
+
 /// O nome que a barra do arquivo mostra para a pasta: "Sem pasta" na pasta vazia de um chat, senão
 /// o da pasta.
 fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
@@ -561,7 +591,7 @@ impl Janela {
                     // abrir e a cada seta, rola até a mudança (com folga em cima).
                     Some((vista, mais_longa)) => {
                         if self.edicao_rolar.replace(false)
-                            && let Some(mudanca) = vista.mudancas.get(self.edicao_atual)
+                            && let Some(mudanca) = vista.mudancas.get(self.edicao_atual.min(vista.mudancas.len().saturating_sub(1)))
                         {
                             rolagem_codigo.scroll_to_item(mudanca.fileira.saturating_sub(4), ScrollStrategy::Top);
                         }
@@ -734,11 +764,17 @@ impl Janela {
             let janela = janela.clone();
             // Com um trecho em vista (a seleção ou a mudança), o arquivo inteiro também se menciona.
             let com_trecho = self.alvo_da_mencao().is_some();
+            // No diff de "Na pasta", a opção de deixar de fora o que só mudou de espaço.
+            let sem_espaco = match self.arquivo_edicao.as_deref().map(|e| &e.origem) {
+                Some(super::edicao::Origem::Git { sem_espaco }) => Some(*sem_espaco),
+                _ => None,
+            };
             botao_icone("menu-arquivo", Lucide::Ellipsis, "Mais opções do arquivo", TamanhoBotao::Barra, window, cx)
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                     let (conteudo, relativo, onde, inteiro, janela, fora) =
                         (conteudo.clone(), relativo.clone(), onde.clone(), inteiro.clone(), janela.clone(), fora.clone());
                     menu.when(com_trecho, |menu| {
+                        let janela = janela.clone();
                         menu.item(PopupMenuItem::new("Mencionar o arquivo inteiro").icon(Lucide::AtSign).on_click(
                             move |_, window, cx| {
                                 let _ = janela.update(cx, |this, cx| this.mencionar_arquivo(&inteiro, None, window, cx));
@@ -759,6 +795,14 @@ impl Janela {
                         cx.write_to_clipboard(ClipboardItem::new_string(relativo.clone()));
                         window.push_notification(aviso(Tom::Pronto, "Caminho copiado."), cx);
                     }))
+                    .when_some(sem_espaco, |menu, ligado| {
+                        let janela = janela.clone();
+                        menu.separator().item(PopupMenuItem::new("Ignorar espaço em branco").checked(ligado).on_click(
+                            move |_, window, cx| {
+                                let _ = janela.update(cx, |this, cx| this.alternar_diff_sem_espaco(window, cx));
+                            },
+                        ))
+                    })
                     .separator()
                     // O aplicativo padrão do sistema: o navegador para o .html, a planilha para o .csv.
                     .item(
@@ -852,8 +896,10 @@ impl Janela {
     }
 
     /// A faixa da edição, embaixo do cabeçalho: "Edição", o +N −M e "2 de 5", com as setas que
-    /// passam de uma mudança à outra e o × que volta ao arquivo sem a edição. No registro de antes
-    /// de guardar o diff, um aviso discreto no lugar.
+    /// passam de uma mudança à outra e o × que volta ao arquivo sem a edição. Aberta pelas
+    /// Mudanças de um chat com mais de um arquivo, diz também "arquivo 2 de 8", e a seta da última
+    /// mudança passa ao arquivo seguinte da lista. No registro de antes de guardar o diff, um
+    /// aviso discreto no lugar.
     fn faixa_da_edicao(
         &self,
         edicao: &Edicao,
@@ -864,45 +910,68 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let mudancas = vista.map_or(0, |v| v.mudancas.len());
+        let atual = self.edicao_atual.min(mudancas.saturating_sub(1));
+        let lugar = self.lugar_do_arquivo_no_turno(edicao, cx).filter(|(_, total)| *total > 1);
         let fechar = botao_icone("fechar-edicao", Lucide::X, "Ver o arquivo sem a edição", TamanhoBotao::Linha, window, cx)
             .on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)));
-        let setas = (mudancas > 1).then(|| {
+        // A dica diz para onde a seta vai: outra mudança ou outro arquivo.
+        let seta = |id: &'static str, icone: Lucide, passo: isize| {
+            let destino = passo_da_revisao(atual, mudancas, lugar, passo)?;
+            let dica = match (destino, passo > 0) {
+                (Passo::Mudanca(_), true) => "Próxima mudança",
+                (Passo::Mudanca(_), false) => "Mudança anterior",
+                (Passo::Arquivo { .. }, true) => "Próximo arquivo das Mudanças",
+                (Passo::Arquivo { .. }, false) => "Arquivo anterior das Mudanças",
+            };
+            Some(
+                botao_icone(id, icone, dica, TamanhoBotao::Linha, window, cx)
+                    .on_click(cx.listener(move |this, _, window, cx| this.ir_para_mudanca(passo, window, cx))),
+            )
+        };
+        let (anterior, seguinte) = (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1));
+        let setas = (anterior.is_some() || seguinte.is_some())
+            .then(|| div().flex().flex_none().items_center().gap(esp::E2).children(anterior).children(seguinte));
+        // "arquivo 2 de 8"; no painel estreito, "2/8", com a frase na dica.
+        let do_turno = lugar.map(|(posicao, total)| {
+            let longo = SharedString::from(format!("arquivo {} de {}", posicao + 1, total));
+            let texto = if self.direita_estreita { SharedString::from(format!("{}/{}", posicao + 1, total)) } else { longo.clone() };
             div()
+                .id("arquivo-do-turno")
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(esp::E2)
-                .child(
-                    botao_icone("mudanca-anterior", Lucide::ChevronUp, "Mudança anterior", TamanhoBotao::Linha, window, cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.ir_para_mudanca(-1, cx))),
-                )
-                .child(
-                    botao_icone("mudanca-seguinte", Lucide::ChevronDown, "Próxima mudança", TamanhoBotao::Linha, window, cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.ir_para_mudanca(1, cx))),
-                )
+                .gap(esp::E4)
+                .whitespace_nowrap()
+                .metadado()
+                .text_color(Cores::tenue())
+                .child(super::componentes::icone(Lucide::Files, 12., window))
+                .child(texto)
+                .tooltip(move |window, cx| Tooltip::new(format!("Nas Mudanças deste chat: {longo}")).build(window, cx))
         });
+        let so_espaco = matches!(edicao.origem, super::edicao::Origem::Git { sem_espaco: true });
         let esquerda = if edicao.sem_registro {
+            // O diff sem espaço em branco que ficou vazio não é um registro antigo: só mudou espaço.
+            let (simbolo, texto) = if so_espaco {
+                (Lucide::FileDiff, "Só mudou espaço em branco.")
+            } else {
+                (Lucide::Info, "Este registro não guardou a edição: o arquivo aparece como está agora.")
+            };
             div()
                 .flex()
                 .flex_1()
                 .min_w_0()
                 .items_center()
                 .gap(esp::E8)
-                .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::Info, 14., window)))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .metadado()
-                        .text_color(Cores::tenue())
-                        .child("Este registro não guardou a edição: o arquivo aparece como está agora."),
-                )
+                .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(simbolo, 14., window)))
+                .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto))
+                .children(do_turno)
         } else {
-            let posicao = (mudancas > 0).then(|| format!("{} de {}", (self.edicao_atual % mudancas) + 1, mudancas));
+            let posicao = (mudancas > 0).then(|| format!("{} de {}", atual + 1, mudancas));
             div()
                 .flex()
                 .flex_1()
                 .min_w_0()
+                .overflow_hidden()
                 .items_center()
                 .gap(esp::E8)
                 .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::FileDiff, 14., window)))
@@ -918,6 +987,11 @@ impl Janela {
                         .when(edicao.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", edicao.saem)))),
                 )
                 .children(posicao.map(|p| div().flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue()).child(p)))
+                .when(so_espaco, |s| {
+                    s.child(div().flex_none().whitespace_nowrap().metadado().text_color(Cores::tenue()).child("sem espaço em branco"))
+                })
+                .child(div().flex_1())
+                .children(do_turno)
         };
         div()
             .flex()
@@ -936,6 +1010,26 @@ impl Janela {
             .children(setas)
             .child(fechar)
             .into_any_element()
+    }
+
+    /// Onde o arquivo da edição aberta está na lista de Mudanças do chat dela: a posição e quantos
+    /// arquivos a lista tem. A conta (a lista inteira de mudanças do chat) fica guardada pela
+    /// edição e pelo tamanho da conversa: o painel é desenhado a cada quadro.
+    fn lugar_do_arquivo_no_turno(&self, edicao: &Edicao, cx: &App) -> Option<(usize, usize)> {
+        let super::edicao::Origem::Chat { chat, itens, caminho } = &edicao.origem else {
+            return None;
+        };
+        let chat = self.motor.as_ref()?.read(cx).chat(chat)?;
+        let chave = (edicao as *const Edicao as usize, chat.itens.len());
+        if let Some((de, tamanho, lugar)) = self.lugar_no_turno.get()
+            && (de, tamanho) == chave
+        {
+            return lugar;
+        }
+        let (neste, antes) = super::mensagens::mudancas_do_chat(&chat.itens);
+        let lugar = super::edicao::lugar_na_revisao(&neste, &antes, itens, caminho.as_deref()).map(|(lista, posicao)| (posicao, lista.len()));
+        self.lugar_no_turno.set(Some((chave.0, chave.1, lugar)));
+        lugar
     }
 
     /// A edição posta nas linhas do arquivo lido, refeita só quando o arquivo ou a edição mudam.
@@ -965,7 +1059,7 @@ impl Janela {
             self.arquivo_edicao.as_ref()?;
             let lido = self.arquivo_lido.borrow();
             let (_, vista, _) = lido.as_ref()?.vista.as_ref()?;
-            let mudanca = vista.mudancas.get(self.edicao_atual % vista.mudancas.len().max(1))?;
+            let mudanca = vista.mudancas.get(self.edicao_atual.min(vista.mudancas.len().saturating_sub(1)))?;
             mudanca.linhas.map(|(a, b)| (a as u32, b as u32))
         })
     }
@@ -995,15 +1089,46 @@ impl Janela {
         cx.notify();
     }
 
-    /// As setas da edição: a mudança anterior ou a seguinte (dá a volta), rolando até ela.
-    fn ir_para_mudanca(&mut self, passo: isize, cx: &mut Context<Self>) {
+    /// As setas da edição: a mudança anterior ou a seguinte, rolando até ela. Na última (ou na
+    /// primeira), passa ao arquivo seguinte (ou anterior) da lista de Mudanças do chat, na ordem
+    /// dela e dando a volta; fora de uma lista, dá a volta dentro do arquivo.
+    fn ir_para_mudanca(&mut self, passo: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edicao) = self.arquivo_edicao.clone() else { return };
         let total = self.arquivo_lido.borrow().as_ref().and_then(|l| l.vista.as_ref()).map_or(0, |(_, v, _)| v.mudancas.len());
-        if total == 0 {
-            return;
+        let lugar = self.lugar_do_arquivo_no_turno(&edicao, cx);
+        match passo_da_revisao(self.edicao_atual, total, lugar, passo) {
+            Some(Passo::Mudanca(i)) => {
+                self.edicao_atual = i;
+                self.edicao_rolar.set(true);
+                cx.notify();
+            }
+            Some(Passo::Arquivo { indice, no_fim }) => {
+                let super::edicao::Origem::Chat { chat, itens, caminho } = &edicao.origem else { return };
+                // A lista de agora: o turno pode ter mudado mais arquivos desde que este abriu.
+                let alvo = self.motor.as_ref().and_then(|m| m.read(cx).chat(chat)).and_then(|c| {
+                    let (neste, antes) = super::mensagens::mudancas_do_chat(&c.itens);
+                    let (lista, _) = super::edicao::lugar_na_revisao(&neste, &antes, itens, caminho.as_deref())?;
+                    lista.get(indice).map(|a| a.itens.clone())
+                });
+                let Some(itens) = alvo else { return };
+                self.abrir_edicao(&super::edicao::AbrirEdicao { chat: chat.clone(), itens, caminho: None }, window, cx);
+                // Voltando, o arquivo anterior abre na última mudança dele (a posição se prende
+                // ao tamanho quando a vista dele ficar pronta).
+                if no_fim {
+                    self.edicao_atual = usize::MAX;
+                }
+            }
+            None => {}
         }
-        self.edicao_atual = (self.edicao_atual as isize + passo).rem_euclid(total as isize) as usize;
-        self.edicao_rolar.set(true);
-        cx.notify();
+    }
+
+    /// "Ignorar espaço em branco", no "…" do arquivo aberto com o diff de "Na pasta": liga ou
+    /// desliga e refaz o diff. Vale até fechar o Vitral.
+    fn alternar_diff_sem_espaco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.diff_sem_espaco = !self.diff_sem_espaco;
+        if let Some((raiz, caminho)) = self.arquivo_aberto.clone() {
+            self.abrir_diff_do_git(raiz, caminho, false, window, cx);
+        }
     }
 
     /// O × da faixa da edição: o arquivo fica aberto, sem as marcas.
@@ -1123,8 +1248,8 @@ fn colorir(
 #[cfg(test)]
 mod testes {
     use super::{
-        Aviso, Conteudo, Saida, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor, nome_da_linguagem, saidas_do_aviso,
-        tamanho, titulo_do_binario,
+        Aviso, Conteudo, Passo, Saida, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor, nome_da_linguagem,
+        passo_da_revisao, saidas_do_aviso, tamanho, titulo_do_binario,
     };
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
@@ -1223,5 +1348,27 @@ mod testes {
         assert_eq!(linha_do_editor(None, None, Some(120)), Some(120));
         assert_eq!(linha_do_editor(None, Some((40, 44)), Some(120)), Some(40));
         assert_eq!(linha_do_editor(Some((7, 9)), Some((40, 44)), Some(120)), Some(7));
+    }
+
+    #[test]
+    fn as_setas_da_edicao_passam_ao_proximo_arquivo_do_turno() {
+        // Dentro do arquivo, de uma mudança à outra.
+        assert_eq!(passo_da_revisao(0, 3, Some((0, 8)), 1), Some(Passo::Mudanca(1)));
+        assert_eq!(passo_da_revisao(2, 3, Some((0, 8)), -1), Some(Passo::Mudanca(1)));
+        // Na última mudança, o arquivo seguinte da lista; na primeira, o anterior, pelo fim dele.
+        assert_eq!(passo_da_revisao(2, 3, Some((0, 8)), 1), Some(Passo::Arquivo { indice: 1, no_fim: false }));
+        assert_eq!(passo_da_revisao(0, 3, Some((1, 8)), -1), Some(Passo::Arquivo { indice: 0, no_fim: true }));
+        // Nas pontas da lista, dá a volta.
+        assert_eq!(passo_da_revisao(2, 3, Some((7, 8)), 1), Some(Passo::Arquivo { indice: 0, no_fim: false }));
+        assert_eq!(passo_da_revisao(0, 3, Some((0, 8)), -1), Some(Passo::Arquivo { indice: 7, no_fim: true }));
+        // O arquivo sem mudança para mostrar (saiu do disco, registro antigo) não prende a seta.
+        assert_eq!(passo_da_revisao(0, 0, Some((3, 8)), 1), Some(Passo::Arquivo { indice: 4, no_fim: false }));
+        // Fora de uma lista (o diff de "Na pasta") ou com um arquivo só, dá a volta dentro dele.
+        assert_eq!(passo_da_revisao(2, 3, None, 1), Some(Passo::Mudanca(0)));
+        assert_eq!(passo_da_revisao(0, 3, Some((0, 1)), -1), Some(Passo::Mudanca(2)));
+        assert_eq!(passo_da_revisao(0, 0, None, 1), None);
+        assert_eq!(passo_da_revisao(0, 0, Some((0, 1)), 1), None);
+        // A posição que passou do fim (o arquivo encolheu) vale como a última.
+        assert_eq!(passo_da_revisao(9, 3, Some((0, 2)), 1), Some(Passo::Arquivo { indice: 1, no_fim: false }));
     }
 }

@@ -459,6 +459,13 @@ pub struct Janela {
     /// próximo quadro.
     edicao_atual: usize,
     edicao_rolar: std::cell::Cell<bool>,
+    /// Onde o arquivo da edição aberta está na lista de Mudanças do chat (a posição e quantos a
+    /// lista tem), guardado pela edição e pelo tamanho da conversa: as setas passam ao arquivo
+    /// seguinte, e a faixa diz "arquivo 2 de 8".
+    lugar_no_turno: std::cell::Cell<Option<(usize, usize, Option<(usize, usize)>)>>,
+    /// O diff de "Na pasta" sem as mudanças só de espaço em branco (o `-w` do git). Desligado ao
+    /// abrir o Vitral; liga e desliga no "…" do arquivo aberto com o diff.
+    diff_sem_espaco: bool,
     /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
     /// mencionar o trecho, e a ponta de onde a escolha começou.
     arquivo_selecao: Option<(u32, u32)>,
@@ -778,6 +785,8 @@ impl Janela {
             arquivo_edicao: None,
             edicao_atual: 0,
             edicao_rolar: Default::default(),
+            lugar_no_turno: Default::default(),
+            diff_sem_espaco: false,
             arquivo_selecao: None,
             arquivo_ancora: None,
             cache_arquivos: Default::default(),

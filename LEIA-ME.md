@@ -1284,6 +1284,11 @@ worktree"), lido quando a dica aparece.
   poucos segundos. O `retrato_da_pasta` usa a mesma leitura e cai no `git symbolic-ref` só no
   repositório que os arquivos não contam (o formato reftable).
 - Não há aviso quando a pasta troca de ramo (dono, 18/11/2026: nada de avisos novos).
+- **Ignorar espaço em branco.** Com o diff de "Na pasta" aberto, o **…** do arquivo tem
+  **Ignorar espaço em branco** (marcado quando ligado): o diff é refeito com o `-w` do git
+  (`git::diff_do_arquivo`), e o que só mudou de recuo ou de espaço no fim da linha sai. A faixa
+  diz "sem espaço em branco" e, se não sobrou nada, "Só mudou espaço em branco". Começa
+  desligado e vale até fechar o Vitral (`Janela::diff_sem_espaco`).
 
 **Nesta conversa** (`src/ui/sumario.rs`). O Este chat abre com o sumário da conversa (com duas
 mensagens suas ou mais): uma linha por mensagem sua, com a hora e o começo do texto em até duas
@@ -1619,8 +1624,15 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   escolhe a linha (o segundo a desfaz) e Shift+clique estende a escolha; as escolhidas ficam em
   azul, e o cabeçalho diz quais são ("linhas 12 a 18"), com o × que desfaz. Aberto pela edição
   (ver **Ver a edição**, em Ferramentas), o arquivo ganha a faixa da edição embaixo do cabeçalho:
-  "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra (dão a volta) e o ×
-  que volta ao arquivo sem as marcas. As linhas que entraram ficam com o fundo verde, a faixa
+  "Edição", o +N −M e "2 de 5", as setas que passam de uma mudança à outra e o ×
+  que volta ao arquivo sem as marcas. **Rever o turno em sequência:** aberto pelas Mudanças de um
+  chat (ou por uma edição da conversa) com mais de um arquivo na lista, a faixa diz também
+  "arquivo 2 de 8" ("2/8" no painel estreito), e a seta, na última mudança, passa ao arquivo
+  seguinte da lista em que ele está ("Neste turno" ou "Antes"), na ordem dela; a de cima, na
+  primeira mudança, volta ao arquivo anterior, na última mudança dele. Nas pontas da lista, dá a
+  volta. A dica da seta diz se o próximo passo é outra mudança ou outro arquivo
+  (`passo_da_revisao` e `edicao::lugar_na_revisao`, com teste). Fora de uma lista (o diff de "Na
+  pasta") ou com um arquivo só, as setas dão a volta dentro do arquivo, como antes. As linhas que entraram ficam com o fundo verde, a faixa
   verde na borda e o "+"; as que saíram aparecem entre elas, sem número, em vermelho, com o "−"
   (o markdown sai em linhas nesse modo). Cada trecho da edição é achado no arquivo de agora pelo
   lado novo (o contexto e o que entrou; no diff do Codex, perto da linha que ele diz); o que não
