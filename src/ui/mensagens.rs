@@ -1747,7 +1747,8 @@ fn estilo_das_mensagens(vista: TextView, cx: &App) -> TextView {
         // com Shift, separada por tabulação, que é o que uma planilha cola em colunas.
         .table_actions(|tabela, _, _| {
             h_flex().w_full().justify_end().child(
-                BotaoCopiar::new("copiar-tabela", tabela.markdown.clone())
+                // Sem os links internos que os caminhos de arquivo ganharam na resposta.
+                BotaoCopiar::new("copiar-tabela", super::links_arquivo::sem_links_do_vitral(&tabela.markdown))
                     .com_shift(tabela_para_planilha(&tabela.headers, &tabela.rows))
                     .dica("Copiar a tabela (com Shift, para colar em planilha)"),
             )

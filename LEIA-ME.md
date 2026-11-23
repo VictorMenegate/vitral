@@ -1026,6 +1026,8 @@ no cabeçalho; dono, 18/11/2026).
   código (`BotaoCopiar`, tênue) no canto direito, logo abaixo dela: o clique copia a tabela em
   Markdown, e com Shift copia separada por tabulação, que uma planilha cola em colunas
   (`mensagens::tabela_para_planilha`; a tabulação e a quebra dentro de uma célula viram espaço).
+  O Markdown copiado sai sem os links internos que os caminhos de arquivo ganham na resposta
+  (`links_arquivo::sem_links_do_vitral`: o caminho volta a ser código em linha).
   É o gancho `table_actions` do kit, que desenha o que recebe numa fileira abaixo da tabela, e
   não por cima dela como no bloco de código: por isso o botão fica embaixo, e o texto depois de
   uma tabela desce uns 28 px.
