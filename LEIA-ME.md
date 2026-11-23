@@ -1467,7 +1467,11 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   clique direito) abre no VS Code, copia o caminho ou mostra na pasta. A lista é relida a cada 20 s
   em segundo plano, sem travar a tela.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
-  `config.json` fica na dica do subtítulo), em quatro grupos: **Chats** (**Resumo ao voltar depois
+  `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
+  (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
+  Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à direita,
+  as opções da parte escolhida, que rolam sozinhas numa altura fixa. As opções, antes em quatro
+  grupos: **Chats** (**Resumo ao voltar depois
   de**, **Mostrar o uso do plano no canto da janela**, ligada por padrão, o modo de permissão
   padrão, o modelo dos chats, **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os
   chats já lidos e não fixados e sem fila, e **Servidores MCP do Claude Code**, os do seu Claude

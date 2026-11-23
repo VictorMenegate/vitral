@@ -972,8 +972,10 @@ impl Janela {
         }
         acoes.push(copiar(chave, texto).into_any_element());
         // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, no trecho reto
-        // da borda (a 16, na coluna do texto); no canto ela montava na curva.
-        let barra = div().absolute().top(r(-14.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
+        // da borda (a 16, na coluna do texto); no canto ela montava na curva. Sobe 22, e não 14:
+        // com 8 de respiro no balão, ela entrava 6 px na primeira linha do texto (revisão de
+        // design, 23/11/2026).
+        let barra = div().absolute().top(r(-22.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
         v_flex()
             .w_full()
             .map(com_alcance_da_barra)
@@ -1699,7 +1701,7 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
 /// fora): 16 de folga em cima, devolvidos pela margem. Sem isso, chegando por cima, a barra sumia
 /// antes do clique no lápis (teste de usabilidade, 16/11/2026).
 fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
-    elemento.pt(esp::E16).mt(r(-16.))
+    elemento.pt(esp::E24).mt(r(-24.))
 }
 
 /// O mesmo para a barra embaixo da resposta, que ocupa os 30 depois do texto: 32 de folga

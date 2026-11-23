@@ -68,16 +68,21 @@ fn rotulo_e_frase(motor: &Motor, chat: &str, texto: &str) -> Vec<AnyElement> {
     let frase = titulo.and_then(|t| texto.strip_prefix(t)).and_then(|r| r.strip_prefix(": "));
     // O nome do chat vai sempre na frente: "Precisa da sua permissão: Bash…" sozinho, três vezes,
     // não dizia de qual chat era cada uma (revisão de design, 23/11/2026).
+    // O rótulo do grupo já diz "Precisa de você": a linha fica com o que é pedido ("Bash, $ ls").
+    let sem_pedido = |t: &str| {
+        ["Precisa da sua permissão: ", "Precisa da sua aprovação: "].iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t).to_string()
+    };
     let frase = match (titulo, frase) {
-        (_, Some(frase)) => super::falas::primeira_frase(frase),
-        (Some(_), None) => uma_linha(texto),
+        (_, Some(frase)) => sem_pedido(&super::falas::primeira_frase(frase)),
+        (Some(_), None) => sem_pedido(&uma_linha(texto)),
         (None, None) => {
             return vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()];
         }
     };
     let titulo = titulo.unwrap_or_default();
     vec![
-        div().flex_none().max_w(relative(0.45)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
+        // O nome com largura fixa: a frase começa no mesmo lugar em todas as linhas.
+        div().flex_none().w(relative(0.4)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
         div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(frase).into_any_element(),
     ]
 }
@@ -144,11 +149,13 @@ impl Janela {
                     h_flex()
                         .id(SharedString::from(format!("resumo-{onde}-{grupo}-{i}")))
                         .min_h(r(28.))
-                        .px(esp::E4)
+                        // O nome na coluna do texto do rótulo do grupo (o ponto de 6 e o vão de 6),
+                        // sem o balão de cada linha, que não dizia nada (revisão de design, 23/11/2026).
+                        .pl(esp::E12)
+                        .pr(esp::E4)
                         .gap(esp::E8)
                         .rounded(raio::CONTROLE)
                         .when(chat.is_some(), |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
-                        .child(div().flex_none().child(simbolo_do_chat(16.)))
                         .children(rotulo_e_frase(motor, &l.chat, &l.texto))
                         .when_some(chat, |s, chat| {
                             s.on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -162,7 +169,7 @@ impl Janela {
                 );
             }
             if linhas.len() > mostradas {
-                corpo = corpo.child(div().pl(esp::E24).metadado().text_color(Cores::tenue()).child(format!("e mais {}", linhas.len() - mostradas)));
+                corpo = corpo.child(div().pl(esp::E12).metadado().text_color(Cores::tenue()).child(format!("e mais {}", linhas.len() - mostradas)));
             }
         }
         let motor_e = self.motor.clone();

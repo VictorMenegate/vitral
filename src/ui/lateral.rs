@@ -1276,7 +1276,9 @@ impl Janela {
                 .px(esp::E8)
                 .gap(esp::E6)
                 .rounded(raio::PILULA)
-                .child(div().flex_none().size(r(8.)).rounded_full().bg(Cores::destaque()))
+                // O aro do rodando, o mesmo da lista: o disco cheio é dos avisos (revisão de design,
+                // 23/11/2026).
+                .child(Sinal::Rodando.ponto(8.))
                 .child(
                     div()
                         .min_w_0()

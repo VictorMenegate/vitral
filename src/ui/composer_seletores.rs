@@ -541,7 +541,7 @@ fn itens_de_conta(motor: &Motor, chat: &Chat) -> Vec<ItemDeEscolha> {
         .iter()
         .map(|c| {
             let uso = motor.uso_da_conta(&c.id);
-            let descricao = if motor.conta_sem_login(&c.id) { "sem login: entre de novo em Contas do Claude".to_string() } else { descricao_da_conta(&uso) };
+            let descricao = if motor.conta_sem_login(&c.id) { "Sem login: entre de novo em Contas do Claude".to_string() } else { com_maiuscula(&descricao_da_conta(&uso)) };
             ItemDeEscolha {
                 descricao: Some(descricao.into()),
                 selos: selo(c.id == escolha),
@@ -988,7 +988,7 @@ impl Janela {
                     .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
                 div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).children(dupla).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
-                        dica_de_tecla(&["↑", "↓"], "escolher"),
+                        dica_de_tecla(&["↑", "↓"], "escolhe"),
                         dica_de_tecla(&["Enter"], "usa"),
                     ], window);
                     s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E8).child(teclas))

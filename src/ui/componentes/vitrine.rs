@@ -534,7 +534,7 @@ impl Vitrine {
                     .shadow(vec![linha_de_luz(1.)])
                     .corpo_ui()
                     .text_color(Cores::tenue())
-                    .child("Mensagem para este chat…")
+                    .child("Mensagem para este chat")
                     // O foco são as cantoneiras azuis, sem halo.
                     .when(forca > 0., |s| s.child(cantoneiras(raio::peca(), 12., Cantos::Diagonal, forca))),
             )

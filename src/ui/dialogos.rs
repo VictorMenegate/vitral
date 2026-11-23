@@ -280,7 +280,7 @@ impl Janela {
                             .w_full()
                             .child(div().flex_1())
                             .when(largo, |s| {
-                                s.child(dica_teclas(&["↑", "↓"], "escolher")).child(dica_teclas(&["Enter"], "abrir"))
+                                s.child(dica_teclas(&["↑", "↓"], "escolhe")).child(dica_teclas(&["Enter"], "abre"))
                             }),
                     )
                     .into_any_element()
@@ -380,7 +380,7 @@ impl Janela {
                 .font_weight(FontWeight::NORMAL)
                 .child("Valem para todos os chats")
                 .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
-            moldura(dialogo, largura::G, window)
+            moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
                 .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
                 .child(vista.clone())
         });

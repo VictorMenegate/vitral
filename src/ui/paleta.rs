@@ -377,7 +377,7 @@ impl Janela {
                             .gap(r(12.))
                             .w_full()
                             .child(div().flex_1())
-                            .child(dica_teclas(&["↑", "↓"], "escolher"))
+                            .child(dica_teclas(&["↑", "↓"], "escolhe"))
                             .child(dica_teclas(&["Enter"], "fazer")),
                     )
                     .into_any_element()

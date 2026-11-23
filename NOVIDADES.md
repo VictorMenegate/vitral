@@ -29,8 +29,14 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **A lista mais limpa.** A linha do chat aberto fica só com o fundo, sem a barrinha azul na ponta;
   a hora fica mais legível com a janela transparente; e o pé da lista esmaece, em vez de cortar a
   última linha a seco.
-- **Configurações com controles iguais.** Os seletores (modo, agente, modelo) ficam na mesma caixa
-  escura do contador, alinhados, e toda linha tem o ⓘ.
+- **Configurações por partes.** Uma coluna à esquerda com Chats, Agentes, Memória, Aparência,
+  Claude Code e Atualizações, e as opções de cada parte à direita. Os seletores (modo, agente,
+  modelo) ficam na mesma caixa escura do contador, alinhados, e toda linha tem o ⓘ.
+- **Acabamento.** A barra de ações do seu balão (hora, editar, copiar) não cobre mais a primeira
+  linha do texto; as linhas do "Enquanto você esteve fora" ficam alinhadas, sem o balão de cada
+  uma e com o que é pedido ("Bash: ls -la"); o "1 rodando" usa o mesmo aro da lista; os campos
+  sem reticências ("Mensagem para este chat"); e as dicas de tecla no mesmo tempo ("↑ ↓ escolhe",
+  "Enter abre").
 - **As cores de estado iguais em todo lugar.** O que terminou e você ainda não viu é verde na
   lista também (era azul só nela); o azul fica para o que roda.
 
