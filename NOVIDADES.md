@@ -78,6 +78,8 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
 - **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
   como código.
+- **Arquivo grande abre para ler.** Arquivos de 400 KB a 5 MB (um log, um export) abriam só no
+  VS Code. Agora abrem aqui, só para ler, com a busca e a escolha de linhas.
 - **Rever as mudanças do turno em sequência.** Na edição aberta à direita, a seta da última
   mudança passa ao próximo arquivo da lista de Mudanças do chat, e a faixa mostra "arquivo 2 de
   8". Antes as setas davam a volta dentro do mesmo arquivo.

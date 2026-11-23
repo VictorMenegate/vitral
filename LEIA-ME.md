@@ -1654,6 +1654,14 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   se acha mais (o arquivo mudou depois) aparece solto no fim, com uma nota. O painel abre rolado
   até a primeira mudança. O registro antigo, sem o diff, abre o arquivo como está, com o aviso
   "Este registro não guardou a edição" na faixa.
+  **Arquivo grande.** Acima de 400 KB o arquivo abre **só para ler**, até 5 MB
+  (`TETO_DE_LEITURA`), com a faixa discreta "Só leitura: arquivo grande (612 KB)" embaixo do
+  cabeçalho: em linhas, sem a cor da sintaxe (colorir alguns MB levaria dezenas de segundos), sem
+  a prévia do markdown e com a linha de mais de 2 mil letras cortada no desenho (o JSON
+  minificado). A escolha de linhas e o Ctrl+F continuam (a busca conta as linhas só com ASCII
+  sem dobrar o texto: `achados_na_linha`). Medido na bancada, no binário de depuração, com um log
+  de 5 MB e 99,8 mil linhas: um quadro de 0,5 s ao abrir, a rolagem sem custo e até 0,34 s por
+  tecla da busca; o binário de release é várias vezes mais rápido. Acima de 5 MB continua o aviso.
   O markdown sai renderizado; o código, com cor e número de linha, rola para os lados. O **SVG**
   abre desenhado, como as outras imagens (o `img` do GPUI o desenha; `claude::imagem_de_ver`), e o
   clique o leva ao visor, no tamanho que a tag `<svg>` diz (`imagens::medidas_svg`: o `width` e o
@@ -1666,7 +1674,7 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   dica do botão diz qual. Arquivo que não dá para mostrar tem um aviso no lugar, com a saída que
   serve (`saidas_do_aviso`): o **binário** (PDF, planilha, zip; o aviso diz o tipo pela extensão)
   tem o **Abrir fora**, que abre no aplicativo padrão do sistema (`sistema::abrir_fora`); o
-  **grande demais** (mais de 400 KB) tem **Abrir no VS Code** e **Abrir fora**; o que sumiu,
+  **grande demais** (mais de 5 MB) tem **Abrir no VS Code** e **Abrir fora**; o que sumiu,
   **Fechar**. O arquivo grande com um byte nulo no começo é binário, e não "grande demais" (antes
   um PDF de 2 MB só oferecia o VS Code). O **…** do cabeçalho também tem o **Abrir fora**, para
   qualquer arquivo (o .html no navegador, o .csv na planilha).

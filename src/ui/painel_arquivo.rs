@@ -98,15 +98,63 @@ fn achados_nas_linhas(linhas: &[SharedString], termo: &str) -> Vec<(usize, usize
     if termo.is_empty() {
         return Vec::new();
     }
-    linhas
-        .iter()
-        .enumerate()
-        .flat_map(|(linha, texto)| (0..super::acentos::faixas(texto, termo).len()).map(move |k| (linha, k)))
-        .collect()
+    linhas.iter().enumerate().flat_map(|(linha, texto)| (0..achados_na_linha(texto, termo)).map(move |k| (linha, k))).collect()
 }
 
-/// Maior arquivo que abre aqui (o resto fica para o VS Code).
+/// Quantas vezes o termo (já normalizado) aparece na linha, sem se sobrepor. A linha só com ASCII
+/// (quase todo código e todo log) é contada sem dobrar o texto: num arquivo de alguns MB a conta
+/// roda nas linhas todas a cada tecla da busca.
+fn achados_na_linha(texto: &str, termo: &str) -> usize {
+    if !(texto.is_ascii() && termo.is_ascii()) {
+        return super::acentos::faixas(texto, termo).len();
+    }
+    let (texto, termo) = (texto.as_bytes(), termo.as_bytes());
+    let (mut i, mut achados) = (0, 0);
+    while i + termo.len() <= texto.len() {
+        if texto[i..i + termo.len()].eq_ignore_ascii_case(termo) {
+            achados += 1;
+            i += termo.len();
+        } else {
+            i += 1;
+        }
+    }
+    achados
+}
+
+/// Maior arquivo que abre inteiro (com cor e, no .md, renderizado); acima dele, só para ler.
 const LIMITE: u64 = 400_000;
+
+/// Maior arquivo que abre para ler (o resto fica para o VS Code ou para o aplicativo do sistema).
+const TETO_DE_LEITURA: u64 = 5_000_000;
+
+/// No arquivo grande, a linha desenhada vai até aqui (o JSON minificado numa linha só travaria o
+/// desenho do texto).
+const LINHA_MAXIMA: usize = 2_000;
+
+/// O aviso do arquivo que abre só para ler, pelo tamanho dele; `None`, ele abre inteiro.
+fn nota_de_so_leitura(bytes: u64) -> Option<String> {
+    (bytes > LIMITE).then(|| format!("Só leitura: arquivo grande ({})", tamanho(bytes)))
+}
+
+/// A linha como é desenhada: a tabulação vira 4 espaços (o GPUI não a desenha como recuo) e, no
+/// arquivo grande, a linha comprida demais é cortada.
+fn linha_desenhada(linha: &str, cortar: bool) -> String {
+    if linha.is_empty() {
+        return " ".to_string();
+    }
+    match linha.char_indices().nth(LINHA_MAXIMA) {
+        Some((fim, _)) if cortar => format!("{} …", &linha[..fim]).replace('\t', "    "),
+        _ => linha.replace('\t', "    "),
+    }
+}
+
+/// A largura da coluna do número da linha (em px a 100%): os dígitos × 0,6 em do mono de 13, mais 4.
+fn largura_do_numero(linhas: usize) -> f32 {
+    linhas.max(1).to_string().len().max(2) as f32 * LETRA_DO_CODIGO + 4.
+}
+
+/// O avanço de uma letra do código (em px a 100%): 0,6 em do mono de 13.
+const LETRA_DO_CODIGO: f32 = 7.8;
 
 /// O limite das imagens é outro: o de texto barraria um print comum, e desenhar uma imagem custa
 /// a memória dela decodificada, não o tamanho do arquivo.
@@ -121,6 +169,8 @@ pub(super) struct ArquivoLido {
     modificado: Option<SystemTime>,
     conferido: Instant,
     conteudo: Conteudo,
+    /// O tamanho do arquivo lido: acima do limite da edição ele abre só para ler.
+    bytes: u64,
     /// Chegam do segundo plano pouco depois da leitura; até lá o código sai sem cor.
     cores: Option<CoresDasLinhas>,
     rolagem: UniformListScrollHandle,
@@ -185,28 +235,24 @@ fn ler_arquivo(completo: &Path, rico: bool) -> Conteudo {
             return if m.len() > LIMITE_IMAGEM { Conteudo::Aviso(Aviso::Grande(m.len())) } else { Conteudo::Imagem };
         }
         // O PDF de 2 MB é binário, e não "grande demais": a saída dele é o aplicativo do sistema.
-        Ok(m) if m.len() > LIMITE => {
-            return Conteudo::Aviso(if comeco_binario(completo) { Aviso::Binario } else { Aviso::Grande(m.len()) });
-        }
+        Ok(m) if m.len() > LIMITE && comeco_binario(completo) => return Conteudo::Aviso(Aviso::Binario),
+        Ok(m) if m.len() > TETO_DE_LEITURA => return Conteudo::Aviso(Aviso::Grande(m.len())),
         Ok(_) => {}
         Err(erro) => return Conteudo::Aviso(erro_de_leitura(erro)),
     }
-    let texto = match std::fs::read(completo) {
+    let (texto, grande) = match std::fs::read(completo) {
         Ok(bytes) if bytes.is_empty() => return Conteudo::Aviso(Aviso::Vazio),
-        Ok(bytes) if bytes.len() as u64 > LIMITE => return Conteudo::Aviso(Aviso::Grande(bytes.len() as u64)),
+        Ok(bytes) if bytes.len() as u64 > TETO_DE_LEITURA => return Conteudo::Aviso(Aviso::Grande(bytes.len() as u64)),
         Ok(bytes) if bytes.contains(&0) => return Conteudo::Aviso(Aviso::Binario),
-        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+        Ok(bytes) => (String::from_utf8_lossy(&bytes).to_string(), bytes.len() as u64 > LIMITE),
         Err(erro) => return Conteudo::Aviso(erro_de_leitura(erro)),
     };
-    if markdown {
+    // O .md grande sai em linhas: a prévia de um texto desse tamanho travaria a janela.
+    if markdown && !grande {
         let linhas = texto.lines().count();
         return Conteudo::Markdown(texto.into(), linhas);
     }
-    // Tabulação vira 4 espaços: o GPUI não a desenha como recuo.
-    let linhas: Vec<SharedString> = texto
-        .lines()
-        .map(|l| SharedString::from(if l.is_empty() { " ".to_string() } else { l.replace('\t', "    ") }))
-        .collect();
+    let linhas: Vec<SharedString> = texto.lines().map(|l| SharedString::from(linha_desenhada(l, grande))).collect();
     let mais_longa = (0..linhas.len()).max_by_key(|&i| linhas[i].chars().count()).unwrap_or(0);
     Conteudo::Codigo(Rc::new(linhas), mais_longa)
 }
@@ -221,7 +267,7 @@ fn tamanho(bytes: u64) -> String {
 }
 
 /// A linguagem para o realce: a extensão, ou o nome para arquivos sem ela (Makefile, Dockerfile).
-fn linguagem(caminho: &Path) -> String {
+pub(super) fn linguagem(caminho: &Path) -> String {
     let nome = caminho.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match nome.rsplit_once('.') {
         Some((_, extensao)) if !extensao.is_empty() => extensao.to_string(),
@@ -499,18 +545,27 @@ fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
     super::dialogos::nome_da_pasta(raiz)
 }
 
+/// O que o painel mostra do arquivo lido: o conteúdo, as cores do código se já chegaram, a
+/// rolagem e o tamanho do arquivo.
+struct Visto {
+    conteudo: Conteudo,
+    cores: Option<CoresDasLinhas>,
+    rolagem: UniformListScrollHandle,
+    bytes: u64,
+}
+
 impl Janela {
     /// O conteúdo do arquivo aberto, relido só quando ele muda (a data é conferida no máximo a
     /// cada segundo), com as cores do código se já chegaram e a rolagem.
-    fn conteudo_arquivo(
-        &self,
-        completo: &Path,
-        rico: bool,
-        cx: &Context<Self>,
-    ) -> (Conteudo, Option<CoresDasLinhas>, UniformListScrollHandle) {
+    fn conteudo_arquivo(&self, completo: &Path, rico: bool, cx: &Context<Self>) -> Visto {
         let mut lido = self.arquivo_lido.borrow_mut();
         let data = || std::fs::metadata(completo).and_then(|m| m.modified()).ok();
-        let visto = |l: &ArquivoLido| (l.conteudo.clone(), l.cores.clone(), l.rolagem.clone());
+        let visto = |l: &ArquivoLido| Visto {
+            conteudo: l.conteudo.clone(),
+            cores: l.cores.clone(),
+            rolagem: l.rolagem.clone(),
+            bytes: l.bytes,
+        };
         if let Some(l) = lido.as_mut()
             && l.caminho == completo
             && l.rico == rico
@@ -530,9 +585,11 @@ impl Janela {
             .map(|l| l.rolagem.clone())
             .unwrap_or_default();
         let modificado = data();
+        let bytes = std::fs::metadata(completo).map(|m| m.len()).unwrap_or(0);
         let conteudo = ler_arquivo(completo, rico);
         let colorindo = match &conteudo {
-            Conteudo::Codigo(linhas, _) => Some(colorir(completo, modificado, linhas, cx)),
+            // O arquivo grande sai sem cor: colorir alguns MB levaria dezenas de segundos.
+            Conteudo::Codigo(linhas, _) if bytes <= LIMITE => Some(colorir(completo, modificado, linhas, cx)),
             _ => None,
         };
         let novo = ArquivoLido {
@@ -540,6 +597,7 @@ impl Janela {
             modificado,
             conferido: Instant::now(),
             conteudo,
+            bytes,
             cores: None,
             rolagem,
             _colorindo: colorindo,
@@ -565,7 +623,7 @@ impl Janela {
         // Com a busca aberta também: ela é pelas linhas.
         let edicao = self.arquivo_edicao.clone();
         let rico = edicao.is_none() && !self.busca_arquivo.aberta;
-        let (conteudo, cores, rolagem_codigo) = self.conteudo_arquivo(&completo, rico, cx);
+        let Visto { conteudo, cores, rolagem: rolagem_codigo, bytes } = self.conteudo_arquivo(&completo, rico, cx);
         let janela = cx.entity().downgrade();
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
         let medir = self.medir_direita(cx);
@@ -585,6 +643,11 @@ impl Janela {
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, reserva, na_gaveta, window, cx);
         let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
+        // O aviso discreto do arquivo que abre só para ler.
+        let faixa_de_leitura = match &conteudo {
+            Conteudo::Codigo(..) => nota_de_so_leitura(bytes).map(|nota| faixa_de_nota(nota, reserva, na_gaveta, window)),
+            _ => None,
+        };
         // O achado atual e quantos são, para a barra da busca (só o arquivo em linhas tem).
         let mut contagem_da_busca: Option<(usize, usize)> = None;
         let corpo = match conteudo {
@@ -643,9 +706,7 @@ impl Janela {
                 .into_any_element(),
             // Só as linhas visíveis são montadas: arquivos de milhares de linhas não pesam.
             Conteudo::Codigo(linhas, mais_longa) => {
-                let digitos = linhas.len().max(1).to_string().len().max(2);
-                // Dígitos × 0,6 em do mono de 13, mais 4.
-                let largura_numero = r(digitos as f32 * 7.8 + 4.);
+                let largura_numero = r(largura_do_numero(linhas.len()));
                 // O link da conversa pediu uma linha: rola até ela uma vez (com folga em cima) e
                 // a deixa marcada enquanto o arquivo estiver aberto.
                 if let Some(linha) = self.arquivo_linha.take() {
@@ -795,6 +856,7 @@ impl Janela {
             .child(cabecalho)
             .child(barra)
             .children(faixa)
+            .children(faixa_de_leitura)
             .child(div().relative().flex_1().min_h_0().flex().flex_col().child(corpo).children(barra_da_busca))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
@@ -988,7 +1050,18 @@ impl Janela {
                     .items_center()
                     .gap(esp::E8)
                     .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone_do_arquivo(caminho), 16., window)))
-                    .child(div().flex_shrink(1.).min_w(r(24.)).truncate().rotulo().text_color(Cores::forte()).child(nome))
+                    // O nome é cortado no meio: a extensão fica à vista.
+                    .child(
+                        div()
+                            .flex_shrink(1.)
+                            .min_w(r(24.))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
+                            .rotulo()
+                            .text_color(Cores::forte())
+                            .child(nome),
+                    )
                     .when(com_info, |s| {
                         s.children(info.map(|i| {
                             div()
@@ -1464,7 +1537,7 @@ fn aviso_do_arquivo(
         Aviso::Grande(bytes) => (
             Lucide::File,
             "Arquivo grande demais",
-            Some(format!("Tem {}; aqui abrem arquivos de até {}.", tamanho(bytes), tamanho(LIMITE))),
+            Some(format!("Tem {}; aqui abrem arquivos de até {}.", tamanho(bytes), tamanho(TETO_DE_LEITURA))),
         ),
         Aviso::Binario => (
             Lucide::Binary,
@@ -1488,6 +1561,26 @@ fn aviso_do_arquivo(
                 .when_some(texto, |e, t| e.texto(t))
                 .when_some(acao, |e, a| e.acao(a)),
         )
+        .into_any_element()
+}
+
+/// A faixa de um aviso discreto, embaixo do cabeçalho ("Só leitura: arquivo grande (1,2 MB)").
+fn faixa_de_nota(texto: String, reserva: Option<Pixels>, na_gaveta: bool, window: &Window) -> AnyElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(altura::BARRA)
+        .pl(esp::E12)
+        .map(|s| match reserva {
+            Some(folga) => s.pr(folga),
+            None => s.pr(esp::E8),
+        })
+        .gap(esp::E8)
+        .border_b_1()
+        .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
+        .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::Info, 14., window)))
+        .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(texto))
         .into_any_element()
 }
 
@@ -1526,8 +1619,9 @@ fn colorir(
 #[cfg(test)]
 mod testes {
     use super::{
-        Aviso, Conteudo, Passo, Saida, achados_nas_linhas, cores_por_linha, icone_do_arquivo, ler_arquivo, linha_do_editor,
-        nome_da_linguagem, passo_da_revisao, saidas_do_aviso, tamanho, titulo_do_binario,
+        Aviso, Conteudo, LINHA_MAXIMA, Passo, Saida, TETO_DE_LEITURA, achados_na_linha, achados_nas_linhas, cores_por_linha, icone_do_arquivo,
+        ler_arquivo, linha_do_editor, nome_da_linguagem, nota_de_so_leitura, passo_da_revisao, saidas_do_aviso, tamanho,
+        titulo_do_binario,
     };
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
@@ -1577,10 +1671,48 @@ mod testes {
         };
         assert_eq!(aviso("vazio.txt", b""), Some(Aviso::Vazio));
         assert_eq!(aviso("binario.bin", b"a\0b"), Some(Aviso::Binario));
-        assert_eq!(aviso("grande.txt", &vec![b'a'; 400_001]), Some(Aviso::Grande(400_001)));
+        // Até 23/11 o teto era de 400 KB; o item "arquivo grande" o levou a `TETO_DE_LEITURA`.
+        assert_eq!(aviso("grande.txt", &vec![b'a'; TETO_DE_LEITURA as usize + 1]), Some(Aviso::Grande(TETO_DE_LEITURA + 1)));
         assert_eq!(aviso("ok.rs", b"fn main() {}\n"), None);
         assert!(matches!(ler_arquivo(&pasta.join("sumiu.rs"), false), Conteudo::Aviso(Aviso::NaoExiste)));
         assert!(matches!(ler_arquivo(&pasta, false), Conteudo::Aviso(Aviso::Erro(_))));
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn arquivo_grande_abre_so_para_ler_ate_o_teto() {
+        let pasta = std::env::temp_dir().join(format!("vitral-teste-grande-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let linhas_de = |nome: &str, texto: &str, rico: bool| {
+            std::fs::write(pasta.join(nome), texto).unwrap();
+            match ler_arquivo(&pasta.join(nome), rico) {
+                Conteudo::Codigo(linhas, _) => Some(linhas),
+                _ => None,
+            }
+        };
+        // Um log de 540 KB: antes era "grande demais"; agora abre, em linhas.
+        let log = "2026-11-23 12:00:00 pedido 123456 separado no galpao\n".repeat(10_000);
+        assert_eq!(linhas_de("saida.log", &log, true).map(|l| l.len()), Some(10_000));
+        // 60 mil linhas curtas também.
+        assert_eq!(linhas_de("ids.csv", &"1234567890\n".repeat(60_000), true).map(|l| l.len()), Some(60_000));
+        // O .md grande abre em linhas: a prévia de um texto desse tamanho travaria a janela.
+        assert_eq!(linhas_de("historico.md", &"- uma linha do historico de pedidos\n".repeat(15_000), true).map(|l| l.len()), Some(15_000));
+        // A linha comprida demais (um JSON minificado) é cortada no desenho.
+        let minificado = format!("{{\"a\":\"{}\"}}\nfim\n", "x".repeat(500_000));
+        let linhas = linhas_de("pacote.min.json", &minificado, true).unwrap();
+        assert_eq!(linhas.len(), 2);
+        assert!(linhas[0].chars().count() <= LINHA_MAXIMA + 2, "a linha ficou com {} letras", linhas[0].chars().count());
+        assert!(linhas[0].ends_with('…'));
+        assert_eq!(linhas[1].as_ref(), "fim");
+        // O aviso discreto diz por que não dá para editar; o arquivo comum não tem aviso.
+        assert_eq!(nota_de_so_leitura(540_000).as_deref(), Some("Só leitura: arquivo grande (540 KB)"));
+        assert_eq!(nota_de_so_leitura(2_300_000).as_deref(), Some("Só leitura: arquivo grande (2,3 MB)"));
+        assert_eq!(nota_de_so_leitura(400_000), None);
+        assert_eq!(nota_de_so_leitura(1_200), None);
+        // Acima do teto continua o aviso, com as saídas de antes.
+        std::fs::write(pasta.join("dump.sql"), vec![b'a'; TETO_DE_LEITURA as usize + 1]).unwrap();
+        assert!(matches!(ler_arquivo(&pasta.join("dump.sql"), true), Conteudo::Aviso(Aviso::Grande(n)) if n == TETO_DE_LEITURA + 1));
+        assert_eq!(saidas_do_aviso(&Aviso::Grande(TETO_DE_LEITURA + 1)), [Saida::Editor, Saida::Fora]);
         let _ = std::fs::remove_dir_all(&pasta);
     }
 
@@ -1593,9 +1725,9 @@ mod testes {
         pdf.extend(std::iter::repeat_n([0u8, 1, 2, 255], 125_000).flatten());
         std::fs::write(pasta.join("relatorio.pdf"), &pdf).unwrap();
         assert!(matches!(ler_arquivo(&pasta.join("relatorio.pdf"), false), Conteudo::Aviso(Aviso::Binario)));
-        // O texto grande continua "grande demais".
-        std::fs::write(pasta.join("dados.csv"), vec![b'a'; 500_000]).unwrap();
-        assert!(matches!(ler_arquivo(&pasta.join("dados.csv"), false), Conteudo::Aviso(Aviso::Grande(500_000))));
+        // O texto acima do teto de leitura continua "grande demais" (até 23/11 o teto era de 400 KB).
+        std::fs::write(pasta.join("dados.csv"), vec![b'a'; TETO_DE_LEITURA as usize + 1]).unwrap();
+        assert!(matches!(ler_arquivo(&pasta.join("dados.csv"), false), Conteudo::Aviso(Aviso::Grande(n)) if n == TETO_DE_LEITURA + 1));
         assert_eq!(saidas_do_aviso(&Aviso::Binario), [Saida::Fora]);
         assert_eq!(saidas_do_aviso(&Aviso::Grande(500_000)), [Saida::Editor, Saida::Fora]);
         assert_eq!(saidas_do_aviso(&Aviso::NaoExiste), [Saida::Fechar]);
@@ -1648,6 +1780,24 @@ mod testes {
         assert_eq!(passo_da_revisao(0, 0, Some((0, 1)), 1), None);
         // A posição que passou do fim (o arquivo encolheu) vale como a última.
         assert_eq!(passo_da_revisao(9, 3, Some((0, 2)), 1), Some(Passo::Arquivo { indice: 1, no_fim: false }));
+    }
+
+    #[test]
+    fn a_busca_conta_igual_na_linha_so_com_ascii() {
+        // O atalho das linhas sem acento dá a mesma conta que a busca dobrada.
+        for (linha, termo) in [
+            ("2026-11-23 12:00:00 INFO pedido 1050000 conferido", "1050000"),
+            ("let Config = CONFIG.config();", "config"),
+            ("aaaa", "aa"),
+            ("aaa", "aa"),
+            ("curto", "um termo mais comprido que a linha"),
+            ("sem nada", "xyz"),
+        ] {
+            assert_eq!(achados_na_linha(linha, termo), crate::ui::acentos::faixas(linha, termo).len(), "{linha:?} / {termo:?}");
+        }
+        assert_eq!(achados_na_linha("aaaa", "aa"), 2);
+        // Com acento na linha ou no termo, a busca dobrada.
+        assert_eq!(achados_na_linha("Configuração e configuracao", "configuracao"), 2);
     }
 
     #[test]
