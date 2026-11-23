@@ -8,6 +8,7 @@ mod claude;
 mod codex;
 mod contas;
 mod dados;
+mod diagnostico;
 mod git;
 mod ideias;
 mod importar;
@@ -18,12 +19,14 @@ mod memoria_equipe;
 mod migracao;
 mod modelo;
 mod motor;
+mod perfis;
 mod processos;
 mod prompts;
 mod queda;
 mod sistema;
 mod tema;
 mod ui;
+mod versoes_agentes;
 
 use std::{
     path::{Path, PathBuf},

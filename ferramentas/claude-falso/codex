@@ -7,7 +7,8 @@ chamada ficam em $XDG_STATE_HOME/codex-falso.log.
 
 No pedido, `[ferramenta <Nome> <detalhe> | <segundos>]` encena um item: Bash vira um comando, Edit e
 Write uma mudança de arquivo, Pensa um raciocínio. `[falha]` termina o turno com erro.
-`codex debug models` devolve um catálogo pequeno.
+`codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
+(CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
 import json
 import os
@@ -136,6 +137,9 @@ def servidor():
 def main():
     args = sys.argv[1:]
     anotar(args)
+    if args == ["--version"]:
+        print(f"codex-cli {os.environ.get('CODEX_FALSO_VERSAO', '0.169.0')}")
+        return
     if args[:2] == ["debug", "models"]:
         return catalogo()
     if args and args[0] == "app-server":
