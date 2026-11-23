@@ -87,9 +87,6 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   mensagem podia deixar dois ou três processos do Claude na mesma conversa, cada um respondendo e
   soltando agentes por conta própria. Agora cada conversa tem um processo só, e o Parar derruba
   também o que ainda estava saindo.
-- **Mensagem com os agentes ainda rodando entra na hora.** Depois da resposta, com agentes em
-  segundo plano, a mensagem nova ficava na fila até o último agente acabar. Agora o Claude a
-  responde em seguida, no mesmo processo, sem parar os agentes.
 
 ## 0.9.5
 

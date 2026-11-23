@@ -330,10 +330,6 @@ pub struct Motor {
     /// O turno que espera o processo anterior do chat sair para abrir: as mensagens dele, já como
     /// vão entrar. Abre sozinho quando o anterior sai (`abrir_quando_sair`); o Parar o desfaz.
     a_abrir: HashMap<String, Vec<Entrada>>,
-    /// Os chats cujo processo de agora já ganhou o aviso de que os agentes seguem em segundo
-    /// plano: com a entrada aberta, cada turno no meio da espera termina adiado de novo, e o
-    /// aviso é um só por processo.
-    avisou_do_fundo: HashSet<String>,
     /// A trava que segura a suspensão automática enquanto algum chat trabalha (`acertar_trava`).
     trava_de_suspensao: Option<std::process::Child>,
     /// Quando a trava foi pedida pela última vez: sem `systemd-inhibit` (ou com ele saindo na hora),
@@ -665,7 +661,6 @@ impl Motor {
             conta_do_turno: HashMap::new(),
             encerrando: Default::default(),
             a_abrir: HashMap::new(),
-            avisou_do_fundo: HashSet::new(),
             trava_de_suspensao: None,
             trava_pedida_em: None,
             ultimo_sinal: HashMap::new(),
@@ -951,7 +946,6 @@ impl Motor {
             }
             self.encerrando.derrubar_do_chat(id);
             self.a_abrir.remove(id);
-            self.avisou_do_fundo.remove(id);
             self.execucao.remove(id);
             self.geracao_atual.remove(id);
             self.ultima_entrada.remove(id);
@@ -1492,6 +1486,16 @@ impl Motor {
     /// (`abrir_quando_sair`). Quem não sai no prazo é derrubado (`saidas::PRAZO_DE_SAIDA`).
     /// Devolve `true` quando o turno ficou esperando.
     fn esperar_o_anterior_sair(&mut self, chat_id: &str, mensagens: &[Entrada], cx: &mut Context<Self>) -> bool {
+        // O chat já tem o processo dele, com turno rodando ou à espera dos agentes: nada abre por
+        // cima (o `insert` trocaria o processo do chat por outro). O que ia abrir espera a vez na
+        // fila, na frente, e entra quando ele sair.
+        if self.processos.contains_key(chat_id) {
+            let fila = self.filas.entry(chat_id.to_string()).or_default();
+            fila.splice(0..0, mensagens.iter().cloned());
+            self.salvar();
+            cx.notify();
+            return true;
+        }
         // O que ainda esperava a sugestão fecha a entrada e passa a contar como saindo.
         self.parar_de_esperar_sugestao(chat_id);
         if !self.encerrando.vivo(chat_id) {
@@ -1808,10 +1812,9 @@ impl Motor {
             return Dirigido::NaFila(None);
         }
         // Um turno sendo parado está indo embora. Esperando os agentes do fundo, a entrada fica
-        // aberta e a mensagem entra: o Claude Code abre outro turno com ela na hora, no mesmo
-        // processo (medido no 2.1.328 em 23/11/2026). Só com a entrada já fechada (um Codex, um
-        // processo que a vigia fechou) ela espera a vez, mais abaixo (`Processo::dirigir`).
-        if self.interrompidos.iter().any(|c| c == chat_id) {
+        // aberta e a mensagem entra (o Claude Code abre um turno com ela); sem agentes, o fim
+        // adiado é o da mensagem dirigida, e a entrada pode já ter fechado.
+        if self.interrompidos.iter().any(|c| c == chat_id) || (self.fim_adiado.contains_key(chat_id) && !self.agentes_no_fundo_com_entrada(chat_id)) {
             return Dirigido::NaFila(None);
         }
         if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
@@ -1864,7 +1867,6 @@ impl Motor {
             let _ = motor.update(cx, |m, _| {
                 if m.geracao_atual.get(&chat).copied() == geracao
                     && m.fim_adiado.contains_key(&chat)
-                    && m.fundo.get(&chat).copied().unwrap_or(0) == 0
                     && let Some(processo) = m.processos.get_mut(&chat)
                 {
                     processo.fechar_entrada();
@@ -1900,10 +1902,17 @@ impl Motor {
         }
     }
 
+    /// Os agentes do fundo ainda trabalham e a entrada do processo segue aberta: dá para mandar
+    /// mensagem nesse tempo.
+    fn agentes_no_fundo_com_entrada(&self, chat: &str) -> bool {
+        self.fundo.get(chat).copied().unwrap_or(0) > 0 && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
+    }
+
     /// O turno que roda neste chat recebe mensagem agora (o Enviar e o "Mandar agora" entram nele).
     pub fn turno_recebe_mensagem(&self, chat: &str) -> bool {
         self.somente_leitura.is_none()
             && matches!(self.execucao(chat), Execucao::Rodando { .. })
+            && (!self.fim_adiado.contains_key(chat) || self.agentes_no_fundo_com_entrada(chat))
             && !self.interrompidos.iter().any(|c| c == chat)
             && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
     }
@@ -2428,7 +2437,6 @@ impl Motor {
                 self.acertar_trava();
                 self.fundo.remove(chat_id);
                 self.fim_adiado.remove(chat_id);
-                self.avisou_do_fundo.remove(chat_id);
                 self.dirigidas.remove(chat_id);
                 self.retiradas.remove(chat_id);
                 // O processo novo já abre com o que a conversa pede: a troca que esperava não vai.
@@ -3478,11 +3486,11 @@ impl Motor {
                 // Turno começando no mesmo processo: a mensagem dirigida saiu da fila interna do
                 // Claude Code e é ela que está rodando agora.
                 self.dirigidas.remove(chat_id);
-                // Com a entrada aberta é um turno como outro qualquer, mesmo com agentes no fundo
-                // (a mensagem que você mandou com eles rodando, ou o aviso de um que terminou): o
-                // fim que estava adiado deixa de valer, e dá para dirigir de novo. Só o processo
-                // de entrada fechada continua contando como "esperando os agentes" até sair.
-                if self.processos.get(chat_id).is_some_and(Processo::entrada_aberta) {
+                // Com a entrada aberta e sem agentes no fundo, é um turno como outro qualquer: o
+                // fim que estava adiado por causa dela deixa de valer, e dá para dirigir de novo.
+                if self.fundo.get(chat_id).copied().unwrap_or(0) == 0
+                    && self.processos.get(chat_id).is_some_and(Processo::entrada_aberta)
+                {
                     self.fim_adiado.remove(chat_id);
                 }
                 // Os fluxos só contam como desligados num turno que os pediu (no plano Pro eles
@@ -3561,11 +3569,15 @@ impl Motor {
             }
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
-                // Os agentes acabaram com o processo de entrada aberta à espera deles: o Claude
-                // Code abre o turno do aviso em seguida (o `Inicio` tira o fim adiado). Se não
-                // abrir, a vigia fecha a entrada e o processo sai, com o fim que estava adiado.
-                if n == 0 && self.fim_adiado.contains_key(chat_id) {
-                    self.vigiar_turno_dirigido(chat_id, cx);
+                // O último agente do fundo terminou com o turno já adiado: a entrada, que ficou
+                // aberta para as mensagens desse tempo, fecha (sem nenhuma esperando), e o Claude
+                // Code fecha o turno e sai, como antes.
+                if n == 0
+                    && self.fim_adiado.contains_key(chat_id)
+                    && !self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty())
+                    && let Some(processo) = self.processos.get_mut(chat_id)
+                {
+                    processo.fechar_entrada();
                 }
             }
             Evento::Comandos(comandos) => {
@@ -3876,19 +3888,20 @@ impl Motor {
                 let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
                 if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido) && self.processos.contains_key(chat_id) {
                     // O fluxo (ou subagente) segue em segundo plano e o Claude Code abre outro
-                    // turno quando ele acaba; o turno só termina no último `result`. A entrada
-                    // fica aberta enquanto isso (até a 0.9.5 ela fechava aqui): a mensagem que
-                    // você manda com os agentes rodando entra neste mesmo processo, como outro
-                    // turno, em vez de esperar na fila até o último agente acabar (medido no
-                    // 2.1.328 em 23/11/2026: o `init` dela sai 0,15 s depois). Quando os agentes
-                    // acabam, o turno do aviso é o último, e é o fim dele que fecha a entrada.
-                    // Só com a mensagem dirigida engatilhada (sem agentes), a vigia fecha a
-                    // entrada se o turno dela não começar, e o processo sai.
+                    // turno quando ele acaba; o turno só termina no último `result`. A entrada fica
+                    // aberta enquanto os agentes trabalham: a mensagem que o usuário manda nesse
+                    // tempo entra no Claude Code na hora, em vez de esperar na fila até eles
+                    // acabarem (dono, 23/11/2026: "essa mensagem não tá indo", depois de 53 min de
+                    // agentes no fundo). Ela fecha quando o último agente termina (`Fundo(0)`). Sem
+                    // agentes, só com a mensagem dirigida engatilhada: o turno dela começa na hora,
+                    // no mesmo processo; se não começar, a vigia fecha a entrada e o processo sai.
                     if agentes == 0 {
                         self.vigiar_turno_dirigido(chat_id, cx);
                     }
-                    self.fim_adiado.insert(chat_id.to_string(), (texto, custo_usd));
-                    let primeiro = agentes > 0 && self.avisou_do_fundo.insert(chat_id.to_string());
+                    let primeiro = self
+                        .fim_adiado
+                        .insert(chat_id.to_string(), (texto, custo_usd))
+                        .is_none();
                     if let Some(c) = self.chat_mut(chat_id)
                         && janela.is_some()
                     {
