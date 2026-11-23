@@ -191,17 +191,21 @@ impl RenderOnce for Switch {
         let toggle_bg: Background = cx.theme().tokens.switch_thumb.into();
         let disabled_label_color = cx.theme().muted_foreground;
 
+        // Vitral: as medidas acompanham o zoom do app (o rem de 15 a 100%), como o `z()` do menu.
+        // Em px fixos, a 1,6 o interruptor ficava com 36×20 ao lado de controles de 44 de altura.
+        let rem = window.rem_size();
+        let z = move |v: f32| rem * (v / 15.);
         let (bg_width, bg_height) = match self.size {
-            Size::XSmall | Size::Small => (px(28.), px(16.)),
-            Size::Large => (px(44.), px(24.)),
-            _ => (px(36.), px(20.)),
+            Size::XSmall | Size::Small => (z(28.), z(16.)),
+            Size::Large => (z(44.), z(24.)),
+            _ => (z(36.), z(20.)),
         };
         let bar_width = match self.size {
-            Size::XSmall | Size::Small => px(12.),
-            Size::Large => px(20.),
-            _ => px(16.),
+            Size::XSmall | Size::Small => z(12.),
+            Size::Large => z(20.),
+            _ => z(16.),
         };
-        let inset = px(2.);
+        let inset = z(2.);
         let radius = if cx.theme().radius >= px(4.) {
             bg_height
         } else {

@@ -7,7 +7,7 @@ use gpui_kit::component::{
     Disableable as _, WindowExt as _, v_flex,
     dialog::Dialog,
     input::{Input, InputState},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -280,7 +280,7 @@ impl Janela {
                             .w_full()
                             .child(div().flex_1())
                             .when(largo, |s| {
-                                s.child(dica_teclas(&["↑", "↓"], "escolher")).child(dica_teclas(&["Enter"], "abrir"))
+                                s.child(dica_teclas(&["↑", "↓"], "escolhe")).child(dica_teclas(&["Enter"], "abre"))
                             }),
                     )
                     .into_any_element()
@@ -378,9 +378,10 @@ impl Janela {
             let subtitulo = div()
                 .id("configuracoes-pasta")
                 .font_weight(FontWeight::NORMAL)
-                .child("Valem para todos os chats")
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
-            moldura(dialogo, largura::G, window)
+                // Em Aparência e Atualizações não é dos chats: vale para o app, e grava na hora.
+                .child("Gravam na hora")
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
+            moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
                 .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
                 .child(vista.clone())
         });

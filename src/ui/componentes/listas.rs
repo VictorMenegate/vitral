@@ -8,7 +8,7 @@ use gpui_kit::component::{
     command::{Command, CommandGroup, CommandItem, CommandState},
     scroll::{Scrollbar, ScrollbarHandle},
     switch::Switch,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -365,17 +365,6 @@ impl RenderOnce for CartaoDeLista {
         let raio_cartao = raio::de(altura);
         let vao = if uma_linha && !arvore { esp::E8 } else { esp::E12 };
         let forte = self.nao_lido || self.selecionado;
-        let cor_barra = Cores::destaque();
-        let barra = (self.selecionado || self.aberto_em_outro).then(|| {
-            div()
-                .absolute()
-                .left(r(2.))
-                .top(r(if uma_linha { 7. } else { 10. }))
-                .bottom(r(if uma_linha { 7. } else { 10. }))
-                .w(px(3.))
-                .rounded_full()
-                .bg(if self.selecionado { cor_barra } else { cor_barra.opacity(0.4) })
-        });
         let simbolo = if arvore {
             Some(coluna_da_arvore(self.simbolo, self.sinal, self.dica_do_ponto, self.ramo, window))
         } else {
@@ -468,8 +457,14 @@ impl RenderOnce for CartaoDeLista {
                     )
                 })
         });
-        let (fundo, hover) =
-            if self.selecionado { (Cores::selecao(), Cores::selecao()) } else { (transparent_black(), Cores::hover()) };
+        // O escolhido é o fundo da seleção, e o aberto noutro painel, o do hover. A barrinha azul na
+        // ponta da esquerda saiu: uma barra num lado da caixa redonda é o atalho que a revisão de
+        // design pede para trocar pelo fundo (dono, 23/11/2026: "pode fazer todas").
+        let (fundo, hover) = match (self.selecionado, self.aberto_em_outro) {
+            (true, _) => (Cores::selecao(), Cores::selecao()),
+            (false, true) => (Cores::hover(), Cores::hover()),
+            (false, false) => (transparent_black(), Cores::hover()),
+        };
         div()
             .id(self.id)
             .group(GRUPO)
@@ -479,8 +474,7 @@ impl RenderOnce for CartaoDeLista {
             .gap(vao)
             .h(r(altura))
             .px(dentro_da_borda(8.))
-            // Sem símbolo (os chats da lista), o título fica a 12 da borda: com 8 ele encostava na
-            // barra azul do selecionado.
+            // Sem símbolo (os chats da lista), o título fica a 12 da borda.
             .when(simbolo.is_none(), |d| d.pl(dentro_da_borda(12.)))
             .rounded(raio_cartao)
             .bg(fundo)
@@ -489,7 +483,6 @@ impl RenderOnce for CartaoDeLista {
             .when(self.realce, |d| d.border_color(Cores::destaque_borda()))
             .hover(move |s| s.bg(hover))
             .when(self.ao_clicar.is_some(), |d| d.cursor_pointer())
-            .children(barra)
             .children(simbolo)
             .child(
                 div()
@@ -558,7 +551,7 @@ fn coluna_da_arvore(
                 .items_center()
                 .justify_center()
                 .child(ponto)
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element(),
         ),
         (ponto, _) => ponto,
@@ -701,7 +694,7 @@ impl RenderOnce for LinhaDeOpcao {
                         .id("info")
                         .text_color(Cores::tenue())
                         .child(Icon::new(Lucide::Info).with_size(tam(window, 14.)))
-                        .tooltip(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
                 )
             });
         let mut controle_embaixo = None;

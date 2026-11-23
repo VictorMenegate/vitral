@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Antigravity CLI (`agy`) de mentira para a bancada (vai no PATH junto com o claude falso, com
+CLAUDE_FALSO=1): fala o ACP do `agy acp` como o agy 1.5.15 (initialize, session/new|resume,
+session/set_config_option, session/prompt com session/update, session/request_permission e
+session/cancel), sem chamar a API. Cada pedido anota a mensagem em notas-do-chat.md na pasta da
+sessão e responde "(gemini falso) Anotei…". Na mensagem:
+- `[demora]` leva 10 s;
+- `[permissao]` pede permissão para rodar `ls -la` e diz o que o Vitral respondeu;
+- `[ferramenta Edit]` encena uma edição de c.txt (o tool_call e o diff);
+- `[falha]` termina o pedido com erro.
+Um session/prompt com o turno rodando entra nele: o anterior responde end_turn na hora e a resposta
+final cita a mensagem nova. `agy models` lista os modelos; `agy --version` diz a versão. Os
+pedidos recebidos vão para $XDG_STATE_HOME/agy-falso.log."""
+import json
+import os
+import queue
+import sys
+import threading
+import time
+import uuid
+
+ARGS = sys.argv[1:]
+if ARGS[:1] == ["--version"]:
+    print("1.5.15")
+    sys.exit(0)
+if ARGS[:1] == ["models"]:
+    print("Fetching available models...")
+    print("gemini-3.8-flash-high\tGemini 3.8 Flash (High)")
+    print("gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)")
+    print("gemini-3.8-flash-low\tGemini 3.8 Flash (Low)")
+    print("claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)")
+    sys.exit(0)
+if ARGS[:1] != ["acp"]:
+    print("agy falso: só `acp`, `models` e `--version`", file=sys.stderr)
+    sys.exit(2)
+
+estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+os.makedirs(estado, exist_ok=True)
+registro = open(os.path.join(estado, "agy-falso.log"), "a")
+saida_trava = threading.Lock()
+
+
+def escrever(objeto):
+    with saida_trava:
+        sys.stdout.write(json.dumps(objeto, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+
+def atualizar(sessao, update):
+    escrever({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sessao, "update": update}})
+
+
+def opcoes(modelo="gemini-3.8-flash", nivel="high", modo="default"):
+    return [
+        {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": modelo,
+         "options": [{"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"}, {"value": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6 (Thinking)"}]},
+        {"id": "thought_level", "name": "Thinking Level", "category": "thought_level", "type": "select", "currentValue": nivel,
+         "options": [{"value": "low", "name": "Low"}, {"value": "medium", "name": "Medium"}, {"value": "high", "name": "High"}]},
+        {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": modo,
+         "options": [{"value": "default"}, {"value": "accept-edits"}, {"value": "auto"}, {"value": "plan"}]},
+    ]
+
+
+sessoes = {}  # id -> {"cwd", "config"}
+entrada = queue.Queue()
+respostas = {}  # id de pedido nosso -> resultado
+cancelado = threading.Event()
+turno = {"pedidos": [], "extras": [], "rodando": False}
+turno_trava = threading.Lock()
+
+
+def ler():
+    for linha in sys.stdin:
+        try:
+            entrada.put(json.loads(linha))
+        except ValueError:
+            continue
+    entrada.put(None)
+
+
+def texto_do(prompt):
+    return " ".join(b.get("text", "") for b in prompt if b.get("type") == "text").strip()
+
+
+def rodar_turno(sessao, id_pedido, prompt):
+    texto = texto_do(prompt)
+    imagens = sum(1 for b in prompt if b.get("type") == "image")
+    pasta = sessoes[sessao]["cwd"]
+    with open(os.path.join(pasta, "notas-do-chat.md"), "a") as notas:
+        notas.write(f"- {texto}\n")
+    atualizar(sessao, {"sessionUpdate": "usage_update", "used": 1200, "size": 1048576})
+    atualizar(sessao, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Pensando no pedido."}})
+    if "[demora]" in texto:
+        for _ in range(100):
+            if cancelado.is_set():
+                break
+            time.sleep(0.1)
+    if "[ferramenta Edit]" in texto and not cancelado.is_set():
+        caminho = os.path.join(pasta, "c.txt")
+        args = {"Path": caminho, "Target": "linha dois", "Replacement": "linha 2"}
+        atualizar(sessao, {"sessionUpdate": "tool_call", "toolCallId": "falso-edit", "name": "edit_file", "args": args,
+                           "status": "in_progress", "kind": "edit", "title": "File c.txt", "rawInput": args})
+        time.sleep(1)
+        atualizar(sessao, {"sessionUpdate": "tool_call_update", "toolCallId": "falso-edit", "name": "edit_file", "args": args,
+                           "status": "completed", "kind": "edit", "title": "File c.txt",
+                           "content": [{"type": "diff", "path": caminho, "oldText": "linha um\nlinha dois\n", "newText": "linha um\nlinha 2\n"}]})
+    decisao = ""
+    if "[permissao]" in texto and "--dangerously-skip-permissions" in ARGS and not cancelado.is_set():
+        decisao = " (sem perguntar)"
+    elif "[permissao]" in texto and not cancelado.is_set():
+        args = {"CommandLine": "ls -la", "toolSummary": "List files"}
+        chamada = {"sessionUpdate": "tool_call", "toolCallId": "falso-ls", "name": "run_command", "args": args,
+                   "status": "pending", "kind": "execute", "title": "ls -la", "rawInput": args}
+        atualizar(sessao, chamada)
+        id_permissao = str(uuid.uuid4())
+        escrever({"jsonrpc": "2.0", "id": id_permissao, "method": "session/request_permission", "params": {
+            "sessionId": sessao, "toolCall": chamada,
+            "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}, {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}})
+        while id_permissao not in respostas and not cancelado.is_set():
+            time.sleep(0.05)
+        escolha = respostas.pop(id_permissao, {}).get("outcome", {})
+        permitiu = escolha.get("optionId") == "allow"
+        decisao = " (permitiu o ls)" if permitiu else " (negou o ls)"
+        status = "completed" if permitiu else "failed"
+        atualizar(sessao, {**chamada, "sessionUpdate": "tool_call_update", "status": status,
+                           "rawOutput": {"output": "a.txt\n" if permitiu else "", "exit_code": 0}})
+    with turno_trava:
+        extras = list(turno["extras"])
+        turno["extras"].clear()
+        pedidos = list(turno["pedidos"])
+        turno["pedidos"].clear()
+        turno["rodando"] = False
+    if cancelado.is_set():
+        for pedido in pedidos:
+            escrever({"jsonrpc": "2.0", "id": pedido, "result": {"stopReason": "cancelled"}})
+        return
+    if "[falha]" in texto:
+        for pedido in pedidos:
+            escrever({"jsonrpc": "2.0", "id": pedido, "error": {"code": -32603, "message": "Internal error (falha encenada)"}})
+        return
+    resposta = f"(gemini falso) Anotei em notas-do-chat.md, na pasta {pasta.replace(os.path.expanduser('~'), '~')}: {texto}{decisao}"
+    if imagens:
+        resposta += f" [{imagens} imagem(ns)]"
+    for extra in extras:
+        resposta += f" + {extra}"
+    for parte in (resposta[: len(resposta) // 2], resposta[len(resposta) // 2:]):
+        atualizar(sessao, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": parte}})
+    atualizar(sessao, {"sessionUpdate": "usage_update", "used": 2400, "size": 1048576})
+    uso = {"inputTokens": 900, "outputTokens": 120, "cachedReadTokens": 300, "cachedWriteTokens": 0, "thoughtTokens": 40, "totalTokens": 1320}
+    for pedido in pedidos:
+        escrever({"jsonrpc": "2.0", "id": pedido, "result": {"stopReason": "end_turn", "usage": uso}})
+
+
+threading.Thread(target=ler, daemon=True).start()
+while True:
+    m = entrada.get()
+    if m is None:
+        break
+    registro.write(json.dumps(m, ensure_ascii=False)[:2000] + "\n")
+    registro.flush()
+    metodo, id_m, p = m.get("method"), m.get("id"), m.get("params") or {}
+    if metodo is None and id_m is not None:
+        respostas[id_m] = m.get("result") or {}
+        continue
+    if metodo == "initialize":
+        escrever({"jsonrpc": "2.0", "id": id_m, "result": {"protocolVersion": 1, "agentInfo": {"name": "Antigravity ACP Server", "version": "1.5.15"},
+                  "agentCapabilities": {"loadSession": True, "promptCapabilities": {"image": True}, "sessionCapabilities": {"resume": {}}}}})
+    elif metodo in ("session/new", "session/resume"):
+        sessao = p.get("sessionId") or str(uuid.uuid4())
+        sessoes[sessao] = {"cwd": p.get("cwd") or os.getcwd(), "config": opcoes()}
+        escrever({"jsonrpc": "2.0", "id": id_m, "result": {"sessionId": sessao, "configOptions": sessoes[sessao]["config"]}})
+    elif metodo == "session/set_config_option":
+        config = sessoes.get(p.get("sessionId"), {}).get("config", opcoes())
+        for o in config:
+            if o["id"] == p.get("configId"):
+                o["currentValue"] = p.get("value")
+        escrever({"jsonrpc": "2.0", "id": id_m, "result": {"configOptions": config}})
+    elif metodo == "session/prompt":
+        sessao = p.get("sessionId")
+        with turno_trava:
+            rodando = turno["rodando"]
+            if rodando:
+                # Entra no turno que roda: o pedido anterior responde na hora.
+                anteriores = list(turno["pedidos"])
+                turno["pedidos"] = [id_m]
+                turno["extras"].append(texto_do(p.get("prompt", [])))
+            else:
+                turno["rodando"] = True
+                turno["pedidos"] = [id_m]
+                anteriores = []
+        for anterior in anteriores:
+            escrever({"jsonrpc": "2.0", "id": anterior, "result": {"stopReason": "end_turn"}})
+        if not rodando:
+            cancelado.clear()
+            threading.Thread(target=rodar_turno, args=(sessao, id_m, p.get("prompt", [])), daemon=True).start()
+    elif metodo == "session/cancel":
+        cancelado.set()
+    elif id_m is not None:
+        escrever({"jsonrpc": "2.0", "id": id_m, "error": {"code": -32601, "message": "Method not found"}})
+# Entrada fechada: espera o turno que roda terminar, como o agy.
+while turno["rodando"]:
+    time.sleep(0.05)

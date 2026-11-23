@@ -1438,9 +1438,10 @@ impl Motor {
         if self.somente_leitura.is_some() || !self.processos.contains_key(chat_id) {
             return Dirigido::NaFila(None);
         }
-        // Esperando os agentes do fundo não há turno a dirigir (a entrada já está fechada), e um
-        // turno sendo parado está indo embora.
-        if self.fim_adiado.contains_key(chat_id) || self.interrompidos.iter().any(|c| c == chat_id) {
+        // Um turno sendo parado está indo embora. Esperando os agentes do fundo, a entrada fica
+        // aberta e a mensagem entra (o Claude Code abre um turno com ela); sem agentes, o fim
+        // adiado é o da mensagem dirigida, e a entrada pode já ter fechado.
+        if self.interrompidos.iter().any(|c| c == chat_id) || (self.fim_adiado.contains_key(chat_id) && !self.agentes_no_fundo_com_entrada(chat_id)) {
             return Dirigido::NaFila(None);
         }
         if !matches!(self.execucao_real(chat_id), Execucao::Rodando { .. }) {
@@ -1528,11 +1529,17 @@ impl Motor {
         }
     }
 
+    /// Os agentes do fundo ainda trabalham e a entrada do processo segue aberta: dá para mandar
+    /// mensagem nesse tempo.
+    fn agentes_no_fundo_com_entrada(&self, chat: &str) -> bool {
+        self.fundo.get(chat).copied().unwrap_or(0) > 0 && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
+    }
+
     /// O turno que roda neste chat recebe mensagem agora (o Enviar e o "Mandar agora" entram nele).
     pub fn turno_recebe_mensagem(&self, chat: &str) -> bool {
         self.somente_leitura.is_none()
             && matches!(self.execucao(chat), Execucao::Rodando { .. })
-            && !self.fim_adiado.contains_key(chat)
+            && (!self.fim_adiado.contains_key(chat) || self.agentes_no_fundo_com_entrada(chat))
             && !self.interrompidos.iter().any(|c| c == chat)
             && self.processos.get(chat).is_some_and(Processo::entrada_aberta)
     }
@@ -1882,19 +1889,35 @@ impl Motor {
         if let Some(AlvoDaDupla::So(chamado)) = alvo
             && chamado != chat.agente
             && chat.parceiro.is_none()
-            && (chamado != Agente::Codex || crate::agente_codex::instalado())
+            && chamado.instalado()
             && let Some(c) = self.chat_mut(chat_id)
         {
+            let antes = c.agente;
             iniciar_dupla(c, chamado);
             chat = c.copia_sem_itens();
-            self.avisar(chat_id, &aviso_da_dupla(chamado, chamado.outro()), false);
+            self.avisar(chat_id, &aviso_da_dupla(chamado, antes), false);
         }
         // Com o Claude e o Codex juntos: a mensagem do usuário escolhe quem trabalha (e, com a
         // revisão ligada, se é uma rodada dos dois), e quem trabalha recebe o que o outro fez desde
         // a vez dele.
-        let resumo_da_dupla = if chat.parceiro.is_some() {
+        let resumo_da_dupla = if let Some(parceiro) = chat.parceiro.as_ref().map(|p| p.agente) {
             if let Some(alvo) = alvo {
                 let primeiro = match alvo {
+                    // Um terceiro agente não entra numa dupla já formada: responde quem está na vez.
+                    AlvoDaDupla::So(agente) if agente != chat.agente && agente != parceiro => {
+                        self.avisar(
+                            chat_id,
+                            &format!(
+                                "Este chat já tem o {} e o {} juntos; o {} não entra nele. Respondeu o {}.",
+                                chat.agente.nome(),
+                                parceiro.nome(),
+                                agente.nome(),
+                                chat.agente.nome()
+                            ),
+                            false,
+                        );
+                        chat.agente
+                    }
                     AlvoDaDupla::So(agente) => {
                         self.rodadas.remove(chat_id);
                         agente
@@ -1917,15 +1940,20 @@ impl Motor {
                 }
             }
             let itens = self.chat(chat_id).map_or(&[][..], |c| c.itens.as_slice());
-            o_que_o_outro_fez(itens, chat.agente)
+            let outro = chat.parceiro.as_ref().map_or(chat.agente.outro(), |p| p.agente);
+            o_que_o_outro_fez(itens, chat.agente, outro)
         } else {
             None
         };
         // Ultracode só com o que ele precisa: sem isso, o Claude Code o ignora calado. Um por vez no
         // Vitral inteiro: a fonte do PC não segura dois fluxos de agentes.
-        let codex = chat.agente == Agente::Codex;
-        if codex && !crate::agente_codex::instalado() {
-            self.avisar(chat_id, "O Codex não está instalado neste computador (ou não está no PATH); a mensagem não foi enviada.", true);
+        let claude = chat.agente == Agente::Claude;
+        if !chat.agente.instalado() {
+            let aviso = format!(
+                "O {} não está instalado neste computador (ou não está no PATH); a mensagem não foi enviada.",
+                chat.agente.nome()
+            );
+            self.avisar(chat_id, &aviso, true);
             self.salvar();
             cx.notify();
             return;
@@ -1949,7 +1977,7 @@ impl Motor {
         // A sessão gravada expirou (o Claude Code apaga as antigas): uma nova, com as últimas
         // mensagens no começo, em vez de um `--resume` que falharia.
         let pasta_conta = self.conta_para(&chat).pasta();
-        let expirou = !codex && chat.sessao_criada && claude::sessao_expirou(pasta_conta.as_deref(), &chat.cwd, &chat.sessao);
+        let expirou = claude && chat.sessao_criada && claude::sessao_expirou(pasta_conta.as_deref(), &chat.cwd, &chat.sessao);
         if expirou {
             self.passagens.insert(chat_id.to_string(), MotivoPassagem::Expirou);
             chat.sessao = uuid::Uuid::new_v4().to_string();
@@ -1979,7 +2007,7 @@ impl Motor {
         {
             let repeticao = mensagens.iter().all(|e| e.registrada);
             let c = self.chat_mut(chat_id).unwrap();
-            c.itens.extend(itens_das_entradas(mensagens, (!codex).then_some(marca.as_str())));
+            c.itens.extend(itens_das_entradas(mensagens, claude.then_some(marca.as_str())));
             // A marca de quem trabalha, na dupla; a repetição do mesmo turno não marca de novo.
             let ultima_vez = c.itens.iter().rev().find_map(|i| match i {
                 Item::Vez { agente, .. } => Some(*agente),
@@ -2013,7 +2041,7 @@ impl Motor {
         // Vence o esforço acima: o Ultracode roda sempre em Extra.
         opcoes.ultracode = ultracode;
         // A sessão foi criada, mas a marca não chegou ao disco (queda no primeiro turno).
-        if !codex
+        if claude
             && !opcoes.retomar
             && claude::sessao_existe(opcoes.pasta_conta.as_deref(), &chat.cwd, &chat.sessao)
         {
@@ -2028,7 +2056,7 @@ impl Motor {
         let mensagem = Mensagem {
             texto: &texto,
             imagens: &imagens,
-            marca: (!codex).then_some(marca.as_str()),
+            marca: claude.then_some(marca.as_str()),
         };
         // A sugestão do turno anterior sai, e o processo que ainda esperava por ela fecha antes de
         // o novo abrir a mesma sessão.
@@ -2071,12 +2099,12 @@ impl Motor {
         cx.notify();
     }
 
-    /// O modelo que vai no turno deste chat. No Codex, só o escolhido no chat (sem ele, vale o
-    /// padrão do próprio Codex). No Claude, a família vai como a versão mais nova que o Claude
+    /// O modelo que vai no turno deste chat. No Codex e no Gemini, só o escolhido no chat (sem
+    /// ele, vale o padrão do próprio agente). No Claude, a família vai como a versão mais nova que o Claude
     /// Code instalado oferece (ver `claude::modelo_para_o_turno`); num Claude Code sem as versões
     /// exatas, como está.
     fn modelo_do_turno(&self, chat: &Chat) -> Option<String> {
-        if chat.agente == Agente::Codex {
+        if chat.agente != Agente::Claude {
             return chat.modelo.clone();
         }
         let modelo = chat.modelo.clone().unwrap_or_else(|| self.config.modelo_chats.clone());
@@ -2097,7 +2125,8 @@ impl Motor {
     pub fn esforco_automatico(&self, chat: &Chat) -> Option<String> {
         match self.chave_do_esforco(chat) {
             Some((conta, modelo)) => claude::esforco_padrao(conta.as_deref(), &modelo),
-            None => chat.modelo.as_deref().and_then(crate::agente_codex::esforco_padrao),
+            None if chat.agente == Agente::Codex => chat.modelo.as_deref().and_then(crate::agente_codex::esforco_padrao),
+            None => None,
         }
     }
 
@@ -2124,7 +2153,7 @@ impl Motor {
                 && std::fs::write(&arquivo, &prompt_sistema).is_ok();
             gravou.then_some(arquivo)
         });
-        let codex = chat.agente == Agente::Codex;
+        let claude = chat.agente == Agente::Claude;
         Opcoes {
             agente: chat.agente,
             cwd: chat.cwd.clone(),
@@ -2134,8 +2163,8 @@ impl Motor {
             // O chat bifurcado de outro também começa numa cópia: a da sessão do chat de origem.
             bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada)
                 .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada).map(|b| b.sessao.clone()))
-                .filter(|_| !codex),
-            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && !codex).and_then(|b| b.ate.clone()),
+                .filter(|_| claude),
+            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && claude).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
             modelo: self.modelo_do_turno(chat),
@@ -2152,7 +2181,7 @@ impl Motor {
             ultracode: false,
             pasta_conta: None,
             memoria_nativa: self.config.memoria_ao_terminar,
-            sugestoes: self.config.sugerir_resposta && !codex,
+            sugestoes: self.config.sugerir_resposta && claude,
             mcp_da_equipe,
         }
     }
@@ -2188,7 +2217,7 @@ impl Motor {
             return true;
         }
         if self.processos.contains_key(chat_id) {
-            self.avisar(chat_id, "Troque entre o Claude e o Codex quando este turno terminar.", false);
+            self.avisar(chat_id, "Troque de agente quando este turno terminar.", false);
             cx.notify();
             return false;
         }
@@ -2213,7 +2242,19 @@ impl Motor {
         let tem_conversa = self.chat(chat_id).is_some_and(|c| {
             c.sessao_criada || c.importada.is_some() || c.itens.iter().any(|i| matches!(i, Item::Usuario { .. }))
         });
-        if tem_conversa && (agente != Agente::Codex || crate::agente_codex::instalado()) {
+        // A dupla é de dois: com outro parceiro já no chat, o terceiro não entra.
+        if let Some(parceiro) = self.chat(chat_id).and_then(|c| c.parceiro.as_ref()).map(|p| p.agente) {
+            let aviso = format!(
+                "Este chat já tem o {} e o {} juntos; separe os dois para trocar para o {}.",
+                antes.nome(),
+                parceiro.nome(),
+                agente.nome()
+            );
+            self.avisar(chat_id, &aviso, false);
+            cx.notify();
+            return false;
+        }
+        if tem_conversa && agente.instalado() {
             if let Some(c) = self.chat_mut(chat_id) {
                 iniciar_dupla(c, agente);
                 (c.modelo, c.modelo_atual) = (modelo, None);
@@ -2230,7 +2271,7 @@ impl Motor {
             (c.sessao, c.sessao_criada) = (uuid::Uuid::new_v4().to_string(), false);
             (c.contexto, c.janela, c.custo_da_sessao) = (None, None, None);
             // Os comandos de barra e as skills são do Claude Code.
-            if agente == Agente::Codex {
+            if agente != Agente::Claude {
                 c.comandos.clear();
                 c.esforco = c.esforco.take().filter(|e| e != "ultracode");
             }
@@ -2255,13 +2296,13 @@ impl Motor {
             return true;
         }
         if self.processos.contains_key(chat_id) {
-            self.avisar(chat_id, "Junte ou separe o Claude e o Codex quando este turno terminar.", false);
+            self.avisar(chat_id, "Junte ou separe os agentes quando este turno terminar.", false);
             cx.notify();
             return false;
         }
         let outro = agente.outro();
-        if juntos && outro == Agente::Codex && !crate::agente_codex::instalado() {
-            self.avisar(chat_id, "O Codex não está instalado neste computador (ou não está no PATH).", true);
+        if juntos && !outro.instalado() {
+            self.avisar(chat_id, &format!("O {} não está instalado neste computador (ou não está no PATH).", outro.nome()), true);
             cx.notify();
             return false;
         }
@@ -2270,7 +2311,14 @@ impl Motor {
                 c.parceiro = Some(Parceiro::novo(outro));
                 c.revisao_em_dupla = true;
             }
-            "O Claude e o Codex estão juntos neste chat: cada mensagem vai aos dois, um de cada vez, e um revisa o que o outro fez. Comece com @claude ou @codex para falar só com um.".to_string()
+            format!(
+                "O {} e o {} estão juntos neste chat: cada mensagem vai aos dois, um de cada vez, e um revisa o que o outro fez. \
+                 Comece com @{} ou @{} para falar só com um.",
+                agente.nome(),
+                outro.nome(),
+                agente.nome().to_lowercase(),
+                outro.nome().to_lowercase()
+            )
         } else {
             self.rodadas.remove(chat_id);
             if let Some(c) = self.chat_mut(chat_id) {
@@ -2305,18 +2353,15 @@ impl Motor {
         true
     }
 
-    /// Abre a raia de `de`: um chat novo do outro agente (o Codex para um chat do Claude, e o
-    /// contrário), na mesma pasta, para receber o mesmo pedido. Nasce em Planejar, que só lê: os
-    /// dois trabalham na mesma pasta, e dois agentes mexendo nos mesmos arquivos se atropelam.
-    /// Devolve o id do chat novo.
+    /// Abre a raia de `de`: um chat novo do outro agente (o parceiro padrão: o Codex para um chat
+    /// do Claude, e o Claude para os outros), na mesma pasta, para receber o mesmo pedido. Nasce em
+    /// Planejar, que só lê: os dois trabalham na mesma pasta, e dois agentes mexendo nos mesmos
+    /// arquivos se atropelam. Devolve o id do chat novo.
     pub fn abrir_raia(&mut self, de: &str, pedido: &str, cx: &mut Context<Self>) -> Result<String, String> {
         let (pasta, agente) = self.chat(de).map(|c| (c.cwd.clone(), c.agente)).ok_or("o chat não existe mais")?;
-        let outro = match agente {
-            Agente::Claude => Agente::Codex,
-            Agente::Codex => Agente::Claude,
-        };
-        if outro == Agente::Codex && !crate::agente_codex::instalado() {
-            return Err("o Codex não está instalado neste computador".into());
+        let outro = agente.outro();
+        if !outro.instalado() {
+            return Err(format!("o {} não está instalado neste computador", outro.nome()));
         }
         let id = self.novo_chat(Some(&pasta), &format!("raia:{de}"), cx)?;
         if let Some(c) = self.chat_mut(&id) {
@@ -2329,12 +2374,17 @@ impl Motor {
         Ok(id)
     }
 
-    /// Pergunta ao Codex instalado quais modelos ele oferece (em segundo plano) e redesenha se a
-    /// lista mudou: ao abrir o app.
+    /// Pergunta ao Codex e ao Gemini instalados quais modelos eles oferecem (em segundo plano) e
+    /// redesenha se a lista mudou: ao abrir o app.
     pub fn reler_modelos_do_codex(&self, cx: &mut Context<Self>) {
         let pasta = self.dados.cache.join("perguntas");
         cx.spawn(async move |motor, cx| {
-            let mudou = cx.background_spawn(async move { crate::agente_codex::atualizar_modelos(&pasta) }).await;
+            let mudou = cx
+                .background_spawn(async move {
+                    let codex = crate::agente_codex::atualizar_modelos(&pasta);
+                    crate::agente_gemini::atualizar_modelos(&pasta) || codex
+                })
+                .await;
             if mudou {
                 let _ = motor.update(cx, |_, cx| cx.notify());
             }
@@ -2383,7 +2433,7 @@ impl Motor {
     pub fn motivo_sem_ultracode(&self, chat: &Chat) -> Option<String> {
         // Vale com ou sem a dupla: "este chat responde pelo Codex" era falso no chat em que os dois
         // respondem juntos (relatório de design, 16/11/2026).
-        if chat.agente == Agente::Codex {
+        if chat.agente != Agente::Claude {
             return Some("só no Claude Code".into());
         }
         let escolhido = chat.modelo.as_deref().unwrap_or(&self.config.modelo_chats);
@@ -2667,7 +2717,7 @@ impl Motor {
         let Some(c) = self.chat_mut(chat).map(Chat::copia_sem_itens) else {
             return false;
         };
-        if c.agente == Agente::Codex {
+        if c.agente != Agente::Claude {
             return false;
         }
         let Some(atual) = self.conta_do_turno.get(chat).cloned() else {
@@ -3152,6 +3202,16 @@ impl Motor {
             }
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
+                // O último agente do fundo terminou com o turno já adiado: a entrada, que ficou
+                // aberta para as mensagens desse tempo, fecha (sem nenhuma esperando), e o Claude
+                // Code fecha o turno e sai, como antes.
+                if n == 0
+                    && self.fim_adiado.contains_key(chat_id)
+                    && !self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty())
+                    && let Some(processo) = self.processos.get_mut(chat_id)
+                {
+                    processo.fechar_entrada();
+                }
             }
             Evento::Comandos(comandos) => {
                 if comandos.is_empty() {
@@ -3383,6 +3443,31 @@ impl Motor {
                     }
                 }
             }
+            // O pedido de permissão do Gemini: o mesmo cartão dos do Claude Code, e o "Permitir
+            // sempre" da conversa vale para ele também.
+            Evento::Permissao { ferramenta, entrada, resposta } => {
+                if self.chat(chat_id).is_some_and(|c| c.permite(&ferramenta, &entrada)) {
+                    let permitido = json!({"behavior": "allow", "updatedInput": entrada});
+                    let _ = resposta.try_send(Resposta::ok(permitido.to_string()));
+                    return;
+                }
+                let pedido = texto_do_pedido(&ferramenta, &entrada);
+                self.permissoes.push(PedidoPermissao {
+                    id: novo_id(),
+                    chat: chat_id.to_string(),
+                    ferramenta,
+                    entrada,
+                    resposta,
+                });
+                self.execucao.insert(chat_id.to_string(), Execucao::EsperandoVoce);
+                self.registrar("permissao", chat_id, chat_id, &pedido);
+                if !self.janela_ativa
+                    && let Some(chat) = self.chat(chat_id)
+                {
+                    self.notificar(chat, &pedido, true);
+                }
+                cx.notify();
+            }
             Evento::Fim {
                 erro,
                 texto,
@@ -3392,19 +3477,16 @@ impl Motor {
                 let interrompido = self.interrompidos.iter().any(|c| c == chat_id);
                 let agentes = self.fundo.get(chat_id).copied().unwrap_or(0);
                 let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
-                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido)
-                    && let Some(processo) = self.processos.get_mut(chat_id)
-                {
+                if adiar_o_fim(agentes, dirigida_esperando, erro, interrompido) && self.processos.contains_key(chat_id) {
                     // O fluxo (ou subagente) segue em segundo plano e o Claude Code abre outro
-                    // turno quando ele acaba: com a entrada fechada, ele espera os agentes e sai,
-                    // e o turno só termina no último `result`. Só com a mensagem dirigida
-                    // engatilhada, a entrada fica aberta: o turno dela começa na hora, no mesmo
-                    // processo, e continua recebendo mensagens (fechada, o que o usuário mandasse
-                    // durante esse turno inteiro ia para a fila; dono, 13/11/2026). Se esse turno
-                    // não começar, a vigia fecha a entrada e o processo sai.
-                    if agentes > 0 {
-                        processo.fechar_entrada();
-                    } else {
+                    // turno quando ele acaba; o turno só termina no último `result`. A entrada fica
+                    // aberta enquanto os agentes trabalham: a mensagem que o usuário manda nesse
+                    // tempo entra no Claude Code na hora, em vez de esperar na fila até eles
+                    // acabarem (dono, 23/11/2026: "essa mensagem não tá indo", depois de 53 min de
+                    // agentes no fundo). Ela fecha quando o último agente termina (`Fundo(0)`). Sem
+                    // agentes, só com a mensagem dirigida engatilhada: o turno dela começa na hora,
+                    // no mesmo processo; se não começar, a vigia fecha a entrada e o processo sai.
+                    if agentes == 0 {
                         self.vigiar_turno_dirigido(chat_id, cx);
                     }
                     let primeiro = self
@@ -3713,7 +3795,7 @@ impl Motor {
             self.rodadas.remove(chat_id);
             self.avisar(
                 chat_id,
-                &format!("O Claude e o Codex já trocaram {} vezes nesta mensagem; parei a conversa entre eles. Mande outra para continuar.", DUPLA_TROCAS + 1),
+                &format!("Os dois agentes já trocaram {} vezes nesta mensagem; parei a conversa entre eles. Mande outra para continuar.", DUPLA_TROCAS + 1),
                 false,
             );
             return false;
@@ -4182,12 +4264,9 @@ pub fn falha_de_login(erro: &str) -> bool {
         .any(|trecho| erro.contains(trecho))
 }
 
-/// "Claude" ou "Codex", para títulos e rótulos curtos.
+/// "Claude", "Codex" ou "Gemini", para títulos e rótulos curtos.
 pub fn nome_curto_do_agente(agente: Agente) -> &'static str {
-    match agente {
-        Agente::Claude => "Claude",
-        Agente::Codex => "Codex",
-    }
+    agente.nome()
 }
 
 /// A linha sem as marcas de markdown do começo: título ("## "), citação ("> "), tarefa
@@ -4481,20 +4560,17 @@ fn aviso_da_dupla(chamado: Agente, antes: Agente) -> String {
          ou @{} para escolher quem responde.",
         chamado.nome(),
         antes.nome(),
-        Agente::Claude.nome().to_lowercase(),
-        Agente::Codex.nome().to_lowercase()
+        chamado.nome().to_lowercase(),
+        antes.nome().to_lowercase()
     )
 }
 
 fn alvo_da_dupla(texto: &str) -> AlvoDaDupla {
     let comeco = texto.trim_start().to_lowercase();
-    if comeco.starts_with("@claude") {
-        AlvoDaDupla::So(Agente::Claude)
-    } else if comeco.starts_with("@codex") {
-        AlvoDaDupla::So(Agente::Codex)
-    } else {
-        AlvoDaDupla::OsDois
-    }
+    Agente::TODOS
+        .into_iter()
+        .find(|a| comeco.starts_with(&format!("@{}", a.nome().to_lowercase())))
+        .map_or(AlvoDaDupla::OsDois, AlvoDaDupla::So)
 }
 
 /// A última resposta do agente da vez foi só o "Nada a acrescentar".
@@ -4509,15 +4585,14 @@ fn nada_a_acrescentar(itens: &[Item]) -> bool {
 /// O que `este` agente da dupla ainda não viu: o que o usuário mandou e o que o outro fez desde a
 /// última vez dele (tudo o que há, na primeira), do mais recente para trás até caber em
 /// `PASSAGEM_CARACTERES`. `None` quando não há nada novo.
-fn o_que_o_outro_fez(itens: &[Item], este: Agente) -> Option<String> {
-    let outro = este.outro();
+fn o_que_o_outro_fez(itens: &[Item], este: Agente, outro: Agente) -> Option<String> {
     let ultima = itens.iter().rposition(|i| matches!(i, Item::Vez { agente, .. } if *agente == este));
     // Depois da última vez dele, o que vem até a próxima marca é dele mesmo.
     let mut do_outro = ultima.is_none();
     let mut linhas = Vec::new();
     for item in &itens[ultima.map_or(0, |i| i + 1)..] {
         match item {
-            Item::Vez { agente, .. } => do_outro = *agente == outro,
+            Item::Vez { agente, .. } => do_outro = *agente != este,
             Item::Usuario { texto, .. } => linhas.push(format!("Usuário: {}", texto.trim())),
             Item::Entrega { de, texto, .. } => linhas.push(format!("[de: {de}] {}", texto.trim())),
             Item::Assistente { texto, .. } if do_outro => linhas.push(format!("{}: {}", outro.nome(), texto.trim())),
@@ -5012,17 +5087,17 @@ mod testes {
             editou.clone(),
             fala("Faltava o teste; acrescentei."),
         ];
-        let para_o_claude = o_que_o_outro_fez(&itens, Agente::Claude).unwrap();
+        let para_o_claude = o_que_o_outro_fez(&itens, Agente::Claude, Agente::Codex).unwrap();
         // Só o que veio depois da vez dele, e do Codex.
         assert!(para_o_claude.contains("Codex usou Edit: src/ui/fila.rs"), "{para_o_claude}");
         assert!(para_o_claude.contains("Codex: Faltava o teste; acrescentei."));
         assert!(!para_o_claude.contains("Arrumei a fila."));
         assert!(!para_o_claude.contains("antes da dupla"));
         // Na primeira vez dele, o Codex recebe a conversa desde o começo, até a vez dele.
-        let para_o_codex = o_que_o_outro_fez(&itens[..5], Agente::Codex).unwrap();
+        let para_o_codex = o_que_o_outro_fez(&itens[..5], Agente::Codex, Agente::Claude).unwrap();
         assert!(para_o_codex.contains("antes da dupla") && para_o_codex.contains("Claude: Arrumei a fila."), "{para_o_codex}");
         // Logo depois da própria vez, nada de novo.
-        assert_eq!(o_que_o_outro_fez(&itens[..5], Agente::Claude), None);
+        assert_eq!(o_que_o_outro_fez(&itens[..5], Agente::Claude, Agente::Codex), None);
         // A rodada para quando a revisão não acrescenta nada.
         assert!(!nada_a_acrescentar(&itens));
         let mut fim = itens.clone();

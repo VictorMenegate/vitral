@@ -357,7 +357,7 @@ impl Janela {
             TextareaState::new(window, cx)
                 .auto_grow(1, super::composer::LINHAS_CAIXA)
                 .submit_on_enter(true)
-                .placeholder("Mensagem…")
+                .placeholder("Mensagem")
         });
         self._assinaturas.push(cx.subscribe_in(
             &composer,
@@ -419,7 +419,7 @@ impl Janela {
             },
         ));
         // O histórico do cabeçalho: escolher um chat mostra ele neste painel, como uma aba.
-        let busca_historico = cx.new(|cx| ListaDeEscolha::new("Buscar chat…", window, cx));
+        let busca_historico = cx.new(|cx| ListaDeEscolha::new("Buscar chat", window, cx));
         self._assinaturas.push(cx.subscribe_in(&busca_historico, window, move |this, _, evento: &EventoEscolha, window, cx| {
             this.escolheu_no_historico(id, evento, window, cx)
         }));
@@ -462,7 +462,7 @@ impl Janela {
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
             foco_faixa: cx.focus_handle(),
-            dica_caixa: "Mensagem…".into(),
+            dica_caixa: "Mensagem".into(),
             alvo: None,
             ancoras: Default::default(),
             novo_desde: None,
@@ -505,7 +505,7 @@ impl Janela {
             .as_ref()
             .and_then(|c| self.rascunhos.remove(c))
             .unwrap_or_default();
-        // Com pasta, "Mensagem para este chat…"; sem pasta (ou sem chat), só "Mensagem…". E se o
+        // Com pasta, "Mensagem para este chat"; sem pasta (ou sem chat), só "Mensagem". E se o
         // chat tem resposta que você não viu, até quando ele estava lido.
         let (com_pasta, tamanho, novidade, itens) = novo
             .as_ref()
@@ -517,7 +517,7 @@ impl Janela {
                 Some((!m.sem_pasta(chat), tamanho, novidade, chat.itens.len()))
             })
             .unwrap_or((false, 0, None, 0));
-        let dica = if com_pasta { "Mensagem para este chat…" } else { "Mensagem…" };
+        let dica = if com_pasta { "Mensagem para este chat" } else { "Mensagem" };
         // As menções do rascunho voltam como pílulas (dono, 16/11/2026).
         let pasta = novo.as_ref().and_then(|id| self.motor.as_ref()?.read(cx).chat(id).map(|c| c.cwd.clone()));
         let conteudo = match &pasta {
@@ -583,9 +583,9 @@ impl Janela {
             } else if let Some(sugestao) = sugestao {
                 format!("{sugestao}  ·  Tab").into()
             } else if com_pasta {
-                "Mensagem para este chat…".into()
+                "Mensagem para este chat".into()
             } else {
-                "Mensagem…".into()
+                "Mensagem".into()
             };
             if painel.dica_caixa != dica {
                 painel.dica_caixa = dica.clone();

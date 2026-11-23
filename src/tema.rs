@@ -459,6 +459,7 @@ gpui_kit::assets::icon_assets!(
         AtSign,
         BellOff,
         Binary,
+        Bot,
         Brain,
         CalendarClock,
         ChartColumn,
@@ -529,6 +530,7 @@ gpui_kit::assets::icon_assets!(
         MoveUp,
         NotebookPen,
         Orbit,
+        Palette,
         Paperclip,
         Pencil,
         Pin,
@@ -1105,7 +1107,18 @@ static ZOOM_DOS_RAIOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU
 /// O `zoom` avisa a cada mudança.
 pub fn definir_zoom_dos_raios(fator: f32) {
     let fator = if fator.is_finite() && fator > 0. { fator } else { 1. };
-    ZOOM_DOS_RAIOS.store(fator.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    if ZOOM_DOS_RAIOS.swap(fator.to_bits(), std::sync::atomic::Ordering::Relaxed) != fator.to_bits() {
+        GERACAO_DO_TEMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Sobe a cada troca de tema (a transparência, o zoom). O `movimento` compara com a de cada valor
+/// animado: o alvo que muda junto com o tema pula direto, sem transição (dono, 23/11/2026: "turn
+/// transitions off while the theme changes").
+static GERACAO_DO_TEMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn geracao_do_tema() -> u32 {
+    GERACAO_DO_TEMA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn zoom_dos_raios() -> f32 {
@@ -1133,7 +1146,9 @@ static TRANSPARENCIA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8:
 
 /// A Janela diz o nível escolhido a cada desenho.
 pub fn definir_transparencia(nivel: u8) {
-    TRANSPARENCIA.store(nivel.min(3), std::sync::atomic::Ordering::Relaxed);
+    if TRANSPARENCIA.swap(nivel.min(3), std::sync::atomic::Ordering::Relaxed) != nivel.min(3) {
+        GERACAO_DO_TEMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 pub fn transparencia() -> u8 {
@@ -1288,6 +1303,10 @@ impl Cores {
     }
     pub fn codex() -> Hsla {
         rgba(0x5b6cf9ff).into()
+    }
+    /// O roxo do meio do degradê do Gemini.
+    pub fn gemini() -> Hsla {
+        rgba(0x9177c7ff).into()
     }
     pub fn linear() -> Hsla {
         rgba(0x5e6ad2ff).into()
@@ -1910,6 +1929,26 @@ pub(crate) mod testes {
             }
         }
         assert!(erros.is_empty(), "metal fora de componentes/metal.rs:\n{}", erros.join("\n"));
+    }
+
+    /// Toda dica passa pela gerenciada do kit (`dica_no_ponteiro`, `dica_com_hover` ou a dos
+    /// botões): uma por janela, espera só na primeira e troca na hora com outra aberta. O
+    /// `.tooltip(closure)` puro do GPUI espera 500 ms em cada uma (dono, 23/11/2026: "delay only
+    /// the first one; once one is open, show the rest instantly").
+    #[test]
+    fn dica_pela_gerenciada() {
+        let proibidos = [concat!(".tooltip", "(move |"), concat!(".tooltip", "(|")];
+        let raiz = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
+        let mut erros = Vec::new();
+        for caminho in arquivos_rs(raiz) {
+            let texto = std::fs::read_to_string(&caminho).unwrap();
+            for proibido in proibidos {
+                if texto.contains(proibido) {
+                    erros.push(format!("{}: {proibido}", caminho.strip_prefix(raiz).unwrap().display()));
+                }
+            }
+        }
+        assert!(erros.is_empty(), "dica sem a graça do kit (use dica_no_ponteiro):\n{}", erros.join("\n"));
     }
 
     /// A barra de rolagem aparece e some seca: o fade do kit pedia quadros no ritmo do monitor

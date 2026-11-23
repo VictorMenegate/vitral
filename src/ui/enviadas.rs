@@ -176,7 +176,7 @@ impl Janela {
             Rc::new(enviadas(&m.chats, self.selecionado.as_deref(), &m.dados.pasta_avulso("")))
         };
         let vista = cx.new(|cx| {
-            let mut vista = ListaDeEscolha::new("Buscar nas suas mensagens…", window, cx);
+            let mut vista = ListaDeEscolha::new("Buscar nas suas mensagens", window, cx);
             vista.em_dialogo();
             vista.definir(grupos(&lista, ""), None, cx);
             let filtro = lista.clone();
@@ -193,7 +193,7 @@ impl Janela {
                             .gap(r(12.))
                             .w_full()
                             .child(div().flex_1())
-                            .child(dica_teclas(&["↑", "↓"], "escolher"))
+                            .child(dica_teclas(&["↑", "↓"], "escolhe"))
                             .child(dica_teclas(&["Enter"], "pôr na caixa")),
                     )
                     .into_any_element()

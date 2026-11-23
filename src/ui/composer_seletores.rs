@@ -27,6 +27,7 @@ use crate::ui::componentes::{
 };
 use crate::{
     agente_codex::{self, ModeloDoCodex},
+    agente_gemini,
     contas,
     modelo::{Agente, Chat},
     motor::{FLUXOS_DESLIGADOS, Motor, Uso, motivo_sem_versao_exata},
@@ -425,13 +426,33 @@ fn itens_de_modelo(linhas: Vec<LinhaDeModelo>) -> Vec<ItemDeEscolha> {
 /// `codex:<slug>` um modelo do catálogo. Escolher uma delas passa o chat para o Codex.
 const DO_CODEX: &str = "codex:";
 
+/// O prefixo das chaves do grupo do Gemini no seletor: `gemini:` é o padrão dele e
+/// `gemini:<valor>` um modelo da conta. Escolher uma delas passa o chat para o Gemini.
+const DO_GEMINI: &str = "gemini:";
+
 /// A chave do seletor que corresponde ao que o chat usa hoje.
 fn chave_do_modelo(chat: &Chat) -> String {
     let modelo = chat.modelo.clone().unwrap_or_default();
     match chat.agente {
         Agente::Claude => modelo,
         Agente::Codex => format!("{DO_CODEX}{modelo}"),
+        Agente::Gemini => format!("{DO_GEMINI}{modelo}"),
     }
+}
+
+/// As linhas do Gemini: o padrão dele e os modelos que a conta tem no Antigravity (o Gemini, e
+/// também os de outras casas que o Antigravity oferece). Um escolhido que saiu da lista continua
+/// nela, para dar para ver e sair dele.
+fn linhas_do_gemini(escolhido: Option<&str>, oferecidos: &[agente_gemini::ModeloDoGemini]) -> Vec<LinhaDeModelo> {
+    let mut linhas = vec![LinhaDeModelo::new(DO_GEMINI, "Padrão", "O modelo que o Antigravity escolher")];
+    linhas.extend(oferecidos.iter().map(|m| {
+        let descricao = if m.valor.starts_with("gemini") { "do Google" } else { "pelo Antigravity" };
+        LinhaDeModelo::new(format!("{DO_GEMINI}{}", m.valor), m.nome.clone(), descricao)
+    }));
+    if let Some(antigo) = escolhido.filter(|e| !oferecidos.iter().any(|m| m.valor == *e)) {
+        linhas.push(LinhaDeModelo::new(format!("{DO_GEMINI}{antigo}"), antigo, "escolhido antes"));
+    }
+    linhas
 }
 
 /// A descrição de um modelo do Codex em português. O catálogo dele vem em inglês e muda a cada
@@ -465,9 +486,15 @@ fn linhas_do_codex(escolhido: Option<&str>, oferecidos: &[ModeloDoCodex]) -> Vec
     linhas
 }
 
-/// O seletor tem as abas Claude e Codex: com o Codex instalado, ou num chat que já é dele.
+/// O seletor tem as abas dos agentes: com o Codex ou o Gemini instalado, ou num chat que já é de
+/// um deles.
 fn com_abas_de_agente(chat: &Chat) -> bool {
-    chat.agente == Agente::Codex || agente_codex::instalado()
+    abas_de_agente(chat).len() > 1
+}
+
+/// As abas do seletor: o Claude sempre, e os outros instalados (ou o do chat).
+fn abas_de_agente(chat: &Chat) -> Vec<Agente> {
+    Agente::TODOS.into_iter().filter(|a| *a == Agente::Claude || *a == chat.agente || a.instalado()).collect()
 }
 
 /// Os grupos da aba `aba` do seletor. Claude: as famílias, que é o que se usa no dia a dia, e
@@ -478,6 +505,9 @@ fn grupos_de_modelo(motor: &Motor, chat: &Chat, aba: Agente) -> Vec<GrupoDeEscol
     let escolhido = chat.modelo.as_deref().filter(|_| do_chat);
     if aba == Agente::Codex {
         return vec![GrupoDeEscolha { titulo: None, itens: itens_de_modelo(linhas_do_codex(escolhido, &agente_codex::modelos())) }];
+    }
+    if aba == Agente::Gemini {
+        return vec![GrupoDeEscolha { titulo: None, itens: itens_de_modelo(linhas_do_gemini(escolhido, &agente_gemini::modelos())) }];
     }
     let em_uso = chat.modelo_atual.as_deref().filter(|_| do_chat);
     let motivo = motivo_sem_versao_exata(motor.versao_claude);
@@ -511,7 +541,7 @@ fn itens_de_conta(motor: &Motor, chat: &Chat) -> Vec<ItemDeEscolha> {
         .iter()
         .map(|c| {
             let uso = motor.uso_da_conta(&c.id);
-            let descricao = if motor.conta_sem_login(&c.id) { "sem login: entre de novo em Contas do Claude".to_string() } else { descricao_da_conta(&uso) };
+            let descricao = if motor.conta_sem_login(&c.id) { "Sem login: entre de novo em Contas do Claude".to_string() } else { com_maiuscula(&descricao_da_conta(&uso)) };
             ItemDeEscolha {
                 descricao: Some(descricao.into()),
                 selos: selo(c.id == escolha),
@@ -750,8 +780,12 @@ impl Janela {
     pub(super) fn chip_modo(&self, motor: &Motor, chat: &Chat, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
         let atual = motor.permissao_de(chat);
         let mudado = chat.permissao.as_ref().is_some_and(|p| *p != motor.config.permissao);
-        // No Codex o modo vira o sandbox dele, e é isso que a dica explica.
-        let descricao = if chat.agente == Agente::Codex { agente_codex::dica_da_permissao(&atual) } else { descricao_do_modo(&atual) };
+        // No Codex o modo vira o sandbox dele, e é isso que a dica explica; no Gemini, o modo dele.
+        let descricao = match chat.agente {
+            Agente::Codex => agente_codex::dica_da_permissao(&atual),
+            Agente::Gemini => agente_gemini::dica_da_permissao(&atual),
+            Agente::Claude => descricao_do_modo(&atual),
+        };
         let dica: SharedString = format!("Modo de permissão: {}\n{}", nome_do_modo(&atual), descricao).into();
         let chip = |aberto: bool| {
             let (icone, cor) = icone_do_modo(&atual);
@@ -788,13 +822,19 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let codex = chat.agente == Agente::Codex;
         let padrao = padrao_da_pasta(motor, chat).to_string();
         let efetivo = chat.modelo.clone().unwrap_or(padrao);
         let em_uso = chat.modelo_atual.clone().filter(|m| !m.is_empty());
-        let (curto, nome, detalhe) = if codex {
+        let (curto, nome, detalhe) = if chat.agente == Agente::Codex {
             let curto = chat.modelo.as_deref().map_or_else(|| "Codex".to_string(), agente_codex::nome_do_modelo);
             let detalhe = if chat.modelo.is_some() { "do Codex, escolhido nesta conversa" } else { "o modelo que o Codex escolher" };
+            (curto.clone(), curto, detalhe.to_string())
+        } else if chat.agente == Agente::Gemini {
+            let curto = chat.modelo.as_deref().map_or_else(
+                || em_uso.clone().unwrap_or_else(|| "Gemini".to_string()),
+                agente_gemini::nome_do_modelo,
+            );
+            let detalhe = if chat.modelo.is_some() { "pelo Antigravity, escolhido nesta conversa" } else { "o modelo que o Antigravity escolher" };
             (curto.clone(), curto, detalhe.to_string())
         } else {
             let curto = rotulo_modelo(&efetivo, em_uso.as_deref());
@@ -812,7 +852,7 @@ impl Janela {
             None => nome,
         };
         let aberto = self.pop_caixa == Some((b.painel, PopCaixa::Modelo));
-        let marca_de = |a: Agente| if a == Agente::Codex { Marca::Codex } else { Marca::Claude };
+        let marca_de = Marca::do_agente;
         // Na dupla, as duas marcas, em toda largura (a de quem trabalhou por último na frente).
         let simbolo = match &chat.parceiro {
             Some(p) => Simbolo::Dupla(marca_de(chat.agente), marca_de(p.agente)),
@@ -834,6 +874,7 @@ impl Janela {
         // As abas Claude e Codex em cima da lista: a que está à vista e se elas existem.
         let aba = self.aba_do_modelo.filter(|(p, _)| *p == painel).map_or(chat.agente, |(_, a)| a);
         let com_abas = com_abas_de_agente(chat);
+        let agentes_das_abas = abas_de_agente(chat);
         let (largura, estreita) = (b.largura_popover().px(), b.estreita());
         let juntos = chat.revisao_em_dupla;
         // Numa conversa já grande, trocar o modelo do Claude custa uma releitura inteira.
@@ -879,14 +920,17 @@ impl Janela {
                                     return;
                                 }
                                 // A linha escolhida diz também quem responde: as do grupo do Codex
-                                // passam o chat para ele, as outras para o Claude.
-                                let (agente, modelo) = match valor.strip_prefix(DO_CODEX) {
-                                    Some(slug) => (Agente::Codex, slug.to_string()),
-                                    None => (Agente::Claude, valor),
+                                // e do Gemini passam o chat para eles, as outras para o Claude.
+                                let (agente, modelo) = match (valor.strip_prefix(DO_CODEX), valor.strip_prefix(DO_GEMINI)) {
+                                    (Some(slug), _) => (Agente::Codex, slug.to_string()),
+                                    (_, Some(valor)) => (Agente::Gemini, valor.to_string()),
+                                    _ => (Agente::Claude, valor),
                                 };
                                 let nome = match agente {
                                     Agente::Codex if modelo.is_empty() => "Codex".to_string(),
                                     Agente::Codex => agente_codex::nome_do_modelo(&modelo),
+                                    Agente::Gemini if modelo.is_empty() => "Gemini".to_string(),
+                                    Agente::Gemini => agente_gemini::nome_do_modelo(&modelo),
                                     Agente::Claude => com_claude(&rotulo_modelo(&modelo, None)),
                                 };
                                 if let Some(m) = &motor_e {
@@ -903,9 +947,11 @@ impl Janela {
                 // Trocar de aba só mostra os modelos do outro: quem responde muda ao escolher um.
                 let abas = com_abas.then(|| {
                     let (lista, motor_e, janela, chat_id) = (lista.clone(), motor_e.clone(), janela.clone(), chat_id.clone());
-                    let atual = usize::from(aba == Agente::Codex);
-                    let controle = ControleSegmentado::new(("aba-modelo", painel as usize), ["Claude", "Codex"], atual, move |nova, window, cx| {
-                        let agente = if nova == 1 { Agente::Codex } else { Agente::Claude };
+                    let agentes = agentes_das_abas.clone();
+                    let atual = agentes.iter().position(|a| *a == aba).unwrap_or(0);
+                    let nomes: Vec<&'static str> = agentes.iter().map(|a| a.nome()).collect();
+                    let controle = ControleSegmentado::new(("aba-modelo", painel as usize), nomes, atual, move |nova, window, cx| {
+                        let agente = agentes.get(nova).copied().unwrap_or(Agente::Claude);
                         let _ = janela.update(cx, |this, cx| {
                             this.aba_do_modelo = Some((painel, agente));
                             cx.notify();
@@ -926,8 +972,8 @@ impl Janela {
                     div().child(
                         LinhaDeOpcao::new(("dupla", painel as usize), "Os dois em toda mensagem")
                             .descricao(
-                                "Um responde e o outro revisa. Sem isso, trocar de modelo ou começar com @claude ou @codex já \
-                                 passa a conversa de um para o outro.",
+                                "Um responde e o outro revisa. Sem isso, trocar de modelo ou começar com @claude, @codex ou \
+                                 @gemini já passa a conversa de um para o outro.",
                             )
                             .interruptor(juntos, move |ligar, _, cx| {
                                 if let Some(m) = &motor_e {
@@ -942,7 +988,7 @@ impl Janela {
                     .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
                 div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).children(dupla).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
-                        dica_de_tecla(&["↑", "↓"], "escolher"),
+                        dica_de_tecla(&["↑", "↓"], "escolhe"),
                         dica_de_tecla(&["Enter"], "usa"),
                     ], window);
                     s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E8).child(teclas))
@@ -1052,7 +1098,8 @@ impl Janela {
         let dica = "Anexar arquivo ou contexto";
         botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                let largura = tam(window, 300.);
+                // 360: com 300, os próprios rótulos saíam cortados ("Arquivo ou imagem do computad…").
+                let largura = tam(window, 360.);
                 let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
                 itens_de_anexar(menu, &dados, true)
                     .separator()
@@ -1078,11 +1125,12 @@ impl Janela {
             vazio: b.composer.read(cx).value().trim().is_empty(),
             renova: motor.renovacao_do_chat(&chat.id),
         };
-        let codex = chat.agente == Agente::Codex;
+        let claude = chat.agente == Agente::Claude;
         let tem_agentes = crate::ui::mapa_agentes::tem_agentes(chat);
         // A segunda resposta: o mesmo pedido para o outro agente, num painel ao lado.
-        let raia = (codex || agente_codex::instalado()).then(|| {
-            let rotulo = if codex { "Perguntar também ao Claude" } else { "Perguntar também ao Codex" };
+        let outro = chat.agente.outro();
+        let raia = outro.instalado().then(|| {
+            let rotulo = format!("Perguntar também ao {}", outro.nome());
             let caixa = b.composer.read(cx).value();
             (cx.entity().downgrade(), rotulo, caixa.trim().is_empty() || caixa.trim_start().starts_with('/'))
         });
@@ -1116,7 +1164,7 @@ impl Janela {
                     })
                     .item(item_de_comandos(j1, painel))
                     // O `/compact` é do Claude Code.
-                    .when(!codex, |menu| {
+                    .when(claude, |menu| {
                         menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, _, cx| {
                             let _ = j2.update(cx, |this, cx| this.compactar_conversa(painel, cx));
                         }))

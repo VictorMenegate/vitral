@@ -3,7 +3,7 @@
 
 use std::{rc::Rc, time::Duration};
 
-use gpui_kit::component::{Icon, Sizable as _, spinner::compasso_recente, tooltip::Tooltip};
+use gpui_kit::component::{Icon, Sizable as _, spinner::compasso_recente, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -29,7 +29,11 @@ impl Sinal {
         match self {
             Sinal::Erro => Cores::vermelho(),
             Sinal::Pedido | Sinal::Parada => Cores::espera(),
-            Sinal::Nova | Sinal::Rodando => Cores::destaque(),
+            // A novidade (terminou e você ainda não viu) é verde em todo lugar: na lista era azul, e
+            // no resumo, nas abas e nos agentes, verde (revisão de design, 23/11/2026). O azul fica
+            // para o que roda.
+            Sinal::Nova => Cores::verde(),
+            Sinal::Rodando => Cores::destaque(),
         }
     }
 
@@ -246,7 +250,7 @@ impl RenderOnce for PilulaDeEstado {
                 .items_center()
                 .justify_center()
                 .child(ponto)
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element();
         }
         div()
@@ -436,7 +440,7 @@ impl RenderOnce for Selo {
                             .h_full()
                             .when(i + 1 < n, |s| s.border_r_1().border_color(Cores::borda()))
                             .child(icone.with_size(tam(window, 14.)).text_color(cor))
-                            .tooltip(move |window, cx| Tooltip::new(dica).build(window, cx))
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
                     }))
                     .into_any_element()
             }

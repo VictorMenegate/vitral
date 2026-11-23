@@ -85,9 +85,10 @@ pub enum De {
     Cima,
     /// Só o fade (o painel aberto ao lado).
     Parado,
-    /// 24 px da borda esquerda, no `left` (a gaveta da lista, que é absoluta).
+    /// 24 px da borda esquerda, no `left` (a gaveta da lista, que é absoluta; e o passo das
+    /// boas-vindas ao voltar, relativo).
     Esquerda,
-    /// 24 px da borda direita, no `right` (a gaveta da Equipe).
+    /// 24 px da borda direita, no `right` (a gaveta da Equipe; e o passo ao continuar).
     Direita,
 }
 
@@ -136,6 +137,27 @@ pub fn abertura(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) -> 
 /// A gaveta (absoluta, na borda) em `t` da `abertura`: 24 px de fora e de 0 a 1 de opacidade.
 pub fn deslizar_gaveta<E: Styled>(el: E, de: De, t: f32) -> E {
     de.aplicar(el, t)
+}
+
+/// O tremor da chave errada (dono, 23/11/2026: "shake the field as well as turning it red").
+pub const TREMER: Duration = Duration::from_millis(360);
+/// As paradas do tremor em px, a intervalos iguais: vai e volta encolhendo até parar no lugar.
+const PARADAS_DO_TREMOR: [f32; 7] = [0., -10., 10., -6., 6., -3., 0.];
+
+/// O deslocamento do tremor em `t` (0 a 1), em linha reta entre as paradas.
+fn deslocamento_do_tremor(t: f32) -> f32 {
+    let trechos = (PARADAS_DO_TREMOR.len() - 1) as f32;
+    let pos = t.clamp(0., 1.) * trechos;
+    let i = (pos.floor() as usize).min(PARADAS_DO_TREMOR.len() - 2);
+    let f = pos - i as f32;
+    PARADAS_DO_TREMOR[i] + (PARADAS_DO_TREMOR[i + 1] - PARADAS_DO_TREMOR[i]) * f
+}
+
+/// O campo que recusou a chave treme, junto com o vermelho. Toca uma vez por `id`: quem chama
+/// põe nele a contagem de falhas, para tremer de novo a cada tentativa errada. O `left` de um
+/// elemento relativo só o desloca, sem mexer no layout. Com o movimento reduzido, fica parado.
+pub fn tremer<E: IntoElement + Styled + 'static>(el: E, id: impl Into<ElementId>) -> AnimationElement<E> {
+    el.with_animation(id, Animation::new(TREMER).with_max_fps(QPS), |el, t| el.left(r(deslocamento_do_tremor(t))))
 }
 
 /// Algo que precisa da janela e do `App` mutáveis para desenhar (o estado guardado do
@@ -221,6 +243,8 @@ struct Transicao<T> {
     curva: Curva,
     mudou_em: Option<Instant>,
     animando: Rc<Cell<bool>>,
+    /// A geração do tema da última vez que andou (`crate::tema::geracao_do_tema`).
+    tema: u32,
 }
 
 impl<T: Interpolavel> Transicao<T> {
@@ -234,6 +258,7 @@ impl<T: Interpolavel> Transicao<T> {
             curva: c,
             mudou_em: None,
             animando: Rc::new(Cell::new(false)),
+            tema: crate::tema::geracao_do_tema(),
         }
     }
 
@@ -314,12 +339,16 @@ fn transicao<T: Interpolavel>(
 ) -> T {
     let agora = cx.background_executor().now();
     let reduzido = cx.reduce_motion();
+    // O alvo que muda junto com o tema (a transparência, o zoom) pula direto para o novo: sem
+    // isso, cada hover e pílula andaria do tema velho para o novo.
+    let geracao = crate::tema::geracao_do_tema();
     let estado = window.use_keyed_state(id, cx, {
         let alvo = alvo.clone();
         move |_, _| Transicao::nova(inicial.unwrap_or_else(|| alvo.clone()), alvo, d, c, agora, reduzido)
     });
     let (valor, anda, sinal) = estado.update(cx, |t, _| {
-        let (valor, anda) = t.avancar(alvo, d, c, agora, reduzido);
+        let tema_trocou = std::mem::replace(&mut t.tema, geracao) != geracao;
+        let (valor, anda) = t.avancar(alvo, d, c, agora, reduzido || tema_trocou);
         (valor, anda, t.animando.clone())
     });
     if anda {
@@ -677,7 +706,9 @@ fn reduzido_no_sistema(cx: &App) -> bool {
 
 #[cfg(test)]
 mod testes {
-    use super::{Animacoes, Curva, Disparo, Interpolavel, Lacos, MESMO_QUADRO, PAUSA_DO_LACO, QPS, Transicao};
+    use super::{
+        Animacoes, Curva, Disparo, Interpolavel, Lacos, MESMO_QUADRO, PAUSA_DO_LACO, QPS, Transicao, deslocamento_do_tremor,
+    };
     use gpui_kit::{Hsla, Rgba, rgba};
     use std::{
         cell::Cell,
@@ -686,6 +717,17 @@ mod testes {
     };
 
     const D: Duration = Duration::from_millis(160);
+
+    /// O tremor passa pelas paradas (0, -10, 10, -6, 6, -3, 0) e termina no lugar.
+    #[test]
+    fn tremor_vai_e_volta_e_para_no_lugar() {
+        let paradas: Vec<f32> = (0..=6).map(|i| deslocamento_do_tremor(i as f32 / 6.)).collect();
+        for (achado, esperado) in paradas.iter().zip([0., -10., 10., -6., 6., -3., 0.]) {
+            assert!((achado - esperado).abs() < 1e-4, "{paradas:?}");
+        }
+        assert!((deslocamento_do_tremor(1. / 12.) + 5.).abs() < 1e-4);
+        assert_eq!(deslocamento_do_tremor(2.), 0.);
+    }
 
     #[test]
     fn curvas_comecam_em_zero_terminam_em_um_e_nao_passam_do_alvo() {

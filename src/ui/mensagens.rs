@@ -19,7 +19,7 @@ use gpui_kit::component::{
     scroll::{ScrollableElement as _, Scrollbar, ScrollbarMode},
     shimmer::ShimmerText,
     text::{TextView, TextViewStyle},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -280,14 +280,14 @@ impl Janela {
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push((Bloco::Texto, None, self.dica_inicial(motor, chat, window, cx)));
         }
-        // Conversas antigas guardaram as buscas de ferramenta; não interessam. O modo foco tira
-        // todas as ferramentas.
+        // Conversas antigas guardaram as buscas de ferramenta; não interessam. No modo foco as
+        // ferramentas ficam, recolhidas na linha do turno (`turnos_do_foco`).
         let mut visiveis: Vec<(usize, &Item)> = chat
             .itens
             .iter()
             .enumerate()
             .filter(|(i, item)| match item {
-                Item::Ferramenta { nome, .. } => nome != "ToolSearch" && !foco,
+                Item::Ferramenta { nome, .. } => nome != "ToolSearch",
                 Item::Assistente { .. } => !resposta_repete_o_erro(&chat.itens, *i),
                 _ => true,
             })
@@ -325,9 +325,9 @@ impl Janela {
             .novo_desde
             .and_then(|lido| item_do_separador_novo(&chat.itens, lido))
             .filter(|n| escondidos == 0 || visiveis.first().is_some_and(|(i, _)| i <= n));
-        // Os turnos prontos recolhem numa linha "Trabalhou…" (rodada de uso, 2.1). No modo foco as
-        // ferramentas já saíram, e não há o que recolher.
-        let turnos = if foco { Vec::new() } else { turnos_recolhiveis(&chat.itens, contexto.rodando) };
+        // Os turnos prontos recolhem numa linha "Trabalhou…" (rodada de uso, 2.1). No modo foco,
+        // todo turno, também o que roda, vira uma linha só (`turnos_do_foco`).
+        let turnos = turnos_da_conversa(&chat.itens, foco, contexto.rodando);
         let mut turno_posto: Option<usize> = None;
         // Onde o separador "Novo" entrou (a posição entre os blocos) e o índice do bloco logo depois
         // dele: a abertura no começo da resposta o deixa à vista no alto (conferência, 16/11/2026).
@@ -663,7 +663,7 @@ impl Janela {
                             // O mesmo buraco dos balões da conversa, por cima da faixa.
                             .child(fundo_da_lista(raio))
                             .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
-                            .tooltip(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
+                            .dica_no_ponteiro(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
                             }),
@@ -734,9 +734,8 @@ impl Janela {
         let Some(ix) = self.paineis.iter().position(|p| p.id == painel_id) else { return; };
         let p = &self.paineis[ix];
         if p.rolagem.offset().y < -px(240.) || p.preservar_topo.is_some() || p.busca.aberta { return; }
-        let foco = self.modo_foco(cx);
         let nativos = self.motor.as_ref().and_then(|m| m.read(cx).chat(p.chat.as_deref()?)).map_or(0, |chat| {
-            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch" || foco)).count()
+            chat.itens.iter().filter(|item| !matches!(item, Item::Ferramenta { nome, .. } if nome == "ToolSearch")).count()
         });
         let tem_mais = if p.mostrar < nativos {
             self.paineis[ix].mostrar += ITENS_NA_TELA;
@@ -973,8 +972,10 @@ impl Janela {
         }
         acoes.push(copiar(chave, texto).into_any_element());
         // O balão ocupa a coluna inteira: a barra de ações flutua no canto de cima, no trecho reto
-        // da borda (a 16, na coluna do texto); no canto ela montava na curva.
-        let barra = div().absolute().top(r(-14.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
+        // da borda (a 16, na coluna do texto); no canto ela montava na curva. Sobe 22, e não 14:
+        // com 8 de respiro no balão, ela entrava 6 px na primeira linha do texto (revisão de
+        // design, 23/11/2026).
+        let barra = div().absolute().top(r(-22.)).right(if minima(contexto.nivel) { esp::E12 } else { esp::E16 });
         v_flex()
             .w_full()
             .map(com_alcance_da_barra)
@@ -1080,7 +1081,7 @@ impl Janela {
         let outro = chat.agente.outro();
         let pode_continuar = lido.agente == chat.agente
             && contexto.motor.pode_tentar_de_novo(&chat.id)
-            && (outro != Agente::Codex || crate::agente_codex::instalado());
+            && outro.instalado();
         let continuar = |acoes: &mut Vec<AnyElement>| {
             if !pode_continuar {
                 return;
@@ -1118,6 +1119,11 @@ impl Janela {
             fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_codex(), window, cx)
                 .into_any_element()
         };
+        // O instalador do Gemini também faz o login (`agy acp --login`), e sem instalar só entra.
+        let gemini = |rotulo: &str, icone: Lucide, nome: &str| {
+            fantasma(id(nome), Some(icone), rotulo.to_string(), TamanhoBotao::Linha, |_, _, _| super::uso_plano::instalar_gemini(), window, cx)
+                .into_any_element()
+        };
         match (lido.tipo, lido.agente) {
             (TipoDeErro::Limite, Agente::Codex) => {
                 if let Some(url) = lido.url_de_uso.clone() {
@@ -1132,6 +1138,9 @@ impl Janela {
                 acoes.push(contas("Contas do Claude", Lucide::CircleUserRound, "contas"));
                 continuar(&mut acoes);
             }
+            (TipoDeErro::Limite, Agente::Gemini) => continuar(&mut acoes),
+            (TipoDeErro::Login, Agente::Gemini) => acoes.push(gemini("Entrar no Gemini", Lucide::KeyRound, "entrar")),
+            (TipoDeErro::SemAgente, Agente::Gemini) => acoes.push(gemini("Instalar o Gemini", Lucide::Download, "instalar")),
             // As Contas já no login da conta que caiu, e não na lista (rodada de uso, item 8.3).
             (TipoDeErro::Login, Agente::Claude) => {
                 let conta = conta_que_caiu(contexto.motor, chat);
@@ -1149,7 +1158,7 @@ impl Janela {
                 );
             }
             (TipoDeErro::Login, Agente::Codex) => acoes.push(instalar("Entrar no Codex", Lucide::KeyRound, "entrar")),
-            (TipoDeErro::SemCodex, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
+            (TipoDeErro::SemAgente, _) => acoes.push(instalar("Instalar o Codex", Lucide::Download, "instalar")),
             (TipoDeErro::Contexto, Agente::Claude) => {
                 let painel = contexto.painel;
                 acoes.push(
@@ -1692,7 +1701,7 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
 /// fora): 16 de folga em cima, devolvidos pela margem. Sem isso, chegando por cima, a barra sumia
 /// antes do clique no lápis (teste de usabilidade, 16/11/2026).
 fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
-    elemento.pt(esp::E16).mt(r(-16.))
+    elemento.pt(esp::E24).mt(r(-24.))
 }
 
 /// O mesmo para a barra embaixo da resposta, que ocupa os 30 depois do texto: 32 de folga
@@ -1840,10 +1849,7 @@ pub(super) fn separadores_de_data(horas: &[u64], agora: u64) -> Vec<(usize, Stri
 /// Num chat com o Claude e o Codex juntos, quem trabalha daqui em diante: a marca na coluna de 16
 /// da primeira borda e o nome na segunda, como as linhas da trilha.
 fn marca_da_vez(agente: Agente) -> AnyElement {
-    let marca = match agente {
-        Agente::Claude => Marca::Claude,
-        Agente::Codex => Marca::Codex,
-    };
+    let marca = Marca::do_agente(agente);
     h_flex()
         .h(r(24.))
         .gap(r(8.))
@@ -2030,7 +2036,7 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
             })))
             .child(div().flex_none().metadado().text_color(Cores::tenue()).child(contagem(n, "imagem", "imagens")))
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat_id, &primeira, window, cx)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
     )
     .into_any_element()
 }
@@ -2105,7 +2111,7 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
             .hover(|s| s.border_color(Cores::destaque()))
             .child(simbolo)
             .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .into_any_element();
     }
     h_flex()
@@ -2129,7 +2135,7 @@ fn pilula_de_arquivo(id: String, caminho: &Path, chat: &str, no_balao: bool, cx:
                 .hover(|s| s.bg(Cores::hover()))
                 .on_click(cx.listener(move |this, _, window, cx| this.abrir_visor(&chat, &alvo, window, cx)))
         })
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -2303,7 +2309,10 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TurnoRecolhivel {
     pub mensagem: usize,
+    /// A resposta final, que fica embaixo da linha; no turno `ao_vivo`, o fim da conversa.
     pub resposta: usize,
+    /// O turno que roda agora (só no modo foco): a linha diz o que ele faz e quantas chamadas fez.
+    pub ao_vivo: bool,
 }
 
 impl TurnoRecolhivel {
@@ -2343,10 +2352,70 @@ pub(super) fn turnos_recolhiveis(itens: &[Item], rodando: bool) -> Vec<TurnoReco
         let trilha = antes.iter().any(|i| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. }));
         let texto = antes.iter().any(|i| matches!(i, Item::Assistente { .. }));
         if trilha && texto {
-            saida.push(TurnoRecolhivel { mensagem, resposta });
+            saida.push(TurnoRecolhivel { mensagem, resposta, ao_vivo: false });
         }
     }
     saida
+}
+
+/// Os turnos que recolhem nesta conversa: os do modo foco, ou os de sempre.
+pub(super) fn turnos_da_conversa(itens: &[Item], foco: bool, rodando: bool) -> Vec<TurnoRecolhivel> {
+    if foco { turnos_do_foco(itens, rodando) } else { turnos_recolhiveis(itens, rodando) }
+}
+
+/// Os turnos do modo foco, como a extensão do Claude Code no VS Code (dono, 23/11/2026: "tem que
+/// ser igual aqui no VS Code"): de depois da mensagem até a resposta final, tudo o que o agente fez
+/// (as chamadas, o raciocínio, as falas do meio) vira uma linha só, que abre no clique, e a
+/// resposta fica embaixo. O turno que roda também, ao vivo: "Rodando cargo test · 18 chamadas".
+pub(super) fn turnos_do_foco(itens: &[Item], rodando: bool) -> Vec<TurnoRecolhivel> {
+    let marcos: Vec<usize> = itens
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }))
+        .map(|(k, _)| k)
+        .collect();
+    let trabalho = |i: &Item| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. } | Item::Assistente { .. });
+    let mut saida = Vec::new();
+    for (n, &mensagem) in marcos.iter().enumerate() {
+        let fim = marcos.get(n + 1).copied().unwrap_or(itens.len());
+        if crate::motor::e_revisao_da_memoria(&itens[mensagem]) {
+            continue;
+        }
+        if rodando && fim == itens.len() {
+            if itens[mensagem + 1..].iter().any(|i| matches!(i, Item::Ferramenta { .. } | Item::Raciocinio { .. })) {
+                saida.push(TurnoRecolhivel { mensagem, resposta: fim, ao_vivo: true });
+            }
+            continue;
+        }
+        let Some(resposta) = itens[mensagem + 1..fim].iter().rposition(|i| matches!(i, Item::Assistente { .. })).map(|k| mensagem + 1 + k)
+        else {
+            continue;
+        };
+        if itens[mensagem + 1..resposta].iter().any(trabalho) {
+            saida.push(TurnoRecolhivel { mensagem, resposta, ao_vivo: false });
+        }
+    }
+    saida
+}
+
+/// A linha do turno que roda, no modo foco: o que ele faz agora e quantas chamadas fez.
+fn resumo_ao_vivo(itens: &[Item], turno: TurnoRecolhivel) -> String {
+    let trecho = &itens[turno.mensagem + 1..turno.resposta.min(itens.len())];
+    let chamadas = trecho.iter().filter(|i| matches!(i, Item::Ferramenta { .. })).count();
+    let agora = trecho.iter().rev().find_map(|i| match i {
+        Item::Ferramenta { nome, resumo, .. } => {
+            let detalhe = detalhe_da_chamada(nome, resumo);
+            let verbo = verbo_da_ferramenta(nome, true);
+            Some(if detalhe.is_empty() { verbo.to_string() } else { format!("{verbo} {detalhe}") })
+        }
+        Item::Raciocinio { .. } => Some("Pensando".to_string()),
+        _ => None,
+    });
+    let mut partes = vec![agora.unwrap_or_else(|| "Trabalhando".to_string())];
+    if chamadas > 0 {
+        partes.push(contagem(chamadas, "chamada", "chamadas"));
+    }
+    partes.join(" · ")
 }
 
 /// O que fica à vista com o turno recolhido: o texto intermediário que termina em pergunta, o
@@ -2808,7 +2877,7 @@ impl Janela {
         // Os tokens e o custo do turno, quando o livro dos gastos os tem (`motor/gasto.rs`): só na
         // dica, para a linha continuar curta (dono, 18/11/2026).
         let gasto = contexto.motor.gastos().do_turno(&contexto.chat.id, turno.mensagem, contexto.chat.itens[turno.mensagem].em());
-        let resumo = resumo_do_turno(&contexto.chat.itens, turno);
+        let resumo = if turno.ao_vivo { resumo_ao_vivo(&contexto.chat.itens, turno) } else { resumo_do_turno(&contexto.chat.itens, turno) };
         let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
         let dica = SharedString::from(super::onde_uso::dica_com_gasto(dica, gasto.as_ref()));
         let linha = h_flex()
@@ -2818,10 +2887,14 @@ impl Janela {
             .hover(|s| s.bg(Cores::hover()))
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
-            .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
-            .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
+            .child(coluna_do_icone().text_color(Cores::tenue()).child(if turno.ao_vivo {
+                super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.).into_any_element()
+            } else {
+                icone_de(Lucide::Clock, 14.).into_any_element()
+            }))
+            .child(partes_inteiras(&resumo).text_color(if turno.ao_vivo { Cores::texto() } else { Cores::tenue() }))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
         let mut imagens: Vec<(usize, PathBuf)> = Vec::new();
         if !aberto {
@@ -2933,7 +3006,10 @@ impl Janela {
                 div()
                     .flex_shrink(1.)
                     .min_w_0()
-                    .truncate()
+                    // Corta no meio: a extensão fica à vista.
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
                     // Mono solto na cor do código, como o detalhe das chamadas (sem o chip).
                     .font_family(FONTE_MONO)
                     .text_color(if existe { Cores::codigo() } else { Cores::apagado() })
@@ -2955,7 +3031,7 @@ impl Janela {
                     .hover(|s| s.bg(Cores::hover()))
                     .on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx))
             })
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .into_any_element()
     }
 
@@ -3299,7 +3375,7 @@ impl Janela {
                         .rounded(raio::CONTROLE)
                         .hover(|s| s.bg(Cores::hover()))
                         .child(chevron)
-                        .tooltip(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
                         .on_click(move |evento, window, cx| {
                             cx.stop_propagation();
                             alterna(evento, window, cx);
@@ -3321,7 +3397,7 @@ impl Janela {
                         .group_hover(grupo.clone(), |s| s.opacity(1.))
                         .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                         .child(icone_de(Lucide::PanelRight, 13.))
-                        .tooltip(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
+                        .dica_no_ponteiro(|window, cx| Tooltip::new("Abrir o arquivo ao lado").build(window, cx))
                         .on_click(move |_, window, cx| {
                             // Não abre nem fecha o detalhe da linha.
                             cx.stop_propagation();
@@ -3329,7 +3405,7 @@ impl Janela {
                         }),
                 )
             })
-            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .map(|s| match edicao.clone() {
                 Some(pedido) => s.on_click(move |_, window, cx| window.dispatch_action(Box::new(pedido.clone()), cx)),
                 None => s.on_click(alternar(chave.clone(), cx)),
@@ -3777,7 +3853,7 @@ fn selo_dirigido(painel: u64, n: usize, estreita: bool) -> AnyElement {
                 .child(icone_de(Lucide::MessageSquarePlus, 12.))
                 .when(!estreita, |s| s.child(rotulo)),
         )
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .into_any_element()
 }
 
@@ -3902,7 +3978,7 @@ impl Janela {
                                     .etiqueta()
                                     .text_color(Cores::apagado())
                                     .child(relogio(crate::modelo::agora().saturating_sub(desde)))
-                                    .when_some(memoria, |s, dica| s.tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
+                                    .when_some(memoria, |s, dica| s.dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))),
                             )
                         })
                         // Muito tempo sem evento: um comando longo, ou o processo travou. Só avisa;
@@ -3919,7 +3995,7 @@ impl Janela {
                                 .etiqueta()
                                 .text_color(Cores::espera())
                                 .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
-                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
                         // Os comandos que o agente deixou rodando no fundo (um servidor, um build):
                         // à vista, e o clique para (o `stop_task` de cada um).
@@ -3975,7 +4051,7 @@ impl Janela {
                                             .child(icone_de(Lucide::ListChecks, 12.))
                                             .child(format!("{feitos}/{}", passos.len())),
                                     )
-                                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                             })
                         })
                         // Os subagentes que trabalham agora: o clique abre o mapa deles.
@@ -4127,7 +4203,7 @@ impl Janela {
                             .text_size(r(13.))
                             .line_height(r(18.))
                             .child(format!("Parada · {curto}"))
-                            .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     })
                     .into_any_element(),
                 Some(
@@ -4251,7 +4327,7 @@ impl Janela {
                                 .text_size(r(13.))
                                 .line_height(r(18.))
                                 .child(rotulo)
-                                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
                         )
                         .into_any_element(),
                     Some(acao),
@@ -4867,7 +4943,7 @@ fn pilula_do_fim(
         .child(icone_de(Lucide::ArrowDown, 14.))
         .when(novidade, |s| s.child(div().flex_none().size(r(6.)).rounded_full().bg(Cores::destaque())))
         .when(com_rotulo, |s| s.child(div().rotulo().child("Novas mensagens")))
-        .tooltip(|window, cx| Tooltip::new("Ir para o fim").action(&IrAoFim, None).build(window, cx))
+        .dica_no_ponteiro(|window, cx| Tooltip::new("Ir para o fim").action(&IrAoFim, None).build(window, cx))
         .on_click(cx.listener(move |this, _, _, cx| this.ir_para_o_fim(painel_id, cx)));
     div()
         .absolute()
@@ -6095,7 +6171,7 @@ mod testes {
             em(assistente("Pronto."), 1_372),
         ];
         let turnos = turnos_recolhiveis(&itens, false);
-        assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7 }]);
+        assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7, ao_vivo: false }]);
         assert!(turnos[0].contem(1) && turnos[0].contem(6) && !turnos[0].contem(7) && !turnos[0].contem(0));
         assert_eq!(resumo_do_turno(&itens, turnos[0]), "Trabalhou 6 min 12 s · 2 comandos · editou carrinho.py e motor.rs");
         // Com o turno ainda rodando, o último não recolhe.

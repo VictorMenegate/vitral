@@ -10,7 +10,7 @@ use gpui_kit::component::{
     h_flex,
     input::{Enter, Textarea, TextareaState},
     scroll::ScrollableElement as _,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -329,7 +329,7 @@ fn corpo_da_fila(
                 .corpo_ui()
                 .text_color(Cores::texto())
                 .child(format!("Fila · {}", contagem(total, "mensagem", "mensagens")))
-                .tooltip(move |window, cx| Tooltip::new(explicacao).build(window, cx)),
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(explicacao).build(window, cx)),
         )
         .child(botao_icone(("fechar-fila", painel as usize), Lucide::X, "Fechar a fila", TamanhoBotao::Linha, window, cx)
             .on_click(move |_, _, cx| { let _ = fechar.update(cx, |j, cx| {
@@ -527,7 +527,7 @@ fn linha_da_fila(
                         .corpo_ui()
                         .text_color(if do_usuario { Cores::texto() } else { Cores::tenue() })
                         .child(previa)
-                        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         .into_any_element(),
                 }),
         )

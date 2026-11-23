@@ -2,7 +2,7 @@
 //! chats parados no freio de ciclo (em "Esperando você" e no sino) e a faixa "Enquanto você esteve
 //! fora".
 
-use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{Icon, h_flex, tooltip::{ManagedTooltipExt as _, Tooltip}, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -66,13 +66,25 @@ pub(super) fn precisa_em_tudo(motor: &Motor) -> PrecisaDeVoce {
 fn rotulo_e_frase(motor: &Motor, chat: &str, texto: &str) -> Vec<AnyElement> {
     let titulo = motor.chat(chat).map(|c| c.titulo.as_str());
     let frase = titulo.and_then(|t| texto.strip_prefix(t)).and_then(|r| r.strip_prefix(": "));
-    match (titulo, frase) {
-        (Some(titulo), Some(frase)) => vec![
-            div().flex_none().max_w(relative(0.45)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
-            div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(super::falas::primeira_frase(frase)).into_any_element(),
-        ],
-        _ => vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()],
-    }
+    // O nome do chat vai sempre na frente: "Precisa da sua permissão: Bash…" sozinho, três vezes,
+    // não dizia de qual chat era cada uma (revisão de design, 23/11/2026).
+    // O rótulo do grupo já diz "Precisa de você": a linha fica com o que é pedido ("Bash, $ ls").
+    let sem_pedido = |t: &str| {
+        ["Precisa da sua permissão: ", "Precisa da sua aprovação: "].iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t).to_string()
+    };
+    let frase = match (titulo, frase) {
+        (_, Some(frase)) => sem_pedido(&super::falas::primeira_frase(frase)),
+        (Some(_), None) => sem_pedido(&uma_linha(texto)),
+        (None, None) => {
+            return vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()];
+        }
+    };
+    let titulo = titulo.unwrap_or_default();
+    vec![
+        // O nome com largura fixa: a frase começa no mesmo lugar em todas as linhas.
+        div().flex_none().w(relative(0.4)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
+        div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(frase).into_any_element(),
+    ]
 }
 
 impl Janela {
@@ -109,7 +121,12 @@ impl Janela {
     pub(super) fn faixa_do_resumo(&self, motor: &Motor, onde: &'static str, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
         let resumo = motor.resumo_volta.as_ref()?;
         let desde = crate::modelo::quando_local(resumo.desde);
-        let grupos = [("terminou", "Terminou", Cores::verde()), ("precisa", "Precisa de você", Cores::espera()), ("falhou", "Falhou ou parou", Cores::vermelho())];
+        // O que pede você vem primeiro, como na lista, no azul-claro dos pedidos (o `Sinal::Pedido`).
+        let grupos = [
+            ("precisa", "Precisa de você", Sinal::Pedido.cor()),
+            ("falhou", "Falhou ou parou", Sinal::Erro.cor()),
+            ("terminou", "Terminou", Sinal::Nova.cor()),
+        ];
         let mut corpo = v_flex().gap(esp::E2);
         for (grupo, titulo, cor) in grupos {
             let linhas: Vec<_> = resumo.linhas.iter().filter(|l| l.grupo == grupo).collect();
@@ -124,18 +141,21 @@ impl Janela {
                     .child(div().rotulo().text_color(Cores::tenue()).child(titulo))
                     .child(div().metadado().text_color(Cores::apagado()).child(linhas.len().to_string())),
             );
-            let mostradas = linhas.len().min(4);
+            // Até 3 por grupo: com 9 linhas o cartão deixava a lista com uma linha e meia.
+            let mostradas = linhas.len().min(3);
             for (i, l) in linhas.iter().take(mostradas).enumerate() {
                 let chat = (!l.chat.is_empty() && motor.chat(&l.chat).is_some()).then(|| l.chat.clone());
                 corpo = corpo.child(
                     h_flex()
                         .id(SharedString::from(format!("resumo-{onde}-{grupo}-{i}")))
                         .min_h(r(28.))
-                        .px(esp::E4)
+                        // O nome na coluna do texto do rótulo do grupo (o ponto de 6 e o vão de 6),
+                        // sem o balão de cada linha, que não dizia nada (revisão de design, 23/11/2026).
+                        .pl(esp::E12)
+                        .pr(esp::E4)
                         .gap(esp::E8)
                         .rounded(raio::CONTROLE)
                         .when(chat.is_some(), |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
-                        .child(div().flex_none().child(simbolo_do_chat(16.)))
                         .children(rotulo_e_frase(motor, &l.chat, &l.texto))
                         .when_some(chat, |s, chat| {
                             s.on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -149,7 +169,7 @@ impl Janela {
                 );
             }
             if linhas.len() > mostradas {
-                corpo = corpo.child(div().pl(esp::E24).metadado().text_color(Cores::tenue()).child(format!("e mais {}", linhas.len() - mostradas)));
+                corpo = corpo.child(div().pl(esp::E12).metadado().text_color(Cores::tenue()).child(format!("e mais {}", linhas.len() - mostradas)));
             }
         }
         let motor_e = self.motor.clone();
@@ -187,7 +207,7 @@ impl Janela {
                                 .rotulo()
                                 .text_color(Cores::forte())
                                 .child("Enquanto você esteve fora")
-                                .tooltip(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
+                                .dica_no_ponteiro(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
                         )
                         .child(div().flex_none().relative().top(r(-3.)).child(fechar)),
                 )

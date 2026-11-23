@@ -151,6 +151,7 @@ impl RenderOnce for CirculoDePapel {
 pub enum Marca {
     Claude,
     Codex,
+    Gemini,
     Linear,
 }
 
@@ -172,16 +173,35 @@ static GLIFO_CODEX: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/codex-glifo.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
 });
+/// A estrela do Gemini no degradê dele (azul, roxo e rosa), no disco branco e solta.
+static DISCO_GEMINI: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let svg = include_bytes!("../../../assets/marcas/gemini.svg");
+    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+});
+static GLIFO_GEMINI: LazyLock<Arc<Image>> = LazyLock::new(|| {
+    let svg = include_bytes!("../../../assets/marcas/gemini-glifo.svg");
+    Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
+});
 static DISCO_LINEAR: LazyLock<Arc<Image>> = LazyLock::new(|| {
     let svg = include_bytes!("../../../assets/marcas/linear.svg");
     Arc::new(Image::from_bytes(ImageFormat::Svg, svg.to_vec()))
 });
 
 impl Marca {
+    /// A marca de quem responde num chat.
+    pub fn do_agente(agente: crate::modelo::Agente) -> Marca {
+        match agente {
+            crate::modelo::Agente::Claude => Marca::Claude,
+            crate::modelo::Agente::Codex => Marca::Codex,
+            crate::modelo::Agente::Gemini => Marca::Gemini,
+        }
+    }
+
     pub fn nome(self) -> &'static str {
         match self {
             Marca::Claude => "Claude",
             Marca::Codex => "Codex",
+            Marca::Gemini => "Gemini",
             Marca::Linear => "Linear",
         }
     }
@@ -191,6 +211,7 @@ impl Marca {
         match self {
             Marca::Claude => Cores::claude(),
             Marca::Codex => Cores::codex(),
+            Marca::Gemini => Cores::gemini(),
             Marca::Linear => Cores::linear(),
         }
     }
@@ -205,6 +226,7 @@ impl Marca {
         let imagem = match self {
             Marca::Claude => GLIFO_CLAUDE.clone(),
             Marca::Codex => GLIFO_CODEX.clone(),
+            Marca::Gemini => GLIFO_GEMINI.clone(),
             Marca::Linear => return self.disco(lado).into_any_element(),
         };
         img(imagem).flex_none().size(r(lado)).into_any_element()
@@ -232,6 +254,7 @@ impl RenderOnce for DiscoDeMarca {
         let imagem = match self.marca {
             Marca::Claude => DISCO_CLAUDE.clone(),
             Marca::Codex => DISCO_CODEX.clone(),
+            Marca::Gemini => DISCO_GEMINI.clone(),
             Marca::Linear => DISCO_LINEAR.clone(),
         };
         img(imagem)

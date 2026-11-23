@@ -1,7 +1,7 @@
 //! As abas do painel da direita (seção 4.1 da especificação): "Este chat" e o arquivo aberto.
 //! Abaixo de 520 px, com mais de uma aba, elas viram só o símbolo, com o nome na dica.
 
-use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
 use gpui_kit::*;
 
 use super::{
@@ -76,7 +76,7 @@ impl Janela {
             _ => TomAba::Inativa,
         };
         let dica = |e: Stateful<Div>, d: Option<SharedString>| match d {
-            Some(d) => e.tooltip(move |window, cx| Tooltip::new(d.clone()).build(window, cx)),
+            Some(d) => e.dica_no_ponteiro(move |window, cx| Tooltip::new(d.clone()).build(window, cx)),
             None => e,
         };
         let mut abas: Vec<AnyElement> = Vec::new();

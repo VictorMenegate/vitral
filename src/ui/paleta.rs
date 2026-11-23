@@ -97,8 +97,7 @@ impl Direto {
         let chat = m.chat.as_ref();
         match self {
             MandarDepois => "Mandar depois, na fila".into(),
-            PerguntarAoOutro if chat.is_some_and(|c| c.codex) => "Perguntar também ao Claude".into(),
-            PerguntarAoOutro => "Perguntar também ao Codex".into(),
+            PerguntarAoOutro => format!("Perguntar também ao {}", chat.map_or(Agente::Codex, |c| c.agente.outro()).nome()),
             Compactar => "Compactar a conversa".into(),
             Agentes => "Agentes desta conversa".into(),
             SessaoNova => "Sessão nova".into(),
@@ -166,9 +165,9 @@ impl Direto {
                 match self {
                     MandarDepois if !c.dirige => Some("Só com o turno rodando (parado, o Enter já envia)".into()),
                     MandarDepois if c.caixa_vazia => Some("Escreva a mensagem na caixa antes".into()),
-                    PerguntarAoOutro if !c.codex && !m.codex_instalado => Some("O Codex não está instalado".into()),
+                    PerguntarAoOutro if !c.outro_instalado => Some(format!("O {} não está instalado", c.agente.outro().nome())),
                     PerguntarAoOutro if c.caixa_vazia || c.caixa_com_barra => Some("Escreva a pergunta na caixa antes".into()),
-                    Compactar if c.codex => Some("O /compact é do Claude Code".into()),
+                    Compactar if c.agente != Agente::Claude => Some("O /compact é do Claude Code".into()),
                     Compactar if !c.com_sessao => Some("A conversa ainda não tem sessão".into()),
                     Agentes if !c.tem_agentes => Some("Esta conversa não abriu agentes".into()),
                     SessaoNova if c.rodando => Some("Espere o turno terminar".into()),
@@ -184,7 +183,9 @@ impl Direto {
 /// O chat do painel ativo, como a paleta o vê ao abrir.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct ChatAgora {
-    codex: bool,
+    agente: Agente,
+    /// O parceiro padrão deste agente (`Agente::outro`) está instalado.
+    outro_instalado: bool,
     /// A sessão do agente já existe (há o que compactar).
     com_sessao: bool,
     rodando: bool,
@@ -205,7 +206,6 @@ struct ChatAgora {
 struct Momento {
     chat: Option<ChatAgora>,
     memoria_ligada: bool,
-    codex_instalado: bool,
     versao_pronta: Option<String>,
     /// Os arranjos de painéis salvos (`arranjo/salvos.rs`) e o que está em uso.
     arranjos: Vec<String>,
@@ -333,7 +333,8 @@ impl Janela {
         let chat = painel.and_then(|p| m.chat(p.chat.as_deref()?).map(|c| (p, c))).map(|(p, c)| {
             let caixa = p.composer.read(cx).value();
             ChatAgora {
-                codex: c.agente == Agente::Codex,
+                agente: c.agente,
+                outro_instalado: c.agente.outro().instalado(),
                 com_sessao: c.sessao_criada,
                 rodando: m.execucao(&c.id).rodando(),
                 dirige: m.turno_recebe_mensagem(&c.id),
@@ -349,7 +350,6 @@ impl Janela {
         Momento {
             chat,
             memoria_ligada: !m.config.memoria_da_equipe.is_empty() && crate::memoria_equipe::ler_chave(&m.dados.config).is_some(),
-            codex_instalado: crate::agente_codex::instalado(),
             versao_pronta: self.atualizacao_pronta.clone(),
             arranjos: arranjos.salvos.into_iter().map(|s| s.nome).collect(),
             arranjo_em_uso: arranjos.em_uso,
@@ -377,8 +377,8 @@ impl Janela {
                             .gap(r(12.))
                             .w_full()
                             .child(div().flex_1())
-                            .child(dica_teclas(&["↑", "↓"], "escolher"))
-                            .child(dica_teclas(&["Enter"], "fazer")),
+                            .child(dica_teclas(&["↑", "↓"], "escolhe"))
+                            .child(dica_teclas(&["Enter"], "faz")),
                     )
                     .into_any_element()
             });
@@ -525,7 +525,7 @@ mod testes {
         }
         assert_eq!(Direto::TODOS.len(), todas.iter().filter(|e| e.chave.starts_with("direto:")).count());
         // No chat do Codex, a segunda resposta é a do Claude; fixado, o item desafixa.
-        let todas = entradas(&com_chat(ChatAgora { codex: true, fixado: true, ..Default::default() }));
+        let todas = entradas(&com_chat(ChatAgora { agente: crate::modelo::Agente::Codex, fixado: true, ..Default::default() }));
         acha(&todas, "Perguntar também ao Claude");
         acha(&todas, "Desafixar a conversa");
     }
@@ -542,7 +542,7 @@ mod testes {
         assert_eq!(acha(&vazio, "Sessão nova").motivo.as_deref(), Some("Abra uma conversa no painel ativo"));
         assert_eq!(acha(&vazio, "Contas do Claude").motivo, None);
         // A caixa vazia não tem pergunta para o outro agente.
-        let caixa_vazia = entradas(&Momento { codex_instalado: true, ..com_chat(ChatAgora { caixa_vazia: true, ..Default::default() }) });
+        let caixa_vazia = entradas(&com_chat(ChatAgora { caixa_vazia: true, outro_instalado: true, ..Default::default() }));
         assert_eq!(acha(&caixa_vazia, "Perguntar também ao Codex").motivo.as_deref(), Some("Escreva a pergunta na caixa antes"));
         // O atalho de um lugar que a paleta não alcança, e a própria paleta.
         assert!(acha(&vazio, "Andar pelo menu “/”").motivo.is_some());

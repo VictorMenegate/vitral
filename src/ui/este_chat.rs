@@ -2,7 +2,7 @@
 //! aviso, se ela sumiu).
 
 use gpui_kit::component::{
-    ElementExt as _, Icon, StyledExt as _, h_flex, scroll::ScrollableElement as _, tooltip::Tooltip,
+    ElementExt as _, Icon, StyledExt as _, h_flex, scroll::ScrollableElement as _, tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -254,7 +254,7 @@ fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: Str
                 .when(arquivo.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", arquivo.saem)))),
         )
         .when(arquivo.novo, |s| s.child(super::componentes::Selo::cor("novo", Cores::verde())))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .when_some(alvo, |s, alvo| {
             s.on_click(move |_, window, cx| window.dispatch_action(Box::new(alvo.clone()), cx))
         })
@@ -310,7 +310,7 @@ fn linha_dado(
                 .mono_pequeno()
                 .text_color(Cores::texto())
                 .child(valor)
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)),
         )
         .child(copiar(format!("{id}-copiar"), copia))
 }

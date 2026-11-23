@@ -313,7 +313,7 @@ impl Motor {
         let marco = c.itens.iter().rposition(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }));
         let conta = match c.agente {
             Agente::Claude => self.conta_do_turno.get(chat_id).cloned().unwrap_or_default(),
-            Agente::Codex => String::new(),
+            Agente::Codex | Agente::Gemini => String::new(),
         };
         let turno = Turno {
             em: agora(),

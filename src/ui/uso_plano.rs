@@ -9,7 +9,7 @@ use gpui_kit::component::{
     Icon, Selectable, StyledExt as _, h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
     popover::PopoverState,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -44,7 +44,24 @@ const INSTALAR_CODEX: &str = "set -o pipefail; export PATH=\"$HOME/.local/bin:$P
     if command -v codex >/dev/null; then codex login; \
     else echo 'O Codex não foi encontrado no PATH depois da instalação.'; fi";
 
+/// O mesmo para o Gemini: o instalador oficial do Antigravity CLI (`agy`, em `~/.local/bin`) só se
+/// ainda não houver um, e depois o login com a conta Google (`agy acp --login`, que entra e sai).
+const INSTALAR_GEMINI: &str = "set -o pipefail; export PATH=\"$HOME/.local/bin:$PATH\"; \
+    if ! command -v agy >/dev/null; then \
+    echo 'Instalando o Antigravity CLI (o Gemini) pelo instalador oficial do Google...'; \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash \
+    || echo 'Não deu para instalar o Antigravity CLI (veja o erro acima).'; fi; \
+    if command -v agy >/dev/null; then echo 'Entre com a sua conta Google:'; agy acp --login; \
+    else echo 'O agy não foi encontrado no PATH depois da instalação.'; fi";
+
 const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
+
+/// Abre o terminal do usuário com a instalação do Gemini (se faltar) e o login da conta Google.
+pub(super) fn instalar_gemini() {
+    if let Some(casa) = dirs::home_dir() {
+        sistema::abrir_terminal(&casa, Some(INSTALAR_GEMINI));
+    }
+}
 
 /// Abre o terminal do usuário com a instalação (se faltar) e o login do Codex.
 pub(super) fn instalar_codex() {
@@ -225,7 +242,7 @@ impl RenderOnce for BotaoUso {
             .when(self.aberto, |s| s.bg(Cores::pressionado()))
             .when(!self.aberto, |s| {
                 s.hover(|s| s.bg(Cores::hover()))
-                    .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(
                 AnelDeUso::new(("uso-anel", id), self.marca, l.fora.map(|f| f as f32))
@@ -392,8 +409,8 @@ fn detalhes(
     match marca {
         Marca::Claude => detalhes_claude(&motor, janela, popover, agora, window, cx).into_any_element(),
         Marca::Codex => detalhes_codex(&motor, janela, popover, agora, window, cx).into_any_element(),
-        // O Linear não tem plano de uso.
-        Marca::Linear => div().into_any_element(),
+        // O Linear não tem plano de uso, e o Antigravity não diz a cota do Gemini.
+        Marca::Gemini | Marca::Linear => div().into_any_element(),
     }
 }
 
@@ -833,7 +850,7 @@ fn rodape(
                     motor.update(cx, |m, cx| match marca {
                         Marca::Claude => m.atualizar_uso(cx),
                         Marca::Codex => m.reler_uso(cx),
-                        Marca::Linear => {}
+                        Marca::Gemini | Marca::Linear => {}
                     })
                 }),
         )

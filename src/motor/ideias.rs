@@ -20,6 +20,8 @@ pub struct EstadoDoLinear {
     ligando: bool,
     lido_em: Option<u64>,
     erro: Option<String>,
+    /// Quantas vezes o Linear recusou a chave testada: o campo treme de novo a cada uma.
+    recusas: u32,
     /// Cartões com mudança daqui a caminho (quantas): a leitura não passa por cima deles.
     presas: HashMap<String, u32>,
     /// A edição de texto de cada cartão (a geração dela): sobe quando para de mudar.
@@ -36,7 +38,7 @@ impl EstadoDoLinear {
 /// O que o quadro mostra do Linear.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SituacaoDoLinear {
-    Desligado { ligando: bool, erro: Option<String> },
+    Desligado { ligando: bool, erro: Option<String>, recusas: u32 },
     Ligado { time: Option<String>, lendo: bool, lido_em: Option<u64>, erro: Option<String> },
 }
 
@@ -68,7 +70,7 @@ impl Motor {
     pub fn situacao_do_linear(&self) -> SituacaoDoLinear {
         let l = &self.linear;
         match &l.chave {
-            None => SituacaoDoLinear::Desligado { ligando: l.ligando, erro: l.erro.clone() },
+            None => SituacaoDoLinear::Desligado { ligando: l.ligando, erro: l.erro.clone(), recusas: l.recusas },
             Some(_) => SituacaoDoLinear::Ligado {
                 time: l.time.as_ref().map(|t| format!("{} ({})", t.nome, t.chave)),
                 lendo: l.lendo,
@@ -180,7 +182,12 @@ impl Motor {
                         }
                         Err(erro) => m.linear.erro = Some(format!("Não gravei a chave: {erro}")),
                     },
-                    Err(erro) => m.linear.erro = Some(erro),
+                    Err(erro) => {
+                        if erro == linear::RECUSOU_A_CHAVE {
+                            m.linear.recusas += 1;
+                        }
+                        m.linear.erro = Some(erro);
+                    }
                 }
                 cx.notify();
             });
@@ -400,7 +407,7 @@ impl Motor {
             if ideia.coluna != Coluna::Fazendo {
                 self.mover_ideia(id, Coluna::Fazendo, None, cx);
             }
-            self.registrar("ideia", "", &chat, &format!("Mandou a ideia \"{}\" no chat", ideia.titulo));
+            self.registrar("ideia", "", &chat, &format!("Mandou a ideia “{}” no chat", ideia.titulo));
             cx.notify();
             return Ok(chat);
         }
@@ -417,7 +424,7 @@ impl Motor {
         if ideia.coluna != Coluna::Fazendo {
             self.mover_ideia(id, Coluna::Fazendo, None, cx);
         }
-        self.registrar("ideia", "", &chat, &format!("Abriu o chat da ideia \"{}\"", ideia.titulo));
+        self.registrar("ideia", "", &chat, &format!("Abriu o chat da ideia “{}”", ideia.titulo));
         self.salvar_quadro();
         cx.notify();
         Ok(chat)

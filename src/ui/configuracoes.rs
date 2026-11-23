@@ -6,9 +6,11 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    Disableable as _, Size, Sizable as _,
+    Disableable as _, Icon, Size, Sizable as _,
     menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -17,7 +19,7 @@ use super::{
     composer::{DESCRICOES_DE_MODELO, MODELOS, MODOS},
     componentes::{
         Chip, Contador, ControleSegmentado, GatilhoChip, GrupoDeOpcoes, LinhaDeOpcao, Marca, Simbolo, TamanhoBotao,
-        TamanhoChip, botao_fantasma, icone_do_modo, item_descrito, largura,
+        TamanhoChip, botao_fantasma, icone_do_modo, item_descrito,
     },
     atualizacao::{Vista, grupo as grupo_de_atualizacoes},
     dialogos::estreito,
@@ -28,7 +30,7 @@ use crate::{
     claude::{self, Atualizacao, Versao},
     modelo::Config,
     motor::{self, Motor},
-    tema::{Cores, Lucide, r, tam},
+    tema::{Cores, Lucide, Tipo as _, esp, r, raio, tam},
 };
 
 const PRAZOS_ARQUIVAR: [(u32, &str); 4] = [(0, "Nunca"), (3, "3 dias"), (7, "7 dias"), (30, "30 dias")];
@@ -82,8 +84,53 @@ pub(super) fn linha_do_claude(
     LinhaDoClaude { texto, andando, resposta: linhas, falhou: resposta.is_some_and(|r| !r.ok), espera }
 }
 
+/// As partes das Configurações, na coluna da esquerda (dono, 23/11/2026: "faz ser uma coluna na
+/// esquerda com as configurações separadas em cada parte").
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Parte {
+    Chats,
+    Agentes,
+    Memoria,
+    Aparencia,
+    ClaudeCode,
+    Atualizacoes,
+}
+
+impl Parte {
+    const TODAS: [Parte; 6] = [Parte::Chats, Parte::Agentes, Parte::Memoria, Parte::Aparencia, Parte::ClaudeCode, Parte::Atualizacoes];
+
+    fn nome(self) -> &'static str {
+        match self {
+            Parte::Chats => "Chats",
+            Parte::Agentes => "Agentes",
+            Parte::Memoria => "Memória",
+            Parte::Aparencia => "Aparência",
+            Parte::ClaudeCode => "Claude Code",
+            Parte::Atualizacoes => "Atualizações",
+        }
+    }
+
+    fn icone(self) -> Lucide {
+        match self {
+            Parte::Chats => Lucide::MessagesSquare,
+            Parte::Agentes => Lucide::Bot,
+            Parte::Memoria => Lucide::Brain,
+            Parte::Aparencia => Lucide::Palette,
+            Parte::ClaudeCode => Lucide::Terminal,
+            Parte::Atualizacoes => Lucide::RefreshCw,
+        }
+    }
+}
+
+/// A altura do corpo das Configurações, a 100%: a coluna das partes fica parada e só o lado
+/// direito rola, sem o diálogo mudar de tamanho a cada parte.
+const ALTURA_DAS_CONFIGURACOES: f32 = 520.;
+/// A largura do diálogo, a 100%: mais largo que o G, com a coluna das partes e as opções lado a lado.
+pub(super) const LARGURA_DAS_CONFIGURACOES: f32 = 860.;
+
 pub struct Configuracoes {
     motor: Entity<Motor>,
+    parte: Parte,
     _observa: Subscription,
     _atualizacoes: Subscription,
     /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
@@ -98,7 +145,7 @@ impl Configuracoes {
         // A linha do Claude Code mostra a versão instalada: ela pode ter mudado por fora (ou pelo
         // próprio Atualizar, numa abertura anterior) desde a leitura da abertura do app.
         motor.update(cx, |m, cx| m.reler_versao_claude(cx));
-        Self { motor, _observa, _atualizacoes, _acompanhando }
+        Self { motor, parte: Parte::Chats, _observa, _atualizacoes, _acompanhando }
     }
 
     /// O grupo Claude Code das Configurações: a versão que os turnos abrem e o Atualizar.
@@ -138,6 +185,8 @@ impl Configuracoes {
             window,
             cx,
         )
+        // Na caixa escura dos outros controles: solto, parecia texto (revisão de design, 23/11/2026).
+        .bg(Cores::recuo())
         .when_some(linha.espera.clone(), |b, motivo| b.disabled(true).opacity(0.45).tooltip(motivo))
         .on_click(move |_, _, cx| motor_e.update(cx, |m, cx| m.atualizar_claude(cx)));
         let opcao = LinhaDeOpcao::new("cfg-claude", "Versão instalada")
@@ -212,6 +261,10 @@ pub(super) fn menu_escolha(
             None => chip,
         }
         .construir(window, cx)
+        // Na mesma caixa escura do contador e da escolha segmentada da coluna: solto, o seletor
+        // parecia o valor, e não um controle (revisão de design, 23/11/2026).
+        .bg(Cores::recuo())
+        .text_color(Cores::texto())
     };
     let gatilho = GatilhoChip::new(chip(false), chip(true));
     let (opcoes, atual, escolher) = (Rc::new(opcoes), atual.to_string(), Rc::new(escolher));
@@ -334,7 +387,7 @@ fn opcoes_de_modelo(padrao: &'static str) -> Vec<Opcao> {
 
 impl Render for Configuracoes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let estreito = estreito(window, largura::G);
+        let estreito = estreito(window, LARGURA_DAS_CONFIGURACOES);
         let ancora = if estreito { Anchor::TopLeft } else { Anchor::TopRight };
         let config = self.motor.read(cx).config.clone();
         let padrao = Config::default();
@@ -359,6 +412,7 @@ impl Render for Configuracoes {
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
+                    .info("O cartão “Enquanto você esteve fora” junta o que terminou, o que precisa de você e o que falhou desde que a janela saiu de foco. Ele some no × e volta na próxima saída.")
                     .descricao("Minutos com a janela fora de foco antes do “Enquanto você esteve fora”."),
                 contador("cfg-resumo", &[5, 10, 15, 30, 60, 120], config.minutos_para_resumo as u32, m(), |c, v| {
                     c.minutos_para_resumo = v as u64
@@ -374,54 +428,6 @@ impl Render for Configuracoes {
                         alternar_avisos.update(cx, |m, cx| m.mudar_config(|c| c.avisos_no_app = ligado, cx))
                     }),
             )
-            .linha(
-                LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
-                    // Os anéis voltaram para baixo do × no mesmo dia em que foram ao cabeçalho
-                    // (dono, 16/11/2026).
-                    .descricao("Os anéis ficam no canto de cima, à direita, embaixo do ×. Desligado, o uso fica só em Contas do Claude.")
-                    .interruptor(uso_no_canto, move |ligado, _, cx| {
-                        alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
-                    }),
-            )
-            .linha(com(
-                LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
-                    .info("“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.")
-                    .descricao("Cada chat pode trocar o modo na caixa de mensagem."),
-                menu_escolha("cfg-permissao", ancora, modos, &config.permissao, &padrao.permissao, gravar(m(), |c, v| c.permissao = v), window, cx),
-            ))
-            .linha(com(
-                LinhaDeOpcao::new("cfg-agente", "Quem responde nos chats novos")
-                    .info("O Codex é o agente de código da OpenAI. Ele usa o login e o plano do próprio Codex, e precisa estar instalado neste computador.")
-                    .descricao("Cada chat pode trocar o agente no seletor de modelo."),
-                menu_escolha(
-                    "cfg-agente",
-                    ancora,
-                    vec![
-                        Opcao::new("claude", "Claude").descricao("Claude Code").simbolo(Simbolo::Marca(Marca::Claude)),
-                        Opcao::new("codex", "Codex")
-                            .descricao(if crate::agente_codex::instalado() { "Codex, da OpenAI" } else { "Não achei o Codex neste computador" })
-                            .simbolo(Simbolo::Marca(Marca::Codex)),
-                    ],
-                    if config.agente_padrao == crate::modelo::Agente::Codex { "codex" } else { "claude" },
-                    "claude",
-                    gravar(m(), |c, v| c.agente_padrao = if v == "codex" { crate::modelo::Agente::Codex } else { crate::modelo::Agente::Claude }),
-                    window,
-                    cx,
-                ),
-            ))
-            .linha(com(
-                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude").descricao("Cada chat pode trocar o modelo na caixa de mensagem."),
-                menu_escolha(
-                    "cfg-modelo-trab",
-                    ancora,
-                    opcoes_de_modelo("O do seu Claude Code"),
-                    &config.modelo_chats,
-                    "",
-                    gravar(m(), |c, v| c.modelo_chats = v),
-                    window,
-                    cx,
-                ),
-            ))
             .linha(com(
                 LinhaDeOpcao::new("cfg-arquivar", "Arquivar chats parados depois de")
                     .info(
@@ -434,19 +440,73 @@ impl Render for Configuracoes {
                 }, window, cx),
             ))
             .linha(
-                LinhaDeOpcao::new("cfg-mcp", "Servidores MCP do Claude Code")
-                    .info("No Haiku, muitos servidores MCP estouram o contexto.")
-                    // A descrição acompanha o estado, como a da Memória da equipe: ligado, ela só
-                    // falava do desligado.
-                    .descricao(if mcp {
-                        "Ligado, os chats usam também os servidores do seu Claude Code."
-                    } else {
-                        "Desligado, só as ferramentas do Vitral."
-                    })
-                    .interruptor(mcp, move |ligado, _, cx| {
-                        alternar_mcp.update(cx, |m, cx| m.mudar_config(|c| c.mcp_trabalhadores = ligado, cx))
+                LinhaDeOpcao::new("cfg-sugerir", "Sugerir a próxima mensagem")
+                    .info(
+                        "Depois de cada resposta do Claude, o Claude Code adivinha o que você escreveria em seguida \
+                         (“roda os testes”, “commita”). A sugestão aparece apagada na caixa vazia, e o Tab a põe na \
+                         caixa. Quando o próximo passo não é óbvio, ele não sugere nada. É uma chamada curta, que \
+                         reaproveita o cache da conversa.",
+                    )
+                    .descricao("Só no Claude. O Tab aceita.")
+                    .interruptor(sugerir, move |ligado, _, cx| {
+                        alternar_sugerir.update(cx, |m, cx| m.mudar_config(|c| c.sugerir_resposta = ligado, cx))
                     }),
-            )
+            );
+        let agentes = GrupoDeOpcoes::new(Some("Agentes".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
+                    .info("“Sem perguntar” é o mesmo do seu VS Code. Nos outros, os pedidos de permissão aparecem na conversa.")
+                    .descricao("Cada chat pode trocar o modo na caixa de mensagem."),
+                menu_escolha("cfg-permissao", ancora, modos, &config.permissao, &padrao.permissao, gravar(m(), |c, v| c.permissao = v), window, cx),
+            ))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-agente", "Quem responde nos chats novos")
+                    .info("O Codex é o agente de código da OpenAI, e o Gemini, o do Google (pelo Antigravity CLI). Cada um usa o login e o plano dele, e precisa estar instalado neste computador.")
+                    .descricao("Cada chat pode trocar o agente no seletor de modelo."),
+                menu_escolha(
+                    "cfg-agente",
+                    ancora,
+                    vec![
+                        Opcao::new("claude", "Claude").descricao("Claude Code").simbolo(Simbolo::Marca(Marca::Claude)),
+                        Opcao::new("codex", "Codex")
+                            .descricao(if crate::agente_codex::instalado() { "Codex, da OpenAI" } else { "Não achei o Codex neste computador" })
+                            .simbolo(Simbolo::Marca(Marca::Codex)),
+                        Opcao::new("gemini", "Gemini")
+                            .descricao(if crate::agente_gemini::instalado() { "Gemini, do Google, pelo Antigravity CLI" } else { "Não achei o Antigravity CLI (agy) neste computador" })
+                            .simbolo(Simbolo::Marca(Marca::Gemini)),
+                    ],
+                    match config.agente_padrao {
+                        crate::modelo::Agente::Claude => "claude",
+                        crate::modelo::Agente::Codex => "codex",
+                        crate::modelo::Agente::Gemini => "gemini",
+                    },
+                    "claude",
+                    gravar(m(), |c, v| {
+                        c.agente_padrao = match v.as_str() {
+                            "codex" => crate::modelo::Agente::Codex,
+                            "gemini" => crate::modelo::Agente::Gemini,
+                            _ => crate::modelo::Agente::Claude,
+                        }
+                    }),
+                    window,
+                    cx,
+                ),
+            ))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-modelo-trab", "Modelo dos chats do Claude")
+                    .info("Padrão é o modelo que o seu Claude Code escolher. As versões exatas e as contas ficam no seletor de modelo da caixa.").descricao("Cada chat pode trocar o modelo na caixa de mensagem."),
+                menu_escolha(
+                    "cfg-modelo-trab",
+                    ancora,
+                    opcoes_de_modelo("O do seu Claude Code"),
+                    &config.modelo_chats,
+                    "",
+                    gravar(m(), |c, v| c.modelo_chats = v),
+                    window,
+                    cx,
+                ),
+            ));
+        let memoria_grupo = GrupoDeOpcoes::new(Some("Memória".into()))
             .linha({
                 let ligada = !config.memoria_da_equipe.is_empty();
                 let abrir = m();
@@ -459,6 +519,7 @@ impl Render for Configuracoes {
                     .descricao(if ligada { format!("Ligada a {}", config.memoria_da_equipe) } else { "Desligada".to_string() })
                     .controle(
                         botao_fantasma("cfg-memoria-equipe-abrir", None, if ligada { "Trocar…" } else { "Ligar…" }, TamanhoBotao::Controle, window, cx)
+                            .bg(Cores::recuo())
                             .on_click(move |_, window, cx| super::memoria_equipe::abrir(abrir.clone(), window, cx)),
                     )
             })
@@ -473,25 +534,39 @@ impl Render for Configuracoes {
                     .interruptor(memoria, move |ligado, _, cx| {
                         alternar_memoria.update(cx, |m, cx| m.mudar_config(|c| c.memoria_ao_terminar = ligado, cx))
                     }),
-            )
+            );
+        // A versão do Claude Code e os servidores MCP dele num cartão só, como as outras partes.
+        let claude_grupo = self.grupo_do_claude(estreito, window, cx)
             .linha(
-                LinhaDeOpcao::new("cfg-sugerir", "Sugerir a próxima mensagem")
-                    .info(
-                        "Depois de cada resposta do Claude, o Claude Code adivinha o que você escreveria em seguida \
-                         (\"roda os testes\", \"commita\"). A sugestão aparece apagada na caixa vazia, e o Tab a põe na \
-                         caixa. Quando o próximo passo não é óbvio, ele não sugere nada. É uma chamada curta, que \
-                         reaproveita o cache da conversa.",
-                    )
-                    .descricao("Só no Claude. O Tab aceita.")
-                    .interruptor(sugerir, move |ligado, _, cx| {
-                        alternar_sugerir.update(cx, |m, cx| m.mudar_config(|c| c.sugerir_resposta = ligado, cx))
+                LinhaDeOpcao::new("cfg-mcp", "Servidores MCP do Claude Code")
+                    .info("No Haiku, muitos servidores MCP estouram o contexto.")
+                    // A descrição acompanha o estado, como a da Memória da equipe: ligado, ela só
+                    // falava do desligado.
+                    .descricao(if mcp {
+                        "Ligado, os chats usam também os servidores do seu Claude Code."
+                    } else {
+                        "Desligado, só as ferramentas do Vitral."
+                    })
+                    .interruptor(mcp, move |ligado, _, cx| {
+                        alternar_mcp.update(cx, |m, cx| m.mudar_config(|c| c.mcp_trabalhadores = ligado, cx))
                     }),
             );
 
         let (animacoes, sistema_sem) = movimento::animacoes(cx);
         let segmentos = [movimento::SEGUIR_O_SISTEMA, "Desligadas"];
         let atual = usize::from(animacoes == Animacoes::Desligadas);
-        let interface = GrupoDeOpcoes::new(Some("Interface".into())).linha(com(
+        let interface = GrupoDeOpcoes::new(Some("Aparência".into()))
+            .linha(
+                LinhaDeOpcao::new("cfg-uso-no-canto", "Mostrar o uso do plano no canto da janela")
+                    .info("Cada anel é a janela de 5 horas por fora e a da semana por dentro. O clique abre os detalhes e as contas.")
+                    // Os anéis voltaram para baixo do × no mesmo dia em que foram ao cabeçalho
+                    // (dono, 16/11/2026).
+                    .descricao("Os anéis ficam no canto de cima, à direita, embaixo do ×. Desligado, o uso fica só em Contas do Claude.")
+                    .interruptor(uso_no_canto, move |ligado, _, cx| {
+                        alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
+                    }),
+            )
+            .linha(com(
             LinhaDeOpcao::new("cfg-animacoes", "Animações")
                 .info(
                     "Desligadas, os popovers, os menus, as mensagens novas, a pílula dos segmentados e os anéis \
@@ -532,14 +607,56 @@ impl Render for Configuracoes {
         let trabalhando = self.motor.read(cx).trabalhando();
         let atualizacoes = Vista::da_global(cx).map(|vista| grupo_de_atualizacoes(&vista, trabalhando, estreito, window, cx));
 
+        let grupos: Vec<AnyElement> = match self.parte {
+            Parte::Chats => vec![conversas.into_any_element()],
+            Parte::Agentes => vec![agentes.into_any_element()],
+            Parte::Memoria => vec![memoria_grupo.into_any_element()],
+            Parte::Aparencia => vec![interface.into_any_element()],
+            Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
+            Parte::Atualizacoes => atualizacoes.into_iter().map(IntoElement::into_any_element).collect(),
+        };
+        // A coluna das partes: o ícone e o nome (no diálogo estreito, só o ícone, com o nome na
+        // dica); a escolhida com o fundo da seleção, como as linhas da lista.
+        let atual = self.parte;
+        let partes = Parte::TODAS.into_iter().map(|parte| {
+            let escolhida = parte == atual;
+            div()
+                .id(SharedString::from(format!("cfg-parte-{}", parte.nome())))
+                .flex()
+                .items_center()
+                .gap(esp::E8)
+                .h(r(32.))
+                .px(esp::E8)
+                .rounded(raio::CONTROLE)
+                .cursor_pointer()
+                .text_color(if escolhida { Cores::forte() } else { Cores::tenue() })
+                .when(escolhida, |s| s.bg(Cores::selecao()))
+                .when(!escolhida, |s| s.hover(|s| s.bg(Cores::hover()).text_color(Cores::texto())))
+                .child(Icon::new(parte.icone()).with_size(tam(window, 16.)))
+                .when(!estreito, |s| s.child(div().rotulo().child(parte.nome())))
+                .when(estreito, |s| s.dica_no_ponteiro(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.parte = parte;
+                    cx.notify();
+                }))
+        });
         div()
             .flex()
-            .flex_col()
-            .gap(r(24.))
-            .child(conversas)
-            .child(interface)
-            .child(self.grupo_do_claude(estreito, window, cx))
-            .children(atualizacoes)
+            .gap(esp::E16)
+            .h(r(ALTURA_DAS_CONFIGURACOES))
+            .child(v_flex().flex_none().w(if estreito { r(40.) } else { r(176.) }).gap(esp::E2).children(partes))
+            .child(div().flex_none().w(px(1.)).h_full().bg(Cores::linha()))
+            .child(
+                v_flex()
+                    .id("cfg-parte")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .gap(esp::E24)
+                    .pb(esp::E16)
+                    .children(grupos),
+            )
     }
 }
 

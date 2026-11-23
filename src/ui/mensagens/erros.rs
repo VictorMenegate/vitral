@@ -18,6 +18,7 @@ const PREFIXO_DO_PROCESSO: &str = "Falhou: ";
 
 const PASTA_SUMIU: &str = "A pasta deste chat não existe mais (";
 const SEM_CODEX: &str = "O Codex não está instalado";
+const SEM_GEMINI: &str = "O Gemini não está instalado";
 const ABRIR: &str = "Não consegui abrir o ";
 const AGENTES: &str = "Os agentes em segundo plano não terminaram";
 const ULTRACODE: &str = "O Claude Code não ligou o Ultracode";
@@ -27,7 +28,7 @@ const TODAS_NO_LIMITE: &str = "Todas as contas chegaram ao limite do plano";
 const PRIMEIRA_VOLTA: &str = "a primeira volta ";
 
 /// Os textos de erro que o Vitral escreve: a faixa não os lê como texto do agente.
-const PREFIXOS_DO_VITRAL: [&str; 7] = [PASTA_SUMIU, SEM_CODEX, ABRIR, AGENTES, ULTRACODE, ULTRACODE_ANTIGO, CICLO];
+const PREFIXOS_DO_VITRAL: [&str; 8] = [PASTA_SUMIU, SEM_CODEX, SEM_GEMINI, ABRIR, AGENTES, ULTRACODE, ULTRACODE_ANTIGO, CICLO];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum TipoDeErro {
@@ -38,7 +39,7 @@ pub(super) enum TipoDeErro {
     Contexto,
     Processo,
     PastaSumiu,
-    SemCodex,
+    SemAgente,
     Abrir,
     Agentes,
     Ultracode,
@@ -115,6 +116,7 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
         TipoDeErro::Limite => {
             lido.titulo = match agente {
                 Agente::Codex => "O Codex chegou ao limite de uso".into(),
+                Agente::Gemini => "O Gemini chegou ao limite da cota".into(),
                 Agente::Claude => "O Claude chegou ao limite do plano".into(),
             };
             lido.volta = hora_de_volta(cru);
@@ -127,6 +129,7 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
         TipoDeErro::Login => {
             let (titulo, frase) = match agente {
                 Agente::Codex => ("O Codex pediu para entrar de novo", "Entre no Codex e tente outra vez."),
+                Agente::Gemini => ("O Gemini pediu para entrar com a conta Google", "Entre no Gemini e tente outra vez."),
                 Agente::Claude => ("O Claude Code perdeu o login desta conta", "Entre nela de novo e tente outra vez."),
             };
             (lido.titulo, lido.frase) = (titulo.into(), Some(frase.into()));
@@ -147,7 +150,7 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
             lido.titulo = "A conversa passou do tamanho que o modelo aceita".into();
             lido.frase = Some(match agente {
                 Agente::Claude => "Compacte a conversa e mande de novo.".into(),
-                Agente::Codex => "Comece um chat novo ou mande uma mensagem mais curta.".into(),
+                Agente::Codex | Agente::Gemini => "Comece um chat novo ou mande uma mensagem mais curta.".into(),
             });
         }
         _ if do_processo => {
@@ -179,7 +182,10 @@ fn texto_do_vitral(texto: &str, agente_do_chat: Agente) -> Option<ErroLido> {
         ErroLido::do_vitral(TipoDeErro::PastaSumiu, agente_do_chat, "A pasta deste chat sumiu", Some(frase), texto)
     } else if texto.starts_with(SEM_CODEX) {
         let frase = texto.contains("não foi enviada").then(|| "A mensagem não foi enviada.".to_string());
-        ErroLido::do_vitral(TipoDeErro::SemCodex, Agente::Codex, SEM_CODEX, frase, texto)
+        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Codex, SEM_CODEX, frase, texto)
+    } else if texto.starts_with(SEM_GEMINI) {
+        let frase = texto.contains("não foi enviada").then(|| "A mensagem não foi enviada.".to_string());
+        ErroLido::do_vitral(TipoDeErro::SemAgente, Agente::Gemini, SEM_GEMINI, frase, texto)
     } else if texto.starts_with(ABRIR) {
         let (titulo, detalhe) = texto.split_once(": ").unwrap_or((texto, ""));
         let agente = agente_do_erro(titulo, agente_do_chat);
@@ -275,7 +281,7 @@ pub(super) fn tipo_do_cru(cru: &str) -> TipoDeErro {
     let tem = |trechos: &[&str]| trechos.iter().any(|x| t.contains(x));
     // O limite de requisições ("rate limit") é sobrecarga passageira, nunca o limite do plano.
     let por_minuto = tem(&["rate limit", "rate_limit"]);
-    if falha_de_login(cru) || tem(&["not logged in", "codex login", "please log in", "login required"]) {
+    if falha_de_login(cru) || tem(&["not logged in", "codex login", "please log in", "login required", "authentication required"]) {
         TipoDeErro::Login
     } else if !por_minuto && tem(&["usage limit", "hit your limit", "limit reached", "out of extra usage", "weekly limit", "quota"]) {
         TipoDeErro::Limite
@@ -324,7 +330,11 @@ fn sobrecarregado(t: &str) -> bool {
 /// De quem é o erro: na dupla (o Claude e o Codex no mesmo chat) o texto diz melhor que o chat.
 pub(super) fn agente_do_erro(cru: &str, agente_do_chat: Agente) -> Agente {
     let t = cru.to_ascii_lowercase();
-    if ["chatgpt.com", "openai", "codex"].iter().any(|x| t.contains(x)) {
+    // O Gemini primeiro: pelo Antigravity ele também roda modelos de outras casas, e o erro pode
+    // citar o modelo.
+    if ["gemini", "antigravity", "agy acp"].iter().any(|x| t.contains(x)) {
+        Agente::Gemini
+    } else if ["chatgpt.com", "openai", "codex"].iter().any(|x| t.contains(x)) {
         Agente::Codex
     } else if ["claude", "anthropic"].iter().any(|x| t.contains(x)) {
         Agente::Claude
@@ -504,7 +514,7 @@ pub(super) fn aparencia(tipo: TipoDeErro) -> (Lucide, Option<Hsla>) {
         TipoDeErro::Contexto => (Lucide::Minimize, Some(Cores::vermelho())),
         TipoDeErro::Processo => (Lucide::Unplug, Some(Cores::vermelho())),
         TipoDeErro::PastaSumiu => (Lucide::FolderX, Some(Cores::vermelho())),
-        TipoDeErro::SemCodex => (Lucide::Download, Some(Cores::vermelho())),
+        TipoDeErro::SemAgente => (Lucide::Download, Some(Cores::vermelho())),
         TipoDeErro::Agentes => (Lucide::Workflow, Some(Cores::vermelho())),
         TipoDeErro::Ultracode => (Lucide::Zap, Some(Cores::ambar())),
         TipoDeErro::Ciclo => (Lucide::MessagesSquare, Some(Cores::espera())),
@@ -541,6 +551,7 @@ pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Luci
         TipoDeErro::Limite => {
             let base = match agente {
                 Agente::Codex => "Limite de uso do Codex",
+                Agente::Gemini => "Cota do Gemini",
                 Agente::Claude => "Limite do plano",
             };
             let rotulo = match hora_de_volta(texto) {
@@ -715,7 +726,7 @@ mod testes {
             Agente::Codex,
             None,
         );
-        assert_eq!(lido.tipo, TipoDeErro::SemCodex);
+        assert_eq!(lido.tipo, TipoDeErro::SemAgente);
         assert_eq!(lido.frase.as_deref(), Some("A mensagem não foi enviada."));
         let lido = ler_erro("O Codex não está instalado neste computador (ou não está no PATH).", Agente::Claude, None);
         assert_eq!(lido.frase, None);

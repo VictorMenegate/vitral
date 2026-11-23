@@ -181,8 +181,16 @@ pub enum Evento {
     SubProgresso { pai: String, ferramentas: u32, tokens: u64 },
     /// O subagente em segundo plano terminou (ou falhou), com o resumo do que fez.
     SubFim { pai: String, erro: bool, resumo: String, ferramentas: u32, tokens: u64 },
-    /// O Codex confirmou (ou recusou) uma mensagem enviada durante o turno.
+    /// O Codex ou o Gemini confirmou (ou recusou) uma mensagem enviada durante o turno.
     DirecaoConfirmada { texto: String, aceita: bool },
+    /// O Gemini pede permissão para uma chamada (`session/request_permission` do ACP): vai para o
+    /// mesmo cartão dos pedidos do Claude Code, e a resposta (no formato do `permissao` do MCP,
+    /// `behavior: allow|deny`) volta por `resposta`.
+    Permissao {
+        ferramenta: String,
+        entrada: Value,
+        resposta: smol::channel::Sender<crate::mcp::Resposta>,
+    },
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
     /// depois do `result`.
     Sugestao(String),
@@ -212,11 +220,54 @@ pub enum Evento {
     },
 }
 
+/// O canal de um agente que fala JSON-RPC pela entrada (o Codex e o Gemini): ele fica com a
+/// entrada e sabe dirigir e parar o turno no protocolo de cada um.
+pub trait CanalDoAgente: Send {
+    fn aberta(&self) -> bool;
+    fn fechar(&mut self);
+    fn dirigir(&mut self, texto: &str, imagens: &[PathBuf]) -> std::io::Result<()>;
+    fn interromper(&mut self) -> std::io::Result<()>;
+}
+
+impl CanalDoAgente for crate::agente_codex::servidor::Canal {
+    fn aberta(&self) -> bool {
+        Self::aberta(self)
+    }
+    fn fechar(&mut self) {
+        Self::fechar(self)
+    }
+    fn dirigir(&mut self, texto: &str, imagens: &[PathBuf]) -> std::io::Result<()> {
+        Self::dirigir(self, texto, imagens)
+    }
+    fn interromper(&mut self) -> std::io::Result<()> {
+        Self::interromper(self)
+    }
+}
+
+impl CanalDoAgente for crate::agente_gemini::Canal {
+    fn aberta(&self) -> bool {
+        Self::aberta(self)
+    }
+    fn fechar(&mut self) {
+        Self::fechar(self)
+    }
+    fn dirigir(&mut self, texto: &str, imagens: &[PathBuf]) -> std::io::Result<()> {
+        Self::dirigir(self, texto, imagens)
+    }
+    fn interromper(&mut self) -> std::io::Result<()> {
+        Self::interromper(self)
+    }
+}
+
+/// O tradutor da saída de um agente JSON-RPC: uma linha lida, os eventos dela.
+type Tradutor = Box<dyn FnMut(&Value) -> Vec<Evento> + Send>;
+
 pub struct Processo {
     filho: Child,
     /// Escrita numa thread própria (`EntradaDeFundo`): o processo pode demorar a ler.
     entrada: Option<processos::EntradaDeFundo>,
-    codex: Option<Arc<Mutex<crate::agente_codex::servidor::Canal>>>,
+    /// O canal do Codex ou do Gemini, que fica com a entrada (`CanalDoAgente`).
+    canal: Option<Arc<Mutex<dyn CanalDoAgente>>>,
     escopo: Escopo,
     parado: bool,
 }
@@ -227,13 +278,17 @@ impl Processo {
         mensagem: Mensagem,
         mut enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
-        let codex = opcoes.agente == crate::modelo::Agente::Codex;
-        let mut comando = if codex {
+        let agente = opcoes.agente;
+        let mut comando = if agente == crate::modelo::Agente::Codex {
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
             comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
             if let Some((_, chave)) = opcoes.mcp_da_equipe.as_deref().and_then(crate::memoria_equipe::conexao_do_arquivo) {
                 comando.env("VITRAL_MEMORIA_EQUIPE_TOKEN", chave);
             }
+            comando
+        } else if agente == crate::modelo::Agente::Gemini {
+            let mut comando = processos::comando(crate::agente_gemini::binario(), "gemini");
+            comando.current_dir(&opcoes.cwd).args(crate::agente_gemini::argumentos(opcoes));
             comando
         } else {
             let mut comando = processos::comando(binario_claude(), "claude");
@@ -260,19 +315,40 @@ impl Processo {
             .stderr(Stdio::piped());
 
         let (mut filho, escopo) =
-            processos::abrir(comando).with_context(|| if codex { "não abriu o codex" } else { "não abriu o claude" })?;
+            processos::abrir(comando).with_context(|| format!("não abriu o {}", agente.programa()))?;
         let pid = filho.id();
         let saida = filho.stdout.take().unwrap();
         let erros = filho.stderr.take().unwrap();
         let mut entrada = filho.stdin.take().map(processos::EntradaDeFundo::nova);
-        let canal_codex = if codex {
-            entrada.take().map(|stdin| Arc::new(Mutex::new(crate::agente_codex::servidor::Canal::novo(Box::new(stdin)))))
-        } else { None };
-        let mut protocolo_codex = canal_codex.as_ref().map(|canal| {
-            crate::agente_codex::servidor::Protocolo::novo(canal.clone(), crate::agente_codex::parametros_servidor(opcoes),
-                crate::agente_codex::servidor::entrada(mensagem.texto, mensagem.imagens), opcoes.esforco.clone())
-        });
-        if let Some(protocolo) = protocolo_codex.as_mut() { protocolo.iniciar()?; }
+        // O Codex e o Gemini falam JSON-RPC: a entrada vai para o canal do protocolo de cada um, e
+        // a saída é traduzida para os mesmos eventos do Claude Code.
+        let (canal, mut tradutor): (Option<Arc<Mutex<dyn CanalDoAgente>>>, Option<Tradutor>) = match agente {
+            crate::modelo::Agente::Codex => match entrada.take() {
+                Some(stdin) => {
+                    let canal = Arc::new(Mutex::new(crate::agente_codex::servidor::Canal::novo(Box::new(stdin))));
+                    let mut protocolo = crate::agente_codex::servidor::Protocolo::novo(
+                        canal.clone(),
+                        crate::agente_codex::parametros_servidor(opcoes),
+                        crate::agente_codex::servidor::entrada(mensagem.texto, mensagem.imagens),
+                        opcoes.esforco.clone(),
+                    );
+                    protocolo.iniciar()?;
+                    (Some(canal), Some(Box::new(move |v: &Value| protocolo.linha(v))))
+                }
+                None => (None, None),
+            },
+            crate::modelo::Agente::Gemini => match entrada.take() {
+                Some(stdin) => {
+                    let canal = Arc::new(Mutex::new(crate::agente_gemini::Canal::novo(Box::new(stdin))));
+                    let mut protocolo =
+                        crate::agente_gemini::Protocolo::novo(canal.clone(), opcoes, mensagem.texto, mensagem.imagens);
+                    protocolo.iniciar()?;
+                    (Some(canal), Some(Box::new(move |v: &Value| protocolo.linha(v))))
+                }
+                None => (None, None),
+            },
+            crate::modelo::Agente::Claude => (None, None),
+        };
 
         // O stderr é lido junto: cheio (64 KiB) sem ninguém ler, ele travaria o claude.
         let ultimas = Arc::new(Mutex::new(VecDeque::new()));
@@ -289,15 +365,14 @@ impl Processo {
             }
         });
         std::thread::spawn(move || {
-            // O Codex fala outro formato, traduzido para os mesmos eventos.
-            let mut do_codex = protocolo_codex;
+            // O Codex e o Gemini falam outro formato, traduzido para os mesmos eventos.
             for linha in BufReader::new(saida).lines() {
                 let Ok(linha) = linha else { break };
                 let Ok(valor) = serde_json::from_str::<Value>(&linha) else {
                     continue;
                 };
-                let eventos = match &mut do_codex {
-                    Some(leitor) => leitor.linha(&valor),
+                let eventos = match &mut tradutor {
+                    Some(traduzir) => traduzir(&valor),
                     None => interpretar(&valor),
                 };
                 for evento in eventos {
@@ -322,7 +397,7 @@ impl Processo {
         Ok(Self {
             filho,
             entrada,
-            codex: canal_codex,
+            canal,
             escopo,
             parado: false,
         })
@@ -345,7 +420,7 @@ impl Processo {
     /// Encerra a entrada: o processo termina depois do turno atual.
     pub fn fechar_entrada(&mut self) {
         self.entrada = None;
-        if let Some(canal) = &self.codex { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
+        if let Some(canal) = &self.canal { canal.lock().unwrap_or_else(|e| e.into_inner()).fechar(); }
     }
 
     /// A memória que o agente e tudo o que ele abriu ocupam agora (`Escopo::memoria`).
@@ -355,7 +430,7 @@ impl Processo {
 
     /// A entrada ainda está aberta: dá para dirigir o turno (`dirigir`).
     pub fn entrada_aberta(&self) -> bool {
-        self.entrada.is_some() || self.codex.as_ref().is_some_and(|c| c.lock().unwrap_or_else(|e| e.into_inner()).aberta())
+        self.entrada.is_some() || self.canal.as_ref().is_some_and(|c| c.lock().unwrap_or_else(|e| e.into_inner()).aberta())
     }
 
     /// Dirige o turno que está rodando: escreve outra mensagem do usuário na entrada, que fica
@@ -376,7 +451,7 @@ impl Processo {
     ///
     /// Nada dela aparece na saída: quem põe a mensagem na conversa é o Vitral.
     pub fn dirigir(&mut self, mensagem: Mensagem) -> bool {
-        if let Some(canal) = &self.codex {
+        if let Some(canal) = &self.canal {
             return canal.lock().unwrap_or_else(|e| e.into_inner()).dirigir(mensagem.texto, mensagem.imagens).is_ok();
         }
         let Some(entrada) = self.entrada.as_mut() else {
@@ -392,7 +467,7 @@ impl Processo {
     /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
     /// saiu (`Motor::conferir_parada`).
     pub fn interromper(&mut self) {
-        if let Some(canal) = &self.codex
+        if let Some(canal) = &self.canal
             && canal.lock().unwrap_or_else(|e| e.into_inner()).interromper().is_ok() { return; }
         if let Some(mut entrada) = self.entrada.take() {
             let pedido = json!({
@@ -1841,7 +1916,7 @@ pub fn tipo_imagem(caminho: &std::path::Path) -> Option<&'static str> {
     })
 }
 
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALFABETO: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut saida = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for bloco in bytes.chunks(3) {

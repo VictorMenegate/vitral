@@ -17,7 +17,7 @@ use gpui_kit::component::{
     input::{Enter, Escape, InputState, MoveDown, MoveUp},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
     tree::{TreeEntry, TreeItem, TreeState, tree},
     v_flex,
 };
@@ -659,7 +659,7 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
     campo_de_busca_de("busca-lista", estado, atalho, 40., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
-            s.tooltip(move |window, cx| {
+            s.dica_no_ponteiro(move |window, cx| {
                 if conversas {
                     Tooltip::new("Buscar nas conversas\nNos títulos e nas mensagens, também das arquivadas").action(&Buscar, None).build(window, cx)
                 } else {
@@ -667,18 +667,6 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
                 }
             })
         })
-}
-
-/// Barra de 3 px da linha escolhida.
-fn barra_de_selecao() -> Div {
-    div()
-        .absolute()
-        .left(r(2.))
-        .top(r(6.))
-        .bottom(r(6.))
-        .w(px(3.))
-        .rounded_full()
-        .bg(Cores::destaque())
 }
 
 /// Botão pequeno de texto no cabeçalho de uma seção ("Retomar tudo"); na
@@ -835,7 +823,7 @@ fn linha_da_arvore(
         .pl(r(8. + 16. * entrada.depth() as f32))
         .pr(esp::E4)
         .rounded(raio::CONTROLE)
-        .when(escolhido, |l| l.bg(Cores::selecao()).child(barra_de_selecao()))
+        .when(escolhido, |l| l.bg(Cores::selecao()))
         .child(
             h_flex()
                 .w_full()
@@ -847,7 +835,8 @@ fn linha_da_arvore(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
+                        // O arquivo corta no meio, para a extensão ficar à vista; a pasta, no fim.
+                        .map(|s| if e_pasta { s.truncate() } else { s.overflow_hidden().whitespace_nowrap().text_ellipsis_middle() })
                         .text_size(r(13.))
                         .line_height(r(18.))
                         .font_weight(if e_pasta { FontWeight::MEDIUM } else { FontWeight::NORMAL })
@@ -904,7 +893,7 @@ fn linha_achada(
         .px(esp::E8)
         .rounded(raio::CONTROLE)
         .cursor_pointer()
-        .when(escolhido, |d| d.bg(Cores::selecao()).child(barra_de_selecao()))
+        .when(escolhido, |d| d.bg(Cores::selecao()))
         .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
         .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::FileText, 16., window)))
         // O nome corta no meio para a extensão continuar à vista; a pasta some antes.
@@ -930,7 +919,7 @@ fn linha_achada(
                 .child(dir),
         )
         .child(acoes_do_arquivo(GRUPO, ix, janela.clone(), pasta.to_path_buf(), caminho.to_string(), window, cx))
-        .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+        .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .on_click(move |_, window, cx| {
             let _ = j_clique.update(cx, |this, cx| this.abrir_arquivo(p_clique.clone(), c_clique.clone(), window, cx));
         })
@@ -1002,7 +991,7 @@ impl Janela {
                         this.tecla_na_lista(&navegaveis, ev, window, cx)
                     }))
                     .children(montagem.itens)
-                    .child(div().flex_none().h(esp::E8));
+                    .child(div().flex_none().h(esp::E16));
                 // A área vai até a borda da peça (a barra fina fica ali) e devolve os 8 de margem.
                 // A barra é irmã da lista, como a dos achados: dentro dela, rolava junto com os
                 // cartões e o trilho saía do lugar (dono, 16/11/2026: "a barra de rolagem daqui
@@ -1014,6 +1003,21 @@ impl Janela {
                     .mr(r(-8.))
                     .pr(esp::PECA)
                     .child(lista)
+                    // O pé esmaece no tom da lista: a última linha não fica cortada a seco na
+                    // linha do rodapé (revisão de design, 23/11/2026).
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right(esp::PECA)
+                            .bottom_0()
+                            .h(esp::E24)
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(Cores::vidro_leitura().opacity(0.), 0.),
+                                linear_color_stop(Cores::vidro_leitura(), 1.),
+                            )),
+                    )
                     .child(barra_de_rolagem("barra-lista", &self.rolagem_lista))
                     .into_any_element()
             }
@@ -1273,7 +1277,9 @@ impl Janela {
                 .px(esp::E8)
                 .gap(esp::E6)
                 .rounded(raio::PILULA)
-                .child(div().flex_none().size(r(8.)).rounded_full().bg(Cores::destaque()))
+                // O aro do rodando, o mesmo da lista: o disco cheio é dos avisos (revisão de design,
+                // 23/11/2026).
+                .child(Sinal::Rodando.ponto(8.))
                 .child(
                     div()
                         .min_w_0()
@@ -1595,7 +1601,7 @@ impl Janela {
             .mt(esp::E2)
             .child(cartao)
             .when_some(pasta_da_dica, |s, pasta| {
-                s.tooltip(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
+                s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
             })
             .on_drag(arrasto, move |a, _, _, cx| cx.new(|_| PreviaArrasto { titulo: a.titulo.clone(), simbolo: None }))
             .on_aux_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -1709,8 +1715,11 @@ impl Janela {
                 let quando = tempo_relativo(chat.atualizado_em);
                 let dica = if quando == "agora" { "Atualizado agora".to_string() } else { format!("Atualizado há {quando}") };
                 // Tênue em repouso e texto na selecionada: o apagado ficava abaixo de 3:1
-                // (relatório de design, 16/11/2026).
-                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { Cores::tenue() }).child(quando), dica)
+                // (relatório de design, 16/11/2026). Com a janela transparente, o tênue sobre o
+                // papel de parede ficava entre 3,1 e 3,8:1; vai o texto a 70% (revisão de design,
+                // 23/11/2026).
+                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue() };
+                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { repouso }).child(quando), dica)
             }
         };
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a

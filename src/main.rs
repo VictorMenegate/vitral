@@ -3,6 +3,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agente_codex;
+mod agente_gemini;
 mod atualizacao;
 mod claude;
 mod codex;

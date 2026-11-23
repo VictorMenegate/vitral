@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::{Icon, Sizable as _, WindowExt as _, button::Button, tooltip::Tooltip};
+use gpui_kit::component::{Icon, Sizable as _, WindowExt as _, button::Button, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -93,7 +93,7 @@ impl RenderOnce for CabecalhoDialogo {
                     .line_height(r(20.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(Cores::forte())
-                    .when(self.uma_linha, |t| t.truncate().tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)))
+                    .when(self.uma_linha, |t| t.truncate().dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx)))
                     .child(self.titulo),
             )
             .child(

@@ -9,7 +9,7 @@ use gpui_kit::component::{
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
     spinner::Spinner,
-    tooltip::Tooltip,
+    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -312,7 +312,7 @@ impl PainelContas {
             div()
                 .id(("conta-uso", ix))
                 .child(resumo_uso(cinco_h, semana))
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element()
         };
         let menu = self.menu_conta(ix, conta, escolhida, window, cx);

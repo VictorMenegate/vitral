@@ -1376,7 +1376,10 @@ impl PopupMenu {
                 .child(label.clone())
         };
 
+        // Vitral: o item não encolhe. Num menu mais alto que o teto, os itens espremiam (o menu do
+        // logo ficava com as linhas a 44 em vez de 54) em vez de o menu rolar.
         let this = MenuItemElement::new(ix)
+            .flex_none()
             .relative()
             .text_size(z(14.))
             .line_height(z(20.))

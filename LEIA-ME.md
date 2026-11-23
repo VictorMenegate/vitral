@@ -58,6 +58,24 @@ componentes do GPUI Kit.
   pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
+- **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
+  (`agy`), o sucessor do Gemini CLI, que parou de atender as contas pessoais em 18/06/2026. Ele
+  aparece na aba **Gemini** do seletor quando o `agy` está instalado (`agente_gemini::instalado`:
+  o PATH ou `~/.local/bin`). Roda um `agy acp` por turno, com o ACP (Agent Client Protocol), em
+  `src/agente_gemini.rs`: `initialize`, `session/new` (ou `session/resume` com o id guardado em
+  `Chat.sessao`; uma conversa que o agy não tem mais abre uma nova), as opções `model`,
+  `thought_level` e `mode` por `session/set_config_option` antes do primeiro `session/prompt`, e o
+  prompt de sistema em `_meta.antigravity.systemPrompt.append`. Uma mensagem com o turno rodando é
+  outro `session/prompt`, que o agy absorve no mesmo turno (o anterior responde `end_turn` na hora;
+  o fim espera a resposta do último). O pedido de permissão (`session/request_permission`) vira
+  `Evento::Permissao` e cai no mesmo cartão dos pedidos do Claude Code; a resposta volta ao agy por
+  uma thread (sem resposta, `cancelled`). Parar é o `session/cancel`. O "Sem perguntar" é o
+  `--dangerously-skip-permissions` do processo; os outros modos viram os do agy (`modo_de`). Os
+  modelos vêm do `agy models` (as variantes de nível juntam num modelo só; o nível é o esforço da
+  caixa, até Alto) e das opções da sessão. Sem anel de uso (o Antigravity não expõe a cota), sem
+  conta, sem comandos de barra nem `/compact`, e sem as ferramentas do Vitral: o agy só aceita
+  servidor MCP local. Instalar e entrar (`uso_plano::instalar_gemini`) abre o terminal com o
+  instalador oficial e o `agy acp --login`. Conferido no agy 1.5.15 com uma conta pessoal.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
@@ -147,11 +165,14 @@ componentes do GPUI Kit.
   painel ao lado (`Janela::enviar_aos_dois`, `Motor::abrir_raia`). O chat novo nasce em Planejar,
   que só lê: dois agentes mexendo nos mesmos arquivos se atropelam. O título dele leva o nome de
   quem responde na frente ("Codex · …").
-- **Mapa de agentes.** `src/ui/mapa_agentes.rs`: um diálogo com a conversa à esquerda e, ligados
-  por um fio, os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`), com o
-  estado (trabalhando, terminou, falhou, interrompido), o tempo e as ferramentas usadas (o
-  `Subagente` de `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números). O
-  clique num agente abre os passos e o resultado. Abre pela pílula "N agentes" da linha de estado
+- **Mapa de agentes.** `src/ui/mapa_agentes.rs`: um diálogo largo com a conversa em cima (o
+  modelo, o contexto e a conta de quantos trabalham, terminaram e falharam) e, embaixo, a lista de
+  todos os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`) à esquerda, com
+  a sua rolagem, e o escolhido à direita (`painel_do_agente`): o estado (trabalhando, terminou,
+  falhou, interrompido), o tempo, os tokens e as ferramentas usadas (o `Subagente` de
+  `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números), os passos
+  numerados (sem os vazios) e o resultado. Abre no que está trabalhando, ou no último. Era uma
+  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre pela pílula "N agentes" da linha de estado
   da caixa (só com agente vivo) e por **Agentes desta conversa**, no "…" da caixa. Um agente sem
   resultado só conta como vivo com o turno rodando e sem aviso depois dele na conversa.
 - **Mensagem no meio do turno.** O Enviar com o turno rodando manda a mensagem para dentro dele
@@ -386,7 +407,11 @@ componentes do GPUI Kit.
 - **Agentes em segundo plano.** Quando o Claude responde com um fluxo de agentes (ou um subagente)
   ainda rodando, o turno não acaba ali: o chat continua rodando, a conversa ganha o aviso "Os
   agentes seguem trabalhando em segundo plano; o turno termina quando eles acabarem." e o turno só
-  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai). Se o processo sai com eles ainda rodando, com o teto da espera
+  termina, com a última resposta, depois que eles acabam (ou quando o processo do Claude Code sai).
+  Nessa espera a entrada do processo fica aberta: a mensagem que você manda entra no Claude Code na
+  hora (`Motor::dirigir_turno`, `agentes_no_fundo_com_entrada`), em vez de esperar na fila até os
+  agentes acabarem, e a entrada fecha quando o último termina (`Evento::Fundo(0)`) sem mensagem
+  pendente (dono, 23/11/2026: uma mensagem ficou 53 min na fila). Se o processo sai com eles ainda rodando, com o teto da espera
   vencido ou com um código de erro, o turno termina com erro e o relatório diz que os agentes não
   terminaram. Parar continua valendo e, nessa espera, derruba o processo com os agentes. Um turno
   que termina com erro ou parado enquanto há agentes em segundo plano também derruba o processo, em
@@ -556,9 +581,12 @@ itálico, código, título; o link vira "texto (endereço)"), com as linhas e os
 tem gancho para as ações da citação: a resposta com citação é partida em trechos
 (`trechos_com_citacoes`, em `src/ui/mensagens.rs`) e cada citação é desenhada à parte, com o
 mesmo estilo; a busca conta as ocorrências trecho a trecho (`Realce::trecho`), e a seleção vale
-dentro de cada trecho. Modo foco (esconde as
-ferramentas, vale para todos os chats: `Config::modo_foco`, no menu do painel e na paleta, sem botão
-no cabeçalho; dono, 18/11/2026).
+dentro de cada trecho. Modo foco (vale para todos os chats: `Config::modo_foco`, no menu do painel e
+na paleta, sem botão no cabeçalho; dono, 18/11/2026): como a extensão do Claude Code no VS Code,
+cada turno vira uma linha só com o que o agente fez (`turnos_do_foco`): pronto, "Trabalhou 16 s ·
+1 comando", com a resposta final embaixo; rodando, ao vivo, "Buscando cupom · 2 chamadas", com o
+anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o que está lá dentro
+(dono, 23/11/2026).
 
 - **Ler a conversa.** A **hora** de cada mensagem aparece no hover, na mesma barra flutuante do
   Copiar (`hora_na_barra`; a barra é uma tecla em relevo, opaca, com fio claro e a luz em cima, sem
@@ -1439,7 +1467,11 @@ lidos do cache e saída), um embaixo do outro. Sem turno anotado, a linha não a
   clique direito) abre no VS Code, copia o caminho ou mostra na pasta. A lista é relida a cada 20 s
   em segundo plano, sem travar a tela.
 - **Configurações** (Ctrl+,), gravando na hora, valem para todos os chats (o caminho do
-  `config.json` fica na dica do subtítulo), em quatro grupos: **Chats** (**Resumo ao voltar depois
+  `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
+  (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
+  Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à direita,
+  as opções da parte escolhida, que rolam sozinhas numa altura fixa. As opções, antes em quatro
+  grupos: **Chats** (**Resumo ao voltar depois
   de**, **Mostrar o uso do plano no canto da janela**, ligada por padrão, o modo de permissão
   padrão, o modelo dos chats, **Arquivar chats parados depois de**: nunca, 3, 7 ou 30 dias, só os
   chats já lidos e não fixados e sem fila, e **Servidores MCP do Claude Code**, os do seu Claude
@@ -1654,7 +1686,11 @@ bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encen
 três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
-os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
+os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`) e o `ferramentas/claude-falso/agy`, o
+Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
+rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
+termina com erro, um `session/prompt` com o turno rodando entra nele, `agy models` dá a lista, e os
+pedidos ficam em `$XDG_STATE_HOME/agy-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
 (fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; no `--fork-session`, copia a sessão original para a nova ao lado dela (só nesse `CLAUDE_CONFIG_DIR`); e
 grava os argumentos, o ambiente e as chamadas em `$XDG_STATE_HOME/claude-falso.log`. No roteiro,
 `roda <comando>` (saída em `roda.log`, sem comentário na linha; os XDG são os da bancada) e `reabre
@@ -1670,7 +1706,14 @@ antes de cada rodada. `python3 -I ferramentas/medir_print.py
 <print.png> X Y` (ou `--pontos <arquivo>`) mede o contraste de um texto no print. Os roteiros da
 linguagem visual ficam em `ferramentas/roteiros/` (`4c-antes.txt` tira todas as telas;
 `4c-zoom-larguras.txt` vai de 100% a 150% com a lista arrastada, os popovers do Claude e do sino, a
-janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista); no meio de um
+janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista). Para ver todos os
+menus, popovers e diálogos de uma vez: `ferramentas/galeria-de-menus.sh <pasta> [binário]` roda o
+roteiro `galeria-menus.txt` (zoom 1,6; o menu do logo, o sino, o uso, o menu do chat, os chips da
+caixa, Nova conversa, as seis partes das Configurações, Atalhos, Paleta, Contas, Memória da equipe,
+Quadro de ideias, Novo chat e Importar), grava um print inteiro de cada e monta a `folha.png` com
+todos em miniatura, com o nome; serve para as revisões de design (dono, 23/11/2026: "faz algo pra
+conseguir ver todos e analisar o que dá pra melhorar"). Os cliques são posições fixas: mudou o
+layout, confira a folha antes de confiar nela. No meio de um
 roteiro, `tecla Control_L+equal` muda o zoom, e `rolar X Y N` gira a roda N entalhes com o ponteiro
 em X, Y (N negativo sobe; serve para ver o fim de um diálogo que rola). A bancada usa o socket do
 Wayland que o Shell anuncia no log (um lock velho de uma rodada que caiu o leva ao `wayland-1`) e
@@ -1895,6 +1938,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |
 | `src/contas.rs`, `src/contas/` | Contas extras (`CLAUDE_CONFIG_DIR`), login e o uso e o plano (o que o Claude Code guarda em `.claude.json` e a busca direta na Anthropic, `busca.rs`) |
 | `src/codex.rs` | Uso do plano do Codex, lido das sessões em `~/.codex/sessions` |
+| `src/agente_gemini.rs` | O Gemini como agente de um chat, pelo `agy acp` (ACP): o canal da entrada, a tradução da saída para os eventos do Claude Code, o pedido de permissão, os modos e o catálogo de modelos |
 | `src/agente_codex.rs` | O Codex como agente de um chat: os argumentos do processo e o protocolo JSON-RPC em `src/agente_codex/servidor.rs`, a tradução da saída para os eventos do Claude Code, o sandbox de cada modo e o catálogo de modelos |
 | `src/git.rs` | O comando do git (`novo_git`, o único jeito de abrir o git), o caminho relativo em texto e de onde saiu uma cópia isolada das versões de antes (para a carga pôr o chat de volta na origem) |
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
@@ -1942,7 +1986,10 @@ quem tem contorno de 1 px usa `dentro_da_borda(12.)` para o conteúdo ficar a 12
 atalhos do Tailwind (`gap_2()`, `p_3()`) medem em rem e, com 1 rem = 15 px, saem fora da grade (7,5
 e 11,25). O teste `espacos_na_escala` barra os dois casos em todo o `src/ui`, sem exceção, e o
 `movimento_com_teto` barra animação feita fora de `src/ui/movimento.rs`. O `metal_so_pelo_motor`
-barra `paint_image(` e `drop_image(` fora de `src/ui/componentes/metal.rs`.
+barra `paint_image(` e `drop_image(` fora de `src/ui/componentes/metal.rs`. O `dica_pela_gerenciada`
+barra o `.tooltip(closure)` puro do GPUI: toda dica vai pela gerenciada do kit (`dica_no_ponteiro`
+para linha larga, `dica_com_hover` para quem já ouve o hover, ou a dos botões), que espera só na
+primeira e, com uma aberta, mostra a próxima na hora (dono, 23/11/2026).
 
 Raios (`tema::raio`, em Pixels fixos): nos controles, um padrão só, `raio::de(altura)`, 45% da
 altura (16 num botão de 36, 14 num de 32, 9 num chip de 20; bem arredondado, nunca redondo, o

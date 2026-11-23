@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::{Icon, Sizable as _, tooltip::Tooltip};
+use gpui_kit::component::{Icon, Sizable as _, tooltip::{ManagedTooltipExt as _, Tooltip}};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -152,7 +152,6 @@ impl Aba {
         // abas moram na mesma casca preta (`casca_da_aba`); a selecionada é o campo dela,
         // com o material do campo da caixa de mensagem (dono, 13/11/2026: "tem que ficar mais
         // parecido com a que digito aqui"); as outras usam o mesmo contorno e um tom mais discreto.
-        let campo = matches!(self.tom, TomAba::Unica | TomAba::Ativa);
         let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
             // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
             // 16/11/2026: "diminui as bordas").
@@ -166,7 +165,7 @@ impl Aba {
         // chamativo" e, com o fio de 1 px apagado, "dá pra ver nada"): um fio de 2 px na cor do
         // estado por cima do preto, com um véu de 6% da mesma cor no miolo, sem halo. Trabalhando,
         // o azul respira devagar, numa vista própria; os outros ficam acesos, parados.
-        let cor_da_borda = |s: Sinal| if s == Sinal::Nova { Cores::verde() } else { s.cor() };
+        let cor_da_borda = Sinal::cor;
         let respira = self.borda.map(|(s, chave)| ContornoDeEstado {
             chave,
             raio: raio::de(32.),
@@ -193,7 +192,7 @@ impl Aba {
                 .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
                 .when(!fechar_a_vista, |s| s.invisible().group_hover(GRUPO_DA_ABA, |s| s.visible()))
                 .child(Icon::new(Lucide::X).with_size(tam(window, 14.)))
-                .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     f(window, cx);
@@ -242,6 +241,7 @@ impl Aba {
                 .child(div().rounded(raio::de(24.)).bg(fundo_do_x).p(esp::E2).child(f))
         });
         // Ícone solto em 16; o círculo do chat em 18.
+        let tem_simbolo = self.simbolo.is_some();
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
             s.desenhar(lado, window)
@@ -260,7 +260,14 @@ impl Aba {
             .h(r(32.))
             .max_w(r(400.))
             .min_w_0()
-            .map(|s| if self.quadrada { s.w(r(32.)).flex_none().justify_center() } else { s.pl(esp::E8).pr(esp::E12) })
+            // Sem o ícone (as abas de chat, desde 18/11/2026), 12 dos dois lados: com 8 na esquerda
+            // o título ficava torto na pílula (dono, 23/11/2026: "esses textos dos chats não estão
+            // centralizados").
+            .map(|s| match (self.quadrada, tem_simbolo) {
+                (true, _) => s.w(r(32.)).flex_none().justify_center(),
+                (false, true) => s.pl(esp::E8).pr(esp::E12),
+                (false, false) => s.px(esp::E12),
+            })
             .relative()
             .rounded(raio::de(32.))
             .border_1()
@@ -281,9 +288,9 @@ impl Aba {
                             .absolute()
                             .inset_0()
                             .rounded(raio::de(32.))
-                            .bg(fundo)
-                            // O brilho de cima do campo da caixa de mensagem.
-                            .when(campo, |s| s.shadow(vec![BoxShadow::new(px(0.), px(1.), Cores::brilho_topo()).inset()])),
+                            // Sem o brilho de cima (dono, 23/11/2026: "tira esse brilho de cima das
+                            // coisas").
+                            .bg(fundo),
                     )
                     .child(
                         div()
