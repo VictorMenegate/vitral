@@ -111,6 +111,7 @@ impl Janela {
     /// bancada, 16/11/2026).
     fn gravar_antes_de_fechar(&mut self, cx: &mut Context<Self>) {
         self.gravar_ao_sair(cx);
+        self.gravar_editor_ao_sair(cx);
         self.gravar_arranjo_ao_sair();
         if let Some(motor) = &self.motor {
             motor.update(cx, |m, _| m.gravar_antes_de_fechar());

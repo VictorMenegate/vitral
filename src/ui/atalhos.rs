@@ -156,6 +156,8 @@ tabela! {
     // conversa e num contexto mais fundo, ganha dela. O Esc fecha a barra antes de parar o turno.
     "ctrl-f", super::painel_arquivo::BuscarNoArquivo, Some("Arquivo"), Grupo::Paineis, "Buscar no arquivo aberto (com o foco nele)", "";
     "escape", super::painel_arquivo::FecharBuscaNoArquivo, Some("Arquivo"), Grupo::Paineis, "", "";
+    // Um clique no texto do arquivo abre o editor: ele grava sozinho, e o Ctrl+S grava na hora.
+    "ctrl-s", super::painel_arquivo::SalvarArquivo, Some("Arquivo"), Grupo::Paineis, "Salvar o arquivo que você está editando (ele também se salva sozinho)", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
@@ -373,5 +375,12 @@ mod testes {
         assert_eq!(no_arquivo.rotulo, "Buscar no arquivo aberto (com o foco nele)");
         let posicao = |contexto: Option<&str>| linhas().iter().position(|l| l.teclas == "ctrl-f" && l.contexto == contexto).unwrap();
         assert!(posicao(Some("Arquivo")) > posicao(None));
+    }
+
+    #[test]
+    fn salvar_o_arquivo_editado_esta_na_tabela() {
+        let salvar = linhas().into_iter().find(|l| l.teclas == "ctrl-s").expect("o Ctrl+S não está na tabela");
+        assert_eq!(salvar.contexto, Some("Arquivo"));
+        assert_eq!((salvar.rotulo, salvar.grupo), ("Salvar o arquivo que você está editando (ele também se salva sozinho)", Grupo::Paineis));
     }
 }

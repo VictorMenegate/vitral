@@ -21,6 +21,7 @@ mod copias;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod editor_arquivo;
 mod enviadas;
 mod falas;
 mod fila;
@@ -482,8 +483,13 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
+    /// agente muda o mesmo arquivo. `None`, o arquivo está só para ler.
+    editor_arquivo: Option<editor_arquivo::Editor>,
     /// O .md ou o .svg aberto mostra a fonte, e não a prévia (o seletor do cabeçalho).
     arquivo_fonte: bool,
+    /// A esquerda da lista do código na janela, para o clique no texto saber a coluna.
+    codigo_esquerda: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
     foco_arquivo: FocusHandle,
     /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
@@ -745,6 +751,8 @@ impl Janela {
             // O que você escreveu e não enviou vai para o disco antes de tudo: é o que você
             // espera encontrar na caixa quando o Vitral abrir de novo.
             this.gravar_ao_sair(cx);
+            // O que falta gravar no editor do arquivo também.
+            this.gravar_editor_ao_sair(cx);
             // E como a janela estava, para ela voltar igual.
             this.gravar_arranjo_ao_sair();
             if let Some(motor) = &this.motor {
@@ -815,7 +823,9 @@ impl Janela {
             cache_arquivos: Default::default(),
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            editor_arquivo: None,
             arquivo_fonte: false,
+            codigo_esquerda: Default::default(),
             foco_arquivo: cx.focus_handle(),
             busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
             feedback_plano: HashMap::new(),

@@ -10,7 +10,8 @@ o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartã
 continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
 aparecem na conversa. O chat ganha um título de verdade, o aviso de fim sai legível e os arquivos
 citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, Ctrl+F dentro do
-arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa.
+arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa. E
+o arquivo aberto à direita agora se edita ali mesmo.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -78,6 +79,13 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
 - **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
   como código.
+- **Editar o arquivo no painel.** Um clique no texto do arquivo aberto à direita abre o editor
+  ali, com a cor da sintaxe. O que você escreve se salva sozinho quando você para de digitar, e o
+  Ctrl+S salva na hora. O Esc volta à leitura. O número da linha continua escolhendo linhas para
+  mencionar.
+- **Aviso quando o agente muda o arquivo que você está editando.** Se o arquivo muda no disco com
+  texto seu ainda não salvo, uma faixa pergunta: Recarregar (fica o do disco) ou Manter o meu
+  (o seu passa por cima ao salvar). Sem texto seu por salvar, o editor só passa a mostrar o novo.
 - **Arquivo grande abre para ler.** Arquivos de 400 KB a 5 MB (um log, um export) abriam só no
   VS Code. Agora abrem aqui, só para ler, com a busca e a escolha de linhas.
 - **Markdown: Prévia ou Fonte.** O .md aberto à direita tem um seletor Prévia | Fonte. Na prévia,

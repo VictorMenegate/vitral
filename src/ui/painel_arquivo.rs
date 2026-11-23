@@ -5,14 +5,15 @@
 //! conversa, mostra a edição no próprio arquivo, com as setas de uma mudança à outra
 //! (`edicao.rs`). O número da linha escolhe linhas para mencionar. Com o foco no painel, o Ctrl+F
 //! busca dentro do arquivo (`BuscaNoArquivo`): a barra flutua no alto do conteúdo, com "3 de 12"
-//! e as setas, e o markdown passa para as linhas enquanto ela está aberta. O .md e o .svg têm o
-//! seletor Prévia | Fonte, e a prévia do .md mostra o frontmatter numa tabelinha
-//! (`previa_markdown.rs`).
+//! e as setas, e o markdown passa para as linhas enquanto ela está aberta. Um clique no texto
+//! abre o editor por cima da leitura (`editor_arquivo.rs`): salva sozinho e no Ctrl+S, e uma faixa
+//! pergunta o que fazer quando o agente grava o mesmo arquivo. O .md e o .svg têm o seletor
+//! Prévia | Fonte, e a prévia do .md mostra o frontmatter numa tabelinha (`previa_markdown.rs`).
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, ElementExt as _, Sizable as _, Size, WindowExt as _, h_flex,
     highlighter::highlight_code,
-    input::{Escape, InputState},
+    input::{Editor as CampoDeCodigo, Escape, InputState, RopeExt as _},
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::{ScrollableElement as _, ScrollbarAxis},
     text::TextView,
@@ -39,6 +40,7 @@ use super::{
         botao_icone, campo_de_busca, contagem,
     },
     edicao::{Edicao, Fileira, Marca, Vista},
+    editor_arquivo::Conflito,
     movimento::{self, De},
 };
 use crate::{
@@ -46,8 +48,8 @@ use crate::{
     tema::{Cores, FONTE_MONO, Lucide, Tipo as _, altura, esp, r, raio},
 };
 
-// Ctrl+F com o foco no painel do arquivo, e o Esc que fecha a barra.
-actions!(vitral, [BuscarNoArquivo, FecharBuscaNoArquivo]);
+// Ctrl+F com o foco no painel do arquivo, o Esc que fecha a barra e o Ctrl+S do editor.
+actions!(vitral, [BuscarNoArquivo, FecharBuscaNoArquivo, SalvarArquivo]);
 
 /// A busca dentro do arquivo aberto: o campo da barra, se ela está aberta e os achados. Dura
 /// enquanto a janela existe: fechar a barra guarda o termo para o próximo Ctrl+F.
@@ -123,8 +125,8 @@ fn achados_na_linha(texto: &str, termo: &str) -> usize {
     achados
 }
 
-/// Maior arquivo que abre inteiro (com cor e prévia); acima dele, só para ler.
-const LIMITE: u64 = 400_000;
+/// Maior arquivo que abre inteiro (com cor, prévia e edição); acima dele, só para ler.
+const LIMITE: u64 = super::editor_arquivo::LIMITE_DE_EDICAO;
 
 /// Maior arquivo que abre para ler (o resto fica para o VS Code ou para o aplicativo do sistema).
 const TETO_DE_LEITURA: u64 = 5_000_000;
@@ -181,6 +183,8 @@ pub(super) struct ArquivoLido {
     bytes: u64,
     /// A prévia do .md (o frontmatter e o texto com os links ligados).
     previa: Option<Rc<PreviaLida>>,
+    /// Lido antes de o editor gravar por cima: a próxima leitura vai ao disco de qualquer jeito.
+    velho: bool,
     /// Chegam do segundo plano pouco depois da leitura; até lá o código sai sem cor.
     cores: Option<CoresDasLinhas>,
     rolagem: UniformListScrollHandle,
@@ -395,6 +399,7 @@ fn fileira_de_codigo(
     fundo: Fundo,
     sinal: Option<&'static str>,
     achados: Vec<(Range<usize>, HighlightStyle)>,
+    editavel: bool,
     janela: WeakEntity<Janela>,
 ) -> AnyElement {
     // Os achados da busca (o fundo âmbar) por cima das cores da sintaxe.
@@ -409,6 +414,7 @@ fn fileira_de_codigo(
         Fundo::Saiu => Some(Cores::vermelho()),
         Fundo::Nenhum | Fundo::Escolhida => None,
     };
+    let janela_do_numero = janela.clone();
     let numero_el = div()
         .id(("numero-da-linha", indice))
         .w(largura_numero)
@@ -419,13 +425,26 @@ fn fileira_de_codigo(
         .children(numero.map(|n| n.to_string()))
         .when_some(numero, |s, n| {
             s.cursor_pointer().hover(|s| s.text_color(Cores::texto())).on_click(move |evento, _, cx| {
+                // O clique no número escolhe a linha, e não abre o editor.
+                cx.stop_propagation();
                 let estender = evento.modifiers().shift;
-                let _ = janela.update(cx, |this, cx| this.escolher_linha(n as u32, estender, cx));
+                let _ = janela_do_numero.update(cx, |this, cx| this.escolher_linha(n as u32, estender, cx));
             })
         });
     div()
+        .id(("fileira-de-codigo", indice))
         .relative()
         .flex()
+        // A fileira vai até a borda do painel: o clique depois do fim de uma linha curta vale, e o
+        // fundo da linha escolhida não acaba no meio.
+        .min_w_full()
+        // Um clique no texto abre o editor ali.
+        .when_some(numero.filter(|_| editavel), |s, n| {
+            s.cursor_text().on_click(move |evento, window, cx| {
+                let x = evento.position().x;
+                let _ = janela.update(cx, |this, cx| this.clicou_no_texto(n - 1, x, window, cx));
+            })
+        })
         .h(r(20.))
         .pl(esp::E12)
         .pr(esp::E24)
@@ -478,6 +497,8 @@ enum Saida {
     Fora,
     Editor,
     Fechar,
+    /// O arquivo vazio abre no editor, para você escrever nele.
+    Escrever,
 }
 
 /// As saídas de cada aviso, na ordem dos botões. O binário (PDF, planilha, zip) só tem o que
@@ -487,7 +508,7 @@ fn saidas_do_aviso(aviso: &Aviso) -> &'static [Saida] {
         Aviso::Binario => &[Saida::Fora],
         Aviso::Grande(_) => &[Saida::Editor, Saida::Fora],
         Aviso::NaoExiste | Aviso::Erro(_) => &[Saida::Fechar],
-        Aviso::Vazio => &[],
+        Aviso::Vazio => &[Saida::Escrever],
     }
 }
 
@@ -588,6 +609,7 @@ impl Janela {
         if let Some(l) = lido.as_mut()
             && l.caminho == completo
             && l.rico == rico
+            && !l.velho
         {
             if l.conferido.elapsed() < Duration::from_secs(1) {
                 return visto(l);
@@ -626,6 +648,7 @@ impl Janela {
             conferido: Instant::now(),
             conteudo,
             bytes,
+            velho: false,
             previa,
             cores: None,
             rolagem,
@@ -653,8 +676,15 @@ impl Janela {
         let edicao = self.arquivo_edicao.clone();
         let com_previa = tem_previa(&completo);
         let rico = edicao.is_none() && !self.busca_arquivo.aberta && !(com_previa && self.arquivo_fonte);
-        let Visto { conteudo, cores, rolagem: rolagem_codigo, bytes, previa } = self.conteudo_arquivo(&raiz, &completo, rico, cx);
-        // O arquivo grande abre só em linhas, sem prévia.
+        // Com o editor aberto a leitura fica parada: o arquivo não é relido nem colorido de novo
+        // a cada gravação.
+        let editando = self.editando(&completo);
+        let Visto { conteudo, cores, rolagem: rolagem_codigo, bytes, previa } = if editando {
+            Visto { conteudo: Conteudo::Aviso(Aviso::Vazio), cores: None, rolagem: Default::default(), bytes: 0, previa: None }
+        } else {
+            self.conteudo_arquivo(&raiz, &completo, rico, cx)
+        };
+        // O arquivo que abre inteiro se edita com um clique no texto; o grande é só para ler.
         let editavel = bytes <= LIMITE;
         let janela = cx.entity().downgrade();
         let na_gaveta = self.gaveta == Some(Gaveta::Direita);
@@ -674,18 +704,55 @@ impl Janela {
         let reserva = self.reserva_dos_aneis(window, cx);
         let cabecalho = self.barra_de_abas(motor.read(cx), super::abas_direita::AbaDireita::Arquivo(0), false, "arrastar-arquivo", window, cx);
         // O seletor Prévia | Fonte só existe para o que tem prévia e abre inteiro, fora da edição
-        // do agente e da busca (que são pelas linhas).
-        let seletor = com_previa && edicao.is_none() && !self.busca_arquivo.aberta && editavel;
+        // do agente e da busca (que são pelas linhas). Com o editor aberto ele fica: a Prévia
+        // grava o que falta e mostra o resultado.
+        let seletor = com_previa && edicao.is_none() && !self.busca_arquivo.aberta && (editando || editavel);
         let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor, reserva, na_gaveta, window, cx);
         let faixa = edicao.as_ref().map(|e| self.faixa_da_edicao(e, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, na_gaveta, window, cx));
-        // O aviso discreto do arquivo que abre só para ler.
+        // O aviso discreto do arquivo que abre só para ler, e a pergunta do conflito no editor.
         let faixa_de_leitura = match &conteudo {
             Conteudo::Codigo(..) => nota_de_so_leitura(bytes).map(|nota| faixa_de_nota(nota, reserva, na_gaveta, window)),
             _ => None,
         };
+        let faixa_do_conflito = self
+            .editor_arquivo
+            .as_ref()
+            .filter(|_| editando)
+            .and_then(|e| e.conflito_para_a_faixa())
+            .map(|(conflito, nova)| self.faixa_do_conflito(conflito, nova, reserva, na_gaveta, window, cx));
         // O achado atual e quantos são, para a barra da busca (só o arquivo em linhas tem).
         let mut contagem_da_busca: Option<(usize, usize)> = None;
+        let mut corpo_do_editor = self.editor_arquivo.as_ref().filter(|_| editando).map(|editor| {
+            // O texto do editor fica onde estava o da leitura, para nada pular no clique: o
+            // campo do kit tem 6 px de margem, a calha de pelo menos 3 dígitos e mais 6 px, e 8 px
+            // em cima, sem crescer com o zoom; a leitura tem 12, o número, 16 e 8, que crescem.
+            let escala = window.rem_size().as_f32() / 15.;
+            let linhas = editor.estado.read(cx).text().lines_len();
+            let digitos = linhas.max(1).to_string().len().max(3) as f32;
+            let do_campo = 6. + digitos * LETRA_DO_CODIGO * escala + 6.;
+            let da_leitura = (12. + largura_do_numero(linhas) + 16.) * escala;
+            div()
+                .flex_1()
+                .min_h_0()
+                .pl(px((da_leitura - do_campo).max(0.)))
+                .pt(px((8. * escala - 8.).max(0.)))
+                // O Esc que o campo não usou (fechar um menu dele) volta à leitura.
+                .on_action(cx.listener(|this, _: &Escape, window, cx| this.sair_do_editor(window, cx)))
+                .child(
+                    CampoDeCodigo::new(&editor.estado)
+                        .appearance(false)
+                        .bordered(false)
+                        // A calha fica por cima do texto que rola para o lado: opaca (a cor da
+                        // gaveta tem 2% de transparência), na cor da superfície em que o painel está.
+                        .gutter_background(if na_gaveta { Cores::gaveta() } else { Cores::cartao_opaco() }.alpha(1.))
+                        .h(relative(1.))
+                        .text_size(r(13.))
+                        .line_height(r(20.)),
+                )
+                .into_any_element()
+        });
         let corpo = match conteudo {
+            _ if editando => corpo_do_editor.take().unwrap_or_else(|| div().into_any_element()),
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
             // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
             // leva ao visor, com o tamanho real e o "Abrir fora".
@@ -820,10 +887,10 @@ impl Janela {
                                         let sinal = if *entrou { "+" } else { " " };
                                         let texto = linhas.get(*linha).cloned().unwrap_or_default();
                                         let achados = achados_da_linha(*linha, &texto);
-                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), achados, janela.clone())
+                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), achados, editavel, janela.clone())
                                     }
                                     Fileira::Saiu(texto) => {
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), Vec::new(), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), Vec::new(), false, janela.clone())
                                     }
                                     Fileira::Solta(marca, texto) => {
                                         let (fundo, sinal) = match marca {
@@ -831,7 +898,7 @@ impl Janela {
                                             Marca::Sai => (Fundo::Saiu, "−"),
                                             Marca::Igual => (Fundo::Nenhum, " "),
                                         };
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), false, janela.clone())
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
                                 })
@@ -850,7 +917,7 @@ impl Janela {
                                     let cores_linha = cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
                                     let fundo = if escolhida(i + 1) { Fundo::Escolhida } else { Fundo::Nenhum };
                                     let achados = achados_da_linha(i, &linhas[i]);
-                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, achados, janela.clone())
+                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, achados, editavel, janela.clone())
                                 })
                                 .collect()
                         })
@@ -859,10 +926,13 @@ impl Janela {
                 };
                 // Com a barra da busca aberta, as primeiras linhas descem para não ficar atrás dela.
                 let respiro_de_cima = if self.busca_arquivo.aberta { r(60.) } else { esp::E8 };
+                // A esquerda da lista, para o clique no texto saber em que coluna caiu.
+                let esquerda = self.codigo_esquerda.clone();
                 div()
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .on_prepaint(move |limites, _, _| esquerda.set(limites.origin.x))
                     .child(
                         lista
                             .with_sizing_behavior(ListSizingBehavior::Auto)
@@ -896,6 +966,7 @@ impl Janela {
             // O campo da barra liga o Ctrl+F ao `Search` do kit: com o foco nele, a busca continua a do arquivo.
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             .on_action(cx.listener(|this, _: &FecharBuscaNoArquivo, window, cx| this.fechar_busca_no_arquivo(window, cx)))
+            .on_action(cx.listener(|this, _: &SalvarArquivo, window, cx| this.salvar_arquivo_agora(window, cx)))
             .on_action(cx.listener(|this, _: &AchadoSeguinte, _, cx| this.f3_no_arquivo(1, cx)))
             .on_action(cx.listener(|this, _: &AchadoAnterior, _, cx| this.f3_no_arquivo(-1, cx)))
             // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
@@ -907,6 +978,7 @@ impl Janela {
             .child(barra)
             .children(faixa)
             .children(faixa_de_leitura)
+            .children(faixa_do_conflito)
             .child(div().relative().flex_1().min_h_0().flex().flex_col().child(corpo).children(barra_da_busca))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
@@ -961,7 +1033,11 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let nome = caminho.rsplit('/').next().unwrap_or(caminho).to_string();
         let selecao = self.arquivo_selecao;
+        // Com o editor aberto, no lugar das linhas e da linguagem: "editando", o ponto do que
+        // falta gravar e o × que volta à leitura.
+        let editando = self.editor_arquivo.as_ref().filter(|e| e.sessao.caminho() == completo);
         let info = match selecao {
+            _ if editando.is_some() => Some("editando".to_string()),
             Some((a, b)) if b > a => Some(format!("linhas {a} a {b}")),
             Some((a, _)) => Some(format!("linha {a}")),
             None => linhas.map(|n| {
@@ -978,7 +1054,8 @@ impl Janela {
         let largura = if self.direita_largura > 0. { self.direita_largura * 15. } else { 330. };
         let escala = window.rem_size().as_f32() / 15.;
         let aneis = reserva.map_or(8., |r| r.as_f32() / escala);
-        let livre = largura - 12. - aneis - 16. - 8.;
+        // O ponto e o × do editor ocupam 6 + 24 e os respiros.
+        let livre = largura - 12. - aneis - 16. - 8. - if editando.is_some() { 42. } else { 0. };
         // O seletor Prévia | Fonte fica antes das ações, com rótulo quando elas também têm.
         let (com_rotulos, com_info) = match seletor {
             false => o_que_cabe(livre, &nome, info.as_deref()),
@@ -1087,6 +1164,32 @@ impl Janela {
                     cx.notify();
                 }))
         });
+        // O que falta gravar (âmbar; vermelho quando a gravação falhou) e a volta à leitura.
+        let do_editor = editando.map(|e| {
+            let (cor, estado) = match (&e.erro, e.por_salvar) {
+                (Some(erro), _) => (Cores::vermelho(), format!("Não deu para salvar: {erro}")),
+                (None, true) => (Cores::ambar(), "Ainda não salvo: grava sozinho quando você para de digitar, ou no Ctrl+S".to_string()),
+                (None, false) => (gpui_kit::transparent_black().into(), "Salvo".to_string()),
+            };
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(esp::E4)
+                .child(
+                    div()
+                        .id("ponto-do-editor")
+                        .flex_none()
+                        .size(r(6.))
+                        .rounded_full()
+                        .bg(cor)
+                        .tooltip(move |window, cx| Tooltip::new(estado.clone()).build(window, cx)),
+                )
+                .child(
+                    botao_icone("sair-do-editor", Lucide::X, "Voltar à leitura (Esc)", TamanhoBotao::Linha, window, cx)
+                        .on_click(cx.listener(|this, _, window, cx| this.sair_do_editor(window, cx))),
+                )
+        });
         let seletor = seletor.then(|| {
             let janela = janela.clone();
             // Estreito, só os símbolos (o nome vai na dica).
@@ -1095,12 +1198,18 @@ impl Janela {
             } else {
                 [Segmento::new("Prévia").icone(Lucide::Eye), Segmento::new("Fonte").icone(Lucide::Braces)]
             };
-            ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, _, cx| {
-                let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, cx));
+            ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, window, cx| {
+                let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, window, cx));
             })
             .with_size(Size::Small)
             .so_icone(!com_rotulos)
         });
+        // Editando, o lápis no lugar do símbolo do arquivo (o que resta à vista no painel estreito).
+        let simbolo = match editando {
+            Some(_) => div().flex_none().text_color(Cores::destaque_texto()).child(super::componentes::icone(Lucide::Pencil, 16., window)),
+            None => div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone_do_arquivo(caminho), 16., window)),
+        };
+        let em_destaque = selecao.is_some() || editando.is_some();
         let j_mencionar = janela.clone();
         div()
             .flex()
@@ -1125,7 +1234,7 @@ impl Janela {
                     .flex()
                     .items_center()
                     .gap(esp::E8)
-                    .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(icone_do_arquivo(caminho), 16., window)))
+                    .child(simbolo)
                     // O nome é cortado no meio: a extensão fica à vista.
                     .child(
                         div()
@@ -1144,11 +1253,12 @@ impl Janela {
                                 .flex_none()
                                 .whitespace_nowrap()
                                 .metadado()
-                                .text_color(if selecao.is_some() { Cores::destaque_texto() } else { Cores::apagado() })
+                                .text_color(if em_destaque { Cores::destaque_texto() } else { Cores::apagado() })
                                 .child(i)
                         }))
                     })
                     .children(desfazer)
+                    .children(do_editor)
                     .child(
                         div()
                             .flex_1()
@@ -1181,8 +1291,95 @@ impl Janela {
             .into_any_element()
     }
 
-    /// O seletor Prévia | Fonte do .md e do .svg.
-    fn escolher_vista_do_arquivo(&mut self, fonte: bool, cx: &mut Context<Self>) {
+    /// A faixa do conflito no editor: o agente gravou (ou apagou) o arquivo com texto seu por
+    /// gravar. "Recarregar" fica com o do disco e "Manter o meu" com o seu, que passa por cima na
+    /// gravação seguinte. No painel estreito os botões descem para a linha de baixo.
+    fn faixa_do_conflito(
+        &self,
+        conflito: Conflito,
+        nova: bool,
+        reserva: Option<Pixels>,
+        na_gaveta: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let (frase, dica_manter) = match conflito {
+            Conflito::Mudou => ("O arquivo mudou no disco.", "Fica o que você escreveu: ao salvar, passa por cima do que está no disco"),
+            Conflito::Apagado => ("O arquivo foi apagado. O seu texto continua aqui.", "Fica o que você escreveu: ao salvar, o arquivo é criado de novo"),
+        };
+        let recarregar = (conflito == Conflito::Mudou).then(|| {
+            botao_fantasma("recarregar-arquivo", None, "Recarregar", TamanhoBotao::Linha, window, cx)
+                .tooltip("Fica o que está no disco: o que você escreveu se perde")
+                .on_click(cx.listener(|this, _, window, cx| this.recarregar_editor(window, cx)))
+        });
+        let manter = botao_fantasma("manter-o-meu", None, "Manter o meu", TamanhoBotao::Linha, window, cx)
+            .tooltip(dica_manter)
+            .on_click(cx.listener(|this, _, window, cx| this.manter_o_meu_no_editor(window, cx)));
+        let faixa = div()
+            .id("conflito-do-arquivo")
+            .flex()
+            .flex_none()
+            .flex_wrap()
+            .items_center()
+            .min_h(altura::CONTROLE)
+            .py(esp::E4)
+            .pl(esp::E12)
+            .map(|s| match reserva {
+                Some(folga) => s.pr(folga),
+                None => s.pr(esp::E8),
+            })
+            .gap_x(esp::E8)
+            .gap_y(esp::E2)
+            .border_b_1()
+            .border_color(if na_gaveta { Cores::borda() } else { Cores::linha() })
+            .bg(Cores::tinta_leve(Cores::ambar()))
+            .child(div().flex_none().text_color(Cores::ambar()).child(super::componentes::icone(Lucide::TriangleAlert, 14., window)))
+            .child(div().flex_1().min_w(r(132.)).metadado().text_color(Cores::texto()).child(frase))
+            .child(div().flex().flex_none().items_center().gap(esp::E4).children(recarregar).child(manter));
+        movimento::entrada("entra-conflito-do-arquivo", nova, De::Cima, faixa).into_any_element()
+    }
+
+    /// Onde o código está rolado (a leitura em linhas), para o editor abrir no mesmo lugar.
+    pub(super) fn rolagem_do_codigo(&self) -> Option<Point<Pixels>> {
+        let lido = self.arquivo_lido.borrow();
+        let lido = lido.as_ref()?;
+        matches!(lido.conteudo, Conteudo::Codigo(..)).then(|| lido.rolagem.0.borrow().base_handle.offset())
+    }
+
+    /// O editor gravou por cima do arquivo: a próxima leitura vai ao disco, e a lista volta com a
+    /// linha `primeira` (a partir de 0) no alto.
+    pub(super) fn reler_arquivo_aberto(&self, primeira: Option<usize>) {
+        if let Some(lido) = self.arquivo_lido.borrow_mut().as_mut() {
+            lido.velho = true;
+            if let Some(linha) = primeira {
+                lido.rolagem.scroll_to_item(linha, ScrollStrategy::Top);
+            }
+        }
+    }
+
+    /// Um clique no texto da linha (a partir de 0), em `x` na janela: abre o editor com o cursor ali.
+    fn clicou_no_texto(&mut self, linha: usize, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        let (total, rolado) = {
+            let lido = self.arquivo_lido.borrow();
+            let Some(lido) = lido.as_ref() else { return };
+            let Conteudo::Codigo(linhas, _) = &lido.conteudo else { return };
+            (linhas.len(), lido.rolagem.0.borrow().base_handle.offset().x)
+        };
+        // Onde o texto começa: a margem da fileira, o número e o respiro (na edição do agente,
+        // também a coluna do sinal), menos o que o código rolou para o lado.
+        let com_sinal = self.arquivo_edicao.as_ref().is_some_and(|e| !e.sem_registro);
+        let antes = 12. + largura_do_numero(total) + if com_sinal { 24. } else { 16. };
+        let escala = window.rem_size().as_f32() / 15.;
+        let comeco = self.codigo_esquerda.get() + px(antes * escala) + rolado;
+        let coluna = ((x - comeco).as_f32() / (LETRA_DO_CODIGO * escala)).round().max(0.) as usize;
+        self.entrar_no_editor(linha, coluna, window, cx);
+    }
+
+    /// O seletor Prévia | Fonte do .md e do .svg. A Prévia fecha o editor (gravando o que falta).
+    fn escolher_vista_do_arquivo(&mut self, fonte: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !fonte {
+            self.largar_editor(window, cx);
+        }
         self.arquivo_fonte = fonte;
         cx.notify();
     }
@@ -1447,6 +1644,8 @@ impl Janela {
         if crate::claude::tipo_imagem(&raiz.join(&caminho)).is_some() {
             return;
         }
+        // A busca é pelas linhas da leitura: o editor grava o que falta e sai.
+        self.largar_editor(window, cx);
         // Pela paleta, a direita pode estar fechada ou na outra aba.
         if !matches!(self.aba_direita, super::abas_direita::AbaDireita::Arquivo(_)) || !(self.direita_visivel() || self.gaveta == Some(Gaveta::Direita)) {
             self.aba_direita = super::abas_direita::AbaDireita::Arquivo(0);
@@ -1496,9 +1695,11 @@ impl Janela {
         }
     }
 
-    /// O foco está no painel do arquivo ou no campo da busca dele.
+    /// O foco está no painel do arquivo, no campo da busca dele ou no editor.
     pub(super) fn foco_no_arquivo(&self, window: &Window, cx: &App) -> bool {
-        self.foco_arquivo.is_focused(window) || self.busca_arquivo.campo.read(cx).focus_handle(cx).is_focused(window)
+        self.foco_arquivo.is_focused(window)
+            || self.busca_arquivo.campo.read(cx).focus_handle(cx).is_focused(window)
+            || self.editor_arquivo.as_ref().is_some_and(|e| e.estado.read(cx).focus_handle(cx).contains_focused(window, cx))
     }
 
     /// O arquivo está aberto na gaveta da direita, por cima das conversas: aí o Ctrl+F é dele.
@@ -1609,8 +1810,16 @@ fn aviso_do_arquivo(
             Saida::Fechar => {
                 let janela = janela.clone();
                 botao_fantasma("aviso-fechar", None, "Fechar", TamanhoBotao::Barra, window, cx)
-                    .on_click(move |_, _, cx| {
-                        let _ = janela.update(cx, |this, cx| this.fechar_arquivo(cx));
+                    .on_click(move |_, window, cx| {
+                        let _ = janela.update(cx, |this, cx| this.fechar_arquivo(window, cx));
+                    })
+                    .into_any_element()
+            }
+            Saida::Escrever => {
+                let janela = janela.clone();
+                botao_fantasma("aviso-escrever", Some(Lucide::Pencil.into()), "Escrever nele", TamanhoBotao::Barra, window, cx)
+                    .on_click(move |_, window, cx| {
+                        let _ = janela.update(cx, |this, cx| this.entrar_no_editor(0, 0, window, cx));
                     })
                     .into_any_element()
             }
@@ -1840,7 +2049,8 @@ mod testes {
         assert_eq!(saidas_do_aviso(&Aviso::Grande(500_000)), [Saida::Editor, Saida::Fora]);
         assert_eq!(saidas_do_aviso(&Aviso::NaoExiste), [Saida::Fechar]);
         assert_eq!(saidas_do_aviso(&Aviso::Erro("x".into())), [Saida::Fechar]);
-        assert!(saidas_do_aviso(&Aviso::Vazio).is_empty());
+        // O arquivo vazio abre no editor (até 23/11 não havia o que fazer com ele).
+        assert_eq!(saidas_do_aviso(&Aviso::Vazio), [Saida::Escrever]);
         assert_eq!(titulo_do_binario(&pasta.join("relatorio.PDF")), "Arquivo PDF");
         assert_eq!(titulo_do_binario(&pasta.join("vendas.xlsx")), "Planilha");
         assert_eq!(titulo_do_binario(&pasta.join("dump.bin")), "Arquivo binário");

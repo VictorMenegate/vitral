@@ -1920,6 +1920,8 @@ impl Janela {
     }
 
     pub(super) fn abrir_arquivo(&mut self, pasta: PathBuf, caminho: String, window: &mut Window, cx: &mut Context<Self>) {
+        // O editor é do arquivo que estava aberto: grava o que falta e sai.
+        self.largar_editor(window, cx);
         // A marca de linha é do link que a pediu: outro arquivo (ou o mesmo, pela árvore) abre sem ela.
         if self.arquivo_linha.get().is_none() {
             self.arquivo_marcada.set(None);
