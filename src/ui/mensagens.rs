@@ -2939,8 +2939,8 @@ pub(super) fn editou(nomes: &[String]) -> String {
     }
 }
 
-/// A linha do turno recolhido: "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e
-/// motor.rs". A duração é a hora do último item menos a da mensagem; sem hora (conversa de antes
+/// A linha do turno recolhido: "Trabalhou 6 min 12 s · 13 comandos · cargo test falhou 2×, passou
+/// · editou carrinho.py e motor.rs" (as checagens, em `checagens.rs`). A duração é a hora do último item menos a da mensagem; sem hora (conversa de antes
 /// da 0.4.0), sem número.
 pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String {
     let inicio = itens[turno.mensagem].em();
@@ -2955,6 +2955,8 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
     if comandos > 0 {
         partes.push(contagem(comandos, "comando", "comandos"));
     }
+    // As checagens que o turno rodou e como cada uma terminou, ao lado dos comandos.
+    partes.extend(super::checagens::checagens_do_turno(trecho).iter().map(super::checagens::Checagem::texto));
     let nomes = editados_nas_chamadas(trecho);
     if !nomes.is_empty() {
         partes.push(editou(&nomes));
@@ -2973,6 +2975,12 @@ pub(super) fn resumo_do_turno(itens: &[Item], turno: TurnoRecolhivel) -> String 
 /// linha, que a altura de uma linha só esconde. Uma parte sozinha maior que a linha é a única que
 /// ainda se corta.
 fn partes_inteiras(resumo: &str) -> Div {
+    partes_com_falhas(resumo, false)
+}
+
+/// As partes inteiras e, com `falhas`, o "falhou" (ou "falhou 2×") de uma checagem do turno no
+/// vermelho que a trilha já usa na chamada que falhou; o resto da parte fica no tom da linha.
+fn partes_com_falhas(resumo: &str, falhas: bool) -> Div {
     div()
         .flex()
         .flex_wrap()
@@ -2983,7 +2991,9 @@ fn partes_inteiras(resumo: &str) -> Div {
         .gap_x(esp::E4)
         .children(resumo.split(" · ").enumerate().map(|(i, parte)| {
             let texto = if i == 0 { parte.to_string() } else { format!("· {parte}") };
-            div().flex_none().max_w_full().truncate().child(texto)
+            let vermelho = falhas.then(|| super::checagens::trecho_da_falha(&texto)).flatten();
+            let marcas = vermelho.map(|trecho| (trecho, HighlightStyle { color: Some(Cores::vermelho()), ..Default::default() }));
+            div().flex_none().max_w_full().truncate().child(StyledText::new(texto).with_highlights(marcas))
         }))
 }
 
@@ -3175,7 +3185,11 @@ impl Janela {
         let estatistica = gasto.and_then(|_| livro.estatistica(&contexto.chat.id, turno.mensagem, quando));
         let resumo = resumo_do_turno(&contexto.chat.itens, turno);
         let dica = if aberto { "Recolher o que o agente fez neste turno" } else { "Ver o que o agente fez neste turno" };
-        let dica = SharedString::from(super::onde_uso::dica_do_turno(dica, gasto.as_ref(), estatistica.as_ref()));
+        // As checagens também na dica: no painel estreito, a parte que não cabe na linha some inteira.
+        let checagens = super::checagens::checagens_do_turno(&contexto.chat.itens[turno.mensagem + 1..turno.resposta]);
+        let checagens = checagens.iter().map(super::checagens::Checagem::texto).collect::<Vec<_>>().join(" · ");
+        let dica = if checagens.is_empty() { dica.to_string() } else { format!("{dica}\n{checagens}") };
+        let dica = SharedString::from(super::onde_uso::dica_do_turno(&dica, gasto.as_ref(), estatistica.as_ref()));
         let linha = h_flex()
             .id(SharedString::from(format!("turno-{chave}")))
             .map(linha_de_log)
@@ -3184,7 +3198,7 @@ impl Janela {
             .tab_index(0)
             .focus_visible(|s| s.shadow(halo_foco()))
             .child(coluna_do_icone().text_color(Cores::tenue()).child(icone_de(Lucide::Clock, 14.)))
-            .child(partes_inteiras(&resumo).text_color(Cores::tenue()))
+            .child(partes_com_falhas(&resumo, true).text_color(Cores::tenue()))
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
@@ -6432,7 +6446,32 @@ mod testes {
         let turnos = turnos_recolhiveis(&itens, false);
         assert_eq!(turnos, [TurnoRecolhivel { mensagem: 0, resposta: 7 }]);
         assert!(turnos[0].contem(1) && turnos[0].contem(6) && !turnos[0].contem(7) && !turnos[0].contem(0));
-        assert_eq!(resumo_do_turno(&itens, turnos[0]), "Trabalhou 6 min 12 s · 2 comandos · editou carrinho.py e motor.rs");
+        // Os dois comandos deste turno são checagens (cargo test e cargo check), e desde a rodada
+        // do Paseo (item 3) a linha diz como cada uma terminou, ao lado dos comandos. Antes disso
+        // o esperado aqui era "Trabalhou 6 min 12 s · 2 comandos · editou carrinho.py e motor.rs".
+        assert_eq!(
+            resumo_do_turno(&itens, turnos[0]),
+            "Trabalhou 6 min 12 s · 2 comandos · cargo test passou · cargo check passou · editou carrinho.py e motor.rs"
+        );
+        // O exemplo do pedido: a última execução de cada checagem, e as falhas de antes em "falhou N×".
+        let falha = |comando: &str| ferramenta("Bash", comando, Some("Exit code 1"), true);
+        let passa = |comando: &str| ferramenta("Bash", comando, Some("ok"), false);
+        let checado = vec![
+            em(usuario("faz"), 1_000),
+            assistente("Vou rodar."),
+            passa("npx tsc --noEmit"),
+            falha("npx vitest run"),
+            falha("npx vitest run"),
+            passa("npx vitest run"),
+            passa("ls"),
+            passa("cargo test"),
+            em(assistente("Pronto."), 1_062),
+        ];
+        let turno = turnos_recolhiveis(&checado, false)[0];
+        assert_eq!(resumo_do_turno(&checado, turno), "Trabalhou 1 min 2 s · 6 comandos · tsc passou · vitest falhou 2×, passou · cargo test passou");
+        // Um turno sem checagem fica como era.
+        let sem = vec![em(usuario("faz"), 1_000), assistente("Vou olhar."), passa("ls"), em(assistente("Pronto."), 1_062)];
+        assert_eq!(resumo_do_turno(&sem, turnos_recolhiveis(&sem, false)[0]), "Trabalhou 1 min 2 s · 1 comando");
         // Com o turno ainda rodando, o último não recolhe.
         assert!(turnos_recolhiveis(&itens, true).is_empty());
         // Sem texto intermediário (só a trilha e a resposta), não recolhe: a trilha já basta.

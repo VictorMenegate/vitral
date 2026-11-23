@@ -45,6 +45,10 @@ e quanto cache cada turno gastou.
   conversa diz o quê: "Criou 5 passos", "Começou: rodar os testes", "Concluiu: rodar os testes".
   Antes toda chamada era "Atualizou os passos". O Vitral lê também as ferramentas de tarefa novas
   do Claude Code (TaskCreate, TaskUpdate e TaskList), e a pílula "3/5" conta por elas.
+- **As checagens do turno na linha "Trabalhou…".** O turno pronto diz como terminaram os testes,
+  o typecheck, o lint e o build que ele rodou: "tsc passou · vitest falhou 2×, passou · cargo test
+  passou". Vale a última execução de cada um. Quando não dá para saber o resultado (o comando
+  atrás de um `| tail`, sem nada na saída que diga), a checagem não aparece.
 - **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
   mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
 

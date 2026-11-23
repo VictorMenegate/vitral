@@ -14,6 +14,7 @@ mod avisos_no_app;
 mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
+mod checagens;
 mod composer;
 mod configuracoes;
 mod conversa;
