@@ -405,6 +405,7 @@ mod testes {
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
+            eventos_de_hook: false,
         }
     }
 

@@ -21,6 +21,7 @@ mod ideias;
 mod agendadas;
 pub mod gasto;
 mod memoria;
+mod pedidos_de_hook;
 pub use gasto::{Tokens, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
 pub use ideias::SituacaoDoLinear;
@@ -79,6 +80,9 @@ pub struct PedidoPermissao {
     pub chat: String,
     pub ferramenta: String,
     pub entrada: Value,
+    /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
+    /// ver `pedidos_de_hook`.
+    pub motivo_do_hook: Option<String>,
     resposta: Sender<Resposta>,
 }
 
@@ -290,6 +294,9 @@ pub struct Motor {
     gastos: gasto::Livro,
     /// A memória de cada chat trabalhando, lida do escopo dele (`motor/memoria.rs`).
     memorias: memoria::Leituras,
+    /// O que os hooks do usuário mandaram perguntar e ainda espera o pedido de permissão
+    /// (`motor/pedidos_de_hook.rs`).
+    motivos_de_hook: pedidos_de_hook::MotivosDeHook,
     /// Até quando cada conta que bateu no limite fica de fora (segundos Unix).
     limite_ate: HashMap<String, u64>,
     /// As contas em que o Claude Code disse que o login se perdeu (token revogado ou vencido sem
@@ -586,6 +593,7 @@ impl Motor {
         let mut motor = Self {
             gastos,
             memorias: Default::default(),
+            motivos_de_hook: Default::default(),
             quadro,
             quadro_sujo: false,
             linear,
@@ -1181,7 +1189,12 @@ impl Motor {
             .permissoes
             .iter()
             .filter(|p| p.chat == chat_id)
-            .filter(|p| p.id == id || chat.is_some_and(|c| c.permite(&p.ferramenta, &p.entrada)))
+            .filter(|p| {
+                p.id == id
+                    || chat.is_some_and(|c| {
+                        pedidos_de_hook::passa_sem_perguntar(c, &p.ferramenta, &p.entrada, p.motivo_do_hook.is_some())
+                    })
+            })
             .map(|p| p.id.clone())
             .collect();
         for pedido in cobertos {
@@ -2040,6 +2053,7 @@ impl Motor {
             Ok(processo) => {
                 self.processos.insert(chat_id.to_string(), processo);
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
+                self.motivos_de_hook.esquecer(chat_id);
                 self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
                 // Um turno começou (mandado por você ou pela retomada): a volta agendada cai.
                 self.retomar_as.remove(chat_id);
@@ -2154,6 +2168,12 @@ impl Motor {
             memoria_nativa: self.config.memoria_ao_terminar,
             sugestoes: self.config.sugerir_resposta && !codex,
             mcp_da_equipe,
+            // No turno que começa antes de a leitura de fundo da versão voltar, vale a do link
+            // do instalador nativo.
+            eventos_de_hook: self
+                .versao_claude
+                .or_else(|| claude::versao_pelo_link(&claude::binario_claude()))
+                .is_some_and(|v| v >= claude::VERSAO_EVENTOS_DE_HOOK),
         }
     }
 
@@ -3190,6 +3210,12 @@ impl Motor {
                     c.itens.push(Item::Raciocinio { texto: git::inicio_do_texto(texto, 20_000), milis, em: agora() });
                 }
             }
+            // Um hook do usuário mandou perguntar: o motivo espera o pedido de permissão dessa
+            // chamada, que vem em seguida pelo MCP, sem ele (`tratar_ferramenta`).
+            Evento::HookPediu { ferramenta, motivo } => {
+                self.motivos_de_hook.guardar(chat_id, &ferramenta, &motivo, std::time::Instant::now());
+                return;
+            }
             Evento::SubFerramenta { pai, nome, entrada } => {
                 if nome == "mcp__vitral__permissao" || nome == "ToolSearch" {
                     return;
@@ -3535,6 +3561,7 @@ impl Motor {
                 self.fim_de_turno(chat_id, erro, texto, cx);
             }
             Evento::Saiu { stderr, codigo } => {
+                self.motivos_de_hook.esquecer(chat_id);
                 // Saiu depois de um `result` adiado, sem outro: os agentes acabaram sem outro turno
                 // (o fim normal, com o texto daquele `result`) ou foram cortados junto com o
                 // processo (teto da espera, queda), e aí o turno termina com erro.
@@ -3798,8 +3825,13 @@ impl Motor {
 
         let resposta = match chamada.ferramenta.as_str() {
             "permissao" => {
-                // "Permitir sempre" desta conversa: vale já no turno em andamento.
-                if chat.permite(a["tool_name"].as_str().unwrap_or("?"), &a["input"]) {
+                let ferramenta = a["tool_name"].as_str().unwrap_or("?");
+                // O pedido que um hook do usuário mandou fazer chega aqui em qualquer modo, até no
+                // "Sem perguntar", e sem o motivo: ele veio antes, no evento do hook.
+                let motivo_do_hook = self.motivos_de_hook.tirar(&chat.id, ferramenta, std::time::Instant::now());
+                // "Permitir sempre" desta conversa: vale já no turno em andamento, menos para o
+                // que um hook mandou perguntar.
+                if pedidos_de_hook::passa_sem_perguntar(&chat, ferramenta, &a["input"], motivo_do_hook.is_some()) {
                     let resposta = json!({"behavior": "allow", "updatedInput": a["input"]});
                     let _ = chamada.resposta.try_send(Resposta::ok(resposta.to_string()));
                     return;
@@ -3807,8 +3839,9 @@ impl Motor {
                 self.permissoes.push(PedidoPermissao {
                     id: novo_id(),
                     chat: chat.id.clone(),
-                    ferramenta: a["tool_name"].as_str().unwrap_or("?").to_string(),
+                    ferramenta: ferramenta.to_string(),
                     entrada: a["input"].clone(),
+                    motivo_do_hook,
                     resposta: chamada.resposta,
                 });
                 self.execucao

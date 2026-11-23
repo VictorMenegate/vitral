@@ -10,6 +10,12 @@ conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[fe
 manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
 test…") sem chamar a API.
 
+Com `[hook <Nome> <detalhe> | <motivo>]`, encena uma chamada que um hook `PreToolUse` do usuário
+mandou perguntar (`permissionDecision: "ask"`), como o Claude Code 2.1.328 faz: manda o tool_use,
+os eventos do hook (só com `--include-hook-events`) e pede a permissão à ferramenta do
+`--permission-prompt-tool`, sem o motivo (ele só vem no evento do hook). Sem essa ferramenta nos
+argumentos, a chamada volta recusada com o motivo do hook como erro, sem perguntar a ninguém.
+
 Ferramentas do Vitral: cada `[mcp <nome> <json>]` da mensagem (fora das linhas citadas com "> ")
 vira uma chamada de verdade ao MCP do Vitral (a URL do --mcp-config), com o tool_use e o
 tool_result no stream. E, sem precisar pedir:
@@ -233,7 +239,7 @@ anotar({
 })
 
 emitir({"type": "system", "subtype": "init", "model": "claude-falso", "session_id": sessao,
-        "slash_commands": ["clear", "compact"], "claude_code_version": "2.1.300", "tools": ["Read", "Edit", "Bash"]})
+        "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
 if "[demora]" in texto:
     time.sleep(10)
 # `[limite]`: a primeira vez, o turno cai no limite do plano, que volta em 60 s (o formato
@@ -375,6 +381,56 @@ def fingir_ferramentas(texto):
             {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})
 
 
+# `[hook Nome detalhe | motivo]`: a chamada que um hook PreToolUse mandou perguntar.
+HOOK = re.compile(r"\[hook ([A-Za-z_]+) ([^\]|]+?)\s*\|\s*([^\]]+)\]")
+
+
+def encenar_hooks(texto):
+    """Cada `[hook ...]` vira o que o Claude Code 2.1.328 faz com o "ask" de um hook PreToolUse
+    (medido em 23/11/2026): o tool_use; com `--include-hook-events`, o hook_started e o
+    hook_response (o motivo só aparece aqui, na saída do hook, sem o id da chamada); e o pedido à
+    ferramenta do `--permission-prompt-tool`, só com tool_name, input e tool_use_id. Sem essa
+    ferramenta, ninguém é perguntado: a chamada volta recusada, com o motivo do hook como erro."""
+    proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
+    for i, (nome, detalhe, motivo) in enumerate(HOOK.findall(proprio), start=1):
+        detalhe, motivo = detalhe.strip(), motivo.strip()
+        id_ = f"toolu_falso_h{i}"
+        entrada = entrada_da_ferramenta(nome, detalhe)
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id_, "name": nome, "input": entrada}]}})
+        if "--include-hook-events" in args:
+            saida = json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                                       "permissionDecisionReason": motivo}}, ensure_ascii=False) + "\n"
+            base = {"type": "system", "hook_id": f"hook-falso-{i}", "hook_name": f"PreToolUse:{nome}",
+                    "hook_event": "PreToolUse", "session_id": sessao}
+            emitir({**base, "subtype": "hook_started"})
+            emitir({**base, "subtype": "hook_response", "output": saida, "stdout": saida, "stderr": "",
+                    "exit_code": 0, "outcome": "success"})
+        if valor_de("--permission-prompt-tool") != "mcp__vitral__permissao" or not url:
+            anotar({"hook": nome, "perguntou": False})
+            emitir({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": id_, "content": motivo, "is_error": True}]}})
+            continue
+        argumentos = {"tool_name": nome, "input": entrada, "tool_use_id": id_}
+        corpo = json.dumps({"jsonrpc": "2.0", "id": 9000 + i, "method": "tools/call",
+                            "params": {"name": "permissao", "arguments": argumentos}}).encode()
+        try:
+            req = urllib.request.Request(url, data=corpo, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3600) as r:
+                decisao = json.loads(json.loads(r.read())["result"]["content"][0]["text"])
+        except Exception as e:  # noqa: BLE001 (a bancada só anota)
+            decisao = {"behavior": "deny", "message": f"(claude falso) o pedido de permissão falhou: {e}"}
+        permitiu = decisao.get("behavior") == "allow"
+        anotar({"hook": nome, "perguntou": True, "permitiu": permitiu})
+        if permitiu:
+            time.sleep(1)
+            resultado = f"(claude falso) {nome} em {detalhe}"
+        else:
+            resultado = decisao.get("message") or "negado"
+        emitir({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id_, "content": resultado, "is_error": not permitiu}]}})
+
+
 def diretivas(texto):
     """Os `[mcp nome {json}]` do texto, fora das linhas citadas."""
     proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
@@ -406,6 +462,7 @@ if papel != "mestre":
 else:
     arquivo = None
 fingir_ferramentas(texto)
+encenar_hooks(texto)
 if url:
     for nome, argumentos in diretivas(texto):
         chamar(nome, argumentos)

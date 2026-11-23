@@ -60,6 +60,11 @@ pub struct Opcoes {
     /// O arquivo com o servidor MCP da memória da equipe (`memoria_equipe::arquivo_do_mcp`): vai
     /// como mais um `--mcp-config`.
     pub mcp_da_equipe: Option<PathBuf>,
+    /// `--include-hook-events`: os eventos dos hooks do usuário na saída. É por eles que chega o
+    /// motivo de um hook que mandou perguntar (`Evento::HookPediu`); o pedido de permissão vem
+    /// sem ele. Só num Claude Code que conhece a opção (`VERSAO_EVENTOS_DE_HOOK`): sem ela, o
+    /// cartão aparece igual, sem o motivo.
+    pub eventos_de_hook: bool,
 }
 
 /// O relatório que o subagente devolve, sem a moldura que o Claude Code põe em volta dele
@@ -171,6 +176,11 @@ pub enum Evento {
         conteudo: String,
         erro: bool,
     },
+    /// Um hook `PreToolUse` do usuário mandou perguntar antes de uma chamada dessa ferramenta
+    /// (`permissionDecision: "ask"`), com o motivo que ele deu (pode vir vazio). Vem do
+    /// `hook_response` (`--include-hook-events`), logo antes do pedido de permissão da chamada,
+    /// que não traz o motivo (`motor/pedidos_de_hook.rs`).
+    HookPediu { ferramenta: String, motivo: String },
     /// O subagente da chamada `pai` foi para o segundo plano: o resultado da chamada é só o aviso
     /// de que ele começou, e o de verdade chega no `SubFim`.
     SubLancado { pai: String },
@@ -468,6 +478,9 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if opcoes.sugestoes {
         args.push("--prompt-suggestions".into());
     }
+    if opcoes.eventos_de_hook {
+        args.push("--include-hook-events".into());
+    }
     args.extend(["--allowedTools".to_string(), "mcp__vitral".to_string()]);
     match &opcoes.prompt_arquivo {
         Some(arquivo) => args.extend([
@@ -481,9 +494,10 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if let Some(ferramentas) = opcoes.ferramentas.as_deref().filter(|f| !f.is_empty()) {
         args.extend(["--tools".to_string(), ferramentas.to_string()]);
     }
-    if opcoes.permissao != "bypassPermissions" {
-        args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
-    }
+    // Em todos os modos, até no "Sem perguntar": lá o Claude Code só pergunta o que o próprio
+    // usuário mandou perguntar (um hook `PreToolUse` com "ask", uma regra `ask` das configurações
+    // dele), e sem ter a quem perguntar ele recusa a chamada (medido no 2.1.328, 23/11/2026).
+    args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
     // Aprovar o plano pode passar para "Sem perguntar" já neste turno.
     if opcoes.permissao == "plan" {
         args.push("--allow-dangerously-skip-permissions".into());
@@ -577,14 +591,18 @@ pub fn versao_de(texto: &str) -> Option<Versao> {
     partes.next().is_none().then_some(versao)
 }
 
+/// A versão pelo link que o instalador nativo deixa para `versions/<versão>`: sem abrir processo
+/// nenhum, serve para a thread da interface (o turno que começa antes de a leitura de fundo
+/// voltar). `None` sem o link (o `claude` do npm, o de mentira da bancada).
+pub fn versao_pelo_link(binario: &Path) -> Option<Versao> {
+    dunce::canonicalize(binario).ok().and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
+}
+
 /// A versão do `claude` que o Vitral abre: o instalador nativo deixa um link para
 /// `versions/<versão>`; sem ele, pergunta ao próprio `claude --version`.
 pub fn versao_instalada() -> Option<Versao> {
     let binario = binario_claude();
-    if let Some(versao) = dunce::canonicalize(&binario)
-        .ok()
-        .and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
-    {
+    if let Some(versao) = versao_pelo_link(&binario) {
         return Some(versao);
     }
     let saida = processos::novo_comando(&binario)
@@ -1364,6 +1382,9 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             ferramentas: valor["usage"]["tool_uses"].as_u64().unwrap_or(0) as u32,
             tokens: valor["usage"]["total_tokens"].as_u64().unwrap_or(0),
         }],
+        "system" if valor["subtype"] == "hook_response" && valor["hook_event"] == "PreToolUse" => {
+            hook_que_pediu(valor).into_iter().collect()
+        }
         "stream_event" => {
             let evento = &valor["event"];
             if evento["type"] == "content_block_delta" && evento["delta"]["type"] == "text_delta" {
@@ -1470,6 +1491,20 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
     }
 }
 
+/// O `hook_response` de um hook `PreToolUse` que mandou perguntar (`permissionDecision: "ask"` na
+/// saída dele): a ferramenta (o `hook_name` é "PreToolUse:<ferramenta>") e o motivo. O evento não
+/// traz o id da chamada (2.1.328).
+fn hook_que_pediu(valor: &Value) -> Option<Evento> {
+    let ferramenta = valor["hook_name"].as_str()?.strip_prefix("PreToolUse:").filter(|f| !f.is_empty())?;
+    let saida = valor["stdout"].as_str().or(valor["output"].as_str())?;
+    let decisao = serde_json::from_str::<Value>(saida.trim()).ok()?;
+    let decisao = &decisao["hookSpecificOutput"];
+    (decisao["permissionDecision"] == "ask").then(|| Evento::HookPediu {
+        ferramenta: ferramenta.to_string(),
+        motivo: decisao["permissionDecisionReason"].as_str().unwrap_or_default().trim().to_string(),
+    })
+}
+
 fn conteudo_resultado(conteudo: &Value) -> String {
     match conteudo {
         Value::String(s) => s.clone(),
@@ -1516,6 +1551,11 @@ fn binario_claude_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf
 /// A versão a partir da qual o prompt vai por arquivo, sem a foto da sessão
 /// (`--system-prompt-snapshot off`, conferido no 2.1.278).
 pub const VERSAO_PROMPT_POR_ARQUIVO: Versao = (2, 1, 278);
+
+/// A versão a partir da qual o Vitral pede os eventos de hook (`--include-hook-events`): a mais
+/// antiga em que a opção foi conferida (23/11/2026; o changelog não diz quando ela entrou). Num
+/// Claude Code que não a conhecesse, a opção derrubaria todo turno.
+pub const VERSAO_EVENTOS_DE_HOOK: Versao = (2, 1, 323);
 
 /// A sessão gravada sumiu da pasta do projeto que ainda existe: o Claude Code a apagou (o
 /// `cleanupPeriodDays`, 30 dias por padrão). Sem a pasta do projeto não dá para saber, e quem
@@ -1958,6 +1998,7 @@ mod testes {
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
+            eventos_de_hook: false,
         }
     }
 
@@ -2232,6 +2273,218 @@ mod testes {
         assert!(cortado.len() < 8_100 && cortado.ends_with("… (cortado)"));
     }
 
+}
+
+#[cfg(test)]
+mod testes_do_ask_de_hook {
+    use super::*;
+
+    fn opcoes(modo: &str, url_mcp: &str) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: PathBuf::from("/tmp/x"),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: None,
+            permissao: modo.into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            url_mcp: url_mcp.into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+        }
+    }
+
+    fn valor_de<'a>(args: &'a [String], chave: &str) -> Option<&'a str> {
+        let i = args.iter().position(|a| a == chave)?;
+        args.get(i + 1).map(String::as_str)
+    }
+
+    /// Medido no Claude Code 2.1.328 (23/11/2026): com o "ask" de um hook `PreToolUse`, ele chama
+    /// a ferramenta do `--permission-prompt-tool` em todos os modos, até em `bypassPermissions`;
+    /// sem ela (era o caso do "Sem perguntar"), a chamada volta recusada com o motivo do hook como
+    /// erro. O motivo só sai nos eventos de hook (`--include-hook-events`).
+    #[test]
+    fn todo_modo_tem_a_quem_perguntar_e_ouve_os_hooks() {
+        for modo in ["manual", "acceptEdits", "plan", "auto", "bypassPermissions"] {
+            let args = argumentos(&opcoes(modo, "http://127.0.0.1:1/mcp"));
+            assert_eq!(valor_de(&args, "--permission-mode"), Some(modo));
+            assert_eq!(valor_de(&args, "--permission-prompt-tool"), Some("mcp__vitral__permissao"), "{modo}");
+            assert!(args.iter().any(|a| a == "--include-hook-events"), "{modo}");
+            // Num Claude Code que não conhece a opção dos eventos, ela não vai (derrubaria o
+            // turno), e a ferramenta de permissão continua lá: o cartão aparece, sem o motivo.
+            let args = argumentos(&Opcoes { eventos_de_hook: false, ..opcoes(modo, "http://127.0.0.1:1/mcp") });
+            assert_eq!(valor_de(&args, "--permission-prompt-tool"), Some("mcp__vitral__permissao"), "{modo}");
+            assert!(!args.iter().any(|a| a == "--include-hook-events"), "{modo}");
+        }
+    }
+
+    /// O turno que começa antes de a leitura de fundo da versão voltar ainda sabe a versão do
+    /// instalador nativo, pelo link.
+    #[cfg(unix)]
+    #[test]
+    fn a_versao_sai_do_link_do_instalador_sem_abrir_processo() {
+        let pasta = std::env::temp_dir().join(format!("vitral-link-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(pasta.join("versions")).unwrap();
+        std::fs::write(pasta.join("versions/2.1.328"), "").unwrap();
+        std::os::unix::fs::symlink(pasta.join("versions/2.1.328"), pasta.join("claude")).unwrap();
+        assert_eq!(versao_pelo_link(&pasta.join("claude")), Some((2, 1, 328)));
+        // Sem o link (o do npm, o de mentira): só o `--version` diz.
+        std::fs::write(pasta.join("solto"), "").unwrap();
+        assert_eq!(versao_pelo_link(&pasta.join("solto")), None);
+        assert_eq!(versao_pelo_link(&pasta.join("nao-existe")), None);
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn os_eventos_de_hook_so_num_claude_code_que_conhece_a_opcao() {
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_EVENTOS_DE_HOOK));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_EVENTOS_DE_HOOK));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_EVENTOS_DE_HOOK));
+    }
+
+    /// O `hook_response` como o 2.1.328 o manda (copiado da saída dele).
+    fn resposta_do_hook(nome: &str, saida: &str) -> Value {
+        json!({
+            "type": "system", "subtype": "hook_response", "hook_id": "0defe090-dfd7-4bd4-b337-b6578af9b068",
+            "hook_name": nome, "hook_event": nome.split(':').next().unwrap_or_default(),
+            "output": saida, "stdout": saida, "stderr": "", "exit_code": 0, "outcome": "success",
+            "uuid": "52e37abc-4230-4400-aed9-c3a9a9b25f9d", "session_id": "c94b6ba9-8047-48c1-b9eb-f6c7e588a68a",
+        })
+    }
+
+    fn decisao(decisao: &str, motivo: &str) -> String {
+        json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": decisao,
+                                        "permissionDecisionReason": motivo } })
+        .to_string()
+            + "\n"
+    }
+
+    #[test]
+    fn hook_que_manda_perguntar_vira_evento_com_o_motivo() {
+        let motivo = "MOTIVO-DO-HOOK: este comando precisa do sim do dono.";
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:Bash", &decisao("ask", motivo)));
+        match eventos.as_slice() {
+            [Evento::HookPediu { ferramenta, motivo: m }] => assert_eq!((ferramenta.as_str(), m.as_str()), ("Bash", motivo)),
+            outro => panic!("{outro:?}"),
+        }
+        // A ferramenta de um servidor MCP vem com o nome inteiro.
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:mcp__easypanel__deploy", &decisao("ask", "produção")));
+        assert!(
+            matches!(eventos.as_slice(), [Evento::HookPediu { ferramenta, motivo }] if ferramenta == "mcp__easypanel__deploy" && motivo == "produção"),
+            "{eventos:?}"
+        );
+        // Sem motivo, o pedido ainda é de um hook.
+        let sem = json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "ask" } }).to_string();
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:Bash", &sem));
+        assert!(matches!(eventos.as_slice(), [Evento::HookPediu { motivo, .. }] if motivo.is_empty()), "{eventos:?}");
+        // Só o `stdout` (um Claude Code que não repita a saída em `output`).
+        let mut so_stdout = resposta_do_hook("PreToolUse:Bash", &decisao("ask", motivo));
+        so_stdout.as_object_mut().unwrap().remove("output");
+        assert!(matches!(interpretar(&so_stdout).as_slice(), [Evento::HookPediu { .. }]));
+    }
+
+    #[test]
+    fn os_outros_eventos_de_hook_nao_viram_nada() {
+        let nada = |valor: Value| assert!(interpretar(&valor).is_empty(), "{valor}");
+        // Os hooks que não decidem, os que permitem e os que negam (a recusa vem no tool_result).
+        nada(resposta_do_hook("PreToolUse:Bash", "{}\n"));
+        nada(resposta_do_hook("PreToolUse:Bash", ""));
+        nada(resposta_do_hook("PreToolUse:Bash", "texto solto de um hook antigo\n"));
+        nada(resposta_do_hook("PreToolUse:Bash", &decisao("allow", "pode")));
+        nada(resposta_do_hook("PreToolUse:Bash", &decisao("deny", "não pode")));
+        // Os outros eventos: só o PreToolUse pergunta antes da chamada.
+        nada(resposta_do_hook("PostToolUse:Bash", &decisao("ask", "tarde demais")));
+        nada(resposta_do_hook("SessionStart:startup", &decisao("ask", "x")));
+        nada(resposta_do_hook("UserPromptSubmit", "{}\n"));
+        nada(json!({ "type": "system", "subtype": "hook_started", "hook_id": "1", "hook_name": "PreToolUse:Bash",
+                     "hook_event": "PreToolUse" }));
+    }
+
+    /// De ponta a ponta com o claude de mentira da bancada, que encena o que o 2.1.328 faz com o
+    /// "ask" de um hook (`[hook ...]`): com os argumentos de um turno em "Sem perguntar", a
+    /// chamada passa pela ferramenta de permissão do servidor MCP do Vitral, e o motivo chega
+    /// antes dela, pelo evento do hook. Sem a ferramenta nos argumentos (como era), ninguém é
+    /// perguntado e a chamada volta recusada.
+    #[cfg(unix)]
+    #[test]
+    fn o_ask_de_hook_chega_a_ferramenta_de_permissao_em_sem_perguntar() {
+        use std::sync::mpsc;
+
+        let (chegou, chamadas) = mpsc::channel::<(String, Value)>();
+        let servidor = crate::mcp::iniciar(move |chamada: crate::mcp::Chamada| {
+            let resposta = json!({ "behavior": "allow", "updatedInput": chamada.argumentos["input"] });
+            let _ = chegou.send((chamada.ferramenta.clone(), chamada.argumentos.clone()));
+            let _ = chamada.resposta.try_send(crate::mcp::Resposta::ok(resposta.to_string()));
+        })
+        .unwrap();
+        let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+        let pasta = std::env::temp_dir().join(format!("vitral-ask-de-hook-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let motivo = "Deploy no expediente do galpão.";
+        let mensagem = json!({ "type": "user", "message": { "role": "user", "content": [
+            { "type": "text", "text": format!("[hook Bash echo teste-ask | {motivo}]\nroda o comando") }] } });
+        let turno = |args: Vec<String>| -> Vec<Evento> {
+            let mut filho = processos::novo_comando("python3")
+                .arg("-I")
+                .arg(&falso)
+                .args(args)
+                .current_dir(&pasta)
+                .env("XDG_STATE_HOME", &pasta)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("python3 para o claude de mentira");
+            // A entrada fecha logo depois da mensagem: é o fim do turno para ele.
+            writeln!(filho.stdin.take().unwrap(), "{mensagem}").unwrap();
+            let saida = filho.wait_with_output().unwrap();
+            String::from_utf8_lossy(&saida.stdout)
+                .lines()
+                .filter_map(|linha| serde_json::from_str::<Value>(linha).ok())
+                .flat_map(|valor| interpretar(&valor))
+                .collect()
+        };
+
+        let args = argumentos(&opcoes("bypassPermissions", &servidor.url("c1")));
+        let eventos = turno(args.clone());
+        let posicao = |achar: &dyn Fn(&Evento) -> bool| eventos.iter().position(achar);
+        let chamada = posicao(&|e| matches!(e, Evento::Ferramenta { nome, .. } if nome == "Bash")).expect("a chamada");
+        let pediu = posicao(&|e| matches!(e, Evento::HookPediu { ferramenta, motivo: m } if ferramenta == "Bash" && m == motivo))
+            .unwrap_or_else(|| panic!("sem o evento do hook: {eventos:?}"));
+        let resultado = posicao(&|e| matches!(e, Evento::ResultadoFerramenta { erro: false, .. }))
+            .unwrap_or_else(|| panic!("a chamada permitida não rodou: {eventos:?}"));
+        assert!(chamada < pediu && pediu < resultado, "{eventos:?}");
+        // O pedido chegou à ferramenta de permissão, sem o motivo (ele só vem no evento).
+        let (ferramenta, argumentos_do_pedido) = chamadas.try_recv().expect("o pedido de permissão");
+        assert_eq!(ferramenta, "permissao");
+        assert_eq!(argumentos_do_pedido["tool_name"], "Bash");
+        assert_eq!(argumentos_do_pedido["input"]["command"], "echo teste-ask");
+        assert!(!argumentos_do_pedido.to_string().contains(motivo));
+        assert!(chamadas.try_recv().is_err(), "um pedido só");
+
+        // Como era em "Sem perguntar": sem a ferramenta de permissão, a recusa com o motivo.
+        let i = args.iter().position(|a| a == "--permission-prompt-tool").expect("a ferramenta de permissão");
+        let mut como_era = args;
+        como_era.drain(i..i + 2);
+        let eventos = turno(como_era);
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { erro: true, conteudo, .. } if conteudo == motivo)),
+            "{eventos:?}"
+        );
+        assert!(chamadas.try_recv().is_err(), "ninguém foi perguntado");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
 }
 
 #[cfg(test)]

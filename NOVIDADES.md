@@ -3,6 +3,16 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.9.6
+
+O pedido de permissão de um hook seu aparece em todos os modos.
+
+- **O que um hook manda perguntar vira o cartão de permissão, até em Sem perguntar.** Quando um
+  hook seu do Claude Code pedia confirmação antes de um comando (a trava de um deploy, por
+  exemplo), o cartão não aparecia no modo Sem perguntar: o comando voltava recusado e o agente
+  insistia. Agora o cartão aparece em qualquer modo, com o motivo que o hook deu, e esse pedido
+  não tem "Não perguntar de novo".
+
 ## 0.9.5
 
 O fundo das suas mensagens parado e as imagens delas com o canto redondo.

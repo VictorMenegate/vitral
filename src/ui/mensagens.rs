@@ -4433,11 +4433,11 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        let pedidos: Vec<(String, String, serde_json::Value)> = motor
+        let pedidos: Vec<(String, String, serde_json::Value, Option<String>)> = motor
             .permissoes
             .iter()
             .filter(|p| p.chat == chat.id)
-            .map(|p| (p.id.clone(), p.ferramenta.clone(), p.entrada.clone()))
+            .map(|p| (p.id.clone(), p.ferramenta.clone(), p.entrada.clone(), p.motivo_do_hook.clone()))
             .collect();
         let manual = motor.permissao_de(chat) == "manual";
         let (nivel, faixa) = self
@@ -4470,13 +4470,13 @@ impl Janela {
                         .child(CabecalhoDeSecao::new("Pedidos").contagem(quantos).tingida(Cores::espera()).primeira(true)),
                 )
             })
-            .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada))| {
+            .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada, motivo_do_hook))| {
                 let corpo = aberto.as_deref() == Some(id.as_str());
                 if ferramenta == "ExitPlanMode" {
                     return self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx);
                 }
                 let posicao = (quantos > 1).then_some((k + 1, quantos));
-                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, corpo, posicao, nivel, window, cx)
+                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, motivo_do_hook, corpo, posicao, nivel, window, cx)
             }))
     }
 
@@ -4492,6 +4492,7 @@ impl Janela {
         id: &str,
         ferramenta: &str,
         entrada: &serde_json::Value,
+        motivo_do_hook: Option<String>,
         corpo_aberto: bool,
         posicao: Option<(usize, usize)>,
         nivel: LarguraPainel,
@@ -4508,8 +4509,9 @@ impl Janela {
                 }
             })
         };
-        // A regra só existe fora do perigoso: o mesmo filtro do desenho.
-        let com_regra = regra_do_pedido(ferramenta, entrada, &chat.cwd, manual).is_some();
+        // A regra só existe fora do perigoso e do que um hook mandou perguntar: o mesmo filtro do
+        // desenho.
+        let com_regra = regra_do_cartao(ferramenta, entrada, &chat.cwd, manual, motivo_do_hook.is_some()).is_some();
         let permitir = {
             let id = id.to_string();
             cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
@@ -4569,6 +4571,7 @@ impl Janela {
             posicao,
             nivel,
             manual,
+            motivo_do_hook,
             marcado: self.sempre_marcado.contains(id),
             explicando,
         };
@@ -5075,6 +5078,9 @@ pub(super) struct Pedido {
     pub posicao: Option<(usize, usize)>,
     pub nivel: LarguraPainel,
     pub manual: bool,
+    /// Um hook `PreToolUse` do usuário mandou perguntar, com este motivo (vazio se ele não deu):
+    /// o cartão mostra a linha do hook e não oferece a caixa "Não perguntar de novo".
+    pub motivo_do_hook: Option<String>,
     /// A caixa "Não perguntar de novo" marcada.
     pub marcado: bool,
     /// O campo de "negar e explicar" aberto.
@@ -5108,6 +5114,30 @@ fn regra_do_pedido(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path, 
     crate::modelo::regra_de_permissao(ferramenta, entrada, pasta).map(|regra| rotulo_da_regra(&regra, manual))
 }
 
+/// A regra que a caixa do cartão oferece: a do pedido, menos no que um hook mandou perguntar (quem
+/// pôs o hook quer ser perguntado toda vez; o motor também não deixa a regra valer para ele).
+fn regra_do_cartao(ferramenta: &str, entrada: &serde_json::Value, pasta: &Path, manual: bool, do_hook: bool) -> Option<(String, String)> {
+    if do_hook {
+        return None;
+    }
+    regra_do_pedido(ferramenta, entrada, pasta, manual)
+}
+
+/// O maior motivo de hook que o cartão mostra inteiro.
+const MAX_MOTIVO_DO_HOOK: usize = 600;
+
+/// A linha do cartão que diz por que um pedido apareceu: um hook do usuário mandou perguntar, com
+/// o motivo que ele deu, numa linha só e sem a marcação.
+fn linha_do_hook(motivo: &str) -> String {
+    let motivo = sem_marcacao(&motivo.split_whitespace().collect::<Vec<_>>().join(" "));
+    if motivo.is_empty() {
+        return "Um hook pediu a sua confirmação.".into();
+    }
+    let cortado: String = motivo.chars().take(MAX_MOTIVO_DO_HOOK).collect();
+    let reticencias = if cortado.len() < motivo.len() { "…" } else { "" };
+    format!("Um hook pediu a sua confirmação: {cortado}{reticencias}")
+}
+
 /// O comando tem um trecho que apaga, força ou roda algo difícil de desfazer.
 fn pedido_perigoso(ferramenta: &str, entrada: &serde_json::Value) -> bool {
     ferramenta == "Bash" && !trechos_perigosos(entrada["command"].as_str().unwrap_or_default()).is_empty()
@@ -5130,7 +5160,7 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
         .as_str()
         .or(entrada["notebook_path"].as_str())
         .is_some_and(|c| caminho_no_chat(c, &p.pasta).1);
-    let regra = regra_do_pedido(&p.ferramenta, entrada, &p.pasta, p.manual);
+    let regra = regra_do_cartao(&p.ferramenta, entrada, &p.pasta, p.manual, p.motivo_do_hook.is_some());
     let minima = minima(p.nivel);
     let cabecalho = h_flex()
         .id(id_texto("cab"))
@@ -5283,6 +5313,17 @@ pub(super) fn cartao_de_pedido(p: Pedido, r_: RespostasDoPedido, window: &Window
                             )
                         }),
                 )
+                // Por que o pedido apareceu, quando foi um hook do usuário: a linha inteira, com
+                // quebra (o motivo é o que ele precisa ler para decidir).
+                .when_some(p.motivo_do_hook.as_deref().map(linha_do_hook), |s, linha| {
+                    s.child(
+                        h_flex()
+                            .items_start()
+                            .gap(esp::E6)
+                            .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::ShieldAlert, 14.).text_color(Cores::ambar())))
+                            .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(linha)),
+                    )
+                })
                 .when(perigoso, |s| {
                     s.child(
                         h_flex()
@@ -5542,6 +5583,7 @@ mod testes {
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
+        MAX_MOTIVO_DO_HOOK, linha_do_hook, regra_do_cartao,
         titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
     };
     use crate::modelo::{Chat, Item, regra_de_permissao};
@@ -5776,6 +5818,37 @@ mod testes {
         assert_eq!(regra_do_pedido("Bash", &json!({"command": "git push --force"}), pasta, true), None);
         let comum = regra_do_pedido("Bash", &json!({"command": "cargo test"}), pasta, true);
         assert_eq!(comum.map(|(objeto, _)| objeto), Some("este comando".to_string()));
+    }
+
+    /// O que um hook mandou perguntar não oferece "Não perguntar de novo"; o resto, como antes.
+    #[test]
+    fn pedido_de_hook_nunca_vira_regra() {
+        let pasta = Path::new("/home/v/loja");
+        let deploy = json!({"command": "easypanel deploy central-worker"});
+        assert_eq!(regra_do_cartao("Bash", &deploy, pasta, false, true), None);
+        assert_eq!(regra_do_cartao("mcp__x__y", &json!({}), pasta, true, true), None);
+        assert_eq!(regra_do_cartao("Bash", &deploy, pasta, false, false), regra_do_pedido("Bash", &deploy, pasta, false));
+        assert_eq!(
+            regra_do_cartao("Bash", &deploy, pasta, false, false).map(|(objeto, _)| objeto),
+            Some("este comando".to_string())
+        );
+        // O perigoso continua sem regra, com hook ou sem.
+        assert_eq!(regra_do_cartao("Bash", &json!({"command": "rm -rf build"}), pasta, true, false), None);
+    }
+
+    #[test]
+    fn o_cartao_diz_o_motivo_que_o_hook_deu() {
+        assert_eq!(
+            linha_do_hook("Deploy do `central-worker` no expediente do galpão.\n  Confirme com o **dono**. "),
+            "Um hook pediu a sua confirmação: Deploy do central-worker no expediente do galpão. Confirme com o dono."
+        );
+        // O hook que não disse por quê.
+        assert_eq!(linha_do_hook(""), "Um hook pediu a sua confirmação.");
+        assert_eq!(linha_do_hook(" \n "), "Um hook pediu a sua confirmação.");
+        // Um motivo enorme não toma o cartão.
+        let enorme = linha_do_hook(&"palavra ".repeat(500));
+        assert!(enorme.ends_with('…'), "{enorme}");
+        assert_eq!(enorme.chars().count(), "Um hook pediu a sua confirmação: ".chars().count() + MAX_MOTIVO_DO_HOOK + 1);
     }
 
     #[test]

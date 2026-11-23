@@ -249,7 +249,7 @@ componentes do GPUI Kit.
   mensagens automáticas seguidas entre dois chats sem você no meio, a próxima fica guardada e os dois
   avisam "muitas mensagens seguidas entre X e Y; esperando você"; escrever para um dos dois zera. O
   servidor MCP (`src/mcp.rs`) só tem essas três ferramentas e a `permissao`, a do cartão de pedido
-  de permissão (`--permission-prompt-tool mcp__vitral__permissao`).
+  de permissão (`--permission-prompt-tool mcp__vitral__permissao`, em todos os modos).
 - **Enquanto você esteve fora.** Ao voltar à janela depois de 15 min fora (**Resumo ao voltar
   depois de**), ou ao abrir o Vitral, o topo da lista mostra o que terminou, o que precisa de você e
   o que falhou ou parou desde que você saiu, cada linha abrindo o chat (Ctrl+clique, ao lado), com
@@ -702,6 +702,33 @@ no cabeçalho; dono, 18/11/2026).
   vários pedidos de uma vez, eles ficam sob "Pedidos" com o número, e só um mostra o corpo (clique
   no cabeçalho de outro para abri-lo; os fechados têm Negar e Permitir só desta vez ali mesmo, e o
   perigoso, o segurar).
+- **O que um hook seu manda perguntar.** Um hook `PreToolUse` do Claude Code pode devolver
+  `permissionDecision: "ask"` (a trava de um deploy, por exemplo): a chamada vira o mesmo cartão,
+  em **todos os modos, até em Sem perguntar**, com uma linha a mais embaixo do comando, com o
+  escudo em âmbar: "Um hook pediu a sua confirmação: <o motivo que o hook deu>", inteira e com
+  quebra de linha (até 600 caracteres). Esse cartão não tem a caixa **Não perguntar de novo**, e
+  uma regra já gravada na conversa não vale para ele: quem pôs o hook quer ser perguntado toda
+  vez. O mesmo cartão (sem a linha) aparece para uma regra `ask` das configurações do Claude Code.
+  Como funciona, medido no Claude Code 2.1.328 em 23/11/2026 com um hook de teste: com o "ask",
+  ele chama a ferramenta do `--permission-prompt-tool` em qualquer `--permission-mode`, mas só
+  com `tool_name`, `input` e `tool_use_id`; sem essa ferramenta ele recusa a chamada e devolve o
+  motivo do hook ao modelo como erro. Era o caso do Sem perguntar, que abria sem ela: o cartão
+  nunca aparecia e o agente insistia. Em `bypassPermissions` só chega à ferramenta o que o
+  próprio usuário mandou perguntar (hook ou regra `ask`): gravar em `.git`, `.claude`, `.vscode`
+  ou fora da pasta e comandos com `$(...)` passam direto, como antes. O motivo vem por outro
+  caminho, o `hook_response` da saída (`--include-hook-events`), que não traz o id da chamada,
+  só o nome da ferramenta, e sai logo antes do pedido: o `claude::interpretar` o vira
+  `Evento::HookPediu`, o motor guarda (`src/motor/pedidos_de_hook.rs`) e o pedido seguinte da
+  mesma ferramenta, no mesmo chat, o leva. Sem o id, o par é pela ordem: duas chamadas da mesma
+  ferramenta ao mesmo tempo, com motivos diferentes, podem sair com o motivo trocado; o motivo que
+  ninguém veio buscar (outro hook negou, o turno parou) vence em 60 s e some quando o processo
+  sai. A opção dos eventos só vai a partir do Claude Code 2.1.323 (`VERSAO_EVENTOS_DE_HOOK`, a
+  mais antiga em que foi conferida; num que não a conhecesse ela derrubaria o turno): abaixo
+  disso o cartão aparece como um pedido comum, sem a linha do hook e com a caixa (no turno que
+  começa antes de a versão ser lida, vale a do link do instalador nativo,
+  `claude::versao_pelo_link`). O `--permission-prompt-tool stdio` traria o motivo no próprio pedido (`decision_reason`,
+  `decision_reason_type`), mas a resposta teria de ir pela entrada do processo, que o Vitral fecha
+  enquanto os agentes em segundo plano ainda trabalham.
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
@@ -1651,7 +1678,14 @@ para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os seg
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
 bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); ao lado dele mora o
+três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); com `[hook <Nome>
+<detalhe> | <motivo>]` encena uma chamada que um hook `PreToolUse` mandou perguntar, como o Claude
+Code 2.1.328: o `tool_use`, o `hook_response` com o motivo (só com `--include-hook-events`) e o
+pedido à `permissao` do Vitral, sem o motivo (sem o `--permission-prompt-tool` nos argumentos, a
+chamada volta recusada com o motivo como erro, sem perguntar a ninguém; para o motivo aparecer no
+cartão, a bancada precisa de `CLAUDE_FALSO_VERSAO=2.1.328`, porque o Vitral só pede os eventos de
+hook a partir do 2.1.323 e o padrão do claude de mentira é 2.1.300, a mesma versão que ele diz no
+`init`; o roteiro é o `ferramentas/roteiros/ask-de-hook.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
@@ -1882,6 +1916,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | Arquivo | O que faz |
 | --- | --- |
 | `src/motor.rs` | Os chats (criar com `novo_chat(pasta)`, a lista em `chats_da_lista`, renomear, fixar, arquivar, o que espera você), os turnos e a fila, contas, retomadas, Ultracode e agentes em segundo plano, os pedidos de permissão e a passagem de sessão |
+| `src/motor/pedidos_de_hook.rs` | O que os hooks `PreToolUse` do usuário mandaram perguntar: o motivo de cada um, do evento do hook até o pedido de permissão da chamada, e a regra de que esse pedido nunca passa pelo "Não perguntar de novo" |
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
