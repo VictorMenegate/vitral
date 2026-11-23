@@ -1032,8 +1032,12 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   do outro (`uso_no_canto`, em `src/ui/uso_plano.rs`), cada um no disco opaco da peça, com o fio de
   1 px e uma sombra curta, como um botão flutuante: a conversa vai até a borda por baixo deles, sem
   folga (dono, 16/11/2026: eles passaram pelo cabeçalho e voltaram no mesmo dia, "o de uso tem que
-  ficar onde eu tinha falado, embaixo do ×"): o do Claude sempre e o do Codex
-  quando ele está instalado e tem uso lido. **Mostrar o uso do plano no canto da janela**, em
+  ficar onde eu tinha falado, embaixo do ×"): cada um só com a conta
+  daquele serviço conectada (0.9.6; `aneis_a_mostrar`): o do Claude com uma conta com o login
+  guardado e não perdido (`Motor::claude_conectado`, de `busca::tem_login`, lido ao abrir e a cada
+  busca do uso), o do Codex com o `auth.json` dele e uso lido. Sem conta, o anel some, a fileira
+  do painel da direita não guarda lugar (`reserva_dos_aneis`) e o "Entrar" e o "Instalar o
+  Codex…" seguem no menu do logo. **Mostrar o uso do plano no canto da janela**, em
   Configurações > Chats
   (`Config.uso_no_canto`, ligada por padrão), os esconde; o uso continua em Contas do Claude.
 - **O cabeçalho da conversa tem pouca coisa:** as abas e o **+** (novo
@@ -1323,8 +1327,8 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 ## Contas e uso dos planos
 
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
-outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): o do Claude sempre e o do Codex quando ele está
-instalado e tem uso lido. Cada um é o disco da marca com **um** anel em volta (com a fenda
+outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
+também com uso lido). Cada um é o disco da marca com **um** anel em volta (com a fenda
 embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do serviço até 69%,
 âmbar de 70 a 89% e vermelho daí para cima; no limite, o anel fica cheio em vermelho. As duas
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da

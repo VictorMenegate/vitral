@@ -307,6 +307,10 @@ pub struct Motor {
     /// renovar): ficam fora da escolha até um turno nelas dar certo ou a pessoa entrar de novo.
     /// Gravadas em `contas-sem-login.json`, para a marca sobreviver ao fechar o Vitral.
     sem_login: HashSet<String>,
+    /// As contas que têm o login do Claude Code guardado (`busca::tem_login`): lido ao abrir e a
+    /// cada busca do uso. Com `sem_login` e `recusadas`, diz se há conta conectada
+    /// (`claude_conectado`), que é o que o anel de uso do Claude pede para aparecer.
+    com_login: HashSet<String>,
     /// As contas cujo token a Anthropic recusou (401 ou 403) na última busca do uso. Só aparece
     /// nas Contas, como desconectada: não tira a conta da escolha (um 403 do uso não prova que o
     /// turno falharia).
@@ -652,6 +656,7 @@ impl Motor {
             historico_uso: HashMap::new(),
             limite_ate: HashMap::new(),
             sem_login: contas::ler_sem_login(),
+            com_login: HashSet::new(),
             recusadas: HashSet::new(),
             plano_por_conta: HashMap::new(),
             agenda_uso: Agenda::default(),
@@ -716,6 +721,8 @@ impl Motor {
             pastas.dedup();
             motor.avisos_ao_abrir.extend(crate::sistema::avisos_de_instalacao(&pastas));
         }
+        // Quais contas têm o login guardado, já na abertura: o anel do Claude não pisca.
+        motor.com_login = motor.contas.iter().filter(|c| busca::tem_login(c)).map(|c| c.id.clone()).collect();
         motor.salvar();
         motor.dados.esperar_gravacoes();
         // O último uso do plano que o Claude Code guardou de cada conta e o do Codex.
@@ -2943,6 +2950,19 @@ impl Motor {
             .unwrap_or_else(|| self.contas[0].clone())
     }
 
+    /// Há conta do Claude conectada: alguma com o login guardado e não perdido. Sem nenhuma, o
+    /// anel de uso do Claude some do canto (dono, 23/11/2026).
+    pub fn claude_conectado(&self) -> bool {
+        self.contas
+            .iter()
+            .any(|c| conta_conectada(self.com_login.contains(&c.id), self.sem_login.contains(&c.id), self.recusadas.contains(&c.id)))
+    }
+
+    /// O Codex está com a conta dele (o `auth.json`).
+    pub fn codex_conectado(&self) -> bool {
+        self.codex.as_ref().is_some_and(|c| c.logado)
+    }
+
     /// A conta perdeu o login num turno e ainda não voltou (`login_perdido`).
     pub fn conta_sem_login(&self, id: &str) -> bool {
         self.sem_login.contains(id)
@@ -3010,6 +3030,7 @@ impl Motor {
     pub fn login_refeito(&mut self, id: &str, plano: String, cx: &mut Context<Self>) {
         self.marcar_sem_login(id, false);
         self.recusadas.remove(id);
+        self.com_login.insert(id.to_string());
         if let Some(conta) = self.contas.iter_mut().find(|c| c.id == id)
             && !plano.is_empty()
         {
@@ -3305,7 +3326,8 @@ impl Motor {
                         .into_iter()
                         .map(|(conta, recusado)| {
                             let busca = busca::buscar(&conta, recusado);
-                            (conta.id, busca)
+                            let com_login = busca::tem_login(&conta);
+                            (conta.id, busca, com_login)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -3321,13 +3343,19 @@ impl Motor {
 
     /// Junta o que a rodada trouxe e diz se é para redesenhar: números novos sempre; a hora da
     /// medição e o "não deu para atualizar" só com o popover aberto (o trilho não mostra).
-    fn guardar_buscas(&mut self, buscas: Vec<(String, Busca)>) -> bool {
+    fn guardar_buscas(&mut self, buscas: Vec<(String, Busca, bool)>) -> bool {
         self.agenda_uso.terminar();
         let agora = agora();
         let mut mudou = Mudanca::Nada;
-        for (id, busca) in buscas {
+        for (id, busca, com_login) in buscas {
             if !self.contas.iter().any(|c| c.id == id) {
                 continue;
+            }
+            // O login guardado apareceu ou sumiu (entrou ou saiu pelo terminal): o anel acompanha.
+            let tinha = self.com_login.contains(&id);
+            if com_login != tinha {
+                if com_login { self.com_login.insert(id.clone()) } else { self.com_login.remove(&id) };
+                mudou = Mudanca::Numeros;
             }
             let antes = self.uso_sem_atualizar(&id);
             self.agenda_uso.registrar(&id, &busca, agora);
@@ -3361,6 +3389,7 @@ impl Motor {
         // Entrar de novo numa conta devolve ela à escolha.
         self.marcar_sem_login(&conta.id, false);
         self.recusadas.remove(&conta.id);
+        self.com_login.insert(conta.id.clone());
         self.contas.retain(|c| c.id != conta.id);
         self.contas.push(conta);
         let _ = contas::salvar(&self.contas);
@@ -5767,6 +5796,12 @@ fn quer_ao_vivo(pedido: claude::AoVivo, tem: &claude::AoVivo, reforco: bool) -> 
 /// roda (`Motor::acertar_turno_depois`).
 const ASSENTAR_A_TROCA: std::time::Duration = std::time::Duration::from_millis(600);
 
+/// A conta do Claude está conectada: tem o login guardado e não o perdeu (num turno, ou recusado
+/// pela Anthropic na busca do uso). É o que o anel de uso do Claude pede para aparecer.
+fn conta_conectada(com_login: bool, perdeu_o_login: bool, recusada: bool) -> bool {
+    com_login && !perdeu_o_login && !recusada
+}
+
 /// O turno não termina neste `result`: os agentes seguem em segundo plano (o Claude Code abre
 /// outro turno quando eles acabam) ou uma mensagem dirigida pode ainda estar na fila interna dele,
 /// e aí o turno seguinte vem na hora, no mesmo processo (ver `Processo::dirigir`).
@@ -6367,6 +6402,16 @@ mod testes {
         let antiga = motivo_sem_ultracode("opus", Some((2, 1, 268))).unwrap();
         assert!(antiga.contains("2.1.278") && antiga.contains("2.1.268"), "{antiga}");
         assert!(motivo_sem_ultracode("haiku", versao).unwrap().contains("Extra"));
+    }
+
+    /// O anel do Claude só com conta conectada (item 5 da rodada de 23/11).
+    #[test]
+    fn a_conta_do_claude_conectada_e_a_que_tem_login_e_nao_o_perdeu() {
+        use super::conta_conectada;
+        assert!(conta_conectada(true, false, false));
+        assert!(!conta_conectada(false, false, false), "sem login guardado");
+        assert!(!conta_conectada(true, true, false), "perdeu o login num turno");
+        assert!(!conta_conectada(true, false, true), "a Anthropic recusou o token");
     }
 
     #[test]

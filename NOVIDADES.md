@@ -87,6 +87,9 @@ arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code n
   mensagem podia deixar dois ou três processos do Claude na mesma conversa, cada um respondendo e
   soltando agentes por conta própria. Agora cada conversa tem um processo só, e o Parar derruba
   também o que ainda estava saindo.
+- **Uso do plano só de quem está conectado.** O anel de uso do Claude e o do Codex, no canto da
+  janela, aparecem só com a conta daquele serviço conectada. Sem conta, o anel some; entrar e
+  instalar continuam no menu do logo.
 
 ## 0.9.5
 
