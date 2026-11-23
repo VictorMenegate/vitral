@@ -1022,7 +1022,10 @@ impl ButtonVariant {
             Self::Success => cx.theme().tokens.button_success.into(),
             Self::Info => cx.theme().tokens.button_info.into(),
             Self::Ghost | Self::Link | Self::Text => cx.theme().transparent.into(),
-            Self::Custom(colors) => colors.color.mix_oklab(cx.theme().transparent, 0.2).into(),
+            // Vitral: a cor própria inteira. Misturada a 20% com o transparente, o "Permitir" claro do
+            // pedido de permissão saía quase apagado (2:1) e só clareava no hover; as outras
+            // variantes próprias do Vitral não têm cor de fundo, e não mudam.
+            Self::Custom(colors) => colors.color.into(),
         }
     }
 

@@ -21,6 +21,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   resposta embaixo. Antes as ferramentas sumiam de vez.
 - **A tela dos agentes.** A lista de todos os agentes à esquerda e o escolhido à direita, com os
   passos numerados e o resultado. Antes só dois cabiam, e os outros ficavam escondidos.
+- **O Permitir à vista.** No pedido de permissão, o botão Permitir saía quase apagado e só
+  clareava com o ponteiro em cima; agora é claro desde o começo.
+- **O resumo da volta começa pelo que precisa de você.** No "Enquanto você esteve fora", os
+  pedidos vêm primeiro, no âmbar dos pedidos, e o que terminou vem por último.
 
 ## 0.9.5
 

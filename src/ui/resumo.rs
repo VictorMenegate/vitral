@@ -109,7 +109,8 @@ impl Janela {
     pub(super) fn faixa_do_resumo(&self, motor: &Motor, onde: &'static str, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
         let resumo = motor.resumo_volta.as_ref()?;
         let desde = crate::modelo::quando_local(resumo.desde);
-        let grupos = [("terminou", "Terminou", Cores::verde()), ("precisa", "Precisa de você", Cores::espera()), ("falhou", "Falhou ou parou", Cores::vermelho())];
+        // O que pede você vem primeiro, como na lista, no âmbar dos pedidos (o das abas e da lista).
+        let grupos = [("precisa", "Precisa de você", Cores::ambar()), ("falhou", "Falhou ou parou", Cores::vermelho()), ("terminou", "Terminou", Cores::verde())];
         let mut corpo = v_flex().gap(esp::E2);
         for (grupo, titulo, cor) in grupos {
             let linhas: Vec<_> = resumo.linhas.iter().filter(|l| l.grupo == grupo).collect();

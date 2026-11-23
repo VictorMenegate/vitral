@@ -93,7 +93,8 @@ lto = "thin"
 # a dica não reabre com o ponteiro fora da janela (src/tooltip.rs); com a janela sem foco, o
 # compasso não bate e devolve a fase parada (src/spinner.rs); e o escopo da seleção de texto de fora
 # dos diálogos é o que o app escolhe (src/root.rs, `definir_escopo_de_selecao`), para cada painel de
-# conversa ter o seu. Do plano visual: a cantoneira azul, a
+# conversa ter o seu; e o botão de variante própria pinta a cor dele inteira, e não a 20%
+# (src/button/button.rs). Do plano visual: a cantoneira azul, a
 # trama e o fio de pontos (src/styled.rs, `cantoneira`, `trama`, `fio_de_pontos`), o desenho único
 # de tecla (src/kbd.rs, `desenho_de_teclas`, que a dica usa) e o rótulo de grupo da lista com busca
 # em mono 11 caixa alta com o tracinho (src/command/state.rs, `heading_row`).

@@ -179,7 +179,7 @@ fn linha_do_no(ponto: AnyElement, titulo: SharedString, meta: SharedString, fort
 /// buraco em branco em cima do resultado; dono, 23/11/2026).
 fn painel_do_agente(i: usize, a: &Agente) -> Div {
     let passos: Vec<String> = a.passos.iter().map(|p| detalhe_do_passo(p)).map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
-    let titulo_de_secao = |texto: &'static str| div().etiqueta().text_color(Cores::apagado()).child(texto);
+    let titulo_de_secao = |texto: &'static str| super::componentes::etiqueta_de_secao(texto);
     let lista_de_passos = (!passos.is_empty()).then(|| {
         let n = passos.len();
         v_flex()
@@ -196,7 +196,17 @@ fn painel_do_agente(i: usize, a: &Agente) -> Div {
                             .gap(esp::E8)
                             .items_start()
                             .child(div().flex_none().w(r(22.)).metadado().text_color(Cores::apagado()).child(format!("{}", k + 1)))
-                            .child(div().flex_1().min_w_0().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(p))
+                            // O verbo na letra do texto, e só o objeto (o arquivo, o comando) em mono, como na
+                            // trilha da conversa.
+                            .child({
+                                let (verbo, objeto) = p.split_once(' ').unwrap_or((p.as_str(), ""));
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(esp::E6)
+                                    .child(div().flex_none().metadado().text_color(Cores::tenue()).child(verbo.to_string()))
+                                    .child(div().min_w_0().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(objeto.to_string()))
+                            })
                     })),
             )
     });
@@ -312,9 +322,8 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
         div()
             .id(("agente", i))
             .rounded(raio::CARTAO)
-            .border_1()
-            .border_color(if selecionado { Cores::destaque_borda() } else { transparent_black() })
-            .when(selecionado, |s| s.bg(Cores::selecao()))
+            // O escolhido só com o fundo neutro, sem a borda azul (o "é aqui" do resto do app).
+            .when(selecionado, |s| s.bg(Cores::pressionado()))
             .when(!selecionado, |s| s.hover(|s| s.bg(Cores::hover())))
             .cursor_pointer()
             .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_do_agente(a).into(), false, relogio_vivo))
