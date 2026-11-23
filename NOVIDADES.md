@@ -9,7 +9,8 @@ O turno que está rodando ouve o que você muda nele, o pedido de permissão se 
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
 continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
 aparecem na conversa. O chat ganha um título de verdade, o aviso de fim sai legível e os arquivos
-citados abrem em mais lugares.
+citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, Ctrl+F dentro do
+arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -67,6 +68,9 @@ citados abrem em mais lugares.
 - **Buscar dentro do arquivo (Ctrl+F).** Com um clique no arquivo aberto à direita, o Ctrl+F
   busca dentro dele, com "3 de 12", as setas e o Enter para o próximo. Também está no "…" do
   arquivo. O arquivo em markdown aparece em linhas enquanto a busca está aberta.
+- **Mostrar ignorados na aba Arquivos.** O olho ao lado do ↻ mostra também o que o git ignora
+  (as pastas arquivo/, dados/ e tarefas/, com prints e exports), que antes nunca apareciam. As
+  pastas ignoradas só são lidas quando você as abre. Começa desligado.
 - **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
   que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
 - **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)

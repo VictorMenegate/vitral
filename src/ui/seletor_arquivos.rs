@@ -1,5 +1,7 @@
 //! Arquivos da pasta do chat para mencionar com "@": a lista (do git ou varrendo a pasta), o filtro
-//! (o nome antes da pasta) e as linhas da lista de escolha.
+//! (o nome antes da pasta) e as linhas da lista de escolha. E o que o git ignora, para a aba
+//! Arquivos com o "Mostrar ignorados" (`listar_com_ignorados`): as pastas só com o nome, lidas por
+//! dentro quando são abertas.
 
 use std::path::Path;
 
@@ -100,11 +102,70 @@ const NIVEIS_DE_REPOSITORIO: usize = 3;
 /// duplicaria tudo. Tudo dentro do mesmo teto.
 pub(super) fn listar(pasta: &Path) -> Vec<String> {
     let mut lista = Vec::new();
-    listar_em(pasta, "", 0, &mut lista);
+    listar_em(pasta, "", 0, &mut lista, None);
     lista
 }
 
-fn listar_em(pasta: &Path, prefixo: &str, nivel: usize, lista: &mut Vec<String>) {
+/// O que o git ignora na pasta, para a aba Arquivos com o "Mostrar ignorados" ligado.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Ignorados {
+    /// Os ignorados que aparecem, em ordem: arquivos, e pastas com a barra no fim ("arquivo/"). De
+    /// uma pasta ignorada só entra o que está dentro depois de ela ser aberta na árvore.
+    pub entradas: Vec<String>,
+    /// As pastas ignoradas já lidas (uma que não tem nada dentro aparece vazia, e não "lendo").
+    pub carregadas: std::collections::BTreeSet<String>,
+}
+
+/// Os arquivos da pasta (como `listar`) e os ignorados pelo git. Uma pasta ignorada entra só com
+/// o nome: `node_modules` e `target` têm dezenas de milhares de arquivos. O que há dentro é lido
+/// um nível por vez, só das pastas de `abertas` (as que a pessoa abriu na árvore), e tudo para em
+/// `teto` entradas, somando as duas listas.
+pub(super) fn listar_com_ignorados(pasta: &Path, abertas: &std::collections::BTreeSet<String>, teto: usize) -> (Vec<String>, Ignorados) {
+    let mut lista = Vec::new();
+    let mut entradas = Vec::new();
+    listar_em(pasta, "", 0, &mut lista, Some(&mut entradas));
+    lista.truncate(teto);
+    entradas.sort();
+    entradas.dedup();
+    entradas.truncate(teto - lista.len());
+    // As pastas que podem ser abertas: as ignoradas e as que aparecem dentro de uma delas.
+    let mut conhecidas: std::collections::HashSet<String> = entradas.iter().filter(|e| e.ends_with('/')).cloned().collect();
+    let mut carregadas = std::collections::BTreeSet::new();
+    // De fora para dentro: na ordem do conjunto, a pasta vem antes das de dentro dela.
+    for aberta in abertas {
+        if !conhecidas.contains(aberta) {
+            continue;
+        }
+        let Ok(dentro) = std::fs::read_dir(pasta.join(aberta.trim_end_matches('/'))) else {
+            continue;
+        };
+        let mut filhos: Vec<String> = dentro
+            .flatten()
+            .filter_map(|entrada| {
+                let nome = entrada.file_name().to_string_lossy().to_string();
+                // O `.git` de um worktree ou de um repositório de dentro não é arquivo de trabalho.
+                (nome != ".git").then(|| if entrada.path().is_dir() { format!("{aberta}{nome}/") } else { format!("{aberta}{nome}") })
+            })
+            .collect();
+        filhos.sort();
+        carregadas.insert(aberta.clone());
+        for filho in filhos {
+            if lista.len() + entradas.len() >= teto {
+                break;
+            }
+            if filho.ends_with('/') {
+                conhecidas.insert(filho.clone());
+            }
+            entradas.push(filho);
+        }
+    }
+    entradas.sort();
+    (lista, Ignorados { entradas, carregadas })
+}
+
+/// `ignorados`, quando vem, junta o que a lista deixa de fora: o que o git ignora (a pasta inteira
+/// como "pasta/", sem descer nela) e, na varredura, as pastas e os arquivos pulados.
+fn listar_em(pasta: &Path, prefixo: &str, nivel: usize, lista: &mut Vec<String>, mut ignorados: Option<&mut Vec<String>>) {
     // -z: sem ele, "relatório.md" sai como "relat\303\263rio.md", entre aspas.
     let ls_files = |extras: &[&str]| -> Option<Vec<String>> {
         let saida = crate::git::git_em(pasta).args(["ls-files", "-z", "--others", "--exclude-standard"]).args(extras).output().ok()?;
@@ -121,17 +182,26 @@ fn listar_em(pasta: &Path, prefixo: &str, nivel: usize, lista: &mut Vec<String>)
             }
         }
         // E os que ele ignora: as pastas ignoradas que têm `.git` (pasta) dentro.
-        if nivel < NIVEIS_DE_REPOSITORIO {
-            de_dentro.extend(ls_files(&["--ignored", "--directory"]).unwrap_or_default().into_iter().filter(|e| e.ends_with('/')));
+        let desce = nivel < NIVEIS_DE_REPOSITORIO;
+        if desce || ignorados.is_some() {
+            for entrada in ls_files(&["--ignored", "--directory"]).unwrap_or_default() {
+                if entrada.ends_with('/') {
+                    de_dentro.push(entrada);
+                } else if let Some(ignorados) = ignorados.as_deref_mut() {
+                    ignorados.push(format!("{prefixo}{entrada}"));
+                }
+            }
             de_dentro.sort();
             de_dentro.dedup();
             for sub in de_dentro {
-                if lista.len() >= TETO {
-                    break;
-                }
                 let caminho = pasta.join(sub.trim_end_matches('/'));
-                if caminho.join(".git").is_dir() {
-                    listar_em(&caminho, &format!("{prefixo}{sub}"), nivel + 1, lista);
+                if desce && caminho.join(".git").is_dir() {
+                    if lista.len() < TETO {
+                        listar_em(&caminho, &format!("{prefixo}{sub}"), nivel + 1, lista, ignorados.as_deref_mut());
+                    }
+                } else if let Some(ignorados) = ignorados.as_deref_mut() {
+                    // A pasta ignorada (ou o worktree, que a lista pula) entra só com o nome.
+                    ignorados.push(format!("{prefixo}{sub}"));
                 }
             }
         }
@@ -145,16 +215,28 @@ fn listar_em(pasta: &Path, prefixo: &str, nivel: usize, lista: &mut Vec<String>)
         };
         for entrada in entradas.flatten() {
             let nome = entrada.file_name().to_string_lossy().to_string();
+            let caminho = entrada.path();
+            // O que a varredura pula conta como ignorado: a pasta só com o nome, o arquivo oculto inteiro.
+            let mut pulado = |e_pasta: bool| {
+                if let (Some(ignorados), Ok(relativo)) = (ignorados.as_deref_mut(), caminho.strip_prefix(pasta))
+                    && nome != ".git"
+                {
+                    let barra = if e_pasta { "/" } else { "" };
+                    ignorados.push(format!("{prefixo}{}{barra}", crate::git::caminho_em_texto(relativo)));
+                }
+            };
             if nome.starts_with('.')
                 || matches!(nome.as_str(), "node_modules" | "target" | "dist" | "build" | "__pycache__")
             {
+                pulado(caminho.is_dir());
                 continue;
             }
-            let caminho = entrada.path();
             if caminho.is_dir() {
                 // Ambiente virtual do Python (venv, env...), seja qual for o nome.
                 if !caminho.join("pyvenv.cfg").exists() {
                     pendentes.push(caminho);
+                } else {
+                    pulado(true);
                 }
             } else if let Ok(relativo) = caminho.strip_prefix(pasta) {
                 // Com `/`, como a lista do git (no Windows o caminho viria com `\`).
@@ -296,5 +378,60 @@ mod testes {
         assert_eq!(filtrar_arquivos(&arquivos, "CONFIGURACAO mod", 10), ["src/configuração/mod.rs"]);
         // E quem escreve com acento acha o nome sem ele.
         assert_eq!(filtrar_arquivos(&["docs/relatorio.md".to_string()], "relatório", 10), ["docs/relatorio.md"]);
+    }
+
+    #[test]
+    fn os_ignorados_entram_pela_pasta_e_so_abrem_quando_pedidos() {
+        use super::listar_com_ignorados;
+        use std::collections::BTreeSet;
+        let raiz = std::env::temp_dir().join(format!("vitral-ignorados-{}", crate::modelo::novo_id()));
+        for pasta in ["arquivo/prints", "node_modules/pacote", "src"] {
+            std::fs::create_dir_all(raiz.join(pasta)).unwrap();
+        }
+        git(&raiz, &["init", "-q"]);
+        std::fs::write(raiz.join(".gitignore"), "arquivo/\nnode_modules/\n*.log\n").unwrap();
+        for arquivo in ["src/a.rs", "arquivo/print.png", "arquivo/prints/tela.png", "node_modules/pacote/index.js", "saida.log"] {
+            std::fs::write(raiz.join(arquivo), "x").unwrap();
+        }
+        let abertas = |pastas: &[&str]| pastas.iter().map(|p| p.to_string()).collect::<BTreeSet<String>>();
+        // Fechadas, as pastas ignoradas entram só com o nome: nada de dentro do node_modules.
+        let (lista, ignorados) = listar_com_ignorados(&raiz, &abertas(&[]), 100);
+        let mut lista = lista;
+        lista.sort();
+        assert_eq!(lista, [".gitignore", "src/a.rs"]);
+        assert_eq!(ignorados.entradas, ["arquivo/", "node_modules/", "saida.log"]);
+        assert!(ignorados.carregadas.is_empty());
+        // Aberta, a pasta mostra um nível: os arquivos e as pastas dela, ainda fechadas.
+        let (_, ignorados) = listar_com_ignorados(&raiz, &abertas(&["arquivo/"]), 100);
+        assert_eq!(ignorados.entradas, ["arquivo/", "arquivo/print.png", "arquivo/prints/", "node_modules/", "saida.log"]);
+        assert_eq!(ignorados.carregadas, abertas(&["arquivo/"]));
+        // A de dentro abre do mesmo jeito; a que não é ignorada (ou não existe) não é lida por aqui.
+        let (_, ignorados) = listar_com_ignorados(&raiz, &abertas(&["arquivo/", "arquivo/prints/", "src/", "nada/"]), 100);
+        assert!(ignorados.entradas.contains(&"arquivo/prints/tela.png".to_string()));
+        assert!(!ignorados.entradas.iter().any(|e| e.starts_with("src/") || e.starts_with("nada/")));
+        assert_eq!(ignorados.carregadas, abertas(&["arquivo/", "arquivo/prints/"]));
+        // O teto vale para a soma: com 2 da lista e teto de 4, entram só 2 ignorados.
+        let (lista, ignorados) = listar_com_ignorados(&raiz, &abertas(&["arquivo/", "node_modules/"]), 4);
+        assert_eq!(lista.len() + ignorados.entradas.len(), 4);
+        let _ = std::fs::remove_dir_all(&raiz);
+    }
+
+    #[test]
+    fn sem_git_as_pastas_puladas_sao_as_ignoradas() {
+        use super::listar_com_ignorados;
+        let raiz = std::env::temp_dir().join(format!("vitral-ignorados-sem-git-{}", crate::modelo::novo_id()));
+        let projeto = raiz.join("projeto");
+        std::fs::create_dir_all(projeto.join("node_modules/pacote")).unwrap();
+        std::fs::create_dir_all(projeto.join("src")).unwrap();
+        std::fs::write(projeto.join("node_modules/pacote/index.js"), "x").unwrap();
+        std::fs::write(projeto.join("src/a.rs"), "x").unwrap();
+        std::fs::write(projeto.join(".env"), "x").unwrap();
+        // O repositório de cima ignora o projeto: vale a varredura, que pula o node_modules e o oculto.
+        git(&raiz, &["init", "-q"]);
+        std::fs::write(raiz.join(".gitignore"), "projeto/\n").unwrap();
+        let (lista, ignorados) = listar_com_ignorados(&projeto, &Default::default(), 100);
+        assert_eq!(lista, ["src/a.rs"]);
+        assert_eq!(ignorados.entradas, [".env", "node_modules/"]);
+        let _ = std::fs::remove_dir_all(&raiz);
     }
 }

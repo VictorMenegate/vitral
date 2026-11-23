@@ -404,6 +404,12 @@ struct ArquivosLidos {
     lidos_em: Option<std::time::Instant>,
     /// A pasta da releitura em andamento, uma por vez.
     relendo: Option<PathBuf>,
+    /// Com o "Mostrar ignorados" da aba Arquivos: o que o git ignora (as pastas com a barra no
+    /// fim) e a lista da árvore com eles juntos, a mesma enquanto nada muda (a árvore não é
+    /// refeita à toa).
+    ignorados: Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)>,
+    /// As pastas ignoradas que a pessoa abriu na árvore: só elas são lidas por dentro.
+    ignoradas_abertas: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -471,6 +477,9 @@ pub struct Janela {
     arquivo_selecao: Option<(u32, u32)>,
     arquivo_ancora: Option<u32>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
+    /// "Mostrar ignorados" na aba Arquivos: o que o git deixa de fora (arquivo/, dados/, tarefas/)
+    /// entra na árvore. Desligado ao abrir o Vitral.
+    mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
     /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
     foco_arquivo: FocusHandle,
@@ -801,6 +810,7 @@ impl Janela {
             arquivo_selecao: None,
             arquivo_ancora: None,
             cache_arquivos: Default::default(),
+            mostrar_ignorados: false,
             arquivo_lido: Default::default(),
             foco_arquivo: cx.focus_handle(),
             busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
@@ -1127,18 +1137,29 @@ impl Janela {
             pastas: Default::default(),
             lidos_em: None,
             relendo: None,
+            ignorados: None,
+            ignoradas_abertas: Default::default(),
         });
         let vencida = lidos.lidos_em.is_none_or(|q| q.elapsed() >= Duration::from_secs(20));
         if vencida && lidos.relendo.is_none() {
             lidos.relendo = Some(pasta.to_path_buf());
             let pasta = pasta.to_path_buf();
+            // Com o "Mostrar ignorados", a leitura traz também o que o git ignora e o que há
+            // dentro das pastas ignoradas que estão abertas na árvore.
+            let com_ignorados = self.mostrar_ignorados;
+            let abertas = lidos.ignoradas_abertas.clone();
             cx.spawn(async move |this, cx| {
-                let (lida, pastas) = {
-                    let pasta = pasta.clone();
+                let (lida, pastas, ignorados) = {
+                    let (pasta, abertas) = (pasta.clone(), abertas.clone());
                     cx.background_spawn(async move {
-                        let lida = seletor_arquivos::listar(&pasta);
+                        let (lida, ignorados) = if com_ignorados {
+                            let (lida, ignorados) = seletor_arquivos::listar_com_ignorados(&pasta, &abertas, seletor_arquivos::TETO);
+                            (lida, Some(ignorados))
+                        } else {
+                            (seletor_arquivos::listar(&pasta), None)
+                        };
                         let pastas = seletor_arquivos::pastas_dos_arquivos(&lida);
-                        (lida, pastas)
+                        (lida, pastas, ignorados)
                     })
                     .await
                 };
@@ -1151,14 +1172,26 @@ impl Janela {
                         };
                         lidos.relendo = None;
                         let primeira = lidos.lidos_em.is_none() && lidos.lista.is_empty();
-                        lidos.lidos_em = Some(std::time::Instant::now());
+                        // O que foi pedido enquanto ela rodava (ligar os ignorados, abrir uma
+                        // pasta ignorada) pede outra leitura já.
+                        let em_dia = this.mostrar_ignorados == com_ignorados && lidos.ignoradas_abertas == abertas;
+                        lidos.lidos_em = em_dia.then(std::time::Instant::now);
                         // A mesma lista fica com o mesmo Rc: a árvore não é refeita à toa.
                         let mudou = *lidos.lista != lida;
                         if mudou {
                             lidos.lista = std::rc::Rc::new(lida);
                             lidos.pastas = std::rc::Rc::new(pastas);
                         }
-                        mudou || primeira
+                        let mudaram_os_ignorados = lidos.ignorados.as_ref().map(|(i, _)| i.as_ref()) != ignorados.as_ref();
+                        if mudou || mudaram_os_ignorados {
+                            lidos.ignorados = ignorados.map(|ignorados| {
+                                // A lista da árvore: os arquivos e os ignorados juntos.
+                                let mut juntos = lidos.lista.as_ref().clone();
+                                juntos.extend(ignorados.entradas.iter().cloned());
+                                (std::rc::Rc::new(ignorados), std::rc::Rc::new(juntos))
+                            });
+                        }
+                        mudou || mudaram_os_ignorados || primeira || !em_dia
                     };
                     if mudou {
                         cx.notify();
@@ -1166,6 +1199,52 @@ impl Janela {
                 });
             })
             .detach();
+        }
+    }
+
+    /// Os ignorados de uma pasta e a lista da árvore com eles, quando o "Mostrar ignorados" está
+    /// ligado e a leitura já chegou.
+    pub(super) fn ignorados_da_pasta(
+        &self,
+        pasta: &std::path::Path,
+    ) -> Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)> {
+        if !self.mostrar_ignorados {
+            return None;
+        }
+        self.cache_arquivos.borrow().get(pasta)?.ignorados.clone()
+    }
+
+    /// O botão "Mostrar ignorados" da aba Arquivos: liga ou desliga e relê a pasta.
+    pub(super) fn alternar_ignorados(&mut self, pasta: &std::path::Path, cx: &mut Context<Self>) {
+        self.mostrar_ignorados = !self.mostrar_ignorados;
+        self.reler_arquivos(pasta);
+        cx.notify();
+    }
+
+    /// Uma pasta foi aberta na árvore: se é uma ignorada ainda não lida, a próxima leitura traz o
+    /// que há dentro dela (um nível).
+    pub(super) fn pasta_aberta_na_arvore(&mut self, pasta: &std::path::Path, id: &str, cx: &mut Context<Self>) {
+        if !self.mostrar_ignorados {
+            return;
+        }
+        let chave = format!("{id}/");
+        let pedir = {
+            let mut cache = self.cache_arquivos.borrow_mut();
+            let Some(lidos) = cache.get_mut(pasta) else {
+                return;
+            };
+            let por_ler = lidos
+                .ignorados
+                .as_ref()
+                .is_some_and(|(i, _)| i.entradas.binary_search(&chave).is_ok() && !i.carregadas.contains(&chave));
+            let pedir = por_ler && lidos.ignoradas_abertas.insert(chave);
+            if pedir {
+                lidos.lidos_em = None;
+            }
+            pedir
+        };
+        if pedir {
+            cx.notify();
         }
     }
 
