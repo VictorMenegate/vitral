@@ -168,6 +168,12 @@ impl Dados {
         self.pasta.join("anexos")
     }
 
+    /// As imagens que as ferramentas de um chat devolveram (`imagens_recebidas`); com `""`, a
+    /// pasta de todas.
+    pub fn pasta_imagens(&self, chat: &str) -> PathBuf {
+        self.pasta.join("imagens").join(chat)
+    }
+
     pub fn arquivo_migracao(&self) -> PathBuf {
         self.pasta.join("migracao.json")
     }
@@ -365,9 +371,23 @@ impl Dados {
         Ok(())
     }
 
-    /// Apaga as mensagens de um chat, na fila, depois do estado que já não o tem.
+    /// Os chats com conversa gravada (`chats/<id>.json`), estejam ou não no estado.
+    pub fn chats_gravados(&self) -> Vec<String> {
+        fs::read_dir(self.pasta.join("chats"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entrada| entrada.file_name().to_string_lossy().strip_suffix(".json").map(str::to_string))
+            .collect()
+    }
+
+    /// Apaga as mensagens de um chat, na fila, depois do estado que já não o tem, e as imagens
+    /// que as ferramentas dele devolveram.
     pub fn apagar_chat(&self, id: &str) {
         self.gravador.gravar(self.arquivo_chat(id), None, false);
+        if !id.is_empty() {
+            crate::imagens_recebidas::apagar_do_chat(&self.pasta_imagens(id));
+        }
     }
 
     /// Espera tudo o que está na fila chegar ao disco (ao fechar o Vitral).

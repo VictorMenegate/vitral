@@ -150,6 +150,10 @@ pub enum Item {
         /// têm (rodada de uso, item 5.1).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mudanca: Option<Mudanca>,
+        /// As imagens que o resultado trouxe (o print do navegador por MCP, a imagem gerada), já
+        /// gravadas na pasta do chat: só os caminhos, nunca o base64 (`imagens_recebidas`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        imagens: Vec<PathBuf>,
     },
     /// Um bloco de raciocínio do modelo: o texto (pode vir vazio, quando o Claude Code não o
     /// entrega) e quanto durou, em milissegundos (0: não medido).

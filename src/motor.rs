@@ -451,6 +451,12 @@ impl Motor {
             for id in &normalizado.chats_a_apagar {
                 dados.apagar_chat(id);
             }
+            // As imagens que as ferramentas devolveram (`imagens_recebidas`): saem as dos chats
+            // que não existem mais e, acima do teto de todas juntas, as mais antigas. A conversa
+            // que o estado não lista mas ainda tem o arquivo dela (um estado que voltou ao
+            // `.anterior`) fica com as imagens.
+            let vivos = chats.iter().map(|c| c.id.clone()).chain(dados.chats_gravados()).collect();
+            crate::imagens_recebidas::varrer(&dados.pasta_imagens(""), &vivos, crate::imagens_recebidas::TETO_TOTAL);
             // A pasta de um chat sem pasta (apagada à mão) volta vazia.
             let avulsos = dados.pasta_avulso("");
             for c in chats.iter().filter(|c| c.cwd.starts_with(&avulsos)) {
@@ -3498,6 +3504,7 @@ impl Motor {
                         arquivo,
                         sub: None,
                         mudanca,
+                        imagens: Vec::new(),
                     });
                 }
                 for (caminho, outro) in mexidos {
@@ -3550,6 +3557,17 @@ impl Motor {
                             break;
                         }
                     }
+                }
+            }
+            // As imagens que o resultado trouxe vão para a pasta do chat nos dados do Vitral, e a
+            // chamada guarda os caminhos: o base64 não entra no estado (`imagens_recebidas`).
+            Evento::ImagensDoResultado { id, imagens } => {
+                let pasta = self.dados.pasta_imagens(chat_id);
+                let guardou = self
+                    .chat_mut(chat_id)
+                    .is_some_and(|c| crate::imagens_recebidas::guardar_na_chamada(&mut c.itens, &id, &pasta, &imagens));
+                if guardou {
+                    self.chats_sujos.insert(chat_id.to_string());
                 }
             }
             Evento::SubLancado { pai } => {
@@ -5400,6 +5418,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: Some(crate::modelo::Mudanca::default()),
+            imagens: Vec::new(),
         };
         let mut a = chat("a");
         let mut b = chat("b");
@@ -5469,6 +5488,7 @@ mod testes {
             arquivo: Some("src/ui/fila.rs".into()),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let itens = vec![
             usuario("antes da dupla"),
@@ -5527,6 +5547,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         assert!(!editou_arquivo_desde(&[ferramenta("Read", 10, false), ferramenta("Bash", 11, false)], 0));
         assert!(!editou_arquivo_desde(&[ferramenta("Edit", 10, true)], 0));
@@ -5561,6 +5582,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         assert!(ferramenta_de_escrita("Edit") && ferramenta_de_escrita("Write") && ferramenta_de_escrita("MultiEdit"));
         assert!(ferramenta_de_escrita("mcp__ai-memory__memory_write_page"));
@@ -6193,6 +6215,7 @@ mod testes_da_pergunta_do_plano_e_da_compactacao {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 

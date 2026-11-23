@@ -311,6 +311,13 @@ pub enum Evento {
         conteudo: String,
         erro: bool,
     },
+    /// As imagens que o resultado da chamada `id` trouxe (o print do navegador por MCP, a imagem
+    /// gerada, o Read de uma imagem), já fora do base64. Vem logo depois do `ResultadoFerramenta`
+    /// dela; o motor as grava na pasta do chat e a conversa fica só com os caminhos.
+    ImagensDoResultado {
+        id: String,
+        imagens: Vec<crate::imagens_recebidas::ImagemRecebida>,
+    },
     /// Um hook `PreToolUse` do usuário mandou perguntar antes de uma chamada dessa ferramenta
     /// (`permissionDecision: "ask"`), com o motivo que ele deu (pode vir vazio). Vem do
     /// `hook_response` (`--include-hook-events`), logo antes do pedido de permissão da chamada,
@@ -1688,13 +1695,21 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .into_iter()
                 .flatten()
                 .filter(|bloco| bloco["type"] == "tool_result")
-                .map(|bloco| match lancado {
-                    true => Evento::SubLancado { pai: texto(&bloco["tool_use_id"]) },
-                    false => Evento::ResultadoFerramenta {
-                        id: texto(&bloco["tool_use_id"]),
-                        conteudo: conteudo_resultado(&bloco["content"]),
-                        erro: bloco["is_error"].as_bool().unwrap_or(false),
-                    },
+                .flat_map(|bloco| {
+                    let id = texto(&bloco["tool_use_id"]);
+                    if lancado {
+                        return vec![Evento::SubLancado { pai: id }];
+                    }
+                    // O texto vira o resultado; as imagens (o print do navegador por MCP, o Read
+                    // de um .png) saem num evento à parte, já fora do base64, para o motor
+                    // guardar em disco: o base64 não vai para o histórico.
+                    let (conteudo, imagens) = crate::imagens_recebidas::partes_do_resultado(&bloco["content"]);
+                    let erro = bloco["is_error"].as_bool().unwrap_or(false);
+                    let mut eventos = vec![Evento::ResultadoFerramenta { id: id.clone(), conteudo, erro }];
+                    if !imagens.is_empty() {
+                        eventos.push(Evento::ImagensDoResultado { id, imagens });
+                    }
+                    eventos
                 })
                 .collect()
         }
@@ -1776,25 +1791,6 @@ fn hook_que_pediu(valor: &Value) -> Option<Evento> {
         ferramenta: ferramenta.to_string(),
         motivo: decisao["permissionDecisionReason"].as_str().unwrap_or_default().trim().to_string(),
     })
-}
-
-fn conteudo_resultado(conteudo: &Value) -> String {
-    match conteudo {
-        Value::String(s) => s.clone(),
-        // Um Read de imagem devolve só o bloco "image" (o base64 dela, que não vai para o
-        // histórico): sem a marca, a chamada aberta ficava numa caixa vazia, como se tivesse
-        // sido interrompida.
-        Value::Array(partes) => partes
-            .iter()
-            .filter_map(|p| match p["type"].as_str() {
-                Some("image") => Some(format!("({})", p["source"]["media_type"].as_str().unwrap_or("imagem"))),
-                _ => p["text"].as_str().map(str::to_string),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Null => String::new(),
-        outro => outro.to_string(),
-    }
 }
 
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
@@ -3707,5 +3703,132 @@ mod testes_da_pergunta_do_plano_e_da_compactacao {
         // Como no de verdade: o /compact termina sem texto.
         assert!(!eventos.iter().any(|e| matches!(e, Evento::Texto(_))), "{eventos:?}");
         assert!(matches!(eventos.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto.is_empty()), "{eventos:?}");
+    }
+}
+
+#[cfg(test)]
+mod testes_das_imagens_do_resultado {
+    use super::*;
+    use crate::{imagens_recebidas, modelo::Item};
+
+    /// Um PNG de mentira: a assinatura, o IHDR com as medidas e um recheio.
+    fn png(largura: u32, altura: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend([0, 0, 0, 13]);
+        bytes.extend(b"IHDR");
+        bytes.extend(largura.to_be_bytes());
+        bytes.extend(altura.to_be_bytes());
+        bytes.extend((0..6000u32).map(|i| (i * 37 % 253) as u8));
+        bytes
+    }
+
+    fn resultado(id: &str, conteudo: Value) -> Value {
+        json!({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": id, "content": conteudo},
+        ]}})
+    }
+
+    fn bloco_de_imagem(bytes: &[u8]) -> Value {
+        json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64(bytes)}})
+    }
+
+    /// O print de um MCP de navegador: o texto vira o resultado e a imagem sai num evento à
+    /// parte, já fora do base64.
+    #[test]
+    fn o_resultado_com_imagem_entrega_o_texto_e_a_imagem_separados() {
+        let imagem = png(1280, 800);
+        let linha = resultado("toolu_1", json!([{"type": "text", "text": "Took a screenshot of the page."}, bloco_de_imagem(&imagem)]));
+        let eventos = interpretar(&linha);
+        match eventos.as_slice() {
+            [Evento::ResultadoFerramenta { id, conteudo, erro: false }, Evento::ImagensDoResultado { id: da_imagem, imagens }] => {
+                assert_eq!((id.as_str(), da_imagem.as_str()), ("toolu_1", "toolu_1"));
+                assert_eq!(conteudo, "Took a screenshot of the page.");
+                assert_eq!(imagens.len(), 1);
+                assert_eq!((imagens[0].extensao, &imagens[0].bytes), ("png", &imagem));
+            }
+            outros => panic!("eventos inesperados: {outros:?}"),
+        }
+        // Nem o texto de depuração dos eventos carrega a imagem.
+        assert!(format!("{eventos:?}").len() < 600);
+    }
+
+    /// O Read de uma imagem devolve só o bloco dela: o resultado fica sem texto (a miniatura é o
+    /// que se mostra), e o resultado sem imagem continua um evento só.
+    #[test]
+    fn o_resultado_so_com_a_imagem_fica_sem_texto() {
+        let eventos = interpretar(&resultado("toolu_2", json!([bloco_de_imagem(&png(40, 20))])));
+        assert!(matches!(eventos.as_slice(), [
+            Evento::ResultadoFerramenta { conteudo, .. },
+            Evento::ImagensDoResultado { imagens, .. },
+        ] if conteudo.is_empty() && imagens.len() == 1));
+        let eventos = interpretar(&resultado("toolu_3", json!("saída do comando")));
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "saída do comando"));
+        let eventos = interpretar(&resultado("toolu_4", json!([{"type": "text", "text": "um"}, {"type": "text", "text": "dois"}])));
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "um\ndois"));
+    }
+
+    /// A imagem que não dá para guardar deixa a marca dela no texto, como antes.
+    #[test]
+    fn a_imagem_que_nao_da_para_guardar_vira_a_marca_no_texto() {
+        let linha = resultado("toolu_5", json!([
+            {"type": "text", "text": "Diagrama:"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/svg+xml", "data": base64(b"<svg></svg>")}},
+        ]));
+        let eventos = interpretar(&linha);
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "Diagrama:\n(image/svg+xml)"));
+    }
+
+    /// Da linha do Claude Code à conversa gravada: a imagem vai para a pasta do chat e o que fica
+    /// na conversa (o que o `salvar_chat` grava) é o caminho. O base64 não aparece em lugar nenhum.
+    #[test]
+    fn o_base64_da_imagem_nao_chega_a_conversa_gravada() {
+        let raiz = std::env::temp_dir().join(format!("vitral-claude-imagens-{}", crate::modelo::novo_id()));
+        let dados = crate::dados::Dados::em(&raiz);
+        let imagem = png(1920, 1080);
+        let em_base64 = base64(&imagem);
+        let linha = resultado("toolu_print", json!([{"type": "text", "text": "Print tirado."}, bloco_de_imagem(&imagem)]));
+
+        // A chamada já está na conversa; os eventos do resultado chegam como o motor os trata.
+        let mut itens = vec![Item::Ferramenta {
+            id: "toolu_print".into(),
+            nome: "mcp__chrome-devtools__take_screenshot".into(),
+            resumo: "mcp__chrome-devtools__take_screenshot".into(),
+            resultado: None,
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            imagens: Vec::new(),
+        }];
+        for evento in interpretar(&linha) {
+            match evento {
+                Evento::ResultadoFerramenta { conteudo, .. } => {
+                    if let Item::Ferramenta { resultado, .. } = &mut itens[0] {
+                        *resultado = Some(conteudo);
+                    }
+                }
+                Evento::ImagensDoResultado { id, imagens } => {
+                    assert!(imagens_recebidas::guardar_na_chamada(&mut itens, &id, &dados.pasta_imagens("chat-1"), &imagens));
+                }
+                outro => panic!("evento inesperado: {outro:?}"),
+            }
+        }
+
+        let Item::Ferramenta { resultado, imagens, .. } = &itens[0] else { unreachable!() };
+        assert_eq!(resultado.as_deref(), Some("Print tirado."));
+        assert_eq!(imagens.len(), 1);
+        assert!(imagens[0].starts_with(dados.pasta_imagens("chat-1")));
+        assert_eq!(std::fs::read(&imagens[0]).unwrap(), imagem);
+
+        let gravado = serde_json::to_string_pretty(&itens).unwrap();
+        assert!(gravado.contains(&imagens[0].display().to_string()));
+        for pedaco in [&em_base64[..64], &em_base64[em_base64.len() / 2..em_base64.len() / 2 + 64]] {
+            assert!(!gravado.contains(pedaco), "o base64 foi para a conversa");
+        }
+        assert!(!gravado.contains("(image/png)"));
+        assert!(gravado.len() < 1500, "{} bytes", gravado.len());
+        let _ = std::fs::remove_dir_all(&raiz);
     }
 }

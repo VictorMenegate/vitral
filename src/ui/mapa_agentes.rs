@@ -338,6 +338,7 @@ mod testes {
             arquivo: None,
             sub,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -365,6 +366,7 @@ mod testes {
                 arquivo: None,
                 sub: None,
                 mudanca: None,
+                imagens: Vec::new(),
             },
         ];
         let agentes = agentes_do_chat(&itens, true, 345);

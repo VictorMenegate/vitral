@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use crate::{
     claude::{Evento, Opcoes},
-    processos,
+    imagens_recebidas, processos,
 };
 
 pub mod servidor;
@@ -171,6 +171,8 @@ impl Leitor {
         let id = item["id"].as_str().unwrap_or_default().to_string();
         let texto = |chave: &str| item[chave].as_str().unwrap_or_default().to_string();
         let falhou = item["status"] == "failed";
+        // A chamada deste item já nasceu, numa linha de antes (o começo dele).
+        let ja_aberta = self.abertos.contains(&id);
         // A chamada (uma vez só, no começo ou já no fim) e o resultado quando o item termina.
         let mut ferramenta = |nome: &str, entrada: Value, resultado: String, erro: bool| {
             let mut eventos = Vec::new();
@@ -211,12 +213,60 @@ impl Leitor {
             }
             "mcp_tool_call" => {
                 let nome = format!("mcp__{}__{}", texto("server"), texto("tool"));
-                let resultado = match &item["result"] {
-                    Value::Null => item["error"]["message"].as_str().unwrap_or_default().to_string(),
-                    Value::String(s) => s.clone(),
-                    outro => outro.to_string(),
+                // O resultado traz os blocos do MCP (`McpToolCallResult { content, … }`): o texto
+                // vira o resultado e a imagem (o print do navegador, em `data` e `mimeType`) sai à
+                // parte, para o Vitral guardar. Antes ia o JSON inteiro, com o base64 dentro.
+                let (resultado, imagens) = match &item["result"] {
+                    Value::Null => (item["error"]["message"].as_str().unwrap_or_default().to_string(), Vec::new()),
+                    Value::String(s) => (s.clone(), Vec::new()),
+                    resultado if resultado["content"].is_array() => {
+                        let (texto, imagens) = imagens_recebidas::partes_do_resultado(&resultado["content"]);
+                        // Só o dado estruturado, sem bloco nenhum de texto: ele é o resultado.
+                        match &resultado["structuredContent"] {
+                            estruturado if texto.is_empty() && imagens.is_empty() && !estruturado.is_null() => (estruturado.to_string(), imagens),
+                            _ => (texto, imagens),
+                        }
+                    }
+                    outro => (outro.to_string(), Vec::new()),
                 };
-                ferramenta(&nome, item["arguments"].clone(), resultado, falhou)
+                let mut eventos = ferramenta(&nome, item["arguments"].clone(), resultado, falhou);
+                if terminou && !imagens.is_empty() {
+                    eventos.push(Evento::ImagensDoResultado { id: id.clone(), imagens });
+                }
+                eventos
+            }
+            // O `view_image` (conferido no app-server do 0.169.0, 23/11/2026): o item traz o
+            // caminho da imagem no disco, sem base64. É a leitura de um arquivo, que a conversa
+            // já mostra com a miniatura.
+            "imageView" | "image_view" => ferramenta("Read", json!({ "file_path": texto("path") }), String::new(), falhou),
+            // A imagem gerada (pelo schema do app-server do 0.169.0; sem turno de verdade para
+            // conferir): `savedPath` é o arquivo que o Codex gravou e `result`, o base64. A
+            // chamada que nasce aqui aponta para o arquivo; a que já nasceu no começo do item
+            // (sem o caminho) ganha a imagem à parte, do base64 ou do arquivo.
+            "imageGeneration" | "image_generation" => {
+                let campo = |a: &str, b: &str| item[a].as_str().or(item[b].as_str()).filter(|t| !t.is_empty());
+                let gravada = campo("savedPath", "saved_path");
+                let mut entrada = json!({ "prompt": campo("revisedPrompt", "revised_prompt") });
+                let recebida = match (gravada, item["result"].as_str().filter(|d| !d.is_empty())) {
+                    _ if !terminou => None,
+                    (Some(caminho), _) if !ja_aberta => {
+                        entrada["file_path"] = json!(caminho);
+                        None
+                    }
+                    (_, Some(dados)) => Some(imagens_recebidas::de_base64("image/png", dados)),
+                    (Some(caminho), None) => imagens_recebidas::do_arquivo(Path::new(caminho)).map(Ok),
+                    (None, None) => None,
+                };
+                let (conteudo, imagens) = match recebida {
+                    Some(Ok(imagem)) => (String::new(), vec![imagem]),
+                    Some(Err(marca)) => (marca, Vec::new()),
+                    None => (String::new(), Vec::new()),
+                };
+                let mut eventos = ferramenta("ImageGeneration", entrada, conteudo, falhou || item["failure"].is_object());
+                if !imagens.is_empty() {
+                    eventos.push(Evento::ImagensDoResultado { id: id.clone(), imagens });
+                }
+                eventos
             }
             "web_search" => ferramenta("WebSearch", json!({ "query": texto("query") }), String::new(), falhou),
             _ => Vec::new(),
@@ -571,5 +621,98 @@ mod testes {
         let modelos = modelos_de(&catalogo);
         assert_eq!(modelos.iter().map(|m| (m.slug.as_str(), m.nome.as_str())).collect::<Vec<_>>(), [("gpt-6.1-sol", "GPT-6.1-Sol"), ("gpt-6-luna", "gpt-6-luna")]);
         assert_eq!((modelos[0].esforco.as_str(), modelos[1].esforco.as_str()), ("low", ""));
+    }
+
+    /// O `view_image` do Codex no app-server (conferido no 0.169.0, 23/11/2026): o item
+    /// `imageView` traz o caminho da imagem no disco, sem base64. Vira a leitura desse arquivo,
+    /// que a conversa já mostra com a miniatura.
+    #[test]
+    fn o_view_image_do_codex_vira_a_leitura_do_arquivo() {
+        let item = json!({"type": "imageView", "id": "exec-52a6", "path": "/p/prints/a.png", "startedAtMs": 1, "completedAtMs": null});
+        let mut leitor = Leitor::default();
+        let comeco = leitor.linha(&json!({"type": "item.started", "item": item}));
+        assert!(matches!(comeco.as_slice(), [Evento::Ferramenta { id, nome, entrada }]
+            if id == "exec-52a6" && nome == "Read" && entrada["file_path"] == "/p/prints/a.png"));
+        let fim = leitor.linha(&json!({"type": "item.completed", "item": item}));
+        assert!(matches!(fim.as_slice(), [Evento::ResultadoFerramenta { id, conteudo, erro: false }] if id == "exec-52a6" && conteudo.is_empty()));
+        // A chamada guarda o arquivo: é por ele que a miniatura aparece.
+        let (_, arquivo) = crate::claude::detalhe_ferramenta("Read", &json!({"file_path": "/p/prints/a.png"}));
+        assert_eq!(arquivo.as_deref(), Some("/p/prints/a.png"));
+    }
+
+    /// A ferramenta MCP que devolve imagem (o print do navegador): o resultado do Codex traz os
+    /// blocos do MCP, com a imagem em `data` e `mimeType`. O texto vira o resultado e a imagem
+    /// sai à parte; o base64 não vai no texto (antes ia o JSON inteiro do resultado).
+    #[test]
+    fn a_imagem_do_mcp_do_codex_sai_do_texto_do_resultado() {
+        let png: Vec<u8> = b"\x89PNG\r\n\x1a\n".iter().copied().chain((0..3000u32).map(|i| (i * 7 % 251) as u8)).collect();
+        // "iVBORw0KGgo" é o começo de todo PNG em base64.
+        let em_base64 = {
+            const ALFABETO: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut saida = String::new();
+            for bloco in png.chunks(3) {
+                let b = [bloco[0], *bloco.get(1).unwrap_or(&0), *bloco.get(2).unwrap_or(&0)];
+                let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+                for i in 0..4 {
+                    saida.push(if i <= bloco.len() { ALFABETO[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+                }
+            }
+            saida
+        };
+        assert!(em_base64.starts_with("iVBORw0KGgo"));
+        let item = json!({"type": "mcp_tool_call", "id": "mcp-1", "server": "chrome-devtools", "tool": "take_screenshot",
+            "status": "completed", "arguments": {}, "error": null, "result": {
+                "content": [{"type": "text", "text": "Took a screenshot."}, {"type": "image", "data": em_base64, "mimeType": "image/png"}],
+                "structuredContent": null, "_meta": null,
+            }});
+        let mut leitor = Leitor::default();
+        let eventos = leitor.linha(&json!({"type": "item.completed", "item": item}));
+        match eventos.as_slice() {
+            [Evento::Ferramenta { nome, .. }, Evento::ResultadoFerramenta { id, conteudo, erro: false }, Evento::ImagensDoResultado { id: da_imagem, imagens }] => {
+                assert_eq!(nome, "mcp__chrome-devtools__take_screenshot");
+                assert_eq!((id.as_str(), da_imagem.as_str()), ("mcp-1", "mcp-1"));
+                assert_eq!(conteudo, "Took a screenshot.");
+                assert_eq!(imagens.len(), 1);
+                assert_eq!(imagens[0].bytes, png);
+            }
+            outros => panic!("eventos inesperados: {outros:?}"),
+        }
+
+        // Sem imagem, o texto dos blocos (e não o JSON deles); a falha continua com a mensagem.
+        let so_texto = json!({"type": "mcp_tool_call", "id": "mcp-2", "server": "s", "tool": "t", "status": "completed", "arguments": {},
+            "result": {"content": [{"type": "text", "text": "um"}, {"type": "text", "text": "dois"}], "structuredContent": null}});
+        let eventos = Leitor::default().linha(&json!({"type": "item.completed", "item": so_texto}));
+        assert!(matches!(eventos.as_slice(), [Evento::Ferramenta { .. }, Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "um\ndois"));
+        let falhou = json!({"type": "mcp_tool_call", "id": "mcp-3", "server": "s", "tool": "t", "status": "failed", "arguments": {},
+            "result": null, "error": {"message": "servidor fora do ar"}});
+        let eventos = Leitor::default().linha(&json!({"type": "item.completed", "item": falhou}));
+        assert!(matches!(eventos.as_slice(), [Evento::Ferramenta { .. }, Evento::ResultadoFerramenta { conteudo, erro: true, .. }] if conteudo == "servidor fora do ar"));
+    }
+
+    /// A imagem que o Codex gera (`imageGeneration`, pelo schema do app-server do 0.169.0): com o
+    /// arquivo que ele gravou (`savedPath`), a chamada aponta para ele; só com o base64
+    /// (`result`), a imagem sai à parte, para o Vitral guardar.
+    #[test]
+    fn a_imagem_gerada_pelo_codex_aparece_na_chamada() {
+        let gravada = json!({"type": "imageGeneration", "id": "ig-1", "status": "completed", "revisedPrompt": "um gato de óculos",
+            "savedPath": "/casa/.codex/generated_images/gato.png", "result": "iVBORw0KGgoAAAA="});
+        let eventos = Leitor::default().linha(&json!({"type": "item.completed", "item": gravada}));
+        match eventos.as_slice() {
+            [Evento::Ferramenta { nome, entrada, .. }, Evento::ResultadoFerramenta { conteudo, erro: false, .. }] => {
+                assert_eq!(nome, "ImageGeneration");
+                assert_eq!(entrada["file_path"], "/casa/.codex/generated_images/gato.png");
+                assert_eq!(entrada["prompt"], "um gato de óculos");
+                assert!(!conteudo.contains("iVBORw0KGgo"));
+            }
+            outros => panic!("eventos inesperados: {outros:?}"),
+        }
+
+        let so_base64 = json!({"type": "imageGeneration", "id": "ig-2", "status": "completed", "revisedPrompt": null, "result": "iVBORw0KGgoAAAA="});
+        let eventos = Leitor::default().linha(&json!({"type": "item.completed", "item": so_base64}));
+        assert!(matches!(eventos.as_slice(), [
+            Evento::Ferramenta { nome, .. },
+            Evento::ResultadoFerramenta { conteudo, .. },
+            Evento::ImagensDoResultado { id, imagens },
+        ] if nome == "ImageGeneration" && conteudo.is_empty() && id == "ig-2" && imagens.len() == 1 && imagens[0].extensao == "png"));
     }
 }

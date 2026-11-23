@@ -364,7 +364,8 @@ componentes do GPUI Kit.
   cada pasta continua lá, como a 0.2.0 o deixou.
 - **Onde fica cada coisa.** Os dados em `~/.local/share/vitral`: `estado.json` (com `.anterior` e,
   vindo de uma versão de antes, `estado.versao-2.json`), `chats/<id>.json`, `avulsos/<chat>/` (as
-  pastas dos chats Sem pasta), `exportadas/`, `anexos/`, `migracao.json` e o `formato` dos dados; ao
+  pastas dos chats Sem pasta), `exportadas/`, `anexos/`, `imagens/<chat>/` (as imagens que as
+  ferramentas devolveram, ver **Ferramentas**), `migracao.json` e o `formato` dos dados; ao
   lado deles, em `app/`, o app instalado pelo atualizador (as versões e os links `atual` e
   `anterior`). As preferências em `~/.config/vitral` (`config.json`, `interface.json`, as contas,
   `atualizacoes.json`; o `recentes.json` antigo, que só a migração lê) e o prompt de cada turno em
@@ -860,6 +861,36 @@ no cabeçalho; dono, 18/11/2026).
   dela; mais de uma, numa linha só (`pilha_de_imagens`): a pilha de até 4 miniaturas quadradas de
   22, sobrepostas como avatares, e "9 imagens", com os nomes na dica (até 10); o clique abre o
   visor na primeira, e as setas passam pelas outras. Aberto, cada chamada mostra a pílula dela.
+  **Imagem que a ferramenta devolve** (`src/imagens_recebidas.rs`; a ideia veio do Paseo). O
+  print de um MCP de navegador (chrome-devtools, playwright), a imagem gerada e o Read de uma
+  imagem chegam em base64 dentro do `tool_result`; a conversa mostrava só "(image/png)". Agora o
+  leitor separa o resultado em texto e imagens (`partes_do_resultado`, que lê o bloco da API do
+  Claude, `source.data`, e o do MCP, `data` e `mimeType`), as imagens saem num evento à parte
+  (`Evento::ImagensDoResultado`, logo depois do `ResultadoFerramenta`) e o motor as grava em
+  `~/.local/share/vitral/imagens/<chat>/imagem-<hash>.<ext>` (`guardar_na_chamada`): a
+  `Item::Ferramenta` guarda só os caminhos (`imagens`), e o base64 nunca vai para o
+  `chats/<id>.json` nem para o `estado.json`. O nome é o começo do SHA-256 do conteúdo, então a
+  mesma imagem de novo não grava outro arquivo; a extensão segue a assinatura dos bytes (PNG,
+  JPEG, GIF, WebP), e o que a conversa não sabe mostrar continua como a marca no texto
+  ("(image/svg+xml)"). A pasta do chat é só do dono (0700, os arquivos 0600). A chamada mostra a
+  miniatura de cada imagem (`imagens::da_chamada`; mais de uma, lado a lado), que entra na pilha
+  do grupo recolhido e na fila do visor junto com as anexadas, sempre como miniatura que abre no
+  visor, nunca como imagem grande no meio do texto (dono, 17/11/2026). No Read de uma imagem
+  vale a do disco, inteira, enquanto ela está lá; apagada (um print em /tmp), fica a guardada,
+  que é a que o modelo viu. **Tetos e limpeza:** 10 MB por imagem (`TETO_POR_IMAGEM`; a maior não
+  é guardada e o resultado diz "passa do teto de 10 MB e não foi guardada"), 100 MB por chat
+  (`TETO_POR_CHAT`; passou, saem as mais antigas daquela pasta, e a miniatura delas some) e 1 GB
+  de todas as conversas juntas (`TETO_TOTAL`, conferido ao abrir o Vitral, tirando as mais
+  antigas de qualquer chat). O chat que sai do Vitral leva a pasta dele (`Dados::apagar_chat`),
+  e ao abrir saem as pastas de chats que não estão no estado nem têm mais o `chats/<id>.json`
+  (`varrer`). As conversas importadas do Claude Code e as de antes desta versão não têm as
+  imagens (o importador lê só o texto do resultado). **No Codex** (conferido no app-server do
+  0.169.0 com um turno de verdade, 23/11/2026): o `view_image` não devolve base64, e sim o item
+  `imageView` com o caminho do arquivo, que vira a leitura dele ("Leu a.png", com a miniatura do
+  disco); o resultado de uma ferramenta MCP (`mcpToolCall.result.content`) traz os blocos do
+  MCP, e a imagem deles é guardada como a do Claude (antes ia para a conversa o JSON inteiro do
+  resultado, com o começo do base64); e a imagem gerada (`imageGeneration`, só pelo schema, sem
+  turno de verdade) aponta para o `savedPath` ou, sem ele, é guardada a partir do `result`.
   **Turno pronto.** Quando o turno termina, tudo o que veio antes da resposta final recolhe numa
   linha só, "Trabalhou 6 min 12 s · 13 comandos · editou carrinho.py e motor.rs" (o nome dos
   arquivos editados até dois; acima disso, a contagem), com a resposta logo embaixo; o clique na
@@ -1789,7 +1820,13 @@ para a linha da ferramenta ter o que mostrar ao abrir), esperando 4 s (ou os seg
 `[ferramenta … | 8]`) e mandando o `tool_result`, para dar de ver a linha do turno ("Lendo
 motor.rs…", "Rodando: cargo test…") sem gastar a API; o `[ferramenta Pensa <texto> | 3]` encena um
 bloco de raciocínio que dura os segundos pedidos, e o `Task` (ou `Agent`) encena um subagente, com
-três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); com `[hook <Nome>
+três ferramentas e uma frase presas à chamada dele (`parent_tool_use_id`); o `[ferramenta Print
+<LxA> <nome>]` encena o print de um MCP de navegador (a chamada
+`mcp__chrome-devtools__take_screenshot` e um `tool_result` com um bloco de texto e um PNG gerado
+na hora em base64; `Prints` devolve duas imagens no mesmo resultado) e o `[ferramenta Read
+<arquivo>]` de uma imagem que existe devolve só o bloco de imagem dela, como o Read de verdade (o
+roteiro é o `ferramentas/roteiros/imagens-de-ferramenta.txt`, que também confere com o `grep` que
+o base64 não foi para a conversa nem para o estado); com `[hook <Nome>
 <detalhe> | <motivo>]` encena uma chamada que um hook `PreToolUse` mandou perguntar, como o Claude
 Code 2.1.328: o `tool_use`, o `hook_response` com o motivo (só com `--include-hook-events`) e o
 pedido à `permissao` do Vitral, sem o motivo (sem o `--permission-prompt-tool` nos argumentos, a
@@ -1815,7 +1852,7 @@ encena uma compactação no meio do turno, e a mensagem "/compact" faz a manual 
 como o de verdade (`CLAUDE_FALSO_COMPACTA=<segundos>`; o roteiro dos três é o
 `ferramentas/roteiros/pergunta-plano-compactacao.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
 (fora das linhas citadas com "> ") como chamadas de verdade ao MCP do Vitral; no `--fork-session`, copia a sessão original para a nova ao lado dela (só nesse `CLAUDE_CONFIG_DIR`); e
 grava os argumentos, o ambiente e as chamadas em `$XDG_STATE_HOME/claude-falso.log`. No roteiro,
@@ -2050,6 +2087,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
 | `src/migracao.rs` | Migração do Vitral antigo (o `.vitral/` de cada pasta de trabalho) para os dados globais: uma vez só, no primeiro uso, sem escrever nada nas pastas antigas, com o `estado.json` gravado por último; adiada com o Vitral antigo aberto |
 | `src/instancia.rs` | Um Vitral só por usuário: a trava (`flock` em `~/.local/share/vitral.trava`), o socket (`$XDG_RUNTIME_DIR/vitral/vitral.sock`, pasta 0700) por onde uma segunda abertura entrega o pedido e sai, a `Abertura` (`vitral <pasta>`, `--nova <pasta>`) e a reexecução da tela de recuperação |
+| `src/imagens_recebidas.rs` | As imagens que uma ferramenta devolve no resultado: o bloco em base64 (o da API do Claude e o do MCP) vira `ImagemRecebida`, que o motor grava em `imagens/<chat>/` com o hash do conteúdo no nome (`guardar`, `guardar_na_chamada`); os tetos por imagem, por chat e de todas (`podar`), e a faxina de quando o Vitral abre (`varrer`) |
 | `src/importar.rs` | Leitura das conversas do Claude Code (só leitura): a listagem com título, datas, mensagens e se está aberta (o `Filtro.desde` da vigia pula o que não mudou), o histórico como itens da conversa e o registro do que já veio |
 | `src/claude.rs` | Processo do Claude Code em `stream-json` (argumentos e ambiente do turno), leitura dos eventos, versão do Claude Code, conferência da sessão, os modelos que ele oferece (o `initialize`, em `atualizar_modelos_oferecidos`) e o detalhe de cada chamada de ferramenta (`detalhe_ferramenta`: o diff do Edit, o começo do Write, o comando do Bash, até 60 linhas de cada lado) |
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |

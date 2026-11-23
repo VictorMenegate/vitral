@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::SharedString;
 
+use crate::modelo::Item;
+
 /// Altura da miniatura dentro do chip da caixa de mensagem (o chip tem 28 de alto).
 /// 24 de altura num chip de 28: a miniatura ocupa quase tudo, com 2 de folga em volta (dono,
 /// 16/11/2026: "o espaçamento em volta da imagem tem que ser menor").
@@ -181,6 +183,29 @@ pub fn medida_da_miniatura(medidas: Option<(u32, u32)>, altura: f32, largura_max
     ((largura * escala).round().max(1.), (alta * escala).round().max(1.))
 }
 
+/// As imagens de uma chamada, para as miniaturas embaixo da linha dela, para a pilha do grupo
+/// recolhido e para o visor: a que ela leu ou gravou (um Read ou Write de um .png) e as que o
+/// resultado trouxe e o Vitral guardou (`imagens_recebidas`: o print do navegador por MCP, a
+/// imagem gerada). O Read de uma imagem tem as duas, e são a mesma: vale a do disco, inteira,
+/// enquanto ela está lá; quando sai (um print em /tmp), fica a guardada, que é a que o modelo viu.
+pub fn da_chamada(item: &Item, cwd: &Path) -> Vec<PathBuf> {
+    let Item::Ferramenta { arquivo, erro, imagens, .. } = item else {
+        return Vec::new();
+    };
+    let do_disco = arquivo
+        .as_deref()
+        .filter(|_| !*erro)
+        // Só o que está no disco agora (`resolver`).
+        .and_then(|arquivo| super::links_arquivo::resolver(cwd, arquivo))
+        .map(PathBuf::from)
+        .filter(|caminho| crate::claude::tipo_imagem(caminho).is_some());
+    match do_disco {
+        Some(caminho) => vec![caminho],
+        // Das guardadas, as que continuam lá: o teto do chat tira as mais antigas.
+        None => imagens.iter().filter(|caminho| super::links_arquivo::resolver(cwd, &caminho.to_string_lossy()).is_some()).cloned().collect(),
+    }
+}
+
 /// O nome do arquivo, ou o caminho inteiro quando ele não tem nome (raiz, "..").
 pub fn nome_do_arquivo(caminho: &Path) -> String {
     caminho
@@ -349,6 +374,53 @@ mod testes {
             vec![pasta.join("um.png"), pasta.join("dois.png")]
         );
         assert!(imagens_do_texto("sem imagem nenhuma", Some(&pasta)).is_empty());
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    fn chamada(nome: &str, arquivo: Option<&str>, erro: bool, imagens: &[&Path]) -> Item {
+        Item::Ferramenta {
+            id: "t1".into(),
+            nome: nome.into(),
+            resumo: nome.into(),
+            resultado: Some(String::new()),
+            erro,
+            em: 0,
+            detalhe: None,
+            arquivo: arquivo.map(str::to_string),
+            sub: None,
+            mudanca: None,
+            imagens: imagens.iter().map(|c| c.to_path_buf()).collect(),
+        }
+    }
+
+    #[test]
+    fn as_imagens_da_chamada_sao_a_do_disco_ou_as_guardadas() {
+        let pasta = std::env::temp_dir().join(format!("vitral-img-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(pasta.join("guardadas")).unwrap();
+        let (um, dois) = (pasta.join("guardadas").join("um.png"), pasta.join("guardadas").join("dois.png"));
+        for caminho in [&um, &dois, &pasta.join("print.png")] {
+            std::fs::write(caminho, b"\x89PNG\r\n\x1a\n").unwrap();
+        }
+
+        // O print de um MCP: não há arquivo da chamada, só o que o resultado trouxe, na ordem.
+        let do_mcp = chamada("mcp__chrome-devtools__take_screenshot", None, false, &[&um, &dois]);
+        assert_eq!(da_chamada(&do_mcp, &pasta), vec![um.clone(), dois.clone()]);
+
+        // O Read de uma imagem que está no disco: a do disco, uma vez só.
+        let leu = chamada("Read", Some("print.png"), false, &[&um]);
+        assert_eq!(da_chamada(&leu, &pasta), vec![pasta.join("print.png")]);
+        // O arquivo saiu do disco: fica a que o Vitral guardou.
+        let leu_e_sumiu = chamada("Read", Some("sumiu.png"), false, &[&um]);
+        assert_eq!(da_chamada(&leu_e_sumiu, &pasta), vec![um.clone()]);
+        // Sem nada guardado (as conversas de antes), a imagem que saiu do disco não aparece,
+        // como sempre foi (`links_arquivo::resolver` só devolve o que está lá).
+        let antiga = chamada("Read", Some("sumiu.png"), false, &[]);
+        assert!(da_chamada(&antiga, &pasta).is_empty());
+
+        // O que não tem imagem: outro tipo de arquivo, a leitura que falhou, outro item.
+        assert!(da_chamada(&chamada("Read", Some("notas.md"), false, &[]), &pasta).is_empty());
+        assert!(da_chamada(&chamada("Read", Some("print.png"), true, &[]), &pasta).is_empty());
+        assert!(da_chamada(&Item::Assistente { texto: "![](print.png)".into(), em: 0 }, &pasta).is_empty());
         let _ = std::fs::remove_dir_all(&pasta);
     }
 

@@ -733,6 +733,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -855,6 +856,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let itens = vec![item_usuario("oi"), ferramenta("Read", "a", None), plano, ferramenta("Edit", "c", None), ferramenta("Bash", "d", None)];
         let achados = ocorrencias(&itens, "carrinho", false);

@@ -2049,16 +2049,6 @@ fn pilha_de_imagens(chat: &str, lista: &[(usize, PathBuf)], cx: &Context<Janela>
     .into_any_element()
 }
 
-/// A imagem que uma chamada leu ou gravou (um Read ou Write de um .png, .jpg…), se ainda está no
-/// disco: é o progresso do trabalho à vista (uma captura de tela que o chat tirou e foi olhar).
-fn imagem_da_chamada(item: &Item, cwd: &Path) -> Option<PathBuf> {
-    let Item::Ferramenta { arquivo: Some(arquivo), erro: false, .. } = item else {
-        return None;
-    };
-    let inteiro = PathBuf::from(super::links_arquivo::resolver(cwd, arquivo)?);
-    crate::claude::tipo_imagem(&inteiro).is_some().then_some(inteiro)
-}
-
 /// Um arquivo na conversa, como a extensão do Claude Code mostra (dono, 16/11/2026: "faz as
 /// imagens que mando e a que você usa ficar igual fica aqui"): uma pílula com a miniatura (ou o
 /// ícone), o nome e as medidas da imagem (ou o tamanho do arquivo). Serve aos anexos das suas
@@ -2816,10 +2806,10 @@ impl Janela {
         let escondidas = &chamadas[..chamadas.len() - mostradas.len()];
         let mut imagens_do_grupo: Vec<(usize, PathBuf)> = Vec::new();
         for (indice, item) in escondidas {
-            if let Some(imagem) = imagem_da_chamada(item, &contexto.chat.cwd)
-                && !imagens_do_grupo.iter().any(|(_, outra)| *outra == imagem)
-            {
-                imagens_do_grupo.push((*indice, imagem));
+            for imagem in imagens::da_chamada(item, &contexto.chat.cwd) {
+                if !imagens_do_grupo.iter().any(|(_, outra)| *outra == imagem) {
+                    imagens_do_grupo.push((*indice, imagem));
+                }
             }
         }
         // Uma imagem só fica na pílula dela. Mais de uma vira uma linha só: a pilha de até 4
@@ -2895,17 +2885,17 @@ impl Janela {
             .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
             .tooltip(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
-        let mut imagens: Vec<(usize, PathBuf)> = Vec::new();
+        let mut da_linha: Vec<(usize, PathBuf)> = Vec::new();
         if !aberto {
             for (indice, item) in escondidos {
-                if let Some(imagem) = imagem_da_chamada(item, &contexto.chat.cwd)
-                    && !imagens.iter().any(|(_, outra)| *outra == imagem)
-                {
-                    imagens.push((*indice, imagem));
+                for imagem in imagens::da_chamada(item, &contexto.chat.cwd) {
+                    if !da_linha.iter().any(|(_, outra)| *outra == imagem) {
+                        da_linha.push((*indice, imagem));
+                    }
                 }
             }
         }
-        let fileira = match imagens.as_slice() {
+        let fileira = match da_linha.as_slice() {
             [] => None,
             [(indice, imagem)] => Some(
                 h_flex()
@@ -3481,9 +3471,11 @@ impl Janela {
         let so_o_pedido = pedido.is_some() && !*erro && resultado.is_some() && matches!(nome.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit");
         // A imagem que a chamada leu ou gravou fica à vista embaixo da linha, sem precisar abrir
         // (dono, 13/11/2026: "dar pra ver as imagens que ele tá acessando… isso é o progresso
-        // dele"). O resultado de ler uma imagem não tem texto: a caixa vazia não aparece.
-        let imagem = imagem_da_chamada(item, &contexto.chat.cwd);
-        let sem_texto = imagem.is_some() && resultado.as_deref().is_some_and(|r| r.trim().is_empty());
+        // dele"). Entram também as que o resultado trouxe (o print do navegador por MCP, a imagem
+        // gerada), que o Vitral guardou: mais de uma, lado a lado. O resultado de ler uma imagem
+        // não tem texto: a caixa vazia não aparece.
+        let da_chamada = imagens::da_chamada(item, &contexto.chat.cwd);
+        let sem_texto = !da_chamada.is_empty() && resultado.as_deref().is_some_and(|r| r.trim().is_empty());
         let comando = (nome == "Bash").then(|| pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo));
         let bloco = v_flex()
             .id(SharedString::from(format!("bloco-chamada-{chave}")))
@@ -3491,8 +3483,11 @@ impl Janela {
             .w_full()
             .child(linha)
             .children(atividade_viva)
-            .when_some(imagem.as_deref(), |s, imagem| {
-                s.child(h_flex().pl(RECUO_DO_LOG).py(esp::E4).child(pilula_de_arquivo(format!("img-{chave}"), imagem, &contexto.chat.id, false, cx)))
+            .when(!da_chamada.is_empty(), |s| {
+                s.child(h_flex().flex_wrap().gap(esp::E4).pl(RECUO_DO_LOG).py(esp::E4).children(da_chamada.iter().enumerate().map(|(k, imagem)| {
+                    let id = if k == 0 { format!("img-{chave}") } else { format!("img-{chave}:{k}") };
+                    pilula_de_arquivo(id, imagem, &contexto.chat.id, false, cx)
+                })))
             })
             .when(aberto, |s| {
                 s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
@@ -3701,6 +3696,7 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
         "TodoWrite" => Lucide::ListChecks,
         "AskUserQuestion" => Lucide::MessageCircleQuestionMark,
         "ExitPlanMode" => Lucide::Map,
+        "ImageGeneration" => Lucide::Image,
         "listar_tarefas" => Lucide::ListTree,
         "anotar_decisao" => Lucide::ScrollText,
         "mensagem_para_chat" | "listar_chats" => Lucide::MessagesSquare,
@@ -3736,6 +3732,8 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "TodoWrite" => ("Atualizou os passos", "Atualizando os passos"),
         "AskUserQuestion" => ("Perguntou", "Perguntando"),
         "ExitPlanMode" => ("Propôs um plano", "Propondo um plano"),
+        // A imagem que o Codex gera (`imageGeneration`).
+        "ImageGeneration" => ("Gerou uma imagem", "Gerando uma imagem"),
         "listar_tarefas" => ("Listou os ajudantes", "Listando os ajudantes"),
         "listar_chats" => ("Listou as conversas", "Listando as conversas"),
         "anotar_decisao" => ("Anotou", "Anotando"),
@@ -5778,6 +5776,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -6311,6 +6310,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let itens = vec![
             em(usuario("faz"), 1_000),
@@ -6386,6 +6386,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let pedido = Item::Entrega { de: "Vitral".into(), texto: crate::motor::PEDIDO_DE_REVISAO.into(), em: 0 };
         let nada = vec![pedido.clone(), ferramenta("Read", "AGENTS.md", Some("ok"), false), assistente("Não há nada a registrar.")];
@@ -6416,6 +6417,7 @@ mod testes {
             arquivo: Some(arquivo.into()),
             sub: None,
             mudanca: Some(Mudanca { entram, saem, novo }),
+            imagens: Vec::new(),
         };
         let itens = vec![
             usuario("um"),
@@ -6448,6 +6450,7 @@ mod testes {
             arquivo: None,
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         }
     }
 
@@ -6523,6 +6526,7 @@ mod testes {
             arquivo: Some(format!("src/{arquivo}")),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         let dois = [editar("carrinho.py"), editar("motor.rs"), ferramenta("Bash", "ls", Some("ok"), false)];
         let chamadas: Vec<(usize, &Item)> = dois.iter().enumerate().collect();

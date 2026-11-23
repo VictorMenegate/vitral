@@ -10,6 +10,7 @@ mod contas;
 mod dados;
 mod git;
 mod ideias;
+mod imagens_recebidas;
 mod importar;
 mod linear;
 mod instancia;

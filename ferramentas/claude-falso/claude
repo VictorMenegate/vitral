@@ -10,6 +10,13 @@ conta que usa a ferramenta: manda o tool_use, espera 4 s (ou os segundos de `[fe
 manda o tool_result. Serve para ver na bancada a linha do turno ("Lendo motor.rs…", "Rodando: cargo
 test…") sem chamar a API.
 
+Com `[ferramenta Print <LxA> <nome>]` (as medidas e o nome são opcionais: 1280x800), encena o print
+de um MCP de navegador: a chamada `mcp__chrome-devtools__take_screenshot` e um tool_result com um
+bloco de texto e um bloco de imagem em base64 (um PNG gerado aqui, diferente a cada nome), como o
+Claude Code o repassa. `[ferramenta Prints <LxA> <nome>]` devolve duas imagens no mesmo resultado.
+E o `[ferramenta Read <arquivo>]` de uma imagem que existe (.png, .jpg, .gif, .webp) devolve só o
+bloco de imagem dela, como o Read de verdade.
+
 Com `[hook <Nome> <detalhe> | <motivo>]`, encena uma chamada que um hook `PreToolUse` do usuário
 mandou perguntar (`permissionDecision: "ask"`), como o Claude Code 2.1.328 faz: manda o tool_use,
 os eventos do hook (só com `--include-hook-events`) e pede a permissão à ferramenta do
@@ -464,6 +471,63 @@ def chamar(nome, argumentos):
     return resultado, erro
 
 
+def png_de_mentira(largura, altura, semente):
+    """Um PNG de verdade (RGB, sem biblioteca): faixas na cor da semente, com uma barra de título
+    escura e um quadro claro no meio, para a miniatura ter o que mostrar."""
+    import struct
+    import zlib
+
+    def bloco(tipo, dados):
+        return struct.pack(">I", len(dados)) + tipo + dados + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+
+    cor = [(semente * 53 + 40) % 200 + 30, (semente * 97 + 90) % 200 + 30, (semente * 31 + 150) % 200 + 30]
+    linhas = bytearray()
+    for y in range(altura):
+        if y < altura // 12:
+            pixel = bytes((28, 30, 36))
+        else:
+            claro = 235 - (y * 60 // max(altura, 1))
+            pixel = bytes((claro, claro, claro))
+        linha = bytearray(pixel * largura)
+        # O quadro colorido no meio, com um degradê de lado a lado.
+        if altura // 4 <= y < altura * 3 // 4:
+            inicio, fim = largura // 6, largura * 5 // 6
+            for x in range(inicio, fim):
+                t = (x - inicio) * 255 // max(fim - inicio, 1)
+                linha[x * 3:x * 3 + 3] = bytes((cor[0] * (255 - t) // 255 + t * 20 // 255, cor[1], (cor[2] + t) % 256))
+        linhas += b"\x00" + linha
+    return (b"\x89PNG\r\n\x1a\n" + bloco(b"IHDR", struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0))
+            + bloco(b"IDAT", zlib.compress(bytes(linhas), 6)) + bloco(b"IEND", b""))
+
+
+def bloco_de_imagem(dados, tipo="image/png"):
+    import base64
+    return {"type": "image", "source": {"type": "base64", "media_type": tipo, "data": base64.b64encode(dados).decode()}}
+
+
+def medidas_do_print(detalhe):
+    """`1280x800 inicio` -> (1280, 800, "inicio"); sem medidas, 1280x800."""
+    achado = re.match(r"\s*(\d{1,4})x(\d{1,4})\s*(.*)$", detalhe)
+    if achado:
+        return max(int(achado.group(1)), 1), max(int(achado.group(2)), 1), achado.group(3).strip()
+    return 1280, 800, detalhe.strip()
+
+
+TIPOS_DE_IMAGEM = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+
+
+def imagem_lida(caminho):
+    """O bloco de imagem que o Read de verdade devolve para um arquivo de imagem que existe."""
+    tipo = TIPOS_DE_IMAGEM.get(os.path.splitext(caminho)[1].lower())
+    if not tipo:
+        return None
+    try:
+        with open(os.path.expanduser(caminho), "rb") as arquivo:
+            return bloco_de_imagem(arquivo.read(), tipo)
+    except OSError:
+        return None
+
+
 # `[ferramenta Nome detalhe]` ou `[ferramenta Nome detalhe | 8]` (segundos até o resultado).
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
 
@@ -548,6 +612,22 @@ def fingir_ferramentas(texto):
                     "status": "killed" if parou else "completed", "summary": f"Background command \"{detalhe}\""})
             emitir({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
             continue
+        # `[ferramenta Print 1280x800 inicio]`: o print de um MCP de navegador, com o texto e a
+        # imagem em base64 no mesmo tool_result (`Prints` devolve duas imagens).
+        if nome in ("Print", "Prints"):
+            largura, altura, rotulo = medidas_do_print(detalhe)
+            semente = sum(rotulo.encode()) + i
+            ferramenta_rodando.set()
+            emitir({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id_,
+                    "name": "mcp__chrome-devtools__take_screenshot", "input": {"format": "png"}}]}})
+            esperar_a_ferramenta(id_, "mcp__chrome-devtools__take_screenshot", int(segundos) if segundos else 2)
+            imagens = [bloco_de_imagem(png_de_mentira(largura, altura, semente))]
+            if nome == "Prints":
+                imagens.append(bloco_de_imagem(png_de_mentira(max(largura // 2, 1), altura, semente + 7)))
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "content": [
+                {"type": "text", "text": "Took a screenshot of the current page's viewport."}] + imagens}]}})
+            absorver_fila()
+            continue
         # A chamada conta como rodando desde o tool_use: a mensagem que o Vitral manda ao vê-lo já
         # espera na fila (o subagente tem o caminho dele, abaixo).
         if nome not in ("Task", "Agent"):
@@ -591,8 +671,10 @@ def fingir_ferramentas(texto):
                 {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {detalhe}: dois lugares mexem no cupom."}]}})
             continue
         esperar_a_ferramenta(id_, nome, int(segundos) if segundos else 4)
+        # O Read de uma imagem que existe devolve só o bloco de imagem dela, como o de verdade.
+        lida = imagem_lida(detalhe) if nome == "Read" else None
         emitir({"type": "user", "message": {"content": [
-            {"type": "tool_result", "tool_use_id": id_, "content": f"(claude falso) {nome} em {detalhe}"}]}})
+            {"type": "tool_result", "tool_use_id": id_, "content": [lida] if lida else f"(claude falso) {nome} em {detalhe}"}]}})
         absorver_fila()
 
 

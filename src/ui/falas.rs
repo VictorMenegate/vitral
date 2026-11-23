@@ -185,6 +185,7 @@ mod testes {
             arquivo: arquivo.map(str::to_string),
             sub: None,
             mudanca: None,
+            imagens: Vec::new(),
         };
         chat.itens.push(ferramenta("Edit", Some("a.rs")));
         chat.itens.push(ferramenta("Edit", Some("a.rs")));

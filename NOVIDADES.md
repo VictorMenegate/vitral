@@ -7,7 +7,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
-continua na conversa e a compactação deixa um marco.
+continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
+aparecem na conversa.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -38,6 +39,11 @@ continua na conversa e a compactação deixa um marco.
 - **Marco de compactação.** Enquanto o Claude Code resume a conversa, a linha do turno diz
   "Compactando…". Quando termina, a conversa ganha o marco "Contexto compactado", com o tamanho
   de antes e se foi automático ou pelo Compactar.
+- **As imagens que as ferramentas devolvem aparecem na conversa.** O print do navegador (por
+  MCP), a imagem gerada e a imagem que o agente foi olhar vinham só como o texto "(image/png)".
+  Agora a chamada mostra a miniatura, que abre no visor junto com as outras imagens da conversa;
+  no Codex, o view_image e os prints por MCP também. As imagens ficam guardadas no computador,
+  até 100 MB por conversa (as mais antigas saem primeiro).
 
 ## 0.9.5
 
