@@ -98,7 +98,7 @@ fn larga(nivel: LarguraPainel) -> bool {
     nivel == LarguraPainel::Largo
 }
 
-fn minima(nivel: LarguraPainel) -> bool {
+pub(super) fn minima(nivel: LarguraPainel) -> bool {
     matches!(nivel, LarguraPainel::Estreito | LarguraPainel::Minimo)
 }
 
@@ -373,7 +373,9 @@ impl Janela {
                 if !aberto {
                     // Recolhido, só o que não pode sumir: a pergunta, o aviso de erro e o cartão.
                     for &(k, escondido) in &visiveis[i..fim] {
-                        if fica_fora_do_recolhido(escondido) {
+                        if let Some(plano) = plano_na_conversa(escondido) {
+                            blocos.push((Bloco::Texto, Some(k), self.plano_respondido(&contexto, k, plano, cx)));
+                        } else if fica_fora_do_recolhido(escondido) {
                             let (bloco, elemento) = self.item(&contexto, k, escondido, window, cx);
                             blocos.push((bloco, Some(k), elemento));
                         }
@@ -387,12 +389,24 @@ impl Janela {
                 lugar_do_novo = Some((blocos.len(), indice));
                 blocos.push((Bloco::Dia, None, separador_novo()));
             }
+            // O plano fica na conversa, no ponto em que foi proposto: um cartão recolhido que diz
+            // o que você respondeu e abre o texto dele. Enquanto espera a resposta, quem aparece é
+            // o pedido, logo abaixo das mensagens.
+            if let Some(plano) = plano_na_conversa(item) {
+                i += 1;
+                if !plano_esperando(motor, &chat.id, item) {
+                    blocos.push((Bloco::Texto, Some(indice), self.plano_respondido(&contexto, indice, plano, cx)));
+                }
+                continue;
+            }
             // O raciocínio faz parte da trilha: fica no meio das chamadas, sem parti-la.
             if matches!(item, Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
                 let mut fim = i + 1;
                 // Uma trilha que passa da meia-noite se parte: o separador do dia novo entra nela.
+                // O cartão do plano também a parte.
                 while fim < visiveis.len()
                     && matches!(visiveis[fim].1, Item::Ferramenta { .. } | Item::Raciocinio { .. })
+                    && plano_na_conversa(visiveis[fim].1).is_none()
                     && !datas.contains_key(&fim)
                 {
                     fim += 1;
@@ -459,7 +473,7 @@ impl Janela {
             && matches!(motor.execucao(&chat.id), Execucao::Rodando { .. })
             && texto_atividade(&chat.itens, false, motor.dirigidas_no_turno(&chat.id)) == "Pensando…"
         {
-            let rotulo = if motor.esperando_agentes(&chat.id) { "Agentes trabalhando em segundo plano…" } else { "Pensando…" };
+            let rotulo = rotulo_do_turno_calado(motor.compactando(&chat.id), motor.esperando_agentes(&chat.id));
             blocos.push((Bloco::Log, None, linha_pensando(painel_id, rotulo, cx.theme().font_family.clone())));
         }
         let (base, vistos) = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
@@ -2354,8 +2368,66 @@ pub(super) fn turnos_recolhiveis(itens: &[Item], rodando: bool) -> Vec<TurnoReco
 pub(super) fn fica_fora_do_recolhido(item: &Item) -> bool {
     match item {
         Item::Assistente { texto, .. } => texto.trim_end().ends_with('?'),
-        Item::Aviso { texto, erro, .. } => *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta,
+        // O marco de compactação diz onde o contexto foi cortado: fica à vista.
+        Item::Aviso { texto, erro, .. } => {
+            *erro || tipo_aviso(texto, *erro) == ClasseAvisoChat::Alerta || texto.starts_with(crate::motor::CONTEXTO_COMPACTADO)
+        }
+        Item::Ferramenta { .. } => plano_na_conversa(item).is_some(),
         _ => false,
+    }
+}
+
+/// O plano de uma chamada ExitPlanMode como fica na conversa depois de respondido.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PlanoNaConversa<'a> {
+    /// "Plano aprovado", "Plano recusado" ou, sem resposta (o turno parou antes), "Plano proposto".
+    pub titulo: &'static str,
+    pub texto: &'a str,
+    pub aprovado: bool,
+    /// O que você pediu para mudar ao recusar, se escreveu.
+    pub mudancas: Option<&'a str>,
+}
+
+/// O cartão do plano de um item da conversa: só a chamada ExitPlanMode que guardou o texto do
+/// plano (as de antes disto seguem como linha da trilha). É também o que parte a trilha: a busca
+/// (`busca_conversa`) usa a mesma regra.
+pub(super) fn plano_na_conversa(item: &Item) -> Option<PlanoNaConversa<'_>> {
+    let Item::Ferramenta { nome, detalhe: Some(texto), resultado, erro, .. } = item else {
+        return None;
+    };
+    if nome != "ExitPlanMode" || texto.trim().is_empty() {
+        return None;
+    }
+    let (titulo, aprovado) = match (resultado, erro) {
+        (None, _) => ("Plano proposto", false),
+        (Some(_), false) => ("Plano aprovado", true),
+        (Some(_), true) => ("Plano recusado", false),
+    };
+    let mudancas = resultado.as_deref().filter(|_| *erro).and_then(pedido_de_mudancas);
+    Some(PlanoNaConversa { titulo, texto, aprovado, mudancas })
+}
+
+/// O comentário com que o plano foi devolvido, tirado da recusa que o modelo leu
+/// (`motor::recusa_explicada`); `None` na recusa sem comentário.
+pub(super) fn pedido_de_mudancas(resultado: &str) -> Option<&str> {
+    resultado.trim().strip_prefix("O usuário pediu mudanças no plano:").map(str::trim).filter(|t| !t.is_empty())
+}
+
+/// O plano ainda espera a sua resposta: o pedido dele está aberto, logo abaixo das mensagens.
+fn plano_esperando(motor: &Motor, chat: &str, item: &Item) -> bool {
+    matches!(item, Item::Ferramenta { resultado: None, .. })
+        && motor.permissoes.iter().any(|p| p.chat == chat && p.ferramenta == "ExitPlanMode")
+}
+
+/// A linha viva do turno que não tem chamada rodando nem texto chegando: o Claude Code resumindo
+/// a conversa, os agentes do fluxo trabalhando depois da resposta, ou o modelo pensando.
+pub(super) fn rotulo_do_turno_calado(compactando: bool, esperando_agentes: bool) -> &'static str {
+    if compactando {
+        "Compactando…"
+    } else if esperando_agentes {
+        "Agentes trabalhando em segundo plano…"
+    } else {
+        "Pensando…"
     }
 }
 
@@ -3008,6 +3080,76 @@ impl Janela {
 
     /// Um bloco de raciocínio na trilha: "Pensou" e quanto durou; o clique mostra o texto, quando
     /// o Claude Code o entrega (referência do dono: 21st.dev, "AI Thinking and Tool calls").
+    /// O plano depois de respondido, no ponto da conversa em que foi proposto: um cartão recolhido
+    /// com o que você respondeu ("Plano aprovado", "Plano recusado") e o título do plano; o clique
+    /// abre o texto inteiro e, no recusado, o que você pediu para mudar. Antes disto o plano só
+    /// existia no pedido: respondido, sobrava uma chamada "ExitPlanMode" sem texto, escondida no
+    /// "Trabalhou…".
+    fn plano_respondido(&self, contexto: &Contexto, indice: usize, plano: PlanoNaConversa, cx: &Context<Self>) -> AnyElement {
+        let chave = format!("{}:{indice}", contexto.chat.id);
+        let realce = contexto.busca.realce(indice, Campo::Texto);
+        let aberto = self.expandidos.contains(&chave);
+        let (icone, cor) = match (plano.aprovado, plano.titulo) {
+            (true, _) => (Lucide::CircleCheck, Cores::verde()),
+            (false, "Plano recusado") => (Lucide::CircleX, Cores::tenue()),
+            _ => (Lucide::Map, Cores::tenue()),
+        };
+        // O título do plano (a primeira linha dele, sem a marcação), para saber qual é sem abrir.
+        let previa = sem_marcacao(plano.texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default().trim_start_matches('#').trim());
+        let cabecalho = h_flex()
+            .id(SharedString::from(format!("plano-{chave}")))
+            .h(r(36.))
+            .px(esp::E12)
+            .gap(esp::E8)
+            .rounded(raio::CARTAO)
+            .cursor_pointer()
+            .hover(|s| s.bg(Cores::hover()))
+            .tab_index(0)
+            .focus_visible(|s| s.shadow(halo_foco()))
+            .child(coluna_do_icone().child(icone_de(icone, 14.).text_color(cor)))
+            .child(div().flex_none().rotulo().text_color(Cores::forte()).child(plano.titulo))
+            .child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(if aberto { String::new() } else { previa }))
+            .when(aberto, |s| {
+                s.child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(
+                    BotaoCopiar::new(SharedString::from(format!("copiar-plano-{chave}")), plano.texto.to_string()).dica("Copiar o plano"),
+                ))
+            })
+            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .on_click(alternar(chave.clone(), cx));
+        let cartao = v_flex()
+            .w_full()
+            .rounded(raio::CARTAO)
+            .bg(Cores::hover())
+            .child(cabecalho)
+            .when(aberto, |s| {
+                s.child(
+                    v_flex()
+                        .px(esp::E12)
+                        .pb(esp::E12)
+                        .gap(esp::E8)
+                        .child(div().corpo().text_color(Cores::texto()).child(markdown_achado(
+                            contexto,
+                            format!("{chave}-plano").into(),
+                            plano.texto.to_string(),
+                            realce.clone(),
+                        )))
+                        .when_some(plano.mudancas, |s, mudancas| {
+                            s.child(
+                                h_flex()
+                                    .items_start()
+                                    .gap(esp::E6)
+                                    .child(div().flex_none().pt(esp::E2).child(icone_de(Lucide::MessageSquareQuote, 14.).text_color(Cores::tenue())))
+                                    .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(format!("Você pediu: {}", sem_marcacao(mudancas)))),
+                            )
+                        }),
+                )
+            })
+            .into_any_element();
+        // Aberto, o próprio texto pede para aparecer; fechado, quem rola até o cartão é o bloco.
+        let realce = if aberto { Realce::default() } else { realce };
+        RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, cartao).into_any_element()
+    }
+
     fn raciocinio(&self, contexto: &Contexto, indice: usize, texto: &str, milis: u64, ramo: Option<bool>, cx: &Context<Self>) -> AnyElement {
         let chave = format!("{}:{indice}", contexto.chat.id);
         let tem_texto = !texto.trim().is_empty();
@@ -3557,6 +3699,8 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
         "Task" | "Agent" => Lucide::Bot,
         "Workflow" => Lucide::Workflow,
         "TodoWrite" => Lucide::ListChecks,
+        "AskUserQuestion" => Lucide::MessageCircleQuestionMark,
+        "ExitPlanMode" => Lucide::Map,
         "listar_tarefas" => Lucide::ListTree,
         "anotar_decisao" => Lucide::ScrollText,
         "mensagem_para_chat" | "listar_chats" => Lucide::MessagesSquare,
@@ -3590,6 +3734,8 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "Task" | "Agent" => ("Subagente", "Subagente"),
         "Workflow" => ("Fluxo de agentes", "Fluxo de agentes"),
         "TodoWrite" => ("Atualizou os passos", "Atualizando os passos"),
+        "AskUserQuestion" => ("Perguntou", "Perguntando"),
+        "ExitPlanMode" => ("Propôs um plano", "Propondo um plano"),
         "listar_tarefas" => ("Listou os ajudantes", "Listando os ajudantes"),
         "listar_chats" => ("Listou as conversas", "Listando as conversas"),
         "anotar_decisao" => ("Anotou", "Anotando"),
@@ -3676,13 +3822,14 @@ fn tipo_aviso(texto: &str, erro: bool) -> ClasseAvisoChat {
     if texto.starts_with(SESSAO_ANTIGA) {
         return ClasseAvisoChat::Marco;
     }
-    const MARCOS: [&str; 6] = [
+    const MARCOS: [&str; 7] = [
         "Sessão nova",
         "Interrompido",
         "Saiu do modo Planejar",
         "Retomando a sessão",
         crate::importar::MARCO,
         VITRAL_FECHADO,
+        crate::motor::CONTEXTO_COMPACTADO,
     ];
     if erro {
         ClasseAvisoChat::Alerta
@@ -3865,9 +4012,10 @@ impl Janela {
             Situacao::Rodando { desde, fila, dirigidas } => {
                 let escrevendo = motor.parcial(&chat.id).is_some();
                 let atividade = texto_atividade(&chat.itens, escrevendo, dirigidas);
-                // A resposta já veio, mas os agentes do fluxo seguem trabalhando.
-                let atividade = if !escrevendo && atividade == "Pensando…" && motor.esperando_agentes(&chat.id) {
-                    "Agentes trabalhando em segundo plano…".to_string()
+                // O Claude Code resume a conversa, ou a resposta já veio e os agentes do fluxo
+                // seguem trabalhando.
+                let atividade = if !escrevendo && atividade == "Pensando…" {
+                    rotulo_do_turno_calado(motor.compactando(&chat.id), motor.esperando_agentes(&chat.id)).to_string()
                 } else {
                     sem_marcacao(&atividade)
                 };
@@ -4476,6 +4624,11 @@ impl Janela {
                     return self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx);
                 }
                 let posicao = (quantos > 1).then_some((k + 1, quantos));
+                // A pergunta com opções tem o cartão dela (sem pergunta legível, o pedido comum).
+                let perguntas = if ferramenta == "AskUserQuestion" { super::pergunta::perguntas_de(&entrada) } else { Vec::new() };
+                if !perguntas.is_empty() {
+                    return self.cartao_pergunta(&id, &perguntas, corpo, posicao, nivel, window, cx);
+                }
                 self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, motivo_do_hook, corpo, posicao, nivel, window, cx)
             }))
     }
@@ -4974,6 +5127,8 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
             None => "Cancelando um pedido…".into(),
         },
         "perguntar_coordenador" => "Perguntando a quem pediu…".into(),
+        "AskUserQuestion" => "Esperando a sua resposta…".into(),
+        "ExitPlanMode" => "Esperando a sua aprovação…".into(),
         "mensagem_para_chat" => "Mandando mensagem a outra conversa…".into(),
         "TodoWrite" | "listar_tarefas" | "listar_chats" | "anotar_decisao" | "informar_progresso" => {
             format!("{verbo}…")
@@ -5584,7 +5739,7 @@ mod testes {
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
         MAX_MOTIVO_DO_HOOK, linha_do_hook, regra_do_cartao,
-        titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta,
+        titulo_do_pedido, trechos_perigosos, verbo_da_ferramenta, fica_fora_do_recolhido,
     };
     use crate::modelo::{Chat, Item, regra_de_permissao};
     use serde_json::json;
@@ -6279,6 +6434,79 @@ mod testes {
         // O que mudou de novo neste turno sai de "Antes".
         assert_eq!(nomes(&antes), [("src/b.rs".to_string(), 2, 0, false)]);
         assert_eq!(total_das_mudancas(&neste), (2, 15, 1));
+    }
+
+    fn chamada_do_plano(resultado: Option<&str>, erro: bool, detalhe: Option<&str>) -> Item {
+        Item::Ferramenta {
+            id: "p1".into(),
+            em: 0,
+            nome: "ExitPlanMode".into(),
+            resumo: "ExitPlanMode".into(),
+            resultado: resultado.map(str::to_string),
+            erro,
+            detalhe: detalhe.map(str::to_string),
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+        }
+    }
+
+    /// O plano continua na conversa depois de respondido: um cartão recolhido no ponto em que
+    /// foi proposto, com o título dizendo o que você respondeu, que abre o texto do plano.
+    #[test]
+    fn o_plano_respondido_fica_na_conversa_como_cartao() {
+        use super::{PlanoNaConversa, pedido_de_mudancas, plano_na_conversa};
+        let texto = "# Trocar o cupom\n\n1. Ler.\n2. Aplicar.";
+        let aprovado = chamada_do_plano(Some("User has approved your plan."), false, Some(texto));
+        assert_eq!(
+            plano_na_conversa(&aprovado),
+            Some(PlanoNaConversa { titulo: "Plano aprovado", texto, aprovado: true, mudancas: None })
+        );
+        let recusado = chamada_do_plano(Some("O usuário pediu mudanças no plano: começa pelos testes"), true, Some(texto));
+        assert_eq!(
+            plano_na_conversa(&recusado),
+            Some(PlanoNaConversa { titulo: "Plano recusado", texto, aprovado: false, mudancas: Some("começa pelos testes") })
+        );
+        // Recusado sem comentário (o "Pedir mudanças" vazio, o Negar do sino).
+        assert_eq!(plano_na_conversa(&chamada_do_plano(Some("O usuário pediu para revisar o plano."), true, Some(texto))).unwrap().mudancas, None);
+        assert_eq!(pedido_de_mudancas("O usuário negou esta ação."), None);
+        // O turno parou antes da resposta: o plano fica, sem dizer que foi aprovado.
+        assert_eq!(plano_na_conversa(&chamada_do_plano(None, false, Some(texto))).unwrap().titulo, "Plano proposto");
+        // Sem o texto do plano (conversa de antes disto) e nas outras chamadas, a linha da trilha.
+        assert_eq!(plano_na_conversa(&chamada_do_plano(Some("ok"), false, None)), None);
+        assert_eq!(plano_na_conversa(&ferramenta("Bash", "Bash · ls", Some("ok"), false)), None);
+        assert_eq!(plano_na_conversa(&usuario("oi")), None);
+        // Com o turno recolhido em "Trabalhou…", o cartão fica à vista.
+        assert!(fica_fora_do_recolhido(&aprovado) && fica_fora_do_recolhido(&recusado));
+        assert!(!fica_fora_do_recolhido(&chamada_do_plano(Some("ok"), false, None)));
+        assert!(!fica_fora_do_recolhido(&ferramenta("Bash", "Bash · ls", Some("ok"), false)));
+        // A linha de quando não há o texto, e o que o turno espera enquanto o pedido está aberto.
+        assert_eq!(verbo_da_ferramenta("ExitPlanMode", false), "Propôs um plano");
+        assert_eq!(texto_atividade(&[usuario("oi"), chamada_do_plano(None, false, None)], false, 0), "Esperando a sua aprovação…");
+    }
+
+    #[test]
+    fn a_pergunta_respondida_e_uma_linha_da_trilha() {
+        assert_eq!(verbo_da_ferramenta("AskUserQuestion", false), "Perguntou");
+        assert_eq!(verbo_da_ferramenta("AskUserQuestion", true), "Perguntando");
+        let pendente = ferramenta("AskUserQuestion", "AskUserQuestion · Qual cor você prefere?", None, false);
+        assert_eq!(texto_atividade(&[usuario("oi"), pendente], false, 0), "Esperando a sua resposta…");
+        assert_eq!(super::detalhe_da_chamada("AskUserQuestion", "AskUserQuestion · Qual cor você prefere?"), "Qual cor você prefere?");
+    }
+
+    /// O marco de compactação: uma nota da conversa, que fica à vista com o turno recolhido, e a
+    /// linha viva do turno dizendo "Compactando…" enquanto dura.
+    #[test]
+    fn o_marco_de_compactacao_e_a_linha_compactando() {
+        use super::rotulo_do_turno_calado;
+        let texto = crate::motor::marco_da_compactacao(false, Some(168_432));
+        assert_eq!(tipo_aviso(&texto, false), ClasseAvisoChat::Marco);
+        assert!(fica_fora_do_recolhido(&Item::Aviso { em: 0, texto, erro: false }));
+        assert!(!fica_fora_do_recolhido(&Item::Aviso { em: 0, texto: "Nova tentativa".into(), erro: false }));
+        assert_eq!(rotulo_do_turno_calado(true, false), "Compactando…");
+        assert_eq!(rotulo_do_turno_calado(true, true), "Compactando…");
+        assert_eq!(rotulo_do_turno_calado(false, true), "Agentes trabalhando em segundo plano…");
+        assert_eq!(rotulo_do_turno_calado(false, false), "Pensando…");
     }
 
     #[test]

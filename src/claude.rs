@@ -283,6 +283,13 @@ pub enum Evento {
     FicouNaFila(usize),
     /// O `set_model` no meio do turno valeu: o id do modelo que o turno passa a usar.
     ModeloEmUso(String),
+    /// O Claude Code está resumindo a conversa para liberar contexto (`status: "compacting"`, que
+    /// ele repete a cada 30 s enquanto dura), ou parou de resumir (o `status` com o
+    /// `compact_result`).
+    Compactando(bool),
+    /// A conversa foi compactada aqui (`compact_boundary`): pelo `/compact` (`manual`) ou sozinha,
+    /// e quantos tokens ela ocupava antes (`None` se o Claude Code não disse).
+    Compactou { manual: bool, antes: Option<u64> },
     /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta.
     SubFerramenta {
         pai: String,
@@ -1617,6 +1624,22 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
         "system" if valor["subtype"] == "hook_response" && valor["hook_event"] == "PreToolUse" => {
             hook_que_pediu(valor).into_iter().collect()
         }
+        // A compactação (medido no 2.1.328 com um `/compact`): `status: "compacting"` enquanto
+        // resume, `status: null` com o `compact_result` quando acaba e, em seguida, o
+        // `compact_boundary` com o gatilho e os tokens de antes e de depois. O `status` também sai
+        // na troca de modo (só com o `permissionMode`), e aí não diz nada.
+        "system" if valor["subtype"] == "status" && valor["status"] == "compacting" => vec![Evento::Compactando(true)],
+        "system" if valor["subtype"] == "status" && !valor["compact_result"].is_null() => vec![Evento::Compactando(false)],
+        "system" if valor["subtype"] == "compact_boundary" => {
+            let dados = &valor["compact_metadata"];
+            let mut eventos = vec![Evento::Compactou {
+                manual: dados["trigger"] == "manual",
+                antes: dados["pre_tokens"].as_u64(),
+            }];
+            // Quanto a conversa ocupa depois do resumo: o anel do contexto desce na hora.
+            eventos.extend(dados["post_tokens"].as_u64().filter(|t| *t > 0).map(Evento::Contexto));
+            eventos
+        }
         "stream_event" => {
             let evento = &valor["event"];
             if evento["type"] == "content_block_delta" && evento["delta"]["type"] == "text_delta" {
@@ -1913,6 +1936,10 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
         "Bash" => campo("command")
             .filter(|c| campo("description").is_some() || c.lines().count() > 1 || c.chars().count() > 90)
             .map(|c| format!("$ {c}")),
+        // O plano inteiro: é o que o cartão da conversa abre depois de respondido. No 2.1.328 a
+        // chamada vem sem ele (o motor o guarda quando o pedido de permissão chega).
+        "ExitPlanMode" => return (campo("plan").and_then(plano_guardado), None),
+        "AskUserQuestion" => Some(perguntas_e_opcoes(entrada)),
         _ => None,
     };
     let detalhe = detalhe.filter(|d| !d.trim().is_empty()).map(|d| {
@@ -1926,6 +1953,57 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
         format!("{}\n… (cortado)", &d[..fim])
     });
     (detalhe, arquivo)
+}
+
+/// O maior plano guardado inteiro na chamada (os outros detalhes param em `MAX_DETALHE`; um plano
+/// de verdade passa disso, e é para ler inteiro).
+pub const MAX_PLANO: usize = 60_000;
+
+/// O texto de um plano como fica guardado na chamada: sem as sobras das pontas e até
+/// `MAX_PLANO`. `None` para o plano vazio.
+pub fn plano_guardado(plano: &str) -> Option<String> {
+    let plano = plano.trim();
+    if plano.is_empty() {
+        return None;
+    }
+    if plano.len() <= MAX_PLANO {
+        return Some(plano.to_string());
+    }
+    let mut fim = MAX_PLANO;
+    while !plano.is_char_boundary(fim) {
+        fim -= 1;
+    }
+    Some(format!("{}\n\n… (cortado)", &plano[..fim]))
+}
+
+/// O plano que o resultado da chamada ExitPlanMode aprovada traz, depois de "## Approved Plan:"
+/// (ou "## Approved Plan (edited by user):"), como o Claude Code 2.1.328 o escreve. É de onde o
+/// plano sai quando a chamada veio sem ele e o pedido de permissão não passou pelo Vitral (a
+/// conversa trazida do Claude Code). `None` no plano recusado, que só traz a recusa.
+pub fn plano_do_resultado(resultado: &str) -> Option<&str> {
+    let (_, depois) = resultado.split_once("## Approved Plan")?;
+    let (_, plano) = depois.split_once('\n')?;
+    Some(plano.trim()).filter(|p| !p.is_empty())
+}
+
+/// As perguntas de uma AskUserQuestion com as opções de cada uma, para ler ao abrir a linha da
+/// chamada depois de respondida.
+fn perguntas_e_opcoes(entrada: &Value) -> String {
+    let texto = |v: &Value| v.as_str().map(str::trim).unwrap_or_default().to_string();
+    entrada["questions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|pergunta| {
+            let mut linhas = vec![texto(&pergunta["question"])];
+            for opcao in pergunta["options"].as_array().into_iter().flatten() {
+                let (rotulo, descricao) = (texto(&opcao["label"]), texto(&opcao["description"]));
+                linhas.push(if descricao.is_empty() { format!("· {rotulo}") } else { format!("· {rotulo}: {descricao}") });
+            }
+            linhas.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Quanto uma edição muda, com o texto inteiro da chamada (rodada de uso, item 5.1): numa troca,
@@ -2013,6 +2091,8 @@ pub fn resumo_ferramenta(nome: &str, entrada: &Value) -> String {
         "Task" | "Agent" => campo("description"),
         "Workflow" => campo("name").or_else(|| campo("description")),
         "TodoWrite" => Some("lista de afazeres".into()),
+        // A primeira pergunta (as outras aparecem ao abrir a linha).
+        "AskUserQuestion" => entrada["questions"][0]["question"].as_str().map(str::trim).filter(|p| !p.is_empty()).map(str::to_string),
         _ if nome.starts_with("mcp__vitral__") => resumo_do_vitral(nome.trim_start_matches("mcp__vitral__"), entrada),
         _ => None,
     };
@@ -3358,5 +3438,274 @@ mod testes_do_turno_ao_vivo {
         let mut sem = Turno::abrir(pedido, |o| Opcoes { raciocinio_resumido: false, ..o }, &[]);
         sem.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
         assert!(matches!(sem.vistos.last(), Some(Evento::Pensamento(t)) if t.is_empty()), "{:?}", sem.vistos);
+    }
+}
+
+/// Testes de aceite da pergunta com opções (AskUserQuestion), do plano que fica na conversa e do
+/// marco de compactação. Os formatos foram medidos no Claude Code 2.1.328 em 23/11/2026 (Haiku,
+/// numa pasta em /tmp): ver o `LEIA-ME.md`.
+#[cfg(test)]
+mod testes_da_pergunta_do_plano_e_da_compactacao {
+    use super::*;
+
+    fn opcoes(modo: &str, url_mcp: &str) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: PathBuf::from("/tmp/x"),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: None,
+            permissao: modo.into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            url_mcp: url_mcp.into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+            raciocinio_resumido: true,
+        }
+    }
+
+    /// As linhas que o 2.1.328 escreve num `/compact` (copiadas da saída dele, sem os ids).
+    #[test]
+    fn a_compactacao_vira_o_estado_e_o_marco() {
+        let comecou = json!({ "type": "system", "subtype": "status", "status": "compacting", "session_id": "s" });
+        assert!(matches!(interpretar(&comecou).as_slice(), [Evento::Compactando(true)]));
+        let acabou = json!({ "type": "system", "subtype": "status", "status": null, "compact_result": "success", "session_id": "s" });
+        assert!(matches!(interpretar(&acabou).as_slice(), [Evento::Compactando(false)]));
+        // O `status` que não fala de compactação (a troca de modo no meio do turno) não diz nada.
+        let modo = json!({ "type": "system", "subtype": "status", "status": null, "permissionMode": "acceptEdits" });
+        assert!(interpretar(&modo).is_empty());
+        let marco = json!({ "type": "system", "subtype": "compact_boundary", "session_id": "s",
+            "compact_metadata": { "trigger": "manual", "pre_tokens": 42987, "post_tokens": 8404,
+                                  "cumulative_dropped_tokens": 34583, "duration_ms": 5213 } });
+        let eventos = interpretar(&marco);
+        // O marco e, depois dele, quanto a conversa ocupa agora (o anel do contexto desce).
+        assert!(
+            matches!(eventos.as_slice(), [Evento::Compactou { manual: true, antes: Some(42987) }, Evento::Contexto(8404)]),
+            "{eventos:?}"
+        );
+        let automatico = json!({ "type": "system", "subtype": "compact_boundary",
+            "compact_metadata": { "trigger": "auto", "pre_tokens": 168432 } });
+        let eventos = interpretar(&automatico);
+        assert!(matches!(eventos.as_slice(), [Evento::Compactou { manual: false, antes: Some(168432) }]), "{eventos:?}");
+        // Sem os números (um Claude Code que não os mande), o marco ainda entra.
+        let sem = json!({ "type": "system", "subtype": "compact_boundary" });
+        assert!(matches!(interpretar(&sem).as_slice(), [Evento::Compactou { manual: false, antes: None }]));
+    }
+
+    #[test]
+    fn a_pergunta_e_o_plano_tem_resumo_e_detalhe_proprios() {
+        let pergunta = json!({ "questions": [
+            { "question": "Qual cor você prefere?", "header": "Cor", "multiSelect": false,
+              "options": [{ "label": "Azul", "description": "A do céu." }, { "label": "Verde" }] },
+            { "question": "Quais frutas?", "header": "Frutas", "multiSelect": true,
+              "options": [{ "label": "Maçã", "description": "" }, { "label": "Uva", "description": "Roxa." }] },
+        ] });
+        assert_eq!(resumo_ferramenta("AskUserQuestion", &pergunta), "AskUserQuestion · Qual cor você prefere?");
+        // Ao abrir a linha: as perguntas com as opções de cada uma.
+        assert_eq!(
+            detalhe_ferramenta("AskUserQuestion", &pergunta).0.as_deref(),
+            Some("Qual cor você prefere?\n· Azul: A do céu.\n· Verde\n\nQuais frutas?\n· Maçã\n· Uva: Roxa.")
+        );
+        // O plano inteiro fica guardado na chamada (o cartão da conversa o abre); um plano passa
+        // do limite das outras ferramentas.
+        let plano = format!("# Plano\n\n{}", "1. um passo\n".repeat(900));
+        assert!(plano.len() > MAX_DETALHE);
+        assert_eq!(detalhe_ferramenta("ExitPlanMode", &json!({ "plan": plano })).0.as_deref(), Some(plano.trim()));
+        // No 2.1.328 a chamada vem sem o plano (ele só vem no pedido de permissão e no resultado).
+        assert_eq!(detalhe_ferramenta("ExitPlanMode", &json!({})), (None, None));
+        assert_eq!(resumo_ferramenta("ExitPlanMode", &json!({})), "ExitPlanMode");
+    }
+
+    /// O resultado da chamada aprovada traz o plano (2.1.328): é de onde ele sai quando a chamada
+    /// veio sem ele e o pedido de permissão não passou pelo Vitral (a conversa trazida).
+    #[test]
+    fn o_plano_aprovado_sai_do_resultado() {
+        let resultado = "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n\
+            Your plan has been saved to: /home/x/.claude/plans/a.md\nYou can refer back to it if needed during implementation.\n\n\
+            ## Approved Plan:\n# Plano: criar ola.txt\n\n1. Criar o arquivo.\n2. Conferir.\n";
+        assert_eq!(plano_do_resultado(resultado), Some("# Plano: criar ola.txt\n\n1. Criar o arquivo.\n2. Conferir."));
+        // Editado antes de aprovar, o título muda.
+        assert_eq!(plano_do_resultado("ok\n\n## Approved Plan (edited by user):\nNovo plano"), Some("Novo plano"));
+        assert_eq!(plano_do_resultado("O usuário pediu mudanças no plano: menos passos"), None);
+        assert_eq!(plano_do_resultado("## Approved Plan:\n  \n"), None);
+    }
+
+    /// Um turno no claude de mentira com os argumentos de um turno de verdade; devolve os eventos.
+    #[cfg(unix)]
+    fn turno(texto: &str, args: Vec<String>) -> Vec<Evento> {
+        let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+        let pasta = std::env::temp_dir().join(format!("vitral-pergunta-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let mensagem = json!({ "type": "user", "message": { "role": "user", "content": [{ "type": "text", "text": texto }] } });
+        let mut filho = processos::novo_comando("python3")
+            .arg("-I")
+            .arg(&falso)
+            .args(args)
+            .current_dir(&pasta)
+            .env("XDG_STATE_HOME", &pasta)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("python3 para o claude de mentira");
+        writeln!(filho.stdin.take().unwrap(), "{mensagem}").unwrap();
+        let saida = filho.wait_with_output().unwrap();
+        let _ = std::fs::remove_dir_all(&pasta);
+        String::from_utf8_lossy(&saida.stdout)
+            .lines()
+            .filter_map(|linha| serde_json::from_str::<Value>(linha).ok())
+            .flat_map(|valor| interpretar(&valor))
+            .collect()
+    }
+
+    /// O servidor MCP do Vitral respondendo aos pedidos com `decidir`; devolve os pedidos vistos.
+    #[cfg(unix)]
+    fn servidor_que_responde(
+        decidir: impl Fn(&Value) -> Value + Send + Sync + 'static,
+    ) -> (crate::mcp::Servidor, std::sync::mpsc::Receiver<Value>) {
+        let (chegou, pedidos) = std::sync::mpsc::channel::<Value>();
+        let chegou = Mutex::new(chegou);
+        let servidor = crate::mcp::iniciar(move |chamada: crate::mcp::Chamada| {
+            let resposta = decidir(&chamada.argumentos);
+            let _ = chegou.lock().unwrap().send(chamada.argumentos.clone());
+            let _ = chamada.resposta.try_send(crate::mcp::Resposta::ok(resposta.to_string()));
+        })
+        .unwrap();
+        (servidor, pedidos)
+    }
+
+    /// De ponta a ponta com o claude de mentira, que encena a AskUserQuestion como o 2.1.328: o
+    /// pedido chega à ferramenta de permissão (em qualquer modo, até em "Sem perguntar") com as
+    /// perguntas, e a resposta do cartão volta como `allow` com o `updatedInput` levando as
+    /// perguntas e as `answers`, com a pergunta inteira como chave.
+    #[cfg(unix)]
+    #[test]
+    fn a_resposta_da_pergunta_volta_no_formato_do_claude_code() {
+        let (servidor, pedidos) = servidor_que_responde(|argumentos| {
+            let respostas: Vec<(String, String)> = argumentos["input"]["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    let pergunta = q["question"].as_str().unwrap_or_default().to_string();
+                    let resposta = if q["multiSelect"] == true { "Maçã, Uva" } else { "Verde" };
+                    (pergunta, resposta.to_string())
+                })
+                .collect();
+            crate::motor::resposta_da_pergunta(&argumentos["input"], &respostas)
+        });
+        let texto = "[pergunta Cor | Qual cor você prefere? | Azul: A do céu.; Verde; Vermelho]\n\
+                     [pergunta+ Frutas | Quais frutas você gosta? | Maçã; Banana; Uva]\npergunta";
+        let eventos = turno(texto, argumentos(&opcoes("bypassPermissions", &servidor.url("c1"))));
+        let chamadas = eventos.iter().filter(|e| matches!(e, Evento::Ferramenta { nome, .. } if nome == "AskUserQuestion")).count();
+        assert_eq!(chamadas, 1, "as duas perguntas numa chamada só: {eventos:?}");
+        let pedido = pedidos.try_recv().expect("o pedido de permissão");
+        assert_eq!(pedido["tool_name"], "AskUserQuestion");
+        let perguntas = pedido["input"]["questions"].as_array().expect("as perguntas");
+        assert_eq!(perguntas.len(), 2);
+        assert_eq!(perguntas[0]["question"], "Qual cor você prefere?");
+        assert_eq!(perguntas[0]["header"], "Cor");
+        assert_eq!(perguntas[0]["multiSelect"], false);
+        assert_eq!(perguntas[0]["options"][0], json!({ "label": "Azul", "description": "A do céu." }));
+        assert_eq!(perguntas[1]["multiSelect"], true);
+        assert!(pedidos.try_recv().is_err(), "um pedido só");
+        // O que o Claude Code devolve ao modelo com as respostas certas.
+        let resultado = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::ResultadoFerramenta { conteudo, erro: false, .. } => Some(conteudo.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a pergunta não foi respondida: {eventos:?}"));
+        assert!(resultado.contains("\"Qual cor você prefere?\"=\"Verde\""), "{resultado}");
+        assert!(resultado.contains("\"Quais frutas você gosta?\"=\"Maçã, Uva\""), "{resultado}");
+
+        // Como era (o Permitir do cartão genérico devolvia a entrada como veio): ninguém respondeu.
+        let (servidor, _pedidos) = servidor_que_responde(|argumentos| json!({ "behavior": "allow", "updatedInput": argumentos["input"] }));
+        let eventos = turno(texto, argumentos(&opcoes("manual", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, .. } if conteudo == "The user did not answer the questions.")),
+            "{eventos:?}"
+        );
+        // Só as respostas, sem as perguntas: o Claude Code recusa o `updatedInput`.
+        let (servidor, _pedidos) = servidor_que_responde(|_| json!({ "behavior": "allow", "updatedInput": { "answers": { "x": "y" } } }));
+        let eventos = turno(texto, argumentos(&opcoes("manual", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, erro: true, .. } if conteudo.contains("failed schema validation"))),
+            "{eventos:?}"
+        );
+    }
+
+    /// O plano no claude de mentira, como no 2.1.328: a chamada vem vazia, o plano vem no pedido
+    /// de permissão e, aprovado, no resultado; recusado, o resultado é a mensagem, como erro.
+    #[cfg(unix)]
+    #[test]
+    fn o_plano_vem_no_pedido_e_no_resultado_aprovado() {
+        let texto = "[plano # Trocar o cupom\\n\\n1. Ler o carrinho.\\n2. Aplicar o desconto.]\nplaneja";
+        let (servidor, pedidos) = servidor_que_responde(|argumentos| json!({ "behavior": "allow", "updatedInput": argumentos["input"] }));
+        let eventos = turno(texto, argumentos(&opcoes("plan", &servidor.url("c1"))));
+        let entrada = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::Ferramenta { nome, entrada, .. } if nome == "ExitPlanMode" => Some(entrada.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("sem a chamada do plano: {eventos:?}"));
+        assert_eq!(entrada, json!({}), "a chamada vem sem o plano");
+        let pedido = pedidos.try_recv().expect("o pedido de permissão");
+        assert_eq!(pedido["tool_name"], "ExitPlanMode");
+        let plano = "# Trocar o cupom\n\n1. Ler o carrinho.\n2. Aplicar o desconto.";
+        assert_eq!(pedido["input"]["plan"], plano);
+        assert_eq!(pedido["tool_use_id"], "toolu_falso_p1");
+        let aprovado = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::ResultadoFerramenta { id, conteudo, erro: false } if id == "toolu_falso_p1" => Some(conteudo.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("o plano aprovado não voltou: {eventos:?}"));
+        assert_eq!(plano_do_resultado(aprovado), Some(plano));
+
+        let recusa = "O usuário pediu mudanças no plano: começa pelos testes";
+        let (servidor, _pedidos) = servidor_que_responde(move |_| json!({ "behavior": "deny", "message": recusa }));
+        let eventos = turno(texto, argumentos(&opcoes("plan", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, erro: true, .. } if conteudo == recusa)),
+            "{eventos:?}"
+        );
+    }
+
+    /// A compactação no claude de mentira: o `[compacta ...]` no meio de um turno (automática) e o
+    /// "/compact" como mensagem (manual), com as mesmas linhas do 2.1.328.
+    #[cfg(unix)]
+    #[test]
+    fn a_compactacao_encenada_tem_o_estado_e_o_marco() {
+        let args = argumentos(&opcoes("manual", "http://127.0.0.1:1/mcp/projeto/c1"));
+        let eventos = turno("[compacta auto 168432 | 1]\ncontinua", args.clone());
+        let posicao = |achar: &dyn Fn(&Evento) -> bool| eventos.iter().position(achar);
+        let comecou = posicao(&|e| matches!(e, Evento::Compactando(true))).unwrap_or_else(|| panic!("{eventos:?}"));
+        let acabou = posicao(&|e| matches!(e, Evento::Compactando(false))).unwrap_or_else(|| panic!("{eventos:?}"));
+        let marco = posicao(&|e| matches!(e, Evento::Compactou { manual: false, antes: Some(168432) })).unwrap_or_else(|| panic!("{eventos:?}"));
+        let fim = posicao(&|e| matches!(e, Evento::Fim { erro: false, .. })).unwrap_or_else(|| panic!("{eventos:?}"));
+        assert!(comecou < acabou && acabou < marco && marco < fim, "{eventos:?}");
+        assert!(eventos[marco..fim].iter().any(|e| matches!(e, Evento::Texto(_))), "o turno segue depois do marco: {eventos:?}");
+
+        let eventos = turno("/compact", args);
+        assert!(eventos.iter().any(|e| matches!(e, Evento::Compactando(true))), "{eventos:?}");
+        assert!(eventos.iter().any(|e| matches!(e, Evento::Compactou { manual: true, antes: Some(_) })), "{eventos:?}");
+        // Como no de verdade: o /compact termina sem texto.
+        assert!(!eventos.iter().any(|e| matches!(e, Evento::Texto(_))), "{eventos:?}");
+        assert!(matches!(eventos.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto.is_empty()), "{eventos:?}");
     }
 }

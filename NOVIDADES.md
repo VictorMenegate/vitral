@@ -5,8 +5,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.9.6
 
-O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo
-e o de um hook seu aparece em todos os modos.
+O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
+o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
+continua na conversa e a compactação deixa um marco.
 
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
@@ -27,6 +28,16 @@ e o de um hook seu aparece em todos os modos.
   exemplo), o cartão não aparecia no modo Sem perguntar: o comando voltava recusado e o agente
   insistia. Agora o cartão aparece em qualquer modo, com o motivo que o hook deu, e esse pedido
   não tem "Não perguntar de novo".
+- **Pergunta com opções.** Quando o Claude pergunta algo com alternativas, a pergunta aparece
+  num cartão com as opções para clicar (uma ou várias), a descrição de cada uma, "Outra…" para
+  escrever a sua e Enviar. Antes ela vinha como um pedido de permissão comum, e o Permitir
+  devolvia a pergunta sem resposta.
+- **O plano continua na conversa.** Depois de aprovado ou recusado, o plano fica no ponto em que
+  foi proposto, num cartão recolhido ("Plano aprovado" ou "Plano recusado") que abre o texto
+  dele. Antes ele sumia da conversa assim que você respondia.
+- **Marco de compactação.** Enquanto o Claude Code resume a conversa, a linha do turno diz
+  "Compactando…". Quando termina, a conversa ganha o marco "Contexto compactado", com o tamanho
+  de antes e se foi automático ou pelo Compactar.
 
 ## 0.9.5
 

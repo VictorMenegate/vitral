@@ -543,6 +543,8 @@ pub(super) enum Enter {
     /// Há tantos pedidos de permissão abertos: nega e manda o texto ao Claude como a resposta
     /// (`Motor::enviar_responde_pedido`).
     RespondePedido(usize),
+    /// O que está aberto é uma pergunta com opções (AskUserQuestion): o texto é a resposta a ela.
+    RespondePergunta,
     /// Espera a vez na fila.
     Fila,
 }
@@ -551,6 +553,7 @@ pub(super) fn enter_no_turno(motor: &Motor, chat: &str) -> Enter {
     match motor.pedidos_abertos(chat) {
         0 if dirige_o_turno(motor, chat) => Enter::Dirige,
         0 => Enter::Fila,
+        _ if motor.so_perguntas_abertas(chat) => Enter::RespondePergunta,
         pedidos => Enter::RespondePedido(pedidos),
     }
 }
@@ -564,6 +567,7 @@ fn dica_do_enviar(enter: Enter, reforco: bool) -> &'static str {
         Enter::Dirige => "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila",
         Enter::RespondePedido(1) => "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
         Enter::RespondePedido(_) => "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePergunta => "Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila",
     }
 }
 
@@ -2057,6 +2061,17 @@ mod testes_caixa {
         assert_eq!(dica_do_enviar(Enter::Dirige, true), reforco);
         assert_eq!(dica_do_enviar(Enter::RespondePedido(1), true), reforco);
         assert_eq!(dica_do_enviar(Enter::Fila, true), "Enviar\nEntra na fila: este turno não recebe mensagem agora");
+    }
+
+    /// Com a pergunta com opções aberta, escrever é responder a ela: a dica não fala em negar.
+    #[test]
+    fn a_dica_do_enviar_com_a_pergunta_aberta() {
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePergunta, false),
+            "Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila"
+        );
+        let reforco = "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila";
+        assert_eq!(dica_do_enviar(Enter::RespondePergunta, true), reforco);
     }
 
     #[test]

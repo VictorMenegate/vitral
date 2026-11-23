@@ -497,7 +497,9 @@ pub fn regra_de_permissao(
     pasta: &Path,
 ) -> Option<String> {
     match ferramenta {
-        "ExitPlanMode" => None,
+        // O plano e a pergunta com opções pedem uma resposta de cada vez: uma regra responderia
+        // por você (e a pergunta voltaria ao modelo sem resposta nenhuma).
+        "ExitPlanMode" | "AskUserQuestion" => None,
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
             let caminho = entrada["file_path"].as_str().or(entrada["notebook_path"].as_str());
             dentro_da_pasta(Path::new(caminho?), pasta).then(|| "edicoes".to_string())

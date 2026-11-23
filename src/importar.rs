@@ -518,9 +518,14 @@ fn historico_limitado_de(leitor: impl BufRead, maximo: usize) -> Historico {
             "user" if !linha.is_meta => {
                 let u = do_usuario(&mensagem.content);
                 for (id, texto, erro) in u.resultados {
-                    if let Some(Item::Ferramenta { resultado, erro: e, .. }) =
+                    if let Some(Item::Ferramenta { nome, resultado, erro: e, detalhe, .. }) =
                         chamadas.get(&id).and_then(|&i| i.checked_sub(cortados)).and_then(|i| itens.get_mut(i))
                     {
+                        // O plano aprovado: desde o 2.1.328 a chamada vem sem ele, e o resultado o
+                        // traz (é o que o cartão "Plano aprovado" abre).
+                        if nome == "ExitPlanMode" && detalhe.is_none() && !erro {
+                            *detalhe = crate::claude::plano_do_resultado(&texto).and_then(crate::claude::plano_guardado);
+                        }
                         *resultado = Some(crate::git::inicio_do_texto(&texto, MAX_RESULTADO));
                         *e = erro;
                     }
@@ -1354,6 +1359,34 @@ mod testes {
         assert_eq!(ampliado.itens.len(), MAX_ITENS + 11);
         assert!(matches!(ampliado.itens.first(), Some(Item::Usuario { texto, .. }) if texto == "m0"));
         let _ = fs::remove_dir_all(&raiz);
+    }
+
+    /// O plano aprovado na conversa trazida: a chamada vem sem o plano (2.1.328) e ele sai do
+    /// resultado, para o cartão "Plano aprovado" ter o que abrir. O de antes, com o plano na
+    /// chamada, fica com ele mesmo recusado.
+    #[test]
+    fn o_plano_da_conversa_trazida_fica_na_chamada() {
+        let cwd = PathBuf::from("/tmp/casa");
+        let quando = "2026-11-23T10:00:00.000Z";
+        let resultado = "User has approved your plan. You can now start coding.\n\n## Approved Plan:\n# Trocar o cupom\n\n1. Ler.\n2. Aplicar.\n";
+        let linhas = [
+            usuario(&cwd, quando, serde_json::json!("planeja a troca do cupom")),
+            assistente(&cwd, quando, "a", serde_json::json!([{"type": "tool_use", "id": "p1", "name": "ExitPlanMode", "input": {}}])),
+            usuario(&cwd, quando, serde_json::json!([{"type": "tool_result", "tool_use_id": "p1", "content": resultado}])),
+            assistente(&cwd, quando, "b", serde_json::json!([{"type": "tool_use", "id": "p2", "name": "ExitPlanMode", "input": {"plan": "# Antigo\n\n1. Um."}}])),
+            usuario(&cwd, quando, serde_json::json!([{"type": "tool_result", "tool_use_id": "p2", "content": "O usuário pediu mudanças no plano: menos", "is_error": true}])),
+        ]
+        .join("\n");
+        let h = historico_limitado_de(linhas.as_bytes(), MAX_ITENS);
+        let planos: Vec<(Option<&str>, bool)> = h
+            .itens
+            .iter()
+            .filter_map(|i| match i {
+                Item::Ferramenta { nome, detalhe, erro, .. } if nome == "ExitPlanMode" => Some((detalhe.as_deref(), *erro)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(planos, [(Some("# Trocar o cupom\n\n1. Ler.\n2. Aplicar."), false), (Some("# Antigo\n\n1. Um."), true)]);
     }
 
     #[test]

@@ -119,6 +119,10 @@ pub(super) fn estado_do_chat(motor: &Motor, chat: &Chat) -> String {
     match motor.execucao(&chat.id) {
         Execucao::EsperandoVoce => match motor.permissoes.iter().find(|p| p.chat == chat.id) {
             Some(p) if p.ferramenta == "ExitPlanMode" => "Plano para aprovar".into(),
+            Some(p) if p.ferramenta == "AskUserQuestion" => match p.entrada["questions"][0]["question"].as_str().map(str::trim) {
+                Some(pergunta) if !pergunta.is_empty() => format!("Pergunta · {pergunta}"),
+                _ => "Pergunta".into(),
+            },
             Some(p) => format!("Permissão · {}", crate::claude::resumo_ferramenta(&p.ferramenta, &p.entrada)),
             None => "Esperando você".into(),
         },

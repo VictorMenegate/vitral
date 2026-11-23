@@ -148,6 +148,8 @@ pub(super) enum Causa {
     /// O resumo da ferramenta ("Bash · npm test").
     Permissao(String),
     Plano,
+    /// A pergunta com opções que o agente fez (o texto dela).
+    Pergunta(String),
     /// O motivo já curto ("Vitral fechou").
     Parada(String),
     /// O texto do erro: vale a primeira linha.
@@ -160,6 +162,7 @@ impl Causa {
         Some(match p {
             PendenciaDoMotor::Permissao { resumo, .. } => Causa::Permissao(resumo.clone()),
             PendenciaDoMotor::Plano { .. } => Causa::Plano,
+            PendenciaDoMotor::Pergunta { pergunta, .. } => Causa::Pergunta(pergunta.clone()),
             PendenciaDoMotor::Parada { motivo, .. } => Causa::Parada(motivo_curto(motivo)),
             PendenciaDoMotor::Erro { texto, .. } => Causa::Erro(texto.clone()),
             PendenciaDoMotor::Nova { .. } => return None,
@@ -171,6 +174,7 @@ impl Causa {
         match self {
             Causa::Permissao(resumo) => (Sinal::Pedido, "Permissão", resumo.clone()),
             Causa::Plano => (Sinal::Pedido, "Plano para aprovar", String::new()),
+            Causa::Pergunta(pergunta) => (Sinal::Pedido, "Pergunta", pergunta.clone()),
             Causa::Parada(porque) => (Sinal::Parada, "Parada", porque.clone()),
             Causa::Erro(texto) => (Sinal::Erro, "Erro", primeira_linha(texto)),
         }
@@ -2153,6 +2157,10 @@ mod testes {
         assert_eq!(partes(Causa::Parada("Vitral fechou".into())), (Some("Parada".into()), "· Vitral fechou".into()));
         assert_eq!(partes(Causa::Permissao("Bash · npm test".into())), (Some("Permissão".into()), "· Bash · npm test".into()));
         assert_eq!(partes(Causa::Plano), (Some("Plano para aprovar".into()), String::new()));
+        // A pergunta com opções (AskUserQuestion) diz o que foi perguntado.
+        assert_eq!(partes(Causa::Pergunta("Qual cor você prefere?".into())), (Some("Pergunta".into()), "· Qual cor você prefere?".into()));
+        let pergunta = PendenciaDoMotor::Pergunta { pedido: "p1".into(), chat: "c1".into(), pergunta: "Qual cor?".into() };
+        assert!(matches!(Causa::da_pendencia(&pergunta), Some(Causa::Pergunta(texto)) if texto == "Qual cor?"));
         assert_eq!(partes(Causa::Erro("\n# deu ruim\nresto".into())), (Some("Erro".into()), "· deu ruim".into()));
         let do_motor = PendenciaDoMotor::Parada { chat: "c1".into(), motivo: "o Vitral foi fechado no meio do turno".into() };
         let causa = Causa::da_pendencia(&do_motor).unwrap();

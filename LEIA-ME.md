@@ -134,6 +134,21 @@ componentes do GPUI Kit.
   que abre a direita em "Este chat", na seção Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
   custo, modelo, conta e Compactar) já existia, no anel da caixa.
+- **Marco de compactação.** Enquanto o Claude Code resume a conversa (o `/compact`, ou sozinho com
+  o contexto cheio), a linha viva do turno diz "Compactando…" no lugar do "Pensando…", na conversa
+  e na linha de estado da caixa (`mensagens::rotulo_do_turno_calado`, `Motor::compactando`). Ao
+  terminar, entra na conversa o marco "Contexto compactado (automático, 168 mil tokens antes)"
+  (ou "manual", no `/compact`; `motor::marco_da_compactacao`), uma nota da conversa como o
+  "Turno interrompido", que fica à vista também com o turno recolhido em "Trabalhou…", e o anel
+  do contexto desce para o que a conversa ocupa depois do resumo. Medido no Claude Code 2.1.328
+  em 23/11/2026 com um `/compact`: a saída traz `system/status` com `status: "compacting"`,
+  depois `status: null` com `compact_result: "success"`, um `init` de novo e o
+  `system/compact_boundary` com `compact_metadata` (`trigger` "manual" ou "auto", `pre_tokens`,
+  `post_tokens`); o `claude::interpretar` os vira `Evento::Compactando` e `Evento::Compactou`
+  (mais o `Evento::Contexto` com o `post_tokens`). O `status` da troca de modo, que só traz o
+  `permissionMode`, não diz nada. O marco é um `Item::Aviso` que começa com
+  `motor::CONTEXTO_COMPACTADO`; a conversa trazida do Claude Code segue com "A conversa foi
+  resumida aqui", que vem do arquivo dela (`src/importar.rs`).
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
   no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
   as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
@@ -176,7 +191,8 @@ componentes do GPUI Kit.
   caixa nega o pedido (todos os abertos daquele chat) e entrega o texto ao modelo como a
   explicação da recusa, pelo mesmo caminho do **Negar e explicar…** do cartão
   (`Motor::responder_pedido_escrevendo`, `motor::recusa_explicada`; no pedido de aprovar um
-  plano, o texto é o pedido de mudanças). A mensagem entra na conversa como sua, antes do
+  plano, o texto é o pedido de mudanças; na pergunta com opções o texto não nega nada, é a
+  resposta dela). A mensagem entra na conversa como sua, antes do
   resultado negado da chamada. Com imagem anexada, que a recusa não leva, os pedidos são negados
   com "O usuário respondeu com uma mensagem…" e a mensagem entra no turno pela entrada. O que
   vale para o turno inteiro (comando de barra, Ultrathink, Ultracode) continua indo para a fila,
@@ -722,7 +738,23 @@ no cabeçalho; dono, 18/11/2026).
   sai do Planejar e volta ao modo de antes (sem modo anterior, o padrão da pasta; se também for
   Planejar, Aceitar edições); a seta ao lado aprova em outro modo (**Aprovar e aceitar edições** ou
   **Aprovar e perguntar antes**). O campo embaixo leva o que mudar: Enter (ou
-  **Enviar mudanças**) devolve o plano com o comentário.
+  **Enviar mudanças**) devolve o plano com o comentário. Respondido, o plano **continua na
+  conversa**, no ponto em que foi proposto: um cartão recolhido com o que você respondeu
+  ("Plano aprovado", com o visto verde, ou "Plano recusado") e o título do plano, que abre o
+  texto inteiro em markdown, com o Copiar, e, no recusado, o "Você pediu: …" com o comentário
+  (`Janela::plano_respondido`, `mensagens::plano_na_conversa`). O cartão fica à vista com o
+  turno recolhido em "Trabalhou…", parte a trilha das chamadas e o Ctrl+F acha no texto dele; se
+  o turno parou antes da resposta, diz "Plano proposto". Enquanto o pedido espera, quem aparece é
+  só o pedido. Medido no Claude Code 2.1.328 (23/11/2026, Haiku em modo `plan`): a chamada
+  `ExitPlanMode` vem **vazia** na saída; o plano só vem no pedido de permissão (`input.plan`,
+  com o `planFilePath` e o `tool_use_id` da chamada) e, aprovado, no resultado ("User has
+  approved your plan…" e, depois de "## Approved Plan:", o plano). O motor guarda o texto do
+  pedido no `detalhe` da chamada (`motor::guardar_plano`, até `claude::MAX_PLANO`, 60 mil
+  caracteres; como o pedido vem pelo MCP e a chamada pela saída, o que chegar primeiro espera o
+  outro) e, na falta dele, tira do resultado aprovado (`claude::plano_do_resultado`), que é
+  também de onde sai o plano da conversa trazida do Claude Code. A chamada sem o texto (as
+  conversas de antes disto, o plano recusado de uma conversa trazida) segue como linha da
+  trilha, "Propôs um plano". No modo foco, que tira as ferramentas, o cartão também sai.
 - **Pedidos de permissão** num cartão de moldura dupla (`cartao_de_pedido`, em
   `src/ui/mensagens.rs`; `moldura_dupla`, em `src/ui/componentes/controles.rs`): por fora, a
   moldura de canto 20; dentro, com 4 de folga, o cartão opaco. No pedido aberto que espera você, a
@@ -777,6 +809,37 @@ no cabeçalho; dono, 18/11/2026).
   `claude::versao_pelo_link`). O `--permission-prompt-tool stdio` traria o motivo no próprio pedido (`decision_reason`,
   `decision_reason_type`), mas a resposta teria de ir pela entrada do processo, que o Vitral fecha
   enquanto os agentes em segundo plano ainda trabalham.
+- **Pergunta com opções (AskUserQuestion).** Quando o agente pergunta algo com alternativas, a
+  pergunta aparece num cartão dos pedidos (`Janela::cartao_pergunta`, em `src/ui/pergunta.rs`),
+  na moldura dupla: cada pergunta com o cabeçalho curto em mono, o texto e as opções para clicar,
+  uma por linha, com o marcador redondo (escolha única) ou quadrado ("Dá para marcar mais de
+  uma.", o `multiSelect`), o rótulo e a descrição embaixo; por último a **Outra…**, que abre um
+  campo de texto livre. No rodapé, **Não responder** e **Enviar**, que só liga com todas as
+  perguntas respondidas (o Enter no campo da "Outra…" também envia; com várias perguntas, o
+  rodapé diz "1 de 2 respondidas", e as perguntas rolam dentro do cartão quando falta altura).
+  O **Não responder** devolve a pergunta sem resposta (o modelo lê que ninguém respondeu), sem
+  marcar a chamada como falha. Escrever na caixa de mensagem e dar Enter responde sem escolher
+  opção: o texto vale como a "Outra…" de cada pergunta (`motor::respostas_escritas`; a dica do
+  Enviar diz "Responde à pergunta com isto, sem escolher opção"). No sino, no aviso do
+  canto e na lista ela aparece como "Pergunta · <texto>", com **Ver pergunta**, e nunca tem
+  "Não perguntar de novo" (`modelo::regra_de_permissao`). Respondida, fica na trilha como
+  "Perguntou <a primeira pergunta>", que abre as perguntas, as opções e a resposta. Medido no
+  Claude Code 2.1.328 em 23/11/2026 (Haiku, numa pasta em /tmp): em `-p`, a AskUserQuestion (e
+  também `EnterPlanMode` e `ExitPlanMode`) só entra na lista de ferramentas do `init` **com o
+  `--permission-prompt-tool`**; sem ele (ou com `--permission-prompts none`) ela some, e o
+  `--permission-prompts host` sozinho não a traz. Era por isso que as sessões abertas pelo
+  Vitral em "Sem perguntar" nunca a chamavam: até o commit do "ask" de hook, esse modo abria sem
+  a ferramenta de permissão. Agora ela existe em todos os modos, e o pedido chega à
+  `mcp__vitral__permissao` até em `bypassPermissions`, com `tool_name`, `input` (as `questions`:
+  `question`, `header`, `options` com `label` e `description`, `multiSelect`) e `tool_use_id`. A
+  resposta volta pelo mesmo caminho da permissão, como `allow` com o `updatedInput` igual à
+  entrada mais `answers`, um objeto com o **texto inteiro da pergunta** como chave e a resposta
+  como valor: o rótulo da opção, os rótulos separados por ", " quando são várias, ou o texto
+  livre (`motor::resposta_da_pergunta`, `Motor::responder_pergunta`; `pergunta::respostas_de`).
+  O modelo recebe "Your questions have been answered: "pergunta"="resposta"…". Com o
+  `updatedInput` sem `answers` (era o Permitir do cartão genérico) ele recebe "The user did not
+  answer the questions."; só com as `answers`, sem as `questions`, o Claude Code recusa o
+  `updatedInput` por não bater com o esquema; negado, a mensagem volta como erro da chamada.
 - **Ferramentas.** Chamadas seguidas viram uma trilha, uma linha de 32 por chamada, coladas e
   ligadas por ramificações desenhadas num só path: o ícone do tipo (em cor só quando falhou; na que ainda roda, o anel
   girando, `AnelGirando`, no lugar do spinner do kit), o verbo ("Leu", "Editou",
@@ -1742,7 +1805,15 @@ mensagem, abre outro turno com ela; a ferramenta que demora manda o `tool_progre
 `heartbeat` a cada 30 s (`CLAUDE_FALSO_BATIDA=<segundos>` encurta); e o texto do `Pensa` só vem
 com `--thinking-display summarized` nos argumentos, que o Vitral só passa a partir do 2.1.323
 (com o padrão 2.1.300 o bloco chega vazio, como no de verdade sem a opção; os roteiros são o
-`ferramentas/roteiros/responder-pedido.txt` e o `ferramentas/roteiros/troca-no-turno.txt`); ao lado dele mora o
+`ferramentas/roteiros/responder-pedido.txt` e o `ferramentas/roteiros/troca-no-turno.txt`); com
+`[pergunta <Cabeçalho> | <pergunta> | <opção>: <descrição>; <opção>]` (e `[pergunta+ …]` para a
+que aceita várias) encena a AskUserQuestion como o 2.1.328, todas as perguntas da mensagem numa
+chamada só, e a resposta do turno termina com "respostas: …"; com `[plano <texto>]` (um `\n`
+escrito vira quebra de linha) encena o plano, com a chamada ExitPlanMode vazia, o plano no pedido
+de permissão e, aprovado, no resultado; com `[compacta <auto|manual> <tokens antes> | <segundos>]`
+encena uma compactação no meio do turno, e a mensagem "/compact" faz a manual e termina sem texto,
+como o de verdade (`CLAUDE_FALSO_COMPACTA=<segundos>`; o roteiro dos três é o
+`ferramentas/roteiros/pergunta-plano-compactacao.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`); executa os `[mcp <nome> <json>]` da mensagem
@@ -1992,7 +2063,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/modelo.rs` | Os tipos do que vai para o disco (chats, ocorrências, filas e a configuração global, com os nomes antigos como alias), os tipos só lidos das versões com projetos (`ProjetoAntigo`, `TarefaAntiga`, `PapelAntigo`) e o `FORMATO_DADOS` e o `VERSAO_ESTADO` |
 | `src/atualizacao/` | Versão embutida e os comandos sem janela (`--versao [--json]`, `--instalar`), o estado da atualização para a interface (`mod.rs`), a thread e o ciclo (`procura.rs`), o manifesto (`manifesto.rs`), a assinatura (`assinatura.rs`), o download (`rede.rs`), o pacote e a conferência do binário novo (`pacote.rs`), a instalação por versão e o menu no Linux (`linux.rs`), a instalação por versão, o `versoes.txt` e o lançador no Windows (`windows.rs`), o `atualizacoes.json` (`config.rs`) e a saúde da versão nova com a volta para a anterior (`saude.rs`); as fixtures ficam em `teste/` (`teste/ponta/` é o release falso dos testes de ponta a ponta, assinado com outra chave de teste) |
 | `src/tema.rs` | Tokens da linguagem visual (cores do vidro e das partes pretas, medidas em rem com `r()` e `tam()`, tipografia, sombras e gradientes), tema do GPUI Kit, cores de sintaxe e ícones extras do Lucide |
-| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão e a linha de estado da caixa, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
+| `src/ui/` | O alto da lista (`trilho.rs`: o logo, o menu do Vitral e o sino), a lista (`lateral.rs`), os painéis (`conversa.rs` é a casca: as abas, o cabeçalho, o menu do painel, a doca e o popover de uso da conversa; `mensagens.rs` o que vai dentro, com o cartão de pedido de permissão, o do plano que ficou na conversa e a linha de estado da caixa, `pergunta.rs` o cartão da pergunta com opções (AskUserQuestion) e as respostas dele, e `mensagens/historico.rs` o histórico das conversas trazidas do Claude Code, lido em segundo plano, com paginação automática ao subir; `paineis.rs` os painéis lado a lado, as abas de cada um e a soltura; `arranjo.rs` como a janela estava ao fechar), `links_arquivo.rs` (os caminhos de arquivo na resposta que viram links e abrem no painel da direita, na linha citada), `composer.rs` (a caixa de mensagem) e `composer_seletores.rs` (os chips, menus e popovers dela), `menus.rs` (o menu da conversa, igual em todo lugar), `dialogos.rs` (Novo chat e a paleta das pastas, renomear, contas, configurações, mencionar arquivo e conversa como contexto), `este_chat.rs` (a direita: onde o chat trabalha), `abas_direita.rs` (as abas da direita), `painel_arquivo.rs` (o arquivo aberto à direita, com a edição e a escolha de linhas), `edicao.rs` (a edição de uma chamada posta sobre o arquivo de agora: os dois formatos de diff, os trechos achados e as fileiras), `mencao.rs` (as menções de arquivo como texto e como pílula, no balão e na caixa), `caixa_entrada.rs` (o popover do sino e o Ctrl+G), `resumo.rs` (o freio de ciclo em Esperando você e o Enquanto você esteve fora), `abertura.rs` (o que fazer com a pasta e o `--nova` de uma abertura, ao abrir e pelo socket), `recuperacao.rs` (a tela de quando os dados abrem só para leitura, com Começar do zero e Tentar de novo), `uso_plano.rs` (os anéis de uso no canto da janela e o popover deles), `atualizacao.rs` (a atualização: avisos, Novidades, o grupo das Configurações e os textos de cada estado), `fechar.rs` (a pergunta antes de fechar ou reiniciar), `busca_conversa.rs` (o Ctrl+F dentro da conversa: a barra, o índice das ocorrências e o realce), `fila.rs` (a lista das mensagens que esperam o turno, com o Entregar agora), `reenvio.rs` (corrigir e mandar de novo a última mensagem), `rascunhos.rs` (o que você escreveu e não enviou, guardado por conversa no `interface.json`), `imagens.rs` e `visor_imagem.rs` (as imagens do chat e o visor), `seletor_arquivos.rs` (os arquivos da pasta para mencionar com `@`), `atalhos.rs` (a tabela única das teclas, que vira os `KeyBinding` e o diálogo "Atalhos do teclado" do `?`), `zoom.rs`, `movimento.rs` (a única porta de animação: durações, curvas, teto de 60 quadros por segundo, entradas e transições, o laço do metal e o `Segurar` do pedido perigoso) |
 | `src/ui/componentes/` | Os componentes da linguagem visual (chip, botões, segmentado, popover, menus, alertas e avisos, cartões de lista, opções, lista de escolha, selos, abas, diálogos, caixa de código), os anéis com fenda e o anel que gira (`graficos.rs`), a moldura dupla, o azulejo e o botão de segurar (`controles.rs`), a placa de metal, o cabeçalho de objeto, a ficha do escolhido e a faixa do pé dos menus (`superficies.rs`), o metal líquido (`metal.rs`, o motor: a chapa da janela, as aberturas e o aro de metal; `malha.rs`, a conta da receita ponto a ponto e a malha do botão do menu), o estado único (o sinal de cada chat) e a vitrine (`--vitrine`) |
 | `pacote/` | `manifesto.py` (o `vitral-versao.json` do release), as chaves públicas (`vitral.pub` e `vitral-reserva.pub`), o `linux/instalar.sh` e o `windows/vitral.iss` (o instalador do Windows, Inno Setup 6) |
 | `lancador/` | O lançador do Windows (`vitral-lancador`, só a std, o `Vitral.exe` da raiz da instalação): `escolha.rs` lê o `versoes.txt` e escolhe a `app-<versão>`; o `build.rs` põe o ícone, a versão e o manifesto. Fora do Windows o `main` só avisa e sai com 2 |

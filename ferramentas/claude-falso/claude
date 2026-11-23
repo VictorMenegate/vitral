@@ -16,6 +16,27 @@ os eventos do hook (só com `--include-hook-events`) e pede a permissão à ferr
 `--permission-prompt-tool`, sem o motivo (ele só vem no evento do hook). Sem essa ferramenta nos
 argumentos, a chamada volta recusada com o motivo do hook como erro, sem perguntar a ninguém.
 
+Com `[pergunta <Cabeçalho> | <pergunta> | <opção>: <descrição>; <opção>; ...]` (e `[pergunta+ ...]`
+para a que aceita várias, o `multiSelect`), encena a AskUserQuestion como o 2.1.328: todas as
+perguntas da mensagem numa chamada só, o pedido à ferramenta do `--permission-prompt-tool` com as
+`questions` e, na volta, o que o de verdade diz ao modelo: com as `answers` (a pergunta inteira
+como chave), "Your questions have been answered: ..."; sem elas, "The user did not answer the
+questions."; sem as `questions` no `updatedInput`, o erro de esquema; negada, a mensagem como
+erro. A resposta do turno termina com "respostas: ...", para a bancada ver o que chegou. Sem a
+ferramenta de permissão nos argumentos, a AskUserQuestion não existe (no de verdade ela some da
+lista de ferramentas do `-p`), e a resposta diz isso.
+
+Com `[plano <texto>]` (um `\n` escrito vira quebra de linha), encena o plano: a chamada
+ExitPlanMode vazia (desde o 2.1.328 o plano não vem nela), o pedido de permissão com o `plan` e o
+`planFilePath` e, aprovado, o resultado com "## Approved Plan:" e o plano; recusado, a mensagem
+como erro.
+
+Com `[compacta <auto|manual> <tokens antes> | <segundos>]` (tudo opcional: auto, 168432 e 4 s),
+encena uma compactação no meio do turno, com as linhas do 2.1.328: o `status` "compacting", a
+espera, o `status` vazio com o `compact_result`, o `init` de novo e o `compact_boundary` com o
+gatilho e os tokens de antes e de depois. A mensagem "/compact" faz a manual, como o de verdade:
+compacta (3 s, ou CLAUDE_FALSO_COMPACTA=<segundos>) e termina sem texto.
+
 Pela entrada, no meio do turno, como o Claude Code 2.1.328 (medido em 23/11/2026):
 - `set_permission_mode`, `set_model` e `apply_flag_settings` (o `effortLevel`) respondem como o de
   verdade e passam a valer no turno que roda: a resposta do turno termina com "no meio do turno:
@@ -390,6 +411,36 @@ if "[limite]" in texto and not os.path.exists(marca_do_limite):
 if "[limite]" in texto and os.path.exists(marca_do_limite):
     os.remove(marca_do_limite)
 
+
+
+def compactar(manual, antes, segundos):
+    """A compactação como o Claude Code 2.1.328 a escreve (medido com um `/compact`)."""
+    depois = min(9000, max(antes // 5, 1))
+    emitir({"type": "system", "subtype": "status", "status": "compacting", "session_id": sessao})
+    time.sleep(segundos)
+    emitir({"type": "system", "subtype": "status", "status": None, "compact_result": "success", "session_id": sessao})
+    emitir({"type": "system", "subtype": "init", "model": ao_vivo.get("modelo", "claude-falso"), "session_id": sessao,
+            "slash_commands": ["clear", "compact"], "claude_code_version": versao_falsa(), "tools": ["Read", "Edit", "Bash"]})
+    emitir({"type": "system", "subtype": "compact_boundary", "session_id": sessao,
+            "compact_metadata": {"trigger": "manual" if manual else "auto", "pre_tokens": antes, "post_tokens": depois,
+                                 "cumulative_dropped_tokens": antes - depois, "duration_ms": int(segundos * 1000)}})
+    emitir({"type": "user", "message": {"role": "user", "content":
+            "This session is being continued from a previous conversation that ran out of context. "
+            "The summary below covers the earlier portion of the conversation.\n\nSummary:\n(claude falso) resumo de mentira"},
+            "session_id": sessao, "parent_tool_use_id": None})
+    anotar({"compactou": "manual" if manual else "auto", "antes": antes})
+
+
+# O `/compact` de verdade não chama o modelo para responder: compacta e termina sem texto.
+if texto.strip().split(" ", 1)[0] == "/compact":
+    compactar(True, 42987, float(os.environ.get("CLAUDE_FALSO_COMPACTA", "3") or 3))
+    emitir({"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Compacted </local-command-stdout>"},
+            "session_id": sessao, "parent_tool_use_id": None})
+    emitir({"type": "result", "subtype": "success", "is_error": False, "result": "", "total_cost_usd": 0.0,
+            "modelUsage": {"claude-falso": {"contextWindow": 200000}}})
+    fim_da_entrada.wait(30)
+    sys.exit(0)
+
 chamadas = []
 
 
@@ -599,6 +650,129 @@ def encenar_hooks(texto):
         absorver_fila()
 
 
+def pedir_permissao(numero, nome, entrada, id_):
+    """O pedido à ferramenta do `--permission-prompt-tool`, como o Claude Code o faz: só com
+    tool_name, input e tool_use_id. Devolve a decisão, ou None sem a ferramenta nos argumentos."""
+    if valor_de("--permission-prompt-tool") != "mcp__vitral__permissao" or not url:
+        return None
+    corpo = json.dumps({"jsonrpc": "2.0", "id": numero, "method": "tools/call",
+                        "params": {"name": "permissao", "arguments": {"tool_name": nome, "input": entrada, "tool_use_id": id_}}}).encode()
+    # Esperando a resposta, a chamada está em curso: a mensagem que chega fica na fila.
+    ferramenta_rodando.set()
+    try:
+        req = urllib.request.Request(url, data=corpo, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3600) as r:
+            decisao = json.loads(json.loads(r.read())["result"]["content"][0]["text"])
+    except Exception as e:  # noqa: BLE001 (a bancada só anota)
+        decisao = {"behavior": "deny", "message": f"(claude falso) o pedido de permissão falhou: {e}"}
+    ferramenta_rodando.clear()
+    return decisao
+
+
+# `[pergunta Cabeçalho | pergunta | opção: descrição; opção]`; com `+`, aceita várias.
+PERGUNTA = re.compile(r"\[pergunta(\+?) ([^\]|]+?)\s*\|\s*([^\]|]+?)\s*\|\s*([^\]]+)\]")
+# O que foi respondido, para o fim da resposta do turno.
+respondidas = []
+
+
+def encenar_perguntas(texto):
+    """Todas as `[pergunta ...]` da mensagem viram uma AskUserQuestion só, como o modelo faz, e a
+    volta é o que o Claude Code 2.1.328 diz ao modelo em cada caso (medido em 23/11/2026)."""
+    proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
+    perguntas = []
+    for varias, cabecalho, pergunta, opcoes in PERGUNTA.findall(proprio):
+        lidas = []
+        for opcao in opcoes.split(";"):
+            rotulo, _, descricao = opcao.strip().partition(": ")
+            if rotulo.strip():
+                lidas.append({"label": rotulo.strip(), "description": descricao.strip()})
+        perguntas.append({"question": pergunta.strip(), "header": cabecalho.strip(), "options": lidas,
+                          "multiSelect": bool(varias)})
+    if not perguntas:
+        return
+    if valor_de("--permission-prompt-tool") != "mcp__vitral__permissao" or not url:
+        # No de verdade, sem a ferramenta de permissão a AskUserQuestion nem aparece no `-p`.
+        anotar({"pergunta": len(perguntas), "perguntou": False})
+        respondidas.append("sem a ferramenta de permissão a AskUserQuestion não existe")
+        return
+    id_ = "toolu_falso_q1"
+    entrada = {"questions": perguntas}
+    emitir({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": id_, "name": "AskUserQuestion", "input": entrada}]}})
+    decisao = pedir_permissao(9500, "AskUserQuestion", entrada, id_)
+    erro = False
+    if decisao.get("behavior") != "allow":
+        resultado, erro = decisao.get("message") or "negado", True
+    elif not isinstance((decisao.get("updatedInput") or {}).get("questions"), list):
+        resultado, erro = ("<tool_use_error>The permission handler returned updatedInput for AskUserQuestion that failed "
+                           "schema validation: AskUserQuestion failed due to the following issue:\nThe required parameter "
+                           "`questions` is missing\nThis is a configuration issue in your canUseTool callback, "
+                           "PermissionRequest hook, or permission-prompt tool — updatedInput must satisfy the tool's input "
+                           "schema. The tool input from the model was valid.</tool_use_error>"), True
+    else:
+        respostas = decisao["updatedInput"].get("answers") or {}
+        pares = ", ".join(f'"{p}"="{r}"' for p, r in respostas.items())
+        rotulos = {o["label"] for p in perguntas for o in p["options"]}
+        das_opcoes = all(parte.strip() in rotulos for r in respostas.values() for parte in str(r).split(","))
+        if not respostas:
+            resultado = "The user did not answer the questions."
+        elif das_opcoes:
+            resultado = f"Your questions have been answered: {pares}. You can now continue with these answers in mind."
+        else:
+            resultado = (f"The user answered: {pares}. Read the answers carefully — they may request clarification, "
+                         "changes, or that you not proceed — and follow what they actually say.")
+        respondidas.extend(f"{p} = {r}" for p, r in respostas.items())
+    anotar({"pergunta": len(perguntas), "perguntou": True, "resultado": resultado[:300]})
+    emitir({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": id_, "content": resultado, "is_error": erro}]}})
+    absorver_fila()
+
+
+# `[plano texto]`: um `\n` escrito vira quebra de linha.
+PLANO = re.compile(r"\[plano ([^\]]+)\]")
+
+
+def encenar_planos(texto):
+    """Cada `[plano ...]` vira o que o Claude Code 2.1.328 faz ao sair do modo de planejar: a
+    chamada ExitPlanMode vazia, o pedido de permissão com o plano e, aprovado, o resultado com o
+    plano depois de "## Approved Plan:"; recusado, a mensagem como erro."""
+    proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
+    for i, plano in enumerate(PLANO.findall(proprio), start=1):
+        plano = plano.strip().replace("\\n", "\n")
+        id_ = f"toolu_falso_p{i}"
+        arquivo_do_plano = os.path.join(estado, f"plano-falso-{i}.md")
+        emitir({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": id_, "name": "ExitPlanMode", "input": {}}]}})
+        decisao = pedir_permissao(9700 + i, "ExitPlanMode", {"plan": plano, "planFilePath": arquivo_do_plano}, id_)
+        if decisao is None:
+            anotar({"plano": i, "perguntou": False})
+            emitir({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id_, "is_error": True,
+                    "content": "(claude falso) sem a ferramenta de permissão não há a quem mostrar o plano"}]}})
+            continue
+        aprovado = decisao.get("behavior") == "allow"
+        anotar({"plano": i, "perguntou": True, "aprovado": aprovado})
+        if aprovado:
+            final = (decisao.get("updatedInput") or {}).get("plan") or plano
+            resultado = ("User has approved your plan. You can now start coding. Start with updating your todo list if "
+                         f"applicable\n\nYour plan has been saved to: {arquivo_do_plano}\nYou can refer back to it if needed "
+                         f"during implementation.\n\n## Approved Plan:\n{final}\n")
+        else:
+            resultado = decisao.get("message") or "negado"
+        emitir({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id_, "content": resultado, "is_error": not aprovado}]}})
+        absorver_fila()
+
+
+# `[compacta auto 168432 | 4]`: o gatilho, os tokens de antes e os segundos, todos opcionais.
+COMPACTA = re.compile(r"\[compacta(?: (auto|manual))?(?: (\d+))?(?:\s*\|\s*(\d+))?\]")
+
+
+def encenar_compactacao(texto):
+    proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
+    for gatilho, antes, segundos in COMPACTA.findall(proprio):
+        compactar(gatilho == "manual", int(antes) if antes else 168432, int(segundos) if segundos else 4)
+
+
 def diretivas(texto):
     """Os `[mcp nome {json}]` do texto, fora das linhas citadas."""
     proprio = "\n".join(l for l in texto.splitlines() if not l.lstrip().startswith(">"))
@@ -631,6 +805,9 @@ else:
     arquivo = None
 fingir_ferramentas(texto)
 encenar_hooks(texto)
+encenar_perguntas(texto)
+encenar_planos(texto)
+encenar_compactacao(texto)
 if url:
     for nome, argumentos in diretivas(texto):
         chamar(nome, argumentos)
@@ -688,6 +865,8 @@ else:
     resposta = f"(claude falso) Anotei em {arquivo}, na pasta {pasta}: {pedido[:80]}"
     if chamadas:
         resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
+if respondidas:
+    resposta += " | respostas: " + "; ".join(respondidas)
 if ao_vivo:
     resposta += " | no meio do turno: " + ", ".join(f"{chave} {valor}" for chave, valor in ao_vivo.items())
 anotar({"papel": papel, "chamadas": chamadas})

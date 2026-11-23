@@ -217,6 +217,8 @@ impl PrecisaDeVoce {
 pub enum Pendencia {
     Permissao { pedido: String, chat: String, ferramenta: String, resumo: String },
     Plano { pedido: String, chat: String },
+    /// A pergunta com opções (a ferramenta AskUserQuestion): o texto da primeira.
+    Pergunta { pedido: String, chat: String, pergunta: String },
     Erro { chat: String, texto: String, pode_tentar: bool },
     Parada { chat: String, motivo: String },
     Nova { chat: String },
@@ -227,6 +229,7 @@ impl Pendencia {
         match self {
             Pendencia::Permissao { chat, .. }
             | Pendencia::Plano { chat, .. }
+            | Pendencia::Pergunta { chat, .. }
             | Pendencia::Erro { chat, .. }
             | Pendencia::Parada { chat, .. }
             | Pendencia::Nova { chat } => chat,
@@ -378,6 +381,11 @@ pub struct Motor {
     fundo: HashMap<String, usize>,
     /// Quando cada chat começou o bloco de raciocínio em curso (para dizer quanto durou).
     pensando: HashMap<String, std::time::Instant>,
+    /// Os chats em que o Claude Code está resumindo a conversa agora (`Evento::Compactando`).
+    compactando: HashSet<String>,
+    /// O plano que chegou no pedido de permissão antes da chamada dele (os dois vêm por canais
+    /// diferentes): o id da chamada, o chat e o texto, até a chamada chegar.
+    planos_sem_chamada: HashMap<String, (String, String)>,
     /// O `result` que chegou com agentes ainda em segundo plano (texto e custo): o turno só
     /// termina quando eles acabam, ou quando o processo sai.
     fim_adiado: HashMap<String, (String, f64)>,
@@ -657,6 +665,8 @@ impl Motor {
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             pensando: HashMap::new(),
+            compactando: HashSet::new(),
+            planos_sem_chamada: HashMap::new(),
             fim_adiado: HashMap::new(),
             dirigidas: HashMap::new(),
             retiradas: HashSet::new(),
@@ -863,15 +873,7 @@ impl Motor {
             .permissoes
             .iter()
             .filter(|p| ativo(&p.chat))
-            .map(|p| match p.ferramenta.as_str() {
-                "ExitPlanMode" => Pendencia::Plano { pedido: p.id.clone(), chat: p.chat.clone() },
-                ferramenta => Pendencia::Permissao {
-                    pedido: p.id.clone(),
-                    chat: p.chat.clone(),
-                    ferramenta: ferramenta.to_string(),
-                    resumo: claude::resumo_ferramenta(ferramenta, &p.entrada),
-                },
-            })
+            .map(|p| pendencia_do_pedido(&p.id, &p.chat, &p.ferramenta, &p.entrada))
             .collect();
         let ativos: Vec<&Chat> = self.chats.iter().filter(|c| !c.arquivado).collect();
         for c in &ativos {
@@ -1167,7 +1169,7 @@ impl Motor {
         } else {
             let mensagem = mensagem
                 .filter(|m| !m.trim().is_empty())
-                .unwrap_or_else(|| "O usuário negou esta ação.".into());
+                .unwrap_or_else(|| recusa_sem_texto(&pedido.ferramenta).into());
             json!({"behavior": "deny", "message": mensagem})
         };
         let _ = pedido.resposta.try_send(Resposta::ok(resposta.to_string()));
@@ -1182,11 +1184,28 @@ impl Motor {
                 self.salvar();
             }
         }
-        if !self.permissoes.iter().any(|p| p.chat == pedido.chat)
-            && self.execucao(&pedido.chat) == Execucao::EsperandoVoce
-        {
-            self.execucao
-                .insert(pedido.chat.clone(), Execucao::Rodando { desde: agora() });
+        self.pedido_respondido(&pedido.chat, cx);
+    }
+
+    /// Responde a uma pergunta com opções (a ferramenta AskUserQuestion) com o que foi escolhido
+    /// no cartão: cada pergunta (o texto inteiro dela) com a resposta. Vai como `allow`, pelo
+    /// mesmo caminho da permissão (`resposta_da_pergunta`). Sem resposta nenhuma é o "Não
+    /// responder" do cartão: o modelo lê "The user did not answer the questions.", e a chamada
+    /// não fica marcada como falha (negada, ficaria).
+    pub fn responder_pergunta(&mut self, id: &str, respostas: &[(String, String)], cx: &mut Context<Self>) {
+        let Some(posicao) = self.permissoes.iter().position(|p| p.id == id) else {
+            return;
+        };
+        let pedido = self.permissoes.remove(posicao);
+        let resposta = resposta_da_pergunta(&pedido.entrada, respostas);
+        let _ = pedido.resposta.try_send(Resposta::ok(resposta.to_string()));
+        self.pedido_respondido(&pedido.chat, cx);
+    }
+
+    /// Um pedido do chat foi respondido: sem outro esperando, o turno volta a rodar.
+    fn pedido_respondido(&mut self, chat: &str, cx: &mut Context<Self>) {
+        if !self.permissoes.iter().any(|p| p.chat == chat) && self.execucao(chat) == Execucao::EsperandoVoce {
+            self.execucao.insert(chat.to_string(), Execucao::Rodando { desde: agora() });
         }
         cx.notify();
     }
@@ -1487,6 +1506,13 @@ impl Motor {
         self.permissoes.iter().filter(|p| p.chat == chat).count()
     }
 
+    /// Tudo o que este chat tem aberto é pergunta com opções (AskUserQuestion): escrever na caixa
+    /// é responder a ela (a dica do Enviar diz isso, em vez de falar em negar).
+    pub fn so_perguntas_abertas(&self, chat: &str) -> bool {
+        let mut pedidos = self.permissoes.iter().filter(|p| p.chat == chat).peekable();
+        pedidos.peek().is_some() && pedidos.all(|p| p.ferramenta == "AskUserQuestion")
+    }
+
     /// Escrever com um pedido de permissão aberto é responder a ele: o Enter nega os pedidos
     /// abertos do chat e o texto vai ao modelo como a explicação da recusa, pelo mesmo caminho do
     /// "Negar e explicar…" do cartão (`responder_permissao` com a mensagem). A mensagem entra na
@@ -1517,7 +1543,18 @@ impl Motor {
         }
         *self.dirigidos.entry(chat_id.to_string()).or_default() += 1;
         for (id, ferramenta) in pedidos {
-            self.responder_permissao(&id, false, Some(recusa_explicada(&ferramenta, &texto)), cx);
+            // Na pergunta com opções, o que foi escrito é a resposta (a "Outra…" de cada
+            // pergunta), e não uma recusa: a chamada negada apareceria como "falhou".
+            let escritas = self
+                .permissoes
+                .iter()
+                .find(|p| p.id == id && ferramenta == "AskUserQuestion")
+                .map(|p| respostas_escritas(&p.entrada, &texto))
+                .filter(|respostas| !respostas.is_empty());
+            match escritas {
+                Some(respostas) => self.responder_pergunta(&id, &respostas, cx),
+                None => self.responder_permissao(&id, false, Some(recusa_explicada(&ferramenta, &texto)), cx),
+            }
         }
         if let Some(c) = self.chat(chat_id) {
             let _ = self.dados.salvar_chat(c);
@@ -2593,6 +2630,12 @@ impl Motor {
             .map(String::as_str)
     }
 
+    /// O Claude Code está resumindo a conversa deste chat agora: a linha do turno diz
+    /// "Compactando…".
+    pub fn compactando(&self, chat: &str) -> bool {
+        self.compactando.contains(chat)
+    }
+
     /// O turno já deu a resposta, mas os agentes dele seguem trabalhando em segundo plano.
     pub fn esperando_agentes(&self, chat: &str) -> bool {
         self.fim_adiado.contains_key(chat)
@@ -3368,6 +3411,20 @@ impl Motor {
                     c.modelo_atual = Some(modelo);
                 }
             }
+            // O Claude Code resume a conversa (o `/compact`, ou sozinho com o contexto cheio): a
+            // linha do turno diz "Compactando…" enquanto dura. Ele repete o estado a cada 30 s.
+            Evento::Compactando(sim) => {
+                let mudou = if sim { self.compactando.insert(chat_id.to_string()) } else { self.compactando.remove(chat_id) };
+                if !mudou {
+                    return;
+                }
+            }
+            // Terminou de resumir: o marco entra na conversa, no ponto em que o contexto foi
+            // cortado (o que o modelo lembra dali para trás é o resumo).
+            Evento::Compactou { manual, antes } => {
+                self.compactando.remove(chat_id);
+                self.avisar(chat_id, &marco_da_compactacao(manual, antes), false);
+            }
             // Um hook do usuário mandou perguntar: o motivo espera o pedido de permissão dessa
             // chamada, que vem em seguida pelo MCP, sem ele (`tratar_ferramenta`).
             Evento::HookPediu { ferramenta, motivo } => {
@@ -3404,7 +3461,14 @@ impl Motor {
                     self.passos.insert(chat_id.to_string(), passos_da_lista(&entrada));
                 }
                 let resumo = claude::resumo_ferramenta(&nome, &entrada);
-                let (detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
+                let (mut detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
+                // O plano que o pedido de permissão trouxe antes de a chamada chegar.
+                if nome == "ExitPlanMode"
+                    && let Some((_, plano)) = self.planos_sem_chamada.remove(&id)
+                    && detalhe.is_none()
+                {
+                    detalhe = claude::plano_guardado(&plano);
+                }
                 // O +N −M contado agora, com o texto inteiro (item 5.1).
                 let mudanca = claude::mudanca_da_ferramenta(&nome, &entrada);
                 // Outro chat mexeu no mesmo arquivo há pouco: sem cópias isoladas, os dois
@@ -3455,10 +3519,16 @@ impl Motor {
                             erro: erro_item,
                             sub,
                             mudanca,
+                            detalhe,
                             ..
                         } = item
                             && *id_item == id
                         {
+                            // O plano aprovado que não veio na chamada nem no pedido (um Claude
+                            // Code que não mande o id da chamada no pedido): o resultado o traz.
+                            if nome == "ExitPlanMode" && detalhe.is_none() && !erro {
+                                *detalhe = claude::plano_do_resultado(&conteudo).and_then(claude::plano_guardado);
+                            }
                             // O Write que criou o arquivo ganha o selo "novo" (item 5.1).
                             if nome == "Write" && !erro && claude::write_criou(&conteudo)
                                 && let Some(m) = mudanca
@@ -3573,6 +3643,8 @@ impl Motor {
                 custo_usd,
                 janela,
             } => {
+                // O turno acabou: nada mais compacta (uma compactação que falhou não manda marco).
+                self.compactando.remove(chat_id);
                 let interrompido = self.interrompidos.iter().any(|c| c == chat_id);
                 let agentes = self.fundo.get(chat_id).copied().unwrap_or(0);
                 let dirigida_esperando = self.dirigidas.get(chat_id).is_some_and(|d| !d.is_empty());
@@ -3722,6 +3794,8 @@ impl Motor {
             }
             Evento::Saiu { stderr, codigo } => {
                 self.motivos_de_hook.esquecer(chat_id);
+                self.compactando.remove(chat_id);
+                self.planos_sem_chamada.retain(|_, (chat, _)| chat != chat_id);
                 self.retiradas.remove(chat_id);
                 self.trocas.remove(chat_id);
                 // Saiu depois de um `result` adiado, sem outro: os agentes acabaram sem outro turno
@@ -3997,6 +4071,18 @@ impl Motor {
                     let resposta = json!({"behavior": "allow", "updatedInput": a["input"]});
                     let _ = chamada.resposta.try_send(Resposta::ok(resposta.to_string()));
                     return;
+                }
+                // O plano só vem aqui (a chamada chega vazia desde o 2.1.328): fica guardado na
+                // chamada, para o cartão da conversa abrir depois de respondido.
+                if ferramenta == "ExitPlanMode"
+                    && let (Some(chamada_do_plano), Some(plano)) = (a["tool_use_id"].as_str(), a["input"]["plan"].as_str())
+                {
+                    let achou = self.chat_mut(&chat.id).is_some_and(|c| guardar_plano(&mut c.itens, chamada_do_plano, plano));
+                    if achou {
+                        self.chats_sujos.insert(chat.id.clone());
+                    } else if !plano.trim().is_empty() {
+                        self.planos_sem_chamada.insert(chamada_do_plano.to_string(), (chat.id.clone(), plano.to_string()));
+                    }
                 }
                 self.permissoes.push(PedidoPermissao {
                     id: novo_id(),
@@ -4919,6 +5005,104 @@ pub fn recusa_explicada(ferramenta: &str, texto: &str) -> String {
     }
 }
 
+/// O que o modelo lê na chamada negada sem explicação: o Negar do cartão e o "Não responder" da
+/// pergunta com opções.
+fn recusa_sem_texto(ferramenta: &str) -> &'static str {
+    if ferramenta == "AskUserQuestion" { "O usuário não quis responder à pergunta." } else { "O usuário negou esta ação." }
+}
+
+/// A resposta a uma pergunta com opções (AskUserQuestion), no formato que o Claude Code espera
+/// do `--permission-prompt-tool` (medido no 2.1.328, 23/11/2026): `allow` com o `updatedInput`
+/// igual à entrada da chamada mais as `answers`, um objeto com o texto inteiro de cada pergunta
+/// como chave e a resposta como valor (várias escolhas numa resposta só, separadas por vírgula).
+/// Sem as `answers` ele diz ao modelo "The user did not answer the questions."; só com elas, sem
+/// as `questions`, recusa o `updatedInput` por não bater com o esquema da ferramenta.
+pub fn resposta_da_pergunta(entrada: &Value, respostas: &[(String, String)]) -> Value {
+    let mut entrada = if entrada.is_object() { entrada.clone() } else { json!({}) };
+    entrada["answers"] = Value::Object(respostas.iter().map(|(pergunta, resposta)| (pergunta.clone(), json!(resposta))).collect());
+    json!({ "behavior": "allow", "updatedInput": entrada })
+}
+
+/// As respostas de uma pergunta com opções quando o usuário escreve na caixa de mensagem em vez
+/// de escolher no cartão: o texto vale para cada pergunta, como a "Outra…" dela. Vazio sem
+/// pergunta legível ou sem texto (aí vale a recusa comum).
+fn respostas_escritas(entrada: &Value, texto: &str) -> Vec<(String, String)> {
+    let texto = texto.trim();
+    if texto.is_empty() {
+        return Vec::new();
+    }
+    entrada["questions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["question"].as_str().filter(|t| !t.trim().is_empty()))
+        .map(|pergunta| (pergunta.to_string(), texto.to_string()))
+        .collect()
+}
+
+/// O que um pedido aberto é para o sino, a lista e o Ctrl+G: o plano, a pergunta com opções ou
+/// uma permissão.
+fn pendencia_do_pedido(pedido: &str, chat: &str, ferramenta: &str, entrada: &Value) -> Pendencia {
+    let (pedido, chat) = (pedido.to_string(), chat.to_string());
+    match ferramenta {
+        "ExitPlanMode" => Pendencia::Plano { pedido, chat },
+        "AskUserQuestion" => Pendencia::Pergunta { pedido, chat, pergunta: primeira_pergunta(entrada) },
+        ferramenta => Pendencia::Permissao {
+            pedido,
+            chat,
+            ferramenta: ferramenta.to_string(),
+            resumo: claude::resumo_ferramenta(ferramenta, entrada),
+        },
+    }
+}
+
+/// O texto da primeira pergunta de uma AskUserQuestion, numa linha.
+fn primeira_pergunta(entrada: &Value) -> String {
+    entrada["questions"][0]["question"].as_str().unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// O marco que entra na conversa quando o Claude Code termina de compactar: "Contexto compactado
+/// (automático, 168 mil tokens antes)". O gatilho é o `/compact` (manual) ou o contexto cheio
+/// (automático); os tokens são os que a conversa ocupava antes do resumo.
+pub fn marco_da_compactacao(manual: bool, antes: Option<u64>) -> String {
+    let gatilho = if manual { "manual" } else { "automático" };
+    let tamanho = match antes {
+        None | Some(0) => None,
+        Some(n @ ..1_000) => Some(format!("{n} tokens")),
+        Some(n @ ..999_500) => Some(format!("{} mil tokens", (n as f64 / 1e3).round() as u64)),
+        Some(n) => Some(format!("{} mi de tokens", format!("{:.1}", n as f64 / 1e6).replace('.', ","))),
+    };
+    match tamanho {
+        Some(tamanho) => format!("{CONTEXTO_COMPACTADO} ({gatilho}, {tamanho} antes)"),
+        None => format!("{CONTEXTO_COMPACTADO} ({gatilho})"),
+    }
+}
+
+/// O começo do texto do marco de compactação: é por ele que a conversa o reconhece.
+pub const CONTEXTO_COMPACTADO: &str = "Contexto compactado";
+
+/// Guarda o texto do plano na chamada ExitPlanMode de id `chamada`, que ainda não o tem. Devolve
+/// se achou a chamada e guardou (sem ela, quem chama deixa o plano esperando a chamada chegar).
+fn guardar_plano(itens: &mut [Item], chamada: &str, plano: &str) -> bool {
+    let Some(plano) = claude::plano_guardado(plano) else {
+        return false;
+    };
+    for item in itens.iter_mut().rev() {
+        if let Item::Ferramenta { id, nome, detalhe, .. } = item
+            && id == chamada
+        {
+            if nome != "ExitPlanMode" {
+                return false;
+            }
+            if detalhe.is_none() {
+                *detalhe = Some(plano);
+            }
+            return true;
+        }
+    }
+    false
+}
+
 /// Como o Parar encerra o turno.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Parada {
@@ -5103,6 +5287,10 @@ fn texto_do_pedido(ferramenta: &str, entrada: &Value) -> String {
     let nome = ferramenta.rsplit("__").next().unwrap_or(ferramenta);
     match ferramenta {
         "ExitPlanMode" => "Precisa da sua aprovação: o plano está pronto".into(),
+        "AskUserQuestion" => match primeira_pergunta(entrada) {
+            pergunta if pergunta.is_empty() => "Tem uma pergunta para você".into(),
+            pergunta => format!("Tem uma pergunta para você: {pergunta}"),
+        },
         "Bash" => {
             let comando = entrada["command"].as_str().unwrap_or_default();
             let linha = comando.lines().next().unwrap_or_default().trim();
@@ -5909,3 +6097,126 @@ mod testes_do_turno_que_roda {
         assert_eq!(quer_ao_vivo(ao_vivo("manual", "opus", None), &tem, true), tem);
     }
 }
+
+/// Testes de aceite da pergunta com opções, do plano que fica na conversa e do marco de
+/// compactação (o que o motor decide; o formato do Claude Code está nos testes de `claude.rs`).
+#[cfg(test)]
+mod testes_da_pergunta_do_plano_e_da_compactacao {
+    use super::*;
+
+    fn pergunta() -> Value {
+        json!({ "questions": [
+            { "question": "Qual cor você prefere?", "header": "Cor", "multiSelect": false,
+              "options": [{ "label": "Azul", "description": "A do céu." }, { "label": "Verde", "description": "" }] },
+            { "question": "Quais frutas?", "header": "Frutas", "multiSelect": true,
+              "options": [{ "label": "Maçã", "description": "" }, { "label": "Uva", "description": "" }] },
+        ] })
+    }
+
+    /// O que a CLI espera (medido no 2.1.328): `allow` com o `updatedInput` igual à entrada mais
+    /// as `answers`, com a pergunta inteira como chave; várias escolhas numa resposta só.
+    #[test]
+    fn a_resposta_da_pergunta_leva_a_entrada_e_as_respostas() {
+        let respostas = [
+            ("Qual cor você prefere?".to_string(), "Verde".to_string()),
+            ("Quais frutas?".to_string(), "Maçã, Uva".to_string()),
+        ];
+        let resposta = resposta_da_pergunta(&pergunta(), &respostas);
+        assert_eq!(resposta["behavior"], "allow");
+        assert_eq!(resposta["updatedInput"]["questions"], pergunta()["questions"], "sem as perguntas a CLI recusa");
+        assert_eq!(
+            resposta["updatedInput"]["answers"],
+            json!({ "Qual cor você prefere?": "Verde", "Quais frutas?": "Maçã, Uva" })
+        );
+        // O que mais veio na entrada segue como veio.
+        let mut com_mais = pergunta();
+        com_mais["metadata"] = json!({ "source": "x" });
+        assert_eq!(resposta_da_pergunta(&com_mais, &respostas)["updatedInput"]["metadata"], json!({ "source": "x" }));
+    }
+
+    #[test]
+    fn a_pergunta_nao_e_um_pedido_de_permissao_comum() {
+        let entrada = pergunta();
+        // No sino, na lista e no Ctrl+G ela é uma pergunta, com o texto dela.
+        assert_eq!(
+            pendencia_do_pedido("p1", "c1", "AskUserQuestion", &entrada),
+            Pendencia::Pergunta { pedido: "p1".into(), chat: "c1".into(), pergunta: "Qual cor você prefere?".into() }
+        );
+        assert_eq!(pendencia_do_pedido("p2", "c1", "ExitPlanMode", &json!({})), Pendencia::Plano { pedido: "p2".into(), chat: "c1".into() });
+        assert!(matches!(pendencia_do_pedido("p3", "c1", "Bash", &json!({ "command": "ls" })), Pendencia::Permissao { .. }));
+        assert_eq!(texto_do_pedido("AskUserQuestion", &entrada), "Tem uma pergunta para você: Qual cor você prefere?");
+        assert_eq!(texto_do_pedido("AskUserQuestion", &json!({})), "Tem uma pergunta para você");
+        // Nunca vira regra de "não perguntar de novo": a regra responderia sem resposta nenhuma.
+        assert_eq!(crate::modelo::regra_de_permissao("AskUserQuestion", &entrada, Path::new("/tmp")), None);
+        let mut chat = Chat::novo("c1".into(), "t", PathBuf::from("/tmp"));
+        chat.permitidas.push("ferramenta:AskUserQuestion".into());
+        assert!(!chat.permite("AskUserQuestion", &entrada));
+        // Responder escrevendo na caixa de mensagem: o texto é a resposta de cada pergunta (a
+        // "Outra…"), e vai como `allow`, não como recusa.
+        let escritas = respostas_escritas(&entrada, " roxo com bolinhas ");
+        assert_eq!(
+            escritas,
+            [
+                ("Qual cor você prefere?".to_string(), "roxo com bolinhas".to_string()),
+                ("Quais frutas?".to_string(), "roxo com bolinhas".to_string()),
+            ]
+        );
+        assert_eq!(resposta_da_pergunta(&entrada, &escritas)["updatedInput"]["answers"]["Quais frutas?"], "roxo com bolinhas");
+        assert!(respostas_escritas(&entrada, "  ").is_empty());
+        assert!(respostas_escritas(&json!({}), "roxo").is_empty());
+        // O "Não responder" do cartão: `allow` sem resposta nenhuma (a CLI diz ao modelo que
+        // ninguém respondeu). A recusa de verdade (o Negar de outro lugar) tem a frase dela.
+        assert_eq!(resposta_da_pergunta(&entrada, &[])["updatedInput"]["answers"], json!({}));
+        assert_eq!(recusa_sem_texto("AskUserQuestion"), "O usuário não quis responder à pergunta.");
+        assert_eq!(recusa_sem_texto("Bash"), "O usuário negou esta ação.");
+    }
+
+    #[test]
+    fn o_marco_da_compactacao_diz_o_gatilho_e_o_tamanho() {
+        assert_eq!(marco_da_compactacao(true, Some(42_987)), "Contexto compactado (manual, 43 mil tokens antes)");
+        assert_eq!(marco_da_compactacao(false, Some(168_432)), "Contexto compactado (automático, 168 mil tokens antes)");
+        assert_eq!(marco_da_compactacao(false, Some(1_240_000)), "Contexto compactado (automático, 1,2 mi de tokens antes)");
+        assert_eq!(marco_da_compactacao(true, Some(850)), "Contexto compactado (manual, 850 tokens antes)");
+        assert_eq!(marco_da_compactacao(false, None), "Contexto compactado (automático)");
+        assert_eq!(marco_da_compactacao(true, Some(0)), "Contexto compactado (manual)");
+    }
+
+    fn chamada(id: &str, nome: &str, detalhe: Option<&str>) -> Item {
+        Item::Ferramenta {
+            id: id.into(),
+            nome: nome.into(),
+            resumo: nome.into(),
+            resultado: None,
+            erro: false,
+            em: 0,
+            detalhe: detalhe.map(str::to_string),
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+        }
+    }
+
+    fn detalhe_de(item: &Item) -> Option<&str> {
+        match item {
+            Item::Ferramenta { detalhe, .. } => detalhe.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// No 2.1.328 a chamada do plano vem vazia: o texto dele chega no pedido de permissão (com o
+    /// id da chamada) e fica guardado nela, para o cartão da conversa abrir depois de respondido.
+    #[test]
+    fn o_plano_do_pedido_fica_guardado_na_chamada() {
+        let mut itens = vec![chamada("t1", "Read", None), chamada("t2", "ExitPlanMode", None)];
+        assert!(guardar_plano(&mut itens, "t2", "# Plano\n\n1. Um.\n"));
+        assert_eq!(detalhe_de(&itens[1]), Some("# Plano\n\n1. Um."));
+        assert_eq!(detalhe_de(&itens[0]), None);
+        // A chamada ainda não chegou (o pedido vem por outro canal): quem chama guarda para depois.
+        assert!(!guardar_plano(&mut itens, "t9", "# Outro"));
+        // Sem plano não há o que guardar, e outra ferramenta com o mesmo id não é tocada.
+        assert!(!guardar_plano(&mut itens, "t2", "  "));
+        assert!(!guardar_plano(&mut itens, "t1", "# Plano"));
+        assert_eq!(detalhe_de(&itens[0]), None);
+    }
+}
+

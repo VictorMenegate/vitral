@@ -39,6 +39,7 @@ mod painel_contas;
 mod fechar;
 mod painel_arquivo;
 mod paleta;
+mod pergunta;
 mod quadro_ideias;
 mod ramo;
 pub(crate) mod paineis;
@@ -466,6 +467,9 @@ pub struct Janela {
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
+    /// O que está marcado em cada pergunta com opções esperando resposta (AskUserQuestion), pelo
+    /// id do pedido.
+    perguntas: HashMap<String, pergunta::EstadoDaPergunta>,
     expandidos: HashSet<String>,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
@@ -779,6 +783,7 @@ impl Janela {
             cache_arquivos: Default::default(),
             arquivo_lido: Default::default(),
             feedback_plano: HashMap::new(),
+            perguntas: HashMap::new(),
             expandidos: HashSet::new(),
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
@@ -1772,6 +1777,17 @@ impl Janela {
                     InputState::new(window, cx).placeholder("O que mudar no plano? (opcional)")
                 })
             });
+        }
+        // E o estado de cada pergunta com opções esperando resposta.
+        let perguntas: Vec<(String, usize)> = motor
+            .read(cx)
+            .permissoes
+            .iter()
+            .filter(|p| p.ferramenta == "AskUserQuestion")
+            .map(|p| (p.id.clone(), pergunta::perguntas_de(&p.entrada).len()))
+            .collect();
+        if !perguntas.is_empty() || !self.perguntas.is_empty() {
+            self.acertar_perguntas(perguntas, window, cx);
         }
         self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
