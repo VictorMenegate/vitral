@@ -24,6 +24,7 @@ mod memoria;
 pub use gasto::{Medida, Tokens, medida_do_resultado, tokens_do_codex, tokens_do_resultado};
 mod bifurcar;
 pub mod subconversa;
+pub mod passos;
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -334,9 +335,9 @@ pub struct Motor {
     /// As chamadas que esperaram uma permissão sua, por (chat, id da chamada): quando você
     /// permitiu. A duração da chamada conta daí, não do pedido (`duracao_da_chamada`).
     liberadas: HashMap<(String, String), u64>,
-    /// A lista de passos que o agente mantém (o TodoWrite do Claude Code), a última de cada chat.
-    /// Só na memória: some ao fechar o Vitral.
-    passos: HashMap<String, Vec<Passo>>,
+    /// A lista de passos que o agente mantém (o TodoWrite e as ferramentas de tarefa do Claude
+    /// Code), a última de cada chat. Só na memória: some ao fechar o Vitral.
+    passos: HashMap<String, passos::Passos>,
     /// Os comandos que o agente de cada chat deixou rodando no fundo: id da tarefa e descrição.
     comandos_no_fundo: HashMap<String, Vec<(String, String)>>,
     /// Processos do Claude Code que já entregaram o resultado e ficam com a entrada aberta à
@@ -1645,7 +1646,7 @@ impl Motor {
 
     /// Os passos que o agente deste chat anotou por último (vazio sem lista).
     pub fn passos(&self, chat: &str) -> &[Passo] {
-        self.passos.get(chat).map_or(&[], Vec::as_slice)
+        self.passos.get(chat).map_or(&[], passos::Passos::lista)
     }
 
     /// O que é preciso para voltar os arquivos de um chat: a pasta, a pasta da conta e a sessão.
@@ -3303,10 +3304,13 @@ impl Motor {
                 if nome == "mcp__vitral__permissao" || nome == "ToolSearch" {
                     return;
                 }
-                if nome == "TodoWrite" {
-                    self.passos.insert(chat_id.to_string(), passos_da_lista(&entrada));
-                }
-                let resumo = claude::resumo_ferramenta(&nome, &entrada);
+                // As ferramentas de passos mudam a lista do chat e dizem na trilha o que mudou
+                // ("Começou: rodar os testes" no lugar de "Atualizou os passos").
+                let resumo = if passos::e_de_passos(&nome) {
+                    self.passos.entry(chat_id.to_string()).or_default().resumo(&id, &nome, &entrada)
+                } else {
+                    claude::resumo_ferramenta(&nome, &entrada)
+                };
                 let (detalhe, arquivo) = claude::detalhe_ferramenta(&nome, &entrada);
                 // O +N −M contado agora, com o texto inteiro (item 5.1).
                 let mudanca = claude::mudanca_da_ferramenta(&nome, &entrada);
@@ -3354,6 +3358,11 @@ impl Motor {
                 // O subagente que entregou o relatório pela chamada de entrega: é ele que fica no
                 // cartão, e não o aviso de que foi entregue.
                 let conteudo = subconversa::relatorio_do_cartao(conteudo, self.relatorios.remove(&(chat_id.to_string(), id.clone())));
+                // As ferramentas de tarefa só mudam a lista de passos com o resultado (o id do
+                // passo criado vem nele).
+                if let Some(lista) = self.passos.get_mut(chat_id) {
+                    lista.resultado(&id, &conteudo, erro);
+                }
                 if let Some(c) = self.chat_mut(chat_id) {
                     anotar_resultado(&mut c.itens, &id, conteudo, erro, no_fundo, liberada, agora());
                 }
@@ -4187,6 +4196,9 @@ fn editou_arquivo_desde(itens: &[Item], desde: u64) -> bool {
 /// Um passo da lista do agente: o texto, o que ele diz enquanto faz e em que pé está.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Passo {
+    /// O id do passo nas ferramentas de tarefa (`TaskCreate` e `TaskUpdate`); vazio no `TodoWrite`,
+    /// que manda a lista inteira.
+    pub id: String,
     pub texto: String,
     pub fazendo: String,
     pub estado: EstadoDoPasso,
@@ -4197,26 +4209,6 @@ pub enum EstadoDoPasso {
     Falta,
     Fazendo,
     Feito,
-}
-
-/// Os passos da entrada do TodoWrite (`todos`: `content`, `activeForm`, `status`).
-fn passos_da_lista(entrada: &serde_json::Value) -> Vec<Passo> {
-    let Some(lista) = entrada.get("todos").and_then(|t| t.as_array()) else {
-        return Vec::new();
-    };
-    lista
-        .iter()
-        .filter_map(|p| {
-            let texto = p.get("content")?.as_str()?.trim().to_string();
-            let fazendo = p.get("activeForm").and_then(|a| a.as_str()).map(str::trim).unwrap_or(&texto).to_string();
-            let estado = match p.get("status").and_then(|s| s.as_str()) {
-                Some("completed") => EstadoDoPasso::Feito,
-                Some("in_progress") => EstadoDoPasso::Fazendo,
-                _ => EstadoDoPasso::Falta,
-            };
-            (!texto.is_empty()).then_some(Passo { texto, fazendo, estado })
-        })
-        .collect()
 }
 
 /// Até quanto tempo atrás uma edição de outro chat no mesmo arquivo gera o aviso (12 h).
@@ -5108,21 +5100,6 @@ mod testes {
         (c.sessao, c.sessao_criada) = ("s".into(), true);
         (c.criado_em, c.atualizado_em, c.lido_em) = (0, 0, 0);
         c
-    }
-
-    #[test]
-    fn le_os_passos_do_todowrite() {
-        let entrada = serde_json::json!({"todos": [
-            {"content": "Ler o código", "activeForm": "Lendo o código", "status": "completed"},
-            {"content": "Corrigir", "activeForm": "Corrigindo", "status": "in_progress"},
-            {"content": "Testar", "status": "pending"},
-            {"content": "  ", "status": "pending"}
-        ]});
-        let passos = passos_da_lista(&entrada);
-        assert_eq!(passos.iter().map(|p| p.estado).collect::<Vec<_>>(), [EstadoDoPasso::Feito, EstadoDoPasso::Fazendo, EstadoDoPasso::Falta]);
-        assert_eq!(passos[1].fazendo, "Corrigindo");
-        assert_eq!(passos[2].fazendo, "Testar");
-        assert!(passos_da_lista(&serde_json::json!({})).is_empty());
     }
 
     #[test]

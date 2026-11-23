@@ -2601,10 +2601,14 @@ fn coluna_do_icone() -> Div {
 /// cortado, o fim levava o último número junto ("leu 3 arqu…") (relatório de design, 16/11/2026).
 fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
+    // As chamadas que mexem nos passos do agente não contam como "N ferramentas": com as
+    // ferramentas de tarefa, cada passo criado, começado e concluído é uma chamada.
+    let mut passos = false;
     for (_, item) in chamadas {
         match item {
             Item::Raciocinio { .. } => pensamentos += 1,
             Item::Ferramenta { nome, .. } => match nome.as_str() {
+                nome if crate::motor::passos::e_de_passos(nome) => passos = true,
                 "Bash" => comandos += 1,
                 "Read" => leituras += 1,
                 "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {}
@@ -2624,6 +2628,7 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
         if leituras > 0 { partes.push(contagem(leituras, "lido", "lidos")); }
         if buscas > 0 { partes.push(contagem(buscas, "busca", "buscas")); }
         if outras > 0 { partes.push(contagem(outras, "ferramenta", "ferramentas")); }
+        if passos { partes.push("passos".into()); }
         if partes.is_empty() && pensamentos > 0 { partes.push("Pensou".into()); }
     } else {
         if comandos > 0 { partes.push(format!("rodou {}", contagem(comandos, "comando", "comandos"))); }
@@ -2631,6 +2636,7 @@ fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
         if leituras > 0 { partes.push(format!("leu {}", contagem(leituras, "arquivo", "arquivos"))); }
         if buscas > 0 { partes.push(format!("fez {}", contagem(buscas, "busca", "buscas"))); }
         if outras > 0 { partes.push(format!("usou {}", contagem(outras, "ferramenta", "ferramentas"))); }
+        if passos { partes.push("atualizou os passos".into()); }
         if partes.is_empty() && pensamentos > 0 { partes.push("Pensou sobre o pedido".into()); }
     }
     let mut resumo = partes.join(" · ");
@@ -3565,11 +3571,18 @@ impl Janela {
         // O +N −M contado com o texto inteiro quando a chamada chegou (item 5.1); as chamadas de
         // antes disso contam pelo detalhe gravado.
         let linhas_do_diff = linhas_da_edicao_gravada(item);
-        let verbo = verbo_da_ferramenta(nome, pendente);
+        let verbo = verbo_da_ferramenta(nome, pendente).to_string();
         let detalhe = sem_marcacao(&detalhe_da_chamada(nome, resumo));
         let detalhe = if detalhe.is_empty() && nome == "Bash" {
             pedido.as_deref().and_then(|p| p.strip_prefix("$ ")).unwrap_or(resumo).to_string()
         } else { detalhe };
+        // Os passos do agente dizem o que mudou ("Começou: rodar os testes"). Na coluna mínima,
+        // sem o verbo, a frase inteira vai no lugar do detalhe.
+        let (verbo, detalhe) = match linha_dos_passos(nome, resumo, pendente) {
+            Some((verbo, detalhe)) if minima(contexto.nivel) => (verbo.clone(), format!("{verbo} {detalhe}").trim().to_string()),
+            Some(dos_passos) => dos_passos,
+            None => (verbo, detalhe),
+        };
         // Ctrl+F: o resumo da chamada fica na linha e o resultado dentro do bloco que ela abre.
         let (no_resumo, no_resultado) =
             (contexto.busca.realce(indice, Campo::Resumo), contexto.busca.realce(indice, Campo::Resultado));
@@ -3618,7 +3631,7 @@ impl Janela {
                         .flex_none()
                         .when(em_grupo, |s| s.min_w(r(56.)))
                         .text_color(Cores::tenue())
-                        .child(verbo.to_string()),
+                        .child(verbo.clone()),
                 )
             })
             .child(
@@ -3970,7 +3983,7 @@ fn icone_da_ferramenta(nome: &str) -> Lucide {
         "WebFetch" | "WebSearch" => Lucide::Globe,
         "Task" | "Agent" => Lucide::Bot,
         "Workflow" => Lucide::Workflow,
-        "TodoWrite" => Lucide::ListChecks,
+        "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" => Lucide::ListChecks,
         "listar_tarefas" => Lucide::ListTree,
         "anotar_decisao" => Lucide::ScrollText,
         "mensagem_para_chat" | "listar_chats" => Lucide::MessagesSquare,
@@ -4003,7 +4016,9 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         "WebSearch" => ("Pesquisou", "Pesquisando"),
         "Task" | "Agent" => ("Subagente", "Subagente"),
         "Workflow" => ("Fluxo de agentes", "Fluxo de agentes"),
-        "TodoWrite" => ("Atualizou os passos", "Atualizando os passos"),
+        "TodoWrite" | "TaskUpdate" => ("Atualizou os passos", "Atualizando os passos"),
+        "TaskCreate" => ("Criou um passo", "Criando um passo"),
+        "TaskList" | "TaskGet" => ("Conferiu os passos", "Conferindo os passos"),
         "listar_tarefas" => ("Listou os ajudantes", "Listando os ajudantes"),
         "listar_chats" => ("Listou as conversas", "Listando as conversas"),
         "anotar_decisao" => ("Anotou", "Anotando"),
@@ -4028,6 +4043,25 @@ fn verbo_da_ferramenta(nome: &str, ao_vivo: bool) -> &str {
         _ => return curto,
     };
     if ao_vivo { gerundio } else { passado }
+}
+
+/// O verbo e o detalhe da linha de uma chamada que mexe nos passos do agente (o `TodoWrite` e as
+/// ferramentas de tarefa): o que ela mudou, tirado da frase que o motor guardou no resumo
+/// (`motor::passos`). "Começou: rodar os testes" vira o verbo "Começou:" e o detalhe "rodar os
+/// testes"; "Criou 5 passos", "Criou" e "5 passos". Sem frase (as chamadas de antes disto, a que
+/// não mudou nada, o `TaskList`), o verbo de sempre, sem detalhe: o "lista de afazeres" ao lado
+/// de "Atualizou os passos" não dizia nada. `None` nas outras ferramentas.
+fn linha_dos_passos(nome: &str, resumo: &str, ao_vivo: bool) -> Option<(String, String)> {
+    if !crate::motor::passos::e_de_passos(nome) {
+        return None;
+    }
+    Some(match crate::motor::passos::frase_do_resumo(nome, resumo) {
+        Some(frase) => match frase.split_once(' ') {
+            Some((verbo, detalhe)) => (verbo.to_string(), detalhe.to_string()),
+            None => (frase.to_string(), String::new()),
+        },
+        None => (verbo_da_ferramenta(nome, ao_vivo).to_string(), String::new()),
+    })
 }
 
 /// O que vem depois do verbo: o detalhe do resumo ou, numa ferramenta MCP de fora, "srv · x".
@@ -5273,7 +5307,8 @@ fn texto_atividade(itens: &[Item], escrevendo: bool, dirigidas: usize) -> String
         },
         "perguntar_coordenador" => "Perguntando a quem pediu…".into(),
         "mensagem_para_chat" => "Mandando mensagem a outra conversa…".into(),
-        "TodoWrite" | "listar_tarefas" | "listar_chats" | "anotar_decisao" | "informar_progresso" => {
+        "TodoWrite" | "TaskCreate" | "TaskUpdate" | "TaskList" | "TaskGet" | "listar_tarefas" | "listar_chats" | "anotar_decisao"
+        | "informar_progresso" => {
             format!("{verbo}…")
         }
         outro => match outro.strip_prefix("mcp__") {
@@ -6540,6 +6575,35 @@ mod testes {
         // O que mudou de novo neste turno sai de "Antes".
         assert_eq!(nomes(&antes), [("src/b.rs".to_string(), 2, 0, false)]);
         assert_eq!(total_das_mudancas(&neste), (2, 15, 1));
+    }
+
+    /// Rodada do Paseo, item 2: a linha da trilha diz o que a chamada mudou nos passos.
+    #[test]
+    fn a_linha_dos_passos_diz_o_que_mudou() {
+        use super::{Item, linha_dos_passos, resumo_das_chamadas};
+        let par = |v: &str, d: &str| Some((v.to_string(), d.to_string()));
+        assert_eq!(linha_dos_passos("TodoWrite", "TodoWrite · Criou 5 passos", false), par("Criou", "5 passos"));
+        assert_eq!(linha_dos_passos("TodoWrite", "TodoWrite · Começou: rodar os testes", false), par("Começou:", "rodar os testes"));
+        assert_eq!(linha_dos_passos("TaskUpdate", "TaskUpdate · Concluiu: rodar os testes", false), par("Concluiu:", "rodar os testes"));
+        assert_eq!(linha_dos_passos("TodoWrite", "TodoWrite · Concluiu 2 passos", false), par("Concluiu", "2 passos"));
+        assert_eq!(linha_dos_passos("TaskCreate", "TaskCreate · Criou: criar a.txt", false), par("Criou:", "criar a.txt"));
+        // As chamadas de antes disto e a que não mudou nada: o verbo de sempre, sem o "lista de afazeres".
+        assert_eq!(linha_dos_passos("TodoWrite", "TodoWrite · lista de afazeres", false), par("Atualizou os passos", ""));
+        assert_eq!(linha_dos_passos("TodoWrite", "TodoWrite · lista de afazeres", true), par("Atualizando os passos", ""));
+        assert_eq!(linha_dos_passos("TaskList", "TaskList", false), par("Conferiu os passos", ""));
+        assert_eq!(linha_dos_passos("Bash", "Bash · ls", false), None);
+        // No cabeçalho do grupo elas não viram "usou 9 ferramentas".
+        let itens = [
+            ferramenta("TaskCreate", "TaskCreate · Criou: a", Some("ok"), false),
+            ferramenta("TaskUpdate", "TaskUpdate · Começou: a", Some("ok"), false),
+            ferramenta("Bash", "ls", Some("ok"), false),
+            ferramenta("TaskUpdate", "TaskUpdate · Concluiu: a", Some("ok"), false),
+        ];
+        let chamadas: Vec<(usize, &Item)> = itens.iter().enumerate().collect();
+        assert_eq!(resumo_das_chamadas(&chamadas, false), "Rodou 1 comando · atualizou os passos");
+        assert_eq!(resumo_das_chamadas(&chamadas, true), "1 comando · passos");
+        let so_passos: Vec<(usize, &Item)> = itens[..2].iter().enumerate().collect();
+        assert_eq!(resumo_das_chamadas(&so_passos, false), "Atualizou os passos");
     }
 
     #[test]

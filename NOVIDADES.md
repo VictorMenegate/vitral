@@ -41,6 +41,10 @@ e quanto cache cada turno gastou.
   que mudaram, com 3 linhas em volta, e a palavra trocada vem marcada dentro da linha. Antes o
   trecho antigo vinha inteiro em vermelho e o novo inteiro em verde. O pedido de permissão de uma
   edição mostra o mesmo diff.
+- **Os passos dizem o que mudou.** Quando o agente mexe na lista de passos dele, a linha na
+  conversa diz o quê: "Criou 5 passos", "Começou: rodar os testes", "Concluiu: rodar os testes".
+  Antes toda chamada era "Atualizou os passos". O Vitral lê também as ferramentas de tarefa novas
+  do Claude Code (TaskCreate, TaskUpdate e TaskList), e a pílula "3/5" conta por elas.
 - **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
   mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
 

@@ -518,6 +518,8 @@ fn itens_do_fio(leitor: impl BufRead, maximo: usize, fio: Fio) -> Historico {
     let mut itens: Vec<Item> = Vec::new();
     // As chamadas pelo id, com o índice contado desde o começo (os cortados saem da frente).
     let mut chamadas: HashMap<String, usize> = HashMap::new();
+    // A lista de passos do agente ao longo do arquivo: cada chamada diz o que mudou nela.
+    let mut passos = crate::motor::passos::Passos::default();
     let mut cortados = 0;
     let mut resposta: Option<String> = None;
     // A hora de cada item vem do `timestamp` da linha (a conversa trazida mostra as datas de
@@ -539,6 +541,7 @@ fn itens_do_fio(leitor: impl BufRead, maximo: usize, fio: Fio) -> Historico {
             "user" if !linha.is_meta => {
                 let u = do_usuario(&mensagem.content);
                 for (id, texto, erro) in u.resultados {
+                    passos.resultado(&id, &texto, erro);
                     if let Some(Item::Ferramenta { resultado, erro: e, .. }) =
                         chamadas.get(&id).and_then(|&i| i.checked_sub(cortados)).and_then(|i| itens.get_mut(i))
                     {
@@ -614,10 +617,11 @@ fn itens_do_fio(leitor: impl BufRead, maximo: usize, fio: Fio) -> Historico {
                             let id = bloco["id"].as_str().unwrap_or_default().to_string();
                             chamadas.insert(id.clone(), cortados + itens.len());
                             let (detalhe, arquivo) = crate::claude::detalhe_ferramenta(nome, &bloco["input"]);
+                            let resumo = passos.resumo(&id, nome, &bloco["input"]);
                             itens.push(Item::Ferramenta {
                                 id,
                                 nome: nome.to_string(),
-                                resumo: crate::claude::resumo_ferramenta(nome, &bloco["input"]),
+                                resumo,
                                 resultado: None,
                                 erro: false,
                                 em,

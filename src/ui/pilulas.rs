@@ -456,7 +456,7 @@ mod testes {
     }
 
     fn passo(estado: EstadoDoPasso) -> Passo {
-        Passo { texto: "Corrigir o desconto".into(), fazendo: "Corrigindo o desconto".into(), estado }
+        Passo { id: String::new(), texto: "Corrigir o desconto".into(), fazendo: "Corrigindo o desconto".into(), estado }
     }
 
     /// "A linha só existe quando há pílula."
@@ -508,6 +508,21 @@ mod testes {
         assert!(!p.vazia());
         // Com o turno parado a lista continua em "Este chat", à direita, e não na linha.
         assert_eq!(montar(false, &[], &[], &passos, &[sua("oi")], 200).passos, None);
+        // Com as ferramentas de tarefa (TaskCreate e TaskUpdate, um passo por chamada) a conta é
+        // a mesma: a lista que elas montam é a que a pílula lê.
+        let mut lista = crate::motor::passos::Passos::default();
+        for (chamada, assunto) in [("a", "ler"), ("b", "corrigir"), ("c", "testar")] {
+            lista.chamada(chamada, "TaskCreate", &serde_json::json!({ "subject": assunto }));
+        }
+        for (n, chamada) in ["a", "b", "c"].iter().enumerate() {
+            lista.resultado(chamada, &format!("Task #{} created successfully: x", n + 1), false);
+        }
+        assert_eq!(montar(true, &[], &[], lista.lista(), &[sua("oi")], 200).passos, Some((0, 3)));
+        lista.chamada("d", "TaskUpdate", &serde_json::json!({ "taskId": "1", "status": "completed" }));
+        lista.resultado("d", "Updated task #1 status", false);
+        lista.chamada("e", "TaskUpdate", &serde_json::json!({ "taskId": "2", "status": "in_progress" }));
+        lista.resultado("e", "Updated task #2 status", false);
+        assert_eq!(montar(true, &[], &[], lista.lista(), &[sua("oi")], 200).passos, Some((1, 3)));
     }
 
     /// "As mudanças do turno (+N −M)."

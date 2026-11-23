@@ -170,8 +170,8 @@ componentes do GPUI Kit.
   ponto de quem espera: "2 trabalhando", "1 esperando você", e "1 falhou" enquanto o turno roda;
   o clique lista os subagentes deste turno, com o que cada um faz, e o clique num deles abre a
   conversa dele numa aba); **os passos do
-  agente** ("3/5", o TodoWrite; a lista inteira na dica e, no clique, com o que ele faz agora em
-  destaque); e **as mudanças do turno** ("2 arquivos +40 −12", pelas chamadas de edição desde a
+  agente** ("3/5", o TodoWrite ou as ferramentas de tarefa; a lista inteira na dica e, no clique,
+  com o que ele faz agora em destaque); e **as mudanças do turno** ("2 arquivos +40 −12", pelas chamadas de edição desde a
   sua última mensagem; o clique abre a lista à direita, em "Este chat"). As três primeiras só
   com o turno rodando; a das mudanças fica depois dele, até a próxima mensagem. No painel
   estreito ficam o ícone e o número. "Esperando você" é o subagente que fez um pedido de
@@ -182,6 +182,30 @@ componentes do GPUI Kit.
   passos e a pílula "N agentes" estavam na linha de estado da caixa (só com o turno rodando),
   e o "N arquivos mudados" numa faixa acima da caixa (que empurrava a conversa ao aparecer).
   Referência: as "tracks" do Paseo (`composer/tracks.tsx`), 23/11/2026.
+- **Passos do agente** (`src/motor/passos.rs`). A lista de passos de cada chat (`Motor.passos`,
+  só na memória) vem de duas famílias de ferramenta do Claude Code. O `TodoWrite` manda a lista
+  inteira a cada chamada. O `TaskCreate`, o `TaskUpdate` e o `TaskList` mexem num passo por vez,
+  pelo id, e só mudam a lista quando o resultado chega (o id do passo criado vem nele: "Task #4
+  created successfully"; o "Task not found" não vem marcado como erro; o `TaskList` responde
+  "#4 [in_progress] passo x" por linha, e refaz a lista inteira). Medido no Claude Code 2.1.328
+  em 23/11/2026, com Haiku, Sonnet e Opus: no `-p`, sem nada no ambiente, ele não oferece
+  nenhuma das duas famílias (a lista de ferramentas do `init` só tem `Task` e `TaskStop`); com
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` oferece `TaskCreate`, `TaskGet`, `TaskList` e `TaskUpdate`,
+  e não o `TodoWrite`, que só aparece nas sessões de versões de antes (2.1.219 a 2.1.228, pela
+  extensão do VS Code). O Vitral não põe essa variável: com o Claude Code de hoje, a pílula e a
+  seção Passos só aparecem em quem a ligar por conta própria. A lista do Claude Code é da
+  sessão e continua de um turno para o outro (ela mora em `tasks/<sessão>/<id>.json`, na pasta
+  de configuração); a do Vitral se perde ao fechar, e volta no próximo `TaskList` (o passo de
+  antes que o agente mexer sem ela aparece como "Concluiu o passo 4"). Um `TaskCreate` que
+  devolve o id 1 é uma lista nova: a de antes sai. **Na trilha, cada chamada diz o que mudou**
+  (`Passos::chamada`, guardado no resumo da chamada: "TodoWrite · Começou: Rodar os testes"):
+  "Criou 5 passos", "Começou: …", "Concluiu: …", "Tirou: …", com vários juntos em número
+  ("Concluiu 2 passos") e mais de uma mudança na mesma chamada separadas por ponto ("Concluiu:
+  Ler o código · Começou: Corrigir"). No `TodoWrite` os passos são casados pelo texto com os da
+  lista de antes. A chamada que não mudou nada disso, as de antes desta versão e o `TaskList`
+  ficam com "Atualizou os passos" e "Conferiu os passos", sem detalhe. O histórico trazido do
+  Claude Code passa pela mesma conta (`importar.rs`). No cabeçalho de um grupo de chamadas
+  elas viram "atualizou os passos", em vez de contar como "usou N ferramentas".
 - **Conversa do subagente em aba** (`src/motor/subconversa.rs`, `src/importar/subagente.rs`). O
   clique no cartão de um subagente (a linha da chamada Task ou Agent) ou nele na pílula dos
   subagentes abre numa aba do painel a conversa INTEIRA dele, só para ler: o pedido que ele
@@ -2121,6 +2145,7 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | --- | --- |
 | `src/motor.rs` | Os chats (criar com `novo_chat(pasta)`, a lista em `chats_da_lista`, renomear, fixar, arquivar, o que espera você), os turnos e a fila, contas, retomadas, Ultracode e agentes em segundo plano, os pedidos de permissão e a passagem de sessão |
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
+| `src/motor/passos.rs` | A lista de passos do agente de cada chat (o `TodoWrite` e as ferramentas de tarefa do Claude Code) e a frase do que cada chamada mudou nela, para a trilha |
 | `src/motor/subconversa.rs` | A conversa de um subagente aberta numa aba: o chat de mentira, só de leitura, fora do estado; achar e reler o arquivo dele em segundo plano enquanto ele trabalha; qual subagente espera uma permissão sua e o relatório entregue que vai para o cartão |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
