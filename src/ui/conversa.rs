@@ -449,6 +449,24 @@ fn menu_do_painel(
     menu
 }
 
+/// O valor do cabeçalho do popover do contexto: a porcentagem e o custo ("31% · US$ 1,84"), ou
+/// só o custo antes de medir o contexto. O Codex e o Gemini não dizem o custo: só a porcentagem.
+fn valor_do_uso(agente: crate::modelo::Agente, numero: Option<u32>, custo: &str) -> String {
+    match numero {
+        Some(numero) if agente != crate::modelo::Agente::Claude => format!("{numero}%"),
+        Some(numero) => format!("{numero}% · {custo}"),
+        None => custo.to_string(),
+    }
+}
+
+/// A nota do rodapé do popover do contexto.
+fn nota_do_uso(agente: crate::modelo::Agente) -> &'static str {
+    match agente {
+        crate::modelo::Agente::Claude => "Custo estimado pelo preço da API; no plano, o que conta é o limite.",
+        _ => "Sem custo em dólar: no plano, o que conta é o limite.",
+    }
+}
+
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
 /// US$ 1,84"); embaixo o modelo, a conta e os tokens; no rodapé a nota da estimativa e `acao` (o
 /// Compactar). `extras` são as linhas que outros módulos põem depois dos tokens (o último turno).
@@ -496,9 +514,9 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
     let (simbolo, valor) = match contexto {
         Some((_, (fracao, numero, _))) => (
             Some(Simbolo::Anel { fracao, cor: Some(cor_da_faixa(fracao, Cores::destaque())) }),
-            format!("{numero}% · {custo}"),
+            valor_do_uso(chat.agente, Some(numero), &custo),
         ),
-        None => (None, custo),
+        None => (None, valor_do_uso(chat.agente, None, &custo)),
     };
     let tokens = contexto.map(|(usados, (fracao, _, janela))| {
         h_flex()
@@ -521,7 +539,8 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
         .child(
             v_flex()
                 .child(linha("Modelo", modelo))
-                .child(linha("Conta", texto(format!("Claude · {conta}"))))
+                // O Codex e o Gemini não têm conta no Vitral: a linha é só do Claude.
+                .when(chat.agente == crate::modelo::Agente::Claude, |s| s.child(linha("Conta", texto(format!("Claude · {conta}")))))
                 .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
                 .children(extras),
         )
@@ -534,7 +553,7 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
                         .min_w_0()
                         .metadado()
                         .text_color(Cores::tenue())
-                        .child("Custo estimado pelo preço da API; no plano, o que conta é o limite."),
+                        .child(nota_do_uso(chat.agente)),
                 )
                 .child(div().flex_none().child(acao)),
         )
@@ -1704,8 +1723,19 @@ impl Direita {
 
 #[cfg(test)]
 mod testes {
-    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, teto_por_igual};
+    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, nota_do_uso, teto_por_igual, valor_do_uso};
     use crate::modelo::Chat;
+
+    /// O Codex não diz o custo: o popover do contexto mostra só a porcentagem e não fala do preço.
+    #[test]
+    fn o_uso_do_codex_mostra_o_contexto_sem_custo() {
+        use crate::modelo::Agente;
+        assert_eq!(valor_do_uso(Agente::Claude, Some(31), "US$ 1,84"), "31% · US$ 1,84");
+        assert_eq!(valor_do_uso(Agente::Claude, None, "US$ 1,84"), "US$ 1,84");
+        assert_eq!(valor_do_uso(Agente::Codex, Some(4), "US$ 0,00"), "4%");
+        assert!(nota_do_uso(Agente::Claude).contains("preço da API"));
+        assert!(!nota_do_uso(Agente::Codex).contains("preço"), "{}", nota_do_uso(Agente::Codex));
+    }
 
     #[test]
     fn historico_busca_sem_acento_com_o_titulo_primeiro() {

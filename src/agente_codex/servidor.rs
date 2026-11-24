@@ -16,6 +16,11 @@
 //! (responde `{}` e abre um turno com o item `contextCompaction`, medido no 0.169.0), `/review` é o
 //! `review/start` (o resultado vem no item `exitedReviewMode`) e cada skill da pasta
 //! (`skills/list`) é um "/nome", que vai como a entrada `skill` com o texto "$nome …".
+//!
+//! O uso vem no `thread/tokenUsage/updated`, a cada chamada ao modelo (medido no 0.169.0): o
+//! `last.totalTokens` é o que a conversa ocupa agora (o contexto, como o Codex mostra), o
+//! `modelContextWindow` é a janela, e o `total` soma a conversa inteira, então o gasto do turno é o
+//! `total` do fim menos o de antes da primeira chamada dele. O Codex não diz custo.
 
 use std::{collections::HashMap, io::{self, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 use serde_json::{Value, json};
@@ -130,13 +135,33 @@ pub struct Protocolo {
     skills: Option<Vec<(String, String)>>,
     /// A conversa abriu e o turno espera a lista das skills (a mensagem começa com "/").
     esperando_skills: bool,
+    /// O `total` de tokens da conversa antes da primeira chamada deste turno e o da última
+    /// ([entrada, cache lido, cache gravado, saída]).
+    tokens_antes: Option<[u64; 4]>,
+    tokens_agora: Option<[u64; 4]>,
+    /// O tamanho da janela de contexto do modelo (`modelContextWindow`).
+    janela: Option<u64>,
+}
+
+/// [entrada, cache lido, cache gravado, saída] de um `TokenUsageBreakdown`.
+fn partes_do_uso(uso: &Value) -> [u64; 4] {
+    ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens"].map(|chave| uso[chave].as_u64().unwrap_or(0))
 }
 
 impl Protocolo {
     pub fn novo(canal: Arc<Mutex<Canal>>, parametros: Value, input: Vec<Value>, esforco: Option<String>) -> Self {
         let pedido = pedido_de(&input);
         Self { canal, parametros, input, esforco, leitor: super::Leitor::default(), modelo: String::new(), fim: None,
-            mudancas: HashMap::new(), pedido, skills: None, esperando_skills: false }
+            mudancas: HashMap::new(), pedido, skills: None, esperando_skills: false, tokens_antes: None, tokens_agora: None,
+            janela: None }
+    }
+
+    /// Os tokens que o turno somou à conversa (`None` sem uso medido nele).
+    fn gasto_do_turno(&self) -> Option<crate::motor::Tokens> {
+        let (antes, agora) = (self.tokens_antes?, self.tokens_agora?);
+        let [entrada, cache_lido, cache_criado, saida]: [u64; 4] = std::array::from_fn(|i| agora[i].saturating_sub(antes[i]));
+        let tokens = crate::motor::Tokens { entrada: entrada.saturating_sub(cache_lido), cache_lido, cache_criado, saida };
+        (tokens.total() > 0).then_some(tokens)
     }
 
     /// Os comandos de barra desta pasta, para o menu "/": os do app-server e as skills.
@@ -295,13 +320,30 @@ impl Protocolo {
                         eventos.push(Evento::PermissaoRetirada);
                     }
                 }
+                "thread/tokenUsage/updated" => {
+                    let uso = &p["tokenUsage"];
+                    self.janela = uso["modelContextWindow"].as_u64().or(self.janela);
+                    if let Some(tokens) = uso["last"]["totalTokens"].as_u64().filter(|n| *n > 0) {
+                        eventos.push(Evento::Contexto(tokens));
+                    }
+                    // Só o uso deste turno conta para o gasto dele (a retomada pode repetir o de antes).
+                    if !canal.turno.is_empty() && p["turnId"].as_str() == Some(canal.turno.as_str()) {
+                        let (total, ultima) = (partes_do_uso(&uso["total"]), partes_do_uso(&uso["last"]));
+                        self.tokens_antes.get_or_insert(std::array::from_fn(|i| total[i].saturating_sub(ultima[i])));
+                        self.tokens_agora = Some(total);
+                    }
+                }
                 "turn/completed" => {
                     canal.concluido = true;
                     let turno = &p["turn"];
                     let erro = turno["status"] != "completed";
                     let texto = if erro { turno["error"]["message"].as_str().unwrap_or("O turno foi interrompido.").to_string() }
                         else { std::mem::take(&mut self.leitor.ultima_fala) };
-                    self.fim = Some(Evento::Fim { erro, texto, custo_usd: 0., janela: None });
+                    // Os tokens do turno vão antes do fim, como os do `result` do Claude Code.
+                    if let Some(tokens) = self.gasto_do_turno() {
+                        eventos.push(Evento::Gasto(tokens));
+                    }
+                    self.fim = Some(Evento::Fim { erro, texto, custo_usd: 0., janela: self.janela });
                 }
                 _ => {}
             }
@@ -685,6 +727,61 @@ mod testes {
         assert!(!eventos.iter().any(|e| matches!(e, Evento::Fim { .. })), "{eventos:?}");
         let turno = pedidos(&g).into_iter().find(|v| v["method"] == "turn/start").expect("turn/start");
         assert_eq!(turno["params"]["input"], json!([{"type":"text","text":"/revisar-pr"}]));
+    }
+
+    /// O `thread/tokenUsage/updated` de um turno: `total` (a conversa inteira) e `last` (a última
+    /// chamada ao modelo), cada um com [entrada, cache lido, saída].
+    fn uso(turno: &str, total: [u64; 3], ultima: [u64; 3], janela: u64) -> Value {
+        let parte = |[entrada, cache, saida]: [u64; 3]| json!({"totalTokens":entrada + saida,"inputTokens":entrada,
+            "cachedInputTokens":cache,"cacheWriteInputTokens":0,"outputTokens":saida,"reasoningOutputTokens":0});
+        json!({"method":"thread/tokenUsage/updated","params":{"threadId":"sessao","turnId":turno,
+            "tokenUsage":{"total":parte(total),"last":parte(ultima),"modelContextWindow":janela}}})
+    }
+
+    /// Os números de um turno de verdade do 0.169.0 (gpt-6.2-sol, 24/11/2026, quatro chamadas):
+    /// o contexto é o `last.totalTokens` da última chamada, a janela é o `modelContextWindow`, e o
+    /// gasto do turno é o `total` do fim menos o de antes da primeira chamada.
+    #[test]
+    fn o_uso_do_codex_vira_o_contexto_e_os_tokens_do_turno() {
+        let (mut p, _, _) = aberto();
+        let chamadas = [
+            ([16623, 0, 46], [16623, 0, 46]),
+            ([33316, 16512, 79], [16693, 16512, 33]),
+            ([50066, 33024, 102], [16750, 16512, 23]),
+            ([66884, 49664, 132], [16818, 16640, 30]),
+        ];
+        let mut contextos = Vec::new();
+        for (total, ultima) in chamadas {
+            for e in p.linha(&uso("turno", total, ultima, 475_000)) {
+                if let Evento::Contexto(n) = e { contextos.push(n) }
+            }
+        }
+        assert_eq!(contextos, [16669, 16726, 16773, 16848]);
+        let fim = p.linha(&json!({"method":"turn/completed","params":{"threadId":"sessao","turn":{"id":"turno","status":"completed","items":[]}}}));
+        match fim.as_slice() {
+            [Evento::Gasto(tokens), Evento::Fim { erro: false, janela, .. }] => {
+                assert_eq!((tokens.entrada, tokens.cache_lido, tokens.cache_criado, tokens.saida), (66884 - 49664, 49664, 0, 132));
+                assert_eq!(*janela, Some(475_000));
+            }
+            outros => panic!("{outros:?}"),
+        }
+    }
+
+    /// Numa conversa retomada, o `total` já traz os turnos de antes: só o que este turno somou
+    /// conta. O uso de outro turno (o que a retomada repete) muda o contexto e não o gasto.
+    #[test]
+    fn o_gasto_do_turno_nao_leva_os_turnos_de_antes() {
+        let (mut p, _, _) = aberto();
+        p.linha(&uso("turno-velho", [100_000, 90_000, 500], [20_000, 19_000, 100], 258_400));
+        p.linha(&uso("turno", [116_623, 100_000, 546], [16_623, 10_000, 46], 258_400));
+        p.linha(&uso("turno", [133_316, 116_512, 579], [16_693, 16_512, 33], 258_400));
+        let fim = p.linha(&json!({"method":"turn/completed","params":{"turn":{"id":"turno","status":"completed","items":[]}}}));
+        let [Evento::Gasto(tokens), Evento::Fim { .. }] = fim.as_slice() else { panic!("{fim:?}") };
+        assert_eq!((tokens.entrada, tokens.cache_lido, tokens.saida), (33_316 - 26_512, 26_512, 79));
+        // Sem nenhum uso no turno, nem gasto nem janela.
+        let (mut p, _, _) = aberto();
+        let fim = p.linha(&json!({"method":"turn/completed","params":{"turn":{"id":"turno","status":"completed","items":[]}}}));
+        assert!(matches!(fim.as_slice(), [Evento::Fim { janela: None, .. }]), "{fim:?}");
     }
 
     #[test]

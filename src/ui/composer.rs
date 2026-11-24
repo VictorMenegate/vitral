@@ -1042,12 +1042,9 @@ impl Janela {
             .bg(Cores::traco())
             .child(div().h_full().w(relative(fracao.clamp(0.06, 1.))).rounded_full().bg(cor_arco));
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
-        let dica: SharedString = format!(
-            "Contexto: {} de {}\nO custo, o modelo e o Compactar",
-            milhares(usados),
-            tokens(janela)
-        )
-        .into();
+        // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
+        let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };
+        let dica: SharedString = format!("Contexto: {} de {}\n{o_que_abre}", milhares(usados), tokens(janela)).into();
         let lado = if estreita { 28. } else { 32. };
         let gatilho = Button::new(("contexto", b.painel as usize))
             .custom(variante_fantasma(cx))

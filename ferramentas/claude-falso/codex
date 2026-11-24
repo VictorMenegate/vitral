@@ -21,6 +21,10 @@ Comandos de barra do app-server: `thread/compact/start` responde `{}` e abre um 
 `contextCompaction` (como o 0.169.0), `review/start` abre um turno com `enteredReviewMode` e
 `exitedReviewMode` (o texto da revisão), e `skills/list` oferece a skill falsa "revisar-pr"; a
 mensagem que chega com a entrada `skill` diz o nome dela na resposta.
+
+O uso vem como no 0.169.0: um `thread/tokenUsage/updated` depois de cada item e da resposta, com o
+`total` da conversa (que cresce de um turno para o outro), o `last` da chamada (12 mil tokens mais
+mil por chamada) e a janela de 258.400.
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -90,6 +94,18 @@ def servidor():
     trabalhador = None
     politica = "never"
     skill_pedida = None
+    total = {"inputTokens": 0, "cachedInputTokens": 0, "outputTokens": 0}
+    chamadas = [0]
+
+    def usar():
+        """Uma chamada ao modelo: o `last` dela e o `total` da conversa, como o app-server manda."""
+        chamadas[0] += 1
+        ultima = {"inputTokens": 12000 + 1000 * chamadas[0], "cachedInputTokens": 11000, "outputTokens": 40}
+        for chave, valor in ultima.items():
+            total[chave] += valor
+        parte = lambda u: dict(u, totalTokens=u["inputTokens"] + u["outputTokens"], cacheWriteInputTokens=0, reasoningOutputTokens=0)
+        evento("thread/tokenUsage/updated", {"threadId": thread, "turnId": turno, "tokenUsage": {
+            "total": parte(total), "last": parte(ultima), "modelContextWindow": 258400}})
     respostas = {}
     aguardando = threading.Condition()
     proximo_pedido = [0]
@@ -174,6 +190,7 @@ def servidor():
                 except OSError: pass
             else: valor.update(status="completed", aggregatedOutput=f"(codex falso) saída de: {detalhe}\n", exitCode=0)
             item(valor, True)
+            usar()
         interrompido = fim.is_set()
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
         if skill_pedida:
@@ -186,7 +203,9 @@ def servidor():
                      "2. **Faltou teste** para o cupom vencido.")
         elif revisando:
             texto = "Nada a acrescentar."
-        if not interrompido: item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
+        if not interrompido:
+            item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
+            usar()
         falhou = "[falha]" in pedido
         evento("turn/completed", {"threadId": thread, "turn": {"id": turno,
                "status": "interrupted" if interrompido else "failed" if falhou else "completed", "items": [],

@@ -94,8 +94,15 @@ componentes do GPUI Kit.
   skills) para `Chat.comandos`, e o menu "/" mostra o `/clear` do Vitral mais ela
   (`comandos_fora_do_claude`); antes do primeiro turno, só os dois. Compactar (o "…" da caixa, a
   paleta, o popover do contexto) vale no Codex também.
-  O que ainda muda num chat do Codex: não há conta, o custo e o contexto não são medidos, e parar
-  é pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
+  **Contexto e tokens** (24/11/2026): o `thread/tokenUsage/updated` chega a cada chamada ao modelo
+  (medido no 0.169.0). O `last.totalTokens` é o contexto de agora (`Evento::Contexto`, o anel da
+  caixa), o `modelContextWindow` é a janela (vai no `Fim`; até o fim do primeiro turno, o anel usa
+  a padrão), e o gasto do turno é o `total` do fim menos o de antes da primeira chamada dele
+  (`Evento::Gasto` antes do `Fim`: a dica da linha "Trabalhou", o "Último turno" do popover e o
+  livro do **Onde o uso foi**). Só o uso do turno que roda conta para o gasto. O popover do
+  contexto do Codex não tem custo nem conta.
+  O que ainda muda num chat do Codex: não há conta nem custo em dólar, e parar é pelo
+  `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
 - **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
@@ -1779,7 +1786,8 @@ e os tokens de entrada nova, de cache lido, de cache criado e de saída. O custo
 `Chat::somar_custo` somou naquele fim de turno; os tokens vêm do `result` do Claude Code
 (`Evento::Gasto`, de `tokens_do_resultado`: o `model_usage_since_last_result`, que conta os
 subagentes, ou, sem ele, o `usage` do turno; nunca o `modelUsage`, que é o total da sessão) e do
-`turn.completed` do Codex (sem custo). Um turno com vários `result` (agentes em segundo plano)
+Codex (sem custo): no app-server, o `total` do último `thread/tokenUsage/updated` do turno menos o
+de antes da primeira chamada dele; no `exec` antigo, o `turn.completed`. Um turno com vários `result` (agentes em segundo plano)
 soma os tokens de todos. No diálogo **Contas do Claude**, embaixo das contas, a seção **Onde o uso
 foi** tem os seletores **Hoje** e **7 dias** (hoje e os 6 dias anteriores): uma barra por pasta,
 da que mais gastou para a que menos, com "182 mil tokens · US$ 0,84"; o clique na pasta abre os
@@ -2565,7 +2573,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
