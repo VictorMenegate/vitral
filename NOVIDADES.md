@@ -3,6 +3,23 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## Próxima
+
+- **Comentário por linha no diff.** Na edição do agente, clique na margem de uma linha e escreva o
+  comentário. Eles se acumulam, ficam marcados nas linhas, e o **Enviar comentários (N)** manda
+  todos de uma vez ao agente, com arquivo e linha de cada um.
+- **Colar HTML vira Markdown.** O que você copia de um navegador ou documento entra na caixa com
+  links, listas, negrito e código; o Ctrl+Z volta ao texto puro. No Linux com Wayland.
+- **O menu “/” mostra tudo.** Todos os comandos e skills numa lista que rola, cada um com a
+  descrição, a dica de argumento, o selo skill e a origem; o ícone (ou o Ctrl+O) abre o arquivo da
+  skill à direita, e os que mais combinam com o que você digitou vêm primeiro.
+- **“@” e “/” onde está o cursor.** O menu abre para a palavra em que você está, e não só para a
+  última, e completa ali. Caminho com espaço vai entre aspas.
+- **Caixa estreita com o nome do modelo.** Com três painéis lado a lado, o chip mostra “Opus” ou
+  “Fable”, e o modo e o esforço ficam só com o ícone.
+- **Imagens coladas sem uso saem sozinhas.** Ao abrir, o Vitral apaga as imagens coladas que
+  nenhuma conversa, fila ou rascunho usa e que estão paradas há mais de um dia.
+
 ## 0.10.1
 
 O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O

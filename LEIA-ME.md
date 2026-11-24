@@ -1379,6 +1379,26 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   uma tabela desce uns 28 px.
 
 
+**A caixa de mensagem: menu "/", "@" e chip do modelo** (`src/ui/composer.rs`, `src/claude.rs`).
+O "/" lista todos os comandos e skills, numa lista que rola (as setas levam o marcado junto): cada
+linha tem a descrição, a dica de argumento, o selo "skill", a origem ("projeto", "pessoal",
+"plugin <nome>") e um ícone que abre o `SKILL.md` à direita (Ctrl+O abre o da marcada). A ordem é
+pela qualidade do casamento (`qualidade_do_casamento`: nome exato, começa com, começa uma parte do
+nome, contém, só a descrição); o "@" e o "#" seguem com o teto de 8. O catálogo vem do
+`initialize` do Claude Code, por pasta (`claude::catalogo_da_pasta`): a origem é a marca que ele põe
+na descrição ("(user)", "(project)", "(plugin) …", `builtin`) e o arquivo se acha em
+`.claude/skills` da pasta e das pastas de cima, na conta (`CLAUDE_CONFIG_DIR` ou `~/.claude`) e nos
+plugins de `installed_plugins.json`. Vale 10 minutos (`precisa_perguntar`) e é refeito ao trocar o
+agente do chat. O menu abre para a palavra sob o cursor, e não só para a última (`gatilho_em`): o
+`/` só na primeira palavra, o `@` e o `#` em qualquer uma; escolher troca a palavra inteira
+(`trocar_palavra`) e passa pelo espaço que já existia. Caminho com espaço vai entre aspas
+(`@"minha pasta/a b.rs"`, também em `mencao.rs`). Na caixa estreita (3 painéis a 150%) o chip do
+modelo mantém o nome da família ("Opus", "Fable"); modo e esforço ficam só com o ícone, e o nome
+cai para só a marca quando não cabe (`decidir_modelo`, medido como o esforço). Ao abrir, em
+segundo plano, saem de `anexos/` os `colado-*` que nenhuma conversa, fila ou rascunho cita
+(`src/limpeza_anexos.rs`; parados há mais de um dia; arquivo de dados ilegível cancela tudo). Na
+bancada, `BANCADA_CATALOGO=1` faz o claude de mentira responder o catálogo.
+
 ## O que fica à vista
 
 O padrão é o mínimo, e o resto aparece quando faz falta:
@@ -1615,6 +1635,26 @@ está aberto); aberto ao lado, o
 cabeçalho dele tem o próprio botão de fechar (o ícone de recolher). O que você escolheu fica
 lembrado (`painel` no `interface.json`). Ele também abre sozinho quando você clica num arquivo
 citado na conversa, sem mudar essa escolha.
+
+**Comentário por linha no diff** (`src/ui/comentarios_diff.rs`; ideia do Paseo). Na edição do
+agente, clicar na margem do sinal (+, − ou o espaço) de uma linha abre embaixo do painel o campo do
+comentário; o Enter guarda e o Esc fecha. Os comentários se acumulam por chat, a linha comentada
+ganha um ponto na margem (clicar de novo edita, e vazio ou o lixo apaga) e o botão discreto
+**Enviar comentários (N)** manda todos numa mensagem só (`comentarios_diff::mensagem`: o arquivo,
+a linha e o trecho de cada um; a linha que saiu leva o texto dela no lugar do número). A mensagem
+entra no turno ou espera na fila como o Enter da caixa (`enter_manda_depois`). Só na edição: o
+arquivo aberto sem diff não tem a margem de comentário (o número continua escolhendo linhas para
+mencionar).
+
+**Colar HTML** (`src/ui/colar_html.rs`). O GPUI do Linux só lia o `text/plain`; o
+`vendor/gpui-pre-linux` (Wayland, `clipboard.rs`) lê também o `text/html` e o guarda no `metadata`
+do `ClipboardItem`. No `on_paste` da caixa, `markdown_da_colagem` converte links, listas, negrito,
+itálico, código, títulos, citações, tabelas e imagens em Markdown, só quando o HTML diz mais que o
+texto puro (o `<span>` com estilo de um editor cola como sempre). A colagem é feita em duas
+edições (o texto puro e, por cima, o Markdown): o Ctrl+Z volta ao texto puro. Só no Wayland; no
+X11 e no Windows a colagem continua em texto puro. Não verificada de ponta a ponta na bancada
+(o Mutter só deixa um cliente com foco oferecer a área de transferência, e o `wl-copy` só oferece
+um tipo por vez).
 
 **Menções** (`src/ui/mencao.rs`). No seu balão, a menção de um arquivo ou pasta que existe
 ("@src/ui/fila.rs#L120-134", "@central/src/") vira uma pílula no meio do texto, no poço escuro do
