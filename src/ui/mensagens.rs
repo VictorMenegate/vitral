@@ -54,6 +54,7 @@ pub(super) mod no_fundo;
 
 use a_vista::{Assinatura, ChaveDoBloco, Medida, TipoDaChave, Vista};
 mod erros;
+mod revisao;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -211,6 +212,8 @@ fn partes_do_item(item: &Item, partes: &mut Vec<u64>) {
         Item::Vez { .. } => partes.push(8),
         Item::Desconhecido(_) => partes.push(9),
         Item::FimDoAgente { chamada, descricao, erro, durou, .. } => partes.extend([10, n(chamada), n(descricao), u64::from(*erro), *durou]),
+        // Mandada, a ação do cartão vira uma linha de texto.
+        Item::Revisao { texto, mandada, .. } => partes.extend([11, n(texto), u64::from(*mandada)]),
     }
     partes.push(item.em());
 }
@@ -240,7 +243,8 @@ pub(super) fn texto_que_chega_depois(item: &Item) -> bool {
         | Item::Assistente { texto, .. }
         | Item::Entrega { texto, .. }
         | Item::Aviso { texto, .. }
-        | Item::Raciocinio { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
+        | Item::Raciocinio { texto, .. }
+        | Item::Revisao { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
         // O relatório de um subagente abre em markdown.
         Item::Ferramenta { resultado, sub, .. } => sub.is_some() && resultado.as_deref().is_some_and(|r| r.len() > TEXTO_LIDO_NA_HORA),
         Item::Cartao { .. } | Item::Vez { .. } | Item::FimDoAgente { .. } | Item::Desconhecido(_) => false,
@@ -456,10 +460,14 @@ impl Janela {
         let agora = crate::modelo::agora();
         // Conversas antigas guardaram as buscas de ferramenta; não interessam. No modo foco as
         // ferramentas ficam, recolhidas na linha do turno (`turnos_do_foco`).
+        // O que o outro agente faz enquanto revê o turno fica fora da conversa: no fim vira o
+        // cartão da revisão (ou a linha "revisou: nada a acrescentar").
+        let fim_a_vista = motor.revisao_em_curso_desde(&chat.id).unwrap_or(usize::MAX);
         let mut visiveis: Vec<(usize, &Item)> = chat
             .itens
             .iter()
             .enumerate()
+            .take_while(|(i, _)| *i < fim_a_vista)
             .filter(|(i, item)| match item {
                 Item::Ferramenta { nome, .. } => nome != "ToolSearch",
                 Item::Assistente { .. } => !resposta_repete_o_erro(&chat.itens, *i),
@@ -1267,6 +1275,9 @@ impl Janela {
             Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
             Item::FimDoAgente { .. } => (Bloco::Log, self.fim_do_agente(contexto, indice, item, cx)),
+            Item::Revisao { de, texto, mandada, .. } => {
+                (Bloco::Recebida, self.cartao_da_revisao(contexto, indice, *de, texto, *mandada, window, cx))
+            }
             Item::Desconhecido(_) => {
                 aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
             }
@@ -3508,6 +3519,12 @@ impl Janela {
         let editados = (!aberto)
             .then(|| self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidos, alternar(chave.clone(), cx)))
             .flatten();
+        // No último turno pronto, a ação discreta "Revisar com o Codex" na ponta da linha
+        // (`mensagens/revisao.rs`); fora dele, a linha como sempre.
+        let linha = match self.acao_de_revisar(contexto, turno, cx) {
+            Some(acao) => h_flex().w_full().gap(esp::E8).child(div().flex_1().min_w_0().child(linha)).child(acao).into_any_element(),
+            None => linha.into_any_element(),
+        };
         v_flex().w_full().child(linha).children(editados).children(fileira).into_any_element()
     }
 
@@ -4678,13 +4695,19 @@ impl Janela {
     ) -> Option<(Option<AnyElement>, Option<AnyElement>)> {
         // A revisão da memória roda por baixo, depois do "Terminou": só uma linha discreta, sem o
         // Esc (item 6.1). Uma mensagem sua a corta (ou espera, se ela já escreveu).
-        if motor.revendo_memoria(&chat.id) {
+        // A revisão pelo outro agente, igual: por baixo, só lendo, e a sua mensagem a corta.
+        let por_baixo = if motor.revendo_memoria(&chat.id) {
+            Some("Revendo a memória…".to_string())
+        } else {
+            motor.revisando_o_par(&chat.id).map(|revisor| format!("{} revisando o turno…", revisor.nome()))
+        };
+        if let Some(texto) = por_baixo {
             let linha = h_flex()
                 .flex_1()
                 .min_w_0()
                 .gap(esp::E8)
                 .child(AnelGirando::new(12.).cor(Cores::tenue()).vivo(format!("memoria-{painel_id}")))
-                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child("Revendo a memória…"));
+                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child(texto));
             return Some((Some(linha.into_any_element()), None));
         }
         let Some(situacao @ Situacao::Rodando { .. }) = situacao_do_turno(motor, &chat.id) else {

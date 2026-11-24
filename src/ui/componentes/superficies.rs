@@ -538,20 +538,6 @@ pub fn rodape_menu(
     })
 }
 
-/// Rodapé de texto (a faixa do pé) com uma dica: a linha técnica do menu do logo, em mono
-/// apagado, com a origem do binário na dica.
-pub fn rodape_menu_com_dica(texto: impl Into<SharedString>, dica: impl Into<SharedString>) -> PopupMenuItem {
-    let (texto, dica) = (texto.into(), dica.into());
-    PopupMenuItem::static_element(move |_, _| {
-        let dica = dica.clone();
-        faixa_do_pe()
-            .etiqueta()
-            .text_color(Cores::apagado())
-            .id("rodape-menu")
-            .child(div().flex_1().min_w_0().truncate().child(texto.clone()))
-            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-    })
-}
 
 /// Tom de alertas e avisos: a cor fica no ícone (e na tinta do alerta).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

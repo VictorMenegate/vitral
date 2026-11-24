@@ -499,7 +499,7 @@ impl Janela {
     /// pronta e, no Só avisar, a que saiu).
     pub(super) fn atualizacao_mudou(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(a) = cx.try_global::<Atualizacoes>() else { return };
-        let pronta = a.pronta().map(|n| n.versao.clone());
+        let pronta = a.versao_pronta();
         let avisar = match &a.estado {
             Estado::Pronta(n) => Some((true, n.clone())),
             Estado::Disponivel(n) if a.modo == Modo::SoAvisar && a.permissao == Permissao::Sozinha && !n.pela_pagina => {

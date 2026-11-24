@@ -846,6 +846,12 @@ def resultado_da_tarefa(nome, entrada):
 def entrada_da_ferramenta(nome, detalhe):
     """O campo que o Vitral lê para montar o resumo de cada ferramenta."""
     # O Edit e o Write levam o que mudou: é o que a conversa mostra ao abrir a linha.
+    # `[ferramenta EditGrande carrinho.py]`: um Edit de 30 linhas (24 entram e 6 saem), para o turno
+    # passar das 20 linhas que disparam a revisão pelo outro agente.
+    if nome == "EditGrande":
+        return {"file_path": detalhe,
+                "old_string": "\n".join(f"    linha_antiga_{n} = {n}" for n in range(6)),
+                "new_string": "\n".join(f"    linha_nova_{n} = aplicar_cupom(cupom, {n})" for n in range(24))}
     if nome == "Edit":
         caminho = detalhe.replace("(palavra)", "").replace("(pede)", "").strip()
         # "(palavra)": uma palavra trocada num trecho de 10 linhas.
@@ -1312,7 +1318,7 @@ def fingir_ferramentas(texto):
             ferramenta_rodando.set()
         entrada = entrada_da_ferramenta(nome, detalhe)
         emitir({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "id": id_, "name": nome, "input": entrada}]}})
+            {"type": "tool_use", "id": id_, "name": "Edit" if nome == "EditGrande" else nome, "input": entrada}]}})
         # As ferramentas de tarefas (TaskCreate, TaskUpdate, TaskList): rápidas, com o texto e o
         # `tool_use_result` do de verdade.
         if nome in ("TaskCreate", "TaskUpdate", "TaskList"):
@@ -1579,7 +1585,13 @@ if papel != "mestre":
         notas.write(f"- {nota}\n")
 else:
     arquivo = None
-fingir_ferramentas(texto)
+# A revisão do turno do outro agente (Vitral 0.9.6, num chat do Codex): só lê. As ferramentas
+# citadas no que o outro fez não são dele: em vez delas, lê o diff da pasta, por 2 s.
+revisando = "responda só: Nada a acrescentar" in texto
+if revisando:
+    fingir_ferramentas("[ferramenta Bash git diff --stat | 2]")
+else:
+    fingir_ferramentas(texto)
 encenar_hooks(texto)
 encenar_perguntas(texto)
 encenar_planos(texto)
@@ -1643,6 +1655,11 @@ else:
         resposta += " | ferramentas: " + ", ".join(f"{c['nome']}{' (erro)' if c['erro'] else ''}" for c in chamadas)
     # `[responde resposta.md]`: a resposta é o que está no arquivo (markdown, links, o que for).
     resposta = arquivo_da_diretiva("responde", texto) or resposta
+    # A revisão: com `[revisor-acha]` no que o usuário pediu, tem achado; sem, nada a acrescentar.
+    if revisando:
+        resposta = ("(claude falso) Um ponto no que o Codex mudou:\n\n"
+                    "1. **`carrinho.py`:** o arredondamento do desconto ficou para baixo."
+                    if "[revisor-acha]" in texto else "Nada a acrescentar.")
 if respondidas:
     resposta += " | respostas: " + "; ".join(respondidas)
 if ao_vivo:

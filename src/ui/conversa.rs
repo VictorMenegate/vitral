@@ -624,7 +624,7 @@ impl Janela {
                 let anel = super::componentes::AneisDaConversa {
                     chave: format!("aneis-{painel_id}"),
                     painel: painel_id,
-                    ativo: motor.execucao(&c.id).rodando() || motor.revendo_memoria(&c.id),
+                    ativo: motor.execucao(&c.id).rodando() || motor.revendo_memoria(&c.id) || motor.revisando_o_par(&c.id).is_some(),
                 };
                 div()
                     .relative()

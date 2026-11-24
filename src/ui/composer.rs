@@ -36,6 +36,7 @@ use crate::{
 mod seletores;
 
 use seletores::Barra;
+pub(super) use seletores::Abertos as AbertosDoModelo;
 
 /// (valor, nome, descrição) dos modos de permissão do Claude Code.
 pub const MODOS: [(&str, &str, &str); 5] = [
@@ -1215,8 +1216,8 @@ impl Janela {
             return;
         }
         if qual == PopCaixa::Modelo {
-            self.aba_do_modelo = None;
-            seletores::preparar_modelos(&lista, &motor, &chat, None, window, cx);
+            (self.aba_do_modelo, self.abertos_do_modelo) = (None, None);
+            seletores::preparar_modelos(&lista, &motor, &chat, None, None, None, window, cx);
         }
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
