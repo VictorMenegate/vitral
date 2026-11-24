@@ -60,11 +60,32 @@ componentes do GPUI Kit.
   espera as confirmações, para não perder mensagens na corrida com o encerramento. O `thread_id`
   fica em `Chat.sessao`, e `thread/resume` recebe esse id. O schema veio da própria
   CLI instalada, e o initialize e thread/start foram conferidos sem inferência em 16/11/2026.
-  O que muda num chat do Codex: não há pedido de permissão no
-  meio do turno (o modo vira o sandbox: Planejar é `read-only`, Sem perguntar é
-  `danger-full-access`, os outros `workspace-write`), não há conta, comandos de barra nem
-  `/compact` (fica o `/clear`, que é do Vitral), o custo e o contexto não são medidos, e parar é
-  pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
+  **Pedido de permissão no meio do turno** (24/11/2026): cada modo é um par sandbox + política de
+  aprovação (`sandbox_de` e `aprovacao_de`, em `src/agente_codex.rs`), que vai no `thread/start`
+  (ou `thread/resume`) e de novo no `turn/start`:
+
+  | Modo do Vitral | sandbox | approvalPolicy | O que pergunta |
+  | --- | --- | --- | --- |
+  | Manual | `workspace-write` | `untrusted` | toda edição e todo comando que não seja só de leitura |
+  | Aceitar edições | `workspace-write` | `untrusted` | os comandos; a edição dentro da pasta o Vitral permite sozinho (`modelo::modo_permite`) |
+  | Planejar | `read-only` | `on-request` | quando o Codex quer escrever ou usar a rede |
+  | Automático | `workspace-write` | `on-request` | quando o Codex quer sair da pasta ou usar a rede |
+  | Sem perguntar | `danger-full-access` | `never` | nada |
+
+  Os pedidos `item/commandExecution/requestApproval` e `item/fileChange/requestApproval` viram
+  `Evento::Permissao` e caem no mesmo cartão do Claude: o comando inteiro (sem o embrulho
+  `/bin/bash -lc`) ou o mini-diff do arquivo, que vem do `item/started` do `fileChange` (o
+  pedido de edição só traz o `itemId`; com vários arquivos, um diff só, com o caminho do primeiro
+  de fora da pasta). Permitir é `accept`, Negar é `decline` (o item volta `declined` e o turno
+  segue), e o cartão que some sem resposta é `cancel`. O `serverRequest/resolved` fecha o canal do
+  cartão (`Evento::PermissaoRetirada`) e ele sai. O "Permitir sempre" e o modo de agora valem para
+  o Codex como para o Gemini, e a revisão pelo outro agente tem tudo negado. O "Negar e explicar"
+  manda só o `decline`: a explicação não chega ao Codex. Medido no 0.169.0 com turnos de verdade:
+  o id do pedido é um número, o `availableDecisions` do comando não lista o `decline` (que mesmo
+  assim vale) e o `resolved` chega logo depois de cada resposta.
+  O que ainda muda num chat do Codex: não há conta, comandos de barra nem `/compact` (fica o
+  `/clear`, que é do Vitral), o custo e o contexto não são medidos, e parar é pelo
+  `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
 - **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
@@ -2534,7 +2555,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`

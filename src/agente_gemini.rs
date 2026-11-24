@@ -651,7 +651,7 @@ impl Protocolo {
             };
             let _ = canal.lock().unwrap_or_else(|e| e.into_inner()).escrever(json!({"jsonrpc": "2.0", "id": id, "result": resultado}));
         });
-        Evento::Permissao { ferramenta, entrada, resposta: envia }
+        Evento::Permissao { ferramenta, entrada, resposta: envia, chamada: None }
     }
 }
 
@@ -1018,7 +1018,7 @@ mod testes {
             "toolCall": {"toolCallId": "c3", "name": "run_command", "args": {"CommandLine": "ls -la"}, "kind": "execute"},
             "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}, {"optionId": "deny", "name": "Deny", "kind": "reject_once"}]}});
         let eventos = p.linha(&pedido);
-        let [Evento::Permissao { ferramenta, entrada, resposta }] = eventos.as_slice() else { panic!("{eventos:?}") };
+        let [Evento::Permissao { ferramenta, entrada, resposta, .. }] = eventos.as_slice() else { panic!("{eventos:?}") };
         assert_eq!(ferramenta, "Bash");
         assert_eq!(entrada["command"], "ls -la");
         resposta.try_send(Resposta::ok(json!({"behavior": "deny", "message": "não"}).to_string())).unwrap();

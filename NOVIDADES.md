@@ -3,6 +3,13 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## Próxima
+
+- **O Codex pede permissão.** Nos modos Manual, Aceitar edições, Planejar e Automático, o Codex
+  pergunta no meio do turno pelo mesmo cartão do Claude, com o comando inteiro ou o diff do
+  arquivo, Negar e Permitir. Antes esses modos viravam só o sandbox dele. O "Permitir sempre"
+  vale para o Codex também, e o Aceitar edições deixa passar as edições dentro da pasta.
+
 ## 0.10.1
 
 O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O

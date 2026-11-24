@@ -391,7 +391,13 @@ pub enum Evento {
         ferramenta: String,
         entrada: Value,
         resposta: smol::channel::Sender<crate::mcp::Resposta>,
+        /// O id da chamada que espera (o `itemId` do Codex): permitida, ela conta o tempo dali em
+        /// diante, e não a espera pelo cartão.
+        chamada: Option<String>,
     },
+    /// O agente fechou um pedido de permissão sem esperar a resposta (o `serverRequest/resolved`
+    /// do Codex): o canal de resposta do cartão já está fechado, e o cartão sai.
+    PermissaoRetirada,
     /// A próxima mensagem provável do usuário (`prompt_suggestion`, com `--prompt-suggestions`),
     /// depois do `result`.
     Sugestao(String),

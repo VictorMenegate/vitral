@@ -4037,10 +4037,20 @@ impl Motor {
                     }
                 }
             }
-            // O pedido de permissão do Gemini: o mesmo cartão dos do Claude Code, e o "Permitir
-            // sempre" da conversa vale para ele também.
-            Evento::Permissao { ferramenta, entrada, resposta } => {
-                if self.chat(chat_id).is_some_and(|c| c.permite(&ferramenta, &entrada)) {
+            // O pedido de permissão do Codex e do Gemini: o mesmo cartão dos do Claude Code, e o
+            // "Permitir sempre" da conversa vale para eles também. O modo de agora também responde
+            // (Aceitar edições, Sem perguntar: `modo_permite`), e a revisão pelo outro agente, que
+            // só lê, tem tudo negado sem perguntar, como no Claude Code.
+            Evento::Permissao { ferramenta, entrada, resposta, chamada } => {
+                if self.revisoes_do_par.contains_key(chat_id) {
+                    let negado = json!({"behavior": "deny", "message": "Esta é uma revisão só de leitura."});
+                    let _ = resposta.try_send(Resposta::ok(negado.to_string()));
+                    return;
+                }
+                let responde_sozinho = self.chat(chat_id).is_some_and(|c| {
+                    c.permite(&ferramenta, &entrada) || crate::modelo::modo_permite(&self.permissao_de(c), &ferramenta, &entrada, &c.cwd)
+                });
+                if responde_sozinho {
                     let permitido = json!({"behavior": "allow", "updatedInput": entrada});
                     let _ = resposta.try_send(Resposta::ok(permitido.to_string()));
                     return;
@@ -4053,7 +4063,7 @@ impl Motor {
                     entrada,
                     resposta,
                     motivo_do_hook: None,
-                    chamada: None,
+                    chamada,
                 });
                 self.execucao.insert(chat_id.to_string(), Execucao::EsperandoVoce);
                 self.registrar("permissao", chat_id, chat_id, &pedido);
@@ -4063,6 +4073,13 @@ impl Motor {
                     self.notificar(chat, &pedido, true);
                 }
                 cx.notify();
+            }
+            // O Codex fechou o pedido sem esperar (o turno parou, ou foi respondido por outro
+            // caminho): o cartão sai, e sem outro esperando o turno volta a rodar.
+            Evento::PermissaoRetirada => {
+                if tirar_pedidos_fechados(&mut self.permissoes, chat_id) {
+                    self.pedido_respondido(chat_id, cx);
+                }
             }
             Evento::Fim {
                 erro,
@@ -5865,6 +5882,14 @@ pub fn recusa_explicada(ferramenta: &str, texto: &str) -> String {
 
 /// O que o modelo lê na chamada negada sem explicação: o Negar do cartão e o "Não responder" da
 /// pergunta com opções.
+/// Tira os pedidos do chat que o agente já fechou (o canal de resposta fechado do outro lado).
+/// Diz se tirou algum.
+fn tirar_pedidos_fechados(permissoes: &mut Vec<PedidoPermissao>, chat: &str) -> bool {
+    let antes = permissoes.len();
+    permissoes.retain(|p| p.chat != chat || !p.resposta.is_closed());
+    permissoes.len() != antes
+}
+
 fn recusa_sem_texto(ferramenta: &str) -> &'static str {
     if ferramenta == "AskUserQuestion" { "O usuário não quis responder à pergunta." } else { "O usuário negou esta ação." }
 }
@@ -6307,6 +6332,35 @@ mod testes {
         assert_eq!(titulo_de("   "), "Conversa");
     }
     use crate::modelo::Chat;
+
+    /// O pedido que o agente fechou sem esperar (o canal do cartão fechado) sai da lista; o do
+    /// outro chat e o que ainda espera ficam.
+    #[test]
+    fn o_pedido_fechado_pelo_agente_sai_da_lista() {
+        let pedido = |chat: &str| {
+            let (envia, recebe) = smol::channel::bounded::<Resposta>(1);
+            let p = PedidoPermissao {
+                id: novo_id(),
+                chat: chat.into(),
+                ferramenta: "Bash".into(),
+                entrada: json!({"command": "ls"}),
+                motivo_do_hook: None,
+                chamada: None,
+                resposta: envia,
+            };
+            (p, recebe)
+        };
+        let (fechado, recebe_fechado) = pedido("c1");
+        let (vivo, _recebe_vivo) = pedido("c1");
+        let (do_outro, recebe_do_outro) = pedido("c2");
+        recebe_fechado.close();
+        recebe_do_outro.close();
+        let vivo_id = vivo.id.clone();
+        let mut lista = vec![fechado, vivo, do_outro];
+        assert!(tirar_pedidos_fechados(&mut lista, "c1"));
+        assert_eq!(lista.iter().map(|p| (p.chat.as_str(), p.id == vivo_id)).collect::<Vec<_>>(), [("c1", true), ("c2", false)]);
+        assert!(!tirar_pedidos_fechados(&mut lista, "c1"), "nada mais a tirar");
+    }
 
     fn chat(id: &str) -> Chat {
         let mut c = Chat::novo(id.into(), id, PathBuf::from("/tmp"));

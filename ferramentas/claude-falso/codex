@@ -9,6 +9,13 @@ No pedido, `[ferramenta <Nome> <detalhe> | <segundos>]` encena um item: Bash vir
 Write uma mudança de arquivo, Pensa um raciocínio; no app-server, Ver é o `view_image` de um arquivo
 da pasta (o item `imageView`, só com o caminho) e Print, uma ferramenta MCP que devolve uma imagem
 em base64. `[falha]` termina o turno com erro.
+
+Aprovação no app-server, como no 0.169.0 (conferido em 24/11/2026): com a política `untrusted` (os
+modos Manual e Aceitar edições do Vitral), cada Bash, Edit e Write pede aprovação
+(`item/commandExecution/requestApproval` ou `item/fileChange/requestApproval`, com id numérico) e
+espera a resposta; com `on-request` (Planejar e Automático), só o comando com "curl" pede, com o
+motivo "precisa da rede". Depois da resposta vem o `serverRequest/resolved`; o `decline` deixa o
+item `declined` e o turno segue, e o `cancel` para o turno.
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -76,6 +83,28 @@ def servidor():
     fim = threading.Event()
     mensagens = []
     trabalhador = None
+    politica = "never"
+    respostas = {}
+    aguardando = threading.Condition()
+    proximo_pedido = [0]
+
+    def pedir(metodo, params):
+        """Um pedido do servidor ao Vitral; devolve a decisão (sem resposta, `cancel`)."""
+        with aguardando:
+            n = proximo_pedido[0]
+            proximo_pedido[0] += 1
+        emitir({"method": metodo, "id": n, "params": dict(params, threadId=thread, turnId=turno)})
+        with aguardando:
+            while n not in respostas and not fim.is_set():
+                aguardando.wait(0.2)
+            resposta = respostas.pop(n, None)
+        evento("serverRequest/resolved", {"threadId": thread, "requestId": n})
+        return ((resposta or {}).get("result") or {}).get("decision", "cancel")
+
+    def precisa_perguntar(nome, detalhe):
+        if politica == "untrusted":
+            return nome in ("Bash", "Edit", "Write")
+        return politica == "on-request" and nome == "Bash" and "curl" in detalhe
 
     def evento(method, params): emitir({"method": method, "params": params})
     def item(valor, terminado=False):
@@ -107,6 +136,21 @@ def servidor():
                 valor = {"id": f"item_{n}", "type": "commandExecution", "status": "inProgress", "command": detalhe,
                          "cwd": os.getcwd(), "commandActions": [], "aggregatedOutput": None, "exitCode": None}
             item(valor)
+            if precisa_perguntar(nome, detalhe):
+                if nome == "Bash":
+                    decisao = pedir("item/commandExecution/requestApproval", {"kind": "command", "itemId": valor["id"],
+                        "command": f"/bin/bash -lc '{detalhe}'", "cwd": os.getcwd(), "commandActions": [],
+                        "reason": "precisa da rede" if "curl" in detalhe else None,
+                        "availableDecisions": ["accept", "cancel"]})
+                else:
+                    decisao = pedir("item/fileChange/requestApproval", {"itemId": valor["id"], "reason": None, "grantRoot": None})
+                if decisao != "accept":
+                    valor["status"] = "declined"
+                    item(valor, True)
+                    if decisao == "cancel":
+                        fim.set()
+                        break
+                    continue
             if fim.wait(int(segundos) if segundos else 3): break
             if nome == "Pensa": valor["summary"] = [detalhe]
             elif nome == "Ver": pass
@@ -145,7 +189,15 @@ def servidor():
         try: v = json.loads(linha)
         except ValueError: continue
         metodo, params, id_ = v.get("method"), v.get("params", {}), v.get("id")
-        anotar(["rpc", metodo, params.get("input", [])])
+        if metodo is None and id_ is not None:
+            # A resposta do Vitral a um pedido de aprovação.
+            anotar(["resposta", id_, v.get("result")])
+            with aguardando:
+                respostas[id_] = v
+                aguardando.notify_all()
+            continue
+        anotar(["rpc", metodo, params.get("input", []), params.get("approvalPolicy"), params.get("sandbox")])
+        politica = params.get("approvalPolicy") or politica
         if metodo == "initialize": emitir({"id": id_, "result": {"userAgent": "codex-falso"}})
         elif metodo in ("thread/start", "thread/resume"):
             thread = params.get("threadId") or thread
