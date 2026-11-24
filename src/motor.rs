@@ -507,6 +507,15 @@ impl Motor {
             // `.anterior`) fica com as imagens.
             let vivos = chats.iter().map(|c| c.id.clone()).chain(dados.chats_gravados()).collect();
             crate::imagens_recebidas::varrer(&dados.pasta_imagens(""), &vivos, crate::imagens_recebidas::TETO_TOTAL);
+            // As imagens coladas na caixa que nenhuma conversa, fila ou rascunho cita (nem as
+            // arquivadas) saem de `anexos/`, em segundo plano e sem pressa (`limpeza_anexos`).
+            let dados_da_limpeza = dados.clone();
+            let _ = std::thread::Builder::new().name("limpeza-anexos".into()).spawn(move || {
+                let apagados = crate::limpeza_anexos::limpar(&dados_da_limpeza, &Default::default());
+                if apagados > 0 {
+                    eprintln!("vitral: {apagados} imagem(ns) colada(s) sem conversa apagada(s) de anexos/");
+                }
+            });
             // A pasta de um chat sem pasta (apagada à mão) volta vazia.
             let avulsos = dados.pasta_avulso("");
             for c in chats.iter().filter(|c| c.cwd.starts_with(&avulsos)) {
@@ -2769,9 +2778,12 @@ impl Motor {
             (c.agente, c.modelo, c.modelo_atual) = (agente, modelo, None);
             (c.sessao, c.sessao_criada) = (uuid::Uuid::new_v4().to_string(), false);
             (c.contexto, c.janela, c.custo_da_sessao) = (None, None, None);
-            // Os comandos de barra e as skills são do Claude Code.
+            // Os comandos de barra e as skills são do Claude Code: a lista da sessão de antes não
+            // vale para a nova, e o catálogo da pasta é perguntado de novo (ao voltar para o Claude
+            // ele traz o que mudou no disco enquanto o outro agente trabalhava).
+            c.comandos.clear();
+            crate::claude::esquecer_comandos_da_pasta(&c.cwd);
             if agente != Agente::Claude {
-                c.comandos.clear();
                 c.esforco = c.esforco.take().filter(|e| e != "ultracode");
             }
         }

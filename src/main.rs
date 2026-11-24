@@ -14,6 +14,7 @@ mod git;
 mod ideias;
 mod imagens_recebidas;
 mod importar;
+mod limpeza_anexos;
 mod linear;
 mod instancia;
 mod mcp;

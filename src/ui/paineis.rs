@@ -38,6 +38,8 @@ pub struct Painel {
     /// a segunda linha, que fica escondida, e sumia: dono, 24/11/2026). Guarda a largura que ele
     /// pedia inteiro, para voltar quando houver lugar (`composer::decidir_esforco`).
     pub esforco_compacto: Option<Pixels>,
+    /// Na caixa estreita, o chip do modelo só com a marca porque o nome da família não coube.
+    pub modelo_so_icone: Option<Pixels>,
     pub rolagem: ScrollHandle,
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
@@ -69,6 +71,8 @@ pub struct Painel {
     /// fechado pelo Esc. Os dois voltam ao começo a cada mudança no texto.
     pub indice_menu: usize,
     pub menu_dispensado: bool,
+    /// A rolagem da lista do menu "/" (as setas a levam até o marcado).
+    pub rolagem_menu: ScrollHandle,
     /// O popover de esforço da caixa (as teclas ←/→, Espaço e Enter vão para ele).
     pub foco_esforco: FocusHandle,
     /// A busca do popover de modelo da caixa.
@@ -465,7 +469,7 @@ impl Janela {
                     // O "@" no começo ou depois de um espaço abre o menu "@" na própria caixa; a
                     // pasta do chat é lida em segundo plano, de novo a cada "@" novo (item 1.2). O
                     // diálogo ficou só no "Arquivo da pasta…" do clipe.
-                    if let Some(('@', digitado, _)) = super::composer::gatilho(&texto)
+                    if let Some(super::composer::Gatilho { sinal: '@', digitado, .. }) = super::composer::gatilho_em(&texto, estado.read(cx).cursor())
                         && let Some(cwd) = this
                             .selecionado
                             .as_ref()
@@ -484,6 +488,15 @@ impl Janela {
                 _ => {}
             },
         ));
+        // O menu "/" e o "@" seguem a palavra sob o cursor: andar com as setas ou clicar noutra
+        // palavra, sem mudar o texto, também refaz o menu (só a casca, e só quando o cursor andou).
+        let ultimo_cursor = std::rc::Rc::new(std::cell::Cell::new(usize::MAX));
+        self._assinaturas.push(cx.observe(&composer, move |this, estado, cx| {
+            let cursor = estado.read(cx).cursor();
+            if ultimo_cursor.replace(cursor) != cursor {
+                this.redesenhar_a_casca(cx);
+            }
+        }));
         // A busca dentro da conversa (Ctrl+F): digitar refaz o índice no desenho seguinte, e o
         // Enter (com Shift, para trás) anda entre os achados sem sair do campo.
         let busca_na_conversa = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar na conversa"));
@@ -518,6 +531,7 @@ impl Janela {
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
             esforco_compacto: None,
+            modelo_so_icone: None,
             rolagem: ScrollHandle::new(),
             mostrar_historico: crate::importar::ITENS_POR_VEZ,
             preservar_topo: None,
@@ -533,6 +547,7 @@ impl Janela {
             largura_abas: px(0.),
             indice_menu: 0,
             menu_dispensado: false,
+            rolagem_menu: ScrollHandle::new(),
             foco_esforco: cx.focus_handle(),
             busca_modelo: cx.new(|cx| ListaDeEscolha::new("Buscar modelo", window, cx)),
             busca_historico,

@@ -401,7 +401,9 @@ fn fileira_de_codigo(
     achados: Vec<(Range<usize>, HighlightStyle)>,
     editavel: bool,
     janela: WeakEntity<Janela>,
+    comentar: Option<(super::comentarios_diff::Alvo, bool)>,
 ) -> AnyElement {
+    let janela_do_comentario = janela.clone();
     // Os achados da busca (o fundo âmbar) por cima das cores da sintaxe.
     let cores: Vec<_> = if achados.is_empty() { cores } else { combine_highlights(cores, achados).collect() };
     // Uma faixa fora da linha derrubaria o desenho do texto.
@@ -460,7 +462,28 @@ fn fileira_de_codigo(
         .when_some(faixa, |s, cor| s.child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(cor)))
         .child(numero_el)
         .when_some(sinal, |s, sinal| {
-            s.child(div().flex_none().w(r(8.)).text_color(faixa.unwrap_or(Cores::apagado())).child(sinal))
+            let coluna = div().flex_none().w(r(8.)).text_color(faixa.unwrap_or(Cores::apagado()));
+            match comentar {
+                // Na edição, a margem do sinal é o clique do comentário: marcada, mostra o balão
+                // (o clique edita ou apaga); sem comentário, ele só aparece com o ponteiro em cima.
+                Some((alvo, marcado)) => s.child(
+                    coluna
+                        .id(("comentar-linha", indice))
+                        .cursor_pointer()
+                        .when(marcado, |c| c.text_color(Cores::destaque_texto()))
+                        .hover(|c| c.text_color(Cores::destaque_texto()))
+                        .child(if marcado { "●" } else { sinal })
+                        .dica_no_ponteiro(move |window, cx| {
+                            Tooltip::new(if marcado { "Ver ou apagar o comentário desta linha" } else { "Comentar esta linha" }).build(window, cx)
+                        })
+                        .on_click(move |_, window, cx| {
+                            cx.stop_propagation();
+                            let alvo = alvo.clone();
+                            let _ = janela_do_comentario.update(cx, |this, cx| this.abrir_comentario(alvo, window, cx));
+                        }),
+                ),
+                None => s.child(coluna.child(sinal)),
+            }
         })
         .child(
             div()
@@ -874,6 +897,14 @@ impl Janela {
                             rolagem_codigo.scroll_to_item(fileira, ScrollStrategy::Center);
                         }
                         let janela = janela.clone();
+                        // Os comentários pendentes deste chat, para marcar as linhas.
+                        let pendentes: Rc<Vec<super::comentarios_diff::Comentario>> =
+                            Rc::new(self.chat_dos_comentarios().map(|c| self.comentarios_diff.do_chat(&c)).unwrap_or_default());
+                        let caminho_do_diff = caminho.clone();
+                        let alvo_de = move |linha: Option<usize>, removida: bool, trecho: &str| {
+                            let marcado = pendentes.iter().any(|c| c.caminho == caminho_do_diff && c.linha == linha && c.removida == removida && (!removida || c.trecho == trecho));
+                            (super::comentarios_diff::Alvo { caminho: caminho_do_diff.clone(), linha, removida, trecho: trecho.to_string() }, marcado)
+                        };
                         uniform_list(id, vista.fileiras.len(), move |faixa, _, _| {
                             faixa
                                 .map(|i| match &vista.fileiras[i] {
@@ -887,10 +918,13 @@ impl Janela {
                                         let sinal = if *entrou { "+" } else { " " };
                                         let texto = linhas.get(*linha).cloned().unwrap_or_default();
                                         let achados = achados_da_linha(*linha, &texto);
-                                        fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), achados, editavel, janela.clone())
+                                        {
+                                            let alvo = alvo_de(Some(linha + 1), false, &texto);
+                                            fileira_de_codigo(i, Some(linha + 1), texto, cores_linha, largura_numero, fundo, Some(sinal), achados, editavel, janela.clone(), Some(alvo))
+                                        }
                                     }
                                     Fileira::Saiu(texto) => {
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), Vec::new(), false, janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, Fundo::Saiu, Some("−"), Vec::new(), false, janela.clone(), Some(alvo_de(None, true, texto)))
                                     }
                                     Fileira::Solta(marca, texto) => {
                                         let (fundo, sinal) = match marca {
@@ -898,7 +932,7 @@ impl Janela {
                                             Marca::Sai => (Fundo::Saiu, "−"),
                                             Marca::Igual => (Fundo::Nenhum, " "),
                                         };
-                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), false, janela.clone())
+                                        fileira_de_codigo(i, None, texto.clone().into(), Vec::new(), largura_numero, fundo, Some(sinal), Vec::new(), false, janela.clone(), None)
                                     }
                                     Fileira::Nota(texto) => nota_de_codigo(texto.clone().into(), largura_numero),
                                 })
@@ -917,7 +951,7 @@ impl Janela {
                                     let cores_linha = cores.as_ref().and_then(|c| c.get(i)).cloned().unwrap_or_default();
                                     let fundo = if escolhida(i + 1) { Fundo::Escolhida } else { Fundo::Nenhum };
                                     let achados = achados_da_linha(i, &linhas[i]);
-                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, achados, editavel, janela.clone())
+                                    fileira_de_codigo(i, Some(i + 1), linhas[i].clone(), cores_linha, largura_numero, fundo, None, achados, editavel, janela.clone(), None)
                                 })
                                 .collect()
                         })
@@ -980,6 +1014,8 @@ impl Janela {
             .children(faixa_de_leitura)
             .children(faixa_do_conflito)
             .child(div().relative().flex_1().min_h_0().flex().flex_col().child(corpo).children(barra_da_busca))
+            // Na edição do agente, o campo do comentário da linha e o "Enviar comentários (N)".
+            .children(edicao.as_ref().and_then(|_| self.barra_de_comentarios(window, cx)).map(|barra| div().flex_none().p(esp::E8).child(barra)))
             .when(!na_gaveta, |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
             .on_prepaint(medir)
             .into_any_element()

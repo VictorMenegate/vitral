@@ -226,8 +226,9 @@ actions!(vitral, [AlternarModo]);
 // Ctrl+Shift+M e Ctrl+E abrem os popovers de modelo e de esforço; dentro do de esforço, Espaço
 // liga o Ultrathink e U, o Ultracode.
 actions!(vitral, [AbrirModelo, AbrirEsforco, AlternarUltrathink, AlternarUltracode]);
-// No menu "/" da caixa: as setas andam e o Tab completa o marcado (o Enter também, pelo enviar).
-actions!(vitral, [MenuAcima, MenuAbaixo, MenuEscolher]);
+// No menu "/" da caixa: as setas andam e o Tab completa o marcado (o Enter também, pelo enviar);
+// o Ctrl+O abre o arquivo da skill marcada no painel da direita.
+actions!(vitral, [MenuAcima, MenuAbaixo, MenuEscolher, AbrirSkill]);
 // Tab na caixa vazia com a sugestão da próxima mensagem à vista: ela vira o texto da caixa.
 actions!(vitral, [AceitarSugestao]);
 
@@ -244,8 +245,8 @@ pub const LINHAS_CAIXA: usize = 12;
 /// No máximo tantas sugestões no menu da caixa.
 const MAX_SUGESTOES: usize = 8;
 
-/// Uma sugestão do menu da caixa: um comando de barra.
-#[derive(Clone, Debug, PartialEq)]
+/// Uma sugestão do menu da caixa: um comando de barra, uma skill, uma menção ou um chat.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Sugestao {
     /// O que entra no lugar do token ("/compact", "#ninee", "@12").
     pub valor: String,
@@ -257,31 +258,160 @@ pub(super) struct Sugestao {
     pub busca: String,
     /// A ordem entre as que casam igual (o tamanho do comando).
     pub peso: usize,
+    /// A dica de argumento do comando ("audit | google").
+    pub dica: Option<String>,
+    /// De onde vem: "projeto", "pessoal" ou "plugin <nome>".
+    pub origem: Option<String>,
+    /// É uma skill (tem `SKILL.md`), e não um comando de barra comum.
+    pub skill: bool,
+    /// O arquivo que o painel da direita abre ("ver a skill").
+    pub arquivo: Option<PathBuf>,
 }
 
-/// O que a última palavra da caixa pede: o sinal, o que veio depois dele e onde a palavra começa.
-/// `/` só no começo e sem espaço depois; `#` e `@` no começo ou depois de um espaço.
-pub(super) fn gatilho(texto: &str) -> Option<(char, &str, usize)> {
-    if let Some(resto) = texto.strip_prefix('/') {
-        return (!resto.contains(char::is_whitespace)).then_some(('/', resto, 0));
+/// O que a palavra sob o cursor pede: o sinal, o que veio depois dele até o cursor, e onde a palavra
+/// começa e acaba (é essa faixa que a escolha troca).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Gatilho<'a> {
+    pub sinal: char,
+    pub digitado: &'a str,
+    pub inicio: usize,
+    pub fim: usize,
+}
+
+/// O gatilho da palavra sob o cursor (dono, 24/11/2026: o menu abria só para a última palavra do
+/// texto). A palavra vai de um espaço ao outro em volta do cursor; `/` só vale na primeira palavra
+/// do texto (o Claude Code só entende comando de barra ali), `#` e `@` em qualquer uma. O cursor
+/// tem que estar depois do sinal. Um caminho com espaço vai entre aspas (`@"minha pasta/a b.rs"`):
+/// com o cursor dentro das aspas, a palavra é o trecho todo.
+pub(super) fn gatilho_em(texto: &str, cursor: usize) -> Option<Gatilho<'_>> {
+    let mut cursor = cursor.min(texto.len());
+    while !texto.is_char_boundary(cursor) {
+        cursor -= 1;
     }
-    let inicio = texto.char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
-    let palavra = &texto[inicio..];
-    let sinal = palavra.chars().next().filter(|c| matches!(c, '#' | '@'))?;
-    Some((sinal, &palavra[sinal.len_utf8()..], inicio))
+    // O `@"` aberto antes do cursor, na mesma linha e sem aspa de fechar entre ele e o cursor.
+    let linha = texto[..cursor].rfind('\n').map_or(0, |i| i + 1);
+    if let Some(i) = texto[linha..cursor].rfind("@\"").map(|i| linha + i)
+        && texto[..i].chars().next_back().is_none_or(char::is_whitespace)
+        && !texto[i + 2..cursor].contains('"')
+    {
+        let fim = match texto[cursor..].find(['"', '\n']) {
+            Some(j) if texto[cursor + j..].starts_with('"') => cursor + j + 1,
+            _ => cursor + texto[cursor..].find(char::is_whitespace).unwrap_or(texto.len() - cursor),
+        };
+        return Some(Gatilho { sinal: '@', digitado: &texto[i + 2..cursor], inicio: i, fim });
+    }
+    let inicio = texto[..cursor].char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8());
+    let fim = cursor + texto[cursor..].find(char::is_whitespace).unwrap_or(texto.len() - cursor);
+    let sinal = texto[inicio..fim].chars().next().filter(|c| matches!(c, '#' | '@' | '/'))?;
+    if (sinal == '/' && inicio != 0) || cursor < inicio + sinal.len_utf8() {
+        return None;
+    }
+    Some(Gatilho { sinal, digitado: &texto[inicio + sinal.len_utf8()..cursor], inicio, fim })
 }
 
-/// As sugestões que casam com o digitado: quem começa com ele primeiro, depois quem só o contém,
-/// cada grupo pelo peso; no máximo 8.
-pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugestao> {
+/// O gatilho da última palavra do texto (o cursor no fim): `(sinal, digitado, onde começa)`.
+#[cfg(test)]
+pub(super) fn gatilho(texto: &str) -> Option<(char, &str, usize)> {
+    let g = gatilho_em(texto, texto.len())?;
+    Some((g.sinal, g.digitado, g.inicio))
+}
+
+/// O valor de uma menção de arquivo na caixa: `@caminho`, ou `@"caminho"` se tem espaço.
+pub(super) fn valor_da_mencao(caminho: &str) -> String {
+    if caminho.contains(char::is_whitespace) { format!("@\"{caminho}\"") } else { format!("@{caminho}") }
+}
+
+/// Quão bem o `digitado` (já sem acento nem maiúscula) casa com a sugestão, de 0 (o melhor) a 4:
+/// o nome exato, o nome começa com ele, uma parte do nome começa com ele (depois de `-`, `:`, `_`,
+/// `.` ou `/`), o nome o contém, só a busca (a descrição) o contém. `None`: não casa.
+fn qualidade_do_casamento(s: &Sugestao, digitado: &str) -> Option<u8> {
+    if digitado.is_empty() || s.chave == digitado {
+        return Some(0);
+    }
+    if s.chave.starts_with(digitado) {
+        return Some(1);
+    }
+    let comeca_uma_parte = s.chave.match_indices(digitado).any(|(i, _)| s.chave[..i].ends_with(['-', ':', '_', '.', '/']));
+    if comeca_uma_parte {
+        return Some(2);
+    }
+    if s.chave.contains(digitado) {
+        return Some(3);
+    }
+    s.busca.contains(digitado).then_some(4)
+}
+
+/// As sugestões que casam com o digitado, da que casa melhor para a que casa pior (ver
+/// `qualidade_do_casamento`), cada grupo pelo peso; no máximo `limite`, ou todas com `None` (o "/"
+/// mostra o catálogo inteiro).
+pub(super) fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str, limite: Option<usize>) -> Vec<Sugestao> {
     let digitado = crate::dados::chave(digitado);
-    let mut lista: Vec<Sugestao> = itens
-        .into_iter()
-        .filter(|s| digitado.is_empty() || s.chave.contains(&digitado) || s.busca.contains(&digitado))
-        .collect();
-    lista.sort_by_key(|s| (!s.chave.starts_with(&digitado), s.peso));
-    lista.truncate(MAX_SUGESTOES);
-    lista
+    let mut lista: Vec<(u8, Sugestao)> = itens.into_iter().filter_map(|s| Some((qualidade_do_casamento(&s, &digitado)?, s))).collect();
+    lista.sort_by_key(|(qualidade, s)| (*qualidade, s.peso));
+    let lista = lista.into_iter().map(|(_, s)| s);
+    match limite {
+        Some(n) => lista.take(n).collect(),
+        None => lista.collect(),
+    }
+}
+
+/// Como o menu mostra a origem de um comando: "projeto", "pessoal", "plugin <nome>". Os do próprio
+/// Claude Code e os de origem desconhecida não mostram nada.
+fn rotulo_da_origem(origem: &crate::claude::Origem) -> Option<String> {
+    use crate::claude::Origem;
+    match origem {
+        Origem::Projeto => Some("projeto".into()),
+        Origem::Pessoal => Some("pessoal".into()),
+        Origem::Plugin(nome) => Some(format!("plugin {nome}")),
+        Origem::Sincronizada => Some("claude.ai".into()),
+        Origem::Embutida | Origem::Desconhecida => None,
+    }
+}
+
+/// A sugestão do menu "/" para um comando ou skill do catálogo.
+pub(super) fn sugestao_do_comando(c: &crate::claude::ComandoOferecido) -> Sugestao {
+    let detalhe = descricao_comando(&c.nome).map(str::to_string).or_else(|| Some(c.descricao.clone()).filter(|d| !d.is_empty()));
+    Sugestao {
+        valor: format!("/{}", c.nome),
+        titulo: format!("/{}", c.nome),
+        detalhe,
+        // Sem acento e minúscula, como o digitado.
+        chave: crate::dados::chave(&c.nome),
+        busca: crate::dados::chave(&c.descricao),
+        peso: c.nome.len(),
+        dica: Some(c.dica.clone()).filter(|d| !d.is_empty()),
+        origem: rotulo_da_origem(&c.origem),
+        skill: c.skill,
+        arquivo: c.arquivo.clone(),
+    }
+}
+
+/// O nome da família do modelo, sem a versão: "Opus 5.5" vira "Opus". É o que a caixa estreita
+/// mostra no chip do modelo.
+pub(super) fn nome_da_familia(curto: &str) -> &str {
+    curto.split_whitespace().next().unwrap_or(curto)
+}
+
+/// O texto com a palavra `inicio..fim` trocada por `valor`, mais o lugar do cursor depois da troca.
+/// Com um espaço logo depois da palavra, o cursor passa por ele; sem, entra um espaço (no fim do
+/// texto também). É a regra que `trocar_palavra` aplica no campo (lá, sem refazer o texto, para as
+/// pílulas ficarem).
+#[cfg(test)]
+pub(super) fn substituir_palavra(texto: &str, inicio: usize, fim: usize, valor: &str) -> (String, usize) {
+    let fim = fim.min(texto.len());
+    let inicio = inicio.min(fim);
+    let tem_espaco = texto[fim..].chars().next().is_some_and(char::is_whitespace);
+    let mut novo = format!("{}{valor}", &texto[..inicio]);
+    let mut cursor = novo.len();
+    if tem_espaco {
+        cursor += texto[fim..].chars().next().map_or(0, char::len_utf8);
+        novo.push_str(&texto[fim..]);
+    } else {
+        novo.push(' ');
+        cursor += 1;
+        novo.push_str(&texto[fim..]);
+    }
+    (novo, cursor)
 }
 
 /// Põe `texto` na caixa, com o cursor no fim e a caixa rolada até ele. Pelo `replace_all`, e não
@@ -331,15 +461,37 @@ pub(super) fn trocar_o_fim(
     cx: &mut Context<TextareaState>,
 ) {
     let total = c.value().len();
-    let inicio = inicio.min(total);
-    let feito = ficha.is_some_and(|f| c.replace_range_with_token(inicio..total, f, window, cx).is_ok());
+    trocar_palavra(c, inicio, total, texto, ficha, window, cx);
+}
+
+/// Troca a palavra `inicio..fim` por `texto` (ou pela pílula `ficha`): o cursor vai para depois
+/// dela e do espaço que a segue, que já existia ou é posto agora (`substituir_palavra`). A caixa
+/// rola até o cursor.
+pub(super) fn trocar_palavra(
+    c: &mut TextareaState,
+    inicio: usize,
+    fim: usize,
+    texto: &str,
+    ficha: Option<InlineToken>,
+    window: &mut Window,
+    cx: &mut Context<TextareaState>,
+) {
+    let total = c.value().len();
+    let (inicio, fim) = (inicio.min(total), fim.min(total));
+    let feito = ficha.is_some_and(|f| c.replace_range_with_token(inicio..fim, f, window, cx).is_ok());
     if !feito {
-        c.set_selected_range(inicio..total, cx);
+        c.set_selected_range(inicio..fim, cx);
         c.replace(texto.to_string(), window, cx);
     }
-    let fim = c.value().len();
-    c.set_selected_range(fim..fim, cx);
-    c.insert(" ", window, cx);
+    let atual = c.value().to_string();
+    let depois = (inicio + texto.len()).min(atual.len());
+    if atual[depois..].chars().next().is_some_and(char::is_whitespace) {
+        let passo = atual[depois..].chars().next().map_or(0, char::len_utf8);
+        c.set_selected_range(depois + passo..depois + passo, cx);
+    } else {
+        c.set_selected_range(depois..depois, cx);
+        c.insert(" ", window, cx);
+    }
     c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
 }
 
@@ -716,6 +868,18 @@ impl Janela {
                             // Colar imagem ou arquivos copiados no gerenciador vira anexo.
                             .on_paste(move |item, window, cx| {
                                 let caminhos = anexos_da_area_de_transferencia(item, &pasta_anexos);
+                                // HTML copiado (navegador, documento): vira Markdown, com o texto
+                                // puro por baixo, para o Ctrl+Z voltar a ele.
+                                if caminhos.is_empty()
+                                    && let (Some(plano), Some(html)) = (item.text(), item.metadata())
+                                    && let Some(markdown) = super::colar_html::markdown_da_colagem(&plano, html)
+                                {
+                                    let campo = campo_colado.clone();
+                                    window.on_next_frame(move |window, cx| {
+                                        let _ = campo.update(cx, |c, cx| colar_com_markdown(c, &plano, &markdown, window, cx));
+                                    });
+                                    return true;
+                                }
                                 if caminhos.is_empty() {
                                     // Texto: quem cola é o campo, que pede a rolagem até o cursor
                                     // antes do layout novo, com a caixa ainda do tamanho de antes;
@@ -820,6 +984,7 @@ impl Janela {
             .on_action(cx.listener(move |this, _: &MenuEscolher, window, cx| {
                 this.escolher_no_menu(painel_id, window, cx);
             }))
+            .on_action(cx.listener(move |this, _: &AbrirSkill, window, cx| this.abrir_skill_marcada(painel_id, window, cx)))
             .on_action(cx.listener({
                 let chat = chat.id.clone();
                 move |this, _: &AceitarSugestao, window, cx| this.aceitar_sugestao(&chat, painel_id, window, cx)
@@ -927,7 +1092,15 @@ impl Janela {
                     }))
                     .child(
                         grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, compacto.is_some(), window, cx)))
-                            .on_prepaint(medir_esforco(cx.entity().downgrade(), painel_id, medida_do_modelo, medida_da_linha, compacto)),
+                            .on_prepaint(medir_esforco(
+                                cx.entity().downgrade(),
+                                painel_id,
+                                medida_do_modelo,
+                                medida_da_linha,
+                                compacto,
+                                estreita,
+                                self.paineis[ix].modelo_so_icone,
+                            )),
                     ),
             )
             .child(
@@ -1448,30 +1621,19 @@ impl Janela {
             }))
     }
 
-    /// As sugestões da última palavra da caixa: os comandos de barra (o texto começa com "/") e as
-    /// menções do "@" (rodada de uso, item 1.2).
-    pub(super) fn sugestoes_da_caixa(&self, chat: &Chat, texto: &str) -> Option<(char, usize, Vec<Sugestao>)> {
-        let (sinal, digitado, inicio) = gatilho(texto)?;
+    /// As sugestões da palavra sob o cursor: os comandos de barra e as skills (o texto começa com
+    /// "/") e as menções do "@" (rodada de uso, item 1.2).
+    pub(super) fn sugestoes_da_caixa(&self, chat: &Chat, texto: &str, cursor: usize) -> Option<(char, usize, Vec<Sugestao>)> {
+        let Gatilho { sinal, digitado, inicio, .. } = gatilho_em(texto, cursor)?;
         if sinal == '@' {
             let lista = self.mencoes_da_caixa(chat, digitado, inicio);
             return (!lista.is_empty()).then_some((sinal, inicio, lista));
         }
         let itens: Vec<Sugestao> = match sinal {
-            '/' => self
-                .comandos_de(chat)
-                .into_iter()
-                .map(|c| Sugestao {
-                    valor: format!("/{c}"),
-                    titulo: format!("/{c}"),
-                    detalhe: descricao_comando(&c).map(str::to_string).or_else(|| crate::claude::descricao_do_comando(&c)),
-                    busca: c.clone(),
-                    peso: c.len(),
-                    chave: c,
-                })
-                .collect(),
+            '/' => self.catalogo_de(chat).iter().map(sugestao_do_comando).collect(),
             _ => return None,
         };
-        let lista = menu_sugestoes(itens, digitado);
+        let lista = menu_sugestoes(itens, digitado, None);
         (!lista.is_empty()).then_some((sinal, inicio, lista))
     }
 
@@ -1492,20 +1654,13 @@ impl Janela {
                         detalhe: Some(format!("Só o {} responde a esta mensagem", agente.nome())),
                         chave: nome.clone(),
                         busca: nome,
-                        peso: 0,
+                        ..Sugestao::default()
                     });
                 }
             }
         }
         let Some((arquivos, pastas)) = self.arquivos_e_pastas_lidos(&chat.cwd).filter(|_| !self.lendo_arquivos(&chat.cwd)) else {
-            lista.push(Sugestao {
-                valor: String::new(),
-                titulo: "Lendo a pasta…".into(),
-                detalhe: None,
-                chave: String::new(),
-                busca: String::new(),
-                peso: 0,
-            });
+            lista.push(Sugestao { titulo: "Lendo a pasta…".into(), ..Sugestao::default() });
             return lista;
         };
         // O arquivo aberto à direita, se é deste chat, vem antes dos outros.
@@ -1538,12 +1693,13 @@ impl Janela {
             let (pasta, nome) = sem_barra.rsplit_once('/').unwrap_or(("", sem_barra));
             let titulo = if caminho.ends_with('/') { format!("{nome}/") } else { nome.to_string() };
             lista.push(Sugestao {
-                valor: format!("@{caminho}"),
+                valor: valor_da_mencao(&caminho),
                 titulo,
                 detalhe: (!pasta.is_empty()).then(|| pasta.to_string()),
                 chave: nome.to_lowercase(),
                 busca: caminho.to_lowercase(),
                 peso: caminho.len(),
+                ..Sugestao::default()
             });
         }
         lista.truncate(MAX_SUGESTOES);
@@ -1556,8 +1712,9 @@ impl Janela {
         if painel.menu_dispensado {
             return None;
         }
-        let texto = painel.composer.read(cx).value().to_string();
-        self.sugestoes_da_caixa(chat, &texto)
+        let campo = painel.composer.read(cx);
+        let (texto, cursor) = (campo.value().to_string(), campo.cursor());
+        self.sugestoes_da_caixa(chat, &texto, cursor)
     }
 
     /// ↑/↓ com o menu "/" à vista: o item marcado anda, sem passar das pontas.
@@ -1570,7 +1727,10 @@ impl Janela {
             return;
         };
         let atual = self.paineis[ix].indice_menu.min(n - 1);
-        self.paineis[ix].indice_menu = atual.saturating_add_signed(passo).min(n - 1);
+        let novo = atual.saturating_add_signed(passo).min(n - 1);
+        self.paineis[ix].indice_menu = novo;
+        // A lista rola junto: o marcado nunca sai da vista.
+        self.paineis[ix].rolagem_menu.scroll_to_item(novo);
         cx.notify();
     }
 
@@ -1641,55 +1801,139 @@ impl Janela {
         self.escolher_sugestao(painel, inicio, &valor, window, cx);
     }
 
+    /// Ctrl+O com o menu "/" à vista: abre no painel da direita o arquivo da skill marcada (o
+    /// `SKILL.md`), para ler o que ela faz antes de usar.
+    fn abrir_skill_marcada(&mut self, painel: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel) else {
+            return;
+        };
+        let Some((_, _, lista)) = self.menu_do_painel_ix(ix, cx) else {
+            cx.propagate();
+            return;
+        };
+        let marcado = self.paineis[ix].indice_menu.min(lista.len().saturating_sub(1));
+        match lista.get(marcado).and_then(|s| s.arquivo.clone()) {
+            Some(arquivo) => self.abrir_arquivo_da_skill(&arquivo, window, cx),
+            None => self.avisar_na_estreita(painel, "Este comando não tem arquivo para abrir".to_string(), window, cx),
+        }
+    }
+
+    /// Abre o arquivo de uma skill no painel da direita, mesmo fora da pasta do chat.
+    fn abrir_arquivo_da_skill(&mut self, arquivo: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(pasta), Some(nome)) = (arquivo.parent(), arquivo.file_name()) else {
+            return;
+        };
+        self.abrir_arquivo(pasta.to_path_buf(), nome.to_string_lossy().into_owned(), window, cx);
+    }
+
     /// O menu das sugestões, acima da caixa. Entra como os popovers: fade e 6 px vindos de baixo,
     /// do lado da caixa. O marcado (o primeiro, até as setas andarem) é o que o Enter e o Tab
-    /// escolhem.
+    /// escolhem. A lista rola: o "/" mostra o catálogo inteiro (cada linha com a descrição, a
+    /// dica de argumento, o selo "skill" e a origem; o ícone à direita abre o `SKILL.md`).
     fn menu_comandos(&self, chat: &Chat, ix: usize, cx: &Context<Self>) -> impl IntoElement + use<> {
         let painel = self.paineis[ix].id;
         let sugestoes = self.menu_da_caixa(ix, chat, cx);
         let marcado = self.paineis[ix].indice_menu;
+        let rolagem = self.paineis[ix].rolagem_menu.clone();
         div().relative().when_some(sugestoes, |s, (sinal, inicio, lista)| {
             let marcado = marcado.min(lista.len().saturating_sub(1));
+            let linhas = lista.into_iter().enumerate().map(|(i, sugestao)| {
+                let valor = sugestao.valor.clone();
+                let arquivo = sugestao.arquivo.clone();
+                div()
+                    .id(("sugestao-caixa", i))
+                    .flex()
+                    .flex_none()
+                    .flex_col()
+                    .justify_center()
+                    .min_h(r(32.))
+                    .py(esp::E4)
+                    .px(esp::E8)
+                    .rounded(raio::CONTROLE)
+                    .cursor_pointer()
+                    .when(i == marcado, |s| s.bg(Cores::selecao()))
+                    .when(i != marcado, |s| s.hover(|s| s.bg(Cores::hover())))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(esp::E8)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .max_w(relative(0.6))
+                                    .truncate()
+                                    .map(|d| if sinal == '/' { d.mono().text_color(Cores::codigo()) } else { d.corpo_ui().text_color(Cores::texto()) })
+                                    .child(sugestao.titulo.clone()),
+                            )
+                            .when_some(sugestao.dica.clone(), |s, dica| {
+                                s.child(div().flex_1().min_w_0().truncate().mono_pequeno().text_color(Cores::tenue()).child(dica))
+                            })
+                            .when(sugestao.dica.is_none(), |s| s.child(div().flex_1()))
+                            .when(sugestao.skill, |s| {
+                                s.child(
+                                    div()
+                                        .flex_none()
+                                        .px(esp::E4)
+                                        .rounded(raio::de(4.))
+                                        .border_1()
+                                        .border_color(Cores::borda())
+                                        .etiqueta()
+                                        .text_color(Cores::tenue())
+                                        .child("skill"),
+                                )
+                            })
+                            .when_some(sugestao.origem.clone(), |s, origem| {
+                                s.child(div().flex_none().max_w(relative(0.35)).truncate().etiqueta().text_color(Cores::tenue()).child(origem))
+                            })
+                            .when_some(arquivo, |s, arquivo| {
+                                s.child(
+                                    div()
+                                        .id(("abrir-skill", i))
+                                        .flex_none()
+                                        .p(esp::E4)
+                                        .rounded(raio::de(6.))
+                                        .cursor_pointer()
+                                        .text_color(Cores::tenue())
+                                        .hover(|s| s.bg(Cores::hover()).text_color(Cores::texto()))
+                                        .child(super::mensagens::icone_de(Lucide::ScrollText, 14.))
+                                        .dica_no_ponteiro(|window, cx| Tooltip::new("Ver o arquivo da skill (Ctrl+O)").build(window, cx))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.abrir_arquivo_da_skill(&arquivo, window, cx);
+                                            cx.stop_propagation();
+                                        })),
+                                )
+                            }),
+                    )
+                    .when_some(sugestao.detalhe.clone(), |s, d| {
+                        s.child(div().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(d))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| this.escolher_sugestao(painel, inicio, &valor, window, cx)))
+            });
             let menu = div()
                 .flex()
                 .flex_col()
-                .gap(esp::E2)
                 .w_full()
                 .p(esp::E8)
                 .flutuante(cx)
-                .children(lista.into_iter().enumerate().map(|(i, sugestao)| {
-                    let valor = sugestao.valor.clone();
+                .child(
                     div()
-                        .id(("sugestao-caixa", i))
+                        .id(("lista-comandos", painel as usize))
                         .flex()
-                        .items_center()
-                        .h(r(32.))
-                        .px(esp::E8)
-                        .gap(esp::E8)
-                        .rounded(raio::CONTROLE)
-                        .cursor_pointer()
-                        .when(i == marcado, |s| s.bg(Cores::selecao()))
-                        .when(i != marcado, |s| s.hover(|s| s.bg(Cores::hover())))
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .max_w(relative(0.6))
-                                .truncate()
-                                .map(|d| if sinal == '/' { d.mono().text_color(Cores::codigo()) } else { d.corpo_ui().text_color(Cores::texto()) })
-                                .child(sugestao.titulo.clone()),
-                        )
-                        .when_some(sugestao.detalhe.clone(), |s, d| {
-                            s.child(div().flex_1().min_w_0().truncate().metadado().text_color(Cores::tenue()).child(d))
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| this.escolher_sugestao(painel, inicio, &valor, window, cx)))
-                }))
+                        .flex_col()
+                        .gap(esp::E2)
+                        .max_h(r(340.))
+                        .overflow_y_scroll()
+                        .track_scroll(&rolagem)
+                        .children(linhas),
+                )
                 .with_animation(
                     ("entra-comandos", painel as usize),
                     movimento::animacao(movimento::ENTRAR, Curva::Entrar),
                     |menu, t| menu.opacity(t).top(r(6. * (1. - t))),
                 );
             // O absoluto fica por fora: o deslize mexe no `top` de quem está dentro.
-            s.child(div().absolute().bottom(esp::E4).left_0().w_full().max_w(r(420.)).child(menu))
+            s.child(div().absolute().bottom(esp::E4).left_0().w_full().max_w(r(460.)).child(menu))
         })
     }
 
@@ -1703,8 +1947,11 @@ impl Janela {
             return;
         }
         // A palavra é medida de novo no texto de agora (o clique pode vir depois de outra tecla).
-        let atual = composer.read(cx).value().to_string();
-        let inicio = gatilho(&atual).map_or(inicio, |(_, _, i)| i);
+        let (atual, cursor) = {
+            let campo = composer.read(cx);
+            (campo.value().to_string(), campo.cursor())
+        };
+        let (inicio, fim) = gatilho_em(&atual, cursor).map_or((inicio, atual.len()), |g| (g.inicio, g.fim));
         let inicio = if atual.is_char_boundary(inicio) { inicio } else { atual.len() };
         // Um arquivo ou uma pasta do "@" entra como pílula; o comando, o "@claude" e o chat, como
         // texto. Só a palavra que se completa muda: as pílulas de antes ficam.
@@ -1716,34 +1963,53 @@ impl Janela {
             .and_then(|id| self.motor.as_ref().and_then(|m| m.read(cx).chat(&id).map(|c| c.cwd.clone())));
         let ficha = valor
             .strip_prefix('@')
+            .map(|c| c.trim_matches('"'))
             .filter(|c| c.contains(['.', '/']))
             .zip(cwd)
             .and_then(|(caminho, cwd)| super::links_arquivo::resolver_mencao(&cwd, caminho))
             .map(|inteiro| ficha_da_mencao(valor, &inteiro, None));
-        composer.update(cx, |c, cx| trocar_o_fim(c, inicio, valor, ficha, window, cx));
+        composer.update(cx, |c, cx| trocar_palavra(c, inicio, fim, valor, ficha, window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);
         cx.notify();
     }
 
+    /// Os nomes dos comandos e skills que o chat oferece.
     pub(super) fn comandos_de(&self, chat: &Chat) -> Vec<String> {
+        self.catalogo_de(chat).into_iter().map(|c| c.nome).collect()
+    }
+
+    /// Os comandos e skills do chat, cada um com o que se sabe dele (descrição, dica de argumento,
+    /// origem, arquivo).
+    pub(super) fn catalogo_de(&self, chat: &Chat) -> Vec<crate::claude::ComandoOferecido> {
+        use crate::claude::ComandoOferecido;
+        let so_nome = |nome: &str| ComandoOferecido { nome: nome.to_string(), ..Default::default() };
         // Os comandos de barra e as skills são do Claude Code; no Codex e no Gemini fica só o
         // `/clear`, que é do Vitral.
         if chat.agente != crate::modelo::Agente::Claude {
-            return vec!["clear".into()];
+            return vec![so_nome("clear")];
         }
-        // Antes do primeiro turno do chat no Vitral, vale o que o Claude Code disse que oferece
-        // naquela pasta (comandos e skills, perguntados quando o chat abre); sem resposta dele,
-        // os fixos.
-        let mut lista: Vec<String> = if !chat.comandos.is_empty() {
-            chat.comandos.clone()
-        } else if let Some(da_pasta) = crate::claude::comandos_da_pasta(&chat.cwd) {
+        // O que o Claude Code disse que oferece naquela pasta (perguntado com o chat aberto, e de
+        // novo a cada 10 minutos), com os detalhes; sem resposta dele ainda, os fixos. Depois que
+        // a sessão do chat abriu, os nomes valem os dela, que é quem manda no que existe.
+        let da_pasta = crate::claude::catalogo_da_pasta(&chat.cwd).unwrap_or_default();
+        let mut lista: Vec<ComandoOferecido> = if !chat.comandos.is_empty() {
+            chat.comandos
+                .iter()
+                .map(|nome| {
+                    da_pasta.iter().find(|c| c.nome == *nome).cloned().unwrap_or_else(|| ComandoOferecido {
+                        descricao: crate::claude::descricao_do_comando(nome).unwrap_or_default(),
+                        ..so_nome(nome)
+                    })
+                })
+                .collect()
+        } else if !da_pasta.is_empty() {
             da_pasta
         } else {
-            COMANDOS_INICIAIS.iter().map(|c| c.to_string()).collect()
+            COMANDOS_INICIAIS.iter().map(|c| so_nome(c)).collect()
         };
-        if !lista.iter().any(|c| c == "clear") {
-            lista.insert(0, "clear".into());
+        if !lista.iter().any(|c| c.nome == "clear") {
+            lista.insert(0, so_nome("clear"));
         }
         lista
     }
@@ -1889,30 +2155,54 @@ fn ajustar_linhas(
     }
 }
 
-/// Mede o chip do esforço depois do layout e liga ou desliga o modo só com o ícone.
+/// Mede o chip do esforço depois do layout e liga ou desliga o modo só com o ícone; na caixa
+/// estreita mede também se o nome da família ainda cabe no chip do modelo (`decidir_modelo`).
 fn medir_esforco(
     janela: WeakEntity<Janela>,
     painel: u64,
     modelo: Rc<Cell<Option<Bounds<Pixels>>>>,
     linha: Rc<Cell<Option<Bounds<Pixels>>>>,
     compacto: Option<Pixels>,
+    estreita: bool,
+    modelo_so_icone: Option<Pixels>,
 ) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static {
     move |esforco, window, _| {
         let Some(modelo) = modelo.get() else {
             return;
         };
         let novo = decidir_esforco(compacto, modelo, esforco, linha.get());
-        if novo == compacto {
+        let novo_modelo = if estreita { decidir_modelo(modelo_so_icone, modelo, esforco, linha.get()) } else { None };
+        if novo == compacto && novo_modelo == modelo_so_icone {
             return;
         }
         window.on_next_frame(move |_, cx| {
             let _ = janela.update(cx, |this, cx| {
                 if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel) {
                     p.esforco_compacto = novo;
+                    p.modelo_so_icone = novo_modelo;
                     cx.notify();
                 }
             });
         });
+    }
+}
+
+/// O chip do modelo da caixa estreita com o nome da família (`None`) ou só com a marca
+/// (`Some(largura que a linha pedia com o nome)`). Mesmo sinal do esforço: o chip seguinte caiu
+/// para a linha escondida. Volta com o nome quando a linha tem a largura que ele pedia, mais 16 px
+/// de folga para não ficar indo e voltando.
+pub(super) fn decidir_modelo(
+    so_icone: Option<Pixels>,
+    modelo: Bounds<Pixels>,
+    esforco: Bounds<Pixels>,
+    linha: Option<Bounds<Pixels>>,
+) -> Option<Pixels> {
+    let quebrou = esforco.origin.y > modelo.origin.y + px(2.);
+    match (so_icone, linha) {
+        (None, Some(linha)) if quebrou => Some(modelo.right() - linha.left() + esforco.size.width + px(4.)),
+        (None, _) => None,
+        (Some(pedia), Some(linha)) if linha.size.width >= pedia + px(16.) => None,
+        (Some(_), _) => so_icone,
     }
 }
 
@@ -1972,6 +2262,19 @@ fn rotulo_modelo(escolhido: &str, em_uso: Option<&str>) -> String {
     }
 }
 
+/// Cola o texto puro e, numa segunda edição, troca-o pelo Markdown: o Ctrl+Z desfaz só a troca e
+/// deixa o texto puro (a colagem em duas edições é de propósito; o kit guarda cada uma).
+fn colar_com_markdown(c: &mut TextareaState, plano: &str, markdown: &str, window: &mut Window, cx: &mut Context<TextareaState>) {
+    c.insert(plano, window, cx);
+    let fim = c.cursor();
+    let inicio = fim.saturating_sub(plano.len());
+    c.set_selected_range(inicio..fim, cx);
+    c.replace(markdown.to_string(), window, cx);
+    let cursor = c.cursor();
+    c.set_selected_range(cursor..cursor, cx);
+    c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
+}
+
 /// Imagens coladas viram arquivos na pasta dos anexos (`anexos/` nos dados); arquivos copiados do
 /// gerenciador entram pelo caminho.
 fn anexos_da_area_de_transferencia(item: &ClipboardItem, pasta: &Path) -> Vec<PathBuf> {
@@ -2005,14 +2308,21 @@ fn anexos_da_area_de_transferencia(item: &ClipboardItem, pasta: &Path) -> Vec<Pa
 
 /// O texto depois da barra, enquanto ainda é o nome de um comando.
 fn prefixo_de(composer: &Entity<TextareaState>, cx: &App) -> Option<String> {
-    let texto = composer.read(cx).value().to_string();
-    let resto = texto.strip_prefix('/')?;
-    (!resto.contains(char::is_whitespace)).then(|| resto.to_string())
+    let campo = composer.read(cx);
+    let texto = campo.value().to_string();
+    let g = gatilho_em(&texto, campo.cursor())?;
+    // Só enquanto o comando é o texto inteiro: com argumento depois, o Enter envia.
+    (g.sinal == '/' && g.fim == texto.len()).then(|| g.digitado.to_string())
 }
 
 #[cfg(test)]
 mod testes_sugestoes {
-    use super::{Sugestao, completar, escolha_do_enter, gatilho, menu_sugestoes};
+    use super::{Sugestao, completar, escolha_do_enter, gatilho, menu_sugestoes as menu_com_limite};
+
+    /// O menu de antes: no máximo oito (o limite do "@" e do "#").
+    fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugestao> {
+        menu_com_limite(itens, digitado, Some(8))
+    }
 
     fn sugestao(valor: &str, chave: &str, busca: &str, peso: usize) -> Sugestao {
         Sugestao {
@@ -2022,6 +2332,7 @@ mod testes_sugestoes {
             chave: chave.into(),
             busca: busca.into(),
             peso,
+            ..Sugestao::default()
         }
     }
 
@@ -2103,7 +2414,7 @@ mod testes_sugestoes {
 #[cfg(test)]
 mod testes_caixa {
     use super::{
-        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, decidir_esforco, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
+        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, decidir_esforco, decidir_modelo, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
         milhares, nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
     };
 
@@ -2183,6 +2494,28 @@ mod testes_caixa {
         assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), estreita), Some(px(150.)));
         // Sem a medida da linha ainda: não muda.
         assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), None), Some(px(150.)));
+    }
+
+    /// O nome da família no chip do modelo da caixa estreita: some quando o esforço cai para a linha
+    /// escondida e volta quando a linha tem a largura que ele pedia (mais 16 de folga).
+    #[test]
+    fn o_nome_da_familia_some_quando_nao_cabe_e_volta_com_lugar() {
+        use gpui_kit::{Bounds, point, px, size};
+        let caixa = |x: f32, y: f32, w: f32| Bounds { origin: point(px(x), px(y)), size: size(px(w), px(32.)) };
+        let modelo = caixa(200., 10., 110.);
+        let linha = Some(caixa(180., 10., 200.));
+        // O esforço (32) cabe ao lado do modelo (termina em 310; 310 + 4 + 32 < 380): fica o nome.
+        assert_eq!(decidir_modelo(None, modelo, caixa(314., 10., 32.), linha), None);
+        // O esforço caiu para a linha de baixo: só a marca, lembrando o que a linha pedia
+        // (310 - 180 + 32 + 4 = 166).
+        assert_eq!(decidir_modelo(None, modelo, caixa(180., 42., 32.), linha), Some(px(166.)));
+        // Linha de 200 com o chip só com a marca: 166 + 16 cabe, o nome volta.
+        assert_eq!(decidir_modelo(Some(px(166.)), caixa(200., 10., 60.), caixa(264., 10., 32.), linha), None);
+        // Linha de 170: não cabe com folga, fica só com a marca.
+        let curta = Some(caixa(180., 10., 170.));
+        assert_eq!(decidir_modelo(Some(px(166.)), caixa(200., 10., 60.), caixa(264., 10., 32.), curta), Some(px(166.)));
+        // Sem a medida da linha ainda: não muda.
+        assert_eq!(decidir_modelo(Some(px(166.)), modelo, caixa(264., 10., 32.), None), Some(px(166.)));
     }
 
     #[test]
@@ -2360,5 +2693,131 @@ mod testes_das_versoes {
             versoes_dos_oferecidos(&oferecidos),
             ["claude-opus-5-5", "claude-alfa-6-1", "claude-alfa-6", "claude-zeta-6"]
         );
+    }
+}
+
+/// O menu na posição do cursor, o "/" completo e a caixa estreita (Paseo, rodada de 24/11/2026).
+#[cfg(test)]
+mod testes_do_cursor_e_do_catalogo {
+    use super::{
+        Gatilho, Sugestao, gatilho_em, menu_sugestoes, nome_da_familia, substituir_palavra, sugestao_do_comando, valor_da_mencao,
+    };
+    use crate::claude::{ComandoOferecido, Origem};
+
+    fn g(sinal: char, digitado: &str, inicio: usize, fim: usize) -> Option<Gatilho<'_>> {
+        Some(Gatilho { sinal, digitado, inicio, fim })
+    }
+
+    #[test]
+    fn o_menu_abre_para_a_palavra_sob_o_cursor() {
+        // No fim da palavra, como sempre.
+        assert_eq!(gatilho_em("veja @cent", 10), g('@', "cent", 5, 10));
+        // No meio dela: o que vale é o digitado até o cursor, e a palavra inteira se troca.
+        assert_eq!(gatilho_em("veja @cent agora", 8), g('@', "ce", 5, 10));
+        // Depois do espaço, ou antes do sinal, não é a palavra do gatilho.
+        assert_eq!(gatilho_em("veja @cent agora", 16), None);
+        assert_eq!(gatilho_em("veja @cent", 5), None);
+        // O "/" só vale na primeira palavra, mesmo com o cursor nela, no meio.
+        assert_eq!(gatilho_em("/compact agora", 5), g('/', "comp", 0, 8));
+        assert_eq!(gatilho_em("foo /ba", 7), None);
+        // Texto com mais de uma linha: a palavra acaba na quebra.
+        assert_eq!(gatilho_em("a\n@b\nc", 4), g('@', "b", 2, 4));
+        // Cursor no meio de um caractere de dois bytes cai na borda de antes.
+        assert_eq!(gatilho_em("#lój", 3), g('#', "l", 0, 5));
+    }
+
+    #[test]
+    fn caminho_com_espaco_entre_aspas_tambem_abre_o_menu() {
+        let texto = "ver @\"minha pasta/a b";
+        assert_eq!(gatilho_em(texto, texto.len()), g('@', "minha pasta/a b", 4, texto.len()));
+        // Com as aspas fechadas e o cursor dentro, a palavra vai até a aspa de fechar.
+        let fechado = "ver @\"a b\" e";
+        assert_eq!(gatilho_em(fechado, 9), g('@', "a b", 4, 10));
+        // Depois do fechamento já é outra palavra.
+        assert_eq!(gatilho_em(fechado, fechado.len()), None);
+        assert_eq!(valor_da_mencao("minha pasta/a b.rs"), "@\"minha pasta/a b.rs\"");
+        assert_eq!(valor_da_mencao("src/a.rs"), "@src/a.rs");
+    }
+
+    #[test]
+    fn completar_no_meio_da_frase_troca_so_a_palavra() {
+        // Com espaço depois da palavra, o cursor passa por ele sem pôr outro.
+        assert_eq!(substituir_palavra("veja @ce agora", 5, 8, "@src/x.rs"), ("veja @src/x.rs agora".to_string(), 15));
+        // No fim do texto, entra o espaço.
+        assert_eq!(substituir_palavra("veja @ce", 5, 8, "@src/x.rs"), ("veja @src/x.rs ".to_string(), 15));
+        // Colado em pontuação ou em outra palavra, entra o espaço também.
+        assert_eq!(substituir_palavra("(@ce)", 1, 4, "@a.rs"), ("(@a.rs )".to_string(), 7));
+        assert_eq!(substituir_palavra("/comp", 0, 5, "/compact"), ("/compact ".to_string(), 9));
+    }
+
+    fn comando(nome: &str, descricao: &str) -> ComandoOferecido {
+        ComandoOferecido { nome: nome.into(), descricao: descricao.into(), ..Default::default() }
+    }
+
+    fn itens(comandos: &[ComandoOferecido]) -> Vec<Sugestao> {
+        comandos.iter().map(sugestao_do_comando).collect()
+    }
+
+    #[test]
+    fn o_menu_da_barra_mostra_todos_os_comandos() {
+        let todos: Vec<ComandoOferecido> = (0..40).map(|i| comando(&format!("skill-{i:02}"), "faz algo")).collect();
+        assert_eq!(menu_sugestoes(itens(&todos), "", None).len(), 40);
+        assert_eq!(menu_sugestoes(itens(&todos), "skill", None).len(), 40);
+        // Com limite (o "@" e o "#"), corta.
+        assert_eq!(menu_sugestoes(itens(&todos), "", Some(8)).len(), 8);
+    }
+
+    #[test]
+    fn a_ordem_segue_a_qualidade_do_casamento() {
+        let todos = [
+            comando("outro", "Revisa o código antes do merge"),
+            comando("code-review", "Revisão em dois eixos"),
+            comando("revisar", "Revisa o diff"),
+            comando("rev", "O nome é exato"),
+            comando("pre-revisao", "meio"),
+        ];
+        let nomes = |digitado: &str| -> Vec<String> { menu_sugestoes(itens(&todos), digitado, None).into_iter().map(|s| s.valor).collect() };
+        // Exato, depois começa com, depois começa uma parte do nome (depois de "-"), depois só
+        // contém no nome; quem casa só pela descrição vai por último.
+        assert_eq!(nomes("rev"), ["/rev", "/revisar", "/code-review", "/pre-revisao", "/outro"]);
+        // Sem acento nem maiúscula; o nome que contém vem antes de quem só tem na descrição.
+        assert_eq!(nomes("REVISÃO"), ["/pre-revisao", "/code-review"]);
+    }
+
+    #[test]
+    fn cada_comando_traz_selo_origem_e_dica() {
+        let skill = ComandoOferecido {
+            nome: "easypanel".into(),
+            descricao: "Operar o EasyPanel".into(),
+            dica: "deploy | env".into(),
+            origem: Origem::Pessoal,
+            skill: true,
+            arquivo: Some("/x/SKILL.md".into()),
+            ..Default::default()
+        };
+        let s = sugestao_do_comando(&skill);
+        assert_eq!((s.valor.as_str(), s.titulo.as_str()), ("/easypanel", "/easypanel"));
+        assert!(s.skill);
+        assert_eq!(s.origem.as_deref(), Some("pessoal"));
+        assert_eq!(s.dica.as_deref(), Some("deploy | env"));
+        assert_eq!(s.detalhe.as_deref(), Some("Operar o EasyPanel"));
+        assert_eq!(s.arquivo.as_deref(), Some(std::path::Path::new("/x/SKILL.md")));
+        let plugin = ComandoOferecido { origem: Origem::Plugin("mattpocock-skills".into()), ..comando("mattpocock-skills:tdd", "TDD") };
+        assert_eq!(sugestao_do_comando(&plugin).origem.as_deref(), Some("plugin mattpocock-skills"));
+        let projeto = ComandoOferecido { origem: Origem::Projeto, ..comando("x", "") };
+        assert_eq!(sugestao_do_comando(&projeto).origem.as_deref(), Some("projeto"));
+        // Os do Claude Code e os de origem desconhecida não mostram origem.
+        assert_eq!(sugestao_do_comando(&comando("clear", "")).origem, None);
+        assert!(!sugestao_do_comando(&comando("clear", "")).skill);
+    }
+
+    #[test]
+    fn a_caixa_estreita_guarda_o_nome_da_familia() {
+        assert_eq!(nome_da_familia("Opus 5.5"), "Opus");
+        assert_eq!(nome_da_familia("Fable 5.2"), "Fable");
+        assert_eq!(nome_da_familia("Sonnet 4.5 (1M)"), "Sonnet");
+        assert_eq!(nome_da_familia("Padrão"), "Padrão");
+        assert_eq!(nome_da_familia("Codex"), "Codex");
+        assert_eq!(nome_da_familia(""), "");
     }
 }

@@ -111,6 +111,7 @@ tabela! {
     "up", composer::MenuAcima, Some("Menu > Input"), Grupo::Conversa, "Andar pelo menu “/”", "↑+↓";
     "down", composer::MenuAbaixo, Some("Menu > Input"), Grupo::Conversa, "", "";
     "tab", composer::MenuEscolher, Some("Menu > Input"), Grupo::Conversa, "Completar o comando marcado no menu “/” (ou Enter)", "";
+    "ctrl-o", composer::AbrirSkill, Some("Menu > Input"), Grupo::Conversa, "Ver o arquivo da skill marcada no menu “/”", "";
     // Com a caixa vazia e a sugestão da próxima mensagem à vista (sem ela, o Tab segue adiante).
     "tab", composer::AceitarSugestao, Some("Vazia > Input"), Grupo::Conversa, "Aceitar a sugestão da próxima mensagem (caixa vazia)", "";
     // O campo do kit liga o Ctrl+F ao `Search` dele, que ninguém atende: o evento segue para cá.

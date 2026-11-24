@@ -10,6 +10,20 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 **Marcar como não lido.** O menu do chat devolve o ponto azul, e ele fica até você abrir o chat de novo.
 
 **Busca na conversa sem ficar embaixo dos anéis.** Com o painel encostado na direita da janela, a barra do Ctrl+F deixa o lugar dos anéis de uso, seja com um, dois, três ou nenhum.
+- **Comentário por linha no diff.** Na edição do agente, clique na margem de uma linha e escreva o
+  comentário. Eles se acumulam, ficam marcados nas linhas, e o **Enviar comentários (N)** manda
+  todos de uma vez ao agente, com arquivo e linha de cada um.
+- **Colar HTML vira Markdown.** O que você copia de um navegador ou documento entra na caixa com
+  links, listas, negrito e código; o Ctrl+Z volta ao texto puro. No Linux com Wayland.
+- **O menu “/” mostra tudo.** Todos os comandos e skills numa lista que rola, cada um com a
+  descrição, a dica de argumento, o selo skill e a origem; o ícone (ou o Ctrl+O) abre o arquivo da
+  skill à direita, e os que mais combinam com o que você digitou vêm primeiro.
+- **“@” e “/” onde está o cursor.** O menu abre para a palavra em que você está, e não só para a
+  última, e completa ali. Caminho com espaço vai entre aspas.
+- **Caixa estreita com o nome do modelo.** Com três painéis lado a lado, o chip mostra “Opus” ou
+  “Fable”, e o modo e o esforço ficam só com o ícone.
+- **Imagens coladas sem uso saem sozinhas.** Ao abrir, o Vitral apaga as imagens coladas que
+  nenhuma conversa, fila ou rascunho usa e que estão paradas há mais de um dia.
 
 ## 0.10.1
 

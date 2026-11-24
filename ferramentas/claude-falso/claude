@@ -265,6 +265,32 @@ primeira_palavra = None
 idas_ao_modelo = 1
 
 
+def catalogo_falso():
+    """Os comandos e skills que o `initialize` devolve com `BANCADA_CATALOGO=1`: os do Claude
+    Code (`builtin`), os pessoais "(user)", os do projeto "(project)" e os de plugin "(plugin) ..."."""
+    embutidos = [("clear", "Clear conversation history"), ("compact", "Summarize the conversation"),
+                 ("context", "Show context usage"), ("usage", "Show plan usage"), ("init", "Create a CLAUDE.md"),
+                 ("review", "Review the changes"), ("simplify", "Simplify the changed code")]
+    lista = [{"name": n, "description": d, "argumentHint": "", "builtin": True} for n, d in embutidos]
+    pessoais = [("easypanel", "Operar o EasyPanel da VPS pela CLI: deploy, env, volume.", "deploy | env | logs"),
+                ("ads", "Auditoria de anúncios em várias plataformas, com nota e plano.", "audit | google | meta"),
+                ("ads-audit", "Auditoria completa de anúncios com subagentes em paralelo.", ""),
+                ("humanizer", "Reescreve texto com cara de IA para soar como o autor.", "<texto>"),
+                ("manter-instrucoes", "Onde cada aprendizado mora: AGENTS.md, skill ou memória.", ""),
+                ("nanobanana-ratos", "Gera imagens pelo Nano Banana.", "<descrição da imagem>")]
+    lista += [{"name": n, "description": d + " (user)", "argumentHint": h} for n, d, h in pessoais]
+    projeto = [("revisar", "Revisa o diff da branch com as lentes do workspace.", "<repo> [base]"),
+               ("feature", "Feature grande: leitores, plano, um escritor e revisão.", "")]
+    lista += [{"name": n, "description": d + " (project)", "argumentHint": h} for n, d, h in projeto]
+    plugin = [("mattpocock-skills:tdd", "Test-driven development.", ""),
+              ("mattpocock-skills:grilling", "Pergunta sem parar sobre um plano.", ""),
+              ("mattpocock-skills:code-review", "Revisa o que mudou desde um ponto fixo.", "<ponto>")]
+    lista += [{"name": n, "description": "(mattpocock-skills) " + d, "argumentHint": h} for n, d, h in plugin]
+    for i in range(1, 15):
+        lista.append({"name": f"skill-do-usuario-{i:02d}", "description": f"Uma skill pessoal de exemplo número {i}. (user)", "argumentHint": ""})
+    return lista
+
+
 def responder_controle(pedido):
     """Os pedidos de controle sem mensagem (o `initialize` das perguntas do Vitral e o
     `rewind_files` do Voltar os arquivos): responde como o de verdade, sem mexer em nada."""
@@ -274,6 +300,8 @@ def responder_controle(pedido):
         anotar({"rewind_files": corpo.get("user_message_id"), "dry_run": corpo.get("dry_run")})
         resposta = {"canRewind": True, "filesChanged": [os.path.join(os.getcwd(), "notas-do-chat.md")],
                     "insertions": 0, "deletions": 1}
+    if corpo.get("subtype") == "initialize" and os.environ.get("BANCADA_CATALOGO"):
+        resposta = {"commands": catalogo_falso()}
     emitir({"type": "control_response", "response": {"subtype": "success", "request_id": pedido.get("request_id"),
                                                      "response": resposta}})
 
