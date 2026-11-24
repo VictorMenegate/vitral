@@ -507,6 +507,15 @@ impl Motor {
             // `.anterior`) fica com as imagens.
             let vivos = chats.iter().map(|c| c.id.clone()).chain(dados.chats_gravados()).collect();
             crate::imagens_recebidas::varrer(&dados.pasta_imagens(""), &vivos, crate::imagens_recebidas::TETO_TOTAL);
+            // As imagens coladas na caixa que nenhuma conversa, fila ou rascunho cita (nem as
+            // arquivadas) saem de `anexos/`, em segundo plano e sem pressa (`limpeza_anexos`).
+            let dados_da_limpeza = dados.clone();
+            let _ = std::thread::Builder::new().name("limpeza-anexos".into()).spawn(move || {
+                let apagados = crate::limpeza_anexos::limpar(&dados_da_limpeza, &Default::default());
+                if apagados > 0 {
+                    eprintln!("vitral: {apagados} imagem(ns) colada(s) sem conversa apagada(s) de anexos/");
+                }
+            });
             // A pasta de um chat sem pasta (apagada à mão) volta vazia.
             let avulsos = dados.pasta_avulso("");
             for c in chats.iter().filter(|c| c.cwd.starts_with(&avulsos)) {
