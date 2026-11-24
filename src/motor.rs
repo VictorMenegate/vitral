@@ -2778,9 +2778,12 @@ impl Motor {
             (c.agente, c.modelo, c.modelo_atual) = (agente, modelo, None);
             (c.sessao, c.sessao_criada) = (uuid::Uuid::new_v4().to_string(), false);
             (c.contexto, c.janela, c.custo_da_sessao) = (None, None, None);
-            // Os comandos de barra e as skills são do Claude Code.
+            // Os comandos de barra e as skills são do Claude Code: a lista da sessão de antes não
+            // vale para a nova, e o catálogo da pasta é perguntado de novo (ao voltar para o Claude
+            // ele traz o que mudou no disco enquanto o outro agente trabalhava).
+            c.comandos.clear();
+            crate::claude::esquecer_comandos_da_pasta(&c.cwd);
             if agente != Agente::Claude {
-                c.comandos.clear();
                 c.esforco = c.esforco.take().filter(|e| e != "ultracode");
             }
         }

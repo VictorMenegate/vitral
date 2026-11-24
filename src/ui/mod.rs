@@ -2040,8 +2040,10 @@ impl Janela {
                 .iter()
                 .filter_map(|p| m.chat(p.chat.as_deref()?))
                 // Sem conferir a pasta aqui (seria uma ida ao disco por painel a cada quadro):
-                // a pergunta confere, uma vez.
-                .filter(|c| c.comandos.is_empty())
+                // a pergunta confere, uma vez por validade. Vale também para o chat que já
+                // rodou turno: a lista da sessão só tem os nomes, e o menu "/" mostra a
+                // descrição, a dica, a origem e o arquivo de cada skill.
+                .filter(|c| c.agente == crate::modelo::Agente::Claude)
                 .map(|c| c.cwd.clone())
                 .collect()
         };

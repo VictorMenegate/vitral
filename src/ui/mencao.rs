@@ -21,12 +21,14 @@ pub struct Mencao {
     pub linhas: Option<(u32, u32)>,
 }
 
-/// O texto da menção que vai na mensagem: "@src/x.rs", "@src/x.rs#L12", "@src/x.rs#L12-20".
+/// O texto da menção que vai na mensagem: "@src/x.rs", "@src/x.rs#L12", "@src/x.rs#L12-20". Um
+/// caminho com espaço vai entre aspas, e as linhas depois delas: `@"minha pasta/x.rs"#L12`.
 pub fn texto_da_mencao(caminho: &str, linhas: Option<(u32, u32)>) -> String {
+    let inicio = if caminho.contains(char::is_whitespace) { format!("@\"{caminho}\"") } else { format!("@{caminho}") };
     match linhas {
-        Some((a, b)) if b > a => format!("@{caminho}#L{a}-{b}"),
-        Some((a, _)) => format!("@{caminho}#L{a}"),
-        None => format!("@{caminho}"),
+        Some((a, b)) if b > a => format!("{inicio}#L{a}-{b}"),
+        Some((a, _)) => format!("{inicio}#L{a}"),
+        None => inicio,
     }
 }
 
@@ -65,6 +67,9 @@ fn do_caminho(c: char) -> bool {
 /// em volta fica de fora ("@a.rs," e "(@a.rs)").
 pub fn ler_mencao(texto: &str) -> Option<(Mencao, usize)> {
     let resto = texto.strip_prefix('@')?;
+    if let Some(entre_aspas) = resto.strip_prefix('"') {
+        return ler_mencao_entre_aspas(entre_aspas);
+    }
     let fim = resto.find(|c: char| !do_caminho(c)).unwrap_or(resto.len());
     let bruto = resto[..fim].trim_end_matches(['.', ',', ';', ':', '!', '?']);
     if bruto.is_empty() {
@@ -88,6 +93,22 @@ pub fn ler_mencao(texto: &str) -> Option<(Mencao, usize)> {
         return None;
     }
     Some((Mencao { caminho: caminho.to_string(), linhas }, 1 + bruto.len()))
+}
+
+/// A menção `@"caminho com espaço"`, já sem o `@"`: o que está entre as aspas (na mesma linha) e,
+/// logo depois delas, as linhas ("#L3-5"). Devolve também quantos bytes a menção inteira ocupa.
+fn ler_mencao_entre_aspas(depois_das_aspas: &str) -> Option<(Mencao, usize)> {
+    let fim = depois_das_aspas.find(['"', '\n'])?;
+    if !depois_das_aspas[fim..].starts_with('"') || depois_das_aspas[..fim].trim().is_empty() {
+        return None;
+    }
+    let caminho = depois_das_aspas[..fim].to_string();
+    let depois = &depois_das_aspas[fim + 1..];
+    let sufixo = &depois[..depois.find(|c: char| !do_caminho(c)).unwrap_or(depois.len())];
+    let sufixo = sufixo.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+    let linhas = ler_linhas(sufixo);
+    let usado = if linhas.is_some() { sufixo.len() } else { 0 };
+    Some((Mencao { caminho, linhas }, 2 + fim + 1 + usado))
 }
 
 /// As menções do texto, com onde cada uma está: "@" no começo ou depois de um espaço ou de um
@@ -295,6 +316,24 @@ mod testes {
         assert_eq!(ler_mencao("@a.rs:"), Some((m("a.rs", None), 5)));
         assert_eq!(ler_mencao("@ x"), None);
         assert_eq!(ler_mencao("@12"), None);
+    }
+
+    /// Caminho com espaço vai entre aspas, e volta inteiro (com as linhas depois das aspas).
+    #[test]
+    fn caminho_com_espaco_vai_entre_aspas() {
+        assert_eq!(texto_da_mencao("minha pasta/a b.rs", Some((3, 5))), "@\"minha pasta/a b.rs\"#L3-5");
+        assert_eq!(texto_da_mencao("minha pasta/", None), "@\"minha pasta/\"");
+        assert_eq!(texto_da_mencao("a.rs", None), "@a.rs");
+        let texto = "@\"minha pasta/a b.rs\"#L3-5, e";
+        let tamanho = texto.find(',').unwrap();
+        assert_eq!(ler_mencao(texto), Some((m("minha pasta/a b.rs", Some((3, 5))), tamanho)));
+        assert_eq!(ler_mencao("@\"a b.rs\" e"), Some((m("a b.rs", None), 9)));
+        // Aspas que não fecham, ou vazias, não são menção.
+        assert_eq!(ler_mencao("@\"sem fim"), None);
+        assert_eq!(ler_mencao("@\"\""), None);
+        let frase = "veja @\"a b/c.rs\" e @d.rs";
+        let achadas: Vec<String> = mencoes_no_texto(frase).into_iter().map(|(f, _)| frase[f].to_string()).collect();
+        assert_eq!(achadas, ["@\"a b/c.rs\"", "@d.rs"]);
     }
 
     #[test]

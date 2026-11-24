@@ -1551,35 +1551,100 @@ fn resposta_do_initialize(valor: &Value) -> Option<&Value> {
     (valor["type"] == "control_response").then(|| &valor["response"]["response"]).filter(|r| r.is_object())
 }
 
+/// De onde vem um comando ou skill do catálogo da caixa (a marca que o Claude Code põe na
+/// descrição: "(user)", "(project)", "(plugin) …", "(claude.ai sync)").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Origem {
+    /// Os do próprio Claude Code (`builtin`).
+    Embutida,
+    Projeto,
+    Pessoal,
+    Plugin(String),
+    /// As que o claude.ai sincronizou.
+    Sincronizada,
+    #[default]
+    Desconhecida,
+}
+
 /// Um comando de barra ou skill que o Claude Code oferece numa pasta.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ComandoOferecido {
     pub nome: String,
+    /// A descrição sem a marca de origem.
     pub descricao: String,
+    /// A dica de argumento ("audit | google | meta"); vazia sem argumento.
+    pub dica: String,
+    pub origem: Origem,
+    /// O `SKILL.md` (ou o `.md` do comando de barra), se está em disco e o Vitral achou.
+    pub arquivo: Option<PathBuf>,
+    /// O arquivo é um `SKILL.md`: é skill, e não um comando de barra comum.
+    pub skill: bool,
+}
+
+/// Separa a marca de origem da descrição que o Claude Code mandou. `embutido`: o `builtin` da
+/// resposta, que não tem marca.
+pub fn separar_origem(descricao: &str, embutido: bool) -> (Origem, String) {
+    let descricao = descricao.trim();
+    if embutido {
+        return (Origem::Embutida, descricao.to_string());
+    }
+    if let Some(resto) = descricao.strip_prefix('(')
+        && let Some((nome, depois)) = resto.split_once(')')
+        && !nome.is_empty()
+        && !nome.contains(char::is_whitespace)
+    {
+        return (Origem::Plugin(nome.to_string()), depois.trim().to_string());
+    }
+    for (marca, origem) in [(" (user)", Origem::Pessoal), (" (project)", Origem::Projeto), (" (claude.ai sync)", Origem::Sincronizada)] {
+        if let Some(sem) = descricao.strip_suffix(marca) {
+            return (origem, sem.trim().to_string());
+        }
+    }
+    (Origem::Desconhecida, descricao.to_string())
+}
+
+/// Quanto tempo o catálogo de uma pasta vale: skill nova no disco aparece sem reabrir o Vitral.
+const VALIDADE_DO_CATALOGO: Duration = Duration::from_secs(10 * 60);
+
+/// A pergunta precisa ser feita: nunca foi, ou a última resposta já passou da validade. `idade`: há
+/// quanto tempo foi a última pergunta daquela pasta.
+pub fn precisa_perguntar(idade: Option<Duration>) -> bool {
+    idade.is_none_or(|i| i >= VALIDADE_DO_CATALOGO)
 }
 
 /// Os comandos e skills que o Claude Code ofereceu em cada pasta já perguntada.
 static COMANDOS_POR_PASTA: Mutex<Vec<(PathBuf, Vec<ComandoOferecido>)>> = Mutex::new(Vec::new());
-/// As pastas já perguntadas (ou sendo perguntadas) nesta abertura do app.
-static PASTAS_PERGUNTADAS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+/// As pastas já perguntadas (ou sendo perguntadas) e quando.
+static PASTAS_PERGUNTADAS: Mutex<Vec<(PathBuf, Instant)>> = Mutex::new(Vec::new());
 
-/// A pasta ainda não foi perguntada: marca e devolve `true` (quem chama faz a pergunta, uma vez).
+/// A pasta ainda não foi perguntada, ou a resposta venceu: marca e devolve `true` (quem chama faz a
+/// pergunta, uma vez).
 pub fn falta_perguntar_comandos(pasta: &Path) -> bool {
     let Ok(mut pastas) = PASTAS_PERGUNTADAS.lock() else {
         return false;
     };
-    if pastas.iter().any(|p| p == pasta) {
+    let idade = pastas.iter().find(|(p, _)| p == pasta).map(|(_, quando)| quando.elapsed());
+    if !precisa_perguntar(idade) {
         return false;
     }
-    pastas.push(pasta.to_path_buf());
+    pastas.retain(|(p, _)| p != pasta);
+    pastas.push((pasta.to_path_buf(), Instant::now()));
     true
 }
 
-/// Os nomes dos comandos e skills que o Claude Code oferece nesta pasta, se ele já respondeu.
-pub fn comandos_da_pasta(pasta: &Path) -> Option<Vec<String>> {
+/// Esquece o que se sabe da pasta: a próxima olhada pergunta de novo (o chat trocou de agente, e
+/// ao voltar para o Claude o catálogo é refeito).
+pub fn esquecer_comandos_da_pasta(pasta: &Path) {
+    if let Ok(mut pastas) = PASTAS_PERGUNTADAS.lock() {
+        pastas.retain(|(p, _)| p != pasta);
+    }
+}
+
+/// O catálogo completo da pasta, com descrição, dica, origem e arquivo, se o Claude Code já
+/// respondeu.
+pub fn catalogo_da_pasta(pasta: &Path) -> Option<Vec<ComandoOferecido>> {
     let guardados = COMANDOS_POR_PASTA.lock().ok()?;
-    let (_, comandos) = guardados.iter().find(|(p, _)| p == pasta)?;
-    Some(comandos.iter().map(|c| c.nome.clone()).collect())
+    guardados.iter().find(|(p, _)| p == pasta).map(|(_, comandos)| comandos.clone())
 }
 
 /// A descrição que o Claude Code deu a um comando ou skill, em qualquer pasta já perguntada.
@@ -1592,6 +1657,71 @@ pub fn descricao_do_comando(nome: &str) -> Option<String> {
         .map(|c| c.descricao.clone())
 }
 
+/// Onde mora o arquivo de um comando ou skill, e se é um `SKILL.md`. Pela origem: o projeto
+/// (`.claude/skills/<nome>/SKILL.md` na pasta e em cada pasta de cima), a conta
+/// (`<conta>/skills/…`) e os plugins instalados (`<instalação>/skills/<nome>/SKILL.md`); um
+/// comando de barra comum é `commands/<nome>.md`. Os do Claude Code não têm arquivo. Um nome com
+/// barra nunca sai da pasta de skills.
+pub fn arquivo_da_comando(
+    nome: &str,
+    origem: &Origem,
+    pasta: &Path,
+    conta: &Path,
+    plugins: &[(String, PathBuf)],
+) -> Option<(PathBuf, bool)> {
+    let procurar = |raiz: &Path, nome: &str| -> Option<(PathBuf, bool)> {
+        if nome.is_empty() || nome.contains(['/', '\\']) || nome == ".." {
+            return None;
+        }
+        let skill = raiz.join("skills").join(nome).join("SKILL.md");
+        if skill.is_file() {
+            return Some((skill, true));
+        }
+        let comando = raiz.join("commands").join(format!("{nome}.md"));
+        comando.is_file().then_some((comando, false))
+    };
+    match origem {
+        Origem::Projeto => pasta.ancestors().find_map(|dir| procurar(&dir.join(".claude"), nome)),
+        Origem::Pessoal | Origem::Sincronizada => procurar(conta, nome),
+        Origem::Plugin(plugin) => {
+            let curto = nome.rsplit(':').next().unwrap_or(nome);
+            plugins.iter().filter(|(p, _)| p == plugin).find_map(|(_, raiz)| procurar(raiz, curto))
+        }
+        // Sem a marca, vale o que se achar: o projeto, depois a conta.
+        Origem::Desconhecida => pasta.ancestors().find_map(|dir| procurar(&dir.join(".claude"), nome)).or_else(|| procurar(conta, nome)),
+        Origem::Embutida => None,
+    }
+}
+
+/// A pasta da conta do Claude Code: o `CLAUDE_CONFIG_DIR` ou `~/.claude`.
+fn pasta_da_conta() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".claude")))
+}
+
+/// Os plugins instalados: o nome (sem o "@mercado") e a pasta da instalação.
+fn plugins_instalados(conta: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(texto) = std::fs::read_to_string(conta.join("plugins/installed_plugins.json")) else {
+        return Vec::new();
+    };
+    let Ok(valor) = serde_json::from_str::<Value>(&texto) else {
+        return Vec::new();
+    };
+    valor["plugins"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(chave, instalacoes)| {
+            let nome = chave.split('@').next().unwrap_or(chave).to_string();
+            instalacoes
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| i["installPath"].as_str().map(|p| (nome.clone(), PathBuf::from(p))))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// Pergunta ao Claude Code instalado quais comandos de barra e skills ele oferece em `pasta` (os
 /// dele, os do usuário, os de plugins e os da própria pasta) e guarda. É o mesmo pedido
 /// `initialize` dos modelos, sem mensagem: não gasta uso nem cria conversa. Sem isso, o "/" de um
@@ -1599,12 +1729,23 @@ pub fn descricao_do_comando(nome: &str) -> Option<String> {
 /// só apareciam depois da primeira mensagem (dono, 13/11/2026: "tá sem as skills"). Bloqueia:
 /// chamar em segundo plano. Devolve `true` se guardou uma lista.
 pub fn atualizar_comandos_da_pasta(pasta: &Path) -> bool {
-    if std::env::var_os("CLAUDE_FALSO").is_some() || !pasta.is_dir() {
+    // O claude de mentira da bancada só responde ao catálogo com `BANCADA_CATALOGO=1`.
+    if (std::env::var_os("CLAUDE_FALSO").is_some() && std::env::var_os("BANCADA_CATALOGO").is_none()) || !pasta.is_dir() {
         return false;
     }
-    let Some(comandos) = perguntar_ao_claude(pasta, false).as_ref().and_then(comandos_de).filter(|c| !c.is_empty()) else {
+    let Some(mut comandos) = perguntar_ao_claude(pasta, false).as_ref().and_then(comandos_de).filter(|c| !c.is_empty()) else {
         return false;
     };
+    // Onde está o arquivo de cada um (para o selo "skill" e para abrir no painel).
+    if let Some(conta) = pasta_da_conta() {
+        let plugins = plugins_instalados(&conta);
+        for c in &mut comandos {
+            if let Some((arquivo, skill)) = arquivo_da_comando(&c.nome, &c.origem, pasta, &conta, &plugins) {
+                c.arquivo = Some(arquivo);
+                c.skill = skill;
+            }
+        }
+    }
     let Ok(mut guardados) = COMANDOS_POR_PASTA.lock() else {
         return false;
     };
@@ -1621,8 +1762,10 @@ fn comandos_de(resposta: &Value) -> Option<Vec<ComandoOferecido>> {
             .iter()
             .filter_map(|c| {
                 let nome = c["name"].as_str()?.trim().to_string();
-                let descricao = c["description"].as_str().unwrap_or_default().trim().to_string();
-                (!nome.is_empty() && !nome.starts_with("__")).then_some(ComandoOferecido { nome, descricao })
+                let bruta = c["description"].as_str().unwrap_or_default();
+                let (origem, descricao) = separar_origem(bruta, c["builtin"].as_bool().unwrap_or(false));
+                let dica = c["argumentHint"].as_str().unwrap_or_default().trim().to_string();
+                (!nome.is_empty() && !nome.starts_with("__")).then_some(ComandoOferecido { nome, descricao, dica, origem, arquivo: None, skill: false })
             })
             .collect(),
     )
@@ -3466,8 +3609,8 @@ mod testes_dos_modelos {
         assert_eq!(
             comandos_de(resposta),
             Some(vec![
-                ComandoOferecido { nome: "easypanel".into(), descricao: "Operar o EasyPanel".into() },
-                ComandoOferecido { nome: "clear".into(), descricao: String::new() },
+                ComandoOferecido { nome: "easypanel".into(), descricao: "Operar o EasyPanel".into(), ..Default::default() },
+                ComandoOferecido { nome: "clear".into(), descricao: String::new(), ..Default::default() },
             ])
         );
         assert_eq!(resposta_do_initialize(&json!({ "type": "system" })), None);
@@ -4502,5 +4645,108 @@ mod testes_das_imagens_do_resultado {
         assert!(!gravado.contains("(image/png)"));
         assert!(gravado.len() < 1500, "{} bytes", gravado.len());
         let _ = std::fs::remove_dir_all(&raiz);
+    }
+}
+
+/// O catálogo de comandos e skills da caixa: de onde vem cada um, quando vale e onde está o arquivo.
+#[cfg(test)]
+mod testes_do_catalogo {
+    use std::{fs, path::PathBuf, time::Duration};
+
+    use serde_json::json;
+
+    use super::{ComandoOferecido, Origem, arquivo_da_comando, comandos_de, precisa_perguntar, separar_origem};
+
+    #[test]
+    fn a_origem_vem_da_marca_que_o_claude_code_poe_na_descricao() {
+        let esperado = |origem, descricao: &str| (origem, descricao.to_string());
+        assert_eq!(separar_origem("Operar o EasyPanel (user)", false), esperado(Origem::Pessoal, "Operar o EasyPanel"));
+        assert_eq!(separar_origem("Regras da casa (project)", false), esperado(Origem::Projeto, "Regras da casa"));
+        assert_eq!(
+            separar_origem("(mattpocock-skills) Test-driven development.", false),
+            esperado(Origem::Plugin("mattpocock-skills".into()), "Test-driven development.")
+        );
+        assert_eq!(separar_origem("Ler o Drive (claude.ai sync)", false), esperado(Origem::Sincronizada, "Ler o Drive"));
+        // Os do próprio Claude Code não têm marca de origem.
+        assert_eq!(separar_origem("Limpa a conversa", true), esperado(Origem::Embutida, "Limpa a conversa"));
+        // Sem marca nenhuma, a origem não se sabe.
+        assert_eq!(separar_origem("Sem marca", false), esperado(Origem::Desconhecida, "Sem marca"));
+        // Um parêntese no meio do texto não é marca.
+        assert_eq!(separar_origem("Use (se puder) isto", false), esperado(Origem::Desconhecida, "Use (se puder) isto"));
+    }
+
+    #[test]
+    fn a_resposta_do_initialize_traz_a_dica_a_origem_e_o_embutido() {
+        let resposta = json!({ "commands": [
+            { "name": "ads", "description": "Auditoria de anúncios (user)", "argumentHint": "audit | google" },
+            { "name": "clear", "description": "Limpa", "argumentHint": "", "builtin": true },
+            { "name": "__interno", "description": "x" },
+        ] });
+        let lista = comandos_de(&resposta).unwrap();
+        assert_eq!(lista.len(), 2);
+        assert_eq!(
+            (lista[0].nome.as_str(), lista[0].descricao.as_str(), lista[0].dica.as_str(), &lista[0].origem),
+            ("ads", "Auditoria de anúncios", "audit | google", &Origem::Pessoal)
+        );
+        assert_eq!((&lista[1].origem, lista[1].dica.as_str()), (&Origem::Embutida, ""));
+        assert_eq!(lista[1], ComandoOferecido { nome: "clear".into(), descricao: "Limpa".into(), origem: Origem::Embutida, ..Default::default() });
+    }
+
+    /// O catálogo vale por um tempo: sem resposta ainda ou velha, pergunta de novo.
+    #[test]
+    fn o_catalogo_tem_validade() {
+        assert!(precisa_perguntar(None));
+        assert!(!precisa_perguntar(Some(Duration::from_secs(60))));
+        assert!(precisa_perguntar(Some(Duration::from_secs(60 * 60))));
+    }
+
+    fn pasta_de_teste(nome: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("vitral-catalogo-{nome}-{}", crate::modelo::novo_id()));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn acha_o_arquivo_da_skill_pela_origem() {
+        let raiz = pasta_de_teste("skills");
+        let projeto = raiz.join("proj");
+        let sub = projeto.join("src/dentro");
+        let conta = raiz.join("conta");
+        let plugin = raiz.join("plugin");
+        for (dir, nome) in [
+            (projeto.join(".claude/skills/revisar"), "revisar"),
+            (conta.join("skills/easypanel"), "easypanel"),
+            (plugin.join("skills/tdd"), "tdd"),
+        ] {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("SKILL.md"), format!("# {nome}")).unwrap();
+        }
+        fs::create_dir_all(&sub).unwrap();
+        fs::create_dir_all(projeto.join(".claude/commands")).unwrap();
+        fs::write(projeto.join(".claude/commands/deploy.md"), "x").unwrap();
+        let plugins = [("mattpocock-skills".to_string(), plugin.clone())];
+
+        // De dentro de uma subpasta, a skill do projeto vem de um dos pais.
+        assert_eq!(
+            arquivo_da_comando("revisar", &Origem::Projeto, &sub, &conta, &plugins),
+            Some((projeto.join(".claude/skills/revisar/SKILL.md"), true))
+        );
+        assert_eq!(
+            arquivo_da_comando("easypanel", &Origem::Pessoal, &sub, &conta, &plugins),
+            Some((conta.join("skills/easypanel/SKILL.md"), true))
+        );
+        assert_eq!(
+            arquivo_da_comando("mattpocock-skills:tdd", &Origem::Plugin("mattpocock-skills".into()), &sub, &conta, &plugins),
+            Some((plugin.join("skills/tdd/SKILL.md"), true))
+        );
+        // Um comando de barra comum tem o arquivo, mas não é skill.
+        assert_eq!(
+            arquivo_da_comando("deploy", &Origem::Projeto, &sub, &conta, &plugins),
+            Some((projeto.join(".claude/commands/deploy.md"), false))
+        );
+        // Os do Claude Code não têm arquivo; nome com barra não escapa da pasta.
+        assert_eq!(arquivo_da_comando("clear", &Origem::Embutida, &sub, &conta, &plugins), None);
+        assert_eq!(arquivo_da_comando("../conta/skills/easypanel", &Origem::Projeto, &sub, &conta, &plugins), None);
+        let _ = fs::remove_dir_all(&raiz);
     }
 }
