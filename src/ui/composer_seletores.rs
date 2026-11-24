@@ -1340,8 +1340,8 @@ impl Janela {
             // pela fila de qualquer jeito não precisa da opção.
             fila_a_parte: composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila,
             outro_instalado: outro.instalado(),
-            // O `/compact` é do Claude Code, e precisa de uma conversa para resumir.
-            compactar: chat.agente == Agente::Claude && chat.sessao_criada,
+            // O `/compact` é do Claude Code e do Codex, e precisa de uma conversa para resumir.
+            compactar: chat.agente != Agente::Gemini && chat.sessao_criada,
             tem_agentes: crate::ui::mapa_agentes::tem_agentes(chat),
             rodando: b.rodando,
         };

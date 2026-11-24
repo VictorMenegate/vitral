@@ -24,6 +24,25 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   “Fable”, e o modo e o esforço ficam só com o ícone.
 - **Imagens coladas sem uso saem sozinhas.** Ao abrir, o Vitral apaga as imagens coladas que
   nenhuma conversa, fila ou rascunho usa e que estão paradas há mais de um dia.
+O Codex ficou quase tão completo quanto o Claude no Vitral: pede permissão no meio do turno pelo
+mesmo cartão, tem o `/compact`, o `/review` e as skills no menu "/", mostra o contexto, os tokens
+e os passos, e corrige uma mensagem ou continua daqui em outro chat sem resumo.
+
+- **O Codex pede permissão.** Nos modos Manual, Aceitar edições, Planejar e Automático, o Codex
+  pergunta no meio do turno pelo mesmo cartão do Claude, com o comando inteiro ou o diff do
+  arquivo, Negar e Permitir. Antes esses modos viravam só o sandbox dele. O "Permitir sempre"
+  vale para o Codex também, e o Aceitar edições deixa passar as edições dentro da pasta.
+- **Comandos de barra no Codex.** O `/compact` resume a conversa do Codex (também pelo
+  Compactar), o `/review` pede a revisão das mudanças (ou do que vier escrito depois dele) e as
+  skills do Codex na pasta aparecem no menu "/".
+- **Contexto e tokens do Codex.** O medidor do contexto aparece também no chat do Codex, com a
+  janela do modelo, e a linha "Trabalhou" diz quantos tokens o turno usou. O Codex não diz o
+  custo em dólar, então o popover mostra só o contexto e os tokens.
+- **Passos do Codex.** O plano que o Codex mantém aparece como os passos do Claude: a pílula
+  "1/3" acima da caixa e as linhas na trilha.
+- **Corrigir e continuar daqui no Codex, sem resumo.** Corrigir uma mensagem ou continuar a
+  conversa em outro chat leva o Codex exatamente ao ponto escolhido, como já fazia com o Claude,
+  em vez de começar uma conversa nova com um resumo das últimas mensagens.
 
 ## 0.10.1
 

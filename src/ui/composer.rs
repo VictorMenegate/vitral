@@ -1215,12 +1215,9 @@ impl Janela {
             .bg(Cores::traco())
             .child(div().h_full().w(relative(fracao.clamp(0.06, 1.))).rounded_full().bg(cor_arco));
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
-        let dica: SharedString = format!(
-            "Contexto: {} de {}\nO custo, o modelo e o Compactar",
-            milhares(usados),
-            tokens(janela)
-        )
-        .into();
+        // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
+        let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };
+        let dica: SharedString = format!("Contexto: {} de {}\n{o_que_abre}", milhares(usados), tokens(janela)).into();
         let lado = if estreita { 28. } else { 32. };
         let gatilho = Button::new(("contexto", b.painel as usize))
             .custom(variante_fantasma(cx))
@@ -1984,10 +1981,10 @@ impl Janela {
     pub(super) fn catalogo_de(&self, chat: &Chat) -> Vec<crate::claude::ComandoOferecido> {
         use crate::claude::ComandoOferecido;
         let so_nome = |nome: &str| ComandoOferecido { nome: nome.to_string(), ..Default::default() };
-        // Os comandos de barra e as skills são do Claude Code; no Codex e no Gemini fica só o
-        // `/clear`, que é do Vitral.
-        if chat.agente != crate::modelo::Agente::Claude {
-            return vec![so_nome("clear")];
+        // Fora do Claude, os que o Vitral conhece: o `/clear` e, no Codex, o `/compact`, o `/review`
+        // e as skills da pasta (`comandos_fora_do_claude`).
+        if let Some(lista) = comandos_fora_do_claude(chat) {
+            return lista.iter().map(|n| so_nome(n)).collect();
         }
         // O que o Claude Code disse que oferece naquela pasta (perguntado com o chat aberto, e de
         // novo a cada 10 minutos), com os detalhes; sem resposta dele ainda, os fixos. Depois que
@@ -2095,9 +2092,31 @@ impl Janela {
     }
 }
 
+/// Os comandos de barra de um chat do Codex ou do Gemini (`None` no Claude, que tem os do Claude
+/// Code). Sempre o `/clear`, que é do Vitral; no Codex, o que ele disse que oferece na pasta no
+/// último turno (o `/compact`, o `/review` e as skills, `agente_codex::servidor`), ou os dois
+/// primeiros antes de ele dizer.
+fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
+    let do_agente: Vec<String> = match chat.agente {
+        crate::modelo::Agente::Claude => return None,
+        crate::modelo::Agente::Gemini => Vec::new(),
+        crate::modelo::Agente::Codex if chat.comandos.is_empty() => {
+            crate::agente_codex::servidor::COMANDOS.iter().map(|c| c.to_string()).collect()
+        }
+        crate::modelo::Agente::Codex => chat.comandos.clone(),
+    };
+    let mut lista = vec!["clear".to_string()];
+    for comando in do_agente {
+        if !lista.contains(&comando) {
+            lista.push(comando);
+        }
+    }
+    Some(lista)
+}
+
 fn descricao_comando(comando: &str) -> Option<&'static str> {
     Some(match comando {
-        "clear" => "Começa uma sessão nova (o Claude esquece a conversa)",
+        "clear" => "Começa uma sessão nova (o agente esquece a conversa)",
         "compact" => "Resume a conversa para liberar contexto",
         "context" => "Mostra o uso do contexto",
         "usage" => "Uso do plano",
@@ -2317,11 +2336,25 @@ fn prefixo_de(composer: &Entity<TextareaState>, cx: &App) -> Option<String> {
 
 #[cfg(test)]
 mod testes_sugestoes {
-    use super::{Sugestao, completar, escolha_do_enter, gatilho, menu_sugestoes as menu_com_limite};
+    use super::{Sugestao, completar, comandos_fora_do_claude, escolha_do_enter, gatilho, menu_sugestoes as menu_com_limite};
 
     /// O menu de antes: no máximo oito (o limite do "@" e do "#").
     fn menu_sugestoes(itens: Vec<Sugestao>, digitado: &str) -> Vec<Sugestao> {
         menu_com_limite(itens, digitado, Some(8))
+    }
+
+    #[test]
+    fn o_codex_tem_o_compact_o_review_e_as_skills_no_menu() {
+        use crate::modelo::{Agente, Chat};
+        let mut chat = Chat::novo("c".into(), "t", std::path::PathBuf::from("/p"));
+        assert_eq!(comandos_fora_do_claude(&chat), None, "o Claude tem os do Claude Code");
+        chat.agente = Agente::Codex;
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review"]);
+        chat.comandos = vec!["compact".into(), "review".into(), "revisar-pr".into(), "clear".into()];
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review", "revisar-pr"]);
+        chat.agente = Agente::Gemini;
+        chat.comandos.clear();
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear"]);
     }
 
     fn sugestao(valor: &str, chave: &str, busca: &str, peso: usize) -> Sugestao {

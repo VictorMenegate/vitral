@@ -586,6 +586,31 @@ pub fn regra_de_permissao(
     }
 }
 
+/// O modo de permissão do chat já responde ao pedido de um agente que pergunta pelo protocolo (o
+/// Codex e o Gemini), sem cartão: "Sem perguntar" permite tudo e "Aceitar edições" permite as
+/// edições dentro da pasta. É o modo de agora, então trocar o modo com o turno rodando vale já
+/// no próximo pedido.
+pub fn modo_permite(modo: &str, ferramenta: &str, entrada: &serde_json::Value, pasta: &Path) -> bool {
+    match modo {
+        "bypassPermissions" => true,
+        "acceptEdits" => regra_de_permissao(ferramenta, entrada, pasta).as_deref() == Some("edicoes"),
+        _ => false,
+    }
+}
+
+/// A marca de uma mensagem que abriu um turno do Codex: o id do turno, com o prefixo que a
+/// separa das do Claude Code (o uuid da mensagem na sessão dele).
+pub fn marca_do_codex(turno: &str) -> String {
+    format!("{PREFIXO_DO_CODEX}{turno}")
+}
+
+const PREFIXO_DO_CODEX: &str = "codex:";
+
+/// O id do turno do Codex guardado na marca (`None` na marca do Claude e na provisória).
+pub fn turno_do_codex(marca: &str) -> Option<&str> {
+    marca.strip_prefix(PREFIXO_DO_CODEX).filter(|turno| !turno.is_empty())
+}
+
 /// O caminho fica na pasta do chat: relativo ou abaixo dela, e sem `..` (que pode sair dela).
 pub fn dentro_da_pasta(caminho: &Path, pasta: &Path) -> bool {
     !caminho.components().any(|c| c == std::path::Component::ParentDir)
@@ -1030,6 +1055,32 @@ mod testes {
     /// e o teste não depende do fuso de quem o roda.
     const MEIO_DIA: u64 = 1_773_316_800;
     const DIA: u64 = 86_400;
+
+    #[test]
+    fn a_marca_do_codex_nao_se_confunde_com_a_do_claude() {
+        let marca = marca_do_codex("01a20e58-8b3a-7870-800e-a5c1a30a45b2");
+        assert_eq!(turno_do_codex(&marca), Some("01a20e58-8b3a-7870-800e-a5c1a30a45b2"));
+        assert_ne!(marca, "01a20e58-8b3a-7870-800e-a5c1a30a45b2", "o uuid sozinho é a marca do Claude");
+        assert_eq!(turno_do_codex("8c1f3b2a-1111-4222-8333-944455556666"), None);
+    }
+
+    #[test]
+    fn o_modo_responde_ao_pedido_sem_cartao() {
+        let pasta = Path::new("/p/loja");
+        let dentro = serde_json::json!({"file_path": "/p/loja/a.rs", "diff": "@@ -1 +1 @@\n-a\n+b"});
+        let fora = serde_json::json!({"file_path": "/etc/hosts", "diff": "@@ -1 +1 @@\n-a\n+b"});
+        let comando = serde_json::json!({"command": "touch b.txt"});
+        assert!(modo_permite("acceptEdits", "Edit", &dentro, pasta));
+        assert!(modo_permite("acceptEdits", "Write", &serde_json::json!({"file_path": "novo.txt", "content": "oi"}), pasta));
+        assert!(!modo_permite("acceptEdits", "Edit", &fora, pasta), "fora da pasta pergunta");
+        assert!(!modo_permite("acceptEdits", "Bash", &comando, pasta), "comando pergunta");
+        for ferramenta in ["Edit", "Bash"] {
+            assert!(modo_permite("bypassPermissions", ferramenta, &comando, pasta));
+            assert!(!modo_permite("manual", ferramenta, &dentro, pasta));
+            assert!(!modo_permite("plan", ferramenta, &dentro, pasta));
+            assert!(!modo_permite("auto", ferramenta, &dentro, pasta));
+        }
+    }
 
     /// O fim de um agente em segundo plano é um item da conversa, gravado com o nome dele: uma
     /// versão de antes disto o guarda como veio (`Desconhecido`), e esta o lê de volta.

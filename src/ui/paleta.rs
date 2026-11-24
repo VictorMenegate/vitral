@@ -176,7 +176,7 @@ impl Direto {
                     MandarDepois if c.caixa_vazia => Some("Escreva a mensagem na caixa antes".into()),
                     PerguntarAoOutro if !c.outro_instalado => Some(format!("O {} não está instalado", c.agente.outro().nome())),
                     PerguntarAoOutro if c.caixa_vazia || c.caixa_com_barra => Some("Escreva a pergunta na caixa antes".into()),
-                    Compactar if c.agente != Agente::Claude => Some("O /compact é do Claude Code".into()),
+                    Compactar if c.agente == Agente::Gemini => Some("O Gemini não tem o /compact".into()),
                     Compactar if !c.com_sessao => Some("A conversa ainda não tem sessão".into()),
                     Agentes if !c.tem_agentes => Some("Esta conversa não abriu agentes".into()),
                     SessaoNova if c.rodando => Some("Espere o turno terminar".into()),
@@ -736,6 +736,16 @@ mod testes {
         let todas = entradas(&com_chat(ChatAgora { agente: crate::modelo::Agente::Codex, fixado: true, ..Default::default() }));
         acha(&todas, "Perguntar também ao Claude");
         acha(&todas, "Desafixar a conversa");
+    }
+
+    /// O Codex também compacta (`thread/compact/start`); só o Gemini não tem como.
+    #[test]
+    fn o_codex_compacta_e_o_gemini_nao() {
+        use crate::modelo::Agente;
+        let codex = entradas(&com_chat(ChatAgora { agente: Agente::Codex, com_sessao: true, ..Default::default() }));
+        assert_eq!(acha(&codex, "Compactar a conversa").motivo, None);
+        let gemini = entradas(&com_chat(ChatAgora { agente: Agente::Gemini, com_sessao: true, ..Default::default() }));
+        assert!(acha(&gemini, "Compactar a conversa").motivo.is_some());
     }
 
     #[test]
