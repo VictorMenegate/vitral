@@ -83,7 +83,11 @@ def servidor():
 
     def trabalhar(pedido):
         nonlocal turno
-        for n, (nome, detalhe, segundos) in enumerate(FERRAMENTA.findall(pedido)):
+        # A revisão do turno do outro agente (Vitral 0.9.6): só lê. As ferramentas citadas no que
+        # o outro fez não são dele: em vez delas, olha o diff da pasta, por 2 s.
+        revisando = "responda só: Nada a acrescentar" in pedido
+        ferramentas = [("Bash", "git diff --stat", "2")] if revisando else FERRAMENTA.findall(pedido)
+        for n, (nome, detalhe, segundos) in enumerate(ferramentas):
             if fim.is_set(): break
             detalhe = detalhe.strip()
             if nome == "Pensa":
@@ -123,7 +127,12 @@ def servidor():
         interrompido = fim.is_set()
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
         # Na dupla do Vitral, a vez de revisar o outro agente: revisa e não acrescenta nada (a rodada para).
-        if "responda só: Nada a acrescentar" in pedido:
+        # Com `[revisor-acha]` no que o usuário pediu, a revisão tem achado.
+        if revisando and "[revisor-acha]" in pedido:
+            texto = ("(codex falso) Dois pontos no que o Claude mudou:\n\n"
+                     "1. **`carrinho.py`, linha 12:** o desconto pode ficar maior que o subtotal, e o total sai negativo.\n"
+                     "2. **Faltou teste** para o cupom vencido.")
+        elif revisando:
             texto = "Nada a acrescentar."
         if not interrompido: item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
         falhou = "[falha]" in pedido

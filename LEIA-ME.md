@@ -88,15 +88,33 @@ componentes do GPUI Kit.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
-  `comecar_turno_com`, a mensagem do usuário escolhe quem trabalha (`alvo_da_dupla`: "@claude",
-  "@codex" ou os dois) e abre a rodada (`Motor.rodadas`, `DUPLA_TROCAS`); `o_que_o_outro_fez`
-  monta, a partir da última `Item::Vez` do agente, o que o usuário mandou e o que o outro disse e
-  mexeu, e vai antes do texto do turno. No `fim_de_turno`, `passar_a_vez` abre a vez do outro com um
-  pedido de revisão que fica fora da conversa (`Entrada.registrada`); a rodada para em "Nada a
-  acrescentar" (`nada_a_acrescentar`), no limite de trocas, num erro ou no Parar. Escolher no seletor
-  um modelo do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O
-  interruptor fica no seletor de modelo (`juntar_agentes`), e o chip do modelo mostra as duas
-  marcas sobrepostas (`Simbolo::Dupla`, a de quem trabalhou por último na frente) em toda largura.
+  `comecar_turno_com`, a mensagem do usuário escolhe quem trabalha (`alvo_da_dupla`: "@claude" ou
+  "@codex"; sem @, quem está na vez); `o_que_o_outro_fez` monta, a partir da última `Item::Vez` do
+  agente, o que o usuário mandou e o que o outro disse e mexeu, e vai antes do texto do turno. A
+  dupla nasce sozinha, ao trocar de agente ou chamar o outro com @. Escolher no seletor um modelo
+  do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O chip do modelo
+  mostra as duas marcas sobrepostas (`Simbolo::Dupla`, a de quem trabalhou por último na frente) em
+  toda largura. A chave "Os dois em toda mensagem" (as rodadas em que um trabalhava e o outro
+  revisava) saiu em 24/11/2026: o campo `Chat.revisao_em_dupla` ainda é lido, para os dados
+  antigos abrirem, e não vale mais nada.
+- **A revisão do turno pelo outro agente.** `src/motor/revisao_do_par.rs` (decisão do dono em
+  23/11/2026). No `fim_de_turno` sem erro, o turno que mudou `LINHAS_PARA_REVISAR` (20) linhas ou
+  mais (a conta das Mudanças do turno, `linhas_mudadas_no_turno`) é revisto pelo outro agente (o
+  Codex num chat do Claude, o Claude nos outros; `Agente::outro`), se a opção
+  `Config.revisar_edicoes` ("Revisão automática pelo outro agente", em Configurações, Agentes;
+  ligada de fábrica) estiver ligada. Não roda com o outro fora (não instalado ou no limite do
+  plano), com o chat em Planejar, nem no turno que veio de uma revisão mandada (nada de laço;
+  `motivo_sem_revisao`). O revisor entra como o parceiro da dupla (`abrir`, que cria o parceiro se o
+  chat não tinha), roda um turno só em Planejar (no Codex, o sandbox `read-only`; o pedido de
+  permissão dele é negado sem perguntar) e o chat volta a quem era (`fechar`): o que ele fez sai da
+  conversa e entra o resultado, a linha "Codex revisou: nada a acrescentar" ou o `Item::Revisao`, o
+  cartão com o achado e **Mandar ao Claude** (`Motor::mandar_revisao`, que entrega o texto ao agente
+  do chat como uma mensagem de "Revisão do Codex"). Enquanto roda, a linha de estado diz "Codex
+  revisando o turno…" e o chat conta como parado; uma mensagem sua corta a revisão, sem deixar
+  nada. Na linha "Trabalhou…" do último turno pronto, **Revisar com o Codex** (ou "com o Claude";
+  `ui/mensagens/revisao.rs`, `Motor::pode_revisar`) pede a mesma revisão para qualquer turno. Na
+  bancada, `[ferramenta EditGrande x.py]` faz um turno de 30 linhas e `[revisor-acha]` na mensagem
+  faz o revisor de mentira achar algo.
 - **Subagente em segundo plano.** Desde o Claude Code 2.1.3xx a chamada Agent volta na hora com
   `tool_use_result.status = "async_launched"`: isso vira `Evento::SubLancado`, e não resultado. O
   `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
@@ -199,8 +217,8 @@ componentes do GPUI Kit.
   `motor::CONTEXTO_COMPACTADO`; a conversa trazida do Claude Code segue com "A conversa foi
   resumida aqui", que vem do arquivo dela (`src/importar.rs`).
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
-  no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
-  as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
+  numa linha no pé da aba do Claude, "Conta: tecnologia · semana 44%", que abre as contas no lugar
+  (`pe_da_conta`, em `src/ui/composer_seletores.rs`; as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
   "OAuth session expired and could not be refreshed"; `motor::falha_de_login`), a conta entra em
   `Motor.sem_login`, sai da escolha (`conta_da_escolha` passa a pular até a conta escolhida à mão)
   e o turno é repetido em outra conta com login, com o aviso de qual (`Motor::login_perdido`). Sem
@@ -770,8 +788,10 @@ próxima mensagem"): vale só para a próxima mensagem, sobe o esforço dela par
 continua Máximo) e deixa o chip em arco-íris até enviar. Um comando de barra não a consome. Embaixo
 dela fica a chave **Ultracode**, em violeta com o ícone de fluxo (U liga): vale só para a próxima
 mensagem, como o Ultrathink, e faz o Claude orquestrar vários agentes em paralelo por um fluxo (a
-ferramenta Workflow do Claude Code). A linha avisa em âmbar que gasta bem mais do plano e que roda
-no esforço Extra (o Máximo vira Extra nessa mensagem). Ligada, o chip do esforço vira "Ultracode" em
+ferramenta Workflow do Claude Code). Embaixo do título, uma linha só: "Agentes em paralelo, só na
+próxima · gasta bem mais"; o (i) ao lado do nome diz o resto, que gasta bem mais do plano e roda no
+esforço Extra (o Máximo vira Extra nessa mensagem). O âmbar fica para o que atrapalha agora
+(`avisos_do_ultracode`). Ligada, o chip do esforço vira "Ultracode" em
 violeta com o ícone de fluxo (com o Ultrathink junto, as barrinhas ficam em arco-íris; na caixa
 estreita, só o ícone de fluxo). Começa sempre desligada, também ao abrir o Vitral. Fica
 desabilitada, com o motivo curto no lugar da descrição (só o título e a chave apagam; o motivo
@@ -781,10 +801,11 @@ no chat em que quem responde é o Codex ("Só no Claude Code", também com os do
 Numa conta em que um turno com Ultracode mostrou os fluxos de agentes desligados (em Dynamic
 workflows no `/config`, por `disableWorkflows` ou pela organização), a linha continua ligável e
 avisa em âmbar; esse turno ganha um aviso em vermelho, segue em Extra e a mensagem perde o selo.
-Fora de Sem perguntar e Automático, a linha também avisa que comandos e edições dos agentes podem
-ser recusados (eles não conseguem pedir permissão). Um Ultracode por vez no Vitral inteiro: com
-outro rodando, a linha avisa ("O Ultracode roda em outra conversa: esta mensagem iria sem ele") e a
-mensagem vai sem o Ultracode, com o motivo na conversa. Quando a conta chega ao limite e o turno
+Fora de Sem perguntar e Automático, a linha também avisa ("Neste modo, os agentes podem ter ações
+recusadas": eles não conseguem pedir permissão). Um Ultracode por vez no Vitral inteiro: com
+outro rodando, a linha avisa ("Roda em outra conversa: esta iria sem ele") e a mensagem vai sem o
+Ultracode, com o motivo na conversa. Cada aviso desses é uma linha curta em âmbar; o porquê vai na
+dica do (i). Quando a conta chega ao limite e o turno
 continua na próxima, a repetição vai sem ele; só o **Tentar de novo** o repete. Fora do Ultracode, a ferramenta
 Workflow fica bloqueada: nem um chat nem um "Continue de onde parou" relançam um fluxo sozinhos. O
 **modelo** abre um seletor com busca: no alto, os seus perfis de agente, se houver (grupo **Perfis**;
@@ -795,8 +816,15 @@ o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está e
 5.5"); só uma família escolhida na conversa ganha o selo "em uso". Uma conversa antiga que
 guardou o nome completo do modelo ganha a linha dele. Quando a família não é a que está em uso, a
 linha dela diz a versão que ela é hoje ("Para os desafios mais difíceis · hoje, Fable 5.1"). Embaixo
-das famílias vêm as **versões exatas** (Fable 5.2, Fable 5.1, Opus 5.5 e as outras), com a que está
-rodando marcada, inclusive quando a conversa segue a família. A lista vem do Claude Code instalado:
+das famílias, a linha **Outras versões ▸** abre no lugar as **versões exatas** (Fable 5.2, Fable 5.1,
+Opus 5.5 e as outras), com a que está rodando marcada, inclusive quando a conversa segue a família.
+No pé, com mais de uma conta, a linha da conta ("Conta: tecnologia · semana 44%") abre a escolha
+dela no lugar. As duas começam recolhidas a cada abertura (só uma versão exata escolhida abre as
+versões), para o seletor caber sem rolagem a 150%: o que está aberto é `Abertos`, guardado na
+Janela por painel, e o que fica à vista sai de `grupos_a_vista`, que também faz a busca (o
+`filtro_proprio` da lista): com algo escrito, as versões e as contas que casam aparecem direto e as
+linhas de abrir saem. Numa conversa do Claude acima de 100 mil tokens (`Chat::contexto_grande`),
+uma linha curta embaixo da lista diz "Trocar agora relê 751 mil tokens" (`aviso_de_troca`). A lista vem do Claude Code instalado:
 ao abrir o app e quando a versão dele muda, o Vitral faz o pedido `initialize` do protocolo do
 Agent SDK (o mesmo da extensão do VS Code ao abrir), sem mandar mensagem e sem gastar uso, numa
 pasta vazia e só do dono dentro do cache do Vitral (`perguntas`), só com as configurações do
@@ -2688,6 +2716,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
 | `src/motor/passos.rs` | A lista de passos do agente de cada chat (o `TodoWrite` e as ferramentas de tarefa do Claude Code) e a frase do que cada chamada mudou nela, para a trilha |
 | `src/motor/fundo.rs` | Os agentes em segundo plano de cada chat: a lista do `background_tasks_changed`, a chamada que abriu cada um, o fim do arquivo de cada um lido aos poucos (a última ação), e o item que marca o fim deles na conversa |
+| `src/motor/revisao_do_par.rs` | A revisão do turno pelo outro agente: quando roda sozinha (20 linhas ou mais, a opção ligada, o outro à mão), o revisor que entra como parceiro e sai no fim, o resultado (a linha ou o cartão) e a entrega da revisão ao agente do chat |
+| `src/ui/mensagens/revisao.rs` | O cartão da revisão do outro agente, com "Mandar ao Claude", e o "Revisar com o Codex" da linha "Trabalhou…" |
 | `src/motor/subconversa.rs` | A conversa de um subagente aberta numa aba: o chat de mentira, só de leitura, fora do estado; achar e reler o arquivo dele em segundo plano enquanto ele trabalha; qual subagente espera uma permissão sua e o relatório entregue que vai para o cartão |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |

@@ -612,6 +612,9 @@ pub struct Janela {
     historico_aberto: Option<(u64, bool)>,
     /// A aba (Claude ou Codex) à vista no seletor de modelo do painel; sem ela, a do agente do chat.
     aba_do_modelo: Option<(u64, crate::modelo::Agente)>,
+    /// O que está aberto no seletor de modelo do painel ("Outras versões", a conta); sem ele, o de
+    /// partida.
+    abertos_do_modelo: Option<(u64, composer::AbertosDoModelo)>,
     /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
     /// de atualização mostrado ("pronta 0.3.0"): um por versão.
     atualizacao_pronta: Option<String>,
@@ -976,6 +979,7 @@ impl Janela {
             pop_caixa: None,
             historico_aberto: None,
             aba_do_modelo: None,
+            abertos_do_modelo: None,
             atualizacao_pronta: None,
             atualizacao_avisada: None,
             aba_direita: abas_direita::AbaDireita::Chat,

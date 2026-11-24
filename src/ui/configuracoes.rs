@@ -310,6 +310,7 @@ impl Configuracoes {
             ("Servidores MCP do Claude Code".to_string(), ligado(c.mcp_trabalhadores)),
             ("Memória da equipe".to_string(), if c.memoria_da_equipe.is_empty() { "desligada" } else { "ligada" }.to_string()),
             ("Rever a memória ao terminar".to_string(), ligado(c.memoria_ao_terminar)),
+            ("Revisão automática pelo outro agente".to_string(), ligado(c.revisar_edicoes)),
             ("Sugerir a próxima mensagem".to_string(), ligado(c.sugerir_resposta)),
             ("Chat chamado abre numa aba".to_string(), ligado(c.chat_chamado_abre_aba)),
             ("Fechar a aba para o chat".to_string(), ligado(c.fechar_aba_para_o_chat)),
@@ -555,6 +556,7 @@ impl Render for Configuracoes {
             .collect();
         let (mcp, alternar_mcp) = (config.mcp_trabalhadores, m());
         let (memoria, alternar_memoria) = (config.memoria_ao_terminar, m());
+        let (revisar, alternar_revisar) = (config.revisar_edicoes, m());
         let (sugerir, alternar_sugerir) = (config.sugerir_resposta, m());
         let (uso_no_canto, alternar_uso) = (config.uso_no_canto, m());
         let (anel_claude, anel_codex, anel_gemini) = (m(), m(), m());
@@ -748,7 +750,22 @@ impl Render for Configuracoes {
                     window,
                     cx,
                 ),
-            ));
+            ))
+            // A revisão do turno pelo outro agente (dono, 23/11/2026): ligada de fábrica, com o
+            // custo à vista, porque cada revisão é um turno no plano do outro.
+            .linha(
+                LinhaDeOpcao::new("cfg-revisar-edicoes", "Revisão automática pelo outro agente")
+                    .info(
+                        "Quando um turno muda 20 linhas ou mais, o outro agente (o Codex num chat do Claude, o Claude \
+                         nos outros) confere o que mudou, só lendo. Sem nada a dizer, fica uma linha discreta; com um \
+                         achado, um cartão que você manda ao agente do chat se quiser: nada vai sozinho. Desligada, a \
+                         revisão continua no “Revisar com…” da linha “Trabalhou…”.",
+                    )
+                    .descricao("Gasta o plano do outro agente a cada turno revisto.")
+                    .interruptor(revisar, move |ligado, _, cx| {
+                        alternar_revisar.update(cx, |m, cx| m.mudar_config(|c| c.revisar_edicoes = ligado, cx))
+                    }),
+            );
         let instrucoes_grupo = GrupoDeOpcoes::new(Some("Suas instruções".into())).linha({
             let abrir = m();
             let vazio = config.instrucoes.trim().is_empty();

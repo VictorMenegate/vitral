@@ -200,6 +200,19 @@ pub enum Item {
         #[serde(default, skip_serializing_if = "sem_hora")]
         em: u64,
     },
+    /// O que o outro agente achou ao rever um turno (0.9.6; `motor/revisao_do_par.rs`): o texto da
+    /// revisão, num cartão com a ação de mandá-la ao agente do chat. A revisão que não achou nada
+    /// vira só um aviso de uma linha.
+    Revisao {
+        /// Quem revisou.
+        de: Agente,
+        texto: String,
+        #[serde(default, skip_serializing_if = "sem_hora")]
+        em: u64,
+        /// Você já a mandou ao agente do chat (a ação some).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        mandada: bool,
+    },
     /// Item de uma versão mais nova, guardado e regravado como veio. Sempre a última variante.
     #[serde(untagged)]
     Desconhecido(serde_json::Value),
@@ -221,7 +234,8 @@ impl Item {
             | Item::Aviso { em, .. }
             | Item::Cartao { em, .. }
             | Item::Vez { em, .. }
-            | Item::FimDoAgente { em, .. } => *em,
+            | Item::FimDoAgente { em, .. }
+            | Item::Revisao { em, .. } => *em,
             Item::Desconhecido(_) => 0,
         }
     }
@@ -383,12 +397,12 @@ pub struct Chat {
     /// Com o Claude e o Codex juntos no chat: o outro agente, com a sessão dele guardada.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parceiro: Option<Parceiro>,
-    /// Na dupla, cada mensagem sem @ vai aos dois, um de cada vez, e um revisa o que o outro fez
-    /// (a opção "Os dois em toda mensagem" do seletor de modelo). Desligada, a dupla nasce sozinha
-    /// quando você troca de agente ou chama o outro com @, e a mensagem vai só a quem está na vez
-    /// (dono, 17/11/2026: "um jeito de não precisar escolher isso, automático quando troco e
-    /// quando chamo com o @").
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// A chave "Os dois em toda mensagem" das versões até a 0.9.5 (cada mensagem sem @ ia aos
+    /// dois, e um revisava o outro em rodadas): só lida, para os dados antigos abrirem. Não vale
+    /// mais nada: o chat que a tinha ligada se comporta como os outros, e quem revisa agora é a
+    /// revisão do turno (`motor/revisao_do_par.rs`).
+    #[serde(default, skip_serializing)]
+    #[allow(dead_code)]
     pub revisao_em_dupla: bool,
     /// A sessão do Claude Code, ou o `thread_id` do Codex depois do primeiro turno.
     pub sessao: String,
@@ -690,6 +704,9 @@ pub struct Config {
     /// Claude Code, que reaproveita o cache da conversa) aparece apagada na caixa vazia, e o Tab a
     /// aceita (dono, 17/11/2026: "faz ter esse negócio de sugerir resposta também no Vitral").
     pub sugerir_resposta: bool,
+    /// O outro agente revê sozinho, só lendo, o turno que mudou bastante arquivo
+    /// (`motor/revisao_do_par.rs`). Ligado de fábrica.
+    pub revisar_edicoes: bool,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
     /// equipe. A chave da pessoa fica fora daqui, num arquivo só dela.
     pub memoria_da_equipe: String,
@@ -826,6 +843,7 @@ impl Default for Config {
             agente_padrao: Agente::default(),
             memoria_ao_terminar: true,
             sugerir_resposta: true,
+            revisar_edicoes: true,
             memoria_da_equipe: String::new(),
             avisos_no_app: true,
             letra_da_conversa: 100,

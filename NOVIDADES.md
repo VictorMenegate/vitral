@@ -29,6 +29,17 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
 - **Título pelo Claude Code, anéis de uso, versão nova e letra na caixa.** Dá para desligar o
   título gerado, escolher quais anéis de uso aparecem (Claude, Codex, Gemini), deixar a consulta
   de versão nova dos agentes só no botão e pôr a letra da conversa também na caixa de mensagem.
+- **O outro agente revisa o turno.** Quando um turno muda 20 linhas ou mais, o Codex (num chat do
+  Claude) ou o Claude (nos outros) confere o que mudou, só lendo. Sem nada a dizer, fica uma linha
+  discreta; com um achado, um cartão com **Mandar ao Claude**. A linha “Trabalhou…” do último
+  turno ganha **Revisar com o Codex** para pedir quando quiser. A revisão gasta o plano do outro
+  agente: dá para desligar em Configurações, Agentes. A chave “Os dois em toda mensagem” saiu.
+- **Seletor de modelo mais curto.** As versões exatas ficam atrás de **Outras versões** e a conta
+  vira uma linha no pé, “Conta: tecnologia · semana 44%”, que abre a escolha no lugar. Escrevendo
+  na busca, as versões e as contas que casam aparecem direto. O aviso de reler só aparece com a
+  conversa acima de 100 mil tokens, numa linha curta.
+- **Ultracode em uma linha.** Embaixo do nome, só “Agentes em paralelo, só na próxima · gasta bem
+  mais”; o resto está no (i).
 
 ## 0.9.7
 
