@@ -25,6 +25,10 @@ mensagem que chega com a entrada `skill` diz o nome dela na resposta.
 O uso vem como no 0.169.0: um `thread/tokenUsage/updated` depois de cada item e da resposta, com o
 `total` da conversa (que cresce de um turno para o outro), o `last` da chamada (12 mil tokens mais
 mil por chamada) e a janela de 258.400.
+
+`[passos A; B; C]` encena o plano (`turn/plan/updated`, a lista inteira a cada mudança): começa com
+o primeiro em andamento, avança um passo a cada ferramenta (ou a cada segundo, sem ferramenta) e
+termina com todos concluídos.
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -52,6 +56,7 @@ def png_de_mentira(largura=640, altura=400):
 
 
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
+PASSOS = re.compile(r"\[passos ([^\]]+)\]")
 SAIDA = threading.Lock()
 
 
@@ -138,6 +143,19 @@ def servidor():
         # o outro fez não são dele: em vez delas, olha o diff da pasta, por 2 s.
         revisando = "responda só: Nada a acrescentar" in pedido
         ferramentas = [("Bash", "git diff --stat", "2")] if revisando else FERRAMENTA.findall(pedido)
+        achados = PASSOS.search(pedido)
+        passos = [p.strip() for p in achados.group(1).split(";") if p.strip()] if achados else []
+
+        def plano(feitos):
+            if not passos: return
+            evento("turn/plan/updated", {"threadId": thread, "turnId": turno, "explanation": None, "plan": [
+                {"step": p, "status": "completed" if i < feitos else "inProgress" if i == feitos else "pending"}
+                for i, p in enumerate(passos)]})
+        plano(0)
+        if passos and not ferramentas:
+            for feitos in range(1, len(passos)):
+                if fim.wait(1): break
+                plano(feitos)
         for n, (nome, detalhe, segundos) in enumerate(ferramentas):
             if fim.is_set(): break
             detalhe = detalhe.strip()
@@ -191,7 +209,9 @@ def servidor():
             else: valor.update(status="completed", aggregatedOutput=f"(codex falso) saída de: {detalhe}\n", exitCode=0)
             item(valor, True)
             usar()
+            plano(min(n + 1, len(passos) - 1))
         interrompido = fim.is_set()
+        if not interrompido: plano(len(passos))
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
         if skill_pedida:
             texto += f" (skill {skill_pedida})"

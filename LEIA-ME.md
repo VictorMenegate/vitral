@@ -101,6 +101,12 @@ componentes do GPUI Kit.
   (`Evento::Gasto` antes do `Fim`: a dica da linha "Trabalhou", o "Último turno" do popover e o
   livro do **Onde o uso foi**). Só o uso do turno que roda conta para o gasto. O popover do
   contexto do Codex não tem custo nem conta.
+  **Passos** (24/11/2026): o `turn/plan/updated` (a lista inteira a cada mudança, com `step` e
+  `status`) vira uma chamada TodoWrite com o resultado na hora (`todos_do_plano`), e a lista de
+  passos do chat (`motor/passos.rs`), a pílula "1/3" e as linhas da trilha ("Criou 3 passos",
+  "Concluiu: … · Começou: …") saem como no Claude. Conferido só pelo schema e pelo Codex de
+  mentira: nos turnos de verdade do 0.169.0 (gpt-6-luna e gpt-6.2-sol) o modelo disse que o
+  `update_plan` não estava disponível, e nenhum plano chegou.
   O que ainda muda num chat do Codex: não há conta nem custo em dólar, e parar é pelo
   `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
@@ -2573,7 +2579,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[passos A; B; C]` encena o plano (`turn/plan/updated`), um passo a cada ferramenta; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`

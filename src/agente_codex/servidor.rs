@@ -21,6 +21,10 @@
 //! `last.totalTokens` é o que a conversa ocupa agora (o contexto, como o Codex mostra), o
 //! `modelContextWindow` é a janela, e o `total` soma a conversa inteira, então o gasto do turno é o
 //! `total` do fim menos o de antes da primeira chamada dele. O Codex não diz custo.
+//!
+//! O plano (`turn/plan/updated`: a lista inteira a cada mudança, com `step` e `status`) vira um
+//! TodoWrite com o resultado na hora: é ele que a lista de passos do chat (`motor::passos`), a
+//! pílula "3/5" e a trilha já leem.
 
 use std::{collections::HashMap, io::{self, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 use serde_json::{Value, json};
@@ -141,6 +145,23 @@ pub struct Protocolo {
     tokens_agora: Option<[u64; 4]>,
     /// O tamanho da janela de contexto do modelo (`modelContextWindow`).
     janela: Option<u64>,
+    /// Quantas vezes o plano mudou neste turno (o id de cada linha da trilha).
+    planos: usize,
+}
+
+/// O plano do Codex no formato da entrada do TodoWrite (`todos`: `content`, `activeForm`,
+/// `status`), que a lista de passos do chat já lê.
+fn todos_do_plano(plano: &Value) -> Value {
+    let todos: Vec<Value> = plano.as_array().into_iter().flatten().filter_map(|passo| {
+        let texto = passo["step"].as_str().map(str::trim).filter(|t| !t.is_empty())?;
+        let estado = match passo["status"].as_str() {
+            Some("completed") => "completed",
+            Some("inProgress") => "in_progress",
+            _ => "pending",
+        };
+        Some(json!({"content":texto, "activeForm":texto, "status":estado}))
+    }).collect();
+    json!({"todos":todos})
 }
 
 /// [entrada, cache lido, cache gravado, saída] de um `TokenUsageBreakdown`.
@@ -153,7 +174,7 @@ impl Protocolo {
         let pedido = pedido_de(&input);
         Self { canal, parametros, input, esforco, leitor: super::Leitor::default(), modelo: String::new(), fim: None,
             mudancas: HashMap::new(), pedido, skills: None, esperando_skills: false, tokens_antes: None, tokens_agora: None,
-            janela: None }
+            janela: None, planos: 0 }
     }
 
     /// Os tokens que o turno somou à conversa (`None` sem uso medido nele).
@@ -319,6 +340,12 @@ impl Protocolo {
                         recebe.close();
                         eventos.push(Evento::PermissaoRetirada);
                     }
+                }
+                "turn/plan/updated" => {
+                    self.planos += 1;
+                    let id = format!("plano-{}-{}", p["turnId"].as_str().unwrap_or(&canal.turno), self.planos);
+                    eventos.push(Evento::Ferramenta { id: id.clone(), nome: "TodoWrite".into(), entrada: todos_do_plano(&p["plan"]) });
+                    eventos.push(Evento::ResultadoFerramenta { id, conteudo: String::new(), erro: false, no_fundo: false });
                 }
                 "thread/tokenUsage/updated" => {
                     let uso = &p["tokenUsage"];
@@ -782,6 +809,36 @@ mod testes {
         let (mut p, _, _) = aberto();
         let fim = p.linha(&json!({"method":"turn/completed","params":{"turn":{"id":"turno","status":"completed","items":[]}}}));
         assert!(matches!(fim.as_slice(), [Evento::Fim { janela: None, .. }]), "{fim:?}");
+    }
+
+    /// O plano do Codex (`turn/plan/updated`, pelo schema do 0.169.0: a lista inteira a cada
+    /// mudança, com `step` e `status`) é a lista de passos do chat: vira um TodoWrite, que a pílula
+    /// "1/3" e a trilha ("Começou: …") já leem.
+    #[test]
+    fn o_plano_do_codex_vira_os_passos() {
+        use crate::motor::{EstadoDoPasso, passos::Passos};
+        let (mut p, _, _) = aberto();
+        let plano = |passos: Value| json!({"method":"turn/plan/updated","params":{"threadId":"sessao","turnId":"turno","explanation":null,"plan":passos}});
+        let mut passos = Passos::default();
+        let mut ids = Vec::new();
+        let mut frases = Vec::new();
+        for lista in [
+            json!([{"step":"Ler o carrinho","status":"inProgress"},{"step":"Corrigir o frete","status":"pending"},{"step":"Rodar os testes","status":"pending"}]),
+            json!([{"step":"Ler o carrinho","status":"completed"},{"step":"Corrigir o frete","status":"inProgress"},{"step":"Rodar os testes","status":"pending"}]),
+        ] {
+            let eventos = p.linha(&plano(lista));
+            let [Evento::Ferramenta { id, nome, entrada }, Evento::ResultadoFerramenta { id: do_resultado, erro: false, .. }] = eventos.as_slice() else {
+                panic!("{eventos:?}")
+            };
+            assert_eq!((nome.as_str(), id), ("TodoWrite", do_resultado));
+            frases.push(passos.chamada(id, nome, entrada));
+            ids.push(id.clone());
+        }
+        assert_ne!(ids[0], ids[1], "cada mudança do plano é uma linha da trilha");
+        assert_eq!(frases[0].as_deref(), Some("Criou 3 passos"));
+        assert_eq!(frases[1].as_deref(), Some("Concluiu: Ler o carrinho · Começou: Corrigir o frete"));
+        let estados: Vec<EstadoDoPasso> = passos.lista().iter().map(|p| p.estado).collect();
+        assert_eq!(estados, [EstadoDoPasso::Feito, EstadoDoPasso::Fazendo, EstadoDoPasso::Falta]);
     }
 
     #[test]

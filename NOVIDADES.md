@@ -15,6 +15,8 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 - **Contexto e tokens do Codex.** O medidor do contexto aparece também no chat do Codex, com a
   janela do modelo, e a linha "Trabalhou" diz quantos tokens o turno usou. O Codex não diz o
   custo em dólar, então o popover mostra só o contexto e os tokens.
+- **Passos do Codex.** O plano que o Codex mantém aparece como os passos do Claude: a pílula
+  "1/3" acima da caixa e as linhas na trilha.
 
 ## 0.10.1
 
