@@ -454,6 +454,15 @@ pub struct Janela {
     /// Arquivos anexados à próxima mensagem de cada conversa.
     anexos: HashMap<String, Vec<PathBuf>>,
     aba: AbaLateral,
+    /// A aba da lista do último desenho: trocada, o conteúdo novo entra com fade.
+    aba_vista: Option<AbaLateral>,
+    /// O que a direita encaixada mostrou no último desenho ("arquivo" ou "chat"; `None` fechada) e
+    /// se já apareceu alguma vez: aberta pelo Ctrl+J ou trocada de aba, ela entra com fade (na
+    /// abertura do app, pronta).
+    direita_vista: Option<&'static str>,
+    direita_ja_vista: bool,
+    /// Os avisos do canto do último desenho (o que aparece entra com fade).
+    vistos_no_canto: movimento::JaVistos,
     rolagem_lista: ScrollHandle,
     /// Seções da lista recolhidas ("Mais antigas" começa assim).
     secoes_recolhidas: HashSet<&'static str>,
@@ -504,6 +513,9 @@ pub struct Janela {
     /// id do pedido.
     perguntas: HashMap<String, pergunta::EstadoDaPergunta>,
     expandidos: HashSet<String>,
+    /// O que um clique acabou de abrir na conversa (um grupo da trilha, o "Pensou", a saída de uma
+    /// chamada): o conteúdo entra com fade e 6 px de cima, uma vez (`movimento::AbertosAgora`).
+    abertos_agora: movimento::AbertosAgora,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
     rolagem_este_chat: ScrollHandle,
@@ -896,6 +908,10 @@ impl Janela {
             _gravar_rascunhos: None,
             anexos: HashMap::new(),
             aba: AbaLateral::Conversas,
+            aba_vista: None,
+            direita_vista: None,
+            direita_ja_vista: false,
+            vistos_no_canto: Default::default(),
             rolagem_lista: ScrollHandle::new(),
             secoes_recolhidas: HashSet::from(RECOLHIDAS_DE_INICIO),
             arquivo_aberto: None,
@@ -920,6 +936,7 @@ impl Janela {
             feedback_plano: HashMap::new(),
             perguntas: HashMap::new(),
             expandidos: HashSet::new(),
+            abertos_agora: Default::default(),
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
@@ -2317,7 +2334,8 @@ impl Janela {
                 .flex()
                 .justify_center()
                 .px(esp::E16)
-                .child(componentes::Alerta::new(componentes::Tom::Erro, texto))
+                // Entra com fade e 6 px de cima (ela é absoluta: o deslize vai no de dentro).
+                .child(movimento::entrar(div().child(componentes::Alerta::new(componentes::Tom::Erro, texto)), "entra-gravacao", movimento::De::Cima))
                 .into_any_element(),
         )
     }
@@ -2421,14 +2439,25 @@ impl Janela {
             }
         }
         if painel {
+            // Aberta (Ctrl+J) ou trocada entre o arquivo e Este chat, entra com fade, uma vez.
+            let qual = match self.aba_visivel(motor.read(cx)) {
+                abas_direita::AbaDireita::Arquivo(_) => "arquivo",
+                abas_direita::AbaDireita::Chat => "chat",
+            };
+            let antes = self.direita_vista.replace(qual);
+            let nova = antes != Some(qual) && (antes.is_some() || self.direita_ja_vista);
+            self.direita_ja_vista = true;
             let conteudo = self.conteudo_da_direita(motor, window, cx);
+            let conteudo = movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo));
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
                     .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
                     .fixed()
-                    .child(div().size_full().child(conteudo)),
+                    .child(conteudo),
             );
+        } else {
+            self.direita_vista = None;
         }
         grupo
     }

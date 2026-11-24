@@ -34,6 +34,7 @@ use super::{
     },
     dialogos::{com_til, nome_da_pasta},
     duracao, menus,
+    movimento::{self, De},
     paineis::ArrastoChat,
     sem_arrastar, tempo_relativo,
 };
@@ -1067,6 +1068,11 @@ impl Janela {
             }
         };
 
+        // Conversas ↔ Arquivos: o conteúdo novo entra com fade (a pílula do segmentado já anda).
+        let aba = self.aba;
+        let trocou = self.aba_vista.replace(aba).is_some_and(|antes| antes != aba);
+        let id_aba = if aba == AbaLateral::Conversas { "lista-entra-conversas" } else { "lista-entra-arquivos" };
+        let conteudo = movimento::entrada(id_aba, trocou, De::Parado, div().flex_1().min_h_0().w_full().flex().flex_col().child(conteudo));
         v_flex()
             .size_full()
             .min_w_0()

@@ -153,6 +153,9 @@ pub struct Configuracoes {
     teste_da_notificacao: Option<Result<(), String>>,
     /// O diagnóstico acabou de ser copiado.
     diagnostico_copiado: bool,
+    /// A parte acabou de trocar: ela entra deslizando do lado para onde se foi (o desenho seguinte
+    /// leva, e zera).
+    entra_de: Option<movimento::De>,
     _observa: Subscription,
     _atualizacoes: Subscription,
     /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
@@ -174,6 +177,7 @@ impl Configuracoes {
             publicadas: versoes_agentes::guardadas().unwrap_or_default(),
             teste_da_notificacao: None,
             diagnostico_copiado: false,
+            entra_de: None,
             _observa,
             _atualizacoes,
             _acompanhando,
@@ -181,6 +185,10 @@ impl Configuracoes {
     }
 
     fn ir_para(&mut self, parte: Parte, cx: &mut Context<Self>) {
+        if parte != self.parte {
+            let posicao = |p: Parte| Parte::TODAS.iter().position(|q| *q == p).unwrap_or(0);
+            self.entra_de = Some(movimento::lado_da_navegacao(posicao(self.parte), posicao(parte)));
+        }
         self.parte = parte;
         // As linhas do Claude Code e do Codex dizem a versão instalada e a nova, quando há.
         if matches!(parte, Parte::Agentes | Parte::ClaudeCode) {
@@ -1009,6 +1017,7 @@ impl Render for Configuracoes {
         // A coluna das partes: o ícone e o nome (no diálogo estreito, só o ícone, com o nome na
         // dica); a escolhida com o fundo da seleção, como as linhas da lista.
         let atual = self.parte;
+        let entra_de = self.entra_de.take();
         let partes = Parte::TODAS.into_iter().map(|parte| {
             let escolhida = parte == atual;
             div()
@@ -1041,9 +1050,16 @@ impl Render for Configuracoes {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
-                    .gap(esp::E24)
                     .pb(esp::E16)
-                    .children(grupos),
+                    // A parte escolhida entra com fade e desliza do lado para onde se foi (de baixo
+                    // descendo na coluna, de cima subindo), como o passo das boas-vindas; abrir as
+                    // Configurações não anima aqui (o diálogo já entra).
+                    .child(movimento::entrada(
+                        SharedString::from(format!("cfg-mostra-{}", atual.nome())),
+                        entra_de.is_some(),
+                        entra_de.unwrap_or(movimento::De::Parado),
+                        v_flex().w_full().gap(esp::E24).children(grupos),
+                    )),
             )
     }
 }

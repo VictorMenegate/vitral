@@ -188,6 +188,69 @@ pub fn entrada<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, nova
     })
 }
 
+/// O que estava à vista no desenho anterior de uma parte da tela (a casca de um painel), para a
+/// `entrada` saber o que acabou de aparecer: um pedido, a fila, uma pílula, o estado da faixa.
+/// Quem desenha pergunta `novo(chave)` para cada coisa que mostra e chama `virar()` no começo de
+/// cada desenho; o que sumiu num desenho e voltou no seguinte é novo de novo. Trocar de conversa
+/// no painel esvazia (`esquecer`), e tudo entra junto com ela.
+#[derive(Default, Debug)]
+pub struct JaVistos {
+    antes: std::collections::HashSet<String>,
+    agora: std::collections::HashSet<String>,
+}
+
+impl JaVistos {
+    /// Começa um desenho: o que foi visto no anterior passa a ser o "antes".
+    pub fn virar(&mut self) {
+        self.antes = std::mem::take(&mut self.agora);
+    }
+
+    /// `chave` está à vista neste desenho; diz se ela não estava no anterior.
+    pub fn novo(&mut self, chave: impl Into<String>) -> bool {
+        let chave = chave.into();
+        let novo = !self.antes.contains(&chave);
+        self.agora.insert(chave);
+        novo
+    }
+
+    /// Esquece tudo: o próximo desenho é um começo (a conversa trocou).
+    pub fn esquecer(&mut self) {
+        self.antes.clear();
+        self.agora.clear();
+    }
+}
+
+/// Quanto tempo depois do clique o que ele abriu ainda conta como "aberto agora". O conteúdo aberto
+/// é montado no desenho seguinte ao clique (uns 16 ms depois); uma remontagem depois disto (rolar
+/// para longe e voltar, trocar de aba) já aparece pronta, sem animar de novo.
+pub const ABERTO_AGORA: Duration = Duration::from_millis(400);
+
+/// O que o usuário acabou de abrir com um clique (um grupo da trilha, o "Pensou", a saída de uma
+/// chamada): o conteúdo que aparece entra com fade e 6 px de cima, uma vez. Recolher é seco (o
+/// GPUI não anima altura automática).
+#[derive(Default, Debug)]
+pub struct AbertosAgora(HashMap<String, Instant>);
+
+impl AbertosAgora {
+    /// O clique abriu `chave` em `agora`.
+    pub fn marcar(&mut self, chave: impl Into<String>, agora: Instant) {
+        self.0.retain(|_, quando| agora.saturating_duration_since(*quando) < ABERTO_AGORA);
+        self.0.insert(chave.into(), agora);
+    }
+
+    /// `chave` foi aberta há menos de `ABERTO_AGORA`.
+    pub fn recente(&self, chave: &str, agora: Instant) -> bool {
+        self.0.get(chave).is_some_and(|quando| agora.saturating_duration_since(*quando) < ABERTO_AGORA)
+    }
+}
+
+/// De que lado entra o que veio por uma navegação em lista (as partes das Configurações): de baixo
+/// indo para uma posição mais abaixo, de cima voltando, como o passo das boas-vindas, que desliza
+/// do lado para onde se vai.
+pub fn lado_da_navegacao(de: usize, para: usize) -> De {
+    if para >= de { De::Baixo } else { De::Cima }
+}
+
 /// A chave de um estado guardado de um componente (`movimento::valor`, `Hover`): o `id` dele e
 /// um nome, para não colidir com os irmãos nem com os outros estados dele.
 pub fn chave(id: &ElementId, nome: &'static str) -> ElementId {
@@ -872,6 +935,51 @@ mod testes {
         let depois = rapido + Duration::from_secs(3);
         assert_eq!(lacos.quando(janela, depois, passo), depois + passo);
         assert_eq!(lacos.quando(gpui_kit::WindowId::from(8u64), t0, passo), t0 + passo);
+    }
+
+    /// O que aparece é novo só no desenho em que aparece; o que some e volta é novo de novo; trocar
+    /// de conversa esquece tudo.
+    #[test]
+    fn ja_vistos_diz_novo_so_no_desenho_em_que_aparece() {
+        let mut vistos = super::JaVistos::default();
+        vistos.virar();
+        assert!(vistos.novo("pedido:a"));
+        vistos.virar();
+        assert!(!vistos.novo("pedido:a"), "continua à vista: não é novo");
+        assert!(vistos.novo("fila"), "a fila apareceu agora");
+        vistos.virar();
+        assert!(!vistos.novo("fila"));
+        // "pedido:a" não foi desenhado neste: sumiu.
+        vistos.virar();
+        assert!(vistos.novo("pedido:a"), "sumiu e voltou: entra de novo");
+        // Perguntar duas vezes no mesmo desenho dá a mesma resposta para quem pergunta primeiro.
+        vistos.virar();
+        assert!(!vistos.novo("pedido:a"));
+        vistos.esquecer();
+        vistos.virar();
+        assert!(vistos.novo("pedido:a"), "a conversa trocou: entra junto com ela");
+    }
+
+    /// O aberto pelo clique conta como "agora" só logo depois dele; o resto não.
+    #[test]
+    fn aberto_agora_vale_so_logo_depois_do_clique() {
+        let t0 = Instant::now();
+        let mut abertos = super::AbertosAgora::default();
+        assert!(!abertos.recente("c:3:grupo", t0));
+        abertos.marcar("c:3:grupo", t0);
+        assert!(abertos.recente("c:3:grupo", t0 + Duration::from_millis(16)), "o desenho seguinte ao clique");
+        assert!(!abertos.recente("c:4:grupo", t0 + Duration::from_millis(16)), "outra chave não");
+        assert!(!abertos.recente("c:3:grupo", t0 + super::ABERTO_AGORA), "remontado depois: já pronto");
+        // Marcar outra limpa as velhas.
+        abertos.marcar("c:9", t0 + super::ABERTO_AGORA * 2);
+        assert_eq!(abertos.0.len(), 1);
+    }
+
+    #[test]
+    fn navegacao_entra_do_lado_para_onde_se_vai() {
+        assert_eq!(super::lado_da_navegacao(1, 4), super::De::Baixo);
+        assert_eq!(super::lado_da_navegacao(4, 1), super::De::Cima);
+        assert_eq!(super::lado_da_navegacao(2, 2), super::De::Baixo);
     }
 
     #[test]

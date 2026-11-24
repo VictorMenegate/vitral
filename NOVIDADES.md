@@ -35,6 +35,12 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
   imagens em miniatura e o relatório, com o botão **Abrir em aba**. E o agente que a conversa deu por
   interrompido, mas que seguiu trabalhando depois de um turno retomado, volta a aparecer como
   trabalhando (ou como terminou).
+- **Menos coisa aparecendo a seco.** Trocar de aba faz a conversa entrar com um fade curto. Os
+  pedidos de permissão, as perguntas e o plano, a fila, cada pílula nova, a faixa quando muda de
+  estado, a chamada que chega numa trilha, o que você abre na conversa (com o chevron girando), a
+  parte das Configurações, a troca Conversas/Arquivos, a direita do Ctrl+J, os avisos do canto e a
+  mensagem presa entram com fade e um deslize de poucos pixels. Tudo em 160 ms, só quando
+  acontece; sair e recolher continuam na hora, e com Animações desligadas tudo aparece pronto.
 
 ## 0.9.7
 
