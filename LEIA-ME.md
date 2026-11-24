@@ -2087,18 +2087,31 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   - **Chats:** **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
     sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
     o que falta), **Arquivar chats parados depois de** (nunca, 3, 7 ou 30 dias; só os chats já
-    lidos, não fixados e sem fila) e **Sugerir a próxima mensagem**.
+    lidos, não fixados e sem fila), **Sugerir a próxima mensagem** e **Título do chat pelo Claude
+    Code** (ligado; desligado, o título fica o das primeiras palavras e nem o pedido do título sai,
+    `opcoes::titulo_pelo_claude_vale`). Mais três grupos, todos gravando na hora em `Config`:
+    **Abas** (**Chat chamado por outro abre numa aba**, ligada, e **Fechar a aba para o chat**,
+    ligada), **Caixa de mensagem** (**Seta ↑ na caixa vazia**: Corrigir a última, como era, ou
+    Percorrer as enviadas; **Enter com o turno rodando**: Entra no turno, como era, ou Vai para a
+    fila) e **Arquivos** (**Lembrar o que a aba Arquivos mostra**, desligada). O padrão de cada
+    opção é o de antes dela, menos as duas das abas.
   - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos** e o **Modelo
     dos chats do Claude**; as **Instruções para todos os chats** (um texto seu, de até 4.000
     caracteres, que entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do
     que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e o
-    **Codex** (a versão instalada, ou **Instalar…** sem ele).
+    **Codex** (a versão instalada, ou **Instalar…** sem ele); e **Versão nova** (**Consultar a
+    versão nova dos agentes**: Sozinho, como era, ou Só pelo botão, que traz o **Consultar agora**).
   - **Perfis:** os perfis de agente (ver **Perfis de agente**, abaixo).
   - **Memória:** **Memória da equipe** e **Rever a memória ao terminar**.
   - **Aparência:** **Zoom da interface** (o mesmo do Ctrl+roda), **Letra da conversa** (de 80% a
     150% do resto: só as mensagens crescem, com o texto, o código e os cartões delas; a lista, a
-    caixa e os menus seguem o zoom), **Mostrar o uso do plano no canto da janela**, ligada por
-    padrão, **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
+    caixa e os menus seguem o zoom; **Letra da conversa também na caixa**, desligada, põe a caixa
+    de mensagem na mesma letra), **Mostrar o uso do plano no canto da janela**, ligada por
+    padrão, com um interruptor por anel (**Anel do Claude, do Codex e do Gemini**, todos ligados;
+    cada um ainda depende da conta conectada, `opcoes::aneis_escolhidos`), **Números nas abas e na
+    lista** (Sempre, como era, ou Só segurando Ctrl: o selo aparece depois de 150 ms com o Ctrl
+    apertado e some ao soltar, guardando o lugar para a aba não mudar de largura; `Janela.ctrl_desde`),
+    **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
     seguindo um GNOME sem animações, a linha diz isso) e **Transparência dos fundos**.
   - **Claude Code:** a versão instalada, a que os turnos abrem, e **Atualizar**, que roda `claude
     update` fora de qualquer turno, espera os chats que estão trabalhando ou com mensagem na fila
@@ -2108,7 +2121,7 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     diz ("Há a 2.1.330. O Atualizar instala.", "0.169.0 · há a 0.171.0"); em dia, não diz nada. A
     consulta são as etiquetas do pacote de cada um no npm (a `stable` para quem escolheu esse
     canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes ou a do Claude
-    Code abre e guardada por uma hora (`src/versoes_agentes.rs`).
+    Code abre (ou pelo botão, com **Só pelo botão**) e guardada por uma hora (`src/versoes_agentes.rs`).
   - **Atualizações:** as atualizações do Vitral e o **Diagnóstico para pedir ajuda**: o **Copiar**
     põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex), o sistema,
     as pastas dos dados, as opções ligadas e as últimas 40 linhas do `queda.log`. O que tem cara de
@@ -2118,6 +2131,23 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   A organização é a das partes da 0.9.6. O ramo que desenhou as Configurações em seis seções
   (Chats, Agentes, Perfis, Aparência, Avisos e Vitral, com a lista em `Secao::grupos`) trouxe as
   opções novas, que entraram dentro das partes; as seções dele não ficaram.
+- **Chat chamado por outro numa aba, e fechar a aba para o chat** (Configurações > Chats > Abas).
+  Quando `mensagem_para_chat` entrega a mensagem (não quando o freio de ciclo a guarda como nota)
+  ou `abrir_chat` abre um chat, o motor põe o id em `Motor.chats_trazidos`; a Janela consome a fila
+  no mesmo observador do `pedido_de_abrir` e chama `trazer_aba`, que segue `onde_entra_a_aba`: o
+  chat já à vista ou já aba de algum painel não faz nada, sem painel abre como qualquer chat, e nos
+  outros casos entra como aba de fundo no painel ativo, sem trocar o que está à vista e sem
+  `activate_window` (o contorno da aba mostra o estado). O × da aba e o Ctrl+W
+  (`fechar_aba_do_usuario`) param o turno do chat que está de fato rodando (não o que espera a
+  resposta do usuário) pelo `Motor::parar`, a menos que ele continue à vista noutro painel ou aba
+  (`ao_fechar_a_aba`); se parar custa caro (`parar_custa_caro`: agentes em segundo plano,
+  Ultracode), o Vitral pergunta antes. Soltar a aba em outro painel e arquivar não passam por aí.
+- **Seta ↑ percorrer as enviadas.** Com a opção (`Config.seta_acima_percorre`), a seta na caixa
+  vazia traz o texto das mensagens que o usuário enviou neste chat (`recordar::enviadas_do_chat`,
+  da mais nova para a mais antiga, sem repetir em seguida), uma por vez; enquanto a caixa tem
+  exatamente o texto trazido, o contexto dela ganha "Recordando" e ↑/↓ continuam andando (↓ volta
+  até a caixa vazia). Editar o texto encerra o percurso (`Percurso::ativo`). O Corrigir fica no
+  lápis do balão e no Ctrl+↑.
 - **Perfis de agente.** Um perfil guarda, com um nome, quem responde, o modelo, o modo de
   permissão e o esforço, mais uma nota de quando usar. Cria-se em Configurações > Perfis (**Novo
   perfil…**; **Editar…** troca ou exclui, e as setas mudam a ordem). Os perfis de quem responde na

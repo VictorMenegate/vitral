@@ -184,7 +184,7 @@ impl Configuracoes {
         self.parte = parte;
         // As linhas do Claude Code e do Codex dizem a versão instalada e a nova, quando há.
         if matches!(parte, Parte::Agentes | Parte::ClaudeCode) {
-            self.ler_os_instalados(cx);
+            self.ler_os_instalados(false, cx);
         }
         cx.notify();
     }
@@ -192,10 +192,18 @@ impl Configuracoes {
     /// A versão do Codex e as mais novas publicadas, em segundo plano, quando a parte Agentes ou a
     /// do Claude Code abre: o `codex --version` leva um instante e a consulta vai à rede (guardada
     /// por uma hora).
-    fn ler_os_instalados(&mut self, cx: &mut Context<Self>) {
+    /// Com "Só pelo botão", abrir a parte lê só o que está instalado e a última consulta guardada;
+    /// a rede só é consultada com `pelo_botao` (`opcoes::consulta_a_rede`).
+    fn ler_os_instalados(&mut self, pelo_botao: bool, cx: &mut Context<Self>) {
+        let consultar = crate::opcoes::consulta_a_rede(self.motor.read(cx).config.consultar_versoes, pelo_botao);
         cx.spawn(async move |vista, cx| {
-            let (codex, publicadas) =
-                cx.background_spawn(async move { (versoes_agentes::versao_do_codex(), versoes_agentes::consultar()) }).await;
+            let (codex, publicadas) = cx
+                .background_spawn(async move {
+                    let publicadas =
+                        if consultar { versoes_agentes::consultar() } else { versoes_agentes::guardadas().unwrap_or_default() };
+                    (versoes_agentes::versao_do_codex(), publicadas)
+                })
+                .await;
             let _ = vista.update(cx, |vista, cx| {
                 (vista.codex, vista.publicadas) = (Some(codex), publicadas);
                 cx.notify();
@@ -303,6 +311,16 @@ impl Configuracoes {
             ("Memória da equipe".to_string(), if c.memoria_da_equipe.is_empty() { "desligada" } else { "ligada" }.to_string()),
             ("Rever a memória ao terminar".to_string(), ligado(c.memoria_ao_terminar)),
             ("Sugerir a próxima mensagem".to_string(), ligado(c.sugerir_resposta)),
+            ("Chat chamado abre numa aba".to_string(), ligado(c.chat_chamado_abre_aba)),
+            ("Fechar a aba para o chat".to_string(), ligado(c.fechar_aba_para_o_chat)),
+            ("Seta ↑ na caixa vazia".to_string(), if c.seta_acima_percorre { "percorre as enviadas" } else { "corrige a última" }.to_string()),
+            ("Enter com o turno rodando".to_string(), if c.enter_na_fila { "vai para a fila" } else { "entra no turno" }.to_string()),
+            ("Números nas abas".to_string(), if c.numeros_so_com_ctrl { "só com Ctrl" } else { "sempre" }.to_string()),
+            ("Lembrar a aba Arquivos".to_string(), ligado(c.lembrar_arquivos)),
+            ("Título pelo Claude Code".to_string(), ligado(c.titulo_pelo_claude)),
+            ("Anéis de uso".to_string(), format!("Claude {}, Codex {}, Gemini {}", ligado(c.anel_claude), ligado(c.anel_codex), ligado(c.anel_gemini))),
+            ("Versão nova dos agentes".to_string(), if c.consultar_versoes { "consulta sozinho" } else { "só pelo botão" }.to_string()),
+            ("Letra da conversa na caixa".to_string(), ligado(c.letra_na_caixa)),
             ("Suas instruções".to_string(), format!("{} caracteres", c.instrucoes.trim().chars().count())),
             ("Perfis".to_string(), c.perfis.len().to_string()),
             ("Zoom".to_string(), format!("{}%", zoom::porcentagem(cx))),
@@ -539,7 +557,9 @@ impl Render for Configuracoes {
         let (memoria, alternar_memoria) = (config.memoria_ao_terminar, m());
         let (sugerir, alternar_sugerir) = (config.sugerir_resposta, m());
         let (uso_no_canto, alternar_uso) = (config.uso_no_canto, m());
+        let (anel_claude, anel_codex, anel_gemini) = (m(), m(), m());
         let (avisos_no_app, alternar_avisos) = (config.avisos_no_app, m());
+        let (titulo_claude, alternar_titulo) = (config.titulo_pelo_claude, m());
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
@@ -604,7 +624,77 @@ impl Render for Configuracoes {
                     .interruptor(sugerir, move |ligado, _, cx| {
                         alternar_sugerir.update(cx, |m, cx| m.mudar_config(|c| c.sugerir_resposta = ligado, cx))
                     }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-titulo-claude", "Título do chat pelo Claude Code")
+                    .info("O Claude Code dá um título à conversa depois da primeira mensagem, e o Vitral o põe no lugar das primeiras palavras. Nunca troca um nome que você deu. Desligado, o título fica o das primeiras palavras. É uma chamada curta ao modelo, uma vez por chat.")
+                    .descricao("Só no Claude. Desligado, vale o começo da primeira mensagem.")
+                    .interruptor(titulo_claude, move |ligado, _, cx| {
+                        alternar_titulo.update(cx, |m, cx| m.mudar_config(|c| c.titulo_pelo_claude = ligado, cx))
+                    }),
             );
+        // As abas: o chat que outro chat põe para trabalhar e o fechar (dono, 24/11/2026).
+        let (abre_aba, alternar_abre_aba) = (config.chat_chamado_abre_aba, m());
+        let (fecha_para, alternar_fecha_para) = (config.fechar_aba_para_o_chat, m());
+        let abas_grupo = GrupoDeOpcoes::new(Some("Abas".into()))
+            .linha(
+                LinhaDeOpcao::new("cfg-chat-chamado", "Chat chamado por outro abre numa aba")
+                    .info("Quando um chat manda mensagem a outro, ou abre um, o destino aparece numa aba do painel ativo. A aba entra de fundo: não troca o que você está lendo nem traz a janela para a frente, e o contorno dela mostra que está rodando. Se o chat já está à vista ou já é aba, nada muda.")
+                    .descricao("Uma aba de fundo, sem trocar o que está à vista.")
+                    .interruptor(abre_aba, move |ligado, _, cx| {
+                        alternar_abre_aba.update(cx, |m, cx| m.mudar_config(|c| c.chat_chamado_abre_aba = ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-fechar-aba", "Fechar a aba para o chat")
+                    .info("Fechar a aba de um chat que está trabalhando para o turno dele, como o botão Parar. Se ele continua à vista em outro painel ou aba, só a aba fecha. Se parar derrubaria agentes em segundo plano, o Vitral pergunta antes. Chat parado ou esperando você só fecha a aba.")
+                    .descricao("O turno para junto, a menos que o chat siga à vista noutro lugar.")
+                    .interruptor(fecha_para, move |ligado, _, cx| {
+                        alternar_fecha_para.update(cx, |m, cx| m.mudar_config(|c| c.fechar_aba_para_o_chat = ligado, cx))
+                    }),
+            );
+        // A caixa de mensagem: a seta ↑ e o Enter.
+        let seta_percorre = config.seta_acima_percorre;
+        let enter_fila = config.enter_na_fila;
+        let (mudar_seta, mudar_enter) = (m(), m());
+        let caixa_grupo = GrupoDeOpcoes::new(Some("Caixa de mensagem".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-seta-acima", "Seta ↑ na caixa vazia")
+                    .info("“Percorrer as enviadas” traz o texto das mensagens que você já enviou neste chat, uma por vez, sem desfazer nada; ↓ volta, e editar o texto devolve as setas ao cursor. O corrigir continua no lápis da mensagem e no Ctrl+↑.")
+                    .descricao("O que a seta faz com nada escrito."),
+                ControleSegmentado::new(
+                    "cfg-seta-acima",
+                    ["Corrigir a última", "Percorrer as enviadas"],
+                    usize::from(seta_percorre),
+                    move |novo, _, cx| mudar_seta.update(cx, |m, cx| m.mudar_config(|c| c.seta_acima_percorre = novo == 1, cx)),
+                )
+                .with_size(Size::Small)
+                .largura_total(estreito)
+                .into_any_element(),
+            ))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-enter-turno", "Enter com o turno rodando")
+                    .info("“Entra no turno” manda a mensagem ao agente sem pará-lo. “Vai para a fila” espera o turno acabar. O Ctrl+Enter faz o outro. Respondendo a um pedido de permissão ou a uma pergunta, o Enter continua sendo a resposta.")
+                    .descricao("O Ctrl+Enter faz o contrário."),
+                ControleSegmentado::new(
+                    "cfg-enter-turno",
+                    ["Entra no turno", "Vai para a fila"],
+                    usize::from(enter_fila),
+                    move |novo, _, cx| mudar_enter.update(cx, |m, cx| m.mudar_config(|c| c.enter_na_fila = novo == 1, cx)),
+                )
+                .with_size(Size::Small)
+                .largura_total(estreito)
+                .into_any_element(),
+            ));
+        let (lembrar, alternar_lembrar) = (config.lembrar_arquivos, m());
+        let arquivos_grupo = GrupoDeOpcoes::new(Some("Arquivos".into())).linha(
+            LinhaDeOpcao::new("cfg-lembrar-arquivos", "Lembrar o que a aba Arquivos mostra")
+                .info("Guarda “Mostrar ignorados” (a aba Arquivos) e “Ignorar espaço em branco” (o “…” do arquivo com o diff) entre uma abertura e outra. Desligado, os dois abrem desligados, como sempre.")
+                .descricao("Os ignorados pelo git e o espaço em branco do diff.")
+                .interruptor(lembrar, move |ligado, _, cx| {
+                    alternar_lembrar.update(cx, |m, cx| m.mudar_config(|c| c.lembrar_arquivos = ligado, cx))
+                }),
+        );
         let agentes = GrupoDeOpcoes::new(Some("Agentes".into()))
             .linha(com(
                 LinhaDeOpcao::new("cfg-modo", "Modo de permissão padrão")
@@ -675,6 +765,34 @@ impl Render for Configuracoes {
                 botao.into_any_element(),
             )
         });
+        // A versão nova dos agentes: consulta sozinha ao abrir a parte, ou só pelo botão.
+        let consulta_sozinha = config.consultar_versoes;
+        let mudar_consulta = m();
+        let versoes_grupo = GrupoDeOpcoes::new(Some("Versão nova".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-consultar-versoes", "Consultar a versão nova dos agentes")
+                    .info("O Vitral pergunta ao npm qual é a versão mais nova do Claude Code e do Codex e diz “há a X” nas linhas de versão. “Só pelo botão” não consulta nada ao abrir: a consulta sai quando você clica em Consultar agora.")
+                    .descricao("Ao abrir esta parte, ou só quando você pedir."),
+                ControleSegmentado::new(
+                    "cfg-consultar-versoes",
+                    ["Sozinho", "Só pelo botão"],
+                    usize::from(!consulta_sozinha),
+                    move |novo, _, cx| mudar_consulta.update(cx, |m, cx| m.mudar_config(|c| c.consultar_versoes = novo == 0, cx)),
+                )
+                .with_size(Size::Small)
+                .largura_total(estreito)
+                .into_any_element(),
+            ))
+            .when(!consulta_sozinha, |g| {
+                let botao = botao_fantasma("cfg-consultar-agora", Some(Lucide::RefreshCw.into()), "Consultar agora", TamanhoBotao::Controle, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(cx.listener(|this, _, _, cx| this.ler_os_instalados(true, cx)));
+                g.linha(com(
+                    LinhaDeOpcao::new("cfg-consultar-agora", "Ver se há versão nova")
+                        .descricao("Consulta o Claude Code e o Codex agora."),
+                    botao.into_any_element(),
+                ))
+            });
         let codex_grupo = GrupoDeOpcoes::new(Some("Codex".into())).linha(self.linha_do_codex(estreito, window, cx));
         let memoria_grupo = GrupoDeOpcoes::new(Some("Memória".into()))
             .linha({
@@ -736,6 +854,27 @@ impl Render for Configuracoes {
                         alternar_uso.update(cx, |m, cx| m.mudar_config(|c| c.uso_no_canto = ligado, cx))
                     }),
             )
+            .linha(
+                LinhaDeOpcao::new("cfg-anel-claude", "Anel do Claude")
+                    .descricao("Só aparece com a conta do Claude conectada.")
+                    .interruptor(config.anel_claude, move |ligado, _, cx| {
+                        anel_claude.update(cx, |m, cx| m.mudar_config(|c| c.anel_claude = ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-anel-codex", "Anel do Codex")
+                    .descricao("Só aparece com a conta do Codex conectada.")
+                    .interruptor(config.anel_codex, move |ligado, _, cx| {
+                        anel_codex.update(cx, |m, cx| m.mudar_config(|c| c.anel_codex = ligado, cx))
+                    }),
+            )
+            .linha(
+                LinhaDeOpcao::new("cfg-anel-gemini", "Anel do Gemini")
+                    .descricao("Só aparece com o Antigravity CLI e a cota lida.")
+                    .interruptor(config.anel_gemini, move |ligado, _, cx| {
+                        anel_gemini.update(cx, |m, cx| m.mudar_config(|c| c.anel_gemini = ligado, cx))
+                    }),
+            )
             .linha(com(
             LinhaDeOpcao::new("cfg-animacoes", "Animações")
                 .info(
@@ -774,6 +913,22 @@ impl Render for Configuracoes {
             .into_any_element(),
         ));
 
+        let mudar_numeros = m();
+        let interface = interface.linha(com(
+            LinhaDeOpcao::new("cfg-numeros", "Números nas abas e na lista")
+                .info("Os números ligam a aba ao chat na lista (e valem para o Alt+1 a 4). “Só segurando Ctrl” esconde os dois e mostra depois de uns 150 ms com o Ctrl apertado; somem ao soltar.")
+                .descricao("Quando o número do painel aparece."),
+            ControleSegmentado::new(
+                "cfg-numeros",
+                ["Sempre", "Só segurando Ctrl"],
+                usize::from(config.numeros_so_com_ctrl),
+                move |novo, _, cx| mudar_numeros.update(cx, |m, cx| m.mudar_config(|c| c.numeros_so_com_ctrl = novo == 1, cx)),
+            )
+            .with_size(Size::Small)
+            .largura_total(estreito)
+            .into_any_element(),
+        ));
+
         let zoom_de_agora = zoom::porcentagem(cx);
         let tamanho = GrupoDeOpcoes::new(Some("Tamanho".into()))
             .linha(com(
@@ -791,7 +946,16 @@ impl Render for Configuracoes {
                 contador("cfg-letra", &crate::tema::LETRAS_DA_CONVERSA, config.letra_da_conversa, m(), |c, v| c.letra_da_conversa = v)
                     .sufixo(SUFIXO_DE_PORCENTO)
                     .map(solto),
-            ));
+            ))
+            .linha({
+                let alternar = m();
+                LinhaDeOpcao::new("cfg-letra-caixa", "Letra da conversa também na caixa")
+                    .info("A caixa de mensagem passa a escrever no mesmo tamanho das mensagens. Desligado, ela segue o zoom da interface.")
+                    .descricao("A caixa de mensagem acompanha a letra da conversa.")
+                    .interruptor(config.letra_na_caixa, move |ligado, _, cx| {
+                        alternar.update(cx, |m, cx| m.mudar_config(|c| c.letra_na_caixa = ligado, cx))
+                    })
+            });
 
         // O diagnóstico para pedir ajuda, na parte das Atualizações (é do Vitral, não dos chats).
         let ajuda = GrupoDeOpcoes::new(Some("Ajuda".into())).linha({
@@ -822,8 +986,18 @@ impl Render for Configuracoes {
         let atualizacoes = Vista::da_global(cx).map(|vista| grupo_de_atualizacoes(&vista, trabalhando, estreito, window, cx));
 
         let grupos: Vec<AnyElement> = match self.parte {
-            Parte::Chats => vec![conversas.into_any_element()],
-            Parte::Agentes => vec![agentes.into_any_element(), instrucoes_grupo.into_any_element(), codex_grupo.into_any_element()],
+            Parte::Chats => vec![
+                conversas.into_any_element(),
+                abas_grupo.into_any_element(),
+                caixa_grupo.into_any_element(),
+                arquivos_grupo.into_any_element(),
+            ],
+            Parte::Agentes => vec![
+                agentes.into_any_element(),
+                instrucoes_grupo.into_any_element(),
+                codex_grupo.into_any_element(),
+                versoes_grupo.into_any_element(),
+            ],
             Parte::Perfis => vec![perfis::grupo(&self.motor, window, cx).into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
             Parte::Aparencia => vec![tamanho.into_any_element(), interface.into_any_element()],

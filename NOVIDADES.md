@@ -3,6 +3,33 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## Próxima
+
+O chat que outro chat chama aparece numa aba, fechar a aba de um chat que trabalha o para, e as
+Configurações ganharam opções: a seta ↑ da caixa, o Enter com o turno rodando, os números das
+abas, o que a aba Arquivos lembra, o título pelo Claude Code, os anéis de uso, a consulta de
+versão nova e a letra da conversa na caixa. Tudo começa como era, menos as duas primeiras.
+
+- **O chat chamado por outro aparece numa aba.** Quando um chat manda mensagem a outro, ou abre
+  um, o destino entra como aba de fundo no painel ativo: o que você lê não troca, a janela não vem
+  para a frente e o contorno da aba mostra que está rodando. Já à vista ou já aba, nada muda. Em
+  Configurações, Chats, Abas.
+- **Fechar a aba para o chat.** Fechar (× ou Ctrl+W) a aba de um chat que está trabalhando para o
+  turno dele, como o Parar, a menos que ele continue à vista em outro painel. Com agentes em
+  segundo plano, o Vitral pergunta antes.
+- **Seta ↑ percorre as enviadas.** Com a opção, a seta na caixa vazia traz as mensagens que você
+  já enviou neste chat, uma por vez; ↓ volta; editar devolve as setas ao cursor. O corrigir fica
+  no lápis da mensagem e no Ctrl+↑.
+- **Enter vai para a fila.** Com o turno rodando, o Enter espera a vez e o Ctrl+Enter entra no
+  turno.
+- **Números só segurando Ctrl.** Os números das abas e da lista aparecem depois de uns 150 ms
+  com o Ctrl apertado e somem ao soltar.
+- **A aba Arquivos lembra.** “Mostrar ignorados” e “Ignorar espaço em branco” voltam como
+  ficaram, se a opção estiver ligada.
+- **Título pelo Claude Code, anéis de uso, versão nova e letra na caixa.** Dá para desligar o
+  título gerado, escolher quais anéis de uso aparecem (Claude, Codex, Gemini), deixar a consulta
+  de versão nova dos agentes só no botão e pôr a letra da conversa também na caixa de mensagem.
+
 ## 0.9.7
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,

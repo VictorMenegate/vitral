@@ -101,6 +101,11 @@ tabela! {
     // Só com a caixa vazia (o "Vazia" sai do contexto quando há texto): a seta continua movendo
     // o cursor enquanto se escreve.
     "up", super::EditarUltima, Some("Vazia > Input"), Grupo::Conversa, "Corrigir a última mensagem (caixa vazia)", "↑";
+    // Com “Percorrer as enviadas” e a caixa com o texto trazido (o “Recordando” sai do contexto
+    // quando o texto muda): ↑ vai à mais antiga, ↓ volta até a caixa vazia.
+    "up", super::RecordarAnterior, Some("Recordando > Input"), Grupo::Conversa, "", "";
+    "down", super::RecordarSeguinte, Some("Recordando > Input"), Grupo::Conversa, "", "";
+    "ctrl-up", super::CorrigirUltima, Some("Composer > Input"), Grupo::Conversa, "Corrigir a última mensagem, com a caixa como estiver (útil com “Percorrer as enviadas”)", "Ctrl+↑";
     // Com o menu "/" à vista (o "Menu" só existe aí): as setas andam nele e o Tab completa. Fora
     // dele, as setas movem o cursor e o Tab segue o caminho de sempre.
     "up", composer::MenuAcima, Some("Menu > Input"), Grupo::Conversa, "Andar pelo menu “/”", "↑+↓";

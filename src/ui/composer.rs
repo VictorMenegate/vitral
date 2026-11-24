@@ -582,6 +582,13 @@ fn dica_do_enviar(enter: Enter, reforco: bool) -> &'static str {
     }
 }
 
+/// A dica do Enviar com "Enter vai para a fila": o Enter espera a vez, o Ctrl+Enter entra no turno.
+fn dica_do_enviar_na_fila(enter: Enter) -> Option<&'static str> {
+    matches!(enter, Enter::Dirige).then_some(
+        "Enviar\nVai para a fila e espera este turno acabar\nCtrl+Enter entra no turno que está rodando, sem pará-lo",
+    )
+}
+
 fn envio(rodando: bool, vazio: bool) -> Envio {
     match (rodando, vazio) {
         (false, true) => Envio::Vazio,
@@ -629,6 +636,13 @@ impl Janela {
         let raio_caixa = raio::peca();
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
+        // "Letra da conversa também na caixa de mensagem".
+        let fator_da_caixa = self.motor.as_ref().map_or(1., |m| {
+            let c = &m.read(cx).config;
+            crate::tema::fator_da_letra(crate::opcoes::letra_da_caixa(c.letra_na_caixa, c.letra_da_conversa))
+        });
+        // Com "Percorrer as enviadas", a caixa com o texto trazido: as setas voltam a percorrer.
+        let recordando = self.paineis[ix].percurso.ativo(&composer.read(cx).value());
         let com_menu = self.menu_da_caixa(ix, chat, cx).is_some();
         // O miolo é concêntrico com a moldura de 20, não com o cartão da conversa: o raio de fora
         // menos a borda de 1 e a folga de 2 (eram 4; dono, 16/11/2026: "diminui as bordas"). A
@@ -668,11 +682,14 @@ impl Janela {
                         "Composer Vazia"
                     } else if com_menu {
                         "Composer Menu"
+                    } else if recordando {
+                        "Composer Recordando"
                     } else {
                         "Composer"
                     })
                     .when(estreita, |s| s.ml(r(-2.)))
-                    .child(
+                    .child(super::vista_mensagens::na_letra(
+                        fator_da_caixa,
                         Textarea::new(&composer)
                             .appearance(false)
                             // As menções de arquivo são pílulas dentro do texto; o clique abre o
@@ -720,7 +737,7 @@ impl Janela {
                                 });
                                 true
                             }),
-                    ),
+                    )),
             )
             .child(div().h(esp::E8))
             .child(barra);
@@ -806,7 +823,22 @@ impl Janela {
             // Seta para cima na caixa vazia: o texto da última mensagem volta para ela, como num
             // terminal (o keymap só a manda para cá no contexto "Vazia").
             .on_action(cx.listener(move |this, _: &super::EditarUltima, window, cx| {
+                // Com "Percorrer as enviadas", a seta na caixa vazia traz as enviadas; o corrigir
+                // fica no lápis do balão e no Ctrl+↑.
+                if this.motor.as_ref().is_some_and(|m| m.read(cx).config.seta_acima_percorre) {
+                    this.percorrer_enviadas(painel_id, true, window, cx)
+                } else {
+                    this.editar_ultima(painel_id, window, cx)
+                }
+            }))
+            .on_action(cx.listener(move |this, _: &super::CorrigirUltima, window, cx| {
                 this.editar_ultima(painel_id, window, cx)
+            }))
+            .on_action(cx.listener(move |this, _: &super::RecordarAnterior, window, cx| {
+                this.percorrer_enviadas(painel_id, true, window, cx)
+            }))
+            .on_action(cx.listener(move |this, _: &super::RecordarSeguinte, window, cx| {
+                this.percorrer_enviadas(painel_id, false, window, cx)
             }))
             .child(self.menu_comandos(chat, ix, cx))
             .child(self.ilha_do_anexo(&chat.id, cx))
@@ -946,14 +978,23 @@ impl Janela {
             principal(Some(Lucide::ArrowUp), dica)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.ativar_painel(painel, cx);
-                    this.enviar_do_painel(painel, window, cx);
+                    if this.enter_manda_depois(painel, false, cx) {
+                        this.enviar_depois(painel, window, cx);
+                    } else {
+                        this.enviar_do_painel(painel, window, cx);
+                    }
                 }))
                 .into_any_element()
         };
         // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code); com
         // um pedido de permissão aberto, ela é a resposta ao pedido. O que vale para o turno
         // inteiro, e tudo o que não é um turno em andamento, vai pela fila.
-        let dica_dirigir = dica_do_enviar(enter, self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat));
+        let reforco = self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat);
+        let na_fila = self.motor.as_ref().is_some_and(|m| m.read(cx).config.enter_na_fila);
+        let dica_dirigir = match dica_do_enviar_na_fila(enter).filter(|_| na_fila && !reforco) {
+            Some(dica) => dica,
+            None => dica_do_enviar(enter, reforco),
+        };
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
             Envio::Enviar => vec![enviar("Enviar")],
@@ -1545,6 +1586,35 @@ impl Janela {
         composer.update(cx, |c, cx| {
             c.set_value(sugestao.clone(), window, cx);
             let fim = sugestao.len();
+            c.set_selected_range(fim..fim, cx);
+        });
+        cx.notify();
+    }
+
+    /// A seta ↑ (`para_tras`) ou ↓ no percurso das enviadas deste chat (`Config.seta_acima_percorre`):
+    /// põe o texto na caixa, com o cursor no fim, sem enviar nem mexer na conversa.
+    fn percorrer_enviadas(&mut self, painel: u64, para_tras: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.paineis.iter().position(|p| p.id == painel) else {
+            return;
+        };
+        let (Some(chat), Some(motor)) = (self.paineis[ix].chat.clone(), self.motor.clone()) else {
+            return;
+        };
+        let enviadas = motor.read(cx).chat(&chat).map(|c| super::recordar::enviadas_do_chat(&c.itens)).unwrap_or_default();
+        let composer = self.paineis[ix].composer.clone();
+        let caixa = composer.read(cx).value().to_string();
+        let novo = if para_tras {
+            self.paineis[ix].percurso.subir(&enviadas, &caixa)
+        } else {
+            self.paineis[ix].percurso.descer(&enviadas, &caixa)
+        };
+        let Some(texto) = novo else {
+            cx.propagate();
+            return;
+        };
+        composer.update(cx, |c, cx| {
+            c.set_value(texto.clone(), window, cx);
+            let fim = texto.len();
             c.set_selected_range(fim..fim, cx);
         });
         cx.notify();

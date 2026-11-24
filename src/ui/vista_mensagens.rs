@@ -107,6 +107,15 @@ pub fn na_letra_da_conversa(filho: impl IntoElement) -> AnyElement {
     NaLetraDaConversa { fator, filho: filho.into_any_element() }.into_any_element()
 }
 
+/// `filho` com a letra num `fator` (1 é o do resto da interface): a caixa de mensagem, com
+/// "Letra da conversa também na caixa". Em 1, é o próprio filho.
+pub fn na_letra(fator: f32, filho: impl IntoElement) -> AnyElement {
+    if (fator - 1.).abs() < 0.001 {
+        return filho.into_any_element();
+    }
+    NaLetraDaConversa { fator, filho: filho.into_any_element() }.into_any_element()
+}
+
 impl NaLetraDaConversa {
     /// O rem de dentro: o da janela (que já leva o zoom) vezes o fator. Lido fora do bloco de
     /// dentro, é sempre o da janela, e as três fases chegam ao mesmo número.

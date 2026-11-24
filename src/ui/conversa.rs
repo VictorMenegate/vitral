@@ -1166,7 +1166,7 @@ impl Janela {
                 }
                 let aba = aba
                     .fechar("Fechar a aba (a conversa continua na lista)", false, move |window, cx| {
-                        let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_fechar, window, cx));
+                        let _ = fechar.update(cx, |this, cx| this.fechar_aba_do_usuario(painel_id, &id_fechar, window, cx));
                     })
                     .construir(window, cx)
                     .max_w(teto)
@@ -1250,7 +1250,7 @@ impl Janela {
                 {
                     let id_do_chat = chat.id.clone();
                     move |window, cx| {
-                        let _ = fechar.update(cx, |this, cx| this.fechar_aba(painel_id, &id_do_chat, window, cx));
+                        let _ = fechar.update(cx, |this, cx| this.fechar_aba_do_usuario(painel_id, &id_do_chat, window, cx));
                     }
                 },
             )
@@ -1264,7 +1264,7 @@ impl Janela {
         // Sem ícone: o estado do chat vai no contorno da aba (dono, 18/11/2026).
         aba = aba.borda(sinal_do_chat(motor, chat), format!("borda-aba-{painel_id}-{}", chat.id));
         if numerada {
-            aba = aba.numero(ix + 1, ativo);
+            aba = aba.numero(ix + 1, ativo).numero_oculto(!self.numeros_a_vista(cx));
         }
         let arrasto = ArrastoChat { chat: chat.id.clone(), titulo: chat.titulo.clone().into(), de_painel: Some(painel_id) };
         let (menu_janela, menu_motor) = (janela.clone(), motor_entidade.clone());

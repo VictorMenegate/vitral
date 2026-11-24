@@ -1802,7 +1802,10 @@ impl Janela {
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
             .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))))
-            .children(em_painel.map(|(n, ativo)| numero_painel(n, ativo)));
+            .children(em_painel.map(|(n, ativo)| {
+                // "Só segurando Ctrl": o número guarda o lugar, invisível.
+                div().when(!self.numeros_a_vista(cx), |d| d.opacity(0.)).child(numero_painel(n, ativo))
+            }));
         // O balão é sempre o pequeno, também no resultado da busca (que tem duas linhas): com uns de
         // 18 e outros de 30 a coluna dos ícones ficava torta. A pasta vai na dica, e a hora junto
         // quando ela saiu da linha.

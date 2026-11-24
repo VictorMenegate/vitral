@@ -121,7 +121,11 @@ impl Janela {
         let ligado = self.motor.as_ref().is_some_and(|m| {
             let m = m.read(cx);
             let (claude, codex) = aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido));
-            m.config.uso_no_canto && (claude || codex || leitura_gemini(m.gemini.as_ref()).em_uso())
+            let aneis = crate::opcoes::aneis_escolhidos(
+                [claude, codex, leitura_gemini(m.gemini.as_ref()).em_uso()],
+                [m.config.anel_claude, m.config.anel_codex, m.config.anel_gemini],
+            );
+            m.config.uso_no_canto && aneis.contains(&true)
         });
         // A cápsula soma 4 de cada lado e o fio.
         ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 10. + 8.))
@@ -132,7 +136,7 @@ impl Janela {
             return Vec::new();
         };
         let janela = cx.entity().downgrade();
-        let (claude, codex, gemini, (com_claude, com_codex)) = {
+        let (claude, codex, gemini, [com_claude, com_codex, com_gemini]) = {
             let m = motor.read(cx);
             let conta = m.conta_padrao();
             // Com uma conta só não há o que distinguir: sem selo e sem a conta na dica.
@@ -147,7 +151,15 @@ impl Janela {
                 ),
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
                 leitura_gemini(m.gemini.as_ref()),
-                aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido)),
+                {
+                    let (claude, codex) =
+                        aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido));
+                    // Só os anéis que as Configurações deixam à vista.
+                    crate::opcoes::aneis_escolhidos(
+                        [claude, codex, leitura_gemini(m.gemini.as_ref()).em_uso()],
+                        [m.config.anel_claude, m.config.anel_codex, m.config.anel_gemini],
+                    )
+                },
             )
         };
         // Cada anel só com a conta do serviço conectada; o do Codex, também com uso lido. Sem
@@ -160,7 +172,7 @@ impl Janela {
             botoes.push(popover_uso(Marca::Codex, codex, motor.clone(), janela.clone()).into_any_element());
         }
         // O do Gemini só com o agy entrando e a cota lida (`agente_gemini::ler_uso`).
-        if gemini.em_uso() {
+        if com_gemini {
             botoes.push(popover_uso(Marca::Gemini, gemini, motor, janela).into_any_element());
         }
         botoes

@@ -51,6 +51,7 @@ mod rascunhos;
 mod resumo;
 mod resumo_do_dia;
 mod recuperacao;
+mod recordar;
 mod reenvio;
 mod seletor_arquivos;
 mod sumario;
@@ -93,7 +94,7 @@ actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsque
 // fechada; Ctrl+Shift+C copia a última resposta do chat à vista.
 actions!(vitral, [AbaSeguinte, AbaAnterior, ReabrirAba, CopiarUltimaResposta]);
 // A seta para cima na caixa vazia e o "?" fora de um campo de texto.
-actions!(vitral, [EditarUltima, AbrirAtalhos]);
+actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguinte, AbrirAtalhos]);
 // Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
 // cabeçalho e nas abas abre o mesmo).
 actions!(vitral, [AbrirMenuDoPainel]);
@@ -474,7 +475,8 @@ pub struct Janela {
     /// seguinte, e a faixa diz "arquivo 2 de 8".
     lugar_no_turno: std::cell::Cell<Option<(usize, usize, Option<(usize, usize)>)>>,
     /// O diff de "Na pasta" sem as mudanças só de espaço em branco (o `-w` do git). Desligado ao
-    /// abrir o Vitral; liga e desliga no "…" do arquivo aberto com o diff.
+    /// abrir o Vitral (a não ser com "Lembrar o que a aba Arquivos mostra"); liga e desliga no
+    /// "…" do arquivo aberto com o diff.
     diff_sem_espaco: bool,
     /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
     /// mencionar o trecho, e a ponta de onde a escolha começou.
@@ -546,6 +548,9 @@ pub struct Janela {
     arranjo: Option<arranjo::Arranjo>,
     /// A abertura já pôs a janela como estava: daqui em diante o arranjo é acompanhado.
     arranjo_ligado: bool,
+    /// Desde quando o Ctrl está apertado (para os números só aparecerem segurando, depois de uns
+    /// 150 ms); `None` com ele solto.
+    ctrl_desde: Option<std::time::Instant>,
     _gravar_arranjo: Option<Task<()>>,
     /// A imagem anexada que está aberta na "ilha" em cima da caixa (o chat e o arquivo), e a que
     /// o clique fora acabou de fechar (para o clique na própria pílula fechar, e não reabrir).
@@ -948,6 +953,7 @@ impl Janela {
             citacoes: HashMap::new(),
             arranjo: None,
             arranjo_ligado: false,
+            ctrl_desde: None,
             _gravar_arranjo: None,
             confirmando_saida: false,
             ultrathink: HashSet::new(),
@@ -1317,6 +1323,10 @@ impl Janela {
     /// O botão "Mostrar ignorados" da aba Arquivos: liga ou desliga e relê a pasta.
     pub(super) fn alternar_ignorados(&mut self, pasta: &std::path::Path, cx: &mut Context<Self>) {
         self.mostrar_ignorados = !self.mostrar_ignorados;
+        let valor = self.mostrar_ignorados;
+        if let Some(motor) = self.motor.clone() {
+            motor.update(cx, |m, cx| m.mudar_config(|c| c.arquivos_mostrar_ignorados = valor, cx));
+        }
         self.reler_arquivos(pasta);
         cx.notify();
     }
@@ -1438,6 +1448,12 @@ impl Janela {
                 this.aplicar_abertura(abertura, window, cx);
                 window.activate_window();
             }
+            // Os chats que outro chat pôs para trabalhar: uma aba de fundo, sem trocar o que está
+            // à vista e sem trazer a janela para a frente.
+            let trazidos = motor.update(cx, |m, _| std::mem::take(&mut m.chats_trazidos));
+            for chat in trazidos {
+                this.trazer_aba(chat, window, cx);
+            }
             // Os avisos que chegam depois de aberta (o resultado da importação do Claude Code).
             let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
             if !avisos.is_empty() {
@@ -1476,6 +1492,10 @@ impl Janela {
                 .map(|c| c.id.clone())
         });
         self.ultimo_chat = ultimo;
+        // A aba Arquivos abre como ficou, se "Lembrar o que a aba Arquivos mostra" está ligado.
+        let c = &m.config;
+        self.mostrar_ignorados = crate::opcoes::valor_ao_abrir(c.lembrar_arquivos, c.arquivos_mostrar_ignorados);
+        self.diff_sem_espaco = crate::opcoes::valor_ao_abrir(c.lembrar_arquivos, c.diff_sem_espaco);
         // Como a janela estava ao fechar, e quais chats de lá ainda dá para abrir (os apagados e
         // os arquivados nesse meio tempo ficam de fora).
         let guardado = arranjo::Arranjo::ler(interface.as_ref());
@@ -1524,6 +1544,37 @@ impl Janela {
             }
         });
         cx.notify();
+    }
+
+    /// O Ctrl foi apertado ou solto. Com "Só segurando Ctrl", os números das abas e da lista
+    /// aparecem 150 ms depois de apertar e somem ao soltar (`opcoes::numeros_a_vista`).
+    fn ctrl_mudou(&mut self, apertado: bool, cx: &mut Context<Self>) {
+        let so_com_ctrl = self.motor.as_ref().is_some_and(|m| m.read(cx).config.numeros_so_com_ctrl);
+        match (apertado, self.ctrl_desde) {
+            (true, None) => {
+                self.ctrl_desde = Some(std::time::Instant::now());
+                if so_com_ctrl {
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(crate::opcoes::ESPERA_DO_SELO).await;
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
+            }
+            (false, Some(_)) => {
+                self.ctrl_desde = None;
+                if so_com_ctrl {
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Os números das abas e da lista aparecem agora?
+    pub(super) fn numeros_a_vista(&self, cx: &App) -> bool {
+        let so_com_ctrl = self.motor.as_ref().is_some_and(|m| m.read(cx).config.numeros_so_com_ctrl);
+        crate::opcoes::numeros_a_vista(so_com_ctrl, self.ctrl_desde.map(|desde| desde.elapsed()))
     }
 
     /// Envia o que está na caixa do painel ativo.
@@ -2102,6 +2153,7 @@ impl Janela {
             .track_focus(&self.foco)
             // Digitar com o foco fora de campo escreve na caixa do painel ativo (item 1.1).
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.tecla_na_janela(ev, window, cx)))
+            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, _, cx| this.ctrl_mudou(ev.modifiers.control, cx)))
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
             // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.

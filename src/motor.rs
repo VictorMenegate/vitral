@@ -456,6 +456,9 @@ pub struct Motor {
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
+    /// Chats que começaram a rodar por pedido de OUTRO chat (`mensagem_para_chat`, `abrir_chat`):
+    /// a Janela os põe numa aba de fundo (`Config.chat_chamado_abre_aba`).
+    pub chats_trazidos: Vec<String>,
     /// As notificações na tela, por chat.
     #[cfg_attr(windows, allow(dead_code))]
     avisos: Arc<std::sync::Mutex<HashMap<String, Aviso>>>,
@@ -744,6 +747,7 @@ impl Motor {
             revisando: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
+            chats_trazidos: Vec::new(),
             avisos: Arc::default(),
             visiveis: HashSet::new(),
             texto_chegando: Vec::new(),
@@ -4384,6 +4388,9 @@ impl Motor {
     /// que isso seria uma chamada ao modelo a cada turno de um chat que ele não soube titular.
     fn titulo_a_pedir(&mut self, chat_id: &str) -> Option<String> {
         const VEZES: u8 = 2;
+        if !crate::opcoes::titulo_pelo_claude_vale(self.config.titulo_pelo_claude, true) {
+            return None;
+        }
         if !self.versao_do_claude().is_some_and(|v| v >= claude::VERSAO_TITULO_GERADO) {
             return None;
         }
@@ -4399,6 +4406,9 @@ impl Motor {
     /// Code gravou na sessão (`ai-title`), se houver. Uma vez só, e nunca por cima de um nome dado
     /// à mão (`titulo_gerado_para`). Lê só o fim do arquivo da sessão.
     fn trocar_pelo_titulo_gerado(&mut self, chat_id: &str) {
+        if !crate::opcoes::titulo_pelo_claude_vale(self.config.titulo_pelo_claude, true) {
+            return;
+        }
         let Some(chat) = self.chat(chat_id).filter(|c| c.agente == Agente::Claude && titulo_automatico(c)) else {
             return;
         };

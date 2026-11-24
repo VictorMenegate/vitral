@@ -24,6 +24,8 @@ pub const MAX_ABAS: usize = 8;
 
 pub struct Painel {
     pub id: u64,
+    /// O percurso das mensagens enviadas na seta ↑ (`Config.seta_acima_percorre`).
+    pub percurso: super::recordar::Percurso,
     pub chat: Option<String>,
     /// As abas do painel, na ordem em que abriram: os chats que ficam no cabeçalho dele, a um
     /// clique. O `chat` é a aba à vista. Clicar num chat da lista abre uma aba aqui (o `render` da
@@ -376,7 +378,7 @@ impl Janela {
                 // mensagem espera a vez na fila em vez de entrar nele.
                 InputEvent::PressEnter { shift: false, secondary } => {
                     this.ativar_painel(id, cx);
-                    if *secondary {
+                    if this.enter_manda_depois(id, *secondary, cx) {
                         this.enviar_depois(id, window, cx);
                     } else {
                         this.enviar_do_painel(id, window, cx);
@@ -441,6 +443,7 @@ impl Janela {
         let eu = cx.entity().downgrade();
         let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu, id));
         let mut painel = Painel {
+            percurso: Default::default(),
             id,
             vista,
             chat: None,
@@ -813,8 +816,15 @@ impl Janela {
         // Pelo teclado não há "painel ativo antes do clique" para voltar.
         self.ativo_antes_do_clique = None;
         match chat {
-            Some(chat) => self.fechar_aba(id, &chat, window, cx),
-            None => self.fechar_e_focar(id, window, cx),
+            Some(chat) => self.fechar_aba_do_usuario(id, &chat, window, cx),
+            None => {
+                // A última aba: o painel fecha, e o turno do chat para como no × da aba.
+                if let Some(chat) = self.paineis.iter().find(|p| p.id == id).and_then(|p| p.chat.clone()) {
+                    self.fechar_parando(id, &chat, |this, id, _, window, cx| this.fechar_e_focar(id, window, cx), window, cx);
+                } else {
+                    self.fechar_e_focar(id, window, cx);
+                }
+            }
         }
     }
 
@@ -899,10 +909,119 @@ impl Janela {
         }
     }
 
+    /// Um chat que outro chamou aparece numa aba do painel ativo, de fundo: o que está à vista fica
+    /// como está, e a aba mostra o estado pelo contorno. Já à vista ou já aba, nada; sem painel,
+    /// abre como qualquer chat.
+    pub(super) fn trazer_aba(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
+        let vistas: Vec<(Option<&str>, &[String])> =
+            self.paineis.iter().map(|p| (p.chat.as_deref(), p.abas.as_slice())).collect();
+        match onde_entra_a_aba(&chat, &vistas, self.ativo) {
+            LugarDaAba::JaTem => {}
+            LugarDaAba::Fundo(ix) => {
+                self.paineis[ix].abas.push(chat);
+                // Passou de `MAX_ABAS`: a mais antiga que não está à vista sai (`acertar_abas`).
+                if let Some(motor) = self.motor.clone() {
+                    self.acertar_abas(motor.read(cx));
+                }
+                cx.notify();
+            }
+            LugarDaAba::Abrir => self.selecionar(Some(chat), window, cx),
+        }
+    }
+
+    /// O Enter (ou o Ctrl+Enter, `secondary`) do painel manda depois, para a fila? Com "Enter vai
+    /// para a fila" ligado os dois se trocam, só onde o turno recebe mensagem (`opcoes::manda_depois`).
+    pub(super) fn enter_manda_depois(&self, painel: u64, secondary: bool, cx: &App) -> bool {
+        let Some(motor) = self.motor.as_ref().map(|m| m.read(cx)) else {
+            return secondary;
+        };
+        let recebe = self
+            .paineis
+            .iter()
+            .find(|p| p.id == painel)
+            .and_then(|p| p.chat.as_deref())
+            .is_some_and(|chat| matches!(super::composer::enter_no_turno(motor, chat), super::composer::Enter::Dirige));
+        crate::opcoes::manda_depois(motor.config.enter_na_fila, secondary, recebe)
+    }
+
     /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.
     pub(super) fn abrir_aba(&mut self, painel_id: u64, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         self.ativar_painel(painel_id, cx);
         self.selecionar(Some(chat), window, cx);
+    }
+
+    /// O × da aba e o Ctrl+W: fecha a aba e, com "Fechar a aba para o chat" ligado, para o turno do
+    /// chat que está trabalhando e não continua à vista noutro painel ou aba (pelo mesmo caminho
+    /// do botão Parar). Se parar derrubaria agentes em segundo plano, pergunta antes. Soltar a aba
+    /// em outro painel e arquivar não passam por aqui: o chat segue trabalhando.
+    pub(super) fn fechar_aba_do_usuario(&mut self, painel_id: u64, chat: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.fechar_parando(painel_id, chat, Self::fechar_aba, window, cx);
+    }
+
+    /// O fechar de `fechar_aba_do_usuario` com o jeito de fechar à escolha (`fechar`: a aba, ou o
+    /// painel inteiro no Ctrl+W da última aba).
+    fn fechar_parando(
+        &mut self,
+        painel_id: u64,
+        chat: &str,
+        fechar: fn(&mut Self, u64, &str, &mut Window, &mut Context<Self>),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(motor) = self.motor.clone() else {
+            return fechar(self, painel_id, chat, window, cx);
+        };
+        let (ligada, rodando, custa_caro, agentes) = {
+            let m = motor.read(cx);
+            (
+                m.config.fechar_aba_para_o_chat,
+                matches!(m.execucao(chat), crate::modelo::Execucao::Rodando { .. }),
+                m.parar_custa_caro(chat),
+                m.agentes_no_fundo(chat),
+            )
+        };
+        let continua = self
+            .paineis
+            .iter()
+            .any(|p| p.id != painel_id && (p.chat.as_deref() == Some(chat) || p.abas.iter().any(|a| a == chat)));
+        match ao_fechar_a_aba(ligada, rodando, continua, custa_caro) {
+            AoFecharAAba::SoFecha => fechar(self, painel_id, chat, window, cx),
+            AoFecharAAba::Para => {
+                motor.update(cx, |m, cx| m.parar(chat, cx));
+                fechar(self, painel_id, chat, window, cx);
+            }
+            AoFecharAAba::Pergunta => {
+                let (fraca, chat) = (cx.weak_entity(), chat.to_string());
+                let quem = if agentes == 1 { "o agente".to_string() } else { format!("os {agentes} agentes") };
+                let texto = if agentes > 0 {
+                    format!("Fechar esta aba para o turno e {quem} em segundo plano. O que parou fica em Esperando você, com o botão Retomar.")
+                } else {
+                    "Fechar esta aba para o turno inteiro, com o que ele roda em segundo plano. O que parou fica em Esperando você, com o botão Retomar.".to_string()
+                };
+                super::componentes::confirmar(
+                    super::componentes::Confirmacao {
+                        tom: super::componentes::TomConfirmacao::Atencao,
+                        icone: Lucide::TriangleAlert.into(),
+                        titulo: "Parar este chat?".into(),
+                        texto: texto.into(),
+                        detalhes: Vec::new(),
+                        ok: "Fechar e parar".into(),
+                        cancelar: "Manter a aba".into(),
+                        ok_perigo: true,
+                    },
+                    move |window, cx| {
+                        let (motor, chat) = (motor.clone(), chat.clone());
+                        let _ = fraca.update(cx, |this, cx| {
+                            motor.update(cx, |m, cx| m.parar(&chat, cx));
+                            fechar(this, painel_id, &chat, window, cx);
+                        });
+                    },
+                    None,
+                    window,
+                    cx,
+                );
+            }
+        }
     }
 
     /// Fecha uma aba do painel (a conversa continua na lista). Se era a que estava à vista, o
@@ -1354,5 +1473,94 @@ fn lembrar_fechada(fechadas: &mut Vec<String>, chat: &str) {
     fechadas.push(chat.to_string());
     if fechadas.len() > 20 {
         fechadas.remove(0);
+    }
+}
+
+/// Onde entra a aba de um chat que outro chat chamou (`Motor.chats_trazidos`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LugarDaAba {
+    /// Já está à vista ou já é aba de algum painel: nada a fazer.
+    JaTem,
+    /// Aba de fundo no painel (a posição dele em `Janela.paineis`), sem trocar o que está à vista.
+    Fundo(usize),
+    /// Sem painel nenhum: abre como qualquer chat.
+    Abrir,
+}
+
+/// Decide onde entra a aba do chat chamado por outro. `paineis`: o chat à vista e as abas de cada
+/// painel, na ordem da janela; `ativo`: o painel ativo. A aba vai para o painel ativo (o primeiro,
+/// se o ativo não existe mais).
+pub(super) fn onde_entra_a_aba(chat: &str, paineis: &[(Option<&str>, &[String])], ativo: usize) -> LugarDaAba {
+    if paineis.is_empty() {
+        return LugarDaAba::Abrir;
+    }
+    if paineis.iter().any(|(a_vista, abas)| *a_vista == Some(chat) || abas.iter().any(|a| a == chat)) {
+        return LugarDaAba::JaTem;
+    }
+    LugarDaAba::Fundo(if ativo < paineis.len() { ativo } else { 0 })
+}
+
+/// O que fechar a aba de um chat faz com o turno dele.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AoFecharAAba {
+    /// Só fecha a aba (a conversa continua na lista).
+    SoFecha,
+    /// Fecha e para o turno, como o botão Parar.
+    Para,
+    /// Parar derrubaria agentes em segundo plano: pergunta antes, como o Esc armado.
+    Pergunta,
+}
+
+/// Decide o que o fechar da aba faz. `rodando` é um turno de verdade em andamento (não o chat
+/// esperando a resposta do usuário); `continua_a_vista` é o chat ainda à vista em outro painel ou
+/// aba depois de fechar esta; `custa_caro` é o `Motor::parar_custa_caro`.
+pub(super) fn ao_fechar_a_aba(ligada: bool, rodando: bool, continua_a_vista: bool, custa_caro: bool) -> AoFecharAAba {
+    if !ligada || !rodando || continua_a_vista {
+        return AoFecharAAba::SoFecha;
+    }
+    if custa_caro { AoFecharAAba::Pergunta } else { AoFecharAAba::Para }
+}
+
+#[cfg(test)]
+mod testes_aba_trazida {
+    use super::{AoFecharAAba, LugarDaAba, ao_fechar_a_aba, onde_entra_a_aba};
+
+    fn abas(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sem_painel_abre_normalmente() {
+        assert_eq!(onde_entra_a_aba("x", &[], 0), LugarDaAba::Abrir);
+    }
+
+    #[test]
+    fn chat_a_vista_ou_ja_aba_nao_faz_nada() {
+        let (a, b) = (abas(&["c1", "c2"]), abas(&["c3"]));
+        let paineis = [(Some("c1"), a.as_slice()), (Some("c3"), b.as_slice())];
+        assert_eq!(onde_entra_a_aba("c1", &paineis, 0), LugarDaAba::JaTem, "à vista");
+        assert_eq!(onde_entra_a_aba("c2", &paineis, 1), LugarDaAba::JaTem, "aba de outro painel");
+        assert_eq!(onde_entra_a_aba("c3", &paineis, 0), LugarDaAba::JaTem);
+    }
+
+    #[test]
+    fn chat_novo_entra_de_fundo_no_painel_ativo() {
+        let (a, b) = (abas(&["c1"]), abas(&["c3"]));
+        let paineis = [(Some("c1"), a.as_slice()), (Some("c3"), b.as_slice())];
+        assert_eq!(onde_entra_a_aba("c9", &paineis, 1), LugarDaAba::Fundo(1));
+        assert_eq!(onde_entra_a_aba("c9", &paineis, 0), LugarDaAba::Fundo(0));
+        // O painel ativo que não existe mais: o primeiro.
+        assert_eq!(onde_entra_a_aba("c9", &paineis, 7), LugarDaAba::Fundo(0));
+    }
+
+    #[test]
+    fn fechar_a_aba_so_para_o_turno_que_roda_e_nao_aparece_em_outro_lugar() {
+        use AoFecharAAba::*;
+        assert_eq!(ao_fechar_a_aba(true, true, false, false), Para);
+        assert_eq!(ao_fechar_a_aba(true, true, false, true), Pergunta, "derrubaria agentes");
+        assert_eq!(ao_fechar_a_aba(false, true, false, false), SoFecha, "opção desligada");
+        assert_eq!(ao_fechar_a_aba(true, false, false, false), SoFecha, "parado ou esperando você");
+        assert_eq!(ao_fechar_a_aba(true, true, true, false), SoFecha, "continua à vista noutro lugar");
+        assert_eq!(ao_fechar_a_aba(true, true, true, true), SoFecha);
     }
 }

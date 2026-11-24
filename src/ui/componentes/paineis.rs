@@ -32,6 +32,8 @@ pub struct Aba {
     titulo: SharedString,
     simbolo: Option<Simbolo>,
     numero: Option<(usize, bool)>,
+    /// O número ocupa o lugar mas não aparece ("Só segurando Ctrl"): a aba não muda de largura.
+    numero_oculto: bool,
     detalhe: Option<(SharedString, bool)>,
     tom: TomAba,
     estado: Option<Sinal>,
@@ -52,6 +54,7 @@ impl Aba {
             titulo: titulo.into(),
             simbolo: None,
             numero: None,
+            numero_oculto: false,
             detalhe: None,
             tom: TomAba::default(),
             estado: None,
@@ -91,6 +94,12 @@ impl Aba {
 
     pub fn simbolo(mut self, s: Simbolo) -> Self {
         self.simbolo = Some(s);
+        self
+    }
+
+    /// O número fica invisível, guardando o lugar.
+    pub fn numero_oculto(mut self, oculto: bool) -> Self {
+        self.numero_oculto = oculto;
         self
     }
 
@@ -325,7 +334,7 @@ impl Aba {
             // O número do painel fica à direita, antes do × (dono, 13/11/2026).
             // Colado no título: 4 em vez dos 6 do vão da aba (dono, 17/11/2026: "diminui o espaço
             // até o número").
-            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| div().flex_none().ml(-esp::E2).child(numero_painel(n, ativo))))
+            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| div().flex_none().ml(-esp::E2).when(self.numero_oculto, |d| d.opacity(0.)).child(numero_painel(n, ativo))))
             .children(self.fim)
             .children(fim)
             .children(por_cima)

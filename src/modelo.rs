@@ -704,6 +704,36 @@ pub struct Config {
     pub instrucoes: String,
     /// Os perfis de agente, na ordem em que aparecem no seletor de modelo (`crate::perfis`).
     pub perfis: Vec<crate::perfis::Perfil>,
+    /// Um chat que começa a rodar por pedido de OUTRO chat (`mensagem_para_chat`, `abrir_chat`)
+    /// aparece numa aba do painel ativo, sem trocar o que está à vista (dono, 24/11/2026).
+    pub chat_chamado_abre_aba: bool,
+    /// Fechar a aba de um chat que está trabalhando para o turno dele (como o Parar), a menos que
+    /// ele continue à vista em outro painel ou aba.
+    pub fechar_aba_para_o_chat: bool,
+    /// A seta ↑ na caixa vazia percorre as mensagens enviadas em vez de corrigir a última (que
+    /// continua no lápis do balão e no Ctrl+↑).
+    pub seta_acima_percorre: bool,
+    /// O Enter com o turno rodando manda a mensagem para a fila; o Ctrl+Enter entra no turno.
+    pub enter_na_fila: bool,
+    /// Os números das abas e da lista só aparecem com o Ctrl apertado.
+    pub numeros_so_com_ctrl: bool,
+    /// A aba Arquivos lembra, entre aberturas, "Mostrar ignorados" e "Ignorar espaço em branco".
+    pub lembrar_arquivos: bool,
+    /// O último "Mostrar ignorados" da aba Arquivos (vale ao abrir com `lembrar_arquivos`).
+    pub arquivos_mostrar_ignorados: bool,
+    /// O último "Ignorar espaço em branco" do diff (vale ao abrir com `lembrar_arquivos`).
+    pub diff_sem_espaco: bool,
+    /// O título do chat vem do Claude Code (`ai-title`), no lugar das primeiras palavras.
+    pub titulo_pelo_claude: bool,
+    /// Quais anéis de uso o canto mostra (cada um ainda depende de a conta estar conectada).
+    pub anel_claude: bool,
+    pub anel_codex: bool,
+    pub anel_gemini: bool,
+    /// A parte Agentes das Configurações consulta sozinha a versão nova dos agentes; desligado,
+    /// só o botão consulta.
+    pub consultar_versoes: bool,
+    /// A caixa de mensagem usa também a letra da conversa.
+    pub letra_na_caixa: bool,
 }
 
 /// Um instante Unix no fuso local (o do sistema, como o `localtime_r`); fora do alcance do chrono,
@@ -801,6 +831,20 @@ impl Default for Config {
             letra_da_conversa: 100,
             instrucoes: String::new(),
             perfis: Vec::new(),
+            chat_chamado_abre_aba: true,
+            fechar_aba_para_o_chat: true,
+            seta_acima_percorre: false,
+            enter_na_fila: false,
+            numeros_so_com_ctrl: false,
+            lembrar_arquivos: false,
+            arquivos_mostrar_ignorados: false,
+            diff_sem_espaco: false,
+            titulo_pelo_claude: true,
+            anel_claude: true,
+            anel_codex: true,
+            anel_gemini: true,
+            consultar_versoes: true,
+            letra_na_caixa: false,
         }
     }
 }
@@ -1048,6 +1092,18 @@ mod testes {
         let nova = Config { letra_da_conversa: 120, instrucoes: "Rode os testes antes de dizer que terminou.".into(), ..Config::default() };
         let volta: Config = serde_json::from_str(&serde_json::to_string(&nova).unwrap()).unwrap();
         assert_eq!((volta.letra_da_conversa, volta.instrucoes), (120, nova.instrucoes));
+    }
+
+    #[test]
+    fn config_de_antes_abre_com_as_opcoes_novas_no_comportamento_de_hoje() {
+        let c: Config = serde_json::from_value(serde_json::json!({ "permissao": "manual" })).unwrap();
+        // Ligadas desde que nasceram (pedidos do dono, 24/11/2026).
+        assert!(c.chat_chamado_abre_aba && c.fechar_aba_para_o_chat);
+        // O que já era assim continua igual.
+        assert!(c.titulo_pelo_claude && c.consultar_versoes && c.anel_claude && c.anel_codex && c.anel_gemini);
+        // O que muda o comportamento de hoje começa desligado.
+        assert!(!c.seta_acima_percorre && !c.enter_na_fila && !c.numeros_so_com_ctrl);
+        assert!(!c.lembrar_arquivos && !c.arquivos_mostrar_ignorados && !c.diff_sem_espaco && !c.letra_na_caixa);
     }
 
     fn chat_de_teste() -> Chat {
