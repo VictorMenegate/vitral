@@ -9,7 +9,7 @@ sessão e responde "(gemini falso) Anotei…". Na mensagem:
 - `[ferramenta Edit]` encena uma edição de c.txt (o tool_call e o diff);
 - `[falha]` termina o pedido com erro.
 Um session/prompt com o turno rodando entra nele: o anterior responde end_turn na hora e a resposta
-final cita a mensagem nova. `agy models` lista os modelos; `agy --version` diz a versão. Os
+final cita a mensagem nova. `agy models` lista os modelos; `agy -p /usage` dá a cota (AGY_FALSO_GEMINI_USADO); `agy --version` diz a versão. Os
 pedidos recebidos vão para $XDG_STATE_HOME/agy-falso.log."""
 import json
 import os
@@ -29,6 +29,17 @@ if ARGS[:1] == ["models"]:
     print("gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)")
     print("gemini-3.8-flash-low\tGemini 3.8 Flash (Low)")
     print("claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)")
+    sys.exit(0)
+if ARGS[:2] == ["-p", "/usage"]:
+    # A cota de cada grupo, como o agy 1.5.15 responde ao `-p /usage --output-format json`.
+    # AGY_FALSO_GEMINI_USADO (0 a 1) é a fração da semana do Gemini já usada; padrão 0,3.
+    usado = float(os.environ.get("AGY_FALSO_GEMINI_USADO", "0.3"))
+    renova = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 5 * 86400))
+    balde = lambda resto: [{"id": "w", "name": "Weekly Limit Remaining", "window": "weekly", "remaining_fraction": resto, "reset_time": renova}]
+    print(json.dumps({"conversation_id": "", "status": "SUCCESS", "response": "", "num_turns": 0, "command": {"name": "usage", "data": {"groups": [
+        {"name": "Gemini Models", "buckets": balde(1 - usado)},
+        {"name": "Claude and GPT models", "buckets": balde(1.0)},
+    ]}}}))
     sys.exit(0)
 if ARGS[:1] != ["acp"]:
     print("agy falso: só `acp`, `models` e `--version`", file=sys.stderr)

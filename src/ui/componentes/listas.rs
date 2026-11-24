@@ -21,8 +21,9 @@ use super::textos::{etiqueta_de_secao, tracinho_de_secao};
 use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam};
 
 /// Rótulo de seção (24, mono 11 apagado em caixa alta, com o tracinho), com contagem, ação e recolher: 16 de respiro em cima (4
-/// na primeira, ou o `respiro`) e 4 embaixo. O texto fica no `recuo` (8 por padrão: na lista, com a peça de 8,
-/// cai na guia de 16; na Equipe, `.recuo(12.)` põe na guia de 24) e o chevron, à esquerda dele.
+/// na primeira, ou o `respiro`) e 4 embaixo. O tracinho fica no `recuo` (8 por padrão: na lista, com a peça de 8,
+/// cai na guia de 16; na Equipe, `.recuo(12.)` põe na guia de 24), o texto 14 depois dele (o tracinho de 8
+/// e o vão de 6) e o chevron, quando há, antes do tracinho.
 #[derive(IntoElement)]
 pub struct CabecalhoDeSecao {
     titulo: SharedString,
@@ -650,6 +651,12 @@ impl LinhaDeOpcao {
     /// Ícone antes do título, com o título na mesma cor (o Ultracode, em violeta).
     pub fn simbolo(mut self, icone: Lucide, cor: Hsla) -> Self {
         self.simbolo = Some((icone, cor));
+        self
+    }
+
+    /// A marca do agente (Claude, Codex) antes do título.
+    pub fn marca(mut self, s: Simbolo) -> Self {
+        self.marca = Some(s);
         self
     }
 

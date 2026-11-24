@@ -34,6 +34,9 @@ pub struct Editor {
     context_menu_builder: Option<Rc<dyn Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu>>,
 
     paste_handler: Option<Rc<dyn Fn(&gpui::ClipboardItem, &mut Window, &mut App) -> bool>>,
+
+    /// Vitral: a cor da calha dos números de linha deste editor.
+    gutter_background: Option<gpui::Hsla>,
 }
 
 impl Editor {
@@ -52,7 +55,16 @@ impl Editor {
             aria_label: None,
             context_menu_builder: None,
             paste_handler: None,
+            gutter_background: None,
         }
+    }
+
+    /// Vitral: a cor da calha dos números de linha, no lugar da do tema. A calha é pintada por
+    /// cima do texto que rola para o lado: sobre uma superfície translúcida ela precisa de uma
+    /// cor opaca, que muda com o lugar em que o editor está (o painel ou a gaveta).
+    pub fn gutter_background(mut self, color: impl Into<gpui::Hsla>) -> Self {
+        self.gutter_background = Some(color.into());
+        self
     }
 
     pub fn h(mut self, height: impl Into<DefiniteLength>) -> Self {
@@ -170,6 +182,9 @@ impl RenderOnce for Editor {
             })
             .when_some(self.paste_handler, |this, handler| {
                 this.on_paste(move |item, window, cx| handler(item, window, cx))
+            })
+            .when_some(self.gutter_background, |this, color| {
+                this.gutter_background(color)
             })
             .refine_style(&self.style)
     }

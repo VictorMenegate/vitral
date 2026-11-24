@@ -27,7 +27,7 @@ pub fn tam(window: &Window, px: f32) -> Pixels {
 
 /// Raios: três medidas e a pílula. As três são em rem, para crescerem com o zoom como o resto (a
 /// 150% o canto fixo em px ficava bem menos redondo: dono, 13/11/2026); quem só aceita `Pixels`
-/// usa `controle()`, `cartao()` e `peca()`. Dentro de quem tem padding p, o raio é max(raio de fora − p, CONTROLE),
+/// usa `controle()`, `cartao()` e `peca()`. Dentro de quem tem padding p, o raio é max(raio de fora − borda − p, CONTROLE),
 /// para os cantos ficarem concêntricos; o teste `raios_na_escala` barra o resto.
 pub mod raio {
     use gpui_kit::{Pixels, px};
@@ -460,6 +460,7 @@ gpui_kit::assets::icon_assets!(
         BellOff,
         Binary,
         Bot,
+        Braces,
         Brain,
         CalendarClock,
         ChartColumn,
@@ -497,6 +498,7 @@ gpui_kit::assets::icon_assets!(
         FolderPlus,
         FolderSearch,
         FolderX,
+        Funnel,
         Gauge,
         GitBranch,
         GitCommitHorizontal,
@@ -1155,6 +1157,32 @@ pub fn transparencia() -> u8 {
     TRANSPARENCIA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Os tamanhos da letra da conversa, em % do resto da interface (o − e o + das Configurações andam
+/// por eles).
+pub const LETRAS_DA_CONVERSA: [u32; 8] = [80, 90, 100, 110, 120, 130, 140, 150];
+
+static LETRA_DA_CONVERSA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(100);
+
+/// Quanto as mensagens crescem em relação ao resto: 110 dá 1,1. Um valor fora da faixa (o
+/// `config.json` editado à mão) fica na ponta mais perto, e o zero de um arquivo estragado, em 1.
+pub fn fator_da_letra(porcento: u32) -> f32 {
+    if porcento == 0 {
+        return 1.;
+    }
+    let (menor, maior) = (LETRAS_DA_CONVERSA[0], LETRAS_DA_CONVERSA[LETRAS_DA_CONVERSA.len() - 1]);
+    porcento.clamp(menor, maior) as f32 / 100.
+}
+
+/// A Janela diz a letra escolhida a cada desenho (como a transparência).
+pub fn definir_letra_da_conversa(porcento: u32) {
+    LETRA_DA_CONVERSA.store(porcento, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// O fator da letra da conversa de agora (`fator_da_letra` da escolha das Configurações).
+pub fn fator_da_conversa() -> f32 {
+    fator_da_letra(LETRA_DA_CONVERSA.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 fn nivel_de_transparencia(nivel: u8) -> (u32, u32, f32) {
     NIVEIS_DE_TRANSPARENCIA[usize::from(nivel.min(3))]
 }
@@ -1461,6 +1489,25 @@ impl Cores {
     }
     pub fn vermelho() -> Hsla {
         rgba(0xf87171ff).into()
+    }
+}
+
+#[cfg(test)]
+mod testes_da_letra {
+    use super::{LETRAS_DA_CONVERSA, fator_da_letra};
+
+    #[test]
+    fn a_letra_da_conversa_e_uma_fracao_do_resto_e_nunca_sai_da_faixa() {
+        assert_eq!(fator_da_letra(100), 1.);
+        assert_eq!(fator_da_letra(120), 1.2);
+        assert_eq!(fator_da_letra(80), 0.8);
+        // Editado à mão para fora da faixa: a ponta mais perto. Zero (arquivo estragado): igual.
+        assert_eq!(fator_da_letra(40), 0.8);
+        assert_eq!(fator_da_letra(900), 1.5);
+        assert_eq!(fator_da_letra(0), 1.);
+        // Os degraus têm o 100 (o padrão) e crescem.
+        assert!(LETRAS_DA_CONVERSA.contains(&100));
+        assert!(LETRAS_DA_CONVERSA.windows(2).all(|par| par[0] < par[1]));
     }
 }
 

@@ -1,0 +1,92 @@
+# O título gerado, o aviso de fim legível, os arquivos citados (linhas, file://, pelo fim do
+# caminho), os links na saída de comando e o comando de barra citado, com o claude de mentira
+# encenando o Claude Code 2.1.328: ele responde ao `generate_session_title` com o `[titulo ...]` da
+# mensagem e grava a linha `ai-title` na sessão; o `[responde arquivo]` dá a resposta do turno e o
+# `[saida arquivo]`, a saída do comando.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele e @PASTA@ uma pasta
+# vazia qualquer, trocados antes de rodar, por exemplo com sed):
+#   CLAUDE_CONFIG_DIR=<pasta vazia de mentira> CLAUDE_FALSO_VERSAO=2.1.328 CLAUDE_FALSO=1 ZOOM=1.5 \
+#     XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-links BANCADA=3 \
+#     ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# O CLAUDE_CONFIG_DIR de mentira é onde o claude de mentira grava a sessão com o título (sem ele o
+# título não muda: o ~/.claude de verdade nunca é tocado). Sem o DADOS_NOVOS: a bancada precisa já
+# ter um chat; na primeira vez, rode antes com `@BIN@ --nova @PASTA@ "oi, tudo bem por aí?"` no
+# lugar do comando. Para o "Enquanto você esteve fora" aparecer sem esperar 15 minutos, ponha
+# {"minutos_para_resumo": 0} no config/vitral/config.json da bancada antes de abrir. Para ler o
+# texto do aviso do sistema, ponha na frente do PATH um `notify-send` que anote os argumentos e
+# escreva um número (o id).
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta e cada mensagem num chat novo (o
+# `--nova`). Para o layout estreito a 150% (como com três painéis lado a lado), comece por
+# `arrastar 1497 500 1000 500` e troque as coordenadas pelas do fim deste arquivo.
+
+espera 8
+# 0. A pasta do chat: dois `mod.rs` (o nome sozinho não liga), um `mensagens.rs` (liga pelo fim),
+#    a resposta e a saída que o claude de mentira devolve.
+roda mkdir -p @PASTA@/src/ui @PASTA@/src/motor @PASTA@/docs @PASTA@/tools
+roda printf 'fn soma(a: i32, b: i32) -> i32 {\n    a - b\n}\n' > @PASTA@/src/x.rs
+roda printf 'const total: number = 1;\nexport function preco(): number {\n  const x: number = "dez";\n  return x + total;\n}\n' > @PASTA@/src/app.ts
+roda seq -f '// src/ui/mod.rs, linha %g' 30 > @PASTA@/src/ui/mod.rs
+roda seq -f '// src/ui/mensagens.rs, linha %g' 12 > @PASTA@/src/ui/mensagens.rs
+roda seq -f '// src/motor/mod.rs, linha %g' 8 > @PASTA@/src/motor/mod.rs
+roda printf '# Guia\n\nComo rodar a loja.\n' > @PASTA@/docs/guia.md
+roda printf 'import sys\nraise SystemExit("gerar: falta o arquivo")\n' > @PASTA@/tools/gerar.py
+roda printf '%s\n' '## Resumo' '' 'O erro está em `src/x.rs:2:5`: a soma subtrai. Mexi também em `src/ui/mod.rs#L10-L20` e em src/app.ts:3:7.' '' '- O arquivo `mensagens.rs:3` só existe em um lugar, então abre; o `mod.rs` são dois e fica como texto.' '- [O guia](docs/guia.md#L3) e o endereço file://@PASTA@/tools/gerar.py:2 também abrem.' '- Rode `/compact` antes de continuar; o `/revisar` não existe neste chat.' > @PASTA@/resposta-links.md
+roda printf '%s\n' '   Compiling loja v0.1.0 (/tmp/loja)' 'error[E0308]: mismatched types' ' --> src/x.rs:2:5' '  |' '2 |     a - b' '  |     ^^^^^ expected `i32`, found `()`' 'src/app.ts(3,7): error TS2322: Type string is not assignable to type number.' '  File "tools/gerar.py", line 2, in <module>' 'warning: comentário solto em mensagens.rs:3' 'veja https://exemplo.com/src/x.rs:2 e a versão 0.9.5' 'error: could not compile `loja` (bin "loja") due to 1 previous error' > @PASTA@/saida-cargo.txt
+roda printf '%s\n' '## Resumo' '' '**Pronto.** Corrigi a `soma` em `src/x.rs` e rodei os testes:' '' '- 12 passaram' '- nenhum falhou' '' 'Falta só o [deploy](https://exemplo.com/deploy).' > @PASTA@/resposta-aviso.md
+
+# 1. O título: durante o turno, o das primeiras palavras; depois dele, o que o Claude Code gerou.
+roda @BIN@ --nova @PASTA@ "olha esse erro aqui que deu no build da loja [titulo Erro de tipos na soma] [ferramenta Bash cargo build | 8] [saida saida-cargo.txt] [responde resposta-links.md]"
+espera 4
+mover 900 200
+print 01-titulo-automatico     # "olha esse erro aqui que deu no" na lista e na aba
+espera 10
+mover 900 200
+print 02-titulo-gerado-e-links # "Erro de tipos na soma"; os arquivos e o /compact em cor de link
+# 2. O comando de barra citado vai para a caixa (o /revisar, que o chat não tem, fica como texto).
+clique 760 723
+espera 1
+mover 900 200
+print 03-comando-na-caixa
+tecla Control_L+a
+tecla BackSpace
+# 3. `arquivo#L10-L20` abre com as linhas marcadas; `mensagens.rs:3` abre pelo fim do caminho.
+clique 745 523
+espera 2
+mover 900 200
+print 04-arquivo-com-as-linhas  # "linhas 10 a 20" no painel da direita
+tecla Control_L+j
+espera 1
+clique 843 575
+espera 2
+mover 900 200
+print 05-pelo-fim-do-caminho    # src/ui/mensagens.rs, na linha 3
+tecla Control_L+j
+espera 1
+# 4. A saída do comando: os arquivos em cor de link, a dica com o caminho inteiro e o clique.
+clique 745 392
+espera 2
+mover 788 541
+espera 2
+print 06-saida-com-links-e-dica # a dica de src/x.rs:2:5
+clique 750 649
+espera 2
+mover 900 200
+print 07-saida-abre-na-linha    # src/app.ts, na linha 3
+tecla Control_L+j
+espera 1
+# 5. O aviso e o "Enquanto você esteve fora": com outro aplicativo na frente, o turno termina.
+roda @BIN@ --nova @PASTA@ "confere o build de novo, por favor [titulo Build da loja conferido] [ferramenta Bash cargo test | 6] [responde resposta-aviso.md]"
+espera 2
+outro_app
+espera 10
+fecha_outro
+espera 2
+mover 900 200
+print 08-esteve-fora            # "Resumo: Pronto." sem as marcas de markdown
+
+# No layout estreito a 150% (depois do `arrastar 1497 500 1000 500`), os mesmos passos com estas
+# coordenadas, e o ponteiro descansando em `mover 700 150`:
+#   o /compact: clique 748 704        o `src/ui/mod.rs#L10-L20`: clique 733 368
+#   o `mensagens.rs:3`: clique 830 454
+#   a saída: `rolar 820 500 -6` (a conversa sobe até a chamada), `clique 700 358` para abrir,
+#   `mover 776 508` para a dica de src/x.rs:2:5 e `clique 738 616` no src/app.ts(3,7).

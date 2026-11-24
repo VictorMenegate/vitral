@@ -8,8 +8,12 @@
 //!
 //! O que não vale agora aparece apagado, com o motivo embaixo. A montagem da lista é pura
 //! (`entradas`), sobre uma foto do momento (`Momento`), e os testes estão no fim.
+//!
+//! Com algo escrito, a lista acha também as conversas (pelo título) e os arquivos da pasta do chat
+//! ativo (pelo nome), em duas seções depois dos comandos (`grupos_com_achados`). O Ctrl+P abre a
+//! lista só dos arquivos (`abrir_arquivo_pelo_nome`), e o Enter abre o escolhido à direita.
 
-use std::rc::Rc;
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use gpui_kit::component::{WindowExt as _, v_flex};
 use gpui_kit::*;
@@ -17,16 +21,21 @@ use gpui_kit::*;
 use super::{
     Janela, acentos,
     atalhos::{self, Grupo},
-    componentes::{EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, desenho_teclas, fio_de_pontos, largura},
-    dialogos::{cabecalho, moldura, topo},
+    componentes::{EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, Simbolo, Tom, aviso, desenho_teclas, fio_de_pontos, largura},
+    dialogos::{cabecalho, com_til, moldura, nome_da_pasta, topo},
+    seletor_arquivos,
 };
 use crate::{
     modelo::Agente,
-    tema::{Cores, Tipo as _, r},
+    tema::{Cores, Lucide, Tipo as _, r},
 };
 
-// Ctrl+Shift+P: a paleta de comandos.
-actions!(vitral, [AbrirPaleta]);
+// Ctrl+Shift+P: a paleta de comandos. Ctrl+P: a lista dos arquivos da pasta do chat ativo.
+actions!(vitral, [AbrirPaleta, AbrirArquivoPeloNome]);
+
+/// Os arquivos da pasta para uma lista de escolha: chegam do segundo plano quando ainda não
+/// foram lidos, e a lista os consulta a cada letra.
+type ArquivosDaLista = Rc<RefCell<Option<Rc<Vec<String>>>>>;
 
 /// O rótulo da linha da própria paleta na tabela de atalhos (ela aparece apagada dentro dela).
 pub(super) const ROTULO_DA_PALETA: &str = "Paleta de comandos";
@@ -309,6 +318,83 @@ fn grupos(todas: &[Entrada], busca: &str) -> Vec<GrupoDeEscolha> {
         .collect()
 }
 
+/// Os títulos das duas seções que só aparecem com algo escrito. A dos comandos da lista já se
+/// chama "Conversas" (a tabela de atalhos), então a das conversas achadas diz o que o Enter faz.
+const GRUPO_CONVERSAS: &str = "Ir para a conversa";
+const GRUPO_ARQUIVOS: &str = "Abrir arquivo";
+
+/// Quantas conversas e quantos arquivos a paleta mostra de cada vez (o resto, refinando a busca).
+const ACHADOS_POR_GRUPO: usize = 6;
+
+/// Uma conversa que a paleta acha pelo título.
+#[derive(Clone, Debug, PartialEq)]
+struct ConversaNaPaleta {
+    id: String,
+    titulo: String,
+    /// O que vai embaixo do título: a pasta (e "arquivada").
+    onde: String,
+}
+
+/// As seções da paleta com os achados: os comandos, como em `grupos`, e, com algo escrito, as
+/// conversas pelo título e os arquivos da pasta do chat ativo pelo nome (os dois sem acento). Sem
+/// busca, só os comandos: nada entra sozinho na lista.
+fn grupos_com_achados(todas: &[Entrada], conversas: &[ConversaNaPaleta], arquivos: &[String], busca: &str) -> Vec<GrupoDeEscolha> {
+    let mut saida = grupos(todas, busca);
+    let palavras = acentos::palavras(busca);
+    if palavras.is_empty() {
+        return saida;
+    }
+    let achadas: Vec<ItemDeEscolha> = conversas
+        .iter()
+        .filter(|c| acentos::tem_todas(&acentos::normalizar(&c.titulo), &palavras))
+        .take(ACHADOS_POR_GRUPO)
+        .map(|c| ItemDeEscolha {
+            simbolo: Some(Simbolo::icone(Lucide::MessageSquare)),
+            descricao: (!c.onde.is_empty()).then(|| c.onde.clone().into()),
+            ..ItemDeEscolha::new(format!("conversa:{}", c.id), c.titulo.clone())
+        })
+        .collect();
+    if !achadas.is_empty() {
+        saida.push(GrupoDeEscolha { titulo: Some(GRUPO_CONVERSAS.into()), itens: achadas });
+    }
+    // As linhas são as do "@" e do Ctrl+P (o nome em cima, a pasta embaixo), com a chave da paleta.
+    let achados: Vec<ItemDeEscolha> = if arquivos.is_empty() {
+        Vec::new()
+    } else {
+        seletor_arquivos::grupos_de_arquivos(Some(arquivos), busca)
+            .into_iter()
+            .flat_map(|g| g.itens)
+            .take(ACHADOS_POR_GRUPO)
+            .map(|item| ItemDeEscolha { chave: format!("arquivo:{}", item.chave).into(), ..item })
+            .collect()
+    };
+    if !achados.is_empty() {
+        saida.push(GrupoDeEscolha { titulo: Some(GRUPO_ARQUIVOS.into()), itens: achados });
+    }
+    saida
+}
+
+/// O rodapé das listas: o fio e as teclas com o que o Enter faz ("faz", "abre").
+fn rodape_das_teclas(enter: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyElement + 'static {
+    move |window, _| {
+        v_flex()
+            .w_full()
+            .gap(r(6.))
+            .child(fio_de_pontos(Cores::fio(), window))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(r(12.))
+                    .w_full()
+                    .child(div().flex_1())
+                    .child(dica_teclas(&["↑", "↓"], "escolhe"))
+                    .child(dica_teclas(&["Enter"], enter)),
+            )
+            .into_any_element()
+    }
+}
+
 /// "↑ ↓ escolher": as teclas da lista e o que fazem, no rodapé.
 fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement {
     div()
@@ -337,7 +423,9 @@ impl Janela {
                 outro_instalado: c.agente.outro().instalado(),
                 com_sessao: c.sessao_criada,
                 rodando: m.execucao(&c.id).rodando(),
-                dirige: m.turno_recebe_mensagem(&c.id),
+                // Também com um pedido de permissão aberto: aí o Enter responde a ele, e a fila
+                // é a outra escolha.
+                dirige: m.turno_recebe_mensagem(&c.id) || m.enviar_responde_pedido(&c.id),
                 fixado: c.fixado,
                 arquivado: c.arquivado,
                 tem_agentes: super::mapa_agentes::tem_agentes(c),
@@ -356,32 +444,137 @@ impl Janela {
         }
     }
 
+    /// A pasta do chat do painel ativo, quando ela existe no disco: é dela a lista do Ctrl+P e a
+    /// seção de arquivos da paleta.
+    fn pasta_do_chat_ativo(&self, cx: &App) -> Option<std::path::PathBuf> {
+        let chat = self.paineis.get(self.ativo)?.chat.as_deref()?;
+        self.motor.as_ref()?.read(cx).chat(chat).map(|c| c.cwd.clone()).filter(|p| p.is_dir())
+    }
+
+    /// As conversas que a paleta acha pelo título: todas menos a do painel ativo (você já está
+    /// nela), da mexida por último à mais antiga, com a pasta embaixo.
+    fn conversas_da_paleta(&self, cx: &App) -> Vec<ConversaNaPaleta> {
+        let Some(motor) = self.motor.as_ref() else {
+            return Vec::new();
+        };
+        let m = motor.read(cx);
+        let ativa = self.paineis.get(self.ativo).and_then(|p| p.chat.as_deref());
+        let mut chats: Vec<&crate::modelo::Chat> = m.chats.iter().filter(|c| Some(c.id.as_str()) != ativa).collect();
+        chats.sort_by_key(|c| std::cmp::Reverse(c.atualizado_em));
+        chats
+            .into_iter()
+            .map(|c| {
+                let pasta = if m.sem_pasta(c) { "Sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+                ConversaNaPaleta {
+                    id: c.id.clone(),
+                    titulo: c.titulo.clone(),
+                    onde: if c.arquivado { format!("{pasta} · arquivada") } else { pasta },
+                }
+            })
+            .collect()
+    }
+
+    /// Os arquivos da pasta para uma lista de escolha. Os que a aba Arquivos e o "@" já leram
+    /// valem na hora (e a lista é relida em segundo plano para a próxima vez); sem eles, são
+    /// lidos agora, e `ao_chegar` avisa quem está mostrando.
+    fn arquivos_para_escolher(
+        &self,
+        pasta: &Path,
+        ao_chegar: impl FnOnce(&Rc<Vec<String>>, &mut App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ArquivosDaLista {
+        let lidos = self.arquivos_e_pastas_lidos(pasta).map(|(lista, _)| lista).filter(|lista| !lista.is_empty());
+        let arquivos: ArquivosDaLista = Rc::new(RefCell::new(lidos.clone()));
+        if lidos.is_some() {
+            self.ler_arquivos(pasta, cx);
+        } else {
+            let pasta = pasta.to_path_buf();
+            let leitura = cx.background_spawn(async move { seletor_arquivos::listar(&pasta) });
+            let guardados = arquivos.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                let lista = Rc::new(leitura.await);
+                *guardados.borrow_mut() = Some(lista.clone());
+                let _ = cx.update(|_, cx| ao_chegar(&lista, cx));
+            })
+            .detach();
+        }
+        arquivos
+    }
+
+    /// Ctrl+P: a lista dos arquivos da pasta do chat ativo, com busca (o nome antes da pasta, sem
+    /// acento). O Enter abre o arquivo no painel da direita.
+    pub(super) fn abrir_arquivo_pelo_nome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pasta) = self.pasta_do_chat_ativo(cx) else {
+            window.push_notification(aviso(Tom::Info, "Abra uma conversa para escolher um arquivo da pasta dela."), cx);
+            return;
+        };
+        let vista = cx.new(|cx| {
+            let mut vista = ListaDeEscolha::new("Nome do arquivo…", window, cx);
+            vista.em_dialogo();
+            vista.rodape(rodape_das_teclas("abre"));
+            vista
+        });
+        let alvo = vista.downgrade();
+        let arquivos = self.arquivos_para_escolher(
+            &pasta,
+            move |lista, cx| {
+                // A leitura chegou com a lista aberta: ela passa a mostrar os arquivos, com o que já foi escrito.
+                let _ = alvo.update(cx, |l, cx| {
+                    let busca = l.busca(cx);
+                    l.definir(seletor_arquivos::grupos_de_arquivos(Some(lista.as_slice()), &busca), None, cx);
+                });
+            },
+            window,
+            cx,
+        );
+        vista.update(cx, |vista, cx| {
+            vista.definir(seletor_arquivos::grupos_de_arquivos(arquivos.borrow().as_deref().map(Vec::as_slice), ""), None, cx);
+            let lidos = arquivos.clone();
+            vista.filtro_proprio(move |busca| {
+                let lidos = lidos.borrow().clone();
+                seletor_arquivos::grupos_de_arquivos(lidos.as_deref().map(Vec::as_slice), busca)
+            });
+        });
+        let raiz = pasta.clone();
+        self._assinatura_dialogo = Some(cx.subscribe_in(&vista, window, move |this, _, evento: &EventoEscolha, window, cx| {
+            let EventoEscolha::Escolheu(caminho) = evento else {
+                return;
+            };
+            window.close_dialog(cx);
+            this.abrir_arquivo(raiz.clone(), caminho.to_string(), window, cx);
+        }));
+        self.foco_antes_do_dialogo(window, cx);
+        let no_dialogo = vista.clone();
+        let onde = com_til(&pasta);
+        window.open_dialog(cx, move |dialogo, window, _| {
+            moldura(dialogo, largura::G, window)
+                .title(topo(cabecalho("Abrir arquivo", Some(onde.clone()))))
+                .child(no_dialogo.clone())
+                .on_ok(|_, _, _| false)
+        });
+        vista.update(cx, |l, cx| l.abrir(window, cx));
+    }
+
     /// Ctrl+Shift+P: abre a paleta. O Enter executa no painel ativo; o Esc devolve o foco à caixa.
     pub(super) fn abrir_paleta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let todas = Rc::new(entradas(&self.momento_da_paleta(cx)));
+        // O que a busca acha além dos comandos: as conversas e os arquivos da pasta do chat ativo.
+        let conversas = Rc::new(self.conversas_da_paleta(cx));
+        let arquivos: ArquivosDaLista = match self.pasta_do_chat_ativo(cx) {
+            Some(pasta) => self.arquivos_para_escolher(&pasta, |_, _| {}, window, cx),
+            None => Rc::default(),
+        };
         let vista = cx.new(|cx| {
-            let mut vista = ListaDeEscolha::new("O que você quer fazer?", window, cx);
+            let mut vista = ListaDeEscolha::new("Comando, conversa ou arquivo…", window, cx);
             vista.em_dialogo();
             vista.definir(grupos(&todas, ""), None, cx);
             let filtro = todas.clone();
-            vista.filtro_proprio(move |busca| grupos(&filtro, busca));
-            vista.rodape(|window, _| {
-                v_flex()
-                    .w_full()
-                    .gap(r(6.))
-                    .child(fio_de_pontos(Cores::fio(), window))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(r(12.))
-                            .w_full()
-                            .child(div().flex_1())
-                            .child(dica_teclas(&["↑", "↓"], "escolhe"))
-                            .child(dica_teclas(&["Enter"], "faz")),
-                    )
-                    .into_any_element()
+            vista.filtro_proprio(move |busca| {
+                let lidos = arquivos.borrow().clone();
+                grupos_com_achados(&filtro, &conversas, lidos.as_deref().map_or(&[], Vec::as_slice), busca)
             });
+            vista.rodape(rodape_das_teclas("faz"));
             vista
         });
         self._assinatura_dialogo = Some(cx.subscribe_in(&vista, window, |this, _, evento: &EventoEscolha, window, cx| {
@@ -416,6 +609,18 @@ impl Janela {
         }
         if let Some(nome) = chave.strip_prefix("arranjo:") {
             self.trocar_de_arranjo(nome, window, cx);
+            return;
+        }
+        // Os achados: a conversa abre no painel ativo, com o foco na caixa; o arquivo, à direita.
+        if let Some(chat) = chave.strip_prefix("conversa:") {
+            self.selecionar(Some(chat.to_string()), window, cx);
+            self.focar_composer(window, cx);
+            return;
+        }
+        if let Some(caminho) = chave.strip_prefix("arquivo:") {
+            if let Some(pasta) = self.pasta_do_chat_ativo(cx) {
+                self.abrir_arquivo(pasta, caminho.to_string(), window, cx);
+            }
             return;
         }
         let Some(direto) = chave.strip_prefix("direto:").and_then(|n| n.parse::<usize>().ok()).and_then(|i| Direto::TODOS.get(i)) else {
@@ -474,7 +679,10 @@ impl Janela {
 
 #[cfg(test)]
 mod testes {
-    use super::{ChatAgora, Direto, Entrada, Momento, ROTULO_DA_PALETA, entradas, grupos};
+    use super::{
+        ACHADOS_POR_GRUPO, ChatAgora, ConversaNaPaleta, Direto, Entrada, GRUPO_ARQUIVOS, GRUPO_CONVERSAS, Momento, ROTULO_DA_PALETA,
+        entradas, grupos, grupos_com_achados,
+    };
     use crate::ui::atalhos::{self, Grupo};
 
     fn com_chat(chat: ChatAgora) -> Momento {
@@ -576,5 +784,38 @@ mod testes {
         // "mapa" não está no nome, mas é como a pessoa procura os agentes.
         assert_eq!(titulos("mapa agentes"), ["Agentes desta conversa"]);
         assert!(titulos("nada que exista aqui").is_empty());
+    }
+
+    #[test]
+    fn com_algo_escrito_a_paleta_acha_conversas_e_arquivos_depois_dos_comandos() {
+        let todas = entradas(&Momento::default());
+        let conversa = |id: &str, titulo: &str| ConversaNaPaleta { id: id.into(), titulo: titulo.into(), onde: "loja".into() };
+        let conversas = [conversa("c1", "Cupons dos grupos VIP"), conversa("c2", "Integração do frete")];
+        let arquivos: Vec<String> = ["src/checkout/cupom.rs", "docs/integração.md", "src/main.rs"].map(String::from).to_vec();
+        let do_grupo = |grupos: &[crate::ui::componentes::GrupoDeEscolha], titulo: &str| -> Option<Vec<(String, String)>> {
+            grupos
+                .iter()
+                .find(|g| g.titulo.as_ref().is_some_and(|t| t.as_ref() == titulo))
+                .map(|g| g.itens.iter().map(|i| (i.chave.to_string(), i.titulo.to_string())).collect())
+        };
+        // Sem nada escrito, só os comandos, como antes.
+        let vazia = grupos_com_achados(&todas, &conversas, &arquivos, "");
+        assert_eq!(vazia.len(), grupos(&todas, "").len());
+        assert_eq!((do_grupo(&vazia, GRUPO_CONVERSAS), do_grupo(&vazia, GRUPO_ARQUIVOS)), (None, None));
+        // "integracao", sem acento, acha a conversa pelo título e o arquivo pelo nome.
+        let achados = grupos_com_achados(&todas, &conversas, &arquivos, "integracao");
+        assert_eq!(do_grupo(&achados, GRUPO_CONVERSAS), Some(vec![("conversa:c2".to_string(), "Integração do frete".to_string())]));
+        assert_eq!(do_grupo(&achados, GRUPO_ARQUIVOS), Some(vec![("arquivo:docs/integração.md".to_string(), "integração.md".to_string())]));
+        // Os comandos continuam e vêm antes dos achados.
+        let achados = grupos_com_achados(&todas, &conversas, &arquivos, "conversa");
+        let comandos = grupos(&todas, "conversa").len();
+        assert!(comandos > 0 && achados.len() >= comandos);
+        let titulos: Vec<String> = achados.iter().map(|g| g.titulo.clone().unwrap_or_default().to_string()).collect();
+        assert!(!titulos[..comandos].iter().any(|t| t == GRUPO_CONVERSAS || t == GRUPO_ARQUIVOS), "{titulos:?}");
+        // De cada tipo, só os primeiros: o resto aparece refinando a busca.
+        let muitos: Vec<String> = (0..40).map(|i| format!("src/modulo{i}/cupom.rs")).collect();
+        let achados = grupos_com_achados(&todas, &conversas, &muitos, "cupom");
+        assert_eq!(do_grupo(&achados, GRUPO_ARQUIVOS).map(|g| g.len()), Some(ACHADOS_POR_GRUPO));
+        assert_eq!(do_grupo(&achados, GRUPO_CONVERSAS), None);
     }
 }

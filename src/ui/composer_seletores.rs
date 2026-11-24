@@ -87,7 +87,7 @@ fn abrir_ou_fechar(janela: &WeakEntity<Janela>, painel: u64, qual: PopCaixa, abr
 }
 
 /// Item de menu com o ícone dentro do conteúdo: num menu de itens descritos, o `.icon()` do kit
-/// reservaria uma coluna vazia antes de todos. O texto cai na coluna dos títulos descritos (28).
+/// reservaria uma coluna vazia antes de todos. O texto cai na coluna dos títulos descritos (40).
 fn item_com_icone(icone: Lucide, rotulo: &'static str) -> PopupMenuItem {
     PopupMenuItem::element(move |window, _| {
         div()
@@ -95,7 +95,12 @@ fn item_com_icone(icone: Lucide, rotulo: &'static str) -> PopupMenuItem {
             .items_center()
             .gap(esp::E12)
             .min_w_0()
-            .child(div().flex_none().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))))
+            .child(
+                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
+                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
+                // (folha dimensional, 23/11/2026).
+                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
+            )
             .child(div().flex_1().min_w_0().truncate().child(rotulo))
     })
 }
@@ -169,7 +174,12 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
             .items_center()
             .gap(esp::E12)
             .min_w_0()
-            .child(div().flex_none().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))))
+            .child(
+                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
+                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
+                // (folha dimensional, 23/11/2026).
+                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
+            )
             .child(
                 div()
                     .flex_1()
@@ -486,6 +496,24 @@ fn linhas_do_codex(escolhido: Option<&str>, oferecidos: &[ModeloDoCodex]) -> Vec
     linhas
 }
 
+/// O prefixo das chaves do grupo "Perfis" no seletor: `perfil:<id>`. Escolher uma deixa o chat
+/// como o perfil diz (`Motor::aplicar_perfil`).
+const DO_PERFIL: &str = "perfil:";
+
+/// As linhas do grupo "Perfis": os perfis de quem responde na aba `aba`, na ordem das
+/// Configurações, com a nota de quando usar (ou o resumo) embaixo do nome. O que bate com o chat
+/// leva o "em uso"; `chat` é `None` na aba que não é a do chat.
+fn linhas_de_perfil(perfis: &[crate::perfis::Perfil], aba: Agente, chat: Option<&Chat>, modo_padrao: &str) -> Vec<LinhaDeModelo> {
+    perfis
+        .iter()
+        .filter(|p| p.agente == aba)
+        .map(|p| LinhaDeModelo {
+            em_uso: chat.is_some_and(|c| p.bate_com(c, modo_padrao)),
+            ..LinhaDeModelo::new(format!("{DO_PERFIL}{}", p.id), p.nome.clone(), crate::ui::configuracoes::perfis::segunda_linha(p))
+        })
+        .collect()
+}
+
 /// O seletor tem as abas dos agentes: com o Codex ou o Gemini instalado, ou num chat que já é de
 /// um deles.
 fn com_abas_de_agente(chat: &Chat) -> bool {
@@ -503,19 +531,31 @@ fn abas_de_agente(chat: &Chat) -> Vec<Agente> {
 fn grupos_de_modelo(motor: &Motor, chat: &Chat, aba: Agente) -> Vec<GrupoDeEscolha> {
     let do_chat = chat.agente == aba;
     let escolhido = chat.modelo.as_deref().filter(|_| do_chat);
+    // Os perfis do agente da aba vão no alto: são o atalho de quem os criou. Com eles, a lista de
+    // modelos embaixo ganha o rótulo, para não parecer mais um perfil.
+    let perfis = linhas_de_perfil(&motor.config.perfis, aba, Some(chat).filter(|_| do_chat), &motor.config.permissao);
+    let com_perfis = !perfis.is_empty();
+    let mut grupos = Vec::new();
+    if com_perfis {
+        grupos.push(GrupoDeEscolha { titulo: Some("Perfis".into()), itens: itens_de_modelo(perfis) });
+    }
     if aba == Agente::Codex {
-        return vec![GrupoDeEscolha { titulo: None, itens: itens_de_modelo(linhas_do_codex(escolhido, &agente_codex::modelos())) }];
+        grupos.push(GrupoDeEscolha {
+            titulo: com_perfis.then(|| "Modelos".into()),
+            itens: itens_de_modelo(linhas_do_codex(escolhido, &agente_codex::modelos())),
+        });
+        return grupos;
     }
     if aba == Agente::Gemini {
         return vec![GrupoDeEscolha { titulo: None, itens: itens_de_modelo(linhas_do_gemini(escolhido, &agente_gemini::modelos())) }];
     }
     let em_uso = chat.modelo_atual.as_deref().filter(|_| do_chat);
     let motivo = motivo_sem_versao_exata(motor.versao_claude);
-    let mut grupos = vec![GrupoDeEscolha {
+    grupos.push(GrupoDeEscolha {
         // Com as abas, o nome do agente já está nelas.
-        titulo: (!com_abas_de_agente(chat)).then(|| "Claude".into()),
+        titulo: if com_abas_de_agente(chat) { com_perfis.then(|| "Modelos".into()) } else { Some("Claude".into()) },
         itens: itens_de_modelo(linhas_de_modelo(escolhido, em_uso, padrao_da_pasta(motor, chat))),
-    }];
+    });
     // A conta é do Claude, então mora na aba dele, e não solta na caixa (dono, 16/11/2026: "por
     // que tem essa conta aqui se agora tem o Codex também?"). Só com mais de uma conta.
     if motor.contas.len() > 1 {
@@ -912,6 +952,18 @@ impl Janela {
                                 if valor == SEM_VERSOES {
                                     return;
                                 }
+                                // Uma linha do grupo dos perfis deixa o chat como o perfil diz.
+                                if let Some(perfil) = valor.strip_prefix(DO_PERFIL) {
+                                    let nome = motor_e.as_ref().and_then(|m| {
+                                        let aplicou = m.update(cx, |m, cx| m.aplicar_perfil(&chat_id, perfil, cx));
+                                        aplicou.then(|| m.read(cx).config.perfis.iter().find(|p| p.id == perfil).map(|p| p.nome.clone())).flatten()
+                                    });
+                                    if let Some(nome) = nome {
+                                        let _ = janela.update(cx, |this, cx| this.avisar_na_estreita(painel, format!("Perfil: {nome}"), window, cx));
+                                    }
+                                    abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
+                                    return;
+                                }
                                 // Uma linha do grupo da conta troca só a conta do chat.
                                 if let Some(conta) = valor.strip_prefix(DA_CONTA) {
                                     let conta = conta.to_string();
@@ -982,27 +1034,30 @@ impl Janela {
                             }),
                     )
                 });
-                // As teclas na coluna do texto das linhas (8 do item).
+                // O aviso e as teclas na coluna do texto das linhas: os 8 do item mais os ~4 da lista
+                // do kit (eram 8 e ficavam 4 px fora; folha dimensional, 23/11/2026).
                 let aviso = aviso_de_troca
                     .clone()
-                    .map(|a| div().px(esp::E8).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
+                    .map(|a| div().px(esp::E12).pt(esp::E6).metadado().text_color(Cores::tenue()).child(a));
                 div().w(largura).flex().flex_col().children(abas).child(lista.clone()).children(aviso).children(dupla).when(!estreita, |s| {
                     let [linha, teclas] = rodape_de_teclas([
                         dica_de_tecla(&["↑", "↓"], "escolhe"),
                         dica_de_tecla(&["Enter"], "usa"),
                     ], window);
-                    s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E8).child(teclas))
+                    s.child(div().mt(esp::E4).child(linha)).child(div().px(esp::E12).child(teclas))
                 })
             })
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn chip_esforco(
         &self,
         motor: &Motor,
         chat: &Chat,
         ix: usize,
         b: &Barra,
+        compacto: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1029,18 +1084,18 @@ impl Janela {
         };
         let base = if ultracode {
             // Com o Ultrathink junto, as barrinhas em arco-íris; só o ícone, o do fluxo.
-            let simbolo = if armado && !b.estreita() { barras_arco_iris() } else { simbolo_ultracode() };
+            let simbolo = if armado && !b.estreita() && !compacto { barras_arco_iris() } else { simbolo_ultracode() };
             Chip::new(b.id("chip-esforco"), "Ultracode")
                 .simbolo(simbolo)
                 .cor_rotulo(Cores::violeta())
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto)
         } else if armado {
             Chip::new(b.id("chip-esforco"), "Ultrathink")
                 .simbolo(barras_arco_iris())
                 .arco_iris()
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto)
         } else {
             // No automático, as barrinhas e o rótulo dizem o nível que ele usa ("Auto · Extra").
             let no_auto = padrao.filter(|_| atual == 0);
@@ -1050,8 +1105,8 @@ impl Janela {
             };
             let chip = Chip::new(b.id("chip-esforco"), rotulo)
                 .simbolo(Simbolo::Sinal { nivel: no_auto.unwrap_or(atual) as u8, total: 5 })
-                .seta(b.larga())
-                .so_icone(b.estreita());
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto);
             chip.mudado(atual != 0)
         };
         let mut chip = base.tamanho(b.tamanho()).aberto(aberto);
@@ -1114,9 +1169,10 @@ impl Janela {
         let estreita = b.estreita();
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
         let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
-        // Com o turno rodando, o Enviar entra nele; a escolha de esperar a vez na fila fica aqui.
-        // Quem já ia pela fila de qualquer jeito não precisa da opção.
-        let depois = composer::dirige_o_turno(motor, &chat.id)
+        // Com o turno rodando, o Enviar entra nele (ou responde ao pedido de permissão aberto); a
+        // escolha de esperar a vez na fila fica aqui. Quem já ia pela fila de qualquer jeito não
+        // precisa da opção.
+        let depois = (composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila)
             .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
         let agendar = crate::ui::agendar::DadosDoMenu {
@@ -1213,6 +1269,34 @@ mod testes {
 
     fn titulos(linhas: &[LinhaDeModelo]) -> Vec<&str> {
         linhas.iter().map(|l| l.titulo.as_str()).collect()
+    }
+
+    #[test]
+    fn os_perfis_do_agente_da_aba_vao_no_seletor_com_a_nota_e_o_em_uso() {
+        use super::linhas_de_perfil;
+        use crate::{modelo::{Agente, Chat}, perfis::Perfil};
+        let perfis = vec![
+            Perfil { id: "a".into(), nome: "Planejar".into(), modelo: "opus".into(), modo: "plan".into(), nota: "Antes de mudança grande".into(), ..Perfil::default() },
+            Perfil { id: "b".into(), nome: "Revisor".into(), agente: Agente::Codex, ..Perfil::default() },
+            Perfil { id: "c".into(), nome: "Rápido".into(), modelo: "haiku".into(), ..Perfil::default() },
+        ];
+        let mut chat = Chat::novo("c1".into(), "Chat", std::path::PathBuf::from("/p"));
+        (chat.modelo, chat.permissao) = (Some("opus".into()), Some("plan".into()));
+        // Na aba do Claude, só os do Claude, na ordem das Configurações; a chave leva o prefixo.
+        let do_claude = linhas_de_perfil(&perfis, Agente::Claude, Some(&chat), "manual");
+        assert_eq!(titulos(&do_claude), ["Planejar", "Rápido"]);
+        assert_eq!(do_claude[0].valor, "perfil:a");
+        // Com nota, é ela que vai embaixo do nome; sem nota, o resumo do que o perfil escolhe.
+        assert_eq!(do_claude[0].descricao, "Antes de mudança grande");
+        assert_eq!(do_claude[1].descricao, "Claude · Haiku");
+        // O que bate com o chat leva o "em uso".
+        assert!(do_claude[0].em_uso && !do_claude[1].em_uso);
+        // Na aba do outro agente, os dele, e nada em uso.
+        let do_codex = linhas_de_perfil(&perfis, Agente::Codex, None, "manual");
+        assert_eq!(titulos(&do_codex), ["Revisor"]);
+        assert!(!do_codex[0].em_uso);
+        // Sem perfil daquele agente, o grupo não existe.
+        assert!(linhas_de_perfil(&perfis[..1], Agente::Codex, None, "manual").is_empty());
     }
 
     #[test]

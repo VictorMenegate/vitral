@@ -14,6 +14,7 @@ mod avisos_no_app;
 mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
+mod checagens;
 mod composer;
 mod configuracoes;
 mod conversa;
@@ -21,6 +22,7 @@ mod copias;
 mod dialogos;
 mod este_chat;
 mod edicao;
+mod editor_arquivo;
 mod enviadas;
 mod falas;
 mod fila;
@@ -36,9 +38,12 @@ mod mensagens;
 mod menus;
 pub mod movimento;
 mod painel_contas;
+mod pilulas;
 mod fechar;
 mod painel_arquivo;
 mod paleta;
+mod pergunta;
+mod previa_markdown;
 mod quadro_ideias;
 mod ramo;
 pub(crate) mod paineis;
@@ -403,6 +408,12 @@ struct ArquivosLidos {
     lidos_em: Option<std::time::Instant>,
     /// A pasta da releitura em andamento, uma por vez.
     relendo: Option<PathBuf>,
+    /// Com o "Mostrar ignorados" da aba Arquivos: o que o git ignora (as pastas com a barra no
+    /// fim) e a lista da árvore com eles juntos, a mesma enquanto nada muda (a árvore não é
+    /// refeita à toa).
+    ignorados: Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)>,
+    /// As pastas ignoradas que a pessoa abriu na árvore: só elas são lidas por dentro.
+    ignoradas_abertas: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -458,14 +469,38 @@ pub struct Janela {
     /// próximo quadro.
     edicao_atual: usize,
     edicao_rolar: std::cell::Cell<bool>,
+    /// Onde o arquivo da edição aberta está na lista de Mudanças do chat (a posição e quantos a
+    /// lista tem), guardado pela edição e pelo tamanho da conversa: as setas passam ao arquivo
+    /// seguinte, e a faixa diz "arquivo 2 de 8".
+    lugar_no_turno: std::cell::Cell<Option<(usize, usize, Option<(usize, usize)>)>>,
+    /// O diff de "Na pasta" sem as mudanças só de espaço em branco (o `-w` do git). Desligado ao
+    /// abrir o Vitral; liga e desliga no "…" do arquivo aberto com o diff.
+    diff_sem_espaco: bool,
     /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
     /// mencionar o trecho, e a ponta de onde a escolha começou.
     arquivo_selecao: Option<(u32, u32)>,
     arquivo_ancora: Option<u32>,
     cache_arquivos: std::cell::RefCell<HashMap<PathBuf, ArquivosLidos>>,
+    /// "Mostrar ignorados" na aba Arquivos: o que o git deixa de fora (arquivo/, dados/, tarefas/)
+    /// entra na árvore. Desligado ao abrir o Vitral.
+    mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
+    /// agente muda o mesmo arquivo. `None`, o arquivo está só para ler.
+    editor_arquivo: Option<editor_arquivo::Editor>,
+    /// O .md ou o .svg aberto mostra a fonte, e não a prévia (o seletor do cabeçalho).
+    arquivo_fonte: bool,
+    /// A esquerda da lista do código na janela, para o clique no texto saber a coluna.
+    codigo_esquerda: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// O foco do painel do arquivo (um clique nele): com ele, o Ctrl+F busca no arquivo.
+    foco_arquivo: FocusHandle,
+    /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
+    busca_arquivo: painel_arquivo::BuscaNoArquivo,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
+    /// O que está marcado em cada pergunta com opções esperando resposta (AskUserQuestion), pelo
+    /// id do pedido.
+    perguntas: HashMap<String, pergunta::EstadoDaPergunta>,
     expandidos: HashSet<String>,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
@@ -502,6 +537,8 @@ pub struct Janela {
     historicos: mensagens::historico::Historicos,
     _assinaturas: Vec<Subscription>,
     _assinatura_motor: Option<Subscription>,
+    /// O texto de uma resposta crescendo: só os painéis do chat redesenham (`texto_chegando`).
+    _assinatura_texto: Option<Subscription>,
     _assinatura_dialogo: Option<Subscription>,
     _relogio: Task<()>,
     /// Como a janela está (painéis, abas, larguras, tamanho), do jeito que vai para o
@@ -519,6 +556,9 @@ pub struct Janela {
     /// O trecho de texto selecionado na janela agora (uma parte de uma resposta, por exemplo):
     /// com ele, o painel ativo mostra o "Responder a este trecho", que o cita na caixa.
     trecho: Option<String>,
+    /// Há texto selecionado na janela (ou uma seleção em curso), conferido a cada desenho: com
+    /// ele, as conversas montam todos os blocos, para a seleção alcançar o que saiu da vista.
+    selecionando: bool,
     /// O trecho citado na próxima mensagem de cada chat: aparece num cartão em cima do campo e
     /// vai na frente do que for escrito, como citação.
     citacoes: HashMap<String, String>,
@@ -584,6 +624,8 @@ pub struct Janela {
     busca_preparada: std::cell::RefCell<HashMap<String, std::rc::Rc<lateral::Preparado>>>,
     /// A lista como vista em cache (ver `vista_mensagens`).
     vista_da_lista: Entity<vista_mensagens::VistaDaLista>,
+    /// A casca da janela como vista própria (ver `vista_mensagens::VistaDaCasca`).
+    casca: Entity<vista_mensagens::VistaDaCasca>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -617,6 +659,57 @@ fn medir_montagem(tempo: Duration) {
     MONTAGEM_PIOR.fetch_max(micros, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// O `VITRAL_QUADROS` está ligado (o contador começou).
+static MEDINDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn medindo_quadros() -> bool {
+    MEDINDO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Do começo do `render` da Janela até o fim do layout (a montagem, o layout e o prepaint da
+/// árvore inteira, com as vistas que se refizeram) e até o fim da pintura: as somas do segundo, em
+/// microssegundos. O que sobra do tempo da thread da janela é o GPUI fechando a cena e mandando
+/// para a placa.
+static LAYOUT_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PINTURA_TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn medir_etapa(soma: &std::sync::atomic::AtomicU64, tempo: Duration) {
+    soma.fetch_add(tempo.as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// As conversas desenhadas no segundo, para o `VITRAL_QUADROS`: quantas vezes as mensagens de um
+/// painel foram refeitas, quantos blocos elas tinham, quantos foram montados de verdade (os outros
+/// entraram como espaço; ver `mensagens::a_vista`) e o tempo do `render` ao fim do `prepaint` (a
+/// montagem e o layout delas; a pintura fica de fora), em microssegundos.
+static CONVERSAS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static BLOCOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static BLOCOS_MONTADOS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static CONVERSAS_TEMPO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Conta uma conversa desenhada para o `VITRAL_QUADROS` (`mensagens` chama no prepaint da lista).
+pub(super) fn medir_conversa(blocos: usize, montados: usize, tempo: Duration) {
+    use std::sync::atomic::Ordering::Relaxed;
+    CONVERSAS.fetch_add(1, Relaxed);
+    BLOCOS.fetch_add(blocos as u32, Relaxed);
+    BLOCOS_MONTADOS.fetch_add(montados as u32, Relaxed);
+    CONVERSAS_TEMPO.fetch_add(tempo.as_micros() as u64, Relaxed);
+}
+
+/// O pedaço da linha do `VITRAL_QUADROS` sobre as conversas: "conversas: 12 · blocos: 9 de 31 ·
+/// 4.2 ms cada" (as médias por conversa desenhada). Vazio quando nenhuma foi desenhada.
+fn linha_das_conversas(conversas: u32, blocos: u32, montados: u32, micros: u64) -> String {
+    if conversas == 0 {
+        return String::new();
+    }
+    let n = f64::from(conversas);
+    format!(
+        " · conversas: {conversas} · blocos: {:.0} de {:.0} · {:.1} ms cada",
+        f64::from(montados) / n,
+        f64::from(blocos) / n,
+        micros as f64 / n / 1000.
+    )
+}
+
 /// Com `VITRAL_QUADROS=1`, escreve "quadros/s: N" no stderr a cada segundo em que a janela
 /// redesenhou: a conferência do orçamento de movimento. Quando o metal refez o campo nesse
 /// segundo, a linha leva o tempo médio de um campo (conta, BMP e decodificação):
@@ -629,6 +722,7 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
     if INICIADO.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    MEDINDO.store(true, std::sync::atomic::Ordering::Relaxed);
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -636,12 +730,23 @@ pub fn iniciar_contador_de_quadros(cx: &mut App) {
             let campo = metal::custo_do_campo();
             let total = MONTAGEM_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
             let pior = MONTAGEM_PIOR.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let conversas = linha_das_conversas(
+                CONVERSAS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                BLOCOS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                BLOCOS_MONTADOS.swap(0, std::sync::atomic::Ordering::Relaxed),
+                CONVERSAS_TEMPO.swap(0, std::sync::atomic::Ordering::Relaxed),
+            );
+            let layout = LAYOUT_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let pintura = PINTURA_TOTAL.swap(0, std::sync::atomic::Ordering::Relaxed);
             if n > 0 {
+                let por_quadro = |micros: u64| micros as f64 / f64::from(n) / 1000.;
                 eprintln!(
-                    "{} · montagem: média {:.1} ms, pior {:.1} ms",
+                    "{} · montagem: média {:.1} ms, pior {:.1} ms · até o layout: {:.1} ms · até a pintura: {:.1} ms{conversas}",
                     linha_dos_quadros(n, campo),
-                    total as f64 / f64::from(n) / 1000.,
-                    pior as f64 / 1000.
+                    por_quadro(total),
+                    pior as f64 / 1000.,
+                    por_quadro(layout),
+                    por_quadro(pintura),
                 );
             }
         }
@@ -672,6 +777,13 @@ impl Janela {
                 cx.notify();
             }
         })];
+        // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
+        let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
+        assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
+            InputEvent::PressEnter { shift, .. } => this.andar_na_busca_do_arquivo(if *shift { -1 } else { 1 }, cx),
+            InputEvent::Change => cx.notify(),
+            _ => {}
+        }));
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
             // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
@@ -711,6 +823,8 @@ impl Janela {
             // O que você escreveu e não enviou vai para o disco antes de tudo: é o que você
             // espera encontrar na caixa quando o Vitral abrir de novo.
             this.gravar_ao_sair(cx);
+            // O que falta gravar no editor do arquivo também.
+            this.gravar_editor_ao_sair(cx);
             // E como a janela estava, para ela voltar igual.
             this.gravar_arranjo_ao_sair();
             if let Some(motor) = &this.motor {
@@ -737,8 +851,18 @@ impl Janela {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let Ok(()) = this.update(cx, |this, cx| {
                     let rodando = this.motor.as_ref().is_some_and(|m| m.read(cx).trabalhando() > 0);
+                    // A conversa de um subagente aberta numa aba acompanha o arquivo dele.
+                    if rodando && let Some(motor) = this.motor.clone() {
+                        motor.update(cx, |m, cx| {
+                            m.conferir_subconversas(cx);
+                            // E a última ação de cada agente em segundo plano, o fim do arquivo dele.
+                            m.conferir_segundo_plano(cx);
+                        });
+                    }
                     if rodando && compasso_recente(cx).is_none() {
                         cx.notify();
+                    } else if rodando {
+                        this.andar_os_relogios_das_chamadas(cx);
                     }
                 }) else {
                     break;
@@ -747,9 +871,11 @@ impl Janela {
         });
 
         let eu = cx.entity().downgrade();
+        let casca = cx.new(|_| vista_mensagens::VistaDaCasca::new(eu.clone()));
         let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu));
         let mut janela = Self {
             vista_da_lista,
+            casca,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -774,11 +900,20 @@ impl Janela {
             arquivo_edicao: None,
             edicao_atual: 0,
             edicao_rolar: Default::default(),
+            lugar_no_turno: Default::default(),
+            diff_sem_espaco: false,
             arquivo_selecao: None,
             arquivo_ancora: None,
             cache_arquivos: Default::default(),
+            mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            editor_arquivo: None,
+            arquivo_fonte: false,
+            codigo_esquerda: Default::default(),
+            foco_arquivo: cx.focus_handle(),
+            busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
             feedback_plano: HashMap::new(),
+            perguntas: HashMap::new(),
             expandidos: HashSet::new(),
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
@@ -802,12 +937,14 @@ impl Janela {
             historicos: Default::default(),
             _assinaturas: assinaturas,
             _assinatura_motor: None,
+            _assinatura_texto: None,
             _assinatura_dialogo: None,
             _relogio,
             ilha: None,
             ilha_fechada: None,
             boas_vindas: None,
             trecho: None,
+            selecionando: false,
             citacoes: HashMap::new(),
             arranjo: None,
             arranjo_ligado: false,
@@ -935,7 +1072,10 @@ impl Janela {
         let contextos = window.context_stack();
         let na_conversa = contextos.iter().any(|c| c.contains(mensagens::CONTEXTO_DA_CONVERSA))
             && !contextos.iter().any(|c| c.contains("Input"));
-        if !(self.foco.is_focused(window) || numa_aba || na_conversa) || window.has_active_dialog(cx) || self.flutuante_aberto() {
+        // O clique no arquivo aberto à direita leva o foco para ele (é o que faz o Ctrl+F buscar
+        // nele); digitar ali continua escrevendo na caixa.
+        let no_arquivo = self.foco_arquivo.is_focused(window);
+        if !(self.foco.is_focused(window) || numa_aba || na_conversa || no_arquivo) || window.has_active_dialog(cx) || self.flutuante_aberto() {
             return;
         }
         self.tecla_para_a_caixa(ev, window, cx);
@@ -1097,18 +1237,29 @@ impl Janela {
             pastas: Default::default(),
             lidos_em: None,
             relendo: None,
+            ignorados: None,
+            ignoradas_abertas: Default::default(),
         });
         let vencida = lidos.lidos_em.is_none_or(|q| q.elapsed() >= Duration::from_secs(20));
         if vencida && lidos.relendo.is_none() {
             lidos.relendo = Some(pasta.to_path_buf());
             let pasta = pasta.to_path_buf();
+            // Com o "Mostrar ignorados", a leitura traz também o que o git ignora e o que há
+            // dentro das pastas ignoradas que estão abertas na árvore.
+            let com_ignorados = self.mostrar_ignorados;
+            let abertas = lidos.ignoradas_abertas.clone();
             cx.spawn(async move |this, cx| {
-                let (lida, pastas) = {
-                    let pasta = pasta.clone();
+                let (lida, pastas, ignorados) = {
+                    let (pasta, abertas) = (pasta.clone(), abertas.clone());
                     cx.background_spawn(async move {
-                        let lida = seletor_arquivos::listar(&pasta);
+                        let (lida, ignorados) = if com_ignorados {
+                            let (lida, ignorados) = seletor_arquivos::listar_com_ignorados(&pasta, &abertas, seletor_arquivos::TETO);
+                            (lida, Some(ignorados))
+                        } else {
+                            (seletor_arquivos::listar(&pasta), None)
+                        };
                         let pastas = seletor_arquivos::pastas_dos_arquivos(&lida);
-                        (lida, pastas)
+                        (lida, pastas, ignorados)
                     })
                     .await
                 };
@@ -1121,14 +1272,26 @@ impl Janela {
                         };
                         lidos.relendo = None;
                         let primeira = lidos.lidos_em.is_none() && lidos.lista.is_empty();
-                        lidos.lidos_em = Some(std::time::Instant::now());
+                        // O que foi pedido enquanto ela rodava (ligar os ignorados, abrir uma
+                        // pasta ignorada) pede outra leitura já.
+                        let em_dia = this.mostrar_ignorados == com_ignorados && lidos.ignoradas_abertas == abertas;
+                        lidos.lidos_em = em_dia.then(std::time::Instant::now);
                         // A mesma lista fica com o mesmo Rc: a árvore não é refeita à toa.
                         let mudou = *lidos.lista != lida;
                         if mudou {
                             lidos.lista = std::rc::Rc::new(lida);
                             lidos.pastas = std::rc::Rc::new(pastas);
                         }
-                        mudou || primeira
+                        let mudaram_os_ignorados = lidos.ignorados.as_ref().map(|(i, _)| i.as_ref()) != ignorados.as_ref();
+                        if mudou || mudaram_os_ignorados {
+                            lidos.ignorados = ignorados.map(|ignorados| {
+                                // A lista da árvore: os arquivos e os ignorados juntos.
+                                let mut juntos = lidos.lista.as_ref().clone();
+                                juntos.extend(ignorados.entradas.iter().cloned());
+                                (std::rc::Rc::new(ignorados), std::rc::Rc::new(juntos))
+                            });
+                        }
+                        mudou || mudaram_os_ignorados || primeira || !em_dia
                     };
                     if mudou {
                         cx.notify();
@@ -1136,6 +1299,52 @@ impl Janela {
                 });
             })
             .detach();
+        }
+    }
+
+    /// Os ignorados de uma pasta e a lista da árvore com eles, quando o "Mostrar ignorados" está
+    /// ligado e a leitura já chegou.
+    pub(super) fn ignorados_da_pasta(
+        &self,
+        pasta: &std::path::Path,
+    ) -> Option<(std::rc::Rc<seletor_arquivos::Ignorados>, std::rc::Rc<Vec<String>>)> {
+        if !self.mostrar_ignorados {
+            return None;
+        }
+        self.cache_arquivos.borrow().get(pasta)?.ignorados.clone()
+    }
+
+    /// O botão "Mostrar ignorados" da aba Arquivos: liga ou desliga e relê a pasta.
+    pub(super) fn alternar_ignorados(&mut self, pasta: &std::path::Path, cx: &mut Context<Self>) {
+        self.mostrar_ignorados = !self.mostrar_ignorados;
+        self.reler_arquivos(pasta);
+        cx.notify();
+    }
+
+    /// Uma pasta foi aberta na árvore: se é uma ignorada ainda não lida, a próxima leitura traz o
+    /// que há dentro dela (um nível).
+    pub(super) fn pasta_aberta_na_arvore(&mut self, pasta: &std::path::Path, id: &str, cx: &mut Context<Self>) {
+        if !self.mostrar_ignorados {
+            return;
+        }
+        let chave = format!("{id}/");
+        let pedir = {
+            let mut cache = self.cache_arquivos.borrow_mut();
+            let Some(lidos) = cache.get_mut(pasta) else {
+                return;
+            };
+            let por_ler = lidos
+                .ignorados
+                .as_ref()
+                .is_some_and(|(i, _)| i.entradas.binary_search(&chave).is_ok() && !i.carregadas.contains(&chave));
+            let pedir = por_ler && lidos.ignoradas_abertas.insert(chave);
+            if pedir {
+                lidos.lidos_em = None;
+            }
+            pedir
+        };
+        if pedir {
+            cx.notify();
         }
     }
 
@@ -1166,8 +1375,57 @@ impl Janela {
         }
     }
 
+    /// O relógio da chamada que roda ("Rodando cargo test 00:42", o do subagente) mora nas
+    /// mensagens, que são uma vista em cache: o compasso dos spinners redesenha a casca e os anéis,
+    /// não ela. Uma vez por segundo, só as mensagens dos painéis cujo chat tem uma chamada rodando
+    /// são avisadas; a Janela, a lista e os outros painéis ficam no cache.
+    fn andar_os_relogios_das_chamadas(&self, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.as_ref().map(|m| m.read(cx)) else {
+            return;
+        };
+        let com_relogio: Vec<_> = self
+            .paineis
+            .iter()
+            .filter(|painel| {
+                painel.chat.as_ref().is_some_and(|id| {
+                    motor.execucao(id).rodando() && motor.chat(id).is_some_and(|c| crate::motor::tem_chamada_rodando(&c.itens))
+                })
+            })
+            .map(|painel| painel.vista.clone())
+            .collect();
+        for vista in com_relogio {
+            vista.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// O texto de uma resposta cresceu nestes chats e nada mais mudou (`motor::TextoChegando`): só
+    /// as mensagens dos painéis que os mostram são redesenhadas. A Janela não é avisada, e por
+    /// isso a lista e os outros painéis saem do cache (eram os três painéis e a lista refeitos a
+    /// cada pedaço de texto, uns 20 por segundo).
+    fn texto_chegando(&mut self, chats: &[String], cx: &mut Context<Self>) {
+        // Uma rolagem pela barra ainda não desenhada não pode ser desfeita pelo fim abaixo.
+        self.acompanhar_rolagem(cx);
+        let motor = self.motor.clone();
+        for painel in &self.paineis {
+            let Some(id) = painel.chat.as_ref().filter(|id| chats.contains(id)) else {
+                continue;
+            };
+            if painel.seguindo {
+                painel.rolagem.scroll_to_bottom();
+                // O que chega nas conversas abertas já conta como visto (se o painel está no fim).
+                if let Some(motor) = &motor {
+                    motor.update(cx, |m, _| m.marcar_lido(id));
+                }
+            }
+            painel.vista.update(cx, |_, cx| cx.notify());
+        }
+    }
+
     /// Liga a janela ao motor (uma vez, ao abrir) e abre na conversa mais recente.
     fn ligar_motor(&mut self, motor: Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) {
+        self._assinatura_texto = Some(cx.subscribe(&motor, |this, _, evento: &crate::motor::TextoChegando, cx| {
+            this.texto_chegando(&evento.chats, cx);
+        }));
         self._assinatura_motor = Some(cx.observe_in(&motor, window, |this, motor, window, cx| {
             // O clique numa notificação: a conversa abre como no sino, e a janela vem para a frente
             // (ou o GNOME avisa que o Vitral está pronto).
@@ -1573,20 +1831,47 @@ impl Janela {
 }
 
 impl Render for Janela {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let inicio = std::time::Instant::now();
-        let janela = self.montar_janela(window, cx);
-        medir_montagem(inicio.elapsed());
-        janela
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Tudo o que a Janela desenha mora na vista da casca (ver `vista_mensagens::VistaDaCasca`).
+        AnyView::from(self.casca.clone())
     }
 }
 
 impl Janela {
+    /// A janela inteira, montada pela vista da casca a cada desenho.
+    pub(super) fn montar_casca(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let inicio = std::time::Instant::now();
+        let janela = self.montar_janela(window, cx);
+        medir_montagem(inicio.elapsed());
+        if !medindo_quadros() {
+            return janela;
+        }
+        // Com o `VITRAL_QUADROS`, uma caixa em volta da janela anota quando o layout da árvore
+        // inteira acabou (o prepaint dela vem depois do dos filhos) e quando a pintura acabou (a
+        // tela dela é o último filho a pintar).
+        use gpui_kit::component::ElementExt as _;
+        div()
+            .size_full()
+            .child(janela)
+            .on_prepaint(move |_, _, _| medir_etapa(&LAYOUT_TOTAL, inicio.elapsed()))
+            .child(canvas(|_, _, _| (), move |_, _, _, _| medir_etapa(&PINTURA_TOTAL, inicio.elapsed())).absolute().size_0())
+            .into_any_element()
+    }
+
+    /// Redesenha a casca sem avisar a Janela: para o que muda só fora das mensagens e da lista
+    /// (o texto da caixa de mensagem). As vistas em cache ficam como estão.
+    pub(super) fn redesenhar_a_casca(&self, cx: &mut Context<Self>) {
+        self.casca.update(cx, |_, cx| cx.notify());
+    }
+
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
+        // O sumário diz se foi desenhado neste desenho (`secao_do_sumario`).
+        self.sumario.desenhado = false;
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
+            crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
         }
         // O desfoque do sistema acompanha o nível (sem desfoque no Opaco).
         crate::acompanhar_o_fundo(window, crate::tema::transparencia());
@@ -1717,7 +2002,9 @@ impl Janela {
         }
         // O texto selecionado na janela, guardado a cada desenho: o clique no "Responder a este
         // trecho" desfaz a seleção antes de chegar ao botão, e o que vale é o que estava marcado.
-        self.trecho = gpui_kit::base::TextSelection::has_selection(window, cx)
+        self.selecionando = gpui_kit::base::TextSelection::has_selection(window, cx);
+        self.trecho = self
+            .selecionando
             .then(|| gpui_kit::base::TextSelection::selected_text(window, cx))
             .filter(|t| !t.trim().is_empty());
         // Antes da lista, para ela já mostrar como lida a conversa que voltou ao fim.
@@ -1728,6 +2015,7 @@ impl Janela {
             let motor = motor.read(cx);
             self.acertar_abas(motor);
         }
+        self.soltar_subconversas(cx);
         // A conversa selecionada pode ter sumido (ex.: troca de pasta).
         if let Some(id) = &self.selecionado
             && motor.read(cx).chat(id).is_none()
@@ -1773,6 +2061,17 @@ impl Janela {
                 })
             });
         }
+        // E o estado de cada pergunta com opções esperando resposta.
+        let perguntas: Vec<(String, usize)> = motor
+            .read(cx)
+            .permissoes
+            .iter()
+            .filter(|p| p.ferramenta == "AskUserQuestion")
+            .map(|p| (p.id.clone(), pergunta::perguntas_de(&p.entrada).len()))
+            .collect();
+        if !perguntas.is_empty() || !self.perguntas.is_empty() {
+            self.acertar_perguntas(perguntas, window, cx);
+        }
         self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
         // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
@@ -1782,6 +2081,13 @@ impl Janela {
             && self.gaveta != Some(Gaveta::Lista)
             && (self.foco_lista.is_focused(window) || self.busca.read(cx).focus_handle(cx).is_focused(window))
         {
+            cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
+        }
+        // O mesmo com o arquivo da direita: fechado ou escondido com o foco nele (ou na busca dele).
+        let arquivo_a_vista = self.arquivo_aberto.is_some()
+            && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_))
+            && (self.direita_visivel() || self.gaveta == Some(Gaveta::Direita));
+        if !arquivo_a_vista && self.foco_no_arquivo(window, cx) {
             cx.defer_in(window, |this, window, cx| this.focar_composer(window, cx));
         }
         // A gaveta fecha quando a parte volta a caber ao lado (ou some) e durante um arrasto,
@@ -1805,12 +2111,19 @@ impl Janela {
             }))
             // Ctrl+F e F3: buscar dentro da conversa aberta. O `Search` é o que o campo do kit
             // liga ao Ctrl+F; sem atender aqui, o Ctrl+F na caixa de mensagem se perderia.
+            // Com o arquivo aberto na gaveta, por cima das conversas, o Ctrl+F é dele.
             .on_action(cx.listener(|this, _: &busca_conversa::BuscarNaConversa, window, cx| {
-                this.abrir_busca_na_conversa(window, cx)
+                if this.arquivo_na_gaveta(cx) {
+                    this.abrir_busca_no_arquivo(window, cx)
+                } else {
+                    this.abrir_busca_na_conversa(window, cx)
+                }
             }))
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| {
                 this.abrir_busca_na_conversa(window, cx)
             }))
+            // Pela paleta de comandos (a tecla, com o foco no arquivo, é atendida no painel dele).
+            .on_action(cx.listener(|this, _: &painel_arquivo::BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoSeguinte, _, cx| this.andar_na_busca(1, cx)))
             .on_action(cx.listener(|this, _: &busca_conversa::AchadoAnterior, _, cx| this.andar_na_busca(-1, cx)))
             // Esc com o foco fora da caixa (um clique na conversa leva o foco para cá): para o
@@ -1858,6 +2171,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AbrirQuadroDeIdeias, window, cx| this.abrir_quadro_de_ideias(window, cx)))
             .on_action(cx.listener(|this, _: &enviadas::BuscarEnviadas, window, cx| this.buscar_enviadas(window, cx)))
             .on_action(cx.listener(|this, _: &paleta::AbrirPaleta, window, cx| this.abrir_paleta(window, cx)))
+            .on_action(cx.listener(|this, _: &paleta::AbrirArquivoPeloNome, window, cx| this.abrir_arquivo_pelo_nome(window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoSeguinte, window, cx| this.andar_nos_arranjos(1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::ArranjoAnterior, window, cx| this.andar_nos_arranjos(-1, window, cx)))
             .on_action(cx.listener(|this, _: &arranjo::salvos::SalvarArranjo, window, cx| this.dialogo_salvar_arranjo(window, cx)))

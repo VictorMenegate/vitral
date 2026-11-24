@@ -3,8 +3,10 @@
 //! Os chips da barra, com os menus e os popovers deles, ficam em `composer_seletores.rs`.
 
 use std::{
+    cell::Cell,
     collections::HashSet,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use gpui_kit::component::{
@@ -500,6 +502,15 @@ pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
     tam(window, if estreita { 10. } else { 12. })
 }
 
+/// Da beirada da coluna à borda de fora da caixa: a margem da coluna de leitura (24) ou, na caixa
+/// estreita, 16. A coluna de leitura inteira (`mensagens::coluna`) e a faixa de cima da caixa ("N
+/// arquivos mudados") medem daqui, para o texto de tudo cair na mesma coluna. A faixa usava 16
+/// fixo e, quando a coluna foi a 24 (17/11/2026), ficou 8 px à esquerda do texto da caixa e 8
+/// antes do enviar (folha dimensional, 23/11/2026).
+pub(super) fn margem_da_caixa(estreita: bool) -> Rems {
+    if estreita { esp::E16 } else { super::mensagens::MARGEM_DA_COLUNA }
+}
+
 /// A dica dos botões de compactar: o clique compacta já; quem quer foco escreve a instrução.
 pub(super) const DICA_DO_COMPACTAR: &str =
     "Resume a conversa agora, sem mexer no que está escrito na caixa (com o turno rodando, entra na fila). Para compactar com foco, escreva “/compact” e a instrução na caixa.";
@@ -535,6 +546,42 @@ pub(super) fn dirige_o_turno(motor: &Motor, chat: &str) -> bool {
     motor.turno_recebe_mensagem(chat)
 }
 
+/// O que o Enter (e o Enviar) faz com a mensagem escrita enquanto o chat trabalha.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Enter {
+    /// Entra no turno que está rodando (`dirige_o_turno`).
+    Dirige,
+    /// Há tantos pedidos de permissão abertos: nega e manda o texto ao Claude como a resposta
+    /// (`Motor::enviar_responde_pedido`).
+    RespondePedido(usize),
+    /// O que está aberto é uma pergunta com opções (AskUserQuestion): o texto é a resposta a ela.
+    RespondePergunta,
+    /// Espera a vez na fila.
+    Fila,
+}
+
+pub(super) fn enter_no_turno(motor: &Motor, chat: &str) -> Enter {
+    match motor.pedidos_abertos(chat) {
+        0 if dirige_o_turno(motor, chat) => Enter::Dirige,
+        0 => Enter::Fila,
+        _ if motor.so_perguntas_abertas(chat) => Enter::RespondePergunta,
+        pedidos => Enter::RespondePedido(pedidos),
+    }
+}
+
+/// A dica do Enviar com o chat trabalhando: o que o Enter vai fazer com a mensagem. `reforco`: o
+/// Ultrathink ou o Ultracode ligado na caixa, que valem para o turno inteiro.
+fn dica_do_enviar(enter: Enter, reforco: bool) -> &'static str {
+    match enter {
+        Enter::Fila => "Enviar\nEntra na fila: este turno não recebe mensagem agora",
+        _ if reforco => "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila",
+        Enter::Dirige => "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePedido(1) => "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePedido(_) => "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila",
+        Enter::RespondePergunta => "Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila",
+    }
+}
+
 fn envio(rodando: bool, vazio: bool) -> Envio {
     match (rodando, vazio) {
         (false, true) => Envio::Vazio,
@@ -546,7 +593,7 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
 
 impl Janela {
     /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
-    /// uma moldura preta de raio 20; dentro, com 4 de folga, o campo opaco de raio 16 com o texto
+    /// uma moldura preta de raio 20; dentro, com 2 de folga, o campo opaco com o texto
     /// (na coluna do ícone do primeiro chip) e os chips; embaixo do campo, ainda na moldura, a
     /// linha de estado em mono 11. O foco acende a moldura (180 ms; apaga em 120).
     pub(super) fn caixa_mensagem(
@@ -583,10 +630,11 @@ impl Janela {
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
         let com_menu = self.menu_da_caixa(ix, chat, cx).is_some();
-        // O miolo é concêntrico com a moldura de 20 e 2 de folga, não com o cartão da conversa.
-        // A moldura preta tem 2 de folga (eram 4; dono, 16/11/2026: "diminui as bordas"); o miolo
-        // continua concêntrico com ela.
-        let raio_miolo = raio::peca() - px(2.);
+        // O miolo é concêntrico com a moldura de 20, não com o cartão da conversa: o raio de fora
+        // menos a borda de 1 e a folga de 2 (eram 4; dono, 16/11/2026: "diminui as bordas"). A
+        // conta tirava só a folga e o canto de dentro saía 1 px mais aberto (2 a 150%), visto na
+        // folha dimensional de 23/11/2026. A borda é 1 px em qualquer zoom; a folga cresce com ele.
+        let raio_miolo = raio::peca() - px(1.) - tam(window, 2.);
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
         // A linha de baixo só existe com o chat trabalhando (o que ele faz agora e o Esc). Parada,
         // a caixa não tem mais a linha das teclas (dono, 13/11/2026: "tira essa parte de baixo").
@@ -734,8 +782,7 @@ impl Janela {
         });
 
         div()
-            .map(super::mensagens::coluna)
-            .when(estreita, |s| s.px(esp::E16))
+            .map(|s| super::mensagens::coluna(s, estreita))
             .pb(esp::E12)
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")
@@ -808,6 +855,11 @@ impl Janela {
             .into_any_element()
         };
         let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
+        // O esforço que não cabe inteiro ao lado do modelo fica só com o ícone, em vez de ir para a
+        // segunda linha escondida e sumir (`decidir_esforco`).
+        let compacto = self.paineis[ix].esforco_compacto;
+        let medida_do_modelo: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::default();
+        let medida_da_linha: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::default();
         let sem_perguntar = motor.permissao_de(chat) == "bypassPermissions";
         let modo = self.chip_modo(motor, chat, b, window, cx);
         let modo = if sem_perguntar { modo } else { em_repouso("repouso-modo", modo) };
@@ -829,8 +881,18 @@ impl Janela {
                     // não coubesse ficaria nela, cortada. Com a altura da linha, a segunda começa
                     // abaixo do recorte.
                     .child(div().h(r(altura)))
-                    .child(grupo(em_repouso("repouso-modelo", self.chip_modelo(motor, chat, ix, b, window, cx))))
-                    .child(grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, window, cx)))),
+                    .on_prepaint({
+                        let caixa = medida_da_linha.clone();
+                        move |limites, _, _| caixa.set(Some(limites))
+                    })
+                    .child(grupo(em_repouso("repouso-modelo", self.chip_modelo(motor, chat, ix, b, window, cx))).on_prepaint({
+                        let modelo = medida_do_modelo.clone();
+                        move |limites, _, _| modelo.set(Some(limites))
+                    }))
+                    .child(
+                        grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, compacto.is_some(), window, cx)))
+                            .on_prepaint(medir_esforco(cx.entity().downgrade(), painel_id, medida_do_modelo, medida_da_linha, compacto)),
+                    ),
             )
             .child(
                 div()
@@ -844,7 +906,7 @@ impl Janela {
                     .when(b.faixa != FaixaCaixa::Media, |s| {
                         s.child(em_repouso("repouso-mais", self.botao_mais(motor, chat, b, window, cx).into_any_element()))
                     })
-                    .children(self.botoes_de_envio(b, vazio, dirige_o_turno(motor, &chat.id), envios, cx)),
+                    .children(self.botoes_de_envio(b, vazio, enter_no_turno(motor, &chat.id), envios, cx)),
             )
     }
 
@@ -855,7 +917,7 @@ impl Janela {
         &self,
         b: &Barra,
         vazio: bool,
-        dirige: bool,
+        enter: Enter,
         envios: u64,
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
@@ -888,15 +950,10 @@ impl Janela {
                 }))
                 .into_any_element()
         };
-        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code). O que
-        // vale para o turno inteiro, e tudo o que não é um turno em andamento, vai pela fila.
-        let dica_dirigir = if !dirige {
-            "Enviar\nEntra na fila: este turno não recebe mensagem agora"
-        } else if self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat) {
-            "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila"
-        } else {
-            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
-        };
+        // Com o turno rodando, a mensagem entra nele sem pará-lo (o steering do Claude Code); com
+        // um pedido de permissão aberto, ela é a resposta ao pedido. O que vale para o turno
+        // inteiro, e tudo o que não é um turno em andamento, vai pela fila.
+        let dica_dirigir = dica_do_enviar(enter, self.ultrathink.contains(&b.chat) || self.ultracode.contains(&b.chat));
         match envio(b.rodando, vazio) {
             Envio::Vazio => vec![principal(Some(Lucide::ArrowUp), "Escreva uma mensagem").vazio(true).into_any_element()],
             Envio::Enviar => vec![enviar("Enviar")],
@@ -1752,6 +1809,58 @@ fn ajustar_linhas(
     }
 }
 
+/// Mede o chip do esforço depois do layout e liga ou desliga o modo só com o ícone.
+fn medir_esforco(
+    janela: WeakEntity<Janela>,
+    painel: u64,
+    modelo: Rc<Cell<Option<Bounds<Pixels>>>>,
+    linha: Rc<Cell<Option<Bounds<Pixels>>>>,
+    compacto: Option<Pixels>,
+) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static {
+    move |esforco, window, _| {
+        let Some(modelo) = modelo.get() else {
+            return;
+        };
+        let novo = decidir_esforco(compacto, modelo, esforco, linha.get());
+        if novo == compacto {
+            return;
+        }
+        window.on_next_frame(move |_, cx| {
+            let _ = janela.update(cx, |this, cx| {
+                if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel) {
+                    p.esforco_compacto = novo;
+                    cx.notify();
+                }
+            });
+        });
+    }
+}
+
+/// O esforço da caixa inteiro (`None`) ou só com o ícone (`Some(largura que ele pede inteiro)`).
+/// O grupo do modelo e do esforço quebra linha com a segunda escondida: inteiro, o esforço que
+/// não cabia ia para ela e sumia (dono, 24/11/2026: "o chat fica sumindo o esforço dele"). Abaixo
+/// da linha do modelo é o sinal de que não coube; volta inteiro quando a sobra à direita do
+/// modelo couber a largura que ele pedia, com 16 px de folga para não ficar indo e voltando.
+pub(super) fn decidir_esforco(
+    compacto: Option<Pixels>,
+    modelo: Bounds<Pixels>,
+    esforco: Bounds<Pixels>,
+    linha: Option<Bounds<Pixels>>,
+) -> Option<Pixels> {
+    let quebrou = esforco.origin.y > modelo.origin.y + px(2.);
+    match compacto {
+        None if quebrou => Some(esforco.size.width),
+        None => None,
+        Some(inteiro) => {
+            let Some(linha) = linha else {
+                return compacto;
+            };
+            let sobra = linha.right() - modelo.right();
+            if !quebrou && sobra >= inteiro + px(16.) { None } else { compacto }
+        }
+    }
+}
+
 /// Quantas linhas a caixa pode ter com a janela desta altura (em rem): o resto do cartão, o
 /// plano e umas linhas de mensagem levam uns 26 rem (420 px); cada linha, 1,5 rem.
 fn linhas_da_caixa(altura: f32) -> usize {
@@ -1914,8 +2023,8 @@ mod testes_sugestoes {
 #[cfg(test)]
 mod testes_caixa {
     use super::{
-        Envio, LINHAS_CAIXA, MODOS, com_claude, envio, gastar_chave, indice_esforco, linhas_da_caixa, milhares,
-        nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
+        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, decidir_esforco, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
+        milhares, nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
     };
 
     #[test]
@@ -1978,6 +2087,25 @@ mod testes_caixa {
     }
 
     #[test]
+    fn o_esforco_que_nao_cabe_fica_so_com_o_icone_e_volta_com_lugar() {
+        use gpui_kit::{Bounds, point, px, size};
+        let caixa = |x: f32, y: f32, w: f32| Bounds { origin: point(px(x), px(y)), size: size(px(w), px(32.)) };
+        let modelo = caixa(200., 10., 220.);
+        let linha = Some(caixa(180., 10., 420.));
+        // Inteiro e na mesma linha do modelo: fica inteiro.
+        assert_eq!(decidir_esforco(None, modelo, caixa(424., 10., 150.), linha), None);
+        // Inteiro e na linha de baixo (a escondida): só o ícone, lembrando que pedia 150.
+        assert_eq!(decidir_esforco(None, modelo, caixa(180., 42., 150.), linha), Some(px(150.)));
+        // Só o ícone, sobra 180 à direita do modelo (600 - 420): 150 + 16 cabe, volta inteiro.
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), linha), None);
+        // Sobra pouca: continua só com o ícone, sem ficar indo e voltando.
+        let estreita = Some(caixa(180., 10., 330.));
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), estreita), Some(px(150.)));
+        // Sem a medida da linha ainda: não muda.
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), None), Some(px(150.)));
+    }
+
+    #[test]
     fn niveis_de_esforco() {
         assert_eq!(indice_esforco(""), 0);
         assert_eq!(indice_esforco("medium"), 2);
@@ -2008,6 +2136,42 @@ mod testes_caixa {
         assert_eq!(tokens(200_000), "200 mil tokens");
         assert_eq!(tokens(1_000_000), "1 milhão de tokens");
         assert_eq!(tokens(2_000_000), "2 milhões de tokens");
+    }
+
+    /// O critério do pedido: com um pedido de permissão aberto, a dica diz que o Enter nega e
+    /// manda o texto como resposta (antes dizia "Entra na fila"); o Ctrl+Enter segue sendo a fila.
+    #[test]
+    fn a_dica_do_enviar_diz_o_que_o_enter_faz() {
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePedido(1), false),
+            "Enviar\nNega o pedido aberto e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePedido(3), false),
+            "Enviar\nNega os pedidos abertos e manda isto ao Claude como resposta\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(
+            dica_do_enviar(Enter::Dirige, false),
+            "Enviar\nEntra no turno que está rodando, sem pará-lo\nCtrl+Enter manda depois, na fila"
+        );
+        assert_eq!(dica_do_enviar(Enter::Fila, false), "Enviar\nEntra na fila: este turno não recebe mensagem agora");
+        // O Ultrathink e o Ultracode valem para o turno inteiro: a mensagem espera a vez, e o
+        // pedido continua aberto.
+        let reforco = "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila";
+        assert_eq!(dica_do_enviar(Enter::Dirige, true), reforco);
+        assert_eq!(dica_do_enviar(Enter::RespondePedido(1), true), reforco);
+        assert_eq!(dica_do_enviar(Enter::Fila, true), "Enviar\nEntra na fila: este turno não recebe mensagem agora");
+    }
+
+    /// Com a pergunta com opções aberta, escrever é responder a ela: a dica não fala em negar.
+    #[test]
+    fn a_dica_do_enviar_com_a_pergunta_aberta() {
+        assert_eq!(
+            dica_do_enviar(Enter::RespondePergunta, false),
+            "Enviar\nResponde à pergunta com isto, sem escolher opção\nCtrl+Enter manda depois, na fila"
+        );
+        let reforco = "Enviar\nO Ultrathink e o Ultracode valem para o turno inteiro: esta espera a vez na fila";
+        assert_eq!(dica_do_enviar(Enter::RespondePergunta, true), reforco);
     }
 
     #[test]

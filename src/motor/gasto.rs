@@ -7,6 +7,10 @@
 //! pelo gravador do `dados.rs`. Na abertura entram o mês de agora e o anterior: é o que o "7 dias"
 //! do diálogo das contas e a linha "Trabalhou" das conversas recentes precisam, e a memória não
 //! cresce com os anos.
+//!
+//! O mesmo `result` diz quanto o turno levou (`Evento::Medida`, de `medida_do_resultado`), e a
+//! linha do livro guarda isso em `Tempos`: é a dica da linha "Trabalhou" e o "cache quente por
+//! mais 3 min" do popover do contexto.
 
 use std::{collections::HashMap, path::Path};
 
@@ -75,6 +79,89 @@ pub fn tokens_do_resultado(valor: &Value) -> Option<Tokens> {
     (tokens.total() > 0).then_some(tokens)
 }
 
+/// Quanto um turno levou e por quanto tempo o cache dele vale. Tudo em zero numa linha de antes
+/// disto (ou do Codex, que não diz), e zero não vai para o disco.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tempos {
+    /// O turno pelo relógio do Claude Code (`duration_ms`), somado entre os `result` dele. Não
+    /// conta o processo subindo nem a espera pelos agentes em segundo plano entre dois `result`.
+    #[serde(default, skip_serializing_if = "zero")]
+    pub total_ms: u64,
+    /// Só as idas ao modelo (`duration_api_ms`).
+    #[serde(default, skip_serializing_if = "zero")]
+    pub modelo_ms: u64,
+    /// Até o primeiro token, pelo Claude Code (`ttft_ms` do primeiro `result` do turno).
+    #[serde(default, skip_serializing_if = "zero")]
+    pub ttft_ms: u64,
+    /// Do processo aberto até a primeira palavra chegar ao Vitral (o relógio é o do motor).
+    #[serde(default, skip_serializing_if = "zero")]
+    pub espera_ms: u64,
+    /// Quantas idas ao modelo o turno teve (`num_turns`).
+    #[serde(default, skip_serializing_if = "zero")]
+    pub passos: u64,
+    /// Por quantos segundos o cache do prompt vale depois do turno: 300, ou 3600 na conta com o
+    /// cache longo. 0: não se sabe.
+    #[serde(default, skip_serializing_if = "zero")]
+    pub cache_ttl: u64,
+}
+
+impl Tempos {
+    /// Quanto custou subir o Claude Code: a espera pela primeira palavra, medida daqui, menos o
+    /// que o próprio Claude Code contou até ela. Só com os dois números, e a espera maior.
+    pub fn subida_ms(&self) -> Option<u64> {
+        (self.ttft_ms > 0 && self.espera_ms > self.ttft_ms).then(|| self.espera_ms - self.ttft_ms)
+    }
+}
+
+/// A validade do cache do prompt, em segundos.
+pub const CACHE_CURTO: u64 = 300;
+pub const CACHE_LONGO: u64 = 3600;
+
+/// Os tempos que um `result` do Claude Code declara (conferidos na saída de verdade da 2.1.328).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Medida {
+    /// `duration_ms`: quanto este `result` levou.
+    pub duracao_ms: u64,
+    /// `duration_api_ms`: o tempo de modelo do PROCESSO até aqui (como o `total_cost_usd`, não
+    /// zera entre dois `result` do mesmo processo; quem soma é o livro, pela diferença).
+    pub modelo_acumulado_ms: u64,
+    /// `ttft_ms`: até o primeiro token deste `result`.
+    pub ttft_ms: u64,
+    /// `num_turns`: as idas ao modelo deste `result`.
+    pub passos: u64,
+    /// A validade do cache que este `result` gravou (0: não gravou, ou a versão não diz).
+    pub cache_ttl: u64,
+}
+
+/// Os tempos de um `result`; `None` quando ele não traz nenhum (versão velha, processo que caiu).
+/// A validade do cache sai do `usage.cache_creation`, que separa o que foi gravado com 5 min
+/// (`ephemeral_5m_input_tokens`) do que foi gravado com 1 h (`ephemeral_1h_input_tokens`): vale a
+/// do que mais gravou (o Claude Code usa uma só por conta; na assinatura, a de 1 h).
+pub fn medida_do_resultado(valor: &Value) -> Option<Medida> {
+    let n = |v: &Value| v.as_u64().unwrap_or(0);
+    let gravado = &valor["usage"]["cache_creation"];
+    let (curto, longo) = (n(&gravado["ephemeral_5m_input_tokens"]), n(&gravado["ephemeral_1h_input_tokens"]));
+    let cache_ttl = match (curto, longo) {
+        (0, 0) => 0,
+        (curto, longo) if longo >= curto => CACHE_LONGO,
+        _ => CACHE_CURTO,
+    };
+    let medida = Medida {
+        duracao_ms: n(&valor["duration_ms"]),
+        modelo_acumulado_ms: n(&valor["duration_api_ms"]),
+        ttft_ms: n(&valor["ttft_ms"]),
+        passos: n(&valor["num_turns"]),
+        cache_ttl,
+    };
+    (medida != Medida::default()).then_some(medida)
+}
+
+/// Quantos segundos o cache do prompt ainda vale em `agora`, para um turno que terminou em `fim`
+/// com a validade `ttl` (cada uso renova a validade, e o último uso é o fim do turno). 0: esfriou.
+pub fn cache_restante(fim: u64, ttl: u64, agora: u64) -> u64 {
+    (fim + ttl).saturating_sub(agora)
+}
+
 /// Os tokens do `turn.completed` do Codex: o `input_tokens` dele já inclui o que veio do cache.
 pub fn tokens_do_codex(valor: &Value) -> Option<Tokens> {
     let n = |chave: &str| valor["usage"][chave].as_u64().unwrap_or(0);
@@ -105,6 +192,8 @@ pub struct Turno {
     pub custo: f64,
     #[serde(flatten)]
     pub tokens: Tokens,
+    #[serde(flatten)]
+    pub tempos: Tempos,
     /// A mensagem que abriu o turno: o índice dela na conversa e a hora. É por ela que a linha
     /// "Trabalhou" acha o gasto do turno (os dois precisam bater: depois de um reenvio, o mesmo
     /// índice é de outra mensagem).
@@ -134,6 +223,24 @@ impl Gasto {
     pub fn peso(&self, por_custo: bool) -> f64 {
         if por_custo { self.custo } else { self.tokens.total() as f64 }
     }
+}
+
+/// O que a dica da linha "Trabalhou" diz de um turno além do gasto: o modelo e os tempos.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Estatistica {
+    pub modelo: String,
+    pub tempos: Tempos,
+}
+
+/// O turno em andamento de um chat: o que os `result` dele já disseram.
+#[derive(Clone, Copy, Debug, Default)]
+struct Pendente {
+    tokens: Tokens,
+    tempos: Tempos,
+    /// O último `duration_api_ms` visto: ele é o total do processo, e o turno soma as diferenças.
+    modelo_visto: u64,
+    /// Já veio um `result` com tempos (o `ttft_ms` que vale é o do primeiro).
+    medido: bool,
 }
 
 /// O gasto de um chat dentro de uma pasta.
@@ -223,7 +330,7 @@ fn mes_anterior(mes: &str) -> Option<String> {
 pub struct Livro {
     turnos: Vec<Turno>,
     por_chat: HashMap<String, Vec<usize>>,
-    pendentes: HashMap<String, Tokens>,
+    pendentes: HashMap<String, Pendente>,
 }
 
 impl Livro {
@@ -251,15 +358,68 @@ impl Livro {
 
     /// Os tokens de mais um `result` do turno em andamento do chat.
     pub fn somar_pendente(&mut self, chat: &str, tokens: Tokens) {
-        self.pendentes.entry(chat.to_string()).or_default().somar(tokens);
+        self.pendentes.entry(chat.to_string()).or_default().tokens.somar(tokens);
+    }
+
+    /// Os tempos de mais um `result` do turno em andamento. O tempo de modelo chega acumulado
+    /// desde que o processo abriu: entra a diferença para o `result` anterior (ou ele inteiro,
+    /// se baixou: o turno trocou de processo). A primeira palavra é a do primeiro `result`.
+    pub fn somar_medida(&mut self, chat: &str, medida: Medida) {
+        let pendente = self.pendentes.entry(chat.to_string()).or_default();
+        let tempos = &mut pendente.tempos;
+        tempos.total_ms += medida.duracao_ms;
+        tempos.modelo_ms += match medida.modelo_acumulado_ms.checked_sub(pendente.modelo_visto) {
+            Some(diferenca) => diferenca,
+            None => medida.modelo_acumulado_ms,
+        };
+        pendente.modelo_visto = medida.modelo_acumulado_ms;
+        tempos.passos += medida.passos;
+        if !pendente.medido {
+            tempos.ttft_ms = medida.ttft_ms;
+        }
+        if medida.cache_ttl > 0 {
+            tempos.cache_ttl = medida.cache_ttl;
+        }
+        pendente.medido = true;
+    }
+
+    /// Quanto o turno em andamento esperou, do processo aberto à primeira palavra (a primeira
+    /// anotação é a que vale).
+    pub fn anotar_espera(&mut self, chat: &str, milis: u64) {
+        let tempos = &mut self.pendentes.entry(chat.to_string()).or_default().tempos;
+        if tempos.espera_ms == 0 {
+            tempos.espera_ms = milis.max(1);
+        }
+    }
+
+    /// O turno em andamento já tem a espera anotada.
+    #[cfg(test)]
+    pub fn espera_anotada(&self, chat: &str) -> bool {
+        self.pendentes.get(chat).is_some_and(|p| p.tempos.espera_ms > 0)
+    }
+
+    /// Um turno novo vai começar: os tempos que sobraram de um turno que não fechou (o processo
+    /// caiu antes do `result`) não entram na conta dele. Os tokens que sobraram ficam, como sempre.
+    pub fn abrir(&mut self, chat: &str) {
+        if let Some(pendente) = self.pendentes.get_mut(chat) {
+            *pendente = Pendente { tokens: pendente.tokens, ..Pendente::default() };
+        }
     }
 
     /// Fecha o turno: os tokens pendentes do chat viram a linha. Sem custo e sem token (o turno
     /// que falhou ao abrir), nada entra. Devolve o mês e o conteúdo do arquivo dele, para gravar.
     pub fn fechar(&mut self, mut turno: Turno) -> Option<(String, Vec<u8>)> {
-        turno.tokens = self.pendentes.remove(&turno.chat).unwrap_or_default();
+        let pendente = self.pendentes.remove(&turno.chat).unwrap_or_default();
+        (turno.tokens, turno.tempos) = (pendente.tokens, pendente.tempos);
         if turno.custo <= 0.0 && turno.tokens.total() == 0 {
             return None;
+        }
+        // O turno do Claude Code que não gravou nada no cache não diz a validade: vale a última
+        // que este chat viu, ou a última da mesma conta.
+        if pendente.medido && turno.tempos.cache_ttl == 0 {
+            let do_chat = self.do_chat(&turno.chat).rev().map(|t| t.tempos.cache_ttl).find(|ttl| *ttl > 0);
+            let da_conta = || self.turnos.iter().rev().filter(|t| t.conta == turno.conta).map(|t| t.tempos.cache_ttl).find(|ttl| *ttl > 0);
+            turno.tempos.cache_ttl = do_chat.or_else(da_conta).unwrap_or(0);
         }
         let mes = mes_de(turno.em);
         self.por_chat.entry(turno.chat.clone()).or_default().push(self.turnos.len());
@@ -286,6 +446,30 @@ impl Livro {
         (gasto.turnos > 0).then_some(gasto)
     }
 
+    /// O modelo e os tempos do turno que a mensagem `item` abriu. Com mais de uma linha (o turno
+    /// que a revisão reabriu), os tempos somam, a primeira palavra é a da primeira e o modelo e o
+    /// cache são os da última.
+    pub fn estatistica(&self, chat: &str, item: usize, item_em: u64) -> Option<Estatistica> {
+        let mut soma: Option<Estatistica> = None;
+        for turno in self.do_chat(chat).filter(|t| t.item == item && t.item_em == item_em) {
+            let Some(estatistica) = &mut soma else {
+                soma = Some(Estatistica { modelo: turno.modelo.clone(), tempos: turno.tempos });
+                continue;
+            };
+            let tempos = &mut estatistica.tempos;
+            tempos.total_ms += turno.tempos.total_ms;
+            tempos.modelo_ms += turno.tempos.modelo_ms;
+            tempos.passos += turno.tempos.passos;
+            if turno.tempos.cache_ttl > 0 {
+                tempos.cache_ttl = turno.tempos.cache_ttl;
+            }
+            if !turno.modelo.is_empty() {
+                estatistica.modelo = turno.modelo.clone();
+            }
+        }
+        soma
+    }
+
     /// O último turno anotado do chat.
     pub fn ultimo(&self, chat: &str) -> Option<&Turno> {
         self.do_chat(chat).next_back()
@@ -304,10 +488,15 @@ impl Motor {
         self.gastos.somar_pendente(chat_id, tokens);
     }
 
+    /// Os tempos de mais um `result` do turno em andamento.
+    pub(super) fn somar_medida(&mut self, chat_id: &str, medida: Medida) {
+        self.gastos.somar_medida(chat_id, medida);
+    }
+
     /// O turno terminou: anota no livro o que ele custou (`custo_antes` é o custo do chat antes
     /// de somar o `result`) e manda o arquivo do mês para o gravador.
     pub(super) fn registrar_gasto(&mut self, chat_id: &str, custo_antes: f64) {
-        let Some(c) = self.chat(chat_id) else {
+        let Some(c) = self.chat_gravado(chat_id) else {
             return;
         };
         let marco = c.itens.iter().rposition(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. } | Item::Vez { .. }));
@@ -323,6 +512,7 @@ impl Motor {
             conta,
             custo: (c.custo_usd - custo_antes).max(0.0),
             tokens: Tokens::default(),
+            tempos: Tempos::default(),
             item: marco.unwrap_or(0),
             item_em: marco.map_or(0, |k| c.itens[k].em()),
         };
@@ -337,7 +527,10 @@ impl Motor {
 
 #[cfg(test)]
 mod testes {
-    use super::{Livro, Tokens, Turno, comeco_do_dia, mes_anterior, mes_de, resumir, tokens_do_codex, tokens_do_resultado};
+    use super::{
+        CACHE_CURTO, CACHE_LONGO, Estatistica, Livro, Medida, Tempos, Tokens, Turno, cache_restante, comeco_do_dia, medida_do_resultado,
+        mes_anterior, mes_de, resumir, tokens_do_codex, tokens_do_resultado,
+    };
     use serde_json::json;
 
     fn turno(em: u64, chat: &str, pasta: &str, custo: f64, saida: u64) -> Turno {
@@ -448,6 +641,125 @@ mod testes {
         assert_eq!(relido.do_turno("a", 4, 77), livro.do_turno("a", 4, 77));
         assert_eq!(String::from_utf8(bytes).unwrap().lines().count(), 1);
         let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    /// O `result` de um turno de verdade do Claude Code 2.1.328 (23/11/2026), só com os campos
+    /// que interessam: uma leitura de arquivo e a resposta.
+    fn result_de_verdade() -> serde_json::Value {
+        json!({
+            "type": "result", "subtype": "success", "is_error": false,
+            "duration_ms": 2526, "duration_api_ms": 1501, "ttft_ms": 1807, "num_turns": 2,
+            "ttft_stream_ms": 1648, "time_to_request_ms": 950, "total_cost_usd": 0.0018409,
+            "usage": {
+                "input_tokens": 4, "cache_creation_input_tokens": 7470, "cache_read_input_tokens": 31050, "output_tokens": 72,
+                "cache_creation": { "ephemeral_1h_input_tokens": 7470, "ephemeral_5m_input_tokens": 0 }
+            }
+        })
+    }
+
+    #[test]
+    fn os_tempos_do_result_de_verdade() {
+        let medida = medida_do_resultado(&result_de_verdade()).unwrap();
+        assert_eq!(medida, Medida { duracao_ms: 2526, modelo_acumulado_ms: 1501, ttft_ms: 1807, passos: 2, cache_ttl: CACHE_LONGO });
+        assert_eq!((CACHE_CURTO, CACHE_LONGO), (300, 3600));
+        // A conta sem o cache longo grava com 5 min.
+        let mut curto = result_de_verdade();
+        curto["usage"]["cache_creation"] = json!({ "ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 7470 });
+        assert_eq!(medida_do_resultado(&curto).unwrap().cache_ttl, CACHE_CURTO);
+        // O turno que não gravou nada no cache (ou a versão que não separa) não diz a validade.
+        let mut nada = result_de_verdade();
+        nada["usage"]["cache_creation"] = json!({ "ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0 });
+        assert_eq!(medida_do_resultado(&nada).unwrap().cache_ttl, 0);
+        nada["usage"].as_object_mut().unwrap().remove("cache_creation");
+        assert_eq!(medida_do_resultado(&nada).map(|m| (m.duracao_ms, m.cache_ttl)), Some((2526, 0)));
+        // O `result` sem tempo nenhum (versão velha, o processo que caiu ao abrir) não vira medida.
+        assert_eq!(medida_do_resultado(&json!({ "type": "result", "total_cost_usd": 0.0, "usage": { "input_tokens": 3 } })), None);
+    }
+
+    #[test]
+    fn o_turno_guarda_os_tempos_dos_results_dele() {
+        let pasta = std::env::temp_dir().join(format!("vitral-gastos-{}", uuid::Uuid::new_v4()));
+        let agora = 1_800_000_000;
+        let mut livro = Livro::ler(&pasta, agora);
+        // Dois `result` no mesmo processo, como medido na 2.1.328: o `duration_ms`, o `ttft_ms` e o
+        // `num_turns` são de cada `result`; o `duration_api_ms` é o total do processo (1518 e
+        // depois 1943, ou seja, 425 no segundo).
+        livro.somar_pendente("a", Tokens { entrada: 4, cache_lido: 31_049, cache_criado: 7_469, saida: 72 });
+        livro.anotar_espera("a", 2967);
+        assert!(livro.espera_anotada("a") && !livro.espera_anotada("b"));
+        livro.somar_medida("a", Medida { duracao_ms: 2256, modelo_acumulado_ms: 1518, ttft_ms: 1405, passos: 2, cache_ttl: CACHE_LONGO });
+        // A segunda palavra já não é a primeira: a espera anotada fica.
+        livro.anotar_espera("a", 9000);
+        livro.somar_medida("a", Medida { duracao_ms: 507, modelo_acumulado_ms: 1943, ttft_ms: 479, passos: 1, cache_ttl: 0 });
+        let (_, bytes) = livro.fechar(Turno { item: 4, item_em: 77, modelo: "claude-opus-5-5".into(), ..turno(agora, "a", "/p/central", 0.42, 0) }).unwrap();
+        let tempos = Tempos { total_ms: 2763, modelo_ms: 1943, ttft_ms: 1405, espera_ms: 2967, passos: 3, cache_ttl: CACHE_LONGO };
+        assert_eq!(livro.ultimo("a").unwrap().tempos, tempos);
+        // Subir o Claude Code custou a espera daqui menos a primeira palavra que ele mesmo contou.
+        assert_eq!(tempos.subida_ms(), Some(1562));
+        assert_eq!(Tempos { espera_ms: 400, ttft_ms: 479, ..tempos }.subida_ms(), None);
+        assert_eq!(Tempos { ttft_ms: 0, ..tempos }.subida_ms(), None);
+        assert_eq!(livro.estatistica("a", 4, 77), Some(Estatistica { modelo: "claude-opus-5-5".into(), tempos }));
+        assert_eq!(livro.estatistica("a", 4, 78), None);
+        // O turno que trocou de processo no meio (o total do processo recomeça): o tempo de modelo
+        // do segundo processo entra inteiro.
+        livro.somar_pendente("b", Tokens { saida: 1, ..Tokens::default() });
+        livro.somar_medida("b", Medida { duracao_ms: 4000, modelo_acumulado_ms: 3000, ttft_ms: 900, passos: 5, cache_ttl: CACHE_CURTO });
+        livro.somar_medida("b", Medida { duracao_ms: 1000, modelo_acumulado_ms: 800, ttft_ms: 300, passos: 1, cache_ttl: CACHE_CURTO });
+        livro.fechar(turno(agora + 1, "b", "/p/central", 0.1, 0)).unwrap();
+        assert_eq!(
+            livro.ultimo("b").unwrap().tempos,
+            Tempos { total_ms: 5000, modelo_ms: 3800, ttft_ms: 900, espera_ms: 0, passos: 6, cache_ttl: CACHE_CURTO }
+        );
+        // O turno seguinte começa do zero: o total do processo anterior não é descontado dele.
+        livro.somar_pendente("a", Tokens { saida: 1, ..Tokens::default() });
+        livro.somar_medida("a", Medida { duracao_ms: 900, modelo_acumulado_ms: 700, ttft_ms: 350, passos: 1, cache_ttl: 0 });
+        livro.fechar(turno(agora + 2, "a", "/p/central", 0.1, 0)).unwrap();
+        let seguinte = livro.ultimo("a").unwrap().tempos;
+        assert_eq!((seguinte.total_ms, seguinte.modelo_ms, seguinte.ttft_ms), (900, 700, 350));
+        // Ele não gravou nada no cache: a validade é a última que o chat viu.
+        assert_eq!(seguinte.cache_ttl, CACHE_LONGO);
+        // O que sobrou de um turno que não fechou (o processo caiu antes do `result`, ou saiu
+        // depois de um fim adiado) não entra nos tempos do próximo; os tokens dele, que o livro
+        // sempre levou para o turno seguinte, continuam lá.
+        livro.somar_pendente("a", Tokens { saida: 9, ..Tokens::default() });
+        livro.anotar_espera("a", 5000);
+        livro.somar_medida("a", Medida { duracao_ms: 8000, modelo_acumulado_ms: 6000, ttft_ms: 700, passos: 4, cache_ttl: 0 });
+        livro.abrir("a");
+        assert!(!livro.espera_anotada("a"));
+        livro.somar_medida("a", Medida { duracao_ms: 1000, modelo_acumulado_ms: 500, ttft_ms: 200, passos: 1, cache_ttl: 0 });
+        livro.fechar(turno(agora + 3, "a", "/p/central", 0.1, 0)).unwrap();
+        let depois = livro.ultimo("a").unwrap().clone();
+        assert_eq!((depois.tokens.saida, depois.tempos.total_ms, depois.tempos.modelo_ms, depois.tempos.ttft_ms, depois.tempos.passos), (9, 1000, 500, 200, 1));
+        // O Codex não mede nada disso: a linha dele fica sem tempos e sem validade de cache.
+        livro.somar_pendente("x", Tokens { entrada: 10, cache_lido: 90, ..Tokens::default() });
+        livro.fechar(turno(agora + 3, "x", "/p/central", 0.0, 0)).unwrap();
+        assert_eq!(livro.ultimo("x").unwrap().tempos, Tempos::default());
+        // O que foi para o disco volta igual; a linha de antes dos tempos é lida sem eles, e o zero
+        // não ocupa lugar no arquivo.
+        std::fs::create_dir_all(&pasta).unwrap();
+        let mes = mes_de(agora);
+        let mut conteudo = bytes.clone();
+        conteudo.extend_from_slice(br#"{"em":1800000009,"chat":"velho","pasta":"/p/x","custo":0.5,"saida":7}"#);
+        conteudo.push(b'\n');
+        std::fs::write(pasta.join(format!("{mes}.jsonl")), conteudo).unwrap();
+        let relido = Livro::ler(&pasta, agora);
+        assert_eq!(relido.ultimo("a").unwrap().tempos, tempos);
+        assert_eq!(relido.ultimo("velho").unwrap().tempos, Tempos::default());
+        let texto = String::from_utf8(bytes).unwrap();
+        assert!(texto.contains(r#""total_ms":2763"#) && texto.contains(r#""cache_ttl":3600"#), "{texto}");
+        let sem_tempos = serde_json::to_string(&turno(agora, "c", "/p", 0.1, 5)).unwrap();
+        assert!(!sem_tempos.contains("_ms") && !sem_tempos.contains("passos") && !sem_tempos.contains("cache_ttl"), "{sem_tempos}");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn quanto_o_cache_ainda_vale() {
+        let fim = 1_800_000_000;
+        assert_eq!(cache_restante(fim, CACHE_CURTO, fim), 300);
+        assert_eq!(cache_restante(fim, CACHE_CURTO, fim + 120), 180);
+        assert_eq!(cache_restante(fim, CACHE_CURTO, fim + 300), 0);
+        assert_eq!(cache_restante(fim, CACHE_CURTO, fim + 4000), 0);
+        assert_eq!(cache_restante(fim, CACHE_LONGO, fim + 300), 3300);
     }
 
     #[test]

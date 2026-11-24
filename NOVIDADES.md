@@ -3,6 +3,193 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.10.0
+
+O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
+o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
+continua na conversa, a compactação deixa um marco e as imagens que as ferramentas devolvem
+aparecem na conversa. O chat ganha um título de verdade, o aviso de fim sai legível e os arquivos
+citados abrem em mais lugares. Achar e abrir arquivo ficou mais direto: Ctrl+P, Ctrl+F dentro do
+arquivo, os ignorados na aba Arquivos, PDF e planilha abrindo fora e o VS Code na linha certa. E
+o arquivo aberto à direita agora se edita ali mesmo.
+
+A conversa mais leve (rolar, digitar e acompanhar a resposta chegando pesam menos), quanto tempo e
+quanto cache cada turno gastou, o que cada agente em segundo plano está fazendo e a conversa do
+subagente numa aba. Nas Configurações, a letra da conversa separada do zoom, as suas instruções
+para todos os chats e os perfis de agente. E cada conversa abre um processo do Claude só.
+
+- **O limite de um modelo só não para a conta.** Com a "Semana · Fable" em 100% e a semana geral
+  em 66%, a recusa do Fable marcava a conta inteira como no limite até a semana renovar. Agora só
+  o limite de 5 h e o semanal geral param a conta; o de um modelo fica no erro do turno dele.
+- **O uso do Gemini no canto.** Com o Antigravity CLI entrando, um terceiro anel mostra a cota da
+  semana dos modelos do Gemini (fora) e a do grupo Claude e GPT (dentro); o clique abre as duas,
+  com quando renovam. A leitura é a do `agy -p /usage`, de 5 em 5 minutos, sem gastar cota.
+- **A mensagem presa no alto com o fundo transparente.** A conversa não é mais desenhada embaixo
+  da faixa da mensagem presa: ela não precisa de fundo próprio, fica como o resto do painel, e o
+  texto que rola não aparece mais por baixo dela.
+- **O esforço não some da caixa.** Quando não cabia inteiro ao lado do modelo, o esforço ia para
+  uma segunda linha escondida e sumia; agora fica só com o ícone até ter lugar de novo.
+- **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
+  ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
+  andamento em menos de um segundo.
+- **Responder a um pedido de permissão escrevendo.** Com um pedido aberto, o Enter na caixa nega
+  o pedido e manda ao Claude o que você escreveu, em vez de deixar a mensagem na fila. O
+  Ctrl+Enter continua mandando para a fila.
+- **Parar com mensagem esperando não derruba mais o Claude Code.** Parar um turno logo depois de
+  mandar uma mensagem para dentro dele encerrava o processo à força, antes de ele fechar o turno
+  e gravar a conversa. Agora o turno fecha direito e a mensagem volta para a fila.
+- **"Sem sinal" só quando o turno travou.** Um comando demorado (um build, uma suíte de testes)
+  ganhava o aviso de sem sinal depois de 10 minutos. Agora o aviso só aparece se o Claude Code
+  parar mesmo de responder.
+- **O raciocínio aparece com o texto.** O "Pensou por…" da conversa vinha vazio; agora abre com o
+  resumo do que o modelo pensou (Claude Code 2.1.323 ou mais novo).
+- **O que um hook manda perguntar vira o cartão de permissão, até em Sem perguntar.** Quando um
+  hook seu do Claude Code pedia confirmação antes de um comando (a trava de um deploy, por
+  exemplo), o cartão não aparecia no modo Sem perguntar: o comando voltava recusado e o agente
+  insistia. Agora o cartão aparece em qualquer modo, com o motivo que o hook deu, e esse pedido
+  não tem "Não perguntar de novo".
+- **Pergunta com opções.** Quando o Claude pergunta algo com alternativas, a pergunta aparece
+  num cartão com as opções para clicar (uma ou várias), a descrição de cada uma, "Outra…" para
+  escrever a sua e Enviar. Antes ela vinha como um pedido de permissão comum, e o Permitir
+  devolvia a pergunta sem resposta.
+- **O plano continua na conversa.** Depois de aprovado ou recusado, o plano fica no ponto em que
+  foi proposto, num cartão recolhido ("Plano aprovado" ou "Plano recusado") que abre o texto
+  dele. Antes ele sumia da conversa assim que você respondia.
+- **Marco de compactação.** Enquanto o Claude Code resume a conversa, a linha do turno diz
+  "Compactando…". Quando termina, a conversa ganha o marco "Contexto compactado", com o tamanho
+  de antes e se foi automático ou pelo Compactar.
+- **As imagens que as ferramentas devolvem aparecem na conversa.** O print do navegador (por
+  MCP), a imagem gerada e a imagem que o agente foi olhar vinham só como o texto "(image/png)".
+  Agora a chamada mostra a miniatura, que abre no visor junto com as outras imagens da conversa;
+  no Codex, o view_image e os prints por MCP também. As imagens ficam guardadas no computador,
+  até 100 MB por conversa (as mais antigas saem primeiro).
+- **O chat ganha um título de verdade.** O título do chat era o começo da sua primeira mensagem
+  ("olha esse erro aqui que deu no"). Depois do primeiro turno ele passa a ser um nome curto do
+  assunto, gerado pelo Claude Code. O que você renomeou fica como está, e no Codex nada muda.
+- **Aviso de fim legível.** A notificação de um chat que terminou mostrava a primeira linha crua
+  da resposta ("Terminou: ## Resumo"). Agora mostra o começo do texto, sem as marcas de markdown,
+  com até 220 letras. O "Enquanto você esteve fora" usa o mesmo texto.
+- **Mais arquivos citados viram link.** `arquivo#L10-L20` abre com as linhas marcadas,
+  `arquivo:12:5` e `file:///caminho` também abrem, e o nome citado sem a pasta (`mensagens.rs:120`)
+  abre o arquivo da pasta do chat que termina assim, quando é um só.
+- **Links na saída de comando.** `src/x.rs:120:5` no erro do cargo, `src/x.ts(12,5)` no do tsc e
+  `"x.py", line 12` no do Python abrem o arquivo na linha. O ponteiro parado no link mostra o
+  caminho inteiro.
+- **Comando de barra citado vira link.** Quando o agente escreve `/compact` ou outro comando do
+  chat, o clique põe o comando na caixa de mensagem. Quem envia é você.
+- **Abrir arquivo pelo nome (Ctrl+P).** O Ctrl+P abre a lista dos arquivos da pasta do chat, com
+  busca; o Enter abre o arquivo à direita. A busca não liga para acento ("relatorio" acha
+  "relatório.md"), e isso vale também para o "@" da caixa.
+- **A paleta acha conversas e arquivos.** Na paleta de comandos (Ctrl+Shift+P), o que você
+  escreve acha também as conversas pelo título e os arquivos da pasta do chat, além dos comandos.
+- **Buscar dentro do arquivo (Ctrl+F).** Com um clique no arquivo aberto à direita, o Ctrl+F
+  busca dentro dele, com "3 de 12", as setas e o Enter para o próximo. Também está no "…" do
+  arquivo. O arquivo em markdown aparece em linhas enquanto a busca está aberta.
+- **Mostrar ignorados na aba Arquivos.** O olho ao lado do ↻ mostra também o que o git ignora
+  (as pastas arquivo/, dados/ e tarefas/, com prints e exports), que antes nunca apareciam. As
+  pastas ignoradas só são lidas quando você as abre. Começa desligado.
+- **VS Code na linha certa.** O botão VS Code do arquivo aberto à direita abre o arquivo na linha
+  que você está vendo: a que escolheu, a da mudança ou a que o link da conversa marcou.
+- **PDF, planilha e outros abrem fora.** O arquivo que o Vitral não mostra (PDF, planilha, zip)
+  ganhou o Abrir fora, que abre no aplicativo do sistema. Antes só havia Abrir no VS Code, que
+  não serve para eles. O "…" do arquivo também tem o Abrir fora, para ver um .html no navegador.
+- **SVG aparece como imagem.** O arquivo .svg abre desenhado à direita e no visor, e não mais
+  como código.
+- **Editar o arquivo no painel.** Um clique no texto do arquivo aberto à direita abre o editor
+  ali, com a cor da sintaxe. O que você escreve se salva sozinho quando você para de digitar, e o
+  Ctrl+S salva na hora. O Esc volta à leitura. O número da linha continua escolhendo linhas para
+  mencionar.
+- **Aviso quando o agente muda o arquivo que você está editando.** Se o arquivo muda no disco com
+  texto seu ainda não salvo, uma faixa pergunta: Recarregar (fica o do disco) ou Manter o meu
+  (o seu passa por cima ao salvar). Sem texto seu por salvar, o editor só passa a mostrar o novo.
+- **Arquivo grande abre para ler.** Arquivos de 400 KB a 5 MB (um log, um export) abriam só no
+  VS Code. Agora abrem aqui, só para ler, com a busca e a escolha de linhas.
+- **Markdown: Prévia ou Fonte.** O .md aberto à direita tem um seletor Prévia | Fonte. Na prévia,
+  o cabeçalho do arquivo (o nome e a descrição de uma skill, por exemplo) aparece numa tabelinha,
+  e os links para outros arquivos abrem o arquivo no painel. Na Fonte, um clique edita.
+- **Rever as mudanças do turno em sequência.** Na edição aberta à direita, a seta da última
+  mudança passa ao próximo arquivo da lista de Mudanças do chat, e a faixa mostra "arquivo 2 de
+  8". Antes as setas davam a volta dentro do mesmo arquivo.
+- **Diff sem espaço em branco.** No diff de "Na pasta", o "…" do arquivo tem Ignorar espaço em
+  branco: o que só mudou de recuo sai do diff. Começa desligado.
+- **Rolar a conversa pesa menos.** O Vitral desenha só as mensagens que estão à vista (e um pouco
+  em volta); as outras entram como espaço. Antes, cada passo da roda refazia as 60 últimas
+  mensagens do painel, e mais ainda depois de subir bastante na conversa.
+- **A resposta chegando não mexe nos outros painéis.** O texto que vai chegando redesenha só a
+  conversa dele: a lista e as conversas ao lado ficam paradas. Antes, cada pedaço de texto refazia
+  a janela inteira.
+- **Quanto tempo o turno levou, e onde.** A dica da linha "Trabalhou…" diz também o modelo,
+  quantos passos o turno teve, o tempo total, o tempo de modelo, o tempo até a primeira palavra,
+  quanto levou para abrir o Claude Code e quanto da entrada veio do cache.
+- **A chamada demorada diz quanto levou.** O comando que levou 10 s ou mais fica com a duração na
+  linha dele, "Rodou cargo test · 2 min 14 s". O que foi para o segundo plano não ganha número: ele
+  segue rodando.
+- **O cache esfriando.** O popover do contexto ganhou a linha **Cache**, que diz por quanto tempo
+  o cache do último turno ainda vale: "quente por mais 3 min" ou "frio". Com ele frio, a próxima
+  mensagem relê a conversa inteira pelo preço cheio.
+- **Digitar e passar o ponteiro não refazem as conversas.** Cada tecla na caixa de mensagem e
+  cada passada do ponteiro por um botão refaziam as conversas de todos os painéis; com três
+  conversas longas abertas, a digitação atrasava.
+- **O que o chat está fazendo, numa linha acima da caixa.** Quando há o que mostrar, uma linha de
+  pílulas aparece logo acima da caixa de mensagem: os comandos que o agente deixou rodando no
+  fundo (o clique lista cada um, com Parar), os subagentes por estado ("2 trabalhando · 1
+  esperando você"), os passos dele ("3/5") e o que o turno mudou ("+40 −12", que abre a lista à
+  direita). Sem nada disso, a linha não existe, e ela não empurra a caixa. O "N arquivos mudados",
+  que ficava numa faixa acima da caixa, virou a pílula das mudanças.
+- **A conversa inteira do subagente, numa aba.** Clicar no cartão de um subagente (ou nele, na
+  pílula dos subagentes) abre numa aba tudo o que ele leu, rodou e respondeu, com o desenho da
+  conversa normal, só para ler. Ela acompanha o subagente enquanto ele trabalha e continua
+  disponível depois de fechar e abrir o Vitral. O cartão fica na conversa, e a setinha dele
+  mostra os passos e o relatório ali mesmo.
+- **O que cada agente em segundo plano está fazendo.** Quando a resposta já veio e os agentes
+  seguem trabalhando, a conversa mostra uma linha por agente, com a descrição, o que ele faz agora
+  ("Rodando cargo test…", "Lendo views.py…") e há quanto tempo foi lançado; o clique abre a
+  conversa dele numa aba. Antes havia só a frase "Agentes trabalhando em segundo plano…". A pílula
+  "N trabalhando" passou a contar esses agentes (ela zerava assim que a resposta chegava), e o
+  cartão deles não aparece mais como "interrompida".
+- **"Terminou: …" quando um agente em segundo plano acaba.** No ponto da conversa em que ele
+  termina entra uma linha, "Terminou: Mapear o carrinho · 25 min" (ou "Falhou: …"), e o clique
+  nela abre o relatório dele. Com vários agentes, o turno agora termina uma vez só: antes o
+  "Terminou" do chat podia sair uma vez por agente.
+- **O diff da edição mostra só o que mudou.** Ao abrir uma edição na conversa, aparecem as linhas
+  que mudaram, com 3 linhas em volta, e a palavra trocada vem marcada dentro da linha. Antes o
+  trecho antigo vinha inteiro em vermelho e o novo inteiro em verde. O pedido de permissão de uma
+  edição mostra o mesmo diff.
+- **Os passos dizem o que mudou.** Quando o agente mexe na lista de passos dele, a linha na
+  conversa diz o quê: "Criou 5 passos", "Começou: rodar os testes", "Concluiu: rodar os testes".
+  Antes toda chamada era "Atualizou os passos". O Vitral lê também as ferramentas de tarefa novas
+  do Claude Code (TaskCreate, TaskUpdate e TaskList), e a pílula "3/5" conta por elas.
+- **As checagens do turno na linha "Trabalhou…".** O turno pronto diz como terminaram os testes,
+  o typecheck, o lint e o build que ele rodou: "tsc passou · vitest falhou 2×, passou · cargo test
+  passou". Vale a última execução de cada um. Quando não dá para saber o resultado (o comando
+  atrás de um `| tail`, sem nada na saída que diga), a checagem não aparece.
+- **Copiar tabela.** Cada tabela de uma resposta ganhou um Copiar no canto de baixo: o clique
+  copia a tabela em Markdown, e com Shift copia pronta para colar numa planilha.
+- **O relatório do subagente aparece no cartão.** No modo automático, o cartão do subagente
+  mostrava um aviso em inglês ("This agent's report was delivered…") no lugar do relatório.
+- **Letra da conversa.** Em Configurações > Aparência, o tamanho das mensagens muda sem mexer no
+  resto: de 80% a 150% da interface. O zoom (Ctrl+roda) continua valendo para tudo e agora também
+  aparece ali.
+- **Suas instruções para todos os chats.** Em Configurações > Agentes, um texto seu que vai junto
+  do que o Vitral já diz ao Claude e ao Codex ("rode os testes antes de dizer que terminou"). Vale
+  a partir da próxima mensagem.
+- **Perfis de agente.** Um nome para quem responde, o modelo, o modo e o esforço, com uma nota de
+  quando usar. Ficam na parte nova **Perfis** das Configurações, aparecem no alto do seletor de
+  modelo, e escolher um ajusta tudo de uma vez.
+- **Versão do Claude Code e do Codex.** Nas Configurações, a versão instalada de cada um (a do
+  Codex, em Agentes); quando sai uma mais nova, a linha avisa.
+- **Testar a notificação.** Em Configurações > Chats, um botão manda uma notificação do sistema na
+  hora.
+- **Diagnóstico para pedir ajuda.** Em Configurações > Atualizações, **Copiar** junta as versões, o
+  sistema, as pastas dos dados e o fim do registro de quedas, sem chaves, tokens nem conversas.
+- **Um chat nunca abre o Claude duas vezes.** Com agentes em segundo plano, parar e mandar outra
+  mensagem podia deixar dois ou três processos do Claude na mesma conversa, cada um respondendo e
+  soltando agentes por conta própria. Agora cada conversa tem um processo só, e o Parar derruba
+  também o que ainda estava saindo.
+- **Uso do plano só de quem está conectado.** O anel de uso do Claude e o do Codex, no canto da
+  janela, aparecem só com a conta daquele serviço conectada. Sem conta, o anel some; entrar e
+  instalar continuam no menu do logo.
+
 ## 0.9.6
 
 O Gemini como terceiro agente, o modo foco como no VS Code e as configurações por partes.

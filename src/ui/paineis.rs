@@ -32,6 +32,10 @@ pub struct Painel {
     pub composer: Entity<TextareaState>,
     /// Máximo de linhas da caixa, que diminui em janela baixa.
     pub linhas_caixa: usize,
+    /// O esforço na caixa só com o ícone porque inteiro ele não cabia ao lado do modelo (ia para
+    /// a segunda linha, que fica escondida, e sumia: dono, 24/11/2026). Guarda a largura que ele
+    /// pedia inteiro, para voltar quando houver lugar (`composer::decidir_esforco`).
+    pub esforco_compacto: Option<Pixels>,
     pub rolagem: ScrollHandle,
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
@@ -76,9 +80,11 @@ pub struct Painel {
     pub base_animacao: usize,
     /// Até onde os blocos já apareceram: um índice daqui para a frente é novo neste quadro.
     pub vistos: usize,
-    /// A faixa do turno e a pílula do fim estavam à vista no quadro anterior (entram uma vez).
+    /// A faixa do turno, a pílula do fim e a linha de pílulas estavam à vista no quadro anterior
+    /// (entram uma vez).
     pub faixa_vista: bool,
     pub pilula_vista: bool,
+    pub pilulas_vistas: bool,
     /// Acabou de abrir ao lado: o conteúdo entra com fade no primeiro quadro.
     pub entra: bool,
     /// Sobe a cada envio, para o pulso do enviar.
@@ -116,6 +122,9 @@ pub struct Painel {
     pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
+    /// A altura que cada bloco da conversa mediu neste painel: o que está longe da vista entra
+    /// como um espaço dessa altura, sem ser montado (ver `mensagens::a_vista`).
+    pub(in crate::ui) alturas: std::rc::Rc<std::cell::RefCell<super::mensagens::a_vista::Alturas>>,
 }
 
 /// O que está sendo arrastado: uma conversa, da lista ou da aba de um painel.
@@ -398,7 +407,10 @@ impl Janela {
                         }
                         this.ler_arquivos(&cwd, cx);
                     }
-                    cx.notify();
+                    // Só a casca: o texto da caixa não aparece nas mensagens nem na lista (o
+                    // rascunho só vai para a lista com o chat fora dos painéis), e avisar a
+                    // Janela refazia as conversas de todos os painéis a cada tecla.
+                    this.redesenhar_a_casca(cx);
                 }
                 _ => {}
             },
@@ -435,6 +447,7 @@ impl Janela {
             abas: Vec::new(),
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
+            esforco_compacto: None,
             rolagem: ScrollHandle::new(),
             mostrar_historico: crate::importar::ITENS_POR_VEZ,
             preservar_topo: None,
@@ -458,6 +471,7 @@ impl Janela {
             vistos: 0,
             faixa_vista: false,
             pilula_vista: false,
+            pilulas_vistas: false,
             entra: false,
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
@@ -472,6 +486,7 @@ impl Janela {
             presa: None,
             empurrao_da_presa: px(0.),
             altura_da_presa: Default::default(),
+            alturas: Default::default(),
         };
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
@@ -561,6 +576,7 @@ impl Janela {
         painel.vistos = tamanho;
         painel.faixa_vista = false;
         painel.pilula_vista = false;
+        painel.pilulas_vistas = false;
     }
 
     /// O fundo da caixa de cada painel: logo depois de um Esc, "O que fazer em vez disso? Enter
@@ -601,6 +617,10 @@ impl Janela {
             return;
         };
         let chat = self.selecionado.clone();
+        // A conversa de um subagente é só para ler (a caixa nem aparece nela).
+        if chat.as_deref().is_some_and(|c| crate::motor::subconversa::partes_do_id(c).is_some()) {
+            return;
+        }
         let anexos = |this: &Self| {
             chat.as_ref().is_some_and(|c| this.anexos.get(c).is_some_and(|a| !a.is_empty()))
         };
@@ -847,6 +867,36 @@ impl Janela {
             None => "Este chat ainda não tem resposta para copiar",
         };
         window.push_notification(super::componentes::aviso(super::componentes::Tom::Info, aviso), cx);
+    }
+
+    /// Abre numa aba do painel a conversa inteira do subagente que a chamada `chamada` do chat
+    /// `chat` abriu, só para ler: o motor a monta com o arquivo que o Claude Code gravou. A aba do
+    /// chat continua no painel; se a conversa já está à vista noutro painel, só ativa ele.
+    pub(super) fn abrir_subagente(&mut self, painel_id: u64, chat: String, chamada: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let Some(id) = motor.update(cx, |m, cx| m.abrir_subconversa(&chat, &chamada, cx)) else {
+            return;
+        };
+        self.abrir_aba(painel_id, id, window, cx);
+    }
+
+    /// Chamado a cada `render`, depois do `acertar_abas`: a conversa de subagente que não está
+    /// mais em aba nenhuma sai da memória do motor (o arquivo dela continua no Claude Code).
+    pub(super) fn soltar_subconversas(&mut self, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let sem_aba: Vec<String> = motor
+            .read(cx)
+            .subconversas_abertas()
+            .filter(|id| !self.paineis.iter().any(|p| p.chat.as_deref() == Some(*id) || p.abas.iter().any(|a| a.as_str() == *id)))
+            .map(str::to_string)
+            .collect();
+        if !sem_aba.is_empty() {
+            motor.update(cx, |m, _| sem_aba.iter().for_each(|id| m.fechar_subconversa(id)));
+        }
     }
 
     /// Clique numa aba que não está à vista: o painel passa a mostrar esse chat.

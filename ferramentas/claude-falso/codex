@@ -6,8 +6,11 @@ escreve `thread.started`, os itens e `turn.completed`, e não chama ninguém. Os
 chamada ficam em $XDG_STATE_HOME/codex-falso.log.
 
 No pedido, `[ferramenta <Nome> <detalhe> | <segundos>]` encena um item: Bash vira um comando, Edit e
-Write uma mudança de arquivo, Pensa um raciocínio. `[falha]` termina o turno com erro.
-`codex debug models` devolve um catálogo pequeno.
+Write uma mudança de arquivo, Pensa um raciocínio; no app-server, Ver é o `view_image` de um arquivo
+da pasta (o item `imageView`, só com o caminho) e Print, uma ferramenta MCP que devolve uma imagem
+em base64. `[falha]` termina o turno com erro.
+`codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
+(CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
 import json
 import os
@@ -16,6 +19,21 @@ import sys
 import time
 import uuid
 import threading
+
+def png_de_mentira(largura=640, altura=400):
+    """Um PNG de verdade em base64 (RGB, sem biblioteca), para o `[ferramenta Print x]`."""
+    import base64
+    import struct
+    import zlib
+
+    def bloco(tipo, dados):
+        return struct.pack(">I", len(dados)) + tipo + dados + struct.pack(">I", zlib.crc32(tipo + dados) & 0xFFFFFFFF)
+
+    linhas = b"".join(b"\x00" + bytes((40, 110 + y * 100 // altura, 220)) * largura for y in range(altura))
+    png = (b"\x89PNG\r\n\x1a\n" + bloco(b"IHDR", struct.pack(">IIBBBBB", largura, altura, 8, 2, 0, 0, 0))
+           + bloco(b"IDAT", zlib.compress(linhas, 6)) + bloco(b"IEND", b""))
+    return base64.b64encode(png).decode()
+
 
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
 SAIDA = threading.Lock()
@@ -70,6 +88,12 @@ def servidor():
             detalhe = detalhe.strip()
             if nome == "Pensa":
                 valor = {"id": f"item_{n}", "type": "reasoning", "summary": [], "content": []}
+            elif nome == "Ver":
+                # O `view_image` de verdade (0.169.0): o item `imageView`, só com o caminho.
+                valor = {"id": f"item_{n}", "type": "imageView", "path": os.path.join(os.getcwd(), detalhe)}
+            elif nome == "Print":
+                valor = {"id": f"item_{n}", "type": "mcpToolCall", "server": "chrome-devtools", "tool": "take_screenshot",
+                         "status": "inProgress", "arguments": {}, "result": None, "error": None}
             elif nome in ("Edit", "Write"):
                 caminho = os.path.join(os.getcwd(), detalhe)
                 valor = {"id": f"item_{n}", "type": "fileChange", "status": "inProgress", "changes": [{
@@ -81,6 +105,13 @@ def servidor():
             item(valor)
             if fim.wait(int(segundos) if segundos else 3): break
             if nome == "Pensa": valor["summary"] = [detalhe]
+            elif nome == "Ver": pass
+            elif nome == "Print":
+                # O resultado de um MCP no app-server: os blocos do MCP, com a imagem em `data`.
+                valor.update(status="completed", result={"content": [
+                    {"type": "text", "text": "Took a screenshot of the current page's viewport."},
+                    {"type": "image", "data": png_de_mentira(), "mimeType": "image/png"}],
+                    "structuredContent": None, "_meta": None})
             elif nome in ("Edit", "Write"):
                 valor["status"] = "completed"
                 try:
@@ -136,6 +167,9 @@ def servidor():
 def main():
     args = sys.argv[1:]
     anotar(args)
+    if args == ["--version"]:
+        print(f"codex-cli {os.environ.get('CODEX_FALSO_VERSAO', '0.169.0')}")
+        return
     if args[:2] == ["debug", "models"]:
         return catalogo()
     if args and args[0] == "app-server":

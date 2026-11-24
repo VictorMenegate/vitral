@@ -441,6 +441,10 @@ fn menu_do_painel(
     // Mover o painel, fechar os outros e fechar este saíram do menu a pedido do dono
     // (13/11/2026): as abas se arrastam, o × fecha, e os atalhos continuam valendo
     // (Ctrl+Shift+PgUp/PgDn e Ctrl+W).
+    // A conversa de um subagente é só para ler: não se renomeia, fixa nem arquiva.
+    if crate::motor::subconversa::partes_do_id(&d.chat).is_some() {
+        return menu;
+    }
     menu = menus::menu_conversa(menu, janela.clone(), &motor, &d.chat, false, window, cx);
     menu
 }
@@ -595,9 +599,15 @@ impl Janela {
             .and_then(|ix| self.paineis[ix].chat.clone())
             .and_then(|id| motor.chat(&id));
         let ativo = ix == Some(self.ativo);
+        let caixa_estreita = ix.is_some_and(|ix| self.paineis[ix].medida.faixa == super::componentes::FaixaCaixa::Estreita);
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
         let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
+        // A conversa de um subagente aberta numa aba: só para ler, sem caixa nem fila.
+        let subagente = chat.and_then(|c| motor.subconversa(&c.id));
+        // A linha de pílulas (o que roda no fundo, os subagentes, os passos, as mudanças): flutua
+        // sobre o pé da conversa, logo acima da caixa, e só existe quando há pílula.
+        let pilulas = chat.zip(ix).and_then(|(c, _)| self.linha_de_pilulas(motor, c, painel_id, cx));
         // As mensagens são uma vista em cache (`vista_mensagens`): a Janela redesenhando por outra
         // coisa (o spinner da caixa, a lista, outro painel) não refaz o layout nem a pintura delas.
         let corpo = match (&chat, ix) {
@@ -620,6 +630,9 @@ impl Janela {
                     .flex_col()
                     .child(mensagens)
                     .child(div().absolute().inset_0().child(anel))
+                    // Fora do fluxo: a linha aparece e some sem empurrar a caixa (a lista de
+                    // mensagens guarda o lugar dela no pé; ver `pilulas::ALTURA_DA_LINHA`).
+                    .children(pilulas.map(|linha| div().absolute().left_0().right_0().bottom(esp::E4).child(linha)))
                     // O texto deste painel só entra numa seleção começada nele (`aplicar_escopo_do_clique`).
                     .text_selection_scope(self.paineis[ix].escopo_selecao)
                     .into_any_element()
@@ -627,11 +640,11 @@ impl Janela {
             _ => self.sem_conversa(window, cx).into_any_element(),
         };
 
-        let arquivos_sobre = chat.is_some() && self.arquivos_sobre == Some(painel_id);
+        let arquivos_sobre = chat.is_some() && subagente.is_none() && self.arquivos_sobre == Some(painel_id);
         let medida = ix.map(|ix| Self::medir_painel(cx.entity().downgrade(), painel_id, self.paineis[ix].medida));
         // A faixa do turno entra com fade e 8 px de baixo no quadro em que aparece; o painel que
         // acabou de abrir ao lado, só com o fade.
-        let faixa = chat.and_then(|c| self.faixa_atividade(motor, c, painel_id, window, cx));
+        let faixa = chat.filter(|_| subagente.is_none()).and_then(|c| self.faixa_atividade(motor, c, painel_id, window, cx));
         let (faixa_nova, painel_novo) = match ix {
             Some(ix) => {
                 let p = &mut self.paineis[ix];
@@ -711,7 +724,7 @@ impl Janela {
                 })
             })
             .when_some(medida, |s, medir| s.on_prepaint(medir))
-            .when_some(chat.map(|c| c.id.clone()), |s, chat_id| {
+            .when_some(chat.filter(|_| subagente.is_none()).map(|c| c.id.clone()), |s, chat_id| {
                 // Arquivos arrastados do gerenciador viram anexos da próxima mensagem.
                 s.on_drag_move(cx.listener(
                     move |this, evento: &DragMoveEvent<ExternalPaths>, _, cx| {
@@ -742,9 +755,11 @@ impl Janela {
             })
             .child(cabecalho)
             .child(corpo)
-            .children(chat.zip(ix).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
+            .children(chat.zip(ix).filter(|_| subagente.is_none()).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
             .children(faixa)
-            .when_some(chat.zip(ix), |s, (chat, ix)| {
+            // No lugar da caixa, o pé da conversa do subagente: o que ela é e em que pé ele está.
+            .when_some(subagente, |s, sub| s.child(self.pe_do_subagente(motor, sub, caixa_estreita, window, cx)))
+            .when_some(chat.zip(ix).filter(|_| subagente.is_none()), |s, (chat, ix)| {
                 let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();
                 // A doca está no fluxo: as mensagens terminam onde ela começa, e nenhum texto fica
                 // por cima do metal. O `overflow_hidden` do cartão corta reto, então a abertura leva
@@ -827,7 +842,7 @@ impl Janela {
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
                 let responder = (ativo && self.trecho.is_some()).then(|| {
                     div()
-                        .map(super::mensagens::coluna)
+                        .map(|s| super::mensagens::coluna(s, caixa_estreita))
                         .flex()
                         .justify_end()
                         .pb(esp::E6)
@@ -893,6 +908,46 @@ impl Janela {
             );
             cartao.when(opacidade < 1., |s| s.opacity(opacidade)).into_any_element()
         })
+    }
+
+    /// O pé da conversa de um subagente, no lugar da caixa de mensagem: ela é só para ler. Diz o
+    /// que é e em que pé ele está (o que faz agora, ou quanto levou); se ele espera uma resposta
+    /// sua, o pedido de permissão aparece aqui também, para responder sem trocar de aba.
+    fn pe_do_subagente(
+        &self,
+        motor: &Motor,
+        sub: &crate::motor::subconversa::Subconversa,
+        caixa_estreita: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        use super::mapa_agentes::{Estado, agentes_do_chat, meta_do_agente, ponto};
+        let pai = motor.chat(&sub.pai);
+        let rodando = motor.execucao(&sub.pai).rodando();
+        let agente = pai.and_then(|c| agentes_do_chat(&c.itens, rodando, crate::modelo::agora()).into_iter().find(|a| a.id == sub.chamada));
+        let espera = motor.subagentes_esperando(&sub.pai).contains(&sub.chamada);
+        let (marca, estado) = match &agente {
+            Some(a) if espera => (ponto(a.estado), "Esperando a sua resposta".to_string()),
+            Some(a) if a.estado == Estado::Rodando => (ponto(a.estado), format!("Trabalhando · {}", meta_do_agente(a))),
+            Some(a) => (ponto(a.estado), meta_do_agente(a)),
+            None => (div().into_any_element(), String::new()),
+        };
+        let linha = h_flex()
+            .map(|s| super::mensagens::coluna(s, caixa_estreita))
+            .h(tam(window, 36.))
+            .gap(esp::E8)
+            .metadado()
+            .text_color(Cores::tenue())
+            .child(marca)
+            .child(div().flex_none().child("Conversa do subagente, só leitura"))
+            .when(!estado.is_empty(), |s| s.child(div().flex_none().text_color(Cores::apagado()).child("·")).child(div().min_w_0().truncate().child(estado)));
+        v_flex()
+            .flex_none()
+            .w_full()
+            .pb(esp::E8)
+            .when_some(pai.filter(|_| espera), |s, pai| s.child(self.permissoes(motor, pai, window, cx)))
+            .child(linha)
+            .into_any_element()
     }
 
     /// O cabeçalho numa linha só (44), que arrasta a janela: a aba, as ações e os botões da janela.

@@ -482,6 +482,8 @@ mod testes {
             arquivo: arquivo.map(str::to_string),
             sub: None,
             mudanca: mudanca.map(|(entram, saem, novo)| Mudanca { entram, saem, novo }),
+            imagens: Vec::new(),
+            durou: 0,
         }
     }
 

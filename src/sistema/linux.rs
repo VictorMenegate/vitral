@@ -16,12 +16,13 @@ fn soltar(comando: &mut Command) {
     }
 }
 
-pub fn abrir_no_editor(pasta: &Path) {
+/// Abre a pasta ou o arquivo no VS Code; com a linha, o arquivo já nela (`--goto`).
+pub fn abrir_no_editor(pasta: &Path, linha: Option<u32>) {
     let editor = ["/usr/bin/code", "code"]
         .into_iter()
         .find(|e| !e.starts_with('/') || Path::new(e).exists())
         .unwrap_or("code");
-    soltar(novo_comando(editor).arg(pasta));
+    soltar(novo_comando(editor).args(super::argumentos_do_editor(pasta, linha)));
 }
 
 /// Abre um terminal na pasta; com `comando`, roda ele e deixa o shell aberto depois.

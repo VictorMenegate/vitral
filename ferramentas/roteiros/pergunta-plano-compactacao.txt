@@ -1,0 +1,79 @@
+# A pergunta com opções (AskUserQuestion), o plano que continua na conversa e o marco de
+# compactação, com o claude de mentira encenando cada um como o Claude Code 2.1.328.
+# Uso (de dentro do worktree, com o binário compilado; @BIN@ é o caminho dele e @PASTA@ uma pasta
+# vazia qualquer, trocados antes de rodar, por exemplo com sed):
+#   XDG_CACHE_HOME=$HOME/.cache/vitral-trabalho/bancada-pergunta BANCADA=3 CLAUDE_FALSO=1 \
+#     CLAUDE_FALSO_VERSAO=2.1.328 ZOOM=1.5 ferramentas/bancada.sh <este roteiro> <prints> @BIN@
+# Sem o DADOS_NOVOS (as boas-vindas pedem uma pasta pelo seletor do sistema): a bancada precisa já
+# ter um chat; na primeira vez, rode antes com `@BIN@ --nova @PASTA@ "oi"` no lugar do comando.
+# As mensagens entram por uma segunda abertura (o `texto` da bancada não digita aspas nem acentos
+# com segurança; por isso o que é digitado vai sem acento). Sem crase nas mensagens: o `roda` passa
+# a linha pelo bash.
+# Coordenadas da janela 1400x880 a 150%, com a lista aberta. Para o layout estreito a 150% (como
+# com três painéis lado a lado), comece por `arrastar 1497 500 1000 500` (a janela vai ao mínimo de
+# 960 e a conversa fica com uns 310 px a 100%) e leve os cliques da conversa para x = 790.
+
+espera 8
+# 1. A pergunta com opções: duas perguntas numa chamada, uma de escolha única e uma de várias.
+roda @BIN@ --nova @PASTA@ "[pergunta Cor | Qual cor você prefere para o botão de comprar? | Azul: A cor do destaque de hoje.; Verde: Combina com o aviso de sucesso.; Laranja] [pergunta+ Telas | Em quais telas a mudança entra? | Carrinho: O resumo do pedido.; Produto; Busca: A lista de resultados.] Pergunta antes de mexer."
+espera 8
+mover 800 60
+espera 1
+print 01-pergunta-aberta       # "2 perguntas", as opções com a descrição, o Enviar desligado
+clique 1040 584                # Verde
+espera 1
+mover 800 60
+print 02-uma-respondida        # o marcador redondo cheio e "1 de 2 respondidas"
+rolar 1040 600 5               # a segunda pergunta
+espera 1
+clique 1040 492                # Carrinho
+clique 1040 552                # Produto
+clique 1040 672                # Outra…: o campo abre com o foco
+espera 1
+rolar 1040 600 4
+espera 1
+texto Checkout tambem
+espera 1
+mover 800 60
+print 03-varias-e-outra        # os quadrados marcados, o campo da Outra… e "2 de 2 respondidas"
+clique 1392 736                # Enviar
+espera 5
+print 04-respondida            # "Perguntou …" na trilha e a resposta com "respostas: … = Verde; … = Carrinho, Produto, Checkout tambem"
+# 2. O plano aprovado continua na conversa.
+roda @BIN@ --nova @PASTA@ "[ferramenta Read src/carrinho.py | 2] [plano # Trocar o cupom do carrinho\n\nO desconto do cupom hoje entra depois do frete. O plano é aplicar antes.\n\n1. Ler o carrinho e achar onde o total é somado.\n2. Aplicar o desconto antes do frete.\n3. Rodar os testes do carrinho.] Planeja a troca do cupom."
+espera 9
+print 05-plano-pendente        # o pedido "Plano para aprovar" (a conversa não repete o plano)
+clique 1290 738                # Aprovar e executar
+espera 6
+mover 800 60
+print 06-plano-aprovado        # o cartão recolhido "Plano aprovado · Trocar o cupom do carrinho"
+clique 1040 626                # abre o cartão
+espera 2
+mover 800 60
+print 07-plano-aberto          # o texto do plano em markdown, com o Copiar
+# 3. O plano recusado, com o que foi pedido.
+roda @BIN@ --nova @PASTA@ "[plano # Trocar o cupom do carrinho\n\n1. Aplicar o desconto antes do frete.\n2. Rodar os testes do carrinho.] Planeja de novo."
+espera 8
+clique 800 672                 # o campo "O que mudar no plano?"
+texto Comeca pelos testes
+tecla Return
+espera 6
+mover 800 60
+print 08-plano-recusado        # o cartão recolhido "Plano recusado"
+clique 1040 626                # abre o cartão
+espera 2
+mover 800 60
+print 09-recusado-aberto       # o plano e "Você pediu: Comeca pelos testes"
+# 4. A compactação automática no meio do turno e a manual, pelo /compact.
+roda @BIN@ --nova @PASTA@ "[ferramenta Read src/carrinho.py | 2] [compacta auto 168432 | 6] Continua o trabalho."
+espera 6
+print 10-compactando           # a linha viva "Compactando…" no lugar do "Pensando…"
+espera 8
+print 11-marco-automatico      # "Contexto compactado (automático, 168 mil tokens antes)" e o turno segue
+clique 1040 838                # a caixa de mensagem
+texto /compact
+tecla Return
+espera 1
+print 12-compact-manual        # "Compactando…" de novo
+espera 6
+print 13-marco-manual          # "Contexto compactado (manual, 43 mil tokens antes)"

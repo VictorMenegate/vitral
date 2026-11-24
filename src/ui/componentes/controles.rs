@@ -28,12 +28,20 @@ use crate::ui::movimento::{self, Curva};
 pub struct BotaoCopiar {
     id: ElementId,
     valor: SharedString,
+    /// O que o clique com Shift copia no lugar do valor (a tabela separada por tabulação).
+    com_shift: Option<SharedString>,
     dica: SharedString,
 }
 
 impl BotaoCopiar {
     pub fn new(id: impl Into<ElementId>, valor: impl Into<SharedString>) -> Self {
-        BotaoCopiar { id: id.into(), valor: valor.into(), dica: "Copiar".into() }
+        BotaoCopiar { id: id.into(), valor: valor.into(), com_shift: None, dica: "Copiar".into() }
+    }
+
+    /// Outro texto para o clique com Shift.
+    pub fn com_shift(mut self, valor: impl Into<SharedString>) -> Self {
+        self.com_shift = Some(valor.into());
+        self
     }
 
     pub fn dica(mut self, dica: impl Into<SharedString>) -> Self {
@@ -47,10 +55,11 @@ impl RenderOnce for BotaoCopiar {
         let copiado = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
         let feito = *copiado.read(cx);
         let icone: Icon = if feito { Lucide::Check.into() } else { Lucide::Copy.into() };
-        let valor = self.valor;
+        let (valor, com_shift) = (self.valor, self.com_shift);
         botao_icone(self.id, icone.when(feito, |i| i.text_color(Cores::verde())), self.dica, TamanhoBotao::Linha, window, cx).on_click(
-            move |_, _, cx| {
+            move |evento, _, cx| {
                 cx.stop_propagation();
+                let valor = com_shift.as_ref().filter(|_| evento.modifiers().shift).unwrap_or(&valor);
                 cx.write_to_clipboard(ClipboardItem::new_string(valor.to_string()));
                 copiado.update(cx, |c, cx| {
                     *c = true;
@@ -1137,17 +1146,24 @@ pub struct Contador {
     id: ElementId,
     valor: u32,
     faixa: RangeInclusive<u32>,
+    sufixo: Option<&'static str>,
     ao_mudar: Rc<dyn Fn(u32, &mut Window, &mut App)>,
 }
 
 impl Contador {
+    /// A unidade colada ao número ("%").
+    pub fn sufixo(mut self, s: &'static str) -> Self {
+        self.sufixo = Some(s);
+        self
+    }
+
     pub fn new(
         id: impl Into<ElementId>,
         valor: u32,
         faixa: RangeInclusive<u32>,
         ao_mudar: impl Fn(u32, &mut Window, &mut App) + 'static,
     ) -> Self {
-        Contador { id: id.into(), valor, faixa, ao_mudar: Rc::new(ao_mudar) }
+        Contador { id: id.into(), valor, faixa, sufixo: None, ao_mudar: Rc::new(ao_mudar) }
     }
 }
 
@@ -1184,12 +1200,14 @@ impl RenderOnce for Contador {
             .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
             .child(
                 div()
-                    .min_w(r(24.))
+                    // Com unidade, a largura do maior número: o − e o + não andam de 90% para 100%.
+                    .min_w(r(if self.sufixo.is_some() { 44. } else { 24. }))
                     .text_center()
                     .text_size(r(13.))
                     .font_semibold()
+                    .tabular()
                     .text_color(Cores::texto())
-                    .child(valor.to_string()),
+                    .child(format!("{valor}{}", self.sufixo.unwrap_or_default())),
             )
             .child(botao("mais", Lucide::Plus, "Aumentar", (valor < max).then(|| valor + 1)))
     }
@@ -1260,9 +1278,13 @@ impl RenderOnce for Campo {
     }
 }
 
-/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A lupa
-/// fica a 8 da borda de fora (o contorno, 6 e a folga do desenho dela): numa peça de 8, cai na
-/// guia de 16 da lista.
+/// Da borda de fora do campo de busca à caixa da lupa. Fora da escala de propósito: com a folga do
+/// desenho da lupa, a tinta fica a 8 da borda, na coluna do ícone de arquivar logo acima. Era 8,
+/// sobra da época do contorno de 1, e a tinta ficava 1 px depois (folha dimensional, 23/11/2026).
+const RECUO_DA_LUPA: f32 = 7.;
+
+/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A tinta
+/// da lupa fica a 8 da borda de fora (`RECUO_DA_LUPA`).
 pub fn campo_de_busca(
     id: impl Into<ElementId>,
     estado: &Entity<InputState>,
@@ -1295,7 +1317,7 @@ pub fn campo_de_busca_de(
         .flex()
         .items_center()
         .h(r(altura))
-        .pl(esp::E8)
+        .pl(r(RECUO_DA_LUPA))
         .pr(esp::E6)
         // Um poço de canto arredondado, sem fio: quem o desenha é a sombra que cai de cima para
         // dentro e o 1 px de luz na quina de baixo. Com o foco, um aro de metal de 2 px em volta

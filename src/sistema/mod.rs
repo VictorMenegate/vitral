@@ -39,6 +39,25 @@ pub fn abrir_pasta(caminho: &Path, cx: &gpui_kit::App) {
     cx.open_url(&format!("file://{}", caminho.display()));
 }
 
+/// Os argumentos do VS Code para abrir o caminho: com a linha, `--goto caminho:linha`, que abre o
+/// arquivo já nela (no Linux e no Windows).
+pub fn argumentos_do_editor(caminho: &Path, linha: Option<u32>) -> Vec<std::ffi::OsString> {
+    match linha.filter(|l| *l > 0) {
+        Some(linha) => {
+            let mut alvo = caminho.as_os_str().to_os_string();
+            alvo.push(format!(":{linha}"));
+            vec!["--goto".into(), alvo]
+        }
+        None => vec![caminho.as_os_str().to_os_string()],
+    }
+}
+
+/// Abre o arquivo no aplicativo padrão do sistema (o leitor de PDF, a planilha, o visor de
+/// imagens). É o mesmo caminho do `abrir_pasta`: o portal do GNOME, ou o Explorer no Windows.
+pub fn abrir_fora(caminho: &Path, cx: &gpui_kit::App) {
+    abrir_pasta(caminho, cx);
+}
+
 /// O bash dos comandos de Rodar. No Linux, o do sistema. No Windows, o do Git para Windows, por
 /// caminho absoluto (`bash_do_git`); None sem ele.
 pub fn bash() -> Option<PathBuf> {
@@ -164,6 +183,19 @@ mod testes {
         std::fs::write(&escolhido, "").unwrap();
         assert_eq!(bash_do_git(Some(escolhido.clone()), &[git.clone()], None), Some(escolhido));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn o_editor_abre_na_linha_com_goto() {
+        use std::ffi::OsString;
+        let caminho = Path::new("/p/minha loja/a.rs");
+        assert_eq!(argumentos_do_editor(caminho, None), [OsString::from("/p/minha loja/a.rs")]);
+        assert_eq!(
+            argumentos_do_editor(caminho, Some(120)),
+            [OsString::from("--goto"), OsString::from("/p/minha loja/a.rs:120")]
+        );
+        // A linha 0 não existe: abre o arquivo, sem o --goto.
+        assert_eq!(argumentos_do_editor(caminho, Some(0)), [OsString::from("/p/minha loja/a.rs")]);
     }
 
     #[test]

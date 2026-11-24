@@ -26,6 +26,8 @@
 # DADOS_NOVOS afastaria os dados da outra) já em uso, a bancada recusa começar.
 # FUNDO=branco (fundo branco liso, o pior caso de contraste) ou FUNDO=<imagem> troca o papel de
 # parede; sem ele, vale o da sessão.
+# TELA=2400x1300 troca o tamanho do monitor de mentira (o padrão é 1600x1000): a 150% de zoom, três
+# conversas lado a lado só cabem numa tela mais larga.
 # ZOOM=1.5 abre o Vitral com esse zoom (grava o interface.json da bancada antes de abrir).
 # DADOS_NOVOS=1 abre como primeiro uso: afasta os dados que a bancada tinha (em $B/data, nunca os de
 # verdade; o app/ que a atualização instalou fica), a configuração e o interface.json (a vista, o
@@ -121,6 +123,14 @@ J
         # CLAUDE_FALSO_VERSAO de novo.
         rm -f "$B/state$N/claude-falso-versao"
     fi
+    # Um chat do Vitral roda com o CLAUDE_CONFIG_DIR da conta de verdade, e com ele o app lê as
+    # conversas reais mesmo na bancada (o DENTRO_DA_BANCADA só barra sem ele): em 23/11/2026 a
+    # bancada aberta de um chat importou as conversas do dono. Passa só o de mentira.
+    case "$(realpath -m "${CLAUDE_CONFIG_DIR:-/nenhum}")" in
+        "$HOME"/.claude | "$HOME"/.claude/* | "$HOME"/.config/vitral/*)
+            echo "bancada: CLAUDE_CONFIG_DIR de verdade ($CLAUDE_CONFIG_DIR) fica de fora" >&2
+            unset CLAUDE_CONFIG_DIR ;;
+    esac
     export XDG_CONFIG_HOME=$B/config XDG_DATA_HOME=$B/data XDG_CACHE_HOME=$B/cache XDG_BIN_HOME=$B/bin \
         XDG_STATE_HOME=$B/state$N XDG_RUNTIME_DIR=$RUN GSETTINGS_BACKEND=keyfile DENTRO_DA_BANCADA=1 \
         VITRAL_SEM_ATUALIZACAO=${VITRAL_SEM_ATUALIZACAO:-1}
@@ -128,7 +138,7 @@ J
     exec dbus-run-session -- "$0" "$ROTEIRO" "$PRINTS" "$@"
 fi
 
-gnome-shell --headless --wayland --virtual-monitor 1600x1000 --no-x11 > "$XDG_STATE_HOME/shell.log" 2>&1 7>&- 8>&- &
+gnome-shell --headless --wayland --virtual-monitor "${TELA:-1600x1000}" --no-x11 > "$XDG_STATE_HOME/shell.log" 2>&1 7>&- 8>&- &
 SHELL_PID=$!
 # O nome do socket sai no log: o lock velho de uma rodada que caiu faz o Shell ir para o wayland-1, e
 # o wayland-0 que sobrou não tem ninguém atrás (o app abria sem tela).

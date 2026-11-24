@@ -304,23 +304,34 @@ impl Janela {
     }
 
     /// O alto da lista enxuta: o logo (o menu do Vitral) e, ao lado, as abas Conversas e Arquivos.
-    pub(super) fn topo_enxuto(&self, motor: &Entity<Motor>, abas: Option<Div>, cx: &Context<Self>) -> impl IntoElement + use<> {
+    pub(super) fn topo_enxuto(&self, motor: &Entity<Motor>, abas: Option<Div>, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
         let m = motor.read(cx);
         let precisa = super::resumo::precisa_em_tudo(m);
+        // Da beirada ao conteúdo da lista: a margem da janela (ou o vão até a conversa) e a peça de
+        // 8. A margem e o vão são px fixos e a peça cresce com o zoom, por isso a conta em px. Na
+        // gaveta a lista encosta na janela e acaba na borda dela: só a peça.
+        let ancorada = self.orcamento.lista;
+        let (margem, vao) =
+            if ancorada { (crate::tema::margem_da_janela(), crate::tema::vao_entre_pecas()) } else { (px(0.), px(0.)) };
+        let peca = tam(window, 8.);
         self.arrastavel_com_id("arrastar-trilho-deitado")
             .on_mouse_down(MouseButton::Right, |evento, window, _| window.show_window_menu(evento.position))
             .relative()
             .flex()
             .items_center()
             .flex_none()
-            .w_full()
-            // Na altura da fileira do alto dos painéis (52), com tudo no meio: o logo de 38 e o
+            // Na altura da fileira do alto dos painéis (56), com tudo no meio: o logo de 38 e o
             // segmentado de 34 centram na linha das abas ao lado (relatório de design, 16/11/2026;
             // dono, 17/11/2026: "melhorar o espaçamento daqui").
             .h(altura::FILEIRA_DO_ALTO)
-            // A fileira passa 4 de cada lado da folga da lista: o logo e o segmentado ficam a 9
-            // da beirada, o mesmo que sobra em cima e embaixo deles.
-            .mx(r(-4.))
+            // A fileira passa da folga da lista dos dois lados: o medalhão do logo e o segmentado
+            // ficam a 11 da beirada (o logo da janela, o segmentado da conversa), o mesmo que sobra
+            // em cima deles, em qualquer zoom. Sem largura fixa, a margem negativa estica a
+            // fileira; com o `w_full` e o -4 de antes ela só deslocava: 14 à esquerda e 20 à
+            // direita a 100% (folha dimensional, 23/11/2026). O logo tem 2 de aro em volta do
+            // medalhão; o segmentado, não.
+            .ml(tam(window, 11. - 2.) - margem - peca)
+            .mr(tam(window, 11.) - vao - peca)
             .gap(esp::E8)
             .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
             .children(abas.map(|abas| super::sem_arrastar().flex().flex_1().min_w_0().child(abas.flex_1().mb(r(0.)))))
@@ -349,7 +360,7 @@ impl Janela {
         let construir = self.itens_menu(motor, compacto, precisa, cx);
         let janela = cx.entity().downgrade();
         // O logo enche o botão; sobra só o aro de 2 do hover. No alto da lista, 38 com o medalhão de
-        // 34, a altura do segmentado ao lado: na fileira de 52 sobram 9 em cima e embaixo (com 44
+        // 34, a altura do segmentado ao lado: na fileira de 56 sobram 9 em cima e embaixo (com 44
         // o logo encostava na beirada da janela; dono, 17/11/2026: "melhora o espaçamento dessa
         // parte de cima").
         let (lado, medalhao) = if compacto { (32., 28.) } else { (38., 34.) };

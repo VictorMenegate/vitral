@@ -153,14 +153,30 @@ fn trechos_do_claude(linhas: &[&str]) -> Vec<Trecho> {
 /// A troca de `antes` por `depois` linha a linha: o que ficou igual (a maior subsequência comum),
 /// o que saiu e o que entrou, com as saídas antes das entradas em cada mudança.
 fn comparar(antes: &[String], depois: &[String]) -> Vec<(Marca, String)> {
+    let (mut i, mut j) = (0, 0);
+    casar(antes, depois, TETO_DA_COMPARACAO)
+        .into_iter()
+        .map(|marca| {
+            let linha = if marca == Marca::Entra { depois[j].clone() } else { antes[i].clone() };
+            i += usize::from(marca != Marca::Entra);
+            j += usize::from(marca != Marca::Sai);
+            (marca, linha)
+        })
+        .collect()
+}
+
+/// Os passos que levam de `antes` a `depois` (linhas, ou os pedaços de uma linha): `Igual` anda
+/// nos dois, `Sai` só em `antes`, `Entra` só em `depois`. É a maior subsequência comum; acima do
+/// `teto` (um lado × o outro) fica o começo e o fim iguais, e o meio inteiro sai e entra.
+fn casar<T: PartialEq>(antes: &[T], depois: &[T], teto: usize) -> Vec<Marca> {
     let (n, m) = (antes.len(), depois.len());
-    if n.saturating_mul(m) > TETO_DA_COMPARACAO {
+    if n.saturating_mul(m) > teto {
         let comeco = antes.iter().zip(depois).take_while(|(a, b)| a == b).count();
         let fim = antes[comeco..].iter().rev().zip(depois[comeco..].iter().rev()).take_while(|(a, b)| a == b).count();
-        let mut saida: Vec<(Marca, String)> = antes[..comeco].iter().map(|l| (Marca::Igual, l.clone())).collect();
-        saida.extend(antes[comeco..n - fim].iter().map(|l| (Marca::Sai, l.clone())));
-        saida.extend(depois[comeco..m - fim].iter().map(|l| (Marca::Entra, l.clone())));
-        saida.extend(antes[n - fim..].iter().map(|l| (Marca::Igual, l.clone())));
+        let mut saida = vec![Marca::Igual; comeco];
+        saida.extend(std::iter::repeat_n(Marca::Sai, n - comeco - fim));
+        saida.extend(std::iter::repeat_n(Marca::Entra, m - comeco - fim));
+        saida.extend(std::iter::repeat_n(Marca::Igual, fim));
         return saida;
     }
     // tabela[i][j]: o tamanho da subsequência comum de antes[i..] e depois[j..].
@@ -174,18 +190,230 @@ fn comparar(antes: &[String], depois: &[String]) -> Vec<(Marca, String)> {
     let mut saida = Vec::with_capacity(n + m);
     while i < n || j < m {
         if i < n && j < m && antes[i] == depois[j] {
-            saida.push((Marca::Igual, antes[i].clone()));
+            saida.push(Marca::Igual);
             i += 1;
             j += 1;
         } else if i < n && (j == m || tabela[i + 1][j] >= tabela[i][j + 1]) {
-            saida.push((Marca::Sai, antes[i].clone()));
+            saida.push(Marca::Sai);
             i += 1;
         } else {
-            saida.push((Marca::Entra, depois[j].clone()));
+            saida.push(Marca::Entra);
             j += 1;
         }
     }
     saida
+}
+
+/// Uma linha do diff como a trilha e o pedido de permissão o mostram (rodada do Paseo, item 1:
+/// antes o lado antigo vinha inteiro em vermelho e o novo inteiro em verde, e uma palavra trocada
+/// em 10 linhas eram 20 linhas coloridas).
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinhaDoDiff {
+    /// Uma linha que não mudou, de contexto.
+    Igual(String),
+    /// Uma linha que saiu, e os trechos dela (em bytes) que a linha nova trocou; sem trecho, a
+    /// linha inteira é a mudança.
+    Sai(String, Vec<std::ops::Range<usize>>),
+    /// Uma linha que entrou, e os trechos dela que são novos.
+    Entra(String, Vec<std::ops::Range<usize>>),
+    /// Linhas iguais que ficaram de fora entre duas mudanças; com 0, a divisa entre duas trocas
+    /// (as do MultiEdit, os trechos de um diff unificado).
+    Pulo(usize),
+    /// "… mais 40 linhas", "… (cortado)".
+    Nota(String),
+}
+
+/// Quantas linhas iguais ficam em volta de cada mudança na trilha.
+const CONTEXTO_DA_TRILHA: usize = 3;
+/// Duas linhas juntas maiores que isto não ganham a palavra marcada (como no Paseo).
+const MAX_DA_LINHA_MARCADA: usize = 1024;
+/// O teto da comparação por palavras de um par de linhas.
+const TETO_DAS_PALAVRAS: usize = 40_000;
+
+/// O diff de um detalhe gravado, nos dois formatos, para a trilha: só o que mudou, com 3 linhas
+/// de contexto, e a palavra trocada marcada. Vazio quando o detalhe não é um diff.
+pub fn diff_da_trilha(detalhe: &str) -> Vec<LinhaDoDiff> {
+    let mut saida = diff_dos_trechos(&trechos(detalhe), CONTEXTO_DA_TRILHA);
+    if !saida.is_empty() && detalhe.lines().any(|l| l == "… (cortado)") {
+        saida.push(LinhaDoDiff::Nota("… (cortado)".into()));
+    }
+    saida
+}
+
+/// O diff de uma troca (o `old_string` e o `new_string` de um Edit), para o pedido de permissão.
+pub fn diff_da_troca(antes: &str, depois: &str, contexto: usize) -> Vec<LinhaDoDiff> {
+    let linhas = |t: &str| t.lines().map(str::to_string).collect::<Vec<_>>();
+    let trecho = Trecho { linhas: comparar(&linhas(antes), &linhas(depois)), ..Trecho::default() };
+    diff_dos_trechos(&[trecho], contexto)
+}
+
+/// Os trechos, um depois do outro, cada um só com o que mudou e `contexto` linhas iguais em
+/// volta, e com a palavra trocada marcada nas linhas que saíram e entraram em pares.
+pub fn diff_dos_trechos(trechos: &[Trecho], contexto: usize) -> Vec<LinhaDoDiff> {
+    let mut saida = Vec::new();
+    for trecho in trechos {
+        let mudou: Vec<usize> = trecho.linhas.iter().enumerate().filter(|(_, (m, _))| *m != Marca::Igual).map(|(i, _)| i).collect();
+        if mudou.is_empty() && trecho.entram_a_mais + trecho.saem_a_mais == 0 {
+            continue;
+        }
+        if !saida.is_empty() {
+            saida.push(LinhaDoDiff::Pulo(0));
+        }
+        // A mudança mais perto de cada linha, antes ou depois dela: a linha fica se está no contexto.
+        let perto = |i: usize| {
+            let depois = mudou.partition_point(|&m| m < i);
+            let dist = |m: Option<&usize>| m.map_or(usize::MAX, |&m| m.abs_diff(i));
+            dist(mudou.get(depois)).min(dist(depois.checked_sub(1).and_then(|a| mudou.get(a)))) <= contexto
+        };
+        let (primeira, ultima) = (mudou.first().copied().unwrap_or(0), mudou.last().copied().unwrap_or(0));
+        let mut puladas = 0;
+        for (i, (marca, texto)) in trecho.linhas.iter().enumerate() {
+            let texto = texto.replace('\t', "    ");
+            match marca {
+                Marca::Igual if !perto(i) => puladas += usize::from(i > primeira && i < ultima),
+                _ => {
+                    if puladas > 0 {
+                        saida.push(LinhaDoDiff::Pulo(puladas));
+                        puladas = 0;
+                    }
+                    saida.push(match marca {
+                        Marca::Igual => LinhaDoDiff::Igual(texto),
+                        Marca::Sai => LinhaDoDiff::Sai(texto, Vec::new()),
+                        Marca::Entra => LinhaDoDiff::Entra(texto, Vec::new()),
+                    });
+                }
+            }
+        }
+        let a_mais = trecho.entram_a_mais.max(trecho.saem_a_mais);
+        if a_mais > 0 {
+            saida.push(LinhaDoDiff::Nota(format!("… mais {a_mais} linhas")));
+        }
+    }
+    marcar_palavras(&mut saida);
+    saida
+}
+
+/// Em cada mudança em que saíram e entraram o mesmo número de linhas, a primeira que saiu é
+/// comparada com a primeira que entrou, e assim por diante: o que difere dentro delas fica marcado.
+fn marcar_palavras(linhas: &mut [LinhaDoDiff]) {
+    let mut i = 0;
+    while i < linhas.len() {
+        let saem = linhas[i..].iter().take_while(|l| matches!(l, LinhaDoDiff::Sai(..))).count();
+        let entram = linhas[i + saem..].iter().take_while(|l| matches!(l, LinhaDoDiff::Entra(..))).count();
+        if saem > 0 && saem == entram {
+            for k in i..i + saem {
+                let (antes, depois) = linhas.split_at_mut(k + 1);
+                if let (LinhaDoDiff::Sai(a, em_a), LinhaDoDiff::Entra(d, em_d)) = (&mut antes[k], &mut depois[saem - 1]) {
+                    (*em_a, *em_d) = palavras_trocadas(a, d);
+                }
+            }
+        }
+        i += (saem + entram).max(1);
+    }
+}
+
+/// Os pedaços de uma linha: cada palavra (letras, números e "_"), cada sequência de brancos e
+/// cada sinal sozinho, com o lugar (em bytes) de cada um.
+fn pedacos(linha: &str) -> Vec<(std::ops::Range<usize>, &str)> {
+    #[derive(PartialEq)]
+    enum Tipo {
+        Palavra,
+        Branco,
+        Sinal,
+    }
+    let tipo = |c: char| {
+        if c.is_alphanumeric() || c == '_' {
+            Tipo::Palavra
+        } else if c.is_whitespace() {
+            Tipo::Branco
+        } else {
+            Tipo::Sinal
+        }
+    };
+    let mut saida: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+    let mut anterior: Option<Tipo> = None;
+    for (i, c) in linha.char_indices() {
+        let este = tipo(c);
+        let fim = i + c.len_utf8();
+        match saida.last_mut() {
+            Some((faixa, _)) if este != Tipo::Sinal && anterior.as_ref() == Some(&este) => faixa.end = fim,
+            _ => saida.push((i..fim, "")),
+        }
+        anterior = Some(este);
+    }
+    for (faixa, texto) in &mut saida {
+        *texto = &linha[faixa.clone()];
+    }
+    saida
+}
+
+/// O que difere entre duas linhas, em trechos de bytes de cada uma. Sem trecho nenhum quando as
+/// linhas são grandes demais ou têm menos da metade das palavras em comum: aí a linha inteira já
+/// diz que mudou, e marcar quase tudo só faria barulho.
+fn palavras_trocadas(antes: &str, depois: &str) -> (Vec<std::ops::Range<usize>>, Vec<std::ops::Range<usize>>) {
+    let nada = (Vec::new(), Vec::new());
+    if antes.len() + depois.len() > MAX_DA_LINHA_MARCADA {
+        return nada;
+    }
+    let (a, d) = (pedacos(antes), pedacos(depois));
+    if a.len().saturating_mul(d.len()) > TETO_DAS_PALAVRAS {
+        return nada;
+    }
+    let textos_a: Vec<&str> = a.iter().map(|(_, t)| *t).collect();
+    let textos_d: Vec<&str> = d.iter().map(|(_, t)| *t).collect();
+    let passos = casar(&textos_a, &textos_d, TETO_DAS_PALAVRAS);
+    let conta = |p: &[(std::ops::Range<usize>, &str)]| p.iter().filter(|(_, t)| !t.trim().is_empty()).count();
+    let (mut i, mut j, mut em_comum) = (0, 0, 0);
+    // Os trechos de cada lado e se o último pedaço igual desde o trecho anterior era só branco.
+    let (mut em_a, mut em_d): (Vec<std::ops::Range<usize>>, Vec<std::ops::Range<usize>>) = (Vec::new(), Vec::new());
+    let (mut so_branco_a, mut so_branco_d) = (false, false);
+    let juntar = |trechos: &mut Vec<std::ops::Range<usize>>, faixa: &std::ops::Range<usize>, so_branco: bool| match trechos.last_mut() {
+        Some(ultimo) if ultimo.end == faixa.start || so_branco => ultimo.end = faixa.end,
+        _ => trechos.push(faixa.clone()),
+    };
+    for passo in passos {
+        match passo {
+            Marca::Igual => {
+                let branco = a[i].1.trim().is_empty();
+                em_comum += usize::from(!branco);
+                // Um branco igual entre dois pedaços trocados não separa o trecho.
+                so_branco_a = branco && em_a.last().is_some_and(|u| u.end == a[i].0.start);
+                so_branco_d = branco && em_d.last().is_some_and(|u| u.end == d[j].0.start);
+                i += 1;
+                j += 1;
+            }
+            Marca::Sai => {
+                juntar(&mut em_a, &a[i].0, so_branco_a);
+                so_branco_a = false;
+                i += 1;
+            }
+            Marca::Entra => {
+                juntar(&mut em_d, &d[j].0, so_branco_d);
+                so_branco_d = false;
+                j += 1;
+            }
+        }
+    }
+    if em_comum * 2 < conta(&a).max(conta(&d)) {
+        return nada;
+    }
+    (em_a, em_d)
+}
+
+/// O diff em texto, como a tela o mostra, para o Copiar.
+pub fn texto_do_diff(linhas: &[LinhaDoDiff]) -> String {
+    linhas
+        .iter()
+        .map(|linha| match linha {
+            LinhaDoDiff::Igual(t) => format!("  {t}"),
+            LinhaDoDiff::Sai(t, _) => format!("- {t}"),
+            LinhaDoDiff::Entra(t, _) => format!("+ {t}"),
+            LinhaDoDiff::Pulo(0) => "…".to_string(),
+            LinhaDoDiff::Pulo(n) => format!("… {}", super::componentes::contagem(*n, "linha igual", "linhas iguais")),
+            LinhaDoDiff::Nota(t) => t.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Quantas linhas entram e saem nos trechos (com as que passaram do corte).
@@ -377,6 +605,19 @@ pub struct Edicao {
     pub entram: usize,
     pub saem: usize,
     pub sem_registro: bool,
+    pub origem: Origem,
+}
+
+/// De onde a edição que o painel mostra veio.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Origem {
+    #[default]
+    Avulsa,
+    /// Das chamadas de edição de um chat (o pedido do `AbrirEdicao`): com elas as setas acham o
+    /// arquivo na lista de Mudanças e passam ao seguinte.
+    Chat { chat: String, itens: Vec<usize>, caminho: Option<String> },
+    /// Do git da pasta ("Na pasta"), com ou sem as mudanças só de espaço em branco.
+    Git { sem_espaco: bool },
 }
 
 /// Abre no painel da direita o arquivo de uma ou mais chamadas de edição de um chat, já na edição:
@@ -388,6 +629,22 @@ pub struct AbrirEdicao {
     pub chat: String,
     pub itens: Vec<usize>,
     pub caminho: Option<String>,
+}
+
+/// Onde o arquivo de uma edição aberta está na lista de Mudanças de "Este chat": a lista em que
+/// ele aparece ("Neste turno" ou "Antes") e a posição nela, para as setas da edição passarem ao
+/// arquivo seguinte. O arquivo é o da chamada `itens[0]` (com o `caminho`, quando o pedido o diz).
+pub(super) fn lugar_na_revisao<'a>(
+    neste: &'a [super::mensagens::ArquivoMudado],
+    antes: &'a [super::mensagens::ArquivoMudado],
+    itens: &[usize],
+    caminho: Option<&str>,
+) -> Option<(&'a [super::mensagens::ArquivoMudado], usize)> {
+    let primeiro = itens.first()?;
+    [neste, antes].into_iter().find_map(|lista| {
+        let posicao = lista.iter().position(|a| a.itens.contains(primeiro) && caminho.is_none_or(|c| a.caminho == c))?;
+        Some((lista, posicao))
+    })
 }
 
 impl super::Janela {
@@ -424,7 +681,8 @@ impl super::Janela {
             (entram, saem) = gravados.iter().fold((0, 0), |(e, s), (e2, s2)| (e + e2, s + s2));
         }
         let sem_registro = trechos.is_empty();
-        self.edicao_pedida = Some(std::rc::Rc::new(Edicao { trechos, entram, saem, sem_registro }));
+        let origem = Origem::Chat { chat: pedido.chat.clone(), itens: pedido.itens.clone(), caminho: pedido.caminho.clone() };
+        self.edicao_pedida = Some(std::rc::Rc::new(Edicao { trechos, entram, saem, sem_registro, origem }));
         self.abrir_arquivo(raiz, relativo, window, cx);
     }
 }
@@ -544,5 +802,174 @@ mod testes {
         // Tabulação e branco no fim não atrapalham.
         let v = vista(&trechos("- x\n+ \tfoo  "), &["    foo"]);
         assert_eq!(v.perdidos, 0);
+    }
+
+    #[test]
+    fn o_arquivo_aberto_tem_lugar_na_lista_de_mudancas_do_turno() {
+        use crate::ui::mensagens::ArquivoMudado;
+        let mudado = |caminho: &str, itens: &[usize]| ArquivoMudado { caminho: caminho.into(), entram: 1, saem: 0, novo: false, itens: itens.to_vec() };
+        let neste = [mudado("src/a.rs", &[5, 9]), mudado("src/b.rs", &[7]), mudado("LEIA-ME.md", &[8])];
+        let antes = [mudado("src/velho.rs", &[2])];
+        // A linha de Mudanças abre com todas as chamadas do arquivo; a da trilha, com uma só.
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[5, 9], None).unwrap();
+        assert_eq!((lista.len(), posicao), (3, 0));
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[7], None).unwrap();
+        assert_eq!((lista.len(), posicao, lista[posicao].caminho.as_str()), (3, 1, "src/b.rs"));
+        // O que mudou antes deste turno anda na lista "Antes".
+        let (lista, posicao) = lugar_na_revisao(&neste, &antes, &[2], None).unwrap();
+        assert_eq!((lista.len(), posicao), (1, 0));
+        // Com o caminho no pedido, vale o arquivo dele; a chamada que não é de edição não tem lugar.
+        assert_eq!(lugar_na_revisao(&neste, &antes, &[9], Some("src/a.rs")).map(|(_, p)| p), Some(0));
+        assert_eq!(lugar_na_revisao(&neste, &antes, &[9], Some("src/outro.rs")).map(|(_, p)| p), None);
+        assert!(lugar_na_revisao(&neste, &antes, &[4], None).is_none());
+        assert!(lugar_na_revisao(&neste, &antes, &[], None).is_none());
+    }
+
+    // ---- O diff da trilha (rodada do Paseo, item 1): só o que mudou, com contexto, e a palavra
+    // trocada marcada dentro da linha. ----
+
+    fn ctx(t: &str) -> LinhaDoDiff {
+        LinhaDoDiff::Igual(t.into())
+    }
+    fn detalhe_da_troca(antes: &[String], depois: &[String]) -> String {
+        let lado = |linhas: &[String], sinal: &str| linhas.iter().map(|l| format!("{sinal} {l}")).collect::<Vec<_>>().join("\n");
+        format!("{}\n{}", lado(antes, "-"), lado(depois, "+"))
+    }
+
+    #[test]
+    fn uma_palavra_trocada_em_dez_linhas_mostra_uma_linha_com_tres_de_contexto() {
+        let antes: Vec<String> = (1..=10).map(|i| format!("linha {i}")).collect();
+        let mut depois = antes.clone();
+        depois[5] = "linha seis".into();
+        let diff = diff_da_trilha(&detalhe_da_troca(&antes, &depois));
+        assert_eq!(
+            diff,
+            vec![
+                ctx("linha 3"),
+                ctx("linha 4"),
+                ctx("linha 5"),
+                LinhaDoDiff::Sai("linha 6".into(), vec![6..7]),
+                LinhaDoDiff::Entra("linha seis".into(), vec![6..10]),
+                ctx("linha 7"),
+                ctx("linha 8"),
+                ctx("linha 9"),
+            ]
+        );
+        // Antes eram 10 vermelhas e 10 verdes.
+        let mudadas = diff.iter().filter(|l| matches!(l, LinhaDoDiff::Sai(..) | LinhaDoDiff::Entra(..))).count();
+        assert_eq!(mudadas, 2);
+    }
+
+    #[test]
+    fn duas_mudancas_longe_uma_da_outra_tem_um_pulo_no_meio() {
+        let antes: Vec<String> = (1..=20).map(|i| format!("l{i}")).collect();
+        let mut depois = antes.clone();
+        depois[1] = "L2".into();
+        depois[17] = "L18".into();
+        let diff = diff_da_trilha(&detalhe_da_troca(&antes, &depois));
+        // l1, a troca do l2, l3 a l5, o pulo de l6 a l14 (9 linhas), l15 a l17, a troca do l18, l19 e l20.
+        assert_eq!(diff[0], ctx("l1"));
+        assert_eq!(diff[5], ctx("l5"));
+        assert_eq!(diff[6], LinhaDoDiff::Pulo(9));
+        assert_eq!(diff[7], ctx("l15"));
+        assert_eq!(diff.len(), 14);
+        // Mudanças perto uma da outra dividem o contexto, sem pulo.
+        let mut perto = antes.clone();
+        perto[1] = "L2".into();
+        perto[6] = "L7".into();
+        let diff = diff_da_trilha(&detalhe_da_troca(&antes, &perto));
+        assert!(!diff.iter().any(|l| matches!(l, LinhaDoDiff::Pulo(_))));
+    }
+
+    #[test]
+    fn a_palavra_que_entrou_e_marcada_e_linhas_sem_nada_em_comum_nao() {
+        // Só entrou um pedaço: nada marcado no que saiu.
+        assert_eq!(
+            diff_da_troca("    total = subtotal", "    total = subtotal - desconto", 3),
+            vec![
+                LinhaDoDiff::Sai("    total = subtotal".into(), vec![]),
+                LinhaDoDiff::Entra("    total = subtotal - desconto".into(), vec![20..31]),
+            ]
+        );
+        // Duas palavras seguidas trocadas viram um trecho só (o espaço entre elas vai junto).
+        assert_eq!(
+            diff_da_troca("let a = foo bar;", "let a = baz qux;", 3),
+            vec![LinhaDoDiff::Sai("let a = foo bar;".into(), vec![8..15]), LinhaDoDiff::Entra("let a = baz qux;".into(), vec![8..15])]
+        );
+        // Linhas que não se parecem: a linha inteira já diz que mudou, sem marcar palavra.
+        assert_eq!(
+            diff_da_troca("fn a() {", "pub struct Coisa;", 3),
+            vec![LinhaDoDiff::Sai("fn a() {".into(), vec![]), LinhaDoDiff::Entra("pub struct Coisa;".into(), vec![])]
+        );
+        // Acentos: os trechos caem em fronteira de letra.
+        let diff = diff_da_troca("// não é ação", "// não é reação", 3);
+        let LinhaDoDiff::Entra(texto, trechos) = &diff[1] else { panic!("{diff:?}") };
+        assert_eq!(trechos.iter().map(|t| &texto[t.clone()]).collect::<Vec<_>>(), ["reação"]);
+        // Três linhas trocadas por três: cada uma com o par dela.
+        let diff = diff_da_troca("a = 1\nb = 2\nc = 3", "a = 10\nb = 20\nc = 30", 3);
+        assert_eq!(diff[0], LinhaDoDiff::Sai("a = 1".into(), vec![4..5]));
+        assert_eq!(diff[3], LinhaDoDiff::Entra("a = 10".into(), vec![4..6]));
+        assert_eq!(diff[5], LinhaDoDiff::Entra("c = 30".into(), vec![4..6]));
+        // Tabulação vira 4 espaços, e os trechos contam no texto já trocado.
+        assert_eq!(
+            diff_da_troca("\tx = 1", "\tx = 2", 3),
+            vec![LinhaDoDiff::Sai("    x = 1".into(), vec![8..9]), LinhaDoDiff::Entra("    x = 2".into(), vec![8..9])]
+        );
+    }
+
+    #[test]
+    fn o_multiedit_separa_as_trocas_e_o_write_fica_inteiro() {
+        let diff = diff_da_trilha("- a\n+ b\n…\n- c\n+ d");
+        assert_eq!(
+            diff,
+            vec![
+                LinhaDoDiff::Sai("a".into(), vec![]),
+                LinhaDoDiff::Entra("b".into(), vec![]),
+                LinhaDoDiff::Pulo(0),
+                LinhaDoDiff::Sai("c".into(), vec![]),
+                LinhaDoDiff::Entra("d".into(), vec![]),
+            ]
+        );
+        // O Write: tudo entrou, sem contexto para cortar, e o que passou do corte vira nota.
+        let diff = diff_da_trilha("+ um\n+ dois\n… mais 40 linhas");
+        assert_eq!(
+            diff,
+            vec![LinhaDoDiff::Entra("um".into(), vec![]), LinhaDoDiff::Entra("dois".into(), vec![]), LinhaDoDiff::Nota("… mais 40 linhas".into())]
+        );
+        // O detalhe cortado no tamanho avisa no fim.
+        assert_eq!(diff_da_trilha("+ a\n… (cortado)").last(), Some(&LinhaDoDiff::Nota("… (cortado)".into())));
+        // O que não é diff (um detalhe de outra ferramenta) não rende nada: a trilha mostra como veio.
+        assert!(diff_da_trilha("$ ls -la").is_empty());
+    }
+
+    #[test]
+    fn o_diff_unificado_do_codex_ganha_a_palavra_marcada() {
+        let diff = diff_da_trilha("--- a/x.rs\n+++ b/x.rs\n@@ -1,3 +1,3 @@\n use a;\n-fn b() {}\n+fn c() {}\n fim\n@@ -10 +10 @@\n-x\n+y");
+        assert_eq!(
+            diff,
+            vec![
+                ctx("use a;"),
+                LinhaDoDiff::Sai("fn b() {}".into(), vec![3..4]),
+                LinhaDoDiff::Entra("fn c() {}".into(), vec![3..4]),
+                ctx("fim"),
+                LinhaDoDiff::Pulo(0),
+                LinhaDoDiff::Sai("x".into(), vec![]),
+                LinhaDoDiff::Entra("y".into(), vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_troca_grande_demais_respeita_o_teto_e_o_texto_copiado_e_um_diff() {
+        // 600 × 600 linhas passa do teto da comparação: o começo e o fim iguais, o meio sai e entra.
+        let antes: Vec<String> = (0..600).map(|i| format!("a{i}")).collect();
+        let mut depois = antes.clone();
+        depois[300] = "outra".into();
+        let diff = diff_da_troca(&antes.join("\n"), &depois.join("\n"), 3);
+        assert_eq!(diff.len(), 8);
+        assert_eq!(diff[3], LinhaDoDiff::Sai("a300".into(), vec![]));
+        // O Copiar leva o diff como a tela o mostra.
+        let diff = diff_da_trilha("- fn a() {\n-     1\n- }\n+ fn a() {\n+     2\n+ }\n…\n- x\n+ y");
+        assert_eq!(texto_do_diff(&diff), "  fn a() {\n-     1\n+     2\n  }\n…\n- x\n+ y");
     }
 }

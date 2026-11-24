@@ -60,6 +60,150 @@ pub struct Opcoes {
     /// O arquivo com o servidor MCP da memória da equipe (`memoria_equipe::arquivo_do_mcp`): vai
     /// como mais um `--mcp-config`.
     pub mcp_da_equipe: Option<PathBuf>,
+    /// `--include-hook-events`: os eventos dos hooks do usuário na saída. É por eles que chega o
+    /// motivo de um hook que mandou perguntar (`Evento::HookPediu`); o pedido de permissão vem
+    /// sem ele. Só num Claude Code que conhece a opção (`VERSAO_EVENTOS_DE_HOOK`): sem ela, o
+    /// cartão aparece igual, sem o motivo.
+    pub eventos_de_hook: bool,
+    /// `--thinking-display summarized`: o texto do raciocínio vem na saída (`Evento::Pensamento`).
+    /// Sem a opção, o Claude Code 2.1.328 manda o bloco vazio. Só num Claude Code que a conhece
+    /// (`VERSAO_RACIOCINIO_RESUMIDO`).
+    pub raciocinio_resumido: bool,
+}
+
+/// O que dá para trocar num turno que já está rodando, pela entrada do processo: o modo de
+/// permissão, o modelo e o esforço. Medido no Claude Code 2.1.328 em 23/11/2026, com o Haiku, no
+/// meio de um `sleep` do Bash:
+/// - `set_permission_mode` responde `{"mode": "acceptEdits"}` e manda um `system`/`status` com o
+///   `permissionMode`; o Write que o modelo pediu em seguida, no mesmo turno, passou sem perguntar
+///   (sem o pedido, voltou negado). `manual` é aceito e respondido como `default`; um nome que não
+///   existe volta erro (`invalid_mode`); o `bypassPermissions` volta erro (`bypass_not_launched`)
+///   num processo aberto sem `--allow-dangerously-skip-permissions`, e com ela entra;
+/// - `set_model` responde `{"model": "<id resolvido>"}` e a chamada seguinte ao modelo, no mesmo
+///   turno, já sai no modelo novo (o `model` da mensagem); um nome que não existe volta erro
+///   (`not_found`), e sem `model` ele volta ao padrão;
+/// - `apply_flag_settings` com `{"effortLevel": "low"}` responde sucesso sem corpo, e o
+///   `get_settings` passa a dizer `applied.effort: "low"`; `null` volta ao automático; um nível
+///   que não existe também responde sucesso e não muda nada.
+///
+/// Na 2.1.323 os três pedidos respondem igual (conferido sem mandar mensagem). Uma recusa não vira
+/// nada na tela: a troca fica gravada na conversa e vale no turno seguinte, como sempre valeu.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AoVivo {
+    /// O `--permission-mode` (`manual`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`).
+    pub modo: String,
+    /// O `--model`; vazio é o padrão do Claude Code.
+    pub modelo: String,
+    /// O `--effort`; `None` é o automático.
+    pub esforco: Option<String>,
+}
+
+impl AoVivo {
+    /// O que o processo tem ao abrir. O turno com Ultracode fica marcado: o esforço dele não se
+    /// troca no meio (ver `pedidos_ao_vivo`).
+    fn das_opcoes(opcoes: &Opcoes) -> Self {
+        Self {
+            modo: opcoes.permissao.clone(),
+            modelo: opcoes.modelo.clone().unwrap_or_default(),
+            esforco: if opcoes.ultracode { Some("ultracode".into()) } else { opcoes.esforco.clone().filter(|e| !e.is_empty()) },
+        }
+    }
+}
+
+/// Os pedidos de controle (o `request` de cada um) que levam o processo do que ele tem para o que
+/// a conversa pede agora; vazio quando nada mudou. O Ultracode é do turno inteiro (os fluxos de
+/// agentes entram pelos argumentos do processo): com ele de um lado ou do outro, o esforço não
+/// vai, e vale no turno seguinte.
+fn pedidos_ao_vivo(tem: &AoVivo, quer: &AoVivo) -> Vec<Value> {
+    let mut pedidos = Vec::new();
+    if quer.modo != tem.modo {
+        // O Manual do Vitral é o `default` do pedido: o 2.1.328 aceita `manual` e responde
+        // `default`, e a lista de modos do erro dele só tem `default`.
+        let modo = if quer.modo == "manual" { "default" } else { quer.modo.as_str() };
+        pedidos.push(json!({ "subtype": "set_permission_mode", "mode": modo }));
+    }
+    if quer.modelo != tem.modelo {
+        // Sem `model`, o Claude Code volta ao padrão dele.
+        pedidos.push(match quer.modelo.as_str() {
+            "" => json!({ "subtype": "set_model" }),
+            modelo => json!({ "subtype": "set_model", "model": modelo }),
+        });
+    }
+    let ultracode = |esforco: &Option<String>| esforco.as_deref() == Some("ultracode");
+    if quer.esforco != tem.esforco && !ultracode(&tem.esforco) && !ultracode(&quer.esforco) {
+        pedidos.push(json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": quer.esforco } }));
+    }
+    pedidos
+}
+
+/// O pedido que tira da fila interna do Claude Code a mensagem dirigida de `uuid` (o `uuid` com
+/// que ela foi escrita na entrada). Não está no tipo público do SDK; medido no 2.1.328: com a
+/// mensagem ainda na fila, responde `{"cancelled": true, "message_uuid": …}` e manda um
+/// `command_lifecycle` com `state: "cancelled"`, e a sessão gravada fica sem ela; com a mensagem
+/// já absorvida no turno (ou um uuid que ele não conhece), `{"cancelled": false}`. A 2.1.323
+/// responde igual.
+fn pedido_de_retirar(uuid: &str) -> Value {
+    json!({ "subtype": "cancel_async_message", "message_uuid": uuid })
+}
+
+/// O pedido do título da sessão: o Claude Code gera um nome curto para a conversa a partir da
+/// `description` (a primeira fala) e, com o `persist`, grava a linha `ai-title` no arquivo da
+/// sessão, de onde o motor a lê depois do turno. É o `generateSessionTitle` do SDK, e o que a
+/// extensão do VS Code usa. Medido no 2.1.328 em 23/11/2026, com o Haiku, numa pasta de `/tmp`:
+/// - num `-p` o Claude Code não gera o título sozinho: num turno inteiro o arquivo da sessão ficou
+///   com 65 linhas e nenhuma `ai-title`. O título automático dele fica desligado quando o
+///   `CLAUDE_CODE_ENTRYPOINT` é `sdk-cli` e não há `CLAUDE_AGENT_SDK_VERSION` no ambiente (o SDK a
+///   define; o Vitral não finge ser o SDK), e também em toda sessão retomada;
+/// - com o pedido na entrada logo depois da mensagem, a resposta `{"title": "Erro na função soma
+///   em soma.rs"}` chegou 0,3 s depois do `init`, e a linha estava no arquivo 0,1 s depois dela,
+///   com o turno ainda rodando; daí em diante o Claude Code a repete a cada gravação;
+/// - numa sessão que já tem título (o segundo turno, retomado), volta o que ela tem, sem gerar
+///   outro; e, pelo código dele (não medido), a descrição com menos de 10 letras ou que é só um
+///   comando de barra volta `{"title": null}` sem chamar o modelo.
+///
+/// O tratamento do pedido é o mesmo no 2.1.323 (conferido no código dele, sem rodar).
+fn pedido_do_titulo(descricao: &str) -> Value {
+    json!({ "subtype": "generate_session_title", "description": descricao, "persist": true })
+}
+
+/// A linha de um pedido de controle; `nome` entra no id (`vitral-<nome>-<uuid>`), que é como a
+/// resposta é reconhecida na saída (`resposta_de_controle`).
+fn linha_do_pedido(nome: &str, corpo: Value) -> Value {
+    json!({
+        "type": "control_request",
+        "request_id": format!("vitral-{nome}-{}", uuid::Uuid::new_v4()),
+        "request": corpo,
+    })
+}
+
+/// O nome que entra no id do pedido, pelo subtipo dele.
+fn nome_do_pedido(corpo: &Value) -> &'static str {
+    match corpo["subtype"].as_str() {
+        Some("set_permission_mode") => "modo",
+        Some("set_model") => "modelo",
+        Some("apply_flag_settings") => "esforco",
+        Some("cancel_async_message") => "retirar",
+        Some("generate_session_title") => "titulo",
+        _ => "pedido",
+    }
+}
+
+/// A `--allow-dangerously-skip-permissions` vai em todo turno, para o "Sem perguntar" poder
+/// entrar no meio dele: sem ela, o `set_permission_mode` para `bypassPermissions` volta
+/// `bypass_not_launched` (medido no 2.1.328). Menos como root: aí o Claude Code nem abre com a
+/// opção ("cannot be used with root/sudo privileges"), e só o Planejar a leva, como já levava
+/// (aprovar o plano pode passar para "Sem perguntar").
+fn libera_o_bypass(modo: &str, root: bool) -> bool {
+    modo == "plan" || !root
+}
+
+/// O Vitral roda como root (no Windows não há o que conferir).
+fn sou_root() -> bool {
+    #[cfg(unix)]
+    // SAFETY: `geteuid` não tem pré-condição nem falha.
+    return unsafe { libc::geteuid() } == 0;
+    #[cfg(not(unix))]
+    false
 }
 
 /// O relatório que o subagente devolve, sem a moldura que o Claude Code põe em volta dele
@@ -124,6 +268,17 @@ pub struct Mensagem<'a> {
     pub marca: Option<&'a str>,
 }
 
+/// Um agente (ou fluxo de agentes) que o Claude Code roda em segundo plano, como o
+/// `background_tasks_changed` o lista (medido na 2.1.328, 23/11/2026): o `task_id` é o id do
+/// agente, o mesmo do arquivo dele (`<sessão>/subagents/agent-<id>.jsonl`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TarefaDeFundo {
+    pub id: String,
+    pub descricao: String,
+    /// Um fluxo de agentes (`local_workflow`), e não um subagente só.
+    pub fluxo: bool,
+}
+
 #[derive(Debug)]
 pub enum Evento {
     Inicio {
@@ -137,6 +292,12 @@ pub enum Evento {
     /// Agentes e fluxos ainda rodando em segundo plano (o Claude Code abre outro turno quando
     /// eles terminam).
     Fundo(usize),
+    /// Os mesmos agentes e fluxos, um por um: o id e a descrição de cada (a lista vem sempre
+    /// inteira, e quem saiu dela terminou).
+    AgentesNoFundo(Vec<TarefaDeFundo>),
+    /// O Claude Code abriu o agente `id` pela chamada `pai` (`task_started`): é o que liga um
+    /// agente da lista do segundo plano ao cartão dele na conversa.
+    AgenteAbriu { id: String, pai: String },
     /// Os comandos de shell que o agente deixou rodando em segundo plano (`run_in_background`):
     /// o id da tarefa (para o `stop_task`) e a descrição. Vazio quando não há mais nenhum.
     Comandos(Vec<(String, String)>),
@@ -148,13 +309,38 @@ pub enum Evento {
     Texto(String),
     /// O modelo começou um bloco de raciocínio (o motor mede quanto ele dura).
     Pensando,
-    /// O raciocínio do bloco que terminou. O texto vem vazio quando o Claude Code não o entrega.
+    /// O raciocínio do bloco que terminou. O texto vem vazio quando o Claude Code não o entrega
+    /// (sem `--thinking-display summarized`; ver `Opcoes::raciocinio_resumido`).
     Pensamento(String),
-    /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta.
+    /// O processo está vivo e não há nada para mostrar: a batida que o Claude Code manda a cada
+    /// 30 s enquanto uma ferramenta roda (`tool_progress` com `heartbeat`). Só conta como sinal de
+    /// vida, para um build longo não ganhar o aviso "sem sinal" (`Motor::silencio`).
+    Vivo,
+    /// A resposta ao `interrupt` disse que ainda há mensagens dirigidas na fila interna do Claude
+    /// Code (`still_queued`): ele abriria outro turno com elas depois do Parar.
+    FicouNaFila(usize),
+    /// O `set_model` no meio do turno valeu: o id do modelo que o turno passa a usar.
+    ModeloEmUso(String),
+    /// O Claude Code está resumindo a conversa para liberar contexto (`status: "compacting"`, que
+    /// ele repete a cada 30 s enquanto dura), ou parou de resumir (o `status` com o
+    /// `compact_result`).
+    Compactando(bool),
+    /// A conversa foi compactada aqui (`compact_boundary`): pelo `/compact` (`manual`) ou sozinha,
+    /// e quantos tokens ela ocupava antes (`None` se o Claude Code não disse).
+    Compactou { manual: bool, antes: Option<u64> },
+    /// Um subagente (`pai` é o id da chamada Task/Agent que o abriu) usou uma ferramenta; `id` é
+    /// o da chamada dele (é o que um pedido de permissão dele traz).
     SubFerramenta {
         pai: String,
+        id: String,
         nome: String,
         entrada: Value,
+    },
+    /// O subagente entregou o relatório a quem o abriu pela chamada `SubagentHandback` (2.1.271
+    /// em diante, no modo automático): o resultado da chamada `pai` só diz que ele foi entregue.
+    SubRelatorio {
+        pai: String,
+        texto: String,
     },
     /// Um subagente disse o que está fazendo.
     SubTexto {
@@ -170,7 +356,22 @@ pub enum Evento {
         id: String,
         conteudo: String,
         erro: bool,
+        /// O comando foi para o segundo plano e segue rodando lá (pedido assim, ou porque passou
+        /// do tempo dele): o resultado chegou, mas não é o fim do comando.
+        no_fundo: bool,
     },
+    /// As imagens que o resultado da chamada `id` trouxe (o print do navegador por MCP, a imagem
+    /// gerada, o Read de uma imagem), já fora do base64. Vem logo depois do `ResultadoFerramenta`
+    /// dela; o motor as grava na pasta do chat e a conversa fica só com os caminhos.
+    ImagensDoResultado {
+        id: String,
+        imagens: Vec<crate::imagens_recebidas::ImagemRecebida>,
+    },
+    /// Um hook `PreToolUse` do usuário mandou perguntar antes de uma chamada dessa ferramenta
+    /// (`permissionDecision: "ask"`), com o motivo que ele deu (pode vir vazio). Vem do
+    /// `hook_response` (`--include-hook-events`), logo antes do pedido de permissão da chamada,
+    /// que não traz o motivo (`motor/pedidos_de_hook.rs`).
+    HookPediu { ferramenta: String, motivo: String },
     /// O subagente da chamada `pai` foi para o segundo plano: o resultado da chamada é só o aviso
     /// de que ele começou, e o de verdade chega no `SubFim`.
     SubLancado { pai: String },
@@ -197,6 +398,11 @@ pub enum Evento {
     /// Os tokens que um `result` declara (os do turno; ver `motor::tokens_do_resultado`). Vem
     /// antes do `Fim` do mesmo `result`.
     Gasto(crate::motor::Tokens),
+    /// Os tempos que um `result` declara (ver `motor::medida_do_resultado`), também antes do `Fim`.
+    Medida(crate::motor::Medida),
+    /// A primeira palavra do modelo chegou, tantos milissegundos depois de o processo abrir (uma
+    /// vez por processo). Menos o `ttft_ms` do `result`, é quanto custou subir o Claude Code.
+    PrimeiraPalavra(u64),
     Fim {
         erro: bool,
         texto: String,
@@ -262,6 +468,45 @@ impl CanalDoAgente for crate::agente_gemini::Canal {
 /// O tradutor da saída de um agente JSON-RPC: uma linha lida, os eventos dela.
 type Tradutor = Box<dyn FnMut(&Value) -> Vec<Evento> + Send>;
 
+/// A vez da mensagem com que o processo abriu, pelo que o Claude Code diz dela na saída
+/// (`command_lifecycle`: `queued`, `started`, `completed`). Serve para uma coisa só: reconhecer o
+/// `result` que chega ANTES de ela começar, que não é o fim do turno dela.
+///
+/// Medido no 2.1.328 em 23/11/2026 (Haiku, pasta em /tmp): ao retomar uma sessão cujo processo
+/// anterior foi derrubado com um agente em segundo plano (o Parar de quem esperava os agentes), o
+/// Claude Code manda o aviso do agente cortado (`task_notification` com `stopped`), põe a mensagem
+/// na fila (`queued`), manda um `init` e um `result` de sucesso vazio, com `num_turns` 0, e só
+/// depois começa a mensagem (`started`, outro `init`, a resposta, o `result` dela). O motor tomava
+/// o primeiro `result` pelo fim do turno: o chat ficava parado com o processo no meio do turno, e
+/// a mensagem seguinte (ou a revisão da memória) abria OUTRO processo da mesma sessão.
+pub(crate) struct VezDaMensagem {
+    uuid: Option<String>,
+    na_fila: bool,
+}
+
+impl VezDaMensagem {
+    pub(crate) fn nova(uuid: Option<&str>) -> Self {
+        Self { uuid: uuid.map(str::to_string), na_fila: false }
+    }
+
+    /// Lê uma linha da saída e diz se ela é um `result` de antes da vez da mensagem (a tirar).
+    pub(crate) fn result_de_antes(&mut self, valor: &Value) -> bool {
+        let Some(uuid) = self.uuid.as_deref() else {
+            return false;
+        };
+        match valor["type"].as_str() {
+            Some("command_lifecycle") if valor["command_uuid"] == uuid => {
+                self.na_fila = valor["state"] == "queued";
+                false
+            }
+            // Só o `result` vazio que foi medido: sem turno do modelo e sem erro. Um Claude Code
+            // que nunca dissesse o `started` não prende o turno: o `result` de verdade passa.
+            Some("result") => self.na_fila && valor["num_turns"] == 0 && valor["is_error"] != true,
+            _ => false,
+        }
+    }
+}
+
 pub struct Processo {
     filho: Child,
     /// Escrita numa thread própria (`EntradaDeFundo`): o processo pode demorar a ler.
@@ -270,16 +515,22 @@ pub struct Processo {
     canal: Option<Arc<Mutex<dyn CanalDoAgente>>>,
     escopo: Escopo,
     parado: bool,
+    /// O modo, o modelo e o esforço que o processo tem agora: os dos argumentos e o que foi
+    /// trocado depois pela entrada (`acertar`).
+    ao_vivo: AoVivo,
+    /// Os `uuid` das mensagens dirigidas a este processo (`dirigir`): é por eles que o Parar as
+    /// tira da fila interna do Claude Code (`retirar_dirigidas`).
+    dirigidas: Vec<String>,
 }
 
 impl Processo {
     pub fn iniciar(
         opcoes: &Opcoes,
         mensagem: Mensagem,
-        mut enviar: impl FnMut(Evento) + Send + 'static,
+        enviar: impl FnMut(Evento) + Send + 'static,
     ) -> Result<Self> {
         let agente = opcoes.agente;
-        let mut comando = if agente == crate::modelo::Agente::Codex {
+        let comando = if agente == crate::modelo::Agente::Codex {
             let mut comando = processos::comando(crate::agente_codex::binario(), "codex");
             comando.current_dir(&opcoes.cwd).args(crate::agente_codex::argumentos_servidor(opcoes));
             if let Some((_, chave)) = opcoes.mcp_da_equipe.as_deref().and_then(crate::memoria_equipe::conexao_do_arquivo) {
@@ -301,6 +552,19 @@ impl Processo {
             }
             comando
         };
+        Self::com_o_comando(comando, opcoes, mensagem, enviar)
+    }
+
+    /// Abre o processo de `comando` (o `claude` ou o `codex`, já com os argumentos e o ambiente do
+    /// turno), escreve a mensagem e põe a leitura da saída para andar. À parte do `iniciar` para
+    /// os testes abrirem o claude de mentira no lugar do instalado.
+    fn com_o_comando(
+        mut comando: processos::Comando,
+        opcoes: &Opcoes,
+        mensagem: Mensagem,
+        mut enviar: impl FnMut(Evento) + Send + 'static,
+    ) -> Result<Self> {
+        let agente = opcoes.agente;
         // Aberto de dentro de outra sessão do Claude Code, o filho herdaria a marca dela.
         for variavel in [
             "CLAUDECODE",
@@ -314,6 +578,8 @@ impl Processo {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // O relógio da primeira palavra começa aqui, antes de o processo existir.
+        let abriu = Instant::now();
         let (mut filho, escopo) =
             processos::abrir(comando).with_context(|| format!("não abriu o {}", agente.programa()))?;
         let pid = filho.id();
@@ -364,17 +630,39 @@ impl Processo {
                 }
             }
         });
+        let mut vez = VezDaMensagem::nova(mensagem.marca.filter(|_| agente == crate::modelo::Agente::Claude));
         std::thread::spawn(move || {
             // O Codex e o Gemini falam outro formato, traduzido para os mesmos eventos.
+            // A primeira palavra do modelo, contada de quando o processo abriu: uma vez só.
+            let mut falta_a_primeira = true;
             for linha in BufReader::new(saida).lines() {
                 let Ok(linha) = linha else { break };
                 let Ok(valor) = serde_json::from_str::<Value>(&linha) else {
                     continue;
                 };
+                // O `result` de antes da vez da mensagem não é o fim do turno dela.
+                if vez.result_de_antes(&valor) {
+                    continue;
+                }
                 let eventos = match &mut tradutor {
                     Some(traduzir) => traduzir(&valor),
-                    None => interpretar(&valor),
+                    None => {
+                        let mut eventos = interpretar(&valor);
+                        eventos.extend(agentes_do_fundo(&valor));
+                        eventos
+                    }
                 };
+                let palavra = falta_a_primeira
+                    && match tradutor.is_some() {
+                        true => eventos.iter().any(|e| {
+                            matches!(e, Evento::TextoParcial(_) | Evento::Texto(_) | Evento::Pensando | Evento::Pensamento(_) | Evento::Ferramenta { .. })
+                        }),
+                        false => primeira_palavra(&valor),
+                    };
+                if palavra {
+                    falta_a_primeira = false;
+                    enviar(Evento::PrimeiraPalavra(abriu.elapsed().as_millis() as u64));
+                }
                 for evento in eventos {
                     enviar(evento);
                 }
@@ -400,7 +688,72 @@ impl Processo {
             canal,
             escopo,
             parado: false,
+            ao_vivo: AoVivo::das_opcoes(opcoes),
+            dirigidas: Vec::new(),
         })
+    }
+
+    /// O modo, o modelo e o esforço que o processo tem agora.
+    pub fn ao_vivo(&self) -> &AoVivo {
+        &self.ao_vivo
+    }
+
+    /// Leva o turno que roda para o que a conversa pede agora (ver `AoVivo`): escreve na entrada os
+    /// pedidos do que mudou e devolve quantos foram. Zero sem entrada (o turno já acabou, ou o
+    /// Parar a levou), no Codex ou sem nada a trocar: aí a escolha vale no turno seguinte, que
+    /// abre com ela nos argumentos. A resposta de cada pedido chega depois, pela saída; uma recusa
+    /// não vira nada na tela.
+    pub fn acertar(&mut self, quer: &AoVivo) -> usize {
+        let mut foram = 0;
+        for pedido in pedidos_ao_vivo(&self.ao_vivo, quer) {
+            let subtipo = pedido["subtype"].as_str().unwrap_or_default().to_string();
+            if !self.pedir(pedido) {
+                break;
+            }
+            foram += 1;
+            match subtipo.as_str() {
+                "set_permission_mode" => self.ao_vivo.modo.clone_from(&quer.modo),
+                "set_model" => self.ao_vivo.modelo.clone_from(&quer.modelo),
+                _ => self.ao_vivo.esforco.clone_from(&quer.esforco),
+            }
+        }
+        foram
+    }
+
+    /// O modo do processo mudou por outro caminho (aprovar o plano o troca na resposta do pedido
+    /// de permissão): o próximo `acertar` não o pede de novo.
+    pub fn anotar_modo(&mut self, modo: &str) {
+        self.ao_vivo.modo = modo.to_string();
+    }
+
+    /// Pede ao Claude Code o título da sessão, gravado no arquivo dela (`pedido_do_titulo`). O
+    /// turno segue enquanto ele responde. `false` sem entrada, no Codex ou se a escrita falhou.
+    pub fn pedir_titulo(&mut self, descricao: &str) -> bool {
+        self.pedir(pedido_do_titulo(descricao))
+    }
+
+    /// Tira da fila interna do Claude Code as mensagens dirigidas a este processo que ele ainda não
+    /// começou (`pedido_de_retirar`), para o `interrupt` que vem em seguida parar o turno sem ele
+    /// abrir outro com elas. `false` sem entrada ou se a escrita falhou: aí só matando o processo.
+    pub fn retirar_dirigidas(&mut self) -> bool {
+        if self.canal.is_some() || self.entrada.is_none() {
+            return false;
+        }
+        let dirigidas = std::mem::take(&mut self.dirigidas);
+        dirigidas.iter().all(|uuid| self.pedir(pedido_de_retirar(uuid)))
+    }
+
+    /// Escreve um pedido de controle na entrada. `false` sem ela, no Codex e no Gemini (a entrada
+    /// deles é do canal do protocolo) ou se a escrita falhou.
+    fn pedir(&mut self, corpo: Value) -> bool {
+        if self.canal.is_some() {
+            return false;
+        }
+        let Some(entrada) = self.entrada.as_mut() else {
+            return false;
+        };
+        let pedido = linha_do_pedido(nome_do_pedido(&corpo), corpo);
+        writeln!(entrada, "{pedido}").and_then(|()| entrada.flush()).is_ok()
     }
 
     /// Para uma tarefa de fundo do Claude Code (o comando deixado rodando): o `stop_task` do
@@ -447,7 +800,11 @@ impl Processo {
     ///   turno e abre outro na hora, no mesmo processo (uns 30 ms depois do `result`), mesmo com a
     ///   entrada já fechada;
     /// - o `interrupt` não a descarta: o turno fecha com erro e ela roda em seguida, como turno
-    ///   novo (por isso o Parar mata o processo quando há mensagem dirigida esperando).
+    ///   novo. Por isso o Parar a tira da fila antes, pelo `uuid` com que ela foi escrita
+    ///   (`retirar_dirigidas`; medido no 2.1.328: a resposta do `interrupt` passa a dizer
+    ///   `still_queued: []`, o turno fecha com o `result` de erro, o processo sai sozinho menos de
+    ///   1 s depois de a entrada fechar e a sessão retomada não tem a mensagem). Num Claude Code
+    ///   anterior ao 2.1.323 o Parar ainda mata o processo (`VERSAO_RETIRAR_DIRIGIDA`).
     ///
     /// Nada dela aparece na saída: quem põe a mensagem na conversa é o Vitral.
     pub fn dirigir(&mut self, mensagem: Mensagem) -> bool {
@@ -457,7 +814,19 @@ impl Processo {
         let Some(entrada) = self.entrada.as_mut() else {
             return false;
         };
-        escrever_mensagem(entrada, mensagem).is_ok()
+        // Com `uuid`, para o Parar poder tirá-la da fila dele (`retirar_dirigidas`).
+        let marca = mensagem.marca.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_string);
+        if escrever_mensagem(entrada, Mensagem { marca: Some(&marca), ..mensagem }).is_err() {
+            return false;
+        }
+        self.dirigidas.push(marca);
+        true
+    }
+
+    /// Os `uuid` das mensagens dirigidas a este processo, na ordem em que foram.
+    #[cfg(test)]
+    fn uuids_das_dirigidas(&self) -> &[String] {
+        &self.dirigidas
     }
 
     /// Para o turno: pede pela entrada o `interrupt` do protocolo do Agent SDK (o mesmo do botão de
@@ -465,7 +834,8 @@ impl Processo {
     /// com um `result` de erro, grava a conversa e sai, com tempo de limpar o que abriu. É o mesmo
     /// nos dois sistemas: no Windows, sem console, não há Ctrl+C para mandar. Sem a entrada (ou se a
     /// escrita falhar), o SIGINT no Linux e, no Windows, para tudo. Quem chama confere depois se ele
-    /// saiu (`Motor::conferir_parada`).
+    /// saiu (`Motor::conferir_parada`) e, com mensagem dirigida esperando, a retira antes
+    /// (`retirar_dirigidas`).
     pub fn interromper(&mut self) {
         if let Some(canal) = &self.canal
             && canal.lock().unwrap_or_else(|e| e.into_inner()).interromper().is_ok() { return; }
@@ -495,6 +865,15 @@ impl Processo {
         if !self.parado && self.esperar().is_none() {
             self.parado = true;
             self.escopo.parar();
+        }
+    }
+
+    /// SIGKILL nele e no que abriu: para o processo que não saiu nem com o SIGTERM do `matar`.
+    pub fn matar_de_vez(&mut self) {
+        self.fechar_entrada();
+        if self.esperar().is_none() {
+            self.parado = true;
+            self.escopo.matar();
         }
     }
 
@@ -543,6 +922,12 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if opcoes.sugestoes {
         args.push("--prompt-suggestions".into());
     }
+    if opcoes.eventos_de_hook {
+        args.push("--include-hook-events".into());
+    }
+    if opcoes.raciocinio_resumido {
+        args.extend(["--thinking-display", "summarized"].map(String::from));
+    }
     args.extend(["--allowedTools".to_string(), "mcp__vitral".to_string()]);
     match &opcoes.prompt_arquivo {
         Some(arquivo) => args.extend([
@@ -556,11 +941,13 @@ fn argumentos(opcoes: &Opcoes) -> Vec<String> {
     if let Some(ferramentas) = opcoes.ferramentas.as_deref().filter(|f| !f.is_empty()) {
         args.extend(["--tools".to_string(), ferramentas.to_string()]);
     }
-    if opcoes.permissao != "bypassPermissions" {
-        args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
-    }
-    // Aprovar o plano pode passar para "Sem perguntar" já neste turno.
-    if opcoes.permissao == "plan" {
+    // Em todos os modos, até no "Sem perguntar": lá o Claude Code só pergunta o que o próprio
+    // usuário mandou perguntar (um hook `PreToolUse` com "ask", uma regra `ask` das configurações
+    // dele), e sem ter a quem perguntar ele recusa a chamada (medido no 2.1.328, 23/11/2026).
+    args.extend(["--permission-prompt-tool", "mcp__vitral__permissao"].map(String::from));
+    // Aprovar o plano pode passar para "Sem perguntar" já neste turno, e o seletor de modo
+    // também, no meio de qualquer turno (`libera_o_bypass`).
+    if libera_o_bypass(&opcoes.permissao, sou_root()) {
         args.push("--allow-dangerously-skip-permissions".into());
     }
     match (opcoes.retomar, &opcoes.bifurcar) {
@@ -652,14 +1039,18 @@ pub fn versao_de(texto: &str) -> Option<Versao> {
     partes.next().is_none().then_some(versao)
 }
 
+/// A versão pelo link que o instalador nativo deixa para `versions/<versão>`: sem abrir processo
+/// nenhum, serve para a thread da interface (o turno que começa antes de a leitura de fundo
+/// voltar). `None` sem o link (o `claude` do npm, o de mentira da bancada).
+pub fn versao_pelo_link(binario: &Path) -> Option<Versao> {
+    dunce::canonicalize(binario).ok().and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
+}
+
 /// A versão do `claude` que o Vitral abre: o instalador nativo deixa um link para
 /// `versions/<versão>`; sem ele, pergunta ao próprio `claude --version`.
 pub fn versao_instalada() -> Option<Versao> {
     let binario = binario_claude();
-    if let Some(versao) = dunce::canonicalize(&binario)
-        .ok()
-        .and_then(|c| c.file_name().and_then(|n| versao_de(&n.to_string_lossy())))
-    {
+    if let Some(versao) = versao_pelo_link(&binario) {
         return Some(versao);
     }
     let saida = processos::novo_comando(&binario)
@@ -1365,7 +1756,57 @@ fn escrever_mensagem(entrada: &mut processos::EntradaDeFundo, mensagem: Mensagem
     Ok(())
 }
 
+/// A linha é a primeira palavra do modelo: o começo de um bloco da resposta (texto, raciocínio ou
+/// chamada) ou um pedaço dele, com `--include-partial-messages`; sem os pedaços, a mensagem
+/// inteira. As linhas dos subagentes não contam.
+fn primeira_palavra(valor: &Value) -> bool {
+    if !valor["parent_tool_use_id"].is_null() {
+        return false;
+    }
+    match valor["type"].as_str() {
+        Some("stream_event") => matches!(valor["event"]["type"].as_str(), Some("content_block_start" | "content_block_delta")),
+        Some("assistant") => true,
+        _ => false,
+    }
+}
+
+/// O que a linha diz dos agentes em segundo plano, um por um, além do que o `interpretar` já tira
+/// dela (quantos são, e o começo de cada subagente).
+fn agentes_do_fundo(valor: &Value) -> Vec<Evento> {
+    if valor["type"] != "system" {
+        return Vec::new();
+    }
+    let de_agente = |tipo: &Value| matches!(tipo.as_str(), Some("local_agent" | "local_workflow"));
+    let texto = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    match valor["subtype"].as_str() {
+        // Os mesmos que o `Fundo` conta: os que o Claude Code espera antes de sair.
+        Some("background_tasks_changed") => vec![Evento::AgentesNoFundo(
+            valor["tasks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|t| t["ambient"] != true && de_agente(&t["task_type"]))
+                .filter_map(|t| {
+                    Some(TarefaDeFundo { id: t["task_id"].as_str()?.to_string(), descricao: texto(&t["description"]), fluxo: t["task_type"] == "local_workflow" })
+                })
+                .collect(),
+        )],
+        // O comando que um subagente roda também tem o `task_started` dele (`local_bash`).
+        Some("task_started") if de_agente(&valor["task_type"]) => match (valor["task_id"].as_str(), valor["tool_use_id"].as_str()) {
+            (Some(id), Some(pai)) => vec![Evento::AgenteAbriu { id: id.to_string(), pai: pai.to_string() }],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
 fn interpretar(valor: &Value) -> Vec<Evento> {
+    // A batida de uma ferramenta que demora (a cada 30 s, com `heartbeat: true`; medido no 2.1.328
+    // com um comando de 75 s). Vem presa à chamada pelo `parent_tool_use_id`, como o que um
+    // subagente faz, e não é dele: só diz que o processo está vivo.
+    if valor["type"] == "tool_progress" {
+        return vec![Evento::Vivo];
+    }
     // Mensagens de subagentes (ferramenta Task/Agent): só o que ele faz (as ferramentas que usa e
     // o que diz) sobe, preso à chamada que o abriu; o resto do fio dele fica de fora.
     if let Some(pai) = valor["parent_tool_use_id"].as_str() {
@@ -1377,8 +1818,16 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             .into_iter()
             .flatten()
             .filter_map(|bloco| match bloco["type"].as_str()? {
+                // O relatório que o subagente entrega a quem o abriu (2.1.271 em diante, no modo
+                // automático) não é uma ferramenta dele: é a resposta, e o resultado da chamada
+                // `pai` só vai dizer que ela foi entregue (medido na 2.1.328).
+                "tool_use" if bloco["name"] == crate::importar::subagente::RELATORIO => bloco["input"]["message"]
+                    .as_str()
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| Evento::SubRelatorio { pai: pai.to_string(), texto: t.to_string() }),
                 "tool_use" => Some(Evento::SubFerramenta {
                     pai: pai.to_string(),
+                    id: bloco["id"].as_str().unwrap_or_default().to_string(),
                     nome: bloco["name"].as_str().unwrap_or_default().to_string(),
                     entrada: bloco["input"].clone(),
                 }),
@@ -1439,6 +1888,25 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             ferramentas: valor["usage"]["tool_uses"].as_u64().unwrap_or(0) as u32,
             tokens: valor["usage"]["total_tokens"].as_u64().unwrap_or(0),
         }],
+        "system" if valor["subtype"] == "hook_response" && valor["hook_event"] == "PreToolUse" => {
+            hook_que_pediu(valor).into_iter().collect()
+        }
+        // A compactação (medido no 2.1.328 com um `/compact`): `status: "compacting"` enquanto
+        // resume, `status: null` com o `compact_result` quando acaba e, em seguida, o
+        // `compact_boundary` com o gatilho e os tokens de antes e de depois. O `status` também sai
+        // na troca de modo (só com o `permissionMode`), e aí não diz nada.
+        "system" if valor["subtype"] == "status" && valor["status"] == "compacting" => vec![Evento::Compactando(true)],
+        "system" if valor["subtype"] == "status" && !valor["compact_result"].is_null() => vec![Evento::Compactando(false)],
+        "system" if valor["subtype"] == "compact_boundary" => {
+            let dados = &valor["compact_metadata"];
+            let mut eventos = vec![Evento::Compactou {
+                manual: dados["trigger"] == "manual",
+                antes: dados["pre_tokens"].as_u64(),
+            }];
+            // Quanto a conversa ocupa depois do resumo: o anel do contexto desce na hora.
+            eventos.extend(dados["post_tokens"].as_u64().filter(|t| *t > 0).map(Evento::Contexto));
+            eventos
+        }
         "stream_event" => {
             let evento = &valor["event"];
             if evento["type"] == "content_block_delta" && evento["delta"]["type"] == "text_delta" {
@@ -1482,22 +1950,37 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             // Desde o 2.1.3xx a chamada Agent devolve na hora "Async agent launched": o subagente
             // segue trabalhando, e não terminou (medido em 16/11/2026).
             let lancado = valor["tool_use_result"]["status"] == "async_launched";
+            // O comando pedido em segundo plano, ou o que passou do tempo dele e foi mandado para
+            // lá: o resultado traz o `backgroundTaskId` (medido na 2.1.328) e o comando segue.
+            let no_fundo = valor["tool_use_result"]["backgroundTaskId"].is_string();
             valor["message"]["content"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter(|bloco| bloco["type"] == "tool_result")
-                .map(|bloco| match lancado {
-                    true => Evento::SubLancado { pai: texto(&bloco["tool_use_id"]) },
-                    false => Evento::ResultadoFerramenta {
-                        id: texto(&bloco["tool_use_id"]),
-                        conteudo: conteudo_resultado(&bloco["content"]),
-                        erro: bloco["is_error"].as_bool().unwrap_or(false),
-                    },
+                .flat_map(|bloco| {
+                    let id = texto(&bloco["tool_use_id"]);
+                    if lancado {
+                        return vec![Evento::SubLancado { pai: id }];
+                    }
+                    // O texto vira o resultado; as imagens (o print do navegador por MCP, o Read
+                    // de um .png) saem num evento à parte, já fora do base64, para o motor
+                    // guardar em disco: o base64 não vai para o histórico.
+                    let (conteudo, imagens) = crate::imagens_recebidas::partes_do_resultado(&bloco["content"]);
+                    let erro = bloco["is_error"].as_bool().unwrap_or(false);
+                    let mut eventos = vec![Evento::ResultadoFerramenta { id: id.clone(), conteudo, erro, no_fundo }];
+                    if !imagens.is_empty() {
+                        eventos.push(Evento::ImagensDoResultado { id, imagens });
+                    }
+                    eventos
                 })
                 .collect()
         }
-        "result" => crate::motor::tokens_do_resultado(valor).map(Evento::Gasto).into_iter().chain([Evento::Fim {
+        "result" => crate::motor::tokens_do_resultado(valor)
+            .map(Evento::Gasto)
+            .into_iter()
+            .chain(crate::motor::medida_do_resultado(valor).map(Evento::Medida))
+            .chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
             texto: valor["result"]
                 .as_str()
@@ -1511,6 +1994,7 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
                 .filter_map(|m| m["contextWindow"].as_u64())
                 .max(),
         }]).collect(),
+        "control_response" => resposta_de_controle(valor).into_iter().collect(),
         "prompt_suggestion" => valor["suggestion"]
             .as_str()
             .map(str::trim)
@@ -1532,12 +2016,21 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             };
             let (uso_5h, renova_5h) = janela("five_hour");
             let (uso_semana, renova_semana) = janela("seven_day");
+            // A recusa só para a conta inteira se veio da janela de 5 h ou da semanal geral. A de
+            // um modelo só (a "Semana · Fable", `seven_day_fable`, `seven_day_opus`…) recusa os
+            // turnos daquele modelo, e o Claude Code já diz isso no erro do turno; com as janelas
+            // gerais longe do fim, a recusa também é de um modelo (24/11/2026: a Fable esgotada
+            // marcou a conta como no limite até sábado com a semana em 66%).
+            let tipo = info["rateLimitType"].as_str();
+            let de_um_modelo = tipo.is_some_and(|t| t != "five_hour" && t != "seven_day");
+            let gerais: Vec<f64> = [uso_5h, uso_semana].into_iter().flatten().collect();
+            let gerais_com_folga = !gerais.is_empty() && gerais.iter().all(|u| *u < 0.99);
             vec![Evento::Limite {
                 uso_5h,
                 uso_semana,
                 renova_5h,
                 renova_semana,
-                bloqueado: info["status"] == "rejected",
+                bloqueado: info["status"] == "rejected" && !de_um_modelo && !gerais_com_folga,
                 bloqueado_ate: info["resetsAt"].as_f64().map(|s| s as u64),
             }]
         }
@@ -1545,23 +2038,35 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
     }
 }
 
-fn conteudo_resultado(conteudo: &Value) -> String {
-    match conteudo {
-        Value::String(s) => s.clone(),
-        // Um Read de imagem devolve só o bloco "image" (o base64 dela, que não vai para o
-        // histórico): sem a marca, a chamada aberta ficava numa caixa vazia, como se tivesse
-        // sido interrompida.
-        Value::Array(partes) => partes
-            .iter()
-            .filter_map(|p| match p["type"].as_str() {
-                Some("image") => Some(format!("({})", p["source"]["media_type"].as_str().unwrap_or("imagem"))),
-                _ => p["text"].as_str().map(str::to_string),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Null => String::new(),
-        outro => outro.to_string(),
+/// O que a resposta a um pedido de controle do turno muda: o modelo que passou a valer (a do
+/// `set_model`, reconhecida pelo id do pedido) e a mensagem dirigida que o `interrupt` deixou na
+/// fila (`still_queued`). As outras, e toda recusa, não viram nada: o que foi pedido e não valeu
+/// fica para o turno seguinte, sem erro na tela.
+fn resposta_de_controle(valor: &Value) -> Option<Evento> {
+    let resposta = &valor["response"];
+    if resposta["subtype"] != "success" {
+        return None;
     }
+    let miolo = &resposta["response"];
+    if let Some(na_fila) = miolo["still_queued"].as_array().filter(|f| !f.is_empty()) {
+        return Some(Evento::FicouNaFila(na_fila.len()));
+    }
+    let do_modelo = resposta["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-modelo-"));
+    miolo["model"].as_str().filter(|m| do_modelo && !m.is_empty()).map(|m| Evento::ModeloEmUso(m.to_string()))
+}
+
+/// O `hook_response` de um hook `PreToolUse` que mandou perguntar (`permissionDecision: "ask"` na
+/// saída dele): a ferramenta (o `hook_name` é "PreToolUse:<ferramenta>") e o motivo. O evento não
+/// traz o id da chamada (2.1.328).
+fn hook_que_pediu(valor: &Value) -> Option<Evento> {
+    let ferramenta = valor["hook_name"].as_str()?.strip_prefix("PreToolUse:").filter(|f| !f.is_empty())?;
+    let saida = valor["stdout"].as_str().or(valor["output"].as_str())?;
+    let decisao = serde_json::from_str::<Value>(saida.trim()).ok()?;
+    let decisao = &decisao["hookSpecificOutput"];
+    (decisao["permissionDecision"] == "ask").then(|| Evento::HookPediu {
+        ferramenta: ferramenta.to_string(),
+        motivo: decisao["permissionDecisionReason"].as_str().unwrap_or_default().trim().to_string(),
+    })
 }
 
 /// O `claude` do PATH ou o de `~/.local/bin` (apps abertos pela dock nem sempre têm esse PATH).
@@ -1591,6 +2096,28 @@ fn binario_claude_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf
 /// A versão a partir da qual o prompt vai por arquivo, sem a foto da sessão
 /// (`--system-prompt-snapshot off`, conferido no 2.1.278).
 pub const VERSAO_PROMPT_POR_ARQUIVO: Versao = (2, 1, 278);
+
+/// A versão a partir da qual o Vitral pede os eventos de hook (`--include-hook-events`): a mais
+/// antiga em que a opção foi conferida (23/11/2026; o changelog não diz quando ela entrou). Num
+/// Claude Code que não a conhecesse, a opção derrubaria todo turno.
+pub const VERSAO_EVENTOS_DE_HOOK: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Parar tira da fila as mensagens dirigidas em vez de matar o
+/// processo (`Processo::retirar_dirigidas`): a mais antiga em que o `cancel_async_message` e o
+/// `still_queued` da resposta do `interrupt` foram conferidos (23/11/2026; o turno inteiro foi
+/// medido no 2.1.328). Num Claude Code que não conhecesse o pedido, a mensagem ficaria na fila e
+/// rodaria como turno novo depois do Parar.
+pub const VERSAO_RETIRAR_DIRIGIDA: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Vitral pede o título gerado da sessão (`pedido_do_titulo`): a mais
+/// antiga em que o pedido foi conferido (23/11/2026, no código dela; o turno foi medido no
+/// 2.1.328). Um Claude Code que não o conhecesse responderia com erro, sem título.
+pub const VERSAO_TITULO_GERADO: Versao = (2, 1, 323);
+
+/// A versão a partir da qual o Vitral pede o texto do raciocínio (`--thinking-display
+/// summarized`, que não aparece no `--help`): a mais antiga em que a opção foi conferida
+/// (23/11/2026). Num Claude Code que não a conhecesse, ela derrubaria todo turno.
+pub const VERSAO_RACIOCINIO_RESUMIDO: Versao = (2, 1, 323);
 
 /// A sessão gravada sumiu da pasta do projeto que ainda existe: o Claude Code a apagou (o
 /// `cleanupPeriodDays`, 30 dias por padrão). Sem a pasta do projeto não dá para saber, e quem
@@ -1628,6 +2155,23 @@ pub fn arquivo_da_sessao(pasta_conta: Option<&std::path::Path>, cwd: &std::path:
         .flatten()
         .map(|pasta| config.join("projects").join(nome_do_projeto(&pasta.to_string_lossy())).join(format!("{sessao}.jsonl")))
         .find(|arquivo| arquivo.is_file())
+}
+
+/// As pastas em que o Claude Code grava as sessões de quem trabalha em `cwd`: a da conta do chat
+/// e a normal (as contas extras ligam o mesmo `projects`, mas uma conta montada à mão pode não
+/// ligar), com o caminho como veio e com o resolvido. Na bancada, a normal só com um
+/// `CLAUDE_CONFIG_DIR` de mentira (`importar::pasta_do_claude`). Só as que existem.
+pub fn pastas_do_projeto(pasta_conta: Option<&std::path::Path>, cwd: &std::path::Path) -> Vec<PathBuf> {
+    let mut pastas: Vec<PathBuf> = Vec::new();
+    for config in [pasta_conta.map(|p| p.to_path_buf()), crate::importar::pasta_do_claude()].into_iter().flatten() {
+        for caminho in [Some(cwd.to_path_buf()), dunce::canonicalize(cwd).ok()].into_iter().flatten() {
+            let pasta = config.join("projects").join(nome_do_projeto(&caminho.to_string_lossy()));
+            if pasta.is_dir() && !pastas.contains(&pasta) {
+                pastas.push(pasta);
+            }
+        }
+    }
+    pastas
 }
 
 /// Nome da pasta do projeto em `projects`, como o Claude Code monta: o que não é letra ou número
@@ -1686,6 +2230,10 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
         "Bash" => campo("command")
             .filter(|c| campo("description").is_some() || c.lines().count() > 1 || c.chars().count() > 90)
             .map(|c| format!("$ {c}")),
+        // O plano inteiro: é o que o cartão da conversa abre depois de respondido. No 2.1.328 a
+        // chamada vem sem ele (o motor o guarda quando o pedido de permissão chega).
+        "ExitPlanMode" => return (campo("plan").and_then(plano_guardado), None),
+        "AskUserQuestion" => Some(perguntas_e_opcoes(entrada)),
         _ => None,
     };
     let detalhe = detalhe.filter(|d| !d.trim().is_empty()).map(|d| {
@@ -1699,6 +2247,57 @@ pub fn detalhe_ferramenta(nome: &str, entrada: &Value) -> (Option<String>, Optio
         format!("{}\n… (cortado)", &d[..fim])
     });
     (detalhe, arquivo)
+}
+
+/// O maior plano guardado inteiro na chamada (os outros detalhes param em `MAX_DETALHE`; um plano
+/// de verdade passa disso, e é para ler inteiro).
+pub const MAX_PLANO: usize = 60_000;
+
+/// O texto de um plano como fica guardado na chamada: sem as sobras das pontas e até
+/// `MAX_PLANO`. `None` para o plano vazio.
+pub fn plano_guardado(plano: &str) -> Option<String> {
+    let plano = plano.trim();
+    if plano.is_empty() {
+        return None;
+    }
+    if plano.len() <= MAX_PLANO {
+        return Some(plano.to_string());
+    }
+    let mut fim = MAX_PLANO;
+    while !plano.is_char_boundary(fim) {
+        fim -= 1;
+    }
+    Some(format!("{}\n\n… (cortado)", &plano[..fim]))
+}
+
+/// O plano que o resultado da chamada ExitPlanMode aprovada traz, depois de "## Approved Plan:"
+/// (ou "## Approved Plan (edited by user):"), como o Claude Code 2.1.328 o escreve. É de onde o
+/// plano sai quando a chamada veio sem ele e o pedido de permissão não passou pelo Vitral (a
+/// conversa trazida do Claude Code). `None` no plano recusado, que só traz a recusa.
+pub fn plano_do_resultado(resultado: &str) -> Option<&str> {
+    let (_, depois) = resultado.split_once("## Approved Plan")?;
+    let (_, plano) = depois.split_once('\n')?;
+    Some(plano.trim()).filter(|p| !p.is_empty())
+}
+
+/// As perguntas de uma AskUserQuestion com as opções de cada uma, para ler ao abrir a linha da
+/// chamada depois de respondida.
+fn perguntas_e_opcoes(entrada: &Value) -> String {
+    let texto = |v: &Value| v.as_str().map(str::trim).unwrap_or_default().to_string();
+    entrada["questions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|pergunta| {
+            let mut linhas = vec![texto(&pergunta["question"])];
+            for opcao in pergunta["options"].as_array().into_iter().flatten() {
+                let (rotulo, descricao) = (texto(&opcao["label"]), texto(&opcao["description"]));
+                linhas.push(if descricao.is_empty() { format!("· {rotulo}") } else { format!("· {rotulo}: {descricao}") });
+            }
+            linhas.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Quanto uma edição muda, com o texto inteiro da chamada (rodada de uso, item 5.1): numa troca,
@@ -1743,13 +2342,33 @@ pub fn write_criou(resultado: &str) -> bool {
     resultado.to_ascii_lowercase().contains("created successfully") || resultado.starts_with("criou ")
 }
 
-/// O que saiu e o que entrou numa troca, cada linha com o seu sinal.
+/// Quantas linhas iguais ficam antes da mudança quando o começo igual de uma troca longa sai.
+const CONTEXTO_DA_TROCA: usize = 3;
+
+/// O que saiu e o que entrou numa troca, cada linha com o seu sinal. Numa troca que passa das
+/// linhas guardadas, o começo igual dos dois lados fica de fora (menos 3 linhas de contexto): sem
+/// isso, uma palavra trocada na linha 150 de um trecho de 200 ficava depois do corte, e o diff
+/// aberto na conversa não mostrava mudança nenhuma.
 fn troca(antes: &str, depois: &str) -> String {
+    let (antes, depois) = sem_o_comeco_igual(antes, depois);
     match (antes.is_empty(), depois.is_empty()) {
         (true, _) => com_prefixo(depois, "+ "),
         (_, true) => com_prefixo(antes, "- "),
         _ => format!("{}\n{}", com_prefixo(antes, "- "), com_prefixo(depois, "+ ")),
     }
+}
+
+/// Os dois lados de uma troca a partir de 3 linhas antes da primeira que difere, quando algum
+/// deles passa das linhas guardadas; a troca curta fica como veio.
+fn sem_o_comeco_igual<'a>(antes: &'a str, depois: &'a str) -> (&'a str, &'a str) {
+    if antes.lines().count() <= LINHAS_DO_DETALHE && depois.lines().count() <= LINHAS_DO_DETALHE {
+        return (antes, depois);
+    }
+    let iguais = antes.lines().zip(depois.lines()).take_while(|(a, d)| a == d).count();
+    let pular = iguais.saturating_sub(CONTEXTO_DA_TROCA);
+    // Do byte em que começa a linha `pular` em diante.
+    let a_partir = |texto: &'a str| &texto[texto.split_inclusive('\n').take(pular).map(str::len).sum::<usize>()..];
+    (a_partir(antes), a_partir(depois))
 }
 
 fn com_prefixo(texto: &str, prefixo: &str) -> String {
@@ -1786,6 +2405,8 @@ pub fn resumo_ferramenta(nome: &str, entrada: &Value) -> String {
         "Task" | "Agent" => campo("description"),
         "Workflow" => campo("name").or_else(|| campo("description")),
         "TodoWrite" => Some("lista de afazeres".into()),
+        // A primeira pergunta (as outras aparecem ao abrir a linha).
+        "AskUserQuestion" => entrada["questions"][0]["question"].as_str().map(str::trim).filter(|p| !p.is_empty()).map(str::to_string),
         _ if nome.starts_with("mcp__vitral__") => resumo_do_vitral(nome.trim_start_matches("mcp__vitral__"), entrada),
         _ => None,
     };
@@ -1916,6 +2537,13 @@ pub fn tipo_imagem(caminho: &std::path::Path) -> Option<&'static str> {
     })
 }
 
+/// O que o visor e o painel do arquivo desenham como imagem: os formatos do anexo e o SVG, que o
+/// `img` do GPUI também desenha. O SVG fica fora do `tipo_imagem` porque a API não o aceita como
+/// imagem: anexado, ele segue como arquivo de texto.
+pub fn imagem_de_ver(caminho: &std::path::Path) -> bool {
+    tipo_imagem(caminho).is_some() || caminho.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
 pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALFABETO: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut saida = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -1935,6 +2563,15 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod testes {
+    #[test]
+    fn o_svg_se_ve_como_imagem_mas_nao_vai_como_anexo_de_imagem() {
+        use std::path::Path;
+        assert!(super::imagem_de_ver(Path::new("assets/logo.SVG")));
+        assert!(super::imagem_de_ver(Path::new("print.png")));
+        assert!(!super::imagem_de_ver(Path::new("relatorio.pdf")));
+        assert_eq!(super::tipo_imagem(Path::new("assets/logo.svg")), None);
+    }
+
     use super::*;
 
     #[test]
@@ -2033,6 +2670,8 @@ mod testes {
             memoria_nativa: false,
             sugestoes: false,
             mcp_da_equipe: None,
+            eventos_de_hook: false,
+            raciocinio_resumido: false,
         }
     }
 
@@ -2201,6 +2840,49 @@ mod testes {
         assert!(matches!(interpretar(&vazio).as_slice(), [Evento::Fundo(0), Evento::Comandos(c)] if c.is_empty()));
     }
 
+    /// Os agentes em segundo plano, um por um, como o Claude Code 2.1.328 os mostrou com a CLI de
+    /// verdade (Haiku, 23/11/2026): a lista traz o `task_id` e a descrição de cada `local_agent`, e
+    /// o `task_started` diz qual chamada abriu cada um.
+    #[test]
+    fn os_agentes_em_segundo_plano_vem_um_por_um_com_o_id_e_a_descricao() {
+        let lista = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [
+            { "task_id": "a21a9faa5262cf9ab", "run_id": "0mwtn4idn-1562673f", "task_type": "local_agent", "subagent_type": "general-purpose", "description": "Contar rápido" },
+            { "task_id": "a1d9cb59ea430972c", "run_id": "0mwtn4iqt-6fbbbd5b", "task_type": "local_agent", "subagent_type": "general-purpose", "description": "Contar devagar" },
+            { "task_id": "w1", "task_type": "local_workflow", "description": "Revisão em paralelo" },
+            { "task_id": "b9", "task_type": "local_bash", "description": "npm run dev" },
+            { "task_id": "d", "task_type": "local_agent", "description": "vigia", "ambient": true }
+        ], "uuid": "e686b32d", "session_id": "s" });
+        match agentes_do_fundo(&lista).as_slice() {
+            [Evento::AgentesNoFundo(agentes)] => assert_eq!(
+                agentes,
+                &[
+                    TarefaDeFundo { id: "a21a9faa5262cf9ab".into(), descricao: "Contar rápido".into(), fluxo: false },
+                    TarefaDeFundo { id: "a1d9cb59ea430972c".into(), descricao: "Contar devagar".into(), fluxo: false },
+                    TarefaDeFundo { id: "w1".into(), descricao: "Revisão em paralelo".into(), fluxo: true },
+                ]
+            ),
+            outro => panic!("{outro:?}"),
+        }
+        // A lista vazia também chega: é ela que diz que o último terminou.
+        let vazia = json!({ "type": "system", "subtype": "background_tasks_changed", "tasks": [] });
+        assert!(matches!(agentes_do_fundo(&vazia).as_slice(), [Evento::AgentesNoFundo(agentes)] if agentes.is_empty()));
+        // O começo de um agente diz a chamada que o abriu.
+        let comecou = json!({ "type": "system", "subtype": "task_started", "task_id": "a21a9faa5262cf9ab", "run_id": "0mwtn4idn-1562673f",
+            "tool_use_id": "toolu_01NMXF6gw8HjAGm1YojE6g2g", "description": "Contar rápido", "subagent_type": "general-purpose",
+            "is_backgrounded": true, "spawn_depth": 1, "task_type": "local_agent", "prompt": "Rode sleep 6" });
+        match agentes_do_fundo(&comecou).as_slice() {
+            [Evento::AgenteAbriu { id, pai }] => assert_eq!((id.as_str(), pai.as_str()), ("a21a9faa5262cf9ab", "toolu_01NMXF6gw8HjAGm1YojE6g2g")),
+            outro => panic!("{outro:?}"),
+        }
+        // O comando que o próprio subagente roda também tem um `task_started`: não é um agente.
+        let comando = json!({ "type": "system", "subtype": "task_started", "task_id": "br3aylza9", "owned_by_subagent": true,
+            "tool_use_id": "toolu_01LBsHTNtUz4L2ePxB3pvNqK", "description": "Run sleep 6 then echo um", "is_backgrounded": false,
+            "parent_task_id": "a21a9faa5262cf9ab", "task_type": "local_bash" });
+        assert!(agentes_do_fundo(&comando).is_empty());
+        // E o resto do stream não diz nada dos agentes.
+        assert!(agentes_do_fundo(&json!({ "type": "assistant", "message": { "content": [] } })).is_empty());
+    }
+
     #[test]
     fn relatorio_do_subagente_sem_a_moldura() {
         let cru = "  <tools-used-before-summary>Bash</tools-used-before-summary>\n\n[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n  a.txt tem 3 linhas.\n  Conferi com wc.\nagentId: a329c (use SendMessage with to: 'a329c' to continue this agent)";
@@ -2281,6 +2963,65 @@ mod testes {
         assert_eq!(*bloqueado_ate, Some(1_790_000_000));
         assert_eq!(*uso_5h, Some(1.0));
     }
+
+    /// 24/11/2026: os subagentes em Fable esgotaram a "Semana · Fable" (100%) com a semana geral em
+    /// 66%, e a recusa do Fable marcou a conta inteira como no limite até sábado. Recusa de uma
+    /// janela de um modelo só não para a conta: só a de 5 h, a semanal geral, ou uma recusa sem
+    /// dizer de qual janela (como antes).
+    #[test]
+    fn recusa_de_um_modelo_so_nao_trava_a_conta() {
+        let recusa = |info: serde_json::Value| -> bool {
+            let eventos = interpretar(&json!({ "type": "rate_limit_event", "rate_limit_info": info }));
+            let [Evento::Limite { bloqueado, .. }] = eventos.as_slice() else { panic!("sem evento de limite") };
+            *bloqueado
+        };
+        // A janela do modelo pelo nome.
+        assert!(!recusa(json!({ "status": "rejected", "rateLimitType": "seven_day_fable", "resetsAt": 1u64 })));
+        assert!(!recusa(json!({ "status": "rejected", "rateLimitType": "seven_day_opus", "resetsAt": 1u64 })));
+        // Sem o nome, mas com as janelas gerais longe do fim: foi a de um modelo.
+        assert!(!recusa(json!({
+            "status": "rejected",
+            "rateLimitType": "seven_day",
+            "utilization": 0.66,
+            "unifiedWindows": {
+                "five_hour": { "utilization": 0.1 },
+                "seven_day": { "utilization": 0.66 }
+            }
+        })));
+        // As gerais continuam travando.
+        assert!(recusa(json!({ "status": "rejected", "rateLimitType": "five_hour", "utilization": 1.0 })));
+        assert!(recusa(json!({ "status": "rejected", "rateLimitType": "seven_day", "utilization": 1.0 })));
+        // Sem dado nenhum de janela, como antes: trava.
+        assert!(recusa(json!({ "status": "rejected" })));
+        // Aviso sem recusa não trava.
+        assert!(!recusa(json!({ "status": "allowed_warning", "rateLimitType": "seven_day", "utilization": 0.9 })));
+    }
+
+    /// Rodada do Paseo, item 1: a mudança lá embaixo de uma troca longa tem de caber no que fica
+    /// guardado, senão o diff aberto na conversa não tem o que mostrar.
+    #[test]
+    fn a_troca_longa_guarda_a_mudanca_e_nao_o_comeco_igual() {
+        let antes: String = (1..=200).map(|i| format!("linha {i}\n")).collect();
+        let depois = antes.replace("linha 150\n", "linha cento e cinquenta\n");
+        let (detalhe, _) = detalhe_ferramenta("Edit", &json!({ "file_path": "a.rs", "old_string": antes, "new_string": depois }));
+        let detalhe = detalhe.unwrap();
+        assert!(detalhe.starts_with("- linha 147\n- linha 148\n- linha 149\n- linha 150\n- linha 151\n"), "{detalhe}");
+        assert!(detalhe.contains("\n+ linha 147\n+ linha 148\n+ linha 149\n+ linha cento e cinquenta\n+ linha 151\n"), "{detalhe}");
+        // 54 linhas de cada lado, da 147 à 200: nada passou do corte.
+        assert!(!detalhe.contains("… mais"), "{detalhe}");
+        // A troca curta fica inteira, com o começo igual (é por ele que o painel acha o lugar no arquivo).
+        let curta = json!({ "file_path": "a.rs", "old_string": "a\nb\nc\nd\ne\nx", "new_string": "a\nb\nc\nd\ne\ny" });
+        assert_eq!(detalhe_ferramenta("Edit", &curta).0.as_deref(), Some("- a\n- b\n- c\n- d\n- e\n- x\n+ a\n+ b\n+ c\n+ d\n+ e\n+ y"));
+        // O MultiEdit também, troca por troca.
+        let varias = json!({ "file_path": "a.rs", "edits": [{ "old_string": antes, "new_string": depois }, { "old_string": "c", "new_string": "d" }] });
+        let detalhe = detalhe_ferramenta("MultiEdit", &varias).0.unwrap();
+        assert!(detalhe.starts_with("- linha 147\n") && detalhe.ends_with("\n…\n- c\n+ d"), "{detalhe}");
+        // Uma troca longa que muda desde a primeira linha não perde nada do começo.
+        let do_topo = antes.replace("linha 1\n", "primeira\n");
+        let detalhe = detalhe_ferramenta("Edit", &json!({ "file_path": "a.rs", "old_string": antes, "new_string": do_topo })).0.unwrap();
+        assert!(detalhe.starts_with("- linha 1\n- linha 2\n"), "{detalhe}");
+    }
+
     #[test]
     fn detalhe_do_que_a_chamada_pediu() {
         let edit = json!({ "file_path": "/p/a.rs", "old_string": "a\nb", "new_string": "c" });
@@ -2307,6 +3048,219 @@ mod testes {
         assert!(cortado.len() < 8_100 && cortado.ends_with("… (cortado)"));
     }
 
+}
+
+#[cfg(test)]
+mod testes_do_ask_de_hook {
+    use super::*;
+
+    fn opcoes(modo: &str, url_mcp: &str) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: PathBuf::from("/tmp/x"),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: None,
+            permissao: modo.into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            url_mcp: url_mcp.into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+            raciocinio_resumido: true,
+        }
+    }
+
+    fn valor_de<'a>(args: &'a [String], chave: &str) -> Option<&'a str> {
+        let i = args.iter().position(|a| a == chave)?;
+        args.get(i + 1).map(String::as_str)
+    }
+
+    /// Medido no Claude Code 2.1.328 (23/11/2026): com o "ask" de um hook `PreToolUse`, ele chama
+    /// a ferramenta do `--permission-prompt-tool` em todos os modos, até em `bypassPermissions`;
+    /// sem ela (era o caso do "Sem perguntar"), a chamada volta recusada com o motivo do hook como
+    /// erro. O motivo só sai nos eventos de hook (`--include-hook-events`).
+    #[test]
+    fn todo_modo_tem_a_quem_perguntar_e_ouve_os_hooks() {
+        for modo in ["manual", "acceptEdits", "plan", "auto", "bypassPermissions"] {
+            let args = argumentos(&opcoes(modo, "http://127.0.0.1:1/mcp"));
+            assert_eq!(valor_de(&args, "--permission-mode"), Some(modo));
+            assert_eq!(valor_de(&args, "--permission-prompt-tool"), Some("mcp__vitral__permissao"), "{modo}");
+            assert!(args.iter().any(|a| a == "--include-hook-events"), "{modo}");
+            // Num Claude Code que não conhece a opção dos eventos, ela não vai (derrubaria o
+            // turno), e a ferramenta de permissão continua lá: o cartão aparece, sem o motivo.
+            let args = argumentos(&Opcoes { eventos_de_hook: false, ..opcoes(modo, "http://127.0.0.1:1/mcp") });
+            assert_eq!(valor_de(&args, "--permission-prompt-tool"), Some("mcp__vitral__permissao"), "{modo}");
+            assert!(!args.iter().any(|a| a == "--include-hook-events"), "{modo}");
+        }
+    }
+
+    /// O turno que começa antes de a leitura de fundo da versão voltar ainda sabe a versão do
+    /// instalador nativo, pelo link.
+    #[cfg(unix)]
+    #[test]
+    fn a_versao_sai_do_link_do_instalador_sem_abrir_processo() {
+        let pasta = std::env::temp_dir().join(format!("vitral-link-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(pasta.join("versions")).unwrap();
+        std::fs::write(pasta.join("versions/2.1.328"), "").unwrap();
+        std::os::unix::fs::symlink(pasta.join("versions/2.1.328"), pasta.join("claude")).unwrap();
+        assert_eq!(versao_pelo_link(&pasta.join("claude")), Some((2, 1, 328)));
+        // Sem o link (o do npm, o de mentira): só o `--version` diz.
+        std::fs::write(pasta.join("solto"), "").unwrap();
+        assert_eq!(versao_pelo_link(&pasta.join("solto")), None);
+        assert_eq!(versao_pelo_link(&pasta.join("nao-existe")), None);
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn os_eventos_de_hook_so_num_claude_code_que_conhece_a_opcao() {
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_EVENTOS_DE_HOOK));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_EVENTOS_DE_HOOK));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_EVENTOS_DE_HOOK));
+    }
+
+    /// O `hook_response` como o 2.1.328 o manda (copiado da saída dele).
+    fn resposta_do_hook(nome: &str, saida: &str) -> Value {
+        json!({
+            "type": "system", "subtype": "hook_response", "hook_id": "0defe090-dfd7-4bd4-b337-b6578af9b068",
+            "hook_name": nome, "hook_event": nome.split(':').next().unwrap_or_default(),
+            "output": saida, "stdout": saida, "stderr": "", "exit_code": 0, "outcome": "success",
+            "uuid": "52e37abc-4230-4400-aed9-c3a9a9b25f9d", "session_id": "c94b6ba9-8047-48c1-b9eb-f6c7e588a68a",
+        })
+    }
+
+    fn decisao(decisao: &str, motivo: &str) -> String {
+        json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": decisao,
+                                        "permissionDecisionReason": motivo } })
+        .to_string()
+            + "\n"
+    }
+
+    #[test]
+    fn hook_que_manda_perguntar_vira_evento_com_o_motivo() {
+        let motivo = "MOTIVO-DO-HOOK: este comando precisa do sim do dono.";
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:Bash", &decisao("ask", motivo)));
+        match eventos.as_slice() {
+            [Evento::HookPediu { ferramenta, motivo: m }] => assert_eq!((ferramenta.as_str(), m.as_str()), ("Bash", motivo)),
+            outro => panic!("{outro:?}"),
+        }
+        // A ferramenta de um servidor MCP vem com o nome inteiro.
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:mcp__easypanel__deploy", &decisao("ask", "produção")));
+        assert!(
+            matches!(eventos.as_slice(), [Evento::HookPediu { ferramenta, motivo }] if ferramenta == "mcp__easypanel__deploy" && motivo == "produção"),
+            "{eventos:?}"
+        );
+        // Sem motivo, o pedido ainda é de um hook.
+        let sem = json!({ "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "ask" } }).to_string();
+        let eventos = interpretar(&resposta_do_hook("PreToolUse:Bash", &sem));
+        assert!(matches!(eventos.as_slice(), [Evento::HookPediu { motivo, .. }] if motivo.is_empty()), "{eventos:?}");
+        // Só o `stdout` (um Claude Code que não repita a saída em `output`).
+        let mut so_stdout = resposta_do_hook("PreToolUse:Bash", &decisao("ask", motivo));
+        so_stdout.as_object_mut().unwrap().remove("output");
+        assert!(matches!(interpretar(&so_stdout).as_slice(), [Evento::HookPediu { .. }]));
+    }
+
+    #[test]
+    fn os_outros_eventos_de_hook_nao_viram_nada() {
+        let nada = |valor: Value| assert!(interpretar(&valor).is_empty(), "{valor}");
+        // Os hooks que não decidem, os que permitem e os que negam (a recusa vem no tool_result).
+        nada(resposta_do_hook("PreToolUse:Bash", "{}\n"));
+        nada(resposta_do_hook("PreToolUse:Bash", ""));
+        nada(resposta_do_hook("PreToolUse:Bash", "texto solto de um hook antigo\n"));
+        nada(resposta_do_hook("PreToolUse:Bash", &decisao("allow", "pode")));
+        nada(resposta_do_hook("PreToolUse:Bash", &decisao("deny", "não pode")));
+        // Os outros eventos: só o PreToolUse pergunta antes da chamada.
+        nada(resposta_do_hook("PostToolUse:Bash", &decisao("ask", "tarde demais")));
+        nada(resposta_do_hook("SessionStart:startup", &decisao("ask", "x")));
+        nada(resposta_do_hook("UserPromptSubmit", "{}\n"));
+        nada(json!({ "type": "system", "subtype": "hook_started", "hook_id": "1", "hook_name": "PreToolUse:Bash",
+                     "hook_event": "PreToolUse" }));
+    }
+
+    /// De ponta a ponta com o claude de mentira da bancada, que encena o que o 2.1.328 faz com o
+    /// "ask" de um hook (`[hook ...]`): com os argumentos de um turno em "Sem perguntar", a
+    /// chamada passa pela ferramenta de permissão do servidor MCP do Vitral, e o motivo chega
+    /// antes dela, pelo evento do hook. Sem a ferramenta nos argumentos (como era), ninguém é
+    /// perguntado e a chamada volta recusada.
+    #[cfg(unix)]
+    #[test]
+    fn o_ask_de_hook_chega_a_ferramenta_de_permissao_em_sem_perguntar() {
+        use std::sync::mpsc;
+
+        let (chegou, chamadas) = mpsc::channel::<(String, Value)>();
+        let servidor = crate::mcp::iniciar(move |chamada: crate::mcp::Chamada| {
+            let resposta = json!({ "behavior": "allow", "updatedInput": chamada.argumentos["input"] });
+            let _ = chegou.send((chamada.ferramenta.clone(), chamada.argumentos.clone()));
+            let _ = chamada.resposta.try_send(crate::mcp::Resposta::ok(resposta.to_string()));
+        })
+        .unwrap();
+        let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+        let pasta = std::env::temp_dir().join(format!("vitral-ask-de-hook-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let motivo = "Deploy no expediente do galpão.";
+        let mensagem = json!({ "type": "user", "message": { "role": "user", "content": [
+            { "type": "text", "text": format!("[hook Bash echo teste-ask | {motivo}]\nroda o comando") }] } });
+        let turno = |args: Vec<String>| -> Vec<Evento> {
+            let mut filho = processos::novo_comando("python3")
+                .arg("-I")
+                .arg(&falso)
+                .args(args)
+                .current_dir(&pasta)
+                .env("XDG_STATE_HOME", &pasta)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("python3 para o claude de mentira");
+            // A entrada fecha logo depois da mensagem: é o fim do turno para ele.
+            writeln!(filho.stdin.take().unwrap(), "{mensagem}").unwrap();
+            let saida = filho.wait_with_output().unwrap();
+            String::from_utf8_lossy(&saida.stdout)
+                .lines()
+                .filter_map(|linha| serde_json::from_str::<Value>(linha).ok())
+                .flat_map(|valor| interpretar(&valor))
+                .collect()
+        };
+
+        let args = argumentos(&opcoes("bypassPermissions", &servidor.url("c1")));
+        let eventos = turno(args.clone());
+        let posicao = |achar: &dyn Fn(&Evento) -> bool| eventos.iter().position(achar);
+        let chamada = posicao(&|e| matches!(e, Evento::Ferramenta { nome, .. } if nome == "Bash")).expect("a chamada");
+        let pediu = posicao(&|e| matches!(e, Evento::HookPediu { ferramenta, motivo: m } if ferramenta == "Bash" && m == motivo))
+            .unwrap_or_else(|| panic!("sem o evento do hook: {eventos:?}"));
+        let resultado = posicao(&|e| matches!(e, Evento::ResultadoFerramenta { erro: false, .. }))
+            .unwrap_or_else(|| panic!("a chamada permitida não rodou: {eventos:?}"));
+        assert!(chamada < pediu && pediu < resultado, "{eventos:?}");
+        // O pedido chegou à ferramenta de permissão, sem o motivo (ele só vem no evento).
+        let (ferramenta, argumentos_do_pedido) = chamadas.try_recv().expect("o pedido de permissão");
+        assert_eq!(ferramenta, "permissao");
+        assert_eq!(argumentos_do_pedido["tool_name"], "Bash");
+        assert_eq!(argumentos_do_pedido["input"]["command"], "echo teste-ask");
+        assert!(!argumentos_do_pedido.to_string().contains(motivo));
+        assert!(chamadas.try_recv().is_err(), "um pedido só");
+
+        // Como era em "Sem perguntar": sem a ferramenta de permissão, a recusa com o motivo.
+        let i = args.iter().position(|a| a == "--permission-prompt-tool").expect("a ferramenta de permissão");
+        let mut como_era = args;
+        como_era.drain(i..i + 2);
+        let eventos = turno(como_era);
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { erro: true, conteudo, .. } if conteudo == motivo)),
+            "{eventos:?}"
+        );
+        assert!(chamadas.try_recv().is_err(), "ninguém foi perguntado");
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
 }
 
 #[cfg(test)]
@@ -2372,6 +3326,30 @@ mod testes_dos_modelos {
         assert!(interpretar(&resultado_do_sub).is_empty());
     }
 
+    /// Item 2: cada chamada do subagente traz o id dela (é por ele que se sabe qual subagente
+    /// espera uma permissão), e o relatório que ele entrega pela chamada `SubagentHandback` sobe
+    /// como relatório, e não como mais uma ferramenta (medido na 2.1.328, modo automático).
+    #[test]
+    fn a_chamada_do_subagente_traz_o_id_e_o_relatorio_entregue_nao_e_ferramenta() {
+        use super::{Evento, interpretar};
+        let chamada = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "agent_id": "a1ef", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_ler", "name": "Read", "input": { "file_path": "notas.txt" } }] } });
+        match interpretar(&chamada).as_slice() {
+            [Evento::SubFerramenta { pai, id, nome, .. }] => assert_eq!((pai.as_str(), id.as_str(), nome.as_str()), ("toolu_pai", "toolu_ler", "Read")),
+            outro => panic!("{outro:?}"),
+        }
+        let entrega = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "agent_id": "a1ef", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_entrega", "name": "SubagentHandback", "input": { "message": "A última palavra é banana." } }] } });
+        match interpretar(&entrega).as_slice() {
+            [Evento::SubRelatorio { pai, texto }] => assert_eq!((pai.as_str(), texto.as_str()), ("toolu_pai", "A última palavra é banana.")),
+            outro => panic!("{outro:?}"),
+        }
+        // A entrega ainda sem o texto (a chamada chegando aos pedaços) não vira nada.
+        let vazia = json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "message": { "content": [
+            { "type": "tool_use", "id": "toolu_entrega", "name": "SubagentHandback", "input": {} }] } });
+        assert!(interpretar(&vazia).is_empty());
+    }
+
     /// O subagente em segundo plano, como o Claude Code 2.1.322 o mostrou (16/11/2026): a chamada
     /// volta na hora com "Async agent launched", o progresso conta as ferramentas e o fim vem
     /// num aviso à parte, com o resumo.
@@ -2396,6 +3374,61 @@ mod testes_dos_modelos {
         assert!(matches!(interpretar(&comecou).as_slice(), [Evento::SubInicio { pai }] if pai == "toolu_pai"));
         let falhou = json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "toolu_pai", "status": "failed" });
         assert!(matches!(interpretar(&falhou).as_slice(), [Evento::SubFim { erro: true, .. }]));
+    }
+
+    /// O `result` e os resultados de comando como o Claude Code 2.1.328 os mostrou (23/11/2026).
+    #[test]
+    fn o_result_traz_os_tempos_e_o_comando_diz_se_foi_para_o_segundo_plano() {
+        use super::{Evento, interpretar};
+        let fim = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "feito",
+            "duration_ms": 7004, "duration_api_ms": 2699, "ttft_ms": 1421, "num_turns": 2, "total_cost_usd": 0.01,
+            "usage": { "input_tokens": 4, "output_tokens": 72, "cache_read_input_tokens": 31050, "cache_creation_input_tokens": 7470,
+                "cache_creation": { "ephemeral_1h_input_tokens": 7470, "ephemeral_5m_input_tokens": 0 } } });
+        match interpretar(&fim).as_slice() {
+            [Evento::Gasto(tokens), Evento::Medida(medida), Evento::Fim { erro: false, texto, .. }] => {
+                assert_eq!(tokens.cache_lido, 31050);
+                assert_eq!((medida.duracao_ms, medida.modelo_acumulado_ms, medida.ttft_ms, medida.passos, medida.cache_ttl), (7004, 2699, 1421, 2, 3600));
+                assert_eq!(texto, "feito");
+            }
+            outro => panic!("{outro:?}"),
+        }
+        // O `result` sem tempo nenhum (o de uma versão velha) segue só com o fim.
+        let velho = json!({ "type": "result", "is_error": false, "result": "ok", "total_cost_usd": 0.0 });
+        assert!(matches!(interpretar(&velho).as_slice(), [Evento::Fim { .. }]));
+        // O comando que terminou.
+        let terminou = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_a", "type": "tool_result", "content": "lento" }] },
+            "tool_use_result": { "stdout": "lento", "stderr": "", "interrupted": false } });
+        assert!(matches!(interpretar(&terminou).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: false, .. }] if id == "toolu_a"));
+        // O que foi pedido em segundo plano volta na hora, e o que passou do tempo volta quando
+        // passa: nos dois o `backgroundTaskId` diz que o comando segue rodando.
+        let pedido = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_b", "type": "tool_result",
+            "content": "Command running in background with ID: bdotu4uvf." }] },
+            "tool_use_result": { "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "bdotu4uvf" } });
+        assert!(matches!(interpretar(&pedido).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: true, .. }] if id == "toolu_b"));
+        let estourou = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_c", "type": "tool_result",
+            "content": "Command did not complete within its 3s timeout and was moved to the background (ID: bakp5fylo)." }] },
+            "tool_use_result": { "stdout": "", "stderr": "", "interrupted": false, "backgroundTaskId": "bakp5fylo", "timedOutAfterMs": 3000 } });
+        assert!(matches!(interpretar(&estourou).as_slice(), [Evento::ResultadoFerramenta { id, no_fundo: true, .. }] if id == "toolu_c"));
+        // O resultado de erro vem com o `tool_use_result` em texto, não em objeto.
+        let erro = json!({ "type": "user", "message": { "content": [{ "tool_use_id": "toolu_d", "type": "tool_result", "content": "x", "is_error": true }] },
+            "tool_use_result": "Error: Blocked" });
+        assert!(matches!(interpretar(&erro).as_slice(), [Evento::ResultadoFerramenta { erro: true, no_fundo: false, .. }]));
+    }
+
+    #[test]
+    fn a_primeira_palavra_e_o_primeiro_bloco_da_resposta() {
+        use super::primeira_palavra;
+        // Com os pedaços: o começo de um bloco (até o de uma chamada, que não vira evento) e o pedaço.
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_start", "content_block": { "type": "tool_use" } } })));
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_start", "content_block": { "type": "thinking" } } })));
+        assert!(primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "O" } } })));
+        // Sem eles (o claude falso), a mensagem inteira.
+        assert!(primeira_palavra(&json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "oi" }] } })));
+        // O que vem antes da palavra não conta, nem o que é de um subagente.
+        assert!(!primeira_palavra(&json!({ "type": "system", "subtype": "init", "model": "claude-opus-5-5" })));
+        assert!(!primeira_palavra(&json!({ "type": "stream_event", "event": { "type": "message_start" } })));
+        assert!(!primeira_palavra(&json!({ "type": "rate_limit_event", "rate_limit_info": {} })));
+        assert!(!primeira_palavra(&json!({ "type": "assistant", "parent_tool_use_id": "toolu_pai", "message": { "content": [{ "type": "text", "text": "oi" }] } })));
     }
 
     /// A resposta do `mcp_status` como o Claude Code 2.1.322 a deu.
@@ -2518,5 +3551,956 @@ mod testes_da_mudanca {
         assert_eq!((m.entram, m.saem), (2, 1));
         assert!(write_criou("File created successfully at: /x/b.md"));
         assert!(!write_criou("The file /x/b.md has been updated successfully."));
+    }
+}
+
+/// O turno que roda recebe pela entrada o que antes só valia no seguinte (o modo, o modelo e o
+/// esforço); o Parar tira da fila a mensagem dirigida em vez de matar o processo; a batida de uma
+/// ferramenta que demora conta como sinal de vida; e o texto do raciocínio vem na saída. Os
+/// pedidos e as respostas são os medidos no Claude Code 2.1.328 em 23/11/2026, e o claude de
+/// mentira da bancada os encena.
+#[cfg(test)]
+mod testes_do_turno_ao_vivo {
+    use super::*;
+    #[cfg(unix)]
+    use std::sync::mpsc;
+
+    fn ao_vivo(modo: &str, modelo: &str, esforco: Option<&str>) -> AoVivo {
+        AoVivo { modo: modo.into(), modelo: modelo.into(), esforco: esforco.map(str::to_string) }
+    }
+
+    fn opcoes(pasta: &Path) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: pasta.to_path_buf(),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: Some("haiku".into()),
+            permissao: "manual".into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            // Sem "/mcp/" no endereço: o claude de mentira não chama servidor nenhum.
+            url_mcp: "http://127.0.0.1:1/nada".into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+            raciocinio_resumido: true,
+        }
+    }
+
+    fn valor_de<'a>(args: &'a [String], chave: &str) -> Option<&'a str> {
+        let i = args.iter().position(|a| a == chave)?;
+        args.get(i + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn cada_troca_vira_o_pedido_de_controle_dela() {
+        let tem = ao_vivo("manual", "opus", Some("high"));
+        assert!(pedidos_ao_vivo(&tem, &tem).is_empty(), "sem troca, nenhum pedido");
+        // O modo, com o nome que o Claude Code dá a cada um.
+        for modo in ["acceptEdits", "plan", "auto", "bypassPermissions"] {
+            assert_eq!(
+                pedidos_ao_vivo(&tem, &AoVivo { modo: modo.into(), ..tem.clone() }),
+                [json!({ "subtype": "set_permission_mode", "mode": modo })]
+            );
+        }
+        // O Manual do Vitral é o `default` do pedido (o 2.1.328 aceita `manual` e responde
+        // `default`; a lista de modos do erro dele só tem `default`).
+        let em_edicoes = ao_vivo("acceptEdits", "opus", Some("high"));
+        assert_eq!(pedidos_ao_vivo(&em_edicoes, &tem), [json!({ "subtype": "set_permission_mode", "mode": "default" })]);
+        // O modelo; vazio é o padrão do Claude Code, que o pedido sem `model` devolve.
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { modelo: "claude-haiku-4-5-20251001".into(), ..tem.clone() }),
+            [json!({ "subtype": "set_model", "model": "claude-haiku-4-5-20251001" })]
+        );
+        assert_eq!(pedidos_ao_vivo(&tem, &AoVivo { modelo: String::new(), ..tem.clone() }), [json!({ "subtype": "set_model" })]);
+        // O esforço; o automático é o `null`.
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { esforco: Some("low".into()), ..tem.clone() }),
+            [json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": "low" } })]
+        );
+        assert_eq!(
+            pedidos_ao_vivo(&tem, &AoVivo { esforco: None, ..tem.clone() }),
+            [json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": null } })]
+        );
+        // Tudo de uma vez: um pedido por troca.
+        let subtipos: Vec<String> = pedidos_ao_vivo(&tem, &ao_vivo("plan", "haiku", None))
+            .iter()
+            .map(|p| p["subtype"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(subtipos, ["set_permission_mode", "set_model", "apply_flag_settings"]);
+    }
+
+    /// O Ultracode entra pelos argumentos do processo (os fluxos de agentes, o `--settings`): com
+    /// ele de um lado ou do outro, o esforço fica para o turno seguinte. O resto troca igual.
+    #[test]
+    fn o_esforco_do_ultracode_nao_troca_no_meio() {
+        let no_ultracode = ao_vivo("manual", "opus", Some("ultracode"));
+        assert!(pedidos_ao_vivo(&no_ultracode, &ao_vivo("manual", "opus", Some("high"))).is_empty());
+        assert!(pedidos_ao_vivo(&no_ultracode, &ao_vivo("manual", "opus", None)).is_empty());
+        assert!(pedidos_ao_vivo(&ao_vivo("manual", "opus", Some("high")), &no_ultracode).is_empty());
+        assert_eq!(
+            pedidos_ao_vivo(&no_ultracode, &ao_vivo("plan", "opus", Some("high"))),
+            [json!({ "subtype": "set_permission_mode", "mode": "plan" })]
+        );
+        // O processo que abre com Ultracode já nasce marcado, e o comum com o esforço dele.
+        let pasta = PathBuf::from("/tmp/x");
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { ultracode: true, esforco: Some("max".into()), ..opcoes(&pasta) }).esforco.as_deref(), Some("ultracode"));
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { esforco: Some("max".into()), ..opcoes(&pasta) }), ao_vivo("manual", "haiku", Some("max")));
+        assert_eq!(AoVivo::das_opcoes(&Opcoes { esforco: Some(String::new()), modelo: None, ..opcoes(&pasta) }), ao_vivo("manual", "", None));
+    }
+
+    #[test]
+    fn o_pedido_vai_como_control_request_com_o_id_do_vitral() {
+        let corpo = json!({ "subtype": "set_permission_mode", "mode": "plan" });
+        let linha = linha_do_pedido(nome_do_pedido(&corpo), corpo.clone());
+        assert_eq!(linha["type"], "control_request");
+        assert_eq!(linha["request"], corpo);
+        assert!(linha["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-modo-")), "{linha}");
+        assert_eq!(nome_do_pedido(&json!({ "subtype": "set_model" })), "modelo");
+        assert_eq!(nome_do_pedido(&json!({ "subtype": "apply_flag_settings" })), "esforco");
+        // O que tira da fila a mensagem dirigida, pelo uuid com que ela foi escrita.
+        let retirar = pedido_de_retirar("8b82d03c-d4b3-4238-9531-17dc4a1df43e");
+        assert_eq!(retirar, json!({ "subtype": "cancel_async_message", "message_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e" }));
+        assert_eq!(nome_do_pedido(&retirar), "retirar");
+    }
+
+    /// O pedido do título da sessão, como medido no 2.1.328 em 23/11/2026: a primeira fala na
+    /// `description` e o `persist`, que manda gravar a linha `ai-title` na sessão. A resposta (o
+    /// título, ou `null` quando ele não soube titular) não vira evento: o motor lê o título do
+    /// arquivo da sessão, depois do turno.
+    #[test]
+    fn o_pedido_do_titulo_leva_a_primeira_fala_e_manda_gravar() {
+        let corpo = pedido_do_titulo("olha esse erro aqui que deu no teste");
+        assert_eq!(
+            corpo,
+            json!({ "subtype": "generate_session_title", "description": "olha esse erro aqui que deu no teste", "persist": true })
+        );
+        let linha = linha_do_pedido(nome_do_pedido(&corpo), corpo.clone());
+        assert_eq!(linha["type"], "control_request");
+        assert_eq!(linha["request"], corpo);
+        assert!(linha["request_id"].as_str().is_some_and(|id| id.starts_with("vitral-titulo-")), "{linha}");
+        for miolo in [json!({ "title": "Erro na função soma" }), json!({ "title": null })] {
+            let resposta = json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "vitral-titulo-1", "response": miolo } });
+            assert!(interpretar(&resposta).is_empty(), "{resposta}");
+        }
+        // O pedido existe igual desde a 2.1.323 (o claude de mentira da bancada diz 2.1.300 por padrão).
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_TITULO_GERADO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_TITULO_GERADO));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_TITULO_GERADO));
+    }
+
+    /// De ponta a ponta com o claude de mentira, que encena o pedido como o 2.1.328: o título pedido
+    /// no meio do turno fica gravado na sessão (só numa pasta de configuração de mentira), e é de
+    /// lá que o motor o lê.
+    #[cfg(unix)]
+    #[test]
+    fn o_titulo_pedido_no_turno_fica_gravado_na_sessao() {
+        let config = std::env::temp_dir().join(format!("vitral-titulo-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&config).unwrap();
+        let ambiente = [("CLAUDE_CONFIG_DIR", config.to_str().unwrap()), ("CLAUDE_FALSO_TITULO", "Erro na função soma")];
+        let mut turno = Turno::abrir("[ferramenta Bash cargo test | 1]\nolha esse erro aqui que deu no teste", |o| o, &ambiente);
+        assert!(turno.processo.pedir_titulo("olha esse erro aqui que deu no teste"));
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        let sessao = "11111111-1111-4111-8111-111111111111";
+        let arquivo = arquivo_da_sessao(Some(&config), &turno.pasta, sessao).expect("a sessão gravada pelo claude de mentira");
+        assert_eq!(crate::importar::titulos_da_sessao(&arquivo).gerado.as_deref(), Some("Erro na função soma"));
+        // Com a entrada fechada (o turno acabou) não há a quem pedir.
+        turno.processo.fechar_entrada();
+        assert!(!turno.processo.pedir_titulo("olha esse erro aqui que deu no teste"));
+        drop(turno);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// Medido no 2.1.328: aberto sem a `--allow-dangerously-skip-permissions`, o processo recusa
+    /// o `set_permission_mode` para `bypassPermissions` ("bypass_not_launched"); com ela, entra.
+    /// Como root ele nem abre com a opção, então ela só vai onde já ia (o Planejar).
+    #[test]
+    fn o_sem_perguntar_pode_entrar_no_meio_de_qualquer_turno() {
+        for modo in ["manual", "acceptEdits", "plan", "auto", "bypassPermissions"] {
+            assert!(libera_o_bypass(modo, false), "{modo}");
+            assert_eq!(libera_o_bypass(modo, true), modo == "plan", "{modo} como root");
+            let args = argumentos(&Opcoes { permissao: modo.into(), ..opcoes(Path::new("/tmp/x")) });
+            assert_eq!(args.iter().any(|a| a == "--allow-dangerously-skip-permissions"), libera_o_bypass(modo, sou_root()), "{modo}");
+        }
+    }
+
+    /// Medido no 2.1.328: sem a opção, o bloco de raciocínio chega com o texto vazio; com
+    /// `--thinking-display summarized` (fora do `--help`), chega com ele. A 2.1.323 aceita a opção.
+    #[test]
+    fn o_texto_do_raciocinio_e_pedido_a_quem_conhece_a_opcao() {
+        let pasta = Path::new("/tmp/x");
+        let args = argumentos(&opcoes(pasta));
+        assert_eq!(valor_de(&args, "--thinking-display"), Some("summarized"));
+        let args = argumentos(&Opcoes { raciocinio_resumido: false, ..opcoes(pasta) });
+        assert!(!args.iter().any(|a| a == "--thinking-display"));
+        assert!(versao_de("2.1.328 (Claude Code)").is_some_and(|v| v >= VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_RACIOCINIO_RESUMIDO));
+        assert!(versao_de("2.1.323 (Claude Code)").is_some_and(|v| v >= VERSAO_RETIRAR_DIRIGIDA));
+        assert!(versao_de("2.1.300 (Claude Code)").is_some_and(|v| v < VERSAO_RETIRAR_DIRIGIDA));
+        // O bloco como o 2.1.328 o manda, com a opção e sem ela.
+        let bloco = |texto: &str| {
+            json!({ "type": "assistant", "parent_tool_use_id": null, "message": { "model": "claude-haiku-5-5", "content": [
+                { "type": "thinking", "thinking": texto, "signature": "CAQS3AYKEAgUGAI4AUIIdGhpbmtpbmc" }] } })
+        };
+        let com = "I'm working out the timing: train A arrives 16:55 and train B arrives 16:45.";
+        assert!(matches!(interpretar(&bloco(com)).as_slice(), [Evento::Pensamento(t)] if t == com));
+        assert!(matches!(interpretar(&bloco("")).as_slice(), [Evento::Pensamento(t)] if t.is_empty()));
+    }
+
+    /// A linha é a que o 2.1.328 mandou aos 30 e aos 60 s de um comando de 75 s. Ela vem presa à
+    /// chamada (`parent_tool_use_id`), como os passos de um subagente, e não é um.
+    #[test]
+    fn a_batida_da_ferramenta_e_sinal_de_vida() {
+        let batida = json!({
+            "type": "tool_progress", "tool_use_id": "toolu_01FjUGWS8amto8qs5E2ZFmEn-heartbeat-0", "tool_name": "Bash",
+            "parent_tool_use_id": "toolu_01FjUGWS8amto8qs5E2ZFmEn", "elapsed_time_seconds": 30, "heartbeat": true,
+            "session_id": "a5102f2d-119f-4862-9d1a-ba981ad4fe47", "uuid": "382ed80b-e3a3-4bca-b4d3-247416d53245",
+        });
+        assert!(matches!(interpretar(&batida).as_slice(), [Evento::Vivo]), "{:?}", interpretar(&batida));
+    }
+
+    /// As respostas aos pedidos de controle e os avisos que os acompanham, copiados da saída do
+    /// 2.1.328. Uma recusa não vira nada: a troca vale no turno seguinte, sem erro na tela.
+    #[test]
+    fn as_respostas_de_controle_nao_viram_erro_na_tela() {
+        let resposta = |id: &str, corpo: Value| {
+            let mut r = json!({ "subtype": "success", "request_id": id });
+            if !corpo.is_null() {
+                r["response"] = corpo;
+            }
+            json!({ "type": "control_response", "response": r })
+        };
+        let recusa = |id: &str, erro: &str, codigo: &str| {
+            json!({ "type": "control_response", "response": { "subtype": "error", "request_id": id, "error": erro, "error_code": codigo } })
+        };
+        let nada = |valor: Value| assert!(interpretar(&valor).is_empty(), "{valor} virou {:?}", interpretar(&valor));
+        nada(resposta("vitral-modo-1", json!({ "mode": "acceptEdits" })));
+        nada(json!({ "type": "system", "subtype": "status", "status": null, "permissionMode": "acceptEdits",
+                     "uuid": "6e4618d7-111d-4d3e-b049-2172d5ef3f9e", "session_id": "b8610580-4229-4347-b29e-9e1b7eac4bca" }));
+        nada(recusa(
+            "vitral-modo-2",
+            "Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions",
+            "bypass_not_launched",
+        ));
+        nada(recusa("vitral-modo-3", "Cannot set permission mode: must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan", "invalid_mode"));
+        nada(json!({ "type": "control_response", "response": { "subtype": "error", "request_id": "vitral-modelo-1",
+                     "error": "Model 'bananinha-9' not found", "error_code": "not_found", "model": "claude-haiku-5-5" } }));
+        nada(resposta("vitral-esforco-1", Value::Null));
+        nada(resposta("vitral-retirar-1", json!({ "cancelled": true, "message_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e" })));
+        nada(resposta("vitral-retirar-2", json!({ "cancelled": false })));
+        nada(json!({ "type": "command_lifecycle", "command_uuid": "8b82d03c-d4b3-4238-9531-17dc4a1df43e", "state": "cancelled",
+                     "uuid": "7a6c96cf-b3ca-462e-9cb4-839d723d8da2", "session_id": "13c823ee-17a5-48fd-b566-9fae508dd5d5" }));
+        // O aviso que o `set_model` deixa na conversa do Claude Code não é mensagem de ninguém.
+        nada(json!({ "type": "user", "message": { "role": "user", "content": "<local-command-stdout>Set model to `claude-haiku-4-5-20251001`</local-command-stdout>" },
+                     "session_id": "b8610580-4229-4347-b29e-9e1b7eac4bca", "parent_tool_use_id": null, "isReplay": true }));
+        // O Parar que não deixou nada na fila.
+        nada(resposta("vitral-parar-1", json!({ "still_queued": [] })));
+        nada(resposta("vitral-parar-tarefa-1", json!({})));
+
+        // O que o motor precisa saber: o modelo que passou a valer, e a mensagem que o Parar não
+        // tirou da fila (o Claude Code abriria outro turno com ela).
+        let trocou = interpretar(&resposta("vitral-modelo-2", json!({ "model": "claude-haiku-4-5-20251001" })));
+        assert!(matches!(trocou.as_slice(), [Evento::ModeloEmUso(m)] if m == "claude-haiku-4-5-20251001"), "{trocou:?}");
+        let ficou = interpretar(&resposta("vitral-parar-2", json!({ "still_queued": ["8b82d03c-d4b3-4238-9531-17dc4a1df43e"] })));
+        assert!(matches!(ficou.as_slice(), [Evento::FicouNaFila(1)]), "{ficou:?}");
+    }
+
+    /// Um turno no claude de mentira, aberto pelo mesmo caminho dos turnos de verdade
+    /// (`Processo::com_o_comando`), com os argumentos de um turno em Manual.
+    #[cfg(unix)]
+    struct Turno {
+        processo: Processo,
+        eventos: mpsc::Receiver<Evento>,
+        vistos: Vec<Evento>,
+        pasta: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl Turno {
+        fn abrir(texto: &str, opcoes: impl FnOnce(Opcoes) -> Opcoes, ambiente: &[(&str, &str)]) -> Self {
+            Self::abrir_marcado(texto, None, opcoes, ambiente)
+        }
+
+        /// Como o motor abre: a mensagem vai com o `uuid` dela (a `marca`).
+        fn abrir_marcado(texto: &str, marca: Option<&str>, opcoes: impl FnOnce(Opcoes) -> Opcoes, ambiente: &[(&str, &str)]) -> Self {
+            let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+            let pasta = std::env::temp_dir().join(format!("vitral-ao-vivo-{}", crate::modelo::novo_id()));
+            std::fs::create_dir_all(&pasta).unwrap();
+            let opcoes = opcoes(self::opcoes(&pasta));
+            let mut comando = processos::comando_leve("python3", "teste");
+            comando.arg("-I").arg(&falso).args(argumentos(&opcoes)).current_dir(&pasta).env("XDG_STATE_HOME", &pasta);
+            for (chave, valor) in ambiente {
+                comando.env(chave, valor);
+            }
+            let (manda, eventos) = mpsc::channel();
+            let mensagem = Mensagem { texto, imagens: &[], marca };
+            let processo = Processo::com_o_comando(comando, &opcoes, mensagem, move |evento| {
+                let _ = manda.send(evento);
+            })
+            .expect("python3 para o claude de mentira");
+            Self { processo, eventos, vistos: Vec::new(), pasta }
+        }
+
+        /// Lê a saída até o evento que casa (ele fica por último em `vistos`).
+        fn ate(&mut self, o_que: &str, casa: impl Fn(&Evento) -> bool) {
+            let limite = Instant::now() + Duration::from_secs(30);
+            loop {
+                let Ok(evento) = self.eventos.recv_timeout(limite.saturating_duration_since(Instant::now())) else {
+                    panic!("não chegou {o_que}; chegou: {:?}", self.vistos);
+                };
+                let achou = casa(&evento);
+                let saiu = matches!(evento, Evento::Saiu { .. });
+                self.vistos.push(evento);
+                if achou {
+                    return;
+                }
+                assert!(!saiu, "o processo saiu antes de {o_que}: {:?}", self.vistos);
+            }
+        }
+
+        /// Lê até o processo sair e devolve o código de saída dele (-1 se morreu por sinal).
+        fn ate_sair(&mut self) -> Option<i32> {
+            self.ate("a saída do processo", |e| matches!(e, Evento::Saiu { .. }));
+            match self.vistos.last() {
+                Some(Evento::Saiu { codigo, .. }) => *codigo,
+                _ => None,
+            }
+        }
+
+        fn quantos(&self, casa: impl Fn(&Evento) -> bool) -> usize {
+            self.vistos.iter().filter(|e| casa(e)).count()
+        }
+
+        fn disse(&self, trecho: &str) -> bool {
+            self.vistos.iter().any(|e| matches!(e, Evento::Texto(t) if t.contains(trecho)))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Turno {
+        fn drop(&mut self) {
+            self.processo.matar();
+            let _ = std::fs::remove_dir_all(&self.pasta);
+        }
+    }
+
+    /// O critério do pedido: a troca feita com o turno rodando chega a ele (o claude de mentira
+    /// diz no fim da resposta o que recebeu no meio do turno), sem erro; com a entrada já
+    /// fechada, nada vai e nada falha (a escolha vale no turno seguinte, como antes).
+    #[cfg(unix)]
+    #[test]
+    fn a_troca_no_meio_do_turno_chega_ao_processo_que_roda() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 3]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert_eq!(turno.processo.ao_vivo(), &ao_vivo("manual", "haiku", None));
+        let quer = ao_vivo("acceptEdits", "claude-haiku-4-5-20251001", Some("low"));
+        assert_eq!(turno.processo.acertar(&quer), 3, "um pedido por troca");
+        assert_eq!(turno.processo.ao_vivo(), &quer);
+        assert_eq!(turno.processo.acertar(&quer), 0, "o que já foi não vai de novo");
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(matches!(turno.vistos.last(), Some(Evento::Fim { erro: false, .. })), "{:?}", turno.vistos);
+        assert!(
+            turno.disse("no meio do turno: modo acceptEdits, modelo claude-haiku-4-5-20251001, esforço low"),
+            "as trocas não chegaram ao turno: {:?}",
+            turno.vistos
+        );
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::ModeloEmUso(m) if m == "claude-haiku-4-5-20251001")), 1, "{:?}", turno.vistos);
+        // O turno acabou e a entrada fechou: a troca seguinte não vai a lugar nenhum, sem erro.
+        turno.processo.fechar_entrada();
+        assert_eq!(turno.processo.acertar(&ao_vivo("plan", "opus", None)), 0);
+        assert_eq!(turno.processo.ao_vivo(), &quer, "o que não foi não fica anotado");
+        turno.ate_sair();
+    }
+
+    /// O "Sem perguntar" entra no meio de um turno aberto em Manual: o claude de mentira, como o
+    /// de verdade, só aceita num processo aberto com a `--allow-dangerously-skip-permissions`.
+    #[cfg(unix)]
+    #[test]
+    fn o_sem_perguntar_entra_num_turno_aberto_em_manual() {
+        if sou_root() {
+            return;
+        }
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 2]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert_eq!(turno.processo.acertar(&ao_vivo("bypassPermissions", "haiku", None)), 1);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(turno.disse("no meio do turno: modo bypassPermissions"), "{:?}", turno.vistos);
+    }
+
+    /// O critério do Parar: com uma mensagem dirigida ainda na fila do Claude Code, o Parar a
+    /// retira e interrompe; o turno fecha com o `result` de erro e o processo sai sozinho (código
+    /// 1, e não morto por sinal), sem abrir outro turno com ela.
+    #[cfg(unix)]
+    #[test]
+    fn o_parar_retira_a_mensagem_dirigida_e_o_processo_sai_sozinho() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 20]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert!(turno.processo.dirigir(Mensagem { texto: "BANANA", imagens: &[], marca: None }));
+        let uuids = turno.processo.uuids_das_dirigidas().to_vec();
+        assert_eq!(uuids.len(), 1);
+        assert!(uuid::Uuid::parse_str(&uuids[0]).is_ok(), "{uuids:?}");
+        assert!(turno.processo.retirar_dirigidas());
+        turno.processo.interromper();
+        assert_eq!(turno.ate_sair(), Some(1), "saiu sozinho, depois de fechar o turno: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { erro: true, .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::FicouNaFila(_))), 0, "{:?}", turno.vistos);
+        assert!(!turno.disse("BANANA"), "a mensagem retirada rodou: {:?}", turno.vistos);
+        // Parado, não há mais o que retirar nem a quem pedir.
+        assert!(!turno.processo.retirar_dirigidas());
+    }
+
+    /// O que acontece sem retirar (por isso o Parar matava o processo): o `interrupt` fecha o
+    /// turno, avisa que a mensagem ficou na fila, e o Claude Code abre outro turno com ela.
+    #[cfg(unix)]
+    #[test]
+    fn sem_retirar_a_mensagem_dirigida_roda_depois_do_parar() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 20]\nfaz o build", |o| o, &[]);
+        turno.ate("a chamada", |e| matches!(e, Evento::Ferramenta { .. }));
+        assert!(turno.processo.dirigir(Mensagem { texto: "BANANA", imagens: &[], marca: None }));
+        turno.processo.interromper();
+        turno.ate_sair();
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::FicouNaFila(1))), 1, "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 2, "{:?}", turno.vistos);
+        assert!(turno.disse("BANANA"), "{:?}", turno.vistos);
+    }
+
+    /// A batida chega enquanto a ferramenta roda (aqui de segundo em segundo; no de verdade, a
+    /// cada 30 s), entre a chamada e o resultado dela.
+    #[cfg(unix)]
+    #[test]
+    fn a_batida_chega_enquanto_a_ferramenta_roda() {
+        let mut turno = Turno::abrir("[ferramenta Bash cargo build | 3]\nfaz o build", |o| o, &[("CLAUDE_FALSO_BATIDA", "1")]);
+        turno.ate("o resultado da chamada", |e| matches!(e, Evento::ResultadoFerramenta { .. }));
+        let chamada = turno.vistos.iter().position(|e| matches!(e, Evento::Ferramenta { .. })).expect("a chamada");
+        let batidas = turno.vistos[chamada..].iter().filter(|e| matches!(e, Evento::Vivo)).count();
+        assert!(batidas >= 1, "sem batida entre a chamada e o resultado: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::SubFerramenta { .. } | Evento::SubTexto { .. })), 0);
+    }
+
+    /// O texto do raciocínio vem com a opção e não vem sem ela, como no Claude Code 2.1.328.
+    #[cfg(unix)]
+    #[test]
+    fn o_texto_do_raciocinio_vem_com_a_opcao() {
+        let pedido = "[ferramenta Pensa primeiro o build e depois os testes | 1]\nfaz o build";
+        let mut com = Turno::abrir(pedido, |o| o, &[]);
+        com.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
+        assert!(matches!(com.vistos.last(), Some(Evento::Pensamento(t)) if t == "primeiro o build e depois os testes"), "{:?}", com.vistos);
+        let mut sem = Turno::abrir(pedido, |o| Opcoes { raciocinio_resumido: false, ..o }, &[]);
+        sem.ate("o raciocínio", |e| matches!(e, Evento::Pensamento(_)));
+        assert!(matches!(sem.vistos.last(), Some(Evento::Pensamento(t)) if t.is_empty()), "{:?}", sem.vistos);
+    }
+
+    // ---------- um chat, um processo (23/11/2026) ----------
+
+    /// O que o Claude Code 2.1.328 mandou ao retomar uma sessão cujo processo anterior foi
+    /// derrubado com um agente em segundo plano (medido em 23/11/2026, Haiku, pasta em /tmp): o
+    /// aviso do agente cortado, a mensagem na fila, um `init` e um `result` vazio com `num_turns`
+    /// 0, e só então a mensagem começa. Esse primeiro `result` não é o fim do turno dela.
+    #[test]
+    fn o_result_de_antes_da_vez_da_mensagem_nao_e_o_fim_do_turno() {
+        let uuid = "d22bde2c-4f94-40cd-92c9-de002c9d90f2";
+        let vez = |estado: &str| json!({ "type": "command_lifecycle", "command_uuid": uuid, "state": estado });
+        let aviso = json!({ "type": "system", "subtype": "task_notification", "task_id": "a3eaeeaf23ca00f7c", "status": "stopped",
+            "summary": "Background agent \"x\" didn't finish before the previous session ended" });
+        let init = json!({ "type": "system", "subtype": "init", "model": "claude-haiku-4-5" });
+        let vazio = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "", "num_turns": 0 });
+        let resposta = json!({ "type": "result", "subtype": "success", "is_error": false, "result": "15", "num_turns": 1 });
+        let mut da_mensagem = VezDaMensagem::nova(Some(uuid));
+        let saida = [&aviso, &vez("queued"), &init, &vazio, &vez("started"), &init, &resposta, &vez("completed")];
+        let de_antes: Vec<bool> = saida.iter().map(|linha| da_mensagem.result_de_antes(linha)).collect();
+        assert_eq!(de_antes, [false, false, false, true, false, false, false, false], "só o `result` vazio é de antes");
+        // Depois que a mensagem começou, todo `result` é de um turno do processo (o dela, o de uma
+        // mensagem dirigida, o que um agente abriu ao terminar).
+        assert!(!da_mensagem.result_de_antes(&vazio));
+        // A vez de OUTRA mensagem (uma dirigida, com o uuid dela) não mexe na da primeira.
+        let mut outra = VezDaMensagem::nova(Some(uuid));
+        let da_outra = json!({ "type": "command_lifecycle", "command_uuid": "outro", "state": "queued" });
+        assert!(!outra.result_de_antes(&da_outra) && !outra.result_de_antes(&vazio), "sem a fila da mensagem, vale o `result`");
+        // Num Claude Code que não diz a vez (ou no turno sem uuid), nada é tirado: como antes.
+        let mut sem = VezDaMensagem::nova(None);
+        assert!(!sem.result_de_antes(&vez("queued")) && !sem.result_de_antes(&vazio));
+        // O turno interrompido antes de começar fecha com erro DEPOIS do `started` (medido): vale.
+        let mut parado = VezDaMensagem::nova(Some(uuid));
+        let erro = json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 0 });
+        assert!(!parado.result_de_antes(&vez("queued")) && !parado.result_de_antes(&vez("started")) && !parado.result_de_antes(&erro));
+    }
+
+    /// O critério do defeito de 23/11: a retomada depois do corte dá UM fim de turno, e ele vem
+    /// depois da resposta. Antes, o `result` vazio chegava ao motor como o fim: o chat parecia
+    /// parado com o processo ainda no meio do turno, e a mensagem seguinte abria outro processo
+    /// da mesma sessão.
+    #[cfg(unix)]
+    #[test]
+    fn a_retomada_depois_do_corte_termina_uma_vez_so_depois_da_resposta() {
+        let marca = uuid::Uuid::new_v4().to_string();
+        let ambiente = [("CLAUDE_FALSO_AGENTE_CORTADO", "1")];
+        let mut turno = Turno::abrir_marcado("[ferramenta Bash cargo build | 1]\nfaz o build", Some(&marca), |o| o, &ambiente);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert!(turno.disse("Anotei"), "o fim chegou antes da resposta: {:?}", turno.vistos);
+        assert!(matches!(turno.vistos.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto.contains("Anotei")), "{:?}", turno.vistos);
+        turno.processo.fechar_entrada();
+        turno.ate_sair();
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
+    }
+
+    /// A mensagem nova entra no processo que espera os agentes (medido no 2.1.328: com a entrada
+    /// aberta, o Claude Code abre outro turno com ela na hora, no mesmo processo), o agente que
+    /// termina abre o turno dele, e só com a entrada fechada o processo sai.
+    #[cfg(unix)]
+    #[test]
+    fn a_mensagem_nova_entra_no_processo_que_espera_os_agentes() {
+        let marca = uuid::Uuid::new_v4().to_string();
+        let mut turno = Turno::abrir_marcado("[ferramenta AgenteFundo confere os testes | 6]\nfaz o build", Some(&marca), |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fundo(1))), 1, "o agente segue em segundo plano: {:?}", turno.vistos);
+        assert!(turno.processo.entrada_aberta());
+        assert!(turno.processo.dirigir(Mensagem { texto: "e mais essa", imagens: &[], marca: None }));
+        turno.ate("a resposta da mensagem nova", |e| matches!(e, Evento::Texto(t) if t.contains("turno novo no mesmo processo: e mais essa")));
+        turno.ate("o fim do turno dela", |e| matches!(e, Evento::Fim { erro: false, .. }));
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fundo(0))), 0, "o agente ainda roda: {:?}", turno.vistos);
+        turno.ate("o agente terminar", |e| matches!(e, Evento::Fundo(0)));
+        turno.ate("o turno que o agente abre", |e| matches!(e, Evento::Texto(t) if t.contains("o agente terminou")));
+        turno.ate("o fim dele", |e| matches!(e, Evento::Fim { erro: false, .. }));
+        turno.processo.fechar_entrada();
+        assert_eq!(turno.ate_sair(), Some(0), "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 3, "três turnos, um processo: {:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Inicio { .. })), 3, "{:?}", turno.vistos);
+    }
+
+    /// Com a entrada fechada, o processo espera o agente, abre o turno dele e sai (o que o Vitral
+    /// fazia antes; continua valendo para o que não pode ser dirigido).
+    #[cfg(unix)]
+    #[test]
+    fn com_a_entrada_fechada_o_processo_espera_o_agente_e_sai() {
+        let mut turno = Turno::abrir("[ferramenta AgenteFundo confere os testes | 3]\nfaz o build", |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        turno.processo.fechar_entrada();
+        assert!(!turno.processo.dirigir(Mensagem { texto: "tarde demais", imagens: &[], marca: None }));
+        assert_eq!(turno.ate_sair(), Some(0), "{:?}", turno.vistos);
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 2, "o turno e o do agente: {:?}", turno.vistos);
+    }
+
+    /// O Parar (e fechar o Vitral) em quem espera os agentes derruba o processo com eles: nada
+    /// continua rodando por fora.
+    #[cfg(unix)]
+    #[test]
+    fn parar_derruba_o_processo_que_espera_os_agentes() {
+        let mut turno = Turno::abrir("[ferramenta AgenteFundo confere os testes | 120]\nfaz o build", |o| o, &[]);
+        turno.ate("o fim do turno", |e| matches!(e, Evento::Fim { .. }));
+        turno.processo.matar();
+        assert_eq!(turno.ate_sair(), Some(143), "derrubado pelo SIGTERM: {:?}", turno.vistos);
+        assert!(turno.processo.esperar().is_some(), "o processo ainda roda");
+        assert_eq!(turno.quantos(|e| matches!(e, Evento::Fim { .. })), 1, "{:?}", turno.vistos);
+    }
+}
+
+/// Testes de aceite da pergunta com opções (AskUserQuestion), do plano que fica na conversa e do
+/// marco de compactação. Os formatos foram medidos no Claude Code 2.1.328 em 23/11/2026 (Haiku,
+/// numa pasta em /tmp): ver o `LEIA-ME.md`.
+#[cfg(test)]
+mod testes_da_pergunta_do_plano_e_da_compactacao {
+    use super::*;
+
+    fn opcoes(modo: &str, url_mcp: &str) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Claude,
+            cwd: PathBuf::from("/tmp/x"),
+            sessao: "11111111-1111-4111-8111-111111111111".into(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: None,
+            permissao: modo.into(),
+            prompt_sistema: "p".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            url_mcp: url_mcp.into(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: None,
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: true,
+            raciocinio_resumido: true,
+        }
+    }
+
+    /// As linhas que o 2.1.328 escreve num `/compact` (copiadas da saída dele, sem os ids).
+    #[test]
+    fn a_compactacao_vira_o_estado_e_o_marco() {
+        let comecou = json!({ "type": "system", "subtype": "status", "status": "compacting", "session_id": "s" });
+        assert!(matches!(interpretar(&comecou).as_slice(), [Evento::Compactando(true)]));
+        let acabou = json!({ "type": "system", "subtype": "status", "status": null, "compact_result": "success", "session_id": "s" });
+        assert!(matches!(interpretar(&acabou).as_slice(), [Evento::Compactando(false)]));
+        // O `status` que não fala de compactação (a troca de modo no meio do turno) não diz nada.
+        let modo = json!({ "type": "system", "subtype": "status", "status": null, "permissionMode": "acceptEdits" });
+        assert!(interpretar(&modo).is_empty());
+        let marco = json!({ "type": "system", "subtype": "compact_boundary", "session_id": "s",
+            "compact_metadata": { "trigger": "manual", "pre_tokens": 42987, "post_tokens": 8404,
+                                  "cumulative_dropped_tokens": 34583, "duration_ms": 5213 } });
+        let eventos = interpretar(&marco);
+        // O marco e, depois dele, quanto a conversa ocupa agora (o anel do contexto desce).
+        assert!(
+            matches!(eventos.as_slice(), [Evento::Compactou { manual: true, antes: Some(42987) }, Evento::Contexto(8404)]),
+            "{eventos:?}"
+        );
+        let automatico = json!({ "type": "system", "subtype": "compact_boundary",
+            "compact_metadata": { "trigger": "auto", "pre_tokens": 168432 } });
+        let eventos = interpretar(&automatico);
+        assert!(matches!(eventos.as_slice(), [Evento::Compactou { manual: false, antes: Some(168432) }]), "{eventos:?}");
+        // Sem os números (um Claude Code que não os mande), o marco ainda entra.
+        let sem = json!({ "type": "system", "subtype": "compact_boundary" });
+        assert!(matches!(interpretar(&sem).as_slice(), [Evento::Compactou { manual: false, antes: None }]));
+    }
+
+    #[test]
+    fn a_pergunta_e_o_plano_tem_resumo_e_detalhe_proprios() {
+        let pergunta = json!({ "questions": [
+            { "question": "Qual cor você prefere?", "header": "Cor", "multiSelect": false,
+              "options": [{ "label": "Azul", "description": "A do céu." }, { "label": "Verde" }] },
+            { "question": "Quais frutas?", "header": "Frutas", "multiSelect": true,
+              "options": [{ "label": "Maçã", "description": "" }, { "label": "Uva", "description": "Roxa." }] },
+        ] });
+        assert_eq!(resumo_ferramenta("AskUserQuestion", &pergunta), "AskUserQuestion · Qual cor você prefere?");
+        // Ao abrir a linha: as perguntas com as opções de cada uma.
+        assert_eq!(
+            detalhe_ferramenta("AskUserQuestion", &pergunta).0.as_deref(),
+            Some("Qual cor você prefere?\n· Azul: A do céu.\n· Verde\n\nQuais frutas?\n· Maçã\n· Uva: Roxa.")
+        );
+        // O plano inteiro fica guardado na chamada (o cartão da conversa o abre); um plano passa
+        // do limite das outras ferramentas.
+        let plano = format!("# Plano\n\n{}", "1. um passo\n".repeat(900));
+        assert!(plano.len() > MAX_DETALHE);
+        assert_eq!(detalhe_ferramenta("ExitPlanMode", &json!({ "plan": plano })).0.as_deref(), Some(plano.trim()));
+        // No 2.1.328 a chamada vem sem o plano (ele só vem no pedido de permissão e no resultado).
+        assert_eq!(detalhe_ferramenta("ExitPlanMode", &json!({})), (None, None));
+        assert_eq!(resumo_ferramenta("ExitPlanMode", &json!({})), "ExitPlanMode");
+    }
+
+    /// O resultado da chamada aprovada traz o plano (2.1.328): é de onde ele sai quando a chamada
+    /// veio sem ele e o pedido de permissão não passou pelo Vitral (a conversa trazida).
+    #[test]
+    fn o_plano_aprovado_sai_do_resultado() {
+        let resultado = "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n\
+            Your plan has been saved to: /home/x/.claude/plans/a.md\nYou can refer back to it if needed during implementation.\n\n\
+            ## Approved Plan:\n# Plano: criar ola.txt\n\n1. Criar o arquivo.\n2. Conferir.\n";
+        assert_eq!(plano_do_resultado(resultado), Some("# Plano: criar ola.txt\n\n1. Criar o arquivo.\n2. Conferir."));
+        // Editado antes de aprovar, o título muda.
+        assert_eq!(plano_do_resultado("ok\n\n## Approved Plan (edited by user):\nNovo plano"), Some("Novo plano"));
+        assert_eq!(plano_do_resultado("O usuário pediu mudanças no plano: menos passos"), None);
+        assert_eq!(plano_do_resultado("## Approved Plan:\n  \n"), None);
+    }
+
+    /// Um turno no claude de mentira com os argumentos de um turno de verdade; devolve os eventos.
+    #[cfg(unix)]
+    fn turno(texto: &str, args: Vec<String>) -> Vec<Evento> {
+        let falso = Path::new(env!("CARGO_MANIFEST_DIR")).join("ferramentas/claude-falso/claude");
+        let pasta = std::env::temp_dir().join(format!("vitral-pergunta-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let mensagem = json!({ "type": "user", "message": { "role": "user", "content": [{ "type": "text", "text": texto }] } });
+        let mut filho = processos::novo_comando("python3")
+            .arg("-I")
+            .arg(&falso)
+            .args(args)
+            .current_dir(&pasta)
+            .env("XDG_STATE_HOME", &pasta)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("python3 para o claude de mentira");
+        writeln!(filho.stdin.take().unwrap(), "{mensagem}").unwrap();
+        let saida = filho.wait_with_output().unwrap();
+        let _ = std::fs::remove_dir_all(&pasta);
+        String::from_utf8_lossy(&saida.stdout)
+            .lines()
+            .filter_map(|linha| serde_json::from_str::<Value>(linha).ok())
+            .flat_map(|valor| interpretar(&valor))
+            .collect()
+    }
+
+    /// O servidor MCP do Vitral respondendo aos pedidos com `decidir`; devolve os pedidos vistos.
+    #[cfg(unix)]
+    fn servidor_que_responde(
+        decidir: impl Fn(&Value) -> Value + Send + Sync + 'static,
+    ) -> (crate::mcp::Servidor, std::sync::mpsc::Receiver<Value>) {
+        let (chegou, pedidos) = std::sync::mpsc::channel::<Value>();
+        let chegou = Mutex::new(chegou);
+        let servidor = crate::mcp::iniciar(move |chamada: crate::mcp::Chamada| {
+            let resposta = decidir(&chamada.argumentos);
+            let _ = chegou.lock().unwrap().send(chamada.argumentos.clone());
+            let _ = chamada.resposta.try_send(crate::mcp::Resposta::ok(resposta.to_string()));
+        })
+        .unwrap();
+        (servidor, pedidos)
+    }
+
+    /// De ponta a ponta com o claude de mentira, que encena a AskUserQuestion como o 2.1.328: o
+    /// pedido chega à ferramenta de permissão (em qualquer modo, até em "Sem perguntar") com as
+    /// perguntas, e a resposta do cartão volta como `allow` com o `updatedInput` levando as
+    /// perguntas e as `answers`, com a pergunta inteira como chave.
+    #[cfg(unix)]
+    #[test]
+    fn a_resposta_da_pergunta_volta_no_formato_do_claude_code() {
+        let (servidor, pedidos) = servidor_que_responde(|argumentos| {
+            let respostas: Vec<(String, String)> = argumentos["input"]["questions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    let pergunta = q["question"].as_str().unwrap_or_default().to_string();
+                    let resposta = if q["multiSelect"] == true { "Maçã, Uva" } else { "Verde" };
+                    (pergunta, resposta.to_string())
+                })
+                .collect();
+            crate::motor::resposta_da_pergunta(&argumentos["input"], &respostas)
+        });
+        let texto = "[pergunta Cor | Qual cor você prefere? | Azul: A do céu.; Verde; Vermelho]\n\
+                     [pergunta+ Frutas | Quais frutas você gosta? | Maçã; Banana; Uva]\npergunta";
+        let eventos = turno(texto, argumentos(&opcoes("bypassPermissions", &servidor.url("c1"))));
+        let chamadas = eventos.iter().filter(|e| matches!(e, Evento::Ferramenta { nome, .. } if nome == "AskUserQuestion")).count();
+        assert_eq!(chamadas, 1, "as duas perguntas numa chamada só: {eventos:?}");
+        let pedido = pedidos.try_recv().expect("o pedido de permissão");
+        assert_eq!(pedido["tool_name"], "AskUserQuestion");
+        let perguntas = pedido["input"]["questions"].as_array().expect("as perguntas");
+        assert_eq!(perguntas.len(), 2);
+        assert_eq!(perguntas[0]["question"], "Qual cor você prefere?");
+        assert_eq!(perguntas[0]["header"], "Cor");
+        assert_eq!(perguntas[0]["multiSelect"], false);
+        assert_eq!(perguntas[0]["options"][0], json!({ "label": "Azul", "description": "A do céu." }));
+        assert_eq!(perguntas[1]["multiSelect"], true);
+        assert!(pedidos.try_recv().is_err(), "um pedido só");
+        // O que o Claude Code devolve ao modelo com as respostas certas.
+        let resultado = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::ResultadoFerramenta { conteudo, erro: false, .. } => Some(conteudo.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a pergunta não foi respondida: {eventos:?}"));
+        assert!(resultado.contains("\"Qual cor você prefere?\"=\"Verde\""), "{resultado}");
+        assert!(resultado.contains("\"Quais frutas você gosta?\"=\"Maçã, Uva\""), "{resultado}");
+
+        // Como era (o Permitir do cartão genérico devolvia a entrada como veio): ninguém respondeu.
+        let (servidor, _pedidos) = servidor_que_responde(|argumentos| json!({ "behavior": "allow", "updatedInput": argumentos["input"] }));
+        let eventos = turno(texto, argumentos(&opcoes("manual", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, .. } if conteudo == "The user did not answer the questions.")),
+            "{eventos:?}"
+        );
+        // Só as respostas, sem as perguntas: o Claude Code recusa o `updatedInput`.
+        let (servidor, _pedidos) = servidor_que_responde(|_| json!({ "behavior": "allow", "updatedInput": { "answers": { "x": "y" } } }));
+        let eventos = turno(texto, argumentos(&opcoes("manual", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, erro: true, .. } if conteudo.contains("failed schema validation"))),
+            "{eventos:?}"
+        );
+    }
+
+    /// O plano no claude de mentira, como no 2.1.328: a chamada vem vazia, o plano vem no pedido
+    /// de permissão e, aprovado, no resultado; recusado, o resultado é a mensagem, como erro.
+    #[cfg(unix)]
+    #[test]
+    fn o_plano_vem_no_pedido_e_no_resultado_aprovado() {
+        let texto = "[plano # Trocar o cupom\\n\\n1. Ler o carrinho.\\n2. Aplicar o desconto.]\nplaneja";
+        let (servidor, pedidos) = servidor_que_responde(|argumentos| json!({ "behavior": "allow", "updatedInput": argumentos["input"] }));
+        let eventos = turno(texto, argumentos(&opcoes("plan", &servidor.url("c1"))));
+        let entrada = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::Ferramenta { nome, entrada, .. } if nome == "ExitPlanMode" => Some(entrada.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("sem a chamada do plano: {eventos:?}"));
+        assert_eq!(entrada, json!({}), "a chamada vem sem o plano");
+        let pedido = pedidos.try_recv().expect("o pedido de permissão");
+        assert_eq!(pedido["tool_name"], "ExitPlanMode");
+        let plano = "# Trocar o cupom\n\n1. Ler o carrinho.\n2. Aplicar o desconto.";
+        assert_eq!(pedido["input"]["plan"], plano);
+        assert_eq!(pedido["tool_use_id"], "toolu_falso_p1");
+        let aprovado = eventos
+            .iter()
+            .find_map(|e| match e {
+                Evento::ResultadoFerramenta { id, conteudo, erro: false, .. } if id == "toolu_falso_p1" => Some(conteudo.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("o plano aprovado não voltou: {eventos:?}"));
+        assert_eq!(plano_do_resultado(aprovado), Some(plano));
+
+        let recusa = "O usuário pediu mudanças no plano: começa pelos testes";
+        let (servidor, _pedidos) = servidor_que_responde(move |_| json!({ "behavior": "deny", "message": recusa }));
+        let eventos = turno(texto, argumentos(&opcoes("plan", &servidor.url("c1"))));
+        assert!(
+            eventos.iter().any(|e| matches!(e, Evento::ResultadoFerramenta { conteudo, erro: true, .. } if conteudo == recusa)),
+            "{eventos:?}"
+        );
+    }
+
+    /// A compactação no claude de mentira: o `[compacta ...]` no meio de um turno (automática) e o
+    /// "/compact" como mensagem (manual), com as mesmas linhas do 2.1.328.
+    #[cfg(unix)]
+    #[test]
+    fn a_compactacao_encenada_tem_o_estado_e_o_marco() {
+        let args = argumentos(&opcoes("manual", "http://127.0.0.1:1/mcp/projeto/c1"));
+        let eventos = turno("[compacta auto 168432 | 1]\ncontinua", args.clone());
+        let posicao = |achar: &dyn Fn(&Evento) -> bool| eventos.iter().position(achar);
+        let comecou = posicao(&|e| matches!(e, Evento::Compactando(true))).unwrap_or_else(|| panic!("{eventos:?}"));
+        let acabou = posicao(&|e| matches!(e, Evento::Compactando(false))).unwrap_or_else(|| panic!("{eventos:?}"));
+        let marco = posicao(&|e| matches!(e, Evento::Compactou { manual: false, antes: Some(168432) })).unwrap_or_else(|| panic!("{eventos:?}"));
+        let fim = posicao(&|e| matches!(e, Evento::Fim { erro: false, .. })).unwrap_or_else(|| panic!("{eventos:?}"));
+        assert!(comecou < acabou && acabou < marco && marco < fim, "{eventos:?}");
+        assert!(eventos[marco..fim].iter().any(|e| matches!(e, Evento::Texto(_))), "o turno segue depois do marco: {eventos:?}");
+
+        let eventos = turno("/compact", args);
+        assert!(eventos.iter().any(|e| matches!(e, Evento::Compactando(true))), "{eventos:?}");
+        assert!(eventos.iter().any(|e| matches!(e, Evento::Compactou { manual: true, antes: Some(_) })), "{eventos:?}");
+        // Como no de verdade: o /compact termina sem texto.
+        assert!(!eventos.iter().any(|e| matches!(e, Evento::Texto(_))), "{eventos:?}");
+        assert!(matches!(eventos.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto.is_empty()), "{eventos:?}");
+    }
+}
+
+#[cfg(test)]
+mod testes_das_imagens_do_resultado {
+    use super::*;
+    use crate::{imagens_recebidas, modelo::Item};
+
+    /// Um PNG de mentira: a assinatura, o IHDR com as medidas e um recheio.
+    fn png(largura: u32, altura: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend([0, 0, 0, 13]);
+        bytes.extend(b"IHDR");
+        bytes.extend(largura.to_be_bytes());
+        bytes.extend(altura.to_be_bytes());
+        bytes.extend((0..6000u32).map(|i| (i * 37 % 253) as u8));
+        bytes
+    }
+
+    fn resultado(id: &str, conteudo: Value) -> Value {
+        json!({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": id, "content": conteudo},
+        ]}})
+    }
+
+    fn bloco_de_imagem(bytes: &[u8]) -> Value {
+        json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": base64(bytes)}})
+    }
+
+    /// O print de um MCP de navegador: o texto vira o resultado e a imagem sai num evento à
+    /// parte, já fora do base64.
+    #[test]
+    fn o_resultado_com_imagem_entrega_o_texto_e_a_imagem_separados() {
+        let imagem = png(1280, 800);
+        let linha = resultado("toolu_1", json!([{"type": "text", "text": "Took a screenshot of the page."}, bloco_de_imagem(&imagem)]));
+        let eventos = interpretar(&linha);
+        match eventos.as_slice() {
+            [Evento::ResultadoFerramenta { id, conteudo, erro: false, .. }, Evento::ImagensDoResultado { id: da_imagem, imagens }] => {
+                assert_eq!((id.as_str(), da_imagem.as_str()), ("toolu_1", "toolu_1"));
+                assert_eq!(conteudo, "Took a screenshot of the page.");
+                assert_eq!(imagens.len(), 1);
+                assert_eq!((imagens[0].extensao, &imagens[0].bytes), ("png", &imagem));
+            }
+            outros => panic!("eventos inesperados: {outros:?}"),
+        }
+        // Nem o texto de depuração dos eventos carrega a imagem.
+        assert!(format!("{eventos:?}").len() < 600);
+    }
+
+    /// O Read de uma imagem devolve só o bloco dela: o resultado fica sem texto (a miniatura é o
+    /// que se mostra), e o resultado sem imagem continua um evento só.
+    #[test]
+    fn o_resultado_so_com_a_imagem_fica_sem_texto() {
+        let eventos = interpretar(&resultado("toolu_2", json!([bloco_de_imagem(&png(40, 20))])));
+        assert!(matches!(eventos.as_slice(), [
+            Evento::ResultadoFerramenta { conteudo, .. },
+            Evento::ImagensDoResultado { imagens, .. },
+        ] if conteudo.is_empty() && imagens.len() == 1));
+        let eventos = interpretar(&resultado("toolu_3", json!("saída do comando")));
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "saída do comando"));
+        let eventos = interpretar(&resultado("toolu_4", json!([{"type": "text", "text": "um"}, {"type": "text", "text": "dois"}])));
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "um\ndois"));
+    }
+
+    /// A imagem que não dá para guardar deixa a marca dela no texto, como antes.
+    #[test]
+    fn a_imagem_que_nao_da_para_guardar_vira_a_marca_no_texto() {
+        let linha = resultado("toolu_5", json!([
+            {"type": "text", "text": "Diagrama:"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/svg+xml", "data": base64(b"<svg></svg>")}},
+        ]));
+        let eventos = interpretar(&linha);
+        assert!(matches!(eventos.as_slice(), [Evento::ResultadoFerramenta { conteudo, .. }] if conteudo == "Diagrama:\n(image/svg+xml)"));
+    }
+
+    /// Da linha do Claude Code à conversa gravada: a imagem vai para a pasta do chat e o que fica
+    /// na conversa (o que o `salvar_chat` grava) é o caminho. O base64 não aparece em lugar nenhum.
+    #[test]
+    fn o_base64_da_imagem_nao_chega_a_conversa_gravada() {
+        let raiz = std::env::temp_dir().join(format!("vitral-claude-imagens-{}", crate::modelo::novo_id()));
+        let dados = crate::dados::Dados::em(&raiz);
+        let imagem = png(1920, 1080);
+        let em_base64 = base64(&imagem);
+        let linha = resultado("toolu_print", json!([{"type": "text", "text": "Print tirado."}, bloco_de_imagem(&imagem)]));
+
+        // A chamada já está na conversa; os eventos do resultado chegam como o motor os trata.
+        let mut itens = vec![Item::Ferramenta {
+            id: "toolu_print".into(),
+            nome: "mcp__chrome-devtools__take_screenshot".into(),
+            resumo: "mcp__chrome-devtools__take_screenshot".into(),
+            resultado: None,
+            erro: false,
+            em: 0,
+            detalhe: None,
+            arquivo: None,
+            sub: None,
+            mudanca: None,
+            imagens: Vec::new(),
+            durou: 0,
+        }];
+        for evento in interpretar(&linha) {
+            match evento {
+                Evento::ResultadoFerramenta { conteudo, .. } => {
+                    if let Item::Ferramenta { resultado, .. } = &mut itens[0] {
+                        *resultado = Some(conteudo);
+                    }
+                }
+                Evento::ImagensDoResultado { id, imagens } => {
+                    assert!(imagens_recebidas::guardar_na_chamada(&mut itens, &id, &dados.pasta_imagens("chat-1"), &imagens));
+                }
+                outro => panic!("evento inesperado: {outro:?}"),
+            }
+        }
+
+        let Item::Ferramenta { resultado, imagens, .. } = &itens[0] else { unreachable!() };
+        assert_eq!(resultado.as_deref(), Some("Print tirado."));
+        assert_eq!(imagens.len(), 1);
+        assert!(imagens[0].starts_with(dados.pasta_imagens("chat-1")));
+        assert_eq!(std::fs::read(&imagens[0]).unwrap(), imagem);
+
+        let gravado = serde_json::to_string_pretty(&itens).unwrap();
+        // O caminho como o JSON o escreve: no Windows cada barra invertida vira `\\`.
+        assert!(gravado.contains(&serde_json::to_string(&imagens[0]).unwrap()));
+        for pedaco in [&em_base64[..64], &em_base64[em_base64.len() / 2..em_base64.len() / 2 + 64]] {
+            assert!(!gravado.contains(pedaco), "o base64 foi para a conversa");
+        }
+        assert!(!gravado.contains("(image/png)"));
+        assert!(gravado.len() < 1500, "{} bytes", gravado.len());
+        let _ = std::fs::remove_dir_all(&raiz);
     }
 }
