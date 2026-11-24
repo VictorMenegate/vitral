@@ -412,6 +412,36 @@ pub fn gradiente_do_pe_do_cartao() -> Background {
     linear_gradient(180., linear_color_stop(cartao.opacity(0.), 0.), linear_color_stop(cartao, 1.))
 }
 
+/// O pé do cartão em curva: do transparente ao opaco em trechos que seguem a curva suave
+/// (3t² − 2t³), que começa e termina sem quina. O degradê reto de 200 px deixava uma linha onde
+/// acabava e o cartão ficava cheio (dono, 24/11/2026: "deixa mais difuso pra não ficar essa
+/// repartição", sobre o shader). Cada trecho: início e fim (fração da altura) e o degradê dele.
+pub fn pe_do_cartao_em_curva() -> Vec<(f32, f32, Background)> {
+    let cartao = Cores::cartao_opaco();
+    curva_do_pe(TRECHOS_DO_PE)
+        .into_iter()
+        .map(|(de, ate, alfa_de, alfa_ate)| {
+            (de, ate, linear_gradient(180., linear_color_stop(cartao.opacity(alfa_de), 0.), linear_color_stop(cartao.opacity(alfa_ate), 1.)))
+        })
+        .collect()
+}
+
+/// Em quantos trechos o pé do cartão faz a curva, e a altura de cada um (px): 8 de 48, com um
+/// número inteiro de pixels por trecho também a 125% e 150%, para não sobrar fio entre dois.
+pub const TRECHOS_DO_PE: usize = 8;
+pub const ALTURA_DO_TRECHO_DO_PE: f32 = 48.;
+
+/// Os trechos da curva: (início, fim, opacidade no início, opacidade no fim).
+pub fn curva_do_pe(trechos: usize) -> Vec<(f32, f32, f32, f32)> {
+    let suave = |t: f32| t * t * (3. - 2. * t);
+    (0..trechos)
+        .map(|i| {
+            let (de, ate) = (i as f32 / trechos as f32, (i + 1) as f32 / trechos as f32);
+            (de, ate, suave(de), suave(ate))
+        })
+        .collect()
+}
+
 /// A divisória entre duas peças emendadas: um fio de 1 px que nasce do nada no alto, fica cheio no
 /// meio e some de novo embaixo (dono, 16/11/2026: "tem que ser algo diferente, mais moderno"; o
 /// fio reto de cima a baixo cortava a fileira das abas e a das caixas). `embaixo` dá o trecho de
@@ -2011,5 +2041,28 @@ pub(crate) mod testes {
             assert_eq!(m.expand(), Duration::ZERO);
             assert_eq!(m.idle(), Duration::from_millis(1200));
         }
+    }
+}
+
+#[cfg(test)]
+mod testes_do_pe_em_curva {
+    use super::curva_do_pe;
+
+    #[test]
+    fn a_curva_do_pe_vai_do_transparente_ao_cheio_sem_quina() {
+        let curva = curva_do_pe(8);
+        assert_eq!(curva.len(), 8);
+        assert_eq!(curva[0].2, 0.0);
+        assert!((curva[7].3 - 1.0).abs() < 1e-6);
+        // Trechos emendados, sem buraco nem sobra, e sempre subindo.
+        for par in curva.windows(2) {
+            assert_eq!(par[0].1, par[1].0);
+            assert_eq!(par[0].3, par[1].2);
+            assert!(par[1].3 > par[0].3);
+        }
+        // Começa e termina devagar: o primeiro e o último trecho sobem menos que os do meio.
+        let subida = |i: usize| curva[i].3 - curva[i].2;
+        assert!(subida(0) < subida(3) / 3.0);
+        assert!(subida(7) < subida(4) / 3.0);
     }
 }

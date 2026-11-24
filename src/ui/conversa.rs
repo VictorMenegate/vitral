@@ -682,7 +682,7 @@ impl Janela {
             .bg(Cores::cartao())
             .overflow_hidden()
             // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
-            // caixa de mensagem: 200 de degradê e 200 cheios (por baixo do conteúdo).
+            // caixa de mensagem: 384 de degradê em curva e 200 cheios (por baixo do conteúdo).
             // Só com os fundos transparentes (no opaco não há o que fechar). O pedaço cheio leva os
             // cantos de baixo do cartão: o `overflow_hidden` corta em retângulo, e sem isso o
             // fundo sobrava quadrado para fora da curva (dono, 13/11/2026). O pedaço cheio cresce
@@ -691,14 +691,20 @@ impl Janela {
             // essa parte da divisão do shader").
             .when(crate::tema::transparencia() > 0, |s| {
                 let cheio = px(200.) + tam(window, topo_da_doca);
+                // A curva (`pe_do_cartao_em_curva`): trechos de degradê empilhados, em pixels
+                // inteiros, que sobem devagar no começo e no fim (24/11/2026: "mais difuso").
+                let trecho = px(crate::tema::ALTURA_DO_TRECHO_DO_PE);
+                let degrade = trecho * crate::tema::TRECHOS_DO_PE as f32;
                 s.child(
                     div()
                         .absolute()
                         .left_0()
                         .right_0()
                         .bottom_0()
-                        .h(cheio + px(200.))
-                        .child(div().absolute().top_0().left_0().right_0().h(px(200.)).bg(crate::tema::gradiente_do_pe_do_cartao()))
+                        .h(cheio + degrade)
+                        .children(crate::tema::pe_do_cartao_em_curva().into_iter().enumerate().map(move |(i, (_, _, fundo))| {
+                            div().absolute().left_0().right_0().top(trecho * i as f32).h(trecho).bg(fundo)
+                        }))
                         .child(
                             div()
                                 .absolute()
