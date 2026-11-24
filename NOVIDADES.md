@@ -5,6 +5,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
 
 ## 0.10.3
 
+O Codex e o Gemini ganharam nas Configurações o mesmo cuidado do Claude Code: dá para instalar,
+atualizar, entrar e sair da conta e ver os servidores MCP de cada um. As pílulas do turno voltaram
+para baixo do campo de mensagem.
+
 - **Codex e Gemini nas Configurações.** Duas partes novas, depois do Claude Code, no mesmo molde:
   a versão instalada com **Atualizar** (ou **Instalar…** se o programa não está no computador), a
   conta com **Entrar…** (e **Sair** no Codex, com pergunta antes), a lista dos servidores MCP e o
