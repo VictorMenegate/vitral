@@ -500,6 +500,15 @@ pub(super) fn borda_ao_conteudo(estreita: bool, window: &Window) -> Pixels {
     tam(window, if estreita { 10. } else { 12. })
 }
 
+/// Da beirada da coluna à borda de fora da caixa: a margem da coluna de leitura (24) ou, na caixa
+/// estreita, 16. A coluna de leitura inteira (`mensagens::coluna`) e a faixa de cima da caixa ("N
+/// arquivos mudados") medem daqui, para o texto de tudo cair na mesma coluna. A faixa usava 16
+/// fixo e, quando a coluna foi a 24 (17/11/2026), ficou 8 px à esquerda do texto da caixa e 8
+/// antes do enviar (folha dimensional, 23/11/2026).
+pub(super) fn margem_da_caixa(estreita: bool) -> Rems {
+    if estreita { esp::E16 } else { super::mensagens::MARGEM_DA_COLUNA }
+}
+
 /// A dica dos botões de compactar: o clique compacta já; quem quer foco escreve a instrução.
 pub(super) const DICA_DO_COMPACTAR: &str =
     "Resume a conversa agora, sem mexer no que está escrito na caixa (com o turno rodando, entra na fila). Para compactar com foco, escreva “/compact” e a instrução na caixa.";
@@ -582,7 +591,7 @@ fn envio(rodando: bool, vazio: bool) -> Envio {
 
 impl Janela {
     /// A caixa de mensagem do painel, em moldura dupla (a base AI Input With Loading): por fora,
-    /// uma moldura preta de raio 20; dentro, com 4 de folga, o campo opaco de raio 16 com o texto
+    /// uma moldura preta de raio 20; dentro, com 2 de folga, o campo opaco com o texto
     /// (na coluna do ícone do primeiro chip) e os chips; embaixo do campo, ainda na moldura, a
     /// linha de estado em mono 11. O foco acende a moldura (180 ms; apaga em 120).
     pub(super) fn caixa_mensagem(
@@ -619,10 +628,11 @@ impl Janela {
         let foco_da_caixa = composer.read(cx).focus_handle(cx);
         let caixa_vazia = composer.read(cx).value().trim().is_empty();
         let com_menu = self.menu_da_caixa(ix, chat, cx).is_some();
-        // O miolo é concêntrico com a moldura de 20 e 2 de folga, não com o cartão da conversa.
-        // A moldura preta tem 2 de folga (eram 4; dono, 16/11/2026: "diminui as bordas"); o miolo
-        // continua concêntrico com ela.
-        let raio_miolo = raio::peca() - px(2.);
+        // O miolo é concêntrico com a moldura de 20, não com o cartão da conversa: o raio de fora
+        // menos a borda de 1 e a folga de 2 (eram 4; dono, 16/11/2026: "diminui as bordas"). A
+        // conta tirava só a folga e o canto de dentro saía 1 px mais aberto (2 a 150%), visto na
+        // folha dimensional de 23/11/2026. A borda é 1 px em qualquer zoom; a folga cresce com ele.
+        let raio_miolo = raio::peca() - px(1.) - tam(window, 2.);
         // A linha de estado: com o chat trabalhando, o que ele faz agora (M15); parada, as teclas.
         // A linha de baixo só existe com o chat trabalhando (o que ele faz agora e o Esc). Parada,
         // a caixa não tem mais a linha das teclas (dono, 13/11/2026: "tira essa parte de baixo").
@@ -770,8 +780,7 @@ impl Janela {
         });
 
         div()
-            .map(super::mensagens::coluna)
-            .when(estreita, |s| s.px(esp::E16))
+            .map(|s| super::mensagens::coluna(s, estreita))
             .pb(esp::E12)
             .on_prepaint(ajustar_linhas(janela.clone(), painel_id, linhas))
             .key_context("Caixa")

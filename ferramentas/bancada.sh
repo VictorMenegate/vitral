@@ -123,6 +123,14 @@ J
         # CLAUDE_FALSO_VERSAO de novo.
         rm -f "$B/state$N/claude-falso-versao"
     fi
+    # Um chat do Vitral roda com o CLAUDE_CONFIG_DIR da conta de verdade, e com ele o app lê as
+    # conversas reais mesmo na bancada (o DENTRO_DA_BANCADA só barra sem ele): em 23/11/2026 a
+    # bancada aberta de um chat importou as conversas do dono. Passa só o de mentira.
+    case "$(realpath -m "${CLAUDE_CONFIG_DIR:-/nenhum}")" in
+        "$HOME"/.claude | "$HOME"/.claude/* | "$HOME"/.config/vitral/*)
+            echo "bancada: CLAUDE_CONFIG_DIR de verdade ($CLAUDE_CONFIG_DIR) fica de fora" >&2
+            unset CLAUDE_CONFIG_DIR ;;
+    esac
     export XDG_CONFIG_HOME=$B/config XDG_DATA_HOME=$B/data XDG_CACHE_HOME=$B/cache XDG_BIN_HOME=$B/bin \
         XDG_STATE_HOME=$B/state$N XDG_RUNTIME_DIR=$RUN GSETTINGS_BACKEND=keyfile DENTRO_DA_BANCADA=1 \
         VITRAL_SEM_ATUALIZACAO=${VITRAL_SEM_ATUALIZACAO:-1}

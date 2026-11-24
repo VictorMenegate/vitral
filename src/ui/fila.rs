@@ -18,7 +18,7 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{LarguraPainel, Selo, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, contagem, variante_fantasma},
+    componentes::{FaixaCaixa, LarguraPainel, Selo, TamanhoBotao, Tom, aviso, botao_fantasma, botao_icone, contagem, variante_fantasma},
 };
 use crate::{
     modelo::Entrada,
@@ -112,7 +112,7 @@ impl Janela {
         // A linha em edição vai por parâmetro: ler a Janela daqui de dentro, no desenho dela,
         // derrubava o app (`cannot read Janela while it is already being updated`).
         let editando = self.editando_fila.as_ref().filter(|e| e.chat == chat).map(|e| (e.indice, e.campo.clone()));
-        Some(div().map(super::mensagens::coluna).py(esp::E8)
+        Some(div().map(|s| super::mensagens::coluna(s, p.medida.faixa == FaixaCaixa::Estreita)).py(esp::E8)
             .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, editando, window, cx)).into_any_element())
     }
 

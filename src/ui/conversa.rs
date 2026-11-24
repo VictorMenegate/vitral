@@ -599,6 +599,7 @@ impl Janela {
             .and_then(|ix| self.paineis[ix].chat.clone())
             .and_then(|id| motor.chat(&id));
         let ativo = ix == Some(self.ativo);
+        let caixa_estreita = ix.is_some_and(|ix| self.paineis[ix].medida.faixa == super::componentes::FaixaCaixa::Estreita);
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
         let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
@@ -841,7 +842,7 @@ impl Janela {
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
                 let responder = (ativo && self.trecho.is_some()).then(|| {
                     div()
-                        .map(super::mensagens::coluna)
+                        .map(|s| super::mensagens::coluna(s, caixa_estreita))
                         .flex()
                         .justify_end()
                         .pb(esp::E6)

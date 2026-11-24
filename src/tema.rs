@@ -27,7 +27,7 @@ pub fn tam(window: &Window, px: f32) -> Pixels {
 
 /// Raios: três medidas e a pílula. As três são em rem, para crescerem com o zoom como o resto (a
 /// 150% o canto fixo em px ficava bem menos redondo: dono, 13/11/2026); quem só aceita `Pixels`
-/// usa `controle()`, `cartao()` e `peca()`. Dentro de quem tem padding p, o raio é max(raio de fora − p, CONTROLE),
+/// usa `controle()`, `cartao()` e `peca()`. Dentro de quem tem padding p, o raio é max(raio de fora − borda − p, CONTROLE),
 /// para os cantos ficarem concêntricos; o teste `raios_na_escala` barra o resto.
 pub mod raio {
     use gpui_kit::{Pixels, px};
