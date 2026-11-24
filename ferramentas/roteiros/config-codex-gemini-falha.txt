@@ -1,0 +1,16 @@
+# O Atualizar do Codex e do Gemini quando o comando falha (âmbar), a 150%.
+#   CODEX_FALSO_UPDATE_FALHA=1 AGY_FALSO_UPDATE_FALHA=1 VITRAL_AGENTES_PUBLICADOS="codex=0.171.0" \
+#     bancada-isolada.sh <este roteiro> prints/
+espera 9
+tecla Control_L+comma
+espera 2
+clique 288 550            # Codex
+espera 4
+clique 1322 311           # Atualizar
+espera 6
+print f1-codex-falhou
+clique 288 601            # Gemini
+espera 5
+clique 1322 299           # Atualizar
+espera 6
+print f2-gemini-falhou

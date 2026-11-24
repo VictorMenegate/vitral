@@ -1,4 +1,4 @@
-# As sete partes das Configurações a 150%, na janela de 1400 da bancada (a coluna à esquerda).
+# As nove partes das Configurações a 150%, na janela de 1400 da bancada (a coluna à esquerda).
 # ZOOM=1.5 CLAUDE_FALSO=1 VITRAL_SEM_ANIMACAO=1 VITRAL_AGENTES_PUBLICADOS="claude=9.9.9,codex=9.9.9" \
 #   ferramentas/bancada.sh ferramentas/roteiros/config-partes.txt prints/ ./target/debug/vitral <pasta>
 # Os cliques são os itens da coluna; conferir o y se a altura do diálogo mudar.
@@ -9,7 +9,7 @@ espera 2                  # o diálogo desenha
 print p1-chats            # resumo, avisos, o Testar da notificação, arquivar e sugerir
 clique 266 251            # Agentes
 espera 4                  # o codex --version e as versões publicadas respondem
-print p2-agentes          # modo, quem responde e modelo; as instruções; o Codex com "há a 9.9.9"
+print p2-agentes          # modo, quem responde e modelo; as instruções e a versão nova
 clique 255 302            # Perfis
 espera 1
 print p3-perfis           # a lista e o Novo perfil
@@ -22,6 +22,12 @@ print p5-aparencia        # zoom e letra da conversa em %, uso no canto, animaç
 clique 288 455            # Claude Code
 espera 2
 print p6-claude-code      # a versão instalada com "Há a 9.9.9" e os servidores MCP
-clique 288 506            # Atualizações
+clique 288 506            # Codex
+espera 3
+print p7-codex            # a versão com "Há a 9.9.9", a conta, os servidores e a configuração
+clique 288 557            # Gemini
+espera 3
+print p8-gemini
+clique 288 608            # Atualizações
 espera 1
-print p7-atualizacoes     # as atualizações e o Copiar do diagnóstico
+print p9-atualizacoes     # as atualizações e o Copiar do diagnóstico

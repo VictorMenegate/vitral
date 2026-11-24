@@ -1834,12 +1834,19 @@ pub fn atualizar() -> Atualizacao {
 }
 
 fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
+    atualizar_programa(binario, "claude", "update")
+}
+
+/// Roda `<binario> <subcomando>` (o `update` do claude, do codex e do agy, e o `logout` do codex)
+/// e devolve o que ele imprimiu: o mesmo desenho do `claude update`, com `nome` no aviso de
+/// "não disse nada".
+pub fn atualizar_programa(binario: &std::path::Path, nome: &str, subcomando: &str) -> Atualizacao {
     // Um binário recém-trocado pode dar "Text file busy" por um instante (no Windows, o antivírus
     // segurando o .exe): tenta de novo, como o atualizador do próprio Vitral.
     let mut tentativas = 0;
     let saida = loop {
         let saida = processos::novo_comando(binario)
-            .arg("update")
+            .arg(subcomando)
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .output();
@@ -1873,7 +1880,7 @@ fn atualizar_com(binario: &std::path::Path) -> Atualizacao {
         linhas.drain(..linhas.len() - LINHAS_DA_ATUALIZACAO);
     }
     if linhas.is_empty() {
-        linhas.push("O claude não disse nada.".into());
+        linhas.push(format!("O {nome} não disse nada."));
     }
     Atualizacao { ok: saida.status.success(), linhas }
 }

@@ -1,0 +1,14 @@
+# As partes Codex e Gemini das Configurações a 150%, com o Codex e o agy de mentira.
+# WT=. BANCADA=N BIN=./target/debug/vitral VITRAL_AGENTES_PUBLICADOS="claude=9.9.9,codex=0.171.0" \
+#   bancada-isolada.sh ferramentas/roteiros/config-codex-gemini.txt prints/
+# Os cliques são os itens da coluna (Codex e Gemini vêm depois do Claude Code).
+
+espera 9                  # o Vitral abre
+tecla Control_L+comma     # Configurações
+espera 2
+clique 288 550            # Codex
+espera 4                  # --version, login status e a consulta respondem
+print c1-codex            # versão com "Há a 0.171.0", conta, servidores e configuração
+clique 288 601            # Gemini
+espera 6                  # agy --version e a cota (login)
+print c2-gemini

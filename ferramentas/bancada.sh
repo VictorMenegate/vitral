@@ -24,6 +24,7 @@
 # tempo usam cada um o seu par, por exemplo XDG_CACHE_HOME=~/.cache/vitral-trabalho/bancada-l5
 # BANCADA=5. Com o mesmo número (o Shell de uma recebe a janela da outra) ou a mesma pasta (o
 # DADOS_NOVOS afastaria os dados da outra) já em uso, a bancada recusa começar.
+# SO_CLAUDE_FALSO=1 (com CLAUDE_FALSO=1) deixa só o claude de mentira no PATH, sem o codex e o agy.
 # FUNDO=branco (fundo branco liso, o pior caso de contraste) ou FUNDO=<imagem> troca o papel de
 # parede; sem ele, vale o da sessão.
 # TELA=2400x1300 troca o tamanho do monitor de mentira (o padrão é 1600x1000): a 150% de zoom, três
@@ -118,7 +119,16 @@ $LISO
 show-banners=false
 J
     if [ -n "${CLAUDE_FALSO:-}" ]; then
-        export PATH="$(dirname "$(realpath "$0")")/claude-falso:$PATH"
+        FALSOS="$(dirname "$(realpath "$0")")/claude-falso"
+        # SO_CLAUDE_FALSO=1: só o claude de mentira entra no PATH (sem o codex e o agy falsos), para ver
+        # as Configurações sem o Codex e o Gemini instalados (use também HOME=<pasta vazia> e um PATH
+        # sem ~/.local/bin, onde os de verdade moram).
+        if [ -n "${SO_CLAUDE_FALSO:-}" ]; then
+            mkdir -p "$B/so-claude-falso"
+            ln -sf "$FALSOS/claude" "$B/so-claude-falso/claude"
+            FALSOS="$B/so-claude-falso"
+        fi
+        export PATH="$FALSOS:$PATH"
         # A versão que um update de mentira anotou vale só nesta rodada: a próxima parte do
         # CLAUDE_FALSO_VERSAO de novo.
         rm -f "$B/state$N/claude-falso-versao"

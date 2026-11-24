@@ -2301,8 +2301,7 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     dos chats do Claude** e a **Revisão automática pelo outro agente** (ligada; ver **A revisão do
     turno pelo outro agente**); as **Instruções para todos os chats** (um texto seu, de até 4.000
     caracteres, que entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do
-    que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e o
-    **Codex** (a versão instalada, ou **Instalar…** sem ele); e **Versão nova** (**Consultar a
+    que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e **Versão nova** (**Consultar a
     versão nova dos agentes**: Sozinho, como era, ou Só pelo botão, que traz o **Consultar agora**).
   - **Perfis:** os perfis de agente (ver **Perfis de agente**, abaixo).
   - **Memória:** **Memória da equipe** e **Rever a memória ao terminar**.
@@ -2323,14 +2322,34 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     e mostra o que ele respondeu, em âmbar se falhar (a versão nova vale no turno seguinte, sem
     reiniciar o Vitral), **Servidores MCP do Claude Code**, os do seu Claude Code nos chats, e a
     **Lista dos servidores MCP**, que abre a lista de cada servidor e o estado dele.
+  - **Codex** e **Gemini** (`src/ui/configuracoes/agentes_fora.rs`, o mesmo molde do cartão do
+    Claude Code; o que roda processo mora em `src/cli_agentes.rs` e `src/motor/cli_fora.rs`): a
+    **Versão instalada** (`codex --version`, `agy --version`) com **Atualizar**, que roda `codex
+    update` ou `agy update` fora de qualquer turno, em segundo plano, com spinner, espera os chats
+    daquele agente (como agente ou como parceiro da dupla) que estão trabalhando ou com mensagem
+    na fila e mostra o que o comando respondeu, em âmbar se falhar (o `agy update` responde um JSON
+    de uma linha, e o Vitral mostra só a `message`); sem o programa, só essa linha, com **Instalar…**
+    (o instalador oficial e o login no terminal, `uso_plano::instalar_*`). Com ele: a **Conta**
+    (Codex: o `codex login status` traduzido, "Entrou com a conta do ChatGPT", "Entrou com uma chave
+    de API" ou "Não entrou", sem nunca mostrar a chave; Gemini: "Conta Google conectada" quando o
+    `agy -p /usage` devolve a cota, que é o único sinal de login que o `agy` dá) com **Entrar…**
+    (o terminal com `codex login` ou `agy acp --login`, e o motor olha de tempos em tempos, por uns
+    minutos, se a conta entrou) e, no Codex, **Sair** (`codex logout`, com a confirmação antes,
+    porque derruba os chats do Codex até entrar de novo); a **Lista dos servidores MCP**, só
+    leitura (`codex mcp list --json`, `agy mcp list`; o formato do `agy` com servidores não foi
+    visto, a leitura é tolerante); e a **Configuração do Codex** (`$CODEX_HOME/config.toml` ou
+    `~/.codex/config.toml`) ou **do Gemini** (`~/.gemini/antigravity-cli/settings.json`), com
+    **Abrir** no aplicativo do sistema, só quando o arquivo existe. A versão nova do Codex vem da
+    consulta do npm (abaixo); o Gemini não tem consulta, porque o `agy` não publica uma versão que
+    se leia sem instalar.
     Quando o pacote do Claude Code ou do Codex anuncia versão mais nova que a instalada, a linha
-    diz ("Há a 2.1.330. O Atualizar instala.", "0.169.0 · há a 0.171.0"); em dia, não diz nada. A
+    diz ("Há a 2.1.330. O Atualizar instala."); em dia, não diz nada. A
     consulta são as etiquetas do pacote de cada um no npm (a `stable` para quem escolheu esse
-    canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes ou a do Claude
-    Code abre (ou pelo botão, com **Só pelo botão**) e guardada por uma hora (`src/versoes_agentes.rs`).
+    canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes, a do Claude
+    Code ou a do Codex abre (ou pelo botão, com **Só pelo botão**) e guardada por uma hora (`src/versoes_agentes.rs`).
   - **Atualizações:** as atualizações do Vitral, a **Pasta de dados** (com **Abrir**) e o
     **Diagnóstico para pedir ajuda**: o **Copiar**
-    põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex), o sistema,
+    põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex, Gemini), o sistema,
     as pastas dos dados, as opções ligadas e as últimas 40 linhas do `queda.log`. O que tem cara de
     chave ou token é coberto, a pasta pessoal vira `~`, as suas instruções entram só pelo tamanho,
     o endereço da memória da equipe só como "ligada", e nenhuma conversa entra
@@ -2639,7 +2658,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
 `[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[passos A; B; C]` encena o plano (`turn/plan/updated`), um passo a cada ferramenta; as conversas ficam em `$XDG_STATE_HOME/codex-falso-conversas.json`, a resposta diz de quais mensagens de antes ele lembra e o `thread/fork` corta no `beforeTurnId` (o turno que não existe dá `turn not found`); `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
-os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
+os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0; `codex login status` (`CODEX_FALSO_LOGIN`: chatgpt, chave ou fora; o `logout` falso grava "fora"), `codex update` (`CODEX_FALSO_UPDATE_SEGUNDOS`, `CODEX_FALSO_UPDATE_FALHA=1`; instala a 0.171.0) e `codex mcp list [--json]` (`CODEX_FALSO_MCP=1` põe dois servidores); no `agy`, `update` (`AGY_FALSO_UPDATE_*`, com o JSON de uma linha) e `mcp list` (`AGY_FALSO_MCP=1`); `SO_CLAUDE_FALSO=1` na bancada tira os dois do PATH para ver o Instalar) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`
 termina com erro, um `session/prompt` com o turno rodando entra nele, `agy models` dá a lista, e os
@@ -2662,7 +2681,7 @@ linguagem visual ficam em `ferramentas/roteiros/` (`4c-antes.txt` tira todas as 
 janela estreita e as gavetas, e `4c-zoom-lista-estreita.txt` estreita a lista). Para ver todos os
 menus, popovers e diálogos de uma vez: `ferramentas/galeria-de-menus.sh <pasta> [binário]` roda o
 roteiro `galeria-menus.txt` (zoom 1,6; o menu do logo, o sino, o uso, o menu do chat, os chips da
-caixa, Nova conversa, as seis partes das Configurações, Atalhos, Paleta, Contas, Memória da equipe,
+caixa, Nova conversa, as partes das Configurações, Atalhos, Paleta, Contas, Memória da equipe,
 Quadro de ideias, Novo chat e Importar), grava um print inteiro de cada e monta a `folha.png` com
 todos em miniatura, com o nome; serve para as revisões de design (dono, 23/11/2026: "faz algo pra
 conseguir ver todos e analisar o que dá pra melhorar"). Os cliques são posições fixas: mudou o
@@ -2908,7 +2927,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/mcp.rs` | Servidor MCP local com as ferramentas do Vitral (`listar_chats`, `mensagem_para_chat`, `abrir_chat` e `permissao`), uma rota por chat com o token da sessão |
 | `src/prompts.rs` | O texto que o Vitral põe no prompt de sistema de cada chat: onde ele trabalha (direto na pasta, Sem pasta ou continuando uma conversa do Claude Code) e as convenções `[de: …]` e `[Vitral]`; no fim dele, as instruções de quem usa (`com_instrucoes`) |
 | `src/perfis.rs` | Os perfis de agente (`Config.perfis`): o que cada um guarda, guardar, remover e mudar de ordem, o que ele põe no chat e quando ele bate com o chat |
-| `src/versoes_agentes.rs` | A versão do Codex instalado e a mais nova publicada do Claude Code e do Codex (as etiquetas do pacote no npm, guardadas por uma hora), para o grupo Instalados das Configurações |
+| `src/versoes_agentes.rs` | A mais nova publicada do Claude Code e do Codex (as etiquetas do pacote no npm, guardadas por uma hora), para o "há a X" das Configurações |
+| `src/cli_agentes.rs` | O Codex e o Gemini como programas instalados: versão, `login status`, listas de MCP, `update`, `logout`, o comando do terminal para o login e o arquivo de configuração de cada um (a leitura do que eles imprimem é pura, com testes) |
 | `src/diagnostico.rs` | O texto do diagnóstico para pedir ajuda e a cobertura do que tem cara de segredo (`cobrir`) |
 | `src/processos/` | Todo processo que o Vitral abre (`novo_comando`, sem janela de console no Windows) e os que ele para por inteiro: escopos do systemd ou grupos de processos (`unix.rs`), Job Objects (`windows.rs`); `entrada.rs` escreve na entrada do claude e do codex numa thread própria, porque o pipe enche em 64 KiB e a janela não pode esperar o processo ler |
 | `src/sistema/` | O que abre fora do Vitral, nos dois sistemas: editor, terminal, gerenciador de arquivos, o bash dos comandos (no Windows, o do Git para Windows, nunca o do WSL) e o aviso do que falta instalar (`linux.rs`, `windows.rs`) |

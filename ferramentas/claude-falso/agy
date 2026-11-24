@@ -23,6 +23,23 @@ ARGS = sys.argv[1:]
 if ARGS[:1] == ["--version"]:
     print("1.5.15")
     sys.exit(0)
+if ARGS[:1] == ["update"]:
+    # `agy update` falso: AGY_FALSO_UPDATE_SEGUNDOS (padrão 4); AGY_FALSO_UPDATE_FALHA=1 falha.
+    time.sleep(float(os.environ.get("AGY_FALSO_UPDATE_SEGUNDOS", "4")))
+    if os.environ.get("AGY_FALSO_UPDATE_FALHA") == "1":
+        print(json.dumps({"success": False, "message": "Could not reach the update server."}))
+        sys.exit(1)
+    print(json.dumps({"success": True, "message": "Already on the latest version."}))
+    sys.exit(0)
+if ARGS[:2] == ["mcp", "list"]:
+    # Vazio, ou dois servidores com AGY_FALSO_MCP=1 (o formato com servidores é um palpite: o agy
+    # de verdade só foi visto sem nenhum configurado).
+    if os.environ.get("AGY_FALSO_MCP") == "1":
+        print("- fs  npx -y @modelcontextprotocol/server-filesystem /work")
+        print("- api  https://example.com/mcp (disabled)")
+    else:
+        print("No MCP servers configured.")
+    sys.exit(0)
 if ARGS[:1] == ["models"]:
     print("Fetching available models...")
     print("gemini-3.8-flash-high\tGemini 3.8 Flash (High)")
@@ -42,7 +59,7 @@ if ARGS[:2] == ["-p", "/usage"]:
     ]}}}))
     sys.exit(0)
 if ARGS[:1] != ["acp"]:
-    print("agy falso: só `acp`, `models` e `--version`", file=sys.stderr)
+    print("agy falso: só `acp`, `models`, `update`, `mcp list` e `--version`", file=sys.stderr)
     sys.exit(2)
 
 estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")

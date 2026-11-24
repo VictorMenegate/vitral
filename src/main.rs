@@ -6,6 +6,7 @@ mod agente_codex;
 mod agente_gemini;
 mod atualizacao;
 mod claude;
+mod cli_agentes;
 mod codex;
 mod contas;
 mod dados;

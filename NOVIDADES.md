@@ -3,6 +3,15 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.10.3
+
+- **Codex e Gemini nas Configurações.** Duas partes novas, depois do Claude Code, no mesmo molde:
+  a versão instalada com **Atualizar** (ou **Instalar…** se o programa não está no computador), a
+  conta com **Entrar…** (e **Sair** no Codex, com pergunta antes), a lista dos servidores MCP e o
+  arquivo de configuração com **Abrir**. O Atualizar roda fora dos turnos, espera os chats do
+  agente terminarem e mostra o que o comando respondeu. O Codex que ficava em Agentes mudou para a
+  parte dele.
+
 ## 0.10.2
 
 O Codex ficou quase tão completo quanto o Claude no Vitral: pede permissão no meio do turno pelo
