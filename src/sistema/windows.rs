@@ -81,6 +81,15 @@ pub fn abrir_terminal(pasta: &Path, comando: Option<&str>) {
     soltar(&mut terminal, true);
 }
 
+/// Abre um console do PowerShell na pasta rodando `comando` e deixa aberto depois (os instaladores
+/// oficiais do Codex e do Antigravity CLI no Windows são `install.ps1`, não scripts do bash).
+pub fn abrir_powershell(pasta: &Path, comando: &str) {
+    let mut terminal = novo_comando("powershell.exe");
+    terminal.args(["-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", comando]);
+    terminal.current_dir(pasta);
+    soltar(&mut terminal, true);
+}
+
 /// Manda o arquivo ou a pasta para a Lixeira (dá para restaurar pelo Explorer). Nunca apaga: o
 /// `FOF_WANTNUKEWARNING` faz o Windows perguntar quando ela não cabe na Lixeira (seria apagada de
 /// vez), e o "não" deixa tudo no lugar. Sem `FOF_ALLOWUNDO` aceito, devolve o erro.

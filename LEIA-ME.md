@@ -23,7 +23,7 @@ componentes do GPUI Kit.
   dela). **Sem pasta** dá ao chat uma pasta vazia só dele, em `~/.local/share/vitral/avulsos/<chat>`.
 - **Chat novo.** O "+" e o Ctrl+N criam um na hora, sem perguntar, como o "novo chat" do VS Code
   (`novo_chat_direto`, em `src/ui/dialogos.rs`): com **pasta de trabalho** (`Config.pasta_de_trabalho`,
-  escolhida nas boas-vindas; **Pasta de trabalho: <nome>…**, no menu do logo, troca), é sempre nela.
+  escolhida nas boas-vindas; **Pasta dos chats novos**, em Configurações, Chats, troca), é sempre nela.
   Sem pasta de trabalho: na pasta do chat aberto (o chat Sem pasta abre outro Sem pasta); sem chat
   aberto, na última pasta usada (a do último chat criado, guardada como
   `ultimo_destino` no `interface.json`, ou a do chat mexido por último); sem nenhuma, a paleta
@@ -88,15 +88,33 @@ componentes do GPUI Kit.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em
-  `comecar_turno_com`, a mensagem do usuário escolhe quem trabalha (`alvo_da_dupla`: "@claude",
-  "@codex" ou os dois) e abre a rodada (`Motor.rodadas`, `DUPLA_TROCAS`); `o_que_o_outro_fez`
-  monta, a partir da última `Item::Vez` do agente, o que o usuário mandou e o que o outro disse e
-  mexeu, e vai antes do texto do turno. No `fim_de_turno`, `passar_a_vez` abre a vez do outro com um
-  pedido de revisão que fica fora da conversa (`Entrada.registrada`); a rodada para em "Nada a
-  acrescentar" (`nada_a_acrescentar`), no limite de trocas, num erro ou no Parar. Escolher no seletor
-  um modelo do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O
-  interruptor fica no seletor de modelo (`juntar_agentes`), e o chip do modelo mostra as duas
-  marcas sobrepostas (`Simbolo::Dupla`, a de quem trabalhou por último na frente) em toda largura.
+  `comecar_turno_com`, a mensagem do usuário escolhe quem trabalha (`alvo_da_dupla`: "@claude" ou
+  "@codex"; sem @, quem está na vez); `o_que_o_outro_fez` monta, a partir da última `Item::Vez` do
+  agente, o que o usuário mandou e o que o outro disse e mexeu, e vai antes do texto do turno. A
+  dupla nasce sozinha, ao trocar de agente ou chamar o outro com @. Escolher no seletor um modelo
+  do outro agente muda o modelo dele (`definir_agente`), sem desfazer a dupla. O chip do modelo
+  mostra as duas marcas sobrepostas (`Simbolo::Dupla`, a de quem trabalhou por último na frente) em
+  toda largura. A chave "Os dois em toda mensagem" (as rodadas em que um trabalhava e o outro
+  revisava) saiu em 24/11/2026: o campo `Chat.revisao_em_dupla` ainda é lido, para os dados
+  antigos abrirem, e não vale mais nada.
+- **A revisão do turno pelo outro agente.** `src/motor/revisao_do_par.rs` (decisão do dono em
+  23/11/2026). No `fim_de_turno` sem erro, o turno que mudou `LINHAS_PARA_REVISAR` (20) linhas ou
+  mais (a conta das Mudanças do turno, `linhas_mudadas_no_turno`) é revisto pelo outro agente (o
+  Codex num chat do Claude, o Claude nos outros; `Agente::outro`), se a opção
+  `Config.revisar_edicoes` ("Revisão automática pelo outro agente", em Configurações, Agentes;
+  ligada de fábrica) estiver ligada. Não roda com o outro fora (não instalado ou no limite do
+  plano), com o chat em Planejar, nem no turno que veio de uma revisão mandada (nada de laço;
+  `motivo_sem_revisao`). O revisor entra como o parceiro da dupla (`abrir`, que cria o parceiro se o
+  chat não tinha), roda um turno só em Planejar (no Codex, o sandbox `read-only`; o pedido de
+  permissão dele é negado sem perguntar) e o chat volta a quem era (`fechar`): o que ele fez sai da
+  conversa e entra o resultado, a linha "Codex revisou: nada a acrescentar" ou o `Item::Revisao`, o
+  cartão com o achado e **Mandar ao Claude** (`Motor::mandar_revisao`, que entrega o texto ao agente
+  do chat como uma mensagem de "Revisão do Codex"). Enquanto roda, a linha de estado diz "Codex
+  revisando o turno…" e o chat conta como parado; uma mensagem sua corta a revisão, sem deixar
+  nada. Na linha "Trabalhou…" do último turno pronto, **Revisar com o Codex** (ou "com o Claude";
+  `ui/mensagens/revisao.rs`, `Motor::pode_revisar`) pede a mesma revisão para qualquer turno. Na
+  bancada, `[ferramenta EditGrande x.py]` faz um turno de 30 linhas e `[revisor-acha]` na mensagem
+  faz o revisor de mentira achar algo.
 - **Subagente em segundo plano.** Desde o Claude Code 2.1.3xx a chamada Agent volta na hora com
   `tool_use_result.status = "async_launched"`: isso vira `Evento::SubLancado`, e não resultado. O
   `system/task_progress` conta as ferramentas (`SubProgresso`) e o `system/task_notification`
@@ -199,8 +217,8 @@ componentes do GPUI Kit.
   `motor::CONTEXTO_COMPACTADO`; a conversa trazida do Claude Code segue com "A conversa foi
   resumida aqui", que vem do arquivo dela (`src/importar.rs`).
 - **Conta do Claude e login perdido.** Com mais de uma conta, a escolha fica no seletor de modelo,
-  no grupo "Conta do Claude" da aba do Claude (`itens_de_conta`, em `src/ui/composer_seletores.rs`;
-  as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
+  numa linha no pé da aba do Claude, "Conta: tecnologia · semana 44%", que abre as contas no lugar
+  (`pe_da_conta`, em `src/ui/composer_seletores.rs`; as chaves são `conta:<id>`). Quando um turno termina com erro de login ("OAuth token revoked",
   "OAuth session expired and could not be refreshed"; `motor::falha_de_login`), a conta entra em
   `Motor.sem_login`, sai da escolha (`conta_da_escolha` passa a pular até a conta escolhida à mão)
   e o turno é repetido em outra conta com login, com o aviso de qual (`Motor::login_perdido`). Sem
@@ -215,13 +233,25 @@ componentes do GPUI Kit.
   modelo, o contexto e a conta de quantos trabalham, terminaram e falharam) e, embaixo, a lista de
   todos os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`) à esquerda, com
   a sua rolagem, e o escolhido à direita (`painel_do_agente`): o estado (trabalhando, terminou,
-  falhou, interrompido), o tempo, os tokens e as ferramentas usadas (o `Subagente` de
-  `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números), os passos
-  numerados (sem os vazios) e o resultado. Abre no que está trabalhando, ou no último. Era uma
-  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre por **Agentes desta conversa**, no "…" da
+  falhou, interrompido), o tempo, os tokens e as ferramentas usadas e, embaixo, a **conversa do
+  agente como a de um chat normal** (`conversa_do_agente`): o pedido num balão, o que ele
+  respondeu em Markdown, as chamadas seguidas num grupo recolhível ("Leu 1 arquivo · fez 1 busca",
+  o clique abre as linhas), as imagens que as chamadas trouxeram em miniatura (o clique abre o
+  visor) e o relatório, que é a última resposta. Os itens vêm da conversa do subagente que o motor
+  lê do arquivo do Claude Code (`Motor::abrir_subconversa_no_mapa`, a mesma da aba, mantida em
+  memória enquanto o diálogo está aberto e solta ao fechar); sem o arquivo, o cartão (os passos e
+  o relatório). O **Abrir em aba** fecha o diálogo e abre essa conversa numa aba. A **ordem** da
+  lista (`ordenar`): quem trabalha em cima, depois quem espera resposta sua (um pedido de
+  permissão do subagente), quem falhou, e os terminados e interrompidos, do mais recente ao mais
+  antigo em cada grupo; abre no primeiro. Era uma árvore com o agente aberto dentro dela, e com 10
+  agentes só dois cabiam (dono, 23/11/2026). Abre por **Agentes desta conversa**, no "…" da
   caixa, e pela paleta (a pílula "N agentes" da linha de estado, que o abria, virou a pílula dos
   subagentes da linha de pílulas, que lista os do turno). Um agente sem resultado só conta como
-  vivo com o turno rodando e sem aviso depois dele na conversa.
+  vivo com o turno rodando e sem aviso depois dele na conversa, **a não ser que o arquivo dele
+  diga outra coisa** (`importar::subagente::sinal_das_linhas`, lido a cada 2 s com o diálogo
+  aberto): terminando numa resposta só em texto, terminou; gravado há menos de 2 min, trabalha
+  (o turno da conversa pode ter caído e voltado, com o `SendMessage`, e o subagente seguiu por
+  fora: era o "Interrompido" de um agente que trabalhava); parado há mais, segue interrompido.
 - **Linha de pílulas** (`src/ui/pilulas.rs`). Uma linha só, logo acima da caixa de cada painel,
   com o que acontece naquele chat. Só existe quando há pílula, flutua sobre o pé da conversa
   (`Janela::conversa` a põe por cima da área das mensagens, fora do fluxo) e não empurra a caixa;
@@ -371,7 +401,8 @@ componentes do GPUI Kit.
 - **Esforço automático.** No Auto, o seletor diz o nível que vale: o Vitral pergunta ao Claude
   Code (`get_settings`, o `applied.effort`), uma vez por conta e modelo, em segundo plano
   (`claude::atualizar_esforco_padrao`); no Codex vem do catálogo (`default_reasoning_level`).
-- **Servidores MCP.** O `/mcp` da caixa e **Servidores MCP**, no menu do logo, abrem a lista dos
+- **Servidores MCP.** O `/mcp` da caixa, **Lista dos servidores MCP** (Configurações, Claude Code) e
+  a paleta abrem a lista dos
   servidores do chat do painel ativo (`src/ui/mcp_servidores.rs`): por origem (do seu Claude Code,
   da pasta, conectores da conta), um cartão cada, com o estado, o erro de quem caiu e, no clique,
   as ferramentas. Enquanto o diálogo está aberto há um Claude Code só dele (`claude::SessaoMcp`:
@@ -448,6 +479,22 @@ componentes do GPUI Kit.
     nada da conversa. Tudo o que muda uma pílula chega por um evento do motor que não é texto,
     e esses avisam a Janela; a conversa de um subagente que cresce avisa só os painéis que a
     mostram (`TextoChegando`, emitido por `Motor::subconversa_lida`).
+  - **O fade de quem está em cache mora dentro da vista.** O GPUI reaproveita a pintura de uma
+    vista em cache enquanto ela não é avisada, e a chave do cache é a caixa, o recorte e o estilo
+    do texto, não a opacidade: um fade posto pela casca em volta dela só anda se ela se
+    redesenhar a cada quadro (no painel aberto ao lado, ela se redesenha sozinha nos primeiros
+    quadros, medindo os blocos, e o fade do cartão funciona). Por isso a conversa que troca no
+    painel entra pelo `movimento::entrada` de dentro de `Janela::corpo_do_painel` (`Painel.troca`
+    e `troca_vista`): a vista se redesenha nos quadros do fade, e só ela. O que anima na casca
+    redesenha a casca; o que anima nas mensagens, só a vista daquele painel. As entradas da rodada
+    de 24/11/2026 (ver **O que entra com fade**) não mudaram o custo, medido com a mesma bancada
+    (três conversas de 450 itens a 150%, binário otimizado, a thread principal em % de um núcleo,
+    média de 3 rodadas antes e 2 depois, com a máquina ocupada por outras sessões e até 10 pontos
+    de diferença entre rodadas iguais): parado, 0 e 0; pensando, 49 e 46; rodando ferramenta, 48
+    e 48; escrevendo, 56 e 56; rolando parado, 33 e 33; rolando com texto chegando, 55 e 54.
+    Trocar de aba, abrir um grupo e trocar Conversas e Arquivos fazem de 6 a 8 redesenhos no
+    segundo da ação, antes e depois, com o mesmo custo por quadro: os quadros do fade caem nos que
+    a ação já pedia (medir os blocos, ir à âncora).
   - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
     layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
     com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
@@ -719,6 +766,26 @@ componentes do GPUI Kit.
   de 12); texto chegando
   numa conversa que nenhum painel mostra não redesenha a janela; e a barra de rolagem aparece e
   some sem fade (o fade pedia quadros no ritmo do monitor a cada mudança de tamanho, como o Ctrl+B).
+- **O que entra com fade** (dono, 24/11/2026: "tem bastante coisa que parece meio seco"). Tudo em
+  160 ms, uma vez, com 6 a 8 px de deslize ou só o fade, nunca de escala (o GPUI não tem escala em
+  div): a conversa que troca no painel (aba, lista, histórico);
+  cada pedido de permissão, pergunta e plano acima da caixa (de baixo); a fila aberta (de baixo);
+  a faixa do turno quando aparece e quando troca de estado (Parada, Falhou, Fila, Você parou); cada
+  pílula que aparece com a linha já à vista (de baixo); a linha de estado da caixa quando o turno
+  começa (só o fade: ela abre o lugar dela e a caixa cresce); a chamada que chega numa trilha já à
+  vista (de baixo) e o cabeçalho do grupo, que nasce com a segunda; o que um clique abre na
+  conversa (um grupo da trilha, "Trabalhou…", "Pensou", a saída de uma chamada, o relatório de um
+  agente, o plano respondido, os "Detalhes" de um erro, a revisão da memória), de cima, com o
+  chevron girando 90° em 120 ms; a mensagem presa quando aparece (a troca de texto ao rolar
+  segue a rolagem, sem fade); a parte das Configurações, deslizando do lado para onde se foi na
+  coluna (como o passo das boas-vindas); Conversas ↔ Arquivos na lista; a direita encaixada ao
+  abrir (Ctrl+J) e ao trocar entre o arquivo e Este chat; o "Comece um chat" do painel vazio; os
+  avisos do canto; a faixa de quando a gravação falha; e a ilha do anexo. Sair é seco (o kit
+  desmonta no quadro em que o estado muda), recolher também (altura automática não anima), e nada
+  disso repete ao rolar, ao trocar de painel ou com outro painel abrindo ao lado. Ficam sem
+  transição de cor, de propósito, o hover das linhas de lista, das abas e dos itens de menu:
+  passar o ponteiro por uma fileira viraria animação contínua. A troca de tema continua sem
+  transição.
 
 ## Opções da conversa (como na extensão do Claude Code)
 
@@ -746,10 +813,18 @@ girando de "rodando"; o clique abre o uso da conversa: em cima o
 contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta e os tokens, e no rodapé
 **Compactar a conversa**, que prepara o `/compact`), o clipe de anexar (arquivo ou imagem, arquivo
 da pasta, conversa anterior e comandos
-de barra), o **…** (comandos de barra, compactar, sessão nova e fixar) e o enviar, uma tecla de
+de barra), o **…** e o enviar, uma tecla de
 metal (`VarianteRedonda::Metal`, o par do "+" da lista), apagado com a caixa vazia, que acende
 quando ela ganha texto e dá um pulso claro a cada envio (o pulso fica no botão também quando ele já
-virou o parar). Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
+virou o parar). O **…** tem no máximo três grupos, com uma divisória entre eles (`grupos_do_mais`,
+dono, 24/11/2026: eram 11 itens e 5 divisórias): na caixa estreita, **anexar** primeiro (**Arquivo
+ou imagem…**, **Arquivo da pasta…** e **Conversa anterior como contexto…**, que saem do clipe);
+com texto na caixa, **mandar** (**Mandar depois, na fila**, com o turno rodando e o Enter entrando
+nele; **Mandar quando as 5 h renovarem**; **Mandar às…**; **Perguntar também ao Codex**, menos
+para um comando de barra); e **a conversa** (**Comandos de barra**, **Compactar a conversa** numa
+conversa do Claude que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
+nova** com o chat parado, **Fixar**). O que não se aplica agora sai, em vez de ficar cinza. Na
+caixa média, o **…** não aparece, como antes. Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
 o espaço entre os chips, a linha de estado) mantém o cursor nela. Com a conversa rodando, ele vira
 o parar (o quadrado, com um anel girando em volta); com texto escrito, ficam os dois, e o enviar
 entra na fila. A linha de estado, com o chat parado, mostra as teclas: à esquerda "/" comandos e,
@@ -770,8 +845,10 @@ próxima mensagem"): vale só para a próxima mensagem, sobe o esforço dela par
 continua Máximo) e deixa o chip em arco-íris até enviar. Um comando de barra não a consome. Embaixo
 dela fica a chave **Ultracode**, em violeta com o ícone de fluxo (U liga): vale só para a próxima
 mensagem, como o Ultrathink, e faz o Claude orquestrar vários agentes em paralelo por um fluxo (a
-ferramenta Workflow do Claude Code). A linha avisa em âmbar que gasta bem mais do plano e que roda
-no esforço Extra (o Máximo vira Extra nessa mensagem). Ligada, o chip do esforço vira "Ultracode" em
+ferramenta Workflow do Claude Code). Embaixo do título, uma linha só: "Agentes em paralelo, só na
+próxima · gasta bem mais"; o (i) ao lado do nome diz o resto, que gasta bem mais do plano e roda no
+esforço Extra (o Máximo vira Extra nessa mensagem). O âmbar fica para o que atrapalha agora
+(`avisos_do_ultracode`). Ligada, o chip do esforço vira "Ultracode" em
 violeta com o ícone de fluxo (com o Ultrathink junto, as barrinhas ficam em arco-íris; na caixa
 estreita, só o ícone de fluxo). Começa sempre desligada, também ao abrir o Vitral. Fica
 desabilitada, com o motivo curto no lugar da descrição (só o título e a chave apagam; o motivo
@@ -781,10 +858,11 @@ no chat em que quem responde é o Codex ("Só no Claude Code", também com os do
 Numa conta em que um turno com Ultracode mostrou os fluxos de agentes desligados (em Dynamic
 workflows no `/config`, por `disableWorkflows` ou pela organização), a linha continua ligável e
 avisa em âmbar; esse turno ganha um aviso em vermelho, segue em Extra e a mensagem perde o selo.
-Fora de Sem perguntar e Automático, a linha também avisa que comandos e edições dos agentes podem
-ser recusados (eles não conseguem pedir permissão). Um Ultracode por vez no Vitral inteiro: com
-outro rodando, a linha avisa ("O Ultracode roda em outra conversa: esta mensagem iria sem ele") e a
-mensagem vai sem o Ultracode, com o motivo na conversa. Quando a conta chega ao limite e o turno
+Fora de Sem perguntar e Automático, a linha também avisa ("Neste modo, os agentes podem ter ações
+recusadas": eles não conseguem pedir permissão). Um Ultracode por vez no Vitral inteiro: com
+outro rodando, a linha avisa ("Roda em outra conversa: esta iria sem ele") e a mensagem vai sem o
+Ultracode, com o motivo na conversa. Cada aviso desses é uma linha curta em âmbar; o porquê vai na
+dica do (i). Quando a conta chega ao limite e o turno
 continua na próxima, a repetição vai sem ele; só o **Tentar de novo** o repete. Fora do Ultracode, a ferramenta
 Workflow fica bloqueada: nem um chat nem um "Continue de onde parou" relançam um fluxo sozinhos. O
 **modelo** abre um seletor com busca: no alto, os seus perfis de agente, se houver (grupo **Perfis**;
@@ -795,8 +873,15 @@ o check do escolhido à direita. Seguindo o Padrão, é ele que diz qual está e
 5.5"); só uma família escolhida na conversa ganha o selo "em uso". Uma conversa antiga que
 guardou o nome completo do modelo ganha a linha dele. Quando a família não é a que está em uso, a
 linha dela diz a versão que ela é hoje ("Para os desafios mais difíceis · hoje, Fable 5.1"). Embaixo
-das famílias vêm as **versões exatas** (Fable 5.2, Fable 5.1, Opus 5.5 e as outras), com a que está
-rodando marcada, inclusive quando a conversa segue a família. A lista vem do Claude Code instalado:
+das famílias, a linha **Outras versões ▸** abre no lugar as **versões exatas** (Fable 5.2, Fable 5.1,
+Opus 5.5 e as outras), com a que está rodando marcada, inclusive quando a conversa segue a família.
+No pé, com mais de uma conta, a linha da conta ("Conta: tecnologia · semana 44%") abre a escolha
+dela no lugar. As duas começam recolhidas a cada abertura (só uma versão exata escolhida abre as
+versões), para o seletor caber sem rolagem a 150%: o que está aberto é `Abertos`, guardado na
+Janela por painel, e o que fica à vista sai de `grupos_a_vista`, que também faz a busca (o
+`filtro_proprio` da lista): com algo escrito, as versões e as contas que casam aparecem direto e as
+linhas de abrir saem. Numa conversa do Claude acima de 100 mil tokens (`Chat::contexto_grande`),
+uma linha curta embaixo da lista diz "Trocar agora relê 751 mil tokens" (`aviso_de_troca`). A lista vem do Claude Code instalado:
 ao abrir o app e quando a versão dele muda, o Vitral faz o pedido `initialize` do protocolo do
 Agent SDK (o mesmo da extensão do VS Code ao abrir), sem mandar mensagem e sem gastar uso, numa
 pasta vazia e só do dono dentro do cache do Vitral (`perguntas`), só com as configurações do
@@ -905,7 +990,7 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
   a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3).
   **Mensagem com hora marcada** (`src/motor/agendadas.rs` e `src/ui/agendar.rs`): no **…** da
-  caixa, **Mandar quando a janela de 5 h renovar** (a renovação da conta em que o chat roda, ou a
+  caixa, com texto nela, **Mandar quando as 5 h renovarem** (a renovação da conta em que o chat roda, ou a
   do Codex, mais 30 s de folga; o item some sem essa hora lida) e **Mandar às…** (um diálogo com
   a hora: "15:10", "15h", "830"; a que já passou hoje vale para amanhã) mandam o que está na caixa
   para a fila do chat com a hora (`Entrada::agendada`, gravada no estado: sobrevive ao reinício).
@@ -1250,8 +1335,9 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   agente em **Detalhes**; ver **Chat que cai**). A troca da sessão antiga do Claude Code por uma
   nova com resumo (a que sumiu e a que expirou) é o marco "Sessão nova, com um resumo da anterior",
   e as linhas de troca de conta ou de agente levam o ícone de troca. O que chega com a conversa aberta no painel (a sua
-  mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
-  conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
+  mensagem, a resposta, um evento, um aviso, a chamada que chega numa trilha já à vista) entra com
+  um fade e 8 px de baixo, uma vez; trocar de conversa no painel faz a conversa inteira entrar
+  com um fade, e trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
   (e antes do separador de dia), 12 depois dele e 12 entre os blocos de um turno (`esp::ENTRE_TURNOS`
   e `NO_TURNO`): com o vão de fora mais de 2 vezes o de dentro, cada pergunta fica presa à resposta
   e os turnos se leem como parágrafos (relatório de aparência, 16/11/2026, V3).
@@ -1713,15 +1799,24 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 
 - **O alto da lista** (a área vazia arrasta a janela, o clique duplo maximiza e o clique direito
   abre o menu da janela): o logo, no quadrado de metal (clique ou F10 para o **menu do Vitral**, que
-  abre à direita: no topo, a placa de metal com o logo, "Vitral" e quantos chats há, com a pasta de
-  dados na dica; depois **Recolher a lista** (Ctrl+B), **Novo chat**, **Novo chat em outra pasta…**
-  e **Importar do Claude Code…**; **Contas do Claude**, **Instalar o Codex…** quando ele falta,
-  **Configurações** e **Atalhos do teclado**; **Abrir a pasta de dados** ↗; com os atalhos de cada
-  um em teclas; no rodapé, a faixa escura com a linha técnica em mono, "Vitral 0.7.0 · a1b2c3d" (a
-  versão e o commit curto, ou o canal no compilado no PC), e a origem na dica; com uma versão nova
-  pronta, um ponto azul de 8 no canto do logo, a versão na dica e **Reiniciar para a 0.3.0** logo
-  acima das Configurações). Ao lado do logo, as abas **Conversas | Arquivos** (ver **O que fica à
-  vista**).
+  abre à direita, também no modo recolhido, a 12 da margem de cima: no topo, a placa de metal com
+  o logo, "Vitral" e, embaixo, a versão, o commit curto (ou o canal no compilado no PC) e quantos
+  chats há, "0.7.0 · a1b2c3d · 16 chats", com a origem e a pasta de dados na dica; com uma versão
+  nova pronta, logo abaixo, a linha de destaque **Versão nova pronta · Reiniciar** (a versão na
+  dica); depois três grupos por assunto, com uma divisória entre eles (`grupos_do_menu`): **Recolher
+  a lista** (Ctrl+B; no recolhido, **Mostrar a lista** e **O que precisa de você**, com o selo do
+  sino), **Novo chat**, **Novo chat em outra pasta…** e **Importar do Claude Code…**; **Quadro de
+  ideias**, **Resumo de hoje** e **Arranjos ▸**; **Contas do Claude**, **Instalar o Codex…** e
+  **Instalar o Gemini…** quando faltam, **Configurações**, **Paleta de comandos** e **Atalhos do
+  teclado**; com os atalhos de cada um em teclas. Cabe sem rolagem a 150% numa janela de 880 de
+  altura, também recolhido e com a versão pronta. Até 24/11/2026 ele também tinha Servidores MCP,
+  Memória da equipe, a pasta de trabalho e Abrir a pasta de dados: eles moram nas Configurações
+  (Claude Code, Memória, Chats e Atualizações) e na paleta. Com uma versão nova pronta, um ponto
+  azul de 8 no canto do logo, com a versão na dica. A versão pronta é relida no link `atual` ao
+  abrir o menu e ao voltar à janela (`Atualizacoes::versao_pronta`): o "Reiniciar para a 0.10.0-dev
+  .766bc7804b" do print de 24/11/2026 era a pronta guardada ao abrir o app, com outra mais nova já
+  instalada por outra abertura, e o Reiniciar já ia para a nova. Ao lado do logo, as abas
+  **Conversas | Arquivos** (ver **O que fica à vista**).
 - **O pé da lista:** as **Arquivadas**, os agentes rodando e o sino do que precisa de você e,
   embaixo deles, a busca e o "+" (os anéis de uso ficam no canto da janela; ver **Contas e uso dos
   planos**). O número do sino é o mesmo de "Esperando você" (pedidos, erros, paradas que pedem
@@ -2082,34 +2177,55 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
   Perfis, Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à
-  direita, as opções da parte escolhida, que rolam sozinhas numa altura fixa. O que mora em cada
+  direita, as opções da parte escolhida, que rolam sozinhas numa altura que nunca passa da da
+  janela (`altura_do_corpo`: 520 a 100%, ou a janela menos a folga do cabeçalho; a navegação e o
+  cabeçalho ficam parados e só a coluna rola). O que mora em cada
   parte (`src/ui/configuracoes.rs`):
-  - **Chats:** **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
+  - **Chats:** **Pasta dos chats novos** (a pasta de trabalho, com **Trocar…**, que abre o seletor
+    do sistema; `trocar_pasta_de_trabalho`), **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
     sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
     o que falta), **Arquivar chats parados depois de** (nunca, 3, 7 ou 30 dias; só os chats já
-    lidos, não fixados e sem fila) e **Sugerir a próxima mensagem**.
-  - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos** e o **Modelo
-    dos chats do Claude**; as **Instruções para todos os chats** (um texto seu, de até 4.000
+    lidos, não fixados e sem fila), **Sugerir a próxima mensagem** e **Título do chat pelo Claude
+    Code** (ligado; desligado, o título fica o das primeiras palavras e nem o pedido do título sai,
+    `opcoes::titulo_pelo_claude_vale`). Mais três grupos, todos gravando na hora em `Config`:
+    **Abas** (**Chat chamado por outro abre numa aba**, ligada, e **Fechar a aba para o chat**,
+    ligada), **Caixa de mensagem** (**Seta ↑ na caixa vazia**: Corrigir a última, como era, ou
+    Percorrer as enviadas; **Enter com o turno rodando**: Entra no turno, como era, ou Vai para a
+    fila) e **Arquivos** (**Lembrar o que a aba Arquivos mostra**, desligada). O padrão de cada
+    opção é o de antes dela, menos as duas das abas.
+  - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos**, o **Modelo
+    dos chats do Claude** e a **Revisão automática pelo outro agente** (ligada; ver **A revisão do
+    turno pelo outro agente**); as **Instruções para todos os chats** (um texto seu, de até 4.000
     caracteres, que entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do
     que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e o
-    **Codex** (a versão instalada, ou **Instalar…** sem ele).
+    **Codex** (a versão instalada, ou **Instalar…** sem ele); e **Versão nova** (**Consultar a
+    versão nova dos agentes**: Sozinho, como era, ou Só pelo botão, que traz o **Consultar agora**).
   - **Perfis:** os perfis de agente (ver **Perfis de agente**, abaixo).
   - **Memória:** **Memória da equipe** e **Rever a memória ao terminar**.
   - **Aparência:** **Zoom da interface** (o mesmo do Ctrl+roda), **Letra da conversa** (de 80% a
     150% do resto: só as mensagens crescem, com o texto, o código e os cartões delas; a lista, a
-    caixa e os menus seguem o zoom), **Mostrar o uso do plano no canto da janela**, ligada por
-    padrão, **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
+    caixa e os menus seguem o zoom; **Letra da conversa também na caixa**, desligada, põe a caixa
+    de mensagem na mesma letra), **Mostrar o uso do plano no canto da janela**, ligada por
+    padrão, com um interruptor por anel (**Anel do Claude, do Codex e do Gemini**, todos ligados;
+    cada um ainda depende da conta conectada, `opcoes::aneis_escolhidos`), **Números nas abas e na
+    lista** (Sempre, como era, ou Só segurando Ctrl: o selo aparece depois de 150 ms com o Ctrl
+    apertado e some ao soltar, guardando o lugar para a aba não mudar de largura; `Janela.ctrl_desde`, que
+    zera a cada desenho com o Ctrl de fato solto: o `Ctrl+,` que abre as Configurações soltava o Ctrl
+    com o foco no diálogo, e o número ficava à vista),
+    **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
     seguindo um GNOME sem animações, a linha diz isso) e **Transparência dos fundos**.
   - **Claude Code:** a versão instalada, a que os turnos abrem, e **Atualizar**, que roda `claude
     update` fora de qualquer turno, espera os chats que estão trabalhando ou com mensagem na fila
     e mostra o que ele respondeu, em âmbar se falhar (a versão nova vale no turno seguinte, sem
-    reiniciar o Vitral), e **Servidores MCP do Claude Code**, os do seu Claude Code nos chats.
+    reiniciar o Vitral), **Servidores MCP do Claude Code**, os do seu Claude Code nos chats, e a
+    **Lista dos servidores MCP**, que abre a lista de cada servidor e o estado dele.
     Quando o pacote do Claude Code ou do Codex anuncia versão mais nova que a instalada, a linha
     diz ("Há a 2.1.330. O Atualizar instala.", "0.169.0 · há a 0.171.0"); em dia, não diz nada. A
     consulta são as etiquetas do pacote de cada um no npm (a `stable` para quem escolheu esse
     canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes ou a do Claude
-    Code abre e guardada por uma hora (`src/versoes_agentes.rs`).
-  - **Atualizações:** as atualizações do Vitral e o **Diagnóstico para pedir ajuda**: o **Copiar**
+    Code abre (ou pelo botão, com **Só pelo botão**) e guardada por uma hora (`src/versoes_agentes.rs`).
+  - **Atualizações:** as atualizações do Vitral, a **Pasta de dados** (com **Abrir**) e o
+    **Diagnóstico para pedir ajuda**: o **Copiar**
     põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex), o sistema,
     as pastas dos dados, as opções ligadas e as últimas 40 linhas do `queda.log`. O que tem cara de
     chave ou token é coberto, a pasta pessoal vira `~`, as suas instruções entram só pelo tamanho,
@@ -2118,6 +2234,23 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   A organização é a das partes da 0.9.6. O ramo que desenhou as Configurações em seis seções
   (Chats, Agentes, Perfis, Aparência, Avisos e Vitral, com a lista em `Secao::grupos`) trouxe as
   opções novas, que entraram dentro das partes; as seções dele não ficaram.
+- **Chat chamado por outro numa aba, e fechar a aba para o chat** (Configurações > Chats > Abas).
+  Quando `mensagem_para_chat` entrega a mensagem (não quando o freio de ciclo a guarda como nota)
+  ou `abrir_chat` abre um chat, o motor põe o id em `Motor.chats_trazidos`; a Janela consome a fila
+  no mesmo observador do `pedido_de_abrir` e chama `trazer_aba`, que segue `onde_entra_a_aba`: o
+  chat já à vista ou já aba de algum painel não faz nada, sem painel abre como qualquer chat, e nos
+  outros casos entra como aba de fundo no painel ativo, sem trocar o que está à vista e sem
+  `activate_window` (o contorno da aba mostra o estado). O × da aba e o Ctrl+W
+  (`fechar_aba_do_usuario`) param o turno do chat que está de fato rodando (não o que espera a
+  resposta do usuário) pelo `Motor::parar`, a menos que ele continue à vista noutro painel ou aba
+  (`ao_fechar_a_aba`); se parar custa caro (`parar_custa_caro`: agentes em segundo plano,
+  Ultracode), o Vitral pergunta antes. Soltar a aba em outro painel e arquivar não passam por aí.
+- **Seta ↑ percorrer as enviadas.** Com a opção (`Config.seta_acima_percorre`), a seta na caixa
+  vazia traz o texto das mensagens que o usuário enviou neste chat (`recordar::enviadas_do_chat`,
+  da mais nova para a mais antiga, sem repetir em seguida), uma por vez; enquanto a caixa tem
+  exatamente o texto trazido, o contexto dela ganha "Recordando" e ↑/↓ continuam andando (↓ volta
+  até a caixa vazia). Editar o texto encerra o percurso (`Percurso::ativo`). O Corrigir fica no
+  lápis do balão e no Ctrl+↑.
 - **Perfis de agente.** Um perfil guarda, com um nome, quem responde, o modelo, o modo de
   permissão e o esforço, mais uma nota de quando usar. Cria-se em Configurações > Perfis (**Novo
   perfil…**; **Editar…** troca ou exclui, e as setas mudam a ordem). Os perfis de quem responde na
@@ -2658,6 +2791,8 @@ nota usando), que vira as notas do Release e, depois, o **Novidades** do app; um
 | `src/motor/conversas.rs` | O que liga as conversas umas às outras e ao usuário: `listar_chats`, `mensagem_para_chat` e `abrir_chat`, o freio de ciclo e o resumo do que aconteceu enquanto você esteve fora |
 | `src/motor/passos.rs` | A lista de passos do agente de cada chat (o `TodoWrite` e as ferramentas de tarefa do Claude Code) e a frase do que cada chamada mudou nela, para a trilha |
 | `src/motor/fundo.rs` | Os agentes em segundo plano de cada chat: a lista do `background_tasks_changed`, a chamada que abriu cada um, o fim do arquivo de cada um lido aos poucos (a última ação), e o item que marca o fim deles na conversa |
+| `src/motor/revisao_do_par.rs` | A revisão do turno pelo outro agente: quando roda sozinha (20 linhas ou mais, a opção ligada, o outro à mão), o revisor que entra como parceiro e sai no fim, o resultado (a linha ou o cartão) e a entrega da revisão ao agente do chat |
+| `src/ui/mensagens/revisao.rs` | O cartão da revisão do outro agente, com "Mandar ao Claude", e o "Revisar com o Codex" da linha "Trabalhou…" |
 | `src/motor/subconversa.rs` | A conversa de um subagente aberta numa aba: o chat de mentira, só de leitura, fora do estado; achar e reler o arquivo dele em segundo plano enquanto ele trabalha; qual subagente espera uma permissão sua e o relatório entregue que vai para o cartão |
 | `src/motor/importacao.rs` | A importação no motor: um chat direto na pasta de cada conversa do Claude Code, a da primeira abertura, a do menu, a vigia (a cada abertura e a cada 2 minutos, só o que mudou desde a passada anterior) e a marca de quando ela continua no Vitral |
 | `src/dados.rs` | Pasta de dados global (`~/.local/share/vitral`, a configuração em `~/.config/vitral`): caminhos, gravação que aguenta queda de energia (temporário com fsync, `.anterior` por link duro, rename e fsync da pasta), o gravador em segundo plano (que guarda a gravação que falhou para tentar de novo), `carregar` com volta ao `.anterior` e a guarda do `estado.versao-N.json`, a `normalizar` (os dados das versões com projetos: só chats, cada um com a pasta dele), o `formato` dos dados e a `DADOS_GLOBAIS` |
@@ -2771,7 +2906,16 @@ Movimento: `src/ui/movimento.rs` tem `COR` 120, `ENTRAR` 160, `MOVER` 180 e `ENC
 (Entrar, Mover, Sair, sem ricochete); `animacao(d, c)` para o `with_animation`; `entrar(el, id, De)`
 para o que aparece; `valor`/`valor_desde` para um valor que anda até o alvo quando ele muda (a
 montagem não anima); `disparo` para um efeito que toca quando uma chave muda; `Hover` para o
-ponteiro num controle solto; `abertura(id)` e `deslizar_gaveta(el, De::Esquerda | De::Direita, t)`
+ponteiro num controle solto; `JaVistos` para o que acabou de aparecer numa parte da tela (o que a
+casca do painel mostrou no desenho anterior, `Painel.ja_vistos`, virado no começo de
+`Janela::conversa` e esquecido ao trocar de conversa: os pedidos, a fila, cada pílula, o estado da
+faixa, a linha de estado da caixa, o painel vazio); `AbertosAgora` para o que um clique acabou de
+abrir na conversa (`Janela.abertos_agora`, marcado pelo `alternar` e pelos cliques da trilha;
+vale 400 ms, então o conteúdo aberto entra uma vez e uma remontagem depois aparece pronta);
+`lado_da_navegacao` (as partes das Configurações); e, em `mensagens.rs`, `chevron` (o de abrir e
+recolher, que gira 90° pelo `valor`), `entrada_da_chamada` e `entrada_do_cabecalho` (com teste).
+Uma `entrada` que deixa de ser montada no meio perde o estado: quem decide entrar mantém o
+invólucro (o `Some(false)` do `entrada_do_bloco`) enquanto o elemento fica à vista; `abertura(id)` e `deslizar_gaveta(el, De::Esquerda | De::Direita, t)`
 para a gaveta (24 px em `MOVER`, com o véu a 0,5·t; a `Janela.geracao_gaveta` sobe em cada
 abertura, e fechar é seco). Tudo no relógio de 60 qps por janela, e a última batida já pousa no
 alvo. O que anda sem parar (o metal) passa pelo `laco_a(window, cx, qps)`: a fase em `f64`, uma

@@ -34,6 +34,7 @@ use super::{
     },
     dialogos::{com_til, nome_da_pasta},
     duracao, menus,
+    movimento::{self, De},
     paineis::ArrastoChat,
     sem_arrastar, tempo_relativo,
 };
@@ -1067,6 +1068,11 @@ impl Janela {
             }
         };
 
+        // Conversas ↔ Arquivos: o conteúdo novo entra com fade (a pílula do segmentado já anda).
+        let aba = self.aba;
+        let trocou = self.aba_vista.replace(aba).is_some_and(|antes| antes != aba);
+        let id_aba = if aba == AbaLateral::Conversas { "lista-entra-conversas" } else { "lista-entra-arquivos" };
+        let conteudo = movimento::entrada(id_aba, trocou, De::Parado, div().flex_1().min_h_0().w_full().flex().flex_col().child(conteudo));
         v_flex()
             .size_full()
             .min_w_0()
@@ -1802,7 +1808,10 @@ impl Janela {
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
             .when(enxuta && chat.fixado, |d| d.child(div().text_color(Cores::apagado()).child(icone(Lucide::Pin, 11., window))))
-            .children(em_painel.map(|(n, ativo)| numero_painel(n, ativo)));
+            .children(em_painel.map(|(n, ativo)| {
+                // "Só segurando Ctrl": o número guarda o lugar, invisível.
+                div().when(!self.numeros_a_vista(cx), |d| d.opacity(0.)).child(numero_painel(n, ativo))
+            }));
         // O balão é sempre o pequeno, também no resultado da busca (que tem duas linhas): com uns de
         // 18 e outros de 30 a coluna dos ícones ficava torta. A pasta vai na dica, e a hora junto
         // quando ela saiu da linha.

@@ -51,6 +51,7 @@ mod rascunhos;
 mod resumo;
 mod resumo_do_dia;
 mod recuperacao;
+mod recordar;
 mod reenvio;
 mod seletor_arquivos;
 mod sumario;
@@ -93,7 +94,7 @@ actions!(vitral, [FecharPainel, PainelAnterior, PainelSeguinte, MoverPainelEsque
 // fechada; Ctrl+Shift+C copia a última resposta do chat à vista.
 actions!(vitral, [AbaSeguinte, AbaAnterior, ReabrirAba, CopiarUltimaResposta]);
 // A seta para cima na caixa vazia e o "?" fora de um campo de texto.
-actions!(vitral, [EditarUltima, AbrirAtalhos]);
+actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguinte, AbrirAtalhos]);
 // Shift+F10 e a tecla Menu: o menu do painel ativo (o "⋯" do cabeçalho saiu; o botão direito no
 // cabeçalho e nas abas abre o mesmo).
 actions!(vitral, [AbrirMenuDoPainel]);
@@ -453,6 +454,15 @@ pub struct Janela {
     /// Arquivos anexados à próxima mensagem de cada conversa.
     anexos: HashMap<String, Vec<PathBuf>>,
     aba: AbaLateral,
+    /// A aba da lista do último desenho: trocada, o conteúdo novo entra com fade.
+    aba_vista: Option<AbaLateral>,
+    /// O que a direita encaixada mostrou no último desenho ("arquivo" ou "chat"; `None` fechada) e
+    /// se já apareceu alguma vez: aberta pelo Ctrl+J ou trocada de aba, ela entra com fade (na
+    /// abertura do app, pronta).
+    direita_vista: Option<&'static str>,
+    direita_ja_vista: bool,
+    /// Os avisos do canto do último desenho (o que aparece entra com fade).
+    vistos_no_canto: movimento::JaVistos,
     rolagem_lista: ScrollHandle,
     /// Seções da lista recolhidas ("Mais antigas" começa assim).
     secoes_recolhidas: HashSet<&'static str>,
@@ -474,7 +484,8 @@ pub struct Janela {
     /// seguinte, e a faixa diz "arquivo 2 de 8".
     lugar_no_turno: std::cell::Cell<Option<(usize, usize, Option<(usize, usize)>)>>,
     /// O diff de "Na pasta" sem as mudanças só de espaço em branco (o `-w` do git). Desligado ao
-    /// abrir o Vitral; liga e desliga no "…" do arquivo aberto com o diff.
+    /// abrir o Vitral (a não ser com "Lembrar o que a aba Arquivos mostra"); liga e desliga no
+    /// "…" do arquivo aberto com o diff.
     diff_sem_espaco: bool,
     /// As linhas escolhidas no arquivo aberto (clique no número, Shift+clique estende), para
     /// mencionar o trecho, e a ponta de onde a escolha começou.
@@ -502,6 +513,9 @@ pub struct Janela {
     /// id do pedido.
     perguntas: HashMap<String, pergunta::EstadoDaPergunta>,
     expandidos: HashSet<String>,
+    /// O que um clique acabou de abrir na conversa (um grupo da trilha, o "Pensou", a saída de uma
+    /// chamada): o conteúdo entra com fade e 6 px de cima, uma vez (`movimento::AbertosAgora`).
+    abertos_agora: movimento::AbertosAgora,
     /// Campo de "negar e explicar" aberto num pedido de permissão.
     explicacao: Option<mensagens::Explicacao>,
     rolagem_este_chat: ScrollHandle,
@@ -546,6 +560,9 @@ pub struct Janela {
     arranjo: Option<arranjo::Arranjo>,
     /// A abertura já pôs a janela como estava: daqui em diante o arranjo é acompanhado.
     arranjo_ligado: bool,
+    /// Desde quando o Ctrl está apertado (para os números só aparecerem segurando, depois de uns
+    /// 150 ms); `None` com ele solto.
+    ctrl_desde: Option<std::time::Instant>,
     _gravar_arranjo: Option<Task<()>>,
     /// A imagem anexada que está aberta na "ilha" em cima da caixa (o chat e o arquivo), e a que
     /// o clique fora acabou de fechar (para o clique na própria pílula fechar, e não reabrir).
@@ -607,6 +624,9 @@ pub struct Janela {
     historico_aberto: Option<(u64, bool)>,
     /// A aba (Claude ou Codex) à vista no seletor de modelo do painel; sem ela, a do agente do chat.
     aba_do_modelo: Option<(u64, crate::modelo::Agente)>,
+    /// O que está aberto no seletor de modelo do painel ("Outras versões", a conta); sem ele, o de
+    /// partida.
+    abertos_do_modelo: Option<(u64, composer::AbertosDoModelo)>,
     /// A versão nova pronta esperando o reinício (o ponto no logo e o item do menu) e o último aviso
     /// de atualização mostrado ("pronta 0.3.0"): um por versão.
     atualizacao_pronta: Option<String>,
@@ -786,6 +806,10 @@ impl Janela {
         }));
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
+            // Ao voltar à janela, a versão pronta é relida: outra abertura pode ter instalado uma.
+            if ativa {
+                this.atualizacao_mudou(window, cx);
+            }
             // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
             if let Some(motor) = &this.motor {
                 motor.update(cx, |m, cx| {
@@ -891,6 +915,10 @@ impl Janela {
             _gravar_rascunhos: None,
             anexos: HashMap::new(),
             aba: AbaLateral::Conversas,
+            aba_vista: None,
+            direita_vista: None,
+            direita_ja_vista: false,
+            vistos_no_canto: Default::default(),
             rolagem_lista: ScrollHandle::new(),
             secoes_recolhidas: HashSet::from(RECOLHIDAS_DE_INICIO),
             arquivo_aberto: None,
@@ -915,6 +943,7 @@ impl Janela {
             feedback_plano: HashMap::new(),
             perguntas: HashMap::new(),
             expandidos: HashSet::new(),
+            abertos_agora: Default::default(),
             explicacao: None,
             rolagem_este_chat: ScrollHandle::new(),
             este_chat_rolado: None,
@@ -948,6 +977,7 @@ impl Janela {
             citacoes: HashMap::new(),
             arranjo: None,
             arranjo_ligado: false,
+            ctrl_desde: None,
             _gravar_arranjo: None,
             confirmando_saida: false,
             ultrathink: HashSet::new(),
@@ -970,6 +1000,7 @@ impl Janela {
             pop_caixa: None,
             historico_aberto: None,
             aba_do_modelo: None,
+            abertos_do_modelo: None,
             atualizacao_pronta: None,
             atualizacao_avisada: None,
             aba_direita: abas_direita::AbaDireita::Chat,
@@ -1317,6 +1348,10 @@ impl Janela {
     /// O botão "Mostrar ignorados" da aba Arquivos: liga ou desliga e relê a pasta.
     pub(super) fn alternar_ignorados(&mut self, pasta: &std::path::Path, cx: &mut Context<Self>) {
         self.mostrar_ignorados = !self.mostrar_ignorados;
+        let valor = self.mostrar_ignorados;
+        if let Some(motor) = self.motor.clone() {
+            motor.update(cx, |m, cx| m.mudar_config(|c| c.arquivos_mostrar_ignorados = valor, cx));
+        }
         self.reler_arquivos(pasta);
         cx.notify();
     }
@@ -1438,6 +1473,12 @@ impl Janela {
                 this.aplicar_abertura(abertura, window, cx);
                 window.activate_window();
             }
+            // Os chats que outro chat pôs para trabalhar: uma aba de fundo, sem trocar o que está
+            // à vista e sem trazer a janela para a frente.
+            let trazidos = motor.update(cx, |m, _| std::mem::take(&mut m.chats_trazidos));
+            for chat in trazidos {
+                this.trazer_aba(chat, window, cx);
+            }
             // Os avisos que chegam depois de aberta (o resultado da importação do Claude Code).
             let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
             if !avisos.is_empty() {
@@ -1476,6 +1517,10 @@ impl Janela {
                 .map(|c| c.id.clone())
         });
         self.ultimo_chat = ultimo;
+        // A aba Arquivos abre como ficou, se "Lembrar o que a aba Arquivos mostra" está ligado.
+        let c = &m.config;
+        self.mostrar_ignorados = crate::opcoes::valor_ao_abrir(c.lembrar_arquivos, c.arquivos_mostrar_ignorados);
+        self.diff_sem_espaco = crate::opcoes::valor_ao_abrir(c.lembrar_arquivos, c.diff_sem_espaco);
         // Como a janela estava ao fechar, e quais chats de lá ainda dá para abrir (os apagados e
         // os arquivados nesse meio tempo ficam de fora).
         let guardado = arranjo::Arranjo::ler(interface.as_ref());
@@ -1524,6 +1569,37 @@ impl Janela {
             }
         });
         cx.notify();
+    }
+
+    /// O Ctrl foi apertado ou solto. Com "Só segurando Ctrl", os números das abas e da lista
+    /// aparecem 150 ms depois de apertar e somem ao soltar (`opcoes::numeros_a_vista`).
+    fn ctrl_mudou(&mut self, apertado: bool, cx: &mut Context<Self>) {
+        let so_com_ctrl = self.motor.as_ref().is_some_and(|m| m.read(cx).config.numeros_so_com_ctrl);
+        match (apertado, self.ctrl_desde) {
+            (true, None) => {
+                self.ctrl_desde = Some(std::time::Instant::now());
+                if so_com_ctrl {
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(crate::opcoes::ESPERA_DO_SELO).await;
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
+            }
+            (false, Some(_)) => {
+                self.ctrl_desde = None;
+                if so_com_ctrl {
+                    cx.notify();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Os números das abas e da lista aparecem agora?
+    pub(super) fn numeros_a_vista(&self, cx: &App) -> bool {
+        let so_com_ctrl = self.motor.as_ref().is_some_and(|m| m.read(cx).config.numeros_so_com_ctrl);
+        crate::opcoes::numeros_a_vista(so_com_ctrl, self.ctrl_desde.map(|desde| desde.elapsed()))
     }
 
     /// Envia o que está na caixa do painel ativo.
@@ -1867,6 +1943,11 @@ impl Janela {
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
+        // O Ctrl solto com a janela fora do caminho do evento (um diálogo com o foco, a janela
+        // desativada) não avisa: sem o Ctrl de fato apertado, o relógio dos números zera.
+        if !window.modifiers().control {
+            self.ctrl_desde = None;
+        }
         // O sumário diz se foi desenhado neste desenho (`secao_do_sumario`).
         self.sumario.desenhado = false;
         if let Some(motor) = &self.motor {
@@ -2102,6 +2183,7 @@ impl Janela {
             .track_focus(&self.foco)
             // Digitar com o foco fora de campo escreve na caixa do painel ativo (item 1.1).
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| this.tecla_na_janela(ev, window, cx)))
+            .on_modifiers_changed(cx.listener(|this, ev: &ModifiersChangedEvent, _, cx| this.ctrl_mudou(ev.modifiers.control, cx)))
             .on_action(cx.listener(|this, _: &NovaConversa, window, cx| this.novo_chat_direto(window, cx)))
             // O Ctrl+K seleciona o termo anterior: o que se digita troca a busca, em vez de se
             // somar a ela ("WMSPesagem"). O Esc da lista, que também foca a busca, não seleciona.
@@ -2265,7 +2347,8 @@ impl Janela {
                 .flex()
                 .justify_center()
                 .px(esp::E16)
-                .child(componentes::Alerta::new(componentes::Tom::Erro, texto))
+                // Entra com fade e 6 px de cima (ela é absoluta: o deslize vai no de dentro).
+                .child(movimento::entrar(div().child(componentes::Alerta::new(componentes::Tom::Erro, texto)), "entra-gravacao", movimento::De::Cima))
                 .into_any_element(),
         )
     }
@@ -2369,14 +2452,25 @@ impl Janela {
             }
         }
         if painel {
+            // Aberta (Ctrl+J) ou trocada entre o arquivo e Este chat, entra com fade, uma vez.
+            let qual = match self.aba_visivel(motor.read(cx)) {
+                abas_direita::AbaDireita::Arquivo(_) => "arquivo",
+                abas_direita::AbaDireita::Chat => "chat",
+            };
+            let antes = self.direita_vista.replace(qual);
+            let nova = antes != Some(qual) && (antes.is_some() || self.direita_ja_vista);
+            self.direita_ja_vista = true;
             let conteudo = self.conteudo_da_direita(motor, window, cx);
+            let conteudo = movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo));
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
                     .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
                     .fixed()
-                    .child(div().size_full().child(conteudo)),
+                    .child(conteudo),
             );
+        } else {
+            self.direita_vista = None;
         }
         grupo
     }

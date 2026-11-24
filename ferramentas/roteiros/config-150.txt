@@ -1,0 +1,35 @@
+# Cada parte das Configurações a 150%, na janela de 1600x1000 da bancada: o diálogo cabe na janela,
+# a coluna da esquerda e o cabeçalho ficam parados e só a coluna da parte rola, até o fim.
+#   VITRAL_AGENTES_PUBLICADOS="claude=9.9.9,codex=9.9.9" restaurar-bancada.sh ...; bancada.sh <este roteiro> ...
+espera 12
+tecla Control_L+comma
+espera 2
+print s1-chats
+rolar 1000 600 40
+espera 1
+print s1-chats-fim
+mover 300 400
+clique 266 295
+espera 3
+rolar 1000 600 40
+espera 1
+print s2-agentes-fim
+clique 255 346
+espera 1
+print s3-perfis
+clique 268 397
+espera 1
+print s4-memoria
+clique 275 448
+espera 1
+rolar 1000 600 40
+espera 1
+print s5-aparencia-fim
+clique 288 499
+espera 2
+print s6-claude-code
+clique 288 550
+espera 1
+rolar 1000 600 40
+espera 1
+print s7-atualizacoes-fim

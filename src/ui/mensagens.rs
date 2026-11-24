@@ -54,6 +54,7 @@ pub(super) mod no_fundo;
 
 use a_vista::{Assinatura, ChaveDoBloco, Medida, TipoDaChave, Vista};
 mod erros;
+mod revisao;
 
 /// O logo pequeno, para as mensagens que o próprio Vitral entrega.
 static LOGO: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -211,6 +212,8 @@ fn partes_do_item(item: &Item, partes: &mut Vec<u64>) {
         Item::Vez { .. } => partes.push(8),
         Item::Desconhecido(_) => partes.push(9),
         Item::FimDoAgente { chamada, descricao, erro, durou, .. } => partes.extend([10, n(chamada), n(descricao), u64::from(*erro), *durou]),
+        // Mandada, a ação do cartão vira uma linha de texto.
+        Item::Revisao { texto, mandada, .. } => partes.extend([11, n(texto), u64::from(*mandada)]),
     }
     partes.push(item.em());
 }
@@ -240,7 +243,8 @@ pub(super) fn texto_que_chega_depois(item: &Item) -> bool {
         | Item::Assistente { texto, .. }
         | Item::Entrega { texto, .. }
         | Item::Aviso { texto, .. }
-        | Item::Raciocinio { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
+        | Item::Raciocinio { texto, .. }
+        | Item::Revisao { texto, .. } => texto.len() > TEXTO_LIDO_NA_HORA,
         // O relatório de um subagente abre em markdown.
         Item::Ferramenta { resultado, sub, .. } => sub.is_some() && resultado.as_deref().is_some_and(|r| r.len() > TEXTO_LIDO_NA_HORA),
         Item::Cartao { .. } | Item::Vez { .. } | Item::FimDoAgente { .. } | Item::Desconhecido(_) => false,
@@ -294,6 +298,39 @@ fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> Rems {
 /// quadro em que o bloco aparece (`vistos`). Trocar de conversa ou rolar não anima nada.
 fn entrada_do_bloco(indice: Option<usize>, base: usize, vistos: usize) -> Option<bool> {
     indice.filter(|i| *i >= base).map(|i| i >= vistos)
+}
+
+/// A entrada de uma chamada dentro de uma trilha: a primeira entra com o bloco (que leva o índice
+/// dela); cada uma que chega depois, numa trilha que já estava à vista, entra sozinha, com a mesma
+/// regra dos blocos. Como no bloco, o `Some` fica enquanto ela está à vista (o estado da entrada
+/// não pode sumir no meio dela), e o `true` só no desenho em que ela aparece.
+fn entrada_da_chamada(primeira: bool, indice: usize, base: usize, vistos: usize) -> Option<bool> {
+    if primeira { None } else { entrada_do_bloco(Some(indice), base, vistos) }
+}
+
+/// O cabeçalho de um grupo da trilha nasce com a segunda chamada: entra com ela. Se a trilha inteira
+/// é nova neste desenho, quem entra é o bloco, e o cabeçalho vem junto.
+fn entrada_do_cabecalho(indices: &[usize], base: usize, vistos: usize) -> Option<bool> {
+    match indices {
+        [primeira, segunda, ..] if *segunda >= base && *primeira < vistos => Some(*segunda >= vistos),
+        _ => None,
+    }
+}
+
+/// O chevron de abrir e recolher: para a direita fechado, para baixo aberto, e gira 90° em 120 ms
+/// quando o clique troca (montado, já está no lugar; parado, é o ícone de sempre, sem giro).
+pub(super) fn chevron(chave: &str, aberto: bool) -> movimento::ComEstado {
+    let id = SharedString::from(format!("gira-{chave}"));
+    movimento::com_estado(move |window, cx| {
+        let quarto = movimento::valor(id, if aberto { 1f32 } else { 0. }, movimento::COR, movimento::Curva::Mover, window, cx);
+        if quarto >= 1. {
+            icone_de(Lucide::ChevronDown, 12.).into_any_element()
+        } else if quarto <= 0. {
+            icone_de(Lucide::ChevronRight, 12.).into_any_element()
+        } else {
+            icone_de(Lucide::ChevronRight, 12.).rotate(radians(quarto * std::f32::consts::FRAC_PI_2)).into_any_element()
+        }
+    })
 }
 
 fn deslocamento_apos_prepend(offset: Pixels, altura_antes: Pixels, altura_depois: Pixels) -> Pixels {
@@ -418,14 +455,19 @@ impl Janela {
         let foco = motor.config.modo_foco;
         let nivel = self.paineis[ix].medida.nivel;
         let caixa_estreita = self.paineis[ix].medida.faixa == FaixaCaixa::Estreita;
-        let contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
+        let mut contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
+        contexto.entrada = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let agora = crate::modelo::agora();
         // Conversas antigas guardaram as buscas de ferramenta; não interessam. No modo foco as
         // ferramentas ficam, recolhidas na linha do turno (`turnos_do_foco`).
+        // O que o outro agente faz enquanto revê o turno fica fora da conversa: no fim vira o
+        // cartão da revisão (ou a linha "revisou: nada a acrescentar").
+        let fim_a_vista = motor.revisao_em_curso_desde(&chat.id).unwrap_or(usize::MAX);
         let mut visiveis: Vec<(usize, &Item)> = chat
             .itens
             .iter()
             .enumerate()
+            .take_while(|(i, _)| *i < fim_a_vista)
             .filter(|(i, item)| match item {
                 Item::Ferramenta { nome, .. } => nome != "ToolSearch",
                 Item::Assistente { .. } => !resposta_repete_o_erro(&chat.itens, *i),
@@ -471,6 +513,7 @@ impl Janela {
             // demanda, e nem todo ele está em memória.
             busca: &sem_busca,
             rolagem: &rolagem,
+            entrada: (usize::MAX, usize::MAX),
         };
         // Daqui até a montagem, a Janela só é lida: os blocos guardam como se montar.
         let (eu, ctx) = (&*self, &contexto);
@@ -501,6 +544,10 @@ impl Janela {
         // todo turno, também o que roda, vira uma linha só (`turnos_do_foco`).
         let turnos = turnos_da_conversa(&chat.itens, foco, contexto.rodando);
         let mut turno_posto: Option<usize> = None;
+        // Os recolhidos ("Trabalhou…", a revisão da memória) que um clique acabou de abrir: os blocos
+        // de dentro entram com fade e 6 px de cima, uma vez (o primeiro índice e o fim, sem eles).
+        let agora_mesmo_aberto = std::time::Instant::now();
+        let mut abrindo: Vec<(usize, usize)> = Vec::new();
         // O separador "Novo" leva o índice do bloco logo depois dele: a abertura no começo da
         // resposta o deixa à vista no alto (conferência, 16/11/2026).
         let separador_do_novo = |seguinte: usize| {
@@ -524,6 +571,9 @@ impl Janela {
                     .map_or(chat.itens.len(), |p| indice + 1 + p);
                 let chave = format!("{}:{indice}:memoria", chat.id);
                 let aberta = self.expandidos.contains(&chave);
+                if aberta && self.abertos_agora.recente(&chave, agora_mesmo_aberto) {
+                    abrindo.push((indice, fim_item));
+                }
                 let rodando = fim_item == chat.itens.len() && motor.revendo_memoria(&chat.id);
                 let itens_da_revisao = &chat.itens[indice..fim_item];
                 let chave_do_bloco = ChaveDoBloco {
@@ -547,6 +597,9 @@ impl Janela {
             if let Some(turno) = turnos.iter().copied().find(|t| t.contem(indice)).filter(|t| turno_posto != Some(t.mensagem)) {
                 turno_posto = Some(turno.mensagem);
                 let aberto = self.expandidos.contains(&turno.chave(&chat.id));
+                if aberto && self.abertos_agora.recente(&turno.chave(&chat.id), agora_mesmo_aberto) {
+                    abrindo.push((turno.mensagem, turno.resposta));
+                }
                 let fim = visiveis[i..].iter().position(|(k, _)| *k >= turno.resposta).map_or(visiveis.len(), |p| i + p);
                 // O separador "Novo" de um item lá dentro fica antes da linha.
                 if novo.is_some_and(|n| n < turno.resposta) {
@@ -840,8 +893,16 @@ impl Janela {
                 caixa = caixa.on_prepaint(move |limites, _, _| presa.borrow_mut().push((texto.clone(), limites.top(), limites.bottom())));
             }
             let entrada = if sem_entrada || !montado { None } else { entrada_do_bloco(indice, base, vistos) };
+            // O que já ficava à vista com o turno recolhido (a pergunta, o erro, o plano) não pisca.
+            let abre = !sem_entrada
+                && montado
+                && indice.is_some_and(|i| {
+                    abrindo.iter().any(|(de, ate)| i > *de && i < *ate)
+                        && chat.itens.get(i).is_some_and(|item| !fica_fora_do_recolhido(item) && plano_na_conversa(item).is_none())
+                });
             lista = match (indice, entrada) {
                 (Some(i), Some(nova)) => lista.child(movimento::entrada(("entra", i), nova, De::Baixo, caixa)),
+                (Some(i), None) if abre => lista.child(movimento::entrada(("abre", i), true, De::Cima, caixa)),
                 _ => lista.child(caixa),
             };
             anterior = Some(bloco);
@@ -997,6 +1058,10 @@ impl Janela {
         // onde tô olhando"), em duas linhas; o clique leva até ela. Escolhida no prepaint da lista
         // (acima); sai com a busca da conversa aberta, que mora no mesmo lugar.
         let (empurrao, altura_da_presa) = (self.paineis[ix].empurrao_da_presa, self.paineis[ix].altura_da_presa.clone());
+        // Ela entra com fade quando aparece (a sua mensagem subiu além do topo); trocar de texto
+        // rolando segue a rolagem, sem fade, para não piscar a cada passo da roda.
+        let presa_a_vista = self.paineis[ix].presa.is_some() && !self.paineis[ix].busca.aberta;
+        let presa_nova = presa_a_vista && !std::mem::replace(&mut self.paineis[ix].presa_vista, presa_a_vista);
         let presa = self.paineis[ix]
             .presa
             .clone()
@@ -1097,6 +1162,7 @@ impl Janela {
             // Empurrada para cima, a faixa sai pelo alto da lista, cortada nele: solta, ela subia por
             // cima das abas do cabeçalho (dono, 19/11/2026: "a mensagem ficou em cima das abas").
             .children(presa.map(|faixa| {
+                let faixa = movimento::entrada(("entra-presa", painel_id as usize), presa_nova, De::Parado, faixa);
                 div().absolute().inset_0().overflow_hidden().child(super::vista_mensagens::na_letra_da_conversa(faixa))
             }))
             // A barra do Ctrl+F, por cima das mensagens (montada em `conversa`).
@@ -1209,6 +1275,9 @@ impl Janela {
             Item::Cartao { id, .. } => aviso_do_chat(&format!("Cartão #{id}"), false, &Realce::default()),
             Item::Vez { agente, .. } => (Bloco::Marco, marca_da_vez(*agente)),
             Item::FimDoAgente { .. } => (Bloco::Log, self.fim_do_agente(contexto, indice, item, cx)),
+            Item::Revisao { de, texto, mandada, .. } => {
+                (Bloco::Recebida, self.cartao_da_revisao(contexto, indice, *de, texto, *mandada, window, cx))
+            }
             Item::Desconhecido(_) => {
                 aviso_do_chat("(mensagem de uma versão mais nova)", false, &Realce::default())
             }
@@ -1426,7 +1495,7 @@ impl Janela {
             let aberto = !lido.recolhido || self.expandidos.contains(&chave_detalhes) || !realce.vazio();
             if lido.recolhido {
                 let icone = if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight };
-                cartao = cartao.acao(fantasma(id("detalhes"), Some(icone), "Detalhes", TamanhoBotao::Linha, alternar(chave_detalhes, cx), window, cx));
+                cartao = cartao.acao(fantasma(id("detalhes"), Some(icone), "Detalhes", TamanhoBotao::Linha, alternar(chave_detalhes.clone(), cx), window, cx));
             }
             if aberto {
                 let tudo = self.expandidos.contains(&chave_tudo);
@@ -1453,7 +1522,8 @@ impl Janela {
                             .linhas(cortar.then_some(8)),
                     )
                     .children(mostrar);
-                cartao = cartao.original(original, !lido.recolhido);
+                // Aberto pelo "Detalhes", o texto do agente entra com fade e 6 px de cima.
+                cartao = cartao.original(self.ao_abrir(&chave_detalhes, original), !lido.recolhido);
             }
         }
         let elemento = RolarAoAchado::novo(format!("rolar-{chave}").into(), &realce, contexto.rolagem, cartao.into_any_element()).into_any_element();
@@ -2598,6 +2668,9 @@ struct Contexto<'a> {
     busca: &'a busca_conversa::Indice,
     /// A rolagem do painel, para a conversa andar até o achado.
     rolagem: &'a ScrollHandle,
+    /// `Painel.base_animacao` e `Painel.vistos` deste desenho: de onde as chamadas que chegam numa
+    /// trilha já à vista entram com fade (`entrada_da_chamada`). No histórico, nada entra.
+    entrada: (usize, usize),
 }
 
 impl<'a> Contexto<'a> {
@@ -2619,6 +2692,7 @@ impl<'a> Contexto<'a> {
             marco: marco_da_conversa(&chat.itens, motor.dirigidas_no_turno(&chat.id)),
             busca,
             rolagem,
+            entrada: (usize::MAX, usize::MAX),
         }
     }
 
@@ -2656,7 +2730,7 @@ fn coluna_do_icone() -> Div {
 /// O resumo do grupo de chamadas: "Rodou 13 comandos · editou 1 arquivo · leu 3 arquivos" no
 /// painel largo e, fora dele, a forma curta sem os verbos, "13 comandos · 1 editado · 3 lidos":
 /// cortado, o fim levava o último número junto ("leu 3 arqu…") (relatório de design, 16/11/2026).
-fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
+pub(super) fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
     // As chamadas que mexem nos passos do agente não contam como "N ferramentas": com as
     // ferramentas de tarefa, cada passo criado, começado e concluído é uma chamada.
@@ -3284,10 +3358,14 @@ impl Janela {
                     s.child(Selo::cor(contagem(falhas, "falhou", "falharam"), Cores::vermelho()))
                 })
                 .when(rodando_escondida, |s| s.child(super::componentes::lugar_do_anel(contexto.painel, Cores::destaque(), 14.)))
-                .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+                .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
                 .on_click(cx.listener({ let chave = chave.clone(); move |j, _, _, cx| {
                     if aberto { j.expandidos.remove(&chave); j.expandidos.insert(format!("{chave}:fechado")); }
-                    else { j.expandidos.remove(&format!("{chave}:fechado")); j.expandidos.insert(chave.clone()); }
+                    else {
+                        j.expandidos.remove(&format!("{chave}:fechado"));
+                        j.expandidos.insert(chave.clone());
+                        j.abertos_agora.marcar(chave.clone(), std::time::Instant::now());
+                    }
                     for p in j.paineis.iter_mut().filter(|p| p.seguindo) { p.manter_lugar = true; }
                     cx.notify();
                 }}))
@@ -3324,25 +3402,53 @@ impl Janela {
                 move |j, _, _, cx| {
                     j.expandidos.remove(&format!("{chave}:fechado"));
                     j.expandidos.insert(chave.clone());
+                    j.abertos_agora.marcar(chave.clone(), std::time::Instant::now());
                     cx.notify();
                 }
             });
             self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidas, mais)
         });
         let ultima = mostradas.len().saturating_sub(1);
+        let (base, vistos) = contexto.entrada;
+        let primeira = chamadas[0].0;
+        // A chamada que chega numa trilha já à vista entra com fade e 8 px de baixo (a primeira
+        // entra com o bloco); o cabeçalho, que nasce com a segunda, só com o fade.
+        let indices: Vec<usize> = chamadas.iter().map(|(i, _)| *i).collect();
+        let cabecalho = cabecalho.map(|c| match entrada_do_cabecalho(&indices, base, vistos) {
+            Some(nova) => movimento::entrada(("entra-grupo", primeira), nova, De::Parado, c).into_any_element(),
+            None => c.into_any_element(),
+        });
+        let linhas = v_flex().w_full().children(
+            mostradas
+                .iter()
+                .enumerate()
+                // Recolhido e ao vivo, a chamada à vista é uma linha solta, sem trilho.
+                .map(|(k, (indice, item))| {
+                    let linha = self.chamada(contexto, *indice, item, aberto.then_some(k < ultima), cx);
+                    match entrada_da_chamada(*indice == primeira, *indice, base, vistos) {
+                        Some(nova) => movimento::entrada(("entra-chamada", *indice), nova, De::Baixo, div().child(linha)).into_any_element(),
+                        None => linha,
+                    }
+                }),
+        );
+        // Aberto pelo clique, o que estava escondido entra com fade e 6 px de cima.
+        let linhas = if recolhivel && aberto { self.ao_abrir(&chave, linhas) } else { linhas.into_any_element() };
         v_flex()
             .w_full()
             .children(cabecalho)
             .children(editados_do_grupo.flatten())
             .children(fileira)
-            .children(
-                mostradas
-                    .iter()
-                    .enumerate()
-                    // Recolhido e ao vivo, a chamada à vista é uma linha solta, sem trilho.
-                    .map(|(k, (indice, item))| self.chamada(contexto, *indice, item, aberto.then_some(k < ultima), cx)),
-            )
+            .child(linhas)
             .into_any_element()
+    }
+
+    /// O que um clique acabou de abrir (`Janela::abertos_agora`) entra com fade e 6 px de cima, uma
+    /// vez; remontado depois (rolar para longe e voltar, trocar de aba), aparece pronto.
+    fn ao_abrir(&self, chave: &str, conteudo: impl IntoElement + Styled + 'static) -> AnyElement {
+        if !self.abertos_agora.recente(chave, std::time::Instant::now()) {
+            return conteudo.into_any_element();
+        }
+        movimento::entrada(SharedString::from(format!("abre-{chave}")), true, De::Cima, conteudo).into_any_element()
     }
 
     /// A linha de um turno pronto, "Trabalhou 6 min · 13 comandos · editou x e y", que abre e
@@ -3383,7 +3489,7 @@ impl Janela {
                 icone_de(Lucide::Clock, 14.).into_any_element()
             }))
             .child(partes_com_falhas(&resumo, true).text_color(if turno.ao_vivo { Cores::texto() } else { Cores::tenue() }))
-            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
             .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             .on_click(alternar(chave.clone(), cx));
         let mut da_linha: Vec<(usize, PathBuf)> = Vec::new();
@@ -3413,6 +3519,12 @@ impl Janela {
         let editados = (!aberto)
             .then(|| self.editados_do_recolhido(contexto, &format!("{chave}:ed"), escondidos, alternar(chave.clone(), cx)))
             .flatten();
+        // No último turno pronto, a ação discreta "Revisar com o Codex" na ponta da linha
+        // (`mensagens/revisao.rs`); fora dele, a linha como sempre.
+        let linha = match self.acao_de_revisar(contexto, turno, cx) {
+            Some(acao) => h_flex().w_full().gap(esp::E8).child(div().flex_1().min_w_0().child(linha)).child(acao).into_any_element(),
+            None => linha.into_any_element(),
+        };
         v_flex().w_full().child(linha).children(editados).children(fileira).into_any_element()
     }
 
@@ -3554,7 +3666,7 @@ impl Janela {
                 icone_de(Lucide::Brain, 14.).text_color(Cores::tenue()).into_any_element()
             }))
             .child(div().min_w_0().truncate().text_color(Cores::tenue()).child(texto))
-            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .child(div().flex_none().text_color(Cores::apagado()).child(chevron(chave, aberta)))
             .when_some(abrir, |s, alvo| {
                 s.child(
                     botao_so_icone(
@@ -3608,7 +3720,7 @@ impl Janela {
                     BotaoCopiar::new(SharedString::from(format!("copiar-plano-{chave}")), plano.texto.to_string()).dica("Copiar o plano"),
                 ))
             })
-            .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+            .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
             .on_click(alternar(chave.clone(), cx));
         let cartao = v_flex()
             .w_full()
@@ -3616,7 +3728,7 @@ impl Janela {
             .bg(Cores::hover())
             .child(cabecalho)
             .when(aberto, |s| {
-                s.child(
+                s.child(self.ao_abrir(&chave,
                     v_flex()
                         .px(esp::E12)
                         .pb(esp::E12)
@@ -3636,7 +3748,7 @@ impl Janela {
                                     .child(div().flex_1().min_w_0().metadado().text_color(Cores::texto()).child(format!("Você pediu: {}", sem_marcacao(mudancas)))),
                             )
                         }),
-                )
+                ))
             })
             .into_any_element();
         // Aberto, o próprio texto pede para aparecer; fechado, quem rola até o cartão é o bloco.
@@ -3669,7 +3781,7 @@ impl Janela {
             .when(tem_texto, |s| {
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
-                    .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+                    .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
                     .on_click(alternar(chave.clone(), cx))
             });
         v_flex()
@@ -3677,7 +3789,7 @@ impl Janela {
             .w_full()
             .child(linha)
             .when(aberto, |s| {
-                s.child(
+                s.child(self.ao_abrir(&chave,
                     div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         div()
                             .id(SharedString::from(format!("raciocinio-texto-{chave}")))
@@ -3693,7 +3805,7 @@ impl Janela {
                             .text_color(Cores::tenue())
                             .child(texto.trim().to_string()),
                     ),
-                )
+                ))
             })
             .children(ramo.map(trilho_do_log))
             .into_any_element()
@@ -3946,9 +4058,9 @@ impl Janela {
             })
             .group(grupo.clone())
             .map(|s| {
-                let chevron = icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.).text_color(Cores::apagado());
+                let seta = div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto));
                 if edicao.is_none() && subagente.is_none() {
-                    return s.child(chevron);
+                    return s.child(seta);
                 }
                 // Na edição, o chevron é um botão à parte: a linha abre o arquivo; ele, o diff aqui.
                 // No subagente também: a linha abre a conversa dele; ele, os passos e o relatório.
@@ -3969,7 +4081,7 @@ impl Janela {
                         .justify_center()
                         .rounded(raio::CONTROLE)
                         .hover(|s| s.bg(Cores::hover()))
-                        .child(chevron)
+                        .child(seta)
                         .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_chevron).build(window, cx))
                         .on_click(move |evento, window, cx| {
                             cx.stop_propagation();
@@ -4032,7 +4144,8 @@ impl Janela {
                 })))
             })
             .when(aberto, |s| {
-                s.children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
+                // Aberto pelo clique, o que aparece entra com fade e 6 px de cima.
+                s.child(self.ao_abrir(&chave, v_flex().w_full().children(passos).when_some(pedido.as_deref().filter(|_| comando.is_none()), |s, pedido| {
                     s.child(div().pl(RECUO_DO_LOG).pt(esp::E4).child(cartao_de_edicao(&chave, pedido)))
                 })
                 .when_some(comando, |s, comando| {
@@ -4110,7 +4223,7 @@ impl Janela {
                         ))
                     },
                 )
-                .when(so_o_pedido, |s| s.pb(esp::E4))
+                .when(so_o_pedido, |s| s.pb(esp::E4))))
             })
             .children(ramo.map(trilho_do_log))
             .into_any_element();
@@ -4130,6 +4243,7 @@ pub(super) fn alternar(
     cx.listener(move |this: &mut Janela, _: &ClickEvent, _, cx| {
         if !this.expandidos.remove(&chave) {
             this.expandidos.insert(chave.clone());
+            this.abertos_agora.marcar(chave.clone(), std::time::Instant::now());
             for painel in this.paineis.iter_mut().filter(|p| p.seguindo) {
                 let desta = painel.chat.as_deref().and_then(|c| chave.strip_prefix(c));
                 painel.manter_lugar |= desta.is_some_and(|resto| resto.starts_with(':'));
@@ -4486,6 +4600,22 @@ enum Situacao {
     VocePorou,
 }
 
+impl Situacao {
+    /// O nome do estado, para a faixa entrar de novo quando ele troca (e não a cada segundo do
+    /// relógio, nem a cada mudança de número dentro do mesmo estado).
+    fn nome(&self) -> &'static str {
+        match self {
+            Situacao::Rodando { .. } => "rodando",
+            Situacao::Parada { .. } => "parada",
+            Situacao::Falhou => "falhou",
+            Situacao::OrigemSumiu { .. } => "sumiu",
+            Situacao::Fila(_) => "fila",
+            Situacao::Fria { .. } => "fria",
+            Situacao::VocePorou => "voce-parou",
+        }
+    }
+}
+
 /// O que um chat parado tem a dizer acima da caixa: a pasta dele sumiu (a do chat sem pasta o
 /// Vitral cria de novo).
 fn situacao_do_chat(motor: &Motor, chat: &Chat) -> Option<Situacao> {
@@ -4565,13 +4695,19 @@ impl Janela {
     ) -> Option<(Option<AnyElement>, Option<AnyElement>)> {
         // A revisão da memória roda por baixo, depois do "Terminou": só uma linha discreta, sem o
         // Esc (item 6.1). Uma mensagem sua a corta (ou espera, se ela já escreveu).
-        if motor.revendo_memoria(&chat.id) {
+        // A revisão pelo outro agente, igual: por baixo, só lendo, e a sua mensagem a corta.
+        let por_baixo = if motor.revendo_memoria(&chat.id) {
+            Some("Revendo a memória…".to_string())
+        } else {
+            motor.revisando_o_par(&chat.id).map(|revisor| format!("{} revisando o turno…", revisor.nome()))
+        };
+        if let Some(texto) = por_baixo {
             let linha = h_flex()
                 .flex_1()
                 .min_w_0()
                 .gap(esp::E8)
                 .child(AnelGirando::new(12.).cor(Cores::tenue()).vivo(format!("memoria-{painel_id}")))
-                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child("Revendo a memória…"));
+                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child(texto));
             return Some((Some(linha.into_any_element()), None));
         }
         let Some(situacao @ Situacao::Rodando { .. }) = situacao_do_turno(motor, &chat.id) else {
@@ -4709,7 +4845,7 @@ impl Janela {
         painel_id: u64,
         window: &Window,
         cx: &Context<Self>,
-    ) -> Option<AnyElement> {
+    ) -> Option<(AnyElement, &'static str)> {
         // O que roda (ou parou) vale mais; parado, a pasta que sumiu, e só então
         // a fila que espera.
         let situacao = match situacao_do_turno(motor, &chat.id) {
@@ -4728,6 +4864,7 @@ impl Janela {
         if matches!(situacao, Situacao::Rodando { .. }) {
             return None;
         }
+        let estado = situacao.nome();
         let medida = self.paineis.iter().find(|p| p.id == painel_id).map(|p| p.medida).unwrap_or_default();
         let fila_aberta = self.paineis.iter().any(|p| p.id == painel_id && p.fila_aberta);
         // O botão da faixa (Retomar, Tentar de novo e as saídas da falha) leva este foco: o Ctrl+G
@@ -4996,7 +5133,7 @@ impl Janela {
                 .into_any_element(),
             None => esquerda,
         };
-        Some(
+        Some((
             h_flex()
                 .map(|s| coluna(s, caixa_estreita))
                 .pl(recuo)
@@ -5008,7 +5145,8 @@ impl Janela {
                 // A ação fica sempre inteira; quem corta é o texto, à esquerda.
                 .children(direita.map(|d| div().flex_none().child(d)))
                 .into_any_element(),
-        )
+            estado,
+        ))
     }
 
     /// Confere os painéis que o usuário rolou (roda, barra, ou o conteúdo que encolheu) desde a
@@ -5083,6 +5221,13 @@ impl Janela {
             .filter(|a| pedidos.iter().any(|(id, ..)| id == a))
             .or_else(|| pedidos.first().map(|(id, ..)| id.clone()));
         let quantos = pedidos.len();
+        // Cada pedido entra com fade e 8 px de baixo no desenho em que aparece (`ja_vistos` da casca
+        // do painel); responder um e o próximo aparecer, ou trocar de conversa, faz o mesmo.
+        let vistos = self.paineis.iter().find(|p| p.chat.as_deref() == Some(chat.id.as_str())).map(|p| &p.ja_vistos);
+        let entra = move |id: &str, cartao: AnyElement| -> AnyElement {
+            let nova = vistos.is_some_and(|v| v.borrow_mut().novo(format!("pedido:{id}")));
+            movimento::entrada(SharedString::from(format!("entra-pedido-{id}")), nova, De::Baixo, div().child(cartao)).into_any_element()
+        };
         // Os pedidos encolhem e rolam quando falta altura, para a caixa e as mensagens não saírem
         // da tela; vários de uma vez (chamadas em paralelo) nunca passam de 400 px.
         v_flex()
@@ -5102,15 +5247,15 @@ impl Janela {
             .children(pedidos.into_iter().enumerate().map(|(k, (id, ferramenta, entrada, motivo_do_hook))| {
                 let corpo = aberto.as_deref() == Some(id.as_str());
                 if ferramenta == "ExitPlanMode" {
-                    return self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx);
+                    return entra(&id, self.cartao_plano(motor, chat, &id, &entrada, nivel, corpo, window, cx));
                 }
                 let posicao = (quantos > 1).then_some((k + 1, quantos));
                 // A pergunta com opções tem o cartão dela (sem pergunta legível, o pedido comum).
                 let perguntas = if ferramenta == "AskUserQuestion" { super::pergunta::perguntas_de(&entrada) } else { Vec::new() };
                 if !perguntas.is_empty() {
-                    return self.cartao_pergunta(&id, &perguntas, corpo, posicao, nivel, window, cx);
+                    return entra(&id, self.cartao_pergunta(&id, &perguntas, corpo, posicao, nivel, window, cx));
                 }
-                self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, motivo_do_hook, corpo, posicao, nivel, window, cx)
+                entra(&id, self.cartao_permissao(chat, manual, &id, &ferramenta, &entrada, motivo_do_hook, corpo, posicao, nivel, window, cx))
             }))
     }
 
@@ -6212,7 +6357,7 @@ mod testes {
     }
     // Sem `super::*`: o `gpui_kit::*` lá de cima traz um `test` que troca o `#[test]`.
     use super::{
-        Bloco, ClasseAvisoChat, comando_de_barra, detalhe_da_chamada, entrada_do_bloco, espaco_antes,
+        Bloco, ClasseAvisoChat, comando_de_barra, detalhe_da_chamada, entrada_da_chamada, entrada_do_bloco, entrada_do_cabecalho, espaco_antes,
         com_quebras_duras, dica_da_pilha, linhas_da_edicao, resposta_repete_o_erro, texto_da_citacao, trechos_com_citacoes, marco_da_conversa, nome_e_id, previa, resumo_da_trilha, erros::partes_do_erro,
         resumo_das_chamadas, sem_marcacao,
         separadores_de_data, etiqueta_da_ferramenta, regra_do_pedido, texto_atividade, tipo_aviso,
@@ -6363,6 +6508,26 @@ mod testes {
         assert_eq!(entrada_do_bloco(Some(5), 5, 6), Some(false));
         // O texto do streaming entra no índice em que vai pousar: ao pousar, não entra de novo.
         assert_eq!(entrada_do_bloco(Some(6), 5, crate::ui::paineis::tamanho_da_conversa(6, true)), Some(false));
+    }
+
+    /// A chamada que chega numa trilha já à vista entra sozinha; a primeira entra com o bloco. O
+    /// cabeçalho do grupo entra com a segunda chamada, e não quando a trilha inteira é nova.
+    #[test]
+    fn chamada_nova_entra_na_trilha_que_ja_estava_a_vista() {
+        // Abriu com 5 itens; a trilha começou no 5 e já foi vista (vistos 6); chega a 6.
+        assert_eq!(entrada_da_chamada(true, 5, 5, 6), None, "a primeira é o bloco");
+        assert_eq!(entrada_da_chamada(false, 6, 5, 6), Some(true));
+        assert_eq!(entrada_da_chamada(false, 6, 5, 7), Some(false), "no desenho seguinte, guardada sem recomeçar");
+        assert_eq!(entrada_da_chamada(false, 3, 5, 7), None, "o que já estava na conversa não entra");
+        // O cabeçalho nasce com a segunda.
+        assert_eq!(entrada_do_cabecalho(&[5, 6], 5, 6), Some(true));
+        assert_eq!(entrada_do_cabecalho(&[5, 6], 5, 7), Some(false));
+        assert_eq!(entrada_do_cabecalho(&[5, 6, 7], 5, 7), Some(false), "a terceira não refaz o cabeçalho");
+        // A trilha inteira nova (as duas no mesmo desenho): quem entra é o bloco.
+        assert_eq!(entrada_do_cabecalho(&[5, 6], 5, 5), None);
+        assert_eq!(entrada_do_cabecalho(&[5], 5, 5), None);
+        // Trilha antiga (aberta com a conversa): nada.
+        assert_eq!(entrada_do_cabecalho(&[1, 2], 5, 5), None);
     }
 
     #[test]

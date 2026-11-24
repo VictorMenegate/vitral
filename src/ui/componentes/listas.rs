@@ -817,6 +817,9 @@ pub struct ItemDeEscolha {
     pub termos: Option<SharedString>,
     /// O atalho que faz o mesmo, em teclas, à direita (a linha de ação "Novo chat").
     pub teclas: Option<Vec<SharedString>>,
+    /// A linha abre outras no lugar ("Outras versões" do seletor de modelo): a seta logo depois do
+    /// título, para a direita fechada e para baixo aberta.
+    pub seta: Option<bool>,
 }
 
 impl ItemDeEscolha {
@@ -830,6 +833,7 @@ impl ItemDeEscolha {
             desabilitado: None,
             termos: None,
             teclas: None,
+            seta: None,
         }
     }
 }
@@ -986,13 +990,28 @@ fn linha_de_escolha(item: &ItemDeEscolha, escolhido: bool, ficha: bool, window: 
                 .min_w_0()
                 .child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap(esp::E4)
                         .min_w_0()
-                        .truncate()
-                        .text_size(r(13.))
-                        .line_height(r(18.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
-                        .child(item.titulo.clone()),
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(r(13.))
+                                .line_height(r(18.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
+                                .child(item.titulo.clone()),
+                        )
+                        .when_some(item.seta, |d, aberta| {
+                            d.child(
+                                div()
+                                    .flex_none()
+                                    .text_color(Cores::tenue())
+                                    .child(Icon::new(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, 14.))),
+                            )
+                        }),
                 )
                 .when_some(item.descricao.clone(), |d, t| {
                     d.child(

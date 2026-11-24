@@ -255,6 +255,9 @@ impl Motor {
         let de = format!("chat {} \"{}\"", chat.id, chat.titulo);
         let nota = self.contar_ciclo(&chat.id, &alvo.id);
         self.entregar_entrada(&alvo.id, Entrada { de: Some(de), texto: corpo, remetente: Some(chat.id.clone()), nota, ..Default::default() }, cx);
+        if !nota {
+            self.trazer_chat(&alvo.id);
+        }
         if nota {
             return Resposta::ok(
                 "Muitas mensagens seguidas entre vocês dois: esta ficou guardada e entra quando o usuário falar com um dos \
@@ -289,6 +292,7 @@ impl Motor {
         }
         let de = format!("chat {} \"{}\"", chat.id, chat.titulo);
         self.entregar_entrada(&id, Entrada { de: Some(de), texto: pedido, remetente: Some(chat.id.clone()), ..Default::default() }, cx);
+        self.trazer_chat(&id);
         let texto = format!("Abriu o chat {id} \"{titulo}\"");
         self.registrar("chat", &chat.id, &chat.id, &texto);
         Resposta::ok(format!(
@@ -296,6 +300,14 @@ impl Motor {
              ele o título. Nada volta para você sozinho.",
             com_til(&self.chat_gravado(&id).map_or_else(|| chat.cwd.clone(), |c| c.cwd.clone()))
         ))
+    }
+
+    /// O chat começa a rodar por pedido de outro: a Janela o põe numa aba de fundo, se a opção
+    /// está ligada. A fila fica sem repetir o mesmo chat.
+    fn trazer_chat(&mut self, id: &str) {
+        if self.config.chat_chamado_abre_aba && !self.chats_trazidos.iter().any(|c| c == id) {
+            self.chats_trazidos.push(id.to_string());
+        }
     }
 
     /// Conta mais uma mensagem automática entre os dois chats e diz se ela vai como nota (passou do

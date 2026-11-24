@@ -1,0 +1,24 @@
+# As opções novas das Configurações: Chats (Abas, Caixa de mensagem, Arquivos), Agentes (Versão
+# nova) e Aparência (anéis, números, letra na caixa), cada parte no alto e rolada até o fim.
+# A 150% o diálogo (520 de corpo) passa da altura da janela de 1600x1000 da bancada e a roda rola o
+# diálogo inteiro, não a coluna: por isso este roteiro vai a ZOOM=1.0 (as coordenadas são as dele).
+#   ZOOM=1.0 VITRAL_AGENTES_PUBLICADOS="claude=9.9.9,codex=9.9.9" bancada.sh <este roteiro> <prints> ...
+espera 12
+tecla Control_L+comma
+espera 2
+print c1-chats
+rolar 900 500 30
+espera 1
+print c2-chats-fim
+clique 440 270
+espera 4
+print c3-agentes
+rolar 900 500 30
+espera 1
+print c4-agentes-fim
+clique 450 372
+espera 1
+print c5-aparencia
+rolar 900 500 30
+espera 1
+print c6-aparencia-fim

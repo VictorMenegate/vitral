@@ -52,8 +52,26 @@ pub fn parametros_servidor(opcoes: &Opcoes) -> Value {
     parametros
 }
 
-/// No Windows o Codex do npm é um `codex.cmd`.
-const NOME_DO_CODEX: &str = if cfg!(windows) { "codex.cmd" } else { "codex" };
+/// O nome com que se chama o Codex quando ele não foi achado (o PATH resolve).
+const NOME_DO_CODEX: &str = if cfg!(windows) { "codex.exe" } else { "codex" };
+
+/// Os nomes do Codex neste sistema. No Windows, o `codex.exe` do instalador oficial (`install.ps1`)
+/// e o `codex.cmd` do npm: só o `.cmd` era procurado, e o Codex instalado pelo instalador oficial
+/// nunca aparecia (dono, 24/11/2026: "no windows não tem o gemini e o codex").
+fn nomes_do_codex(windows: bool) -> &'static [&'static str] {
+    if windows { &["codex.exe", "codex.cmd"] } else { &["codex"] }
+}
+
+/// Onde os instaladores põem o Codex, além do PATH: `~/.local/bin` (o instalador do Linux) e, no
+/// Windows, `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` (o `install.ps1`) e `%APPDATA%\npm`.
+fn pastas_do_codex(windows: bool, home: &Path, local: Option<PathBuf>, roaming: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut pastas = vec![home.join(".local").join("bin")];
+    if windows {
+        pastas.extend(local.map(|l| l.join("Programs").join("OpenAI").join("Codex").join("bin")));
+        pastas.extend(roaming.map(|r| r.join("npm")));
+    }
+    pastas
+}
 
 /// Quanto se espera o `codex debug models` responder.
 const PRAZO_DOS_MODELOS: Duration = Duration::from_secs(20);
@@ -64,11 +82,9 @@ pub fn binario() -> PathBuf {
 }
 
 fn binario_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
-    if let Some(caminho) = path.and_then(|path| std::env::split_paths(&path).map(|p| p.join(NOME_DO_CODEX)).find(|p| p.is_file())) {
-        return caminho;
-    }
-    let local = home.join(".local").join("bin").join(NOME_DO_CODEX);
-    if local.is_file() { local } else { PathBuf::from(NOME_DO_CODEX) }
+    let windows = cfg!(windows);
+    let pastas = pastas_do_codex(windows, &home, std::env::var_os("LOCALAPPDATA").map(PathBuf::from), std::env::var_os("APPDATA").map(PathBuf::from));
+    crate::sistema::achar_programa(path.as_deref(), nomes_do_codex(windows), &pastas).unwrap_or_else(|| PathBuf::from(NOME_DO_CODEX))
 }
 
 /// Há um Codex instalado neste computador.
@@ -714,5 +730,21 @@ mod testes {
             Evento::ResultadoFerramenta { conteudo, .. },
             Evento::ImagensDoResultado { id, imagens },
         ] if nome == "ImageGeneration" && conteudo.is_empty() && id == "ig-2" && imagens.len() == 1 && imagens[0].extensao == "png"));
+    }
+}
+
+#[cfg(test)]
+mod testes_dos_nomes_no_windows {
+    use super::{nomes_do_codex, pastas_do_codex};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn no_windows_o_codex_e_o_exe_do_instalador_ou_o_cmd_do_npm() {
+        assert_eq!(nomes_do_codex(true), &["codex.exe", "codex.cmd"]);
+        assert_eq!(nomes_do_codex(false), &["codex"]);
+        let pastas = pastas_do_codex(true, Path::new("/casa"), Some(PathBuf::from("/local")), Some(PathBuf::from("/roaming")));
+        assert!(pastas.contains(&PathBuf::from("/local/Programs/OpenAI/Codex/bin")));
+        assert!(pastas.contains(&PathBuf::from("/roaming/npm")));
+        assert_eq!(pastas_do_codex(false, Path::new("/casa"), None, None), vec![PathBuf::from("/casa/.local/bin")]);
     }
 }

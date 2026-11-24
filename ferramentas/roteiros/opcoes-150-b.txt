@@ -1,0 +1,38 @@
+# Enter na fila e seta ↑ percorrer, a 150%. Liga as duas opções (e o "Lembrar" dos Arquivos) em
+# Configurações > Chats rolada até o fim, manda duas mensagens com o turno rodando (a segunda vai
+# para a fila) e percorre as enviadas com ↑ e ↓.
+espera 12
+tecla Control_L+comma
+espera 2
+rolar 1000 600 40
+espera 1
+clique 1274 592           # Seta ↑: Percorrer as enviadas
+clique 1313 684           # Enter: Vai para a fila
+clique 1374 845           # Lembrar o que a aba Arquivos mostra
+espera 1
+print b0-chats-ligados
+clique 1401 181
+espera 1
+clique 300 374            # "Carrinho com cupom de desconto"
+espera 2
+clique 780 838
+texto Primeira mensagem. [demora]
+tecla Return
+espera 3
+texto Segunda, que vai para a fila.
+print b1-antes-do-enter
+tecla Return
+espera 2
+print b2-enter-na-fila    # a segunda espera na fila, o turno da primeira segue
+espera 25
+clique 780 838
+tecla Up
+espera 1
+print b3-seta-1           # a mais recente enviada
+tecla Up
+espera 1
+print b4-seta-2           # a anterior
+tecla Down
+tecla Down
+espera 1
+print b5-seta-volta       # a caixa vazia de novo

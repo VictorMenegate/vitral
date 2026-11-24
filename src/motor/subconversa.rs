@@ -293,6 +293,40 @@ impl Motor {
         }
     }
 
+    /// As pastas de projeto onde o Claude Code pode ter gravado os subagentes do chat e a sessão
+    /// dele: a pasta do projeto na conta do chat e na normal (as contas extras ligam o mesmo
+    /// `projects`), e a da conversa trazida de lá.
+    pub fn onde_ficam_os_subagentes(&self, chat: &str) -> Option<(Vec<PathBuf>, String)> {
+        let chat = self.chat_gravado(chat)?;
+        let mut projetos = claude::pastas_do_projeto(self.conta_para(chat).pasta().as_deref(), &chat.cwd);
+        if let Some(pasta) = chat.importada.as_ref().and_then(|i| i.arquivo.parent()) {
+            projetos.push(pasta.to_path_buf());
+        }
+        Some((projetos, chat.sessao.clone()))
+    }
+
+    /// O mapa dos agentes abre a conversa do subagente que o usuário escolheu e a mantém na
+    /// memória enquanto o diálogo está aberto (sem aba, a interface a soltaria).
+    pub fn abrir_subconversa_no_mapa(&mut self, chat: &str, chamada: &str, cx: &mut Context<Self>) {
+        let antes = self.subconversa_do_mapa.take();
+        let id = self.abrir_subconversa(chat, chamada, cx);
+        if let Some(antes) = antes.filter(|a| Some(a) != id.as_ref()) {
+            self.fechar_subconversa(&antes);
+        }
+        self.subconversa_do_mapa = id;
+    }
+
+    /// O mapa dos agentes fechou: a conversa que ele mantinha sai da memória (se nenhuma aba a usa,
+    /// a interface a solta no desenho seguinte).
+    pub fn mapa_de_agentes_fechou(&mut self) {
+        self.subconversa_do_mapa = None;
+    }
+
+    /// A conversa de subagente que o mapa dos agentes mantém aberta.
+    pub fn subconversa_do_mapa(&self) -> Option<&str> {
+        self.subconversa_do_mapa.as_deref()
+    }
+
     /// Lê (ou relê) em segundo plano o arquivo da conversa do subagente. Com uma leitura em
     /// curso, só marca que é para ler de novo quando ela acabar.
     fn ler_subconversa(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -310,13 +344,10 @@ impl Motor {
         let Some(chat) = self.chat_gravado(&pai) else {
             return;
         };
-        // Onde o Claude Code pode ter gravado: a pasta do projeto na conta do chat e na normal
-        // (as contas extras ligam o mesmo `projects`), e a da conversa trazida de lá.
-        let mut projetos = claude::pastas_do_projeto(self.conta_para(chat).pasta().as_deref(), &chat.cwd);
-        if let Some(pasta) = chat.importada.as_ref().and_then(|i| i.arquivo.parent()) {
-            projetos.push(pasta.to_path_buf());
-        }
-        let (sessao, de) = (chat.sessao.clone(), format!("chat {} \"{}\"", chat.id, chat.titulo));
+        let Some((projetos, sessao)) = self.onde_ficam_os_subagentes(&pai) else {
+            return;
+        };
+        let de = format!("chat {} \"{}\"", chat.id, chat.titulo);
         (self.subconversas[posicao].lendo, self.subconversas[posicao].de_novo) = (true, false);
         let id = id.to_string();
         cx.spawn(async move |motor, cx| {

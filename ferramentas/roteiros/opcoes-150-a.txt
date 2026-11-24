@@ -1,0 +1,33 @@
+# Opções novas conferidas na tela a 150%: a letra da conversa na caixa, o anel do Claude e os números
+# das abas só com o Ctrl. Coordenadas do diálogo a 150% na janela de 1600x1000 (config-150.txt).
+espera 12
+tecla Control_L+comma
+espera 2
+clique 275 448            # Aparência
+espera 1
+clique 1379 391           # Letra da conversa: 110, 120, 130
+clique 1379 391
+clique 1379 391
+espera 1
+clique 1401 181           # fecha
+espera 1
+print o1-letra-130-caixa-normal
+tecla Control_L+comma
+espera 2
+clique 275 448
+espera 1
+clique 1374 483           # Letra da conversa também na caixa
+espera 1
+clique 1401 181
+espera 1
+print o2-letra-130-na-caixa
+tecla Control_L+comma
+espera 2
+clique 275 448
+espera 1
+print o3-antes-dos-aneis
+clique 1374 760           # Anel do Claude desligado
+espera 1
+clique 1401 181
+espera 1
+print o4-sem-anel-do-claude

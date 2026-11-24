@@ -54,6 +54,66 @@ fn entre_os_da_pasta(pasta: &Path, chamada: &str) -> Option<PathBuf> {
     })
 }
 
+/// O que o fim do arquivo de um subagente diz sobre ele, para o mapa dos agentes: o cartão da
+/// conversa que o abriu pode ter ficado sem resultado (o turno dela caiu e foi retomado, o
+/// subagente seguiu por fora), e quem sabe o que ele faz é o arquivo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sinal {
+    /// A última entrada pede uma sequência (chamada de ferramenta, resultado, raciocínio) e o
+    /// arquivo foi mexido há pouco.
+    Trabalhando,
+    /// A última entrada é a resposta dele, só com texto.
+    Terminou,
+    /// Parou no meio: a última entrada espera uma sequência, mas o arquivo não anda há tempo.
+    Parado,
+}
+
+/// Quanto tempo sem gravar o subagente aguenta antes de contar como parado (ele grava a cada
+/// chamada e a cada resposta; uma ferramenta lenta passa de um minuto raramente).
+pub const PARADO_DEPOIS_DE: u64 = 120;
+
+/// O sinal pelas últimas linhas do arquivo (as mais antigas primeiro) e pela idade do arquivo, em
+/// segundos. Só contam as entradas `assistant` e `user`; anexos e gravações da API ficam de fora.
+pub fn sinal_das_linhas<'a>(linhas: impl IntoIterator<Item = &'a str>, idade: u64) -> Option<Sinal> {
+    let mut ultimo: Option<serde_json::Value> = None;
+    for linha in linhas {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(linha) else {
+            continue;
+        };
+        if matches!(v["type"].as_str(), Some("assistant" | "user")) {
+            ultimo = Some(v);
+        }
+    }
+    let ultimo = ultimo?;
+    let partes = ultimo["message"]["content"].as_array().cloned().unwrap_or_default();
+    let tem = |tipo: &str| partes.iter().any(|p| p["type"] == tipo);
+    let terminou = ultimo["type"] == "assistant" && tem("text") && !tem("tool_use");
+    Some(match (terminou, idade <= PARADO_DEPOIS_DE) {
+        (true, _) => Sinal::Terminou,
+        (false, true) => Sinal::Trabalhando,
+        (false, false) => Sinal::Parado,
+    })
+}
+
+/// O sinal do arquivo de um subagente (lê só o fim dele).
+pub fn sinal_do_arquivo(arquivo: &Path) -> Option<Sinal> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut f = fs::File::open(arquivo).ok()?;
+    let tamanho = f.metadata().ok()?.len();
+    let idade = f.metadata().ok()?.modified().ok()?.elapsed().map_or(0, |d| d.as_secs());
+    let inicio = tamanho.saturating_sub(256 * 1024);
+    f.seek(SeekFrom::Start(inicio)).ok()?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    let texto = String::from_utf8_lossy(&bytes);
+    // Cortado no meio de uma linha: a primeira, se não começou no arquivo, se perde.
+    let mut linhas = texto.lines();
+    if inicio > 0 {
+        linhas.next();
+    }
+    sinal_das_linhas(linhas, idade)
+}
+
 /// A conversa inteira do subagente, na ordem: o pedido que ele recebeu (entregue por `de`), o
 /// raciocínio, cada chamada com o resultado e o que ele disse.
 pub fn conversa(arquivo: &Path, de: &str) -> std::io::Result<Vec<Item>> {
@@ -123,6 +183,24 @@ mod testes {
                 outro => format!("{outro:?}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn o_fim_do_arquivo_diz_se_o_subagente_trabalha_terminou_ou_parou() {
+        let medido = transcript_medido();
+        let linhas: Vec<&str> = medido.lines().collect();
+        // Termina com a resposta só em texto.
+        assert_eq!(sinal_das_linhas(linhas.iter().copied(), 5), Some(Sinal::Terminou));
+        assert_eq!(sinal_das_linhas(linhas.iter().copied(), 9_999), Some(Sinal::Terminou), "a resposta vale mesmo com o arquivo antigo");
+        // Cortado depois do resultado do Bash: ele ia continuar.
+        let no_meio = &linhas[..9];
+        assert_eq!(sinal_das_linhas(no_meio.iter().copied(), 5), Some(Sinal::Trabalhando));
+        assert_eq!(sinal_das_linhas(no_meio.iter().copied(), PARADO_DEPOIS_DE + 1), Some(Sinal::Parado));
+        // Uma chamada pendente (o assistant pediu a ferramenta e o resultado não veio).
+        assert_eq!(sinal_das_linhas(linhas[..8].iter().copied(), 5), Some(Sinal::Trabalhando));
+        // Só o raciocínio vazio: ainda não respondeu.
+        assert_eq!(sinal_das_linhas(linhas[..10].iter().copied(), 5), Some(Sinal::Trabalhando));
+        assert_eq!(sinal_das_linhas(std::iter::empty(), 5), None);
     }
 
     /// Item 2: a conversa inteira do subagente, o que ele leu, rodou e respondeu.

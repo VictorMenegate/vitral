@@ -20,6 +20,7 @@ mod mcp;
 mod memoria_equipe;
 mod migracao;
 mod modelo;
+mod opcoes;
 mod motor;
 mod perfis;
 mod processos;

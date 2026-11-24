@@ -1626,9 +1626,14 @@ impl Janela {
     }
 
     /// "Ignorar espaço em branco", no "…" do arquivo aberto com o diff de "Na pasta": liga ou
-    /// desliga e refaz o diff. Vale até fechar o Vitral.
+    /// desliga e refaz o diff. A escolha fica guardada na configuração e volta na próxima abertura
+    /// se "Lembrar o que a aba Arquivos mostra" está ligado.
     fn alternar_diff_sem_espaco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.diff_sem_espaco = !self.diff_sem_espaco;
+        let valor = self.diff_sem_espaco;
+        if let Some(motor) = self.motor.clone() {
+            motor.update(cx, |m, cx| m.mudar_config(|c| c.diff_sem_espaco = valor, cx));
+        }
         if let Some((raiz, caminho)) = self.arquivo_aberto.clone() {
             self.abrir_diff_do_git(raiz, caminho, false, window, cx);
         }

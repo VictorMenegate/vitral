@@ -112,8 +112,11 @@ impl Janela {
         // A linha em edição vai por parâmetro: ler a Janela daqui de dentro, no desenho dela,
         // derrubava o app (`cannot read Janela while it is already being updated`).
         let editando = self.editando_fila.as_ref().filter(|e| e.chat == chat).map(|e| (e.indice, e.campo.clone()));
-        Some(div().map(|s| super::mensagens::coluna(s, p.medida.faixa == FaixaCaixa::Estreita)).py(esp::E8)
-            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, editando, window, cx)).into_any_element())
+        let fila = div().map(|s| super::mensagens::coluna(s, p.medida.faixa == FaixaCaixa::Estreita)).py(esp::E8)
+            .child(corpo_da_fila(motor, &cx.entity().downgrade(), chat, p.id, rodando, p.medida.nivel == LarguraPainel::Largo, editando, window, cx));
+        // Aberta, entra com fade e 8 px de baixo, como a faixa (fechar é seco).
+        let nova = p.ja_vistos.borrow_mut().novo("fila");
+        Some(super::movimento::entrada(SharedString::from(format!("entra-fila-{}", p.id)), nova, super::movimento::De::Baixo, fila).into_any_element())
     }
 
     /// Tira uma mensagem da fila e a devolve inteira à caixa (rodada de uso, item 1.3): com a caixa

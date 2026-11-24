@@ -3,6 +3,74 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.10.1
+
+O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O
+mapa dos agentes ficou parecido com um chat, o que aparece na tela entra com uma animação curta,
+o outro agente revisa o turno grande e os menus de modelo, do logo e do "…" da caixa ficaram mais
+curtos. As Configurações ganharam opções: a seta ↑ da caixa, o Enter com o turno rodando, os
+números das abas, o que a aba Arquivos lembra, o título pelo Claude Code, os anéis de uso, a
+consulta de versão nova e a letra da conversa na caixa. Essas começam no jeito de antes; só a aba
+do chat chamado e o fechar que para já vêm ligados. E o Codex e o Gemini aparecem também no
+Windows.
+
+- **O Codex e o Gemini no Windows.** O Vitral só procurava o `codex.cmd` do npm, e o Codex do
+  instalador oficial (`codex.exe`) nunca aparecia; o Gemini só aparecia com a pasta dele já no
+  PATH do app aberto. Agora ele procura os dois nomes do Codex e as pastas dos instaladores
+  oficiais, e o **Instalar o Codex…** e o **Instalar o Gemini…** também existem no Windows, rodando
+  os instaladores oficiais em PowerShell e o login de cada um.
+- **O chat chamado por outro aparece numa aba.** Quando um chat manda mensagem a outro, ou abre
+  um, o destino entra como aba de fundo no painel ativo: o que você lê não troca, a janela não vem
+  para a frente e o contorno da aba mostra que está rodando. Já à vista ou já aba, nada muda. Em
+  Configurações, Chats, Abas.
+- **Fechar a aba para o chat.** Fechar (× ou Ctrl+W) a aba de um chat que está trabalhando para o
+  turno dele, como o Parar, a menos que ele continue à vista em outro painel. Com agentes em
+  segundo plano, o Vitral pergunta antes.
+- **Seta ↑ percorre as enviadas.** Com a opção, a seta na caixa vazia traz as mensagens que você
+  já enviou neste chat, uma por vez; ↓ volta; editar devolve as setas ao cursor. O corrigir fica
+  no lápis da mensagem e no Ctrl+↑.
+- **Enter vai para a fila.** Com o turno rodando, o Enter espera a vez e o Ctrl+Enter entra no
+  turno.
+- **Números só segurando Ctrl.** Os números das abas e da lista aparecem depois de uns 150 ms
+  com o Ctrl apertado e somem ao soltar.
+- **A aba Arquivos lembra.** “Mostrar ignorados” e “Ignorar espaço em branco” voltam como
+  ficaram, se a opção estiver ligada.
+- **Título pelo Claude Code, anéis de uso, versão nova e letra na caixa.** Dá para desligar o
+  título gerado, escolher quais anéis de uso aparecem (Claude, Codex, Gemini), deixar a consulta
+  de versão nova dos agentes só no botão e pôr a letra da conversa também na caixa de mensagem.
+- **O mapa dos agentes ficou mais parecido com um chat.** Quem está trabalhando fica em cima, depois
+  quem espera você, quem falhou e os terminados. O lado direito mostra a conversa do agente como a de
+  um chat: o pedido num balão, as respostas em Markdown, as chamadas agrupadas e recolhíveis, as
+  imagens em miniatura e o relatório, com o botão **Abrir em aba**. E o agente que a conversa deu por
+  interrompido, mas que seguiu trabalhando depois de um turno retomado, volta a aparecer como
+  trabalhando (ou como terminou).
+- **Menos coisa aparecendo a seco.** Trocar de aba faz a conversa entrar com um fade curto. Os
+  pedidos de permissão, as perguntas e o plano, a fila, cada pílula nova, a faixa quando muda de
+  estado, a chamada que chega numa trilha, o que você abre na conversa (com o chevron girando), a
+  parte das Configurações, a troca Conversas/Arquivos, a direita do Ctrl+J, os avisos do canto e a
+  mensagem presa entram com fade e um deslize de poucos pixels. Tudo em 160 ms, só quando
+  acontece; sair e recolher continuam na hora, e com Animações desligadas tudo aparece pronto.
+- **O outro agente revisa o turno.** Quando um turno muda 20 linhas ou mais, o Codex (num chat do
+  Claude) ou o Claude (nos outros) confere o que mudou, só lendo. Sem nada a dizer, fica uma linha
+  discreta; com um achado, um cartão com **Mandar ao Claude**. A linha “Trabalhou…” do último
+  turno ganha **Revisar com o Codex** para pedir quando quiser. A revisão gasta o plano do outro
+  agente: dá para desligar em Configurações, Agentes. A chave “Os dois em toda mensagem” saiu.
+- **Seletor de modelo mais curto.** As versões exatas ficam atrás de **Outras versões** e a conta
+  vira uma linha no pé, “Conta: tecnologia · semana 44%”, que abre a escolha no lugar. Escrevendo
+  na busca, as versões e as contas que casam aparecem direto. O aviso de reler só aparece com a
+  conversa acima de 100 mil tokens, numa linha curta.
+- **Menu do logo mais curto.** Três grupos (os chats, as vistas, a conta e os ajustes), a versão
+  no alto e, quando há versão nova pronta, a linha **Versão nova pronta · Reiniciar** logo abaixo.
+  Servidores MCP, Memória da equipe, a pasta dos chats novos e a pasta de dados saíram do menu: estão
+  nas Configurações e na paleta. O menu cabe sem rolar a 150%, e a versão pronta não fica mais para
+  trás quando outra janela do Vitral instala uma mais nova.
+- **O "…" da caixa em três grupos.** Anexar, mandar e a conversa, com duas divisórias no máximo.
+  O que não serve agora sai do menu em vez de ficar cinza: os de mandar só aparecem com texto na
+  caixa, o compactar só com conversa e a sessão nova só com o chat parado. “Arquivo ou imagem…”
+  não sai mais cortado.
+- **Ultracode em uma linha.** Embaixo do nome, só “Agentes em paralelo, só na próxima · gasta bem
+  mais”; o resto está no (i).
+
 ## 0.10.0
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,

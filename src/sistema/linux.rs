@@ -25,6 +25,12 @@ pub fn abrir_no_editor(pasta: &Path, linha: Option<u32>) {
     soltar(novo_comando(editor).args(super::argumentos_do_editor(pasta, linha)));
 }
 
+/// Só o Windows tem o PowerShell dos instaladores: aqui não é chamado, e abre o terminal comum.
+#[allow(dead_code)]
+pub fn abrir_powershell(pasta: &Path, comando: &str) {
+    abrir_terminal(pasta, Some(comando));
+}
+
 /// Abre um terminal na pasta; com `comando`, roda ele e deixa o shell aberto depois.
 pub fn abrir_terminal(pasta: &Path, comando: Option<&str>) {
     let mut terminal = novo_comando("ptyxis");

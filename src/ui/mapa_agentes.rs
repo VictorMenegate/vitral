@@ -3,6 +3,8 @@
 //! ferramentas usou; o clique num agente abre os passos e o resultado dele. Referência do dono
 //! (13/11/2026): o "Agent map" da extensão do Claude Code.
 
+use std::collections::{HashMap, HashSet};
+
 use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -12,12 +14,13 @@ use super::{
     componentes::{AnelGirando, contagem, largura, relogio},
     composer::nome_curto_modelo,
     dialogos::{cabecalho, moldura, topo},
-    mensagens::{detalhe_da_chamada, detalhe_do_passo, duracao_curta, nome_curto},
+    mensagens::{detalhe_da_chamada, detalhe_do_passo, duracao_curta, markdown, nome_curto, resumo_das_chamadas},
 };
 use crate::{
+    importar::subagente::Sinal,
     modelo::{Agente as QuemResponde, Chat, Execucao, Item, agora},
-    motor::Motor,
-    tema::{Cores, FONTE_MONO, Tipo as _, esp, r, raio},
+    motor::{Motor, subconversa::id_da_subconversa},
+    tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, r, raio},
 };
 
 /// A altura da linha de um agente (o título e a linha de baixo), a 100%.
@@ -52,6 +55,10 @@ pub(super) struct Agente {
     pub atividade: String,
     pub passos: Vec<String>,
     pub resultado: Option<String>,
+    /// Quando a chamada que o abriu entrou na conversa (0: sem hora): ordena a lista.
+    pub em: u64,
+    /// Espera uma resposta sua a um pedido de permissão.
+    pub esperando: bool,
 }
 
 pub(super) fn e_agente(item: &Item) -> bool {
@@ -67,6 +74,21 @@ pub(super) fn tem_agentes(chat: &Chat) -> bool {
 /// (sem ele, quem não tem resultado foi interrompido). Um agente sem resultado só conta como vivo
 /// se nenhum aviso veio depois dele: o turno que para ou falha deixa um aviso na conversa.
 pub(super) fn agentes_do_chat(itens: &[Item], rodando: bool, agora: u64) -> Vec<Agente> {
+    agentes_do_chat_com(itens, rodando, agora, &HashMap::new(), &[])
+}
+
+/// Como `agentes_do_chat`, com o que o arquivo de cada subagente diz (`sinais`, pelo id da chamada)
+/// e as chamadas que esperam uma resposta do usuário. Um agente sem resultado cujo arquivo termina
+/// numa resposta só em texto terminou, e um cujo arquivo anda segue trabalhando mesmo com um aviso
+/// de turno parado no meio: o turno da conversa caiu e foi retomado (com o `SendMessage`, por
+/// exemplo), e o subagente não parou junto. Só sem arquivo vale a regra do aviso.
+pub(super) fn agentes_do_chat_com(
+    itens: &[Item],
+    rodando: bool,
+    agora: u64,
+    sinais: &HashMap<String, Sinal>,
+    esperando: &[String],
+) -> Vec<Agente> {
     let ultimo_aviso = itens.iter().rposition(Item::aviso_que_fecha);
     itens
         .iter()
@@ -83,6 +105,13 @@ pub(super) fn agentes_do_chat(itens: &[Item], rodando: bool, agora: u64) -> Vec<
                 (true, false, _) => Estado::Terminou,
                 (false, ..) => Estado::Interrompido,
             };
+            // O que o arquivo do subagente diz vale mais que o aviso do turno da conversa.
+            let estado = match (resultado.is_none(), sinais.get(id)) {
+                (true, Some(Sinal::Trabalhando)) => Estado::Rodando,
+                (true, Some(Sinal::Terminou)) => Estado::Terminou,
+                (true, Some(Sinal::Parado)) => Estado::Interrompido,
+                _ => estado,
+            };
             let segundos = match (sub, estado) {
                 (_, Estado::Rodando) if *em > 0 => Some(agora.saturating_sub(*em)),
                 (Some(sub), _) if sub.fim >= *em && *em > 0 => Some(sub.fim - *em),
@@ -98,9 +127,26 @@ pub(super) fn agentes_do_chat(itens: &[Item], rodando: bool, agora: u64) -> Vec<
                 atividade: sub.as_ref().map(|s| s.atividade.clone()).unwrap_or_default(),
                 passos: sub.as_ref().map(|s| s.passos.clone()).unwrap_or_default(),
                 resultado: resultado.clone(),
+                em: *em,
+                esperando: estado == Estado::Rodando && esperando.iter().any(|e| e == id),
             })
         })
         .collect()
+}
+
+/// A ordem da lista do mapa: quem está trabalhando em cima, depois quem espera uma resposta sua,
+/// quem falhou e, por fim, quem terminou ou foi interrompido; em cada grupo, do mais recente ao
+/// mais antigo (a ordem de abertura desempata).
+pub(super) fn ordenar(agentes: &mut [Agente]) {
+    let grupo = |a: &Agente| match (a.estado, a.esperando) {
+        (Estado::Rodando, false) => 0,
+        (Estado::Rodando, true) => 1,
+        (Estado::Falhou, _) => 2,
+        (Estado::Terminou | Estado::Interrompido, _) => 3,
+    };
+    // Estável: com a mesma hora, o aberto depois vem antes.
+    agentes.reverse();
+    agentes.sort_by_key(|a| (grupo(a), std::cmp::Reverse(a.em)));
 }
 
 /// Quantos subagentes desta conversa estão trabalhando agora (a pílula da linha de estado).
@@ -127,6 +173,7 @@ pub(super) fn meta_do_agente(a: &Agente) -> String {
     let tokens = (a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
     let numeros = [tempo, tokens, ferramentas].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     match a.estado {
+        Estado::Rodando if a.esperando => "Esperando você".to_string(),
         Estado::Rodando if !a.atividade.is_empty() => detalhe_do_passo(&a.atividade),
         Estado::Rodando => "Começando…".to_string(),
         Estado::Terminou if numeros.is_empty() => "Terminou".to_string(),
@@ -174,92 +221,248 @@ fn linha_do_no(ponto: AnyElement, titulo: SharedString, meta: SharedString, fort
         .children(direita)
 }
 
-/// O painel da direita: o agente escolhido, com o que ele está fazendo (ou quanto levou), os
-/// passos dele e o resultado, cada parte com a sua rolagem. Passo vazio não entra (deixava um
-/// buraco em branco em cima do resultado; dono, 23/11/2026).
-fn painel_do_agente(i: usize, a: &Agente) -> Div {
+/// O que só o diálogo sabe: qual agente está aberto, o que o arquivo de cada um diz (lido de
+/// tempos em tempos) e quais grupos de chamadas estão abertos na conversa dele.
+#[derive(Default)]
+struct EstadoDoMapa {
+    aberto: Option<String>,
+    sinais: HashMap<String, Sinal>,
+    expandidos: HashSet<usize>,
+    fechado: bool,
+}
+
+/// O que o desenho do mapa precisa e não vem do motor.
+struct Ligacoes {
+    estado: Entity<EstadoDoMapa>,
+    motor: Entity<Motor>,
+    janela: WeakEntity<Janela>,
+    /// O painel onde a aba do subagente abre (o ativo quando o diálogo abriu).
+    painel: u64,
+    chat: String,
+}
+
+/// A conversa do agente como um chat normal, no painel da direita: o pedido num balão, o que ele
+/// respondeu em Markdown, as chamadas agrupadas e recolhíveis como na trilha da conversa, as
+/// imagens em miniatura (o clique abre o visor) e, por último, o relatório. Os itens vêm da
+/// conversa do subagente que o motor mantém aberta para o mapa (`abrir_subconversa_no_mapa`).
+fn conversa_do_agente(ligacoes: &Ligacoes, sub_id: &str, itens: &[Item], expandidos: &HashSet<usize>, cx: &App) -> Vec<AnyElement> {
+    let mut saida: Vec<AnyElement> = Vec::new();
+    let mut i = 0;
+    while i < itens.len() {
+        match &itens[i] {
+            Item::Usuario { texto, .. } | Item::Entrega { texto, .. } => {
+                saida.push(
+                    div()
+                        .px(esp::E12)
+                        .py(esp::E8)
+                        .rounded(raio::CARTAO)
+                        .bg(Cores::balao())
+                        .corpo_ui()
+                        .text_color(Cores::forte())
+                        .max_h(r(160.))
+                        .overflow_hidden()
+                        .child(texto.trim().to_string())
+                        .into_any_element(),
+                );
+                i += 1;
+            }
+            Item::Assistente { texto, .. } if !texto.trim().is_empty() => {
+                saida.push(div().corpo_ui().child(markdown(SharedString::from(format!("agente-{sub_id}-{i}")), texto.clone(), cx)).into_any_element());
+                i += 1;
+            }
+            Item::Ferramenta { .. } | Item::Raciocinio { .. } => {
+                // Todas as chamadas seguidas, num grupo só.
+                let inicio = i;
+                while i < itens.len() && matches!(itens[i], Item::Ferramenta { .. } | Item::Raciocinio { .. }) {
+                    i += 1;
+                }
+                let grupo: Vec<(usize, &Item)> = (inicio..i).map(|k| (k, &itens[k])).collect();
+                saida.extend(grupo_de_chamadas(ligacoes, sub_id, inicio, &grupo, expandidos.contains(&inicio)));
+            }
+            Item::Aviso { texto, .. } => {
+                saida.push(div().metadado().text_color(Cores::tenue()).child(texto.clone()).into_any_element());
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    saida
+}
+
+/// Um grupo de chamadas: a linha de resumo (clique abre e fecha), as chamadas dele e as imagens que
+/// elas trouxeram.
+fn grupo_de_chamadas(ligacoes: &Ligacoes, sub_id: &str, inicio: usize, grupo: &[(usize, &Item)], aberto: bool) -> Vec<AnyElement> {
+    let chamadas: Vec<&Item> = grupo.iter().map(|(_, i)| *i).filter(|i| matches!(i, Item::Ferramenta { .. })).collect();
+    let imagens: Vec<std::path::PathBuf> = chamadas
+        .iter()
+        .filter_map(|i| match i {
+            Item::Ferramenta { imagens, .. } => Some(imagens.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let mut saida: Vec<AnyElement> = Vec::new();
+    if !chamadas.is_empty() {
+        let resumo = resumo_das_chamadas(grupo, false);
+        let resumo = if resumo.is_empty() { contagem(chamadas.len(), "chamada", "chamadas") } else { resumo };
+        let estado = ligacoes.estado.clone();
+        let linhas = aberto.then(|| {
+            v_flex().pl(esp::E16).gap(esp::E2).children(chamadas.iter().map(|item| {
+                let Item::Ferramenta { nome, resumo, erro, .. } = item else {
+                    return div().into_any_element();
+                };
+                let passo = detalhe_do_passo(&format!("{} · {}", nome_curto(nome), detalhe_da_chamada(nome, resumo)));
+                let (verbo, objeto) = passo.split_once(' ').unwrap_or((passo.as_str(), ""));
+                h_flex()
+                    .gap(esp::E6)
+                    .child(div().flex_none().metadado().text_color(if *erro { Cores::vermelho() } else { Cores::tenue() }).child(verbo.to_string()))
+                    .child(div().min_w_0().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(objeto.to_string()))
+                    .into_any_element()
+            }))
+        });
+        saida.push(
+            v_flex()
+                .gap(esp::E4)
+                .child(
+                    h_flex()
+                        .id(SharedString::from(format!("grupo-{sub_id}-{inicio}")))
+                        .gap(esp::E6)
+                        .items_center()
+                        .cursor_pointer()
+                        .text_color(Cores::tenue())
+                        .hover(|s| s.text_color(Cores::texto()))
+                        .child(super::mensagens::icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.))
+                        .child(div().min_w_0().truncate().metadado().child(resumo))
+                        .on_click(move |_, window, cx| {
+                            estado.update(cx, |e, cx| {
+                                if !e.expandidos.remove(&inicio) {
+                                    e.expandidos.insert(inicio);
+                                }
+                                cx.notify();
+                            });
+                            window.refresh();
+                        }),
+                )
+                .children(linhas)
+                .into_any_element(),
+        );
+    }
+    if !imagens.is_empty() {
+        let miniaturas = imagens.into_iter().enumerate().map(|(k, caminho)| {
+            let (janela, sub_id, abrir) = (ligacoes.janela.clone(), sub_id.to_string(), caminho.clone());
+            div()
+                .id(SharedString::from(format!("imagem-{sub_id}-{inicio}-{k}")))
+                .flex_none()
+                .size(r(72.))
+                .rounded(raio::CONTROLE)
+                .overflow_hidden()
+                .bg(Cores::preto())
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.85))
+                .child(img(caminho).size_full().object_fit(ObjectFit::Cover))
+                .on_click(move |_, window, cx| {
+                    let (sub_id, abrir) = (sub_id.clone(), abrir.clone());
+                    let _ = janela.update(cx, |j, cx| j.abrir_visor(&sub_id, &abrir, window, cx));
+                })
+        });
+        saida.push(h_flex().flex_wrap().gap(esp::E8).children(miniaturas).into_any_element());
+    }
+    saida
+}
+
+/// O painel da direita: o agente escolhido, com o que ele está fazendo (ou quanto levou), a conversa
+/// dele como a de um chat normal e o botão que a abre numa aba. Sem a conversa (o Claude Code já a
+/// apagou, ou a leitura ainda não voltou), os passos e o relatório que o cartão guardou.
+fn painel_do_agente(i: usize, a: &Agente, ligacoes: &Ligacoes, expandidos: &HashSet<usize>, motor: &Motor, window: &Window, cx: &App) -> Div {
+    let sub_id = id_da_subconversa(&ligacoes.chat, &a.id);
+    let itens: Option<Vec<Item>> = motor.subconversa(&sub_id).map(|s| s.chat.itens.clone()).filter(|itens| !itens.is_empty());
     let passos: Vec<String> = a.passos.iter().map(|p| detalhe_do_passo(p)).map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
     let titulo_de_secao = |texto: &'static str| super::componentes::etiqueta_de_secao(texto);
-    let lista_de_passos = (!passos.is_empty()).then(|| {
-        let n = passos.len();
-        v_flex()
-            .gap(esp::E4)
-            .child(titulo_de_secao(if n == 1 { "1 passo" } else { "Passos" }))
-            .child(
+    let corpo: Vec<AnyElement> = match &itens {
+        Some(itens) => conversa_do_agente(ligacoes, &sub_id, itens, expandidos, cx),
+        None => {
+            let lista_de_passos = (!passos.is_empty()).then(|| {
                 v_flex()
-                    .id(("passos-do-agente", i))
-                    .max_h(r(200.))
-                    .overflow_y_scroll()
                     .gap(esp::E2)
-                    .children(passos.into_iter().enumerate().map(|(k, p)| {
-                        h_flex()
-                            .gap(esp::E8)
-                            .items_start()
-                            .child(div().flex_none().w(r(22.)).metadado().text_color(Cores::apagado()).child(format!("{}", k + 1)))
-                            // O verbo na letra do texto, e só o objeto (o arquivo, o comando) em mono, como na
-                            // trilha da conversa.
-                            .child({
-                                let (verbo, objeto) = p.split_once(' ').unwrap_or((p.as_str(), ""));
-                                h_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .gap(esp::E6)
-                                    .child(div().flex_none().metadado().text_color(Cores::tenue()).child(verbo.to_string()))
-                                    .child(div().min_w_0().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(objeto.to_string()))
-                            })
-                    })),
-            )
-    });
-    let resultado = a.resultado.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|texto| {
-        let curto: String = texto.chars().take(8_000).collect();
-        v_flex().gap(esp::E4).min_h_0().child(titulo_de_secao("Resultado")).child(
-            div()
-                .id(("resultado-do-agente", i))
-                .max_h(r(300.))
-                .overflow_y_scroll()
-                .p(esp::E12)
-                .rounded(raio::CONTROLE)
-                .bg(Cores::preto())
-                .corpo_ui()
-                .text_color(Cores::texto())
-                .child(curto),
-        )
-    });
-    let vazio = (lista_de_passos.is_none() && resultado.is_none()).then(|| {
-        div().corpo_ui().text_color(Cores::tenue()).child(match a.estado {
-            Estado::Rodando => "Ainda não usou nenhuma ferramenta.",
-            _ => "A conversa não guardou os passos deste agente.",
-        })
+                    .child(titulo_de_secao(if passos.len() == 1 { "1 passo" } else { "Passos" }))
+                    .children(passos.iter().map(|p| div().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(p.clone())))
+                    .into_any_element()
+            });
+            let resultado = a.resultado.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|texto| {
+                let curto: String = texto.chars().take(8_000).collect();
+                v_flex()
+                    .gap(esp::E4)
+                    .child(titulo_de_secao("Relatório"))
+                    .child(div().corpo_ui().child(markdown(SharedString::from(format!("relatorio-{sub_id}")), curto, cx)))
+                    .into_any_element()
+            });
+            let vazio = (lista_de_passos.is_none() && resultado.is_none()).then(|| {
+                div()
+                    .corpo_ui()
+                    .text_color(Cores::tenue())
+                    .child(match a.estado {
+                        Estado::Rodando => "Lendo a conversa do agente…",
+                        _ => "A conversa não guardou os passos deste agente.",
+                    })
+                    .into_any_element()
+            });
+            lista_de_passos.into_iter().chain(resultado).chain(vazio).collect()
+        }
+    };
+    let (janela, chat, chamada, painel) = (ligacoes.janela.clone(), ligacoes.chat.clone(), a.id.clone(), ligacoes.painel);
+    let abrir_aba = super::componentes::botao_fantasma(
+        ("agente-abrir-aba", i),
+        Some(Lucide::PanelRight.into()),
+        "Abrir em aba",
+        super::componentes::TamanhoBotao::Controle,
+        window,
+        cx,
+    )
+    .bg(Cores::recuo())
+    .on_click(move |_, window, cx| {
+        window.close_dialog(cx);
+        let (chat, chamada) = (chat.clone(), chamada.clone());
+        let _ = janela.update(cx, |j, cx| j.abrir_subagente(painel, chat, chamada, window, cx));
     });
     v_flex()
         .size_full()
         .gap(esp::E12)
         .child(
-            h_flex().gap(esp::E8).items_start().child(div().flex_none().pt(esp::E4).child(ponto(a.estado))).child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(esp::E2)
-                    .child(div().corpo_ui().font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child(a.titulo.clone()))
-                    .child(div().metadado().text_color(Cores::tenue()).child(meta_do_agente(a))),
-            ),
+            h_flex()
+                .gap(esp::E8)
+                .items_start()
+                .child(div().flex_none().pt(esp::E4).child(ponto(a.estado)))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(esp::E2)
+                        .child(div().corpo_ui().font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child(a.titulo.clone()))
+                        .child(div().metadado().text_color(Cores::tenue()).child(meta_do_agente(a))),
+                )
+                .child(div().flex_none().child(abrir_aba)),
         )
-        .children(lista_de_passos)
-        .children(resultado)
-        .children(vazio)
+        .child(
+            v_flex()
+                .id(("conversa-do-agente", i))
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .gap(esp::E12)
+                .children(corpo),
+        )
 }
-
-/// O agente que abre escolhido: o que está trabalhando, ou o último.
+/// O agente que abre escolhido: o primeiro da lista (o que trabalha, ou o mais recente).
 fn escolhido_padrao(agentes: &[Agente]) -> Option<String> {
-    agentes.iter().find(|a| a.estado == Estado::Rodando).or_else(|| agentes.last()).map(|a| a.id.clone())
+    agentes.first().map(|a| a.id.clone())
 }
 
 /// A tela dos agentes: em cima, a conversa (o modelo e o contexto) e a conta de quantos
 /// trabalham, terminaram e falharam; embaixo, a lista de todos à esquerda, com a sua rolagem, e o
-/// escolhido à direita, com os passos e o resultado. Era uma árvore com o agente aberto dentro
-/// dela: com 10 agentes, só dois cabiam e o resto ficava escondido embaixo (dono, 23/11/2026:
-/// "tem que melhorar bastante essa parte pra ver os agents").
-fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, estado: &Entity<Option<String>>) -> AnyElement {
+/// escolhido à direita, como uma conversa. Era uma árvore com o agente aberto dentro dela: com 10
+/// agentes, só dois cabiam e o resto ficava escondido embaixo (dono, 23/11/2026: "tem que melhorar
+/// bastante essa parte pra ver os agents").
+fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], ligacoes: &Ligacoes, window: &Window, cx: &App) -> AnyElement {
     let execucao = motor.execucao(&chat.id);
     let rodando = matches!(execucao, Execucao::Rodando { .. });
     let modelo = match (chat.agente, chat.modelo_atual.as_deref().filter(|m| !m.is_empty())) {
@@ -312,13 +515,17 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
         };
         return v_flex().gap(esp::E12).child(conversa).child(div().px(esp::E4).corpo_ui().text_color(Cores::tenue()).child(aviso)).into_any_element();
     }
-    let escolhido = aberto.filter(|id| agentes.iter().any(|a| a.id == *id)).map(str::to_string).or_else(|| escolhido_padrao(agentes));
+    let (aberto, expandidos) = {
+        let e = ligacoes.estado.read(cx);
+        (e.aberto.clone(), e.expandidos.clone())
+    };
+    let escolhido = aberto.filter(|id| agentes.iter().any(|a| a.id == *id)).or_else(|| escolhido_padrao(agentes));
     let linhas = agentes.iter().enumerate().map(|(i, a)| {
         let selecionado = escolhido.as_deref() == Some(a.id.as_str());
         let relogio_vivo = (a.estado == Estado::Rodando)
             .then(|| a.segundos.map(|s| div().flex_none().etiqueta().text_color(Cores::apagado()).child(relogio(s)).into_any_element()))
             .flatten();
-        let (estado, id) = (estado.clone(), a.id.clone());
+        let (estado, motor_e, chat_id, id) = (ligacoes.estado.clone(), ligacoes.motor.clone(), ligacoes.chat.clone(), a.id.clone());
         div()
             .id(("agente", i))
             .rounded(raio::CARTAO)
@@ -328,10 +535,13 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
             .cursor_pointer()
             .child(linha_do_no(ponto(a.estado), a.titulo.clone().into(), meta_do_agente(a).into(), false, relogio_vivo))
             .on_click(move |_, window, cx| {
-                estado.update(cx, |aberto, cx| {
-                    *aberto = Some(id.clone());
+                estado.update(cx, |e, cx| {
+                    e.aberto = Some(id.clone());
+                    e.expandidos.clear();
                     cx.notify();
                 });
+                // A conversa dele passa a ser lida para o painel da direita.
+                motor_e.update(cx, |m, cx| m.abrir_subconversa_no_mapa(&chat_id, &id, cx));
                 window.refresh();
             })
     });
@@ -339,7 +549,7 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
         .iter()
         .enumerate()
         .find(|(_, a)| escolhido.as_deref() == Some(a.id.as_str()))
-        .map(|(i, a)| painel_do_agente(i, a));
+        .map(|(i, a)| painel_do_agente(i, a, ligacoes, &expandidos, motor, window, cx));
     v_flex()
         .gap(esp::E12)
         .child(conversa)
@@ -364,15 +574,83 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], aberto: Option<&str>, es
         .into_any_element()
 }
 
+/// Os agentes desta conversa na ordem da lista, com o que o arquivo de cada um diz.
+fn agentes_ordenados(c: &Chat, rodando: bool, m: &Motor, sinais: &HashMap<String, Sinal>) -> Vec<Agente> {
+    let esperando: Vec<String> = m.subagentes_esperando(&c.id);
+    let mut agentes = agentes_do_chat_com(&c.itens, rodando, agora(), sinais, &esperando);
+    ordenar(&mut agentes);
+    agentes
+}
+
 impl Janela {
     /// Abre o mapa dos agentes da conversa. O diálogo lê a conversa a cada quadro: os agentes que
-    /// trabalham andam ao vivo, com o relógio.
+    /// trabalham andam ao vivo, com o relógio. A cada 2 s, enquanto aberto, o fim do arquivo de
+    /// cada agente sem resultado é lido: é ele que diz se um agente que o cartão deu por parado
+    /// trabalha ou terminou (o turno da conversa pode ter caído e voltado com ele no meio).
     pub(super) fn abrir_mapa_de_agentes(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(motor) = self.motor.clone() else {
             return;
         };
-        // Qual agente está aberto (o id da chamada): um estado só do diálogo.
-        let aberto: Entity<Option<String>> = cx.new(|_| None);
+        let painel = self.paineis.get(self.ativo).map_or(0, |p| p.id);
+        let estado: Entity<EstadoDoMapa> = cx.new(|_| EstadoDoMapa::default());
+        // O primeiro da lista abre já com a conversa dele lida.
+        {
+            let m = motor.read(cx);
+            if let Some(c) = m.chat(&chat) {
+                let rodando = matches!(m.execucao(&c.id), Execucao::Rodando { .. });
+                if let Some(id) = escolhido_padrao(&agentes_ordenados(c, rodando, m, &HashMap::new())) {
+                    estado.update(cx, |e, _| e.aberto = Some(id.clone()));
+                    motor.update(cx, |m, cx| m.abrir_subconversa_no_mapa(&chat, &id, cx));
+                }
+            }
+        }
+        // A leitura do fim dos arquivos, em segundo plano.
+        let (motor_l, estado_l, chat_l) = (motor.clone(), estado.clone(), chat.clone());
+        cx.spawn(async move |_, cx| {
+            loop {
+                let pedido = motor_l.update(cx, |m, _| {
+                    let c = m.chat(&chat_l)?;
+                    let sem_resultado: Vec<String> = c
+                        .itens
+                        .iter()
+                        .filter_map(|i| match i {
+                            Item::Ferramenta { id, resultado: None, .. } if e_agente(i) => Some(id.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    let (projetos, sessao) = m.onde_ficam_os_subagentes(&chat_l)?;
+                    Some((sem_resultado, projetos, sessao))
+                });
+                if estado_l.read_with(cx, |e, _| e.fechado) {
+                    break;
+                }
+                if let Some((chamadas, projetos, sessao)) = pedido
+                    && !chamadas.is_empty()
+                {
+                    let sinais = cx
+                        .background_spawn(async move {
+                            chamadas
+                                .into_iter()
+                                .filter_map(|chamada| {
+                                    let arquivo = crate::importar::subagente::transcript(&projetos, &sessao, &chamada)?;
+                                    Some((chamada, crate::importar::subagente::sinal_do_arquivo(&arquivo)?))
+                                })
+                                .collect::<HashMap<_, _>>()
+                        })
+                        .await;
+                    let _ = estado_l.update(cx, |e, cx| {
+                        if e.sinais != sinais {
+                            e.sinais = sinais;
+                            cx.notify();
+                        }
+                    });
+                }
+                cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+            }
+        })
+        .detach();
+        let ligacoes = Ligacoes { estado: estado.clone(), motor: motor.clone(), janela: cx.weak_entity(), painel, chat: chat.clone() };
+        let (motor_f, estado_f) = (motor.clone(), estado.clone());
         self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, cx| {
             let m = motor.read(cx);
@@ -380,23 +658,34 @@ impl Janela {
                 return moldura(dialogo, largura::G, window).title(topo(cabecalho("Agentes desta conversa", None)));
             };
             let rodando = matches!(m.execucao(&c.id), Execucao::Rodando { .. });
-            let agentes = agentes_do_chat(&c.itens, rodando, agora());
+            let agentes = agentes_ordenados(c, rodando, m, &ligacoes.estado.read(cx).sinais);
             let vivos = agentes.iter().filter(|a| a.estado == Estado::Rodando).count();
             let subtitulo = match (agentes.len(), vivos) {
                 (0, _) => "Os subagentes que a conversa abre".to_string(),
-                (n, 0) => format!("{} · clique num para ver os passos", contagem(n, "agente", "agentes")),
-                (n, v) => format!("{} · {v} trabalhando · clique num para ver os passos", contagem(n, "agente", "agentes")),
+                (n, 0) => format!("{} · clique num para ver a conversa dele", contagem(n, "agente", "agentes")),
+                (n, v) => format!("{} · {v} trabalhando · clique num para ver a conversa dele", contagem(n, "agente", "agentes")),
             };
-            let qual = aberto.read(cx).clone();
-            let corpo = mapa(m, c, &agentes, qual.as_deref(), &aberto);
-            moldura(dialogo, LARGURA_DO_DIALOGO, window).title(topo(cabecalho("Agentes desta conversa", Some(subtitulo)))).child(corpo)
+            let corpo = mapa(m, c, &agentes, &ligacoes, window, cx);
+            moldura(dialogo, LARGURA_DO_DIALOGO, window)
+                .title(topo(cabecalho("Agentes desta conversa", Some(subtitulo))))
+                .on_close({
+                    let (motor_fechou, estado_fechou) = (motor_f.clone(), estado_f.clone());
+                    move |_, _, cx| {
+                        estado_fechou.update(cx, |e, _| e.fechado = true);
+                        motor_fechou.update(cx, |m, _| m.mapa_de_agentes_fechou());
+                    }
+                })
+                .child(corpo)
         });
     }
 }
 
 #[cfg(test)]
 mod testes {
-    use super::{Agente, Estado, agentes_do_chat, em_mil, meta_do_agente};
+    use std::collections::HashMap;
+
+    use super::{Agente, Estado, agentes_do_chat, agentes_do_chat_com, em_mil, meta_do_agente, ordenar};
+    use crate::importar::subagente::Sinal;
     use crate::modelo::{Item, Subagente};
 
     fn agente(id: &str, resultado: Option<&str>, erro: bool, em: u64, sub: Option<Subagente>) -> Item {
@@ -485,6 +774,8 @@ mod testes {
             atividade: "Read · admin.py".into(),
             passos: Vec::new(),
             resultado: None,
+            em: 0,
+            esperando: false,
         };
         assert_eq!(meta_do_agente(&base), "Leu admin.py");
         assert_eq!(meta_do_agente(&Agente { atividade: String::new(), ..base.clone() }), "Começando…");
@@ -494,5 +785,80 @@ mod testes {
         assert_eq!(meta_do_agente(&Agente { estado: Estado::Terminou, ferramentas: None, segundos: None, ..base }), "Terminou");
         assert_eq!(em_mil(437_700), "437,7 mil");
         assert_eq!(em_mil(900), "900");
+    }
+
+    fn com_estado(id: &str, estado: Estado, em: u64, esperando: bool) -> Agente {
+        Agente {
+            id: id.into(),
+            titulo: id.into(),
+            estado,
+            ferramentas: None,
+            tokens: 0,
+            segundos: None,
+            atividade: String::new(),
+            passos: Vec::new(),
+            resultado: None,
+            em,
+            esperando,
+        }
+    }
+
+    /// Pedido 4: rodando em cima; depois quem espera resposta, quem falhou, e por fim os terminados
+    /// e interrompidos, do mais recente ao mais antigo em cada grupo.
+    #[test]
+    fn a_lista_poe_quem_roda_em_cima_e_ordena_cada_grupo_do_mais_recente() {
+        let mut lista = vec![
+            com_estado("terminou-velho", Estado::Terminou, 10, false),
+            com_estado("rodando-velho", Estado::Rodando, 20, false),
+            com_estado("falhou", Estado::Falhou, 70, false),
+            com_estado("interrompido-novo", Estado::Interrompido, 60, false),
+            com_estado("esperando", Estado::Rodando, 30, true),
+            com_estado("rodando-novo", Estado::Rodando, 50, false),
+            com_estado("terminou-novo", Estado::Terminou, 80, false),
+        ];
+        ordenar(&mut lista);
+        let ids: Vec<&str> = lista.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["rodando-novo", "rodando-velho", "esperando", "falhou", "terminou-novo", "interrompido-novo", "terminou-velho"]
+        );
+        // Sem hora, o aberto depois vem antes.
+        let mut sem_hora = vec![com_estado("a", Estado::Terminou, 0, false), com_estado("b", Estado::Terminou, 0, false)];
+        ordenar(&mut sem_hora);
+        assert_eq!(sem_hora.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+    }
+
+    /// Complemento do pedido 4: o agente que o aviso do turno deu por interrompido, mas cujo arquivo
+    /// anda (o turno da conversa caiu e voltou, o subagente seguiu), trabalha; se o arquivo termina
+    /// na resposta dele, terminou; se parou de andar, segue interrompido.
+    #[test]
+    fn o_arquivo_do_agente_vale_mais_que_o_aviso_do_turno_parado() {
+        let itens = vec![
+            agente("a", None, false, 100, None),
+            Item::Aviso { texto: "Interrompido.".into(), erro: false, em: 110 },
+            agente("b", None, false, 120, None),
+            Item::Aviso { texto: "Interrompido.".into(), erro: false, em: 130 },
+        ];
+        // O turno retomado roda, mas o aviso veio depois dos dois: sem o arquivo, interrompidos.
+        let sem = agentes_do_chat_com(&itens, true, 200, &HashMap::new(), &[]);
+        assert!(sem.iter().all(|a| a.estado == Estado::Interrompido));
+        let sinais = HashMap::from([("a".to_string(), Sinal::Trabalhando), ("b".to_string(), Sinal::Terminou)]);
+        let com = agentes_do_chat_com(&itens, true, 200, &sinais, &[]);
+        assert_eq!((com[0].estado, com[1].estado), (Estado::Rodando, Estado::Terminou));
+        let parado = HashMap::from([("a".to_string(), Sinal::Parado)]);
+        assert_eq!(agentes_do_chat_com(&itens, true, 200, &parado, &[])[0].estado, Estado::Interrompido);
+        // Com resultado gravado, o arquivo não muda nada.
+        let pronto = vec![agente("c", Some("ok"), false, 100, None)];
+        let engana = HashMap::from([("c".to_string(), Sinal::Trabalhando)]);
+        assert_eq!(agentes_do_chat_com(&pronto, true, 200, &engana, &[])[0].estado, Estado::Terminou);
+    }
+
+    #[test]
+    fn o_agente_que_pede_permissao_espera_voce() {
+        let itens = vec![agente("a", None, false, 100, Some(sub(1, "Bash · ls", 0)))];
+        let agentes = agentes_do_chat_com(&itens, true, 120, &HashMap::new(), &["a".to_string()]);
+        assert!(agentes[0].esperando);
+        assert_eq!(meta_do_agente(&agentes[0]), "Esperando você");
+        assert!(!agentes_do_chat_com(&itens, true, 120, &HashMap::new(), &[])[0].esperando);
     }
 }

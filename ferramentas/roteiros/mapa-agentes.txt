@@ -1,0 +1,23 @@
+# O mapa dos agentes: a lista com quem trabalha em cima e, à direita, a conversa do agente
+# escolhido (o pedido, as respostas em Markdown, as chamadas agrupadas e o relatório).
+# Dois subagentes encenados pelo claude falso: um de 30 s e um de 6 s. Roteiro de `restaurar-bancada.sh`
+# (ZOOM padrão da bancada de 150%).
+espera 12
+clique 300 374            # "Carrinho com cupom de desconto"
+espera 3
+clique 780 838            # foco na caixa
+texto Explora o carrinho [ferramenta Task Mapear o carrinho | 30] [ferramenta Task Revisar os testes | 6] [juntas]
+tecla Return
+espera 12                 # o de 6 s já terminou, o de 30 s trabalha
+tecla Control_L+Shift_L+p
+espera 2
+texto Agentes desta
+espera 1
+tecla Return
+espera 3
+print m1-mapa-rodando     # o que roda em cima, o terminado embaixo; a conversa do escolhido à direita
+espera 25                 # os dois terminaram
+print m2-mapa-terminou
+clique 330 360            # o segundo da lista
+espera 3
+print m3-outro-agente

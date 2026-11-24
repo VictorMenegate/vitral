@@ -118,12 +118,12 @@ pub fn sem_janela(argumentos: &[String]) -> Option<i32> {
     None
 }
 
-/// O rodapé do menu do logo.
+/// O nome com a versão, na dica do cabeçalho do menu do logo.
 pub fn rotulo() -> String {
     format!("Vitral {VERSAO}")
 }
 
-/// A dica do rodapé: de onde veio este binário.
+/// A dica do cabeçalho do menu do logo: de onde veio este binário.
 pub fn origem() -> String {
     origem_de(canal(), commit())
 }
@@ -285,6 +285,16 @@ impl Atualizacoes {
             Estado::Pronta(novidade) => Some(novidade),
             _ => None,
         }
+    }
+
+    /// A versão que o Reiniciar abre agora, se é mais nova que esta: a do link `atual`, relida na
+    /// hora (é para ele que o reinício vai). A pronta guardada pode ter ficado para trás: o print
+    /// do dono de 24/11/2026 dizia "Reiniciar para a 0.10.0-dev.766bc7804b" com a 267fe2c7c9 já no
+    /// `atual`, porque a versão pronta só era lida ao abrir e no aviso da procura, e o "Instalar
+    /// como app" de outra abertura não avisa esta. Sem o link (fora da versão gerenciada), a pronta.
+    pub fn versao_pronta(&self) -> Option<String> {
+        let relida = self.app.as_deref().zip(self.rodando.as_deref()).and_then(|(app, rodando)| trocada_por_fora(app, rodando));
+        relida.map(|n| n.versao).or_else(|| self.pronta().map(|n| n.versao.clone()))
     }
 
     /// As novidades de `novidade` em Markdown: as do manifesto, as do NOVIDADES.md que veio com
