@@ -552,6 +552,8 @@ mod testes {
             atividade: "Bash · cargo test".into(),
             passos: Vec::new(),
             resultado: None,
+            em: 0,
+            esperando: false,
         };
         assert_eq!(super::meta_na_lista(&rodando), "Rodando cargo test…");
         assert_eq!(super::meta_na_lista(&rodando), acao_ao_vivo(&rodando.atividade));

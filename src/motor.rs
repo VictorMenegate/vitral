@@ -459,6 +459,8 @@ pub struct Motor {
     /// Chats que começaram a rodar por pedido de OUTRO chat (`mensagem_para_chat`, `abrir_chat`):
     /// a Janela os põe numa aba de fundo (`Config.chat_chamado_abre_aba`).
     pub chats_trazidos: Vec<String>,
+    /// A conversa de subagente que o mapa dos agentes mostra no painel dele (sem aba).
+    subconversa_do_mapa: Option<String>,
     /// As notificações na tela, por chat.
     #[cfg_attr(windows, allow(dead_code))]
     avisos: Arc<std::sync::Mutex<HashMap<String, Aviso>>>,
@@ -748,6 +750,7 @@ impl Motor {
             janela_ativa: true,
             pedido_de_abrir: None,
             chats_trazidos: Vec::new(),
+            subconversa_do_mapa: None,
             avisos: Arc::default(),
             visiveis: HashSet::new(),
             texto_chegando: Vec::new(),

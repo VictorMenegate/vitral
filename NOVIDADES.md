@@ -29,6 +29,12 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
 - **Título pelo Claude Code, anéis de uso, versão nova e letra na caixa.** Dá para desligar o
   título gerado, escolher quais anéis de uso aparecem (Claude, Codex, Gemini), deixar a consulta
   de versão nova dos agentes só no botão e pôr a letra da conversa também na caixa de mensagem.
+- **O mapa dos agentes ficou mais parecido com um chat.** Quem está trabalhando fica em cima, depois
+  quem espera você, quem falhou e os terminados. O lado direito mostra a conversa do agente como a de
+  um chat: o pedido num balão, as respostas em Markdown, as chamadas agrupadas e recolhíveis, as
+  imagens em miniatura e o relatório, com o botão **Abrir em aba**. E o agente que a conversa deu por
+  interrompido, mas que seguiu trabalhando depois de um turno retomado, volta a aparecer como
+  trabalhando (ou como terminou).
 
 ## 0.9.7
 

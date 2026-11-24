@@ -2656,7 +2656,7 @@ fn coluna_do_icone() -> Div {
 /// O resumo do grupo de chamadas: "Rodou 13 comandos · editou 1 arquivo · leu 3 arquivos" no
 /// painel largo e, fora dele, a forma curta sem os verbos, "13 comandos · 1 editado · 3 lidos":
 /// cortado, o fim levava o último número junto ("leu 3 arqu…") (relatório de design, 16/11/2026).
-fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
+pub(super) fn resumo_das_chamadas(chamadas: &[(usize, &Item)], curto: bool) -> String {
     let (mut comandos, mut leituras, mut buscas, mut outras, mut pensamentos) = (0, 0, 0, 0, 0);
     // As chamadas que mexem nos passos do agente não contam como "N ferramentas": com as
     // ferramentas de tarefa, cada passo criado, começado e concluído é uma chamada.

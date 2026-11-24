@@ -902,6 +902,7 @@ impl Janela {
             .read(cx)
             .subconversas_abertas()
             .filter(|id| !self.paineis.iter().any(|p| p.chat.as_deref() == Some(*id) || p.abas.iter().any(|a| a.as_str() == *id)))
+            .filter(|id| motor.read(cx).subconversa_do_mapa() != Some(*id))
             .map(str::to_string)
             .collect();
         if !sem_aba.is_empty() {

@@ -215,13 +215,25 @@ componentes do GPUI Kit.
   modelo, o contexto e a conta de quantos trabalham, terminaram e falharam) e, embaixo, a lista de
   todos os subagentes que ela abriu (as chamadas Task e Agent, `agentes_do_chat`) à esquerda, com
   a sua rolagem, e o escolhido à direita (`painel_do_agente`): o estado (trabalhando, terminou,
-  falhou, interrompido), o tempo, os tokens e as ferramentas usadas (o `Subagente` de
-  `Item::Ferramenta.sub`; as do histórico do Claude Code vêm sem esses números), os passos
-  numerados (sem os vazios) e o resultado. Abre no que está trabalhando, ou no último. Era uma
-  árvore com o agente aberto dentro dela, e com 10 agentes só dois cabiam (dono, 23/11/2026). Abre por **Agentes desta conversa**, no "…" da
+  falhou, interrompido), o tempo, os tokens e as ferramentas usadas e, embaixo, a **conversa do
+  agente como a de um chat normal** (`conversa_do_agente`): o pedido num balão, o que ele
+  respondeu em Markdown, as chamadas seguidas num grupo recolhível ("Leu 1 arquivo · fez 1 busca",
+  o clique abre as linhas), as imagens que as chamadas trouxeram em miniatura (o clique abre o
+  visor) e o relatório, que é a última resposta. Os itens vêm da conversa do subagente que o motor
+  lê do arquivo do Claude Code (`Motor::abrir_subconversa_no_mapa`, a mesma da aba, mantida em
+  memória enquanto o diálogo está aberto e solta ao fechar); sem o arquivo, o cartão (os passos e
+  o relatório). O **Abrir em aba** fecha o diálogo e abre essa conversa numa aba. A **ordem** da
+  lista (`ordenar`): quem trabalha em cima, depois quem espera resposta sua (um pedido de
+  permissão do subagente), quem falhou, e os terminados e interrompidos, do mais recente ao mais
+  antigo em cada grupo; abre no primeiro. Era uma árvore com o agente aberto dentro dela, e com 10
+  agentes só dois cabiam (dono, 23/11/2026). Abre por **Agentes desta conversa**, no "…" da
   caixa, e pela paleta (a pílula "N agentes" da linha de estado, que o abria, virou a pílula dos
   subagentes da linha de pílulas, que lista os do turno). Um agente sem resultado só conta como
-  vivo com o turno rodando e sem aviso depois dele na conversa.
+  vivo com o turno rodando e sem aviso depois dele na conversa, **a não ser que o arquivo dele
+  diga outra coisa** (`importar::subagente::sinal_das_linhas`, lido a cada 2 s com o diálogo
+  aberto): terminando numa resposta só em texto, terminou; gravado há menos de 2 min, trabalha
+  (o turno da conversa pode ter caído e voltado, com o `SendMessage`, e o subagente seguiu por
+  fora: era o "Interrompido" de um agente que trabalhava); parado há mais, segue interrompido.
 - **Linha de pílulas** (`src/ui/pilulas.rs`). Uma linha só, logo acima da caixa de cada painel,
   com o que acontece naquele chat. Só existe quando há pílula, flutua sobre o pé da conversa
   (`Janela::conversa` a põe por cima da área das mensagens, fora do fluxo) e não empurra a caixa;
