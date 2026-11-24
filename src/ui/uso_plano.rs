@@ -56,19 +56,43 @@ const INSTALAR_GEMINI: &str = "set -o pipefail; export PATH=\"$HOME/.local/bin:$
     if command -v agy >/dev/null; then echo 'Entre com a sua conta Google:'; agy acp --login; \
     else echo 'O agy não foi encontrado no PATH depois da instalação.'; fi";
 
+/// No Windows: o instalador oficial do Codex em PowerShell (`install.ps1`, que põe o `codex.exe` em
+/// `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`) só se ainda não houver um, e o login.
+const INSTALAR_CODEX_WINDOWS: &str = "$codex = (Get-Command codex -ErrorAction SilentlyContinue).Source; \
+    if (-not $codex) { $codex = Join-Path $env:LOCALAPPDATA 'Programs\\OpenAI\\Codex\\bin\\codex.exe' }; \
+    if (-not (Test-Path $codex)) { Write-Host 'Instalando o Codex pelo instalador oficial da OpenAI...'; \
+    try { irm https://chatgpt.com/codex/install.ps1 | iex } catch { Write-Host \"Não deu para instalar o Codex: $_\" } }; \
+    if (Test-Path $codex) { & $codex login } else { Write-Host 'O Codex não foi encontrado depois da instalação.' }";
+
+/// O mesmo para o Gemini no Windows: o `install.ps1` do Antigravity CLI (põe o `agy.exe` em
+/// `%LOCALAPPDATA%\agy\bin`) e o login com a conta Google.
+const INSTALAR_GEMINI_WINDOWS: &str = "$agy = (Get-Command agy -ErrorAction SilentlyContinue).Source; \
+    if (-not $agy) { $agy = Join-Path $env:LOCALAPPDATA 'agy\\bin\\agy.exe' }; \
+    if (-not (Test-Path $agy)) { Write-Host 'Instalando o Antigravity CLI (o Gemini) pelo instalador oficial do Google...'; \
+    try { irm https://antigravity.google/cli/install.ps1 | iex } catch { Write-Host \"Não deu para instalar o Antigravity CLI: $_\" } }; \
+    if (Test-Path $agy) { Write-Host 'Entre com a sua conta Google:'; & $agy acp --login } else { Write-Host 'O agy não foi encontrado depois da instalação.' }";
+
 const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
 
 /// Abre o terminal do usuário com a instalação do Gemini (se faltar) e o login da conta Google.
 pub(super) fn instalar_gemini() {
     if let Some(casa) = dirs::home_dir() {
-        sistema::abrir_terminal(&casa, Some(INSTALAR_GEMINI));
+        if cfg!(windows) {
+            sistema::abrir_powershell(&casa, INSTALAR_GEMINI_WINDOWS);
+        } else {
+            sistema::abrir_terminal(&casa, Some(INSTALAR_GEMINI));
+        }
     }
 }
 
 /// Abre o terminal do usuário com a instalação (se faltar) e o login do Codex.
 pub(super) fn instalar_codex() {
     if let Some(casa) = dirs::home_dir() {
-        sistema::abrir_terminal(&casa, Some(INSTALAR_CODEX));
+        if cfg!(windows) {
+            sistema::abrir_powershell(&casa, INSTALAR_CODEX_WINDOWS);
+        } else {
+            sistema::abrir_terminal(&casa, Some(INSTALAR_CODEX));
+        }
     }
 }
 
@@ -562,8 +586,8 @@ fn detalhes_codex(
             "Instale o Codex da OpenAI e entre com a conta do ChatGPT. O uso do plano \
              aparece aqui depois da primeira resposta.",
         );
-        // O instalador oficial é um script do sh (Linux e Mac): no Windows não há o botão.
-        let vazio = if cfg!(windows) { vazio } else { vazio.acao(botao_instalar("Instalar e entrar", popover, window, cx)) };
+        // O instalador oficial: o script do sh no Linux e no Mac, o install.ps1 no Windows (`instalar_codex`).
+        let vazio = vazio.acao(botao_instalar("Instalar e entrar", popover, window, cx));
         return corpo.cabecalho(cabecalho(None, "Não instalado neste computador")).child(vazio);
     };
     let sem_dado = codex.uso.cinco_horas.is_none() && codex.uso.semana.is_none() && codex.outras.is_empty();

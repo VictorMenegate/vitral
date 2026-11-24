@@ -19,7 +19,19 @@ mod windows;
 #[cfg(windows)]
 use windows as plataforma;
 
-pub use plataforma::{abrir_no_editor, abrir_terminal};
+pub use plataforma::{abrir_no_editor, abrir_powershell, abrir_terminal};
+
+/// O primeiro programa com um destes `nomes` nas pastas do `PATH` e, depois, nas `conhecidas` (onde os
+/// instaladores oficiais põem o programa: o Vitral aberto pelo menu nem sempre tem essas pastas no
+/// PATH, e no Windows o PATH do app não muda depois de um instalador acrescentar a pasta).
+pub fn achar_programa(path: Option<&OsStr>, nomes: &[&str], conhecidas: &[PathBuf]) -> Option<PathBuf> {
+    let do_path: Vec<PathBuf> = path.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    do_path
+        .iter()
+        .chain(conhecidas)
+        .flat_map(|pasta| nomes.iter().map(move |nome| pasta.join(nome)))
+        .find(|caminho| caminho.is_file())
+}
 
 /// As marcas de uma sessão do Claude Code que um programa aberto pelo Vitral não deve herdar (ele
 /// pode ter sido aberto de dentro de uma).
@@ -204,5 +216,33 @@ mod testes {
         assert!(no_onedrive(&nuvem.join("Documentos").join("loja"), std::slice::from_ref(&nuvem)));
         assert!(!no_onedrive(&std::env::temp_dir().join("OneDrive - Empresa2"), std::slice::from_ref(&nuvem)));
         assert!(!no_onedrive(&nuvem, &[]));
+    }
+}
+
+#[cfg(test)]
+mod testes_de_achar_programa {
+    use super::achar_programa;
+    use std::path::PathBuf;
+
+    fn pasta(nome: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("vitral-achar-{nome}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn acha_no_path_antes_das_conhecidas_e_aceita_o_segundo_nome() {
+        let no_path = pasta("path");
+        let conhecida = pasta("conhecida");
+        std::fs::write(conhecida.join("codex.exe"), "").unwrap();
+        // Só a conhecida tem: acha lá (o instalador pôs fora do PATH do app aberto).
+        let path = std::env::join_paths([&no_path]).unwrap();
+        assert_eq!(achar_programa(Some(&path), &["codex.exe", "codex.cmd"], &[conhecida.clone()]), Some(conhecida.join("codex.exe")));
+        // O do PATH vem antes, mesmo que seja o segundo nome (o codex.cmd do npm).
+        std::fs::write(no_path.join("codex.cmd"), "").unwrap();
+        assert_eq!(achar_programa(Some(&path), &["codex.exe", "codex.cmd"], &[conhecida.clone()]), Some(no_path.join("codex.cmd")));
+        // Nenhum: None.
+        assert_eq!(achar_programa(None, &["agy.exe"], &[conhecida]), None);
     }
 }

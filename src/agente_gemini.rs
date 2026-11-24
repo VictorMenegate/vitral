@@ -50,11 +50,19 @@ pub fn binario() -> PathBuf {
 }
 
 fn binario_em(path: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
-    if let Some(caminho) = path.and_then(|path| std::env::split_paths(&path).map(|p| p.join(NOME_DO_AGY)).find(|p| p.is_file())) {
-        return caminho;
+    let pastas = pastas_do_agy(cfg!(windows), &home, std::env::var_os("LOCALAPPDATA").map(PathBuf::from));
+    crate::sistema::achar_programa(path.as_deref(), &[NOME_DO_AGY], &pastas).unwrap_or_else(|| PathBuf::from(NOME_DO_AGY))
+}
+
+/// Onde o instalador oficial põe o agy, além do PATH: `~/.local/bin` (Linux e Mac) e, no Windows,
+/// `%LOCALAPPDATA%\agy\bin` (o `install.ps1`). O PATH do Vitral aberto não muda depois que o
+/// instalador acrescenta a pasta, e o Gemini não aparecia até reiniciar (24/11/2026).
+fn pastas_do_agy(windows: bool, home: &Path, local: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut pastas = vec![home.join(".local").join("bin")];
+    if windows {
+        pastas.extend(local.map(|l| l.join("agy").join("bin")));
     }
-    let local = home.join(".local").join("bin").join(NOME_DO_AGY);
-    if local.is_file() { local } else { PathBuf::from(NOME_DO_AGY) }
+    pastas
 }
 
 /// Há um Antigravity CLI instalado neste computador.
@@ -1156,5 +1164,17 @@ mod testes_do_uso_de_verdade {
         let uso = super::ler_uso(&pasta);
         eprintln!("{uso:?}");
         assert!(uso.is_some());
+    }
+}
+
+#[cfg(test)]
+mod testes_das_pastas_no_windows {
+    use super::pastas_do_agy;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn no_windows_o_agy_mora_no_localappdata() {
+        assert!(pastas_do_agy(true, Path::new("/casa"), Some(PathBuf::from("/local"))).contains(&PathBuf::from("/local/agy/bin")));
+        assert_eq!(pastas_do_agy(false, Path::new("/casa"), Some(PathBuf::from("/local"))), vec![PathBuf::from("/casa/.local/bin")]);
     }
 }

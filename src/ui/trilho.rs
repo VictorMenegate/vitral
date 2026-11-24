@@ -491,7 +491,7 @@ impl Janela {
         let sem_codex = motor.codex_lido && motor.codex.is_none();
         let chats = motor.chats.iter().filter(|c| !c.arquivado).count();
         // O instalador oficial do Codex e o do Antigravity CLI são scripts do sh: no Windows, nada.
-        let grupos = grupos_do_menu(compacto, sem_codex && cfg!(not(windows)), !crate::agente_gemini::instalado() && cfg!(not(windows)));
+        let grupos = grupos_do_menu(compacto, sem_codex, !crate::agente_gemini::instalado());
         Rc::new(move |menu, window, cx| {
             // Relida na hora de abrir: outra abertura pode ter instalado uma mais nova depois.
             let pronta = cx.try_global::<atualizacao::Atualizacoes>().and_then(atualizacao::Atualizacoes::versao_pronta);

@@ -11,8 +11,14 @@ o outro agente revisa o turno grande e os menus de modelo, do logo e do "…" da
 curtos. As Configurações ganharam opções: a seta ↑ da caixa, o Enter com o turno rodando, os
 números das abas, o que a aba Arquivos lembra, o título pelo Claude Code, os anéis de uso, a
 consulta de versão nova e a letra da conversa na caixa. Essas começam no jeito de antes; só a aba
-do chat chamado e o fechar que para já vêm ligados.
+do chat chamado e o fechar que para já vêm ligados. E o Codex e o Gemini aparecem também no
+Windows.
 
+- **O Codex e o Gemini no Windows.** O Vitral só procurava o `codex.cmd` do npm, e o Codex do
+  instalador oficial (`codex.exe`) nunca aparecia; o Gemini só aparecia com a pasta dele já no
+  PATH do app aberto. Agora ele procura os dois nomes do Codex e as pastas dos instaladores
+  oficiais, e o **Instalar o Codex…** e o **Instalar o Gemini…** também existem no Windows, rodando
+  os instaladores oficiais em PowerShell e o login de cada um.
 - **O chat chamado por outro aparece numa aba.** Quando um chat manda mensagem a outro, ou abre
   um, o destino entra como aba de fundo no painel ativo: o que você lê não troca, a janela não vem
   para a frente e o contorno da aba mostra que está rodando. Já à vista ou já aba, nada muda. Em

@@ -312,8 +312,8 @@ impl Configuracoes {
                  pacote dele anuncia; quem atualiza é o instalador do Codex, fora do Vitral.",
             )
             .descricao(texto);
-        // O instalador oficial do Codex é um script do sh: no Windows não há o botão.
-        if instalado || cfg!(windows) {
+        // No Windows o botão roda o instalador oficial em PowerShell (`uso_plano::instalar_codex`).
+        if instalado {
             return opcao;
         }
         let botao = botao_fantasma("cfg-codex-instalar", Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
