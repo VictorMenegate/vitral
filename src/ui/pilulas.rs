@@ -1,7 +1,8 @@
-//! A linha de pílulas acima da caixa de mensagem de cada painel: o que acontece naquele chat sem
-//! ocupar a conversa. Os comandos que o agente deixou no fundo, os subagentes por estado, os
-//! passos do agente e o que o turno mudou. A linha só existe quando há pílula; ela flutua sobre o
-//! fim da conversa e não empurra a caixa. Referência: as "tracks" do Paseo (23/11/2026).
+//! As pílulas de cada painel: o que acontece naquele chat. Os comandos que o agente deixou no
+//! fundo, os subagentes por estado, os passos do agente e o que o turno mudou. Moram na linha de
+//! estado da caixa de mensagem (dentro da moldura, embaixo do campo; `Janela::linha_de_estado`),
+//! depois do que o turno faz agora, e a linha só existe quando há pílula ou turno em andamento.
+//! Referência: as "tracks" do Paseo (23/11/2026); o dono as quis embaixo, na caixa (24/11/2026).
 
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
@@ -12,9 +13,9 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{AnelGirando, CorpoPopover, Flutuante as _, LarguraPopover, TamanhoBotao, botao_fantasma, contagem, popover, variante_fantasma},
+    componentes::{AnelGirando, CorpoPopover, LarguraPopover, TamanhoBotao, botao_fantasma, contagem, popover, variante_fantasma},
     mapa_agentes::{Estado, agentes_do_chat, e_agente, meta_do_agente, ponto},
-    mensagens::{coluna, icone_de, larga, linhas_da_edicao_gravada, nome_curto, texto_dos_passos},
+    mensagens::{icone_de, linhas_da_edicao_gravada, nome_curto, texto_dos_passos},
     movimento::{self, De},
 };
 use crate::{
@@ -23,11 +24,8 @@ use crate::{
     tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, r, raio},
 };
 
-/// Quanto do pé da conversa a linha ocupa, a 100%: a pílula e o respiro em cima e embaixo dela. A
-/// lista de mensagens guarda esse espaço no fim enquanto a linha existe (`mensagens`), para a
-/// última linha da conversa não ficar atrás das pílulas.
-pub(super) const ALTURA_DA_LINHA: f32 = 32.;
-const ALTURA_DA_PILULA: f32 = 24.;
+/// A altura de uma pílula: a da linha de estado da caixa.
+const ALTURA_DA_PILULA: f32 = 22.;
 
 /// O estado de um subagente na pílula.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,7 +36,7 @@ pub(super) enum NaPilula {
     Falhou,
 }
 
-/// O que a linha de um chat mostra agora. Tudo vazio: a linha não existe.
+/// O que as pílulas de um chat mostram agora. Tudo vazio: não há pílula.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Pilulas {
     /// Os comandos que o agente deixou rodando no fundo: o id da tarefa e a descrição.
@@ -53,7 +51,7 @@ pub(super) struct Pilulas {
 }
 
 impl Pilulas {
-    /// Nada a mostrar: a linha não é desenhada.
+    /// Nada a mostrar.
     pub fn vazia(&self) -> bool {
         self.comandos.is_empty() && self.agentes.is_empty() && self.passos.is_none() && self.mudancas.is_none()
     }
@@ -175,6 +173,33 @@ pub(super) fn rotulo_das_mudancas((arquivos, entram, saem): (usize, usize, usize
     if linhas.is_empty() { contagem(arquivos, "arquivo", "arquivos") } else { linhas.join(" ") }
 }
 
+/// Quais pílulas há, na ordem em que a linha as desenha: os comandos, os subagentes, os passos e
+/// as mudanças. Fica só com o que tem o que dizer.
+pub(super) fn ordem(pilulas: &Pilulas) -> Vec<&'static str> {
+    [
+        ("comandos", !pilulas.comandos.is_empty()),
+        ("agentes", !pilulas.agentes.is_empty()),
+        ("passos", pilulas.passos.is_some()),
+        ("mudancas", pilulas.mudancas.is_some()),
+    ]
+    .into_iter()
+    .filter_map(|(tipo, ha)| ha.then_some(tipo))
+    .collect()
+}
+
+/// As pílulas ficam só com o ícone e o número quando o painel é estreito ou quando são muitas
+/// (3 ou mais): a linha de estado também leva o relógio e a tecla Esc, e o texto de uma pílula
+/// cortado no meio é pior do que o ícone sozinho (a dica de cada uma diz o resto).
+pub(super) fn so_icone_e_numero(painel_estreito: bool, pilulas: usize) -> bool {
+    painel_estreito || pilulas >= 3
+}
+
+/// A linha de estado da caixa existe quando o chat trabalha (ou revê a memória por baixo) ou
+/// quando há alguma pílula para mostrar nela.
+pub(super) fn linha_existe(turno_vivo: bool, pilulas: &Pilulas) -> bool {
+    turno_vivo || !pilulas.vazia()
+}
+
 /// Uma pílula: o botão baixo e redondo, com a dica. Serve de gatilho de popover.
 fn pilula(id: impl Into<ElementId>, dica: impl Into<SharedString>, conteudo: impl IntoElement, cx: &App) -> Button {
     Button::new(id)
@@ -184,11 +209,6 @@ fn pilula(id: impl Into<ElementId>, dica: impl Into<SharedString>, conteudo: imp
         .rounded(raio::de(ALTURA_DA_PILULA))
         .tooltip(dica)
         .child(h_flex().gap(esp::E4).metadado().text_color(Cores::texto()).child(conteudo))
-}
-
-/// A superfície de uma pílula: opaca, com o anel e a sombra de quem flutua sobre o texto.
-fn flutuando(pilula: impl IntoElement, cx: &App) -> Div {
-    div().flex_none().flutuante(cx).rounded(raio::de(ALTURA_DA_PILULA)).child(pilula)
 }
 
 /// A marca de um estado na pílula dos subagentes: o anel girando de quem trabalha, o ponto âmbar
@@ -211,48 +231,41 @@ fn titulo_do_popover(texto: impl Into<SharedString>, conta: Option<String>) -> D
 }
 
 impl Janela {
-    /// A linha de pílulas do painel, ou `None` quando não há pílula (a linha só existe com
-    /// alguma). Vai por cima do pé da conversa, fora do fluxo (`conversa`).
-    pub(super) fn linha_de_pilulas(&mut self, motor: &Motor, chat: &Chat, painel_id: u64, cx: &Context<Self>) -> Option<AnyElement> {
-        let pilulas = pilulas_do_chat(motor, chat);
-        let painel = self.paineis.iter_mut().find(|p| p.id == painel_id)?;
-        // Entra com fade e 8 px de baixo no quadro em que aparece, como a faixa do turno.
-        let nova = !std::mem::replace(&mut painel.pilulas_vistas, !pilulas.vazia());
-        if pilulas.vazia() {
+    /// As pílulas do chat, para a linha de estado da caixa: um grupo só, que não encolhe.
+    /// `linha_nova`: a linha acabou de aparecer (quem entra, nesse quadro, é ela); com a linha já à
+    /// vista, a pílula que aparece depois (o primeiro comando no fundo, as mudanças no fim do
+    /// turno) entra sozinha, com fade e 8 px de baixo. `curto`: painel estreito, só ícone e número.
+    pub(super) fn pilulas_da_linha(
+        &self,
+        motor: &Motor,
+        chat: &Chat,
+        pilulas: &Pilulas,
+        painel_id: u64,
+        linha_nova: bool,
+        curto: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let tipos = ordem(pilulas);
+        if tipos.is_empty() {
             return None;
         }
-        let nivel = painel.medida.nivel;
-        let curto = !larga(nivel);
-        // A margem é a da caixa (a 461ab7a juntou a regra das mensagens e da caixa em `coluna`).
-        let caixa_estreita = painel.medida.faixa == super::componentes::FaixaCaixa::Estreita;
-        // Com a linha já à vista, a pílula que aparece depois (o primeiro comando no fundo, as
-        // mudanças no fim do turno) entra sozinha, com fade e 8 px de baixo; na linha que acabou de
-        // aparecer, quem entra é a linha.
+        let curto = so_icone_e_numero(curto, tipos.len());
         let vistos = self.paineis.iter().find(|p| p.id == painel_id).map(|p| &p.ja_vistos);
-        let mut filhos: Vec<AnyElement> = Vec::new();
-        let mut por = |tipo: &'static str, pilula: AnyElement| {
-            let aparece = vistos.is_some_and(|v| v.borrow_mut().novo(format!("pilula:{tipo}")));
-            let id = SharedString::from(format!("entra-pilula-{tipo}-{painel_id}"));
-            filhos.push(movimento::entrada(id, aparece && !nova, De::Baixo, div().flex_none().child(pilula)).into_any_element());
-        };
-        if !pilulas.comandos.is_empty() {
-            por("comandos", self.pilula_dos_comandos(&pilulas.comandos, &chat.id, painel_id, curto, cx));
-        }
-        if !pilulas.agentes.is_empty() {
-            por("agentes", self.pilula_dos_agentes(&pilulas.agentes, &chat.id, painel_id, curto, cx));
-        }
-        if let Some(passos) = pilulas.passos {
-            por("passos", self.pilula_dos_passos(passos, motor.passos(&chat.id), &chat.id, painel_id, cx));
-        }
-        if let Some(mudancas) = pilulas.mudancas {
-            por("mudancas", self.pilula_das_mudancas(mudancas, painel_id, curto, cx));
-        }
-        let linha = h_flex()
-            .map(|s| coluna(s, caixa_estreita))
-            .h(r(ALTURA_DA_PILULA))
-            .gap(esp::E6)
-            .children(filhos);
-        Some(movimento::entrada(("entra-pilulas", painel_id as usize), nova, De::Baixo, div().w_full().child(linha)).into_any_element())
+        let filhos: Vec<AnyElement> = tipos
+            .into_iter()
+            .map(|tipo| {
+                let pilula = match tipo {
+                    "comandos" => self.pilula_dos_comandos(&pilulas.comandos, &chat.id, painel_id, curto, cx),
+                    "agentes" => self.pilula_dos_agentes(&pilulas.agentes, &chat.id, painel_id, curto, cx),
+                    "passos" => self.pilula_dos_passos(pilulas.passos.unwrap_or_default(), motor.passos(&chat.id), &chat.id, painel_id, cx),
+                    _ => self.pilula_das_mudancas(pilulas.mudancas.unwrap_or_default(), painel_id, curto, cx),
+                };
+                let aparece = vistos.is_some_and(|v| v.borrow_mut().novo(format!("pilula:{tipo}")));
+                let id = SharedString::from(format!("entra-pilula-{tipo}-{painel_id}"));
+                movimento::entrada(id, aparece && !linha_nova, De::Baixo, div().flex_none().child(pilula)).into_any_element()
+            })
+            .collect();
+        Some(h_flex().flex_none().gap(esp::E6).children(filhos).into_any_element())
     }
 
     /// Os comandos que o agente deixou rodando no fundo: quantos; o clique lista e deixa parar
@@ -305,7 +318,7 @@ impl Janela {
                 )
                 .into_any_element()
         });
-        flutuando(lista, cx).into_any_element()
+        div().flex_none().child(lista).into_any_element()
     }
 
     /// Os subagentes do turno por estado ("2 trabalhando · 1 esperando você"), cada estado com a
@@ -377,7 +390,7 @@ impl Janela {
                 .child(v_flex().id("agentes-do-turno").max_h(r(320.)).overflow_y_scroll().children(linhas))
                 .into_any_element()
         });
-        flutuando(lista, cx).into_any_element()
+        div().flex_none().child(lista).into_any_element()
     }
 
     /// Os passos do agente ("3/5"): a lista inteira na dica, e no clique com o que está fazendo
@@ -402,7 +415,7 @@ impl Janela {
                 .child(v_flex().id("passos-do-turno").max_h(r(320.)).overflow_y_scroll().gap(esp::E8).children(linhas))
                 .into_any_element()
         });
-        flutuando(lista, cx).into_any_element()
+        div().flex_none().child(lista).into_any_element()
     }
 
     /// O que o turno mudou ("+40 −12"): o clique abre a lista, à direita, em "Este chat".
@@ -432,7 +445,7 @@ impl Janela {
             this.aba_direita = super::abas_direita::AbaDireita::Chat;
             this.mostrar_direita(window, cx);
         }));
-        flutuando(gatilho, cx).into_any_element()
+        div().flex_none().child(gatilho).into_any_element()
     }
 }
 
@@ -440,7 +453,7 @@ impl Janela {
 mod testes {
     // Sem o `use super::*`: ele traria o `test` do GPUI (do `gpui_kit::*` lá de cima), e o
     // `#[test]` daqui deixaria de ser o do Rust.
-    use super::{NaPilula, Pilulas, montar, rotulo_das_mudancas, rotulo_dos_agentes, rotulo_dos_comandos, rotulo_dos_passos};
+    use super::{NaPilula, Pilulas, linha_existe, montar, ordem, so_icone_e_numero, rotulo_das_mudancas, rotulo_dos_agentes, rotulo_dos_comandos, rotulo_dos_passos};
     use crate::{
         modelo::{Item, Mudanca},
         motor::{EstadoDoPasso, Passo},
@@ -638,5 +651,29 @@ mod testes {
         assert_eq!(rotulo_dos_comandos(2, false), "2 comandos no fundo");
         assert_eq!(rotulo_dos_comandos(1, false), "1 comando no fundo");
         assert_eq!(rotulo_dos_comandos(2, true), "2");
+    }
+
+    /// Pedido de 24/11: as pílulas moram na linha de estado da caixa, que existe com o turno
+    /// vivo ou com alguma pílula (um comando no fundo ou as mudanças, com o turno já parado), e
+    /// as desenha sempre na mesma ordem.
+    #[test]
+    fn a_linha_de_estado_recebe_as_pilulas_do_chat() {
+        let comandos = [("b1".to_string(), "npm run dev".to_string())];
+        let conversa = [sua("agora"), agente("a", None, false), edicao("a.rs", 5, 2)];
+        let tudo = montar(true, &comandos, &[], &[passo(EstadoDoPasso::Fazendo)], &conversa, 200);
+        assert_eq!(ordem(&tudo), ["comandos", "agentes", "passos", "mudancas"]);
+        // Sem pílula e sem turno, a linha não existe; com turno vivo ela existe vazia; parado, com
+        // pílula, existe só por causa dela.
+        let nada = Pilulas::default();
+        assert!(ordem(&nada).is_empty());
+        assert!(!linha_existe(false, &nada));
+        assert!(linha_existe(true, &nada));
+        let parado = montar(false, &comandos, &[], &[], &conversa, 200);
+        assert_eq!(ordem(&parado), ["comandos", "mudancas"]);
+        assert!(linha_existe(false, &parado));
+        // Com 3 ou mais pílulas, ou no painel estreito, só o ícone e o número.
+        assert!(!so_icone_e_numero(false, 2));
+        assert!(so_icone_e_numero(false, 3));
+        assert!(so_icone_e_numero(true, 1));
     }
 }

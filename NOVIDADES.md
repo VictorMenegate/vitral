@@ -11,6 +11,10 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   arquivo de configuração com **Abrir**. O Atualizar roda fora dos turnos, espera os chats do
   agente terminarem e mostra o que o comando respondeu. O Codex que ficava em Agentes mudou para a
   parte dele.
+- **Os comandos no fundo, os subagentes, os passos e as mudanças voltaram para dentro da caixa.**
+  As pílulas ficam de novo embaixo do campo de mensagem, na linha de estado, e não há mais linha
+  solta em cima da caixa. Continuam com o clique que lista e para cada comando, a lista dos
+  subagentes que abre a conversa de cada um e as mudanças que abrem "Este chat".
 
 ## 0.10.2
 

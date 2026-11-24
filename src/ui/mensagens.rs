@@ -522,9 +522,6 @@ impl Janela {
         if chat.itens.is_empty() && chat.importada.is_none() {
             blocos.push(Planejado::pronto(Bloco::Texto, None, eu.dica_inicial(motor, chat, window, cx)));
         }
-        // A linha de pílulas flutua sobre o fim da conversa: enquanto ela existe, a lista guarda
-        // o lugar dela no pé, para a última linha (a chamada que roda) não ficar atrás.
-        let tem_pilulas = !super::pilulas::pilulas_do_chat(motor, chat).vazia();
         if let Some((importada, lido)) = &lido {
             blocos.extend(eu.blocos_do_historico(&contexto_do_historico, importada, lido, ix, window, cx));
         }
@@ -910,11 +907,8 @@ impl Janela {
         // Embaixo, os 32 só depois de uma resposta, onde a barra de copiar e da hora aparece; depois
         // da trilha ("Pensou por 5 s") ou de um aviso, 12, colado na caixa (dono, 18/11/2026: "tá
         // muito longe o pensou da parte das mensagens em baixo").
-        if tem_pilulas {
-            let base = if matches!(anterior, Some(Bloco::Texto)) { 32. } else { 12. };
-            lista = lista.pb(r(base + super::pilulas::ALTURA_DA_LINHA));
-        } else if !matches!(anterior, Some(Bloco::Texto)) {
-            lista = lista.pb(esp::NO_TURNO);
+        if let Some(pe) = pe_da_lista(matches!(anterior, Some(Bloco::Texto))) {
+            lista = lista.pb(pe);
         }
         let janela = cx.entity().downgrade();
         let inicio_da_resposta = inicio_da_ultima_resposta(&chat.itens);
@@ -1158,7 +1152,7 @@ impl Janela {
                 Scrollbar::vertical(&rolagem).id(("barra-conversa", painel_id as usize))
                     .mode(ScrollbarMode::Always).viewport_from_layout(),
             ))
-            .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, tem_pilulas, cx)))
+            .when(!seguindo, |s| s.child(pilula_do_fim(painel_id, novidade, minima(nivel), pilula_nova, cx)))
             // Empurrada para cima, a faixa sai pelo alto da lista, cortada nele: solta, ela subia por
             // cima das abas do cabeçalho (dono, 19/11/2026: "a mensagem ficou em cima das abas").
             .children(presa.map(|faixa| {
@@ -4696,6 +4690,18 @@ impl Janela {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<(Option<AnyElement>, Option<AnyElement>)> {
+        // As pílulas do chat (os comandos no fundo, os subagentes, os passos, as mudanças do turno)
+        // moram aqui, depois do que o turno faz; a linha existe com o turno vivo ou com alguma pílula.
+        let pilulas = super::pilulas::pilulas_do_chat(motor, chat);
+        let painel = self.paineis.iter().find(|p| p.id == painel_id);
+        let medida = painel.map(|p| p.medida).unwrap_or_default();
+        let (estreita, minima) = (!larga(medida.nivel), minima(medida.nivel));
+        // Só pergunta se a linha é nova depois de saber que ela existe (quem não existe não conta como
+        // vista, e a que aparece entra com fade).
+        let na_linha = |cx: &Context<Self>| {
+            let nova = painel.is_some_and(|p| p.ja_vistos.borrow_mut().novo("linha-de-estado"));
+            self.pilulas_da_linha(motor, chat, &pilulas, painel_id, nova, estreita, cx)
+        };
         // A revisão da memória roda por baixo, depois do "Terminou": só uma linha discreta, sem o
         // Esc (item 6.1). Uma mensagem sua a corta (ou espera, se ela já escreveu).
         // A revisão pelo outro agente, igual: por baixo, só lendo, e a sua mensagem a corta.
@@ -4710,20 +4716,24 @@ impl Janela {
                 .min_w_0()
                 .gap(esp::E8)
                 .child(AnelGirando::new(12.).cor(Cores::tenue()).vivo(format!("memoria-{painel_id}")))
-                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child(texto));
+                .child(div().min_w_0().truncate().font_family(cx.theme().font_family.clone()).metadado().child(texto))
+                .children(na_linha(cx));
             return Some((Some(linha.into_any_element()), None));
         }
         let Some(situacao @ Situacao::Rodando { .. }) = situacao_do_turno(motor, &chat.id) else {
-            return None;
+            // Sem turno em andamento, a linha é só das pílulas (um comando que segue no fundo, o
+            // que o turno mudou). Parada, a caixa não tem mais a linha das teclas.
+            if !super::pilulas::linha_existe(false, &pilulas) {
+                return None;
+            }
+            let linha = h_flex().flex_1().min_w_0().gap(esp::E8).children(na_linha(cx));
+            return Some((Some(linha.into_any_element()), None));
         };
-        let painel = self.paineis.iter().find(|p| p.id == painel_id);
-        let medida = painel.map(|p| p.medida).unwrap_or_default();
         // Com a conversa no fim, o que o turno faz já está à vista nela (a chamada em andamento, o
         // "Pensando…"): a linha da caixa não repete, fica com o relógio, a contagem e a fila
         // (dono, 13/11/2026: "por que aparece o rodando em cima e embaixo?"). Rolada para cima, a
         // conversa não mostra mais o fim, e aí a linha diz.
         let no_fim = painel.is_none_or(|p| p.seguindo);
-        let (estreita, minima) = (!larga(medida.nivel), minima(medida.nivel));
         let esc = move |rotulo: &'static str, window: &Window| {
             h_flex()
                 .flex_none()
@@ -4803,8 +4813,6 @@ impl Janela {
                                 .child(if estreita { format!("calado {minutos} min") } else { format!("sem sinal há {minutos} min") })
                                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                         }))
-                        // Os comandos no fundo, os passos do agente e os subagentes saíram daqui
-                        // para a linha de pílulas acima da caixa (`pilulas.rs`).
                         // A mensagem que você mandou entrou neste turno, sem reiniciá-lo.
                         .when(dirigidas > 0, |s| s.child(selo_dirigido(painel_id, dirigidas, estreita)))
                         // A fila é um controle: o clique abre a lista do que espera, para tirar o
@@ -4812,6 +4820,9 @@ impl Janela {
                         .when(fila > 0, |s| {
                             s.child(div().flex_none().child(self.pilula_da_fila(&chat.id, painel_id, fila, true, estreita, window, cx)))
                         })
+                        // Por último: o que aparece depois (uma pílula nova) não move o que está à
+                        // esquerda; o que cede é o texto do turno, com reticências.
+                        .children(na_linha(cx))
                         .into_any_element(),
                     Some(match self.esc_armado.as_ref().filter(|(c, q)| *c == chat.id && q.elapsed() < std::time::Duration::from_secs(3)) {
                         // O Esc só armou: parar agora derruba os agentes (item 6.2).
@@ -4856,7 +4867,7 @@ impl Janela {
             Some(s) => s,
             // Por último, e só com o chat quieto: a conversa grande que esfriou. O que o último
             // turno mudou ("N arquivos mudados", que morava aqui desde 12/11) é agora a pílula das
-            // mudanças, na linha de pílulas (`pilulas.rs`), que não empurra a caixa.
+            // mudanças, uma pílula na linha de estado da caixa (`pilulas.rs`), que não empurra a conversa.
             None => situacao_do_chat(motor, chat)
                 // Logo depois de um Esc: o Continuar (não entra no sino; item 6.2).
                 .or_else(|| motor.parou_por_voce(&chat.id).then_some(Situacao::VocePorou))
@@ -5629,6 +5640,13 @@ fn distancia_do_fim(rolagem: &ScrollHandle) -> Pixels {
     maximo + rolagem.offset().y.clamp(-maximo, px(0.))
 }
 
+/// O que a lista guarda no fim, depois do último bloco: nada depois de uma resposta (os 32 vêm da
+/// barra de copiar e da hora) e o respiro do turno depois da trilha ou de um aviso. As pílulas
+/// moram na linha de estado da caixa, e não pedem lugar aqui.
+fn pe_da_lista(ultimo_e_texto: bool) -> Option<Rems> {
+    (!ultimo_e_texto).then_some(esp::NO_TURNO)
+}
+
 /// Pílula para voltar ao fim de um painel rolado para cima: só a seta, ou "Novas mensagens" com o
 /// ponto azul quando chegou coisa nova desde que o usuário subiu. Entra com fade e 8 px de baixo
 /// (`nova` no primeiro quadro em que aparece).
@@ -5637,7 +5655,6 @@ fn pilula_do_fim(
     novidade: bool,
     minima: bool,
     nova: bool,
-    acima_das_pilulas: bool,
     cx: &Context<Janela>,
 ) -> impl IntoElement + use<> {
     let com_rotulo = novidade && !minima;
@@ -5664,8 +5681,7 @@ fn pilula_do_fim(
         .absolute()
         .left_0()
         .right_0()
-        // Com a linha de pílulas no pé da conversa, ela sobe para não ficar por cima delas.
-        .bottom(r(if acima_das_pilulas { 12. + super::pilulas::ALTURA_DA_LINHA } else { 12. }))
+        .bottom(esp::E12)
         .flex()
         .justify_center()
         .child(movimento::entrada(("entra-pilula-fim", painel_id as usize), nova, De::Baixo, pilula))
@@ -6361,6 +6377,15 @@ fn conta_que_caiu(m: &crate::motor::Motor, chat: &Chat) -> Option<String> {
 
 #[cfg(test)]
 mod testes {
+    /// As pílulas moram na caixa (24/11/2026): o pé da lista não guarda lugar para elas. Depois de
+    /// uma resposta ele fica como sempre (o espaço vem da barra de copiar), e depois da trilha ou
+    /// de um aviso, 12.
+    #[test]
+    fn o_pe_da_lista_nao_guarda_lugar_para_pilulas() {
+        assert_eq!(super::pe_da_lista(true), None);
+        assert_eq!(super::pe_da_lista(false), Some(crate::tema::esp::NO_TURNO));
+    }
+
     #[test]
     fn mensagens_acrescentadas_em_cima_preservam_o_ponto_de_leitura() {
         let antes = gpui_kit::px(-120.);
