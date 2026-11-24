@@ -765,10 +765,18 @@ girando de "rodando"; o clique abre o uso da conversa: em cima o
 contexto e o custo, "Contexto 31% · US$ 1,84", embaixo o modelo, a conta e os tokens, e no rodapé
 **Compactar a conversa**, que prepara o `/compact`), o clipe de anexar (arquivo ou imagem, arquivo
 da pasta, conversa anterior e comandos
-de barra), o **…** (comandos de barra, compactar, sessão nova e fixar) e o enviar, uma tecla de
+de barra), o **…** e o enviar, uma tecla de
 metal (`VarianteRedonda::Metal`, o par do "+" da lista), apagado com a caixa vazia, que acende
 quando ela ganha texto e dá um pulso claro a cada envio (o pulso fica no botão também quando ele já
-virou o parar). Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
+virou o parar). O **…** tem no máximo três grupos, com uma divisória entre eles (`grupos_do_mais`,
+dono, 24/11/2026: eram 11 itens e 5 divisórias): na caixa estreita, **anexar** primeiro (**Arquivo
+ou imagem…**, **Arquivo da pasta…** e **Conversa anterior como contexto…**, que saem do clipe);
+com texto na caixa, **mandar** (**Mandar depois, na fila**, com o turno rodando e o Enter entrando
+nele; **Mandar quando as 5 h renovarem**; **Mandar às…**; **Perguntar também ao Codex**, menos
+para um comando de barra); e **a conversa** (**Comandos de barra**, **Compactar a conversa** numa
+conversa do Claude que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
+nova** com o chat parado, **Fixar**). O que não se aplica agora sai, em vez de ficar cinza. Na
+caixa média, o **…** não aparece, como antes. Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
 o espaço entre os chips, a linha de estado) mantém o cursor nela. Com a conversa rodando, ele vira
 o parar (o quadrado, com um anel girando em volta); com texto escrito, ficam os dois, e o enviar
 entra na fila. A linha de estado, com o chat parado, mostra as teclas: à esquerda "/" comandos e,
@@ -934,7 +942,7 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   para cima traz de volta a última da fila, com anexos e reforço, sem tocar no turno; o Ctrl+Enter
   a devolve à fila. Sem fila, a seta avisa como antes (rodada de uso, item 1.3).
   **Mensagem com hora marcada** (`src/motor/agendadas.rs` e `src/ui/agendar.rs`): no **…** da
-  caixa, **Mandar quando a janela de 5 h renovar** (a renovação da conta em que o chat roda, ou a
+  caixa, com texto nela, **Mandar quando as 5 h renovarem** (a renovação da conta em que o chat roda, ou a
   do Codex, mais 30 s de folga; o item some sem essa hora lida) e **Mandar às…** (um diálogo com
   a hora: "15:10", "15h", "830"; a que já passou hoje vale para amanhã) mandam o que está na caixa
   para a fila do chat com a hora (`Entrada::agendada`, gravada no estado: sobrevive ao reinício).

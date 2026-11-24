@@ -43,6 +43,10 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
   Servidores MCP, Memória da equipe, a pasta dos chats novos e a pasta de dados saíram do menu: estão
   nas Configurações e na paleta. O menu cabe sem rolar a 150%, e a versão pronta não fica mais para
   trás quando outra janela do Vitral instala uma mais nova.
+- **O "…" da caixa em três grupos.** Anexar, mandar e a conversa, com duas divisórias no máximo.
+  O que não serve agora sai do menu em vez de ficar cinza: os de mandar só aparecem com texto na
+  caixa, o compactar só com conversa e a sessão nova só com o chat parado. “Arquivo ou imagem…”
+  não sai mais cortado.
 - **Ultracode em uma linha.** Embaixo do nome, só “Agentes em paralelo, só na próxima · gasta bem
   mais”; o resto está no (i).
 

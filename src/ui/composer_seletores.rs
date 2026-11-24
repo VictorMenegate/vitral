@@ -274,7 +274,8 @@ fn itens_de_anexar(menu: PopupMenu, d: &DadosAnexar, com_comandos: bool) -> Popu
     let (c1, c2, c3, painel) = (d.chat.clone(), d.chat.clone(), d.chat.clone(), d.painel);
     let menu = menu
         .item(
-            PopupMenuItem::new("Arquivo ou imagem do computador…")
+            // Curto, para caber no "…" a 150% ("Arquivo ou imagem do computad…"; dono, 24/11/2026).
+            PopupMenuItem::new("Arquivo ou imagem…")
                 .icon(Lucide::FolderOpen)
                 .on_click(move |_, window, cx| {
                     let chat = c1.clone();
@@ -1300,7 +1301,6 @@ impl Janela {
         let dica = "Anexar arquivo ou contexto";
         botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                // 360: com 300, os próprios rótulos saíam cortados ("Arquivo ou imagem do computad…").
                 let largura = tam(window, 360.);
                 let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
                 itens_de_anexar(menu, &dados, true)
@@ -1310,102 +1310,145 @@ impl Janela {
             .into_any_element()
     }
 
-    /// "…": comandos, compactar, sessão nova e fixar; na faixa estreita, também o anexar e a
-    /// conta, que saem da barra.
+    /// "…": no máximo três grupos, com uma divisória entre eles (dono, 24/11/2026: "esse daqui
+    /// também"; eram 11 itens e 5 divisórias, um cinza sozinho entre duas e um rótulo cortado). Na
+    /// faixa estreita, **anexar**, que sai da barra; com texto na caixa, **mandar** (depois, numa
+    /// hora, aos dois); e **a conversa**. O que não se aplica agora sai, em vez de ficar cinza
+    /// (`grupos_do_mais`).
     pub(super) fn botao_mais(&self, motor: &Motor, chat: &Chat, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let estreita = b.estreita();
         let anexar = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
-        let (motor_e, fixado, rodando, painel) = (self.motor.clone(), chat.fixado, b.rodando, b.painel);
-        // Com o turno rodando, o Enviar entra nele (ou responde ao pedido de permissão aberto); a
-        // escolha de esperar a vez na fila fica aqui. Quem já ia pela fila de qualquer jeito não
-        // precisa da opção.
-        let depois = (composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila)
-            .then(|| (cx.entity().downgrade(), b.composer.read(cx).value().trim().is_empty()));
-        // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
-        let agendar = crate::ui::agendar::DadosDoMenu {
-            janela: cx.entity().downgrade(),
-            painel: b.painel,
-            vazio: b.composer.read(cx).value().trim().is_empty(),
-            renova: motor.renovacao_do_chat(&chat.id),
-        };
-        let claude = chat.agente == Agente::Claude;
-        let tem_agentes = crate::ui::mapa_agentes::tem_agentes(chat);
-        // A segunda resposta: o mesmo pedido para o outro agente, num painel ao lado.
+        let (motor_e, fixado, painel) = (self.motor.clone(), chat.fixado, b.painel);
+        let caixa = b.composer.read(cx).value();
         let outro = chat.agente.outro();
-        let raia = outro.instalado().then(|| {
-            let rotulo = format!("Perguntar também ao {}", outro.nome());
-            let caixa = b.composer.read(cx).value();
-            (cx.entity().downgrade(), rotulo, caixa.trim().is_empty() || caixa.trim_start().starts_with('/'))
-        });
-        let tamanho = if estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
+        let agora = AgoraNoMais {
+            estreita: b.estreita(),
+            com_texto: !caixa.trim().is_empty(),
+            comando: caixa.trim_start().starts_with('/'),
+            // Com o turno rodando, o Enviar entra nele (ou responde ao pedido aberto); quem já ia
+            // pela fila de qualquer jeito não precisa da opção.
+            fila_a_parte: composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila,
+            outro_instalado: outro.instalado(),
+            // O `/compact` é do Claude Code, e precisa de uma conversa para resumir.
+            compactar: chat.agente == Agente::Claude && chat.sessao_criada,
+            tem_agentes: crate::ui::mapa_agentes::tem_agentes(chat),
+            rodando: b.rodando,
+        };
+        let grupos = grupos_do_mais(&agora);
+        // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
+        let agendar = crate::ui::agendar::DadosDoMenu { janela: cx.entity().downgrade(), painel, renova: motor.renovacao_do_chat(&chat.id) };
+        let rotulo_do_outro = format!("Perguntar também ao {}", outro.nome());
+        let tamanho = if agora.estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
                 let largura = tam(window, 300.);
-                let (j1, j2, j3) = (anexar.janela.clone(), anexar.janela.clone(), anexar.janela.clone());
-                let (m1, m2, c1, c2) = (motor_e.clone(), motor_e.clone(), anexar.chat.clone(), anexar.chat.clone());
-                let c3 = anexar.chat.clone();
-                let mut menu = menu
-                    .min_w(largura)
-                    .max_w(largura)
-                    .when_some(depois.clone(), |menu, (janela, vazio)| {
-                        menu.item(
-                            PopupMenuItem::new("Mandar depois, na fila")
-                                .icon(Lucide::ListChecks)
-                                .disabled(vazio)
-                                .on_click(move |_, window, cx| {
+                let mut menu = menu.min_w(largura).max_w(largura);
+                for (n, grupo) in grupos.iter().enumerate() {
+                    if n > 0 {
+                        menu = menu.separator();
+                    }
+                    for item in grupo {
+                        let janela = anexar.janela.clone();
+                        let (motor_e, chat) = (motor_e.clone(), anexar.chat.clone());
+                        menu = match item {
+                            ItemDoMais::Anexar => itens_de_anexar(menu, &anexar, false),
+                            ItemDoMais::MandarDepois => menu.item(PopupMenuItem::new("Mandar depois, na fila").icon(Lucide::ListChecks).on_click(
+                                move |_, window, cx| {
                                     let _ = janela.update(cx, |this, cx| this.enviar_depois(painel, window, cx));
-                                }),
-                        )
-                        .separator()
-                    })
-                    .map(|menu| crate::ui::agendar::itens_do_menu(menu, &agendar))
-                    .when_some(raia.clone(), |menu, (janela, rotulo, vazio)| {
-                        menu.item(PopupMenuItem::new(rotulo).icon(Lucide::Columns2).disabled(vazio).on_click(move |_, window, cx| {
-                            let _ = janela.update(cx, |this, cx| this.enviar_aos_dois(painel, window, cx));
-                        }))
-                        .separator()
-                    })
-                    .item(item_de_comandos(j1, painel))
-                    // O `/compact` é do Claude Code.
-                    .when(claude, |menu| {
-                        menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, _, cx| {
-                            let _ = j2.update(cx, |this, cx| this.compactar_conversa(painel, cx));
-                        }))
-                    })
-                    // O mapa dos subagentes, quando a conversa abriu algum.
-                    .when(tem_agentes, |menu| {
-                        let chat = c3.clone();
-                        menu.item(PopupMenuItem::new("Agentes desta conversa").icon(Lucide::Workflow).on_click(move |_, window, cx| {
-                            let _ = j3.update(cx, |this, cx| this.abrir_mapa_de_agentes(chat.clone(), window, cx));
-                        }))
-                    })
-                    .item(
-                        PopupMenuItem::new("Sessão nova")
-                            .icon(Lucide::RefreshCw)
-                            .disabled(rodando)
-                            .on_click(move |_, _, cx| {
-                                if let Some(m) = &m1 {
-                                    m.update(cx, |m, cx| m.nova_sessao(&c1, cx));
+                                },
+                            )),
+                            ItemDoMais::Agendar => crate::ui::agendar::itens_do_menu(menu, &agendar),
+                            ItemDoMais::PerguntarAoOutro => menu.item(PopupMenuItem::new(rotulo_do_outro.clone()).icon(Lucide::Columns2).on_click(
+                                move |_, window, cx| {
+                                    let _ = janela.update(cx, |this, cx| this.enviar_aos_dois(painel, window, cx));
+                                },
+                            )),
+                            ItemDoMais::Comandos => menu.item(item_de_comandos(janela, painel)),
+                            ItemDoMais::Compactar => menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, _, cx| {
+                                let _ = janela.update(cx, |this, cx| this.compactar_conversa(painel, cx));
+                            })),
+                            // O mapa dos subagentes, quando a conversa abriu algum.
+                            ItemDoMais::Agentes => menu.item(PopupMenuItem::new("Agentes desta conversa").icon(Lucide::Workflow).on_click(
+                                move |_, window, cx| {
+                                    let _ = janela.update(cx, |this, cx| this.abrir_mapa_de_agentes(chat.clone(), window, cx));
+                                },
+                            )),
+                            ItemDoMais::SessaoNova => menu.item(PopupMenuItem::new("Sessão nova").icon(Lucide::RefreshCw).on_click(move |_, _, cx| {
+                                if let Some(m) = &motor_e {
+                                    m.update(cx, |m, cx| m.nova_sessao(&chat, cx));
                                 }
-                            }),
-                    )
-                    .separator()
-                    .item(
-                        PopupMenuItem::new(if fixado { "Desafixar conversa" } else { "Fixar conversa" })
-                            .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
-                            .on_click(move |_, _, cx| {
-                                if let Some(m) = &m2 {
-                                    m.update(cx, |m, cx| m.alternar_fixado(&c2, cx));
-                                }
-                            }),
-                    );
-                if estreita {
-                    menu = itens_de_anexar(menu.separator(), &anexar, false);
+                            })),
+                            ItemDoMais::Fixar => menu.item(
+                                PopupMenuItem::new(if fixado { "Desafixar conversa" } else { "Fixar conversa" })
+                                    .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
+                                    .on_click(move |_, _, cx| {
+                                        if let Some(m) = &motor_e {
+                                            m.update(cx, |m, cx| m.alternar_fixado(&chat, cx));
+                                        }
+                                    }),
+                            ),
+                        };
+                    }
                 }
                 menu
             })
             .into_any_element()
     }
+}
+
+/// O que o "…" da caixa precisa saber para decidir o que mostra.
+#[derive(Clone, Copy, Debug, Default)]
+struct AgoraNoMais {
+    /// A faixa estreita: o clipe sai da barra e o anexar vem para cá.
+    estreita: bool,
+    com_texto: bool,
+    /// O texto da caixa é um comando de barra.
+    comando: bool,
+    /// O Enter não vai para a fila: a fila é uma escolha à parte.
+    fila_a_parte: bool,
+    outro_instalado: bool,
+    compactar: bool,
+    tem_agentes: bool,
+    rodando: bool,
+}
+
+/// Uma linha (ou um bloco de linhas) do "…".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ItemDoMais {
+    /// Arquivo ou imagem, arquivo da pasta e conversa anterior.
+    Anexar,
+    MandarDepois,
+    /// "Mandar quando as 5 h renovarem" (com a hora lida) e "Mandar às…".
+    Agendar,
+    PerguntarAoOutro,
+    Comandos,
+    Compactar,
+    Agentes,
+    SessaoNova,
+    Fixar,
+}
+
+/// Os grupos do "…", na ordem: anexar (só na faixa estreita, e primeiro, porque é o que serve com
+/// a caixa vazia), mandar (só com texto na caixa: todos precisam dele) e a conversa. O que não se
+/// aplica agora sai, em vez de ficar cinza: a fila com o Enter já indo para ela, o outro agente
+/// sem ele instalado ou com um comando de barra na caixa, o compactar sem conversa do Claude, a
+/// sessão nova com o turno rodando. O "Perguntar também ao Codex" fica com os de mandar: ele manda
+/// o texto da caixa, como eles.
+fn grupos_do_mais(agora: &AgoraNoMais) -> Vec<Vec<ItemDoMais>> {
+    use ItemDoMais::*;
+    let anexar = if agora.estreita { vec![Anexar] } else { Vec::new() };
+    let mandar = if agora.com_texto {
+        [agora.fila_a_parte.then_some(MandarDepois), Some(Agendar), (agora.outro_instalado && !agora.comando).then_some(PerguntarAoOutro)]
+            .into_iter()
+            .flatten()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let conversa = [Some(Comandos), agora.compactar.then_some(Compactar), agora.tem_agentes.then_some(Agentes), (!agora.rodando).then_some(SessaoNova), Some(Fixar)]
+        .into_iter()
+        .flatten()
+        .collect();
+    [anexar, mandar, conversa].into_iter().filter(|g: &Vec<ItemDoMais>| !g.is_empty()).collect()
 }
 
 #[cfg(test)]
@@ -1416,6 +1459,29 @@ mod testes {
 
     fn titulos(linhas: &[LinhaDeModelo]) -> Vec<&str> {
         linhas.iter().map(|l| l.titulo.as_str()).collect()
+    }
+
+    /// O "…" do pedido de 24/11/2026: no máximo três grupos (duas divisórias), anexar primeiro na
+    /// faixa estreita, e o que não se aplica sai em vez de ficar cinza.
+    #[test]
+    fn o_mais_tem_tres_grupos_e_so_o_que_se_aplica() {
+        use super::{AgoraNoMais, ItemDoMais::*, grupos_do_mais};
+        let base = AgoraNoMais { estreita: true, fila_a_parte: true, outro_instalado: true, compactar: true, ..AgoraNoMais::default() };
+        // Caixa vazia: anexar e a conversa; nada de mandar (era tudo cinza).
+        assert_eq!(grupos_do_mais(&base), [vec![Anexar], vec![Comandos, Compactar, SessaoNova, Fixar]]);
+        // Com texto: os de mandar no meio, o "Perguntar também" junto deles.
+        let com_texto = AgoraNoMais { com_texto: true, ..base };
+        assert_eq!(grupos_do_mais(&com_texto), [vec![Anexar], vec![MandarDepois, Agendar, PerguntarAoOutro], vec![Comandos, Compactar, SessaoNova, Fixar]]);
+        // Um comando de barra não vai ao outro agente; o Enter que já vai à fila dispensa a fila.
+        assert_eq!(grupos_do_mais(&AgoraNoMais { comando: true, fila_a_parte: false, ..com_texto })[1], [Agendar]);
+        // Fora da faixa estreita o clipe está na barra; rodando, sem sessão nova; sem conversa do
+        // Claude, sem compactar; com subagentes, o mapa deles.
+        let larga = AgoraNoMais { estreita: false, rodando: true, compactar: false, tem_agentes: true, ..base };
+        assert_eq!(grupos_do_mais(&larga), [vec![Comandos, Agentes, Fixar]]);
+        for agora in [base, com_texto, larga, AgoraNoMais::default()] {
+            let grupos = grupos_do_mais(&agora);
+            assert!(grupos.len() <= 3 && grupos.iter().all(|g| !g.is_empty()), "{grupos:?}");
+        }
     }
 
     fn linhas_com_seta(linhas: &[LinhaDeModelo]) -> Vec<(&str, Option<bool>)> {

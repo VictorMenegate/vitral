@@ -29,31 +29,23 @@ use crate::{
 pub(super) struct DadosDoMenu {
     pub janela: WeakEntity<Janela>,
     pub painel: u64,
-    /// A caixa está vazia: não há o que agendar.
-    pub vazio: bool,
     /// Quando a janela de 5 h da conta do chat renova, já com a folga (`Motor::renovacao_do_chat`).
     pub renova: Option<u64>,
 }
 
-/// Os dois itens, depois do "Mandar depois, na fila". Sem a hora da renovação lida (ou com ela já
-/// passada), fica só o "Mandar às…".
+/// Os dois itens, no grupo de mandar do "…" (que só aparece com texto na caixa: sem ele, não há o
+/// que agendar). Sem a hora da renovação lida (ou com ela já passada), fica só o "Mandar às…".
 pub(super) fn itens_do_menu(menu: PopupMenu, dados: &DadosDoMenu) -> PopupMenu {
-    let (janela, painel, vazio) = (dados.janela.clone(), dados.painel, dados.vazio);
+    let (janela, painel) = (dados.janela.clone(), dados.painel);
     let as_horas = janela.clone();
     menu.when_some(dados.renova, |menu, quando| {
-        menu.item(
-            PopupMenuItem::new("Mandar quando a janela de 5 h renovar")
-                .icon(Lucide::CalendarClock)
-                .disabled(vazio)
-                .on_click(move |_, window, cx| {
-                    let _ = janela.update(cx, |this, cx| this.enviar_agendada(painel, quando, window, cx));
-                }),
-        )
+        menu.item(PopupMenuItem::new("Mandar quando as 5 h renovarem").icon(Lucide::CalendarClock).on_click(move |_, window, cx| {
+            let _ = janela.update(cx, |this, cx| this.enviar_agendada(painel, quando, window, cx));
+        }))
     })
-    .item(PopupMenuItem::new("Mandar às…").icon(Lucide::Clock).disabled(vazio).on_click(move |_, window, cx| {
+    .item(PopupMenuItem::new("Mandar às…").icon(Lucide::Clock).on_click(move |_, window, cx| {
         let _ = as_horas.update(cx, |this, cx| this.dialogo_mandar_as(painel, window, cx));
     }))
-    .separator()
 }
 
 /// A hora e o minuto que a pessoa escreveu: "15:10", "15h10", "15h", "15", "1510", "8.30".
