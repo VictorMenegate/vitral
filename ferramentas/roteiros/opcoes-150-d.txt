@@ -1,0 +1,22 @@
+# A aba Arquivos lembrada entre aberturas, a 150%: liga "Lembrar o que a aba Arquivos mostra" em
+# Configurações > Chats, liga "Mostrar ignorados" na aba Arquivos, derruba e reabre o Vitral.
+espera 12
+tecla Control_L+comma
+espera 2
+rolar 1000 600 40
+espera 1
+clique 1374 845           # Lembrar o que a aba Arquivos mostra
+espera 1
+clique 1401 181
+espera 1
+clique 470 118            # aba Arquivos
+espera 3
+print d1-antes-do-clique
+clique 504 194            # Mostrar ignorados
+espera 3
+print d2-ignorados-ligados
+reabre
+espera 12
+clique 470 118
+espera 4
+print d3-depois-de-reabrir  # ainda com os ignorados

@@ -1935,6 +1935,11 @@ impl Janela {
     /// A árvore da janela inteira (o `render`, que só mede quanto ela leva para o `VITRAL_QUADROS`).
     fn montar_janela(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         contar_quadro();
+        // O Ctrl solto com a janela fora do caminho do evento (um diálogo com o foco, a janela
+        // desativada) não avisa: sem o Ctrl de fato apertado, o relógio dos números zera.
+        if !window.modifiers().control {
+            self.ctrl_desde = None;
+        }
         // O sumário diz se foi desenhado neste desenho (`secao_do_sumario`).
         self.sumario.desenhado = false;
         if let Some(motor) = &self.motor {
