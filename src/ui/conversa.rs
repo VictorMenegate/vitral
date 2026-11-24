@@ -758,7 +758,7 @@ impl Janela {
             .children(chat.zip(ix).filter(|_| subagente.is_none()).and_then(|(chat, ix)| self.fila_do_painel(motor_entidade, &chat.id, ix, window, cx)))
             .children(faixa)
             // No lugar da caixa, o pé da conversa do subagente: o que ela é e em que pé ele está.
-            .when_some(subagente, |s, sub| s.child(self.pe_do_subagente(motor, sub, window, cx)))
+            .when_some(subagente, |s, sub| s.child(self.pe_do_subagente(motor, sub, caixa_estreita, window, cx)))
             .when_some(chat.zip(ix).filter(|_| subagente.is_none()), |s, (chat, ix)| {
                 let caixa = self.caixa_mensagem(motor, chat, ix, window, cx).into_any_element();
                 // A doca está no fluxo: as mensagens terminam onde ela começa, e nenhum texto fica
@@ -917,6 +917,7 @@ impl Janela {
         &self,
         motor: &Motor,
         sub: &crate::motor::subconversa::Subconversa,
+        caixa_estreita: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -932,7 +933,7 @@ impl Janela {
             None => (div().into_any_element(), String::new()),
         };
         let linha = h_flex()
-            .map(super::mensagens::coluna)
+            .map(|s| super::mensagens::coluna(s, caixa_estreita))
             .h(tam(window, 36.))
             .gap(esp::E8)
             .metadado()

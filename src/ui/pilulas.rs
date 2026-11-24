@@ -14,7 +14,7 @@ use super::{
     Janela,
     componentes::{AnelGirando, CorpoPopover, Flutuante as _, LarguraPopover, TamanhoBotao, botao_fantasma, contagem, popover, variante_fantasma},
     mapa_agentes::{Estado, agentes_do_chat, e_agente, meta_do_agente, ponto},
-    mensagens::{coluna, icone_de, larga, linhas_da_edicao_gravada, minima, nome_curto, texto_dos_passos},
+    mensagens::{coluna, icone_de, larga, linhas_da_edicao_gravada, nome_curto, texto_dos_passos},
     movimento::{self, De},
 };
 use crate::{
@@ -222,7 +222,9 @@ impl Janela {
             return None;
         }
         let nivel = painel.medida.nivel;
-        let (curto, apertado) = (!larga(nivel), minima(nivel));
+        let curto = !larga(nivel);
+        // A margem é a da caixa (a 461ab7a juntou a regra das mensagens e da caixa em `coluna`).
+        let caixa_estreita = painel.medida.faixa == super::componentes::FaixaCaixa::Estreita;
         let mut filhos: Vec<AnyElement> = Vec::new();
         if !pilulas.comandos.is_empty() {
             filhos.push(self.pilula_dos_comandos(&pilulas.comandos, &chat.id, painel_id, curto, cx));
@@ -237,8 +239,7 @@ impl Janela {
             filhos.push(self.pilula_das_mudancas(mudancas, painel_id, curto, cx));
         }
         let linha = h_flex()
-            .map(coluna)
-            .when(apertado, |s| s.px(esp::E16))
+            .map(|s| coluna(s, caixa_estreita))
             .h(r(ALTURA_DA_PILULA))
             .gap(esp::E6)
             .children(filhos);
