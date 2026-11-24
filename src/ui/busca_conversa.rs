@@ -542,6 +542,16 @@ impl RenderOnce for RolarAoAchado {
 
 // ------------------------------------------------------------------ a barra e as ações
 
+/// A distância da barra da busca até a borda da direita do painel: o respiro de sempre, ou, no
+/// painel que encosta na direita da janela e com anéis de uso à vista, a reserva deles (que conta
+/// da borda da janela, e ali painel e janela têm a mesma borda). Nunca menos que o respiro.
+pub(super) fn recuo_da_direita(painel_na_borda: bool, reserva: Option<Pixels>, respiro: Pixels) -> Pixels {
+    match reserva {
+        Some(reserva) if painel_na_borda => reserva.max(respiro),
+        _ => respiro,
+    }
+}
+
 impl Janela {
     /// Ctrl+F: abre (ou refoca) a busca do painel ativo, com o termo de antes selecionado.
     pub(super) fn abrir_busca_na_conversa(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -691,12 +701,20 @@ impl Janela {
                     .on_click(cx.listener(|this, _, window, cx| this.fechar_busca_na_conversa(window, cx))),
             );
         // A barra fica por cima da conversa, encostada no alto e à direita, e nunca mais larga
-        // que o painel (no painel mínimo ela ocupa tudo menos as margens).
+        // que o painel (no painel mínimo ela ocupa tudo menos as margens). No painel que encosta
+        // na direita da janela ela guarda o lugar dos anéis de uso, que flutuam ali por cima
+        // (dono, 24/11/2026: a barra ficava por baixo deles). A reserva vem de
+        // `reserva_dos_aneis`, a mesma do cabeçalho do arquivo: sem anel nenhum não há reserva.
+        let recuo = recuo_da_direita(
+            self.painel_na_borda_da_janela(ix),
+            self.reserva_dos_aneis(window, cx),
+            crate::tema::tam(window, 8.),
+        );
         Some(
             div()
                 .absolute()
                 .top(esp::E8)
-                .right(esp::E8)
+                .right(recuo)
                 .left(esp::E8)
                 .flex()
                 .justify_end()
@@ -715,9 +733,24 @@ impl Janela {
 mod testes {
     // Sem `use super::*`: o `gpui_kit::*` lá de cima traz um `test` que esconde o `#[test]`
     // (o mesmo cuidado do ui/mensagens.rs).
-    use super::{Campo, Indice, Realce, andar, chaves_para_abrir, faixas, normalizar, ocorrencias};
+    use super::{Campo, Indice, Realce, andar, chaves_para_abrir, faixas, normalizar, ocorrencias, recuo_da_direita};
     use super::super::acentos::primeira;
     use crate::modelo::Item;
+
+    #[test]
+    fn a_barra_respeita_a_reserva_dos_aneis_so_na_borda_da_janela() {
+        use gpui_kit::px;
+        let respiro = px(8.);
+        // Sem anéis (sem reserva), ou num painel que não encosta na direita da janela: o respiro.
+        assert_eq!(recuo_da_direita(true, None, respiro), respiro);
+        assert_eq!(recuo_da_direita(false, Some(px(60.)), respiro), respiro);
+        // No painel da borda, com anel (um, dois ou três: a reserva é a mesma, eles se empilham),
+        // a barra recua o que a reserva manda, sem número fixo.
+        assert_eq!(recuo_da_direita(true, Some(px(60.)), respiro), px(60.));
+        assert_eq!(recuo_da_direita(true, Some(px(90.)), respiro), px(90.));
+        // Reserva menor que o respiro nunca aproxima a barra da borda.
+        assert_eq!(recuo_da_direita(true, Some(px(4.)), respiro), respiro);
+    }
 
     fn item_usuario(texto: &str) -> Item {
         Item::Usuario {

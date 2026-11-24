@@ -100,6 +100,26 @@ actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguin
 actions!(vitral, [AbrirMenuDoPainel]);
 // Ctrl+I: o quadro de ideias.
 actions!(vitral, [AbrirQuadroDeIdeias]);
+// Teclado e organização (24/11/2026): Alt+↑/↓ pulam de mensagem sua em mensagem sua; PgUp/PgDn
+// rolam a conversa; Ctrl+Shift+Enter maximiza o painel; Alt+PgUp/PgDn levam a aba ao painel
+// vizinho e Alt+Shift+PgUp/PgDn abrem um painel ao lado com ela; Ctrl+Alt+A arquiva o chat do
+// painel ativo e o Ctrl+Z, fora de campo, desfaz enquanto o aviso estiver na tela.
+actions!(
+    vitral,
+    [
+        MensagemAnterior,
+        MensagemSeguinte,
+        PaginaAcima,
+        PaginaAbaixo,
+        MaximizarPainel,
+        MoverAbaEsquerda,
+        MoverAbaDireita,
+        DividirAbaEsquerda,
+        DividirAbaDireita,
+        ArquivarChatAtivo,
+        DesfazerArquivar
+    ]
+);
 
 
 /// Por quanto tempo o Esc armado espera o segundo (item 6.2).
@@ -439,6 +459,9 @@ pub struct Janela {
     ativo: usize,
     /// Painel ativo antes do último clique num cartão (o clique ativa o painel na captura).
     ativo_antes_do_clique: Option<u64>,
+    /// O painel que ocupa a área das conversas, com os outros guardados (não fechados): o arranjo
+    /// volta inteiro ao desfazer. Segue o painel ativo e some com menos de dois painéis.
+    maximizado: Option<u64>,
     /// As abas fechadas, da mais antiga para a mais nova (Ctrl+Shift+T reabre a do fim).
     abas_fechadas: Vec<String>,
     proximo_painel: u64,
@@ -907,6 +930,7 @@ impl Janela {
             paineis: Vec::new(),
             ativo: 0,
             ativo_antes_do_clique: None,
+            maximizado: None,
             abas_fechadas: Vec::new(),
             proximo_painel: 0,
             alvo_arrasto: None,
@@ -1029,6 +1053,8 @@ impl Janela {
             .filter(|(chat, motor)| motor.read(cx).execucao(chat).rodando());
         match rodando {
             Some((chat, _)) if !self.foco_lista.is_focused(window) => self.esc_no_turno(&chat, cx),
+            // Painel maximizado, sem turno para parar: o Esc devolve o arranjo.
+            _ if self.maximizado.is_some() => self.sair_do_maximizado(cx),
             _ => cx.propagate(),
         }
     }
@@ -2237,6 +2263,17 @@ impl Janela {
             .on_action(cx.listener(|this, _: &FecharPainel, window, cx| this.fechar_painel_ativo(window, cx)))
             .on_action(cx.listener(|this, _: &PainelAnterior, window, cx| this.painel_vizinho(-1, window, cx)))
             .on_action(cx.listener(|this, _: &PainelSeguinte, window, cx| this.painel_vizinho(1, window, cx)))
+            .on_action(cx.listener(|this, _: &MensagemAnterior, _, cx| this.pular_mensagem(-1, cx)))
+            .on_action(cx.listener(|this, _: &MensagemSeguinte, _, cx| this.pular_mensagem(1, cx)))
+            .on_action(cx.listener(|this, _: &PaginaAcima, _, cx| this.rolar_pagina(-1, cx)))
+            .on_action(cx.listener(|this, _: &PaginaAbaixo, _, cx| this.rolar_pagina(1, cx)))
+            .on_action(cx.listener(|this, _: &MaximizarPainel, _, cx| this.alternar_maximizado_ativo(cx)))
+            .on_action(cx.listener(|this, _: &MoverAbaEsquerda, window, cx| this.mover_aba_do_ativo(paineis::Lado::Esquerda, false, window, cx)))
+            .on_action(cx.listener(|this, _: &MoverAbaDireita, window, cx| this.mover_aba_do_ativo(paineis::Lado::Direita, false, window, cx)))
+            .on_action(cx.listener(|this, _: &DividirAbaEsquerda, window, cx| this.mover_aba_do_ativo(paineis::Lado::Esquerda, true, window, cx)))
+            .on_action(cx.listener(|this, _: &DividirAbaDireita, window, cx| this.mover_aba_do_ativo(paineis::Lado::Direita, true, window, cx)))
+            .on_action(cx.listener(|this, _: &ArquivarChatAtivo, window, cx| this.arquivar_chat_ativo(window, cx)))
+            .on_action(cx.listener(|this, _: &DesfazerArquivar, window, cx| this.desfazer_arquivar(window, cx)))
             .on_action(cx.listener(|this, _: &MoverPainelEsquerda, _, cx| this.mover_painel(-1, cx)))
             .on_action(cx.listener(|this, _: &MoverPainelDireita, _, cx| this.mover_painel(1, cx)))
             .on_action(cx.listener(|this, _: &composer::AbrirModelo, window, cx| {
@@ -2362,7 +2399,10 @@ impl Janela {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let o = self.orcamento;
-        let n = self.paineis.len().max(1);
+        self.normalizar_maximizado();
+        let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
+        let visiveis = paineis::paineis_a_mostrar(&ids, self.maximizado);
+        let n = visiveis.len().max(1);
         let lista = o.lista;
         let painel = o.direita == Direita::Ancorada;
         // Com outra composição, outro zoom ou outra largura de janela, as divisórias recomeçam
@@ -2434,14 +2474,14 @@ impl Janela {
                     ),
             );
         } else {
-            for ix in 0..self.paineis.len() {
+            for (k, &ix) in visiveis.iter().enumerate() {
                 let id = self.paineis[ix].id;
                 let conteudo = self.conversa(motor, Some(ix), window, cx).into_any_element();
                 // Só a 1ª conversa, com a lista ao lado, guarda o meio vão da esquerda; sem a lista
                 // vale a margem da janela.
-                let depois_da_lista = ix == 0 && larguras.lista.is_some();
+                let depois_da_lista = k == 0 && larguras.lista.is_some();
                 grupo = grupo.child(
-                    resizable_panel().size(px(larguras.conversas[ix])).size_range(min_conversa..Pixels::MAX).child(
+                    resizable_panel().size(px(larguras.conversas[k])).size_range(min_conversa..Pixels::MAX).child(
                         div()
                             .size_full()
                             .relative()
@@ -2481,7 +2521,8 @@ impl Janela {
     /// com 6 px de folga.
     fn na_divisoria_de_conversas(&self, x: Pixels, cx: &Context<Self>) -> bool {
         let n = self.paineis.len();
-        if n < 2 {
+        // Maximizado, só há um painel à vista: não há divisória.
+        if n < 2 || self.maximizado.is_some() {
             return false;
         }
         let o = self.orcamento;

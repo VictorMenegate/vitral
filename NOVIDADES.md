@@ -3,6 +3,14 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## Próxima
+
+**Atalhos para andar e organizar.** Alt+↑ e Alt+↓ pulam para a sua mensagem anterior e a seguinte; PgUp e PgDn rolam a conversa (na caixa com texto continuam sendo do texto). Ctrl+Shift+Enter maximiza o painel e volta (o Esc também volta), Alt+PgUp e Alt+PgDn levam a aba ao painel vizinho, Alt+Shift+PgUp e Alt+Shift+PgDn abrem um painel ao lado com ela, e Ctrl+Alt+A arquiva o chat do painel, com Ctrl+Z desfazendo enquanto o aviso estiver na tela. Todos estão em Atalhos do teclado e na paleta.
+
+**Marcar como não lido.** O menu do chat devolve o ponto azul, e ele fica até você abrir o chat de novo.
+
+**Busca na conversa sem ficar embaixo dos anéis.** Com o painel encostado na direita da janela, a barra do Ctrl+F deixa o lugar dos anéis de uso, seja com um, dois, três ou nenhum.
+
 ## 0.10.1
 
 O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O

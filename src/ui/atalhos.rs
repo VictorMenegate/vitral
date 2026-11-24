@@ -129,12 +129,25 @@ tabela! {
     "enter", gpui_kit::base::actions::Confirm { secondary: false }, Some("Esforco"), Grupo::Conversa, "", "";
     "ctrl-r", super::enviadas::BuscarEnviadas, None, Grupo::Conversa, "Buscar nas suas mensagens já enviadas (o Enter põe na caixa)", "";
     "ctrl-end", super::IrAoFim, None, Grupo::Conversa, "Ir ao fim da conversa", "";
+    // Nenhuma das duas é do campo de texto (o kit só liga o Alt+Shift+↑/↓ a cursores extras).
+    "alt-up", super::MensagemAnterior, None, Grupo::Conversa, "Pular para a sua mensagem anterior", "Alt+↑";
+    "alt-down", super::MensagemSeguinte, None, Grupo::Conversa, "Pular para a sua mensagem seguinte (depois da última, vai ao fim)", "Alt+↓";
+    // O PgUp e o PgDn do campo movem o cursor: fora dele e na caixa vazia (onde não há o que
+    // mover) rolam a conversa; na caixa com texto continuam sendo do texto.
+    "pageup", super::PaginaAcima, Some("Vitral"), Grupo::Conversa, "Rolar a conversa uma página para cima", "PgUp";
+    "pagedown", super::PaginaAbaixo, Some("Vitral"), Grupo::Conversa, "Rolar a conversa uma página para baixo", "PgDn";
+    "pageup", super::PaginaAcima, Some("Vazia > Input"), Grupo::Conversa, "", "";
+    "pagedown", super::PaginaAbaixo, Some("Vazia > Input"), Grupo::Conversa, "", "";
     "ctrl-shift-c", super::CopiarUltimaResposta, None, Grupo::Conversa, "Copiar a última resposta", "";
     // No visor de imagem (o Esc que fecha é o do diálogo).
     "left", visor_imagem::ImagemAnterior, Some("Visor"), Grupo::Conversa, "Imagem anterior e seguinte no visor", "←+→";
     "right", visor_imagem::ImagemSeguinte, Some("Visor"), Grupo::Conversa, "", "";
 
     // ---------- conversas ----------
+    // O Ctrl+Z é do texto dentro de um campo (o "!Input" o tira de quem está escrevendo): fora dele
+    // desfaz o arquivar enquanto o aviso estiver na tela.
+    "ctrl-alt-a", super::ArquivarChatAtivo, None, Grupo::Lista, "Arquivar o chat do painel ativo", "";
+    "ctrl-z", super::DesfazerArquivar, Some("Vitral && !Input"), Grupo::Lista, "Desfazer o arquivar (fora da caixa de mensagem)", "";
     "ctrl-n", super::NovaConversa, None, Grupo::Lista, "Nova conversa", "";
     "ctrl-k", super::Buscar, None, Grupo::Lista, "Buscar conversas", "";
     "ctrl-b", super::AlternarLista, None, Grupo::Lista, "Mostrar ou recolher a lista", "";
@@ -165,6 +178,13 @@ tabela! {
     "ctrl-s", super::painel_arquivo::SalvarArquivo, Some("Arquivo"), Grupo::Paineis, "Salvar o arquivo que você está editando (ele também se salva sozinho)", "";
     "ctrl-pageup", super::PainelAnterior, None, Grupo::Paineis, "Painel anterior", "";
     "ctrl-pagedown", super::PainelSeguinte, None, Grupo::Paineis, "Painel seguinte", "";
+    // Ctrl+Shift+Enter: o campo não liga essa combinação (o Enter dele é o do envio).
+    "ctrl-shift-enter", super::MaximizarPainel, Some("Vitral"), Grupo::Paineis, "Maximizar o painel ativo e voltar (o Esc também volta)", "";
+    // Como soltar a aba no painel vizinho com o mouse; na ponta, abre um painel novo daquele lado.
+    "alt-pageup", super::MoverAbaEsquerda, None, Grupo::Paineis, "Levar a aba para o painel da esquerda (na ponta, abre um painel novo)", "Alt+PgUp";
+    "alt-pagedown", super::MoverAbaDireita, None, Grupo::Paineis, "Levar a aba para o painel da direita (na ponta, abre um painel novo)", "Alt+PgDn";
+    "alt-shift-pageup", super::DividirAbaEsquerda, None, Grupo::Paineis, "Abrir a aba num painel novo à esquerda", "Alt+Shift+PgUp";
+    "alt-shift-pagedown", super::DividirAbaDireita, None, Grupo::Paineis, "Abrir a aba num painel novo à direita", "Alt+Shift+PgDn";
     "ctrl-shift-pageup", super::MoverPainelEsquerda, None, Grupo::Paineis, "Mover o painel para a esquerda", "";
     "ctrl-shift-pagedown", super::MoverPainelDireita, None, Grupo::Paineis, "Mover o painel para a direita", "";
     "ctrl-alt-pagedown", super::arranjo::salvos::ArranjoSeguinte, None, Grupo::Paineis, "Arranjo de painéis seguinte (dá a volta)", "";
@@ -391,5 +411,38 @@ mod testes {
         let salvar = linhas().into_iter().find(|l| l.teclas == "ctrl-s").expect("o Ctrl+S não está na tabela");
         assert_eq!(salvar.contexto, Some("Arquivo"));
         assert_eq!((salvar.rotulo, salvar.grupo), ("Salvar o arquivo que você está editando (ele também se salva sozinho)", Grupo::Paineis));
+    }
+
+    #[test]
+    fn nenhuma_combinacao_repete_no_mesmo_contexto() {
+        let mut vistas = std::collections::HashSet::new();
+        for l in linhas() {
+            assert!(vistas.insert((l.teclas, l.contexto)), "combinação repetida: {} em {:?}", l.teclas, l.contexto);
+        }
+    }
+
+    #[test]
+    fn os_atalhos_de_teclado_e_organizacao_estao_na_tabela_e_na_lista() {
+        let acha = |teclas: &str, contexto: Option<&str>| linhas().into_iter().find(|l| l.teclas == teclas && l.contexto == contexto);
+        let com_rotulo = |teclas: &str, contexto: Option<&str>| {
+            let l = acha(teclas, contexto).unwrap_or_else(|| panic!("{teclas} {contexto:?} não está na tabela"));
+            assert!(!l.rotulo.is_empty(), "{teclas} sem rótulo, fora da lista e da paleta");
+        };
+        com_rotulo("alt-up", None);
+        acha("alt-down", None).expect("Alt+↓");
+        com_rotulo("pageup", Some("Vitral"));
+        acha("pagedown", Some("Vitral")).expect("PgDn");
+        // Com a caixa vazia o PgUp e o PgDn rolam a conversa (a caixa não tem o que mover).
+        acha("pageup", Some("Vazia > Input")).expect("PgUp na caixa vazia");
+        com_rotulo("ctrl-shift-enter", Some("Vitral"));
+        com_rotulo("alt-pageup", None);
+        acha("alt-pagedown", None).expect("Alt+PgDn");
+        com_rotulo("alt-shift-pageup", None);
+        acha("alt-shift-pagedown", None).expect("Alt+Shift+PgDn");
+        com_rotulo("ctrl-alt-a", None);
+        // O Ctrl+Z do arquivar fora de campo: dentro da caixa ele é do texto.
+        let desfazer = acha("ctrl-z", Some("Vitral && !Input")).expect("Ctrl+Z fora de campo");
+        assert!(!desfazer.rotulo.is_empty());
+        assert!(acha("ctrl-z", None).is_none() && acha("ctrl-z", Some("Vitral")).is_none(), "o Ctrl+Z não pode valer dentro do campo");
     }
 }

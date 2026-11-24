@@ -5182,7 +5182,7 @@ impl Janela {
     }
 
     /// Volta o painel ao fim da conversa e marca o que chegou como visto.
-    fn ir_para_o_fim(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+    pub(super) fn ir_para_o_fim(&mut self, painel_id: u64, cx: &mut Context<Self>) {
         let Some(painel) = self.paineis.iter_mut().find(|p| p.id == painel_id) else {
             return;
         };

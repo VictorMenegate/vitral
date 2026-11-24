@@ -446,6 +446,11 @@ pub struct Chat {
     /// Quando o usuário viu a conversa pela última vez (para marcar o que é novo).
     #[serde(default)]
     pub lido_em: u64,
+    /// "Marcar como não lido": o ponto azul fica até a próxima visita de verdade (abrir o chat
+    /// pela lista, ativar o painel dele), e o "lido" automático de quem está com o fim à vista
+    /// não o apaga. Só na memória: ao reabrir o Vitral, vale o `lido_em` gravado.
+    #[serde(skip)]
+    pub retido_nao_lido: bool,
     /// Há um turno aberto (o processo começou e ainda não terminou). Ao reabrir, marca o turno
     /// que o Vitral fechado (ou uma queda de energia) cortou no meio.
     #[serde(default)]
@@ -508,6 +513,7 @@ impl Chat {
             fixado: false,
             arquivado: false,
             lido_em: agora,
+            retido_nao_lido: false,
             turno_aberto: false,
             modo_antes_do_plano: None,
             memoria_da_sessao: None,

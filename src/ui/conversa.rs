@@ -372,6 +372,8 @@ fn menu_do_painel(
         chat: String,
         foco: bool,
         ultimo: bool,
+        /// O painel está maximizado, ou há mais de um para maximizar.
+        maximizado: Option<bool>,
         direita_aberta: bool,
         /// O que a direita mostra (o arquivo aberto ou Este chat).
         direita: Direita,
@@ -400,6 +402,7 @@ fn menu_do_painel(
             chat: chat.id.clone(),
             foco: j.modo_foco(cx),
             ultimo: ix + 1 == j.paineis.len(),
+            maximizado: if j.maximizado.is_some() { Some(true) } else { (j.paineis.len() > 1).then_some(false) },
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
             cheio,
@@ -429,6 +432,17 @@ fn menu_do_painel(
             .checked(d.direita_aberta)
             .action(Box::new(AlternarPainel))
             .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
+        );
+    }
+    if let Some(maximizado) = d.maximizado {
+        menu = menu.item(
+            PopupMenuItem::new(if maximizado { "Voltar o painel ao arranjo" } else { "Maximizar o painel" })
+                .icon(if maximizado { Lucide::Minimize } else { Lucide::Maximize })
+                .action(Box::new(super::MaximizarPainel))
+                .on_click(na_janela(&janela, move |this, _, cx| {
+                    this.ativar_painel(painel_id, cx);
+                    this.alternar_maximizado_ativo(cx)
+                })),
         );
     }
     menu = menu
@@ -979,8 +993,7 @@ impl Janela {
         let nivel = ix.map(|ix| self.paineis[ix].medida.nivel).unwrap_or_default();
         // Os botões da janela ficam no canto de cima à direita: no último painel, se o painel da
         // direita estiver fechado ou em gaveta.
-        let ultimo = ix.is_none_or(|ix| ix + 1 == self.paineis.len());
-        let mostra_botoes_janela = ultimo && !self.direita_visivel();
+        let mostra_botoes_janela = ix.is_none_or(|ix| self.painel_na_borda_da_janela(ix));
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
         // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.
