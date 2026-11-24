@@ -225,18 +225,27 @@ impl Janela {
         let curto = !larga(nivel);
         // A margem é a da caixa (a 461ab7a juntou a regra das mensagens e da caixa em `coluna`).
         let caixa_estreita = painel.medida.faixa == super::componentes::FaixaCaixa::Estreita;
+        // Com a linha já à vista, a pílula que aparece depois (o primeiro comando no fundo, as
+        // mudanças no fim do turno) entra sozinha, com fade e 8 px de baixo; na linha que acabou de
+        // aparecer, quem entra é a linha.
+        let vistos = self.paineis.iter().find(|p| p.id == painel_id).map(|p| &p.ja_vistos);
         let mut filhos: Vec<AnyElement> = Vec::new();
+        let mut por = |tipo: &'static str, pilula: AnyElement| {
+            let aparece = vistos.is_some_and(|v| v.borrow_mut().novo(format!("pilula:{tipo}")));
+            let id = SharedString::from(format!("entra-pilula-{tipo}-{painel_id}"));
+            filhos.push(movimento::entrada(id, aparece && !nova, De::Baixo, div().flex_none().child(pilula)).into_any_element());
+        };
         if !pilulas.comandos.is_empty() {
-            filhos.push(self.pilula_dos_comandos(&pilulas.comandos, &chat.id, painel_id, curto, cx));
+            por("comandos", self.pilula_dos_comandos(&pilulas.comandos, &chat.id, painel_id, curto, cx));
         }
         if !pilulas.agentes.is_empty() {
-            filhos.push(self.pilula_dos_agentes(&pilulas.agentes, &chat.id, painel_id, curto, cx));
+            por("agentes", self.pilula_dos_agentes(&pilulas.agentes, &chat.id, painel_id, curto, cx));
         }
         if let Some(passos) = pilulas.passos {
-            filhos.push(self.pilula_dos_passos(passos, motor.passos(&chat.id), &chat.id, painel_id, cx));
+            por("passos", self.pilula_dos_passos(passos, motor.passos(&chat.id), &chat.id, painel_id, cx));
         }
         if let Some(mudancas) = pilulas.mudancas {
-            filhos.push(self.pilula_das_mudancas(mudancas, painel_id, curto, cx));
+            por("mudancas", self.pilula_das_mudancas(mudancas, painel_id, curto, cx));
         }
         let linha = h_flex()
             .map(|s| coluna(s, caixa_estreita))

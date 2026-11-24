@@ -724,9 +724,11 @@ impl Janela {
             )
             .child(div().h(esp::E8))
             .child(barra);
-        // Na altura, os 2 de cima igualam a folga de baixo da moldura.
+        // Na altura, os 2 de cima igualam a folga de baixo da moldura. Quando o turno começa, ela
+        // entra com fade (sem deslize: ela abre o lugar dela na moldura, e a caixa cresce 22 px).
+        let estado_novo = estado.is_some() && self.paineis[ix].ja_vistos.borrow_mut().novo("linha-de-estado");
         let linha_de_estado = estado.map(|(estado_esquerda, estado_direita)| {
-            h_flex()
+            let linha = h_flex()
                 .h(r(22.))
                 .pt(esp::E2)
                 .px(esp::E12)
@@ -735,7 +737,8 @@ impl Janela {
                 .etiqueta()
                 .text_color(Cores::tenue())
                 .child(h_flex().flex_1().min_w_0().gap(esp::E12).overflow_hidden().children(estado_esquerda))
-                .child(h_flex().flex_none().gap(esp::E12).children(estado_direita))
+                .child(h_flex().flex_none().gap(esp::E12).children(estado_direita));
+            movimento::entrada(SharedString::from(format!("entra-estado-{painel_id}")), estado_novo, movimento::De::Parado, linha)
         });
         // A moldura preta: o campo e a linha de estado. O vão entre as peças, a folga e a linha
         // são da caixa: o clique ali não leva o foco para a janela. O campo e os botões tratam o
@@ -1211,7 +1214,8 @@ impl Janela {
             // dentro do cartão, que corta reto, a imagem larga saía cortada e passava por baixo do
             // painel vizinho (dono, 19/11/2026: "tá bugado a imagem aqui, tem que ficar por cima").
             // O canto de baixo dela fica no alto da caixa, e ela não sai da janela.
-            s.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window_with_margin(px(8.)).child(
+            // Entra com fade e 8 px de baixo, saindo da caixa.
+            s.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window_with_margin(px(8.)).child(movimento::entrar(
                 div()
                     .id("ilha-do-anexo")
                     .mb(esp::E8)
@@ -1263,7 +1267,9 @@ impl Janela {
                                     }))),
                             ),
                     ),
-            )).with_priority(1))
+                "entra-ilha",
+                movimento::De::Baixo,
+            ))).with_priority(1))
         })
     }
 

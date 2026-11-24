@@ -448,6 +448,16 @@ componentes do GPUI Kit.
     nada da conversa. Tudo o que muda uma pílula chega por um evento do motor que não é texto,
     e esses avisam a Janela; a conversa de um subagente que cresce avisa só os painéis que a
     mostram (`TextoChegando`, emitido por `Motor::subconversa_lida`).
+  - **O fade de quem está em cache mora dentro da vista.** O GPUI reaproveita a pintura de uma
+    vista em cache enquanto ela não é avisada, e a chave do cache é a caixa, o recorte e o estilo
+    do texto, não a opacidade: um fade posto pela casca em volta dela só anda se ela se
+    redesenhar a cada quadro (no painel aberto ao lado, ela se redesenha sozinha nos primeiros
+    quadros, medindo os blocos, e o fade do cartão funciona). Por isso a conversa que troca no
+    painel entra pelo `movimento::entrada` de dentro de `Janela::corpo_do_painel` (`Painel.troca`
+    e `troca_vista`): a vista se redesenha nos 10 quadros do fade, e só ela. O que anima na casca redesenha a casca; o que anima nas mensagens,
+    só a vista daquele painel. Medido em 24/11/2026 com a mesma bancada (três conversas de 450
+    itens a 150%, binário otimizado): ver **O que entra com fade** e a seção da rodada no
+    `NOVIDADES.md`.
   - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
     layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
     com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
@@ -719,6 +729,26 @@ componentes do GPUI Kit.
   de 12); texto chegando
   numa conversa que nenhum painel mostra não redesenha a janela; e a barra de rolagem aparece e
   some sem fade (o fade pedia quadros no ritmo do monitor a cada mudança de tamanho, como o Ctrl+B).
+- **O que entra com fade** (dono, 24/11/2026: "tem bastante coisa que parece meio seco"). Tudo em
+  160 ms, uma vez, com 6 a 8 px de deslize ou só o fade, nunca de escala (o GPUI não tem escala em
+  div): a conversa que troca no painel (aba, lista, histórico);
+  cada pedido de permissão, pergunta e plano acima da caixa (de baixo); a fila aberta (de baixo);
+  a faixa do turno quando aparece e quando troca de estado (Parada, Falhou, Fila, Você parou); cada
+  pílula que aparece com a linha já à vista (de baixo); a linha de estado da caixa quando o turno
+  começa (só o fade: ela abre o lugar dela e a caixa cresce); a chamada que chega numa trilha já à
+  vista (de baixo) e o cabeçalho do grupo, que nasce com a segunda; o que um clique abre na
+  conversa (um grupo da trilha, "Trabalhou…", "Pensou", a saída de uma chamada, o relatório de um
+  agente, o plano respondido, os "Detalhes" de um erro, a revisão da memória), de cima, com o
+  chevron girando 90° em 120 ms; a mensagem presa quando aparece (a troca de texto ao rolar
+  segue a rolagem, sem fade); a parte das Configurações, deslizando do lado para onde se foi na
+  coluna (como o passo das boas-vindas); Conversas ↔ Arquivos na lista; a direita encaixada ao
+  abrir (Ctrl+J) e ao trocar entre o arquivo e Este chat; o "Comece um chat" do painel vazio; os
+  avisos do canto; a faixa de quando a gravação falha; e a ilha do anexo. Sair é seco (o kit
+  desmonta no quadro em que o estado muda), recolher também (altura automática não anima), e nada
+  disso repete ao rolar, ao trocar de painel ou com outro painel abrindo ao lado. Ficam sem
+  transição de cor, de propósito, o hover das linhas de lista, das abas e dos itens de menu:
+  passar o ponteiro por uma fileira viraria animação contínua. A troca de tema continua sem
+  transição.
 
 ## Opções da conversa (como na extensão do Claude Code)
 
@@ -1250,8 +1280,9 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   agente em **Detalhes**; ver **Chat que cai**). A troca da sessão antiga do Claude Code por uma
   nova com resumo (a que sumiu e a que expirou) é o marco "Sessão nova, com um resumo da anterior",
   e as linhas de troca de conta ou de agente levam o ícone de troca. O que chega com a conversa aberta no painel (a sua
-  mensagem, a resposta, um evento, um aviso) entra com um fade e 8 px de baixo, uma vez; abrir a
-  conversa, trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
+  mensagem, a resposta, um evento, um aviso, a chamada que chega numa trilha já à vista) entra com
+  um fade e 8 px de baixo, uma vez; trocar de conversa no painel faz a conversa inteira entrar
+  com um fade, e trocar de painel ou rolar não anima nada. Entre turnos ficam 32 px antes do seu balão
   (e antes do separador de dia), 12 depois dele e 12 entre os blocos de um turno (`esp::ENTRE_TURNOS`
   e `NO_TURNO`): com o vão de fora mais de 2 vezes o de dentro, cada pergunta fica presa à resposta
   e os turnos se leem como parágrafos (relatório de aparência, 16/11/2026, V3).
@@ -2771,7 +2802,16 @@ Movimento: `src/ui/movimento.rs` tem `COR` 120, `ENTRAR` 160, `MOVER` 180 e `ENC
 (Entrar, Mover, Sair, sem ricochete); `animacao(d, c)` para o `with_animation`; `entrar(el, id, De)`
 para o que aparece; `valor`/`valor_desde` para um valor que anda até o alvo quando ele muda (a
 montagem não anima); `disparo` para um efeito que toca quando uma chave muda; `Hover` para o
-ponteiro num controle solto; `abertura(id)` e `deslizar_gaveta(el, De::Esquerda | De::Direita, t)`
+ponteiro num controle solto; `JaVistos` para o que acabou de aparecer numa parte da tela (o que a
+casca do painel mostrou no desenho anterior, `Painel.ja_vistos`, virado no começo de
+`Janela::conversa` e esquecido ao trocar de conversa: os pedidos, a fila, cada pílula, o estado da
+faixa, a linha de estado da caixa, o painel vazio); `AbertosAgora` para o que um clique acabou de
+abrir na conversa (`Janela.abertos_agora`, marcado pelo `alternar` e pelos cliques da trilha;
+vale 400 ms, então o conteúdo aberto entra uma vez e uma remontagem depois aparece pronta);
+`lado_da_navegacao` (as partes das Configurações); e, em `mensagens.rs`, `chevron` (o de abrir e
+recolher, que gira 90° pelo `valor`), `entrada_da_chamada` e `entrada_do_cabecalho` (com teste).
+Uma `entrada` que deixa de ser montada no meio perde o estado: quem decide entrar mantém o
+invólucro (o `Some(false)` do `entrada_do_bloco`) enquanto o elemento fica à vista; `abertura(id)` e `deslizar_gaveta(el, De::Esquerda | De::Direita, t)`
 para a gaveta (24 px em `MOVER`, com o véu a 0,5·t; a `Janela.geracao_gaveta` sobe em cada
 abertura, e fechar é seco). Tudo no relógio de 60 qps por janela, e a última batida já pousa no
 alvo. O que anda sem parar (o metal) passa pelo `laco_a(window, cx, qps)`: a fase em `f64`, uma

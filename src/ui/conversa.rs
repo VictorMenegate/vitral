@@ -595,6 +595,11 @@ impl Janela {
     ) -> impl IntoElement + use<> {
         let motor = motor_entidade.read(cx);
         let painel_id = ix.map(|ix| self.paineis[ix].id).unwrap_or(0);
+        // Um desenho novo da casca deste painel: o que ela mostrou no anterior vira o "antes" (o
+        // que não estava entra com fade; ver `movimento::JaVistos`).
+        if let Some(ix) = ix {
+            self.paineis[ix].ja_vistos.borrow_mut().virar();
+        }
         let chat = ix
             .and_then(|ix| self.paineis[ix].chat.clone())
             .and_then(|id| motor.chat(&id));
@@ -637,24 +642,26 @@ impl Janela {
                     .text_selection_scope(self.paineis[ix].escopo_selecao)
                     .into_any_element()
             }
-            _ => self.sem_conversa(window, cx).into_any_element(),
+            _ => {
+                // O "Comece um chat" entra com fade e 8 px de baixo quando aparece (fechou a
+                // última conversa do painel).
+                let nova = ix.is_some_and(|ix| self.paineis[ix].ja_vistos.borrow_mut().novo("vazio"));
+                entrada(SharedString::from(format!("entra-vazio-{painel_id}")), nova, De::Baixo, div().flex_1().flex().flex_col().child(self.sem_conversa(window, cx)))
+                    .into_any_element()
+            }
         };
 
         let arquivos_sobre = chat.is_some() && subagente.is_none() && self.arquivos_sobre == Some(painel_id);
         let medida = ix.map(|ix| Self::medir_painel(cx.entity().downgrade(), painel_id, self.paineis[ix].medida));
-        // A faixa do turno entra com fade e 8 px de baixo no quadro em que aparece; o painel que
-        // acabou de abrir ao lado, só com o fade.
+        // A faixa do turno entra com fade e 8 px de baixo no quadro em que aparece, e de novo
+        // quando troca de estado (Parada, Falhou, Fila…): o conteúdo novo não aparece a seco no
+        // lugar do outro. O painel que acabou de abrir ao lado entra só com o fade.
         let faixa = chat.filter(|_| subagente.is_none()).and_then(|c| self.faixa_atividade(motor, c, painel_id, window, cx));
-        let (faixa_nova, painel_novo) = match ix {
-            Some(ix) => {
-                let p = &mut self.paineis[ix];
-                let nova = faixa.is_some() && !p.faixa_vista;
-                p.faixa_vista = faixa.is_some();
-                (nova, std::mem::take(&mut p.entra))
-            }
-            None => (false, false),
-        };
-        let faixa = faixa.map(|f| entrada(("entra-faixa", painel_id as usize), faixa_nova, De::Baixo, div().child(f)));
+        let painel_novo = ix.is_some_and(|ix| std::mem::take(&mut self.paineis[ix].entra));
+        let faixa = faixa.map(|(f, estado)| {
+            let nova = ix.is_some_and(|ix| self.paineis[ix].ja_vistos.borrow_mut().novo(format!("faixa:{estado}")));
+            entrada(SharedString::from(format!("entra-faixa-{painel_id}-{estado}")), nova, De::Baixo, div().child(f))
+        });
         // O pé de toda conversa é a doca: uma abertura no cartão por onde se vê o metal, com a
         // caixa de mensagem pousada nela. Alta na conversa ainda vazia, rente à caixa no resto do
         // tempo (com o chat trabalhando, quem mostra é o metal, que corre).
@@ -1634,7 +1641,16 @@ impl Janela {
         let foco = motor.config.modo_foco;
         self.paineis[ix].busca.indice.atualizar(&chat.id, &chat.itens, foco, &termo);
         let barra_busca = self.barra_de_busca(ix, window, cx);
-        self.mensagens(motor, chat, ix, barra_busca, window, cx).into_any_element()
+        let mensagens = self.mensagens(motor, chat, ix, barra_busca, window, cx);
+        // Trocou de conversa (aba, lista, histórico): ela entra com fade, uma vez. O fade mora aqui
+        // dentro, e não na casca: o GPUI reaproveita a pintura de uma vista em cache com a
+        // opacidade do quadro em que ela se pintou, e o fade de fora dependeria de ela se
+        // redesenhar a cada quadro. Aqui ela se redesenha nos 10 quadros do fade, e só ela.
+        let p = &mut self.paineis[ix];
+        let nova = std::mem::replace(&mut p.troca_vista, p.troca) != p.troca;
+        let id = SharedString::from(format!("entra-conversa-{painel_id}-{}", p.troca));
+        let corpo = div().flex_1().w_full().min_h(super::mensagens::MINIMO_MENSAGENS).flex().flex_col().child(mensagens);
+        entrada(id, nova, De::Parado, corpo).into_any_element()
     }
 
     /// Avisa as vistas das mensagens de todos os painéis: o estado que elas desenham mora na

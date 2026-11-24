@@ -80,13 +80,21 @@ pub struct Painel {
     pub base_animacao: usize,
     /// Até onde os blocos já apareceram: um índice daqui para a frente é novo neste quadro.
     pub vistos: usize,
-    /// A faixa do turno, a pílula do fim e a linha de pílulas estavam à vista no quadro anterior
-    /// (entram uma vez).
-    pub faixa_vista: bool,
+    /// A pílula do fim e a linha de pílulas estavam à vista no quadro anterior (entram uma vez).
     pub pilula_vista: bool,
     pub pilulas_vistas: bool,
     /// Acabou de abrir ao lado: o conteúdo entra com fade no primeiro quadro.
     pub entra: bool,
+    /// Sobe a cada troca de conversa no painel (aba, lista, histórico); a vista das mensagens guarda
+    /// em `troca_vista` a última que desenhou. Diferentes, a conversa entra com fade, uma vez (ver
+    /// `Janela::corpo_do_painel`). O painel que nasce (com a janela ou ao lado) começa igual: o
+    /// aberto ao lado já entra pelo fade do cartão (`entra`).
+    pub troca: u64,
+    pub troca_vista: u64,
+    /// O que a casca deste painel mostrou no desenho anterior (os pedidos, a fila, cada pílula, o
+    /// estado da faixa, a dica do vazio): o que não estava entra com fade (`movimento::JaVistos`).
+    /// Na casca, que só é lida (`&self`) por quem desenha esses pedaços.
+    pub ja_vistos: std::cell::RefCell<super::movimento::JaVistos>,
     /// Sobe a cada envio, para o pulso do enviar.
     pub envios: u64,
     /// O que o fundo da caixa diz agora (o texto padrão, ou o "Enter continua" depois de um Esc).
@@ -114,6 +122,8 @@ pub struct Painel {
     /// dela no conteúdo e o índice do item; `usize::MAX` no histórico trazido). Decidida no
     /// prepaint da lista, com a rolagem e as posições do mesmo quadro.
     pub presa: Option<(String, Pixels, usize)>,
+    /// A faixa presa estava à vista no desenho anterior das mensagens (entra com fade ao aparecer).
+    pub presa_vista: bool,
     /// Quanto a faixa da mensagem presa sobe: a sua mensagem seguinte, chegando no alto, a empurra
     /// para fora em vez de passar por baixo dela, como no "sticky" do VS Code (dono, 18/11/2026:
     /// "fica meio bugado quando tá assim", com o "Quero" preso por cima do "Sim").
@@ -469,10 +479,12 @@ impl Janela {
             busca: super::busca_conversa::Busca::nova(busca_na_conversa),
             base_animacao: 0,
             vistos: 0,
-            faixa_vista: false,
             pilula_vista: false,
             pilulas_vistas: false,
             entra: false,
+            troca: 0,
+            troca_vista: 0,
+            ja_vistos: Default::default(),
             envios: 0,
             mostrar: super::mensagens::ITENS_NA_TELA,
             foco_faixa: cx.focus_handle(),
@@ -484,6 +496,7 @@ impl Janela {
             presa_do_historico: Default::default(),
             topo_da_lista: Default::default(),
             presa: None,
+            presa_vista: false,
             empurrao_da_presa: px(0.),
             altura_da_presa: Default::default(),
             alturas: Default::default(),
@@ -491,6 +504,8 @@ impl Janela {
         if let Some(chat) = chat {
             self.preparar_composer(&mut painel, None, Some(chat), window, cx);
         }
+        // O painel que nasce aparece pronto (o aberto ao lado entra pelo fade do cartão).
+        painel.troca_vista = painel.troca;
         painel
     }
 
@@ -574,9 +589,11 @@ impl Janela {
         painel.rolagem.scroll_to_bottom();
         painel.base_animacao = tamanho;
         painel.vistos = tamanho;
-        painel.faixa_vista = false;
         painel.pilula_vista = false;
         painel.pilulas_vistas = false;
+        // A conversa nova entra com fade (uma vez), e o que a casca mostra dela entra junto.
+        painel.troca += 1;
+        painel.ja_vistos.borrow_mut().esquecer();
     }
 
     /// O fundo da caixa de cada painel: logo depois de um Esc, "O que fazer em vez disso? Enter

@@ -12,7 +12,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use super::{
-    Janela, QualFlutuante,
+    Janela, QualFlutuante, movimento,
     componentes::{Flutuante as _, TamanhoBotao, botao_fantasma, botao_icone, botao_primario, contagem},
     mensagens::{icone_de, trechos_perigosos},
 };
@@ -55,6 +55,8 @@ pub(super) fn entra_no_canto(p: &Pendencia, visiveis: &HashSet<String>, dispensa
 impl Janela {
     /// Os avisos do canto, por cima de tudo. `None` sem nada a avisar ou com a chave desligada.
     pub(super) fn avisos_no_canto(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // O cartão que aparece entra com fade e 8 px de baixo, uma vez (o que some, some seco).
+        self.vistos_no_canto.virar();
         let motor = self.motor.clone()?;
         let m = motor.read(cx);
         if !m.config.avisos_no_app {
@@ -75,11 +77,21 @@ impl Janela {
         if pendencias.is_empty() {
             return None;
         }
-        let cartoes: Vec<AnyElement> = if pendencias.len() >= RAJADA {
-            vec![self.aviso_da_rajada(pendencias.len(), window, cx)]
+        let cartoes: Vec<(String, AnyElement)> = if pendencias.len() >= RAJADA {
+            vec![("rajada".to_string(), self.aviso_da_rajada(pendencias.len(), window, cx))]
         } else {
-            pendencias.iter().filter_map(|p| self.aviso_de(p, window, cx)).collect()
+            pendencias
+                .iter()
+                .filter_map(|p| Some((format!("{}:{}", p.chat(), chave_do_aviso(p).unwrap_or_default()), self.aviso_de(p, window, cx)?)))
+                .collect()
         };
+        let cartoes: Vec<AnyElement> = cartoes
+            .into_iter()
+            .map(|(chave, cartao)| {
+                let nova = self.vistos_no_canto.novo(chave.clone());
+                movimento::entrada(SharedString::from(format!("canto-{chave}")), nova, movimento::De::Baixo, div().child(cartao)).into_any_element()
+            })
+            .collect();
         // Acima da caixa do último painel (o enviar fica livre) e longe dos anéis de uso, no alto.
         Some(
             div()

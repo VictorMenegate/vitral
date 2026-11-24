@@ -3,6 +3,15 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## Próxima
+
+- **Menos coisa aparecendo a seco.** Trocar de aba faz a conversa entrar com um fade curto. Os
+  pedidos de permissão, as perguntas e o plano, a fila, cada pílula nova, a faixa quando muda de
+  estado, a chamada que chega numa trilha, o que você abre na conversa (com o chevron girando), a
+  parte das Configurações, a troca Conversas/Arquivos, a direita do Ctrl+J, os avisos do canto e a
+  mensagem presa entram com fade e um deslize de poucos pixels. Tudo em 160 ms, só quando
+  acontece; sair e recolher continuam na hora, e com Animações desligadas tudo aparece pronto.
+
 ## 0.9.7
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,

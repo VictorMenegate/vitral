@@ -158,7 +158,7 @@ impl Janela {
                 ));
                 s.cursor_pointer()
                     .hover(|s| s.bg(Cores::hover()))
-                    .child(div().flex_none().text_color(Cores::apagado()).child(icone_de(if aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12.)))
+                    .child(div().flex_none().text_color(Cores::apagado()).child(chevron(&chave, aberto)))
                     .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                     .on_click(alternar(chave.clone(), cx))
             });
@@ -167,7 +167,7 @@ impl Janela {
             .child(linha)
             .when_some(relatorio.filter(|_| aberto), |s, relatorio| {
                 // O mesmo cartão claro do relatório no cartão do subagente.
-                s.child(
+                s.child(self.ao_abrir(&chave,
                     div().pl(RECUO_DO_LOG).py(esp::E4).child(
                         div()
                             .relative()
@@ -190,7 +190,7 @@ impl Janela {
                                     .child(BotaoCopiar::new(SharedString::from(format!("copiar-relatorio-do-fim-{chave}")), relatorio).dica("Copiar o relatório")),
                             ),
                     ),
-                )
+                ))
             })
             .into_any_element()
     }
