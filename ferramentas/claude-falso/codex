@@ -9,6 +9,31 @@ No pedido, `[ferramenta <Nome> <detalhe> | <segundos>]` encena um item: Bash vir
 Write uma mudança de arquivo, Pensa um raciocínio; no app-server, Ver é o `view_image` de um arquivo
 da pasta (o item `imageView`, só com o caminho) e Print, uma ferramenta MCP que devolve uma imagem
 em base64. `[falha]` termina o turno com erro.
+
+Aprovação no app-server, como no 0.169.0 (conferido em 24/11/2026): com a política `untrusted` (os
+modos Manual e Aceitar edições do Vitral), cada Bash, Edit e Write pede aprovação
+(`item/commandExecution/requestApproval` ou `item/fileChange/requestApproval`, com id numérico) e
+espera a resposta; com `on-request` (Planejar e Automático), só o comando com "curl" pede, com o
+motivo "precisa da rede". Depois da resposta vem o `serverRequest/resolved`; o `decline` deixa o
+item `declined` e o turno segue, e o `cancel` para o turno.
+
+Comandos de barra do app-server: `thread/compact/start` responde `{}` e abre um turno com o item
+`contextCompaction` (como o 0.169.0), `review/start` abre um turno com `enteredReviewMode` e
+`exitedReviewMode` (o texto da revisão), e `skills/list` oferece a skill falsa "revisar-pr"; a
+mensagem que chega com a entrada `skill` diz o nome dela na resposta.
+
+O uso vem como no 0.169.0: um `thread/tokenUsage/updated` depois de cada item e da resposta, com o
+`total` da conversa (que cresce de um turno para o outro), o `last` da chamada (12 mil tokens mais
+mil por chamada) e a janela de 258.400.
+
+`[passos A; B; C]` encena o plano (`turn/plan/updated`, a lista inteira a cada mudança): começa com
+o primeiro em andamento, avança um passo a cada ferramenta (ou a cada segundo, sem ferramenta) e
+termina com todos concluídos.
+
+As conversas ficam em $XDG_STATE_HOME/codex-falso-conversas.json (as mensagens de cada turno, por
+conversa), e a resposta diz de quais mensagens de antes ele "lembra": é assim que a bancada vê o
+corte do `thread/fork` (com `beforeTurnId`, a cópia fica só com os turnos de antes dele; um turno
+que não está na conversa dá `-32600 turn not found`, como no 0.169.0).
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -36,6 +61,7 @@ def png_de_mentira(largura=640, altura=400):
 
 
 FERRAMENTA = re.compile(r"\[ferramenta ([A-Za-z]+) ([^\]|]+?)(?:\s*\|\s*(\d+))?\]")
+PASSOS = re.compile(r"\[passos ([^\]]+)\]")
 SAIDA = threading.Lock()
 
 
@@ -64,6 +90,25 @@ def catalogo():
     ]}))
 
 
+def conversas_gravadas():
+    estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    caminho = os.path.join(estado, "codex-falso-conversas.json")
+    try:
+        with open(caminho, encoding="utf-8") as arq:
+            return caminho, json.load(arq)
+    except (OSError, ValueError):
+        return caminho, {}
+
+
+def gravar_conversas(caminho, conversas):
+    try:
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho, "w", encoding="utf-8") as arq:
+            json.dump(conversas, arq, ensure_ascii=False)
+    except OSError:
+        pass
+
+
 def valor_de(args, chave):
     return next((args[i + 1] for i, a in enumerate(args[:-1]) if a == chave), None)
 
@@ -76,6 +121,43 @@ def servidor():
     fim = threading.Event()
     mensagens = []
     trabalhador = None
+    politica = "never"
+    skill_pedida = None
+    lembradas = None
+    arquivo_das_conversas, conversas = conversas_gravadas()
+    total = {"inputTokens": 0, "cachedInputTokens": 0, "outputTokens": 0}
+    chamadas = [0]
+
+    def usar():
+        """Uma chamada ao modelo: o `last` dela e o `total` da conversa, como o app-server manda."""
+        chamadas[0] += 1
+        ultima = {"inputTokens": 12000 + 1000 * chamadas[0], "cachedInputTokens": 11000, "outputTokens": 40}
+        for chave, valor in ultima.items():
+            total[chave] += valor
+        parte = lambda u: dict(u, totalTokens=u["inputTokens"] + u["outputTokens"], cacheWriteInputTokens=0, reasoningOutputTokens=0)
+        evento("thread/tokenUsage/updated", {"threadId": thread, "turnId": turno, "tokenUsage": {
+            "total": parte(total), "last": parte(ultima), "modelContextWindow": 258400}})
+    respostas = {}
+    aguardando = threading.Condition()
+    proximo_pedido = [0]
+
+    def pedir(metodo, params):
+        """Um pedido do servidor ao Vitral; devolve a decisão (sem resposta, `cancel`)."""
+        with aguardando:
+            n = proximo_pedido[0]
+            proximo_pedido[0] += 1
+        emitir({"method": metodo, "id": n, "params": dict(params, threadId=thread, turnId=turno)})
+        with aguardando:
+            while n not in respostas and not fim.is_set():
+                aguardando.wait(0.2)
+            resposta = respostas.pop(n, None)
+        evento("serverRequest/resolved", {"threadId": thread, "requestId": n})
+        return ((resposta or {}).get("result") or {}).get("decision", "cancel")
+
+    def precisa_perguntar(nome, detalhe):
+        if politica == "untrusted":
+            return nome in ("Bash", "Edit", "Write")
+        return politica == "on-request" and nome == "Bash" and "curl" in detalhe
 
     def evento(method, params): emitir({"method": method, "params": params})
     def item(valor, terminado=False):
@@ -87,6 +169,19 @@ def servidor():
         # o outro fez não são dele: em vez delas, olha o diff da pasta, por 2 s.
         revisando = "responda só: Nada a acrescentar" in pedido
         ferramentas = [("Bash", "git diff --stat", "2")] if revisando else FERRAMENTA.findall(pedido)
+        achados = PASSOS.search(pedido)
+        passos = [p.strip() for p in achados.group(1).split(";") if p.strip()] if achados else []
+
+        def plano(feitos):
+            if not passos: return
+            evento("turn/plan/updated", {"threadId": thread, "turnId": turno, "explanation": None, "plan": [
+                {"step": p, "status": "completed" if i < feitos else "inProgress" if i == feitos else "pending"}
+                for i, p in enumerate(passos)]})
+        plano(0)
+        if passos and not ferramentas:
+            for feitos in range(1, len(passos)):
+                if fim.wait(1): break
+                plano(feitos)
         for n, (nome, detalhe, segundos) in enumerate(ferramentas):
             if fim.is_set(): break
             detalhe = detalhe.strip()
@@ -107,6 +202,21 @@ def servidor():
                 valor = {"id": f"item_{n}", "type": "commandExecution", "status": "inProgress", "command": detalhe,
                          "cwd": os.getcwd(), "commandActions": [], "aggregatedOutput": None, "exitCode": None}
             item(valor)
+            if precisa_perguntar(nome, detalhe):
+                if nome == "Bash":
+                    decisao = pedir("item/commandExecution/requestApproval", {"kind": "command", "itemId": valor["id"],
+                        "command": f"/bin/bash -lc '{detalhe}'", "cwd": os.getcwd(), "commandActions": [],
+                        "reason": "precisa da rede" if "curl" in detalhe else None,
+                        "availableDecisions": ["accept", "cancel"]})
+                else:
+                    decisao = pedir("item/fileChange/requestApproval", {"itemId": valor["id"], "reason": None, "grantRoot": None})
+                if decisao != "accept":
+                    valor["status"] = "declined"
+                    item(valor, True)
+                    if decisao == "cancel":
+                        fim.set()
+                        break
+                    continue
             if fim.wait(int(segundos) if segundos else 3): break
             if nome == "Pensa": valor["summary"] = [detalhe]
             elif nome == "Ver": pass
@@ -124,8 +234,17 @@ def servidor():
                 except OSError: pass
             else: valor.update(status="completed", aggregatedOutput=f"(codex falso) saída de: {detalhe}\n", exitCode=0)
             item(valor, True)
+            usar()
+            plano(min(n + 1, len(passos) - 1))
         interrompido = fim.is_set()
+        if not interrompido: plano(len(passos))
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
+        if skill_pedida:
+            texto += f" (skill {skill_pedida})"
+        if lembradas:
+            texto += " Lembro de: " + " | ".join(lembradas) + "."
+        elif lembradas is not None:
+            texto += " Não lembro de nada antes."
         # Na dupla do Vitral, a vez de revisar o outro agente: revisa e não acrescenta nada (a rodada para).
         # Com `[revisor-acha]` no que o usuário pediu, a revisão tem achado.
         if revisando and "[revisor-acha]" in pedido:
@@ -134,7 +253,9 @@ def servidor():
                      "2. **Faltou teste** para o cupom vencido.")
         elif revisando:
             texto = "Nada a acrescentar."
-        if not interrompido: item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
+        if not interrompido:
+            item({"id": "resposta", "type": "agentMessage", "text": texto}, True)
+            usar()
         falhou = "[falha]" in pedido
         evento("turn/completed", {"threadId": thread, "turn": {"id": turno,
                "status": "interrupted" if interrompido else "failed" if falhou else "completed", "items": [],
@@ -145,15 +266,64 @@ def servidor():
         try: v = json.loads(linha)
         except ValueError: continue
         metodo, params, id_ = v.get("method"), v.get("params", {}), v.get("id")
-        anotar(["rpc", metodo, params.get("input", [])])
+        if metodo is None and id_ is not None:
+            # A resposta do Vitral a um pedido de aprovação.
+            anotar(["resposta", id_, v.get("result")])
+            with aguardando:
+                respostas[id_] = v
+                aguardando.notify_all()
+            continue
+        anotar(["rpc", metodo, params.get("input", []), params.get("approvalPolicy"), params.get("sandbox")])
+        politica = params.get("approvalPolicy") or politica
         if metodo == "initialize": emitir({"id": id_, "result": {"userAgent": "codex-falso"}})
         elif metodo in ("thread/start", "thread/resume"):
             thread = params.get("threadId") or thread
             modelo = params.get("model") or modelo
+            conversas.setdefault(thread, [])
             emitir({"id": id_, "result": {"thread": {"id": thread, "turns": []}, "model": modelo}})
+        elif metodo == "thread/fork":
+            origem, antes = params.get("threadId"), params.get("beforeTurnId")
+            turnos = conversas.get(origem)
+            corte = next((i for i, t in enumerate(turnos or []) if t["turno"] == antes), None) if antes else len(turnos or [])
+            if turnos is None:
+                emitir({"id": id_, "error": {"code": -32600, "message": f"thread not found: {origem}"}})
+            elif corte is None:
+                emitir({"id": id_, "error": {"code": -32600, "message": f"turn not found: {antes}"}})
+            else:
+                thread = str(uuid.uuid4())
+                modelo = params.get("model") or modelo
+                conversas[thread] = turnos[:corte]
+                gravar_conversas(arquivo_das_conversas, conversas)
+                emitir({"id": id_, "result": {"thread": {"id": thread, "forkedFromId": origem, "turns": []}, "model": modelo}})
+        elif metodo == "skills/list":
+            pasta = (params.get("cwds") or [os.getcwd()])[0]
+            emitir({"id": id_, "result": {"data": [{"cwd": pasta, "errors": [], "skills": [
+                {"name": "revisar-pr", "description": "(skill falsa) Revisa o PR", "path": "/tmp/codex-falso/revisar-pr/SKILL.md",
+                 "scope": "user", "enabled": True}]}]}})
+        elif metodo in ("thread/compact/start", "review/start"):
+            turno = str(uuid.uuid4())
+            compactar = metodo == "thread/compact/start"
+            emitir({"id": id_, "result": {} if compactar else {"turn": {"id": turno, "status": "inProgress", "items": []}, "reviewThreadId": thread}})
+            evento("turn/started", {"threadId": thread, "turn": {"id": turno, "status": "inProgress", "items": []}})
+            if compactar:
+                item({"id": "compactar", "type": "contextCompaction"})
+                time.sleep(2)
+                item({"id": "compactar", "type": "contextCompaction"}, True)
+            else:
+                alvo = params.get("target", {})
+                item({"id": "revisao", "type": "enteredReviewMode", "review": alvo.get("instructions") or "mudanças sem commit"})
+                time.sleep(2)
+                item({"id": "revisao", "type": "exitedReviewMode", "review":
+                      "(codex falso) Revisei " + (alvo.get("instructions") or "as mudanças sem commit") + ": nada grave."}, True)
+            evento("turn/completed", {"threadId": thread, "turn": {"id": turno, "status": "completed", "items": [], "error": None}})
+            turno = None
         elif metodo == "turn/start":
             turno = str(uuid.uuid4())
             mensagens = [p["text"] for p in params.get("input", []) if p.get("type") == "text"]
+            skill_pedida = next((p.get("name") for p in params.get("input", []) if p.get("type") == "skill"), None)
+            lembradas = [t["texto"] for t in conversas.get(thread, [])]
+            conversas.setdefault(thread, []).append({"turno": turno, "texto": " ".join(mensagens)[:80]})
+            gravar_conversas(arquivo_das_conversas, conversas)
             fim.clear()
             emitir({"id": id_, "result": {"turn": {"id": turno, "status": "inProgress", "items": []}}})
             evento("turn/started", {"threadId": thread, "turn": {"id": turno, "status": "inProgress", "items": []}})

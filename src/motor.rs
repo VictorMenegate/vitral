@@ -454,6 +454,9 @@ pub struct Motor {
     /// Os chats cujo turno de agora é a revisão pelo outro agente (`motor/revisao_do_par.rs`): por
     /// fora contam como parados, como na revisão da memória, e a sua mensagem tem a vez.
     revisoes_do_par: HashMap<String, revisao_do_par::EmCurso>,
+    /// A marca provisória da mensagem que abriu o turno do Codex de cada chat, até ele dizer o id
+    /// do turno (`Evento::TurnoDoAgente`): aí ela vira `modelo::marca_do_codex`.
+    marcas_do_codex: HashMap<String, String>,
     pub janela_ativa: bool,
     /// A conversa que o clique numa notificação pediu para abrir; a Janela consome.
     pub pedido_de_abrir: Option<String>,
@@ -507,6 +510,15 @@ impl Motor {
             // `.anterior`) fica com as imagens.
             let vivos = chats.iter().map(|c| c.id.clone()).chain(dados.chats_gravados()).collect();
             crate::imagens_recebidas::varrer(&dados.pasta_imagens(""), &vivos, crate::imagens_recebidas::TETO_TOTAL);
+            // As imagens coladas na caixa que nenhuma conversa, fila ou rascunho cita (nem as
+            // arquivadas) saem de `anexos/`, em segundo plano e sem pressa (`limpeza_anexos`).
+            let dados_da_limpeza = dados.clone();
+            let _ = std::thread::Builder::new().name("limpeza-anexos".into()).spawn(move || {
+                let apagados = crate::limpeza_anexos::limpar(&dados_da_limpeza, &Default::default());
+                if apagados > 0 {
+                    eprintln!("vitral: {apagados} imagem(ns) colada(s) sem conversa apagada(s) de anexos/");
+                }
+            });
             // A pasta de um chat sem pasta (apagada à mão) volta vazia.
             let avulsos = dados.pasta_avulso("");
             for c in chats.iter().filter(|c| c.cwd.starts_with(&avulsos)) {
@@ -748,6 +760,7 @@ impl Motor {
             parados_por_voce: HashMap::new(),
             revisando: HashMap::new(),
             revisoes_do_par: HashMap::new(),
+            marcas_do_codex: HashMap::new(),
             janela_ativa: true,
             pedido_de_abrir: None,
             chats_trazidos: Vec::new(),
@@ -1032,6 +1045,7 @@ impl Motor {
             self.dirigidos.remove(id);
             self.revisando.remove(id);
             self.revisoes_do_par.remove(id);
+            self.marcas_do_codex.remove(id);
             self.parados_por_voce.remove(id);
             self.visiveis.remove(id);
         }
@@ -2468,6 +2482,8 @@ impl Motor {
         // O uuid com que a mensagem vai ao Claude Code, novo a cada processo (a repetição de um turno
         // com o mesmo uuid poderia ser tomada por repetida); o item novo da conversa o guarda.
         let marca = uuid::Uuid::new_v4().to_string();
+        // No Codex a marca é provisória: o id do turno chega quando ele começa.
+        let codex = chat.agente == Agente::Codex;
         let texto = [passagem, resumo_da_dupla]
             .into_iter()
             .flatten()
@@ -2481,7 +2497,7 @@ impl Motor {
         {
             let repeticao = mensagens.iter().all(|e| e.registrada);
             let c = self.chat_mut(chat_id).unwrap();
-            c.itens.extend(itens_das_entradas(mensagens, claude.then_some(marca.as_str())));
+            c.itens.extend(itens_das_entradas(mensagens, (claude || codex).then_some(marca.as_str())));
             // A marca de quem trabalha, na dupla; a repetição do mesmo turno não marca de novo.
             let ultima_vez = c.itens.iter().rev().find_map(|i| match i {
                 Item::Vez { agente, .. } => Some(*agente),
@@ -2556,6 +2572,16 @@ impl Motor {
                 self.geracao_atual.insert(chat_id.to_string(), geracao);
                 self.motivos_de_hook.esquecer(chat_id);
                 self.gastos.abrir(chat_id);
+                // A mensagem nova do Codex espera o id do turno (a repetição já tem o dela).
+                let com_marca = codex
+                    && self.chat_gravado(chat_id).is_some_and(|c| {
+                        c.itens.iter().any(|i| matches!(i, Item::Usuario { marca: Some(m), .. } if *m == marca))
+                    });
+                if com_marca {
+                    self.marcas_do_codex.insert(chat_id.to_string(), marca.clone());
+                } else {
+                    self.marcas_do_codex.remove(chat_id);
+                }
                 self.liberadas.retain(|(chat, _), _| chat != chat_id);
                 self.ultimo_sinal.insert(chat_id.to_string(), std::time::Instant::now());
                 // Um turno começou (mandado por você ou pela retomada): a volta agendada cai.
@@ -2648,6 +2674,7 @@ impl Motor {
             gravou.then_some(arquivo)
         });
         let claude = chat.agente == Agente::Claude;
+        let copia = matches!(chat.agente, Agente::Claude | Agente::Codex);
         let versao = self.versao_do_claude();
         Opcoes {
             agente: chat.agente,
@@ -2656,10 +2683,11 @@ impl Motor {
             retomar: chat.sessao_criada,
             // A conversa importada é do Claude Code: no Codex ela entra pelo bloco de passagem.
             // O chat bifurcado de outro também começa numa cópia: a da sessão do chat de origem.
+            // No Codex, a cópia é o `thread/fork` da conversa de origem, até antes do turno do corte.
             bifurcar: crate::importar::bifurcar_de(chat.importada.as_ref(), chat.sessao_criada)
-                .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada).map(|b| b.sessao.clone()))
-                .filter(|_| claude),
-            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && claude).and_then(|b| b.ate.clone()),
+                .filter(|_| claude)
+                .or_else(|| chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && copia).map(|b| b.sessao.clone())),
+            cortar_em: chat.bifurcado_de.as_ref().filter(|_| !chat.sessao_criada && copia).and_then(|b| b.ate.clone()),
             // A família vai como a versão mais nova que o Claude Code instalado oferece (ver
             // `claude::modelo_para_o_turno`); num Claude Code sem as versões exatas, como está.
             modelo: self.modelo_do_turno(chat),
@@ -2769,9 +2797,12 @@ impl Motor {
             (c.agente, c.modelo, c.modelo_atual) = (agente, modelo, None);
             (c.sessao, c.sessao_criada) = (uuid::Uuid::new_v4().to_string(), false);
             (c.contexto, c.janela, c.custo_da_sessao) = (None, None, None);
-            // Os comandos de barra e as skills são do Claude Code.
+            // Os comandos de barra e as skills são do Claude Code: a lista da sessão de antes não
+            // vale para a nova, e o catálogo da pasta é perguntado de novo (ao voltar para o Claude
+            // ele traz o que mudou no disco enquanto o outro agente trabalhava).
+            c.comandos.clear();
+            crate::claude::esquecer_comandos_da_pasta(&c.cwd);
             if agente != Agente::Claude {
-                c.comandos.clear();
                 c.esforco = c.esforco.take().filter(|e| e != "ultracode");
             }
         }
@@ -3702,6 +3733,17 @@ impl Motor {
                     c.contexto = Some(tokens);
                 }
             }
+            // A mensagem que abriu o turno do Codex guarda o id dele: é o ponto exato para
+            // corrigi-la ou continuar dali em outro chat (`bifurcar::ponto_no_codex`).
+            Evento::TurnoDoAgente(turno) => {
+                if let Some(provisoria) = self.marcas_do_codex.remove(chat_id)
+                    && let Some(c) = self.chat_mut(chat_id)
+                    && bifurcar::anotar_turno_do_codex(&mut c.itens, &provisoria, &turno)
+                {
+                    self.chats_sujos.insert(chat_id.to_string());
+                }
+                return;
+            }
             Evento::Fundo(n) => {
                 self.fundo.insert(chat_id.to_string(), n);
                 // O último agente do fundo terminou com o turno já adiado: a entrada, que ficou
@@ -4037,10 +4079,20 @@ impl Motor {
                     }
                 }
             }
-            // O pedido de permissão do Gemini: o mesmo cartão dos do Claude Code, e o "Permitir
-            // sempre" da conversa vale para ele também.
-            Evento::Permissao { ferramenta, entrada, resposta } => {
-                if self.chat(chat_id).is_some_and(|c| c.permite(&ferramenta, &entrada)) {
+            // O pedido de permissão do Codex e do Gemini: o mesmo cartão dos do Claude Code, e o
+            // "Permitir sempre" da conversa vale para eles também. O modo de agora também responde
+            // (Aceitar edições, Sem perguntar: `modo_permite`), e a revisão pelo outro agente, que
+            // só lê, tem tudo negado sem perguntar, como no Claude Code.
+            Evento::Permissao { ferramenta, entrada, resposta, chamada } => {
+                if self.revisoes_do_par.contains_key(chat_id) {
+                    let negado = json!({"behavior": "deny", "message": "Esta é uma revisão só de leitura."});
+                    let _ = resposta.try_send(Resposta::ok(negado.to_string()));
+                    return;
+                }
+                let responde_sozinho = self.chat(chat_id).is_some_and(|c| {
+                    c.permite(&ferramenta, &entrada) || crate::modelo::modo_permite(&self.permissao_de(c), &ferramenta, &entrada, &c.cwd)
+                });
+                if responde_sozinho {
                     let permitido = json!({"behavior": "allow", "updatedInput": entrada});
                     let _ = resposta.try_send(Resposta::ok(permitido.to_string()));
                     return;
@@ -4053,7 +4105,7 @@ impl Motor {
                     entrada,
                     resposta,
                     motivo_do_hook: None,
-                    chamada: None,
+                    chamada,
                 });
                 self.execucao.insert(chat_id.to_string(), Execucao::EsperandoVoce);
                 self.registrar("permissao", chat_id, chat_id, &pedido);
@@ -4063,6 +4115,13 @@ impl Motor {
                     self.notificar(chat, &pedido, true);
                 }
                 cx.notify();
+            }
+            // O Codex fechou o pedido sem esperar (o turno parou, ou foi respondido por outro
+            // caminho): o cartão sai, e sem outro esperando o turno volta a rodar.
+            Evento::PermissaoRetirada => {
+                if tirar_pedidos_fechados(&mut self.permissoes, chat_id) {
+                    self.pedido_respondido(chat_id, cx);
+                }
             }
             Evento::Fim {
                 erro,
@@ -4627,6 +4686,23 @@ impl Motor {
     pub fn marcar_lido(&mut self, chat: &str) {
         let mudou = self.chat_mut(chat).is_some_and(|c| ler_ate_agora(c, agora()));
         self.estado_sujo |= mudou;
+    }
+
+    /// "Marcar como não lido" no menu do chat: o ponto azul volta e fica até a próxima visita.
+    pub fn marcar_nao_lido(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let mudou = self.chat_mut(chat).is_some_and(marcar_como_nao_lido);
+        if mudou {
+            self.estado_sujo = true;
+            cx.notify();
+        }
+    }
+
+    /// O usuário abriu o chat (pela lista, por uma aba) ou ativou o painel dele: solta a marca de
+    /// "não lido". Quem lê é o fim à vista (`marcar_lido`), como sempre.
+    pub fn visitar(&mut self, chat: &str) {
+        if let Some(c) = self.chat_mut(chat) {
+            visitar_chat(c);
+        }
     }
 
     /// Antes de a janela fechar pelo × ou pelo Alt+F4 (o `on_app_quit` da Janela não roda no
@@ -5865,6 +5941,14 @@ pub fn recusa_explicada(ferramenta: &str, texto: &str) -> String {
 
 /// O que o modelo lê na chamada negada sem explicação: o Negar do cartão e o "Não responder" da
 /// pergunta com opções.
+/// Tira os pedidos do chat que o agente já fechou (o canal de resposta fechado do outro lado).
+/// Diz se tirou algum.
+fn tirar_pedidos_fechados(permissoes: &mut Vec<PedidoPermissao>, chat: &str) -> bool {
+    let antes = permissoes.len();
+    permissoes.retain(|p| p.chat != chat || !p.resposta.is_closed());
+    permissoes.len() != antes
+}
+
 fn recusa_sem_texto(ferramenta: &str) -> &'static str {
     if ferramenta == "AskUserQuestion" { "O usuário não quis responder à pergunta." } else { "O usuário negou esta ação." }
 }
@@ -6179,11 +6263,32 @@ fn texto_do_pedido(ferramenta: &str, entrada: &Value) -> String {
 /// Marca o chat como lido em `agora`, se havia algo não lido; devolve se mudou (aí o estado vai
 /// para o disco na próxima passada da gravação).
 fn ler_ate_agora(c: &mut Chat, agora: u64) -> bool {
-    let mudou = c.lido_em < c.atualizado_em;
+    // Marcado como não lido: só a visita de verdade (`visitar_chat`) solta o ponto azul.
+    let mudou = c.lido_em < c.atualizado_em && !c.retido_nao_lido;
     if mudou {
         c.lido_em = agora.max(c.atualizado_em);
     }
     mudou
+}
+
+/// "Marcar como não lido": devolve o ponto azul (o `lido_em` fica um segundo antes da última
+/// novidade) e segura a marca contra o "lido" de cada quadro. Nada a marcar numa conversa vazia
+/// ou que já está não lida; devolve se mudou.
+fn marcar_como_nao_lido(c: &mut Chat) -> bool {
+    if c.atualizado_em == 0 || c.lido_em < c.atualizado_em {
+        return false;
+    }
+    c.lido_em = c.atualizado_em - 1;
+    c.retido_nao_lido = true;
+    true
+}
+
+/// A visita de verdade ao chat (o usuário o abriu ou ativou o painel dele): solta a marca de
+/// "não lido". Não lê por conta própria (abrir não marca como lido, só chegar ao fim): a leitura
+/// segue o caminho de sempre, o `ler_ate_agora` de quem está com o fim à vista. Devolve se havia
+/// marca.
+fn visitar_chat(c: &mut Chat) -> bool {
+    std::mem::take(&mut c.retido_nao_lido)
 }
 
 /// "Parou com erro: <primeira linha>" da notificação de um turno que falhou.
@@ -6307,6 +6412,35 @@ mod testes {
         assert_eq!(titulo_de("   "), "Conversa");
     }
     use crate::modelo::Chat;
+
+    /// O pedido que o agente fechou sem esperar (o canal do cartão fechado) sai da lista; o do
+    /// outro chat e o que ainda espera ficam.
+    #[test]
+    fn o_pedido_fechado_pelo_agente_sai_da_lista() {
+        let pedido = |chat: &str| {
+            let (envia, recebe) = smol::channel::bounded::<Resposta>(1);
+            let p = PedidoPermissao {
+                id: novo_id(),
+                chat: chat.into(),
+                ferramenta: "Bash".into(),
+                entrada: json!({"command": "ls"}),
+                motivo_do_hook: None,
+                chamada: None,
+                resposta: envia,
+            };
+            (p, recebe)
+        };
+        let (fechado, recebe_fechado) = pedido("c1");
+        let (vivo, _recebe_vivo) = pedido("c1");
+        let (do_outro, recebe_do_outro) = pedido("c2");
+        recebe_fechado.close();
+        recebe_do_outro.close();
+        let vivo_id = vivo.id.clone();
+        let mut lista = vec![fechado, vivo, do_outro];
+        assert!(tirar_pedidos_fechados(&mut lista, "c1"));
+        assert_eq!(lista.iter().map(|p| (p.chat.as_str(), p.id == vivo_id)).collect::<Vec<_>>(), [("c1", true), ("c2", false)]);
+        assert!(!tirar_pedidos_fechados(&mut lista, "c1"), "nada mais a tirar");
+    }
 
     fn chat(id: &str) -> Chat {
         let mut c = Chat::novo(id.into(), id, PathBuf::from("/tmp"));
@@ -6472,6 +6606,36 @@ mod testes {
         // Já lido: nada muda, e a gravação não é pedida a cada quadro.
         assert!(!ler_ate_agora(&mut c, 300));
         assert_eq!(c.lido_em, 250);
+    }
+
+    #[test]
+    fn marcar_como_nao_lido_devolve_o_ponto_e_so_a_visita_de_verdade_o_tira() {
+        let mut c = chat("c1");
+        (c.atualizado_em, c.lido_em) = (200, 250);
+        assert!(marcar_como_nao_lido(&mut c));
+        assert!(c.lido_em < c.atualizado_em, "o ponto azul voltou");
+        // O `ler_ate_agora` roda a cada quadro com o fim à vista: não pode apagar a marca.
+        assert!(!ler_ate_agora(&mut c, 300));
+        assert!(c.lido_em < c.atualizado_em);
+        // A visita de verdade só solta a marca: quem lê é o fim à vista, no quadro seguinte.
+        assert!(visitar_chat(&mut c));
+        assert!(!c.retido_nao_lido);
+        assert!(c.lido_em < c.atualizado_em);
+        assert!(ler_ate_agora(&mut c, 400));
+        assert_eq!(c.lido_em, 400);
+        // Sem a marca, a visita não muda nada.
+        assert!(!visitar_chat(&mut c));
+    }
+
+    #[test]
+    fn marcar_como_nao_lido_nao_faz_nada_numa_conversa_sem_nada_para_ler() {
+        let mut c = chat("c1");
+        (c.atualizado_em, c.lido_em) = (0, 0);
+        assert!(!marcar_como_nao_lido(&mut c));
+        assert!(!c.retido_nao_lido);
+        // Já não lida: a marca não muda o que já está.
+        (c.atualizado_em, c.lido_em) = (200, 100);
+        assert!(!marcar_como_nao_lido(&mut c));
     }
 
     #[test]

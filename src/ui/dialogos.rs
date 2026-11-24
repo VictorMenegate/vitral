@@ -822,4 +822,36 @@ impl Janela {
         }
         super::lateral::avisar_arquivadas(motor, vec![chat], "Conversa arquivada".into(), window, cx);
     }
+
+    /// Ctrl+Alt+A: arquiva o chat do painel ativo, como o "Arquivar" do menu do chat (com o aviso e
+    /// o Desfazer; o chat vazio sai em vez de arquivar). A conversa de um subagente é só para ler.
+    pub(super) fn arquivar_chat_ativo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(chat) = self.paineis.get(self.ativo).and_then(|p| p.chat.clone()) else {
+            return;
+        };
+        if crate::motor::subconversa::partes_do_id(&chat).is_some() {
+            return;
+        }
+        self.arquivar_do_menu(chat, window, cx);
+    }
+
+    /// Ctrl+Z fora de campo de texto: devolve o que o aviso de "arquivada" ainda guarda. Sem aviso
+    /// na tela, não faz nada (dentro da caixa de mensagem o Ctrl+Z é do texto).
+    pub(super) fn desfazer_arquivar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(motor) = self.motor.clone() else {
+            return;
+        };
+        let pendentes = cx.default_global::<super::lateral::ArquivadasPendentes>().tomar(|_| true);
+        let voltar: Vec<String> =
+            pendentes.into_iter().filter(|id| motor.read(cx).chat(id).is_some_and(|c| c.arquivado)).collect();
+        if voltar.is_empty() {
+            return;
+        }
+        window.remove_notification::<super::lateral::AvisoDeArquivada>(cx);
+        motor.update(cx, |m, cx| {
+            for id in &voltar {
+                m.alternar_arquivado(id, cx);
+            }
+        });
+    }
 }

@@ -46,10 +46,30 @@ pub fn argumentos_servidor(opcoes: &Opcoes) -> Vec<String> {
 pub fn parametros_servidor(opcoes: &Opcoes) -> Value {
     let mut parametros = json!({
         "cwd":opcoes.cwd, "model":opcoes.modelo, "sandbox":sandbox_de(&opcoes.permissao),
-        "approvalPolicy":"never", "developerInstructions":opcoes.prompt_sistema,
+        "approvalPolicy":aprovacao_de(&opcoes.permissao), "developerInstructions":opcoes.prompt_sistema,
     });
     if opcoes.retomar { parametros["threadId"] = json!(opcoes.sessao); }
     parametros
+}
+
+/// Como o turno abre a conversa no app-server, e com quê: `thread/start` (nova), `thread/resume`
+/// (a do chat) ou `thread/fork` (uma cópia de outra, até antes de um turno).
+pub fn abertura(opcoes: &Opcoes) -> (&'static str, Value) {
+    let mut parametros = parametros_servidor(opcoes);
+    match &opcoes.bifurcar {
+        Some(origem) if !opcoes.retomar => {
+            parametros["threadId"] = json!(origem);
+            if let Some(turno) = &opcoes.cortar_em {
+                parametros["beforeTurnId"] = json!(turno);
+            }
+            // A resposta não precisa trazer o histórico inteiro (o Codex avisa que encher a
+            // resposta com ele ficou para trás).
+            parametros["excludeTurns"] = json!(true);
+            ("thread/fork", parametros)
+        }
+        _ if parametros.get("threadId").is_some() => ("thread/resume", parametros),
+        _ => ("thread/start", parametros),
+    }
 }
 
 /// O nome com que se chama o Codex quando ele não foi achado (o PATH resolve).
@@ -102,12 +122,28 @@ pub fn sandbox_de(permissao: &str) -> &'static str {
     }
 }
 
+/// Quando o Codex pergunta, em cada modo de permissão do Vitral (o `approvalPolicy` do
+/// app-server). Manual e Aceitar edições: `untrusted`, que pergunta antes de toda edição e de todo
+/// comando que não seja só de leitura (no Aceitar edições, o Vitral responde sozinho às edições
+/// dentro da pasta: `modelo::modo_permite`). Planejar e Automático: `on-request`, em que o
+/// Codex trabalha dentro do sandbox sem perguntar e pede quando precisa sair dele (escrever no
+/// Planejar, a rede ou fora da pasta no Automático). Sem perguntar: `never`.
+pub fn aprovacao_de(permissao: &str) -> &'static str {
+    match permissao {
+        "bypassPermissions" => "never",
+        "plan" | "auto" => "on-request",
+        _ => "untrusted",
+    }
+}
+
 /// O que cada modo de permissão quer dizer num chat do Codex (para a dica do seletor).
 pub fn dica_da_permissao(permissao: &str) -> &'static str {
-    match sandbox_de(permissao) {
-        "read-only" => "O Codex só lê: não muda arquivo nem roda comando que escreve.",
-        "danger-full-access" => "O Codex roda sem sandbox, com acesso ao computador todo e à rede.",
-        _ => "O Codex escreve só na pasta do chat e roda sem rede. Ele não pede permissão no meio do turno.",
+    match permissao {
+        "plan" => "O Codex só lê, e pede permissão quando precisa escrever ou usar a rede.",
+        "bypassPermissions" => "O Codex roda sem sandbox, com acesso ao computador todo e à rede.",
+        "auto" => "O Codex trabalha na pasta do chat, sem rede, e só pede permissão para sair dela.",
+        "acceptEdits" => "O Codex edita a pasta do chat sem perguntar e pede permissão antes de cada comando que não só lê.",
+        _ => "O Codex pede permissão antes de cada edição e de cada comando que não só lê.",
     }
 }
 
@@ -507,6 +543,53 @@ mod testes {
         // Esforço que o Codex não conhece pelo nome fica de fora (vale o padrão do modelo).
         o.esforco = Some("ultracode".into());
         assert!(!argumentos(&o, &[]).iter().any(|a| a.contains("reasoning_effort")));
+    }
+
+    /// Cada modo do Vitral é um par sandbox + política de aprovação do Codex. Os que pedem
+    /// permissão (Manual, Aceitar edições, Planejar e Automático) deixam o Codex perguntar no meio
+    /// do turno; o "Sem perguntar" não deixa.
+    #[test]
+    fn cada_modo_vira_um_sandbox_e_uma_politica_de_aprovacao() {
+        for (modo, sandbox, politica) in [
+            ("manual", "workspace-write", "untrusted"),
+            ("acceptEdits", "workspace-write", "untrusted"),
+            ("plan", "read-only", "on-request"),
+            ("auto", "workspace-write", "on-request"),
+            ("bypassPermissions", "danger-full-access", "never"),
+        ] {
+            let parametros = parametros_servidor(&opcoes(false, modo));
+            assert_eq!((parametros["sandbox"].as_str(), parametros["approvalPolicy"].as_str()), (Some(sandbox), Some(politica)), "{modo}");
+        }
+    }
+
+    /// A cópia da conversa (corrigir uma mensagem, continuar daqui em outro chat) abre com o
+    /// `thread/fork` da conversa de origem, cortada antes do turno da mensagem (`beforeTurnId`,
+    /// conferido no 0.169.0 com a API experimental). O fork não herda a configuração: a pasta, o
+    /// modelo, as instruções, o sandbox e a política vão de novo.
+    #[test]
+    fn a_copia_da_conversa_abre_com_o_fork_e_a_configuracao_do_chat() {
+        let mut o = opcoes(false, "manual");
+        (o.bifurcar, o.cortar_em) = (Some("origem".into()), Some("turno-3".into()));
+        o.modelo = Some("gpt-6.2-sol".into());
+        o.prompt_sistema = "Responda em português.".into();
+        let (metodo, p) = abertura(&o);
+        assert_eq!(metodo, "thread/fork");
+        assert_eq!((p["threadId"].as_str(), p["beforeTurnId"].as_str()), (Some("origem"), Some("turno-3")));
+        assert_eq!((p["cwd"].as_str(), p["model"].as_str()), (Some("/casa/loja"), Some("gpt-6.2-sol")));
+        assert_eq!(p["developerInstructions"], "Responda em português.");
+        assert_eq!((p["sandbox"].as_str(), p["approvalPolicy"].as_str()), (Some("workspace-write"), Some("untrusted")));
+        assert_eq!(p["excludeTurns"], true, "sem o histórico inteiro na resposta");
+        // Sem corte: a conversa inteira.
+        o.cortar_em = None;
+        let (metodo, p) = abertura(&o);
+        assert_eq!((metodo, p.get("beforeTurnId")), ("thread/fork", None));
+        // Já com a conversa própria, retoma ela.
+        o.retomar = true;
+        let (metodo, p) = abertura(&o);
+        assert_eq!((metodo, p["threadId"].as_str()), ("thread/resume", Some("01a1d5d6")));
+        o.bifurcar = None;
+        o.retomar = false;
+        assert_eq!(abertura(&o).0, "thread/start");
     }
 
     #[test]

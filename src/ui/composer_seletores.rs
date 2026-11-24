@@ -1059,12 +1059,24 @@ impl Janela {
             Some(p) => Simbolo::Dupla(marca_de(chat.agente), marca_de(p.agente)),
             None => Simbolo::Marca(marca_de(chat.agente)),
         };
-        let mut chip = Chip::new(b.id("chip-modelo"), if b.larga() { nome.clone() } else { curto })
+        // Na caixa estreita (3 painéis a 150%) o modo e o esforço viram só o ícone, e o modelo
+        // guarda o nome da família ("Opus", "Fable"): é o que diz com quem se fala. Só quando a
+        // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`); na
+        // dupla são as duas marcas, sem nome.
+        let familia_na_estreita = b.estreita() && chat.parceiro.is_none() && self.paineis[ix].modelo_so_icone.is_none();
+        let rotulo_do_chip = if b.larga() {
+            nome.clone()
+        } else if familia_na_estreita {
+            super::nome_da_familia(&curto).to_string()
+        } else {
+            curto
+        };
+        let mut chip = Chip::new(b.id("chip-modelo"), rotulo_do_chip)
             .simbolo(simbolo)
             .tamanho(b.tamanho())
             .mudado(chat.modelo.is_some() || chat.agente != motor.config.agente_padrao)
             .seta(b.larga())
-            .so_icone(b.estreita())
+            .so_icone(b.estreita() && !familia_na_estreita)
             .aberto(aberto);
         if !aberto {
             chip = chip.dica_acao(format!("Modelo: {nome}\n{detalhe}"), Box::new(AbrirModelo), Some("Vitral"));
@@ -1328,8 +1340,8 @@ impl Janela {
             // pela fila de qualquer jeito não precisa da opção.
             fila_a_parte: composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila,
             outro_instalado: outro.instalado(),
-            // O `/compact` é do Claude Code, e precisa de uma conversa para resumir.
-            compactar: chat.agente == Agente::Claude && chat.sessao_criada,
+            // O `/compact` é do Claude Code e do Codex, e precisa de uma conversa para resumir.
+            compactar: chat.agente != Agente::Gemini && chat.sessao_criada,
             tem_agentes: crate::ui::mapa_agentes::tem_agentes(chat),
             rodando: b.rodando,
         };

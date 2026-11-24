@@ -17,6 +17,9 @@ use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
     ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
+/// Vitral: o HTML que o navegador ou o documento copia junto com o texto. Não é oferecido a
+/// outros programas; na leitura, vai no `metadata` do item (`ClipboardItem::metadata`).
+pub(crate) const HTML_MIME_TYPE: &str = "text/html";
 
 /// Text mime types that we'll accept from other programs.
 pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
@@ -114,7 +117,18 @@ impl<T: ReceiveData> DataOffer<T> {
         // copying from eg: firefox inserts a lot of blank
         // lines, and that is super annoying.
         let result = text_content.replace("\r\n", "\n");
-        Some(ClipboardItem::new_string(result))
+        // Vitral: com `text/html` na oferta, o HTML segue no `metadata` (o Vitral o converte em
+        // Markdown ao colar na caixa). Falha ao ler o HTML não perde o texto.
+        let html = self
+            .has_mime_type(HTML_MIME_TYPE)
+            .then(|| self.read_bytes(connection, HTML_MIME_TYPE))
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .filter(|html| !html.trim().is_empty());
+        Some(match html {
+            Some(html) => ClipboardItem::new_string_with_metadata(result, html),
+            None => ClipboardItem::new_string(result),
+        })
     }
 
     fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {

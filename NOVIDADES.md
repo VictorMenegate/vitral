@@ -3,6 +3,54 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.10.2
+
+O Codex ficou quase tão completo quanto o Claude no Vitral: pede permissão no meio do turno pelo
+mesmo cartão, tem o `/compact`, o `/review` e as skills no menu "/", mostra o contexto, os tokens
+e os passos, e corrige uma mensagem ou continua daqui em outro chat sem resumo. O diff ganhou
+comentário por linha, o menu "/" mostra tudo, e há atalhos novos para andar entre as mensagens,
+maximizar o painel, mover abas e arquivar.
+
+- **Atalhos para andar e organizar.** Alt+↑ e Alt+↓ pulam para a sua mensagem anterior e a seguinte;
+  PgUp e PgDn rolam a conversa (na caixa com texto continuam sendo do texto). Ctrl+Shift+Enter
+  maximiza o painel e volta (o Esc também volta), Alt+PgUp e Alt+PgDn levam a aba ao painel vizinho,
+  Alt+Shift+PgUp e Alt+Shift+PgDn abrem um painel ao lado com ela, e Ctrl+Alt+A arquiva o chat do
+  painel, com Ctrl+Z desfazendo enquanto o aviso estiver na tela. Todos estão em Atalhos do teclado
+  e na paleta.
+- **Marcar como não lido.** O menu do chat devolve o ponto azul, e ele fica até você abrir o chat de
+  novo.
+- **Busca na conversa sem ficar embaixo dos anéis.** Com o painel encostado na direita da janela, a
+  barra do Ctrl+F deixa o lugar dos anéis de uso, seja com um, dois, três ou nenhum.
+- **Comentário por linha no diff.** Na edição do agente, clique na margem de uma linha e escreva o
+  comentário. Eles se acumulam, ficam marcados nas linhas, e o **Enviar comentários (N)** manda
+  todos de uma vez ao agente, com arquivo e linha de cada um.
+- **Colar HTML vira Markdown.** O que você copia de um navegador ou documento entra na caixa com
+  links, listas, negrito e código; o Ctrl+Z volta ao texto puro. No Linux com Wayland.
+- **O menu “/” mostra tudo.** Todos os comandos e skills numa lista que rola, cada um com a
+  descrição, a dica de argumento, o selo skill e a origem; o ícone (ou o Ctrl+O) abre o arquivo da
+  skill à direita, e os que mais combinam com o que você digitou vêm primeiro.
+- **“@” e “/” onde está o cursor.** O menu abre para a palavra em que você está, e não só para a
+  última, e completa ali. Caminho com espaço vai entre aspas.
+- **Caixa estreita com o nome do modelo.** Com três painéis lado a lado, o chip mostra “Opus” ou
+  “Fable”, e o modo e o esforço ficam só com o ícone.
+- **Imagens coladas sem uso saem sozinhas.** Ao abrir, o Vitral apaga as imagens coladas que nenhuma
+  conversa, fila ou rascunho usa e que estão paradas há mais de um dia.
+- **O Codex pede permissão.** Nos modos Manual, Aceitar edições, Planejar e Automático, o Codex
+  pergunta no meio do turno pelo mesmo cartão do Claude, com o comando inteiro ou o diff do arquivo,
+  Negar e Permitir. Antes esses modos viravam só o sandbox dele. O "Permitir sempre" vale para o
+  Codex também, e o Aceitar edições deixa passar as edições dentro da pasta.
+- **Comandos de barra no Codex.** O `/compact` resume a conversa do Codex (também pelo Compactar), o
+  `/review` pede a revisão das mudanças (ou do que vier escrito depois dele) e as skills do Codex na
+  pasta aparecem no menu "/".
+- **Contexto e tokens do Codex.** O medidor do contexto aparece também no chat do Codex, com a
+  janela do modelo, e a linha "Trabalhou" diz quantos tokens o turno usou. O Codex não diz o custo
+  em dólar, então o popover mostra só o contexto e os tokens.
+- **Passos do Codex.** O plano que o Codex mantém aparece como os passos do Claude: a pílula "1/3"
+  acima da caixa e as linhas na trilha.
+- **Corrigir e continuar daqui no Codex, sem resumo.** Corrigir uma mensagem ou continuar a conversa
+  em outro chat leva o Codex exatamente ao ponto escolhido, como já fazia com o Claude, em vez de
+  começar uma conversa nova com um resumo das últimas mensagens.
+
 ## 0.10.1
 
 O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O

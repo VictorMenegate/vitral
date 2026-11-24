@@ -60,11 +60,61 @@ componentes do GPUI Kit.
   espera as confirmações, para não perder mensagens na corrida com o encerramento. O `thread_id`
   fica em `Chat.sessao`, e `thread/resume` recebe esse id. O schema veio da própria
   CLI instalada, e o initialize e thread/start foram conferidos sem inferência em 16/11/2026.
-  O que muda num chat do Codex: não há pedido de permissão no
-  meio do turno (o modo vira o sandbox: Planejar é `read-only`, Sem perguntar é
-  `danger-full-access`, os outros `workspace-write`), não há conta, comandos de barra nem
-  `/compact` (fica o `/clear`, que é do Vitral), o custo e o contexto não são medidos, e parar é
-  pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
+  **Pedido de permissão no meio do turno** (24/11/2026): cada modo é um par sandbox + política de
+  aprovação (`sandbox_de` e `aprovacao_de`, em `src/agente_codex.rs`), que vai no `thread/start`
+  (ou `thread/resume`) e de novo no `turn/start`:
+
+  | Modo do Vitral | sandbox | approvalPolicy | O que pergunta |
+  | --- | --- | --- | --- |
+  | Manual | `workspace-write` | `untrusted` | toda edição e todo comando que não seja só de leitura |
+  | Aceitar edições | `workspace-write` | `untrusted` | os comandos; a edição dentro da pasta o Vitral permite sozinho (`modelo::modo_permite`) |
+  | Planejar | `read-only` | `on-request` | quando o Codex quer escrever ou usar a rede |
+  | Automático | `workspace-write` | `on-request` | quando o Codex quer sair da pasta ou usar a rede |
+  | Sem perguntar | `danger-full-access` | `never` | nada |
+
+  Os pedidos `item/commandExecution/requestApproval` e `item/fileChange/requestApproval` viram
+  `Evento::Permissao` e caem no mesmo cartão do Claude: o comando inteiro (sem o embrulho
+  `/bin/bash -lc`) ou o mini-diff do arquivo, que vem do `item/started` do `fileChange` (o
+  pedido de edição só traz o `itemId`; com vários arquivos, um diff só, com o caminho do primeiro
+  de fora da pasta). Permitir é `accept`, Negar é `decline` (o item volta `declined` e o turno
+  segue), e o cartão que some sem resposta é `cancel`. O `serverRequest/resolved` fecha o canal do
+  cartão (`Evento::PermissaoRetirada`) e ele sai. O "Permitir sempre" e o modo de agora valem para
+  o Codex como para o Gemini, e a revisão pelo outro agente tem tudo negado. O "Negar e explicar"
+  manda só o `decline`: a explicação não chega ao Codex. Medido no 0.169.0 com turnos de verdade:
+  o id do pedido é um número, o `availableDecisions` do comando não lista o `decline` (que mesmo
+  assim vale) e o `resolved` chega logo depois de cada resposta.
+  **Comandos de barra** (24/11/2026): os que o app-server atende. O `/compact` vai como
+  `thread/compact/start` (medido no 0.169.0: responde `{}` e abre um turno com o item
+  `contextCompaction`, que vira o "Compactando…" e o marco, como no Claude; o texto depois dele
+  não vai, o Codex não aceita foco); o `/review` como `review/start` (sem texto, as mudanças sem
+  commit; com texto, o que ele pede; o texto do item `exitedReviewMode` é a resposta, e o 0.169.0
+  manda o mesmo texto numa mensagem do agente, que não entra de novo); e cada
+  skill da pasta (o `skills/list`, pedido em todo turno) é um "/nome", que vai como a entrada
+  `skill` com o arquivo dela e o texto "$nome …", como o Codex faz. A mensagem com barra espera a
+  lista; a lista que falha não para o turno. O `Inicio` leva a lista (`compact`, `review` e as
+  skills) para `Chat.comandos`, e o menu "/" mostra o `/clear` do Vitral mais ela
+  (`comandos_fora_do_claude`); antes do primeiro turno, só os dois. Compactar (o "…" da caixa, a
+  paleta, o popover do contexto) vale no Codex também.
+  **Contexto e tokens** (24/11/2026): o `thread/tokenUsage/updated` chega a cada chamada ao modelo
+  (medido no 0.169.0). O `last.totalTokens` é o contexto de agora (`Evento::Contexto`, o anel da
+  caixa), o `modelContextWindow` é a janela (vai no `Fim`; até o fim do primeiro turno, o anel usa
+  a padrão), e o gasto do turno é o `total` do fim menos o de antes da primeira chamada dele
+  (`Evento::Gasto` antes do `Fim`: a dica da linha "Trabalhou", o "Último turno" do popover e o
+  livro do **Onde o uso foi**). Só o uso do turno que roda conta para o gasto. O popover do
+  contexto do Codex não tem custo nem conta.
+  **Passos** (24/11/2026): o `turn/plan/updated` (a lista inteira a cada mudança, com `step` e
+  `status`) vira uma chamada TodoWrite com o resultado na hora (`todos_do_plano`), e a lista de
+  passos do chat (`motor/passos.rs`), a pílula "1/3" e as linhas da trilha ("Criou 3 passos",
+  "Concluiu: … · Começou: …") saem como no Claude. Conferido só pelo schema e pelo Codex de
+  mentira: nos turnos de verdade do 0.169.0 (gpt-6-luna e gpt-6.2-sol) o modelo disse que o
+  `update_plan` não estava disponível, e nenhum plano chegou.
+  **Conferir com o Codex de verdade:** `cargo-vez.sh test -- --ignored --nocapture
+  codex_de_verdade` (em `src/claude.rs`) roda quatro turnos curtos numa pasta nova em /tmp, pelo
+  mesmo `Processo` dos chats, e gasta o plano do Codex: no Manual, o pedido da edição (permitido) e
+  o do comando (negado); o `/compact`; a cópia antes do primeiro turno; e o `/review`. Passou no
+  0.169.0 com o gpt-6.2-sol em 24/11/2026.
+  O que ainda muda num chat do Codex: não há conta nem custo em dólar, e parar é pelo
+  `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
 - **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
@@ -150,11 +200,13 @@ componentes do GPUI Kit.
   --fork-session --session-id <nova> --resume-session-at <uuid>`, o mesmo corte do "Continuar
   daqui em outro chat"; `Bifurcacao::correcao`, `bifurcar::sessao_depois_da_correcao`). O agente
   fica com o contexto exato do que veio antes, e o começo da conversa é o mesmo que o Claude Code
-  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. Quando o ponto não é
-  achado no arquivo da sessão (Codex, conversa de antes das marcas, a primeira mensagem da
-  sessão, mensagem dirigida ao turno), vale o caminho de antes: sessão vazia com o bloco de
-  passagem (`MotivoPassagem::Reenvio`); se o Claude Code recusar o corte, o turno é repetido
-  assim, com um aviso na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
+  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. No Codex o corte é o
+  `thread/fork` da conversa com o `beforeTurnId` do turno que a mensagem abriu (ver o "Continuar
+  daqui em outro chat"). Quando o ponto não é achado (no Claude, no arquivo da sessão: conversa de
+  antes das marcas, a primeira mensagem da sessão, mensagem dirigida ao turno; no Codex, a
+  mensagem sem o id do turno), vale o caminho de antes: sessão vazia com o bloco de passagem
+  (`MotivoPassagem::Reenvio`); se o agente recusar o corte, o turno é repetido assim, com um aviso
+  na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
   na sessão de origem. A cópia de uma sessão traz o custo acumulado da original (o Claude Code
   restaura o `cost-state` dela, lido no binário da 2.1.325): o chat leva o último total visto
   para a sessão nova, e o `somar_custo` soma só o que crescer. A pergunta antes de corrigir só
@@ -174,8 +226,19 @@ componentes do GPUI Kit.
   resumo. O uuid é o da última entrada do agente ou do usuário antes da mensagem que abre o turno
   seguinte, achado no arquivo da sessão subindo a cadeia de `parentUuid` a partir da marca dela
   (`motor/bifurcar.rs`, `ponto_de_corte`); o ponto fica em `Chat.bifurcado_de` até a sessão nova
-  nascer. No Codex, sem sessão, sem marca (conversa antiga, mensagem dirigida ao turno) ou sem o
-  ponto no arquivo, o chat novo começa numa sessão nova com o bloco de passagem
+  nascer. No Codex (24/11/2026) o corte é exato também: o primeiro turno abre com o
+  `thread/fork` da conversa de origem e o `beforeTurnId` do turno que a mensagem do ponto abriu
+  (`bifurcar::ponto_no_codex`, `agente_codex::abertura`), que é experimental no 0.169.0 (o
+  `initialize` liga a `experimentalApi`, como o Paseo faz). A mensagem sua que abre um turno do
+  Codex guarda o id dele na marca (`modelo::marca_do_codex`, "codex:<id>"): ela entra na conversa
+  com um uuid provisório, e o `turn/started` (`Evento::TurnoDoAgente`) o troca pelo id. O fork não
+  herda a configuração: a pasta, o modelo, as instruções, o sandbox e a política vão de novo, com
+  `excludeTurns` (a resposta não traz o histórico inteiro). Medido no 0.169.0: a cópia nasce com
+  outro id e `forkedFromId`; num turno de verdade, a cópia feita antes do primeiro turno respondeu
+  "Não." a "algum arquivo foi pedido antes?"; um turno que não está na conversa dá
+  `-32600 turn not found`, e aí o turno se repete numa conversa nova com o bloco de passagem
+  (`servidor::FORK_RECUSADO`, `consertar_bifurcacao`). No Gemini, sem sessão, sem marca ou sem o
+  ponto, o chat novo começa numa sessão nova com o bloco de passagem
   (`MotivoPassagem::Bifurcou`). A flag `--resume-session-at` está no Claude Code 2.1.325 fora do
   `--help`. Medido em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem
   (não gasta o plano, como o `rewind_files`): ela aceita o uuid de qualquer entrada da cadeia (do
@@ -822,7 +885,7 @@ ou imagem…**, **Arquivo da pasta…** e **Conversa anterior como contexto…**
 com texto na caixa, **mandar** (**Mandar depois, na fila**, com o turno rodando e o Enter entrando
 nele; **Mandar quando as 5 h renovarem**; **Mandar às…**; **Perguntar também ao Codex**, menos
 para um comando de barra); e **a conversa** (**Comandos de barra**, **Compactar a conversa** numa
-conversa do Claude que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
+conversa do Claude ou do Codex que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
 nova** com o chat parado, **Fixar**). O que não se aplica agora sai, em vez de ficar cinza. Na
 caixa média, o **…** não aparece, como antes. Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
 o espaço entre os chips, a linha de estado) mantém o cursor nela. Com a conversa rodando, ele vira
@@ -1379,6 +1442,26 @@ anel girando. O clique abre o turno inteiro, e a busca (Ctrl+F) acha e abre o qu
   uma tabela desce uns 28 px.
 
 
+**A caixa de mensagem: menu "/", "@" e chip do modelo** (`src/ui/composer.rs`, `src/claude.rs`).
+O "/" lista todos os comandos e skills, numa lista que rola (as setas levam o marcado junto): cada
+linha tem a descrição, a dica de argumento, o selo "skill", a origem ("projeto", "pessoal",
+"plugin <nome>") e um ícone que abre o `SKILL.md` à direita (Ctrl+O abre o da marcada). A ordem é
+pela qualidade do casamento (`qualidade_do_casamento`: nome exato, começa com, começa uma parte do
+nome, contém, só a descrição); o "@" e o "#" seguem com o teto de 8. O catálogo vem do
+`initialize` do Claude Code, por pasta (`claude::catalogo_da_pasta`): a origem é a marca que ele põe
+na descrição ("(user)", "(project)", "(plugin) …", `builtin`) e o arquivo se acha em
+`.claude/skills` da pasta e das pastas de cima, na conta (`CLAUDE_CONFIG_DIR` ou `~/.claude`) e nos
+plugins de `installed_plugins.json`. Vale 10 minutos (`precisa_perguntar`) e é refeito ao trocar o
+agente do chat. O menu abre para a palavra sob o cursor, e não só para a última (`gatilho_em`): o
+`/` só na primeira palavra, o `@` e o `#` em qualquer uma; escolher troca a palavra inteira
+(`trocar_palavra`) e passa pelo espaço que já existia. Caminho com espaço vai entre aspas
+(`@"minha pasta/a b.rs"`, também em `mencao.rs`). Na caixa estreita (3 painéis a 150%) o chip do
+modelo mantém o nome da família ("Opus", "Fable"); modo e esforço ficam só com o ícone, e o nome
+cai para só a marca quando não cabe (`decidir_modelo`, medido como o esforço). Ao abrir, em
+segundo plano, saem de `anexos/` os `colado-*` que nenhuma conversa, fila ou rascunho cita
+(`src/limpeza_anexos.rs`; parados há mais de um dia; arquivo de dados ilegível cancela tudo). Na
+bancada, `BANCADA_CATALOGO=1` faz o claude de mentira responder o catálogo.
+
 ## O que fica à vista
 
 O padrão é o mínimo, e o resto aparece quando faz falta:
@@ -1616,6 +1699,26 @@ cabeçalho dele tem o próprio botão de fechar (o ícone de recolher). O que vo
 lembrado (`painel` no `interface.json`). Ele também abre sozinho quando você clica num arquivo
 citado na conversa, sem mudar essa escolha.
 
+**Comentário por linha no diff** (`src/ui/comentarios_diff.rs`; ideia do Paseo). Na edição do
+agente, clicar na margem do sinal (+, − ou o espaço) de uma linha abre embaixo do painel o campo do
+comentário; o Enter guarda e o Esc fecha. Os comentários se acumulam por chat, a linha comentada
+ganha um ponto na margem (clicar de novo edita, e vazio ou o lixo apaga) e o botão discreto
+**Enviar comentários (N)** manda todos numa mensagem só (`comentarios_diff::mensagem`: o arquivo,
+a linha e o trecho de cada um; a linha que saiu leva o texto dela no lugar do número). A mensagem
+entra no turno ou espera na fila como o Enter da caixa (`enter_manda_depois`). Só na edição: o
+arquivo aberto sem diff não tem a margem de comentário (o número continua escolhendo linhas para
+mencionar).
+
+**Colar HTML** (`src/ui/colar_html.rs`). O GPUI do Linux só lia o `text/plain`; o
+`vendor/gpui-pre-linux` (Wayland, `clipboard.rs`) lê também o `text/html` e o guarda no `metadata`
+do `ClipboardItem`. No `on_paste` da caixa, `markdown_da_colagem` converte links, listas, negrito,
+itálico, código, títulos, citações, tabelas e imagens em Markdown, só quando o HTML diz mais que o
+texto puro (o `<span>` com estilo de um editor cola como sempre). A colagem é feita em duas
+edições (o texto puro e, por cima, o Markdown): o Ctrl+Z volta ao texto puro. Só no Wayland; no
+X11 e no Windows a colagem continua em texto puro. Não verificada de ponta a ponta na bancada
+(o Mutter só deixa um cliente com foco oferecer a área de transferência, e o `wl-copy` só oferece
+um tipo por vez).
+
 **Menções** (`src/ui/mencao.rs`). No seu balão, a menção de um arquivo ou pasta que existe
 ("@src/ui/fila.rs#L120-134", "@central/src/") vira uma pílula no meio do texto, no poço escuro do
 balão: o ícone do tipo, o nome curto em mono e as linhas em tom tênue, com o caminho inteiro na
@@ -1748,7 +1851,8 @@ e os tokens de entrada nova, de cache lido, de cache criado e de saída. O custo
 `Chat::somar_custo` somou naquele fim de turno; os tokens vêm do `result` do Claude Code
 (`Evento::Gasto`, de `tokens_do_resultado`: o `model_usage_since_last_result`, que conta os
 subagentes, ou, sem ele, o `usage` do turno; nunca o `modelUsage`, que é o total da sessão) e do
-`turn.completed` do Codex (sem custo). Um turno com vários `result` (agentes em segundo plano)
+Codex (sem custo): no app-server, o `total` do último `thread/tokenUsage/updated` do turno menos o
+de antes da primeira chamada dele; no `exec` antigo, o `turn.completed`. Um turno com vários `result` (agentes em segundo plano)
 soma os tokens de todos. No diálogo **Contas do Claude**, embaixo das contas, a seção **Onde o uso
 foi** tem os seletores **Hoje** e **7 dias** (hoje e os 6 dias anteriores): uma barra por pasta,
 da que mais gastou para a que menos, com "182 mil tokens · US$ 0,84"; o clique na pasta abre os
@@ -1912,7 +2016,7 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   redimensionar; **dois cliques** na divisória entre duas conversas deixam todas com a mesma
   largura (`igualar_conversas`, em `src/ui/mod.rs`). A lista da esquerda recolhe pelo menu do logo
   (**Recolher a lista**) ou pelo Ctrl+B, e no arrasto vai de 200 a 560 px (`FAIXA_LISTA`).
-  Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar.
+  Ctrl+PgUp/PgDn vão para o painel vizinho e Ctrl+Shift+PgUp/PgDn trocam o painel de lugar. Teclado e organização (24/11/2026), tudo na tabela de `atalhos.rs` (tela "?" e paleta): `paineis_a_mostrar` e `alternar_maximizado` (`paineis.rs`) maximizam o painel ativo com Ctrl+Shift+Enter, e o menu do painel também (o outro painel não fecha, só some do desenho; `Janela.maximizado` segue o painel ativo, o Esc e repetir o atalho devolvem); `destino_da_aba` e `divisao_da_aba` fazem do Alt+PgUp/PgDn (aba para o painel vizinho, na ponta painel novo) e Alt+Shift+PgUp/PgDn (painel novo ao lado) o mesmo que soltar a aba com o mouse, pelo `soltar`; Alt+↑/↓ (`pular_mensagem` em `sumario.rs`, usa a âncora do sumário) e PgUp/PgDn (`offset_da_pagina`, 90% da tela; na caixa vazia, pois com texto o PgUp é do cursor); Ctrl+Alt+A arquiva o chat do painel pelo caminho do menu e o Ctrl+Z, só com o foco fora de campo (`Vitral && !Input`), desfaz via `ArquivadasPendentes` (`lateral.rs`: global com a senha de cada aviso, que sai no Desfazer, no × ou na troca); "Marcar como não lido" (`Chat.retido_nao_lido`, só em memória) segura o ponto azul contra o `ler_ate_agora` de cada quadro até `Motor::visitar`, chamado ao abrir o chat pela lista ou ativar o painel dele. A barra do Ctrl+F (`recuo_da_direita`, `busca_conversa.rs`) recua o que `reserva_dos_aneis` manda no painel que encosta na direita da janela (`painel_na_borda_da_janela`).
 - **Cabeçalho do painel.** Uma linha só (44): as abas e o **+** (dono,
   16/11/2026: "faz esse botão ser o de + de criar mais uma conversa e ter o histórico também, e
   tira o de 3 pontinhos e deixa só no botão direito"). O **+** (`botao_historico`, em
@@ -2534,7 +2638,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[passos A; B; C]` encena o plano (`turn/plan/updated`), um passo a cada ferramenta; as conversas ficam em `$XDG_STATE_HOME/codex-falso-conversas.json`, a resposta diz de quais mensagens de antes ele lembra e o `thread/fork` corta no `beforeTurnId` (o turno que não existe dá `turn not found`); `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`

@@ -1252,8 +1252,11 @@ impl Janela {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
                 let editavel = contexto.editavel.is_some_and(|desde| indice >= desde);
-                // Só o Claude Code guarda o antes dos arquivos por mensagem.
-                let marca = marca.as_deref().filter(|_| contexto.chat.agente == crate::modelo::Agente::Claude);
+                // Só o Claude Code guarda o antes dos arquivos por mensagem (a marca de um turno
+                // do Codex, numa dupla, não é dele).
+                let marca = marca
+                    .as_deref()
+                    .filter(|m| contexto.chat.agente == crate::modelo::Agente::Claude && crate::modelo::turno_do_codex(m).is_none());
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, marca, window, cx))
             }
             Item::Assistente { texto, .. } => {
@@ -5182,7 +5185,7 @@ impl Janela {
     }
 
     /// Volta o painel ao fim da conversa e marca o que chegou como visto.
-    fn ir_para_o_fim(&mut self, painel_id: u64, cx: &mut Context<Self>) {
+    pub(super) fn ir_para_o_fim(&mut self, painel_id: u64, cx: &mut Context<Self>) {
         let Some(painel) = self.paineis.iter_mut().find(|p| p.id == painel_id) else {
             return;
         };
@@ -5784,6 +5787,16 @@ fn linhas_da_edicao(antigo: &str, novo: &str) -> Vec<LinhaDoDiff> {
     super::edicao::diff_da_troca(antigo, novo, CONTEXTO_DO_PEDIDO)
 }
 
+/// As linhas do pedido de um Edit: a troca (`old_string`, `new_string`) do Claude Code ou o diff
+/// unificado (`diff`) que o Codex manda para cada arquivo.
+fn linhas_do_pedido_de_edicao(entrada: &serde_json::Value) -> Vec<LinhaDoDiff> {
+    let campo = |chave: &str| entrada[chave].as_str().unwrap_or_default();
+    match entrada["diff"].as_str() {
+        Some(diff) => super::edicao::diff_dos_trechos(&super::edicao::trechos(diff), CONTEXTO_DO_PEDIDO),
+        None => linhas_da_edicao(campo("old_string"), campo("new_string")),
+    }
+}
+
 /// Trechos (em bytes) de um comando que apagam, forçam ou rodam algo difícil de desfazer. A caixa
 /// do sino usa para trocar o "Permitir" por "Permitir mesmo assim".
 pub(super) fn trechos_perigosos(comando: &str) -> Vec<std::ops::Range<usize>> {
@@ -6239,7 +6252,7 @@ fn corpo_permissao(id: &str, ferramenta: &str, entrada: &serde_json::Value) -> A
         }
         "Edit" => v_flex()
             .gap(r(6.))
-            .child(bloco_de_linhas(id, &linhas_da_edicao(campo("old_string"), campo("new_string")), 80))
+            .child(bloco_de_linhas(id, &linhas_do_pedido_de_edicao(entrada), 80))
             .when(entrada["replace_all"].as_bool() == Some(true), |s| {
                 s.child(nota("Troca todas as ocorrências no arquivo."))
             })
@@ -6843,6 +6856,22 @@ mod testes {
             linhas_da_edicao("a\nb\ntotal = 1\nc\nd", "a\nb\ntotal = 2\nc\nd"),
             vec![Igual(t("a")), Igual(t("b")), Sai(t("total = 1"), vec![8..9]), Entra(t("total = 2"), vec![8..9]), Igual(t("c")), Igual(t("d"))]
         );
+    }
+
+    /// O pedido de edição do Codex traz o diff unificado do arquivo, e não a troca: o cartão mostra
+    /// as linhas dele (antes ficava vazio).
+    #[test]
+    fn o_pedido_de_edicao_do_codex_mostra_o_diff() {
+        use super::linhas_do_pedido_de_edicao;
+        use crate::ui::edicao::LinhaDoDiff::{Entra, Igual, Sai};
+        let t = |texto: &str| texto.to_string();
+        let do_codex = json!({"file_path": "/p/a.rs", "diff": "@@ -1,3 +1,3 @@\n a\n-total = 1\n+total = 2\n c\n"});
+        assert_eq!(
+            linhas_do_pedido_de_edicao(&do_codex),
+            vec![Igual(t("a")), Sai(t("total = 1"), vec![8..9]), Entra(t("total = 2"), vec![8..9]), Igual(t("c"))]
+        );
+        let do_claude = json!({"file_path": "/p/a.rs", "old_string": "x\ny", "new_string": "x"});
+        assert_eq!(linhas_do_pedido_de_edicao(&do_claude), linhas_da_edicao("x\ny", "x"));
     }
 
     #[test]

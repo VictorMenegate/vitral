@@ -372,6 +372,8 @@ fn menu_do_painel(
         chat: String,
         foco: bool,
         ultimo: bool,
+        /// O painel está maximizado, ou há mais de um para maximizar.
+        maximizado: Option<bool>,
         direita_aberta: bool,
         /// O que a direita mostra (o arquivo aberto ou Este chat).
         direita: Direita,
@@ -400,6 +402,7 @@ fn menu_do_painel(
             chat: chat.id.clone(),
             foco: j.modo_foco(cx),
             ultimo: ix + 1 == j.paineis.len(),
+            maximizado: if j.maximizado.is_some() { Some(true) } else { (j.paineis.len() > 1).then_some(false) },
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
             cheio,
@@ -431,6 +434,17 @@ fn menu_do_painel(
             .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
         );
     }
+    if let Some(maximizado) = d.maximizado {
+        menu = menu.item(
+            PopupMenuItem::new(if maximizado { "Voltar o painel ao arranjo" } else { "Maximizar o painel" })
+                .icon(if maximizado { Lucide::Minimize } else { Lucide::Maximize })
+                .action(Box::new(super::MaximizarPainel))
+                .on_click(na_janela(&janela, move |this, _, cx| {
+                    this.ativar_painel(painel_id, cx);
+                    this.alternar_maximizado_ativo(cx)
+                })),
+        );
+    }
     menu = menu
         .separator()
         .item(
@@ -447,6 +461,24 @@ fn menu_do_painel(
     }
     menu = menus::menu_conversa(menu, janela.clone(), &motor, &d.chat, false, window, cx);
     menu
+}
+
+/// O valor do cabeçalho do popover do contexto: a porcentagem e o custo ("31% · US$ 1,84"), ou
+/// só o custo antes de medir o contexto. O Codex e o Gemini não dizem o custo: só a porcentagem.
+fn valor_do_uso(agente: crate::modelo::Agente, numero: Option<u32>, custo: &str) -> String {
+    match numero {
+        Some(numero) if agente != crate::modelo::Agente::Claude => format!("{numero}%"),
+        Some(numero) => format!("{numero}% · {custo}"),
+        None => custo.to_string(),
+    }
+}
+
+/// A nota do rodapé do popover do contexto.
+fn nota_do_uso(agente: crate::modelo::Agente) -> &'static str {
+    match agente {
+        crate::modelo::Agente::Claude => "Custo estimado pelo preço da API; no plano, o que conta é o limite.",
+        _ => "Sem custo em dólar: no plano, o que conta é o limite.",
+    }
 }
 
 /// O popover do anel do contexto, na caixa: no cabeçalho o contexto e o custo ("Contexto 31% ·
@@ -496,9 +528,9 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
     let (simbolo, valor) = match contexto {
         Some((_, (fracao, numero, _))) => (
             Some(Simbolo::Anel { fracao, cor: Some(cor_da_faixa(fracao, Cores::destaque())) }),
-            format!("{numero}% · {custo}"),
+            valor_do_uso(chat.agente, Some(numero), &custo),
         ),
-        None => (None, custo),
+        None => (None, valor_do_uso(chat.agente, None, &custo)),
     };
     let tokens = contexto.map(|(usados, (fracao, _, janela))| {
         h_flex()
@@ -521,7 +553,8 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
         .child(
             v_flex()
                 .child(linha("Modelo", modelo))
-                .child(linha("Conta", texto(format!("Claude · {conta}"))))
+                // O Codex e o Gemini não têm conta no Vitral: a linha é só do Claude.
+                .when(chat.agente == crate::modelo::Agente::Claude, |s| s.child(linha("Conta", texto(format!("Claude · {conta}")))))
                 .when_some(tokens, |s, t| s.child(linha("Tokens", t)))
                 .children(extras),
         )
@@ -534,7 +567,7 @@ pub(super) fn uso_da_conversa(motor: &Motor, chat: &Chat, extras: Vec<AnyElement
                         .min_w_0()
                         .metadado()
                         .text_color(Cores::tenue())
-                        .child("Custo estimado pelo preço da API; no plano, o que conta é o limite."),
+                        .child(nota_do_uso(chat.agente)),
                 )
                 .child(div().flex_none().child(acao)),
         )
@@ -979,8 +1012,7 @@ impl Janela {
         let nivel = ix.map(|ix| self.paineis[ix].medida.nivel).unwrap_or_default();
         // Os botões da janela ficam no canto de cima à direita: no último painel, se o painel da
         // direita estiver fechado ou em gaveta.
-        let ultimo = ix.is_none_or(|ix| ix + 1 == self.paineis.len());
-        let mostra_botoes_janela = ultimo && !self.direita_visivel();
+        let mostra_botoes_janela = ix.is_none_or(|ix| self.painel_na_borda_da_janela(ix));
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
         // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.
@@ -1704,8 +1736,19 @@ impl Direita {
 
 #[cfg(test)]
 mod testes {
-    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, teto_por_igual};
+    use super::{JeitoDaAba, LinhaDoHistorico, grupos_que_casam, jeito_das_abas, modelo_da_conversa, nota_do_uso, teto_por_igual, valor_do_uso};
     use crate::modelo::Chat;
+
+    /// O Codex não diz o custo: o popover do contexto mostra só a porcentagem e não fala do preço.
+    #[test]
+    fn o_uso_do_codex_mostra_o_contexto_sem_custo() {
+        use crate::modelo::Agente;
+        assert_eq!(valor_do_uso(Agente::Claude, Some(31), "US$ 1,84"), "31% · US$ 1,84");
+        assert_eq!(valor_do_uso(Agente::Claude, None, "US$ 1,84"), "US$ 1,84");
+        assert_eq!(valor_do_uso(Agente::Codex, Some(4), "US$ 0,00"), "4%");
+        assert!(nota_do_uso(Agente::Claude).contains("preço da API"));
+        assert!(!nota_do_uso(Agente::Codex).contains("preço"), "{}", nota_do_uso(Agente::Codex));
+    }
 
     #[test]
     fn historico_busca_sem_acento_com_o_titulo_primeiro() {
