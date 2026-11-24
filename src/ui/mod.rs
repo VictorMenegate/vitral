@@ -16,6 +16,7 @@ mod busca_conversa;
 mod caixa_entrada;
 mod checagens;
 mod colar_html;
+mod comentarios_diff;
 mod composer;
 mod configuracoes;
 mod conversa;
@@ -508,6 +509,8 @@ pub struct Janela {
     foco_arquivo: FocusHandle,
     /// A busca dentro do arquivo aberto: a barra, o termo e os achados.
     busca_arquivo: painel_arquivo::BuscaNoArquivo,
+    /// Os comentários por linha do diff (`comentarios_diff`).
+    comentarios_diff: comentarios_diff::Estado,
     /// Comentário para "pedir mudanças" de cada plano esperando aprovação (pelo id do pedido).
     feedback_plano: HashMap<String, Entity<InputState>>,
     /// O que está marcado em cada pergunta com opções esperando resposta (AskUserQuestion), pelo
@@ -805,6 +808,9 @@ impl Janela {
             InputEvent::Change => cx.notify(),
             _ => {}
         }));
+        // O campo do comentário na linha do diff: o Enter guarda.
+        let (campo_dos_comentarios, assinatura_dos_comentarios) = comentarios_diff::campo_novo(window, cx);
+        assinaturas.push(assinatura_dos_comentarios);
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
             // Ao voltar à janela, a versão pronta é relida: outra abertura pode ter instalado uma.
@@ -941,6 +947,7 @@ impl Janela {
             codigo_esquerda: Default::default(),
             foco_arquivo: cx.focus_handle(),
             busca_arquivo: painel_arquivo::BuscaNoArquivo::nova(busca_no_arquivo),
+            comentarios_diff: comentarios_diff::Estado::novo(campo_dos_comentarios),
             feedback_plano: HashMap::new(),
             perguntas: HashMap::new(),
             expandidos: HashSet::new(),
