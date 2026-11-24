@@ -613,8 +613,12 @@ pub fn turno_do_codex(marca: &str) -> Option<&str> {
 
 /// O caminho fica na pasta do chat: relativo ou abaixo dela, e sem `..` (que pode sair dela).
 pub fn dentro_da_pasta(caminho: &Path, pasta: &Path) -> bool {
+    // Relativo de verdade é o que não tem raiz: no Windows, `\etc\hosts` (ou `/etc/hosts`) não tem
+    // letra de drive, então o `is_relative` diz que sim, mas ele parte da raiz do drive e fica fora
+    // da pasta. Sem o `has_root`, o Aceitar edições deixava passar uma edição assim sem perguntar
+    // (achado pelo CI do Windows na 0.10.2).
     !caminho.components().any(|c| c == std::path::Component::ParentDir)
-        && (caminho.is_relative() || caminho.starts_with(pasta))
+        && ((caminho.is_relative() && !caminho.has_root()) || caminho.starts_with(pasta))
 }
 
 /// A tarefa de um chat como as versões com cópias e ajudantes a gravavam: só o que a carga precisa
