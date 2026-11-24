@@ -29,6 +29,11 @@ mil por chamada) e a janela de 258.400.
 `[passos A; B; C]` encena o plano (`turn/plan/updated`, a lista inteira a cada mudança): começa com
 o primeiro em andamento, avança um passo a cada ferramenta (ou a cada segundo, sem ferramenta) e
 termina com todos concluídos.
+
+As conversas ficam em $XDG_STATE_HOME/codex-falso-conversas.json (as mensagens de cada turno, por
+conversa), e a resposta diz de quais mensagens de antes ele "lembra": é assim que a bancada vê o
+corte do `thread/fork` (com `beforeTurnId`, a cópia fica só com os turnos de antes dele; um turno
+que não está na conversa dá `-32600 turn not found`, como no 0.169.0).
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -85,6 +90,25 @@ def catalogo():
     ]}))
 
 
+def conversas_gravadas():
+    estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    caminho = os.path.join(estado, "codex-falso-conversas.json")
+    try:
+        with open(caminho, encoding="utf-8") as arq:
+            return caminho, json.load(arq)
+    except (OSError, ValueError):
+        return caminho, {}
+
+
+def gravar_conversas(caminho, conversas):
+    try:
+        os.makedirs(os.path.dirname(caminho), exist_ok=True)
+        with open(caminho, "w", encoding="utf-8") as arq:
+            json.dump(conversas, arq, ensure_ascii=False)
+    except OSError:
+        pass
+
+
 def valor_de(args, chave):
     return next((args[i + 1] for i, a in enumerate(args[:-1]) if a == chave), None)
 
@@ -99,6 +123,8 @@ def servidor():
     trabalhador = None
     politica = "never"
     skill_pedida = None
+    lembradas = None
+    arquivo_das_conversas, conversas = conversas_gravadas()
     total = {"inputTokens": 0, "cachedInputTokens": 0, "outputTokens": 0}
     chamadas = [0]
 
@@ -215,6 +241,10 @@ def servidor():
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
         if skill_pedida:
             texto += f" (skill {skill_pedida})"
+        if lembradas:
+            texto += " Lembro de: " + " | ".join(lembradas) + "."
+        elif lembradas is not None:
+            texto += " Não lembro de nada antes."
         # Na dupla do Vitral, a vez de revisar o outro agente: revisa e não acrescenta nada (a rodada para).
         # Com `[revisor-acha]` no que o usuário pediu, a revisão tem achado.
         if revisando and "[revisor-acha]" in pedido:
@@ -249,7 +279,22 @@ def servidor():
         elif metodo in ("thread/start", "thread/resume"):
             thread = params.get("threadId") or thread
             modelo = params.get("model") or modelo
+            conversas.setdefault(thread, [])
             emitir({"id": id_, "result": {"thread": {"id": thread, "turns": []}, "model": modelo}})
+        elif metodo == "thread/fork":
+            origem, antes = params.get("threadId"), params.get("beforeTurnId")
+            turnos = conversas.get(origem)
+            corte = next((i for i, t in enumerate(turnos or []) if t["turno"] == antes), None) if antes else len(turnos or [])
+            if turnos is None:
+                emitir({"id": id_, "error": {"code": -32600, "message": f"thread not found: {origem}"}})
+            elif corte is None:
+                emitir({"id": id_, "error": {"code": -32600, "message": f"turn not found: {antes}"}})
+            else:
+                thread = str(uuid.uuid4())
+                modelo = params.get("model") or modelo
+                conversas[thread] = turnos[:corte]
+                gravar_conversas(arquivo_das_conversas, conversas)
+                emitir({"id": id_, "result": {"thread": {"id": thread, "forkedFromId": origem, "turns": []}, "model": modelo}})
         elif metodo == "skills/list":
             pasta = (params.get("cwds") or [os.getcwd()])[0]
             emitir({"id": id_, "result": {"data": [{"cwd": pasta, "errors": [], "skills": [
@@ -276,6 +321,9 @@ def servidor():
             turno = str(uuid.uuid4())
             mensagens = [p["text"] for p in params.get("input", []) if p.get("type") == "text"]
             skill_pedida = next((p.get("name") for p in params.get("input", []) if p.get("type") == "skill"), None)
+            lembradas = [t["texto"] for t in conversas.get(thread, [])]
+            conversas.setdefault(thread, []).append({"turno": turno, "texto": " ".join(mensagens)[:80]})
+            gravar_conversas(arquivo_das_conversas, conversas)
             fim.clear()
             emitir({"id": id_, "result": {"turn": {"id": turno, "status": "inProgress", "items": []}}})
             evento("turn/started", {"threadId": thread, "turn": {"id": turno, "status": "inProgress", "items": []}})

@@ -52,6 +52,26 @@ pub fn parametros_servidor(opcoes: &Opcoes) -> Value {
     parametros
 }
 
+/// Como o turno abre a conversa no app-server, e com quê: `thread/start` (nova), `thread/resume`
+/// (a do chat) ou `thread/fork` (uma cópia de outra, até antes de um turno).
+pub fn abertura(opcoes: &Opcoes) -> (&'static str, Value) {
+    let mut parametros = parametros_servidor(opcoes);
+    match &opcoes.bifurcar {
+        Some(origem) if !opcoes.retomar => {
+            parametros["threadId"] = json!(origem);
+            if let Some(turno) = &opcoes.cortar_em {
+                parametros["beforeTurnId"] = json!(turno);
+            }
+            // A resposta não precisa trazer o histórico inteiro (o Codex avisa que encher a
+            // resposta com ele ficou para trás).
+            parametros["excludeTurns"] = json!(true);
+            ("thread/fork", parametros)
+        }
+        _ if parametros.get("threadId").is_some() => ("thread/resume", parametros),
+        _ => ("thread/start", parametros),
+    }
+}
+
 /// O nome com que se chama o Codex quando ele não foi achado (o PATH resolve).
 const NOME_DO_CODEX: &str = if cfg!(windows) { "codex.exe" } else { "codex" };
 
@@ -540,6 +560,36 @@ mod testes {
             let parametros = parametros_servidor(&opcoes(false, modo));
             assert_eq!((parametros["sandbox"].as_str(), parametros["approvalPolicy"].as_str()), (Some(sandbox), Some(politica)), "{modo}");
         }
+    }
+
+    /// A cópia da conversa (corrigir uma mensagem, continuar daqui em outro chat) abre com o
+    /// `thread/fork` da conversa de origem, cortada antes do turno da mensagem (`beforeTurnId`,
+    /// conferido no 0.169.0 com a API experimental). O fork não herda a configuração: a pasta, o
+    /// modelo, as instruções, o sandbox e a política vão de novo.
+    #[test]
+    fn a_copia_da_conversa_abre_com_o_fork_e_a_configuracao_do_chat() {
+        let mut o = opcoes(false, "manual");
+        (o.bifurcar, o.cortar_em) = (Some("origem".into()), Some("turno-3".into()));
+        o.modelo = Some("gpt-6.2-sol".into());
+        o.prompt_sistema = "Responda em português.".into();
+        let (metodo, p) = abertura(&o);
+        assert_eq!(metodo, "thread/fork");
+        assert_eq!((p["threadId"].as_str(), p["beforeTurnId"].as_str()), (Some("origem"), Some("turno-3")));
+        assert_eq!((p["cwd"].as_str(), p["model"].as_str()), (Some("/casa/loja"), Some("gpt-6.2-sol")));
+        assert_eq!(p["developerInstructions"], "Responda em português.");
+        assert_eq!((p["sandbox"].as_str(), p["approvalPolicy"].as_str()), (Some("workspace-write"), Some("untrusted")));
+        assert_eq!(p["excludeTurns"], true, "sem o histórico inteiro na resposta");
+        // Sem corte: a conversa inteira.
+        o.cortar_em = None;
+        let (metodo, p) = abertura(&o);
+        assert_eq!((metodo, p.get("beforeTurnId")), ("thread/fork", None));
+        // Já com a conversa própria, retoma ela.
+        o.retomar = true;
+        let (metodo, p) = abertura(&o);
+        assert_eq!((metodo, p["threadId"].as_str()), ("thread/resume", Some("01a1d5d6")));
+        o.bifurcar = None;
+        o.retomar = false;
+        assert_eq!(abertura(&o).0, "thread/start");
     }
 
     #[test]

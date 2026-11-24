@@ -7,8 +7,16 @@
 //!   trazidas), cortada no ponto com `--resume-session-at <uuid>`. O uuid é o da última entrada
 //!   do agente (ou sua) antes da mensagem que abre o turno seguinte, achado no arquivo da sessão
 //!   subindo a cadeia de `parentUuid` a partir da marca dessa mensagem (`ponto_de_corte`);
-//! - no Codex, sem sessão, sem marca ou sem o arquivo: uma sessão nova com o bloco de passagem
-//!   (as últimas mensagens da conversa copiada).
+//! - no Codex (24/11/2026): o primeiro turno abre com o `thread/fork` da conversa de origem, com o
+//!   `beforeTurnId` do turno que a mensagem do ponto abriu (`ponto_no_codex`). A mensagem guarda o
+//!   id do turno na marca (`modelo::marca_do_codex`), que chega quando o turno começa
+//!   (`Evento::TurnoDoAgente`; até lá a marca é o uuid provisório). O fork não herda a
+//!   configuração: a pasta, o modelo, as instruções, o sandbox e a política vão de novo
+//!   (`agente_codex::abertura`). Medido no 0.169.0 com a API experimental ligada: a cópia nasce
+//!   com outro id e `forkedFromId` da origem; um turno que não está nela dá `turn not found`, e o
+//!   turno é repetido numa conversa nova com o bloco de passagem (`consertar_bifurcacao`);
+//! - sem sessão, sem marca ou sem o arquivo (e no Gemini): uma sessão nova com o bloco de
+//!   passagem (as últimas mensagens da conversa copiada).
 //!
 //! O corte é sempre na borda de um turno: bifurcar numa resposta leva o turno dela inteiro, e
 //! bifurcar numa mensagem sua leva tudo o que veio antes (o texto dela vai para a caixa do chat
@@ -142,6 +150,44 @@ fn custo_visto(chat: &Chat) -> Option<f64> {
     chat.custo_da_sessao.as_ref().filter(|(sessao, _)| *sessao == chat.sessao).map(|(_, visto)| *visto)
 }
 
+/// A mensagem que abriu um turno do Codex passa a guardar o id dele: a marca provisória (o uuid
+/// com que ela entrou na conversa) vira `modelo::marca_do_codex(turno)`. Diz se achou a mensagem.
+pub(super) fn anotar_turno_do_codex(itens: &mut [Item], provisoria: &str, turno: &str) -> bool {
+    let achada = itens.iter_mut().rev().find_map(|item| match item {
+        Item::Usuario { marca: Some(marca), .. } if marca == provisoria => Some(marca),
+        _ => None,
+    });
+    match achada {
+        Some(marca) => {
+            *marca = crate::modelo::marca_do_codex(turno);
+            true
+        }
+        None => false,
+    }
+}
+
+/// De onde o Codex continua com a conversa até o item `fim` (fora): a conversa dele (a do chat ou,
+/// antes do primeiro turno de uma cópia, a de origem dela) e o turno da mensagem do ponto, que vai
+/// no `beforeTurnId` do `thread/fork` (`None` no ponto: a conversa inteira). `None` quando não há
+/// conversa ou a mensagem não tem o id do turno (de antes disto, a que não chegou a começar, a do
+/// Claude numa dupla): aí vale o bloco de passagem.
+pub(super) fn ponto_no_codex(chat: &Chat, fim: usize) -> Option<Bifurcacao> {
+    let (sessao, ate_de_agora) = if chat.sessao_criada {
+        (chat.sessao.clone(), None)
+    } else {
+        let pendente = chat.bifurcado_de.as_ref()?;
+        (pendente.sessao.clone(), pendente.ate.clone())
+    };
+    if fim >= chat.itens.len() {
+        return Some(Bifurcacao { sessao, ate: ate_de_agora, correcao: false });
+    }
+    let Item::Usuario { marca: Some(marca), .. } = &chat.itens[fim] else {
+        return None;
+    };
+    let turno = crate::modelo::turno_do_codex(marca)?;
+    Some(Bifurcacao { sessao, ate: Some(turno.to_string()), correcao: false })
+}
+
 /// O ponto de corte lido do arquivo da sessão.
 fn ponto_no_arquivo(arquivo: &Path, marca: &str) -> Option<String> {
     let leitor = std::io::BufReader::new(std::fs::File::open(arquivo).ok()?);
@@ -154,8 +200,10 @@ impl Motor {
     /// é o fim da conversa). A sessão é a do chat ou, antes do primeiro turno de um chat que já
     /// espera uma cópia (bifurcado ou corrigido há pouco), a de origem dessa cópia.
     fn origem_da_bifurcacao(&self, chat: &Chat, fim: usize) -> Option<Bifurcacao> {
-        if chat.agente != Agente::Claude {
-            return None;
+        match chat.agente {
+            Agente::Claude => {}
+            Agente::Codex => return ponto_no_codex(chat, fim),
+            Agente::Gemini => return None,
         }
         let (sessao, ate_de_agora) = if chat.sessao_criada {
             (chat.sessao.clone(), None)
@@ -253,7 +301,8 @@ impl Motor {
         let Some(chat) = self.chat_gravado(chat_id) else {
             return false;
         };
-        if chat.bifurcado_de.is_none() || chat.sessao_criada || !(erro.contains(SEM_O_PONTO) || erro.contains(SEM_A_SESSAO)) {
+        let sem_o_ponto = [SEM_O_PONTO, SEM_A_SESSAO, crate::agente_codex::servidor::FORK_RECUSADO].iter().any(|e| erro.contains(e));
+        if chat.bifurcado_de.is_none() || chat.sessao_criada || !sem_o_ponto {
             return false;
         }
         let Some((_, mensagens)) = self.ultima_entrada.get(chat_id).cloned() else {
@@ -347,6 +396,49 @@ mod testes {
         let sessao = novo.sessao.clone();
         assert!(!sessao_depois_da_correcao(&mut novo, None));
         assert_eq!((novo.sessao.as_str(), novo.sessao_criada), (sessao.as_str(), false));
+    }
+
+    #[test]
+    fn a_mensagem_do_codex_guarda_o_id_do_turno_que_abriu() {
+        let mut itens = vec![usuario("um", Some("codex:t1")), assistente("ok"), usuario("dois", Some("uuid-provisorio")), usuario("dirigida", None)];
+        assert!(anotar_turno_do_codex(&mut itens, "uuid-provisorio", "t2"));
+        let marcas: Vec<Option<String>> = itens
+            .iter()
+            .map(|i| match i {
+                Item::Usuario { marca, .. } => marca.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(marcas, [Some("codex:t1".into()), None, Some("codex:t2".into()), None]);
+        assert!(!anotar_turno_do_codex(&mut itens, "uuid-provisorio", "t3"), "uma vez só");
+    }
+
+    /// O corte exato do Codex: o turno da mensagem do ponto (o `beforeTurnId`), na conversa do chat.
+    #[test]
+    fn o_codex_corta_a_conversa_no_turno_da_mensagem() {
+        let mut chat = Chat::novo("c".into(), "t", PathBuf::from("/p/loja"));
+        chat.agente = crate::modelo::Agente::Codex;
+        chat.itens = vec![usuario("um", Some("codex:t1")), assistente("r1"), usuario("dois", Some("codex:t2")), assistente("r2")];
+        assert_eq!(ponto_no_codex(&chat, 2), None, "sem conversa ainda");
+        (chat.sessao, chat.sessao_criada) = ("thread-1".into(), true);
+        let ponto = |ate: Option<&str>| Some(Bifurcacao { sessao: "thread-1".into(), ate: ate.map(str::to_string), correcao: false });
+        assert_eq!(ponto_no_codex(&chat, 2), ponto(Some("t2")));
+        // A primeira também tem ponto (o Codex corta antes do primeiro turno: a conversa vazia).
+        assert_eq!(ponto_no_codex(&chat, 0), ponto(Some("t1")));
+        // No fim da conversa: ela inteira.
+        assert_eq!(ponto_no_codex(&chat, 4), ponto(None));
+        // A mensagem sem o id do turno (provisória, de antes disto, do Claude na dupla): a passagem.
+        chat.itens[2] = usuario("dois", Some("2f1c-uuid-provisorio"));
+        assert_eq!(ponto_no_codex(&chat, 2), None);
+        chat.itens[2] = usuario("dois", None);
+        assert_eq!(ponto_no_codex(&chat, 2), None);
+        // Corrigida a segunda há pouco (ela e a resposta saíram), ainda sem turno novo: a cópia
+        // sai da conversa de origem, e o fim dela é o corte que já esperava.
+        chat.itens.truncate(2);
+        (chat.sessao, chat.sessao_criada) = ("nova".into(), false);
+        chat.bifurcado_de = Some(Bifurcacao { sessao: "thread-1".into(), ate: Some("t2".into()), correcao: true });
+        assert_eq!(ponto_no_codex(&chat, 0), ponto(Some("t1")));
+        assert_eq!(ponto_no_codex(&chat, 2), ponto(Some("t2")));
     }
 
     #[test]

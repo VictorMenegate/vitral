@@ -87,7 +87,8 @@ componentes do GPUI Kit.
   `thread/compact/start` (medido no 0.169.0: responde `{}` e abre um turno com o item
   `contextCompaction`, que vira o "Compactando…" e o marco, como no Claude; o texto depois dele
   não vai, o Codex não aceita foco); o `/review` como `review/start` (sem texto, as mudanças sem
-  commit; com texto, o que ele pede; o texto do item `exitedReviewMode` é a resposta); e cada
+  commit; com texto, o que ele pede; o texto do item `exitedReviewMode` é a resposta, e o 0.169.0
+  manda o mesmo texto numa mensagem do agente, que não entra de novo); e cada
   skill da pasta (o `skills/list`, pedido em todo turno) é um "/nome", que vai como a entrada
   `skill` com o arquivo dela e o texto "$nome …", como o Codex faz. A mensagem com barra espera a
   lista; a lista que falha não para o turno. O `Inicio` leva a lista (`compact`, `review` e as
@@ -107,6 +108,11 @@ componentes do GPUI Kit.
   "Concluiu: … · Começou: …") saem como no Claude. Conferido só pelo schema e pelo Codex de
   mentira: nos turnos de verdade do 0.169.0 (gpt-6-luna e gpt-6.2-sol) o modelo disse que o
   `update_plan` não estava disponível, e nenhum plano chegou.
+  **Conferir com o Codex de verdade:** `cargo-vez.sh test -- --ignored --nocapture
+  codex_de_verdade` (em `src/claude.rs`) roda quatro turnos curtos numa pasta nova em /tmp, pelo
+  mesmo `Processo` dos chats, e gasta o plano do Codex: no Manual, o pedido da edição (permitido) e
+  o do comando (negado); o `/compact`; a cópia antes do primeiro turno; e o `/review`. Passou no
+  0.169.0 com o gpt-6.2-sol em 24/11/2026.
   O que ainda muda num chat do Codex: não há conta nem custo em dólar, e parar é pelo
   `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
@@ -194,11 +200,13 @@ componentes do GPUI Kit.
   --fork-session --session-id <nova> --resume-session-at <uuid>`, o mesmo corte do "Continuar
   daqui em outro chat"; `Bifurcacao::correcao`, `bifurcar::sessao_depois_da_correcao`). O agente
   fica com o contexto exato do que veio antes, e o começo da conversa é o mesmo que o Claude Code
-  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. Quando o ponto não é
-  achado no arquivo da sessão (Codex, conversa de antes das marcas, a primeira mensagem da
-  sessão, mensagem dirigida ao turno), vale o caminho de antes: sessão vazia com o bloco de
-  passagem (`MotivoPassagem::Reenvio`); se o Claude Code recusar o corte, o turno é repetido
-  assim, com um aviso na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
+  já tinha mandado, em vez de um resumo de dez mensagens relido do zero. No Codex o corte é o
+  `thread/fork` da conversa com o `beforeTurnId` do turno que a mensagem abriu (ver o "Continuar
+  daqui em outro chat"). Quando o ponto não é achado (no Claude, no arquivo da sessão: conversa de
+  antes das marcas, a primeira mensagem da sessão, mensagem dirigida ao turno; no Codex, a
+  mensagem sem o id do turno), vale o caminho de antes: sessão vazia com o bloco de passagem
+  (`MotivoPassagem::Reenvio`); se o agente recusar o corte, o turno é repetido assim, com um aviso
+  na conversa. Corrigir duas vezes seguidas, antes de mandar, corta de novo
   na sessão de origem. A cópia de uma sessão traz o custo acumulado da original (o Claude Code
   restaura o `cost-state` dela, lido no binário da 2.1.325): o chat leva o último total visto
   para a sessão nova, e o `somar_custo` soma só o que crescer. A pergunta antes de corrigir só
@@ -218,8 +226,19 @@ componentes do GPUI Kit.
   resumo. O uuid é o da última entrada do agente ou do usuário antes da mensagem que abre o turno
   seguinte, achado no arquivo da sessão subindo a cadeia de `parentUuid` a partir da marca dela
   (`motor/bifurcar.rs`, `ponto_de_corte`); o ponto fica em `Chat.bifurcado_de` até a sessão nova
-  nascer. No Codex, sem sessão, sem marca (conversa antiga, mensagem dirigida ao turno) ou sem o
-  ponto no arquivo, o chat novo começa numa sessão nova com o bloco de passagem
+  nascer. No Codex (24/11/2026) o corte é exato também: o primeiro turno abre com o
+  `thread/fork` da conversa de origem e o `beforeTurnId` do turno que a mensagem do ponto abriu
+  (`bifurcar::ponto_no_codex`, `agente_codex::abertura`), que é experimental no 0.169.0 (o
+  `initialize` liga a `experimentalApi`, como o Paseo faz). A mensagem sua que abre um turno do
+  Codex guarda o id dele na marca (`modelo::marca_do_codex`, "codex:<id>"): ela entra na conversa
+  com um uuid provisório, e o `turn/started` (`Evento::TurnoDoAgente`) o troca pelo id. O fork não
+  herda a configuração: a pasta, o modelo, as instruções, o sandbox e a política vão de novo, com
+  `excludeTurns` (a resposta não traz o histórico inteiro). Medido no 0.169.0: a cópia nasce com
+  outro id e `forkedFromId`; num turno de verdade, a cópia feita antes do primeiro turno respondeu
+  "Não." a "algum arquivo foi pedido antes?"; um turno que não está na conversa dá
+  `-32600 turn not found`, e aí o turno se repete numa conversa nova com o bloco de passagem
+  (`servidor::FORK_RECUSADO`, `consertar_bifurcacao`). No Gemini, sem sessão, sem marca ou sem o
+  ponto, o chat novo começa numa sessão nova com o bloco de passagem
   (`MotivoPassagem::Bifurcou`). A flag `--resume-session-at` está no Claude Code 2.1.325 fora do
   `--help`. Medido em 18/11/2026 numa sessão de verdade, abrindo o processo sem mandar mensagem
   (não gasta o plano, como o `rewind_files`): ela aceita o uuid de qualquer entrada da cadeia (do
@@ -866,7 +885,7 @@ ou imagem…**, **Arquivo da pasta…** e **Conversa anterior como contexto…**
 com texto na caixa, **mandar** (**Mandar depois, na fila**, com o turno rodando e o Enter entrando
 nele; **Mandar quando as 5 h renovarem**; **Mandar às…**; **Perguntar também ao Codex**, menos
 para um comando de barra); e **a conversa** (**Comandos de barra**, **Compactar a conversa** numa
-conversa do Claude que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
+conversa do Claude ou do Codex que já tem sessão, **Agentes desta conversa** quando ela abriu algum, **Sessão
 nova** com o chat parado, **Fixar**). O que não se aplica agora sai, em vez de ficar cinza. Na
 caixa média, o **…** não aparece, como antes. Clicar em qualquer ponto vazio da caixa (o vão entre o texto e os chips, a margem,
 o espaço entre os chips, a linha de estado) mantém o cursor nela. Com a conversa rodando, ele vira
@@ -2579,7 +2598,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[passos A; B; C]` encena o plano (`turn/plan/updated`), um passo a cada ferramenta; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server, e o uso vem num `thread/tokenUsage/updated` depois de cada item; `[passos A; B; C]` encena o plano (`turn/plan/updated`), um passo a cada ferramenta; as conversas ficam em `$XDG_STATE_HOME/codex-falso-conversas.json`, a resposta diz de quais mensagens de antes ele lembra e o `thread/fork` corta no `beforeTurnId` (o turno que não existe dá `turn not found`); `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`

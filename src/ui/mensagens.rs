@@ -1252,8 +1252,11 @@ impl Janela {
                 let reforco = Reforco { ultrathink: *ultrathink, ultracode: *ultracode, depois: false };
                 let realce = contexto.busca.realce(indice, Campo::Texto);
                 let editavel = contexto.editavel.is_some_and(|desde| indice >= desde);
-                // Só o Claude Code guarda o antes dos arquivos por mensagem.
-                let marca = marca.as_deref().filter(|_| contexto.chat.agente == crate::modelo::Agente::Claude);
+                // Só o Claude Code guarda o antes dos arquivos por mensagem (a marca de um turno
+                // do Codex, numa dupla, não é dele).
+                let marca = marca
+                    .as_deref()
+                    .filter(|m| contexto.chat.agente == crate::modelo::Agente::Claude && crate::modelo::turno_do_codex(m).is_none());
                 (Bloco::Balao, self.balao_usuario(contexto, &chave, texto, anexos, reforco, item.em(), realce, editavel, marca, window, cx))
             }
             Item::Assistente { texto, .. } => {

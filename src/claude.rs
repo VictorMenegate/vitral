@@ -303,6 +303,9 @@ pub enum Evento {
     Comandos(Vec<(String, String)>),
     /// A conversa do lado do agente ganhou este id (o `thread_id` do Codex): é ele que retoma.
     Sessao(String),
+    /// O turno do Codex que a mensagem do usuário abriu começou, com este id: é o ponto exato
+    /// (`beforeTurnId`) para corrigir a mensagem ou continuar dali em outro chat.
+    TurnoDoAgente(String),
     /// Tokens que a conversa ocupa no contexto agora.
     Contexto(u64),
     TextoParcial(String),
@@ -598,9 +601,9 @@ impl Processo {
             crate::modelo::Agente::Codex => match entrada.take() {
                 Some(stdin) => {
                     let canal = Arc::new(Mutex::new(crate::agente_codex::servidor::Canal::novo(Box::new(stdin))));
-                    let mut protocolo = crate::agente_codex::servidor::Protocolo::novo(
+                    let mut protocolo = crate::agente_codex::servidor::Protocolo::com_abertura(
                         canal.clone(),
-                        crate::agente_codex::parametros_servidor(opcoes),
+                        crate::agente_codex::abertura(opcoes),
                         crate::agente_codex::servidor::entrada(mensagem.texto, mensagem.imagens),
                         opcoes.esforco.clone(),
                     );
@@ -4508,5 +4511,129 @@ mod testes_das_imagens_do_resultado {
         assert!(!gravado.contains("(image/png)"));
         assert!(gravado.len() < 1500, "{} bytes", gravado.len());
         let _ = std::fs::remove_dir_all(&raiz);
+    }
+}
+
+/// O Codex de verdade, pelo mesmo `Processo` dos chats: manual, com o Codex instalado e logado
+/// (`cargo test -- --ignored --nocapture codex_de_verdade`). Quatro turnos curtos numa pasta nova
+/// em /tmp (gasta o plano do Codex): o pedido de edição e o de comando no Manual, o `/compact`, a
+/// cópia com o `thread/fork` antes do primeiro turno e o `/review`. O modelo é o
+/// `VITRAL_CODEX_MODELO` (gpt-6.2-sol se faltar), com esforço baixo.
+#[cfg(test)]
+mod testes_do_codex_de_verdade {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[derive(Default, Debug)]
+    struct Visto {
+        linhas: Vec<String>,
+        sessao: Option<String>,
+        turnos: Vec<String>,
+        fim: Option<(bool, String, Option<u64>)>,
+    }
+
+    fn opcoes(pasta: &Path, permissao: &str) -> Opcoes {
+        Opcoes {
+            agente: crate::modelo::Agente::Codex,
+            cwd: pasta.to_path_buf(),
+            sessao: String::new(),
+            retomar: false,
+            bifurcar: None,
+            cortar_em: None,
+            modelo: Some(std::env::var("VITRAL_CODEX_MODELO").unwrap_or_else(|_| "gpt-6.2-sol".into())),
+            permissao: permissao.into(),
+            prompt_sistema: "Responda em português, numa linha só.".into(),
+            prompt_arquivo: None,
+            ferramentas: None,
+            url_mcp: String::new(),
+            bloqueadas: Vec::new(),
+            so_mcp_vitral: true,
+            esforco: Some("low".into()),
+            ultracode: false,
+            pasta_conta: None,
+            memoria_nativa: false,
+            sugestoes: false,
+            mcp_da_equipe: None,
+            eventos_de_hook: false,
+            raciocinio_resumido: false,
+        }
+    }
+
+    /// Um turno inteiro; `permite` responde a cada pedido de permissão pela ferramenta.
+    fn rodar(opcoes: &Opcoes, texto: &str, permite: &dyn Fn(&str) -> bool) -> Visto {
+        let (envia, recebe) = mpsc::channel();
+        let mensagem = Mensagem { texto, imagens: &[], marca: None };
+        let _processo = Processo::iniciar(opcoes, mensagem, move |e| {
+            let _ = envia.send(e);
+        })
+        .expect("o Codex não abriu");
+        let mut visto = Visto::default();
+        let limite = Instant::now() + Duration::from_secs(300);
+        while let Ok(evento) = recebe.recv_timeout(limite.saturating_duration_since(Instant::now())) {
+            match evento {
+                Evento::Permissao { ferramenta, entrada, resposta, chamada } => {
+                    let sim = permite(&ferramenta);
+                    let alvo = entrada["command"].as_str().or(entrada["file_path"].as_str()).unwrap_or_default().to_string();
+                    visto.linhas.push(format!("pedido {ferramenta} {alvo} ({}; chamada {chamada:?})", if sim { "permitiu" } else { "negou" }));
+                    let corpo = if sim { json!({"behavior": "allow"}) } else { json!({"behavior": "deny", "message": "não"}) };
+                    let _ = resposta.try_send(crate::mcp::Resposta::ok(corpo.to_string()));
+                }
+                Evento::PermissaoRetirada => visto.linhas.push("pedido retirado".into()),
+                Evento::Sessao(s) => visto.sessao = Some(s),
+                Evento::TurnoDoAgente(t) => visto.turnos.push(t),
+                Evento::Inicio { modelo, comandos, .. } => visto.linhas.push(format!("início {modelo}, comandos {}", comandos.join(" "))),
+                Evento::Contexto(n) => visto.linhas.push(format!("contexto {n}")),
+                Evento::Gasto(t) => visto.linhas.push(format!("gasto {t:?}")),
+                Evento::Compactando(sim) => visto.linhas.push(format!("compactando {sim}")),
+                Evento::Compactou { manual, antes } => visto.linhas.push(format!("compactou manual={manual} antes={antes:?}")),
+                Evento::Ferramenta { nome, entrada, .. } => visto.linhas.push(format!("ferramenta {nome} {}", crate::claude::resumo_ferramenta(&nome, &entrada))),
+                Evento::ResultadoFerramenta { erro, .. } => visto.linhas.push(format!("resultado erro={erro}")),
+                Evento::Texto(t) => visto.linhas.push(format!("texto {t}")),
+                Evento::Fim { erro, texto, janela, .. } => visto.fim = Some((erro, texto, janela)),
+                Evento::Saiu { .. } => break,
+                _ => {}
+            }
+        }
+        eprintln!("=== {texto}\n{visto:#?}");
+        visto
+    }
+
+    #[test]
+    #[ignore]
+    fn codex_de_verdade() {
+        let pasta = std::env::temp_dir().join(format!("vitral-codex-de-verdade-{}", crate::modelo::novo_id()));
+        std::fs::create_dir_all(&pasta).unwrap();
+        let git = |args: &[&str]| crate::git::novo_git().args(args).current_dir(&pasta).output().unwrap();
+        git(&["init", "-q"]);
+        // 1. Manual: a edição e o comando pedem pelo cartão; a edição passa e o comando não.
+        let a = rodar(
+            &opcoes(&pasta, "manual"),
+            "Crie o arquivo a.txt com o conteúdo oi usando apply_patch e depois rode exatamente o comando: touch b.txt",
+            &|ferramenta| ferramenta != "Bash",
+        );
+        assert!(a.linhas.iter().any(|l| l.starts_with("pedido Write") || l.starts_with("pedido Edit")), "{a:#?}");
+        assert!(a.linhas.iter().any(|l| l.starts_with("pedido Bash")), "{a:#?}");
+        assert!(pasta.join("a.txt").is_file() && !pasta.join("b.txt").exists());
+        assert!(a.linhas.iter().any(|l| l.starts_with("contexto")) && a.linhas.iter().any(|l| l.starts_with("gasto")), "{a:#?}");
+        assert!(matches!(a.fim, Some((false, _, Some(_)))), "{a:#?}");
+        let (conversa, primeiro) = (a.sessao.clone().unwrap(), a.turnos[0].clone());
+        // 2. O /compact da conversa.
+        let mut o = opcoes(&pasta, "manual");
+        (o.sessao, o.retomar) = (conversa.clone(), true);
+        let b = rodar(&o, "/compact", &|_| false);
+        assert!(b.linhas.iter().any(|l| l == "compactou manual=true antes=None"), "{b:#?}");
+        assert!(matches!(b.fim, Some((false, _, _))), "{b:#?}");
+        // 3. A cópia antes do primeiro turno: outra conversa, sem o pedido do arquivo.
+        let mut o = opcoes(&pasta, "plan");
+        (o.bifurcar, o.cortar_em) = (Some(conversa.clone()), Some(primeiro));
+        let c = rodar(&o, "Algum arquivo foi pedido nesta conversa antes desta mensagem? Responda sim ou não.", &|_| false);
+        assert!(c.sessao.as_ref().is_some_and(|s| *s != conversa), "{c:#?}");
+        assert!(matches!(c.fim, Some((false, _, _))), "{c:#?}");
+        // 4. O /review com o que pedir.
+        let mut o = opcoes(&pasta, "plan");
+        (o.sessao, o.retomar) = (conversa, true);
+        let d = rodar(&o, "/review veja só se a.txt contém oi", &|_| false);
+        assert!(matches!(d.fim, Some((false, _, _))), "{d:#?}");
+        let _ = std::fs::remove_dir_all(&pasta);
     }
 }

@@ -92,6 +92,11 @@ impl Canal {
     }
 }
 
+/// O começo do erro de um `thread/fork` recusado (o turno do corte não está na conversa de
+/// origem, ou ela sumiu): o motor reconhece e repete o turno numa conversa nova, com o resumo
+/// (`Motor::consertar_bifurcacao`).
+pub const FORK_RECUSADO: &str = "O Codex não achou o ponto da conversa";
+
 /// O id de um pedido do JSON-RPC em texto (o Codex manda números; o `requestId` do
 /// `serverRequest/resolved` vem no mesmo tipo).
 fn chave_do_id(id: &Value) -> String {
@@ -125,6 +130,8 @@ fn pedido_de(input: &[Value]) -> Pedido {
 
 pub struct Protocolo {
     canal: Arc<Mutex<Canal>>,
+    /// `thread/start`, `thread/resume` ou `thread/fork` (`agente_codex::abertura`).
+    metodo: &'static str,
     parametros: Value,
     input: Vec<Value>,
     esforco: Option<String>,
@@ -147,6 +154,8 @@ pub struct Protocolo {
     janela: Option<u64>,
     /// Quantas vezes o plano mudou neste turno (o id de cada linha da trilha).
     planos: usize,
+    /// O texto do `/review` que já entrou na conversa (pelo `exitedReviewMode`).
+    revisao_dita: Option<String>,
 }
 
 /// O plano do Codex no formato da entrada do TodoWrite (`todos`: `content`, `activeForm`,
@@ -170,11 +179,17 @@ fn partes_do_uso(uso: &Value) -> [u64; 4] {
 }
 
 impl Protocolo {
+    /// Abre com o método e os parâmetros de `agente_codex::abertura`.
+    pub fn com_abertura(canal: Arc<Mutex<Canal>>, (metodo, parametros): (&'static str, Value), input: Vec<Value>, esforco: Option<String>) -> Self {
+        Self { metodo, ..Self::novo(canal, parametros, input, esforco) }
+    }
+
     pub fn novo(canal: Arc<Mutex<Canal>>, parametros: Value, input: Vec<Value>, esforco: Option<String>) -> Self {
         let pedido = pedido_de(&input);
-        Self { canal, parametros, input, esforco, leitor: super::Leitor::default(), modelo: String::new(), fim: None,
+        let metodo = if parametros.get("threadId").is_some() { "thread/resume" } else { "thread/start" };
+        Self { canal, metodo, parametros, input, esforco, leitor: super::Leitor::default(), modelo: String::new(), fim: None,
             mudancas: HashMap::new(), pedido, skills: None, esperando_skills: false, tokens_antes: None, tokens_agora: None,
-            janela: None, planos: 0 }
+            janela: None, planos: 0, revisao_dita: None }
     }
 
     /// Os tokens que o turno somou à conversa (`None` sem uso medido nele).
@@ -263,14 +278,15 @@ impl Protocolo {
         } else if let Some(id) = v["id"].as_str() {
             if let Some(texto) = canal.pendentes.remove(id) {
                 eventos.push(Evento::DirecaoConfirmada { texto, aceita: v.get("error").is_none() });
+            } else if id == "vitral-thread" && self.metodo == "thread/fork" && let Some(erro) = v.get("error") {
+                return Err(io::Error::other(format!("{FORK_RECUSADO}: {}", erro["message"].as_str().unwrap_or("recusado"))));
             } else if v.get("error").is_some() && id != "vitral-interrupt" {
                 return Err(io::Error::other(v["error"]["message"].as_str().unwrap_or("Pedido recusado")));
             } else {
                 match id {
                     "vitral-init" => {
                         canal.escrever(json!({"method":"initialized","params":{}}))?;
-                        let metodo = if self.parametros.get("threadId").is_some() { "thread/resume" } else { "thread/start" };
-                        canal.escrever(json!({"id":"vitral-thread", "method":metodo, "params":self.parametros}))?;
+                        canal.escrever(json!({"id":"vitral-thread", "method":self.metodo, "params":self.parametros}))?;
                         // As skills da pasta: o menu "/" e a mensagem que chama uma.
                         let pasta = self.parametros["cwd"].clone();
                         canal.escrever(json!({"id":"vitral-skills", "method":"skills/list", "params":{"cwds":[pasta]}}))?;
@@ -292,8 +308,11 @@ impl Protocolo {
             let p = &v["params"];
             match v["method"].as_str().unwrap_or_default() {
                 "turn/started" => {
-                    if let Some(id) = p["turn"]["id"].as_str() { canal.ativar(id)?; }
                     eventos.push(Evento::Inicio { modelo: self.modelo.clone(), comandos: self.comandos(), versao: None, fluxos: None });
+                    if let Some(id) = p["turn"]["id"].as_str() {
+                        canal.ativar(id)?;
+                        eventos.push(Evento::TurnoDoAgente(id.to_string()));
+                    }
                 }
                 "item/agentMessage/delta" => eventos.push(Evento::TextoParcial(p["delta"].as_str().unwrap_or_default().to_string())),
                 "item/started" | "item/completed" => {
@@ -313,14 +332,20 @@ impl Protocolo {
                             eventos.push(Evento::Compactou { manual: self.pedido == Pedido::Compactar, antes: None });
                         }
                         "contextCompaction" => eventos.push(Evento::Compactando(true)),
-                        // O fim do `/review`: o texto da revisão é a resposta do turno.
+                        // O fim do `/review`: o texto da revisão é a resposta do turno. O 0.169.0 manda
+                        // o mesmo texto também numa mensagem do agente (medido em 24/11/2026): vai
+                        // uma vez só, venha antes ou depois.
                         "exitedReviewMode" if terminou => {
                             let revisao = item["review"].as_str().unwrap_or_default().to_string();
-                            if !revisao.trim().is_empty() {
+                            if !revisao.trim().is_empty() && self.leitor.ultima_fala.trim() != revisao.trim() {
                                 self.leitor.ultima_fala = revisao.clone();
-                                eventos.push(Evento::Texto(revisao));
+                                eventos.push(Evento::Texto(revisao.clone()));
                             }
+                            self.revisao_dita = Some(revisao);
                         }
+                        "agentMessage"
+                            if terminou
+                                && self.revisao_dita.as_deref().is_some_and(|r| r.trim() == item["text"].as_str().unwrap_or_default().trim()) => {}
                         _ => {
                             let normal = normalizar(item);
                             eventos.extend(self.leitor.linha(&json!({"type":if terminou {"item.completed"} else {"item.started"}, "item":normal})));
@@ -713,6 +738,28 @@ mod testes {
         assert!(matches!(fim.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto == "O frete ignora o CEP."));
     }
 
+    /// No `/review` de verdade (0.169.0, 24/11/2026) o texto da revisão vem duas vezes: numa
+    /// mensagem do agente e no `exitedReviewMode`. A conversa mostra uma vez só, venha em que
+    /// ordem vier.
+    #[test]
+    fn a_revisao_aparece_uma_vez_so() {
+        let mensagem = json!({"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m","text":"Sim, a.txt contém oi."}}});
+        let saida = json!({"method":"item/completed","params":{"item":{"type":"exitedReviewMode","id":"rv","review":"Sim, a.txt contém oi."}}});
+        for ordem in [[&mensagem, &saida], [&saida, &mensagem]] {
+            let (mut p, _) = retomado_com("/review", json!([]));
+            p.linha(&json!({"method":"turn/started","params":{"turn":{"id":"t"}}}));
+            let textos: Vec<String> = ordem
+                .into_iter()
+                .flat_map(|v| p.linha(v))
+                .filter_map(|e| match e {
+                    Evento::Texto(t) => Some(t),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(textos, ["Sim, a.txt contém oi."]);
+        }
+    }
+
     /// As skills que o Codex oferece na pasta (`skills/list`, conferido no 0.169.0) são comandos
     /// de barra: "/nome" vai como a entrada `skill` com o arquivo dela e o texto "$nome …", como o
     /// Codex faz quando se escolhe a skill. A lista vai no `Inicio`, para o menu "/".
@@ -839,6 +886,50 @@ mod testes {
         assert_eq!(frases[1].as_deref(), Some("Concluiu: Ler o carrinho · Começou: Corrigir o frete"));
         let estados: Vec<EstadoDoPasso> = passos.lista().iter().map(|p| p.estado).collect();
         assert_eq!(estados, [EstadoDoPasso::Feito, EstadoDoPasso::Fazendo, EstadoDoPasso::Falta]);
+    }
+
+    /// A cópia abre com o `thread/fork` (o `beforeTurnId` e a configuração vêm do motor), e a
+    /// conversa nova que ele devolve é a sessão do chat daí em diante.
+    #[test]
+    fn a_copia_abre_com_o_fork_e_a_conversa_nova_e_a_do_chat() {
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let parametros = json!({"threadId":"origem","beforeTurnId":"t2","cwd":"/p","approvalPolicy":"untrusted"});
+        let mut p = Protocolo::com_abertura(canal, ("thread/fork", parametros.clone()), entrada("de novo", &[]), None);
+        p.iniciar().unwrap();
+        p.linha(&json!({"id":"vitral-init","result":{}}));
+        let fork = pedidos(&g).into_iter().find(|v| v["id"] == "vitral-thread").expect("a abertura");
+        assert_eq!((fork["method"].as_str(), &fork["params"]), (Some("thread/fork"), &parametros));
+        let eventos = p.linha(&json!({"id":"vitral-thread","result":{"thread":{"id":"copia","forkedFromId":"origem"},"model":"gpt-teste"}}));
+        assert!(matches!(eventos.as_slice(), [Evento::Sessao(s)] if s == "copia"), "{eventos:?}");
+        let turno = pedidos(&g).into_iter().find(|v| v["method"] == "turn/start").expect("turn/start");
+        assert_eq!(turno["params"]["threadId"], "copia");
+    }
+
+    /// O fork recusado (medido no 0.169.0: `-32600 "turn not found: …"`) termina o turno com um
+    /// erro que o motor reconhece, para repetir numa conversa nova com o resumo.
+    #[test]
+    fn o_fork_recusado_diz_que_nao_achou_o_ponto() {
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let mut p = Protocolo::com_abertura(canal, ("thread/fork", json!({"threadId":"origem","beforeTurnId":"x"})), entrada("oi", &[]), None);
+        p.iniciar().unwrap();
+        p.linha(&json!({"id":"vitral-init","result":{}}));
+        let eventos = p.linha(&json!({"id":"vitral-thread","error":{"code":-32600,"message":"turn not found: x"}}));
+        assert!(matches!(eventos.as_slice(), [Evento::Fim { erro: true, texto, .. }] if texto.contains(FORK_RECUSADO) && texto.contains("turn not found")), "{eventos:?}");
+    }
+
+    /// O turno que começa diz o id dele: é o ponto da mensagem que o abriu.
+    #[test]
+    fn o_turno_que_comeca_diz_o_id_dele() {
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let mut p = Protocolo::novo(canal, json!({"cwd":"/p"}), entrada("oi", &[]), None);
+        p.iniciar().unwrap();
+        p.linha(&json!({"id":"vitral-init","result":{}}));
+        p.linha(&json!({"id":"vitral-thread","result":{"thread":{"id":"t1"}}}));
+        let eventos = p.linha(&json!({"method":"turn/started","params":{"threadId":"t1","turn":{"id":"01a2-turno","status":"inProgress","items":[]}}}));
+        assert!(eventos.iter().any(|e| matches!(e, Evento::TurnoDoAgente(t) if t == "01a2-turno")), "{eventos:?}");
     }
 
     #[test]
