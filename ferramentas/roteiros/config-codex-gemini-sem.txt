@@ -1,0 +1,11 @@
+# As partes Codex e Gemini sem os programas instalados (só o botão Instalar…), a 150%.
+#   SO_CLAUDE_FALSO=1 HOME=<pasta vazia> PATH=/usr/local/bin:/usr/bin:/bin bancada-isolada.sh <roteiro> prints/
+espera 9
+tecla Control_L+comma
+espera 2
+clique 288 550            # Codex
+espera 3
+print s1-codex-sem
+clique 288 601            # Gemini
+espera 3
+print s2-gemini-sem

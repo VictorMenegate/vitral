@@ -1,0 +1,40 @@
+# As ações das partes Codex e Gemini a 150%: a lista dos servidores MCP, a pergunta do Sair e o
+# Atualizar andando e respondendo (o Entrar abre o terminal fora da bancada).
+#   CODEX_FALSO_MCP=1 AGY_FALSO_MCP=1 VITRAL_AGENTES_PUBLICADOS="codex=0.171.0" \
+#     bancada-isolada.sh <este roteiro> prints/      (CODEX_FALSO_UPDATE_FALHA=1 mostra a falha)
+# Os cliques são os itens da coluna e os botões de cada parte; a resposta do Atualizar empurra as
+# linhas de baixo, então ela vem por último em cada parte.
+
+espera 9
+tecla Control_L+comma
+espera 2
+clique 288 550            # Codex
+espera 4
+print d0-codex            # "Há a 0.171.0. O Atualizar instala."
+clique 1340 507           # Ver… (servidores MCP)
+espera 3
+print d1-codex-mcp
+tecla Escape
+espera 1
+clique 1346 415           # Sair
+espera 1
+print d2-codex-sair       # a pergunta antes de derrubar os chats do Codex
+tecla Escape
+espera 1
+clique 1322 311           # Atualizar
+espera 1.5
+print d3-codex-atualizando   # o spinner, "Rodando o codex update…" e o botão parado
+espera 6
+print d4-codex-respondeu  # a resposta do comando e a versão relida
+clique 288 601            # Gemini
+espera 5
+clique 1340 483           # Ver… (servidores MCP)
+espera 3
+print d5-gemini-mcp
+tecla Escape
+espera 1
+clique 1322 299           # Atualizar
+espera 1.5
+print d6-gemini-atualizando
+espera 6
+print d7-gemini-respondeu

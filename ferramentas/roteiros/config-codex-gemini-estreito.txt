@@ -1,0 +1,13 @@
+# As partes Codex e Gemini no diálogo estreito (a coluna só com os ícones e o controle embaixo do
+# texto), a 150%.
+#   TELA=1300x1000 CODEX_FALSO_MCP=1 VITRAL_AGENTES_PUBLICADOS="codex=0.171.0" bancada-isolada.sh <roteiro> prints/
+espera 9
+tecla Control_L+comma
+espera 2
+print n0-aberto
+clique 65 543             # Codex
+espera 4
+print n1-codex
+clique 65 594             # Gemini
+espera 5
+print n2-gemini

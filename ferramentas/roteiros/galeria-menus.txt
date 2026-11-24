@@ -74,7 +74,13 @@ espera 2
 print 14b-configuracoes-claude-code
 clique 258 477
 espera 2
-print 14c-configuracoes-atualizacoes
+print 14c-configuracoes-codex
+clique 258 531
+espera 2
+print 14d-configuracoes-gemini
+clique 258 585
+espera 2
+print 14e-configuracoes-atualizacoes
 tecla Escape
 espera 1
 # Os itens do menu do logo (as posições são as do menu aberto com o zoom 1,6). Na janela da

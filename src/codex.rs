@@ -56,7 +56,7 @@ struct Linha {
 }
 
 /// Pasta do Codex: `$CODEX_HOME` ou `~/.codex`.
-fn raiz() -> Option<PathBuf> {
+pub(crate) fn raiz() -> Option<PathBuf> {
     match std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()) {
         Some(pasta) => Some(PathBuf::from(pasta)),
         None => Some(dirs::home_dir()?.join(".codex")),

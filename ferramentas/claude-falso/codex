@@ -113,6 +113,72 @@ def valor_de(args, chave):
     return next((args[i + 1] for i, a in enumerate(args[:-1]) if a == chave), None)
 
 
+def arquivo_de_estado(nome):
+    estado = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(estado, f"codex-falso-{nome}")
+
+
+def estado_de(nome):
+    try:
+        with open(arquivo_de_estado(nome), encoding="utf-8") as arq:
+            return arq.read().strip()
+    except OSError:
+        return None
+
+
+def gravar_estado(nome, valor):
+    try:
+        os.makedirs(os.path.dirname(arquivo_de_estado(nome)), exist_ok=True)
+        with open(arquivo_de_estado(nome), "w", encoding="utf-8") as arq:
+            arq.write(valor)
+    except OSError:
+        pass
+
+
+def login_status():
+    """`codex login status` como o 0.169.0: CODEX_FALSO_LOGIN = chatgpt (padrão), chave ou fora; o
+    `codex logout` falso grava "fora"."""
+    modo = estado_de("login") or os.environ.get("CODEX_FALSO_LOGIN", "chatgpt")
+    if modo == "fora":
+        print("Not logged in", file=sys.stderr)
+        return 1
+    print("Logged in using an API key - sk-proj-***abcd" if modo == "chave" else "Logged in using ChatGPT")
+
+
+def atualizar():
+    """`codex update` falso: leva CODEX_FALSO_UPDATE_SEGUNDOS (padrão 4); CODEX_FALSO_UPDATE_FALHA=1
+    falha; senão "instala" a 0.171.0 (a versão passa a ser essa)."""
+    time.sleep(float(os.environ.get("CODEX_FALSO_UPDATE_SEGUNDOS", "4")))
+    if os.environ.get("CODEX_FALSO_UPDATE_FALHA") == "1":
+        print("Error: could not reach the update server (os error 111)", file=sys.stderr)
+        return 1
+    antes = estado_de("versao") or os.environ.get("CODEX_FALSO_VERSAO", "0.169.0")
+    gravar_estado("versao", "0.171.0")
+    print(f"Updating Codex from {antes} to 0.171.0...")
+    print("Codex updated to 0.171.0")
+
+
+def mcp_list(json_):
+    """`codex mcp list [--json]`: vazio, ou dois servidores com CODEX_FALSO_MCP=1."""
+    servidores = []
+    if os.environ.get("CODEX_FALSO_MCP") == "1":
+        servidores = [
+            {"name": "docs", "enabled": True, "disabled_reason": None,
+             "transport": {"type": "stdio", "command": "docs-server", "args": ["--porta", "4000"], "env": {"CHAVE": "segredo"}, "env_vars": [], "cwd": None},
+             "startup_timeout_sec": None, "tool_timeout_sec": None, "auth_status": "unsupported"},
+            {"name": "figma", "enabled": False, "disabled_reason": None,
+             "transport": {"type": "streamable_http", "url": "https://mcp.figma.com/mcp?token=segredo", "bearer_token_env_var": None, "http_headers": None, "env_http_headers": None},
+             "startup_timeout_sec": None, "tool_timeout_sec": None, "auth_status": "not_logged_in"},
+        ]
+    if json_:
+        print(json.dumps(servidores, indent=2))
+    elif servidores:
+        for s in servidores:
+            print(s["name"])
+    else:
+        print("No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.")
+
+
 def servidor():
     """Mesmo JSON-RPC do app-server, com o stdin aberto e turn/steer durante a ferramenta."""
     thread = str(uuid.uuid4())
@@ -347,8 +413,18 @@ def main():
     args = sys.argv[1:]
     anotar(args)
     if args == ["--version"]:
-        print(f"codex-cli {os.environ.get('CODEX_FALSO_VERSAO', '0.169.0')}")
+        print(f"codex-cli {estado_de('versao') or os.environ.get('CODEX_FALSO_VERSAO', '0.169.0')}")
         return
+    if args[:2] == ["login", "status"]:
+        return login_status()
+    if args == ["logout"]:
+        gravar_estado("login", "fora")
+        print("Successfully logged out")
+        return
+    if args == ["update"]:
+        return atualizar()
+    if args[:2] == ["mcp", "list"]:
+        return mcp_list("--json" in args)
     if args[:2] == ["debug", "models"]:
         return catalogo()
     if args and args[0] == "app-server":

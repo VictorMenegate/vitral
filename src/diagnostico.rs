@@ -21,6 +21,7 @@ pub struct Entrada {
     pub sistema: String,
     pub claude: Option<String>,
     pub codex: Option<String>,
+    pub gemini: Option<String>,
     pub dados: PathBuf,
     pub config: PathBuf,
     pub cache: PathBuf,
@@ -169,6 +170,7 @@ pub fn texto(e: &Entrada) -> String {
     t.push_str(&format!("Sistema: {}\n", e.sistema));
     t.push_str(&format!("Claude Code: {}\n", ou(&e.claude, "não achei")));
     t.push_str(&format!("Codex: {}\n", ou(&e.codex, "não instalado")));
+    t.push_str(&format!("Gemini (agy): {}\n", ou(&e.gemini, "não instalado")));
     t.push_str(&format!("\nDados: {}\nConfiguração: {}\nCache: {}\nChats: {}\n", caminho(&e.dados), caminho(&e.config), caminho(&e.cache), e.chats));
     if !e.opcoes.is_empty() {
         t.push_str("\nOpções:\n");
@@ -278,6 +280,7 @@ mod testes {
             sistema: "Fedora Linux 44 · kernel 7.2.15 · wayland · GNOME".into(),
             claude: Some("2.1.328".into()),
             codex: None,
+            gemini: Some("1.5.16".into()),
             dados: "/home/victor/.local/share/vitral".into(),
             config: "/home/victor/.config/vitral".into(),
             cache: "/home/victor/.cache/vitral".into(),
@@ -292,6 +295,7 @@ mod testes {
             "Sistema: Fedora Linux 44",
             "Claude Code: 2.1.328",
             "Codex: não instalado",
+            "Gemini (agy): 1.5.16",
             "Dados: ~/.local/share/vitral",
             "Configuração: ~/.config/vitral",
             "Cache: ~/.cache/vitral",

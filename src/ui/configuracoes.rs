@@ -8,7 +8,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    Disableable as _, Icon, Size, Sizable as _,
+    Disableable as _, Size, Sizable as _,
     menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
     tooltip::{ManagedTooltipExt as _, Tooltip},
@@ -31,12 +31,13 @@ use super::{
 use crate::{
     atualizacao::{self, Acompanhando, Atualizacoes},
     claude::{self, Atualizacao, Versao},
-    modelo::Config,
+    modelo::{Agente, Config},
     motor::{self, Motor},
     tema::{Cores, Lucide, Tipo as _, esp, r, raio, tam},
     versoes_agentes::{self, Publicadas},
 };
 
+mod agentes_fora;
 mod instrucoes;
 pub(in crate::ui) mod perfis;
 
@@ -60,6 +61,23 @@ pub(super) struct LinhaDoClaude {
     pub espera: Option<String>,
 }
 
+/// Por que o Atualizar não dá para clicar agora (`None`: dá): ele já está rodando, ou há chats do
+/// agente trabalhando (a atualização troca o binário no disco).
+pub(super) fn espera_da_atualizacao(andando: bool, a_caminho: usize) -> Option<String> {
+    if andando {
+        Some("A atualização está rodando".to_string())
+    } else if a_caminho > 0 {
+        let (quantos, eles) = if a_caminho == 1 {
+            ("1 chat está trabalhando".to_string(), "ele terminar")
+        } else {
+            (format!("{a_caminho} chats estão trabalhando"), "eles terminarem")
+        };
+        Some(format!("{quantos} ou com mensagem na fila: o Atualizar espera {eles}"))
+    } else {
+        None
+    }
+}
+
 /// A linha do Claude Code: a versão que os turnos abrem e o estado do `claude update`. O botão
 /// espera os chats porque a atualização troca o binário no disco (e no Windows ela nem roda com o
 /// `claude.exe` em uso); quem está no meio de um turno continua no processo que já abriu.
@@ -79,18 +97,7 @@ pub(super) fn linha_do_claude(
     if resposta.is_some_and(claude::instalou_versao_nova) {
         linhas.push("A versão nova vale no próximo turno; o Vitral não precisa reiniciar.".into());
     }
-    let espera = if andando {
-        Some("A atualização está rodando".to_string())
-    } else if a_caminho > 0 {
-        let (quantos, eles) = if a_caminho == 1 {
-            ("1 chat está trabalhando".to_string(), "ele terminar")
-        } else {
-            (format!("{a_caminho} chats estão trabalhando"), "eles terminarem")
-        };
-        Some(format!("{quantos} ou com mensagem na fila: o Atualizar espera {eles}"))
-    } else {
-        None
-    };
+    let espera = espera_da_atualizacao(andando, a_caminho);
     LinhaDoClaude { texto, andando, resposta: linhas, falhou: resposta.is_some_and(|r| !r.ok), espera }
 }
 
@@ -104,12 +111,23 @@ enum Parte {
     Memoria,
     Aparencia,
     ClaudeCode,
+    Codex,
+    Gemini,
     Atualizacoes,
 }
 
 impl Parte {
-    const TODAS: [Parte; 7] =
-        [Parte::Chats, Parte::Agentes, Parte::Perfis, Parte::Memoria, Parte::Aparencia, Parte::ClaudeCode, Parte::Atualizacoes];
+    const TODAS: [Parte; 9] = [
+        Parte::Chats,
+        Parte::Agentes,
+        Parte::Perfis,
+        Parte::Memoria,
+        Parte::Aparencia,
+        Parte::ClaudeCode,
+        Parte::Codex,
+        Parte::Gemini,
+        Parte::Atualizacoes,
+    ];
 
     fn nome(self) -> &'static str {
         match self {
@@ -119,6 +137,8 @@ impl Parte {
             Parte::Memoria => "Memória",
             Parte::Aparencia => "Aparência",
             Parte::ClaudeCode => "Claude Code",
+            Parte::Codex => "Codex",
+            Parte::Gemini => "Gemini",
             Parte::Atualizacoes => "Atualizações",
         }
     }
@@ -131,7 +151,18 @@ impl Parte {
             Parte::Memoria => Lucide::Brain,
             Parte::Aparencia => Lucide::Palette,
             Parte::ClaudeCode => Lucide::Terminal,
+            // O Codex e o Gemini levam a marca deles na coluna (`simbolo`); este é o reserva.
+            Parte::Codex | Parte::Gemini => Lucide::Bot,
             Parte::Atualizacoes => Lucide::RefreshCw,
+        }
+    }
+
+    /// O que vai à esquerda do nome na coluna: a marca do Codex e a do Gemini, o ícone do resto.
+    fn simbolo(self) -> Simbolo {
+        match self {
+            Parte::Codex => Simbolo::Marca(Marca::Codex),
+            Parte::Gemini => Simbolo::Marca(Marca::Gemini),
+            outra => Simbolo::icone(outra.icone()),
         }
     }
 }
@@ -161,8 +192,6 @@ pub struct Configuracoes {
     /// servidores MCP (os dois saíram do menu do logo em 24/11/2026 e moram aqui).
     janela: WeakEntity<super::Janela>,
     parte: Parte,
-    /// A versão do Codex instalado (`None` até a leitura em segundo plano responder).
-    codex: Option<Option<Versao>>,
     /// As versões mais novas publicadas, quando a consulta responde.
     publicadas: Publicadas,
     /// O que o Testar da notificação deu, depois do clique.
@@ -190,7 +219,6 @@ impl Configuracoes {
             motor,
             janela,
             parte: Parte::Chats,
-            codex: None,
             publicadas: versoes_agentes::guardadas().unwrap_or_default(),
             teste_da_notificacao: None,
             diagnostico_copiado: false,
@@ -207,30 +235,34 @@ impl Configuracoes {
             self.entra_de = Some(movimento::lado_da_navegacao(posicao(self.parte), posicao(parte)));
         }
         self.parte = parte;
-        // As linhas do Claude Code e do Codex dizem a versão instalada e a nova, quando há.
-        if matches!(parte, Parte::Agentes | Parte::ClaudeCode) {
+        // As partes dos agentes dizem a versão instalada e a nova, quando há.
+        if matches!(parte, Parte::Agentes | Parte::ClaudeCode | Parte::Codex | Parte::Gemini) {
             self.ler_os_instalados(false, cx);
+        }
+        match parte {
+            Parte::Codex => self.motor.update(cx, |m, cx| m.reler_cli(Agente::Codex, cx)),
+            Parte::Gemini => self.motor.update(cx, |m, cx| {
+                m.reler_cli(Agente::Gemini, cx);
+                m.reler_uso_gemini(cx);
+            }),
+            _ => {}
         }
         cx.notify();
     }
 
-    /// A versão do Codex e as mais novas publicadas, em segundo plano, quando a parte Agentes ou a
-    /// do Claude Code abre: o `codex --version` leva um instante e a consulta vai à rede (guardada
-    /// por uma hora).
-    /// Com "Só pelo botão", abrir a parte lê só o que está instalado e a última consulta guardada;
-    /// a rede só é consultada com `pelo_botao` (`opcoes::consulta_a_rede`).
+    /// As versões mais novas publicadas, em segundo plano, quando uma parte que as mostra abre: a
+    /// consulta vai à rede (guardada por uma hora). Com "Só pelo botão", abrir a parte lê só a
+    /// última consulta guardada; a rede só é consultada com `pelo_botao` (`opcoes::consulta_a_rede`).
     fn ler_os_instalados(&mut self, pelo_botao: bool, cx: &mut Context<Self>) {
         let consultar = crate::opcoes::consulta_a_rede(self.motor.read(cx).config.consultar_versoes, pelo_botao);
         cx.spawn(async move |vista, cx| {
-            let (codex, publicadas) = cx
+            let publicadas = cx
                 .background_spawn(async move {
-                    let publicadas =
-                        if consultar { versoes_agentes::consultar() } else { versoes_agentes::guardadas().unwrap_or_default() };
-                    (versoes_agentes::versao_do_codex(), publicadas)
+                    if consultar { versoes_agentes::consultar() } else { versoes_agentes::guardadas().unwrap_or_default() }
                 })
                 .await;
             let _ = vista.update(cx, |vista, cx| {
-                (vista.codex, vista.publicadas) = (Some(codex), publicadas);
+                vista.publicadas = publicadas;
                 cx.notify();
             });
         })
@@ -298,30 +330,6 @@ impl Configuracoes {
         GrupoDeOpcoes::new(Some("Claude Code".into())).linha(opcao)
     }
 
-    /// A linha do Codex: a versão instalada e a nova quando há; sem ele, o Instalar.
-    fn linha_do_codex(&self, estreito: bool, window: &Window, cx: &Context<Self>) -> LinhaDeOpcao {
-        let instalado = crate::agente_codex::instalado();
-        let texto = match self.codex {
-            None if instalado => "Lendo a versão…".to_string(),
-            lida => versoes_agentes::linha_do_codex(instalado, lida.flatten(), self.publicadas.codex),
-        };
-        let opcao = LinhaDeOpcao::new("cfg-codex", "Versão instalada")
-            .marca(Simbolo::Marca(Marca::Codex))
-            .info(
-                "O agente de código da OpenAI. Ele usa o login e o plano do próprio Codex. A versão nova é a que o \
-                 pacote dele anuncia; quem atualiza é o instalador do Codex, fora do Vitral.",
-            )
-            .descricao(texto);
-        // No Windows o botão roda o instalador oficial em PowerShell (`uso_plano::instalar_codex`).
-        if instalado {
-            return opcao;
-        }
-        let botao = botao_fantasma("cfg-codex-instalar", Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
-            .bg(Cores::recuo())
-            .on_click(|_, _, _| super::uso_plano::instalar_codex());
-        if estreito { opcao.campo(botao) } else { opcao.controle(botao) }
-    }
-
     /// O texto do diagnóstico de agora, já coberto (`crate::diagnostico`).
     fn diagnostico(&self, cx: &App) -> String {
         let motor = self.motor.read(cx);
@@ -361,8 +369,11 @@ impl Configuracoes {
             vitral: format!("{} · {} · {}", atualizacao::VERSAO, atualizacao::origem(), atualizacao::plataforma()),
             sistema: crate::diagnostico::sistema(),
             claude: motor.versao_claude.map(motor::texto_da_versao),
-            codex: self.codex.flatten().map(motor::texto_da_versao).or_else(|| {
+            codex: motor.cli_codex.versao.flatten().map(motor::texto_da_versao).or_else(|| {
                 crate::agente_codex::instalado().then(|| "instalado".to_string())
+            }),
+            gemini: motor.cli_gemini.versao.flatten().map(motor::texto_da_versao).or_else(|| {
+                crate::agente_gemini::instalado().then(|| "instalado".to_string())
             }),
             quedas: std::fs::read_to_string(pasta.join("queda.log")).ok(),
             dados: pasta,
@@ -852,7 +863,6 @@ impl Render for Configuracoes {
                     botao.into_any_element(),
                 ))
             });
-        let codex_grupo = GrupoDeOpcoes::new(Some("Codex".into())).linha(self.linha_do_codex(estreito, window, cx));
         let memoria_grupo = GrupoDeOpcoes::new(Some("Memória".into()))
             .linha({
                 let ligada = !config.memoria_da_equipe.is_empty();
@@ -1080,13 +1090,14 @@ impl Render for Configuracoes {
             Parte::Agentes => vec![
                 agentes.into_any_element(),
                 instrucoes_grupo.into_any_element(),
-                codex_grupo.into_any_element(),
                 versoes_grupo.into_any_element(),
             ],
             Parte::Perfis => vec![perfis::grupo(&self.motor, window, cx).into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
             Parte::Aparencia => vec![tamanho.into_any_element(), interface.into_any_element()],
             Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
+            Parte::Codex => vec![self.grupo_do_agente(Agente::Codex, estreito, window, cx).into_any_element()],
+            Parte::Gemini => vec![self.grupo_do_agente(Agente::Gemini, estreito, window, cx).into_any_element()],
             Parte::Atualizacoes => {
                 atualizacoes.into_iter().map(IntoElement::into_any_element).chain([ajuda.into_any_element()]).collect()
             }
@@ -1109,7 +1120,7 @@ impl Render for Configuracoes {
                 .text_color(if escolhida { Cores::forte() } else { Cores::tenue() })
                 .when(escolhida, |s| s.bg(Cores::selecao()))
                 .when(!escolhida, |s| s.hover(|s| s.bg(Cores::hover()).text_color(Cores::texto())))
-                .child(Icon::new(parte.icone()).with_size(tam(window, 16.)))
+                .child(parte.simbolo().desenhar(16., window))
                 .when(!estreito, |s| s.child(div().rotulo().child(parte.nome())))
                 .when(estreito, |s| s.dica_no_ponteiro(move |window, cx| Tooltip::new(parte.nome()).build(window, cx)))
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_para(parte, cx)))
@@ -1161,12 +1172,12 @@ mod testes {
         assert_eq!(altura_do_corpo(300., 780., 225., 360.), 360.);
     }
 
-    /// As partes da 0.9.6 continuam as mesmas, na mesma ordem, e os Perfis entraram depois dos
-    /// Agentes; cada nome é um só, e cabe na coluna.
+    /// As partes da 0.9.6 continuam as mesmas, na mesma ordem, os Perfis entraram depois dos
+    /// Agentes e o Codex e o Gemini, depois do Claude Code; cada nome é um só, e cabe na coluna.
     #[test]
     fn as_partes_da_coluna_com_os_perfis() {
         let nomes: Vec<&str> = Parte::TODAS.into_iter().map(Parte::nome).collect();
-        assert_eq!(nomes, ["Chats", "Agentes", "Perfis", "Memória", "Aparência", "Claude Code", "Atualizações"]);
+        assert_eq!(nomes, ["Chats", "Agentes", "Perfis", "Memória", "Aparência", "Claude Code", "Codex", "Gemini", "Atualizações"]);
     }
 
     #[test]

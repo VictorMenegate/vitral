@@ -30,6 +30,7 @@ pub mod subconversa;
 pub mod fundo;
 pub mod passos;
 mod ajustes;
+mod cli_fora;
 pub use ideias::SituacaoDoLinear;
 
 pub use conversas::ResumoVolta;
@@ -333,6 +334,8 @@ pub struct Motor {
     /// Cota do Gemini no Antigravity (`agente_gemini::ler_uso`; `None`: sem agy, sem login ou sem
     /// resposta). Como o `agy` leva uns 3 s, ele é perguntado de 5 em 5 minutos, não a cada releitura.
     pub gemini: Option<crate::agente_gemini::UsoGemini>,
+    /// A cota do Gemini já foi perguntada ao menos uma vez (antes, `gemini: None` não diz "sem login").
+    pub gemini_lido: bool,
     /// Quando o Gemini foi perguntado pela última vez (0: nunca, ou pedido de atualizar).
     gemini_perguntado_em: u64,
     /// Conta usada no turno atual (ou no último) de cada chat.
@@ -397,6 +400,9 @@ pub struct Motor {
     pub atualizando_claude: bool,
     /// O que o último `claude update` respondeu, para a linha das Configurações.
     pub resposta_do_claude: Option<claude::Atualizacao>,
+    /// O Codex e o Gemini como programas instalados: versão, conta, `update` (`motor/cli_fora.rs`).
+    pub cli_codex: crate::cli_agentes::CliFora,
+    pub cli_gemini: crate::cli_agentes::CliFora,
     /// Se a conta tem os fluxos de agentes (a ferramenta `Workflow`): `false` só depois de um
     /// turno com Ultracode em que eles não vieram. Não trava a opção (a pessoa pode ter mudado a
     /// configuração da conta): só a avisa em âmbar.
@@ -714,6 +720,7 @@ impl Motor {
             codex: None,
             codex_lido: false,
             gemini: None,
+            gemini_lido: false,
             gemini_perguntado_em: 0,
             conta_do_turno: HashMap::new(),
             encerrando: Default::default(),
@@ -740,6 +747,8 @@ impl Motor {
             versao_claude: None,
             atualizando_claude: false,
             resposta_do_claude: None,
+            cli_codex: Default::default(),
+            cli_gemini: Default::default(),
             fluxos_por_conta: HashMap::new(),
             fundo: HashMap::new(),
             subconversas: Vec::new(),
@@ -3352,8 +3361,9 @@ impl Motor {
             let _ = motor.update(cx, |m, cx| {
                 let mut mudou = m.guardar_usos(usos, codex);
                 if let Some(gemini) = gemini {
-                    mudou |= m.gemini != gemini;
+                    mudou |= m.gemini != gemini || !m.gemini_lido;
                     m.gemini = gemini;
+                    m.gemini_lido = true;
                 }
                 if mudou {
                     cx.notify();

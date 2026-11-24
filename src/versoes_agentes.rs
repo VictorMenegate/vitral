@@ -6,7 +6,6 @@
 //! consultado.
 
 use std::{
-    process::Stdio,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -19,8 +18,6 @@ const ETIQUETAS_DO_CODEX: &str = "https://registry.npmjs.org/-/package/@openai/c
 const LIMITE_DA_RESPOSTA: u64 = 256 * 1024;
 /// Por quanto tempo uma consulta vale.
 const VALE_POR: Duration = Duration::from_secs(60 * 60);
-/// Quanto se espera o `codex --version`.
-const PRAZO_DA_VERSAO: Duration = Duration::from_secs(5);
 
 /// A primeira palavra com cara de versão num texto: "codex-cli 0.169.0" e "2.1.328 (Claude Code)"
 /// dão `(0, 169, 0)` e `(2, 1, 328)`. Pré-lançamento ("0.173.0-alpha.4") não conta.
@@ -52,20 +49,13 @@ pub fn texto(v: Versao) -> String {
     format!("{}.{}.{}", v.0, v.1, v.2)
 }
 
-/// A linha do Codex no grupo Instalados.
-pub fn linha_do_codex(instalado: bool, versao: Option<Versao>, publicada: Option<Versao>) -> String {
-    match (instalado, versao) {
-        (false, _) => "Não está instalado neste computador".to_string(),
-        (true, None) => "Instalado · não deu para ler a versão".to_string(),
-        (true, Some(v)) => match nova(Some(v), publicada) {
-            Some(n) => format!("{} · há a {}", texto(v), texto(n)),
-            None => texto(v),
-        },
-    }
-}
-
 /// A frase da versão nova do Claude Code, embaixo da linha dele (o Atualizar está ao lado).
 pub fn frase_da_nova_do_claude(instalada: Option<Versao>, publicada: Option<Versao>) -> Option<String> {
+    frase_da_nova(instalada, publicada)
+}
+
+/// A frase da versão nova de qualquer agente com o botão Atualizar ao lado.
+pub fn frase_da_nova(instalada: Option<Versao>, publicada: Option<Versao>) -> Option<String> {
     nova(instalada, publicada).map(|n| format!("Há a {}. O Atualizar instala.", texto(n)))
 }
 
@@ -121,34 +111,6 @@ fn da_rede() -> Publicadas {
     }
 }
 
-/// A versão do Codex instalado (`codex --version`), ou `None` sem ele ou sem resposta no prazo.
-pub fn versao_do_codex() -> Option<Versao> {
-    if !crate::agente_codex::instalado() {
-        return None;
-    }
-    let mut filho = crate::processos::novo_comando(crate::agente_codex::binario())
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let inicio = Instant::now();
-    loop {
-        match filho.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if inicio.elapsed() < PRAZO_DA_VERSAO => std::thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = filho.kill();
-                let _ = filho.wait();
-                return None;
-            }
-        }
-    }
-    let saida = filho.wait_with_output().ok()?;
-    versao_no_texto(&String::from_utf8_lossy(&saida.stdout))
-}
-
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -193,15 +155,6 @@ mod testes {
         assert_eq!(nova(Some((2, 1, 328)), None), None);
         // 0.9 < 0.10: compara número, não texto.
         assert_eq!(nova(Some((0, 9, 0)), Some((0, 10, 0))), Some((0, 10, 0)));
-    }
-
-    #[test]
-    fn a_linha_do_codex_diz_a_versao_e_a_nova_so_quando_ha() {
-        assert_eq!(linha_do_codex(false, None, Some((0, 171, 0))), "Não está instalado neste computador");
-        assert_eq!(linha_do_codex(true, None, None), "Instalado · não deu para ler a versão");
-        assert_eq!(linha_do_codex(true, Some((0, 169, 0)), None), "0.169.0");
-        assert_eq!(linha_do_codex(true, Some((0, 169, 0)), Some((0, 171, 0))), "0.169.0 · há a 0.171.0");
-        assert_eq!(linha_do_codex(true, Some((0, 171, 0)), Some((0, 171, 0))), "0.171.0");
     }
 
     #[test]
