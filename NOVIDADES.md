@@ -3,6 +3,13 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
+## 0.10.3
+
+- **Os comandos no fundo, os subagentes, os passos e as mudanças voltaram para dentro da caixa.**
+  As pílulas ficam de novo embaixo do campo de mensagem, na linha de estado, e não há mais linha
+  solta em cima da caixa. Continuam com o clique que lista e para cada comando, a lista dos
+  subagentes que abre a conversa de cada um e as mudanças que abrem "Este chat".
+
 ## 0.10.2
 
 O Codex ficou quase tão completo quanto o Claude no Vitral: pede permissão no meio do turno pelo

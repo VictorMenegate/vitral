@@ -86,9 +86,8 @@ pub struct Painel {
     pub base_animacao: usize,
     /// Até onde os blocos já apareceram: um índice daqui para a frente é novo neste quadro.
     pub vistos: usize,
-    /// A pílula do fim e a linha de pílulas estavam à vista no quadro anterior (entram uma vez).
+    /// A pílula do fim estava à vista no quadro anterior (entram uma vez).
     pub pilula_vista: bool,
-    pub pilulas_vistas: bool,
     /// Acabou de abrir ao lado: o conteúdo entra com fade no primeiro quadro.
     pub entra: bool,
     /// Sobe a cada troca de conversa no painel (aba, lista, histórico); a vista das mensagens guarda
@@ -555,7 +554,6 @@ impl Janela {
             base_animacao: 0,
             vistos: 0,
             pilula_vista: false,
-            pilulas_vistas: false,
             entra: false,
             troca: 0,
             troca_vista: 0,
@@ -665,7 +663,6 @@ impl Janela {
         painel.base_animacao = tamanho;
         painel.vistos = tamanho;
         painel.pilula_vista = false;
-        painel.pilulas_vistas = false;
         // A conversa nova entra com fade (uma vez), e o que a casca mostra dela entra junto.
         painel.troca += 1;
         painel.ja_vistos.borrow_mut().esquecer();
