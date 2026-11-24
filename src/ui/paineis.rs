@@ -231,6 +231,63 @@ fn posicao_ao_mover(ids: &[u64], origem: u64, destino: u64, lado: Lado) -> Optio
     Some(if lado == Lado::Esquerda { alvo } else { alvo + 1 })
 }
 
+/// Os índices dos painéis que a janela desenha: todos, ou só o maximizado. O maximizado que não
+/// existe mais, ou com menos de dois painéis, não esconde nada.
+pub(super) fn paineis_a_mostrar(ids: &[u64], maximizado: Option<u64>) -> Vec<usize> {
+    match maximizado.and_then(|m| ids.iter().position(|id| *id == m)).filter(|_| ids.len() > 1) {
+        Some(ix) => vec![ix],
+        None => (0..ids.len()).collect(),
+    }
+}
+
+/// O que o atalho de maximizar faz: com um painel maximizado, devolve o arranjo; senão maximiza o
+/// ativo (se há mais de um).
+pub(super) fn alternar_maximizado(atual: Option<u64>, ativo: u64, paineis: usize) -> Option<u64> {
+    match atual {
+        Some(_) => None,
+        None => (paineis > 1).then_some(ativo),
+    }
+}
+
+/// Levar a aba do painel `origem` para o painel vizinho do `lado` (como soltar a aba no meio dele);
+/// na ponta, sem vizinho, abre um painel novo daquele lado se a aba não é a única do painel e cabe
+/// outro. Devolve o painel em que o efeito vale e o efeito (os mesmos do arrasto).
+pub(super) fn destino_da_aba(
+    ids: &[u64],
+    origem: u64,
+    lado: Lado,
+    cabe_mais: bool,
+    origem_com_outras_abas: bool,
+) -> Option<(u64, Efeito)> {
+    let de = ids.iter().position(|id| *id == origem)?;
+    let vizinho = match lado {
+        Lado::Esquerda => de.checked_sub(1),
+        Lado::Direita => de.checked_add(1),
+        Lado::Centro => None,
+    }
+    .and_then(|ix| ids.get(ix).copied());
+    match vizinho {
+        Some(vizinho) => {
+            let efeito = efeito_de(ids, Some(origem), vizinho, Lado::Centro, cabe_mais, origem_com_outras_abas);
+            (efeito != Efeito::Nenhum).then_some((vizinho, efeito))
+        }
+        None => divisao_da_aba(ids, origem, lado, cabe_mais, origem_com_outras_abas),
+    }
+}
+
+/// Abrir um painel novo do `lado` com a aba do painel `origem`: só se ele tem outras abas (senão
+/// ficaria vazio) e se cabe outro painel.
+pub(super) fn divisao_da_aba(
+    ids: &[u64],
+    origem: u64,
+    lado: Lado,
+    cabe_mais: bool,
+    origem_com_outras_abas: bool,
+) -> Option<(u64, Efeito)> {
+    let efeito = efeito_de(ids, Some(origem), origem, lado, cabe_mais, origem_com_outras_abas);
+    matches!(efeito, Efeito::AbrirAoLado(_)).then_some((origem, efeito))
+}
+
 /// Onde fica o painel da posição `de` depois de andar `passo` casas entre `n` (nada nas pontas).
 fn destino_ao_mover(de: usize, passo: isize, n: usize) -> Option<usize> {
     de.checked_add_signed(passo).filter(|ix| *ix < n)
@@ -684,12 +741,22 @@ impl Janela {
         {
             self.ativo = ix;
             self.selecionado = self.paineis[ix].chat.clone();
+            self.visitar_selecionado(cx);
             cx.notify();
+        }
+    }
+
+    /// Chegar a um chat (abrir pela lista ou ativar o painel dele) solta o "marcar como não lido".
+    pub(super) fn visitar_selecionado(&self, cx: &mut Context<Self>) {
+        if let (Some(chat), Some(motor)) = (self.selecionado.as_deref(), self.motor.as_ref()) {
+            motor.update(cx, |m, _| m.visitar(chat));
         }
     }
 
     /// Abre a conversa no painel ativo (ou num novo, se não houver nenhum).
     pub fn selecionar(&mut self, chat: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        // Escolher o chat que já estava à vista (o clique na lista, no mesmo chat) não é visita.
+        let ja_a_vista = chat.is_some() && chat == self.selecionado;
         // "Nova conversa ao lado": a conversa que o diálogo acabou de criar vai para um painel novo.
         if std::mem::take(&mut self.nova_ao_lado)
             && let Some(chat) = chat.clone().filter(|_| !self.paineis.is_empty() && self.cabe_outro_painel())
@@ -717,6 +784,9 @@ impl Janela {
             }
         }
         self.selecionado = self.paineis[self.ativo].chat.clone();
+        if !ja_a_vista {
+            self.visitar_selecionado(cx);
+        }
         // Só com o ativo já trocado: a gaveta devolve o foco à caixa dele (o foco na caixa
         // antiga, no quadro seguinte, ativaria de novo o painel antigo).
         self.recolher_gaveta_da_lista(window, cx);
@@ -1153,6 +1223,62 @@ impl Janela {
         }
     }
 
+    /// Maximiza o painel ativo, ou devolve o arranjo (Ctrl+Shift+Enter e o menu do painel).
+    pub(super) fn alternar_maximizado_ativo(&mut self, cx: &mut Context<Self>) {
+        let Some(ativo) = self.paineis.get(self.ativo).map(|p| p.id) else {
+            return;
+        };
+        self.maximizado = alternar_maximizado(self.maximizado, ativo, self.paineis.len());
+        cx.notify();
+    }
+
+    /// Devolve o arranjo (o Esc de um painel maximizado).
+    pub(super) fn sair_do_maximizado(&mut self, cx: &mut Context<Self>) {
+        if self.maximizado.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// O maximizado acompanha o painel ativo (Alt+2 com um painel maximizado mostra o 2º, e ele
+    /// passa a ser o maximizado) e some quando já não há dois painéis.
+    pub(super) fn normalizar_maximizado(&mut self) {
+        if self.paineis.len() < 2 {
+            self.maximizado = None;
+        } else if self.maximizado.is_some() {
+            self.maximizado = self.paineis.get(self.ativo).map(|p| p.id);
+        }
+    }
+
+    /// O painel `ix` encosta na borda da direita da janela: é o último à vista e a direita não
+    /// está ancorada ao lado das conversas. É ali que os anéis de uso flutuam.
+    pub(super) fn painel_na_borda_da_janela(&self, ix: usize) -> bool {
+        let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
+        !self.direita_visivel() && paineis_a_mostrar(&ids, self.maximizado).last() == Some(&ix)
+    }
+
+    /// A aba à vista do painel ativo vai para o painel vizinho do `lado` (Alt+PgUp/PgDn) ou, com
+    /// `dividir`, abre num painel novo do lado (Alt+Shift+PgUp/PgDn). Faz o mesmo que soltar a aba
+    /// ali com o mouse.
+    pub(super) fn mover_aba_do_ativo(&mut self, lado: Lado, dividir: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((origem, Some(chat), com_outras)) =
+            self.paineis.get(self.ativo).map(|p| (p.id, p.chat.clone(), p.abas.len() > 1))
+        else {
+            return;
+        };
+        let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
+        let cabe = self.cabe_outro_painel();
+        let destino = if dividir {
+            divisao_da_aba(&ids, origem, lado, cabe, com_outras)
+        } else {
+            destino_da_aba(&ids, origem, lado, cabe, com_outras)
+        };
+        let Some((painel, efeito)) = destino else {
+            return;
+        };
+        let arrasto = ArrastoChat { chat, titulo: SharedString::default(), de_painel: Some(origem) };
+        self.soltar(&arrasto, painel, efeito, window, cx);
+    }
+
     /// O painel `id` anda `passo` casas (o menu "⋯" e os atalhos), e fica ativo.
     pub(super) fn mover_este_painel(&mut self, id: u64, passo: isize, cx: &mut Context<Self>) {
         let Some(de) = self.paineis.iter().position(|p| p.id == id) else {
@@ -1580,5 +1706,60 @@ mod testes_aba_trazida {
         assert_eq!(ao_fechar_a_aba(true, false, false, false), SoFecha, "parado ou esperando você");
         assert_eq!(ao_fechar_a_aba(true, true, true, false), SoFecha, "continua à vista noutro lugar");
         assert_eq!(ao_fechar_a_aba(true, true, true, true), SoFecha);
+    }
+}
+
+#[cfg(test)]
+mod testes_teclado {
+    use super::{Efeito, Lado, alternar_maximizado, destino_da_aba, paineis_a_mostrar};
+
+    const A: u64 = 1;
+    const B: u64 = 2;
+    const C: u64 = 3;
+
+    #[test]
+    fn maximizar_mostra_so_o_painel_e_o_arranjo_volta_inteiro() {
+        assert_eq!(paineis_a_mostrar(&[A, B, C], None), vec![0, 1, 2]);
+        assert_eq!(paineis_a_mostrar(&[A, B, C], Some(B)), vec![1]);
+        // O painel maximizado que fechou (ou sobrou um só): tudo à vista, sem estado preso.
+        assert_eq!(paineis_a_mostrar(&[A, B, C], Some(9)), vec![0, 1, 2]);
+        assert_eq!(paineis_a_mostrar(&[A], Some(A)), vec![0]);
+    }
+
+    #[test]
+    fn o_atalho_maximiza_o_ativo_e_repetido_volta() {
+        assert_eq!(alternar_maximizado(None, B, 3), Some(B));
+        assert_eq!(alternar_maximizado(Some(B), B, 3), None);
+        // Maximizado outro e o ativo mudou: o atalho desfaz, não troca.
+        assert_eq!(alternar_maximizado(Some(A), B, 3), None);
+        // Com um painel só não há o que maximizar.
+        assert_eq!(alternar_maximizado(None, A, 1), None);
+    }
+
+    #[test]
+    fn mover_a_aba_vai_para_o_vizinho_e_na_ponta_abre_ao_lado() {
+        // Há vizinho: a aba entra nele (e sai do painel de origem).
+        assert_eq!(
+            destino_da_aba(&[A, B, C], B, Lado::Direita, true, false),
+            Some((C, Efeito::Trocar { origem: Some(B), cheio: false }))
+        );
+        assert_eq!(
+            destino_da_aba(&[A, B, C], B, Lado::Esquerda, true, false),
+            Some((A, Efeito::Trocar { origem: Some(B), cheio: false }))
+        );
+        // Na ponta, com outras abas e lugar: painel novo daquele lado.
+        assert_eq!(destino_da_aba(&[A, B], B, Lado::Direita, true, true), Some((B, Efeito::AbrirAoLado(Lado::Direita))));
+        // Na ponta com a única aba (esvaziaria o painel) ou sem lugar: nada.
+        assert_eq!(destino_da_aba(&[A, B], B, Lado::Direita, true, false), None);
+        assert_eq!(destino_da_aba(&[A, B], B, Lado::Direita, false, true), None);
+        assert_eq!(destino_da_aba(&[A], A, Lado::Esquerda, true, false), None);
+    }
+
+    #[test]
+    fn dividir_abre_painel_novo_so_se_o_painel_tem_outras_abas_e_cabe() {
+        use super::divisao_da_aba;
+        assert_eq!(divisao_da_aba(&[A, B], B, Lado::Esquerda, true, true), Some((B, Efeito::AbrirAoLado(Lado::Esquerda))));
+        assert_eq!(divisao_da_aba(&[A, B], B, Lado::Esquerda, true, false), None);
+        assert_eq!(divisao_da_aba(&[A, B], B, Lado::Esquerda, false, true), None);
     }
 }

@@ -4629,6 +4629,23 @@ impl Motor {
         self.estado_sujo |= mudou;
     }
 
+    /// "Marcar como não lido" no menu do chat: o ponto azul volta e fica até a próxima visita.
+    pub fn marcar_nao_lido(&mut self, chat: &str, cx: &mut Context<Self>) {
+        let mudou = self.chat_mut(chat).is_some_and(marcar_como_nao_lido);
+        if mudou {
+            self.estado_sujo = true;
+            cx.notify();
+        }
+    }
+
+    /// O usuário abriu o chat (pela lista, por uma aba) ou ativou o painel dele: solta a marca de
+    /// "não lido". Quem lê é o fim à vista (`marcar_lido`), como sempre.
+    pub fn visitar(&mut self, chat: &str) {
+        if let Some(c) = self.chat_mut(chat) {
+            visitar_chat(c);
+        }
+    }
+
     /// Antes de a janela fechar pelo × ou pelo Alt+F4 (o `on_app_quit` da Janela não roda no
     /// `remove_window`): o estado e as conversas que esperavam a gravação vão para o disco agora.
     pub fn gravar_antes_de_fechar(&mut self) {
@@ -6179,11 +6196,32 @@ fn texto_do_pedido(ferramenta: &str, entrada: &Value) -> String {
 /// Marca o chat como lido em `agora`, se havia algo não lido; devolve se mudou (aí o estado vai
 /// para o disco na próxima passada da gravação).
 fn ler_ate_agora(c: &mut Chat, agora: u64) -> bool {
-    let mudou = c.lido_em < c.atualizado_em;
+    // Marcado como não lido: só a visita de verdade (`visitar_chat`) solta o ponto azul.
+    let mudou = c.lido_em < c.atualizado_em && !c.retido_nao_lido;
     if mudou {
         c.lido_em = agora.max(c.atualizado_em);
     }
     mudou
+}
+
+/// "Marcar como não lido": devolve o ponto azul (o `lido_em` fica um segundo antes da última
+/// novidade) e segura a marca contra o "lido" de cada quadro. Nada a marcar numa conversa vazia
+/// ou que já está não lida; devolve se mudou.
+fn marcar_como_nao_lido(c: &mut Chat) -> bool {
+    if c.atualizado_em == 0 || c.lido_em < c.atualizado_em {
+        return false;
+    }
+    c.lido_em = c.atualizado_em - 1;
+    c.retido_nao_lido = true;
+    true
+}
+
+/// A visita de verdade ao chat (o usuário o abriu ou ativou o painel dele): solta a marca de
+/// "não lido". Não lê por conta própria (abrir não marca como lido, só chegar ao fim): a leitura
+/// segue o caminho de sempre, o `ler_ate_agora` de quem está com o fim à vista. Devolve se havia
+/// marca.
+fn visitar_chat(c: &mut Chat) -> bool {
+    std::mem::take(&mut c.retido_nao_lido)
 }
 
 /// "Parou com erro: <primeira linha>" da notificação de um turno que falhou.
@@ -6472,6 +6510,36 @@ mod testes {
         // Já lido: nada muda, e a gravação não é pedida a cada quadro.
         assert!(!ler_ate_agora(&mut c, 300));
         assert_eq!(c.lido_em, 250);
+    }
+
+    #[test]
+    fn marcar_como_nao_lido_devolve_o_ponto_e_so_a_visita_de_verdade_o_tira() {
+        let mut c = chat("c1");
+        (c.atualizado_em, c.lido_em) = (200, 250);
+        assert!(marcar_como_nao_lido(&mut c));
+        assert!(c.lido_em < c.atualizado_em, "o ponto azul voltou");
+        // O `ler_ate_agora` roda a cada quadro com o fim à vista: não pode apagar a marca.
+        assert!(!ler_ate_agora(&mut c, 300));
+        assert!(c.lido_em < c.atualizado_em);
+        // A visita de verdade só solta a marca: quem lê é o fim à vista, no quadro seguinte.
+        assert!(visitar_chat(&mut c));
+        assert!(!c.retido_nao_lido);
+        assert!(c.lido_em < c.atualizado_em);
+        assert!(ler_ate_agora(&mut c, 400));
+        assert_eq!(c.lido_em, 400);
+        // Sem a marca, a visita não muda nada.
+        assert!(!visitar_chat(&mut c));
+    }
+
+    #[test]
+    fn marcar_como_nao_lido_nao_faz_nada_numa_conversa_sem_nada_para_ler() {
+        let mut c = chat("c1");
+        (c.atualizado_em, c.lido_em) = (0, 0);
+        assert!(!marcar_como_nao_lido(&mut c));
+        assert!(!c.retido_nao_lido);
+        // Já não lida: a marca não muda o que já está.
+        (c.atualizado_em, c.lido_em) = (200, 100);
+        assert!(!marcar_como_nao_lido(&mut c));
     }
 
     #[test]

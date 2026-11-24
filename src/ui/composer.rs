@@ -1775,6 +1775,9 @@ impl Janela {
             cx.notify();
         } else if ocupado {
             self.esc_no_turno(chat, cx);
+        } else if self.maximizado.is_some() {
+            // Painel maximizado e nada a parar: o Esc devolve o arranjo.
+            self.sair_do_maximizado(cx);
         } else {
             cx.propagate();
         }

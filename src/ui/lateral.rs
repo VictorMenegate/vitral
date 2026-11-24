@@ -2143,17 +2143,60 @@ impl Janela {
     }
 }
 
+/// O que o aviso de "arquivada" ainda pode desfazer, para o Ctrl+Z (fora de campo de texto)
+/// fazer o mesmo que o botão Desfazer enquanto o aviso estiver na tela. Um aviso novo troca o
+/// anterior; o fechamento de um aviso velho não leva o novo junto (a senha é de cada aviso).
+#[derive(Default)]
+pub(super) struct ArquivadasPendentes {
+    proxima: u64,
+    atual: Option<(u64, Vec<String>)>,
+}
+
+impl gpui_kit::Global for ArquivadasPendentes {}
+
+/// A marca do aviso de "arquivada" (um aviso novo troca o anterior; o Ctrl+Z o tira da tela).
+pub(super) struct AvisoDeArquivada;
+
+impl ArquivadasPendentes {
+    /// Guarda as `ids` do aviso que acabou de subir e devolve a senha dele.
+    pub(super) fn guardar(&mut self, ids: Vec<String>) -> u64 {
+        self.proxima += 1;
+        self.atual = Some((self.proxima, ids));
+        self.proxima
+    }
+
+    /// O aviso `senha` saiu da tela (Desfazer, × ou troca): se ainda é o atual, não há mais o que
+    /// desfazer.
+    pub(super) fn fechar(&mut self, senha: u64) {
+        if self.atual.as_ref().is_some_and(|(s, _)| *s == senha) {
+            self.atual = None;
+        }
+    }
+
+    /// O Ctrl+Z: as conversas do aviso que continuam arquivadas (a que você já desarquivou fica
+    /// como está). Só vale uma vez.
+    pub(super) fn tomar(&mut self, ainda_arquivada: impl Fn(&str) -> bool) -> Vec<String> {
+        let Some((_, ids)) = self.atual.take() else { return Vec::new() };
+        ids.into_iter().filter(|id| ainda_arquivada(id)).collect()
+    }
+}
+
 /// O aviso de quem acabou de arquivar, com Desfazer: devolve as `ids` que ainda estão
-/// arquivadas (a que você já desarquivou fica como está).
+/// arquivadas (a que você já desarquivou fica como está). O Ctrl+Z desfaz o mesmo enquanto o aviso
+/// estiver na tela (`desfazer_arquivar`, da Janela).
 pub(super) fn avisar_arquivadas(motor: Entity<Motor>, ids: Vec<String>, texto: String, window: &mut Window, cx: &mut App) {
+    let senha = cx.default_global::<ArquivadasPendentes>().guardar(ids.clone());
     let nota = aviso_com_acao(Tom::Info, texto, "Desfazer", move |_, cx| {
+        cx.default_global::<ArquivadasPendentes>().fechar(senha);
         motor.update(cx, |m, cx| {
             let voltar: Vec<String> = ids.iter().filter(|id| m.chat(id).is_some_and(|c| c.arquivado)).cloned().collect();
             for id in &voltar {
                 m.alternar_arquivado(id, cx);
             }
         })
-    });
+    })
+    .id::<AvisoDeArquivada>()
+    .on_close(move |_, cx| cx.default_global::<ArquivadasPendentes>().fechar(senha));
     window.push_notification(nota, cx);
 }
 
@@ -2175,6 +2218,29 @@ mod testes {
         let mut c: Chat = serde_json::from_str(&json).unwrap();
         c.itens = falas.iter().map(|t| Item::Assistente { texto: t.to_string(), em: 0 }).collect();
         c
+    }
+
+    #[test]
+    fn o_ctrl_z_devolve_so_o_que_o_aviso_ainda_guarda() {
+        use super::ArquivadasPendentes;
+        let mut p = ArquivadasPendentes::default();
+        // Sem aviso na tela, nada a desfazer.
+        assert!(p.tomar(|_| true).is_empty());
+        let t1 = p.guardar(vec!["a".into(), "b".into()]);
+        // O que você já desarquivou à mão fica como está.
+        assert_eq!(p.tomar(|id| id == "a"), vec!["a".to_string()]);
+        // Desfeito uma vez: o segundo Ctrl+Z não repete.
+        assert!(p.tomar(|_| true).is_empty());
+        // O aviso novo troca o antigo; o fechamento do antigo não leva o novo junto.
+        let _ = t1;
+        let velho = p.guardar(vec!["c".into()]);
+        let novo = p.guardar(vec!["d".into()]);
+        p.fechar(velho);
+        assert_eq!(p.tomar(|_| true), vec!["d".to_string()]);
+        let atual = p.guardar(vec!["e".into()]);
+        p.fechar(atual);
+        assert!(p.tomar(|_| true).is_empty(), "aviso fechado: o Ctrl+Z já não vale");
+        let _ = novo;
     }
 
     #[test]

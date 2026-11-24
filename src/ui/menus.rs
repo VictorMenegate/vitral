@@ -40,6 +40,9 @@ pub(super) fn menu_conversa(
         return menu;
     };
     let (fixado, arquivado) = (c.fixado, c.arquivado);
+    // "Marcar como não lido" só onde há o que marcar: lida, com alguma coisa dentro, sem turno
+    // rodando (o ponto azul não vale para quem está trabalhando).
+    let pode_marcar_nao_lido = !arquivado && !c.itens.is_empty() && !motor.read(cx).nao_lido(c) && !motor.read(cx).execucao(chat).rodando();
     let cabe = janela
         .upgrade()
         .map(|j| {
@@ -57,8 +60,8 @@ pub(super) fn menu_conversa(
         .filter(|i| i.chat.as_deref() == Some(chat) && i.coluna != crate::ideias::Coluna::Feitas)
         .count();
     let rotulo_ideias = if ideias == 0 { "Ideias deste chat".to_string() } else { format!("Ideias deste chat ({ideias})") };
-    let (i1, i2, i3, i4, i5) = (id.clone(), id.clone(), id.clone(), id.clone(), id);
-    let (m1, m2) = (motor.clone(), motor.clone());
+    let (i1, i2, i3, i4, i5, i6) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
+    let (m1, m2, m3) = (motor.clone(), motor.clone(), motor.clone());
     menu.when(ao_lado, |menu| {
         menu.item(
             acao("Abrir ao lado", Lucide::Columns2, &janela, move |this, window, cx| {
@@ -75,6 +78,13 @@ pub(super) fn menu_conversa(
         this.abrir_quadro_de_ideias_do_chat(i5.clone(), window, cx)
     }))
     .separator()
+    .when(pode_marcar_nao_lido, |menu| {
+        menu.item(
+            PopupMenuItem::new("Marcar como não lido")
+                .icon(Lucide::CircleDot)
+                .on_click(move |_, _, cx| m3.update(cx, |m, cx| m.marcar_nao_lido(&i6, cx))),
+        )
+    })
     .item(
         PopupMenuItem::new(if fixado { "Desafixar" } else { "Fixar" })
             .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })

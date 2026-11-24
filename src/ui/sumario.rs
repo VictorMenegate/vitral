@@ -97,6 +97,25 @@ pub(super) fn mensagem_a_vista(posicoes: &[(usize, Pixels, Pixels)], sua: impl F
     Some(lida.unwrap_or(primeira).0)
 }
 
+/// A sua mensagem vizinha de `a_vista` (o índice do item), entre as `suas` (os índices de todas as
+/// mensagens suas, em ordem): `passo` -1 é a anterior, 1 é a seguinte; `None` na ponta.
+pub(super) fn mensagem_vizinha(suas: &[usize], a_vista: usize, passo: i32) -> Option<usize> {
+    if passo < 0 {
+        suas.iter().rev().find(|i| **i < a_vista).copied()
+    } else {
+        suas.iter().find(|i| **i > a_vista).copied()
+    }
+}
+
+/// O deslocamento da rolagem depois de uma página (PgUp/PgDn): quase uma tela, para sobrar um
+/// pedaço da anterior à vista, sem passar das pontas. O deslocamento é negativo quando desce;
+/// `maximo` é o quanto o conteúdo rola; `direcao` -1 sobe, 1 desce.
+pub(super) fn offset_da_pagina(offset_y: Pixels, altura: Pixels, maximo: Pixels, direcao: i32) -> Pixels {
+    let pagina = altura * 0.9;
+    let novo = if direcao < 0 { offset_y + pagina } else { offset_y - pagina };
+    novo.clamp(-maximo.max(px(0.)), px(0.))
+}
+
 /// Quantos itens o painel precisa desenhar (os últimos) para o item `item` estar entre eles, com
 /// alguns antes dele (a mensagem não fica colada no alto da lista).
 fn mostrar_ate(itens: usize, item: usize, mostrar: usize) -> usize {
@@ -151,6 +170,44 @@ impl Janela {
         if self.sumario.a_vista != a_vista {
             cx.notify();
         }
+    }
+
+    /// Alt+↑ e Alt+↓: pula para a sua mensagem anterior ou seguinte do painel ativo, como o clique
+    /// no sumário (rola até ela e a realça). Depois da última, o Alt+↓ vai ao fim da conversa.
+    pub(super) fn pular_mensagem(&mut self, passo: i32, cx: &mut Context<Self>) {
+        let Some(painel_id) = self.paineis.get(self.ativo).map(|p| p.id) else { return };
+        let Some(chat_id) = self.paineis[self.ativo].chat.clone() else { return };
+        let Some(motor) = self.motor.clone() else { return };
+        let (suas, base) = {
+            let Some(chat) = motor.read(cx).chat(&chat_id) else { return };
+            let suas: Vec<usize> =
+                chat.itens.iter().enumerate().filter(|(_, i)| matches!(i, Item::Usuario { .. })).map(|(k, _)| k).collect();
+            // O último pulo ainda realçado vale como ponto de partida: a tecla repetida não espera
+            // o painel desenhar o salto anterior.
+            let pulo = self.sumario.realce.as_ref().filter(|(c, _, ate)| *c == chat_id && *ate > Instant::now()).map(|(_, i, _)| *i);
+            (suas, pulo.or_else(|| self.a_vista_no_painel(chat)))
+        };
+        let alvo = match base {
+            Some(base) => mensagem_vizinha(&suas, base, passo),
+            // Nada medido ainda: o Alt+↑ começa pela última e o Alt+↓ não tem para onde ir.
+            None if passo < 0 => suas.last().copied(),
+            None => None,
+        };
+        match alvo {
+            Some(item) => self.ir_a_mensagem_do_sumario(&chat_id, item, cx),
+            None if passo > 0 && !suas.is_empty() => self.ir_para_o_fim(painel_id, cx),
+            None => {}
+        }
+    }
+
+    /// PgUp e PgDn: rola a conversa do painel ativo uma página.
+    pub(super) fn rolar_pagina(&mut self, direcao: i32, cx: &mut Context<Self>) {
+        let Some(p) = self.paineis.get(self.ativo) else { return };
+        let altura = p.rolagem.bounds().size.height;
+        let novo = offset_da_pagina(p.rolagem.offset().y, altura, p.rolagem.max_offset().y, direcao);
+        p.rolagem.set_offset(point(px(0.), novo));
+        self.acompanhar_rolagem(cx);
+        cx.notify();
     }
 
     /// O clique numa linha do sumário: o painel passa a desenhar até a mensagem, rola até ela e a
@@ -324,7 +381,7 @@ mod testes {
     // Sem `use super::*`: ele traria o `test` do gpui, e o #[test] viraria recursão.
     use gpui_kit::px;
 
-    use super::{LinhaDoSumario, comeco, linhas_do_sumario, mensagem_a_vista, mostrar_ate};
+    use super::{LinhaDoSumario, comeco, linhas_do_sumario, mensagem_a_vista, mensagem_vizinha, mostrar_ate, offset_da_pagina};
     use crate::modelo::Item;
 
     fn usuario(texto: &str, em: u64) -> Item {
@@ -409,5 +466,31 @@ mod testes {
         // Com alguns antes dela, para ela não ficar colada no alto.
         assert_eq!(mostrar_ate(200, 100, 60), 106);
         assert_eq!(mostrar_ate(10, 3, 60), 60);
+    }
+    #[test]
+    fn alt_seta_pula_para_a_mensagem_sua_vizinha() {
+        let suas = [0, 5, 9];
+        assert_eq!(mensagem_vizinha(&suas, 5, -1), Some(0));
+        assert_eq!(mensagem_vizinha(&suas, 5, 1), Some(9));
+        // Nas pontas não há para onde ir.
+        assert_eq!(mensagem_vizinha(&suas, 0, -1), None);
+        assert_eq!(mensagem_vizinha(&suas, 9, 1), None);
+        // Sem mensagem sua, nada.
+        assert_eq!(mensagem_vizinha(&[], 0, 1), None);
+    }
+
+    #[test]
+    fn pagina_rola_quase_uma_tela_e_para_nas_pontas() {
+        // Tela de 500, conteúdo que rola até 2000. O offset é negativo quando desce.
+        let (altura, maximo) = (px(500.), px(2000.));
+        let desce = |y: f32| offset_da_pagina(px(y), altura, maximo, 1).as_f32();
+        let sobe = |y: f32| offset_da_pagina(px(y), altura, maximo, -1).as_f32();
+        // Uma página é um pouco menos que a tela: sobra um pedaço da anterior para se situar.
+        assert_eq!(desce(0.), -450.);
+        assert_eq!(sobe(-1000.), -550.);
+        // No fim e no começo, para.
+        assert_eq!(desce(-1900.), -2000.);
+        assert_eq!(sobe(-100.), 0.);
+        assert_eq!(sobe(0.), 0.);
     }
 }
