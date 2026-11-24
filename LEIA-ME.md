@@ -454,10 +454,16 @@ componentes do GPUI Kit.
     redesenhar a cada quadro (no painel aberto ao lado, ela se redesenha sozinha nos primeiros
     quadros, medindo os blocos, e o fade do cartão funciona). Por isso a conversa que troca no
     painel entra pelo `movimento::entrada` de dentro de `Janela::corpo_do_painel` (`Painel.troca`
-    e `troca_vista`): a vista se redesenha nos 10 quadros do fade, e só ela. O que anima na casca redesenha a casca; o que anima nas mensagens,
-    só a vista daquele painel. Medido em 24/11/2026 com a mesma bancada (três conversas de 450
-    itens a 150%, binário otimizado): ver **O que entra com fade** e a seção da rodada no
-    `NOVIDADES.md`.
+    e `troca_vista`): a vista se redesenha nos quadros do fade, e só ela. O que anima na casca
+    redesenha a casca; o que anima nas mensagens, só a vista daquele painel. As entradas da rodada
+    de 24/11/2026 (ver **O que entra com fade**) não mudaram o custo, medido com a mesma bancada
+    (três conversas de 450 itens a 150%, binário otimizado, a thread principal em % de um núcleo,
+    média de 3 rodadas antes e 2 depois, com a máquina ocupada por outras sessões e até 10 pontos
+    de diferença entre rodadas iguais): parado, 0 e 0; pensando, 49 e 46; rodando ferramenta, 48
+    e 48; escrevendo, 56 e 56; rolando parado, 33 e 33; rolando com texto chegando, 55 e 54.
+    Trocar de aba, abrir um grupo e trocar Conversas e Arquivos fazem de 6 a 8 redesenhos no
+    segundo da ação, antes e depois, com o mesmo custo por quadro: os quadros do fade caem nos que
+    a ação já pedia (medir os blocos, ir à âncora).
   - **O que ainda custa** é a casca, refeita em todo quadro: com três painéis, uns 10 ms de
     layout e 7 de pintura (os cabeçalhos, as caixas de mensagem, as faixas), 30 vezes por segundo
     com um chat trabalhando. O que baixaria isso é o cabeçalho e a caixa de cada painel virarem
