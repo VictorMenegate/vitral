@@ -2094,7 +2094,9 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   `config.json` fica na dica do subtítulo). Desde 23/11/2026 são um diálogo largo
   (`LARGURA_DAS_CONFIGURACOES`) com uma coluna à esquerda das partes (`Parte`: Chats, Agentes,
   Perfis, Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à
-  direita, as opções da parte escolhida, que rolam sozinhas numa altura fixa. O que mora em cada
+  direita, as opções da parte escolhida, que rolam sozinhas numa altura que nunca passa da da
+  janela (`altura_do_corpo`: 520 a 100%, ou a janela menos a folga do cabeçalho; a navegação e o
+  cabeçalho ficam parados e só a coluna rola). O que mora em cada
   parte (`src/ui/configuracoes.rs`):
   - **Chats:** **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
     sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
@@ -2122,7 +2124,9 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     padrão, com um interruptor por anel (**Anel do Claude, do Codex e do Gemini**, todos ligados;
     cada um ainda depende da conta conectada, `opcoes::aneis_escolhidos`), **Números nas abas e na
     lista** (Sempre, como era, ou Só segurando Ctrl: o selo aparece depois de 150 ms com o Ctrl
-    apertado e some ao soltar, guardando o lugar para a aba não mudar de largura; `Janela.ctrl_desde`),
+    apertado e some ao soltar, guardando o lugar para a aba não mudar de largura; `Janela.ctrl_desde`, que
+    zera a cada desenho com o Ctrl de fato solto: o `Ctrl+,` que abre as Configurações soltava o Ctrl
+    com o foco no diálogo, e o número ficava à vista),
     **Animações** (Seguir o GNOME ou Desligadas; vale para o app todo e muda na hora;
     seguindo um GNOME sem animações, a linha diz isso) e **Transparência dos fundos**.
   - **Claude Code:** a versão instalada, a que os turnos abrem, e **Atualizar**, que roda `claude

@@ -1,0 +1,24 @@
+# Números das abas só com o Ctrl, e a aba Arquivos lembrada, a 150%. O Ctrl é segurado pelo teclado
+# virtual do Shell (`roda` com o Eval do gdbus), porque `tecla` aperta e solta na hora.
+espera 12
+tecla Control_L+comma
+espera 2
+clique 275 448            # Aparência
+espera 1
+rolar 1000 600 40
+espera 1
+clique 1292 845           # Números: Só segurando Ctrl
+espera 1
+clique 1401 181
+espera 1
+arrastar 300 431 1400 500 # "#4 Aplicar cupom" para o lado direito: o segundo painel
+espera 2
+print n1-dois-paineis-sem-ctrl
+roda gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval "const C = imports.gi.Clutter; const G = imports.gi.GLib; global._vk.notify_keyval(G.get_monotonic_time(), C.KEY_Control_L, C.KeyState.PRESSED); 'ok'"
+espera 0.08
+print n2-ctrl-recem-apertado
+espera 1
+print n3-ctrl-segurado
+roda gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval "const C = imports.gi.Clutter; const G = imports.gi.GLib; global._vk.notify_keyval(G.get_monotonic_time(), C.KEY_Control_L, C.KeyState.RELEASED); 'ok'"
+espera 1
+print n4-ctrl-solto
