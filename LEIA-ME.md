@@ -196,7 +196,7 @@ componentes do GPUI Kit.
   Para compactar com foco, escreve-se "/compact <instrução>" na caixa, como a dica lembra
   (`compactar_conversa`, rodada de uso, item 6.3). Turno rodando, parada, falha, pasta sumida, fila de
   mensagens e o "Você parou" (item 6.2) vêm antes dela. O que o último turno mudou ("3 arquivos
-  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.9.7 a pílula das mudanças, na
+  mudados · +40 −12", que ficava por último nessa faixa) é desde a 0.10.0 a pílula das mudanças, na
   linha de pílulas (ver **Linha de pílulas**): o clique abre a direita em "Este chat", na seção
   Mudanças (rodada de uso, item 5.1). (3) `Chat::contexto_grande` põe uma linha no seletor
   de modelo, na aba do Claude, dizendo quanto a troca faz reler. O medidor da conversa (contexto,
@@ -1409,7 +1409,7 @@ O padrão é o mínimo, e o resto aparece quando faz falta:
   1 px e uma sombra curta, como um botão flutuante: a conversa vai até a borda por baixo deles, sem
   folga (dono, 16/11/2026: eles passaram pelo cabeçalho e voltaram no mesmo dia, "o de uso tem que
   ficar onde eu tinha falado, embaixo do ×"): cada um só com a conta
-  daquele serviço conectada (0.9.7; `aneis_a_mostrar`): o do Claude com uma conta com o login
+  daquele serviço conectada (0.10.0; `aneis_a_mostrar`): o do Claude com uma conta com o login
   guardado e não perdido (`Motor::claude_conectado`, de `busca::tem_login`, lido ao abrir e a cada
   busca do uso), o do Codex com o `auth.json` dele e uso lido. Sem conta, o anel some, a fileira
   do painel da direita não guarda lugar (`reserva_dos_aneis`) e o "Entrar" e o "Instalar o
@@ -3033,7 +3033,7 @@ envio, `motivo_sem_ultracode`, `aceita_ultracode`, um Ultracode por vez (`ultrac
 fim do turno adiado enquanto há agentes em segundo plano (`fim_adiado`; `agentes_cortados` quando o
 processo sai antes deles) e `entrada_para_repetir` na repetição automática da troca de conta.
 
-Um chat, um processo (0.9.7): nunca há dois processos do agente na mesma conversa. Em 23/11/2026
+Um chat, um processo (0.10.0): nunca há dois processos do agente na mesma conversa. Em 23/11/2026
 um chat chegou a ter três `claude -p --resume` da mesma sessão, cada um achando que era o único.
 O que disparou, medido no Claude Code 2.1.328: ao retomar uma sessão cujo processo anterior foi
 derrubado com um agente em segundo plano (o Parar de quem esperava os agentes), ele manda o aviso

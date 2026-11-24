@@ -62,7 +62,7 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
 - **Ultracode em uma linha.** Embaixo do nome, só “Agentes em paralelo, só na próxima · gasta bem
   mais”; o resto está no (i).
 
-## 0.9.7
+## 0.10.0
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano

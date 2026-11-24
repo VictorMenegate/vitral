@@ -4494,7 +4494,8 @@ mod testes_das_imagens_do_resultado {
         assert_eq!(std::fs::read(&imagens[0]).unwrap(), imagem);
 
         let gravado = serde_json::to_string_pretty(&itens).unwrap();
-        assert!(gravado.contains(&imagens[0].display().to_string()));
+        // O caminho como o JSON o escreve: no Windows cada barra invertida vira `\\`.
+        assert!(gravado.contains(&serde_json::to_string(&imagens[0]).unwrap()));
         for pedaco in [&em_base64[..64], &em_base64[em_base64.len() / 2..em_base64.len() / 2 + 64]] {
             assert!(!gravado.contains(pedaco), "o base64 foi para a conversa");
         }
