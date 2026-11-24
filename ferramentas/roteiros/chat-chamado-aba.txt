@@ -1,0 +1,38 @@
+# O chat chamado por outro aparece numa aba, e fechar a aba de um chat que roda o para.
+# Pasta de demonstração (python3 -I ferramentas/demo_vitral.py <pasta>), primeiro uso com DADOS_NOVOS=1.
+# Os ids são os do estado.json da bancada depois da migração (77a040a1c6 "Lista de apps nas
+# preferências" chama 78a96b44d7 "Roteiro do episódio 12"); o "[demora]" da mensagem entregue faz o
+# destino rodar 10 s. O `texto` não digita aspas duplas (o gdbus as come): vão como `tecla quotedbl`.
+espera 12
+clique 300 203            # "Lista de apps nas preferências"
+espera 3
+print 01-antes            # um chat à vista
+clique 780 838            # foco na caixa
+texto Chama o outro: [mcp mensagem_para_chat {
+tecla quotedbl
+texto chat
+tecla quotedbl
+texto :
+tecla quotedbl
+texto 78a96b44d7
+tecla quotedbl
+texto ,
+tecla quotedbl
+texto texto
+tecla quotedbl
+texto :
+tecla quotedbl
+texto Resume o roteiro. [demora]
+tecla quotedbl
+texto }]
+print 01b-digitado
+tecla Return
+espera 12
+print 02-depois           # a aba do destino entra de fundo, com o contorno de rodando; o chat à vista não trocou
+# Fechar a aba do chat que roda (o destino, com o "[demora]") para o turno dele.
+mover 1250 119
+espera 1
+print 03-hover-aba        # o × na aba de fundo que está rodando
+clique 1350 119
+espera 2
+print 04-fechada          # a aba saiu, e o "1 rodando" do pé da lista e o anel do chat na lista sumiram
