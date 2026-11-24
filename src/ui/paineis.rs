@@ -32,6 +32,10 @@ pub struct Painel {
     pub composer: Entity<TextareaState>,
     /// Máximo de linhas da caixa, que diminui em janela baixa.
     pub linhas_caixa: usize,
+    /// O esforço na caixa só com o ícone porque inteiro ele não cabia ao lado do modelo (ia para
+    /// a segunda linha, que fica escondida, e sumia: dono, 24/11/2026). Guarda a largura que ele
+    /// pedia inteiro, para voltar quando houver lugar (`composer::decidir_esforco`).
+    pub esforco_compacto: Option<Pixels>,
     pub rolagem: ScrollHandle,
     pub leitura: super::mensagens::Leitura,
     pub seguindo: bool,
@@ -443,6 +447,7 @@ impl Janela {
             abas: Vec::new(),
             composer,
             linhas_caixa: super::composer::LINHAS_CAIXA,
+            esforco_compacto: None,
             rolagem: ScrollHandle::new(),
             mostrar_historico: crate::importar::ITENS_POR_VEZ,
             preservar_topo: None,

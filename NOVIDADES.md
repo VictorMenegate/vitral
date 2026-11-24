@@ -18,6 +18,11 @@ quanto cache cada turno gastou, o que cada agente em segundo plano está fazendo
 subagente numa aba. Nas Configurações, a letra da conversa separada do zoom, as suas instruções
 para todos os chats e os perfis de agente. E cada conversa abre um processo do Claude só.
 
+- **O limite de um modelo só não para a conta.** Com a "Semana · Fable" em 100% e a semana geral
+  em 66%, a recusa do Fable marcava a conta inteira como no limite até a semana renovar. Agora só
+  o limite de 5 h e o semanal geral param a conta; o de um modelo fica no erro do turno dele.
+- **O esforço não some da caixa.** Quando não cabia inteiro ao lado do modelo, o esforço ia para
+  uma segunda linha escondida e sumia; agora fica só com o ícone até ter lugar de novo.
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
   ou o esforço no meio de um turno só valia no turno seguinte. Agora a troca chega ao turno em
   andamento em menos de um segundo.

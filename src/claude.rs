@@ -2016,12 +2016,21 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             };
             let (uso_5h, renova_5h) = janela("five_hour");
             let (uso_semana, renova_semana) = janela("seven_day");
+            // A recusa só para a conta inteira se veio da janela de 5 h ou da semanal geral. A de
+            // um modelo só (a "Semana · Fable", `seven_day_fable`, `seven_day_opus`…) recusa os
+            // turnos daquele modelo, e o Claude Code já diz isso no erro do turno; com as janelas
+            // gerais longe do fim, a recusa também é de um modelo (24/11/2026: a Fable esgotada
+            // marcou a conta como no limite até sábado com a semana em 66%).
+            let tipo = info["rateLimitType"].as_str();
+            let de_um_modelo = tipo.is_some_and(|t| t != "five_hour" && t != "seven_day");
+            let gerais: Vec<f64> = [uso_5h, uso_semana].into_iter().flatten().collect();
+            let gerais_com_folga = !gerais.is_empty() && gerais.iter().all(|u| *u < 0.99);
             vec![Evento::Limite {
                 uso_5h,
                 uso_semana,
                 renova_5h,
                 renova_semana,
-                bloqueado: info["status"] == "rejected",
+                bloqueado: info["status"] == "rejected" && !de_um_modelo && !gerais_com_folga,
                 bloqueado_ate: info["resetsAt"].as_f64().map(|s| s as u64),
             }]
         }
@@ -2953,6 +2962,39 @@ mod testes {
         assert!(*bloqueado);
         assert_eq!(*bloqueado_ate, Some(1_790_000_000));
         assert_eq!(*uso_5h, Some(1.0));
+    }
+
+    /// 24/11/2026: os subagentes em Fable esgotaram a "Semana · Fable" (100%) com a semana geral em
+    /// 66%, e a recusa do Fable marcou a conta inteira como no limite até sábado. Recusa de uma
+    /// janela de um modelo só não para a conta: só a de 5 h, a semanal geral, ou uma recusa sem
+    /// dizer de qual janela (como antes).
+    #[test]
+    fn recusa_de_um_modelo_so_nao_trava_a_conta() {
+        let recusa = |info: serde_json::Value| -> bool {
+            let eventos = interpretar(&json!({ "type": "rate_limit_event", "rate_limit_info": info }));
+            let [Evento::Limite { bloqueado, .. }] = eventos.as_slice() else { panic!("sem evento de limite") };
+            *bloqueado
+        };
+        // A janela do modelo pelo nome.
+        assert!(!recusa(json!({ "status": "rejected", "rateLimitType": "seven_day_fable", "resetsAt": 1u64 })));
+        assert!(!recusa(json!({ "status": "rejected", "rateLimitType": "seven_day_opus", "resetsAt": 1u64 })));
+        // Sem o nome, mas com as janelas gerais longe do fim: foi a de um modelo.
+        assert!(!recusa(json!({
+            "status": "rejected",
+            "rateLimitType": "seven_day",
+            "utilization": 0.66,
+            "unifiedWindows": {
+                "five_hour": { "utilization": 0.1 },
+                "seven_day": { "utilization": 0.66 }
+            }
+        })));
+        // As gerais continuam travando.
+        assert!(recusa(json!({ "status": "rejected", "rateLimitType": "five_hour", "utilization": 1.0 })));
+        assert!(recusa(json!({ "status": "rejected", "rateLimitType": "seven_day", "utilization": 1.0 })));
+        // Sem dado nenhum de janela, como antes: trava.
+        assert!(recusa(json!({ "status": "rejected" })));
+        // Aviso sem recusa não trava.
+        assert!(!recusa(json!({ "status": "allowed_warning", "rateLimitType": "seven_day", "utilization": 0.9 })));
     }
 
     /// Rodada do Paseo, item 1: a mudança lá embaixo de uma troca longa tem de caber no que fica

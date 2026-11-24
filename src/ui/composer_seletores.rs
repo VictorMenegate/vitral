@@ -1050,12 +1050,14 @@ impl Janela {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn chip_esforco(
         &self,
         motor: &Motor,
         chat: &Chat,
         ix: usize,
         b: &Barra,
+        compacto: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -1082,18 +1084,18 @@ impl Janela {
         };
         let base = if ultracode {
             // Com o Ultrathink junto, as barrinhas em arco-íris; só o ícone, o do fluxo.
-            let simbolo = if armado && !b.estreita() { barras_arco_iris() } else { simbolo_ultracode() };
+            let simbolo = if armado && !b.estreita() && !compacto { barras_arco_iris() } else { simbolo_ultracode() };
             Chip::new(b.id("chip-esforco"), "Ultracode")
                 .simbolo(simbolo)
                 .cor_rotulo(Cores::violeta())
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto)
         } else if armado {
             Chip::new(b.id("chip-esforco"), "Ultrathink")
                 .simbolo(barras_arco_iris())
                 .arco_iris()
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto)
         } else {
             // No automático, as barrinhas e o rótulo dizem o nível que ele usa ("Auto · Extra").
             let no_auto = padrao.filter(|_| atual == 0);
@@ -1103,8 +1105,8 @@ impl Janela {
             };
             let chip = Chip::new(b.id("chip-esforco"), rotulo)
                 .simbolo(Simbolo::Sinal { nivel: no_auto.unwrap_or(atual) as u8, total: 5 })
-                .seta(b.larga())
-                .so_icone(b.estreita());
+                .seta(b.larga() && !compacto)
+                .so_icone(b.estreita() || compacto);
             chip.mudado(atual != 0)
         };
         let mut chip = base.tamanho(b.tamanho()).aberto(aberto);

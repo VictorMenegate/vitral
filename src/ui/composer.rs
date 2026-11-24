@@ -3,8 +3,10 @@
 //! Os chips da barra, com os menus e os popovers deles, ficam em `composer_seletores.rs`.
 
 use std::{
+    cell::Cell,
     collections::HashSet,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use gpui_kit::component::{
@@ -853,6 +855,11 @@ impl Janela {
             .into_any_element()
         };
         let grupo = |e: AnyElement| div().flex_none().ml(esp::E4).child(e);
+        // O esforço que não cabe inteiro ao lado do modelo fica só com o ícone, em vez de ir para a
+        // segunda linha escondida e sumir (`decidir_esforco`).
+        let compacto = self.paineis[ix].esforco_compacto;
+        let medida_do_modelo: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::default();
+        let medida_da_linha: Rc<Cell<Option<Bounds<Pixels>>>> = Rc::default();
         let sem_perguntar = motor.permissao_de(chat) == "bypassPermissions";
         let modo = self.chip_modo(motor, chat, b, window, cx);
         let modo = if sem_perguntar { modo } else { em_repouso("repouso-modo", modo) };
@@ -874,8 +881,18 @@ impl Janela {
                     // não coubesse ficaria nela, cortada. Com a altura da linha, a segunda começa
                     // abaixo do recorte.
                     .child(div().h(r(altura)))
-                    .child(grupo(em_repouso("repouso-modelo", self.chip_modelo(motor, chat, ix, b, window, cx))))
-                    .child(grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, window, cx)))),
+                    .on_prepaint({
+                        let caixa = medida_da_linha.clone();
+                        move |limites, _, _| caixa.set(Some(limites))
+                    })
+                    .child(grupo(em_repouso("repouso-modelo", self.chip_modelo(motor, chat, ix, b, window, cx))).on_prepaint({
+                        let modelo = medida_do_modelo.clone();
+                        move |limites, _, _| modelo.set(Some(limites))
+                    }))
+                    .child(
+                        grupo(em_repouso("repouso-esforco", self.chip_esforco(motor, chat, ix, b, compacto.is_some(), window, cx)))
+                            .on_prepaint(medir_esforco(cx.entity().downgrade(), painel_id, medida_do_modelo, medida_da_linha, compacto)),
+                    ),
             )
             .child(
                 div()
@@ -1792,6 +1809,58 @@ fn ajustar_linhas(
     }
 }
 
+/// Mede o chip do esforço depois do layout e liga ou desliga o modo só com o ícone.
+fn medir_esforco(
+    janela: WeakEntity<Janela>,
+    painel: u64,
+    modelo: Rc<Cell<Option<Bounds<Pixels>>>>,
+    linha: Rc<Cell<Option<Bounds<Pixels>>>>,
+    compacto: Option<Pixels>,
+) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static {
+    move |esforco, window, _| {
+        let Some(modelo) = modelo.get() else {
+            return;
+        };
+        let novo = decidir_esforco(compacto, modelo, esforco, linha.get());
+        if novo == compacto {
+            return;
+        }
+        window.on_next_frame(move |_, cx| {
+            let _ = janela.update(cx, |this, cx| {
+                if let Some(p) = this.paineis.iter_mut().find(|p| p.id == painel) {
+                    p.esforco_compacto = novo;
+                    cx.notify();
+                }
+            });
+        });
+    }
+}
+
+/// O esforço da caixa inteiro (`None`) ou só com o ícone (`Some(largura que ele pede inteiro)`).
+/// O grupo do modelo e do esforço quebra linha com a segunda escondida: inteiro, o esforço que
+/// não cabia ia para ela e sumia (dono, 24/11/2026: "o chat fica sumindo o esforço dele"). Abaixo
+/// da linha do modelo é o sinal de que não coube; volta inteiro quando a sobra à direita do
+/// modelo couber a largura que ele pedia, com 16 px de folga para não ficar indo e voltando.
+pub(super) fn decidir_esforco(
+    compacto: Option<Pixels>,
+    modelo: Bounds<Pixels>,
+    esforco: Bounds<Pixels>,
+    linha: Option<Bounds<Pixels>>,
+) -> Option<Pixels> {
+    let quebrou = esforco.origin.y > modelo.origin.y + px(2.);
+    match compacto {
+        None if quebrou => Some(esforco.size.width),
+        None => None,
+        Some(inteiro) => {
+            let Some(linha) = linha else {
+                return compacto;
+            };
+            let sobra = linha.right() - modelo.right();
+            if !quebrou && sobra >= inteiro + px(16.) { None } else { compacto }
+        }
+    }
+}
+
 /// Quantas linhas a caixa pode ter com a janela desta altura (em rem): o resto do cartão, o
 /// plano e umas linhas de mensagem levam uns 26 rem (420 px); cada linha, 1,5 rem.
 fn linhas_da_caixa(altura: f32) -> usize {
@@ -1954,7 +2023,7 @@ mod testes_sugestoes {
 #[cfg(test)]
 mod testes_caixa {
     use super::{
-        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
+        Enter, Envio, LINHAS_CAIXA, MODOS, com_claude, decidir_esforco, dica_do_enviar, envio, gastar_chave, indice_esforco, linhas_da_caixa,
         milhares, nomes_dos_niveis, proximo_modo, rotulo_modelo, tokens, usa_esforco, uso_do_contexto,
     };
 
@@ -2015,6 +2084,25 @@ mod testes_caixa {
             modo = proximo_modo(modo);
         }
         assert_eq!(modo, "manual");
+    }
+
+    #[test]
+    fn o_esforco_que_nao_cabe_fica_so_com_o_icone_e_volta_com_lugar() {
+        use gpui_kit::{Bounds, point, px, size};
+        let caixa = |x: f32, y: f32, w: f32| Bounds { origin: point(px(x), px(y)), size: size(px(w), px(32.)) };
+        let modelo = caixa(200., 10., 220.);
+        let linha = Some(caixa(180., 10., 420.));
+        // Inteiro e na mesma linha do modelo: fica inteiro.
+        assert_eq!(decidir_esforco(None, modelo, caixa(424., 10., 150.), linha), None);
+        // Inteiro e na linha de baixo (a escondida): só o ícone, lembrando que pedia 150.
+        assert_eq!(decidir_esforco(None, modelo, caixa(180., 42., 150.), linha), Some(px(150.)));
+        // Só o ícone, sobra 180 à direita do modelo (600 - 420): 150 + 16 cabe, volta inteiro.
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), linha), None);
+        // Sobra pouca: continua só com o ícone, sem ficar indo e voltando.
+        let estreita = Some(caixa(180., 10., 330.));
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), estreita), Some(px(150.)));
+        // Sem a medida da linha ainda: não muda.
+        assert_eq!(decidir_esforco(Some(px(150.)), modelo, caixa(424., 10., 32.), None), Some(px(150.)));
     }
 
     #[test]
