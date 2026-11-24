@@ -15,6 +15,7 @@ mod bifurcar;
 mod busca_conversa;
 mod caixa_entrada;
 mod checagens;
+mod colar_html;
 mod composer;
 mod configuracoes;
 mod conversa;

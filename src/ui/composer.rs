@@ -868,6 +868,18 @@ impl Janela {
                             // Colar imagem ou arquivos copiados no gerenciador vira anexo.
                             .on_paste(move |item, window, cx| {
                                 let caminhos = anexos_da_area_de_transferencia(item, &pasta_anexos);
+                                // HTML copiado (navegador, documento): vira Markdown, com o texto
+                                // puro por baixo, para o Ctrl+Z voltar a ele.
+                                if caminhos.is_empty()
+                                    && let (Some(plano), Some(html)) = (item.text(), item.metadata())
+                                    && let Some(markdown) = super::colar_html::markdown_da_colagem(&plano, html)
+                                {
+                                    let campo = campo_colado.clone();
+                                    window.on_next_frame(move |window, cx| {
+                                        let _ = campo.update(cx, |c, cx| colar_com_markdown(c, &plano, &markdown, window, cx));
+                                    });
+                                    return true;
+                                }
                                 if caminhos.is_empty() {
                                     // Texto: quem cola é o campo, que pede a rolagem até o cursor
                                     // antes do layout novo, com a caixa ainda do tamanho de antes;
@@ -2245,6 +2257,19 @@ fn rotulo_modelo(escolhido: &str, em_uso: Option<&str>) -> String {
         // Conversas antigas guardaram o nome completo do modelo, que não está na lista.
         None => nome_curto_modelo(escolhido),
     }
+}
+
+/// Cola o texto puro e, numa segunda edição, troca-o pelo Markdown: o Ctrl+Z desfaz só a troca e
+/// deixa o texto puro (a colagem em duas edições é de propósito; o kit guarda cada uma).
+fn colar_com_markdown(c: &mut TextareaState, plano: &str, markdown: &str, window: &mut Window, cx: &mut Context<TextareaState>) {
+    c.insert(plano, window, cx);
+    let fim = c.cursor();
+    let inicio = fim.saturating_sub(plano.len());
+    c.set_selected_range(inicio..fim, cx);
+    c.replace(markdown.to_string(), window, cx);
+    let cursor = c.cursor();
+    c.set_selected_range(cursor..cursor, cx);
+    c.set_scroll_offset(point(px(0.), px(-1.0e6)), cx);
 }
 
 /// Imagens coladas viram arquivos na pasta dos anexos (`anexos/` nos dados); arquivos copiados do
