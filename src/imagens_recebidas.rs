@@ -652,7 +652,8 @@ mod testes {
 
         // O que vai para o disco com a conversa são os caminhos: nem um pedaço do base64.
         let gravado = serde_json::to_string(&itens).unwrap();
-        assert!(gravado.contains(&guardadas[0].display().to_string()));
+        // O caminho como o JSON o escreve: no Windows cada barra invertida vira `\\`.
+        assert!(gravado.contains(&serde_json::to_string(&guardadas[0]).unwrap()));
         assert!(!gravado.contains(&em_base64(&imagens[0].bytes)[..80]));
         assert!(gravado.len() < 2000, "{} bytes", gravado.len());
         // E a conversa relida tem as mesmas imagens.
