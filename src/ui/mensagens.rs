@@ -1004,10 +1004,11 @@ impl Janela {
             .map(|(texto, alto, i)| {
                 let janela = cx.entity().downgrade();
                 let raio = crate::tema::raio_da_peca();
-                // Uma faixa por trás, do topo até a mensagem, com as mesmas camadas do cartão (o
-                // metal, o véu, o fosco e o cartão): fica transparente como ele e tapa o texto que
-                // passa por baixo (dono, 18/11/2026: o cinza opaco de antes destoava). Sem sombra
-                // embaixo: a de 8 px escura ficava "bem ruim" (dono, 18/11/2026).
+                // A faixa do topo até a mensagem não tem fundo: a conversa é que não é desenhada
+                // embaixo dela (`recortada_no_alto`, na lista abaixo). Com as camadas do cartão
+                // repetidas por cima, ela tapava o texto mas ficava mais escura que o painel com a
+                // transparência ligada (dono, 18/11 e 24/11/2026). Sem sombra embaixo: a de 8 px
+                // escura ficava "bem ruim" (dono, 18/11/2026).
                 // A seguinte, chegando no alto, empurra a faixa para cima (`empurrao_da_presa`); a
                 // altura dela é medida aqui, para o prepaint da lista saber quanto empurrar.
                 div()
@@ -1017,8 +1018,13 @@ impl Janela {
                     .right_0()
                     .pt(esp::E8)
                     .pb(esp::E4)
-                    .on_prepaint(move |limites, _, _| altura_da_presa.set(limites.size.height))
-                    .child(fundo_do_cartao())
+                    .on_prepaint(move |limites, window, _| {
+                        // A conversa é recortada por esta altura (`recortada_no_alto`): mudou, desenha
+                        // de novo para o recorte acompanhar.
+                        if altura_da_presa.replace(limites.size.height) != limites.size.height {
+                            window.refresh();
+                        }
+                    })
                     .child(
                     div().map(|s| coluna(s, caixa_estreita)).child(
                         div()
@@ -1040,6 +1046,9 @@ impl Janela {
                     ),
                 )
             });
+        // Com a faixa presa à vista, a conversa some embaixo dela (ver `recortada_no_alto`).
+        let recorte = presa.is_some().then(|| (self.paineis[ix].altura_da_presa.clone(), empurrao));
+        let alto_do_recorte = move || recorte.as_ref().map_or(px(0.), |(altura, empurrao)| super::vista_mensagens::alto_do_recorte(altura.get(), *empurrao));
         div()
             .key_context(CONTEXTO_DA_CONVERSA)
             .relative()
@@ -1048,7 +1057,7 @@ impl Janela {
             // mensagens nunca somem de todo.
             .min_h(MINIMO_MENSAGENS)
             .w_full()
-            .child(
+            .child(super::vista_mensagens::recortada_no_alto(
                 div()
                     .id(SharedString::from(format!("mensagens-{painel_id}")))
                     .size_full()
@@ -1071,7 +1080,8 @@ impl Janela {
                     // Só as mensagens crescem com a letra da conversa (Configurações > Aparência):
                     // a barra de rolagem, a pílula do fim e a busca ficam no tamanho da interface.
                     .child(super::vista_mensagens::na_letra_da_conversa(lista)),
-            )
+                alto_do_recorte,
+            ))
             // Fora do fim, o pé da área rolável esmaece em 24 até o cartão: a última linha não
             // fica cortada a seco logo acima da faixa ou da caixa. No topo, nada: ali o cartão é
             // translúcido e o dono tirou a linha do cabeçalho (12/11/2026) (relatório de design,
@@ -2143,30 +2153,6 @@ pub(super) fn texto_da_presa(texto: &str) -> String {
 
 /// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal
 /// que fica atrás dela, o véu azul da base e o fosco por cima. O pai precisa ser `relative`.
-/// As camadas que a conversa tem atrás do texto (a chapa, o véu e o fosco da janela, e o cartão),
-/// enchendo o pai: o que fica por cima da conversa e precisa tapar o texto sem destoar do cartão
-/// (a faixa da mensagem presa). Por trás dela, o texto que rola fica a uns 5%.
-fn fundo_do_cartao() -> Div {
-    let sem_cantos = Corners::default();
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .opacity(crate::tema::opacidade_do_metal())
-                .child(super::componentes::metal::abertura_parada(super::componentes::metal::Encaixe::Continuo, sem_cantos)),
-        )
-        .child(div().absolute().top_0().left_0().size_full().bg(Cores::vidro_leitura()))
-        .when(crate::tema::transparencia() > 0, |s| s.child(super::componentes::metal::fosco(sem_cantos)))
-        .child(div().absolute().top_0().left_0().size_full().bg(Cores::cartao()))
-}
-
 pub(super) fn fundo_da_lista(raio: Pixels) -> Div {
     super::componentes::metal::fundo_da_lista(raio)
 }

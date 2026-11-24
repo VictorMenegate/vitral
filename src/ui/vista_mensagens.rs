@@ -115,6 +115,96 @@ impl NaLetraDaConversa {
     }
 }
 
+/// A conversa recortada embaixo da faixa da mensagem presa: o que rola por ali não é desenhado (nem
+/// recebe o ponteiro), então a faixa não precisa de fundo e fica transparente como o resto do
+/// painel. Antes ela repetia as camadas do cartão por cima delas mesmas para tapar o texto, e com a
+/// transparência ligada ficava mais escura que o painel (dono, 23 e 24/11/2026: "o fundo dessa
+/// mensagem que fica em cima não tá transparente"). `alto` diz, na hora de desenhar, quanto do
+/// topo some: a altura da faixa menos o quanto a mensagem seguinte já a empurrou para cima.
+pub fn recortada_no_alto(filho: impl IntoElement, alto: impl Fn() -> Pixels + 'static) -> AnyElement {
+    RecorteNoAlto { alto: Box::new(alto), filho: filho.into_any_element() }.into_any_element()
+}
+
+/// Quanto do topo da conversa fica de fora: a parte da faixa presa que ainda está à vista.
+pub fn alto_do_recorte(altura_da_faixa: Pixels, empurrao: Pixels) -> Pixels {
+    (altura_da_faixa - empurrao).max(px(0.))
+}
+
+struct RecorteNoAlto {
+    alto: Box<dyn Fn() -> Pixels>,
+    filho: AnyElement,
+}
+
+impl RecorteNoAlto {
+    fn mascara(&self, limites: Bounds<Pixels>) -> ContentMask<Pixels> {
+        let alto = (self.alto)().min(limites.size.height);
+        ContentMask {
+            bounds: Bounds {
+                origin: point(limites.origin.x, limites.origin.y + alto),
+                size: size(limites.size.width, limites.size.height - alto),
+            },
+        }
+    }
+}
+
+impl IntoElement for RecorteNoAlto {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for RecorteNoAlto {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.filho.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        limites: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mascara = self.mascara(limites);
+        window.with_content_mask(Some(mascara), |window| self.filho.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        limites: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mascara = self.mascara(limites);
+        window.with_content_mask(Some(mascara), |window| self.filho.paint(window, cx));
+    }
+}
+
 impl IntoElement for NaLetraDaConversa {
     type Element = Self;
 
@@ -171,5 +261,20 @@ impl Element for NaLetraDaConversa {
     ) {
         let rem = self.rem(window);
         window.with_rem_size(Some(rem), |window| self.filho.paint(window, cx));
+    }
+}
+
+#[cfg(test)]
+mod testes_do_recorte {
+    use super::alto_do_recorte;
+    use gpui_kit::px;
+
+    #[test]
+    fn o_recorte_e_a_parte_da_faixa_que_ainda_esta_a_vista() {
+        assert_eq!(alto_do_recorte(px(64.), px(0.)), px(64.));
+        // Empurrada 20 para cima pela mensagem seguinte, só 44 dela cobrem a conversa.
+        assert_eq!(alto_do_recorte(px(64.), px(20.)), px(44.));
+        // Empurrada para fora, nada fica recortado.
+        assert_eq!(alto_do_recorte(px(64.), px(80.)), px(0.));
     }
 }

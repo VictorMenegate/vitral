@@ -26,6 +26,7 @@ use super::{
     painel_contas::{confirmar_desconectar, escolher_conta, limite_atingido},
 };
 use crate::{
+    agente_gemini::{GrupoDoGemini, UsoGemini},
     codex::Codex,
     contas::{self, Conta, Creditos, Parada, Plano, previsao::Previsao},
     modelo::agora,
@@ -120,7 +121,7 @@ impl Janela {
         let ligado = self.motor.as_ref().is_some_and(|m| {
             let m = m.read(cx);
             let (claude, codex) = aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido));
-            m.config.uso_no_canto && (claude || codex)
+            m.config.uso_no_canto && (claude || codex || leitura_gemini(m.gemini.as_ref()).em_uso())
         });
         // A cápsula soma 4 de cada lado e o fio.
         ligado.then(|| crate::tema::tam(window, USO_DA_BORDA + DIAMETRO_NO_CANTO + 10. + 8.))
@@ -131,7 +132,7 @@ impl Janela {
             return Vec::new();
         };
         let janela = cx.entity().downgrade();
-        let (claude, codex, (com_claude, com_codex)) = {
+        let (claude, codex, gemini, (com_claude, com_codex)) = {
             let m = motor.read(cx);
             let conta = m.conta_padrao();
             // Com uma conta só não há o que distinguir: sem selo e sem a conta na dica.
@@ -145,6 +146,7 @@ impl Janela {
                     m.previsao_da_conta(&conta.id).cinco_horas.estoura(),
                 ),
                 leitura_codex(m.codex.as_ref(), m.codex_lido),
+                leitura_gemini(m.gemini.as_ref()),
                 aneis_a_mostrar(m.claude_conectado(), m.codex_conectado(), &leitura_codex(m.codex.as_ref(), m.codex_lido)),
             )
         };
@@ -155,7 +157,11 @@ impl Janela {
             botoes.push(popover_uso(Marca::Claude, claude, motor.clone(), janela.clone()).into_any_element());
         }
         if com_codex {
-            botoes.push(popover_uso(Marca::Codex, codex, motor, janela).into_any_element());
+            botoes.push(popover_uso(Marca::Codex, codex, motor.clone(), janela.clone()).into_any_element());
+        }
+        // O do Gemini só com o agy entrando e a cota lida (`agente_gemini::ler_uso`).
+        if gemini.em_uso() {
+            botoes.push(popover_uso(Marca::Gemini, gemini, motor, janela).into_any_element());
         }
         botoes
     }
@@ -394,6 +400,27 @@ fn leitura_codex(codex: Option<&Codex>, lido: bool) -> Leitura {
     }
 }
 
+/// Gemini: a semana dos modelos do Gemini fora e a do outro grupo do Antigravity (Claude e GPT)
+/// dentro, as duas semanais. Sem leitura (sem agy, sem login), apagado: o anel não aparece.
+fn leitura_gemini(uso: Option<&UsoGemini>) -> Leitura {
+    let nome = Marca::Gemini.nome();
+    let Some(uso) = uso else {
+        return Leitura { fora: None, dentro: None, dica: format!("{nome} · sem leitura da cota"), selo: None, bloqueado: false, apagado: true, atencao: false };
+    };
+    let (gemini, outros) = (uso.do_gemini(), uso.dos_outros());
+    let parte = |g: &GrupoDoGemini| g.fracao.map(|f| format!("{} {}%", g.nome, porcentagem(f)));
+    let partes: Vec<String> = [gemini, outros].into_iter().flatten().filter_map(parte).collect();
+    Leitura {
+        fora: gemini.and_then(|g| g.fracao),
+        dentro: outros.and_then(|g| g.fracao),
+        dica: if partes.is_empty() { format!("{nome} · sem leitura da cota") } else { format!("{nome} · semana: {}", partes.join(" · ")) },
+        selo: None,
+        bloqueado: uso.bloqueado(),
+        apagado: false,
+        atencao: false,
+    }
+}
+
 /// Dica curta das duas janelas: "Claude · 5 h 7% · semana 38%".
 fn dica_janelas(nome: &str, uso: &Uso) -> String {
     let numero = |f: Option<f64>| f.map_or("–".to_string(), |f| format!("{}%", porcentagem(f)));
@@ -428,8 +455,9 @@ fn detalhes(
     match marca {
         Marca::Claude => detalhes_claude(&motor, janela, popover, agora, window, cx).into_any_element(),
         Marca::Codex => detalhes_codex(&motor, janela, popover, agora, window, cx).into_any_element(),
-        // O Linear não tem plano de uso, e o Antigravity não diz a cota do Gemini.
-        Marca::Gemini | Marca::Linear => div().into_any_element(),
+        Marca::Gemini => detalhes_gemini(&motor, janela, popover, agora, window, cx).into_any_element(),
+        // O Linear não tem plano de uso.
+        Marca::Linear => div().into_any_element(),
     }
 }
 
@@ -559,6 +587,38 @@ fn detalhes_codex(
                  próxima resposta neste computador.",
             ))
         })
+}
+
+/// A cota do Gemini no Antigravity: uma janela por grupo de modelos, com quando renova.
+fn detalhes_gemini(
+    entidade: &Entity<Motor>,
+    janela: WeakEntity<Janela>,
+    popover: WeakEntity<PopoverState>,
+    agora: i64,
+    window: &Window,
+    cx: &App,
+) -> CorpoPopover {
+    let motor = entidade.read(cx);
+    let base = Marca::Gemini.cor();
+    let uso = motor.gemini.clone().unwrap_or_default();
+    let pe = rodape(Marca::Gemini, uso.medido_em, false, agora, entidade.clone(), janela, popover, window, cx);
+    CorpoPopover::new(LarguraPopover::P360)
+        .rodape(pe)
+        .cabecalho(CabecalhoPopover::Objeto {
+            simbolo: Simbolo::Marca(Marca::Gemini),
+            nome: Marca::Gemini.nome().into(),
+            detalhe: Some("Antigravity".into()),
+            selo: None,
+        })
+        .when(uso.bloqueado(), |s| s.child(Alerta::new(Tom::Erro, "Limite do Gemini atingido")))
+        .children(uso.grupos.into_iter().map(move |g| {
+            let rotulo = if g.janela.eq_ignore_ascii_case("weekly") { format!("Semana · {}", g.nome) } else { g.nome.clone() };
+            linha_janela(rotulo.into(), g.fracao, g.renova, Previsao::SemDado, base, agora)
+        }))
+        .child(texto(
+            "Cada grupo de modelos tem a sua cota da semana no Antigravity, e ela gasta na proporção \
+             do custo dos tokens.",
+        ))
 }
 
 /// Barra de 6, pílula, na trilha da borda.
@@ -869,7 +929,8 @@ fn rodape(
                     motor.update(cx, |m, cx| match marca {
                         Marca::Claude => m.atualizar_uso(cx),
                         Marca::Codex => m.reler_uso(cx),
-                        Marca::Gemini | Marca::Linear => {}
+                        Marca::Gemini => m.reler_uso_gemini(cx),
+                        Marca::Linear => {}
                     })
                 }),
         )

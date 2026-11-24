@@ -332,6 +332,11 @@ pub struct Motor {
     pub codex: Option<Codex>,
     /// A primeira leitura do Codex terminou (antes dela, `None` não quer dizer "não instalado").
     pub codex_lido: bool,
+    /// Cota do Gemini no Antigravity (`agente_gemini::ler_uso`; `None`: sem agy, sem login ou sem
+    /// resposta). Como o `agy` leva uns 3 s, ele é perguntado de 5 em 5 minutos, não a cada releitura.
+    pub gemini: Option<crate::agente_gemini::UsoGemini>,
+    /// Quando o Gemini foi perguntado pela última vez (0: nunca, ou pedido de atualizar).
+    gemini_perguntado_em: u64,
     /// Conta usada no turno atual (ou no último) de cada chat.
     conta_do_turno: HashMap<String, String>,
     /// Processos que já entregaram o resultado e estão terminando de gravar a sessão, por chat:
@@ -691,6 +696,8 @@ impl Motor {
             uso_em_vista: None,
             codex: None,
             codex_lido: false,
+            gemini: None,
+            gemini_perguntado_em: 0,
             conta_do_turno: HashMap::new(),
             encerrando: Default::default(),
             a_abrir: HashMap::new(),
@@ -3336,19 +3343,38 @@ impl Motor {
 
     /// Relê fora da thread da interface o uso guardado de cada conta e o do Codex; só
     /// redesenha se algo mudou.
-    pub fn reler_uso(&self, cx: &mut Context<Self>) {
+    pub fn reler_uso(&mut self, cx: &mut Context<Self>) {
         let todas = self.contas.clone();
+        // O Gemini só de 5 em 5 minutos (o `agy` leva uns 3 s e abre um processo).
+        let pasta_gemini = (agora().saturating_sub(self.gemini_perguntado_em) >= GEMINI_A_CADA).then(|| self.pasta_das_perguntas());
+        if pasta_gemini.is_some() {
+            self.gemini_perguntado_em = agora();
+        }
         cx.spawn(async move |motor, cx| {
-            let (usos, codex) = cx
-                .background_spawn(async move { (contas::usos_guardados(&todas), codex::ler()) })
+            let (usos, codex, gemini) = cx
+                .background_spawn(async move {
+                    let gemini = pasta_gemini.map(|pasta| crate::agente_gemini::ler_uso(&pasta));
+                    (contas::usos_guardados(&todas), codex::ler(), gemini)
+                })
                 .await;
             let _ = motor.update(cx, |m, cx| {
-                if m.guardar_usos(usos, codex) {
+                let mut mudou = m.guardar_usos(usos, codex);
+                if let Some(gemini) = gemini {
+                    mudou |= m.gemini != gemini;
+                    m.gemini = gemini;
+                }
+                if mudou {
                     cx.notify();
                 }
             });
         })
         .detach();
+    }
+
+    /// O "Atualizar" do popover do Gemini: pergunta já, sem esperar os 5 minutos.
+    pub fn reler_uso_gemini(&mut self, cx: &mut Context<Self>) {
+        self.gemini_perguntado_em = 0;
+        self.reler_uso(cx);
     }
 
     /// Junta o uso lido do `.claude.json` de cada conta ao que já se sabia (zerando as janelas
@@ -5960,6 +5986,9 @@ pub fn marco_da_compactacao(manual: bool, antes: Option<u64>) -> String {
         None => format!("{CONTEXTO_COMPACTADO} ({gatilho})"),
     }
 }
+
+/// De quanto em quanto tempo (s) o uso do Gemini é perguntado ao `agy`.
+const GEMINI_A_CADA: u64 = 300;
 
 /// O começo do texto do marco de compactação: é por ele que a conversa o reconhece.
 pub const CONTEXTO_COMPACTADO: &str = "Contexto compactado";

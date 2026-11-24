@@ -724,6 +724,110 @@ fn resultado_do_agy(u: &Value) -> (String, bool) {
     (texto.replace("\r\n", "\n"), saiu_com_erro)
 }
 
+/// Quanto se espera o `agy -p /usage` responder (leva uns 3 s).
+const PRAZO_DO_USO: Duration = Duration::from_secs(20);
+
+/// A cota do Gemini no Antigravity: cada grupo de modelos tem a sua janela (hoje semanal), e ela
+/// gasta na proporção do custo dos tokens. O `agy -p /usage --output-format json` diz o que resta
+/// sem abrir conversa nem gastar cota (é o que o Paseo lê). Até 24/11/2026 o Vitral achava que o
+/// Antigravity não dizia a cota, e o anel do Gemini não existia (dono: "coloca o uso do gemini").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UsoGemini {
+    pub grupos: Vec<GrupoDoGemini>,
+    pub medido_em: Option<i64>,
+}
+
+/// Um grupo de modelos e a janela dele: "Gemini" ou "Claude e GPT", a fração já usada e quando
+/// renova.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GrupoDoGemini {
+    pub nome: String,
+    pub janela: String,
+    pub fracao: Option<f64>,
+    pub renova: Option<i64>,
+}
+
+impl UsoGemini {
+    /// O grupo dos modelos do Gemini (o do anel de fora).
+    pub fn do_gemini(&self) -> Option<&GrupoDoGemini> {
+        self.grupos.iter().find(|g| g.nome.to_lowercase().contains("gemini")).or(self.grupos.first())
+    }
+    /// O outro grupo (Claude e GPT pelo Antigravity), o do anel de dentro.
+    pub fn dos_outros(&self) -> Option<&GrupoDoGemini> {
+        let gemini = self.do_gemini();
+        self.grupos.iter().find(|g| Some(*g) != gemini)
+    }
+    pub fn bloqueado(&self) -> bool {
+        self.do_gemini().and_then(|g| g.fracao).is_some_and(|f| f >= 1.0)
+    }
+}
+
+/// Pergunta a cota ao agy, rodando em `pasta` (a das perguntas, vazia). `None` sem agy, sem login
+/// ou sem resposta no prazo. Bloqueia: chamar em segundo plano.
+pub fn ler_uso(pasta: &Path) -> Option<UsoGemini> {
+    if !instalado() || std::fs::create_dir_all(pasta).is_err() {
+        return None;
+    }
+    let mut comando = processos::comando_leve(binario(), "uso-gemini");
+    comando
+        .args(["-p", "/usage", "--output-format", "json"])
+        .current_dir(pasta)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let (mut filho, escopo) = processos::abrir(comando).ok()?;
+    let mut saida = filho.stdout.take()?;
+    let (envia, recebe) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut tudo = String::new();
+        let _ = saida.read_to_string(&mut tudo);
+        let _ = envia.send(tudo);
+    });
+    let tudo = recebe.recv_timeout(PRAZO_DO_USO).ok();
+    escopo.matar();
+    let _ = filho.wait();
+    let valor: Value = serde_json::from_str(tudo?.trim()).ok()?;
+    uso_da_resposta(&valor, crate::modelo::agora() as i64)
+}
+
+/// Os grupos da resposta do `/usage` (`command.data.groups[].buckets[]`, com
+/// `remaining_fraction` de 0 a 1 e `reset_time` ISO). `None` se não veio `SUCCESS` ou grupo algum.
+pub fn uso_da_resposta(valor: &Value, agora: i64) -> Option<UsoGemini> {
+    if valor["status"] != "SUCCESS" {
+        return None;
+    }
+    let mut grupos = Vec::new();
+    for grupo in valor["command"]["data"]["groups"].as_array()? {
+        let nome = nome_do_grupo(grupo["name"].as_str().unwrap_or_default());
+        let Some(balde) = grupo["buckets"].as_array().and_then(|b| b.iter().find(|b| b["disabled"] != true)) else {
+            continue;
+        };
+        let renova = balde["reset_time"].as_str().and_then(crate::contas::segundos_iso);
+        let mut fracao = balde["remaining_fraction"].as_f64().map(|resta| (1.0 - resta).clamp(0.0, 1.0));
+        // A janela que já virou só recomeça no próximo uso.
+        if renova.is_some_and(|r| r <= agora) {
+            fracao = fracao.map(|_| 0.0);
+        }
+        grupos.push(GrupoDoGemini {
+            nome,
+            janela: balde["window"].as_str().unwrap_or_default().to_string(),
+            fracao,
+            renova,
+        });
+    }
+    (!grupos.is_empty()).then_some(UsoGemini { grupos, medido_em: Some(agora) })
+}
+
+/// "Gemini Models" vira "Gemini"; "Claude and GPT models", "Claude e GPT".
+fn nome_do_grupo(nome: &str) -> String {
+    let nome = nome.trim();
+    let sem_models = nome
+        .strip_suffix(" Models")
+        .or_else(|| nome.strip_suffix(" models"))
+        .unwrap_or(nome);
+    sem_models.replace(" and ", " e ")
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -993,5 +1097,64 @@ mod testes {
         assert_eq!(modo_de("acceptEdits"), "accept-edits");
         assert_eq!(nivel_de("max"), Some("high"));
         assert_eq!(nivel_de(""), None);
+    }
+}
+
+#[cfg(test)]
+mod testes_do_uso {
+    use super::uso_da_resposta;
+    use serde_json::json;
+
+    /// A resposta de verdade do agy 24/11/2026, com a cota da Gemini em 30% usada.
+    #[test]
+    fn le_a_cota_de_cada_grupo() {
+        let resposta = json!({
+            "status": "SUCCESS",
+            "command": { "name": "usage", "data": { "groups": [
+                { "name": "Gemini Models", "buckets": [
+                    { "id": "gemini-weekly", "name": "Weekly Limit Remaining", "window": "weekly",
+                      "remaining_fraction": 0.7, "reset_time": "2026-12-01T11:32:05Z" } ] },
+                { "name": "Claude and GPT models", "buckets": [
+                    { "id": "3p-weekly", "name": "Weekly Limit Remaining", "window": "weekly",
+                      "remaining_fraction": 1, "reset_time": "2026-12-01T11:32:05Z" } ] }
+            ] } }
+        });
+        let uso = uso_da_resposta(&resposta, 1_795_000_000).expect("uso");
+        let gemini = uso.do_gemini().unwrap();
+        assert_eq!(gemini.nome, "Gemini");
+        assert!((gemini.fracao.unwrap() - 0.3).abs() < 1e-9);
+        assert!(gemini.renova.is_some());
+        let outros = uso.dos_outros().unwrap();
+        assert_eq!(outros.nome, "Claude e GPT");
+        assert_eq!(outros.fracao, Some(0.0));
+        assert!(!uso.bloqueado());
+    }
+
+    #[test]
+    fn sem_sucesso_ou_sem_grupo_nao_ha_uso() {
+        assert!(uso_da_resposta(&json!({ "status": "ERROR", "error": "not signed in" }), 0).is_none());
+        assert!(uso_da_resposta(&json!({ "status": "SUCCESS", "command": { "data": { "groups": [] } } }), 0).is_none());
+    }
+
+    #[test]
+    fn janela_que_ja_virou_volta_a_zero() {
+        let resposta = json!({ "status": "SUCCESS", "command": { "data": { "groups": [
+            { "name": "Gemini Models", "buckets": [
+                { "window": "weekly", "remaining_fraction": 0.0, "reset_time": "2026-11-01T00:00:00Z" } ] } ] } } });
+        let uso = uso_da_resposta(&resposta, 1_795_000_000).unwrap();
+        assert_eq!(uso.do_gemini().unwrap().fracao, Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod testes_do_uso_de_verdade {
+    /// Com o agy de verdade (rodar à mão: `cargo test -- --ignored ler_uso_de_verdade --nocapture`).
+    #[test]
+    #[ignore]
+    fn ler_uso_de_verdade() {
+        let pasta = std::env::temp_dir().join("vitral-uso-gemini");
+        let uso = super::ler_uso(&pasta);
+        eprintln!("{uso:?}");
+        assert!(uso.is_some());
     }
 }

@@ -21,6 +21,12 @@ para todos os chats e os perfis de agente. E cada conversa abre um processo do C
 - **O limite de um modelo só não para a conta.** Com a "Semana · Fable" em 100% e a semana geral
   em 66%, a recusa do Fable marcava a conta inteira como no limite até a semana renovar. Agora só
   o limite de 5 h e o semanal geral param a conta; o de um modelo fica no erro do turno dele.
+- **O uso do Gemini no canto.** Com o Antigravity CLI entrando, um terceiro anel mostra a cota da
+  semana dos modelos do Gemini (fora) e a do grupo Claude e GPT (dentro); o clique abre as duas,
+  com quando renovam. A leitura é a do `agy -p /usage`, de 5 em 5 minutos, sem gastar cota.
+- **A mensagem presa no alto com o fundo transparente.** A conversa não é mais desenhada embaixo
+  da faixa da mensagem presa: ela não precisa de fundo próprio, fica como o resto do painel, e o
+  texto que rola não aparece mais por baixo dela.
 - **O esforço não some da caixa.** Quando não cabia inteiro ao lado do modelo, o esforço ia para
   uma segunda linha escondida e sumia; agora fica só com o ícone até ter lugar de novo.
 - **Modo, modelo e esforço valem no turno que está rodando.** Trocar o modo (Shift+Tab), o modelo
