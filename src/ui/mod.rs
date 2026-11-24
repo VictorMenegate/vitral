@@ -794,6 +794,10 @@ impl Janela {
         }));
         assinaturas.push(cx.observe_window_activation(window, |this, window, cx| {
             let ativa = window.is_window_active();
+            // Ao voltar à janela, a versão pronta é relida: outra abertura pode ter instalado uma.
+            if ativa {
+                this.atualizacao_mudou(window, cx);
+            }
             // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
             if let Some(motor) = &this.motor {
                 motor.update(cx, |m, cx| {

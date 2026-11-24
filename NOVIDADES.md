@@ -38,6 +38,11 @@ versão nova e a letra da conversa na caixa. Tudo começa como era, menos as dua
   vira uma linha no pé, “Conta: tecnologia · semana 44%”, que abre a escolha no lugar. Escrevendo
   na busca, as versões e as contas que casam aparecem direto. O aviso de reler só aparece com a
   conversa acima de 100 mil tokens, numa linha curta.
+- **Menu do logo mais curto.** Três grupos (os chats, as vistas, a conta e os ajustes), a versão
+  no alto e, quando há versão nova pronta, a linha **Versão nova pronta · Reiniciar** logo abaixo.
+  Servidores MCP, Memória da equipe, a pasta dos chats novos e a pasta de dados saíram do menu: estão
+  nas Configurações e na paleta. O menu cabe sem rolar a 150%, e a versão pronta não fica mais para
+  trás quando outra janela do Vitral instala uma mais nova.
 - **Ultracode em uma linha.** Embaixo do nome, só “Agentes em paralelo, só na próxima · gasta bem
   mais”; o resto está no (i).
 

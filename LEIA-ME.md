@@ -23,7 +23,7 @@ componentes do GPUI Kit.
   dela). **Sem pasta** dá ao chat uma pasta vazia só dele, em `~/.local/share/vitral/avulsos/<chat>`.
 - **Chat novo.** O "+" e o Ctrl+N criam um na hora, sem perguntar, como o "novo chat" do VS Code
   (`novo_chat_direto`, em `src/ui/dialogos.rs`): com **pasta de trabalho** (`Config.pasta_de_trabalho`,
-  escolhida nas boas-vindas; **Pasta de trabalho: <nome>…**, no menu do logo, troca), é sempre nela.
+  escolhida nas boas-vindas; **Pasta dos chats novos**, em Configurações, Chats, troca), é sempre nela.
   Sem pasta de trabalho: na pasta do chat aberto (o chat Sem pasta abre outro Sem pasta); sem chat
   aberto, na última pasta usada (a do último chat criado, guardada como
   `ultimo_destino` no `interface.json`, ou a do chat mexido por último); sem nenhuma, a paleta
@@ -389,7 +389,8 @@ componentes do GPUI Kit.
 - **Esforço automático.** No Auto, o seletor diz o nível que vale: o Vitral pergunta ao Claude
   Code (`get_settings`, o `applied.effort`), uma vez por conta e modelo, em segundo plano
   (`claude::atualizar_esforco_padrao`); no Codex vem do catálogo (`default_reasoning_level`).
-- **Servidores MCP.** O `/mcp` da caixa e **Servidores MCP**, no menu do logo, abrem a lista dos
+- **Servidores MCP.** O `/mcp` da caixa, **Lista dos servidores MCP** (Configurações, Claude Code) e
+  a paleta abrem a lista dos
   servidores do chat do painel ativo (`src/ui/mcp_servidores.rs`): por origem (do seu Claude Code,
   da pasta, conectores da conta), um cartão cada, com o estado, o erro de quem caiu e, no clique,
   as ferramentas. Enquanto o diálogo está aberto há um Claude Code só dele (`claude::SessaoMcp`:
@@ -1741,15 +1742,24 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
 
 - **O alto da lista** (a área vazia arrasta a janela, o clique duplo maximiza e o clique direito
   abre o menu da janela): o logo, no quadrado de metal (clique ou F10 para o **menu do Vitral**, que
-  abre à direita: no topo, a placa de metal com o logo, "Vitral" e quantos chats há, com a pasta de
-  dados na dica; depois **Recolher a lista** (Ctrl+B), **Novo chat**, **Novo chat em outra pasta…**
-  e **Importar do Claude Code…**; **Contas do Claude**, **Instalar o Codex…** quando ele falta,
-  **Configurações** e **Atalhos do teclado**; **Abrir a pasta de dados** ↗; com os atalhos de cada
-  um em teclas; no rodapé, a faixa escura com a linha técnica em mono, "Vitral 0.7.0 · a1b2c3d" (a
-  versão e o commit curto, ou o canal no compilado no PC), e a origem na dica; com uma versão nova
-  pronta, um ponto azul de 8 no canto do logo, a versão na dica e **Reiniciar para a 0.3.0** logo
-  acima das Configurações). Ao lado do logo, as abas **Conversas | Arquivos** (ver **O que fica à
-  vista**).
+  abre à direita, também no modo recolhido, a 12 da margem de cima: no topo, a placa de metal com
+  o logo, "Vitral" e, embaixo, a versão, o commit curto (ou o canal no compilado no PC) e quantos
+  chats há, "0.7.0 · a1b2c3d · 16 chats", com a origem e a pasta de dados na dica; com uma versão
+  nova pronta, logo abaixo, a linha de destaque **Versão nova pronta · Reiniciar** (a versão na
+  dica); depois três grupos por assunto, com uma divisória entre eles (`grupos_do_menu`): **Recolher
+  a lista** (Ctrl+B; no recolhido, **Mostrar a lista** e **O que precisa de você**, com o selo do
+  sino), **Novo chat**, **Novo chat em outra pasta…** e **Importar do Claude Code…**; **Quadro de
+  ideias**, **Resumo de hoje** e **Arranjos ▸**; **Contas do Claude**, **Instalar o Codex…** e
+  **Instalar o Gemini…** quando faltam, **Configurações**, **Paleta de comandos** e **Atalhos do
+  teclado**; com os atalhos de cada um em teclas. Cabe sem rolagem a 150% numa janela de 880 de
+  altura, também recolhido e com a versão pronta. Até 24/11/2026 ele também tinha Servidores MCP,
+  Memória da equipe, a pasta de trabalho e Abrir a pasta de dados: eles moram nas Configurações
+  (Claude Code, Memória, Chats e Atualizações) e na paleta. Com uma versão nova pronta, um ponto
+  azul de 8 no canto do logo, com a versão na dica. A versão pronta é relida no link `atual` ao
+  abrir o menu e ao voltar à janela (`Atualizacoes::versao_pronta`): o "Reiniciar para a 0.10.0-dev
+  .766bc7804b" do print de 24/11/2026 era a pronta guardada ao abrir o app, com outra mais nova já
+  instalada por outra abertura, e o Reiniciar já ia para a nova. Ao lado do logo, as abas
+  **Conversas | Arquivos** (ver **O que fica à vista**).
 - **O pé da lista:** as **Arquivadas**, os agentes rodando e o sino do que precisa de você e,
   embaixo deles, a busca e o "+" (os anéis de uso ficam no canto da janela; ver **Contas e uso dos
   planos**). O número do sino é o mesmo de "Esperando você" (pedidos, erros, paradas que pedem
@@ -2112,7 +2122,8 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   Perfis, Memória, Aparência, Claude Code e Atualizações; no diálogo estreito, só os ícones) e, à
   direita, as opções da parte escolhida, que rolam sozinhas numa altura fixa. O que mora em cada
   parte (`src/ui/configuracoes.rs`):
-  - **Chats:** **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
+  - **Chats:** **Pasta dos chats novos** (a pasta de trabalho, com **Trocar…**, que abre o seletor
+    do sistema; `trocar_pasta_de_trabalho`), **Resumo ao voltar depois de**, **Avisar dentro do app**, **Notificação do
     sistema**, com o **Testar**, que manda uma notificação na hora (sem o `notify-send`, a linha diz
     o que falta), **Arquivar chats parados depois de** (nunca, 3, 7 ou 30 dias; só os chats já
     lidos, não fixados e sem fila), **Sugerir a próxima mensagem** e **Título do chat pelo Claude
@@ -2123,8 +2134,9 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
     Percorrer as enviadas; **Enter com o turno rodando**: Entra no turno, como era, ou Vai para a
     fila) e **Arquivos** (**Lembrar o que a aba Arquivos mostra**, desligada). O padrão de cada
     opção é o de antes dela, menos as duas das abas.
-  - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos** e o **Modelo
-    dos chats do Claude**; as **Instruções para todos os chats** (um texto seu, de até 4.000
+  - **Agentes:** o **Modo de permissão padrão**, **Quem responde nos chats novos**, o **Modelo
+    dos chats do Claude** e a **Revisão automática pelo outro agente** (ligada; ver **A revisão do
+    turno pelo outro agente**); as **Instruções para todos os chats** (um texto seu, de até 4.000
     caracteres, que entra no fim do prompt de sistema de cada chat, do Claude e do Codex, depois do
     que o Vitral manda; vale a partir da próxima mensagem; `prompts::com_instrucoes`); e o
     **Codex** (a versão instalada, ou **Instalar…** sem ele); e **Versão nova** (**Consultar a
@@ -2144,13 +2156,15 @@ do turno seguinte, como já era, e os tempos dele se perdem (`Livro::abrir`).
   - **Claude Code:** a versão instalada, a que os turnos abrem, e **Atualizar**, que roda `claude
     update` fora de qualquer turno, espera os chats que estão trabalhando ou com mensagem na fila
     e mostra o que ele respondeu, em âmbar se falhar (a versão nova vale no turno seguinte, sem
-    reiniciar o Vitral), e **Servidores MCP do Claude Code**, os do seu Claude Code nos chats.
+    reiniciar o Vitral), **Servidores MCP do Claude Code**, os do seu Claude Code nos chats, e a
+    **Lista dos servidores MCP**, que abre a lista de cada servidor e o estado dele.
     Quando o pacote do Claude Code ou do Codex anuncia versão mais nova que a instalada, a linha
     diz ("Há a 2.1.330. O Atualizar instala.", "0.169.0 · há a 0.171.0"); em dia, não diz nada. A
     consulta são as etiquetas do pacote de cada um no npm (a `stable` para quem escolheu esse
     canal no Claude Code), sem nenhum dado seu, feita só quando a parte Agentes ou a do Claude
     Code abre (ou pelo botão, com **Só pelo botão**) e guardada por uma hora (`src/versoes_agentes.rs`).
-  - **Atualizações:** as atualizações do Vitral e o **Diagnóstico para pedir ajuda**: o **Copiar**
+  - **Atualizações:** as atualizações do Vitral, a **Pasta de dados** (com **Abrir**) e o
+    **Diagnóstico para pedir ajuda**: o **Copiar**
     põe na área de transferência um texto com as versões (Vitral, Claude Code, Codex), o sistema,
     as pastas dos dados, as opções ligadas e as últimas 40 linhas do `queda.log`. O que tem cara de
     chave ou token é coberto, a pasta pessoal vira `~`, as suas instruções entram só pelo tamanho,

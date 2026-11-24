@@ -144,6 +144,9 @@ pub(super) const LARGURA_DAS_CONFIGURACOES: f32 = 860.;
 
 pub struct Configuracoes {
     motor: Entity<Motor>,
+    /// A janela, para o que abre fora daqui: o seletor da pasta dos chats novos e a lista dos
+    /// servidores MCP (os dois saíram do menu do logo em 24/11/2026 e moram aqui).
+    janela: WeakEntity<super::Janela>,
     parte: Parte,
     /// A versão do Codex instalado (`None` até a leitura em segundo plano responder).
     codex: Option<Option<Versao>>,
@@ -160,7 +163,7 @@ pub struct Configuracoes {
 }
 
 impl Configuracoes {
-    pub fn new(motor: Entity<Motor>, cx: &mut Context<Self>) -> Self {
+    pub fn new(motor: Entity<Motor>, janela: WeakEntity<super::Janela>, cx: &mut Context<Self>) -> Self {
         let _observa = cx.observe(&motor, |_, _, cx| cx.notify());
         let _atualizacoes = cx.observe_global::<Atualizacoes>(|_, cx| cx.notify());
         let _acompanhando = atualizacao::acompanhar_progresso(cx);
@@ -169,6 +172,7 @@ impl Configuracoes {
         motor.update(cx, |m, cx| m.reler_versao_claude(cx));
         Self {
             motor,
+            janela,
             parte: Parte::Chats,
             codex: None,
             publicadas: versoes_agentes::guardadas().unwrap_or_default(),
@@ -562,7 +566,24 @@ impl Render for Configuracoes {
         let (anel_claude, anel_codex, anel_gemini) = (m(), m(), m());
         let (avisos_no_app, alternar_avisos) = (config.avisos_no_app, m());
         let (titulo_claude, alternar_titulo) = (config.titulo_pelo_claude, m());
+        // A pasta em que o "+" cria os chats (era "Escolher a pasta de trabalho…" no menu do logo).
+        let pasta_de_trabalho = {
+            let janela = self.janela.clone();
+            let escolhida = config.pasta_de_trabalho.as_deref();
+            let botao = botao_fantasma("cfg-pasta-trabalho-trocar", Some(Lucide::FolderInput.into()), if escolhida.is_some() { "Trocar…" } else { "Escolher…" }, TamanhoBotao::Controle, window, cx)
+                .bg(Cores::recuo())
+                .on_click(move |_, window, cx| {
+                    let _ = janela.update(cx, |this, cx| this.trocar_pasta_de_trabalho(window, cx));
+                });
+            com(
+                LinhaDeOpcao::new("cfg-pasta-trabalho", "Pasta dos chats novos")
+                    .info("O + e o Novo chat criam o chat nesta pasta. Os chats que já existem ficam onde estão; um chat em outra pasta sai do “Novo chat em outra pasta…”.")
+                    .descricao(escolhida.map_or_else(|| "Nenhuma escolhida".to_string(), super::dialogos::com_til)),
+                botao.into_any_element(),
+            )
+        };
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
+            .linha(pasta_de_trabalho)
             .linha(com(
                 LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar depois de")
                     .info("O cartão “Enquanto você esteve fora” junta o que terminou, o que precisa de você e o que falhou desde que a janela saiu de foco. Ele some no × e volta na próxima saída.")
@@ -855,7 +876,21 @@ impl Render for Configuracoes {
                     .interruptor(mcp, move |ligado, _, cx| {
                         alternar_mcp.update(cx, |m, cx| m.mudar_config(|c| c.mcp_trabalhadores = ligado, cx))
                     }),
-            );
+            )
+            // A lista dos servidores (era "Servidores MCP" no menu do logo).
+            .linha({
+                let janela = self.janela.clone();
+                let botao = botao_fantasma("cfg-mcp-ver", Some(Lucide::Container.into()), "Ver…", TamanhoBotao::Controle, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(move |_, window, cx| {
+                        let _ = janela.update(cx, |this, cx| this.abrir_mcp(window, cx));
+                    });
+                com(
+                    LinhaDeOpcao::new("cfg-mcp-lista", "Lista dos servidores MCP")
+                        .descricao("Os servidores do Claude Code, de onde vem cada um e se conectou."),
+                    botao.into_any_element(),
+                )
+            });
 
         let (animacoes, sistema_sem) = movimento::animacoes(cx);
         let segmentos = [movimento::SEGUIR_O_SISTEMA, "Desligadas"];
@@ -975,7 +1010,19 @@ impl Render for Configuracoes {
             });
 
         // O diagnóstico para pedir ajuda, na parte das Atualizações (é do Vitral, não dos chats).
-        let ajuda = GrupoDeOpcoes::new(Some("Ajuda".into())).linha({
+        // A pasta de dados (era "Abrir a pasta de dados" no menu do logo).
+        let pasta_de_dados = {
+            let pasta = self.motor.read(cx).dados.pasta.clone();
+            let descricao = super::dialogos::com_til(&pasta);
+            let botao = botao_fantasma("cfg-pasta-dados-abrir", Some(Lucide::FolderOpen.into()), "Abrir", TamanhoBotao::Controle, window, cx)
+                .bg(Cores::recuo())
+                .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&pasta, cx));
+            com(
+                LinhaDeOpcao::new("cfg-pasta-dados", "Pasta de dados").descricao(descricao),
+                botao.into_any_element(),
+            )
+        };
+        let ajuda = GrupoDeOpcoes::new(Some("Ajuda".into())).linha(pasta_de_dados).linha({
             let botao = botao_fantasma("cfg-diagnostico-copiar", Some(Lucide::Copy.into()), "Copiar", TamanhoBotao::Controle, window, cx)
                 .bg(Cores::recuo())
                 .on_click(cx.listener(|this, _, _, cx| {

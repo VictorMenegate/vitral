@@ -371,7 +371,8 @@ impl Janela {
         };
         // O caminho só na dica: no cabeçalho, ele não diz nada a quem usa.
         let dica: SharedString = format!("Gravadas em {}", com_til(&motor.read(cx).dados.arquivo_config())).into();
-        let vista = cx.new(|cx| Configuracoes::new(motor, cx));
+        let janela = cx.entity().downgrade();
+        let vista = cx.new(|cx| Configuracoes::new(motor, janela, cx));
         self.foco_antes_do_dialogo(window, cx);
         window.open_dialog(cx, move |dialogo, window, _| {
             let dica = dica.clone();
