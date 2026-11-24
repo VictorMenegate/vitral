@@ -3,12 +3,15 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
-## Próxima
+## 0.10.1
 
-O chat que outro chat chama aparece numa aba, fechar a aba de um chat que trabalha o para, e as
-Configurações ganharam opções: a seta ↑ da caixa, o Enter com o turno rodando, os números das
-abas, o que a aba Arquivos lembra, o título pelo Claude Code, os anéis de uso, a consulta de
-versão nova e a letra da conversa na caixa. Tudo começa como era, menos as duas primeiras.
+O chat que outro chat chama aparece numa aba, e fechar a aba de um chat que trabalha o para. O
+mapa dos agentes ficou parecido com um chat, o que aparece na tela entra com uma animação curta,
+o outro agente revisa o turno grande e os menus de modelo, do logo e do "…" da caixa ficaram mais
+curtos. As Configurações ganharam opções: a seta ↑ da caixa, o Enter com o turno rodando, os
+números das abas, o que a aba Arquivos lembra, o título pelo Claude Code, os anéis de uso, a
+consulta de versão nova e a letra da conversa na caixa. Essas começam no jeito de antes; só a aba
+do chat chamado e o fechar que para já vêm ligados.
 
 - **O chat chamado por outro aparece numa aba.** Quando um chat manda mensagem a outro, ou abre
   um, o destino entra como aba de fundo no painel ativo: o que você lê não troca, a janela não vem
