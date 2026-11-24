@@ -139,6 +139,19 @@ impl Parte {
 /// A altura do corpo das Configurações, a 100%: a coluna das partes fica parada e só o lado
 /// direito rola, sem o diálogo mudar de tamanho a cada parte.
 const ALTURA_DAS_CONFIGURACOES: f32 = 520.;
+/// O que o diálogo gasta fora do corpo (o cabeçalho, o respiro de baixo e a margem até a borda da
+/// janela), a 100%: o corpo nunca passa da janela menos isto.
+const FOLGA_DO_DIALOGO: f32 = 150.;
+/// O corpo não fica menor que isto (a 100%), por menor que seja a janela.
+const MENOR_CORPO: f32 = 240.;
+
+/// A altura do corpo das Configurações, em pixels: a de sempre (`cheia`), ou, com a janela baixa
+/// (a 150% o corpo de 520 passava da altura dela, e a roda rolava o diálogo inteiro), o que sobra
+/// da janela depois da `folga`; nunca menos que `minimo`. Com o corpo menor que o conteúdo, só a
+/// coluna da parte rola.
+fn altura_do_corpo(janela: f32, cheia: f32, folga: f32, minimo: f32) -> f32 {
+    cheia.min(janela - folga).max(minimo)
+}
 /// A largura do diálogo, a 100%: mais largo que o G, com a coluna das partes e as opções lado a lado.
 pub(super) const LARGURA_DAS_CONFIGURACOES: f32 = 860.;
 
@@ -1031,7 +1044,12 @@ impl Render for Configuracoes {
         div()
             .flex()
             .gap(esp::E16)
-            .h(r(ALTURA_DAS_CONFIGURACOES))
+            .h(px(altura_do_corpo(
+                f32::from(window.viewport_size().height),
+                f32::from(tam(window, ALTURA_DAS_CONFIGURACOES)),
+                f32::from(tam(window, FOLGA_DO_DIALOGO)),
+                f32::from(tam(window, MENOR_CORPO)),
+            )))
             .child(v_flex().flex_none().w(if estreito { r(40.) } else { r(176.) }).gap(esp::E2).children(partes))
             .child(div().flex_none().w(px(1.)).h_full().bg(Cores::linha()))
             .child(
@@ -1039,6 +1057,7 @@ impl Render for Configuracoes {
                     .id("cfg-parte")
                     .flex_1()
                     .min_w_0()
+                    .min_h_0()
                     .h_full()
                     .overflow_y_scroll()
                     .gap(esp::E24)
@@ -1050,7 +1069,17 @@ impl Render for Configuracoes {
 
 #[cfg(test)]
 mod testes {
-    use super::{Atualizacao, Parte, linha_do_claude, vizinhos};
+    use super::{Atualizacao, Parte, altura_do_corpo, linha_do_claude, vizinhos};
+
+    #[test]
+    fn o_corpo_das_configuracoes_nunca_passa_da_janela() {
+        // Janela alta: a altura de sempre.
+        assert_eq!(altura_do_corpo(1200., 520., 150., 240.), 520.);
+        // 150%: o corpo de 780 não cabe numa janela de 920 com a folga de 225.
+        assert_eq!(altura_do_corpo(920., 780., 225., 360.), 695.);
+        // Janela minúscula: o piso.
+        assert_eq!(altura_do_corpo(300., 780., 225., 360.), 360.);
+    }
 
     /// As partes da 0.9.6 continuam as mesmas, na mesma ordem, e os Perfis entraram depois dos
     /// Agentes; cada nome é um só, e cabe na coluna.
