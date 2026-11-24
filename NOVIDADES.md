@@ -3,7 +3,7 @@
 Cada versão tem a sua seção (`## 0.2.0`); o texto dela vira as notas do Release no GitHub e o que
 o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seção da versão.
 
-## 0.9.7
+## 0.10.0
 
 O turno que está rodando ouve o que você muda nele, o pedido de permissão se responde escrevendo,
 o de um hook seu aparece em todos os modos, a pergunta com opções tem o cartão dela, o plano
