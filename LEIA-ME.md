@@ -83,9 +83,19 @@ componentes do GPUI Kit.
   manda só o `decline`: a explicação não chega ao Codex. Medido no 0.169.0 com turnos de verdade:
   o id do pedido é um número, o `availableDecisions` do comando não lista o `decline` (que mesmo
   assim vale) e o `resolved` chega logo depois de cada resposta.
-  O que ainda muda num chat do Codex: não há conta, comandos de barra nem `/compact` (fica o
-  `/clear`, que é do Vitral), o custo e o contexto não são medidos, e parar é pelo
-  `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
+  **Comandos de barra** (24/11/2026): os que o app-server atende. O `/compact` vai como
+  `thread/compact/start` (medido no 0.169.0: responde `{}` e abre um turno com o item
+  `contextCompaction`, que vira o "Compactando…" e o marco, como no Claude; o texto depois dele
+  não vai, o Codex não aceita foco); o `/review` como `review/start` (sem texto, as mudanças sem
+  commit; com texto, o que ele pede; o texto do item `exitedReviewMode` é a resposta); e cada
+  skill da pasta (o `skills/list`, pedido em todo turno) é um "/nome", que vai como a entrada
+  `skill` com o arquivo dela e o texto "$nome …", como o Codex faz. A mensagem com barra espera a
+  lista; a lista que falha não para o turno. O `Inicio` leva a lista (`compact`, `review` e as
+  skills) para `Chat.comandos`, e o menu "/" mostra o `/clear` do Vitral mais ela
+  (`comandos_fora_do_claude`); antes do primeiro turno, só os dois. Compactar (o "…" da caixa, a
+  paleta, o popover do contexto) vale no Codex também.
+  O que ainda muda num chat do Codex: não há conta, o custo e o contexto não são medidos, e parar
+  é pelo `turn/interrupt` (sinal como reserva). Trocar o agente de um chat (`Motor::definir_agente`) começa uma sessão nova no
   outro, com as últimas mensagens no bloco de passagem (`MotivoPassagem::TrocouDeAgente`); com um
   turno rodando, não troca.
 - **Gemini.** O terceiro agente (`Agente::Gemini`, desde 23/11/2026) é o Antigravity CLI do Google
@@ -2555,7 +2565,7 @@ da mensagem (ou o de `CLAUDE_FALSO_TITULO`, ou "Sobre" e as três primeiras pala
 `CLAUDE_CONFIG_DIR` de mentira, grava a linha `ai-title` na sessão, que é só o que esse arquivo
 tem (o roteiro dos três é o `ferramentas/roteiros/titulo-aviso-links.txt`); ao lado dele mora o
 `ferramentas/claude-falso/codex`, o Codex de mentira (fala `exec --json` e o JSON-RPC do `app-server`, com `turn/steer`, e entende o mesmo
-`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
+`[ferramenta …]`, mais o `Ver <arquivo>`, que é o `view_image` (o item `imageView`), e o `Print`, uma ferramenta MCP que devolve uma imagem em base64; com a política `untrusted` (Manual e Aceitar edições), cada Bash, Edit e Write pede aprovação como o 0.169.0 e espera a resposta, e com `on-request` só o comando com "curl" pede; o `thread/compact/start`, o `review/start` e o `skills/list` (a skill falsa "revisar-pr") respondem como o app-server; `[falha]` termina o turno com erro, `codex debug models` dá um catálogo pequeno e
 os argumentos ficam em `$XDG_STATE_HOME/codex-falso.log`; o `codex --version` diz a `CODEX_FALSO_VERSAO`, por padrão 0.169.0) e o `ferramentas/claude-falso/agy`, o
 Antigravity CLI (o Gemini) de mentira (fala o ACP do `agy acp`; `[demora]`, `[permissao]` pede para
 rodar `ls -la` e diz o que o Vitral respondeu, `[ferramenta Edit]` encena uma edição, `[falha]`

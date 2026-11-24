@@ -16,6 +16,11 @@ modos Manual e Aceitar edições do Vitral), cada Bash, Edit e Write pede aprova
 espera a resposta; com `on-request` (Planejar e Automático), só o comando com "curl" pede, com o
 motivo "precisa da rede". Depois da resposta vem o `serverRequest/resolved`; o `decline` deixa o
 item `declined` e o turno segue, e o `cancel` para o turno.
+
+Comandos de barra do app-server: `thread/compact/start` responde `{}` e abre um turno com o item
+`contextCompaction` (como o 0.169.0), `review/start` abre um turno com `enteredReviewMode` e
+`exitedReviewMode` (o texto da revisão), e `skills/list` oferece a skill falsa "revisar-pr"; a
+mensagem que chega com a entrada `skill` diz o nome dela na resposta.
 `codex debug models` devolve um catálogo pequeno, e `codex --version` diz a versão
 (CODEX_FALSO_VERSAO, por padrão 0.169.0), como o de verdade: "codex-cli 0.169.0".
 """
@@ -84,6 +89,7 @@ def servidor():
     mensagens = []
     trabalhador = None
     politica = "never"
+    skill_pedida = None
     respostas = {}
     aguardando = threading.Condition()
     proximo_pedido = [0]
@@ -170,6 +176,8 @@ def servidor():
             item(valor, True)
         interrompido = fim.is_set()
         texto = "(codex falso) Recebi: " + " | ".join(mensagens)
+        if skill_pedida:
+            texto += f" (skill {skill_pedida})"
         # Na dupla do Vitral, a vez de revisar o outro agente: revisa e não acrescenta nada (a rodada para).
         # Com `[revisor-acha]` no que o usuário pediu, a revisão tem achado.
         if revisando and "[revisor-acha]" in pedido:
@@ -203,9 +211,32 @@ def servidor():
             thread = params.get("threadId") or thread
             modelo = params.get("model") or modelo
             emitir({"id": id_, "result": {"thread": {"id": thread, "turns": []}, "model": modelo}})
+        elif metodo == "skills/list":
+            pasta = (params.get("cwds") or [os.getcwd()])[0]
+            emitir({"id": id_, "result": {"data": [{"cwd": pasta, "errors": [], "skills": [
+                {"name": "revisar-pr", "description": "(skill falsa) Revisa o PR", "path": "/tmp/codex-falso/revisar-pr/SKILL.md",
+                 "scope": "user", "enabled": True}]}]}})
+        elif metodo in ("thread/compact/start", "review/start"):
+            turno = str(uuid.uuid4())
+            compactar = metodo == "thread/compact/start"
+            emitir({"id": id_, "result": {} if compactar else {"turn": {"id": turno, "status": "inProgress", "items": []}, "reviewThreadId": thread}})
+            evento("turn/started", {"threadId": thread, "turn": {"id": turno, "status": "inProgress", "items": []}})
+            if compactar:
+                item({"id": "compactar", "type": "contextCompaction"})
+                time.sleep(2)
+                item({"id": "compactar", "type": "contextCompaction"}, True)
+            else:
+                alvo = params.get("target", {})
+                item({"id": "revisao", "type": "enteredReviewMode", "review": alvo.get("instructions") or "mudanças sem commit"})
+                time.sleep(2)
+                item({"id": "revisao", "type": "exitedReviewMode", "review":
+                      "(codex falso) Revisei " + (alvo.get("instructions") or "as mudanças sem commit") + ": nada grave."}, True)
+            evento("turn/completed", {"threadId": thread, "turn": {"id": turno, "status": "completed", "items": [], "error": None}})
+            turno = None
         elif metodo == "turn/start":
             turno = str(uuid.uuid4())
             mensagens = [p["text"] for p in params.get("input", []) if p.get("type") == "text"]
+            skill_pedida = next((p.get("name") for p in params.get("input", []) if p.get("type") == "skill"), None)
             fim.clear()
             emitir({"id": id_, "result": {"turn": {"id": turno, "status": "inProgress", "items": []}}})
             evento("turn/started", {"threadId": thread, "turn": {"id": turno, "status": "inProgress", "items": []}})

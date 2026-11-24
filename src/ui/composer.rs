@@ -1727,10 +1727,8 @@ impl Janela {
     }
 
     pub(super) fn comandos_de(&self, chat: &Chat) -> Vec<String> {
-        // Os comandos de barra e as skills são do Claude Code; no Codex e no Gemini fica só o
-        // `/clear`, que é do Vitral.
-        if chat.agente != crate::modelo::Agente::Claude {
-            return vec!["clear".into()];
+        if let Some(lista) = comandos_fora_do_claude(chat) {
+            return lista;
         }
         // Antes do primeiro turno do chat no Vitral, vale o que o Claude Code disse que oferece
         // naquela pasta (comandos e skills, perguntados quando o chat abre); sem resposta dele,
@@ -1826,9 +1824,31 @@ impl Janela {
     }
 }
 
+/// Os comandos de barra de um chat do Codex ou do Gemini (`None` no Claude, que tem os do Claude
+/// Code). Sempre o `/clear`, que é do Vitral; no Codex, o que ele disse que oferece na pasta no
+/// último turno (o `/compact`, o `/review` e as skills, `agente_codex::servidor`), ou os dois
+/// primeiros antes de ele dizer.
+fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
+    let do_agente: Vec<String> = match chat.agente {
+        crate::modelo::Agente::Claude => return None,
+        crate::modelo::Agente::Gemini => Vec::new(),
+        crate::modelo::Agente::Codex if chat.comandos.is_empty() => {
+            crate::agente_codex::servidor::COMANDOS.iter().map(|c| c.to_string()).collect()
+        }
+        crate::modelo::Agente::Codex => chat.comandos.clone(),
+    };
+    let mut lista = vec!["clear".to_string()];
+    for comando in do_agente {
+        if !lista.contains(&comando) {
+            lista.push(comando);
+        }
+    }
+    Some(lista)
+}
+
 fn descricao_comando(comando: &str) -> Option<&'static str> {
     Some(match comando {
-        "clear" => "Começa uma sessão nova (o Claude esquece a conversa)",
+        "clear" => "Começa uma sessão nova (o agente esquece a conversa)",
         "compact" => "Resume a conversa para liberar contexto",
         "context" => "Mostra o uso do contexto",
         "usage" => "Uso do plano",
@@ -2009,7 +2029,21 @@ fn prefixo_de(composer: &Entity<TextareaState>, cx: &App) -> Option<String> {
 
 #[cfg(test)]
 mod testes_sugestoes {
-    use super::{Sugestao, completar, escolha_do_enter, gatilho, menu_sugestoes};
+    use super::{Sugestao, completar, comandos_fora_do_claude, escolha_do_enter, gatilho, menu_sugestoes};
+
+    #[test]
+    fn o_codex_tem_o_compact_o_review_e_as_skills_no_menu() {
+        use crate::modelo::{Agente, Chat};
+        let mut chat = Chat::novo("c".into(), "t", std::path::PathBuf::from("/p"));
+        assert_eq!(comandos_fora_do_claude(&chat), None, "o Claude tem os do Claude Code");
+        chat.agente = Agente::Codex;
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review"]);
+        chat.comandos = vec!["compact".into(), "review".into(), "revisar-pr".into(), "clear".into()];
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear", "compact", "review", "revisar-pr"]);
+        chat.agente = Agente::Gemini;
+        chat.comandos.clear();
+        assert_eq!(comandos_fora_do_claude(&chat).unwrap(), ["clear"]);
+    }
 
     fn sugestao(valor: &str, chave: &str, busca: &str, peso: usize) -> Sugestao {
         Sugestao {

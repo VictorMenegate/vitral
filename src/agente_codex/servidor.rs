@@ -11,6 +11,11 @@
 //! `declined` e o turno segue); o pedido de edição só traz o `itemId`, e o diff vem antes, no
 //! `item/started` do `fileChange`; e o `serverRequest/resolved` chega logo depois de cada
 //! resposta (ou quando o turno para antes dela), e aí o cartão sai.
+//!
+//! Os comandos de barra são os que o app-server oferece: `/compact` é o `thread/compact/start`
+//! (responde `{}` e abre um turno com o item `contextCompaction`, medido no 0.169.0), `/review` é o
+//! `review/start` (o resultado vem no item `exitedReviewMode`) e cada skill da pasta
+//! (`skills/list`) é um "/nome", que vai como a entrada `skill` com o texto "$nome …".
 
 use std::{collections::HashMap, io::{self, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 use serde_json::{Value, json};
@@ -84,6 +89,31 @@ fn chave_do_id(id: &Value) -> String {
     id.as_str().map_or_else(|| id.to_string(), str::to_string)
 }
 
+/// O que o turno pede ao app-server, pelo texto da mensagem.
+#[derive(Clone, Debug, PartialEq)]
+enum Pedido {
+    /// Uma mensagem (`turn/start`).
+    Turno,
+    /// O `/compact` (`thread/compact/start`; o texto depois dele não vai: o Codex não aceita foco).
+    Compactar,
+    /// O `/review` (`review/start`), com o alvo: as mudanças sem commit, ou o que o texto pede.
+    Revisar(Value),
+}
+
+/// Os comandos de barra que o app-server do Codex atende por conta própria (as skills somam).
+pub const COMANDOS: [&str; 2] = ["compact", "review"];
+
+fn pedido_de(input: &[Value]) -> Pedido {
+    let texto = input.first().and_then(|e| e["text"].as_str()).unwrap_or_default().trim();
+    let (comando, resto) = texto.split_once(char::is_whitespace).map_or((texto, ""), |(c, r)| (c, r.trim()));
+    match (comando, resto) {
+        ("/compact", _) => Pedido::Compactar,
+        ("/review", "") => Pedido::Revisar(json!({"type":"uncommittedChanges"})),
+        ("/review", instrucoes) => Pedido::Revisar(json!({"type":"custom","instructions":instrucoes})),
+        _ => Pedido::Turno,
+    }
+}
+
 pub struct Protocolo {
     canal: Arc<Mutex<Canal>>,
     parametros: Value,
@@ -95,12 +125,54 @@ pub struct Protocolo {
     /// As mudanças de cada item `fileChange` aberto, pelo id do item: o pedido de aprovação da
     /// edição só traz o id, e o cartão mostra o diff que veio no começo do item.
     mudancas: HashMap<String, Vec<Value>>,
+    pedido: Pedido,
+    /// As skills da pasta (nome e arquivo), quando o `skills/list` respondeu (vazia se falhou).
+    skills: Option<Vec<(String, String)>>,
+    /// A conversa abriu e o turno espera a lista das skills (a mensagem começa com "/").
+    esperando_skills: bool,
 }
 
 impl Protocolo {
     pub fn novo(canal: Arc<Mutex<Canal>>, parametros: Value, input: Vec<Value>, esforco: Option<String>) -> Self {
+        let pedido = pedido_de(&input);
         Self { canal, parametros, input, esforco, leitor: super::Leitor::default(), modelo: String::new(), fim: None,
-            mudancas: HashMap::new() }
+            mudancas: HashMap::new(), pedido, skills: None, esperando_skills: false }
+    }
+
+    /// Os comandos de barra desta pasta, para o menu "/": os do app-server e as skills.
+    fn comandos(&self) -> Vec<String> {
+        COMANDOS.iter().map(|c| c.to_string()).chain(self.skills.iter().flatten().map(|(nome, _)| nome.clone()))
+            .fold(Vec::new(), |mut lista, c| { if !lista.contains(&c) { lista.push(c); } lista })
+    }
+
+    /// Começa o pedido do turno na conversa aberta: a mensagem (com a skill, se a barra for uma), o
+    /// `/compact` ou o `/review`. A mensagem com barra espera a lista das skills.
+    fn comecar(&mut self, canal: &mut Canal) -> io::Result<()> {
+        let thread = canal.thread.clone();
+        match &self.pedido {
+            Pedido::Compactar => canal.escrever(json!({"id":"vitral-turn", "method":"thread/compact/start", "params":{"threadId":thread}})),
+            Pedido::Revisar(alvo) => canal.escrever(json!({"id":"vitral-turn", "method":"review/start", "params":{"threadId":thread, "target":alvo}})),
+            Pedido::Turno => {
+                let texto = self.input.first().and_then(|e| e["text"].as_str()).unwrap_or_default().trim_start().to_string();
+                if texto.starts_with('/') && self.skills.is_none() {
+                    self.esperando_skills = true;
+                    return Ok(());
+                }
+                self.esperando_skills = false;
+                let mut input = self.input.clone();
+                let nome = texto.strip_prefix('/').and_then(|r| r.split_whitespace().next()).unwrap_or_default();
+                if let Some((nome, arquivo)) = self.skills.iter().flatten().find(|(n, _)| n == nome) {
+                    input[0]["text"] = json!(format!("${}", &texto[1..]));
+                    input.push(json!({"type":"skill", "name":nome, "path":arquivo}));
+                }
+                let mut params = json!({"threadId":thread, "input":input, "effort":self.esforco});
+                // A política vai de novo no turno: a da conversa retomada pode ser outra.
+                if let Some(politica) = self.parametros.get("approvalPolicy") {
+                    params["approvalPolicy"] = politica.clone();
+                }
+                canal.escrever(json!({"id":"vitral-turn", "method":"turn/start", "params":params}))
+            }
+        }
     }
     pub fn iniciar(&mut self) -> io::Result<()> {
         // A API experimental é a que aceita o `beforeTurnId` do `thread/fork` (o corte exato da
@@ -131,7 +203,18 @@ impl Protocolo {
                 _ => canal.escrever(json!({"id":id,"error":{"code":-32601,"message":"Este pedido ainda não é suportado pelo Vitral."}})),
             };
         }
-        if let Some(id) = v["id"].as_str() {
+        if v["id"] == "vitral-skills" {
+            // A lista que falha só deixa o menu sem as skills: o turno segue.
+            let skills = v["result"]["data"].as_array().into_iter().flatten()
+                .flat_map(|pasta| pasta["skills"].as_array().cloned().unwrap_or_default())
+                .filter(|s| s["enabled"] != false)
+                .filter_map(|s| Some((s["name"].as_str()?.to_string(), s["path"].as_str()?.to_string())))
+                .collect();
+            self.skills = Some(skills);
+            if self.esperando_skills {
+                self.comecar(&mut canal)?;
+            }
+        } else if let Some(id) = v["id"].as_str() {
             if let Some(texto) = canal.pendentes.remove(id) {
                 eventos.push(Evento::DirecaoConfirmada { texto, aceita: v.get("error").is_none() });
             } else if v.get("error").is_some() && id != "vitral-interrupt" {
@@ -142,18 +225,16 @@ impl Protocolo {
                         canal.escrever(json!({"method":"initialized","params":{}}))?;
                         let metodo = if self.parametros.get("threadId").is_some() { "thread/resume" } else { "thread/start" };
                         canal.escrever(json!({"id":"vitral-thread", "method":metodo, "params":self.parametros}))?;
+                        // As skills da pasta: o menu "/" e a mensagem que chama uma.
+                        let pasta = self.parametros["cwd"].clone();
+                        canal.escrever(json!({"id":"vitral-skills", "method":"skills/list", "params":{"cwds":[pasta]}}))?;
                     }
                     "vitral-thread" => {
                         let thread = v["result"]["thread"]["id"].as_str().ok_or_else(|| io::Error::other("O Codex não devolveu a conversa"))?;
                         canal.thread = thread.to_string();
                         self.modelo = v["result"]["model"].as_str().unwrap_or_default().to_string();
                         eventos.push(Evento::Sessao(thread.to_string()));
-                        let mut params = json!({"threadId":thread, "input":self.input, "effort":self.esforco});
-                        // A política vai de novo no turno: a da conversa retomada pode ser outra.
-                        if let Some(politica) = self.parametros.get("approvalPolicy") {
-                            params["approvalPolicy"] = politica.clone();
-                        }
-                        canal.escrever(json!({"id":"vitral-turn", "method":"turn/start", "params":params}))?;
+                        self.comecar(&mut canal)?;
                     }
                     "vitral-turn" if canal.turno.is_empty() => {
                         if let Some(id) = v["result"]["turn"]["id"].as_str() { canal.ativar(id)?; }
@@ -166,7 +247,7 @@ impl Protocolo {
             match v["method"].as_str().unwrap_or_default() {
                 "turn/started" => {
                     if let Some(id) = p["turn"]["id"].as_str() { canal.ativar(id)?; }
-                    eventos.push(Evento::Inicio { modelo: self.modelo.clone(), comandos: Vec::new(), versao: None, fluxos: None });
+                    eventos.push(Evento::Inicio { modelo: self.modelo.clone(), comandos: self.comandos(), versao: None, fluxos: None });
                 }
                 "item/agentMessage/delta" => eventos.push(Evento::TextoParcial(p["delta"].as_str().unwrap_or_default().to_string())),
                 "item/started" | "item/completed" => {
@@ -179,8 +260,26 @@ impl Protocolo {
                             self.mudancas.insert(id.to_string(), item["changes"].as_array().cloned().unwrap_or_default());
                         }
                     }
-                    let normal = normalizar(item);
-                    eventos.extend(self.leitor.linha(&json!({"type":if terminou {"item.completed"} else {"item.started"}, "item":normal})));
+                    match item["type"].as_str().unwrap_or_default() {
+                        // O resumo da conversa (o `/compact`, ou sozinho com o contexto cheio): a
+                        // linha do turno diz "Compactando…" e o marco entra no fim.
+                        "contextCompaction" if terminou => {
+                            eventos.push(Evento::Compactou { manual: self.pedido == Pedido::Compactar, antes: None });
+                        }
+                        "contextCompaction" => eventos.push(Evento::Compactando(true)),
+                        // O fim do `/review`: o texto da revisão é a resposta do turno.
+                        "exitedReviewMode" if terminou => {
+                            let revisao = item["review"].as_str().unwrap_or_default().to_string();
+                            if !revisao.trim().is_empty() {
+                                self.leitor.ultima_fala = revisao.clone();
+                                eventos.push(Evento::Texto(revisao));
+                            }
+                        }
+                        _ => {
+                            let normal = normalizar(item);
+                            eventos.extend(self.leitor.linha(&json!({"type":if terminou {"item.completed"} else {"item.started"}, "item":normal})));
+                        }
+                    }
                 }
                 // O patch chega por partes num item já aberto: o cartão mostra o último.
                 "item/fileChange/patchUpdated" => {
@@ -484,6 +583,108 @@ mod testes {
         assert_eq!(enviados[0]["params"]["capabilities"]["experimentalApi"], true);
         let turno = enviados.iter().find(|v| v["method"] == "turn/start").expect("turn/start");
         assert_eq!(turno["params"]["approvalPolicy"], "untrusted");
+    }
+
+    /// Um protocolo que retoma a conversa "sessao" com `texto`, já com a abertura respondida e as
+    /// skills de `skills` (o `data` do `skills/list`).
+    fn retomado_com(texto: &str, skills: Value) -> (Protocolo, Gravador) {
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let mut p = Protocolo::novo(canal, json!({"cwd":"/p","threadId":"sessao","approvalPolicy":"untrusted"}), entrada(texto, &[]), None);
+        p.iniciar().unwrap();
+        p.linha(&json!({"id":"vitral-init","result":{}}));
+        p.linha(&json!({"id":"vitral-skills","result":{"data":skills}}));
+        p.linha(&json!({"id":"vitral-thread","result":{"thread":{"id":"sessao"},"model":"gpt-teste"}}));
+        (p, g)
+    }
+
+    /// O `/compact` é o `thread/compact/start` do app-server, e não uma mensagem: medido no
+    /// 0.169.0 (24/11/2026), ele responde `{}` e abre um turno com um item `contextCompaction`.
+    #[test]
+    fn o_compact_resume_a_conversa_pelo_app_server() {
+        let (mut p, g) = retomado_com("/compact", json!([]));
+        let enviados = pedidos(&g);
+        assert!(!enviados.iter().any(|v| v["method"] == "turn/start"), "o /compact não vai como mensagem");
+        let compactar = enviados.iter().find(|v| v["method"] == "thread/compact/start").expect("thread/compact/start");
+        assert_eq!(compactar["params"], json!({"threadId":"sessao"}));
+        assert!(p.linha(&json!({"id":compactar["id"],"result":{}})).is_empty());
+        let mut eventos = p.linha(&json!({"method":"turn/started","params":{"threadId":"sessao","turn":{"id":"t-compactar","status":"inProgress","items":[]}}}));
+        for (metodo, item) in [("item/started", json!({"type":"contextCompaction","id":"cc"})), ("item/completed", json!({"type":"contextCompaction","id":"cc"}))] {
+            eventos.extend(p.linha(&json!({"method":metodo,"params":{"threadId":"sessao","turnId":"t-compactar","item":item}})));
+        }
+        eventos.extend(p.linha(&json!({"method":"turn/completed","params":{"threadId":"sessao","turn":{"id":"t-compactar","status":"completed","items":[]}}})));
+        let resumo: Vec<String> = eventos
+            .iter()
+            .filter_map(|e| match e {
+                Evento::Inicio { .. } => Some("inicio".into()),
+                Evento::Compactando(sim) => Some(format!("compactando:{sim}")),
+                Evento::Compactou { manual, .. } => Some(format!("compactou:{manual}")),
+                Evento::Fim { erro, .. } => Some(format!("fim:{erro}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(resumo, ["inicio", "compactando:true", "compactou:true", "fim:false"]);
+    }
+
+    /// O `/review` é o `review/start` do app-server: sem texto, as mudanças que não foram para o
+    /// commit; com texto, a revisão que o texto pede. O resultado vem no item `exitedReviewMode`.
+    #[test]
+    fn o_review_pede_a_revisao_ao_app_server() {
+        let (_, g) = retomado_com("/review", json!([]));
+        let revisar = pedidos(&g).into_iter().find(|v| v["method"] == "review/start").expect("review/start");
+        assert_eq!(revisar["params"], json!({"threadId":"sessao","target":{"type":"uncommittedChanges"}}));
+        let (mut p, g) = retomado_com("/review  olhe o cálculo do frete ", json!([]));
+        let revisar = pedidos(&g).into_iter().find(|v| v["method"] == "review/start").expect("review/start");
+        assert_eq!(revisar["params"]["target"], json!({"type":"custom","instructions":"olhe o cálculo do frete"}));
+        p.linha(&json!({"method":"turn/started","params":{"threadId":"sessao","turn":{"id":"t-rev","status":"inProgress","items":[]}}}));
+        let eventos = p.linha(&json!({"method":"item/completed","params":{"threadId":"sessao","turnId":"t-rev","item":{
+            "type":"exitedReviewMode","id":"rv","review":"O frete ignora o CEP."}}}));
+        assert!(matches!(eventos.as_slice(), [Evento::Texto(t)] if t == "O frete ignora o CEP."), "{eventos:?}");
+        let fim = p.linha(&json!({"method":"turn/completed","params":{"threadId":"sessao","turn":{"id":"t-rev","status":"completed","items":[]}}}));
+        assert!(matches!(fim.last(), Some(Evento::Fim { erro: false, texto, .. }) if texto == "O frete ignora o CEP."));
+    }
+
+    /// As skills que o Codex oferece na pasta (`skills/list`, conferido no 0.169.0) são comandos
+    /// de barra: "/nome" vai como a entrada `skill` com o arquivo dela e o texto "$nome …", como o
+    /// Codex faz quando se escolhe a skill. A lista vai no `Inicio`, para o menu "/".
+    #[test]
+    fn a_skill_vira_comando_de_barra() {
+        let skills = json!([{"cwd":"/p","skills":[
+            {"name":"revisar-pr","description":"Revisa o PR","path":"/h/.codex/skills/revisar-pr/SKILL.md","scope":"user","enabled":true},
+            {"name":"desligada","description":"x","path":"/h/x/SKILL.md","scope":"user","enabled":false},
+        ],"errors":[]}]);
+        let (mut p, g) = retomado_com("/revisar-pr olhe o diff", skills.clone());
+        let enviados = pedidos(&g);
+        let listar = enviados.iter().find(|v| v["method"] == "skills/list").expect("skills/list");
+        assert_eq!(listar["params"], json!({"cwds":["/p"]}));
+        let turno = enviados.iter().find(|v| v["method"] == "turn/start").expect("turn/start");
+        assert_eq!(turno["params"]["input"], json!([
+            {"type":"text","text":"$revisar-pr olhe o diff"},
+            {"type":"skill","name":"revisar-pr","path":"/h/.codex/skills/revisar-pr/SKILL.md"},
+        ]));
+        let eventos = p.linha(&json!({"method":"turn/started","params":{"turn":{"id":"t"}}}));
+        assert!(matches!(eventos.as_slice(), [Evento::Inicio { comandos, .. }, ..] if *comandos == ["compact", "review", "revisar-pr"]), "{eventos:?}");
+        // Uma barra que não é skill nem comando vai como texto, igual.
+        let (_, g) = retomado_com("/etc/hosts tem o quê?", skills);
+        let turno = pedidos(&g).into_iter().find(|v| v["method"] == "turn/start").expect("turn/start");
+        assert_eq!(turno["params"]["input"], json!([{"type":"text","text":"/etc/hosts tem o quê?"}]));
+    }
+
+    /// A mensagem com barra espera a lista das skills para começar o turno; a lista que falha não
+    /// para o turno.
+    #[test]
+    fn a_barra_espera_a_lista_das_skills_e_a_falha_dela_nao_para_o_turno() {
+        let g = Gravador(Arc::default());
+        let canal = Arc::new(Mutex::new(Canal::novo(Box::new(g.clone()))));
+        let mut p = Protocolo::novo(canal, json!({"cwd":"/p"}), entrada("/revisar-pr", &[]), None);
+        p.iniciar().unwrap();
+        p.linha(&json!({"id":"vitral-init","result":{}}));
+        p.linha(&json!({"id":"vitral-thread","result":{"thread":{"id":"t1"}}}));
+        assert!(!pedidos(&g).iter().any(|v| v["method"] == "turn/start"), "ainda sem a lista");
+        let eventos = p.linha(&json!({"id":"vitral-skills","error":{"code":-32600,"message":"sem skills"}}));
+        assert!(!eventos.iter().any(|e| matches!(e, Evento::Fim { .. })), "{eventos:?}");
+        let turno = pedidos(&g).into_iter().find(|v| v["method"] == "turn/start").expect("turn/start");
+        assert_eq!(turno["params"]["input"], json!([{"type":"text","text":"/revisar-pr"}]));
     }
 
     #[test]

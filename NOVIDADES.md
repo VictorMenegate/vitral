@@ -9,6 +9,9 @@ o app mostra em **Novidades**. Os pré-lançamentos (`0.2.0-rc.1`) usam a seçã
   pergunta no meio do turno pelo mesmo cartão do Claude, com o comando inteiro ou o diff do
   arquivo, Negar e Permitir. Antes esses modos viravam só o sandbox dele. O "Permitir sempre"
   vale para o Codex também, e o Aceitar edições deixa passar as edições dentro da pasta.
+- **Comandos de barra no Codex.** O `/compact` resume a conversa do Codex (também pelo
+  Compactar), o `/review` pede a revisão das mudanças (ou do que vier escrito depois dele) e as
+  skills do Codex na pasta aparecem no menu "/".
 
 ## 0.10.1
 
