@@ -237,10 +237,24 @@ fn posicao_ao_mover(ids: &[u64], origem: u64, destino: u64, lado: Lado) -> Optio
 /// Os índices dos painéis que a janela desenha: todos, ou só o maximizado. O maximizado que não
 /// existe mais, ou com menos de dois painéis, não esconde nada.
 pub(super) fn paineis_a_mostrar(ids: &[u64], maximizado: Option<u64>) -> Vec<usize> {
-    match maximizado.and_then(|m| ids.iter().position(|id| *id == m)).filter(|_| ids.len() > 1) {
-        Some(ix) => vec![ix],
-        None => (0..ids.len()).collect(),
+    // No jeito do VS Code (Linear, 25/11/2026: "tinha que dar pra ver os outros ainda"), o
+    // maximizado não esconde os outros: eles ficam estreitos (`LARGURA_ESPREMIDA`), à vista.
+    let _ = maximizado;
+    (0..ids.len()).collect()
+}
+
+/// A largura de uma conversa ao lado da maximizada, a 100% (no protótipo, 190).
+pub(super) const LARGURA_ESPREMIDA: f32 = 190.;
+
+/// As larguras das conversas com uma maximizada: as outras ficam com `espremida` (ou menos, se
+/// não couber) e a maximizada com o resto do `total`.
+pub(super) fn larguras_maximizadas(total: f32, n: usize, maximizada: usize, espremida: f32, minimo: f32) -> Vec<f32> {
+    if n < 2 || maximizada >= n {
+        return vec![total / n.max(1) as f32; n.max(1)];
     }
+    let outras = (n - 1) as f32;
+    let espremida = espremida.min(((total - minimo) / outras).max(0.));
+    (0..n).map(|k| if k == maximizada { total - espremida * outras } else { espremida }).collect()
 }
 
 /// O que o atalho de maximizar faz: com um painel maximizado, devolve o arranjo; senão maximiza o
@@ -1195,6 +1209,8 @@ impl Janela {
     /// aberto num painel novo (`selecionar` consome a marca). O dono viu a paleta de pastas aqui
     /// e disse "tá o antigo ainda" (13/11/2026). Só sem ter de onde tirar a pasta a paleta
     /// pergunta; fechada sem criar nada, a marca cai.
+    // Saiu do menu do painel no Linear (25/11/2026, a pedido do dono); fica para o "+" ou a paleta.
+    #[allow(dead_code)]
     pub(super) fn nova_conversa_ao_lado(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.nova_ao_lado = true;
         self.novo_chat_direto(window, cx);
@@ -1732,7 +1748,8 @@ mod testes_teclado {
     #[test]
     fn maximizar_mostra_so_o_painel_e_o_arranjo_volta_inteiro() {
         assert_eq!(paineis_a_mostrar(&[A, B, C], None), vec![0, 1, 2]);
-        assert_eq!(paineis_a_mostrar(&[A, B, C], Some(B)), vec![1]);
+        // Maximizado no jeito do VS Code: os outros continuam à vista (estreitos).
+        assert_eq!(paineis_a_mostrar(&[A, B, C], Some(B)), vec![0, 1, 2]);
         // O painel maximizado que fechou (ou sobrou um só): tudo à vista, sem estado preso.
         assert_eq!(paineis_a_mostrar(&[A, B, C], Some(9)), vec![0, 1, 2]);
         assert_eq!(paineis_a_mostrar(&[A], Some(A)), vec![0]);

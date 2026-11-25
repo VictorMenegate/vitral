@@ -113,6 +113,8 @@ impl Janela {
         if botoes.is_empty() {
             return None;
         }
+        let desloca = self.deslocamento_trilho;
+        let arrastando = self.arrasto_trilho.is_some();
         Some(
             div()
                 .absolute()
@@ -120,15 +122,26 @@ impl Janela {
                 .top(r(USO_DO_TOPO))
                 // Os dois numa peça só, a cápsula opaca de fio fino e sombra curta: eram duas moedas
             // soltas por cima da conversa (dono, 18/11/2026: "melhora o design dessa parte").
+            // No Linear (25/11/2026) ela se arrasta para qualquer lugar (o modo foco é onde ela
+            // aparece) e fica onde foi deixada.
             .child(
                 v_flex()
+                    .id("trilho-de-uso")
+                    .relative()
+                    .left(desloca.x)
+                    .top(desloca.y)
                     .p(esp::E4)
                     .gap(esp::E4)
                     .rounded(crate::tema::raio::de(DIAMETRO_NO_CANTO + 8.))
-                    .bg(Cores::cartao_opaco())
-                    .border_1()
-                    .border_color(Cores::borda())
-                    .shadow(crate::tema::sombra_elevado())
+                    .bg(Cores::preto())
+                    .cursor(if arrastando { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                            this.arrasto_trilho = Some((ev.position, this.deslocamento_trilho));
+                            cx.notify();
+                        }),
+                    )
                     .children(botoes),
             )
                 .into_any_element(),

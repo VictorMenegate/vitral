@@ -59,7 +59,7 @@ pub(super) fn menu_conversa(
         .iter()
         .filter(|i| i.chat.as_deref() == Some(chat) && i.coluna != crate::ideias::Coluna::Feitas)
         .count();
-    let rotulo_ideias = if ideias == 0 { "Ideias deste chat".to_string() } else { format!("Ideias deste chat ({ideias})") };
+    let rotulo_ideias = if ideias == 0 { "Ideias".to_string() } else { format!("Ideias ({ideias})") };
     let (i1, i2, i3, i4, i5, i6) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone(), id);
     let (m1, m2, m3) = (motor.clone(), motor.clone(), motor.clone());
     menu.when(ao_lado, |menu| {
@@ -80,7 +80,7 @@ pub(super) fn menu_conversa(
     .separator()
     .when(pode_marcar_nao_lido, |menu| {
         menu.item(
-            PopupMenuItem::new("Marcar como não lido")
+            PopupMenuItem::new("Não lido")
                 .icon(Lucide::CircleDot)
                 .on_click(move |_, _, cx| m3.update(cx, |m, cx| m.marcar_nao_lido(&i6, cx))),
         )

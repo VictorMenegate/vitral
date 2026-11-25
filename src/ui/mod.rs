@@ -102,6 +102,8 @@ actions!(vitral, [EditarUltima, CorrigirUltima, RecordarAnterior, RecordarSeguin
 actions!(vitral, [AbrirMenuDoPainel]);
 // Ctrl+I: o quadro de ideias.
 actions!(vitral, [AbrirQuadroDeIdeias]);
+// Linear (25/11/2026): Ctrl+. deixa só as conversas na janela.
+actions!(vitral, [AlternarFoco]);
 // Teclado e organização (24/11/2026): Alt+↑/↓ pulam de mensagem sua em mensagem sua; PgUp/PgDn
 // rolam a conversa; Ctrl+Shift+Enter maximiza o painel; Alt+PgUp/PgDn levam a aba ao painel
 // vizinho e Alt+Shift+PgUp/PgDn abrem um painel ao lado com ela; Ctrl+Alt+A arquiva o chat do
@@ -556,6 +558,14 @@ pub struct Janela {
     painel: bool,
     /// Lista da esquerda (conversas/arquivos) aberta ou recolhida.
     lista: bool,
+    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// painel da direita. Guarda como a lista e o painel estavam, para voltar igual.
+    antes_do_foco: Option<(bool, bool)>,
+    /// O trilho de uso (os anéis do canto, à vista no modo foco) pode ser arrastado: quanto ele
+    /// andou do lugar de sempre, em px, guardado no interface.json, e o arrasto em curso (onde o
+    /// ponteiro desceu e o deslocamento de então).
+    deslocamento_trilho: Point<Pixels>,
+    arrasto_trilho: Option<(Point<Pixels>, Point<Pixels>)>,
     /// Divisão da largura no último quadro (lista e direita podem estar em gaveta).
     orcamento: Orcamento,
     /// Larguras dadas no arrasto das divisórias, a 100%.
@@ -563,7 +573,7 @@ pub struct Janela {
     /// Estado das divisórias, recomeçado quando muda a composição, o zoom ou a largura: as partes
     /// voltam às `larguras` na escala nova.
     estado_partes: Entity<ResizableState>,
-    chave_partes: Option<(usize, bool, bool, u32, u32)>,
+    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>)>,
     gaveta: Option<Gaveta>,
     /// Sobe a cada abertura da gaveta: a entrada dela toca uma vez por abertura.
     geracao_gaveta: u64,
@@ -985,6 +995,9 @@ impl Janela {
             // largura toda. O que você escolheu fica lembrado no interface.json.
             painel: false,
             lista: true,
+            antes_do_foco: None,
+            deslocamento_trilho: Point::default(),
+            arrasto_trilho: None,
             orcamento: orcamento_da_janela(window, 1, true, false),
             larguras: Larguras::default(),
             estado_partes: cx.new(|_| ResizableState::default()),
@@ -1191,6 +1204,32 @@ impl Janela {
             }
         }
         cx.notify();
+    }
+
+    /// Modo foco (Linear, 25/11/2026, Ctrl+.): só as conversas, sem a lista, a barra de baixo e o
+    /// painel da direita; o uso dos agentes flutua no canto. De novo, volta como estava.
+    pub(super) fn alternar_foco(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((lista, painel)) = self.antes_do_foco.take() {
+            if lista {
+                self.mostrar_lista(window, cx);
+            }
+            if painel {
+                self.mostrar_direita(window, cx);
+            }
+        } else {
+            self.antes_do_foco = Some((self.lista, self.painel));
+            if self.gaveta.is_some() {
+                self.fechar_gaveta(window, cx);
+            }
+            self.lista = false;
+            self.painel = false;
+        }
+        cx.notify();
+    }
+
+    /// Se o modo foco está ligado.
+    pub(super) fn em_foco(&self) -> bool {
+        self.antes_do_foco.is_some()
     }
 
     /// Ctrl+J e o botão do painel: o mesmo para o painel da direita.
@@ -1565,6 +1604,13 @@ impl Janela {
             .map(|c| c.id.clone())
             .collect();
         self.painel = interface.as_ref().and_then(|i| i.get("painel")?.as_bool()).unwrap_or(false);
+        // Onde o trilho de uso foi deixado (Linear, 25/11/2026).
+        if let Some([x, y]) = interface.as_ref().and_then(|i| {
+            let v = i.get("trilho")?.as_array()?;
+            Some([v.first()?.as_f64()? as f32, v.get(1)?.as_f64()? as f32])
+        }) {
+            self.deslocamento_trilho = point(px(x), px(y));
+        }
         // Os rascunhos antes do `selecionar`: é ele que leva o do chat que abre para a caixa.
         let rascunhos_lidos = rascunhos::ler(interface.as_ref(), |id| m.chat(id).is_some());
         self.restaurar_rascunhos(rascunhos_lidos);
@@ -2259,6 +2305,7 @@ impl Janela {
             .on_action(cx.listener(|this, _: &AlternarLista, window, cx| {
                 this.alternar_lista(window, cx)
             }))
+            .on_action(cx.listener(|this, _: &AlternarFoco, window, cx| this.alternar_foco(window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel1, window, cx| this.focar_painel(0, window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel2, window, cx| this.focar_painel(1, window, cx)))
             .on_action(cx.listener(|this, _: &IrParaPainel3, window, cx| this.focar_painel(2, window, cx)))
@@ -2380,6 +2427,44 @@ impl Janela {
             // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
             // sem a barra de baixo, que já o mostra (Linear, 25/11/2026).
             .children(self.uso_no_canto(cx).filter(|_| !self.lista))
+            // O arrasto do trilho de uso: enquanto o botão está apertado, a janela inteira escuta o
+            // ponteiro (na captura, para nenhum filho segurar o movimento) e o solta no fim.
+            .children(self.arrasto_trilho.map(|_| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    let mover = janela.clone();
+                    window.on_mouse_event(move |ev: &MouseMoveEvent, fase, window, cx| {
+                        if fase != DispatchPhase::Capture {
+                            return;
+                        }
+                        let tela = window.viewport_size();
+                        let _ = mover.update(cx, |this, cx| {
+                            let Some((ini, base)) = this.arrasto_trilho else { return };
+                            let novo = base + (ev.position - ini);
+                            this.deslocamento_trilho = point(
+                                novo.x.clamp(-(tela.width - px(80.)), px(0.)),
+                                novo.y.clamp(px(-40.), tela.height - px(200.)),
+                            );
+                            cx.notify();
+                        });
+                    });
+                    let soltar = janela.clone();
+                    window.on_mouse_event(move |_: &MouseUpEvent, fase, _, cx| {
+                        if fase != DispatchPhase::Capture {
+                            return;
+                        }
+                        let _ = soltar.update(cx, |this, cx| {
+                            if this.arrasto_trilho.take().is_some() {
+                                let p = this.deslocamento_trilho;
+                                gravar_interface("trilho", serde_json::json!([p.x.as_f32(), p.y.as_f32()]), cx);
+                                cx.notify();
+                            }
+                        });
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
             // Quem espera você, fora de vista: o aviso no canto de baixo (rodada de uso, item 3.1).
             .children(self.avisos_no_canto(window, cx))
             .children(fora)
@@ -2431,12 +2516,20 @@ impl Janela {
         // do que já estava: na abertura o primeiro quadro sai na janela ainda não maximizada, com
         // as conversas presas no mínimo, e essa conta torta ficava (dono, 16/11/2026: "falta
         // lembrar como deixei quando fecho e abro"; a divisão de 455/280/420 voltava 432/324/399).
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32);
+        let maximizado = self.maximizado.filter(|_| self.paineis.len() > 1);
+        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
-        let larguras = self.larguras.em_px(&o, n);
+        let mut larguras = self.larguras.em_px(&o, n);
+        // Maximizada no jeito do VS Code: as outras estreitas, a escolhida com o resto. Isso não
+        // vira arranjo guardado (o `on_resize` não grava com uma maximizada).
+        let espremidas = maximizado.and_then(|m| visiveis.iter().position(|&ix| self.paineis[ix].id == m));
+        if let Some(k) = espremidas {
+            let total: f32 = larguras.conversas.iter().sum();
+            larguras.conversas = paineis::larguras_maximizadas(total, n, k, paineis::LARGURA_ESPREMIDA * o.escala, o.min_conversa);
+        }
         let antes = larguras.clone();
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
@@ -2448,7 +2541,7 @@ impl Janela {
         // (`aresta_encostada`), e a faixa de pegar do kit fica em cima dele.
         let meio_vao = crate::tema::vao_entre_pecas() / 2.;
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
-        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}")))
+        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))))
             .with_state(&self.estado_partes)
             .on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
@@ -2462,7 +2555,9 @@ impl Janela {
                         cx.notify();
                         return;
                     }
-                    this.larguras.guardar(&tamanhos, &antes, o.escala)
+                    if espremidas.is_none() {
+                        this.larguras.guardar(&tamanhos, &antes, o.escala)
+                    }
                 });
             });
         if let Some(largura) = larguras.lista {
@@ -2500,8 +2595,13 @@ impl Janela {
                 // Só a 1ª conversa, com a lista ao lado, guarda o meio vão da esquerda; sem a lista
                 // vale a margem da janela.
                 let depois_da_lista = k == 0 && larguras.lista.is_some();
+                // A estreita ao lado da maximizada tem a largura fixa.
+                let faixa = match espremidas {
+                    Some(m) if m != k => px(larguras.conversas[k])..px(larguras.conversas[k]),
+                    _ => min_conversa.min(px(larguras.conversas[k]))..Pixels::MAX,
+                };
                 grupo = grupo.child(
-                    resizable_panel().size(px(larguras.conversas[k])).size_range(min_conversa..Pixels::MAX).child(
+                    resizable_panel().size(px(larguras.conversas[k])).size_range(faixa).child(
                         div()
                             .size_full()
                             .relative()

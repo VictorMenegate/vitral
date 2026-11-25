@@ -158,6 +158,7 @@ tabela! {
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";
+    "ctrl-.", super::AlternarFoco, None, Grupo::Paineis, "Modo foco: só as conversas", "";
     "alt-1", super::IrParaPainel1, None, Grupo::Paineis, "Ir ao painel 1 a 4", "Alt+1…4";
     "alt-2", super::IrParaPainel2, None, Grupo::Paineis, "", "";
     "alt-3", super::IrParaPainel3, None, Grupo::Paineis, "", "";

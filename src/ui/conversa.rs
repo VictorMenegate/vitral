@@ -30,7 +30,7 @@ use super::{
     busca_conversa, composer, menus,
     dialogos::{com_til, nome_da_pasta},
     movimento::{self, Curva, De, com_estado, entrada},
-    paineis::{ArrastoChat, FormaSoltura, Soltura, motivo_sem_lugar},
+    paineis::{ArrastoChat, FormaSoltura, Soltura},
     sem_arrastar,
 };
 use crate::{
@@ -75,10 +75,16 @@ fn linhas_do_historico(motor: &Motor, noutros: &[(String, usize)], so: Option<&[
         } else {
             (pasta_do_painel.as_ref() != Some(&c.cwd)).then(|| nome_da_pasta(&c.cwd))
         };
+        // Textos curtos (Linear, 25/11/2026): "Aberto aqui", "No painel 2 · rodando".
+        let rodando = motor.execucao(&c.id).rodando();
         let onde = if a_vista == Some(c.id.as_str()) {
-            "à vista neste painel · ".to_string()
+            "Aberto aqui · ".to_string()
         } else {
-            noutros.iter().find(|(id, _)| *id == c.id).map(|(_, n)| format!("no painel {n} · ")).unwrap_or_default()
+            noutros
+                .iter()
+                .find(|(id, _)| *id == c.id)
+                .map(|(_, n)| if rodando { format!("No painel {n} · rodando · ") } else { format!("No painel {n} · ") })
+                .unwrap_or_default()
         };
         // O estado e o começo da última fala ("Terminou · Pronto, mandei as duas…"), com o quando.
         let fala = super::falas::estado_e_fala(motor, c);
@@ -337,22 +343,6 @@ fn na_janela(
     }
 }
 
-/// Item de menu que pode estar desligado: aí ganha uma segunda linha com o motivo.
-fn item_com_motivo(titulo: &'static str, icone: Lucide, motivo: Option<String>) -> PopupMenuItem {
-    match motivo {
-        None => PopupMenuItem::new(titulo).icon(icone),
-        Some(motivo) => PopupMenuItem::element(move |_, _| {
-            v_flex()
-                .min_w_0()
-                .py(r(4.))
-                .child(div().truncate().child(titulo))
-                .child(div().truncate().metadado().text_color(Cores::tenue()).child(motivo.clone()))
-        })
-        .icon(icone)
-        .disabled(true),
-    }
-}
-
 /// O menu do painel, o mesmo no "⋯" e no clique direito da aba: o que saiu do cabeçalho na
 /// largura estreita, abrir ao lado, mover e fechar, e o menu da conversa.
 /// O menu do painel: o botão direito no cabeçalho e nas abas, e o Shift+F10 (o "⋯" do cabeçalho
@@ -370,14 +360,11 @@ fn menu_do_painel(
 ) -> PopupMenu {
     struct Dados {
         chat: String,
+        /// O modo foco (Ctrl+.) ligado.
         foco: bool,
-        ultimo: bool,
-        /// O painel está maximizado, ou há mais de um para maximizar.
-        maximizado: Option<bool>,
         direita_aberta: bool,
         /// O que a direita mostra (o arquivo aberto ou Este chat).
         direita: Direita,
-        cheio: Option<String>,
         rotulo: Option<String>,
     }
     let dados = (|| {
@@ -397,15 +384,12 @@ fn menu_do_painel(
                 modelo
             }
         });
-        let cheio = (!j.cabe_outro_painel()).then(|| motivo_sem_lugar(j.paineis.len()));
+        let _ = ix;
         Some(Dados {
             chat: chat.id.clone(),
-            foco: j.modo_foco(cx),
-            ultimo: ix + 1 == j.paineis.len(),
-            maximizado: if j.maximizado.is_some() { Some(true) } else { (j.paineis.len() > 1).then_some(false) },
+            foco: j.em_foco(),
             direita_aberta: j.direita_visivel() || j.gaveta == Some(Gaveta::Direita),
             direita: j.o_que_a_direita_mostra(m),
-            cheio,
             rotulo,
         })
     })();
@@ -416,40 +400,23 @@ fn menu_do_painel(
     if let Some(rotulo) = d.rotulo {
         menu = menu.label(rotulo).separator();
     }
+    // Linear (25/11/2026): o Modo foco (Ctrl+.) e o painel da direita em todo painel; saíram o
+    // Maximizar (é o clique duplo na aba) e o "Nova conversa ao lado". O antigo "modo foco em todos
+    // os chats", que esconde as ferramentas, continua na paleta como "Esconder ferramentas".
     menu = menu
         .item(
-            PopupMenuItem::new("Modo foco em todos os chats")
+            PopupMenuItem::new("Modo foco")
                 .icon(Lucide::Focus)
                 .checked(d.foco)
-                .on_click(na_janela(&janela, move |this, _, cx| this.alternar_modo_foco(cx))),
-        );
-    if d.ultimo {
-        // O botão da direita saiu do cabeçalho (pedido do dono, 12/11/2026): abrir e fechar o
-        // painel fica aqui.
-        menu = menu.item(
-            PopupMenuItem::new(d.direita.no_menu())
-            .icon(Lucide::PanelRight)
-            .checked(d.direita_aberta)
-            .action(Box::new(AlternarPainel))
-            .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
-        );
-    }
-    if let Some(maximizado) = d.maximizado {
-        menu = menu.item(
-            PopupMenuItem::new(if maximizado { "Voltar o painel ao arranjo" } else { "Maximizar o painel" })
-                .icon(if maximizado { Lucide::Minimize } else { Lucide::Maximize })
-                .action(Box::new(super::MaximizarPainel))
-                .on_click(na_janela(&janela, move |this, _, cx| {
-                    this.ativar_painel(painel_id, cx);
-                    this.alternar_maximizado_ativo(cx)
-                })),
-        );
-    }
-    menu = menu
-        .separator()
+                .action(Box::new(super::AlternarFoco))
+                .on_click(na_janela(&janela, move |this, window, cx| this.alternar_foco(window, cx))),
+        )
         .item(
-            item_com_motivo("Nova conversa ao lado", Lucide::Columns2, d.cheio)
-                .on_click(na_janela(&janela, |this, window, cx| this.nova_conversa_ao_lado(window, cx))),
+            PopupMenuItem::new(d.direita.no_menu())
+                .icon(Lucide::PanelRight)
+                .checked(d.direita_aberta)
+                .action(Box::new(AlternarPainel))
+                .on_click(na_janela(&janela, |this, window, cx| this.alternar_painel(window, cx))),
         )
         .separator();
     // Mover o painel, fechar os outros e fechar este saíram do menu a pedido do dono
@@ -1216,7 +1183,15 @@ impl Janela {
                         };
                         Tooltip::new(texto).build(window, cx)
                     })
-                    .on_click(cx.listener(move |this, _, window, cx| this.abrir_aba(painel_id, id_abrir.clone(), window, cx)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        this.abrir_aba(painel_id, id_abrir.clone(), window, cx);
+                        // Clique duplo: maximiza o painel desta aba no jeito do VS Code.
+                        if ev.click_count() >= 2 {
+                            cx.stop_propagation();
+                            this.ativar_painel(painel_id, cx);
+                            this.alternar_maximizado_ativo(cx);
+                        }
+                    }))
                     .on_drag(arrasto, move |arrasto, _, _, cx| {
                         cx.new(|_| PreviaArrasto { titulo: arrasto.titulo.clone(), simbolo: None })
                     })
@@ -1331,7 +1306,15 @@ impl Janela {
             }))
             // Sem dica na aba à vista: o título está ali mesmo, e a dica abria por cima da conversa
             // a cada passada do ponteiro (dono, 16/11/2026: "o de passar o mouse tá bem ruim").
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                // Clique duplo na aba: maximiza no jeito do VS Code, e de novo volta (Linear,
+                // 25/11/2026). Parado aqui, não chega à barra de título (que maximizaria a janela).
+                if ev.click_count() >= 2 {
+                    cx.stop_propagation();
+                    this.ativar_painel(painel_id, cx);
+                    this.alternar_maximizado_ativo(cx);
+                    return;
+                }
                 if let Some(ix) = this.paineis.iter().position(|p| p.id == painel_id) {
                     this.focar_painel(ix, window, cx);
                 }
@@ -1425,8 +1408,8 @@ impl Janela {
             .trigger(botao_icone(
                 ("historico-painel", painel_id as usize),
                 Lucide::Plus,
-                "Novo chat ou histórico",
-                TamanhoBotao::Barra,
+                "Novo chat ou recentes",
+                TamanhoBotao::Linha,
                 window,
                 cx,
             ))
@@ -1507,7 +1490,7 @@ impl Janela {
                 LinhaDoHistorico {
                     grupo: Some(GRUPO_DE_ACAO),
                     chave: NOVO_CHAT_NO_PAINEL.into(),
-                    titulo: "Novo chat neste painel".into(),
+                    titulo: "Novo chat".into(),
                     descricao: String::new(),
                     sinal: None,
                     termos: "novo chat criar conversa".into(),
@@ -1722,8 +1705,9 @@ impl Direita {
     /// O item do "⋯" quando o botão sai do cabeçalho.
     fn no_menu(self) -> &'static str {
         match self {
-            Direita::Arquivo => "Mostrar o arquivo aberto",
-            Direita::EsteChat => "Mostrar Este chat",
+            // Curtos (Linear, 25/11/2026): o visto ao lado já diz se está à vista.
+            Direita::Arquivo => "Arquivo aberto",
+            Direita::EsteChat => "Este chat",
         }
     }
 }
