@@ -99,13 +99,14 @@ impl Janela {
             let dica = SharedString::from(raiz.join(&caminho).display().to_string());
             let janela = cx.entity().downgrade();
             let fechar = botao_icone("fechar-arquivo", Lucide::X, "Fechar o arquivo", TamanhoBotao::Linha, window, cx)
-                .size(r(18.))
+                .size(r(16.))
+                .rounded(raio::de(16.))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     let _ = janela.update(cx, |this, cx| this.fechar_arquivo(window, cx));
                 });
-            let aba = aba_da_direita("aba-arquivo", painel_arquivo::icone_do_arquivo(&caminho), nome.into(), ativa, window)
-                .when(ativa, |a| a.pr(esp::E2).child(fechar))
+            let aba = aba_da_direita_com("aba-arquivo", painel_arquivo::icone_do_arquivo(&caminho), nome.into(), ativa, true, window)
+                .when(ativa, |a| a.pr(esp::E6).child(fechar))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .when(!ativa, |a| a.on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Arquivo(0), cx))));
             abas.push(super::sem_arrastar().flex().min_w_0().child(aba).into_any_element());
@@ -130,6 +131,7 @@ impl Janela {
         self.arquivo_fonte = false;
         self.arquivo_aberto = None;
         self.arquivo_edicao = None;
+        self.edicao_fora = None;
         self.arquivo_selecao = None;
         self.busca_arquivo.aberta = false;
         if matches!(self.aba_direita, AbaDireita::Arquivo(_)) {
@@ -152,6 +154,11 @@ impl Janela {
 /// Uma aba da direita: 24 de altura; a escolhida com o nome em 12,5 no fundo elevado, as outras
 /// só com o símbolo de 14 (protótipo Linear, 25/11/2026).
 fn aba_da_direita(id: &'static str, simbolo: Lucide, nome: SharedString, ativa: bool, window: &Window) -> Stateful<Div> {
+    aba_da_direita_com(id, simbolo, nome, ativa, false, window)
+}
+
+/// A aba da direita; a de arquivo leva o símbolo também quando escolhida (e o nome em 12).
+fn aba_da_direita_com(id: &'static str, simbolo: Lucide, nome: SharedString, ativa: bool, simbolo_na_ativa: bool, window: &Window) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -164,7 +171,19 @@ fn aba_da_direita(id: &'static str, simbolo: Lucide, nome: SharedString, ativa: 
         .font_weight(FontWeight::SEMIBOLD)
         .map(|d| {
             if ativa {
-                d.flex_shrink(1.).px(esp::E8).gap(esp::E6).bg(Cores::cartao_elevado()).text_color(Cores::texto()).child(div().min_w_0().truncate().child(nome))
+                d.flex_shrink(1.)
+                    .px(esp::E8)
+                    .gap(esp::E6)
+                    .bg(Cores::cartao_elevado())
+                    .text_color(Cores::texto())
+                    .when(simbolo_na_ativa, |d| d.child(div().flex_none().child(super::componentes::icone(simbolo, 14., window))))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .when(simbolo_na_ativa, |d| d.text_size(r(12.)).font_weight(FontWeight::MEDIUM))
+                            .child(nome),
+                    )
             } else {
                 d.w(r(24.))
                     .justify_center()

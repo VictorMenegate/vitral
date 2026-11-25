@@ -1892,6 +1892,8 @@ impl Janela {
         // A edição é do clique na trilha que a pediu (`abrir_edicao`): abrir de outro jeito mostra o
         // arquivo como está. A escolha de linhas não passa de uma abertura para a outra.
         self.arquivo_edicao = self.edicao_pedida.take();
+        self.edicao_fora = None;
+        self.dobras_abertas.borrow_mut().clear();
         self.esquecer_vista();
         self.lugar_no_turno.set(None);
         self.edicao_atual = 0;

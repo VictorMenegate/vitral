@@ -504,8 +504,11 @@ impl Janela {
                 }
             }
         });
-        // O editor é do arquivo como está: a edição do agente, a escolha de linhas e a busca saem.
-        self.arquivo_edicao = None;
+        // O editor é do arquivo como está: a edição do agente (guardada para o "Mudanças"), a
+        // escolha de linhas e a busca saem.
+        if let Some(edicao) = self.arquivo_edicao.take() {
+            self.edicao_fora = Some(edicao);
+        }
         self.esquecer_vista();
         self.arquivo_selecao = None;
         self.arquivo_ancora = None;

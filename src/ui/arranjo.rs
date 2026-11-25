@@ -51,6 +51,8 @@ pub(super) struct Arranjo {
     /// As larguras dadas no arrasto, a 100% de zoom.
     pub largura_lista: Option<f32>,
     pub largura_direita: Option<f32>,
+    /// A da direita com um arquivo aberto (`Larguras::arquivo`).
+    pub largura_arquivo: Option<f32>,
     /// A divisão das conversas de agora (a fração de cada uma no espaço delas); vazia, partes
     /// iguais. Fica para quem abrir este arquivo numa versão de antes das `divisoes`.
     pub conversas: Vec<f32>,
@@ -131,6 +133,7 @@ impl Arranjo {
         let mut larguras = Larguras {
             lista: na_faixa(self.largura_lista, (LISTA_MINIMA, FAIXA_LISTA.1), padrao.lista),
             direita: na_faixa(self.largura_direita, FAIXA_DIREITA, padrao.direita),
+            arquivo: na_faixa(self.largura_arquivo, FAIXA_DIREITA, padrao.arquivo),
             divisoes: Vec::new(),
         };
         for d in self.divisoes.iter().chain(std::iter::once(&self.conversas)).filter(|d| fecha(d)) {
@@ -188,6 +191,7 @@ impl Janela {
             lista_recolhida: !self.lista,
             largura_lista: Some(self.larguras.lista),
             largura_direita: Some(self.larguras.direita),
+            largura_arquivo: Some(self.larguras.arquivo),
             conversas: self.larguras.divisao(self.paineis.len()).map(<[f32]>::to_vec).unwrap_or_default(),
             divisoes: self.larguras.divisoes.clone(),
             janela,

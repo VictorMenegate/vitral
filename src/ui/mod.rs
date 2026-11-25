@@ -136,6 +136,9 @@ const RECOLHIDAS_DE_INICIO: [&str; 1] = ["Mais antigas"];
 /// medidas das partes são a 100% e crescem com o zoom (a 150%, a lista normal tem 468 px).
 const LATERAL: f32 = 312.;
 const DIREITA: f32 = 380.;
+/// A largura da direita com um arquivo aberto, guardada à parte (protótipo Linear, 25/11/2026):
+/// o código pede mais lugar que o Este chat.
+const ARQUIVO: f32 = 560.;
 const MIN_CONVERSA: f32 = 280.;
 /// Menos que isso a conversa não se lê: é o mínimo mesmo com a janela apertada.
 const MIN_APERTADO: f32 = 200.;
@@ -276,6 +279,8 @@ fn orcamento(util: f32, escala: f32, n: usize, lista: bool, direita: bool) -> Or
 struct Larguras {
     lista: f32,
     direita: f32,
+    /// A da direita com um arquivo aberto.
+    arquivo: f32,
     /// A divisão das conversas lado a lado (a fração de cada uma no espaço delas), uma por
     /// quantidade de conversas: fechar um painel e abrir de novo volta à divisão que aquela
     /// quantidade tinha (dono, 16/11/2026: "falta lembrar como deixei"). Sem a da quantidade de
@@ -285,7 +290,7 @@ struct Larguras {
 
 impl Default for Larguras {
     fn default() -> Self {
-        Larguras { lista: LATERAL, direita: DIREITA, divisoes: Vec::new() }
+        Larguras { lista: LATERAL, direita: DIREITA, arquivo: ARQUIVO, divisoes: Vec::new() }
     }
 }
 
@@ -316,7 +321,7 @@ impl Larguras {
     /// larguras com que as partes foram montadas (a lista e a direita, se ancoradas). A lista e a
     /// direita só mudam se o arrasto as mexeu: arrastar a divisória entre duas conversas não troca
     /// a largura pedida da lista pela que o orçamento apertou nesta janela.
-    fn guardar(&mut self, tamanhos: &[f32], antes: &LargurasPx, escala: f32) {
+    fn guardar(&mut self, tamanhos: &[f32], antes: &LargurasPx, escala: f32, com_arquivo: bool) {
         let mexeu = |agora: f32, antes: f32| (agora - antes).abs() >= 1.;
         let mut resto = tamanhos;
         if let Some(lista) = antes.lista
@@ -331,7 +336,8 @@ impl Larguras {
             && let Some((d, antes)) = resto.split_last()
         {
             if mexeu(*d, direita) {
-                self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+                let nova = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+                if com_arquivo { self.arquivo = nova } else { self.direita = nova }
             }
             resto = antes;
         }
@@ -490,6 +496,9 @@ pub struct Janela {
     /// arquivo aberto mostra (dono, 16/11/2026: "ver a edição"); `None`, o arquivo como está.
     edicao_pedida: Option<std::rc::Rc<edicao::Edicao>>,
     arquivo_edicao: Option<std::rc::Rc<edicao::Edicao>>,
+    /// A edição do arquivo aberto quando você passa para "Arquivo" (ou entra no editor): o
+    /// "Mudanças" volta a ela.
+    edicao_fora: Option<std::rc::Rc<edicao::Edicao>>,
     /// A mudança à vista na edição (as setas passam de uma à outra) e se o painel rola até ela no
     /// próximo quadro.
     edicao_atual: usize,
@@ -511,6 +520,8 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// As dobras de linhas iguais abertas no arquivo aberto (pela primeira linha delas).
+    dobras_abertas: std::cell::RefCell<std::collections::HashSet<usize>>,
     /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
     /// agente muda o mesmo arquivo. `None`, o arquivo está só para ler.
     editor_arquivo: Option<editor_arquivo::Editor>,
@@ -561,7 +572,7 @@ pub struct Janela {
     /// Estado das divisórias, recomeçado quando muda a composição, o zoom ou a largura: as partes
     /// voltam às `larguras` na escala nova.
     estado_partes: Entity<ResizableState>,
-    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>)>,
+    chave_partes: Option<(usize, bool, bool, u32, u32, Option<u64>, bool)>,
     gaveta: Option<Gaveta>,
     /// Sobe a cada abertura da gaveta: a entrada dela toca uma vez por abertura.
     geracao_gaveta: u64,
@@ -968,6 +979,7 @@ impl Janela {
             arquivo_marcada: Default::default(),
             edicao_pedida: None,
             arquivo_edicao: None,
+            edicao_fora: None,
             edicao_atual: 0,
             edicao_rolar: Default::default(),
             lugar_no_turno: Default::default(),
@@ -977,6 +989,7 @@ impl Janela {
             cache_arquivos: Default::default(),
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            dobras_abertas: Default::default(),
             editor_arquivo: None,
             arquivo_fonte: false,
             codigo_esquerda: Default::default(),
@@ -1910,7 +1923,11 @@ impl Janela {
                 (self.larguras.lista, FAIXA_LISTA.0, div().size_full().child(lista).into_any_element())
             }
             // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
-            Gaveta::Direita => (self.larguras.direita, FAIXA_DIREITA.0, self.conteudo_da_direita(motor, window, cx)),
+            Gaveta::Direita => {
+                let com_arquivo = matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
+                let largura = if com_arquivo { self.larguras.arquivo } else { self.larguras.direita };
+                (largura, FAIXA_DIREITA.0, self.conteudo_da_direita(motor, window, cx))
+            }
         };
         let largura = px(largura_da_gaveta(largura, minima, &self.orcamento));
         // Entra deslizando 24 px da borda, com o véu em fade junto (uma vez por abertura).
@@ -2528,12 +2545,18 @@ impl Janela {
         // as conversas presas no mínimo, e essa conta torta ficava (dono, 16/11/2026: "falta
         // lembrar como deixei quando fecho e abro"; a divisão de 455/280/420 voltava 432/324/399).
         let maximizado = self.maximizado.filter(|_| self.paineis.len() > 1);
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado);
+        // Com um arquivo aberto à direita, a largura dela é a do arquivo (guardada à parte).
+        let com_arquivo = painel && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
+        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
-        let mut larguras = self.larguras.em_px(&o, n);
+        let mut larguras = if com_arquivo {
+            Larguras { direita: self.larguras.arquivo, ..self.larguras.clone() }.em_px(&o, n)
+        } else {
+            self.larguras.em_px(&o, n)
+        };
         // Maximizada no jeito do VS Code: as outras estreitas, a escolhida com o resto. Isso não
         // vira arranjo guardado (o `on_resize` não grava com uma maximizada).
         let espremidas = maximizado.and_then(|m| visiveis.iter().position(|&ix| self.paineis[ix].id == m));
@@ -2564,7 +2587,7 @@ impl Janela {
                         return;
                     }
                     if espremidas.is_none() {
-                        this.larguras.guardar(&tamanhos, &antes, o.escala)
+                        this.larguras.guardar(&tamanhos, &antes, o.escala, com_arquivo)
                     }
                 });
             });
@@ -2976,7 +2999,7 @@ mod testes_orcamento {
     fn o_que_foi_arrastado_cresce_com_o_zoom() {
         // A 100%, a lista foi a 400 e as duas conversas ficaram em 60/40.
         let mut l = Larguras::default();
-        l.guardar(&[400., 480., 320., 380.], &mexeu_em_tudo(true, true), 1.);
+        l.guardar(&[400., 480., 320., 380.], &mexeu_em_tudo(true, true), 1., false);
         assert_eq!(l.lista, 400.);
         assert_eq!(l.direita, 380.);
         assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
@@ -2989,7 +3012,7 @@ mod testes_orcamento {
         assert_eq!(px.conversas, vec![(livre * 0.6f32).floor(), (livre * 0.4f32).floor()]);
         // Guardar a 150% e voltar a 100% devolve o que era.
         let mut de_volta = Larguras::default();
-        de_volta.guardar(&[600., 745., 497., 570.], &mexeu_em_tudo(true, true), 1.5);
+        de_volta.guardar(&[600., 745., 497., 570.], &mexeu_em_tudo(true, true), 1.5, false);
         assert_eq!(de_volta.lista, 400.);
         assert_eq!(de_volta.direita, 380.);
         // Outra quantidade de conversas divide por igual.
@@ -3003,11 +3026,11 @@ mod testes_orcamento {
         // Solta em 180 (abaixo dos 200 da faixa, acima do ponto de recolher): guarda 180, e a
         // montagem seguinte (clique duplo, Ctrl+B) devolve os mesmos 180.
         let mut l = Larguras::default();
-        l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1.);
+        l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, 180.);
         assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
         // Abaixo do ponto de recolher não fica (quem recolhe é o arrasto, antes de guardar).
-        l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1.);
+        l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, super::LISTA_MINIMA);
     }
 
@@ -3015,8 +3038,8 @@ mod testes_orcamento {
     fn cada_quantidade_de_conversas_lembra_a_sua_divisao() {
         // Duas conversas em 60/40; depois três em 50/25/25; fechar uma volta aos 60/40.
         let mut l = Larguras::default();
-        l.guardar(&[600., 400.], &mexeu_em_tudo(false, false), 1.);
-        l.guardar(&[500., 250., 250.], &mexeu_em_tudo(false, false), 1.);
+        l.guardar(&[600., 400.], &mexeu_em_tudo(false, false), 1., false);
+        l.guardar(&[500., 250., 250.], &mexeu_em_tudo(false, false), 1., false);
         assert_eq!(l.divisao(2), Some(&[0.6, 0.4][..]));
         assert_eq!(l.divisao(3), Some(&[0.5, 0.25, 0.25][..]));
         let o = orcamento(1000., 1., 2, false, false);
@@ -3034,11 +3057,11 @@ mod testes_orcamento {
         // guardados para quando couberem.
         let mut l = Larguras { lista: 500., ..Larguras::default() };
         let antes = LargurasPx { lista: Some(340.), conversas: vec![400., 400.], direita: None };
-        l.guardar(&[340., 500., 300.], &antes, 1.);
+        l.guardar(&[340., 500., 300.], &antes, 1., false);
         assert_eq!(l.lista, 500.);
         assert_eq!(l.divisao(2), Some(&[0.625, 0.375][..]));
         // Arrastada de fato, a lista guarda a nova.
-        l.guardar(&[380., 460., 300.], &antes, 1.);
+        l.guardar(&[380., 460., 300.], &antes, 1., false);
         assert_eq!(l.lista, 380.);
     }
 
@@ -3046,12 +3069,12 @@ mod testes_orcamento {
     fn larguras_guardadas_ficam_na_faixa_e_no_que_cabe() {
         let mut l = Larguras::default();
         // Sem a direita e sem a lista ancoradas, só as conversas contam.
-        l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1.);
+        l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1., false);
         assert_eq!((l.lista, l.direita), (312., 380.));
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         // Arrastada além da faixa, fica no limite; na janela pequena, no máximo que cabe. Uma
         // conversa só não mexe na divisão das duas.
-        l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1.);
+        l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, 560.);
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         let o = orcamento(MINIMA, 1., 1, true, false);
