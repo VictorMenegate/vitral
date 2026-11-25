@@ -41,7 +41,7 @@ use super::{
 use crate::{
     modelo::{Chat, Execucao, Item, agora},
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, esp, r, raio},
+    tema::{Cores, Lucide, Tipo as _, esp, linear, r, raio},
 };
 
 /// Larguras da lista, a 100% (a conta é a mesma em qualquer zoom, porque o texto cresce junto).
@@ -619,10 +619,9 @@ fn linhas_a_vista(rolado: f32, visivel: f32, altura: f32, margem: f32) -> Option
 }
 
 impl Montagem {
-    /// O título de uma seção; a primeira visível fica com 4 em cima.
+    /// O título de uma seção.
     fn secao(&mut self, s: SecaoDaLista) {
-        let item = s.primeira(self.itens.is_empty()).into_any_element();
-        self.itens.push(item);
+        self.itens.push(s.into_any_element());
     }
 
     fn navegavel(&mut self, e: AnyElement, chat: &str, pendencia: bool) {
@@ -652,7 +651,8 @@ fn linha_meta(altura: f32) -> Div {
 /// numa coluna só. Era mono de 11 apagado, que dava 2,6 a 3,4:1 e um espaço largo em "5  d"
 /// (relatório de design, 16/11/2026).
 fn hora_do_cartao() -> Div {
-    linha_meta(20.).metadado()
+    // 12,5 no tênue da lista (protótipo Linear, 25/11/2026).
+    linha_meta(20.).metadado().text_size(r(12.5))
 }
 
 /// A prévia: o motivo (o ponto do sinal e o rótulo em texto) e o texto tênue cortado, separados
@@ -689,8 +689,8 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
     // O atalho ("Ctrl" "K") à direita, com o campo vazio e sem foco; abaixo de 276 de lista, nada.
     // Só na aba Conversas: o Ctrl+K leva a ela, então na busca de arquivos ele enganaria.
     let atalho: Option<Box<dyn Action>> = (!estreita && conversas).then(|| Box::new(Buscar) as Box<dyn Action>);
-    // No alto da lista, o logo, a busca e o "+" têm a mesma altura (40).
-    campo_de_busca_de("busca-lista", estado, atalho, 32., window, cx)
+    // No alto da lista, a busca e o "+" com 30 (protótipo Linear, 25/11/2026).
+    campo_de_busca_de("busca-lista", estado, atalho, 30., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
             s.dica_no_ponteiro(move |window, cx| {
@@ -1046,22 +1046,9 @@ impl Janela {
                     .min_h_0()
                     .mr(r(-8.))
                     .pr(esp::PECA)
+                    // Sem o degradê no pé (dono, 25/11/2026: "tá com uma sombra aqui embaixo"):
+                    // no protótipo Linear a lista corta seca em cima da barra de baixo.
                     .child(lista)
-                    // O pé esmaece no tom da lista: a última linha não fica cortada a seco na
-                    // linha do rodapé (revisão de design, 23/11/2026).
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right(esp::PECA)
-                            .bottom_0()
-                            .h(esp::E24)
-                            .bg(linear_gradient(
-                                180.,
-                                linear_color_stop(Cores::vidro_leitura().opacity(0.), 0.),
-                                linear_color_stop(Cores::vidro_leitura(), 1.),
-                            )),
-                    )
                     .child(barra_de_rolagem("barra-lista", &self.rolagem_lista))
                     .into_any_element()
             }
@@ -1075,7 +1062,8 @@ impl Janela {
         v_flex()
             .size_full()
             .min_w_0()
-            .px(esp::PECA)
+            .pl(linear::LISTA_ESQUERDA)
+            .pr(linear::LISTA_DIREITA)
             .rounded(crate::tema::raio_da_peca())
             .on_prepaint(move |limites, window, _| {
                 let nova = limites.size.width.as_f32() / super::escala(window);
@@ -1105,24 +1093,24 @@ impl Janela {
     /// (Ctrl+I). O ponto âmbar na de Conversas quando algo espera você e você está nos arquivos.
     fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool, window: &Window, cx: &Context<Self>) -> Div {
         let pendentes = motor.precisa_de_voce().numero();
+        // 32 de altura, 9 dos lados e entre o ícone e o nome, texto de 13,5 (protótipo Linear).
         let linha = |id: &'static str, simbolo: Lucide, nome: &'static str, escolhido: bool| {
             div()
                 .id(id)
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(esp::E8)
-                .h(r(30.))
-                .px(esp::E12)
+                .gap(linear::ITEM_LADO)
+                .h(r(32.))
+                .px(linear::ITEM_LADO)
                 .rounded(raio::CONTROLE)
-                .text_size(r(13.))
-                .line_height(r(18.))
+                .text_size(r(13.5))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
-                .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
+                .text_color(Cores::texto())
                 .when(escolhido, |d| d.bg(Cores::selecao()))
                 .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
-                .child(div().flex_none().text_color(if escolhido { Cores::forte() } else { Cores::tenue() }).child(icone(simbolo, 15., window)))
+                .child(div().flex_none().text_color(if escolhido { Cores::texto() } else { Cores::tenue_da_lista() }).child(icone(simbolo, 16., window)))
                 .child(div().flex_1().min_w_0().truncate().child(nome))
         };
         let trocar = |aba: AbaLateral| {
@@ -1136,10 +1124,11 @@ impl Janela {
             }
         };
         let ponto = (!conversas && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
-        let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().metadado().text_color(Cores::apagado()).child("Ctrl I"));
+        let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().text_size(r(11.)).text_color(Cores::tenue_da_lista()).child("Ctrl I"));
         let _ = cx;
         v_flex()
             .flex_none()
+            .mt(linear::ANTES_DA_SECAO)
             .gap(esp::E2)
             .mb(esp::E4)
             .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
@@ -1242,10 +1231,10 @@ impl Janela {
             BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
                 .dica_acao(Box::new(NovaConversa), None)
                 .variante(VarianteRedonda::Primario)
-                .diametro(32.)
+                .diametro(30.)
                 .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx)))
         });
-        h_flex().flex_none().gap(esp::E8).mb(esp::E8).child(campo).children(nova)
+        h_flex().flex_none().gap(esp::E6).child(campo).children(nova)
     }
 
     /// Linha de escopo (36): nos Arquivos, de qual pasta (ou da cópia do chat aberto) e o ↻; nas
@@ -1418,7 +1407,7 @@ impl Janela {
             let px_de = |rems: Rems| rems.to_pixels(window.rem_size()).as_f32();
             let rolado = -self.rolagem_lista.offset().y.as_f32();
             let visivel = self.rolagem_lista.bounds().size.height.as_f32();
-            m.a_vista = linhas_a_vista(rolado, visivel, px_de(r(ALTURA_DA_LINHA_DE_CHAT)), px_de(esp::E2));
+            m.a_vista = linhas_a_vista(rolado, visivel, px_de(r(ALTURA_DA_LINHA_DE_CHAT)), 0.);
         }
 
         // "Enquanto você esteve fora", no topo da lista.
@@ -1580,7 +1569,7 @@ impl Janela {
         if let Some(faixa) = &m.a_vista
             && !faixa.contains(&m.itens.len())
         {
-            let espaco = div().flex_none().mt(esp::E2).h(r(ALTURA_DA_LINHA_DE_CHAT)).into_any_element();
+            let espaco = div().flex_none().h(r(ALTURA_DA_LINHA_DE_CHAT)).into_any_element();
             m.navegavel(espaco, &chat.id, pendencia.is_some());
             return;
         }
@@ -1598,7 +1587,7 @@ impl Janela {
         let pasta_da_dica = (!ctx.motor.read(cx).sem_pasta(chat)).then(|| chat.cwd.clone());
         div()
             .id(SharedString::from(format!("linha-{}", chat.id)))
-            .mt(esp::E2)
+            // Sem vão entre as linhas, como no protótipo Linear (25/11/2026).
             .child(cartao)
             .when_some(pasta_da_dica, |s, pasta| {
                 s.dica_no_ponteiro(move |window, cx| Tooltip::new(super::ramo::com_ramo(&com_til(&pasta), &pasta)).build(window, cx))
@@ -1718,8 +1707,8 @@ impl Janela {
                 // (relatório de design, 16/11/2026). Com a janela transparente, o tênue sobre o
                 // papel de parede ficava entre 3,1 e 3,8:1; vai o texto a 70% (revisão de design,
                 // 23/11/2026).
-                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue() };
-                (hora_do_cartao().text_color(if selecionado { Cores::texto() } else { repouso }).child(quando), dica)
+                let repouso = if crate::tema::transparencia() > 0 { Cores::texto().opacity(0.7) } else { Cores::tenue_da_lista() };
+                (hora_do_cartao().text_color(repouso).child(quando), dica)
             }
         };
         // Chat aberto num painel: só o número, e a hora vai para a dica do avatar. Com 3 painéis a
@@ -1738,6 +1727,7 @@ impl Janela {
             _ => s.ponto(8.).into_any_element(),
         });
         let indicadores = linha_meta(16.)
+            .gap(linear::CHAT_VAO)
             .children(estado)
             .when(nao_lido && sinal != Some(Sinal::Nova), |d| d.child(Sinal::Nova.ponto(8.)))
             // Sem o título "Fixadas", é o alfinete que diz por que ela está em cima.
@@ -1754,7 +1744,7 @@ impl Janela {
         let titulo_do_cartao: SharedString = chat.titulo.clone().into();
         let mut cartao = CartaoDeLista::new(SharedString::from(format!("cartao-{}", chat.id)), titulo_do_cartao)
             .map(|c| match subtitulo {
-                None => c.uma_linha().meta(h_flex().gap(esp::E4).child(indicadores).children(quando)),
+                None => c.uma_linha().meta(h_flex().gap(linear::CHAT_VAO).child(indicadores).children(quando)),
                 Some(subtitulo) => match quando {
                     Some(quando) => c.subtitulo(subtitulo).meta(quando).meta_inferior(indicadores),
                     None => c.subtitulo(subtitulo).meta_inferior(indicadores),

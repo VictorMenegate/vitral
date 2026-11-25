@@ -1003,10 +1003,10 @@ impl Janela {
             .on_action(cx.listener(|this, _: &SalvarArquivo, window, cx| this.salvar_arquivo_agora(window, cx)))
             .on_action(cx.listener(|this, _: &AchadoSeguinte, _, cx| this.f3_no_arquivo(1, cx)))
             .on_action(cx.listener(|this, _: &AchadoAnterior, _, cx| this.f3_no_arquivo(-1, cx)))
-            // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
-            // janela e emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
+            // Ancorado, é a última peça do cartão das conversas: fecha os cantos da direita e
+            // emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(na_gaveta, |s| s.rounded(crate::tema::raio_da_peca()))
-            .when(!na_gaveta, |s| s.bg(Cores::cartao()))
+            .when(!na_gaveta, |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
             .overflow_hidden()
             .child(cabecalho)
             .child(barra)

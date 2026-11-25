@@ -63,10 +63,10 @@ impl Janela {
             .size_full()
             .flex()
             .flex_col()
-            // Ancorado, é a última peça da fileira das conversas: encosta no topo e na direita da
-            // janela e emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
+            // Ancorado, é a última peça do cartão das conversas: fecha os cantos da direita e
+            // emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(self.gaveta == Some(Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
-            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()))
+            .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
             .overflow_hidden()
             .child(cabecalho)
             .child(

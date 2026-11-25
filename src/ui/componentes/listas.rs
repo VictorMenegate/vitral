@@ -18,7 +18,7 @@ use super::estado::{Selo, Sinal};
 use super::graficos::fio_de_pontos;
 use super::superficies::{EstadoVazio, ficha_de_metal};
 use super::textos::{etiqueta_de_secao, tracinho_de_secao};
-use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, r, raio, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, linear, r, raio, tam};
 
 /// Rótulo de seção (24, mono 11 apagado em caixa alta, com o tracinho), com contagem, ação e recolher: 16 de respiro em cima (4
 /// na primeira, ou o `respiro`) e 4 embaixo. O tracinho fica no `recuo` (8 por padrão: na lista, com a peça de 8,
@@ -96,21 +96,20 @@ impl CabecalhoDeSecao {
 const CHEVRON: f32 = 12.;
 
 /// O título de seção da lista de chats no jeito do Linear (25/11/2026): o nome em letra comum
-/// (12, tênue), a contagem apagada ao lado e a seta de recolher à DIREITA do nome (era à
-/// esquerda, num rótulo mono em caixa alta); 28 de altura, 8 em cima (4 na primeira). O clique em
-/// qualquer parte do título alterna.
+/// (12, tênue), a contagem apagada ao lado e a seta de recolher logo depois (era à esquerda, num
+/// rótulo mono em caixa alta); 28 de altura e 10 em cima. O clique em qualquer parte do título
+/// alterna.
 #[derive(IntoElement)]
 pub struct SecaoDaLista {
     titulo: SharedString,
     contagem: Option<usize>,
     acao: Option<AnyElement>,
     recolhivel: Option<(bool, Rc<dyn Fn(&mut Window, &mut App)>)>,
-    primeira: bool,
 }
 
 impl SecaoDaLista {
     pub fn new(t: impl Into<SharedString>) -> Self {
-        SecaoDaLista { titulo: t.into(), contagem: None, acao: None, recolhivel: None, primeira: false }
+        SecaoDaLista { titulo: t.into(), contagem: None, acao: None, recolhivel: None }
     }
     pub fn contagem(mut self, n: usize) -> Self {
         self.contagem = Some(n);
@@ -124,21 +123,17 @@ impl SecaoDaLista {
         self.recolhivel = Some((aberto, Rc::new(f)));
         self
     }
-    pub fn primeira(mut self, sim: bool) -> Self {
-        self.primeira = sim;
-        self
-    }
 }
 
 impl RenderOnce for SecaoDaLista {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         const GRUPO: &str = "secao-da-lista";
+        // Protótipo Linear (25/11/2026): 28 de altura, 10 antes e dos lados, o nome no tênue da
+        // lista, o número no apagado e a seta de 14 logo depois.
         let seta = self.recolhivel.as_ref().map(|(aberto, _)| {
             div()
                 .flex_none()
-                .text_color(Cores::apagado())
-                .group_hover(GRUPO, |s| s.text_color(Cores::texto()))
-                .child(Icon::new(if *aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, CHEVRON)))
+                .child(Icon::new(if *aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, 14.)))
         });
         let clique = self.recolhivel.map(|(_, f)| f);
         div()
@@ -149,13 +144,12 @@ impl RenderOnce for SecaoDaLista {
             .items_center()
             .gap(esp::E6)
             .h(r(28.))
-            .mt(if self.primeira { esp::E4 } else { esp::E8 })
-            .pl(esp::E12)
-            .pr(esp::E8)
+            .mt(linear::ANTES_DA_SECAO)
+            .px(linear::SECAO_LADO)
             .rounded(raio::CONTROLE)
             .text_size(r(12.))
             .line_height(r(16.))
-            .text_color(Cores::tenue())
+            .text_color(Cores::tenue_da_lista())
             .group_hover(GRUPO, |s| s.text_color(Cores::texto()))
             .when_some(clique, |d, f| d.cursor_pointer().on_click(move |_, window, cx| f(window, cx)))
             .child(div().flex_none().child(self.titulo))
@@ -247,9 +241,10 @@ pub fn barra_de_rolagem<H: ScrollbarHandle + Clone>(id: impl Into<ElementId>, ro
 /// Grupo de hover do `CartaoDeLista`, para o que aparece com o ponteiro no cartão.
 pub const GRUPO_DO_CARTAO: &str = "cartao-de-lista";
 
-/// A altura, a 100%, da linha de chat da lista corrida (uma linha, fora da árvore). A lista usa
-/// a mesma medida no espaço que guarda o lugar dos cartões fora da vista.
-pub const ALTURA_DA_LINHA_DE_CHAT: f32 = 36.;
+/// A altura, a 100%, da linha de chat da lista corrida (uma linha, fora da árvore): 32, a do
+/// protótipo Linear (25/11/2026). A lista usa a mesma medida no espaço que guarda o lugar dos
+/// cartões fora da vista.
+pub const ALTURA_DA_LINHA_DE_CHAT: f32 = 32.;
 
 /// Cartão de uma lista (conversas, trabalhadores, arquivos, contas, rotinas): 52 com duas
 /// linhas ou 32 com uma. O conteúdo fica a 8 da borda (o símbolo de uma lista com a peça de 8
@@ -424,8 +419,9 @@ impl RenderOnce for CartaoDeLista {
         const GRUPO: &str = GRUPO_DO_CARTAO;
         let arvore = self.nivel > 0;
         let uma_linha = self.uma_linha || arvore;
-        // A linha de chat da lista corrida (uma linha, fora da árvore) é um pouco maior que a da
-        // árvore: 36 de altura e título 15 (dono, 13/11/2026: "deixa esses chats um pouco maior").
+        // A linha de chat da lista corrida (uma linha, fora da árvore): a do protótipo Linear
+        // (25/11/2026), 32 de altura, título de 14 em 500, 11 na esquerda, 9 na direita e 7 entre
+        // as partes, no canto de 10 das linhas de lista.
         let folgada = self.uma_linha && !arvore;
         let (altura, lado_simbolo) = match (uma_linha, folgada) {
             (true, true) => (ALTURA_DA_LINHA_DE_CHAT, 16.),
@@ -434,8 +430,8 @@ impl RenderOnce for CartaoDeLista {
         };
         // O canto do realce é o dos controles, 45% da altura, como as abas e os botões (dono,
         // 18/11/2026: o hover "tá com os cantos quadrados" na lista das contas).
-        let raio_cartao = raio::de(altura);
-        let vao = if uma_linha && !arvore { esp::E8 } else { esp::E12 };
+        let raio_cartao: AbsoluteLength = if folgada { raio::CONTROLE.into() } else { raio::de(altura).into() };
+        let vao = if folgada { linear::CHAT_VAO } else if uma_linha { esp::E8 } else { esp::E12 };
         let forte = self.nao_lido || self.selecionado;
         let simbolo = if arvore {
             Some(coluna_da_arvore(self.simbolo, self.sinal, self.dica_do_ponto, self.ramo, window))
@@ -462,19 +458,17 @@ impl RenderOnce for CartaoDeLista {
                     d.overflow_hidden().whitespace_nowrap()
                 }
             })
-            .text_size(r(if self.nivel > 0 {
-                13.
-            } else if folgada {
-                15.
-            } else {
-                14.
-            }))
+            .text_size(r(if self.nivel > 0 { 13. } else { 14. }))
             .line_height(r(20.))
-            // A linha de chat da lista corrida em 400: a lista pesava mais que a conversa, e o não
-            // lido (600, do `titulo_rico`) era só um degrau acima. A árvore fica em 500
-            // (relatório de aparência, 16/11/2026, V8).
-            .font_weight(if folgada { FontWeight::NORMAL } else { FontWeight::MEDIUM })
-            .text_color(if forte { Cores::forte() } else { Cores::texto() })
+            .font_weight(FontWeight::MEDIUM)
+            // A linha de chat no texto da lista (um pouco abaixo do corpo); a escolhida no corpo.
+            .text_color(if folgada {
+                if forte { Cores::texto() } else { Cores::texto_da_lista() }
+            } else if forte {
+                Cores::forte()
+            } else {
+                Cores::texto()
+            })
             .map(|d| match self.titulo_rico {
                 Some(rico) => d.child(rico),
                 None => d.child(self.titulo.clone()),
@@ -546,8 +540,10 @@ impl RenderOnce for CartaoDeLista {
             .gap(vao)
             .h(r(altura))
             .px(dentro_da_borda(8.))
-            // Sem símbolo (os chats da lista), o título fica a 12 da borda.
+            // Sem símbolo (os chats da lista), o título fica a 12 da borda; a linha de chat, com
+            // 11 e 9.
             .when(simbolo.is_none(), |d| d.pl(dentro_da_borda(12.)))
+            .when(folgada, |d| d.pl(dentro_da_borda(11.)).pr(dentro_da_borda(9.)))
             .rounded(raio_cartao)
             .bg(fundo)
             .border_1()

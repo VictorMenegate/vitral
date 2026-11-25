@@ -546,15 +546,27 @@ impl RenderOnce for Etiqueta {
     }
 }
 
-/// Número do painel (Alt+1…4): uma tecla no recuo, com borda. O ativo leva a borda e o algarismo
-/// em azul, sem o metal: o disco cheio azul com algarismo branco é o desenho dos avisos (sino,
-/// logo), e "Nova conversa 1" se lia como "1 não lida" (relatório de design, 16/11/2026).
-pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
-    let (borda, cor) = if ativo {
-        (Cores::tinta_borda(Cores::destaque()), Cores::destaque_texto())
-    } else {
-        (Cores::borda(), Cores::tenue())
-    };
+/// O número do painel na linha da lista: a pastilha de 20 no azul-escuro, com o número em 11,5
+/// (protótipo Linear, 25/11/2026). Igual no painel ativo e nos outros.
+pub fn numero_painel(n: usize, _ativo: bool) -> impl IntoElement {
+    div()
+        .flex_none()
+        .size(r(20.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(raio::de(18.))
+        .text_size(r(11.5))
+        .line_height(r(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .tabular()
+        .bg(Cores::numero())
+        .text_color(Cores::texto_da_lista())
+        .child(n.to_string())
+}
+
+/// O número do painel na aba aberta: a pastilha de 18 em branco a 14%, com o número branco em 11.
+pub fn numero_da_aba(n: usize) -> impl IntoElement {
     div()
         .flex_none()
         .size(r(18.))
@@ -562,11 +574,12 @@ pub fn numero_painel(n: usize, ativo: bool) -> impl IntoElement {
         .items_center()
         .justify_center()
         .rounded(raio::de(18.))
-        .micro()
-        .bg(Cores::recuo())
-        .border_1()
-        .border_color(borda)
-        .text_color(cor)
+        .text_size(r(11.))
+        .line_height(r(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .tabular()
+        .bg(Cores::forte().opacity(0.14))
+        .text_color(Cores::forte())
         .child(n.to_string())
 }
 

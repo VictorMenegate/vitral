@@ -7,9 +7,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::base::Simbolo;
-use super::estado::{Sinal, numero_painel};
+use super::estado::{Sinal, numero_da_aba};
 use super::superficies::Flutuante as _;
-use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, linear, r, raio, tam};
 
 /// Grupo de hover da aba: no hover, o × aparece e o ponto do estado some.
 pub const GRUPO_DA_ABA: &str = "aba";
@@ -177,7 +177,7 @@ impl Aba {
         let cor_da_borda = Sinal::cor;
         let respira = self.borda.map(|(s, chave)| ContornoDeEstado {
             chave,
-            raio: raio::de(32.),
+            raio: raio::de(30.),
             cor: cor_da_borda(s),
             respira: s == Sinal::Rodando,
         });
@@ -251,6 +251,7 @@ impl Aba {
         });
         // Ícone solto em 16; o círculo do chat em 18.
         let tem_simbolo = self.simbolo.is_some();
+        let com_numero = self.numero.is_some() && !self.quadrada;
         let simbolo = self.simbolo.map(|s| {
             let lado = if matches!(s, Simbolo::Icone(..)) { 16. } else { 18. };
             s.desenhar(lado, window)
@@ -265,20 +266,22 @@ impl Aba {
             // já tem um respiro dentro, e com 12 dos dois lados a folga da esquerda parecia maior
             // (dono, 17/11/2026: "melhorar o espaçamento do nome do chat com o ícone" e "o espaço
             // da esquerda do ícone tá muito grande").
-            .gap(esp::E6)
-            .h(r(32.))
+            .gap(linear::ABA_VAO)
+            .h(r(30.))
             .max_w(r(400.))
             .min_w_0()
             // Sem o ícone (as abas de chat, desde 18/11/2026), 12 dos dois lados: com 8 na esquerda
             // o título ficava torto na pílula (dono, 23/11/2026: "esses textos dos chats não estão
             // centralizados").
+            // Protótipo Linear (25/11/2026): 11 dos lados, 6 na direita com o número.
             .map(|s| match (self.quadrada, tem_simbolo) {
-                (true, _) => s.w(r(32.)).flex_none().justify_center(),
-                (false, true) => s.pl(esp::E8).pr(esp::E12),
-                (false, false) => s.px(esp::E12),
+                (true, _) => s.w(r(30.)).flex_none().justify_center(),
+                (false, true) => s.pl(esp::E8).pr(linear::ABA_LADO),
+                (false, false) => s.px(linear::ABA_LADO),
             })
+            .when(com_numero, |s| s.pr(esp::E6))
             .relative()
-            .rounded(raio::de(32.))
+            .rounded(raio::de(30.))
             .border_1()
             .border_color(borda)
             .text_color(texto)
@@ -290,27 +293,8 @@ impl Aba {
             // anel liso e igual na volta toda. O aro de metal de 2 px que acendia aqui ficava
             // claro de um lado e escuro do outro (dono, 16/11/2026: "o contorno de quando tá com o
             // mouse em cima ainda tá bem ruim").
-            .when(!self.arrastando, |s| {
-                s.group_hover(GRUPO_DA_ABA, |s| s.border_color(Cores::borda_forte()))
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .rounded(raio::de(32.))
-                            // Sem o brilho de cima (dono, 23/11/2026: "tira esse brilho de cima das
-                            // coisas").
-                            .bg(fundo),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .rounded(raio::de(32.))
-                            .bg(Cores::forte().opacity(0.05))
-                            .invisible()
-                            .group_hover(GRUPO_DA_ABA, |s| s.visible()),
-                    )
-            })
+            // No Linear o ponteiro só clareia o texto: o fundo e o contorno ficam.
+            .when(!self.arrastando, |s| s.child(div().absolute().inset_0().rounded(raio::de(30.)).bg(fundo)))
             .children(respira.filter(|_| !self.arrastando))
             .when(self.arrastando, |s| s.opacity(0.45).border_dashed().border_color(Cores::borda_forte()))
             .when_some(self.foco, |s, foco| {
@@ -335,7 +319,7 @@ impl Aba {
             // O número do painel fica à direita, antes do × (dono, 13/11/2026).
             // Colado no título: 4 em vez dos 6 do vão da aba (dono, 17/11/2026: "diminui o espaço
             // até o número").
-            .children(self.numero.filter(|_| !self.quadrada).map(|(n, ativo)| div().flex_none().ml(-esp::E2).when(self.numero_oculto, |d| d.opacity(0.)).child(numero_painel(n, ativo))))
+            .children(self.numero.filter(|_| !self.quadrada).map(|(n, _)| div().flex_none().when(self.numero_oculto, |d| d.opacity(0.)).child(numero_da_aba(n))))
             .children(self.fim)
             .children(fim)
             .children(por_cima)
@@ -356,7 +340,7 @@ impl Aba {
 /// 3 px de contorno escuro). Fica a peça que agrupa a aba na faixa; o tom do miolo distingue a
 /// selecionada.
 pub fn casca_da_aba() -> Div {
-    div().flex().items_center().min_w_0().rounded(raio::de(32.))
+    div().flex().items_center().min_w_0().rounded(raio::de(30.))
 }
 
 /// Aba em miniatura que segue o ponteiro ao arrastar: opaca, em pílula como a aba, até 280. O chat

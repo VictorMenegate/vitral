@@ -1454,13 +1454,17 @@ impl Janela {
                 .id("barra-contexto")
                 .flex_none()
                 .h(r(24.))
-                .px(esp::E6)
-                .gap(esp::E6)
+                // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre
+                // as partes.
+                .pl(esp::E8)
+                .pr(crate::tema::linear::USO_DIREITA)
+                .gap(crate::tema::linear::USO_VAO)
                 .rounded(crate::tema::raio::de(24.))
                 .text_size(r(12.))
-                .hover(|s| s.bg(Cores::hover()))
+                .bg(Cores::preto())
+                .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
                 .child(Anel::new("barra-contexto-anel", fracao).diametro(14.).espessura(2.).cor(Cores::destaque_texto()))
-                .child(div().text_color(Cores::texto()).child("Contexto"))
+                .child(div().text_color(Cores::texto_da_fala()).child("Contexto"))
                 .child(div().tabular().text_color(Cores::tenue()).child(format!("{numero}%")))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .into_any_element(),
@@ -1516,14 +1520,19 @@ impl RenderOnce for PilulaDeUso {
             .id(("uso-pilula", id))
             .flex_none()
             .h(r(24.))
-            .px(esp::E6)
-            .gap(esp::E6)
+            // A pílula do protótipo Linear (25/11/2026): no preto, 8 e 10 dos lados, 7 entre as
+            // partes.
+            .pl(esp::E8)
+            .pr(crate::tema::linear::USO_DIREITA)
+            .gap(crate::tema::linear::USO_VAO)
             .rounded(crate::tema::raio::de(24.))
             .cursor_pointer()
             .text_size(r(12.))
-            .when(self.aberto, |s| s.bg(Cores::pressionado()))
+            .bg(Cores::preto())
+            .when(self.aberto, |s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.10))))
             .when(!self.aberto, |s| {
-                s.hover(|s| s.bg(Cores::hover())).dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
+                s.hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.05))))
+                    .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
             })
             .child(
                 AnelDeUso::new(("uso-pilula-anel", id), self.marca, l.fora.map(|f| f as f32))
@@ -1533,7 +1542,7 @@ impl RenderOnce for PilulaDeUso {
                     .apagado(l.apagado)
                     .atencao(l.atencao),
             )
-            .child(div().text_color(Cores::texto()).child(self.marca.nome()))
+            .child(div().text_color(Cores::texto_da_fala()).child(self.marca.nome()))
             .child(div().tabular().text_color(if l.bloqueado { Cores::ambar() } else { Cores::tenue() }).child(curto))
     }
 }

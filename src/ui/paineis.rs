@@ -622,9 +622,9 @@ impl Janela {
             .as_ref()
             .and_then(|c| self.rascunhos.remove(c))
             .unwrap_or_default();
-        // Com pasta, "Mensagem para este chat"; sem pasta (ou sem chat), só "Mensagem". E se o
-        // chat tem resposta que você não viu, até quando ele estava lido.
-        let (com_pasta, tamanho, novidade, itens) = novo
+        // "Mensagem", com pasta ou sem (protótipo Linear, 25/11/2026). E se o chat tem resposta
+        // que você não viu, até quando ele estava lido.
+        let (_com_pasta, tamanho, novidade, itens) = novo
             .as_ref()
             .and_then(|id| {
                 let m = self.motor.as_ref()?.read(cx);
@@ -634,7 +634,7 @@ impl Janela {
                 Some((!m.sem_pasta(chat), tamanho, novidade, chat.itens.len()))
             })
             .unwrap_or((false, 0, None, 0));
-        let dica = if com_pasta { "Mensagem para este chat" } else { "Mensagem" };
+        let dica = "Mensagem";
         // As menções do rascunho voltam como pílulas (dono, 16/11/2026).
         let pasta = novo.as_ref().and_then(|id| self.motor.as_ref()?.read(cx).chat(id).map(|c| c.cwd.clone()));
         let conteudo = match &pasta {
@@ -693,16 +693,14 @@ impl Janela {
             let Some(chat) = painel.chat.clone() else {
                 continue;
             };
-            let (parou, com_pasta, sugestao) = {
+            let (parou, sugestao) = {
                 let m = motor.read(cx);
-                (m.parou_por_voce(&chat), m.chat(&chat).is_some_and(|c| !m.sem_pasta(c)), m.sugestao(&chat).map(str::to_string))
+                (m.parou_por_voce(&chat), m.sugestao(&chat).map(str::to_string))
             };
             let dica: SharedString = if parou {
                 "O que fazer em vez disso? Enter continua".into()
             } else if let Some(sugestao) = sugestao {
                 format!("{sugestao}  ·  Tab").into()
-            } else if com_pasta {
-                "Mensagem para este chat".into()
             } else {
                 "Mensagem".into()
             };

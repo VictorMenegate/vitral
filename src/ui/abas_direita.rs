@@ -112,8 +112,8 @@ impl Janela {
         }
         self.arrastavel(id)
             .flex_none()
-            .h(altura::FILEIRA_DO_ALTO)
-            .px(esp::E8)
+            .h(altura::CABECALHO)
+            .px(crate::tema::linear::CABECA_LADO)
             .flex()
             .items_center()
             .gap(esp::E4)

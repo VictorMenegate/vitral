@@ -16,9 +16,8 @@ use gpui_kit::*;
 
 use super::base::{Marca, Simbolo, texto_arco_iris};
 use super::estado::Selo;
-use super::metal::{Encaixe, abertura, aro_de_metal};
-use super::superficies::desenho_teclas;
-use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, r, raio, tam};
+use super::metal::{Encaixe, abertura};
+use crate::tema::{Cores, Lucide, Tipo as _, aresta_de_poco, aresta_de_tecla, esp, halo_foco, linear, r, raio, tam};
 use crate::ui::movimento::{self, Curva};
 
 /// O Copiar: um botão de linha (24, ícone de 14 tênue, como os outros botões de linha), que troca
@@ -102,19 +101,22 @@ pub fn icone_do_modo(valor: &str) -> (Icon, Hsla) {
     }
 }
 
-/// Altura do chip: Pequeno 24 (rótulo 12), Médio 28, Grande 32 (caixa).
+/// Altura do chip: Pequeno 24 (rótulo 12), Médio 28, Grande 32, e o da caixa de mensagem, 26
+/// com 5 dos lados e o símbolo de 16 (protótipo Linear, 25/11/2026).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TamanhoChip {
     Pequeno,
     Medio,
     #[default]
     Grande,
+    Caixa,
 }
 
 impl TamanhoChip {
     fn altura(self) -> f32 {
         match self {
             TamanhoChip::Pequeno => 24.,
+            TamanhoChip::Caixa => 26.,
             TamanhoChip::Medio => 28.,
             TamanhoChip::Grande => 32.,
         }
@@ -254,6 +256,8 @@ impl Chip {
     pub fn construir(self, window: &Window, cx: &App) -> Button {
         let altura = self.tamanho.altura();
         let pequeno = self.tamanho == TamanhoChip::Pequeno;
+        let da_caixa = self.tamanho == TamanhoChip::Caixa;
+        let lado_simbolo = if da_caixa { 16. } else { 14. };
         let marcado = self.alternavel == Some(true);
         let cor_texto = self
             .alerta
@@ -276,14 +280,18 @@ impl Chip {
             .rounded(raio::de(altura))
             .border_1()
             .border_color(transparent_black())
-            .map(|b| if self.so_icone { b.w(r(altura)).px_0() } else { b.px(r(8.)) })
+            .map(|b| match (self.so_icone, da_caixa) {
+                (true, _) => b.w(r(altura)).px_0(),
+                (false, true) => b.px(linear::CONTROLE_LADO).gap(esp::E6),
+                (false, false) => b.px(r(8.)),
+            })
             // A marca no chip é o glifo solto, sem o disco cheio: o disco coral a 24 px do escudo
             // âmbar era a mancha mais forte da faixa de caixas (relatório de aparência,
             // 16/11/2026, V9). Nas listas, popovers, na dupla e no anel de uso o disco fica.
             .when_some(self.simbolo, |b, s| {
                 b.child(match s {
-                    Simbolo::Marca(marca) => marca.glifo(14.),
-                    outro => outro.desenhar(14., window),
+                    Simbolo::Marca(marca) => marca.glifo(lado_simbolo),
+                    outro => outro.desenhar(lado_simbolo, window),
                 })
             })
             .when(!self.so_icone, |b| {
@@ -405,6 +413,8 @@ pub fn variante_perigo(cx: &App) -> ButtonCustomVariant {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TamanhoBotao {
     Linha,
+    /// O controle da caixa de mensagem, 26 (protótipo Linear, 25/11/2026).
+    Caixa,
     Barra,
     Controle,
 }
@@ -413,6 +423,7 @@ impl TamanhoBotao {
     fn altura(self) -> f32 {
         match self {
             TamanhoBotao::Linha => 24.,
+            TamanhoBotao::Caixa => 26.,
             TamanhoBotao::Barra => 28.,
             TamanhoBotao::Controle => 32.,
         }
@@ -659,11 +670,13 @@ impl Selectable for BotaoRedondo {
 impl RenderOnce for BotaoRedondo {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (fundo, hover, ativo, cor) = match self.variante {
+            // No Linear (25/11/2026), o azul-marinho do escolhido com o ícone branco; o ponteiro
+            // clareia 6% (o novo chat, o enviar e o parar do protótipo).
             VarianteRedonda::Primario => (
-                Cores::destaque(),
-                Cores::destaque_hover(),
-                Cores::destaque_ativo(),
-                Cores::sobre_destaque(),
+                Cores::selecao(),
+                Cores::selecao().blend(Cores::forte().opacity(0.06)),
+                Cores::selecao().blend(Cores::forte().opacity(0.10)),
+                Cores::forte(),
             ),
             VarianteRedonda::Claro => (Cores::claro(), Cores::forte(), Cores::texto(), Cores::sobre_cor()),
             VarianteRedonda::Neutro => (Cores::hover(), Cores::pressionado(), Cores::borda_forte(), Cores::texto()),
@@ -1281,13 +1294,7 @@ impl RenderOnce for Campo {
     }
 }
 
-/// Da borda de fora do campo de busca à caixa da lupa. Fora da escala de propósito: com a folga do
-/// desenho da lupa, a tinta fica a 8 da borda, na coluna do ícone de arquivar logo acima. Era 8,
-/// sobra da época do contorno de 1, e a tinta ficava 1 px depois (folha dimensional, 23/11/2026).
-const RECUO_DA_LUPA: f32 = 7.;
-
-/// Busca de 32 em recuo, com a lupa e o atalho do keymap enquanto está vazia e sem foco. A tinta
-/// da lupa fica a 8 da borda de fora (`RECUO_DA_LUPA`).
+/// Busca de 32 no preto, com a lupa e o atalho do keymap enquanto está vazia e sem foco.
 pub fn campo_de_busca(
     id: impl Into<ElementId>,
     estado: &Entity<InputState>,
@@ -1309,40 +1316,40 @@ pub fn campo_de_busca_de(
 ) -> Stateful<Div> {
     let focado = estado.read(cx).focus_handle(cx).is_focused(window);
     let vazio = estado.read(cx).value().is_empty();
+    // O atalho em texto simples ("Ctrl K"), sem as teclas em caixa, como no Linear (25/11/2026).
     let teclas = atalho
         .filter(|_| vazio && !focado)
         .and_then(|acao| Kbd::binding_for_action(acao.as_ref(), None, window))
-        .map(|kbd| desenho_teclas(kbd.partes()));
-    let canto = raio::de(altura);
+        .map(|kbd| {
+            div()
+                .flex_none()
+                .text_size(r(11.))
+                .text_color(Cores::tenue_da_lista())
+                .child(kbd.partes().join(" "))
+        });
     div()
         .id(id)
         .relative()
         .flex()
         .items_center()
         .h(r(altura))
-        .pl(r(RECUO_DA_LUPA))
-        .pr(esp::E6)
-        // Um poço de canto arredondado, sem fio: quem o desenha é a sombra que cai de cima para
-        // dentro e o 1 px de luz na quina de baixo. Com o foco, um aro de metal de 2 px em volta
-        // de um miolo opaco ("é aqui"), sem azul chapado nem halo.
-        .rounded(canto)
-        .bg(Cores::recuo())
-        .shadow(aresta_de_poco())
-        .when(focado, |s| {
-            s.child(aro_de_metal(canto, px(2.), 1.))
-                .child(div().absolute().inset_0().rounded(canto).bg(Cores::preto()).shadow(aresta_de_poco()))
-        })
+        .pl(linear::BUSCA_ESQUERDA)
+        .pr(linear::BUSCA_DIREITA)
+        // Chapada no preto, sem fio nem poço (protótipo Linear, 25/11/2026).
+        .rounded(raio::de(altura))
+        .bg(Cores::preto())
         .child(
             Input::new(estado)
                 .appearance(false)
                 .cleanable(true)
                 .px_0()
+                .gap(esp::E6)
                 .prefix(
                     div()
-                        .text_color(Cores::fantasma())
+                        .text_color(Cores::tenue())
                         .child(Icon::new(Lucide::Search).with_size(tam(window, 14.))),
                 )
-                .text_size(r(14.)),
+                .text_size(r(13.5)),
         )
         .children(teclas)
 }

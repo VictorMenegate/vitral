@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui_kit::base::actions::{Confirm, SelectFirst, SelectLast, SelectLeft, SelectRight};
 use gpui_kit::component::{
     Icon, Sizable as _,
-    input::{Paste, TextareaState},
+    input::TextareaState,
     menu::{DropdownMenu, PopupMenu, PopupMenuItem},
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -25,7 +25,7 @@ use crate::ui::componentes::{
     BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
     Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, botao_icone, cabecalho_escolha,
-    desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso, rodape_menu,
+    desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso,
 };
 use crate::{
     agente_codex::{self, ModeloDoCodex},
@@ -59,8 +59,9 @@ impl Barra {
         self.faixa == FaixaCaixa::Larga
     }
 
+    /// Os chips da caixa: 26 em qualquer largura (protótipo Linear, 25/11/2026).
     fn tamanho(&self) -> TamanhoChip {
-        if self.estreita() { TamanhoChip::Medio } else { TamanhoChip::Grande }
+        TamanhoChip::Caixa
     }
 
     fn largura_popover(&self) -> LarguraPopover {
@@ -996,8 +997,8 @@ impl Janela {
                 .simbolo(Simbolo::Icone(icone, Some(cor)))
                 .tamanho(b.tamanho())
                 .mudado(mudado)
-                .seta(b.larga())
-                .so_icone(b.estreita())
+                // Só o ícone, na cor do modo (protótipo Linear, 25/11/2026); o nome vai na dica.
+                .so_icone(true)
                 .aberto(aberto);
             if !aberto {
                 chip = chip.dica_acao(dica.clone(), Box::new(AlternarModo), None);
@@ -1058,20 +1059,15 @@ impl Janela {
         // Na caixa estreita (3 painéis a 150%) o modo e o esforço viram só o ícone, e o modelo
         // guarda o nome da família ("Opus", "Fable"): é o que diz com quem se fala. Só quando a
         // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`).
-        let familia_na_estreita = b.estreita() && self.paineis[ix].modelo_so_icone.is_none();
-        let rotulo_do_chip = if b.larga() {
-            nome.clone()
-        } else if familia_na_estreita {
-            super::nome_da_familia(&curto).to_string()
-        } else {
-            curto
-        };
+        // Linear (25/11/2026): a marca e o nome da família ("Opus") em qualquer largura, sem a
+        // seta; o nome inteiro vai na dica.
+        let familia = self.paineis[ix].modelo_so_icone.is_none();
+        let rotulo_do_chip = if chat.agente == Agente::Claude { super::nome_da_familia(&curto).to_string() } else { curto };
         let mut chip = Chip::new(b.id("chip-modelo"), rotulo_do_chip)
             .simbolo(simbolo)
             .tamanho(b.tamanho())
-            .mudado(chat.modelo.is_some() || chat.agente != motor.config.agente_padrao)
-            .seta(b.larga())
-            .so_icone(b.estreita() && !familia_na_estreita)
+            .cor_rotulo(Cores::texto_da_fala())
+            .so_icone(!familia)
             .aberto(aberto);
         if !aberto {
             chip = chip.dica_acao(format!("Modelo: {nome}\n{detalhe}"), Box::new(AbrirModelo), Some("Vitral"));
@@ -1264,14 +1260,12 @@ impl Janela {
             Chip::new(b.id("chip-esforco"), "Ultracode")
                 .simbolo(simbolo)
                 .cor_rotulo(Cores::violeta())
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto)
+                .so_icone(true)
         } else if armado {
             Chip::new(b.id("chip-esforco"), "Ultrathink")
                 .simbolo(barras_arco_iris())
                 .arco_iris()
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto)
+                .so_icone(true)
         } else {
             // No automático, as barrinhas e o rótulo dizem o nível que ele usa ("Auto · Extra").
             let no_auto = padrao.filter(|_| atual == 0);
@@ -1279,10 +1273,10 @@ impl Janela {
                 Some(p) => format!("Auto · {}", ESFORCOS[p].1).into(),
                 None => nome.into(),
             };
+            // Só as barrinhas (protótipo Linear, 25/11/2026); o nível vai na dica.
             let chip = Chip::new(b.id("chip-esforco"), rotulo)
                 .simbolo(Simbolo::Sinal { nivel: no_auto.unwrap_or(atual) as u8, total: 5 })
-                .seta(b.larga() && !compacto)
-                .so_icone(b.estreita() || compacto);
+                .so_icone(true);
             chip.mudado(atual != 0)
         };
         let mut chip = base.tamanho(b.tamanho()).aberto(aberto);
@@ -1324,20 +1318,6 @@ impl Janela {
             .into_any_element()
     }
 
-    pub(super) fn botao_anexar(&self, b: &Barra, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let dados = DadosAnexar { janela: cx.entity().downgrade(), chat: b.chat.clone(), painel: b.painel };
-        let dica = "Anexar arquivo ou contexto";
-        botao_icone(b.id("anexar"), Lucide::Paperclip, dica, TamanhoBotao::Controle, window, cx)
-            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                let largura = tam(window, 360.);
-                let menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha("Adicionar à mensagem", None));
-                itens_de_anexar(menu, &dados, true)
-                    .separator()
-                    .item(rodape_menu("Cole imagens ou arquivos direto na caixa", Some((Box::new(Paste), Some("Input")))))
-            })
-            .into_any_element()
-    }
-
     /// "…": no máximo três grupos, com uma divisória entre eles (dono, 24/11/2026: "esse daqui
     /// também"; eram 11 itens e 5 divisórias, um cinza sozinho entre duas e um rótulo cortado). Na
     /// faixa estreita, **anexar**, que sai da barra; com texto na caixa, **mandar** (depois, numa
@@ -1349,7 +1329,9 @@ impl Janela {
         let caixa = b.composer.read(cx).value();
         let outro = chat.agente.outro();
         let agora = AgoraNoMais {
-            estreita: b.estreita(),
+            // O clipe não fica na barra em largura nenhuma (protótipo Linear, 25/11/2026): o
+            // anexar mora sempre aqui.
+            estreita: true,
             com_texto: !caixa.trim().is_empty(),
             comando: caixa.trim_start().starts_with('/'),
             // Com o turno rodando, o Enviar entra nele (ou responde ao pedido aberto); quem já ia
@@ -1365,8 +1347,7 @@ impl Janela {
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
         let agendar = crate::ui::agendar::DadosDoMenu { janela: cx.entity().downgrade(), painel, renova: motor.renovacao_do_chat(&chat.id) };
         let rotulo_do_outro = format!("Perguntar também ao {}", outro.nome());
-        let tamanho = if agora.estreita { TamanhoBotao::Barra } else { TamanhoBotao::Controle };
-        botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", tamanho, window, cx)
+        botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", TamanhoBotao::Caixa, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
                 let largura = tam(window, 300.);
                 let mut menu = menu.min_w(largura).max_w(largura);

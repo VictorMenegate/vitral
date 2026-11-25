@@ -44,7 +44,7 @@ use crate::{
     modelo::{Agente, Chat, Execucao, Item, Reforco},
     motor::Motor,
     tema::{
-        Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, halo_foco, r, raio,
+        Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_poco, dentro_da_borda, esp, halo_foco, linear, r, raio,
     },
 };
 
@@ -111,7 +111,8 @@ pub(super) fn minima(nivel: LarguraPainel) -> bool {
 /// A folga dos lados do balão do usuário: 12, e 10 no painel mínimo (eram 16; dono, 17/11/2026:
 /// "diminui o padding disso"). O texto do balão e a barra de ações em cima dele medem daqui.
 fn folga_do_balao(nivel: LarguraPainel) -> f32 {
-    if minima(nivel) { 10. } else { 12. }
+    // 11 dos lados, a do protótipo Linear (25/11/2026); 10 no painel mínimo.
+    if minima(nivel) { 10. } else { 11. }
 }
 
 /// Fundos da linha que sai e da que entra num trecho de código.
@@ -273,9 +274,9 @@ fn fica_montado<'i>(itens: impl IntoIterator<Item = &'i Item>) -> bool {
     itens.into_iter().any(texto_que_chega_depois)
 }
 
-/// Espaço antes de um bloco, numa escala de três passos (18/11/2026): 32 entre turnos (antes do
-/// seu balão e do dia), 12 dentro do turno e nada entre linhas da trilha, que ficam coladas no
-/// passo de 28. Com mais de 2 vezes de fora para dentro, o olho agrupa a pergunta com a resposta
+/// Espaço antes de um bloco, numa escala de três passos (18/11/2026; medidas do protótipo Linear
+/// desde 25/11/2026): 10 entre as falas (o seu balão, a resposta, o dia), 7 dentro da resposta e
+/// nada entre linhas da trilha, que ficam coladas no passo de 22. Com mais de 2 vezes de fora para dentro, o olho agrupa a pergunta com a resposta
 /// (relatório de aparência, 16/11/2026, V3). Saíram os 16 em volta do marco e os 4 entre entregas:
 /// eram dois passos a mais para o mesmo "dentro do turno". O fim da lista guarda os mesmos 32 de
 /// entre turnos: a caixa de mensagem começa o próximo.
@@ -285,9 +286,9 @@ fn espaco_antes(anterior: Option<Bloco>, atual: Bloco) -> Rems {
         return r(0.);
     };
     match (anterior, atual) {
-        (_, Dia) => esp::ENTRE_TURNOS,
-        (Dia, _) => esp::NO_TURNO,
-        (_, Balao) => esp::ENTRE_TURNOS,
+        // Linear (25/11/2026): 10 entre as falas (o dia, o seu balão e a resposta) e 7 dentro
+        // da resposta, os vãos do protótipo.
+        (_, Dia) | (Dia, _) | (_, Balao) | (Balao, _) => esp::ENTRE_TURNOS,
         (Log, Log) => r(0.),
         _ => esp::NO_TURNO,
     }
@@ -454,7 +455,6 @@ impl Janela {
         let rolagem = self.paineis[ix].rolagem.clone();
         let foco = motor.config.modo_foco;
         let nivel = self.paineis[ix].medida.nivel;
-        let caixa_estreita = self.paineis[ix].medida.faixa == FaixaCaixa::Estreita;
         let mut contexto = Contexto::novo(motor, chat, nivel, painel_id, &self.paineis[ix].busca.indice, &rolagem);
         contexto.entrada = (self.paineis[ix].base_animacao, self.paineis[ix].vistos);
         let agora = crate::modelo::agora();
@@ -813,11 +813,10 @@ impl Janela {
             .mt_auto()
             // Na caixa estreita, 16 dos lados (eram 12; dono, 17/11/2026: "aumenta um pouco o
             // padding de dentro da parte do texto").
-            .map(|s| coluna(s, caixa_estreita))
-            .pt(esp::E12)
-            // 32 no fim, o passo de entre turnos: a caixa começa o próximo turno, e a barra de
-            // ações da última resposta cabe embaixo dela.
-            .pb(esp::ENTRE_TURNOS);
+            .map(coluna_de_leitura)
+            // 6 em cima e 20 no fim, os da rolagem do protótipo Linear (25/11/2026).
+            .pt(esp::E6)
+            .pb(linear::ROLAGEM_BAIXO);
         let mut anterior = None;
         // Onde cada bloco ficou neste quadro (o índice do item, o alto e o pé, na tela): o
         // `on_prepaint` da lista, que vem depois dos blocos, os passa para a régua do painel.
@@ -1085,19 +1084,19 @@ impl Janela {
                         }
                     })
                     .child(
-                    div().map(|s| coluna(s, caixa_estreita)).child(
+                    div().map(coluna_de_leitura).child(
                         div()
                             .id(("mensagem-presa", painel_id as usize))
                             .relative()
                             .w_full()
                             // A folga dos balões, também no painel mínimo (lá ficava 2 px fora).
-                            .px(dentro_da_borda(folga_do_balao(nivel)))
-                            .py(dentro_da_borda(8.))
+                            .px(r(folga_do_balao(nivel)))
+                            .py(linear::BALAO_ALTO)
                             .rounded(raio)
                             .cursor_pointer()
                             // A cor cheia dos balões da conversa (Linear, 25/11/2026).
                             .bg(Cores::balao())
-                            .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
+                            .child(div().relative().fala().text_color(Cores::texto_do_balao()).line_clamp(2).child(texto))
                             .dica_no_ponteiro(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
                             .on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |j, cx| j.ir_para_a_mensagem(painel_id, i, alto, cx));
@@ -1364,10 +1363,10 @@ impl Janela {
                         .id(SharedString::from(format!("balao-{chave}")))
                         .w_full()
                         .when_some(alternar_tudo, |s, f| s.cursor_pointer().on_click(f))
-                        .px(dentro_da_borda(folga))
-                        // Com pílulas no alto, 5 em cima (o mesmo dos lados delas) e 6 até o texto.
-                        .pt(dentro_da_borda(if tem_pilulas { 6. } else { 8. }))
-                        .pb(dentro_da_borda(8.))
+                        .px(r(folga))
+                        // 6 em cima e embaixo (protótipo Linear, 25/11/2026).
+                        .pt(linear::BALAO_ALTO)
+                        .pb(linear::BALAO_ALTO)
                         .gap(if tem_pilulas { esp::E6 } else { esp::E8 })
                         // O fundo da lista (dono, 17/11/2026: "era pra ficar igual o fundo da
                         // lista"): o pedaço da chapa de metal que está atrás, com o véu azul e o
@@ -1375,7 +1374,7 @@ impl Janela {
                         .relative()
                         // Chapado (Linear, 25/11/2026): a cor cheia do escolhido, sem o buraco no
                         // metal de antes.
-                        .rounded(raio::CARTAO)
+                        .rounded(linear::RAIO_DO_BALAO)
                         .bg(Cores::balao())
                         .children(pilulas)
                         .when(com_texto, |s| {
@@ -1393,7 +1392,7 @@ impl Janela {
                                 div()
                                     .relative()
                                     .fala()
-                                    .text_color(Cores::texto())
+                                    .text_color(Cores::texto_do_balao())
                                     .when(longo, |s| s.pr(esp::E16))
                                     .child(
                                         markdown_achado(contexto, chave.to_string().into(), com_quebras_duras(&ligado), realce)
@@ -1444,7 +1443,7 @@ impl Janela {
         // linha do texto (revisão de design, 23/11/2026).
         // Linear (25/11/2026): embaixo do balão, à direita, por cima do que vem depois; o alcance
         // do ponteiro desce junto, para a barra não sumir no caminho até ela.
-        let barra = div().absolute().bottom(r(-32.)).right(dentro_da_borda(folga_do_balao(contexto.nivel)));
+        let barra = div().absolute().bottom(r(-32.)).right(r(folga_do_balao(contexto.nivel)));
         v_flex()
             .w_full()
             .map(com_alcance_da_barra_embaixo)
@@ -1695,7 +1694,7 @@ impl Janela {
                     // O primeiro trecho guarda a chave do texto inteiro (a do texto que chegava).
                     let chave_do_trecho = if i == 0 { chave.to_string() } else { format!("{chave}:trecho{i}") };
                     let copiar_citacao = citacao.then(|| texto_da_citacao(&trecho));
-                    let texto = div().corpo().text_color(Cores::texto()).child(
+                    let texto = div().corpo().text_color(Cores::texto_da_fala()).child(
                         markdown_achado(contexto, chave_do_trecho.clone().into(), trecho, realce_do_trecho).estilo(estilo_da_resposta),
                     );
                     match copiar_citacao {
@@ -1714,7 +1713,7 @@ impl Janela {
         } else {
             div()
                 .corpo()
-                .text_color(Cores::texto())
+                .text_color(Cores::texto_da_fala())
                 .child(markdown_achado(contexto, chave.to_string().into(), ligado, realce).estilo(estilo_da_resposta))
                 .into_any_element()
         };
@@ -2145,7 +2144,7 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
     // letra da conversa entra aqui (o resto do texto a recebe pelo rem, em `na_letra_da_conversa`).
     let rem = cx.theme().font_size * crate::tema::fator_da_conversa();
     TextViewStyle::default()
-        .paragraph_gap(esp::E12)
+        .paragraph_gap(linear::ENTRE_FALAS)
         .heading_font_size(move |nivel, _| {
             rem * match nivel {
                 1 => titulos[0] / 15.,
@@ -2154,9 +2153,10 @@ fn estilo_com_titulos(cx: &App, titulos: [f32; 3]) -> TextViewStyle {
             }
         })
         .code_block(poco_de_codigo(raio::CARTAO))
+        // O código no meio do texto no fundo da caixa, na cor do texto (protótipo Linear).
         .inline_code(HighlightStyle {
-            color: Some(Cores::codigo()),
-            background_color: Some(Cores::hover()),
+            color: Some(Cores::texto()),
+            background_color: Some(Cores::caixa_preta()),
             ..Default::default()
         })
         .table(StyleRefinement::default().rounded(raio::CARTAO).border_color(Cores::borda()))
@@ -2698,24 +2698,25 @@ impl<'a> Contexto<'a> {
 /// Linha de log (chamada, evento, cabeçalho de trilha): 28 de altura, o ícone de 14 numa coluna de
 /// 16 e o texto a 8 dela. Coladas, dão o passo de 28 (eram 32: sete linhas comiam mais da metade
 /// da conversa; rodada de concisão, 17/11/2026).
-const ALTURA_DO_LOG: Rems = r(28.);
+const ALTURA_DO_LOG: Rems = r(22.);
 
 /// As duas bordas da conversa (18/11/2026). A primeira é a do texto da resposta, e nela ficam
 /// também o ícone de toda linha da trilha, o do erro, o avatar de quem entregou e a marca da vez.
 /// A segunda fica a 24 dela (a coluna de 16 do ícone mais 8), e nela ficam o texto dessas linhas e
 /// tudo o que elas abrem: a saída, o diff, o raciocínio, o relatório, a imagem. Eram cinco começos
 /// diferentes (0, 12, 32, 34 e 56).
-const RECUO_DO_LOG: Rems = r(24.);
+const RECUO_DO_LOG: Rems = r(21.);
 
 /// A linha da trilha sangra 8 de cada lado da coluna de leitura: o fundo do hover precisa de folga
 /// em volta do ícone, e sem a sangria o ícone ficava 12 para dentro da borda do texto.
 fn linha_de_log<E: Styled>(linha: E) -> E {
-    linha.h(ALTURA_DO_LOG).mx(r(-8.)).px(esp::E8).gap(esp::E8).rounded(raio::CONTROLE).metadado()
+    // O passo do protótipo Linear (25/11/2026): 22 de altura, 12,5 e 7 entre o ícone e o texto.
+    linha.h(ALTURA_DO_LOG).mx(r(-8.)).px(esp::E8).gap(linear::PASSO_VAO).rounded(raio::CONTROLE).metadado().text_size(r(12.5))
 }
 
 /// A coluna de 16 do ícone de uma linha da trilha, na primeira borda.
 fn coluna_do_icone() -> Div {
-    div().flex_none().size(r(16.)).flex().items_center().justify_center()
+    div().flex_none().size(r(14.)).flex().items_center().justify_center()
 }
 
 /// O resumo do grupo de chamadas: "Rodou 13 comandos · editou 1 arquivo · leu 3 arquivos" no
@@ -5607,23 +5608,25 @@ impl Janela {
 /// Largura máxima da coluna de leitura: 675 px a 100%, uns 80 caracteres por linha de resposta
 /// (eram 806 px e perto de 100, linha longa demais para ler no painel único). Em rem, para o zoom
 /// não mudar quantas letras cabem na linha.
-const COLUNA: Rems = rems(45.);
-/// Margem da coluna de leitura de cada lado (16 na faixa estreita da caixa). 24: com as
-/// conversas emendadas e encostadas na janela, os 16 deixavam o texto e a caixa colados na
-/// divisória e na beirada (dono, 17/11/2026: "melhora o espaçamento dessas partes").
-pub(super) const MARGEM_DA_COLUNA: Rems = esp::E24;
+const COLUNA_DE_LEITURA: Rems = r(760. + 2. * 18.);
+/// A da caixa: os 768 da moldura com 8 de cada lado.
+const COLUNA_DA_CAIXA: Rems = r(768. + 2. * 8.);
 /// Altura que as mensagens guardam mesmo em janela baixa (120 px).
 pub(super) const MINIMO_MENSAGENS: Rems = rems(7.5);
 /// Até aqui o plano encolhe: título, umas linhas do texto, o campo e os botões (200 px).
 const MINIMO_PLANO: Rems = rems(12.5);
 
-/// Coluna de leitura comum: mensagens, pedidos de permissão, plano, fila e caixa de mensagem
-/// alinham pelas mesmas bordas em qualquer largura de painel. A margem é a da caixa (24, e 16 na
-/// faixa estreita dela) para todos: as mensagens iam a 16 só com o painel abaixo de 400 px e a
-/// caixa abaixo de ~557, e entre os dois o texto ficava 8 px fora do da caixa (dono, 23/11/2026:
-/// "pode usar a mesma regra da caixa nas mensagens").
+/// A coluna da caixa e do que mora junto dela (pedidos de permissão, plano, fila, a faixa dos
+/// arquivos mudados): alinham pelas mesmas bordas em qualquer largura de painel, a 8 do cartão
+/// (protótipo Linear, 25/11/2026).
 pub(super) fn coluna<E: Styled>(elemento: E, caixa_estreita: bool) -> E {
-    elemento.w_full().max_w(COLUNA).mx_auto().px(composer::margem_da_caixa(caixa_estreita))
+    elemento.w_full().max_w(COLUNA_DA_CAIXA).mx_auto().px(composer::margem_da_caixa(caixa_estreita))
+}
+
+/// A coluna das mensagens no protótipo Linear (25/11/2026): até 760 de texto, com 18 de cada lado.
+/// A caixa e o que fica em volta dela (`coluna`) vão 4 além de cada lado, com 8 até o cartão.
+pub(super) fn coluna_de_leitura<E: Styled>(elemento: E) -> E {
+    elemento.w_full().max_w(COLUNA_DE_LEITURA).mx_auto().px(linear::ROLAGEM_LADO)
 }
 
 /// O painel está no fim da conversa (ou a menos de 48 px dele).
@@ -6505,29 +6508,26 @@ mod testes {
         let px = |e: Option<Bloco>, a: Bloco| espaco_antes(e, a).0 * 15.;
         let perto = |v: f32, esperado: f32| (v - esperado).abs() < 1e-3;
         assert!(perto(px(None, Balao), 0.));
-        // Entre turnos, 32 antes do balão; 12 dele até a resposta (mais de 2 vezes). Nada fica
-        // reservado para as ações.
-        assert!(perto(px(Some(Texto), Balao), 32.));
-        assert!(perto(px(Some(Log), Balao), 32.));
-        assert!(perto(px(Some(Balao), Texto), 12.));
-        assert!(perto(px(Some(Balao), Log), 12.));
-        assert!(perto(px(Some(Balao), Marco), 12.));
-        // O dia começa um turno: 32 antes dele, 12 dele até o balão.
-        assert!(perto(px(Some(Marco), Dia), 32.));
-        assert!(perto(px(Some(Dia), Balao), 12.));
-        // Linhas de log coladas, no passo de 28.
+        // Protótipo Linear (25/11/2026): 10 entre as falas (o dia, o seu balão e a resposta).
+        assert!(perto(px(Some(Texto), Balao), 10.));
+        assert!(perto(px(Some(Log), Balao), 10.));
+        assert!(perto(px(Some(Balao), Texto), 10.));
+        assert!(perto(px(Some(Balao), Log), 10.));
+        assert!(perto(px(Some(Balao), Marco), 10.));
+        assert!(perto(px(Some(Marco), Dia), 10.));
+        assert!(perto(px(Some(Dia), Balao), 10.));
+        assert!(perto(px(Some(Marco), Balao), 10.));
+        // Linhas de log coladas, no passo de 22.
         assert!(perto(px(Some(Log), Log), 0.));
-        // Só três passos: a entrega e a nota ficam no "dentro do turno", como o resto.
-        assert!(perto(px(Some(Recebida), Log), 12.));
-        assert!(perto(px(Some(Recebida), Recebida), 12.));
-        assert!(perto(px(Some(Log), Recebida), 12.));
-        assert!(perto(px(Some(Texto), Marco), 12.));
-        assert!(perto(px(Some(Marco), Log), 12.));
-        assert!(perto(px(Some(Marco), Balao), 32.));
-        // O resto, dentro do turno.
-        assert!(perto(px(Some(Texto), Log), 12.));
-        assert!(perto(px(Some(Log), Alerta), 12.));
-        assert!(perto(px(Some(Alerta), Texto), 12.));
+        // Dentro da resposta, 7.
+        assert!(perto(px(Some(Recebida), Log), 7.));
+        assert!(perto(px(Some(Recebida), Recebida), 7.));
+        assert!(perto(px(Some(Log), Recebida), 7.));
+        assert!(perto(px(Some(Texto), Marco), 7.));
+        assert!(perto(px(Some(Marco), Log), 7.));
+        assert!(perto(px(Some(Texto), Log), 7.));
+        assert!(perto(px(Some(Log), Alerta), 7.));
+        assert!(perto(px(Some(Alerta), Texto), 7.));
     }
 
     #[test]

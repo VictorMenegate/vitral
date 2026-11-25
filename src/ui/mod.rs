@@ -384,30 +384,13 @@ fn na_faixa_de_redimensionar(ponto: Point<Pixels>, window: &Window) -> bool {
         || perto(folga.bottom, tamanho.height - ponto.y)
 }
 
-/// A sombra que a fileira das conversas projeta na lista, do lado de fora dos cantos redondos:
-/// a fileira parece um degrau acima da base (dono, 17/11/2026: "uma sombra ou outra coisa que dê
-/// sensação de profundidade aqui"). Vai num recorte à esquerda da peça, com a forma dela: por
-/// baixo do cartão translúcido, a sombra o escureceria. `meio_vao` é onde o cartão começa no
-/// painel.
-///
-/// Três recortes: o do meio para na borda da peça; os dos cantos vão até o fim da curva, para a
-/// sombra acompanhar o arco (dono, 17/11/2026: "a sombra não acompanhou a curva"). Ali ela também
-/// passa por baixo do canto do cartão, num quadrado do tamanho do raio: embaixo o pé do cartão é
-/// opaco, e em cima o escurecido some no cartão quase opaco.
-fn sombra_da_fileira(meio_vao: Pixels) -> Div {
-    // Até onde a sombra larga chega (o deslocamento e o desfoque): recortada antes, ela acabava
-    // numa beirada dura em vez de sumir.
-    let alcance = px(60.);
-    let raio = crate::tema::raio_encostado(crate::tema::Esquerda::Solta);
-    // A peça, com a sombra, posta onde o cartão está no painel.
-    let peca = || div().absolute().left(alcance + meio_vao).w(px(4000.)).rounded_l(raio).shadow(crate::tema::sombra_da_fileira());
-    let recorte = || div().absolute().left(-alcance).overflow_hidden();
-    div()
-        .absolute()
-        .inset_0()
-        .child(recorte().top(raio).bottom(raio).w(alcance + meio_vao).child(peca().top(-raio).bottom(-raio)))
-        .child(recorte().top_0().h(raio).w(alcance + meio_vao + raio).child(peca().top_0().h(px(4000.))))
-        .child(recorte().bottom_0().h(raio).w(alcance + meio_vao + raio).child(peca().bottom_0().h(px(4000.))))
+/// A margem do cartão das conversas na peça dela: 8 em cima; 8 à direita na última; e, sem a
+/// lista (que leva junto a barra de baixo), 8 embaixo e 8 à esquerda na primeira.
+fn margem_do_cartao(d: Div, primeira: bool, ultima: bool, lista: bool) -> Div {
+    d.pt(esp::E8)
+        .when(ultima, |d| d.pr(esp::E8))
+        .when(!lista, |d| d.pb(esp::E8))
+        .when(!lista && primeira, |d| d.pl(esp::E8))
 }
 
 /// O orçamento desta janela. A margem da esquerda só existe com a lista ancorada (dono,
@@ -610,6 +593,11 @@ pub struct Janela {
     /// O trecho de texto selecionado na janela agora (uma parte de uma resposta, por exemplo):
     /// com ele, o painel ativo mostra o "Responder a este trecho", que o cita na caixa.
     trecho: Option<String>,
+    /// Onde o botão esquerdo soltou por último numa conversa: a barra do trecho (Responder e
+    /// Copiar) aparece embaixo dele. `None` na seleção pelo teclado; enquanto o botão está
+    /// apertado (`segurando_trecho`), a barra não aparece.
+    ponto_do_trecho: Option<Point<Pixels>>,
+    segurando_trecho: bool,
     /// Há texto selecionado na janela (ou uma seleção em curso), conferido a cada desenho: com
     /// ele, as conversas montam todos os blocos, para a seleção alcançar o que saiu da vista.
     selecionando: bool,
@@ -1018,6 +1006,8 @@ impl Janela {
             ilha_fechada: None,
             boas_vindas: None,
             trecho: None,
+            ponto_do_trecho: None,
+            segurando_trecho: false,
             selecionando: false,
             citacoes: HashMap::new(),
             arranjo: None,
@@ -1853,7 +1843,7 @@ impl Janela {
     fn botoes_janela_separados(&self, cx: &Context<Self>) -> Div {
         // Sem folga a mais: o traço do grupo já separa o × do "+" do painel (dono, 17/11/2026:
         // "tá muito distante o + do x").
-        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true)
+        grupo_botoes_janela(botoes_do_layout(cx.button_layout()), false)
     }
 
     /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das
@@ -1972,7 +1962,7 @@ impl Janela {
                         // direita).
                         .rounded(crate::tema::raio_da_peca())
                         .map(|s| {
-                            let reto = crate::tema::raio_encostado(crate::tema::Esquerda::Beirada);
+                            let reto = px(0.);
                             match gaveta {
                                 Gaveta::Lista => s.rounded_l(reto),
                                 Gaveta::Direita => s.rounded_r(reto),
@@ -2427,6 +2417,25 @@ impl Janela {
             // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
             // sem a barra de baixo, que já o mostra (Linear, 25/11/2026).
             .children(self.uso_no_canto(cx).filter(|_| !self.lista))
+            // A seleção na conversa: enquanto o botão está apertado, a janela inteira escuta onde
+            // ele solta (mesmo fora do cartão), e a barra do trecho aparece embaixo desse ponto.
+            .children(self.segurando_trecho.then(|| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    window.on_mouse_event(move |ev: &MouseUpEvent, fase, _, cx| {
+                        if fase != DispatchPhase::Capture || ev.button != MouseButton::Left {
+                            return;
+                        }
+                        let _ = janela.update(cx, |this, cx| {
+                            this.segurando_trecho = false;
+                            this.ponto_do_trecho = Some(ev.position);
+                            cx.notify();
+                        });
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
             // O arrasto do trilho de uso: enquanto o botão está apertado, a janela inteira escuta o
             // ponteiro (na captura, para nenhum filho segurar o movimento) e o solta no fim.
             .children(self.arrasto_trilho.map(|_| {
@@ -2534,12 +2543,9 @@ impl Janela {
         let min_conversa = px(o.min_conversa);
         let u = |medida: f32| px(medida * o.escala);
         let janela = cx.entity().downgrade();
-        // Meio vão de cada lado da divisória entre a lista e a 1ª conversa (o mesmo da margem da
-        // janela, em px da tela). Entre as conversas, e entre a última e a direita, não há vão: a
-        // fileira é uma peça só, emendada por divisórias de 1 px (dono, 16/11/2026: "no meio dos
-        // chats quero uma divisão simples e moderna"); o fio é da própria peça
-        // (`aresta_encostada`), e a faixa de pegar do kit fica em cima dele.
-        let meio_vao = crate::tema::vao_entre_pecas() / 2.;
+        // A fileira (as conversas e a direita) é um cartão só, como no Linear (25/11/2026): 8 de
+        // margem em cima e à direita, e na esquerda e embaixo sem a lista e a barra de baixo. Entre
+        // as peças não há vão, só a divisória de 1 px da própria peça (`aresta_encostada`).
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
         let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))))
             .with_state(&self.estado_partes)
@@ -2566,12 +2572,7 @@ impl Janela {
                     .size(px(largura))
                     .size_range(u(LISTA_NO_ARRASTO)..px(o.max_lista))
                     .fixed()
-                    .child(
-                        div()
-                            .size_full()
-                            .pr(meio_vao)
-                            .child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full())),
-                    ),
+                    .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
         }
         if self.paineis.is_empty() {
@@ -2584,7 +2585,7 @@ impl Janela {
                         div()
                             .size_full()
                             .relative()
-                            .when(larguras.lista.is_some(), |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
+                            .map(|d| margem_do_cartao(d, true, !painel, lista))
                             .child(self.zona_de_soltura(0, conteudo, cx)),
                     ),
             );
@@ -2592,9 +2593,6 @@ impl Janela {
             for (k, &ix) in visiveis.iter().enumerate() {
                 let id = self.paineis[ix].id;
                 let conteudo = self.conversa(motor, Some(ix), window, cx).into_any_element();
-                // Só a 1ª conversa, com a lista ao lado, guarda o meio vão da esquerda; sem a lista
-                // vale a margem da janela.
-                let depois_da_lista = k == 0 && larguras.lista.is_some();
                 // A estreita ao lado da maximizada tem a largura fixa.
                 let faixa = match espremidas {
                     Some(m) if m != k => px(larguras.conversas[k])..px(larguras.conversas[k]),
@@ -2605,7 +2603,7 @@ impl Janela {
                         div()
                             .size_full()
                             .relative()
-                            .when(depois_da_lista, |d| d.pl(meio_vao).child(sombra_da_fileira(meio_vao)))
+                            .map(|d| margem_do_cartao(d, k == 0, k + 1 == visiveis.len() && !painel, lista))
                             .child(self.zona_de_soltura(id, conteudo, cx)),
                     ),
                 );
@@ -2627,7 +2625,7 @@ impl Janela {
                     .size(px(larguras.direita.unwrap_or(o.max_direita)))
                     .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
                     .fixed()
-                    .child(conteudo),
+                    .child(div().size_full().map(|d| margem_do_cartao(d, false, true, lista)).child(conteudo)),
             );
         } else {
             self.direita_vista = None;
@@ -2717,7 +2715,7 @@ fn grupo_botoes_janela(botoes: Vec<WindowButton>, separar: bool) -> Div {
         .flex()
         .flex_none()
         .items_center()
-        .gap(esp::E8)
+        .gap(esp::E2)
         // O traço fica a 4 do "+" do painel (o vão de 8 do cabeçalho menos 4) e a 4 do ×: com 4 + 8
         // de um lado e 8 do outro, o × parecia de outro lugar (dono, 17/11/2026: "ainda tá muito
         // grande o espaço").

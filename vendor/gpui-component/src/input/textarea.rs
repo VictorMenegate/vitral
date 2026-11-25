@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, DefiniteLength, Entity, IntoElement, RenderOnce, SharedString, StyleRefinement, Styled,
+    App, DefiniteLength, Entity, IntoElement, Pixels, RenderOnce, SharedString, StyleRefinement, Styled,
     Window, prelude::FluentBuilder as _,
 };
 
@@ -18,6 +18,8 @@ pub struct Textarea {
     state: Entity<TextareaState>,
     style: StyleRefinement,
     size: Size,
+    /// Vitral: o respiro de cima e de baixo do editor (`Input::respiro_vertical`).
+    editor_py: Option<Pixels>,
     height: Option<DefiniteLength>,
     appearance: bool,
     bordered: bool,
@@ -72,6 +74,7 @@ impl Textarea {
             state: state.clone(),
             style: StyleRefinement::default(),
             size: Size::default(),
+            editor_py: None,
             height: None,
             appearance: true,
             bordered: true,
@@ -96,6 +99,12 @@ impl Textarea {
 
     pub fn appearance(mut self, appearance: bool) -> Self {
         self.appearance = appearance;
+        self
+    }
+
+    /// Vitral: o respiro de cima e de baixo do editor (`Input::respiro_vertical`).
+    pub fn respiro_vertical(mut self, py: Pixels) -> Self {
+        self.editor_py = Some(py);
         self
     }
 
@@ -203,6 +212,7 @@ impl Textarea {
             .tab_index(self.tab_index)
             .role(self.role)
             .with_size(self.size)
+            .when_some(self.editor_py, |this, py| this.respiro_vertical(py))
             .when_some(self.height, |this, height| this.h(height))
             .when_some(self.accessibility_id, |this, id| this.accessibility_id(id))
             .when_some(self.aria_label, |this, label| this.aria_label(label))

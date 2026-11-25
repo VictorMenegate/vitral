@@ -31,7 +31,7 @@ use super::{
 use crate::{
     atualizacao,
     motor::{Motor, PrecisaDeVoce},
-    tema::{Cores, Lucide, altura, esp, halo_foco, r, raio, tam},
+    tema::{Cores, Lucide, esp, halo_foco, r, raio, tam},
 };
 
 /// O logo pequeno (16 a 32 px na tela): o quadrado de metal líquido com o V, parado. É o PNG de
@@ -389,9 +389,10 @@ impl Janela {
         self.arrastavel_com_id("arrastar-topo-da-lista")
             .on_mouse_down(MouseButton::Right, |evento, window, _| window.show_window_menu(evento.position))
             .flex()
-            .items_center()
+            .items_end()
             .flex_none()
-            .h(altura::FILEIRA_DO_ALTO)
+            // 10 do alto da janela até a busca de 30 (protótipo Linear, 25/11/2026).
+            .pt(crate::tema::linear::LISTA_TOPO)
             .child(super::sem_arrastar().flex().flex_1().min_w_0().child(linha.flex_1().mb_0()))
     }
 

@@ -53,6 +53,10 @@ pub mod raio {
     pub fn peca() -> Pixels {
         px((20. * super::zoom_dos_raios()).round())
     }
+    /// A moldura preta da caixa de mensagem: o miolo de 14 (`cartao`) com 3 de folga.
+    pub fn moldura() -> Pixels {
+        px((17. * super::zoom_dos_raios()).round())
+    }
 
     /// O padrão de canto dos controles (botões, campos, abas, chips, selos): bem arredondado,
     /// nunca redondo. É o desenho do logo em escala: 45% da altura (16 num controle de 36, 14 num
@@ -73,6 +77,64 @@ pub mod opacidade {
     /// de fundo).
     pub const EM_REPOUSO: f32 = 0.55;
     pub const DESABILITADO: f32 = 0.45;
+}
+
+/// As medidas do protótipo do redesenho Linear (`tarefas/linear/vitral-linear.html`), que é a
+/// especificação desde 25/11/2026 (dono: "tem que ficar igual o protótipo"). Ficam fora da escala
+/// de `esp` e valem só na peça que o nome diz.
+pub mod linear {
+    use super::r;
+    use gpui_kit::Rems;
+    /// A lista: 12 de recuo na esquerda, 10 na direita (até o cartão) e 10 no alto.
+    pub const LISTA_ESQUERDA: Rems = r(12.);
+    pub const LISTA_DIREITA: Rems = r(10.);
+    pub const LISTA_TOPO: Rems = r(10.);
+    /// Da busca às abas da lista e antes de cada seção.
+    pub const ANTES_DA_SECAO: Rems = r(10.);
+    /// Busca: 10 até a lupa, 11 depois do atalho.
+    pub const BUSCA_ESQUERDA: Rems = r(10.);
+    pub const BUSCA_DIREITA: Rems = r(11.);
+    /// As abas da lista (Conversas, Arquivos, Quadro): 9 dos lados e 9 entre o ícone e o nome.
+    pub const ITEM_LADO: Rems = r(9.);
+    /// Uma linha de chat: 7 entre as partes (os recuos de 11 e 9 vão com `dentro_da_borda`).
+    pub const CHAT_VAO: Rems = r(7.);
+    /// Seção da lista: 10 dos lados.
+    pub const SECAO_LADO: Rems = r(10.);
+    /// As abas do cabeçalho: 11 dos lados (6 na direita da escolhida, com o número) e 7 entre o
+    /// nome e o número; o cabeçalho, 7 dos lados.
+    pub const ABA_LADO: Rems = r(11.);
+    pub const ABAS_VAO: Rems = r(5.);
+    pub const ABA_VAO: Rems = r(7.);
+    pub const CABECA_LADO: Rems = r(7.);
+    /// O seu balão: 6 em cima e embaixo (os 11 dos lados vêm de `mensagens::folga_do_balao`).
+    pub const BALAO_ALTO: Rems = r(6.);
+    /// Entre as falas da conversa (e entre os parágrafos), dentro de uma fala e os lados da
+    /// rolagem.
+    pub const ENTRE_FALAS: Rems = r(10.);
+    pub const NA_FALA: Rems = r(7.);
+    /// O passo da trilha: 7 entre o ícone de 14 e o texto.
+    pub const PASSO_VAO: Rems = r(7.);
+    /// O canto do seu balão.
+    pub const RAIO_DO_BALAO: Rems = r(13.);
+    pub const ROLAGEM_LADO: Rems = r(18.);
+    pub const ROLAGEM_BAIXO: Rems = r(20.);
+    /// A caixa de mensagem: a moldura preta com 3 de folga; dentro, 8 em cima, 6 na direita, 5
+    /// embaixo e 10 na esquerda; os controles a 4 do campo, puxados 4 para a esquerda, com 1 entre
+    /// eles e 5 dentro de cada um.
+    pub const MOLDURA_FOLGA: Rems = r(3.);
+    pub const CAIXA_ALTO: Rems = r(8.);
+    pub const CAIXA_DIREITA: Rems = r(6.);
+    pub const CAIXA_BAIXO: Rems = r(5.);
+    pub const CONTROLES_VAO: Rems = r(1.);
+    pub const CONTROLE_LADO: Rems = r(5.);
+    /// O contexto: o anel e a porcentagem com 5 entre eles.
+    pub const CONTEXTO_VAO: Rems = r(5.);
+    /// A linha de estado embaixo da caixa: 8 na esquerda, 9 na direita.
+    pub const ESTADO_ESQUERDA: Rems = r(8.);
+    pub const ESTADO_DIREITA: Rems = r(9.);
+    /// A barra de baixo: 7 entre as partes de uma pílula de uso, 10 na direita dela.
+    pub const USO_VAO: Rems = r(7.);
+    pub const USO_DIREITA: Rems = r(10.);
 }
 
 pub mod esp {
@@ -107,8 +169,9 @@ pub mod esp {
     pub const GUIA_EQUIPE: Rems = E24;
     /// Antes do seu balão e do separador de dia: mais de 2 vezes o `NO_TURNO` (relatório de
     /// aparência, 16/11/2026, V3; não passar de 32, com 40 os balões ficam soltos).
-    pub const ENTRE_TURNOS: Rems = E32;
-    pub const NO_TURNO: Rems = E12;
+    /// No Linear (25/11/2026), os 10 entre as falas e os 7 dentro delas do protótipo.
+    pub const ENTRE_TURNOS: Rems = super::linear::ENTRE_FALAS;
+    pub const NO_TURNO: Rems = super::linear::NA_FALA;
     /// Respiro visível, da peça de cima ao topo da linha de 24 do cabeçalho de seção.
     pub const ANTES_DE_SECAO: Rems = E16;
 }
@@ -134,12 +197,6 @@ pub mod altura {
     /// Botões do trilho, segmentado grande.
     pub const GRANDE: Rems = r(36.);
     pub const CABECALHO: Rems = r(44.);
-    /// A fileira do alto de cada peça (a do logo na lista, a das abas nas conversas e na direita),
-    /// com o conteúdo no meio: as abas de 32 ficam com 12 em cima (até a beirada da janela, onde
-    /// as peças encostam desde 16/11/2026) e 12 embaixo, e o logo de 38 com 9, o mesmo que sobra
-    /// dos lados dele (dono, 17/11/2026: "uns espaçamentos meio esquisitos em cima" e "esses
-    /// espaços das laterais tão maiores que o de cima").
-    pub const FILEIRA_DO_ALTO: Rems = r(56.);
     /// Item de menu ou de lista de escolha com descrição (era 48; dono, 18/11/2026: "deixa os menus
     /// menor").
     pub const ESCOLHA_2: Rems = r(40.);
@@ -190,13 +247,13 @@ pub trait Tipo: Styled + Sized {
     fn etiqueta(self) -> Self {
         self.font_family(FONTE_MONO).text_size(r(11.)).line_height(r(14.)).font_weight(FontWeight::NORMAL)
     }
+    /// O texto da resposta: 14/22 em 400 (protótipo Linear, 25/11/2026; era 15/23).
     fn corpo(self) -> Self {
-        self.text_size(r(15.)).line_height(r(23.))
-    }
-    /// O que você escreveu (o balão): um degrau abaixo do corpo da resposta, com a entrelinha mais
-    /// aberta (1,57) (balão e cartão de erro, 16/11/2026).
-    fn fala(self) -> Self {
         self.text_size(r(14.)).line_height(r(22.)).font_weight(FontWeight::NORMAL)
+    }
+    /// O que você escreveu (o balão): 14/21 em 400 (protótipo Linear, 25/11/2026).
+    fn fala(self) -> Self {
+        self.text_size(r(14.)).line_height(r(21.)).font_weight(FontWeight::NORMAL)
     }
     fn corpo_ui(self) -> Self {
         self.text_size(r(14.)).line_height(r(20.))
@@ -310,17 +367,6 @@ pub fn aresta_encostada(esquerda: Esquerda) -> Vec<BoxShadow> {
     }
 }
 
-/// A sombra da fileira das conversas sobre a lista (`ui::sombra_da_fileira`): uma larga e macia,
-/// que dá a altura, e uma curta junto da borda, que dá o contato.
-/// Mais difusa desde 17/11/2026 (dono: "essa sombra tinha que ficar mais difusa"): a larga anda
-/// mais e esmaece devagar; o recorte em `ui::sombra_da_fileira` vai até onde ela some.
-pub fn sombra_da_fileira() -> Vec<BoxShadow> {
-    let preto = |a: f32| gpui_kit::hsla(0., 0., 0., a);
-    vec![
-        BoxShadow::new(px(-10.), px(0.), preto(0.5)).blur_radius(px(28.)).spread_radius(px(-4.)),
-        BoxShadow::new(px(-1.), px(0.), preto(0.4)).blur_radius(px(5.)),
-    ]
-}
 
 /// A casca da gaveta (lista ou painel da direita por cima das conversas): a do popover do kit
 /// (`popover_shadow` em vendor/gpui-component/src/styled.rs, com o anel de 14%) sem a luz de 1 px
@@ -355,7 +401,9 @@ pub enum Esquerda {
 /// peças: a fileira das conversas é a peça grande da janela (dono, 17/11/2026: "deixa o border
 /// radius dos cantos da esquerda maior").
 pub fn raio_encostado(esquerda: Esquerda) -> gpui_kit::Pixels {
-    if esquerda == Esquerda::Solta { gpui_kit::px((raio_da_peca().as_f32() * 1.5).round()) } else { px(0.) }
+    // Linear (25/11/2026): a fileira é um cartão só, com 8 de margem da lista ou da beirada e os
+    // cantos de 20 do protótipo; só a emenda com a vizinha fica reta.
+    if esquerda == Esquerda::Emendada { px(0.) } else { raio_da_peca() }
 }
 
 /// Tecla, no que está em relevo e escolhido (a pílula do segmentado, a tecla de atalho): luz de
@@ -567,6 +615,7 @@ gpui_kit::assets::icon_assets!(
         Pencil,
         Pin,
         PinOff,
+        Reply,
         RotateCcw,
         RotateCcwClock,
         Rows3,
@@ -905,7 +954,6 @@ pub mod superficie {
         /// Margem entre a janela e as peças, vão entre elas e o raio dos cantos: o acabamento
         /// "denso", que o dono escolheu olhando as seis opções lado a lado.
         pub margem: f32,
-        pub vao: f32,
         pub raio_peca: f32,
         /// Corpo (o `foreground` do tema), o tênue, o dos metadados e o decorativo.
         pub texto: u32,
@@ -914,6 +962,12 @@ pub mod superficie {
         pub fantasma: u32,
         /// Código em linha no texto.
         pub codigo: u32,
+        /// A divisória de 1 px entre as peças emendadas do cartão das conversas.
+        pub divisoria: u32,
+        /// O texto das linhas da lista e o tênue dela (seções, horários, atalhos): no Linear, um
+        /// pouco abaixo do corpo, para a lista não pesar mais que a conversa.
+        pub texto_da_lista: u32,
+        pub tenue_da_lista: u32,
         /// A base (opaca) onde uma cor é misturada para virar tinta sólida (as abas, o perigo).
         pub base_da_tinta: u32,
         /// O destaque (o único da tela): o cheio, o do ponteiro em cima, o apertado, o de texto
@@ -958,7 +1012,6 @@ pub mod superficie {
         caixa_quente: 0x24396bf7,
         caixa_preta: 0x10131cf7,
         margem: 4.,
-        vao: 4.,
         raio_peca: 14.,
         texto: 0xdfe6fbff,
         tenue: 0x9ba8cfff,
@@ -971,6 +1024,9 @@ pub mod superficie {
         destaque_ativo: 0x2a64d6ff,
         destaque_texto: 0x6b9bffff,
         sobre_destaque: 0xffffffff,
+        divisoria: 0x0000009e,
+        texto_da_lista: 0xdfe6fbff,
+        tenue_da_lista: 0x8a97bfff,
     };
 
     /// "Grafite" (12/11/2026, o dono quis "mais moderno e com menos cara de IA" e apontou o
@@ -1034,7 +1090,6 @@ pub mod superficie {
         caixa_preta: 0x1c1f29ff,
         // A base aparece em volta dos cartões: 8 px dão a ela largura de camada, não de fresta.
         margem: 8.,
-        vao: 8.,
         // Os cartões (a conversa, os painéis): 16. Foram a 24 a pedido do dono ("mais arredondados
         // ainda", 13/11/2026) e voltaram no mesmo dia: com as abas do chat em pílula logo ao lado
         // do canto, a curva grande destoava ("diminuir a curva dessas bordas… parece errada com as
@@ -1052,6 +1107,9 @@ pub mod superficie {
         destaque_ativo: 0x1f52e6ff,
         destaque_texto: 0x7c9dffff,
         sobre_destaque: 0xffffffff,
+        divisoria: 0x0000009e,
+        texto_da_lista: 0xe2e5ecff,
+        tenue_da_lista: 0x8e94a5ff,
     };
 
     /// "Linear" (25/11/2026): o acabamento do protótipo no jeito do Linear, que o dono aprovou
@@ -1089,6 +1147,11 @@ pub mod superficie {
         destaque_hover: 0x5085ffff,
         destaque_ativo: 0x2459e0ff,
         destaque_texto: 0x8eb0ffff,
+        divisoria: 0x03030780,
+        texto_da_lista: 0xdcdde1ff,
+        tenue_da_lista: 0xa1a3aeff,
+        // Sem margem da janela: a lista começa na beirada, com os 12 dela (protótipo).
+        margem: 0.,
         ..GRAFITE
     };
 
@@ -1266,10 +1329,6 @@ pub fn margem_da_janela() -> gpui_kit::Pixels {
     gpui_kit::px(superficie::ATUAL.margem)
 }
 
-/// O vão entre as peças.
-pub fn vao_entre_pecas() -> gpui_kit::Pixels {
-    gpui_kit::px(superficie::ATUAL.vao)
-}
 
 /// Cores próprias do Vitral que não existem no tema dos componentes.
 pub struct Cores;
@@ -1458,6 +1517,7 @@ impl Cores {
     pub fn destaque() -> Hsla {
         rgba(superficie::atual().destaque).into()
     }
+    #[allow(dead_code)]
     pub fn destaque_hover() -> Hsla {
         rgba(superficie::atual().destaque_hover).into()
     }
@@ -1514,7 +1574,27 @@ impl Cores {
     /// sulco escuro, mais fundo que o cartão (dono, 17/11/2026: "faz esse risco de uma cor mais
     /// escura"; era um fio claro de 14%).
     pub fn divisoria() -> Hsla {
-        rgba(0x0000009e).into()
+        rgba(superficie::atual().divisoria).into()
+    }
+    /// A pastilha do número do painel na lista (protótipo Linear, 25/11/2026).
+    pub fn numero() -> Hsla {
+        rgba(0x1a2752ff).into()
+    }
+    /// O texto da resposta do agente, um pouco abaixo do corpo (protótipo Linear, 25/11/2026).
+    pub fn texto_da_fala() -> Hsla {
+        rgba(0xe1e1e3ff).into()
+    }
+    /// O texto do seu balão, no azul.
+    pub fn texto_do_balao() -> Hsla {
+        rgba(0xe8ebf5ff).into()
+    }
+    /// O texto das linhas da lista (os chats, as abas da lista).
+    pub fn texto_da_lista() -> Hsla {
+        rgba(superficie::atual().texto_da_lista).into()
+    }
+    /// O tênue da lista: seções, horários e atalhos.
+    pub fn tenue_da_lista() -> Hsla {
+        rgba(superficie::atual().tenue_da_lista).into()
     }
     /// A sombra de 1 px na base de dentro das peças.
     pub fn sombra_de_baixo() -> Hsla {

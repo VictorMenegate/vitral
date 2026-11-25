@@ -207,13 +207,14 @@ fn largura_do_rotulo(window: &Window, texto: &str) -> Pixels {
 /// de 6) saiu das abas em 18/11/2026 e ficou nesta conta até 19/11: a peça em volta de cada aba,
 /// com o mínimo dela, guardava 22 px vazios depois de um título curto ("tá ficando bugado o
 /// espaçamento lá em cima").
-const ABA_SEM_TITULO: f32 = 26.;
+const ABA_SEM_TITULO: f32 = 24.;
 /// A aba de fundo só com o ícone: um quadrado da altura da aba.
-const ABA_SO_ICONE: f32 = 32.;
+const ABA_SO_ICONE: f32 = 30.;
 /// O lápis do rascunho numa aba de fundo: o vão de 6 e os 11 do ícone.
 const LAPIS_NA_ABA: f32 = 17.;
-/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 8).
-const NUMERO_NA_ABA: f32 = 26.;
+/// O que a aba à vista ocupa além do título, com o número do painel (18 e o vão de 7, menos os 5
+/// que a direita perde para os 6 de quando há número).
+const NUMERO_NA_ABA: f32 = 20.;
 /// O "+N" do fim da faixa, com as abas que saíram dela (um botão de barra com "+2").
 const BOTAO_MAIS: f32 = 40.;
 
@@ -674,12 +675,16 @@ impl Janela {
         // que vazaria por cima da vizinha na emenda.
         let esquerda = self.esquerda_do_painel(ix);
         let raio = crate::tema::raio_encostado(esquerda);
+        // A última peça da fileira (sem a direita ancorada) fecha o cartão com os cantos da direita.
+        let ultima = self.orcamento.direita != super::Direita::Ancorada && ix.is_none_or(|ix| ix + 1 == self.paineis.len());
+        let raio_direito = if ultima { crate::tema::raio_da_peca() } else { px(0.) };
         let cartao = v_flex()
             .id(id_texto("cartao-conversa"))
             .relative()
             .size_full()
             .min_w_0()
             .rounded_l(raio)
+            .rounded_r(raio_direito)
             .bg(Cores::cartao())
             .overflow_hidden()
             // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
@@ -714,15 +719,26 @@ impl Janela {
                                 .bottom_0()
                                 .h(cheio)
                                 .rounded_bl(raio)
+                                .rounded_br(raio_direito)
                                 .bg(Cores::cartao_opaco()),
                         ),
                 )
             })
             // Na captura, antes dos `sem_arrastar` do cabeçalho pararem o clique: qualquer clique
             // no cartão, até na aba, ativa o painel.
-            .capture_any_mouse_down(
-                cx.listener(move |this, _, _, cx| this.clique_no_painel(painel_id, cx)),
-            )
+            .capture_any_mouse_down(cx.listener(move |this, evento: &MouseDownEvent, _, cx| {
+                if evento.button == MouseButton::Left {
+                    this.segurando_trecho = true;
+                    this.ponto_do_trecho = None;
+                }
+                this.clique_no_painel(painel_id, cx)
+            }))
+            // A seleção pelo teclado não tem o ponto do ponteiro: a barra volta para cima da caixa.
+            .capture_key_down(cx.listener(|this, evento: &KeyDownEvent, _, _| {
+                if evento.keystroke.modifiers.shift {
+                    this.ponto_do_trecho = None;
+                }
+            }))
             .when_some(ix.map(|ix| self.paineis[ix].escopo_selecao), |s, escopo| {
                 s.capture_any_mouse_down(move |evento: &MouseDownEvent, _, _| {
                     if evento.button == MouseButton::Left {
@@ -847,57 +863,73 @@ impl Janela {
                 });
                 // Com um trecho da conversa selecionado, o painel ativo oferece citá-lo na caixa
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
-                // Linear (25/11/2026): uma barra chapada com Responder e Copiar ("tem que ter um
-                // botão pra copiar"), no quase preto dos menus. Os dois agem no apertar, e não no
-                // clique: o apertar fora do texto desfaz a seleção, e a barra sumiria antes.
-                let responder = (ativo && self.trecho.is_some()).then(|| {
+                // Linear (25/11/2026): Responder e Copiar numa barra chapada no preto, com 3 de
+                // folga, embaixo de onde a seleção terminou (o ponto em que o botão do mouse
+                // soltou), centrada nele e presa dentro da janela; pelo teclado, sem esse ponto,
+                // em cima da caixa. Os dois agem no apertar, e não no clique: o apertar fora do
+                // texto desfaz a seleção, e a barra sumiria antes.
+                let responder = (ativo && self.trecho.is_some() && !self.segurando_trecho).then(|| {
                     let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
                         h_flex()
                             .id((id, painel_id as usize))
                             .flex_none()
                             .h(r(26.))
-                            .px(esp::E8)
+                            .pl(esp::E8)
+                            .pr(crate::tema::linear::ITEM_LADO)
                             .gap(esp::E6)
-                            .rounded(crate::tema::raio::de(26.))
-                            .metadado()
+                            .rounded(crate::tema::raio::de(24.))
+                            .text_size(r(12.5))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(Cores::texto())
+                            .text_color(Cores::texto_da_fala())
                             .cursor_pointer()
-                            .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::forte()))
-                            .child(super::mensagens::icone_de(simbolo, 13.).text_color(Cores::tenue()))
+                            .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto()))
+                            .child(super::mensagens::icone_de(simbolo, 14.).text_color(Cores::tenue()))
                             .child(rotulo)
                     };
-                    div()
-                        .map(|s| super::mensagens::coluna(s, caixa_estreita))
-                        .flex()
-                        .justify_end()
-                        .pb(esp::E6)
-                        .child(
-                            h_flex()
-                                .flex_none()
-                                .p(esp::E2)
-                                .gap(esp::E2)
-                                .rounded(crate::tema::raio::de(30.))
-                                .bg(Cores::flutuante())
-                                .child(botao("responder-trecho", Lucide::MessageSquareQuote, "Responder").on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.responder_ao_trecho(painel_id, window, cx);
-                                        cx.stop_propagation();
-                                    }),
-                                ))
-                                .child(botao("copiar-trecho", Lucide::Copy, "Copiar").on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _, window, cx| {
-                                        if let Some(trecho) = this.trecho.take() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(trecho.trim().to_string()));
-                                        }
-                                        gpui_kit::base::TextSelection::clear(window, cx);
-                                        cx.stop_propagation();
-                                        cx.notify();
-                                    }),
-                                )),
+                    let barra = h_flex()
+                        .flex_none()
+                        .p(crate::tema::linear::MOLDURA_FOLGA)
+                        .gap(crate::tema::linear::CONTROLES_VAO)
+                        .rounded(crate::tema::raio::cartao())
+                        .bg(Cores::preto())
+                        .occlude()
+                        .child(botao("responder-trecho", Lucide::Reply, "Responder").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                this.responder_ao_trecho(painel_id, window, cx);
+                                cx.stop_propagation();
+                            }),
+                        ))
+                        .child(botao("copiar-trecho", Lucide::Copy, "Copiar").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, window, cx| {
+                                if let Some(trecho) = this.trecho.take() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(trecho.trim().to_string()));
+                                }
+                                gpui_kit::base::TextSelection::clear(window, cx);
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ));
+                    match self.ponto_do_trecho {
+                        // 6 abaixo da linha em que o ponteiro soltou (meia linha de 22 e mais 6).
+                        Some(ponto) => deferred(
+                            anchored()
+                                .anchor(Anchor::TopCenter)
+                                .position(ponto + point(px(0.), tam(window, 17.)))
+                                .snap_to_window_with_margin(px(8.))
+                                .child(barra),
                         )
+                        .with_priority(1)
+                        .into_any_element(),
+                        None => div()
+                            .map(|s| super::mensagens::coluna(s, caixa_estreita))
+                            .flex()
+                            .justify_end()
+                            .pb(esp::E6)
+                            .child(barra)
+                            .into_any_element(),
+                    }
                 });
                 // O botão flutua em cima da doca, fora do fluxo: no fluxo, ele roubava altura da
                 // conversa ao aparecer e a rolagem pulava (dono, 16/11/2026: "quando selecionar o
@@ -997,10 +1029,10 @@ impl Janela {
             .flex_none()
             .flex()
             .items_center()
-            .h(altura::FILEIRA_DO_ALTO)
-            // 12 dos lados: as abas não encostam na divisória nem na beirada da janela.
-            .pl(esp::E12)
-            .pr(esp::E12)
+            // Protótipo Linear (25/11/2026): 44 de altura e 7 dos lados, a aba a 7 da borda do
+            // cartão em cima e do lado.
+            .h(altura::CABECALHO)
+            .px(crate::tema::linear::CABECA_LADO)
             .gap(esp::E8)
             // Sem a linha embaixo do cabeçalho com a conversa rolada (pedido do dono, 12/11/2026).
             // O recolher da lista mora no menu do logo (pedido do dono, 12/11/2026).
@@ -1048,12 +1080,18 @@ impl Janela {
                         .min_w_0()
                         .overflow_hidden()
                         .items_center()
-                        .gap(esp::E6)
+                        .gap(crate::tema::linear::ABAS_VAO)
                         .when_some(medir, |s, medir| s.on_prepaint(medir))
                         .children(abas.into_iter().flatten()),
                 )
-                    .child(acoes)
-                    .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx)))
+                    // O "+" e o × lado a lado, com 2 entre eles e sem o traço (protótipo Linear).
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .gap(esp::E2)
+                            .child(acoes)
+                            .when(mostra_botoes_janela, |s| s.child(self.botoes_janela_separados(cx))),
+                    )
             });
         match menu_do_cabecalho {
             Some((janela, motor)) => cabecalho
