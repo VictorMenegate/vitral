@@ -29,19 +29,12 @@ pub const LINHAS_PARA_REVISAR: usize = 20;
 /// seguinte se reconhece como vindo de uma revisão.
 const ENTREGA_DA_REVISAO: &str = "Revisão do ";
 
-/// A revisão em curso num chat.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EmCurso {
-    /// Onde a conversa estava quando a revisão começou: o que o revisor fizer entra daí em
-    /// diante, e sai no fim.
-    pub desde_item: usize,
-    /// O agente do chat, a quem ele volta.
-    pub principal: Agente,
-    /// O parceiro nasceu só para esta revisão (o chat não era uma dupla): sai no fim.
-    pub criou_o_parceiro: bool,
-    /// O `atualizado_em` de antes: a revisão sem achado não deixa o chat como não lido.
-    pub atualizado_antes: u64,
-}
+/// A revisão em curso num chat. Mora no modelo porque vai gravada no chat também
+/// (`Chat.revisao_do_par`): o Vitral fechado no meio dela a desfaz na abertura seguinte.
+pub use crate::modelo::RevisaoEmCurso as EmCurso;
+
+/// O que a revisão cortada pelo Vitral fechado deixa na conversa (depois de "não terminou: ").
+const CORTADA_AO_FECHAR: &str = "o Vitral foi fechado no meio dela";
 
 /// Por que a revisão não roda.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +139,7 @@ pub fn abrir(chat: &mut Chat) -> EmCurso {
     } else {
         chat.trocar_vez();
     }
+    chat.revisao_do_par = Some(em_curso.clone());
     em_curso
 }
 
@@ -159,7 +153,27 @@ pub fn fechar(chat: &mut Chat, em_curso: &EmCurso, resultado: Option<Item>) {
     if em_curso.criou_o_parceiro {
         chat.parceiro = None;
     }
+    chat.revisao_do_par = None;
     chat.itens.extend(resultado);
+}
+
+/// Na abertura: a revisão que o Vitral fechado (ou uma queda) cortou no meio é desfeita como a
+/// cancelada (o chat volta ao agente dele e o turno do revisor sai), com a linha de que ela não
+/// terminou no lugar. O turno de trabalho já tinha terminado: não há o que retomar, e o
+/// "Revisar com o Codex" continua à mão. Devolve os chats mexidos.
+pub fn desfazer_as_cortadas(chats: &mut [Chat]) -> Vec<String> {
+    let mut mexidos = Vec::new();
+    for chat in chats.iter_mut() {
+        let Some(em_curso) = chat.revisao_do_par.clone() else {
+            continue;
+        };
+        let aviso = resultado(em_curso.principal.outro(), &[], CORTADA_AO_FECHAR, true);
+        fechar(chat, &em_curso, Some(aviso));
+        chat.turno_aberto = false;
+        chat.atualizado_em = chat.atualizado_em.min(em_curso.atualizado_antes.max(chat.lido_em));
+        mexidos.push(chat.id.clone());
+    }
+    mexidos
 }
 
 /// O que fica na conversa: a linha "Codex revisou: nada a acrescentar", o cartão com o achado, ou
@@ -537,6 +551,7 @@ mod testes {
         assert!(matches!(chat.itens.last(), Some(Item::Revisao { de: Agente::Codex, .. })));
         assert_eq!((chat.agente, chat.sessao.as_str(), chat.sessao_criada), (Agente::Claude, "sessao-do-claude", true));
         assert!(chat.parceiro.is_none(), "o chat continua de um agente só");
+        assert!(chat.revisao_do_par.is_none(), "a revisão fechada sai do chat gravado");
         // Num chat que já era dos dois, o parceiro fica e a vez volta a quem estava.
         let mut dupla = Chat::novo("d".into(), "t", std::env::temp_dir());
         dupla.agente = Agente::Codex;
@@ -552,6 +567,45 @@ mod testes {
         assert_eq!(dupla.itens.len(), 2);
         assert_eq!(dupla.agente, Agente::Codex);
         assert_eq!(dupla.parceiro.as_ref().map(|p| p.agente), Some(Agente::Claude));
+    }
+
+    /// O Vitral fechado no meio da revisão: o chat foi gravado com o revisor na vez e o turno dele
+    /// pela metade. A revisão em curso vai gravada junto, e a abertura seguinte a desfaz: o chat
+    /// volta ao agente dele, com a sessão dele, o turno do revisor sai e fica a linha de que a
+    /// revisão não terminou (o turno continua revisável pelo clique).
+    #[test]
+    fn a_revisao_cortada_pelo_vitral_fechado_se_desfaz_ao_abrir() {
+        let mut chat = Chat::novo("c".into(), "t", std::env::temp_dir());
+        chat.itens = vec![usuario("arruma"), edicao("Edit", 20, 5, false), fala("pronto")];
+        chat.sessao = "sessao-do-claude".into();
+        chat.sessao_criada = true;
+        let em_curso = abrir(&mut chat);
+        assert_eq!(chat.revisao_do_par.as_ref(), Some(&em_curso), "a revisão em curso vai no chat");
+        chat.turno_aberto = true;
+        chat.itens.extend([Item::Vez { agente: Agente::Codex, em: 0 }, edicao("Read", 0, 0, false)]);
+        // O que o disco guarda e a abertura lê (as conversas vão à parte, como no `salvar_chat`).
+        let itens = chat.itens.clone();
+        let mut lido: Chat = serde_json::from_value(serde_json::to_value(&chat).unwrap()).unwrap();
+        lido.itens = itens;
+        assert_eq!(lido.revisao_do_par.as_ref(), Some(&em_curso));
+        assert_eq!(lido.agente, Agente::Codex, "gravado com o revisor na vez");
+        let mut chats = vec![lido, Chat::novo("outro".into(), "t", std::env::temp_dir())];
+        assert_eq!(desfazer_as_cortadas(&mut chats), ["c"]);
+        let c = &chats[0];
+        assert_eq!((c.agente, c.sessao.as_str(), c.sessao_criada), (Agente::Claude, "sessao-do-claude", true));
+        assert!(c.parceiro.is_none() && c.revisao_do_par.is_none() && !c.turno_aberto);
+        assert_eq!(c.itens.len(), 4, "{:?}", c.itens);
+        assert!(
+            matches!(c.itens.last(), Some(Item::Aviso { texto, erro: false, .. }) if texto == "A revisão do Codex não terminou: o Vitral foi fechado no meio dela"),
+            "{:?}",
+            c.itens.last()
+        );
+        assert!(revisavel(&c.itens), "o clique ainda revisa o turno");
+        // Sem revisão em curso nada muda, e a segunda abertura não repete.
+        assert!(desfazer_as_cortadas(&mut chats).is_empty());
+        assert_eq!(chats[0].itens.len(), 4);
+        // O chat sem revisão não grava o campo.
+        assert!(serde_json::to_value(&chats[1]).unwrap().get("revisao_do_par").is_none());
     }
 
     /// A ação "Revisar com o Codex" só faz sentido com um turno pronto do agente do chat que

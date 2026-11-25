@@ -225,7 +225,7 @@ impl Sessao {
             Disco::Igual if !self.sujo(atual) => return Gravacao::Nada,
             Disco::Igual | Disco::Recarregar(_) => {}
         }
-        let resultado = if self.crlf { fs::write(&self.caminho, atual.replace('\n', "\r\n")) } else { fs::write(&self.caminho, atual) };
+        let resultado = if self.crlf { gravar_por_inteiro(&self.caminho, atual.replace('\n', "\r\n").as_bytes()) } else { gravar_por_inteiro(&self.caminho, atual.as_bytes()) };
         match resultado {
             Ok(()) => {
                 self.gravado = atual.to_string();
@@ -257,6 +257,45 @@ impl Sessao {
     pub(super) fn manter_o_meu(&mut self) {
         self.conflito = None;
     }
+}
+
+/// Grava o arquivo inteiro sem nunca deixá-lo pela metade. O `fs::write` direto trunca o
+/// original antes de escrever: disco cheio, cota ou uma queda no meio deixavam só um pedaço do
+/// arquivo (conferido com o limite de tamanho de arquivo do sistema, 25/11/2026). Aqui o texto
+/// vai para um arquivo novo na mesma pasta, com as permissões do original, e só depois de
+/// escrito e sincronizado toma o lugar dele (o `rename` na mesma pasta é atômico); com erro, o
+/// original fica como estava. O link simbólico continua link: grava-se no arquivo a que ele
+/// aponta. Dois casos gravam no lugar, como antes: o arquivo com mais de um nome (link físico),
+/// para os outros nomes verem o texto novo, e a pasta onde não se pode criar arquivo.
+fn gravar_por_inteiro(caminho: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let destino = match fs::symlink_metadata(caminho) {
+        Ok(dados) if dados.file_type().is_symlink() => dunce::canonicalize(caminho).unwrap_or_else(|_| caminho.to_path_buf()),
+        _ => caminho.to_path_buf(),
+    };
+    let original = fs::metadata(&destino).ok();
+    #[cfg(unix)]
+    if original.as_ref().is_some_and(|dados| std::os::unix::fs::MetadataExt::nlink(dados) > 1) {
+        return fs::write(&destino, bytes);
+    }
+    let pasta = destino.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let temporario = pasta.join(format!(".{}.vitral-{}", nome_do_arquivo(&destino), crate::modelo::novo_id()));
+    let mut arquivo = match fs::OpenOptions::new().write(true).create_new(true).open(&temporario) {
+        Ok(arquivo) => arquivo,
+        Err(erro) if erro.kind() == std::io::ErrorKind::PermissionDenied => return fs::write(&destino, bytes),
+        Err(erro) => return Err(erro),
+    };
+    let escrito = arquivo.write_all(bytes).and_then(|()| match &original {
+        Some(dados) => arquivo.set_permissions(dados.permissions()),
+        None => Ok(()),
+    });
+    let escrito = escrito.and_then(|()| arquivo.sync_all());
+    drop(arquivo);
+    let resultado = escrito.and_then(|()| fs::rename(&temporario, &destino));
+    if resultado.is_err() {
+        let _ = fs::remove_file(&temporario);
+    }
+    resultado
 }
 
 /// A gravação sozinha: vence `SALVAR_SOZINHO` depois da última tecla.
@@ -574,16 +613,7 @@ impl Janela {
     pub(super) fn largar_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(mut editor) = self.editor_arquivo.take() else { return };
         let texto = editor.estado.read(cx).value();
-        let perdido = match editor.sessao.conflito() {
-            Some(Conflito::Mudou) => editor.sessao.escrito(&texto).then_some("o arquivo mudou no disco"),
-            Some(Conflito::Apagado) => editor.sessao.escrito(&texto).then_some("o arquivo foi apagado"),
-            None => match editor.sessao.salvar(&texto) {
-                Gravacao::Gravou | Gravacao::Nada => None,
-                Gravacao::Conflito(_) => Some("o arquivo mudou no disco"),
-                Gravacao::Erro(_) => Some("a gravação falhou"),
-            },
-        };
-        if let Some(motivo) = perdido {
+        if let Some(motivo) = gravar_ou_motivo(&mut editor.sessao, &texto) {
             let nome = nome_do_arquivo(editor.sessao.caminho());
             cx.write_to_clipboard(ClipboardItem::new_string(texto.to_string()));
             // O aviso tem duas linhas: o título diz o que houve e o texto, onde o escrito foi parar.
@@ -600,13 +630,86 @@ impl Janela {
     }
 }
 
+/// Grava o que falta do texto do editor, ou diz por que ele não iria para o disco: um conflito
+/// sem resposta com texto seu (nada passa por cima do que o agente gravou) ou um erro de gravação.
+/// `None`: o disco tem o texto, ou não havia o que gravar.
+fn gravar_ou_motivo(sessao: &mut Sessao, texto: &str) -> Option<&'static str> {
+    match sessao.conflito() {
+        Some(Conflito::Mudou) => sessao.escrito(texto).then_some("o arquivo mudou no disco"),
+        Some(Conflito::Apagado) => sessao.escrito(texto).then_some("o arquivo foi apagado"),
+        None => match sessao.salvar(texto) {
+            Gravacao::Gravou | Gravacao::Nada => None,
+            Gravacao::Conflito(_) => Some("o arquivo mudou no disco"),
+            Gravacao::Erro(_) => Some("a gravação falhou"),
+        },
+    }
+}
+
+/// Onde fica o texto do editor que não pôde ir para o arquivo quando o Vitral fechou: um arquivo
+/// novo na pasta `nao_salvos`, com o nome do original e a hora ("carrinho-2026-11-25-143210.py").
+/// Nunca passa por cima de outro.
+pub(super) fn guardar_nao_salvo(pasta: &Path, original: &Path, texto: &str) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(pasta)?;
+    let hora = crate::modelo::no_fuso_local(crate::modelo::agora() as i64).format("%Y-%m-%d-%H%M%S");
+    let base = original.file_stem().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| "texto".into());
+    let extensao = original.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    for n in 0..100 {
+        let sufixo = if n == 0 { String::new() } else { format!("-{n}") };
+        let caminho = pasta.join(format!("{base}-{hora}{sufixo}{extensao}"));
+        match fs::OpenOptions::new().write(true).create_new(true).open(&caminho) {
+            Ok(mut arquivo) => {
+                use std::io::Write as _;
+                arquivo.write_all(texto.as_bytes())?;
+                arquivo.sync_all()?;
+                return Ok(caminho);
+            }
+            Err(erro) if erro.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(erro) => return Err(erro),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "nome livre não encontrado"))
+}
+
 impl Janela {
+    /// A pasta onde vai o texto do editor que não pôde ser gravado ao fechar.
+    pub(super) fn pasta_nao_salvos(&self, cx: &App) -> Option<PathBuf> {
+        self.motor.as_ref().map(|motor| motor.read(cx).dados.pasta_nao_salvos())
+    }
+
+    /// Antes de fechar ou reiniciar: grava o que falta no editor e, se o texto não pôde ir para o
+    /// arquivo (um conflito sem resposta, um erro de gravação), devolve o nome do arquivo e o
+    /// motivo, para a pergunta de fechar. O fechar não passa sem ela: o texto do editor só existe
+    /// na tela.
+    pub(super) fn texto_do_editor_em_risco(&mut self, cx: &App) -> Option<(String, &'static str)> {
+        let editor = self.editor_arquivo.as_mut()?;
+        let texto = editor.estado.read(cx).value();
+        let motivo = gravar_ou_motivo(&mut editor.sessao, &texto);
+        if motivo.is_none() {
+            editor.por_salvar = false;
+            editor.erro = None;
+        }
+        motivo.map(|motivo| (nome_do_arquivo(editor.sessao.caminho()), motivo))
+    }
+
     /// O Vitral está fechando: o que falta gravar no editor vai para o disco agora (o prazo da
-    /// gravação sozinha não teria tempo de vencer). Um conflito sem resposta fica como está.
+    /// gravação sozinha não teria tempo de vencer). O texto que não pode ir para o arquivo (um
+    /// conflito sem resposta passa por cima do que o agente gravou; a gravação que falhou) vai
+    /// para uma cópia em `nao_salvos`: é o que a pergunta de fechar promete. O caminho que não
+    /// passa pela pergunta (sair da sessão do sistema) também guarda a cópia.
     pub(super) fn gravar_editor_ao_sair(&mut self, cx: &App) {
-        if let Some(editor) = self.editor_arquivo.as_mut() {
-            let texto = editor.estado.read(cx).value();
-            let _ = editor.sessao.salvar(&texto);
+        let pasta = self.pasta_nao_salvos(cx);
+        let Some(editor) = self.editor_arquivo.as_mut() else { return };
+        let texto = editor.estado.read(cx).value();
+        if gravar_ou_motivo(&mut editor.sessao, &texto).is_none() {
+            return;
+        }
+        let Some(pasta) = pasta else { return };
+        match guardar_nao_salvo(&pasta, editor.sessao.caminho(), &texto) {
+            // Gravada uma vez: o segundo passo do fechar (o `on_app_quit` depois do ×) não repete.
+            Ok(_) => {
+                self.editor_arquivo = None;
+            }
+            Err(erro) => eprintln!("vitral: o texto do editor não pôde ser guardado em {}: {erro}", pasta.display()),
         }
     }
 }
@@ -629,7 +732,10 @@ fn nome_do_arquivo(caminho: &Path) -> String {
 
 #[cfg(test)]
 mod testes {
-    use super::{Agenda, Conflito, Disco, Gravacao, LIMITE_DE_EDICAO, NaoEdita, Sessao, coluna_no_texto, recuo_do_texto};
+    use super::{
+        Agenda, Conflito, Disco, Gravacao, LIMITE_DE_EDICAO, NaoEdita, Sessao, coluna_no_texto, gravar_ou_motivo, gravar_por_inteiro,
+        guardar_nao_salvo, recuo_do_texto,
+    };
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -866,5 +972,74 @@ mod testes {
         assert_eq!(coluna_no_texto("", 3), 0);
         // O editor do kit conta a coluna em letras: o emoji vale uma.
         assert_eq!(coluna_no_texto("😀x", 1), 1);
+    }
+
+    /// A gravação nunca deixa o arquivo pela metade: o texto vai inteiro para um arquivo novo que
+    /// toma o lugar do original, sem sobrar temporário na pasta, com as permissões dele, e o link
+    /// continua link. Rodado sob o limite de tamanho de arquivo do sistema
+    /// (`ulimit -f 1` com o SIGXFSZ ignorado), a gravação falha e o original fica inteiro.
+    #[test]
+    fn gravar_nunca_deixa_o_arquivo_pela_metade() {
+        let pasta = pasta("inteiro");
+        let arquivo = pasta.join("grande.txt");
+        let original = "original\n".repeat(50);
+        fs::write(&arquivo, &original).unwrap();
+        let (mut sessao, _) = Sessao::abrir(&arquivo).unwrap();
+        let novo = "x".repeat(4000);
+        match sessao.salvar(&novo) {
+            Gravacao::Gravou => assert_eq!(fs::read_to_string(&arquivo).unwrap(), novo),
+            Gravacao::Erro(_) => assert_eq!(fs::read_to_string(&arquivo).unwrap(), original, "o erro não corta o original"),
+            outro => panic!("{outro:?}"),
+        }
+        let sobras: Vec<_> = fs::read_dir(&pasta).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(sobras, [std::ffi::OsString::from("grande.txt")], "nenhum temporário fica na pasta");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let script = pasta.join("rodar.sh");
+            fs::write(&script, "echo 1\n").unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o750)).unwrap();
+            gravar_por_inteiro(&script, b"echo 2\n").unwrap();
+            assert_eq!(fs::metadata(&script).unwrap().permissions().mode() & 0o777, 0o750, "as permissões do original ficam");
+            // O link simbólico continua link, e o texto vai para o arquivo a que ele aponta.
+            let link = pasta.join("atalho.sh");
+            std::os::unix::fs::symlink(&script, &link).unwrap();
+            gravar_por_inteiro(&link, b"echo 3\n").unwrap();
+            assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+            assert_eq!(fs::read_to_string(&script).unwrap(), "echo 3\n");
+            // O link físico: os dois nomes veem o texto novo.
+            let outro_nome = pasta.join("mesmo.sh");
+            fs::hard_link(&script, &outro_nome).unwrap();
+            gravar_por_inteiro(&script, b"echo 4\n").unwrap();
+            assert_eq!(fs::read_to_string(&outro_nome).unwrap(), "echo 4\n");
+        }
+        let _ = fs::remove_dir_all(&pasta);
+    }
+
+    /// Ao fechar: o texto com um conflito sem resposta não passa por cima do disco e vai para uma
+    /// cópia com o nome do arquivo e a hora, sem pisar em outra; sem conflito, ele é gravado.
+    #[test]
+    fn o_texto_que_nao_pode_ir_para_o_arquivo_vai_para_uma_copia() {
+        let pasta = pasta("nao-salvo");
+        let arquivo = pasta.join("carrinho.py");
+        fs::write(&arquivo, "a = 1\n").unwrap();
+        let (mut sessao, _) = Sessao::abrir(&arquivo).unwrap();
+        gravar_por_fora(&arquivo, "a = 2  # do agente\n");
+        let meu = "a = 3  # meu\n";
+        assert_eq!(sessao.conferir(meu), Disco::Conflito(Conflito::Mudou));
+        assert_eq!(gravar_ou_motivo(&mut sessao, meu), Some("o arquivo mudou no disco"));
+        assert_eq!(fs::read_to_string(&arquivo).unwrap(), "a = 2  # do agente\n", "o disco fica com o agente");
+        let guardados = pasta.join("nao_salvos");
+        let primeira = guardar_nao_salvo(&guardados, &arquivo, meu).unwrap();
+        let segunda = guardar_nao_salvo(&guardados, &arquivo, "outro").unwrap();
+        assert_ne!(primeira, segunda, "a segunda cópia no mesmo segundo não pisa na primeira");
+        assert_eq!(fs::read_to_string(&primeira).unwrap(), meu);
+        let nome = primeira.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(nome.starts_with("carrinho-") && nome.ends_with(".py"), "{nome}");
+        // Sem conflito, o texto vai para o arquivo e não há motivo.
+        let (mut limpa, _) = Sessao::abrir(&arquivo).unwrap();
+        assert_eq!(gravar_ou_motivo(&mut limpa, "a = 4\n"), None);
+        assert_eq!(fs::read_to_string(&arquivo).unwrap(), "a = 4\n");
+        let _ = fs::remove_dir_all(&pasta);
     }
 }

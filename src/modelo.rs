@@ -258,6 +258,24 @@ pub struct Mudanca {
     pub novo: bool,
 }
 
+/// A revisão do turno pelo outro agente em curso num chat (`motor/revisao_do_par.rs`): o que é
+/// preciso para o chat voltar a quem era. Vai gravada no chat porque a revisão troca o agente da
+/// vez e põe o turno do revisor na conversa: o Vitral fechado (ou uma queda) no meio dela deixava
+/// o revisor na vez e o turno dele pela metade, sem como desfazer (conferido em 25/11/2026). A
+/// abertura seguinte a desfaz (`revisao_do_par::desfazer_as_cortadas`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RevisaoEmCurso {
+    /// Onde a conversa estava quando a revisão começou: o que o revisor fizer entra daí em
+    /// diante, e sai no fim.
+    pub desde_item: usize,
+    /// O agente do chat, a quem ele volta.
+    pub principal: Agente,
+    /// O parceiro nasceu só para esta revisão (o chat não era uma dupla): sai no fim.
+    pub criou_o_parceiro: bool,
+    /// O `atualizado_em` de antes: a revisão sem achado não deixa o chat como não lido.
+    pub atualizado_antes: u64,
+}
+
 /// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI) ou o Gemini (o Antigravity CLI
 /// do Google, `agy`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,6 +473,9 @@ pub struct Chat {
     /// que o Vitral fechado (ou uma queda de energia) cortou no meio.
     #[serde(default)]
     pub turno_aberto: bool,
+    /// A revisão do turno pelo outro agente rodando agora (ver `RevisaoEmCurso`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revisao_do_par: Option<RevisaoEmCurso>,
     /// Modo em que a conversa estava antes de entrar em Planejar: aprovar o plano volta a ele.
     #[serde(default)]
     pub modo_antes_do_plano: Option<String>,
@@ -515,6 +536,7 @@ impl Chat {
             lido_em: agora,
             retido_nao_lido: false,
             turno_aberto: false,
+            revisao_do_par: None,
             modo_antes_do_plano: None,
             memoria_da_sessao: None,
             memoria_pedida_em: 0,

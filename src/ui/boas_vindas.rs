@@ -51,7 +51,7 @@ pub(super) struct BoasVindas {
 }
 
 /// A pasta com o `~` no lugar da pasta do usuário, para caber e ler melhor.
-fn com_til(pasta: &std::path::Path) -> String {
+pub(super) fn com_til(pasta: &std::path::Path) -> String {
     match dirs::home_dir().and_then(|casa| pasta.strip_prefix(&casa).ok().map(|resto| resto.to_path_buf())) {
         Some(resto) if resto.as_os_str().is_empty() => "~".into(),
         Some(resto) => format!("~/{}", resto.display()),

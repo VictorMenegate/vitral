@@ -498,12 +498,14 @@ impl Motor {
         avisos_ao_abrir.extend(normalizado.avisos);
         let Estado { mut chats, filas, ocorrencias, visto_em, resto: resto_estado, .. } = estado;
         let antes: Vec<usize> = chats.iter().map(|c| c.itens.len()).collect();
+        // A revisão do outro agente cortada vem antes: o turno aberto dela não é um turno cortado.
+        let revisoes_desfeitas = revisao_do_par::desfazer_as_cortadas(&mut chats);
         marcar_turnos_cortados(&mut chats);
         // Avisos e o que a normalização mexeu vão para o disco já: se o PC cair de novo antes de
         // qualquer ação, a próxima abertura não repete o aviso.
         if somente_leitura.is_none() {
             for (c, n) in chats.iter().zip(antes) {
-                if c.itens.len() != n || normalizado.chats_mexidos.contains(&c.id) {
+                if c.itens.len() != n || normalizado.chats_mexidos.contains(&c.id) || revisoes_desfeitas.contains(&c.id) {
                     let _ = dados.salvar_chat(c);
                 }
             }
