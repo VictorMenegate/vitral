@@ -15,9 +15,8 @@ use gpui_kit::*;
 
 use super::base::{Simbolo, texto_arco_iris};
 use super::estado::{Selo, Sinal};
-use super::graficos::fio_de_pontos;
 use super::superficies::{EstadoVazio, ficha_de_metal};
-use super::textos::{etiqueta_de_secao, tracinho_de_secao};
+use super::textos::tracinho_de_secao;
 use crate::tema::{Cores, Lucide, Tipo as _, altura, dentro_da_borda, esp, linear, r, raio, tam};
 
 /// Rótulo de seção (24, mono 11 apagado em caixa alta, com o tracinho), com contagem, ação e recolher: 16 de respiro em cima (4
@@ -745,32 +744,27 @@ impl RenderOnce for LinhaDeOpcao {
         let desabilitada = self.desabilitada.is_some();
         let descricao = self.desabilitada.map(IntoElement::into_any_element).or(self.descricao);
         let aviso = self.aviso.filter(|_| !desabilitada);
+        // Protótipo Linear (25/11/2026): o título em 12,5, a explicação longa na dica do título (sem
+        // o ícone de informação) e o valor curto, quando há, embaixo em 11,5.
         let titulo = div()
+            .id("titulo")
             .flex()
             .items_center()
             .gap(r(6.))
-            .text_size(r(14.))
-            .line_height(r(20.))
+            .text_size(r(12.5))
+            .line_height(r(16.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(self.simbolo.map_or_else(Cores::texto, |(_, cor)| cor))
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
-            .when_some(self.marca, |d, marca| d.child(marca.desenhar(16., window)))
+            .when_some(self.marca, |d, marca| d.child(marca.desenhar(15., window)))
             .map(|d| {
                 if self.arco_iris {
                     d.child(texto_arco_iris(&self.titulo))
                 } else {
-                    d.child(self.titulo.clone())
+                    d.min_w_0().child(div().min_w_0().truncate().child(self.titulo.clone()))
                 }
             })
-            .when_some(self.info, |d, info| {
-                d.child(
-                    div()
-                        .id("info")
-                        .text_color(Cores::tenue())
-                        .child(Icon::new(Lucide::Info).with_size(tam(window, 14.)))
-                        .dica_no_ponteiro(move |window, cx| Tooltip::new(info.clone()).build(window, cx)),
-                )
-            });
+            .when_some(self.info, |d, info| d.dica_no_ponteiro(move |window, cx| Tooltip::new(info.clone()).build(window, cx)));
         let mut controle_embaixo = None;
         let (direita, alternar) = match self.controle {
             Controle::Interruptor { ligado, ao_mudar } => {
@@ -791,18 +785,22 @@ impl RenderOnce for LinhaDeOpcao {
         // Desabilitada, só o título e o controle apagam: com a linha inteira a 0,45, o motivo dava
         // 2,45:1 e não se lia. Ele vai em `apagado` cheio (relatório de design, 16/11/2026).
         let apagar = |d: Div| d.when(desabilitada, |d| d.opacity(crate::tema::opacidade::DESABILITADO));
-        let titulo = apagar(div().child(titulo));
+        let titulo = apagar(div().min_w_0().child(titulo));
         div()
             .id(self.id)
             .flex()
             .flex_col()
-            .gap(esp::E8)
-            .p(esp::E12)
+            .justify_center()
+            .gap(esp::E6)
+            .min_h(r(36.))
+            .py(esp::E4)
+            .pl(dentro_da_borda(12.))
+            .pr(linear::ITEM_LADO)
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(r(16.))
+                    .gap(esp::E8)
                     .child(
                         div()
                             .flex()
@@ -811,9 +809,15 @@ impl RenderOnce for LinhaDeOpcao {
                             .min_w_0()
                             .child(titulo)
                             .when_some(descricao, |d, t| {
-                                d.child(div().metadado().text_color(if desabilitada { Cores::apagado() } else { Cores::tenue() }).child(t))
+                                d.child(
+                                    div()
+                                        .text_size(r(11.5))
+                                        .line_height(r(15.))
+                                        .text_color(if desabilitada { Cores::apagado() } else { Cores::tenue() })
+                                        .child(t),
+                                )
                             })
-                            .when_some(aviso, |d, t| d.child(div().metadado().text_color(Cores::ambar()).child(t))),
+                            .when_some(aviso, |d, t| d.child(div().text_size(r(11.5)).text_color(Cores::ambar()).child(t))),
                     )
                     .children(direita.map(|e| apagar(div().flex_none().child(e)))),
             )
@@ -844,31 +848,35 @@ impl GrupoDeOpcoes {
 }
 
 impl RenderOnce for GrupoDeOpcoes {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let n = self.linhas.len();
         let mut filhos: Vec<AnyElement> = Vec::with_capacity(n * 2);
         for (i, linha) in self.linhas.into_iter().enumerate() {
             filhos.push(linha);
-            // Entre as linhas, um fio de pontos recuado 12 dos dois lados (não uma linha cheia).
+            // Entre as linhas, um fio quase sumido.
             if i + 1 < n {
-                filhos.push(div().px(esp::E12).child(fio_de_pontos(Cores::fio(), window)).into_any_element());
+                filhos.push(div().h(px(1.)).bg(Cores::forte().opacity(0.04)).into_any_element());
             }
         }
+        // Protótipo Linear (25/11/2026): o rótulo em 11/600 no tênue, a 5 do cartão no fundo da
+        // caixa, de canto 14, sem fio.
         div()
             .flex()
             .flex_col()
-            .gap(r(6.))
-            .when_some(self.titulo, |d, t| d.child(etiqueta_de_secao(t).px(r(4.))))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .rounded(raio::CARTAO)
-                    .bg(Cores::grupo())
-                    .border_1()
-                    .border_color(Cores::borda())
-                    .children(filhos),
-            )
+            .gap(linear::CONTEXTO_VAO)
+            .when_some(self.titulo, |d, t| {
+                d.child(
+                    div()
+                        .px(esp::E6)
+                        .pt(esp::E2)
+                        .text_size(r(11.))
+                        .line_height(r(14.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(Cores::tenue())
+                        .child(t),
+                )
+            })
+            .child(div().flex().flex_col().rounded(raio::CARTAO).bg(Cores::caixa_preta()).overflow_hidden().children(filhos))
     }
 }
 

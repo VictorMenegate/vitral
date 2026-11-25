@@ -7,7 +7,6 @@ use gpui_kit::component::{
     Disableable as _, WindowExt as _, v_flex,
     dialog::Dialog,
     input::{Input, InputState},
-    tooltip::{ManagedTooltipExt as _, Tooltip},
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -374,16 +373,15 @@ impl Janela {
         let janela = cx.entity().downgrade();
         let vista = cx.new(|cx| Configuracoes::new(motor, janela, cx));
         self.foco_antes_do_dialogo(window, cx);
+        // Protótipo Linear (25/11/2026): o diálogo é a própria peça, no preto, sem o cabeçalho de
+        // cima (o título fica na coluna das partes e o da parte, ao lado do ×). Gravam na hora; o
+        // arquivo fica na dica da coluna.
+        let _ = dica;
         window.open_dialog(cx, move |dialogo, window, _| {
-            let dica = dica.clone();
-            let subtitulo = div()
-                .id("configuracoes-pasta")
-                .font_weight(FontWeight::NORMAL)
-                // Em Aparência e Atualizações não é dos chats: vale para o app, e grava na hora.
-                .child("Gravam na hora")
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx));
             moldura(dialogo, super::configuracoes::LARGURA_DAS_CONFIGURACOES, window)
-                .title(topo(CabecalhoDialogo::new("Configurações").subtitulo(subtitulo)))
+                .p_0()
+                .bg(Cores::preto())
+                .border_color(gpui_kit::transparent_black())
                 .child(vista.clone())
         });
     }
@@ -463,7 +461,7 @@ impl Janela {
         self.abrir_contas_em(false, conta, escolher, window, cx);
     }
 
-    fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn abrir_contas(&mut self, entrar: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.abrir_contas_em(entrar, None, false, window, cx);
     }
 

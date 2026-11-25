@@ -4,7 +4,7 @@
 use std::{cell::RefCell, ops::RangeInclusive, rc::Rc};
 
 use gpui_kit::component::{
-    Disableable, Icon, Selectable, Sizable, Size, StyledExt as _,
+    Disableable, Icon, Selectable, Sizable, Size,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     input::{Input, InputState},
     kbd::Kbd,
@@ -462,7 +462,10 @@ fn montar(
                     .child(icone.with_size(tam(window, t.icone()))),
             )
         })
-        .when_some(rotulo, |b, rotulo| b.child(div().min_w_0().truncate().rotulo().child(rotulo)))
+        // O da caixa (e das Configurações) com o texto em 11,5 (protótipo Linear, 25/11/2026).
+        .when_some(rotulo, |b, rotulo| {
+            b.child(div().min_w_0().truncate().rotulo().when(t == TamanhoBotao::Caixa, |d| d.text_size(r(11.5))).child(rotulo))
+        })
 }
 
 pub fn botao_fantasma(
@@ -871,6 +874,7 @@ pub struct ControleSegmentado {
     compacto: bool,
     no_flutuante: bool,
     solto: bool,
+    chapado: bool,
     desabilitado: bool,
     ao_mudar: Rc<dyn Fn(usize, &mut Window, &mut App)>,
 }
@@ -893,9 +897,17 @@ impl ControleSegmentado {
             compacto: false,
             no_flutuante: false,
             solto: false,
+            chapado: false,
             desabilitado: false,
             ao_mudar: Rc::new(ao_mudar),
         }
+    }
+
+    /// O das Configurações no jeito do protótipo Linear (25/11/2026): 26 de altura, no preto, sem
+    /// fio nem poço, as opções em 11,5 e a escolhida no azul do escolhido.
+    pub fn chapado(mut self, sim: bool) -> Self {
+        self.chapado = sim;
+        self
     }
 
     /// O segmentado do alto da lista: o trilho é um poço sem fio (o mesmo desenho da busca) e a
@@ -999,7 +1011,9 @@ impl RenderOnce for ControleSegmentado {
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle().tab_stop(true))
             .read(cx)
             .clone();
+        let chapado = self.chapado;
         let altura = match self.tamanho {
+            _ if chapado => 26.,
             Size::Small | Size::XSmall => 28.,
             Size::Large => 36.,
             // Uma altura sob medida (as abas do alto da lista têm a do logo).
@@ -1079,14 +1093,16 @@ impl RenderOnce for ControleSegmentado {
             .h(r(altura))
             .rounded(raio::de(altura))
             .map(|s| {
-                if no_flutuante {
+                if chapado {
+                    s.bg(Cores::preto())
+                } else if no_flutuante {
                     s.bg(Cores::recuo_no_flutuante())
                 } else {
                     s.bg(Cores::recuo()).shadow(aresta_de_poco())
                 }
             })
             .border_1()
-            .border_color(if solto { transparent_black() } else { Cores::borda() })
+            .border_color(if solto || chapado { transparent_black() } else { Cores::borda() })
             .focus_visible(|s| s.border_color(Cores::destaque()).shadow(halo_foco()))
             .when(self.largura_total, |s| s.w_full())
             .when(ativo, |s| {
@@ -1114,7 +1130,7 @@ impl RenderOnce for ControleSegmentado {
                     .justify_center()
                     .gap(esp::E6)
                     .h_full()
-                    .px(if self.so_icone {
+                    .px(if self.so_icone || chapado {
                         esp::E8
                     } else if self.compacto {
                         esp::E4
@@ -1126,10 +1142,10 @@ impl RenderOnce for ControleSegmentado {
                     .border_1()
                     .border_color(if escolhido && !tem_pilula && !em_ficha { borda_escolhida } else { transparent_black() })
                     .when(escolhido && !tem_pilula && !em_ficha, |s| s.bg(fundo_escolhido).shadow(aresta_de_tecla()))
-                    .text_size(r(13.))
+                    .text_size(r(if chapado { 11.5 } else { 13. }))
                     .whitespace_nowrap()
-                    .font_weight(if escolhido { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
-                    .text_color(if escolhido { cor_texto } else { Cores::tenue() })
+                    .font_weight(if escolhido && !chapado { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+                    .text_color(if escolhido { cor_texto } else if chapado { Cores::texto_da_fala() } else { Cores::tenue() })
                     .when(seg.desabilitado, |s| s.opacity(0.45))
                     .when(!escolhido && ativo && !seg.desabilitado, |s| {
                         s.cursor_pointer()
@@ -1194,7 +1210,7 @@ impl RenderOnce for Contador {
                 dica,
             )
             .variante(VarianteRedonda::Plano)
-            .diametro(24.)
+            .diametro(22.)
             .disabled(novo.is_none())
             .on_click(move |_, window, cx| {
                 if let Some(novo) = novo {
@@ -1207,20 +1223,19 @@ impl RenderOnce for Contador {
             .flex_none()
             .items_center()
             .gap(r(2.))
-            .h(r(28.))
+            .h(r(26.))
             .px(r(2.))
-            .rounded(raio::de(28.))
-            // Cavado: o número mora num poço.
-            .bg(Cores::recuo())
-            .shadow(aresta_de_poco())
+            .rounded(raio::de(26.))
+            // No preto, como os outros controles das Configurações (protótipo Linear, 25/11/2026).
+            .bg(Cores::preto())
             .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
             .child(
                 div()
                     // Com unidade, a largura do maior número: o − e o + não andam de 90% para 100%.
-                    .min_w(r(if self.sufixo.is_some() { 44. } else { 24. }))
+                    .min_w(r(if self.sufixo.is_some() { 44. } else { 36. }))
                     .text_center()
-                    .text_size(r(13.))
-                    .font_semibold()
+                    .text_size(r(12.5))
+                    .font_weight(FontWeight::MEDIUM)
                     .tabular()
                     .text_color(Cores::texto())
                     .child(format!("{valor}{}", self.sufixo.unwrap_or_default())),

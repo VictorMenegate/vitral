@@ -764,6 +764,21 @@ pub struct Config {
     /// O outro agente revê sozinho, só lendo, o turno que mudou bastante arquivo
     /// (`motor/revisao_do_par.rs`). Ligado de fábrica.
     pub revisar_edicoes: bool,
+    /// Quando a revisão automática roda: "edicoes" (o turno que mudou `revisao_minimo` linhas),
+    /// "todo" (todo turno que terminou bem) ou "botao" (só pelo "Revisar com o…").
+    pub revisao_quando: String,
+    /// O mínimo de linhas mudadas para a revisão "com edições".
+    pub revisao_minimo: u32,
+    /// Com o chat em Planejar, a revisão automática não roda.
+    pub revisao_pula_planejar: bool,
+    /// No que o revisor presta mais atenção ("Bugs", "Segurança", "Testes", "Desempenho", "Estilo").
+    pub revisao_foco: Vec<String>,
+    /// O que o revisor recebe a mais, do seu jeito.
+    pub revisao_instrucoes: String,
+    /// O achado da revisão vai ao agente do chat sozinho, sem o "Mandar ao…".
+    pub revisao_manda_sozinha: bool,
+    /// A linha "Codex revisou: nada a acrescentar" aparece na conversa.
+    pub revisao_mostra_nada: bool,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
     /// equipe. A chave da pessoa fica fora daqui, num arquivo só dela.
     pub memoria_da_equipe: String,
@@ -901,6 +916,13 @@ impl Default for Config {
             memoria_ao_terminar: true,
             sugerir_resposta: true,
             revisar_edicoes: true,
+            revisao_quando: "edicoes".into(),
+            revisao_minimo: 20,
+            revisao_pula_planejar: true,
+            revisao_foco: vec!["Bugs".into(), "Segurança".into(), "Testes".into()],
+            revisao_instrucoes: String::new(),
+            revisao_manda_sozinha: false,
+            revisao_mostra_nada: true,
             memoria_da_equipe: String::new(),
             avisos_no_app: true,
             letra_da_conversa: 100,

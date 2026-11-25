@@ -740,8 +740,7 @@ pub fn escolher_animacoes(escolha: Animacoes, cx: &mut App) {
     .detach();
 }
 
-/// A escolha "seguir o sistema" e o aviso dela nas Configurações.
-pub const SEGUIR_O_SISTEMA: &str = if cfg!(windows) { "Seguir o Windows" } else { "Seguir o GNOME" };
+/// O aviso da escolha "Do sistema" nas Configurações, com o sistema sem animações.
 pub const SISTEMA_SEM_ANIMACOES: &str = if cfg!(windows) {
     "O Windows está sem os efeitos de animação: tudo aparece pronto."
 } else {
