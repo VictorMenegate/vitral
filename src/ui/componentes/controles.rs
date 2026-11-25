@@ -91,11 +91,13 @@ const QUADRADO_PARAR: &[u8] =
 /// perguntar, e vermelho sem perguntar fora de uma cópia isolada.
 pub fn icone_do_modo(valor: &str) -> (Icon, Hsla) {
     match valor {
-        // Os modos comuns são neutros; a cor fica para o que pede cuidado (o "Sem perguntar").
+        // Cada modo com a sua cor (Linear, 25/11/2026: "melhora esse menu"; antes os comuns eram
+        // neutros): o Manual neutro, editar em verde, planejar em azul, automático em violeta e o
+        // "Sem perguntar" em âmbar.
         "manual" => (Icon::empty().data(ESCUDO_CHEIO), Cores::tenue()),
-        "plan" => (Lucide::Map.into(), Cores::tenue()),
-        "acceptEdits" => (Lucide::FilePen.into(), Cores::tenue()),
-        "auto" => (Lucide::WandSparkles.into(), Cores::tenue()),
+        "plan" => (Lucide::Map.into(), Cores::destaque_texto()),
+        "acceptEdits" => (Lucide::FilePen.into(), Cores::verde()),
+        "auto" => (Lucide::WandSparkles.into(), Cores::violeta()),
         _ => (Lucide::ShieldOff.into(), Cores::ambar()),
     }
 }
@@ -745,7 +747,8 @@ impl RenderOnce for BotaoRedondo {
                 (None, Some(icone)) => s.child(icone.with_size(tam(window, lado_icone))),
                 // Só o quadrado, sem anel girando em volta: quem diz que o chat trabalha é a
                 // conversa e a linha de estado (dono, 13/11/2026: "já tem nos outros lugares").
-                (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 10.))),
+                // 8 (Linear, 25/11/2026: o quadrado do protótipo).
+                (None, None) => s.child(Icon::empty().data(QUADRADO_PARAR).with_size(tam(window, 8.))),
             })
             .when_some(pulso, |s, t| s.child(anel_do_pulso(cor_pulso, t)))
             .when(interativo, |s| {

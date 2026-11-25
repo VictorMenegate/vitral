@@ -847,43 +847,57 @@ impl Janela {
                 });
                 // Com um trecho da conversa selecionado, o painel ativo oferece citá-lo na caixa
                 // (dono, 13/11/2026: "selecionar uma parte da conversa pra responder").
+                // Linear (25/11/2026): uma barra chapada com Responder e Copiar ("tem que ter um
+                // botão pra copiar"), no quase preto dos menus. Os dois agem no apertar, e não no
+                // clique: o apertar fora do texto desfaz a seleção, e a barra sumiria antes.
                 let responder = (ativo && self.trecho.is_some()).then(|| {
+                    let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
+                        h_flex()
+                            .id((id, painel_id as usize))
+                            .flex_none()
+                            .h(r(26.))
+                            .px(esp::E8)
+                            .gap(esp::E6)
+                            .rounded(crate::tema::raio::de(26.))
+                            .metadado()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Cores::texto())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::forte()))
+                            .child(super::mensagens::icone_de(simbolo, 13.).text_color(Cores::tenue()))
+                            .child(rotulo)
+                    };
                     div()
                         .map(|s| super::mensagens::coluna(s, caixa_estreita))
                         .flex()
                         .justify_end()
                         .pb(esp::E6)
                         .child(
-                        h_flex()
-                            .id(("responder-trecho", painel_id as usize))
-                            .flex_none()
-                            .h(r(28.))
-                            .px(esp::E12)
-                            .gap(esp::E6)
-                            .rounded(crate::tema::raio::de(28.))
-                            // Uma tecla azul em relevo: o azul do destaque bem leve, o fio do
-                            // mesmo azul e a luz em cima.
-                            .bg(Cores::tinta_solida(Cores::destaque(), 0.16))
-                            .border_1()
-                            .border_color(Cores::tinta_borda(Cores::destaque()))
-                            .shadow([crate::tema::aresta_de_tecla(), crate::tema::sombra_elevado()].concat())
-                            .metadado()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(Cores::forte())
-                            .cursor_pointer()
-                            .hover(|s| s.bg(Cores::tinta_solida(Cores::destaque(), 0.26)))
-                            .child(super::mensagens::icone_de(Lucide::MessageSquareQuote, 13.).text_color(Cores::destaque_texto()))
-                            .child("Responder a este trecho")
-                            // No apertar, e não no clique: o apertar fora do texto desfaz a
-                            // seleção, e o botão sumiria antes de o clique chegar.
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, window, cx| {
-                                    this.responder_ao_trecho(painel_id, window, cx);
-                                    cx.stop_propagation();
-                                }),
-                            ),
-                    )
+                            h_flex()
+                                .flex_none()
+                                .p(esp::E2)
+                                .gap(esp::E2)
+                                .rounded(crate::tema::raio::de(30.))
+                                .bg(Cores::flutuante())
+                                .child(botao("responder-trecho", Lucide::MessageSquareQuote, "Responder").on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.responder_ao_trecho(painel_id, window, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                ))
+                                .child(botao("copiar-trecho", Lucide::Copy, "Copiar").on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, window, cx| {
+                                        if let Some(trecho) = this.trecho.take() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(trecho.trim().to_string()));
+                                        }
+                                        gpui_kit::base::TextSelection::clear(window, cx);
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                )),
+                        )
                 });
                 // O botão flutua em cima da doca, fora do fluxo: no fluxo, ele roubava altura da
                 // conversa ao aparecer e a rolagem pulava (dono, 16/11/2026: "quando selecionar o

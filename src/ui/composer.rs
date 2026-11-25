@@ -22,7 +22,7 @@ use gpui_kit::*;
 
 use super::Janela;
 use super::componentes::{
-    BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
+    Anel, BotaoRedondo, FaixaCaixa, Flutuante as _, TamanhoBotao, VarianteRedonda, botao_fantasma, cor_da_faixa,
     popover, variante_fantasma,
 };
 use super::movimento::{self, Curva, com_estado};
@@ -40,31 +40,12 @@ pub(super) use seletores::Abertos as AbertosDoModelo;
 
 /// (valor, nome, descrição) dos modos de permissão do Claude Code.
 pub const MODOS: [(&str, &str, &str); 5] = [
-    (
-        "manual",
-        "Manual",
-        "Pede aprovação antes de cada edição ou comando",
-    ),
-    (
-        "acceptEdits",
-        "Aceitar edições",
-        "Edita arquivos sem perguntar; comandos ainda pedem",
-    ),
-    (
-        "plan",
-        "Planejar",
-        "Explora o código e apresenta um plano antes de mexer",
-    ),
-    (
-        "auto",
-        "Automático",
-        "Um classificador decide o que precisa de aprovação",
-    ),
-    (
-        "bypassPermissions",
-        "Sem perguntar",
-        "Faz tudo sem pedir permissão",
-    ),
+    // Textos curtos (Linear, 25/11/2026: "tudo muito verboso").
+    ("manual", "Manual", "Pede antes de tudo"),
+    ("acceptEdits", "Aceitar edições", "Edita sem pedir"),
+    ("plan", "Planejar", "Só planeja"),
+    ("auto", "Automático", "Decide sozinho"),
+    ("bypassPermissions", "Sem perguntar", "Nunca pede"),
 ];
 
 pub const MODELOS: [(&str, &str); 5] = [
@@ -1207,13 +1188,9 @@ impl Janela {
         // Um medidor deitado, e não um anel: o anel com um pedaço azul lia como o "carregando"
         // (dono, 18/11/2026: "melhora o design dessa parte de usos e contexto").
         let cor_arco = cor_da_faixa(fracao, Cores::destaque());
-        let barra = div()
-            .flex_none()
-            .w(r(if estreita { 16. } else { 24. }))
-            .h(r(4.))
-            .rounded_full()
-            .bg(Cores::traco())
-            .child(div().h_full().w(relative(fracao.clamp(0.06, 1.))).rounded_full().bg(cor_arco));
+        // Linear (25/11/2026): de novo um anel, fino, com o número ao lado ("essa parte da
+        // porcentagem de contexto tá feia", sobre o medidor deitado de 18/11).
+        let barra = Anel::new(("anel-contexto", b.painel as usize), fracao).diametro(14.).espessura(2.).cor(cor_arco);
         let cor_numero = if cor_arco == Cores::destaque() { Cores::tenue() } else { cor_arco };
         // O Codex e o Gemini não dizem o custo: o popover mostra os tokens.
         let o_que_abre = if chat.agente == crate::modelo::Agente::Claude { "O custo, o modelo e o Compactar" } else { "Os tokens, o modelo e o Compactar" };

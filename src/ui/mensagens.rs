@@ -1442,10 +1442,12 @@ impl Janela {
         // a folga de antes de 17/11, e ficava 5 px antes do fim do texto (folha dimensional,
         // 23/11/2026). Sobe 22, e não 14: com 8 de respiro no balão, ela entrava 6 px na primeira
         // linha do texto (revisão de design, 23/11/2026).
-        let barra = div().absolute().top(r(-22.)).right(dentro_da_borda(folga_do_balao(contexto.nivel)));
+        // Linear (25/11/2026): embaixo do balão, à direita, por cima do que vem depois; o alcance
+        // do ponteiro desce junto, para a barra não sumir no caminho até ela.
+        let barra = div().absolute().bottom(r(-32.)).right(dentro_da_borda(folga_do_balao(contexto.nivel)));
         v_flex()
             .w_full()
-            .map(com_alcance_da_barra)
+            .map(com_alcance_da_barra_embaixo)
             .group(grupo.clone())
             .child(div().relative().w_full().child(corpo).child(barra.child(barra_de_acoes(grupo, acoes, cx))))
             .into_any_element()
@@ -2191,13 +2193,6 @@ fn poco_de_codigo(raio: Rems) -> StyleRefinement {
 /// As ações de uma mensagem numa barra flutuante (28 em pílula, botões de 24): aparece seca no
 /// hover da mensagem, sem reservar altura. Quem chama a posiciona. Um fade aqui viraria animação
 /// em cadeia ao passar o ponteiro pela conversa.
-/// O hover da mensagem alcança a barra de ações inteira, que fica 14 acima dela (metade para
-/// fora): 16 de folga em cima, devolvidos pela margem. Sem isso, chegando por cima, a barra sumia
-/// antes do clique no lápis (teste de usabilidade, 16/11/2026).
-fn com_alcance_da_barra<E: Styled>(elemento: E) -> E {
-    elemento.pt(esp::E24).mt(r(-24.))
-}
-
 /// O mesmo para a barra embaixo da resposta, que ocupa os 30 depois do texto: 32 de folga
 /// embaixo, devolvidos pela margem.
 fn com_alcance_da_barra_embaixo<E: Styled>(elemento: E) -> E {
@@ -2231,11 +2226,8 @@ fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
         .h(r(28.))
         .p(esp::E2)
         .gap(esp::E2)
-        // Uma tecla em relevo, sem o anel azul do flutuante: opaca, com fio claro e a luz em cima.
-        .bg(Cores::cartao_elevado())
-        .border_1()
-        .border_color(Cores::borda_forte())
-        .shadow([crate::tema::aresta_de_tecla(), crate::tema::sombra_elevado()].concat())
+        // Chapada (Linear, 25/11/2026): o quase preto dos menus, sem fio nem sombra.
+        .bg(Cores::flutuante())
         .rounded(raio::de(28.))
         .invisible()
         .group_hover(grupo, |s| s.visible())
