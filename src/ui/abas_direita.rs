@@ -26,6 +26,24 @@ pub enum AbaDireita {
     Arquivo(usize),
 }
 
+/// Um arquivo aberto numa aba da direita (protótipo Linear, 25/11/2026: vários abertos). O de
+/// agora é o `arquivo_aberto` da janela, com o estado nela; os outros guardam o deles aqui.
+pub(super) struct AbaDeArquivo {
+    pub raiz: std::path::PathBuf,
+    pub caminho: String,
+    guardado: Option<EstadoDoArquivo>,
+}
+
+/// O que volta quando a aba volta: a edição (posta ou guardada pelo "Arquivo"), a prévia ou a
+/// fonte, as dobras abertas e a mudança à vista.
+struct EstadoDoArquivo {
+    edicao: Option<std::rc::Rc<super::edicao::Edicao>>,
+    edicao_fora: Option<std::rc::Rc<super::edicao::Edicao>>,
+    fonte: bool,
+    dobras: std::collections::HashSet<usize>,
+    edicao_atual: usize,
+}
+
 /// Abaixo desta largura (px a 100%), com mais de uma aba, elas ficam só com o símbolo.
 pub const LIMITE_DAS_ABAS: f32 = 520.;
 
@@ -93,23 +111,25 @@ impl Janela {
                 .when(!ativa, |a| a.on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))));
             abas.push(super::sem_arrastar().flex().flex_none().child(aba).into_any_element());
         }
-        if let Some((raiz, caminho)) = arquivo {
-            let ativa = matches!(visivel, AbaDireita::Arquivo(_));
-            let nome = caminho.rsplit_once('/').map_or(caminho.clone(), |(_, n)| n.to_string());
-            let dica = SharedString::from(raiz.join(&caminho).display().to_string());
-            let janela = cx.entity().downgrade();
-            let fechar = botao_icone("fechar-arquivo", Lucide::X, "Fechar o arquivo", TamanhoBotao::Linha, window, cx)
+        for (i, aba) in self.abas_de_arquivo.iter().enumerate() {
+            let atual = arquivo.as_ref().is_some_and(|(r, c)| *r == aba.raiz && *c == aba.caminho);
+            let ativa = atual && matches!(visivel, AbaDireita::Arquivo(_));
+            let nome = aba.caminho.rsplit_once('/').map_or(aba.caminho.clone(), |(_, n)| n.to_string());
+            let dica = SharedString::from(aba.raiz.join(&aba.caminho).display().to_string());
+            let fechar = botao_icone(("fechar-arquivo", i), Lucide::X, "Fechar o arquivo", TamanhoBotao::Linha, window, cx)
                 .size(r(16.))
                 .rounded(raio::de(16.))
-                .on_click(move |_, window, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    let _ = janela.update(cx, |this, cx| this.fechar_arquivo(window, cx));
-                });
-            let aba = aba_da_direita_com("aba-arquivo", painel_arquivo::icone_do_arquivo(&caminho), nome.into(), ativa, true, window)
+                    this.fechar_aba_de_arquivo(i, window, cx);
+                }));
+            let aba = aba_da_direita_com(("aba-arquivo", i), painel_arquivo::icone_do_arquivo(&aba.caminho), nome.into(), ativa, true, window)
                 .when(ativa, |a| a.pr(esp::E6).child(fechar))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
-                .when(!ativa, |a| a.on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Arquivo(0), cx))));
-            abas.push(super::sem_arrastar().flex().min_w_0().child(aba).into_any_element());
+                .when(!ativa, |a| a.on_click(cx.listener(move |this, _, window, cx| this.trocar_para_aba_de_arquivo(i, window, cx))))
+                // O clique do meio fecha, como nas abas das conversas.
+                .on_mouse_up(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.fechar_aba_de_arquivo(i, window, cx)));
+            abas.push(super::sem_arrastar().flex().when(ativa, |d| d.min_w_0()).when(!ativa, |d| d.flex_none()).child(aba).into_any_element());
         }
         // 8 em cima e 6 dos lados, a fileira de 26 e 2 até o conteúdo (protótipo).
         self.arrastavel(id)
@@ -125,8 +145,23 @@ impl Janela {
             .child(self.botoes_da_direita(false, window, cx))
     }
 
-    /// Fecha o arquivo da direita; a aba volta à do chat. O editor grava o que falta antes de sair.
+    /// Fecha o arquivo de agora (a aba dele); a direita vai à aba vizinha, ou à do chat.
     pub(super) fn fechar_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let atual = self.indice_do_arquivo_atual();
+        match atual {
+            Some(i) => self.fechar_aba_de_arquivo(i, window, cx),
+            None => self.limpar_arquivo(window, cx),
+        }
+    }
+
+    /// O arquivo de agora entre as abas.
+    fn indice_do_arquivo_atual(&self) -> Option<usize> {
+        let (raiz, caminho) = self.arquivo_aberto.as_ref()?;
+        self.abas_de_arquivo.iter().position(|a| a.raiz == *raiz && a.caminho == *caminho)
+    }
+
+    /// Sem arquivo à vista: o editor grava o que falta e a direita volta à aba do chat.
+    fn limpar_arquivo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.largar_editor(window, cx);
         self.arquivo_fonte = false;
         self.arquivo_aberto = None;
@@ -136,6 +171,73 @@ impl Janela {
         self.busca_arquivo.aberta = false;
         if matches!(self.aba_direita, AbaDireita::Arquivo(_)) {
             self.aba_direita = AbaDireita::Chat;
+        }
+        cx.notify();
+    }
+
+    /// Fecha a aba `i`. A de agora passa para a vizinha (a da direita, ou a da esquerda).
+    pub(super) fn fechar_aba_de_arquivo(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if i >= self.abas_de_arquivo.len() {
+            return;
+        }
+        let era_a_atual = self.indice_do_arquivo_atual() == Some(i);
+        self.abas_de_arquivo.remove(i);
+        if !era_a_atual {
+            cx.notify();
+            return;
+        }
+        if self.abas_de_arquivo.is_empty() {
+            self.limpar_arquivo(window, cx);
+            return;
+        }
+        // O estado do arquivo que fechou não vai para a aba nenhuma.
+        self.arquivo_aberto = None;
+        self.trocar_para_aba_de_arquivo(i.min(self.abas_de_arquivo.len() - 1), window, cx);
+    }
+
+    /// Guarda o estado do arquivo de agora na aba dele, antes de outro arquivo tomar o lugar.
+    pub(super) fn guardar_aba_de_arquivo(&mut self) {
+        let Some(i) = self.indice_do_arquivo_atual() else {
+            return;
+        };
+        self.abas_de_arquivo[i].guardado = Some(EstadoDoArquivo {
+            edicao: self.arquivo_edicao.clone(),
+            edicao_fora: self.edicao_fora.clone(),
+            fonte: self.arquivo_fonte,
+            dobras: self.dobras_abertas.borrow().clone(),
+            edicao_atual: self.edicao_atual,
+        });
+    }
+
+    /// Põe o arquivo na lista das abas (depois do de agora), se ainda não está.
+    pub(super) fn aba_para_o_arquivo(&mut self, raiz: &std::path::Path, caminho: &str) {
+        if self.abas_de_arquivo.iter().any(|a| a.raiz == raiz && a.caminho == caminho) {
+            return;
+        }
+        let depois = self.indice_do_arquivo_atual().map_or(self.abas_de_arquivo.len(), |i| i + 1);
+        self.abas_de_arquivo.insert(depois, AbaDeArquivo { raiz: raiz.to_path_buf(), caminho: caminho.to_string(), guardado: None });
+    }
+
+    /// Vai à aba de arquivo `i`, com o estado que ela guardou.
+    pub(super) fn trocar_para_aba_de_arquivo(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(aba) = self.abas_de_arquivo.get(i) else {
+            return;
+        };
+        let (raiz, caminho) = (aba.raiz.clone(), aba.caminho.clone());
+        if self.arquivo_aberto.as_ref().is_some_and(|(r, c)| *r == raiz && *c == caminho) {
+            self.escolher_aba(AbaDireita::Arquivo(0), cx);
+            return;
+        }
+        self.edicao_pedida = None;
+        self.abrir_arquivo(raiz, caminho, window, cx);
+        if let Some(estado) = self.abas_de_arquivo.get_mut(i).and_then(|a| a.guardado.take()) {
+            self.arquivo_edicao = estado.edicao;
+            self.edicao_fora = estado.edicao_fora;
+            self.arquivo_fonte = estado.fonte;
+            *self.dobras_abertas.borrow_mut() = estado.dobras;
+            self.edicao_atual = estado.edicao_atual;
+            self.edicao_rolar.set(self.arquivo_edicao.is_some());
+            self.esquecer_vista();
         }
         cx.notify();
     }
@@ -158,7 +260,14 @@ fn aba_da_direita(id: &'static str, simbolo: Lucide, nome: SharedString, ativa: 
 }
 
 /// A aba da direita; a de arquivo leva o símbolo também quando escolhida (e o nome em 12).
-fn aba_da_direita_com(id: &'static str, simbolo: Lucide, nome: SharedString, ativa: bool, simbolo_na_ativa: bool, window: &Window) -> Stateful<Div> {
+fn aba_da_direita_com(
+    id: impl Into<ElementId>,
+    simbolo: Lucide,
+    nome: SharedString,
+    ativa: bool,
+    simbolo_na_ativa: bool,
+    window: &Window,
+) -> Stateful<Div> {
     div()
         .id(id)
         .flex()

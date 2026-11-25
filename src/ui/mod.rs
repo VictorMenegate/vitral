@@ -520,6 +520,8 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// Os arquivos abertos nas abas da direita, na ordem delas.
+    abas_de_arquivo: Vec<abas_direita::AbaDeArquivo>,
     /// As dobras de linhas iguais abertas no arquivo aberto (pela primeira linha delas).
     dobras_abertas: std::cell::RefCell<std::collections::HashSet<usize>>,
     /// O editor aberto sobre o arquivo (um clique no texto): grava sozinho e pergunta quando o
@@ -990,6 +992,7 @@ impl Janela {
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
             dobras_abertas: Default::default(),
+            abas_de_arquivo: Vec::new(),
             editor_arquivo: None,
             arquivo_fonte: false,
             codigo_esquerda: Default::default(),
