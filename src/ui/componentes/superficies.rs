@@ -444,15 +444,9 @@ pub fn ficha_de_metal(altura: f32) -> Div {
 
 /// A mesma ficha com o raio dado.
 pub fn ficha_do_escolhido(raio: Pixels) -> Div {
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .rounded(raio)
-        .shadow(crate::tema::sombra_elevado())
-        .child(abertura(Encaixe::Cobrir, Some(Cores::veu_de_placa()), Corners::all(raio)))
-        .child(div().absolute().top_0().left_0().size_full().rounded(raio).shadow(aresta_de_tecla()))
+    // Linear (25/11/2026): chapada, a cor cheia do escolhido (a mesma da lista, da aba aberta e do
+    // seu balão), sem o metal, a sombra e a aresta de tecla de antes.
+    div().absolute().top_0().left_0().size_full().rounded(raio).bg(Cores::selecao())
 }
 
 /// Marca o item de `altura` como escolhido (o visto à direita) e, se for, põe a ficha de metal

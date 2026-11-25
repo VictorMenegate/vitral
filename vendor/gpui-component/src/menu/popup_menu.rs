@@ -1362,10 +1362,11 @@ impl PopupMenu {
 
         let is_submenu = matches!(item, PopupMenuItem::Submenu { .. });
 
-        // Vitral: itens de 32 com 10 de margem, rótulo 14/20 e 10 entre ícone e rótulo.
+        // Vitral: itens de 26 com 10 de margem, rótulo 12,5/18 e 10 entre ícone e rótulo (Linear,
+        // 25/11/2026: "diminui também o espaço de todos os menus"; eram 32 e 14/20).
         let (item_height, radius) = match self.size {
             Size::Small => (px(20.), options.radius),
-            _ => (z(32.), options.radius),
+            _ => (z(26.), options.radius),
         };
         let rotulo = |label: &SharedString, checked: bool| {
             div()
@@ -1381,8 +1382,8 @@ impl PopupMenu {
         let this = MenuItemElement::new(ix)
             .flex_none()
             .relative()
-            .text_size(z(14.))
-            .line_height(z(20.))
+            .text_size(z(12.5))
+            .line_height(z(18.))
             .py_0()
             .px(z(10.))
             .rounded(radius)

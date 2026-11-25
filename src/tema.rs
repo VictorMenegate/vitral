@@ -1054,6 +1054,44 @@ pub mod superficie {
         sobre_destaque: 0xffffffff,
     };
 
+    /// "Linear" (25/11/2026): o acabamento do protótipo no jeito do Linear, que o dono aprovou
+    /// ("tudo que fiz lá vc vai fazer aqui", `tarefas/linear/vitral-linear.html`). Chapado e sem
+    /// profundidade: sem aro, sem luz na quina, sem sombra na base nem brilho por dentro, sem sombra
+    /// de elevação. As cores são as que ele escolheu na Aparência do protótipo (Destaque #3170ff,
+    /// painel #090a15, lista #030926, contraste 74): a moldura da caixa, os menus e os diálogos no
+    /// mesmo quase preto (#030307), e o escolhido da lista, a aba aberta e o seu balão na MESMA cor
+    /// cheia (o destaque a 22% sobre a lista, #0d2056).
+    pub const LINEAR: Variante = Variante {
+        vidro: 0x030926ff,
+        vidro_leitura: 0x030926e3,
+        cartao: 0x090a15f2,
+        cartao_elevado: 0x191a24ff,
+        flutuante: 0x030307ff,
+        dialogo: 0x050509ff,
+        gaveta: 0x090a15fa,
+        preto: 0x030307ff,
+        aro: 0x00000000,
+        brilho_topo: 0x00000000,
+        sombra_de_baixo: 0x00000000,
+        brilho_de_dentro: 0x00000000,
+        reflexo: 0.,
+        sombra: 0.,
+        selecao: 0x0d2056ff,
+        caixa_quente: 0x13141fff,
+        caixa_preta: 0x13141fff,
+        raio_peca: 20.,
+        texto: 0xf0f0f1ff,
+        tenue: 0xacacb0ff,
+        apagado: 0x939398ff,
+        fantasma: 0xacacb099,
+        base_da_tinta: 0x090a15ff,
+        destaque: 0x3170ffff,
+        destaque_hover: 0x5085ffff,
+        destaque_ativo: 0x2459e0ff,
+        destaque_texto: 0x8eb0ffff,
+        ..GRAFITE
+    };
+
     /// Proposta "Noite" (17/11/2026, "dá uma melhorada na paleta"): o Grafite puxado para o azul
     /// profundo da base, com as peças em azul-ardósia e o texto tênue mais separado do apagado.
     pub const NOITE: Variante = Variante {
@@ -1109,7 +1147,7 @@ pub mod superficie {
     };
 
     /// O acabamento em uso.
-    pub const ATUAL: Variante = GRAFITE;
+    pub const ATUAL: Variante = LINEAR;
 
     /// O acabamento em uso: o `ATUAL` ou, para comparar propostas na bancada, o que o
     /// `VITRAL_PALETA` (noite, neutro, marinho) pedir.
@@ -1119,6 +1157,7 @@ pub mod superficie {
             Ok("noite") => &NOITE,
             Ok("neutro") => &NEUTRO,
             Ok("marinho") => &MARINHO,
+            Ok("grafite") => &GRAFITE,
             _ => &ATUAL,
         })
     }
@@ -1296,7 +1335,8 @@ impl Cores {
         rgba(superficie::atual().veu_de_botao).into()
     }
     pub fn pressionado() -> Hsla {
-        rgba(0xffffff1f).into()
+        // 15%: acima do escolhido, que no Linear é uma cor cheia (#0d2056) e não um véu.
+        rgba(0xffffff26).into()
     }
     /// Escolhido num segmentado de outra cor (ciano no esforço).
     pub fn selecao_de(cor: Hsla) -> Hsla {
@@ -1428,7 +1468,8 @@ impl Cores {
     /// Desceu de 0,20 para 0,16 com a fala um degrau abaixo da resposta (balão e cartão de erro,
     /// 16/11/2026).
     pub fn balao() -> Hsla {
-        Self::tinta_solida(Self::destaque(), 0.16)
+        // No Linear (25/11/2026), a mesma cor cheia do escolhido da lista e da aba aberta.
+        Self::selecao()
     }
     /// O destaque para texto pequeno: o cheio pode ficar abaixo de 4,5:1 nas peças.
     pub fn destaque_texto() -> Hsla {
@@ -1788,11 +1829,11 @@ pub(crate) mod testes {
             assert!(realce(Cores::traco()) >= 1.12, "traço sobre {nome_fundo}");
             assert!(realce(Cores::linha()) >= 1.08, "linha sobre {nome_fundo}");
         }
-        // O recuo é um escuro por cima: no acabamento de hoje ele aparece também no flutuante
-        // (antes sumia ali, e por isso existe o `recuo_no_flutuante`, que segue valendo como o
-        // claro de quem precisa de recuo sobre um fundo já escuro).
+        // O recuo é um escuro por cima. No acabamento Linear (25/11/2026) o flutuante é o quase
+        // preto da moldura da caixa, o tom mais escuro da tela: ali um escuro não aparece, e no
+        // protótipo aprovado os recuos dentro do menu também são desse preto. Quem precisa de recuo
+        // sobre um fundo já escuro usa o `recuo_no_flutuante`, um claro, que tem de aparecer.
         let flutuante = fundos[0].1;
-        assert!(contraste(sobre(Cores::recuo(), flutuante), flutuante) >= 1.05);
         assert!(contraste(sobre(Cores::recuo_no_flutuante(), flutuante), flutuante) >= 1.08);
     }
 

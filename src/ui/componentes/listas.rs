@@ -1133,7 +1133,8 @@ impl Render for ListaDeEscolha {
             .relative()
             .w_full()
             .rounded(raio)
-            .child(super::metal::fundo_da_lista(raio))
+            // Chapado (Linear, 25/11/2026): o quase preto dos flutuantes, sem o metal.
+            .bg(Cores::flutuante())
             .child(div().relative().w_full().px(esp::E8).py(esp::E6).child(comando))
     }
 }

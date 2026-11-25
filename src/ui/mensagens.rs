@@ -1095,8 +1095,8 @@ impl Janela {
                             .py(dentro_da_borda(8.))
                             .rounded(raio)
                             .cursor_pointer()
-                            // O mesmo buraco dos balões da conversa, por cima da faixa.
-                            .child(fundo_da_lista(raio))
+                            // A cor cheia dos balões da conversa (Linear, 25/11/2026).
+                            .bg(Cores::balao())
                             .child(div().relative().fala().text_color(Cores::texto()).line_clamp(2).child(texto))
                             .dica_no_ponteiro(|window, cx| Tooltip::new("Ir até esta mensagem").build(window, cx))
                             .on_click(move |_, _, cx| {
@@ -1321,7 +1321,7 @@ impl Janela {
                         .items_center()
                         .rounded(raio::de(32.))
                         .relative()
-                        .child(fundo_da_lista(raio::de(32.)))
+                        .bg(Cores::balao())
                         .mono()
                         .text_color(Cores::codigo())
                         .child(comando.to_string()),
@@ -1373,8 +1373,10 @@ impl Janela {
                         // lista"): o pedaço da chapa de metal que está atrás, com o véu azul e o
                         // fosco da base por cima, sem fio e sem a ponta.
                         .relative()
-                        .rounded(crate::tema::raio_da_peca())
-                        .child(fundo_da_lista(crate::tema::raio_da_peca()))
+                        // Chapado (Linear, 25/11/2026): a cor cheia do escolhido, sem o buraco no
+                        // metal de antes.
+                        .rounded(raio::CARTAO)
+                        .bg(Cores::balao())
                         .children(pilulas)
                         .when(com_texto, |s| {
                             // A fala um degrau abaixo da resposta (14/22 no texto, não no branco),

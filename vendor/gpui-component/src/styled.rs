@@ -295,9 +295,11 @@ impl<T: Styled + Sized> ThemeStyled for T {
         let theme = cx.theme();
         // No border: the edge is the ring inside `popover_shadow`, which is how
         // shadcn draws it and the only way the shadow can show through it.
+        // Vitral (Linear, 25/11/2026): chapado, sem sombra nem anel; o menu é o quase preto da
+        // moldura da caixa e se separa da peça pelo tom.
+        let _ = popover_shadow(popover_ring(cx), 1.);
         self.bg(theme.popover)
             .text_color(theme.popover_foreground)
-            .shadow(popover_shadow(popover_ring(cx), 1.))
             // Vitral: popups com o raio das peças (o `radius.lg` do tema), como os diálogos.
             .rounded(theme.radius_lg)
     }

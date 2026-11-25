@@ -9,7 +9,7 @@ use gpui_kit::*;
 use super::base::Simbolo;
 use super::estado::{Sinal, numero_painel};
 use super::superficies::Flutuante as _;
-use crate::tema::{Cores, Lucide, Tipo as _, esp, gradiente_quente, halo_foco, r, raio, tam};
+use crate::tema::{Cores, Lucide, Tipo as _, esp, halo_foco, r, raio, tam};
 
 /// Grupo de hover da aba: no hover, o × aparece e o ponto do estado some.
 pub const GRUPO_DA_ABA: &str = "aba";
@@ -164,11 +164,11 @@ impl Aba {
         let (fundo, texto, borda): (Background, Hsla, Hsla) = match self.tom {
             // O contorno é o fio preto de 1 px, o da casca de antes, numa linha só (dono,
             // 16/11/2026: "diminui as bordas").
-            TomAba::Unica | TomAba::Ativa => (gradiente_quente(), Cores::forte(), Cores::preto()),
-            // A aba de um painel sem o foco: lisa, quase da cor do painel, só com o contorno.
-            TomAba::Inativa => (Cores::tinta_solida(Cores::forte(), 0.03).into(), Cores::tenue(), Cores::preto()),
-            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), Cores::preto()),
-            TomAba::Normal => (Cores::tinta_solida(Cores::forte(), 0.05).into(), Cores::tenue(), transparent_black()),
+            // Linear (25/11/2026): a aba aberta na cor cheia do escolhido (a mesma do seu balão), em
+            // todo painel; as outras no quase preto da moldura; sem contorno.
+            TomAba::Unica | TomAba::Ativa | TomAba::Inativa => (Cores::selecao().into(), Cores::forte(), transparent_black()),
+            TomAba::Selecionada => (Cores::cartao_elevado().into(), Cores::forte(), transparent_black()),
+            TomAba::Normal => (Cores::preto().into(), Cores::tenue(), transparent_black()),
         };
         // O estado no contorno (dono, 18/11/2026: "faz na borda preta", "tenta não fazer muito
         // chamativo" e, com o fio de 1 px apagado, "dá pra ver nada"): um fio de 2 px na cor do
