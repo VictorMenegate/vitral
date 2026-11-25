@@ -1047,23 +1047,16 @@ impl Janela {
             };
             (curto.clone(), com_claude(&curto), detalhe)
         };
-        // Na dupla, o chip diz os dois: primeiro quem trabalhou por último.
-        let nome = match &chat.parceiro {
-            Some(p) => format!("{} + {}", chat.agente.nome(), p.agente.nome()),
-            None => nome,
-        };
+        // Na dupla, o chip mostra só quem responde a uma mensagem sem "@" (`AlvoDaDupla::OsDois`
+        // vai a `chat.agente`). As duas marcas juntas liam como "a revisão do outro ainda está
+        // ligada", mesmo com o outro parado no limite do plano (dono, 25/11/2026: "deixa só o que
+        // vai sair se eu mandar uma mensagem normal"). O @ da caixa continua oferecendo os dois.
         let aberto = self.pop_caixa == Some((b.painel, PopCaixa::Modelo));
-        let marca_de = Marca::do_agente;
-        // Na dupla, as duas marcas, em toda largura (a de quem trabalhou por último na frente).
-        let simbolo = match &chat.parceiro {
-            Some(p) => Simbolo::Dupla(marca_de(chat.agente), marca_de(p.agente)),
-            None => Simbolo::Marca(marca_de(chat.agente)),
-        };
+        let simbolo = Simbolo::Marca(Marca::do_agente(chat.agente));
         // Na caixa estreita (3 painéis a 150%) o modo e o esforço viram só o ícone, e o modelo
         // guarda o nome da família ("Opus", "Fable"): é o que diz com quem se fala. Só quando a
-        // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`); na
-        // dupla são as duas marcas, sem nome.
-        let familia_na_estreita = b.estreita() && chat.parceiro.is_none() && self.paineis[ix].modelo_so_icone.is_none();
+        // largura ainda dá (`modelo_so_icone`, medido como o esforço: `decidir_esforco`).
+        let familia_na_estreita = b.estreita() && self.paineis[ix].modelo_so_icone.is_none();
         let rotulo_do_chip = if b.larga() {
             nome.clone()
         } else if familia_na_estreita {

@@ -8,7 +8,7 @@ use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{Confirmacao, TomConfirmacao, confirmar},
+    componentes::{ChaveAviso as _, Confirmacao, Tom, TomConfirmacao, aviso, confirmar},
 };
 use crate::{atualizacao, tema::Lucide};
 
@@ -175,12 +175,26 @@ impl Janela {
         let liberar: Rc<dyn Fn(&mut App)> = Rc::new(move |cx| {
             let _ = fraca.update(cx, |this, _| this.confirmando_saida = false);
         });
-        let confirmacao = match em_risco {
+        let confirmacao = match &em_risco {
             Some((nome, motivo)) => {
-                let pasta = self.pasta_nao_salvos(cx).map(|p| super::boas_vindas::com_til(&p)).unwrap_or_default();
-                confirmacao_de_texto_nao_salvo(&nome, motivo, &pasta, n, parar)
+                let pasta = self.pasta_nao_salvos(cx).map_or_else(|| "a pasta de dados do Vitral".into(), |p| super::boas_vindas::com_til(&p));
+                confirmacao_de_texto_nao_salvo(nome, motivo, &pasta, n, parar)
             }
             None => confirmacao_de_parar(n, parar),
+        };
+        // Com texto em risco, a cópia vem antes de fechar; se ela não sai, nada fecha.
+        let copiar = em_risco.is_some();
+        let fraca = cx.weak_entity();
+        let seguir = move |window: &mut Window, cx: &mut App| {
+            if copiar {
+                let copiou = fraca.update(cx, |this, cx| this.copiar_texto_do_editor(cx)).unwrap_or(Ok(()));
+                if let Err(erro) = copiou {
+                    let frase = format!("Não deu para guardar a cópia do texto ({erro}). O Vitral continua aberto.");
+                    window.push_notification(aviso(Tom::Erro, frase).title("Texto não salvo").autohide(false).chave("salvar-arquivo"), cx);
+                    return;
+                }
+            }
+            seguir(window, cx);
         };
         confirmar(confirmacao, seguir, Some(liberar), window, cx);
         false

@@ -161,16 +161,29 @@ pub fn fechar(chat: &mut Chat, em_curso: &EmCurso, resultado: Option<Item>) {
 /// cancelada (o chat volta ao agente dele e o turno do revisor sai), com a linha de que ela não
 /// terminou no lugar. O turno de trabalho já tinha terminado: não há o que retomar, e o
 /// "Revisar com o Codex" continua à mão. Devolve os chats mexidos.
+///
+/// O estado (com a revisão em curso) e a conversa são arquivos gravados um depois do outro, e o
+/// estado pode voltar do `.anterior`: a marca pode ser mais velha que a conversa. Por isso só se
+/// corta o que vem depois de `desde_item` quando é mesmo o turno do revisor (marcas de vez,
+/// ferramentas, falas). Com mensagem sua, entrega ou o resultado de uma revisão ali, a revisão já
+/// tinha acabado: só o agente volta, e a conversa fica inteira.
 pub fn desfazer_as_cortadas(chats: &mut [Chat]) -> Vec<String> {
     let mut mexidos = Vec::new();
     for chat in chats.iter_mut() {
-        let Some(em_curso) = chat.revisao_do_par.clone() else {
+        let Some(mut em_curso) = chat.revisao_do_par.clone() else {
             continue;
         };
-        let aviso = resultado(em_curso.principal.outro(), &[], CORTADA_AO_FECHAR, true);
-        fechar(chat, &em_curso, Some(aviso));
-        chat.turno_aberto = false;
-        chat.atualizado_em = chat.atualizado_em.min(em_curso.atualizado_antes.max(chat.lido_em));
+        let depois = &chat.itens[em_curso.desde_item.min(chat.itens.len())..];
+        let acabou = depois.iter().any(|i| matches!(i, Item::Usuario { .. } | Item::Entrega { .. }) || e_resultado_de_revisao(i));
+        if acabou {
+            em_curso.desde_item = chat.itens.len();
+            fechar(chat, &em_curso, None);
+        } else {
+            let aviso = resultado(em_curso.principal.outro(), &[], CORTADA_AO_FECHAR, true);
+            fechar(chat, &em_curso, Some(aviso));
+            chat.turno_aberto = false;
+            chat.atualizado_em = chat.atualizado_em.min(em_curso.atualizado_antes.max(chat.lido_em));
+        }
         mexidos.push(chat.id.clone());
     }
     mexidos
@@ -606,6 +619,26 @@ mod testes {
         assert_eq!(chats[0].itens.len(), 4);
         // O chat sem revisão não grava o campo.
         assert!(serde_json::to_value(&chats[1]).unwrap().get("revisao_do_par").is_none());
+
+        // A marca mais velha que a conversa (o estado gravado antes, ou de volta do `.anterior`):
+        // a revisão já tinha acabado e a conversa seguiu. Só o agente volta; nada sai.
+        let mut seguiu = Chat::novo("s".into(), "t", std::env::temp_dir());
+        seguiu.itens = vec![usuario("arruma"), fala("pronto")];
+        let em_curso = abrir(&mut seguiu);
+        // A conversa como a revisão fechada a gravou: o turno do revisor já saiu e o cartão entrou.
+        seguiu.itens = vec![
+            usuario("arruma"),
+            fala("pronto"),
+            Item::Revisao { de: Agente::Codex, texto: "Faltou o teste.".into(), em: 0, mandada: false },
+            usuario("e agora?"),
+            fala("feito"),
+        ];
+        let mut chats = vec![seguiu];
+        assert_eq!(desfazer_as_cortadas(&mut chats), ["s"]);
+        let s = &chats[0];
+        assert_eq!(s.itens.len(), 5, "a conversa fica inteira: {:?}", s.itens);
+        assert_eq!(s.agente, em_curso.principal);
+        assert!(s.parceiro.is_none() && s.revisao_do_par.is_none());
     }
 
     /// A ação "Revisar com o Codex" só faz sentido com um turno pronto do agente do chat que

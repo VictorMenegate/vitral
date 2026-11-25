@@ -262,40 +262,90 @@ impl Sessao {
 /// Grava o arquivo inteiro sem nunca deixá-lo pela metade. O `fs::write` direto trunca o
 /// original antes de escrever: disco cheio, cota ou uma queda no meio deixavam só um pedaço do
 /// arquivo (conferido com o limite de tamanho de arquivo do sistema, 25/11/2026). Aqui o texto
-/// vai para um arquivo novo na mesma pasta, com as permissões do original, e só depois de
-/// escrito e sincronizado toma o lugar dele (o `rename` na mesma pasta é atômico); com erro, o
-/// original fica como estava. O link simbólico continua link: grava-se no arquivo a que ele
-/// aponta. Dois casos gravam no lugar, como antes: o arquivo com mais de um nome (link físico),
-/// para os outros nomes verem o texto novo, e a pasta onde não se pode criar arquivo.
+/// vai para um arquivo novo na mesma pasta, já criado com as permissões do original (o segredo de
+/// um `.env` 0600 não fica legível no meio), e só depois de escrito e sincronizado toma o lugar
+/// dele (o `rename` na mesma pasta é atômico); com erro, o original fica como estava. O link
+/// simbólico continua link: grava-se no arquivo a que ele aponta, mesmo que esse arquivo não
+/// exista mais.
+///
+/// Grava no lugar, como antes, quando trocar o arquivo mudaria o que ele é: o somente leitura (a
+/// gravação falha, como falhava, em vez de passar por cima), o de outro dono ou de outro grupo (o
+/// novo seria seu), o que tem mais de um nome (link físico; os outros nomes não veriam o texto
+/// novo), a pasta onde não se pode criar arquivo e o arquivo que não deixa ser trocado (no
+/// Windows, aberto por outro programa sem permitir).
 fn gravar_por_inteiro(caminho: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
-    let destino = match fs::symlink_metadata(caminho) {
-        Ok(dados) if dados.file_type().is_symlink() => dunce::canonicalize(caminho).unwrap_or_else(|_| caminho.to_path_buf()),
-        _ => caminho.to_path_buf(),
-    };
+    let destino = destino_do_link(caminho);
     let original = fs::metadata(&destino).ok();
+    if original.as_ref().is_some_and(|dados| dados.permissions().readonly()) {
+        return fs::write(&destino, bytes);
+    }
     #[cfg(unix)]
     if original.as_ref().is_some_and(|dados| std::os::unix::fs::MetadataExt::nlink(dados) > 1) {
         return fs::write(&destino, bytes);
     }
     let pasta = destino.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let temporario = pasta.join(format!(".{}.vitral-{}", nome_do_arquivo(&destino), crate::modelo::novo_id()));
-    let mut arquivo = match fs::OpenOptions::new().write(true).create_new(true).open(&temporario) {
+    let mut abrir = fs::OpenOptions::new();
+    abrir.write(true).create_new(true);
+    #[cfg(unix)]
+    if let Some(dados) = &original {
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+        abrir.mode(dados.permissions().mode() & 0o777);
+    }
+    let mut arquivo = match abrir.open(&temporario) {
         Ok(arquivo) => arquivo,
         Err(erro) if erro.kind() == std::io::ErrorKind::PermissionDenied => return fs::write(&destino, bytes),
         Err(erro) => return Err(erro),
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let dono = |dados: &fs::Metadata| (dados.uid(), dados.gid());
+        let outro_dono = match (&original, arquivo.metadata()) {
+            (Some(original), Ok(novo)) => dono(original) != dono(&novo),
+            _ => false,
+        };
+        if outro_dono {
+            drop(arquivo);
+            let _ = fs::remove_file(&temporario);
+            return fs::write(&destino, bytes);
+        }
+    }
     let escrito = arquivo.write_all(bytes).and_then(|()| match &original {
+        // De novo depois de escrever: a criação passa pelo umask, e o modo tem de ser o do original.
         Some(dados) => arquivo.set_permissions(dados.permissions()),
         None => Ok(()),
     });
     let escrito = escrito.and_then(|()| arquivo.sync_all());
     drop(arquivo);
-    let resultado = escrito.and_then(|()| fs::rename(&temporario, &destino));
-    if resultado.is_err() {
-        let _ = fs::remove_file(&temporario);
+    match escrito.and_then(|()| fs::rename(&temporario, &destino)) {
+        Ok(()) => Ok(()),
+        Err(erro) => {
+            let _ = fs::remove_file(&temporario);
+            if erro.kind() == std::io::ErrorKind::PermissionDenied { fs::write(&destino, bytes) } else { Err(erro) }
+        }
     }
-    resultado
+}
+
+/// O arquivo a que o caminho leva, seguindo os links simbólicos um a um (o alvo relativo conta da
+/// pasta do link). Diferente do `canonicalize`, não precisa que o alvo exista: o link cujo
+/// arquivo foi apagado continua link, e a gravação cria o arquivo de novo no lugar dele.
+fn destino_do_link(caminho: &Path) -> PathBuf {
+    let mut atual = caminho.to_path_buf();
+    // Um laço de links (a → b → a) para aqui; o `rename` então troca o próprio link.
+    for _ in 0..40 {
+        let Ok(dados) = fs::symlink_metadata(&atual) else { break };
+        if !dados.file_type().is_symlink() {
+            break;
+        }
+        let Ok(alvo) = fs::read_link(&atual) else { break };
+        atual = match atual.parent() {
+            Some(pasta) if alvo.is_relative() => pasta.join(alvo),
+            _ => alvo,
+        };
+    }
+    atual
 }
 
 /// A gravação sozinha: vence `SALVAR_SOZINHO` depois da última tecla.
@@ -371,6 +421,9 @@ pub(super) struct Editor {
     esperando: bool,
     /// A faixa do conflito já estava na tela no quadro anterior (ela entra uma vez por conflito).
     faixa_vista: std::cell::Cell<bool>,
+    /// A cópia em `nao_salvos` já guardada ao fechar, com o texto dela: o mesmo texto não vira
+    /// outra cópia no segundo passo do fechar.
+    copia: Option<(String, PathBuf)>,
     _gravar: Option<Task<()>>,
     _mudou: Subscription,
     _vigia: Task<()>,
@@ -466,6 +519,7 @@ impl Janela {
             erro: None,
             esperando: false,
             faixa_vista: Default::default(),
+            copia: None,
             _gravar: None,
             _mudou: mudou,
             _vigia: vigia,
@@ -659,9 +713,16 @@ pub(super) fn guardar_nao_salvo(pasta: &Path, original: &Path, texto: &str) -> s
         match fs::OpenOptions::new().write(true).create_new(true).open(&caminho) {
             Ok(mut arquivo) => {
                 use std::io::Write as _;
-                arquivo.write_all(texto.as_bytes())?;
-                arquivo.sync_all()?;
-                return Ok(caminho);
+                let escrito = arquivo.write_all(texto.as_bytes()).and_then(|()| arquivo.sync_all());
+                drop(arquivo);
+                // A cópia pela metade não fica parecendo a cópia do texto.
+                return match escrito {
+                    Ok(()) => Ok(caminho),
+                    Err(erro) => {
+                        let _ = fs::remove_file(&caminho);
+                        Err(erro)
+                    }
+                };
             }
             Err(erro) if erro.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(erro) => return Err(erro),
@@ -691,25 +752,36 @@ impl Janela {
         motivo.map(|motivo| (nome_do_arquivo(editor.sessao.caminho()), motivo))
     }
 
+    /// O "Fechar mesmo assim" com texto em risco: o texto do editor vai para a cópia em
+    /// `nao_salvos` antes de qualquer coisa fechar. Com erro (disco cheio, sem a pasta de dados), o
+    /// erro, e quem chamou não fecha: a cópia é a única coisa que guardaria o texto.
+    pub(super) fn copiar_texto_do_editor(&mut self, cx: &App) -> Result<(), String> {
+        let pasta = self.pasta_nao_salvos(cx);
+        let Some(editor) = self.editor_arquivo.as_mut() else { return Ok(()) };
+        let texto = editor.estado.read(cx).value().to_string();
+        if editor.copia.as_ref().is_some_and(|(copiado, caminho)| *copiado == texto && caminho.is_file()) {
+            return Ok(());
+        }
+        let pasta = pasta.ok_or_else(|| "a pasta de dados do Vitral não está aberta".to_string())?;
+        let caminho = guardar_nao_salvo(&pasta, editor.sessao.caminho(), &texto).map_err(|erro| erro.to_string())?;
+        editor.copia = Some((texto, caminho));
+        Ok(())
+    }
+
     /// O Vitral está fechando: o que falta gravar no editor vai para o disco agora (o prazo da
     /// gravação sozinha não teria tempo de vencer). O texto que não pode ir para o arquivo (um
     /// conflito sem resposta passa por cima do que o agente gravou; a gravação que falhou) vai
-    /// para uma cópia em `nao_salvos`: é o que a pergunta de fechar promete. O caminho que não
-    /// passa pela pergunta (sair da sessão do sistema) também guarda a cópia.
+    /// para uma cópia em `nao_salvos`, uma vez só por texto. Pela pergunta de fechar ela já foi
+    /// feita no clique; o caminho que não passa pela pergunta (sair da sessão do sistema) a faz
+    /// aqui.
     pub(super) fn gravar_editor_ao_sair(&mut self, cx: &App) {
-        let pasta = self.pasta_nao_salvos(cx);
         let Some(editor) = self.editor_arquivo.as_mut() else { return };
         let texto = editor.estado.read(cx).value();
         if gravar_ou_motivo(&mut editor.sessao, &texto).is_none() {
             return;
         }
-        let Some(pasta) = pasta else { return };
-        match guardar_nao_salvo(&pasta, editor.sessao.caminho(), &texto) {
-            // Gravada uma vez: o segundo passo do fechar (o `on_app_quit` depois do ×) não repete.
-            Ok(_) => {
-                self.editor_arquivo = None;
-            }
-            Err(erro) => eprintln!("vitral: o texto do editor não pôde ser guardado em {}: {erro}", pasta.display()),
+        if let Err(erro) = self.copiar_texto_do_editor(cx) {
+            eprintln!("vitral: o texto do editor não pôde ser guardado numa cópia: {erro}");
         }
     }
 }
@@ -1012,6 +1084,26 @@ mod testes {
             fs::hard_link(&script, &outro_nome).unwrap();
             gravar_por_inteiro(&script, b"echo 4\n").unwrap();
             assert_eq!(fs::read_to_string(&outro_nome).unwrap(), "echo 4\n");
+            // O link cujo arquivo foi apagado continua link, e o arquivo nasce de novo no lugar
+            // (o alvo relativo conta da pasta do link).
+            fs::create_dir_all(pasta.join("comum")).unwrap();
+            let sem_alvo = pasta.join("config.yml");
+            std::os::unix::fs::symlink("comum/config.yml", &sem_alvo).unwrap();
+            gravar_por_inteiro(&sem_alvo, b"a: 1\n").unwrap();
+            assert!(fs::symlink_metadata(&sem_alvo).unwrap().file_type().is_symlink());
+            assert_eq!(fs::read_to_string(pasta.join("comum/config.yml")).unwrap(), "a: 1\n");
+            // O somente leitura falha como falhava, sem ser trocado por um arquivo novo (como root,
+            // que escreve em qualquer arquivo, o teste não diz nada).
+            let travado = pasta.join("travado.lock");
+            fs::write(&travado, "fixo\n").unwrap();
+            fs::set_permissions(&travado, fs::Permissions::from_mode(0o444)).unwrap();
+            if unsafe { libc::geteuid() } != 0 {
+                assert!(gravar_por_inteiro(&travado, b"novo\n").is_err());
+                assert_eq!(fs::read_to_string(&travado).unwrap(), "fixo\n");
+            }
+            fs::set_permissions(&travado, fs::Permissions::from_mode(0o644)).unwrap();
+            let sobras: Vec<String> = fs::read_dir(&pasta).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains(".vitral-")).collect();
+            assert!(sobras.is_empty(), "{sobras:?}");
         }
         let _ = fs::remove_dir_all(&pasta);
     }
