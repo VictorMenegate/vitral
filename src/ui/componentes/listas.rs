@@ -95,6 +95,77 @@ impl CabecalhoDeSecao {
 /// Chevron de 12 encostado no texto (o desenho do Lucide já tem folga dos dois lados).
 const CHEVRON: f32 = 12.;
 
+/// O título de seção da lista de chats no jeito do Linear (25/11/2026): o nome em letra comum
+/// (12, tênue), a contagem apagada ao lado e a seta de recolher à DIREITA do nome (era à
+/// esquerda, num rótulo mono em caixa alta); 28 de altura, 8 em cima (4 na primeira). O clique em
+/// qualquer parte do título alterna.
+#[derive(IntoElement)]
+pub struct SecaoDaLista {
+    titulo: SharedString,
+    contagem: Option<usize>,
+    acao: Option<AnyElement>,
+    recolhivel: Option<(bool, Rc<dyn Fn(&mut Window, &mut App)>)>,
+    primeira: bool,
+}
+
+impl SecaoDaLista {
+    pub fn new(t: impl Into<SharedString>) -> Self {
+        SecaoDaLista { titulo: t.into(), contagem: None, acao: None, recolhivel: None, primeira: false }
+    }
+    pub fn contagem(mut self, n: usize) -> Self {
+        self.contagem = Some(n);
+        self
+    }
+    pub fn acao(mut self, e: impl IntoElement) -> Self {
+        self.acao = Some(e.into_any_element());
+        self
+    }
+    pub fn recolhivel(mut self, aberto: bool, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.recolhivel = Some((aberto, Rc::new(f)));
+        self
+    }
+    pub fn primeira(mut self, sim: bool) -> Self {
+        self.primeira = sim;
+        self
+    }
+}
+
+impl RenderOnce for SecaoDaLista {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+        const GRUPO: &str = "secao-da-lista";
+        let seta = self.recolhivel.as_ref().map(|(aberto, _)| {
+            div()
+                .flex_none()
+                .text_color(Cores::apagado())
+                .group_hover(GRUPO, |s| s.text_color(Cores::texto()))
+                .child(Icon::new(if *aberto { Lucide::ChevronDown } else { Lucide::ChevronRight }).with_size(tam(window, CHEVRON)))
+        });
+        let clique = self.recolhivel.map(|(_, f)| f);
+        div()
+            .id(SharedString::from(format!("secao-{}", self.titulo)))
+            .group(GRUPO)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(esp::E6)
+            .h(r(28.))
+            .mt(if self.primeira { esp::E4 } else { esp::E8 })
+            .pl(esp::E12)
+            .pr(esp::E8)
+            .rounded(raio::CONTROLE)
+            .text_size(r(12.))
+            .line_height(r(16.))
+            .text_color(Cores::tenue())
+            .group_hover(GRUPO, |s| s.text_color(Cores::texto()))
+            .when_some(clique, |d, f| d.cursor_pointer().on_click(move |_, window, cx| f(window, cx)))
+            .child(div().flex_none().child(self.titulo))
+            .children(self.contagem.map(|n| div().flex_none().text_color(Cores::apagado()).tabular().child(n.to_string())))
+            .children(seta)
+            .child(div().flex_1())
+            .children(self.acao)
+    }
+}
+
 impl RenderOnce for CabecalhoDeSecao {
     fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         const GRUPO: &str = "cabecalho-de-secao";

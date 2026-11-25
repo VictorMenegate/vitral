@@ -72,7 +72,7 @@ use std::{
 
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IconName, ResizableState, WindowExt as _, h_resizable, resizable_panel,
-    h_flex,
+    h_flex, v_flex,
     input::{InputEvent, InputState},
     spinner::compasso_recente,
 };
@@ -2311,8 +2311,13 @@ impl Janela {
             .on_action(cx.listener(|this, acao: &links_arquivo::AbrirLinkVitral, window, cx| this.abrir_link_vitral(&acao.0, window, cx)))
             .on_action(cx.listener(|this, acao: &edicao::AbrirEdicao, window, cx| this.abrir_edicao(acao, window, cx)))
             .child(
-                h_flex()
+                v_flex()
                     .size_full()
+                    .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
                     // Margem só à esquerda, e só com a lista ancorada: a fileira das conversas
                     // encosta no topo, na direita e embaixo da janela, e sem a lista também na
                     // esquerda (dono, 16/11/2026: "não tenha em cima, na direita e no meio dos
@@ -2366,10 +2371,15 @@ impl Janela {
                             .child(self.partes(&motor, window, cx))
                             .children(gaveta),
                     ),
+                    )
+                    // Linear (25/11/2026): a barra de baixo da janela, com o logo, o uso, o contexto,
+                    // a Revisão, as Arquivadas e os Avisos. Some junto com a lista (Ctrl+B).
+                    .when(self.lista, |d| d.child(self.barra_de_baixo(&motor, window, cx))),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
-            // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026).
-            .children(self.uso_no_canto(cx))
+            // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
+            // sem a barra de baixo, que já o mostra (Linear, 25/11/2026).
+            .children(self.uso_no_canto(cx).filter(|_| !self.lista))
             // Quem espera você, fora de vista: o aviso no canto de baixo (rodada de uso, item 3.1).
             .children(self.avisos_no_canto(window, cx))
             .children(fora)

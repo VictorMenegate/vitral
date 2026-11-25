@@ -19,8 +19,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
-    AbaLateral, AbrirAtalhos, AbrirConfiguracoes, AbrirMenuVitral, AbrirQuadroDeIdeias, AlternarLista, Filtro, Gaveta, Janela,
-    NovaConversa, ProximaPendencia,
+    AbaLateral, AbrirConfiguracoes, AbrirMenuVitral, AlternarLista, Filtro, Janela, ProximaPendencia,
     componentes::{
         BotaoRedondo, Selo, Simbolo,
         FASE_INICIAL_DA_MALHA, VarianteRedonda, anel_do_pulso, cabecalho_objeto_com_dica,
@@ -169,20 +168,13 @@ fn linha_tecnica() -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ItemDoMenu {
     MostrarLista,
-    RecolherLista,
     PrecisaDeVoce,
-    NovoChat,
     NovoChatEmOutraPasta,
     Importar,
-    Quadro,
     Resumo,
-    Arranjos,
-    Contas,
     InstalarCodex,
     InstalarGemini,
     Configuracoes,
-    Paleta,
-    Atalhos,
 }
 
 /// Os grupos do menu do Vitral, por assunto, com uma divisória entre um e outro (dono, 24/11/2026:
@@ -190,13 +182,22 @@ enum ItemDoMenu {
 /// as vistas, e a conta com os ajustes e a ajuda. O que tem lugar nas Configurações (Servidores
 /// MCP, Memória da equipe, a pasta de trabalho, a pasta de dados) saiu; na paleta continua tudo.
 /// No modo recolhido, o "Mostrar a lista" e o sino, que só são alcançáveis por aqui.
+///
+/// Enxuto no jeito do Linear (25/11/2026: "pode tirar esses arranjos, quadro de ideias, novo chat,
+/// o contas do Claude e o atalhos de teclado e paleta de comandos", e o "Recolher a lista" porque o
+/// modo foco já faz isso): chat em outra pasta, importar, o resumo de hoje e as Configurações. Os
+/// "Instalar…" só aparecem enquanto faltar o agente (são o único caminho até eles).
 fn grupos_do_menu(compacto: bool, instalar_codex: bool, instalar_gemini: bool) -> Vec<Vec<ItemDoMenu>> {
     use ItemDoMenu::*;
-    let lista: &[ItemDoMenu] = if compacto { &[MostrarLista, PrecisaDeVoce] } else { &[RecolherLista] };
-    let mut ajustes = vec![Contas];
-    ajustes.extend([instalar_codex.then_some(InstalarCodex), instalar_gemini.then_some(InstalarGemini)].into_iter().flatten());
-    ajustes.extend([Configuracoes, Paleta, Atalhos]);
-    vec![lista.iter().copied().chain([NovoChat, NovoChatEmOutraPasta, Importar]).collect(), vec![Quadro, Resumo, Arranjos], ajustes]
+    let mut grupos = Vec::new();
+    if compacto {
+        grupos.push(vec![MostrarLista, PrecisaDeVoce]);
+    }
+    grupos.push(vec![NovoChatEmOutraPasta, Importar, Resumo]);
+    let mut ajustes: Vec<ItemDoMenu> = [instalar_codex.then_some(InstalarCodex), instalar_gemini.then_some(InstalarGemini)].into_iter().flatten().collect();
+    ajustes.push(Configuracoes);
+    grupos.push(ajustes);
+    grupos
 }
 
 /// A linha da versão nova pronta, no alto do menu e só quando há uma: "Versão nova pronta ·
@@ -363,45 +364,13 @@ impl Janela {
     }
 
     /// O alto da lista enxuta: o logo (o menu do Vitral) e, ao lado, as abas Conversas e Arquivos.
-    pub(super) fn topo_enxuto(&self, motor: &Entity<Motor>, abas: Option<Div>, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let m = motor.read(cx);
-        let precisa = super::resumo::precisa_em_tudo(m);
-        // Da beirada ao conteúdo da lista: a margem da janela (ou o vão até a conversa) e a peça de
-        // 8. A margem e o vão são px fixos e a peça cresce com o zoom, por isso a conta em px. Na
-        // gaveta a lista encosta na janela e acaba na borda dela: só a peça.
-        let ancorada = self.orcamento.lista;
-        let (margem, vao) =
-            if ancorada { (crate::tema::margem_da_janela(), crate::tema::vao_entre_pecas()) } else { (px(0.), px(0.)) };
-        let peca = tam(window, 8.);
-        self.arrastavel_com_id("arrastar-trilho-deitado")
-            .on_mouse_down(MouseButton::Right, |evento, window, _| window.show_window_menu(evento.position))
-            .relative()
-            .flex()
-            .items_center()
-            .flex_none()
-            // Na altura da fileira do alto dos painéis (56), com tudo no meio: o logo de 38 e o
-            // segmentado de 34 centram na linha das abas ao lado (relatório de design, 16/11/2026;
-            // dono, 17/11/2026: "melhorar o espaçamento daqui").
-            .h(altura::FILEIRA_DO_ALTO)
-            // A fileira passa da folga da lista dos dois lados: o medalhão do logo e o segmentado
-            // ficam a 11 da beirada (o logo da janela, o segmentado da conversa), o mesmo que sobra
-            // em cima deles, em qualquer zoom. Sem largura fixa, a margem negativa estica a
-            // fileira; com o `w_full` e o -4 de antes ela só deslocava: 14 à esquerda e 20 à
-            // direita a 100% (folha dimensional, 23/11/2026). O logo tem 2 de aro em volta do
-            // medalhão; o segmentado, não.
-            .ml(tam(window, 11. - 2.) - margem - peca)
-            .mr(tam(window, 11.) - vao - peca)
-            .gap(esp::E8)
-            .child(sem_a_peca().child(self.botao_logo(m, false, precisa, cx)))
-            .children(abas.map(|abas| super::sem_arrastar().flex().flex_1().min_w_0().child(abas.flex_1().mb(r(0.)))))
-    }
-
     /// O sino: o número do que precisa de você (ou um ponto, se só há respostas novas) e o
     /// popover "O que precisa de você".
-    pub(super) fn botao_sino(&self, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
+    /// O sino com o diâmetro e o lado do popover (na barra de baixo: 26, abrindo para cima).
+    pub(super) fn botao_sino_em(&self, precisa: PrecisaDeVoce, diametro: f32, ancora: Anchor, cx: &Context<Self>) -> impl IntoElement + use<> {
         let botao = BotaoRedondo::new("trilho-sino", Some(Lucide::Bell.into()), dica_sino(&precisa))
             .variante(VarianteRedonda::Plano)
-            .diametro(36.)
+            .diametro(diametro)
             .dica_acao(Box::new(ProximaPendencia), None)
             .focavel(true)
             .pulso(self.geracao_do_sino(&precisa))
@@ -410,25 +379,95 @@ impl Janela {
             Some(selo) => botao.selo(selo),
             None => botao,
         };
-        self.popover_caixa("caixa-trilho", botao, Anchor::LeftCenter, cx)
+        self.popover_caixa("caixa-trilho", botao, ancora, cx)
+    }
+
+    /// A fileira do alto da lista no jeito do Linear (25/11/2026): a busca e o "+" (o logo foi
+    /// para o canto da barra de baixo). A fileira continua sendo a barra de título da janela: só o
+    /// campo e o botão não arrastam.
+    pub(super) fn topo_da_lista(&self, linha: Div) -> impl IntoElement + use<> {
+        self.arrastavel_com_id("arrastar-topo-da-lista")
+            .on_mouse_down(MouseButton::Right, |evento, window, _| window.show_window_menu(evento.position))
+            .flex()
+            .items_center()
+            .flex_none()
+            .h(altura::FILEIRA_DO_ALTO)
+            .child(super::sem_arrastar().flex().flex_1().min_w_0().child(linha.flex_1().mb_0()))
+    }
+
+    /// A barra de baixo da janela no jeito do Linear (25/11/2026): o logo (o menu do Vitral) no
+    /// canto da esquerda, o uso de cada agente e o contexto do chat aberto; à direita, a Revisão
+    /// automática, as Arquivadas e os Avisos (o sino). Some junto com a lista (Ctrl+B).
+    pub(super) fn barra_de_baixo(&self, motor: &Entity<Motor>, window: &Window, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let m = motor.read(cx);
+        let logo = self.botao_logo_em(m, false, true, super::resumo::precisa_em_tudo(m), cx);
+        let usos = self.pilulas_de_uso(cx);
+        let contexto = self.pilula_do_contexto(m, window);
+        let revisao = {
+            let ligada = m.config.revisar_edicoes;
+            let motor = motor.clone();
+            let dica = if ligada {
+                "Revisão automática ligada\nO outro agente confere os turnos que mudam bastante"
+            } else {
+                "Revisão automática desligada"
+            };
+            h_flex()
+                .id("barra-revisao")
+                .flex_none()
+                .h(r(24.))
+                .px(esp::E6)
+                .gap(esp::E6)
+                .rounded(raio::de(24.))
+                .cursor_pointer()
+                .text_size(r(12.))
+                .text_color(if ligada { Cores::texto() } else { Cores::apagado() })
+                .hover(|s| s.bg(Cores::hover()))
+                .child(div().flex_none().text_color(if ligada { Cores::destaque_texto() } else { Cores::apagado() }).child(super::componentes::icone(Lucide::CheckCheck, 14., window)))
+                .child("Revisão")
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(dica).build(window, cx))
+                .on_click(move |_, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.revisar_edicoes = !c.revisar_edicoes, cx)))
+        };
+        let arquivadas = self.botao_arquivadas(m, window, cx);
+        let sino = self.botao_sino_em(super::resumo::precisa_em_tudo(m), 26., Anchor::BottomRight, cx);
+        h_flex()
+            .flex_none()
+            .w_full()
+            .h(r(34.))
+            .pl(esp::E8)
+            .pr(esp::E12)
+            .gap(esp::E8)
+            .items_center()
+            .child(sem_a_peca().flex_none().child(logo))
+            .children(usos)
+            .children(contexto)
+            .child(div().flex_1())
+            .child(revisao)
+            .children(arquivadas)
+            .child(sino)
     }
 
     /// O logo e o menu do Vitral, controlado por `menu_aberto` para o F10 abrir o mesmo. No trilho
     /// ele abre à direita do logo, também no modo recolhido, onde leva o que o trilho mostrava.
     fn botao_logo(&self, motor: &Motor, compacto: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
+        self.botao_logo_em(motor, compacto, false, precisa, cx)
+    }
+
+    /// O logo no canto da barra de baixo (`embaixo`, Linear, 25/11/2026): menor, sem o selo do
+    /// sino (o sino está na mesma barra) e com o menu abrindo para cima.
+    fn botao_logo_em(&self, motor: &Motor, compacto: bool, embaixo: bool, precisa: PrecisaDeVoce, cx: &Context<Self>) -> impl IntoElement + use<> {
         let construir = self.itens_menu(motor, compacto, precisa, cx);
         let janela = cx.entity().downgrade();
         // O logo enche o botão; sobra só o aro de 2 do hover. No alto da lista, 38 com o medalhão de
         // 34, a altura do segmentado ao lado: na fileira de 56 sobram 9 em cima e embaixo (com 44
         // o logo encostava na beirada da janela; dono, 17/11/2026: "melhora o espaçamento dessa
         // parte de cima").
-        let (lado, medalhao) = if compacto { (32., 28.) } else { (38., 34.) };
+        let (lado, medalhao) = if embaixo { (26., 22.) } else if compacto { (32., 28.) } else { (38., 34.) };
         Popover::new("menu-vitral")
             .appearance(false)
             .overlay_closable(false)
             // À direita do logo nos dois modos: embaixo dele, no recolhido, o menu inteiro a 150%
             // chegava a 7 px do pé da janela (bancada, 24/11/2026).
-            .anchor(Anchor::LeftCenter)
+            .anchor(if embaixo { Anchor::BottomLeft } else { Anchor::LeftCenter })
             .offset(px(8.))
             .open(self.menu_aberto)
             .on_open_change(move |aberto, window, cx| {
@@ -448,8 +487,8 @@ impl Janela {
                 lado,
                 medalhao,
                 aberto: false,
-                selo: compacto.then(|| selo_do_sino(&precisa)).flatten(),
-                pulso: compacto.then(|| (self.geracao_do_sino(&precisa), cor_do_pulso(&precisa))),
+                selo: (compacto && !embaixo).then(|| selo_do_sino(&precisa)).flatten(),
+                pulso: (compacto && !embaixo).then(|| (self.geracao_do_sino(&precisa), cor_do_pulso(&precisa))),
                 pronta: self.atualizacao_pronta.clone().map(SharedString::from),
             })
             .content(move |_, window, cx| {
@@ -458,7 +497,7 @@ impl Janela {
                 let guardado = window.use_keyed_state("menu-vitral-itens", cx, |_, _| None::<Entity<PopupMenu>>);
                 // O logo fica no alto da janela, então o menu centrado nele encosta na margem de cima
                 // (8): a folga de 12 o desce do canto.
-                let folga = tam(window, 12.);
+                let folga = if embaixo { px(0.) } else { tam(window, 12.) };
                 if let Some(menu) = guardado.read(cx).clone() {
                     return div().pt(folga).child(menu);
                 }
@@ -518,12 +557,10 @@ impl Janela {
     pub(super) fn abrir_menu_vitral(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // O logo mora na fileira do alto da lista: com a lista na gaveta (ou recolhida sem caber
         // ao lado), abre a gaveta primeiro, senão o menu não teria onde aparecer.
-        let abrir = if self.lista && !self.orcamento.lista && self.gaveta != Some(Gaveta::Lista) {
-            self.mostrar_lista(window, cx);
-            true
-        } else {
-            !self.menu_aberto
-        };
+        // O logo mora na barra de baixo (com a lista) ou no cabeçalho do painel 1 (sem ela): está
+        // sempre à vista, então é só abrir ou fechar.
+        let _ = window;
+        let abrir = !self.menu_aberto;
         if abrir {
             self.so_um_flutuante(super::QualFlutuante::MenuVitral);
         }
@@ -554,14 +591,12 @@ fn item_do_menu(
     qual: ItemDoMenu,
     janela: &WeakEntity<Janela>,
     precisa: &PrecisaDeVoce,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
+    _window: &mut Window,
+    _cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     use ItemDoMenu::*;
     match qual {
         MostrarLista => menu.item(item("Mostrar a lista", Lucide::PanelLeftOpen, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
-        // Com a lista à vista, recolhê-la é daqui (o "Mostrar a lista" é do menu recolhido).
-        RecolherLista => menu.item(item("Recolher a lista", Lucide::PanelLeftClose, janela, |this, window, cx| this.alternar_lista(window, cx)).action(Box::new(AlternarLista))),
         PrecisaDeVoce => {
             let (selo, caixa) = (selo_do_menu(precisa), janela.clone());
             menu.item(
@@ -578,26 +613,17 @@ fn item_do_menu(
                 }),
             )
         }
-        NovoChat => menu.item(item("Novo chat", Lucide::MessageSquarePlus, janela, |this, window, cx| this.novo_chat_direto(window, cx)).action(Box::new(NovaConversa))),
-        NovoChatEmOutraPasta => menu.item(item("Novo chat em outra pasta…", Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
-        Importar => menu.item(item("Importar do Claude Code…", Lucide::Download, janela, |this, _, cx| {
+        NovoChatEmOutraPasta => menu.item(item("Chat em outra pasta…", Lucide::FolderOpen, janela, |this, window, cx| this.dialogo_nova_conversa(window, cx))),
+        Importar => menu.item(item("Importar conversa…", Lucide::Download, janela, |this, _, cx| {
             if let Some(motor) = this.motor.clone() {
                 motor.update(cx, |m, cx| m.importar_do_claude_code(false, cx));
             }
         })),
-        Quadro => menu.item(item("Quadro de ideias", Lucide::Kanban, janela, |this, window, cx| this.abrir_quadro_de_ideias(window, cx)).action(Box::new(AbrirQuadroDeIdeias))),
         Resumo => menu.item(item("Resumo de hoje", Lucide::CalendarClock, janela, |this, window, cx| this.abrir_resumo_do_dia(window, cx))),
-        Arranjos => super::arranjo::salvos::no_menu(menu, janela, window, cx),
-        Contas => menu.item(item("Contas do Claude", Lucide::CircleUser, janela, |this, window, cx| this.dialogo_contas(window, cx))),
         InstalarCodex => menu.item(PopupMenuItem::new("Instalar o Codex…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_codex())),
         // O Gemini, pelo instalador oficial do Antigravity CLI, que também faz o login.
         InstalarGemini => menu.item(PopupMenuItem::new("Instalar o Gemini…").icon(Lucide::Download).on_click(|_, _, _| uso_plano::instalar_gemini())),
         Configuracoes => menu.item(item("Configurações", Lucide::Settings, janela, |this, window, cx| this.abrir_configuracoes(window, cx)).action(Box::new(AbrirConfiguracoes))),
-        Paleta => menu.item(
-            item(super::paleta::ROTULO_DA_PALETA, Lucide::Search, janela, |this, window, cx| this.abrir_paleta(window, cx))
-                .action(Box::new(super::paleta::AbrirPaleta)),
-        ),
-        Atalhos => menu.item(PopupMenuItem::new("Atalhos do teclado").icon(Lucide::Keyboard).action(Box::new(AbrirAtalhos)).on_click(|_, window, cx| super::atalhos::abrir(window, cx))),
     }
 }
 
@@ -651,24 +677,20 @@ mod testes {
     /// O menu do Vitral do pedido de 24/11/2026: três grupos por assunto (duas divisórias entre
     /// eles), sem o que mora nas Configurações, e com o que só se alcança daqui.
     #[test]
-    fn o_menu_do_vitral_tem_tres_grupos_e_so_o_que_fica() {
+    fn o_menu_do_vitral_e_o_enxuto_do_linear() {
         use super::{ItemDoMenu::*, grupos_do_menu};
+        // Linear (25/11/2026): chat em outra pasta, importar, o resumo de hoje e as Configurações.
         let normal = grupos_do_menu(false, false, false);
-        assert_eq!(
-            normal,
-            [vec![RecolherLista, NovoChat, NovoChatEmOutraPasta, Importar], vec![Quadro, Resumo, Arranjos], vec![Contas, Configuracoes, Paleta, Atalhos]]
-        );
+        assert_eq!(normal, [vec![NovoChatEmOutraPasta, Importar, Resumo], vec![Configuracoes]]);
         // No recolhido, a lista e o sino só se alcançam por aqui.
         let recolhido = grupos_do_menu(true, false, false);
-        assert_eq!(recolhido[0][..2], [MostrarLista, PrecisaDeVoce]);
-        assert!(!recolhido[0].contains(&RecolherLista));
-        // Os instaladores entram com a conta, só quando falta o agente.
-        assert_eq!(grupos_do_menu(false, true, true)[2], [Contas, InstalarCodex, InstalarGemini, Configuracoes, Paleta, Atalhos]);
+        assert_eq!(recolhido[0], [MostrarLista, PrecisaDeVoce]);
+        // Os instaladores entram só quando falta o agente, antes das Configurações.
+        assert_eq!(grupos_do_menu(false, true, true)[1], [InstalarCodex, InstalarGemini, Configuracoes]);
         for grupos in [normal, recolhido, grupos_do_menu(true, true, true)] {
-            assert!(grupos.len() <= 4, "no máximo 3 divisórias");
+            assert!(grupos.len() <= 3, "no máximo 2 divisórias");
             assert!(grupos.iter().all(|g| !g.is_empty()));
-            // O mais comprido (recolhido e com os dois instaladores) tem 14 linhas.
-            assert!(grupos.iter().map(Vec::len).sum::<usize>() <= 14);
+            assert!(grupos.iter().map(Vec::len).sum::<usize>() <= 8);
         }
     }
 }

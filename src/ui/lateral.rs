@@ -27,8 +27,8 @@ use gpui_kit::*;
 use super::{
     AbaLateral, Buscar, Filtro, Gaveta, Janela, NovaConversa,
     componentes::{
-        BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, barra_de_rolagem, ControleSegmentado, EstadoVazio,
-        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Segmento, Sinal, TamanhoBotao, Tom,
+        BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, SecaoDaLista, barra_de_rolagem, EstadoVazio,
+        ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Sinal, TamanhoBotao, Tom,
         VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
         contagem, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
@@ -41,7 +41,7 @@ use super::{
 use crate::{
     modelo::{Chat, Execucao, Item, agora},
     motor::Motor,
-    tema::{Cores, Lucide, Tipo as _, altura, esp, r, raio},
+    tema::{Cores, Lucide, Tipo as _, esp, r, raio},
 };
 
 /// Larguras da lista, a 100% (a conta é a mesma em qualquer zoom, porque o texto cresce junto).
@@ -91,20 +91,22 @@ enum Secao {
     Conversas,
 }
 
-/// Faixas de data das conversas paradas, pela última atividade: o tempo de cada cartão já está
-/// nele, então bastam duas.
+/// Faixas de data das conversas paradas, pela última atividade, no jeito do Linear (25/11/2026):
+/// Hoje, Esta semana e Mais antigas, cada uma com o título à vista.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Faixa {
-    Recentes,
+    Hoje,
+    EstaSemana,
     Antigas,
 }
 
 impl Faixa {
-    const TODAS: [Faixa; 2] = [Faixa::Recentes, Faixa::Antigas];
+    const TODAS: [Faixa; 3] = [Faixa::Hoje, Faixa::EstaSemana, Faixa::Antigas];
 
     fn nome(self) -> &'static str {
         match self {
-            Faixa::Recentes => "Recentes",
+            Faixa::Hoje => "Hoje",
+            Faixa::EstaSemana => "Esta semana",
             Faixa::Antigas => "Mais antigas",
         }
     }
@@ -112,7 +114,13 @@ impl Faixa {
     /// `hoje` é a meia-noite local de hoje; os 7 dias contam a partir dela.
     fn de(instante: u64, hoje: u64) -> Faixa {
         const DIA: u64 = 86_400;
-        if instante >= hoje.saturating_sub(7 * DIA) { Faixa::Recentes } else { Faixa::Antigas }
+        if instante >= hoje {
+            Faixa::Hoje
+        } else if instante >= hoje.saturating_sub(7 * DIA) {
+            Faixa::EstaSemana
+        } else {
+            Faixa::Antigas
+        }
     }
 }
 
@@ -446,7 +454,9 @@ fn posicao_do_realce(n: usize, atual: Option<usize>, tecla: &str) -> Option<usiz
     }
 }
 
-/// "3 rodando": a pasta inteira, sem filtro; nada quando nada roda.
+/// "3 rodando": a pasta inteira, sem filtro; nada quando nada roda. Saiu do rodapé da lista no
+/// Linear (a seção Rodando já conta); fica para os testes.
+#[cfg(test)]
 fn texto_agentes(rodando: usize) -> Option<String> {
     (rodando > 0).then(|| format!("{rodando} rodando"))
 }
@@ -588,10 +598,6 @@ struct Navegavel {
 struct Montagem {
     itens: Vec<AnyElement>,
     navegaveis: Vec<Navegavel>,
-    /// A lista dos chats é corrida: o que espera você, o que roda, as fixadas e os outros, nessa
-    /// ordem, sem o título de cada seção (o ponto do cartão e o alfinete já dizem qual é). As
-    /// Arquivadas têm os títulos das faixas de data.
-    corrida: bool,
     /// As posições (entre os filhos da lista) que estão perto da área à vista: fora delas, o cartão
     /// vira um espaço da mesma altura. `None` desenha tudo.
     a_vista: Option<Range<usize>>,
@@ -613,15 +619,9 @@ fn linhas_a_vista(rolado: f32, visivel: f32, altura: f32, margem: f32) -> Option
 }
 
 impl Montagem {
-    /// A primeira seção visível fica com 4 em cima.
-    fn cabecalho(&mut self, c: CabecalhoDeSecao) {
-        if self.corrida {
-            if self.itens.is_empty() {
-                self.itens.push(div().flex_none().h(esp::E4).into_any_element());
-            }
-            return;
-        }
-        let item = c.primeira(self.itens.is_empty()).into_any_element();
+    /// O título de uma seção; a primeira visível fica com 4 em cima.
+    fn secao(&mut self, s: SecaoDaLista) {
+        let item = s.primeira(self.itens.is_empty()).into_any_element();
         self.itens.push(item);
     }
 
@@ -690,7 +690,7 @@ fn campo_da_lista(estado: &Entity<InputState>, aba: AbaLateral, estreita: bool, 
     // Só na aba Conversas: o Ctrl+K leva a ela, então na busca de arquivos ele enganaria.
     let atalho: Option<Box<dyn Action>> = (!estreita && conversas).then(|| Box::new(Buscar) as Box<dyn Action>);
     // No alto da lista, o logo, a busca e o "+" têm a mesma altura (40).
-    campo_de_busca_de("busca-lista", estado, atalho, 40., window, cx)
+    campo_de_busca_de("busca-lista", estado, atalho, 32., window, cx)
         // Com o cursor no campo, a dica sairia por cima dos resultados.
         .when(!focado, |s| {
             s.dica_no_ponteiro(move |window, cx| {
@@ -1007,7 +1007,7 @@ impl Janela {
             janela: cx.entity().downgrade(),
         };
 
-        let abas = self.abas_da_lista(motor, &ctx, conversas);
+        let abas = self.abas_da_lista(motor, &ctx, conversas, window, cx);
         let montagem = if conversas { self.lista_conversas(motor, &ctx, window, cx) } else { Montagem::default() };
         // Com a busca ativa, o primeiro resultado já vem marcado: o realce que saiu da lista (o
         // termo mudou) volta ao primeiro, no quadro seguinte.
@@ -1021,7 +1021,6 @@ impl Janela {
         }
         let linha_busca = self.linha_da_busca(&montagem, &ctx, window, cx);
         let escopo = self.linha_escopo(motor, arquivos.as_ref(), &ctx, window, cx);
-        let rodape = self.rodape(motor, arquivos.as_ref(), window, cx);
         let conteudo = match &arquivos {
             Some(a) => self.conteudo_arquivos(a, &ctx, window, cx),
             None => {
@@ -1089,50 +1088,67 @@ impl Janela {
                     });
                 }
             })
-            // Uma linha só no alto: o logo (o menu do Vitral, também na gaveta) e as abas. A busca e
-            // o "+" moram no pé da lista (pedido do dono, 12/11/2026).
-            .child(self.topo_enxuto(motor_entidade, Some(abas), window, cx))
-            .child(div().flex_none().h(esp::E4))
+            // Linear (25/11/2026): a busca e o "+" no alto, na fileira de cima; logo abaixo,
+            // Conversas, Arquivos e Quadro de ideias. O logo, as Arquivadas e o sino foram para a
+            // barra de baixo da janela.
+            .child(self.topo_da_lista(linha_busca))
+            .child(abas)
             .children(escopo)
             .child(conteudo)
-            .children(rodape)
-            // Embaixo, o mesmo respiro da caixa de mensagem até a beirada da janela.
-            .child(linha_busca.mt(esp::E4).mb(esp::E16))
+            .child(div().flex_none().h(esp::E8))
             // Sem fundo nem aresta: a lista é a própria base da janela (duas camadas: a base com
             // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
 
-    /// As abas Conversas · Arquivos, num segmentado (o ponto âmbar na de Conversas quando algo
-    /// espera você e você está nos arquivos).
-    fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool) -> Div {
+    /// Conversas, Arquivos e Quadro de ideias, um embaixo do outro, no jeito do Linear (25/11/2026),
+    /// no lugar do segmentado Conversas · Arquivos: o escolhido na cor cheia, o Quadro abre o quadro
+    /// (Ctrl+I). O ponto âmbar na de Conversas quando algo espera você e você está nos arquivos.
+    fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool, window: &Window, cx: &Context<Self>) -> Div {
         let pendentes = motor.precisa_de_voce().numero();
-        let mut aba_conversas = Segmento::new("Conversas").icone(Lucide::MessagesSquare);
-        if !conversas && pendentes > 0 {
-            let dica = format!("{} você", contagem(pendentes, "chat esperando", "chats esperando"));
-            aba_conversas = aba_conversas.ponto(Cores::espera()).dica(dica);
-        }
-        let aba_arquivos = Segmento::new("Arquivos").icone(Lucide::Folder);
-        let janela = ctx.janela.clone();
-        let abas = ControleSegmentado::new(
-            "abas-da-lista",
-            [aba_conversas, aba_arquivos],
-            if conversas { 0 } else { 1 },
-            move |i, window, cx| {
+        let linha = |id: &'static str, simbolo: Lucide, nome: &'static str, escolhido: bool| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(esp::E8)
+                .h(r(30.))
+                .px(esp::E12)
+                .rounded(raio::CONTROLE)
+                .text_size(r(13.))
+                .line_height(r(18.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .text_color(if escolhido { Cores::forte() } else { Cores::texto() })
+                .when(escolhido, |d| d.bg(Cores::selecao()))
+                .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
+                .child(div().flex_none().text_color(if escolhido { Cores::forte() } else { Cores::tenue() }).child(icone(simbolo, 15., window)))
+                .child(div().flex_1().min_w_0().truncate().child(nome))
+        };
+        let trocar = |aba: AbaLateral| {
+            let janela = ctx.janela.clone();
+            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
                 let _ = janela.update(cx, |this, cx| {
                     this.rolagem_lista.set_offset(point(px(0.), px(0.)));
                     this.realce_lista = None;
-                    let aba = if i == 0 { AbaLateral::Conversas } else { AbaLateral::Arquivos };
                     this.trocar_aba(aba, window, cx);
                 });
-            },
-        )
-        // Largura total, com as duas abas do mesmo tamanho e o rótulo no meio de cada uma.
-        .solto(true)
-        .largura_total(true)
-        .so_icone(ctx.aperto.estreita);
-        // 34 de altura, a do medalhão do logo: os dois dividem a fileira do alto.
-        let abas = gpui_kit::component::Sizable::with_size(abas, gpui_kit::component::Size::Size(px(34.)));
-        div().flex_none().mb(esp::E8).child(abas)
+            }
+        };
+        let ponto = (!conversas && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
+        let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().metadado().text_color(Cores::apagado()).child("Ctrl I"));
+        let _ = cx;
+        v_flex()
+            .flex_none()
+            .gap(esp::E2)
+            .mb(esp::E4)
+            .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
+            .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", !conversas).on_click(trocar(AbaLateral::Arquivos)))
+            .child(
+                linha("lista-quadro", Lucide::Kanban, "Quadro de ideias", false)
+                    .children(atalho)
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(super::AbrirQuadroDeIdeias), cx)),
+            )
     }
 
     /// Busca (↓ entra na lista, Esc limpa e depois volta à caixa) e o + de nova conversa.
@@ -1225,8 +1241,8 @@ impl Janela {
         let nova = conversas.then(|| {
             BotaoRedondo::new("nova-conversa", Some(Lucide::Plus.into()), "Novo chat")
                 .dica_acao(Box::new(NovaConversa), None)
-                .variante(VarianteRedonda::Metal)
-                .diametro(40.)
+                .variante(VarianteRedonda::Primario)
+                .diametro(32.)
                 .on_click(cx.listener(|this, _, window, cx| this.novo_chat_direto(window, cx)))
         });
         h_flex().flex_none().gap(esp::E8).mb(esp::E8).child(campo).children(nova)
@@ -1330,90 +1346,32 @@ impl Janela {
         )
     }
 
-    /// Rodapé (36), só quando há o que mostrar: as Arquivadas (o ícone com o número, na guia) e
-    /// os agentes rodando no Vitral inteiro ("2 rodando"); em Arquivos, quantos arquivos a pasta
-    /// tem.
-    fn rodape(&self, motor: &Motor, arquivos: Option<&Arquivos>, window: &Window, cx: &Context<Self>) -> Option<Div> {
-        let rodando = motor.chats.iter().filter(|c| motor.execucao(&c.id).rodando()).count();
-        let agentes = texto_agentes(rodando).map(|texto| {
-            Button::new("rodape-agentes")
+    /// As Arquivadas na barra de baixo (Linear, 25/11/2026; antes no rodapé da lista): o ícone,
+    /// com o número na dica; o clique mostra as arquivadas na lista, e de novo volta às conversas.
+    /// Some sem nenhuma arquivada (a não ser vendo-as).
+    pub(super) fn botao_arquivadas(&self, motor: &Motor, window: &Window, cx: &Context<Self>) -> Option<Button> {
+        let n = motor.chats_da_lista().filter(|c| c.arquivado).count();
+        let vendo = self.filtro == Filtro::Arquivados;
+        (n > 0 || vendo).then(|| {
+            Button::new("barra-arquivadas")
                 .custom(variante_fantasma(cx))
-                .h(altura::BARRA)
-                .min_w_0()
-                .px(esp::E8)
-                .gap(esp::E6)
-                .rounded(raio::PILULA)
-                // O aro do rodando, o mesmo da lista: o disco cheio é dos avisos (revisão de design,
-                // 23/11/2026).
-                .child(Sinal::Rodando.ponto(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .metadado()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(Cores::tenue())
-                        .child(texto),
-                )
-                .on_click(cx.listener(|this, _, window, cx| {
+                .h(r(24.))
+                .flex_none()
+                .px(esp::E6)
+                .rounded(raio::de(24.))
+                .selected(vendo)
+                .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
+                .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
+                .on_click(cx.listener(move |this, _, window, cx| {
                     if this.aba != AbaLateral::Conversas {
                         this.trocar_aba(AbaLateral::Conversas, window, cx);
                     }
+                    this.filtro = if vendo { Filtro::Todos } else { Filtro::Arquivados };
                     this.rolagem_lista.set_offset(point(px(0.), px(0.)));
+                    this.realce_lista = None;
                     cx.notify();
                 }))
-        });
-        let arquivadas = arquivos.is_none().then(|| {
-            let n = motor.chats_da_lista().filter(|c| c.arquivado).count();
-            let vendo = self.filtro == Filtro::Arquivados;
-            (n > 0 || vendo).then(|| {
-                Button::new("rodape-arquivadas")
-                    .custom(variante_fantasma(cx))
-                    .h(altura::BARRA)
-                    .flex_none()
-                    .px(esp::E8)
-                    .gap(esp::E6)
-                    .rounded(raio::de(28.))
-                    .selected(vendo)
-                    .child(div().flex_none().text_color(Cores::tenue()).child(icone(Lucide::Archive, 14., window)))
-                    // O número vai na dica: o "99+" em pílula era a terceira forma de contagem na
-                    // tela, e se lia como não lidas (relatório de design, 16/11/2026).
-                    .tooltip(if vendo { "Voltar às conversas".to_string() } else { format!("Arquivadas: {}", milhar(n)) })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.filtro = if vendo { Filtro::Todos } else { Filtro::Arquivados };
-                        this.rolagem_lista.set_offset(point(px(0.), px(0.)));
-                        this.realce_lista = None;
-                        cx.notify();
-                    }))
-            })
-        });
-        let total = arquivos.filter(|a| !a.lista.is_empty()).map(|a| {
-            let palavra = if a.lista.len() == 1 { "arquivo" } else { "arquivos" };
-            div()
-                .flex_none()
-                .pr(esp::E8)
-                .metadado()
-                .text_color(Cores::apagado())
-                .child(format!("{} {palavra}", milhar(a.lista.len())))
-        });
-        let arquivadas = arquivadas.flatten();
-        // O sino desceu do trilho para cá; os anéis de uso ficam no cabeçalho da conversa.
-        let sino = self.botao_sino(super::resumo::precisa_em_tudo(motor), cx);
-        // Um fio em cima e 4 de respiro: sem eles a fileira começava colada na última conversa, e
-        // o selo do sino ficava a uns 5 px da hora dela (relatório de design, 16/11/2026).
-        Some(
-            div().flex_none().mx(r(-8.)).border_t_1().border_color(Cores::traco()).pt(esp::E4).child(
-                h_flex()
-                    .h(r(36.))
-                    .px(esp::PECA)
-                    .gap(esp::E4)
-                    .children(arquivadas)
-                    .children(agentes)
-                    .child(div().flex_1())
-                    .children(total)
-                    .child(sino),
-            ),
-        )
+        })
     }
 
     fn lista_conversas(&self, motor: &Motor, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> Montagem {
@@ -1454,7 +1412,7 @@ impl Janela {
             }
         };
         let da_secao = |secao: Secao| linhas.iter().filter(|f| secao_de(f) == secao).collect::<Vec<_>>();
-        let mut m = Montagem { corrida: geral, ..Montagem::default() };
+        let mut m = Montagem::default();
         // Só na lista corrida e sem busca: é onde todos os cartões têm uma linha, da mesma altura.
         if geral && busca.is_empty() {
             let px_de = |rems: Rems| rems.to_pixels(window.rem_size()).as_f32();
@@ -1469,27 +1427,43 @@ impl Janela {
         {
             m.itens.push(div().pt(esp::E4).px(esp::E2).child(faixa).into_any_element());
         }
+        // Linear (25/11/2026): cada seção com o título à vista (nome, contagem e a seta de recolher
+        // à direita do nome), na ordem do protótipo: Rodando, Esperando você, Fixadas e as faixas
+        // de data (Hoje, Esta semana, Mais antigas). Na busca, nada recolhe.
+        let secao = |nome: &'static str, n: usize, com_aberta: bool| {
+            let mut sec = SecaoDaLista::new(nome).contagem(n);
+            let recolhida = busca.is_empty() && !com_aberta && self.secoes_recolhidas.contains(nome);
+            if busca.is_empty() {
+                sec = sec.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), nome));
+            }
+            (sec, !recolhida)
+        };
+        let com_aberta = |membros: &[&DaLista]| membros.iter().any(|f| self.aberta_em_painel(&f.0.id));
+
+        let rodando_agora = da_secao(Secao::Rodando);
+        if !rodando_agora.is_empty() {
+            let (sec, aberta) = secao("Rodando", rodando_agora.len(), com_aberta(&rodando_agora));
+            m.secao(sec);
+            if aberta {
+                for f in rodando_agora {
+                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+                }
+            }
+        }
+
         // Pedidos, paradas e erros primeiro; as respostas novas depois (cada grupo por data).
         let mut esperando = da_secao(Secao::EsperandoVoce);
         esperando.sort_by_key(|f| f.1 == Some(Motivo::Nova));
         // Os chats parados no freio de ciclo vêm primeiro.
         let de_ciclo = if geral && busca.is_empty() { super::resumo::esperas_de_ciclo(motor) } else { Vec::new() };
         if !esperando.is_empty() || !de_ciclo.is_empty() {
-            let numero = if busca.is_empty() {
-                super::resumo::precisa_em_tudo(motor).numero()
-            } else {
-                esperando.iter().filter(|f| f.1.is_some_and(|m| m != Motivo::Nova)).count()
-            };
             let paradas: Vec<&&DaLista> = esperando.iter().filter(|f| f.1 == Some(Motivo::Parada)).collect();
-            let mut cabecalho = CabecalhoDeSecao::new("Esperando você");
-            if numero > 0 {
-                cabecalho = cabecalho.contagem(numero).tingida(Cores::espera());
-            }
+            let (mut sec, aberta) = secao("Esperando você", esperando.len() + de_ciclo.len(), com_aberta(&esperando));
             if paradas.len() >= 2 {
                 let retomar: Vec<String> =
                     paradas.iter().map(|f| f.0).filter(|c| motor.precisa_retomar(&c.id)).map(|c| c.id.clone()).collect();
                 let botao = botao_de_secao("retomar-tudo", "Retomar tudo", Lucide::Play, ctx.aperto.apertada, window, cx);
-                cabecalho = cabecalho.acao(botao.on_click(cx.listener(
+                sec = sec.acao(botao.on_click(cx.listener(
                     move |this, _, _, cx| {
                         if let Some(entidade) = &this.motor {
                             entidade.update(cx, |motor, cx| {
@@ -1501,77 +1475,37 @@ impl Janela {
                     },
                 )));
             }
-            m.cabecalho(cabecalho);
-            m.itens.extend(self.linhas_de_ciclo(motor, de_ciclo, window, cx));
-            for f in esperando {
-                self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
-            }
-        }
-
-        let rodando_agora = da_secao(Secao::Rodando);
-        if !rodando_agora.is_empty() {
-            let cabecalho = CabecalhoDeSecao::new("Rodando agora")
-                .contagem(rodando_agora.len())
-                .tingida(Cores::destaque_texto());
-            m.cabecalho(cabecalho);
-            for f in rodando_agora {
-                self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+            m.secao(sec);
+            if aberta {
+                m.itens.extend(self.linhas_de_ciclo(motor, de_ciclo, window, cx));
+                for f in esperando {
+                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
+                }
             }
         }
 
         let fixadas = da_secao(Secao::Fixadas);
         if !fixadas.is_empty() {
-            // Na lista corrida não há título para abrir a seção de novo: as fixadas ficam à vista.
-            let recolhida = !m.corrida && busca.is_empty() && self.secoes_recolhidas.contains("Fixadas");
-            let mut cabecalho = CabecalhoDeSecao::new("Fixadas").contagem(fixadas.len());
-            if busca.is_empty() {
-                cabecalho = cabecalho.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), "Fixadas"));
-            }
-            m.cabecalho(cabecalho);
-            if !recolhida {
+            let (sec, aberta) = secao("Fixadas", fixadas.len(), com_aberta(&fixadas));
+            m.secao(sec);
+            if aberta {
                 for f in fixadas {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
             }
         }
 
-        // Os outros, do mais recente ao mais antigo, todos; nas Arquivadas, por faixa de data.
+        // Os outros, do mais recente ao mais antigo, por faixa de data (também nas Arquivadas).
         let paradas = da_secao(Secao::Conversas);
-        if geral {
-            if !paradas.is_empty() {
-                m.cabecalho(CabecalhoDeSecao::new(if busca.is_empty() { "Recentes" } else { "Conversas" }));
-                for f in &paradas {
-                    self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
-                }
-            }
-        }
-        // As arquivadas por data. "Mais antigas" começa recolhida, menos na busca, quando é a
-        // única faixa ou quando tem uma conversa aberta.
-        let paradas = if geral { Vec::new() } else { paradas };
         let hoje = meia_noite_local(agora());
-        let faixas: Vec<(Faixa, Vec<&DaLista>)> = Faixa::TODAS
-            .into_iter()
-            .map(|faixa| {
-                let membros = paradas.iter().copied().filter(|f| Faixa::de(f.0.atualizado_em, hoje) == faixa);
-                (faixa, membros.collect::<Vec<_>>())
-            })
-            .filter(|(_, membros)| !membros.is_empty())
-            .collect();
-        let so_uma = faixas.len() == 1;
-        for (faixa, membros) in faixas {
-            let antigas = faixa == Faixa::Antigas;
-            let com_aberta = membros.iter().any(|f| self.aberta_em_painel(&f.0.id));
-            let pode_recolher = busca.is_empty() && (!antigas || (!mostrar_arquivados && !so_uma && !com_aberta));
-            let recolhida = pode_recolher && self.secoes_recolhidas.contains(faixa.nome());
-            let mut cabecalho = CabecalhoDeSecao::new(faixa.nome());
-            if antigas {
-                cabecalho = cabecalho.contagem(membros.len());
+        for faixa in Faixa::TODAS {
+            let membros: Vec<&DaLista> = paradas.iter().copied().filter(|f| Faixa::de(f.0.atualizado_em, hoje) == faixa).collect();
+            if membros.is_empty() {
+                continue;
             }
-            if pode_recolher {
-                cabecalho = cabecalho.recolhivel(!recolhida, alternar_secao(ctx.janela.clone(), faixa.nome()));
-            }
-            m.cabecalho(cabecalho);
-            if !recolhida {
+            let (sec, aberta) = secao(faixa.nome(), membros.len(), com_aberta(&membros));
+            m.secao(sec);
+            if aberta {
                 for f in membros {
                     self.linha_da_lista(&mut m, motor, f, ctx, window, cx);
                 }
@@ -1582,7 +1516,7 @@ impl Janela {
         if !mostrar_arquivados {
             let arquivadas = arquivadas_que_casam(motor.chats_da_lista(), &self.busca_preparada, &palavras);
             if !arquivadas.is_empty() {
-                m.cabecalho(CabecalhoDeSecao::new("Arquivadas").contagem(arquivadas.len()));
+                m.secao(SecaoDaLista::new("Arquivadas").contagem(arquivadas.len()));
                 for c in arquivadas {
                     let aberta = self.selecionado.as_deref() == Some(c.id.as_str());
                     let cartao = self.cartao_conversa(motor, c, None, ctx, window, cx);
@@ -2286,15 +2220,18 @@ mod testes {
     fn faixas_de_data() {
         const DIA: u64 = 86_400;
         let hoje = 1_000 * DIA;
-        // Até 7 dias contados da meia-noite de hoje: "Recentes"; antes disso, "Mais antigas".
-        assert_eq!(Faixa::de(hoje + 5, hoje), Faixa::Recentes);
-        assert_eq!(Faixa::de(hoje - DIA, hoje), Faixa::Recentes);
-        assert_eq!(Faixa::de(hoje - 7 * DIA, hoje), Faixa::Recentes);
+        // Desde a meia-noite de hoje: "Hoje"; até 7 dias antes dela: "Esta semana"; antes disso,
+        // "Mais antigas" (Linear, 25/11/2026).
+        assert_eq!(Faixa::de(hoje + 5, hoje), Faixa::Hoje);
+        assert_eq!(Faixa::de(hoje, hoje), Faixa::Hoje);
+        assert_eq!(Faixa::de(hoje - 1, hoje), Faixa::EstaSemana);
+        assert_eq!(Faixa::de(hoje - DIA, hoje), Faixa::EstaSemana);
+        assert_eq!(Faixa::de(hoje - 7 * DIA, hoje), Faixa::EstaSemana);
         assert_eq!(Faixa::de(hoje - 7 * DIA - 1, hoje), Faixa::Antigas);
         assert_eq!(Faixa::de(hoje - 30 * DIA - 1, hoje), Faixa::Antigas);
         // Conversa antiga gravada sem data não quebra a conta.
         assert_eq!(Faixa::de(0, hoje), Faixa::Antigas);
-        assert_eq!(Faixa::TODAS.map(Faixa::nome), ["Recentes", "Mais antigas"]);
+        assert_eq!(Faixa::TODAS.map(Faixa::nome), ["Hoje", "Esta semana", "Mais antigas"]);
     }
 
     #[test]
