@@ -29,7 +29,8 @@ use super::{
     componentes::{
         BotaoRedondo, CabecalhoDeSecao, CartaoDeLista, SecaoDaLista, barra_de_rolagem, EstadoVazio,
         ALTURA_DA_LINHA_DE_CHAT, PreviaArrasto, Sinal, TamanhoBotao, Tom,
-        VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
+        Reflexo as _, VarianteRedonda, aviso, aviso_com_acao, botao_fantasma, botao_icone, botao_primario, campo_de_busca_de,
+        campo_de_busca_pequeno,
         contagem, icone, motivo_curto, numero_painel, sinal_do_chat, variante_fantasma,
     },
     dialogos::{com_til, nome_da_pasta},
@@ -826,7 +827,9 @@ fn acoes_do_arquivo(
         )
 }
 
-/// Uma linha da árvore de arquivos: 28 de altura e 16 de recuo por nível.
+/// Uma linha da árvore de arquivos no jeito do Linear (25/11/2026): 24 de altura, 14 de recuo por
+/// nível, a seta de 12 no apagado, o ícone de 14 e o nome em 12,5; à direita, a letra do git (M,
+/// A); a pasta com mudança dentro fica com o nome âmbar.
 #[allow(clippy::too_many_arguments)]
 fn linha_da_arvore(
     ix: usize,
@@ -834,16 +837,18 @@ fn linha_da_arvore(
     pasta: &Path,
     aberto: Option<&str>,
     ignorados: Option<&super::seletor_arquivos::Ignorados>,
+    marcas: Option<&super::git_da_pasta::MarcasDoGit>,
     janela: &WeakEntity<Janela>,
     window: &Window,
     cx: &App,
 ) -> ListItem {
     const GRUPO: &str = "linha-da-arvore";
     let caminho = entrada.item().id.to_string();
+    let recuo = 6. + 14. * entrada.depth() as f32;
     // A linha que só avisa, dentro de uma pasta ignorada: "Lendo…" ou "Pasta vazia".
     if caminho.ends_with(MARCA_DE_AVISO) {
-        return ListItem::new(ix).h(r(28.)).py_0().pl(r(8. + 16. * entrada.depth() as f32 + 18.)).pr(esp::E4).child(
-            div().metadado().text_color(Cores::apagado()).child(entrada.item().label.clone()),
+        return ListItem::new(ix).h(r(24.)).py_0().pl(r(recuo + 18.)).pr(esp::E8).child(
+            div().text_size(r(12.)).text_color(Cores::apagado()).child(entrada.item().label.clone()),
         );
     }
     let e_pasta = entrada.is_folder();
@@ -852,42 +857,53 @@ fn linha_da_arvore(
     let ignorado = ignorados.is_some_and(|i| {
         i.entradas.binary_search(&caminho).is_ok() || i.entradas.binary_search(&format!("{caminho}/")).is_ok()
     });
+    let marca = marcas.and_then(|m| m.arquivos.get(&caminho)).filter(|_| !e_pasta).copied();
+    let mudou_dentro = e_pasta && marcas.is_some_and(|m| m.pastas.contains(&caminho));
     let escolhido = aberto == Some(caminho.as_str());
-    let simbolo = match (e_pasta, expandida) {
-        (true, true) => Lucide::FolderOpen,
-        (true, false) => Lucide::Folder,
+    let simbolo = match e_pasta {
+        true => Lucide::Folder,
         // Uma imagem se acha na árvore pelo ícone, antes de abrir.
         _ if crate::claude::imagem_de_ver(Path::new(&caminho)) => Lucide::FileImage,
-        _ => Lucide::FileText,
+        _ => Lucide::File,
     };
     let seta = e_pasta.then(|| icone(if expandida { Lucide::ChevronDown } else { Lucide::ChevronRight }, 12., window));
+    let cor_do_nome = if mudou_dentro {
+        Cores::ambar()
+    } else if ignorado {
+        Cores::tenue()
+    } else {
+        Cores::texto_da_fala()
+    };
     let item = ListItem::new(ix)
         .group(GRUPO)
-        .h(r(28.))
+        .h(r(24.))
         .py_0()
-        .pl(r(8. + 16. * entrada.depth() as f32))
-        .pr(esp::E4)
-        .rounded(raio::CONTROLE)
+        .pl(r(recuo))
+        .pr(esp::E8)
+        .rounded(raio::de(20.))
         .when(escolhido, |l| l.bg(Cores::selecao()))
         .child(
             h_flex()
                 .w_full()
                 .min_w_0()
                 .gap(esp::E6)
-                .child(div().flex_none().w(r(12.)).text_color(Cores::tenue()).children(seta))
-                .child(div().flex_none().text_color(Cores::tenue()).child(icone(simbolo, 16., window)))
+                .child(div().flex_none().w(r(12.)).text_color(Cores::apagado()).children(seta))
+                .child(div().flex_none().text_color(Cores::tenue()).child(icone(simbolo, 14., window)))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         // O arquivo corta no meio, para a extensão ficar à vista; a pasta, no fim.
                         .map(|s| if e_pasta { s.truncate() } else { s.overflow_hidden().whitespace_nowrap().text_ellipsis_middle() })
-                        .text_size(r(13.))
-                        .line_height(r(18.))
-                        .font_weight(if e_pasta { FontWeight::MEDIUM } else { FontWeight::NORMAL })
-                        .text_color(if ignorado { Cores::tenue() } else { Cores::texto() })
+                        .text_size(r(12.5))
+                        .line_height(r(16.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(cor_do_nome)
                         .child(entrada.item().label.clone()),
                 )
+                .children(marca.map(|(letra, cor)| {
+                    div().flex_none().font_family(crate::tema::FONTE_MONO).text_size(r(10.5)).font_weight(FontWeight::SEMIBOLD).text_color(cor).child(letra)
+                }))
                 .when(!e_pasta, |d| {
                     d.child(acoes_do_arquivo(GRUPO, ix, janela.clone(), pasta.to_path_buf(), caminho.clone(), window, cx))
                 }),
@@ -993,7 +1009,10 @@ impl Janela {
         let busca = self.busca.read(cx).value().to_lowercase();
         // A aba Arquivos mostra a pasta do chat aberto.
         let conversas = self.aba == AbaLateral::Conversas;
-        let arquivos = (!conversas).then(|| self.preparar_arquivos(motor_entidade, &busca, window, cx));
+        let arquivos = (!conversas).then(|| {
+            let pasta = self.selecionado.as_ref().and_then(|id| motor_entidade.read(cx).chat(id)).map(|c| c.cwd.clone());
+            self.preparar_arquivos(pasta, &busca, window, cx)
+        });
         // Com texto na busca e o cursor nela, o resultado marcado aparece mesmo sem o foco na lista:
         // é o que o Enter abre (rodada de uso, item 4.1).
         let busca_ativa = !busca.is_empty() && self.busca.read(cx).focus_handle(cx).is_focused(window);
@@ -1022,7 +1041,7 @@ impl Janela {
         let linha_busca = self.linha_da_busca(&montagem, &ctx, window, cx);
         let escopo = self.linha_escopo(motor, arquivos.as_ref(), &ctx, window, cx);
         let conteudo = match &arquivos {
-            Some(a) => self.conteudo_arquivos(a, &ctx, window, cx),
+            Some(a) => self.conteudo_arquivos(a, &ctx, &self.busca.clone(), None, window, cx),
             None => {
                 let navegaveis = Rc::new(montagem.navegaveis);
                 let lista = v_flex()
@@ -1132,7 +1151,9 @@ impl Janela {
             .gap(esp::E2)
             .mb(esp::E4)
             .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
-            .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", !conversas).on_click(trocar(AbaLateral::Arquivos)))
+            // Os arquivos moram na direita (protótipo Linear, 25/11/2026): o item abre a aba deles,
+            // com o cursor na busca; a lista continua nas conversas.
+            .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", false).on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))))
             .child(
                 linha("lista-quadro", Lucide::Kanban, "Quadro de ideias", false)
                     .children(atalho)
@@ -1892,7 +1913,7 @@ impl Janela {
     /// a busca.
     fn preparar_arquivos(
         &mut self,
-        motor_entidade: &Entity<Motor>,
+        pasta: Option<PathBuf>,
         busca: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1901,8 +1922,7 @@ impl Janela {
             .use_keyed_state("rolagem-dos-arquivos", cx, |_, _| UniformListScrollHandle::new())
             .read(cx)
             .clone();
-        let motor = motor_entidade.read(cx);
-        let pasta = self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.cwd.clone()).filter(|p| p.is_dir());
+        let pasta = pasta.filter(|p| p.is_dir());
         let lista = match &pasta {
             Some(p) => self.arquivos_da_pasta(p, cx),
             None => Rc::new(Vec::new()),
@@ -1982,7 +2002,15 @@ impl Janela {
     }
 
     /// Aba Arquivos: a árvore da pasta escolhida ou os resultados da busca.
-    fn conteudo_arquivos(&self, a: &Arquivos, ctx: &Contexto, window: &Window, cx: &Context<Self>) -> AnyElement {
+    fn conteudo_arquivos(
+        &self,
+        a: &Arquivos,
+        ctx: &Contexto,
+        busca: &Entity<InputState>,
+        marcas: Option<Rc<super::git_da_pasta::MarcasDoGit>>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let Some(pasta) = a.pasta.clone() else {
             let texto = if self.selecionado.is_some() {
                 "A pasta deste chat não foi encontrada no disco."
@@ -2016,9 +2044,11 @@ impl Janela {
         let aberto = self.arquivo_aberto.clone().filter(|(p, _)| *p == pasta).map(|(_, c)| c);
         if let Some(achados) = &a.achados {
             if achados.is_empty() {
-                let digitado = self.busca.read(cx).value().trim().to_string();
-                let vazio = EstadoVazio::new(Lucide::Search, format!("Nenhum arquivo com “{digitado}”"))
-                    .acao(self.botao_limpar_busca(window, cx));
+                let digitado = busca.read(cx).value().trim().to_string();
+                let campo = busca.clone();
+                let limpar = botao_fantasma("vazio-limpar-busca", None, "Limpar busca", TamanhoBotao::Controle, window, cx)
+                    .on_click(move |_, window, cx| campo.update(cx, |b, cx| b.set_value("", window, cx)));
+                let vazio = EstadoVazio::new(Lucide::Search, format!("Nenhum arquivo com “{digitado}”")).acao(limpar);
                 return div().flex_1().px(esp::E8).child(vazio).into_any_element();
             }
             let termo = ctx.busca.split_whitespace().next().unwrap_or_default().to_string();
@@ -2054,7 +2084,7 @@ impl Janela {
         let pasta_menu = pasta.clone();
         let ignorados = a.ignorados.clone();
         let arvore = tree(arvore, move |ix, entrada, _, window, cx| {
-            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), ignorados.as_deref(), &janela, window, cx)
+            linha_da_arvore(ix, entrada, &pasta, aberto.as_deref(), ignorados.as_deref(), marcas.as_deref(), &janela, window, cx)
         })
         .context_menu(move |_, entrada, menu, _, _| {
             // A linha que só avisa ("Lendo…") não tem o que fazer.
@@ -2064,6 +2094,130 @@ impl Janela {
             menu_do_arquivo(menu, janela_menu.clone(), pasta_menu.clone(), entrada.item().id.to_string(), entrada.is_folder())
         });
         div().flex_1().min_h_0().pb(esp::E8).child(arvore).into_any_element()
+    }
+}
+
+impl Janela {
+    /// Abre a aba Arquivos da direita com o cursor na busca (o item Arquivos da lista).
+    pub(super) fn abrir_aba_arquivos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.aba_direita = super::abas_direita::AbaDireita::Arquivos;
+        self.mostrar_direita(window, cx);
+        let foco = self.busca_arquivos.read(cx).focus_handle(cx);
+        window.focus(&foco, cx);
+        cx.notify();
+    }
+
+    /// A aba Arquivos da direita (protótipo Linear, 25/11/2026): a busca de 28, a pasta de
+    /// trabalho (ou, sem ela, a do chat aberto) e a árvore, com as marcas do git do chat.
+    pub(super) fn painel_de_arquivos(&mut self, motor_entidade: &Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (raiz, pasta_do_chat) = {
+            let motor = motor_entidade.read(cx);
+            let do_chat = self.selecionado.as_ref().and_then(|id| motor.chat(id)).map(|c| c.cwd.clone()).filter(|p| p.is_dir());
+            let raiz = motor.config.pasta_de_trabalho.clone().filter(|p| p.is_dir()).or_else(|| do_chat.clone());
+            (raiz, do_chat)
+        };
+        let termo = self.busca_arquivos.read(cx).value().to_lowercase();
+        let marcas = match (&raiz, &pasta_do_chat) {
+            (Some(raiz), Some(chat)) => self.marcas_do_git(raiz, chat, cx),
+            _ => None,
+        };
+        let arquivos = self.preparar_arquivos(raiz.clone(), &termo, window, cx);
+        let ctx = Contexto {
+            busca: termo,
+            aperto: Aperto::de(self.direita_largura * 15.),
+            teclado: false,
+            motor: motor_entidade.clone(),
+            janela: cx.entity().downgrade(),
+        };
+        let busca_e = self.busca_arquivos.clone();
+        let conteudo = self.conteudo_arquivos(&arquivos, &ctx, &busca_e, marcas, window, cx);
+        let cabecalho = self.barra_de_abas(motor_entidade.read(cx), super::abas_direita::AbaDireita::Arquivos, false, "arrastar-arquivos", window, cx);
+        // A busca a 2 da coluna das linhas, com 4 em cima e 6 embaixo.
+        let busca = div()
+            .flex_none()
+            .mx(esp::E2)
+            .mt(esp::E4)
+            .mb(esp::E6)
+            .on_action(cx.listener(|this, _: &Escape, window, cx| {
+                if this.busca_arquivos.read(cx).value().is_empty() {
+                    this.focar_composer(window, cx);
+                } else {
+                    this.busca_arquivos.update(cx, |b, cx| b.set_value("", window, cx));
+                }
+            }))
+            .child(campo_de_busca_pequeno("busca-arquivos-direita", &busca_e, window, cx));
+        // A pasta de cima, em mono; no hover, o mostrar ignorados e o recarregar.
+        let topo = raiz.as_ref().map(|raiz| {
+            let (r_ign, r_rec) = (raiz.clone(), raiz.clone());
+            let ligado = self.mostrar_ignorados;
+            let (simbolo, dica) = if ligado {
+                (Lucide::Eye, "Esconder os ignorados")
+            } else {
+                (Lucide::EyeOff, "Mostrar ignorados\nO que o git deixa de fora, como prints e exports")
+            };
+            h_flex()
+                .id("raiz-dos-arquivos")
+                .group("raiz-dos-arquivos")
+                .flex_none()
+                .h(r(19.))
+                .px(esp::E8)
+                .gap(esp::E4)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_start()
+                        .font_family(crate::tema::FONTE_MONO)
+                        .text_size(r(11.5))
+                        .text_color(Cores::tenue())
+                        .child(com_til(raiz)),
+                )
+                .child(
+                    sem_arrastar()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(esp::E2)
+                        .when(!ligado, |s| s.invisible().group_hover("raiz-dos-arquivos", |s| s.visible()))
+                        .child(
+                            botao_icone("arquivos-ignorados", simbolo, dica, TamanhoBotao::Linha, window, cx)
+                                .size(r(18.))
+                                .when(ligado, |b| b.text_color(Cores::destaque_texto()))
+                                .on_click(cx.listener(move |this, _, _, cx| this.alternar_ignorados(&r_ign, cx))),
+                        )
+                        .child(
+                            botao_icone("arquivos-recarregar", Lucide::RefreshCw, "Recarregar a lista de arquivos", TamanhoBotao::Linha, window, cx)
+                                .size(r(18.))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.reler_arquivos(&r_rec);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+        });
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .when(self.gaveta == Some(super::Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
+            .when(self.gaveta != Some(super::Gaveta::Direita), |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .overflow_hidden()
+            .child(cabecalho)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .px(esp::E6)
+                    .child(busca)
+                    .children(topo)
+                    .child(div().flex_1().min_h_0().flex().flex_col().child(conteudo)),
+            )
+            .when(self.gaveta != Some(super::Gaveta::Direita), |s| s.aresta_encostada(crate::tema::Esquerda::Emendada))
+            .on_prepaint(self.medir_direita(cx))
+            .into_any_element()
     }
 }
 

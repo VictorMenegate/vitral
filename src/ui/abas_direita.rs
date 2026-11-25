@@ -21,6 +21,8 @@ use crate::{
 pub enum AbaDireita {
     #[default]
     Chat,
+    /// A árvore da pasta de trabalho, com a busca (o item Arquivos da lista abre aqui).
+    Arquivos,
     Arquivo(usize),
 }
 
@@ -31,6 +33,9 @@ impl Janela {
     /// A aba que a direita mostra agora: o arquivo, se é ele que está em foco e continua aberto (ou
     /// sem chat selecionado); senão a do chat selecionado.
     pub(super) fn aba_visivel(&self, motor: &Motor) -> AbaDireita {
+        if self.aba_direita == AbaDireita::Arquivos {
+            return AbaDireita::Arquivos;
+        }
         if let AbaDireita::Arquivo(i) = self.aba_direita
             && self.arquivo_aberto.is_some()
         {
@@ -52,6 +57,7 @@ impl Janela {
     pub(super) fn conteudo_da_direita(&mut self, motor: &Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.aba_visivel(motor.read(cx)) {
             AbaDireita::Arquivo(_) => self.painel_arquivo(motor, window, cx),
+            AbaDireita::Arquivos => self.painel_de_arquivos(motor, window, cx),
             AbaDireita::Chat => self.painel_do_chat(motor, window, cx).into_any_element(),
         }
     }
@@ -78,6 +84,13 @@ impl Janela {
             let aba = aba_da_direita("aba-este-chat", Lucide::MessageCircle, "Este chat".into(), ativa, window)
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .when(!ativa, |a| a.on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Chat, cx))));
+            abas.push(super::sem_arrastar().flex().flex_none().child(aba).into_any_element());
+        }
+        {
+            let ativa = visivel == AbaDireita::Arquivos;
+            let aba = aba_da_direita("aba-arquivos", Lucide::Folder, "Arquivos".into(), ativa, window)
+                .dica_no_ponteiro(|window, cx| Tooltip::new("Arquivos da pasta de trabalho").build(window, cx))
+                .when(!ativa, |a| a.on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))));
             abas.push(super::sem_arrastar().flex().flex_none().child(aba).into_any_element());
         }
         if let Some((raiz, caminho)) = arquivo {

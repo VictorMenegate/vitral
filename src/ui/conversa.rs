@@ -1619,7 +1619,7 @@ impl Janela {
     fn o_que_a_direita_mostra(&self, motor: &Motor) -> Direita {
         match self.aba_visivel(motor) {
             super::abas_direita::AbaDireita::Arquivo(_) => Direita::Arquivo,
-            super::abas_direita::AbaDireita::Chat => Direita::EsteChat,
+            super::abas_direita::AbaDireita::Chat | super::abas_direita::AbaDireita::Arquivos => Direita::EsteChat,
         }
     }
 

@@ -1314,6 +1314,26 @@ pub fn campo_de_busca_de(
     window: &Window,
     cx: &App,
 ) -> Stateful<Div> {
+    campo_de_busca_com(id, estado, atalho, altura, (linear::BUSCA_ESQUERDA, linear::BUSCA_DIREITA), esp::E6, 13.5, window, cx)
+}
+
+/// A busca de 28 da aba Arquivos da direita: 9 dos lados, 7 entre a lupa e o texto, em 12,5.
+pub fn campo_de_busca_pequeno(id: impl Into<ElementId>, estado: &Entity<InputState>, window: &Window, cx: &App) -> Stateful<Div> {
+    campo_de_busca_com(id, estado, None, 28., (linear::ITEM_LADO, linear::ITEM_LADO), linear::PASSO_VAO, 12.5, window, cx)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn campo_de_busca_com(
+    id: impl Into<ElementId>,
+    estado: &Entity<InputState>,
+    atalho: Option<Box<dyn Action>>,
+    altura: f32,
+    (esquerda, direita): (Rems, Rems),
+    vao: Rems,
+    letra: f32,
+    window: &Window,
+    cx: &App,
+) -> Stateful<Div> {
     let focado = estado.read(cx).focus_handle(cx).is_focused(window);
     let vazio = estado.read(cx).value().is_empty();
     // O atalho em texto simples ("Ctrl K"), sem as teclas em caixa, como no Linear (25/11/2026).
@@ -1333,8 +1353,8 @@ pub fn campo_de_busca_de(
         .flex()
         .items_center()
         .h(r(altura))
-        .pl(linear::BUSCA_ESQUERDA)
-        .pr(linear::BUSCA_DIREITA)
+        .pl(esquerda)
+        .pr(direita)
         // Chapada no preto, sem fio nem poço (protótipo Linear, 25/11/2026).
         .rounded(raio::de(altura))
         .bg(Cores::preto())
@@ -1343,13 +1363,13 @@ pub fn campo_de_busca_de(
                 .appearance(false)
                 .cleanable(true)
                 .px_0()
-                .gap(esp::E6)
+                .gap(vao)
                 .prefix(
                     div()
                         .text_color(Cores::tenue())
                         .child(Icon::new(Lucide::Search).with_size(tam(window, 14.))),
                 )
-                .text_size(r(13.5)),
+                .text_size(r(letra)),
         )
         .children(teclas)
 }

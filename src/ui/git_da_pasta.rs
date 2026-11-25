@@ -26,6 +26,25 @@ use crate::{
 /// De quanto em quanto tempo a seção relê o git enquanto está à vista.
 const RELER_A_CADA: Duration = Duration::from_secs(4);
 
+/// As marcas do git na árvore da aba Arquivos: a letra e a cor de cada arquivo mudado e as pastas
+/// com mudança dentro (o nome delas fica âmbar).
+#[derive(Default)]
+pub(super) struct MarcasDoGit {
+    pub arquivos: std::collections::HashMap<String, (&'static str, Hsla)>,
+    pub pastas: std::collections::HashSet<String>,
+}
+
+/// A letra do estado no git: M (mudado, âmbar), A (novo, verde), D (apagado, vermelho), R
+/// (renomeado, tênue).
+fn letra_do_estado(estado: EstadoNoGit) -> (&'static str, Hsla) {
+    match estado {
+        EstadoNoGit::Novo => ("A", Cores::verde()),
+        EstadoNoGit::Apagado => ("D", Cores::vermelho()),
+        EstadoNoGit::Renomeado => ("R", Cores::tenue()),
+        EstadoNoGit::Mudado => ("M", Cores::ambar()),
+    }
+}
+
 /// O último retrato lido e de qual pasta.
 #[derive(Default)]
 pub(super) struct GitDaPasta {
@@ -73,6 +92,42 @@ impl Janela {
             let _ = janela.update(cx, |_, cx| cx.notify());
         })
         .detach();
+    }
+
+    /// As marcas do git na árvore da aba Arquivos (que começa em `raiz_da_arvore`): a letra de cada
+    /// arquivo mudado no repositório do chat e as pastas que têm mudança dentro. Os caminhos são os
+    /// da árvore (relativos à raiz dela); o repositório pode estar dentro dela ou contê-la.
+    pub(super) fn marcas_do_git(&mut self, raiz_da_arvore: &Path, pasta_do_chat: &Path, cx: &Context<Self>) -> Option<std::rc::Rc<MarcasDoGit>> {
+        self.reler_git_se_preciso(pasta_do_chat, cx);
+        let retrato = self.git_da_pasta.retrato.as_ref()?;
+        let repo = retrato.raiz.as_path();
+        let mut marcas = MarcasDoGit::default();
+        for m in &retrato.mudancas {
+            let no_repo = m.caminho.trim_end_matches('/');
+            let caminho = if let Ok(rel) = repo.strip_prefix(raiz_da_arvore) {
+                let rel = crate::git::caminho_em_texto(rel);
+                if rel.is_empty() { no_repo.to_string() } else { format!("{rel}/{no_repo}") }
+            } else if let Ok(rel) = raiz_da_arvore.strip_prefix(repo) {
+                let rel = crate::git::caminho_em_texto(rel);
+                match no_repo.strip_prefix(&format!("{rel}/")) {
+                    Some(dentro) => dentro.to_string(),
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            let (letra, cor) = letra_do_estado(m.estado);
+            let mut acima = caminho.as_str();
+            while let Some((pai, _)) = acima.rsplit_once('/') {
+                marcas.pastas.insert(pai.to_string());
+                acima = pai;
+            }
+            if m.caminho.ends_with('/') {
+                marcas.pastas.insert(caminho.clone());
+            }
+            marcas.arquivos.insert(caminho, (letra, cor));
+        }
+        Some(std::rc::Rc::new(marcas))
     }
 
     /// O ramo da pasta do chat, para o grupo Pasta do Este chat (relê o git quando precisa).
@@ -181,12 +236,7 @@ fn linha_git(raiz: &Path, m: &MudancaNaPasta, i: usize, window: &Window, cx: &Co
     let grupo = SharedString::from(format!("git-{i}"));
     let apagado = m.estado == EstadoNoGit::Apagado;
     let novo = m.estado == EstadoNoGit::Novo;
-    let (letra, cor) = match m.estado {
-        EstadoNoGit::Novo => ("A", Cores::verde()),
-        EstadoNoGit::Apagado => ("D", Cores::vermelho()),
-        EstadoNoGit::Renomeado => ("R", Cores::tenue()),
-        EstadoNoGit::Mudado => ("M", Cores::ambar()),
-    };
+    let (letra, cor) = letra_do_estado(m.estado);
     let dica = SharedString::from(m.caminho.clone());
     let (raiz_a, caminho_a) = (raiz.to_path_buf(), m.caminho.clone());
     let (raiz_d, caminho_d) = (raiz.to_path_buf(), m.caminho.clone());

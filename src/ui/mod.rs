@@ -427,6 +427,9 @@ struct ArquivosLidos {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AbaLateral {
     Conversas,
+    /// A árvore saiu da lista para a aba Arquivos da direita (protótipo Linear, 25/11/2026); o que
+    /// a lista ainda tem dela sai na limpeza da etapa 10 do porte.
+    #[allow(dead_code)]
     Arquivos,
 }
 
@@ -441,6 +444,8 @@ pub struct Janela {
     selecionado: Option<String>,
     filtro: Filtro,
     busca: Entity<InputState>,
+    /// A busca da aba Arquivos da direita.
+    busca_arquivos: Entity<InputState>,
     /// Conversas abertas lado a lado e qual delas está ativa.
     paineis: Vec<paineis::Painel>,
     ativo: usize,
@@ -822,6 +827,13 @@ impl Janela {
                 cx.notify();
             }
         })];
+        // A busca da aba Arquivos da direita: filtra a árvore enquanto se digita.
+        let busca_arquivos = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar arquivo"));
+        assinaturas.push(cx.subscribe_in(&busca_arquivos, window, |_, _, evento, _, cx| {
+            if matches!(evento, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         // A busca dentro do arquivo aberto à direita: o Enter anda pelos achados.
         let busca_no_arquivo = cx.new(|cx| InputState::new(window, cx).placeholder("Buscar no arquivo"));
         assinaturas.push(cx.subscribe_in(&busca_no_arquivo, window, |this, _, evento, _, cx| match evento {
@@ -932,6 +944,7 @@ impl Janela {
             selecionado: None,
             filtro: Filtro::Todos,
             busca,
+            busca_arquivos,
             paineis: Vec::new(),
             ativo: 0,
             ativo_antes_do_clique: None,
@@ -1870,6 +1883,7 @@ impl Janela {
         self.painel
             && match self.aba_direita {
                 abas_direita::AbaDireita::Arquivo(_) => self.arquivo_aberto.is_some() || self.selecionado.is_some(),
+                abas_direita::AbaDireita::Arquivos => true,
                 abas_direita::AbaDireita::Chat => {
                     self.selecionado.is_some() || self.arquivo_aberto.is_some()
                 }
@@ -2601,6 +2615,7 @@ impl Janela {
             // Aberta (Ctrl+J) ou trocada entre o arquivo e Este chat, entra com fade, uma vez.
             let qual = match self.aba_visivel(motor.read(cx)) {
                 abas_direita::AbaDireita::Arquivo(_) => "arquivo",
+                abas_direita::AbaDireita::Arquivos => "arquivos",
                 abas_direita::AbaDireita::Chat => "chat",
             };
             let antes = self.direita_vista.replace(qual);
