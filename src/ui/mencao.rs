@@ -11,7 +11,7 @@ use gpui_kit::component::tooltip::{ManagedTooltipExt as _, Tooltip};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, raio};
+use crate::tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, linear, r, raio};
 
 /// Uma menção: o caminho como vai no texto (relativo à pasta do chat, ou inteiro) e as linhas
 /// (a primeira e a última; iguais numa linha só).
@@ -19,6 +19,8 @@ use crate::tema::{Cores, FONTE_MONO, Lucide, Tipo as _, esp, raio};
 pub struct Mencao {
     pub caminho: String,
     pub linhas: Option<(u32, u32)>,
+    /// O pedaço exato, quando a menção é de parte das linhas (` «…»` depois delas).
+    pub trecho: Option<String>,
 }
 
 /// O texto da menção que vai na mensagem: "@src/x.rs", "@src/x.rs#L12", "@src/x.rs#L12-20". Um
@@ -29,6 +31,39 @@ pub fn texto_da_mencao(caminho: &str, linhas: Option<(u32, u32)>) -> String {
         Some((a, b)) if b > a => format!("{inicio}#L{a}-{b}"),
         Some((a, _)) => format!("{inicio}#L{a}"),
         None => inicio,
+    }
+}
+
+/// A menção com o pedaço exato de parte das linhas: "@src/x.rs#L12 «cabeNaFabrica(c)»". As quebras
+/// do trecho vão como `\n` (a pílula da caixa é uma linha só); com « ou » dentro dele não cabe no
+/// formato, e vai só com as linhas.
+pub fn texto_da_mencao_com(caminho: &str, linhas: Option<(u32, u32)>, trecho: Option<&str>) -> String {
+    let base = texto_da_mencao(caminho, linhas);
+    match trecho.filter(|t| !t.trim().is_empty() && !t.contains(['«', '»']) && linhas.is_some()) {
+        Some(t) => format!("{base} «{}»", t.replace('\n', "\\n")),
+        None => base,
+    }
+}
+
+/// O trecho que vem logo depois de uma menção (` «…»`): ele e quantos bytes ocupa.
+fn ler_trecho(depois: &str) -> Option<(String, usize)> {
+    let dentro = depois.strip_prefix(" «")?;
+    let fim = dentro.find('»')?;
+    let trecho = &dentro[..fim];
+    (!trecho.trim().is_empty() && !trecho.contains(['«', '\n'])).then(|| (trecho.replace("\\n", "\n"), " «".len() + fim + "»".len()))
+}
+
+/// O começo do trecho numa linha só, para a pílula: sem o recuo e cortado em `maximo` letras.
+pub fn trecho_curto(trecho: &str, maximo: usize) -> String {
+    let linha = trecho.trim_start().lines().next().unwrap_or("").trim_end();
+    if linha.chars().count() > maximo {
+        let mut curto: String = linha.chars().take(maximo).collect();
+        curto.push('…');
+        curto
+    } else if trecho.trim().lines().count() > 1 {
+        format!("{linha}…")
+    } else {
+        linha.to_string()
     }
 }
 
@@ -92,7 +127,12 @@ pub fn ler_mencao(texto: &str) -> Option<(Mencao, usize)> {
     if caminho.is_empty() || caminho.contains('#') || caminho.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    Some((Mencao { caminho: caminho.to_string(), linhas }, 1 + bruto.len()))
+    let tamanho = 1 + bruto.len();
+    let (trecho, a_mais) = match ler_trecho(&texto[tamanho..]).filter(|_| linhas.is_some()) {
+        Some((t, n)) => (Some(t), n),
+        None => (None, 0),
+    };
+    Some((Mencao { caminho: caminho.to_string(), linhas, trecho }, tamanho + a_mais))
 }
 
 /// A menção `@"caminho com espaço"`, já sem o `@"`: o que está entre as aspas (na mesma linha) e,
@@ -108,7 +148,11 @@ fn ler_mencao_entre_aspas(depois_das_aspas: &str) -> Option<(Mencao, usize)> {
     let sufixo = sufixo.trim_end_matches(['.', ',', ';', ':', '!', '?']);
     let linhas = ler_linhas(sufixo);
     let usado = if linhas.is_some() { sufixo.len() } else { 0 };
-    Some((Mencao { caminho, linhas }, 2 + fim + 1 + usado))
+    let (trecho, a_mais) = match ler_trecho(&depois[usado..]).filter(|_| linhas.is_some()) {
+        Some((t, n)) => (Some(t), n),
+        None => (None, 0),
+    };
+    Some((Mencao { caminho, linhas, trecho }, 2 + fim + 1 + usado + a_mais))
 }
 
 /// As menções do texto, com onde cada uma está: "@" no começo ou depois de um espaço ou de um
@@ -164,8 +208,37 @@ pub fn link_da_mencao(inteiro: &str, linhas: Option<(u32, u32)>) -> String {
     format!("vitral:mencao/{faixa}/{codificado}")
 }
 
+/// O endereço da pílula com o trecho: o de sempre e `?t=` com o trecho em `%XX`.
+pub fn link_da_mencao_com(inteiro: &str, linhas: Option<(u32, u32)>, trecho: Option<&str>) -> String {
+    let base = link_da_mencao(inteiro, linhas);
+    match trecho.filter(|t| !t.is_empty()) {
+        Some(t) => format!("{base}?t={}", super::links_arquivo::codificado(t)),
+        None => base,
+    }
+}
+
+/// O trecho de um endereço de pílula (`?t=`), se ele tem.
+pub fn trecho_do_link(link: &str) -> Option<String> {
+    let (_, codificado) = link.split_once("?t=")?;
+    let bytes = codificado.as_bytes();
+    let mut saida = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let par = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+            saida.push(u8::from_str_radix(par, 16).ok()?);
+            i += 3;
+        } else {
+            saida.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(saida).ok().filter(|t| !t.is_empty())
+}
+
 /// O caminho inteiro e as linhas de um endereço `vitral:mencao/…` (ou `vitral:arquivo/…`).
 pub fn ler_link_da_mencao(link: &str) -> Option<(String, Option<(u32, u32)>)> {
+    let link = link.split("?t=").next().unwrap_or(link);
     let (inteiro, linha) = super::links_arquivo::ler_link(link)?;
     Some((inteiro, super::links_arquivo::ler_faixa(link).or(linha.map(|l| (l, l)))))
 }
@@ -194,7 +267,7 @@ pub fn ligar_mencoes(texto: &str, resolver: &mut dyn FnMut(&str) -> Option<Strin
     for (faixa, mencao) in mencoes_no_texto(texto) {
         let Some(inteiro) = resolver(&mencao.caminho) else { continue };
         saida.push_str(&texto[ultimo..faixa.start]);
-        let link = link_da_mencao(&inteiro, mencao.linhas);
+        let link = link_da_mencao_com(&inteiro, mencao.linhas, mencao.trecho.as_deref());
         saida.push_str(&format!("[{}]({link})", sem_marcas(&texto[faixa.clone()])));
         ultimo = faixa.end;
     }
@@ -207,6 +280,7 @@ struct DadosDaMencao {
     link: String,
     inteiro: String,
     linhas: Option<(u32, u32)>,
+    trecho: Option<String>,
 }
 
 /// O plugin do texto do balão: o link `vitral:mencao/…` vira a pílula.
@@ -223,8 +297,9 @@ impl MarkdownPlugin for PilulaDeMencao {
             return None;
         }
         let (inteiro, linhas) = ler_link_da_mencao(&link.url)?;
-        let texto = texto_da_mencao(&inteiro, linhas);
-        Some(MarkdownNode::new("mencao-vitral", DadosDaMencao { link: link.url.clone(), inteiro, linhas }).text(texto))
+        let trecho = trecho_do_link(&link.url);
+        let texto = texto_da_mencao_com(&inteiro, linhas, trecho.as_deref());
+        Some(MarkdownNode::new("mencao-vitral", DadosDaMencao { link: link.url.clone(), inteiro, linhas, trecho }).text(texto))
     }
 
     fn render_inline(&self, node: &MarkdownNode, contexto: &InlineRenderContext, _: &mut Window, _: &mut App) -> Option<InlineElement> {
@@ -234,6 +309,8 @@ impl MarkdownPlugin for PilulaDeMencao {
             SharedString::from(format!("mencao-{id}-{}", dados.link)),
             &dados.inteiro,
             dados.linhas,
+            dados.trecho.as_deref(),
+            true,
             false,
             contexto.line_height(),
         );
@@ -241,7 +318,7 @@ impl MarkdownPlugin for PilulaDeMencao {
         Some(InlineElement::new(
             pilula
                 .cursor_pointer()
-                .hover(|s| s.border_color(Cores::borda_forte()))
+                .hover(|s| s.bg(Cores::forte().opacity(0.2)))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(super::links_arquivo::AbrirLinkVitral(link.clone())), cx)
                 }),
@@ -249,51 +326,106 @@ impl MarkdownPlugin for PilulaDeMencao {
     }
 }
 
-/// A pílula de uma menção, do tamanho da linha do texto em volta: o ícone do tipo, o nome curto em
-/// mono e as linhas em tom tênue, no poço escuro (o mesmo do código do balão); o caminho inteiro
-/// fica na dica. `escolhida`: na caixa, com a seleção por cima.
+/// A pílula de uma menção no jeito do protótipo Linear (25/11/2026): 20 de altura, no azul baixo
+/// da caixa (no seu balão, o branco a 13%), o ícone de 12, o nome em mono, as linhas em tênue e,
+/// com o trecho, "· " e o começo dele; o caminho inteiro (e o trecho) fica na dica. `escolhida`:
+/// na caixa, com a seleção por cima.
 pub fn pilula_de_mencao(
     id: SharedString,
     inteiro: &str,
     linhas: Option<(u32, u32)>,
+    trecho: Option<&str>,
+    no_balao: bool,
     escolhida: bool,
     altura_da_linha: Pixels,
 ) -> Stateful<Div> {
     let pasta = inteiro.ends_with('/') || std::path::Path::new(inteiro).is_dir();
     let icone = if pasta { Lucide::Folder } else { super::painel_arquivo::icone_do_arquivo(inteiro) };
     let rotulo = rotulo_da_mencao(inteiro, None);
-    let faixa = linhas.map(|(a, b)| if b > a { format!(":{a}-{b}") } else { format!(":{a}") });
-    let dica = SharedString::from(match linhas {
+    let faixa = linhas.map(|(a, b)| if b > a { format!("{a}-{b}") } else { a.to_string() });
+    let mut dica = match linhas {
         Some((a, b)) if b > a => format!("{inteiro}\nlinhas {a} a {b}"),
         Some((a, _)) => format!("{inteiro}\nlinha {a}"),
         None => inteiro.to_string(),
-    });
+    };
+    // Com o trecho, a dica mostra as primeiras 8 linhas dele.
+    if let Some(t) = trecho {
+        let linhas: Vec<&str> = t.lines().collect();
+        dica.push_str("\n\n");
+        dica.push_str(&linhas.iter().take(8).copied().collect::<Vec<_>>().join("\n"));
+        if linhas.len() > 8 {
+            dica.push_str("\n…");
+        }
+    }
+    let dica = SharedString::from(dica);
+    let curto = trecho.map(|t| trecho_curto(t, 24));
+    let (fundo, cor, cor_linhas, cor_trecho) = if no_balao {
+        (Cores::forte().opacity(0.13), Cores::forte(), Cores::forte().opacity(0.7), Cores::forte().opacity(0.85))
+    } else {
+        (Cores::caixa_preta().blend(Cores::destaque().opacity(0.20)), Cores::destaque_texto(), Cores::tenue(), Cores::texto_da_fala())
+    };
+    let altura = px(20.).min(altura_da_linha - px(1.));
     div()
         .id(id)
         .flex()
         .flex_none()
         .items_center()
         .gap(esp::E4)
-        .h(altura_da_linha - px(2.))
-        .px(esp::E6)
-        .rounded(raio::CONTROLE)
-        .border_1()
-        .map(|s| if escolhida { s.bg(Cores::selecao()).border_color(Cores::destaque_borda()) } else { s.bg(Cores::recuo()).border_color(Cores::borda()) })
+        .h(altura)
+        .pl(linear::CAIXA_BAIXO)
+        .pr(linear::PASSO_VAO)
+        .rounded(raio::de(18.))
+        .bg(if escolhida { Cores::selecao() } else { fundo })
         .font_family(FONTE_MONO)
-        .metadado()
-        .child(div().flex_none().text_color(Cores::tenue()).child(super::mensagens::icone_de(icone, 12.)))
-        .child(div().flex_none().whitespace_nowrap().text_color(Cores::texto()).child(rotulo))
-        .when_some(faixa, |s, faixa| s.child(div().flex_none().whitespace_nowrap().text_color(Cores::tenue()).child(faixa)))
+        .text_size(r(12.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(cor)
+        .child(div().flex_none().child(super::mensagens::icone_de(icone, 12.)))
+        .child(div().flex_none().whitespace_nowrap().child(rotulo))
+        .when_some(faixa, |s, faixa| {
+            s.child(div().flex_none().whitespace_nowrap().font_family(crate::tema::FONTE_UI).text_size(r(11.5)).tabular().text_color(cor_linhas).child(faixa))
+        })
+        .when_some(curto, |s, curto| {
+            s.child(div().flex_none().text_size(r(11.5)).text_color(Cores::apagado()).child("·"))
+                .child(div().min_w_0().max_w(r(190.)).truncate().text_size(r(11.5)).text_color(cor_trecho).child(curto))
+        })
         .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
 }
 
 #[cfg(test)]
 mod testes {
     // Sem o `super::*`: ele traria o `test` do gpui junto com o `gpui_kit::*`.
-    use super::{Mencao, ler_mencao, ligar_mencoes, link_da_mencao, mencoes_no_texto, rotulo_da_mencao, texto_da_mencao};
+    use super::{
+        Mencao, ler_link_da_mencao, ler_mencao, ligar_mencoes, link_da_mencao, link_da_mencao_com, mencoes_no_texto, rotulo_da_mencao,
+        texto_da_mencao, texto_da_mencao_com, trecho_curto, trecho_do_link,
+    };
 
     fn m(caminho: &str, linhas: Option<(u32, u32)>) -> Mencao {
-        Mencao { caminho: caminho.into(), linhas }
+        Mencao { caminho: caminho.into(), linhas, trecho: None }
+    }
+
+    /// Um pedaço de linha (ou de várias) vai com o texto exato entre « », logo depois das linhas:
+    /// as linhas sozinhas não dizem qual parte delas (protótipo Linear, 25/11/2026).
+    #[test]
+    fn o_trecho_vai_entre_aspas_angulares_e_volta() {
+        let texto = texto_da_mencao_com("src/x.rs", Some((12, 12)), Some("cabeNaFabrica(c)"));
+        assert_eq!(texto, "@src/x.rs#L12 «cabeNaFabrica(c)»");
+        let lido = Mencao { caminho: "src/x.rs".into(), linhas: Some((12, 12)), trecho: Some("cabeNaFabrica(c)".into()) };
+        assert_eq!(ler_mencao(&format!("{texto} e o resto")), Some((lido, texto.len())));
+        // Em várias linhas o trecho leva as quebras; com espaço no caminho, depois das aspas.
+        let texto = texto_da_mencao_com("a b/y.rs", Some((3, 4)), Some("fim()\n  começo"));
+        assert_eq!(texto, "@\"a b/y.rs\"#L3-4 «fim()\\n  começo»");
+        assert_eq!(ler_mencao(&texto).map(|(m, n)| (m.trecho, n)), Some((Some("fim()\n  começo".into()), texto.len())));
+        // Sem trecho, nada muda; com « » mas sem fechar, a menção fica sem ele.
+        assert_eq!(texto_da_mencao_com("src/x.rs", Some((1, 2)), None), texto_da_mencao("src/x.rs", Some((1, 2))));
+        assert_eq!(ler_mencao("@src/x.rs#L2 «sem fim").map(|(m, n)| (m.trecho, n)), Some((None, "@src/x.rs#L2".len())));
+        // O trecho vai no endereço da pílula, e o endereço continua abrindo o arquivo nas linhas.
+        let link = link_da_mencao_com("/casa/src/x.rs", Some((12, 12)), Some("a «b» c"));
+        assert_eq!(trecho_do_link(&link).as_deref(), Some("a «b» c"));
+        assert_eq!(ler_link_da_mencao(&link), Some(("/casa/src/x.rs".to_string(), Some((12, 12)))));
+        assert_eq!(trecho_do_link(&link_da_mencao("/casa/src/x.rs", None)), None);
+        // Na pílula, o começo do trecho numa linha só.
+        assert_eq!(trecho_curto("  return c.material\n    .includes(x)", 14), "return c.mater…");
     }
 
     #[test]

@@ -207,6 +207,8 @@ pub mod altura {
 }
 
 pub const FONTE_MONO: &str = "JetBrains Mono";
+/// A da interface (a do tema), para o que fica no meio de um texto em mono.
+pub const FONTE_UI: &str = "Inter";
 
 /// Só no rótulo "Ultrathink": a referência clareada para passar de 4,5:1 no flutuante.
 pub const ARCO_IRIS: [u32; 8] = [

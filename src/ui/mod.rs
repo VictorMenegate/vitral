@@ -520,6 +520,8 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// O trecho selecionado por arrasto no código do arquivo aberto.
+    selecao_no_codigo: Option<painel_arquivo::SelecaoNoCodigo>,
     /// Os arquivos abertos nas abas da direita, na ordem delas.
     abas_de_arquivo: Vec<abas_direita::AbaDeArquivo>,
     /// As dobras de linhas iguais abertas no arquivo aberto (pela primeira linha delas).
@@ -993,6 +995,7 @@ impl Janela {
             arquivo_lido: Default::default(),
             dobras_abertas: Default::default(),
             abas_de_arquivo: Vec::new(),
+            selecao_no_codigo: None,
             editor_arquivo: None,
             arquivo_fonte: false,
             codigo_esquerda: Default::default(),
@@ -2439,6 +2442,21 @@ impl Janela {
             // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
             // sem a barra de baixo, que já o mostra (Linear, 25/11/2026).
             .children(self.uso_no_canto(cx).filter(|_| !self.lista))
+            // O arrasto no código do arquivo: a janela inteira escuta onde o botão solta (mesmo fora
+            // da linha em que começou).
+            .children(self.selecao_no_codigo.filter(|s| s.arrastando).map(|_| {
+                let janela = cx.entity().downgrade();
+                canvas(|_, _, _| {}, move |_, _, window, _| {
+                    window.on_mouse_event(move |ev: &MouseUpEvent, fase, window, cx| {
+                        if fase != DispatchPhase::Capture || ev.button != MouseButton::Left {
+                            return;
+                        }
+                        let _ = janela.update(cx, |this, cx| this.soltou_no_codigo(ev.position, window, cx));
+                    });
+                })
+                .absolute()
+                .size_full()
+            }))
             // A seleção na conversa: enquanto o botão está apertado, a janela inteira escuta onde
             // ele solta (mesmo fora do cartão), e a barra do trecho aparece embaixo desse ponto.
             .children(self.segurando_trecho.then(|| {

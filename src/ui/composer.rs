@@ -411,8 +411,8 @@ pub(super) fn por_texto(c: &mut TextareaState, texto: String, window: &mut Windo
 /// menções ficarem de uma forma melhor"): o texto dela é o que vai ao agente ("@src/x.rs#L3-9");
 /// o id, o endereço que o clique abre (`vitral:mencao/…`); o rótulo, o nome curto ("x.rs:3-9").
 /// Apagar com Backspace leva a menção inteira.
-pub(super) fn ficha_da_mencao(texto: &str, inteiro: &str, linhas: Option<(u32, u32)>) -> InlineToken {
-    InlineToken::new(super::mencao::link_da_mencao(inteiro, linhas), texto.to_string())
+pub(super) fn ficha_da_mencao(texto: &str, inteiro: &str, linhas: Option<(u32, u32)>, trecho: Option<&str>) -> InlineToken {
+    InlineToken::new(super::mencao::link_da_mencao_com(inteiro, linhas, trecho), texto.to_string())
         .with_label(super::mencao::rotulo_da_mencao(inteiro, linhas))
 }
 
@@ -422,7 +422,7 @@ pub(super) fn conteudo_com_mencoes(texto: &str, base: &Path) -> InputContent {
     let mut conteudo = InputContent::new(texto.to_string());
     for (faixa, mencao) in super::mencao::mencoes_no_texto(texto) {
         let Some(inteiro) = super::links_arquivo::resolver_mencao(base, &mencao.caminho) else { continue };
-        let ficha = ficha_da_mencao(&texto[faixa.clone()], &inteiro, mencao.linhas);
+        let ficha = ficha_da_mencao(&texto[faixa.clone()], &inteiro, mencao.linhas, mencao.trecho.as_deref());
         if let Ok(com) = conteudo.clone().with_token(faixa, ficha) {
             conteudo = com;
         }
@@ -873,6 +873,8 @@ impl Janela {
                                         SharedString::from(format!("ficha-{id}")),
                                         &inteiro,
                                         linhas,
+                                        super::mencao::trecho_do_link(&id).as_deref(),
+                                        false,
                                         ficha.is_selected(),
                                         ficha.line_height(),
                                     )
@@ -1980,7 +1982,7 @@ impl Janela {
             .filter(|c| c.contains(['.', '/']))
             .zip(cwd)
             .and_then(|(caminho, cwd)| super::links_arquivo::resolver_mencao(&cwd, caminho))
-            .map(|inteiro| ficha_da_mencao(valor, &inteiro, None));
+            .map(|inteiro| ficha_da_mencao(valor, &inteiro, None, None));
         composer.update(cx, |c, cx| trocar_palavra(c, inicio, fim, valor, ficha, window, cx));
         let foco = composer.read(cx).focus_handle(cx);
         window.focus(&foco, cx);

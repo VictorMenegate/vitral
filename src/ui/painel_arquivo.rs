@@ -426,7 +426,11 @@ fn fileira_de_codigo(
         .text_color(if fundo == Fundo::Escolhida { Cores::texto() } else { Cores::apagado() })
         .children(numero.map(|n| n.to_string()))
         .when_some(numero, |s, n| {
-            s.cursor_pointer().hover(|s| s.text_color(Cores::texto())).on_click(move |evento, _, cx| {
+            s.cursor_pointer()
+                .hover(|s| s.text_color(Cores::texto()))
+                // O apertar no número não começa a seleção de trecho da fileira.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |evento, _, cx| {
                 // O clique no número escolhe a linha, e não abre o editor.
                 cx.stop_propagation();
                 let estender = evento.modifiers().shift;
@@ -440,12 +444,21 @@ fn fileira_de_codigo(
         // A fileira vai até a borda do painel: o clique depois do fim de uma linha curta vale, e o
         // fundo da linha escolhida não acaba no meio.
         .min_w_full()
-        // Um clique no texto abre o editor ali.
-        .when_some(numero.filter(|_| editavel), |s, n| {
-            s.cursor_text().on_click(move |evento, window, cx| {
-                let x = evento.position().x;
-                let _ = janela.update(cx, |this, cx| this.clicou_no_texto(n - 1, x, window, cx));
-            })
+        // Apertar e arrastar seleciona um trecho (Mencionar e Copiar embaixo); um clique sem
+        // arrasto abre o editor ali, no que se edita.
+        .when_some(numero, |s, n| {
+            let janela_do_arrasto = janela.clone();
+            s.cursor_text()
+                .on_mouse_down(MouseButton::Left, move |evento, window, cx| {
+                    let x = evento.position.x;
+                    let _ = janela.update(cx, |this, cx| this.apertou_no_codigo(n - 1, x, editavel, window, cx));
+                })
+                .on_mouse_move(move |evento, window, cx| {
+                    if evento.pressed_button == Some(MouseButton::Left) {
+                        let x = evento.position.x;
+                        let _ = janela_do_arrasto.update(cx, |this, cx| this.arrastou_no_codigo(n - 1, x, window, cx));
+                    }
+                })
         })
         .h(r(20.))
         .pl(esp::E12)
@@ -470,6 +483,7 @@ fn fileira_de_codigo(
                     coluna
                         .id(("comentar-linha", indice))
                         .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .when(marcado, |c| c.text_color(Cores::destaque_texto()))
                         .hover(|c| c.text_color(Cores::destaque_texto()))
                         .child(if marcado { "●" } else { sinal })
@@ -511,6 +525,93 @@ fn nota_de_codigo(texto: SharedString, largura_numero: Rems) -> AnyElement {
         .child(div().flex_none().w(r(8.)))
         .child(texto)
         .into_any_element()
+}
+
+/// A seleção por arrasto no código em leitura (protótipo Linear, 25/11/2026): de onde o botão
+/// apertou a onde está (linha a partir de 0, coluna em letras), se ainda está apertado, onde soltou
+/// (a barra Mencionar e Copiar aparece embaixo) e se o arquivo se edita (um clique sem arrasto abre
+/// o editor ali).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SelecaoNoCodigo {
+    pub inicio: (usize, usize),
+    pub fim: (usize, usize),
+    pub arrastando: bool,
+    pub ponto: Option<Point<Pixels>>,
+    pub editavel: bool,
+}
+
+/// A seleção do trecho de uma menção (a pílula "fila.rs:12-14 · cabeNa…"): onde o texto dele está
+/// nas linhas dela, como o painel desenha o arquivo. Sem achar, nada.
+pub(super) fn selecao_do_trecho(texto_do_arquivo: &str, (a, b): (u32, u32), trecho: &str) -> Option<SelecaoNoCodigo> {
+    let primeira = a.max(1) as usize - 1;
+    let linhas: Vec<String> = texto_do_arquivo.lines().skip(primeira).take((b.max(a) - a.max(1) + 1) as usize).map(|l| linha_desenhada(l, false)).collect();
+    let junto = linhas.join("\n");
+    let trecho = trecho.replace('\t', "    ");
+    let comeco = junto.find(trecho.as_str())?;
+    let posicao = |byte: usize| {
+        let antes = &junto[..byte];
+        let linha = antes.matches('\n').count();
+        let coluna = antes.rsplit('\n').next().unwrap_or("").chars().count();
+        (primeira + linha, coluna)
+    };
+    Some(SelecaoNoCodigo { inicio: posicao(comeco), fim: posicao(comeco + trecho.len()), arrastando: false, ponto: None, editavel: true })
+}
+
+impl SelecaoNoCodigo {
+    /// O começo e o fim em ordem.
+    fn ordem(&self) -> ((usize, usize), (usize, usize)) {
+        if self.inicio <= self.fim { (self.inicio, self.fim) } else { (self.fim, self.inicio) }
+    }
+
+    pub(super) fn vazia(&self) -> bool {
+        self.inicio == self.fim
+    }
+
+    /// As linhas que a seleção pega (1 é a primeira). Terminar na coluna 0 da linha de baixo não a
+    /// leva.
+    pub(super) fn linhas(&self) -> (u32, u32) {
+        let ((la, _), (lb, cb)) = self.ordem();
+        let lb = if cb == 0 && lb > la { lb - 1 } else { lb };
+        (la as u32 + 1, lb as u32 + 1)
+    }
+
+    /// O texto selecionado, com as quebras entre as linhas.
+    pub(super) fn texto(&self, linhas: &[SharedString]) -> String {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        let mut partes = Vec::new();
+        for l in la..=lb.min(linhas.len().saturating_sub(1)) {
+            let texto = linhas[l].as_ref();
+            let n = texto.chars().count();
+            let de = if l == la { ca.min(n) } else { 0 };
+            let ate = if l == lb { cb.min(n) } else { n };
+            partes.push(texto.chars().skip(de).take(ate.saturating_sub(de)).collect::<String>());
+        }
+        partes.join("\n")
+    }
+
+    /// A seleção pega linhas inteiras: começa na coluna 0 e vai até o fim da última (ou ao começo
+    /// da de baixo).
+    pub(super) fn inteiras(&self, linhas: &[SharedString]) -> bool {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        let fim_da_linha = linhas.get(lb).map_or(0, |t| t.chars().count());
+        ca == 0 && (cb >= fim_da_linha || (cb == 0 && lb > la))
+    }
+
+    /// A faixa (em bytes) da linha `l` que fica pintada.
+    pub(super) fn faixa_na_linha(&self, l: usize, texto: &str) -> Option<std::ops::Range<usize>> {
+        let ((la, ca), (lb, cb)) = self.ordem();
+        if self.vazia() || l < la || l > lb {
+            return None;
+        }
+        let n = texto.chars().count();
+        let de = if l == la { ca.min(n) } else { 0 };
+        let ate = if l == lb { cb.min(n) } else { n };
+        if ate <= de {
+            return None;
+        }
+        let byte = |c: usize| texto.char_indices().nth(c).map_or(texto.len(), |(i, _)| i);
+        Some(byte(de)..byte(ate))
+    }
 }
 
 /// A dobra das linhas iguais longe das mudanças: "⇕ N linhas iguais", na coluna do código; o
@@ -903,13 +1004,21 @@ impl Janela {
                 });
                 let achado_atual = busca.as_ref().and_then(|(_, atual)| *atual);
                 let rolar_ao_achado = self.busca_arquivo.rolar.replace(false);
-                // O fundo de cada achado numa linha do arquivo (o do atual, mais forte).
-                let achados_da_linha = move |linha: usize, texto: &str| match &busca {
-                    Some((termo, atual)) if !termo.is_empty() => {
-                        let na_linha = atual.filter(|(l, _)| *l == linha).map(|(_, k)| k);
-                        super::busca_conversa::destaques_do_trecho(texto, termo, na_linha)
+                // O trecho selecionado por arrasto, pintado no azul; fora dele, o fundo de cada
+                // achado da busca (o do atual, mais forte).
+                let selecao = self.selecao_no_codigo.filter(|s| !s.vazia());
+                let fundo_da_selecao = HighlightStyle { background_color: Some(Cores::destaque().opacity(0.45)), ..Default::default() };
+                let achados_da_linha = move |linha: usize, texto: &str| {
+                    if let Some(faixa) = selecao.and_then(|s| s.faixa_na_linha(linha, texto)) {
+                        return vec![(faixa, fundo_da_selecao)];
                     }
-                    _ => Vec::new(),
+                    match &busca {
+                        Some((termo, atual)) if !termo.is_empty() => {
+                            let na_linha = atual.filter(|(l, _)| *l == linha).map(|(_, k)| k);
+                            super::busca_conversa::destaques_do_trecho(texto, termo, na_linha)
+                        }
+                        _ => Vec::new(),
+                    }
                 };
                 let id = SharedString::from(format!("codigo-{caminho}"));
                 let lista = match vista {
@@ -1013,6 +1122,59 @@ impl Janela {
                     .into_any_element()
             }
         };
+        // Selecionado um trecho no código: Mencionar (com as linhas) e Copiar, embaixo de onde o
+        // botão soltou, no preto, como a barra do trecho da conversa (protótipo Linear).
+        let barra_do_trecho = self.selecao_no_codigo.filter(|s| !s.vazia() && !s.arrastando).and_then(|s| s.ponto.map(|p| (s, p))).map(|(sel, ponto)| {
+            let (a, b) = sel.linhas();
+            let faixa = if b > a { format!("{a}-{b}") } else { a.to_string() };
+            let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
+                h_flex()
+                    .id(id)
+                    .flex_none()
+                    .h(r(26.))
+                    .pl(esp::E8)
+                    .pr(linear::ITEM_LADO)
+                    .gap(esp::E6)
+                    .rounded(raio::de(24.))
+                    .text_size(r(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(Cores::texto_da_fala())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Cores::cartao_elevado()).text_color(Cores::texto()))
+                    .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(simbolo, 14., window)))
+                    .child(rotulo)
+            };
+            let barra = h_flex()
+                .flex_none()
+                .p(linear::MOLDURA_FOLGA)
+                .gap(linear::CONTROLES_VAO)
+                .rounded(raio::cartao())
+                .bg(Cores::preto())
+                .occlude()
+                .child(
+                    botao("mencionar-trecho", Lucide::AtSign, "Mencionar")
+                        .child(div().flex_none().text_color(Cores::tenue()).tabular().child(faixa))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.mencionar_a_selecao(window, cx);
+                        })),
+                )
+                .child(botao("copiar-trecho-codigo", Lucide::Copy, "Copiar").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.copiar_a_selecao(cx);
+                    }),
+                ));
+            deferred(
+                anchored()
+                    .anchor(Anchor::TopCenter)
+                    .position(ponto + point(px(0.), crate::tema::tam(window, 14.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(barra),
+            )
+            .with_priority(1)
+        });
         // A barra da busca flutua no alto do conteúdo, à direita, e nunca mais larga que o painel.
         // Com os anéis de uso no canto da janela, ela guarda o lugar deles, como as fileiras de cima.
         let barra_da_busca = self.barra_da_busca_no_arquivo(contagem_da_busca, window, cx).map(|(barra, nova)| {
@@ -1029,6 +1191,13 @@ impl Janela {
             // O clique no painel leva o foco para ele: daí o Ctrl+F é do arquivo, e não da conversa.
             .key_context("Arquivo")
             .track_focus(&self.foco_arquivo)
+            // O Esc desfaz a seleção do trecho antes de qualquer outra coisa.
+            .capture_key_down(cx.listener(|this, evento: &KeyDownEvent, _, cx| {
+                if evento.keystroke.key == "escape" && this.selecao_no_codigo.take().is_some() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &BuscarNoArquivo, window, cx| this.abrir_busca_no_arquivo(window, cx)))
             // O campo da barra liga o Ctrl+F ao `Search` do kit: com o foco nele, a busca continua a do arquivo.
             .on_action(cx.listener(|this, _: &gpui_kit::component::input::Search, window, cx| this.abrir_busca_no_arquivo(window, cx)))
@@ -1061,7 +1230,8 @@ impl Janela {
                     .flex()
                     .flex_col()
                     .child(corpo)
-                    .children(barra_da_busca),
+                    .children(barra_da_busca)
+                    .children(barra_do_trecho),
             )
             // Na edição do agente, o campo do comentário da linha e o "Enviar comentários (N)".
             .children(edicao.as_ref().and_then(|_| self.barra_de_comentarios(window, cx)).map(|barra| div().flex_none().p(esp::E8).child(barra)))
@@ -1476,24 +1646,6 @@ impl Janela {
         }
     }
 
-    /// Um clique no texto da linha (a partir de 0), em `x` na janela: abre o editor com o cursor ali.
-    fn clicou_no_texto(&mut self, linha: usize, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
-        let (total, rolado) = {
-            let lido = self.arquivo_lido.borrow();
-            let Some(lido) = lido.as_ref() else { return };
-            let Conteudo::Codigo(linhas, _) = &lido.conteudo else { return };
-            (linhas.len(), lido.rolagem.0.borrow().base_handle.offset().x)
-        };
-        // Onde o texto começa: a margem da fileira, o número e o respiro (na edição do agente,
-        // também a coluna do sinal), menos o que o código rolou para o lado.
-        let com_sinal = self.arquivo_edicao.as_ref().is_some_and(|e| !e.sem_registro);
-        let antes = 12. + largura_do_numero(total) + if com_sinal { 24. } else { 16. };
-        let escala = window.rem_size().as_f32() / 15.;
-        let comeco = self.codigo_esquerda.get() + px(antes * escala) + rolado;
-        let coluna = ((x - comeco).as_f32() / (LETRA_DO_CODIGO * escala)).round().max(0.) as usize;
-        self.entrar_no_editor(linha, coluna, window, cx);
-    }
-
     /// O seletor Prévia | Fonte do .md e do .svg. A Prévia fecha o editor (gravando o que falta).
     fn escolher_vista_do_arquivo(&mut self, fonte: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !fonte {
@@ -1641,7 +1793,8 @@ impl Janela {
 
     /// As linhas que o Mencionar leva: as escolhidas ou, na edição, as da mudança à vista.
     fn alvo_da_mencao(&self) -> Option<(u32, u32)> {
-        self.arquivo_selecao.or_else(|| {
+        let arrastada = self.selecao_no_codigo.filter(|s| !s.vazia() && !s.arrastando).map(|s| s.linhas());
+        arrastada.or(self.arquivo_selecao).or_else(|| {
             self.arquivo_edicao.as_ref()?;
             let lido = self.arquivo_lido.borrow();
             let (_, vista, _) = lido.as_ref()?.vista.as_ref()?;
@@ -1652,14 +1805,101 @@ impl Janela {
 
     /// Mencionar, no cabeçalho do arquivo: a seleção, a mudança à vista ou o arquivo inteiro.
     fn mencionar_do_painel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selecao_no_codigo.is_some_and(|s| !s.vazia() && !s.arrastando) {
+            self.mencionar_a_selecao(window, cx);
+            return;
+        }
         let Some((raiz, caminho)) = self.arquivo_aberto.clone() else { return };
         let linhas = self.alvo_da_mencao();
         self.mencionar_arquivo(&raiz.join(caminho), linhas, window, cx);
     }
 
+    /// As linhas do arquivo lido, quando ele está em linhas.
+    fn linhas_lidas(&self) -> Option<Rc<Vec<SharedString>>> {
+        match &self.arquivo_lido.borrow().as_ref()?.conteudo {
+            Conteudo::Codigo(linhas, _) => Some(linhas.clone()),
+            _ => None,
+        }
+    }
+
+    /// Menciona o que foi selecionado por arrasto: as linhas e, quando é parte delas, o texto exato.
+    fn mencionar_a_selecao(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(sel), Some((raiz, caminho)), Some(linhas)) = (self.selecao_no_codigo.take(), self.arquivo_aberto.clone(), self.linhas_lidas())
+        else {
+            return;
+        };
+        let trecho = (!sel.inteiras(&linhas)).then(|| sel.texto(&linhas).trim_end().to_string());
+        self.mencionar_pedaco(&raiz.join(caminho), Some(sel.linhas()), trecho.as_deref(), window, cx);
+        cx.notify();
+    }
+
+    /// Copia o que foi selecionado por arrasto.
+    fn copiar_a_selecao(&mut self, cx: &mut Context<Self>) {
+        if let (Some(sel), Some(linhas)) = (self.selecao_no_codigo.take(), self.linhas_lidas()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(sel.texto(&linhas)));
+        }
+        cx.notify();
+    }
+
+    /// Onde a coluna (em letras) cai no código lido, pela posição do ponteiro.
+    fn coluna_no_x(&self, x: Pixels, window: &Window) -> Option<usize> {
+        let (total, rolado) = {
+            let lido = self.arquivo_lido.borrow();
+            let lido = lido.as_ref()?;
+            let Conteudo::Codigo(linhas, _) = &lido.conteudo else { return None };
+            (linhas.len(), lido.rolagem.0.borrow().base_handle.offset().x)
+        };
+        // Onde o texto começa: a margem da fileira, o número e o respiro (na edição do agente,
+        // também a coluna do sinal), menos o que o código rolou para o lado.
+        let com_sinal = self.arquivo_edicao.as_ref().is_some_and(|e| !e.sem_registro);
+        let antes = 12. + largura_do_numero(total) + if com_sinal { 24. } else { 16. };
+        let escala = window.rem_size().as_f32() / 15.;
+        let comeco = self.codigo_esquerda.get() + px(antes * escala) + rolado;
+        Some(((x - comeco).as_f32() / (LETRA_DO_CODIGO * escala)).round().max(0.) as usize)
+    }
+
+    /// O botão apertou no texto da linha `linha`: começa uma seleção ali.
+    fn apertou_no_codigo(&mut self, linha: usize, x: Pixels, editavel: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(coluna) = self.coluna_no_x(x, window) else { return };
+        self.selecao_no_codigo = Some(SelecaoNoCodigo { inicio: (linha, coluna), fim: (linha, coluna), arrastando: true, ponto: None, editavel });
+        cx.notify();
+    }
+
+    /// O ponteiro, com o botão apertado, passou pela linha `linha`: a seleção vai até ali.
+    fn arrastou_no_codigo(&mut self, linha: usize, x: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.selecao_no_codigo.is_some_and(|s| s.arrastando) {
+            return;
+        }
+        let Some(coluna) = self.coluna_no_x(x, window) else { return };
+        if let Some(sel) = self.selecao_no_codigo.as_mut()
+            && sel.fim != (linha, coluna)
+        {
+            sel.fim = (linha, coluna);
+            cx.notify();
+        }
+    }
+
+    /// O botão soltou: sem arrasto é um clique (abre o editor ali, no que se edita); com ele, a
+    /// barra de Mencionar e Copiar aparece embaixo de onde soltou.
+    pub(super) fn soltou_no_codigo(&mut self, ponto: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut sel) = self.selecao_no_codigo.take() else { return };
+        if sel.vazia() {
+            if sel.editavel {
+                self.entrar_no_editor(sel.inicio.0, sel.inicio.1, window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        sel.arrastando = false;
+        sel.ponto = Some(ponto);
+        self.selecao_no_codigo = Some(sel);
+        cx.notify();
+    }
+
     /// Um clique no número da linha: escolhe a linha (o segundo clique nela desfaz); com Shift,
     /// estende a escolha desde a primeira.
     pub(super) fn escolher_linha(&mut self, linha: u32, estender: bool, cx: &mut Context<Self>) {
+        self.selecao_no_codigo = None;
         match (estender, self.arquivo_ancora) {
             (true, Some(ancora)) => self.arquivo_selecao = Some((ancora.min(linha), ancora.max(linha))),
             _ if self.arquivo_selecao == Some((linha, linha)) => {
@@ -2053,8 +2293,54 @@ mod testes {
     use super::{
         Aviso, Conteudo, LINHA_MAXIMA, Passo, Saida, TETO_DE_LEITURA, achados_na_linha, achados_nas_linhas, cores_por_linha, icone_do_arquivo,
         ler_arquivo, linha_do_editor, nome_da_linguagem, nota_de_so_leitura, passo_da_revisao, saidas_do_aviso, tamanho,
-        titulo_do_binario,
+        titulo_do_binario, SelecaoNoCodigo, selecao_do_trecho,
     };
+
+    fn sel(inicio: (usize, usize), fim: (usize, usize)) -> SelecaoNoCodigo {
+        SelecaoNoCodigo { inicio, fim, arrastando: false, ponto: None, editavel: true }
+    }
+
+    /// A seleção por arrasto no código: o texto (de trás para a frente também), a faixa de cada
+    /// linha para pintar, as linhas que ela pega e se são linhas inteiras (aí a menção vai só com
+    /// as linhas; senão, com o trecho exato).
+    #[test]
+    fn a_selecao_no_codigo_da_o_texto_as_linhas_e_se_sao_inteiras() {
+        let linhas: Vec<SharedString> = vec!["fn a() {".into(), "    let é = 1;".into(), "}".into()];
+        let s = sel((1, 4), (1, 7));
+        assert_eq!(s.texto(&linhas), "let");
+        assert_eq!(s.linhas(), (2, 2));
+        assert!(!s.inteiras(&linhas));
+        // De trás para a frente, do meio da 2ª ao meio da 1ª.
+        let s = sel((1, 9), (0, 3));
+        assert_eq!(s.texto(&linhas), "a() {\n    let é");
+        assert_eq!(s.linhas(), (1, 2));
+        // A faixa da linha em bytes (o "é" tem 2): as colunas 0 a 9 da linha 2 são os bytes 0 a 10.
+        assert_eq!(s.faixa_na_linha(1, &linhas[1]), Some(0..10));
+        assert_eq!(s.faixa_na_linha(0, &linhas[0]), Some(3..8));
+        assert_eq!(s.faixa_na_linha(2, &linhas[2]), None);
+        // Do começo de uma linha ao fim de outra: linhas inteiras.
+        let s = sel((0, 0), (1, 99));
+        assert!(s.inteiras(&linhas));
+        assert_eq!(s.texto(&linhas), "fn a() {\n    let é = 1;");
+        // Terminar no começo da linha de baixo não a leva.
+        let s = sel((0, 0), (2, 0));
+        assert_eq!(s.linhas(), (1, 2));
+        assert!(s.inteiras(&linhas));
+        // Parada no mesmo lugar é um clique, não uma seleção.
+        assert!(sel((1, 3), (1, 3)).vazia());
+    }
+
+    /// A pílula de um trecho abre o arquivo com ele marcado, achado nas linhas dela.
+    #[test]
+    fn o_trecho_da_mencao_volta_como_selecao() {
+        let texto = "a\n  let x = 1;\n\tfim(x)\nb";
+        let s = selecao_do_trecho(texto, (2, 2), "x = 1").unwrap();
+        assert_eq!((s.inicio, s.fim), ((1, 6), (1, 11)));
+        // Em duas linhas, com a tabulação desenhada como 4 espaços.
+        let s = selecao_do_trecho(texto, (2, 3), "1;\n\tfim").unwrap();
+        assert_eq!((s.inicio, s.fim), ((1, 10), (2, 7)));
+        assert_eq!(selecao_do_trecho(texto, (1, 1), "x = 1"), None);
+    }
     use crate::tema::Lucide;
     use gpui_kit::{HighlightStyle, SharedString};
 

@@ -98,7 +98,7 @@ pub fn parece_caminho(texto: &str) -> bool {
 
 /// O texto com tudo o que não é letra, dígito, ponto, hífen ou sublinhado em `%XX` (a barra
 /// inclusive: o link tem três partes).
-fn codificado(texto: &str) -> String {
+pub(super) fn codificado(texto: &str) -> String {
     let mut saida = String::with_capacity(texto.len() + 16);
     for byte in texto.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
@@ -475,7 +475,8 @@ pub fn link_permitido(url: &str, do_assistente: bool) -> bool {
 /// O caminho inteiro e a linha de um `vitral:arquivo/<linha>/<caminho em %XX>` ou de uma menção,
 /// `vitral:mencao/<linhas>/<caminho em %XX>` (a primeira das linhas "120-134").
 pub fn ler_link(url: &str) -> Option<(String, Option<u32>)> {
-    let url = url.trim();
+    // O trecho da menção (`?t=…`) não faz parte do caminho.
+    let url = url.trim().split("?t=").next().unwrap_or_default();
     let resto = url.strip_prefix("vitral:arquivo/").or_else(|| url.strip_prefix("vitral:mencao/"))?;
     let (linha, caminho) = resto.split_once('/')?;
     let primeira = linha.split('-').next().unwrap_or(linha);
@@ -484,7 +485,7 @@ pub fn ler_link(url: &str) -> Option<(String, Option<u32>)> {
 
 /// As linhas "120-134" de um link `vitral:…` (a primeira e a última), quando ele marca mais de uma.
 pub fn ler_faixa(url: &str) -> Option<(u32, u32)> {
-    let url = url.trim();
+    let url = url.trim().split("?t=").next().unwrap_or_default();
     let resto = url.strip_prefix("vitral:arquivo/").or_else(|| url.strip_prefix("vitral:mencao/"))?;
     let (linhas, _) = resto.split_once('/')?;
     let (a, b) = linhas.split_once('-')?;
@@ -595,6 +596,16 @@ impl super::Janela {
         if let Some((a, b)) = faixa {
             self.arquivo_selecao = Some((a, b));
             self.arquivo_marcada.set(None);
+        }
+        // A pílula de um pedaço de linha: o pedaço exato fica marcado, no lugar das linhas inteiras
+        // (protótipo Linear, 25/11/2026).
+        if let Some(trecho) = super::mencao::trecho_do_link(url)
+            && let Some(linhas) = faixa.or(linha.map(|l| (l, l)))
+            && let Ok(texto) = std::fs::read_to_string(&inteiro)
+            && let Some(selecao) = super::painel_arquivo::selecao_do_trecho(&texto, linhas, &trecho)
+        {
+            self.selecao_no_codigo = Some(selecao);
+            self.arquivo_selecao = None;
         }
     }
 }

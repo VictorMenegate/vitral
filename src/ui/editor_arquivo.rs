@@ -509,6 +509,7 @@ impl Janela {
         if let Some(edicao) = self.arquivo_edicao.take() {
             self.edicao_fora = Some(edicao);
         }
+        self.selecao_no_codigo = None;
         self.esquecer_vista();
         self.arquivo_selecao = None;
         self.arquivo_ancora = None;

@@ -1899,6 +1899,7 @@ impl Janela {
         self.arquivo_edicao = self.edicao_pedida.take();
         self.edicao_fora = None;
         self.dobras_abertas.borrow_mut().clear();
+        self.selecao_no_codigo = None;
         self.esquecer_vista();
         self.lugar_no_turno.set(None);
         self.edicao_atual = 0;
