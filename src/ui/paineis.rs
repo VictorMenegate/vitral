@@ -1278,8 +1278,14 @@ impl Janela {
     /// O painel `ix` encosta na borda da direita da janela: é o último à vista e a direita não
     /// está ancorada ao lado das conversas. É ali que os anéis de uso flutuam.
     pub(super) fn painel_na_borda_da_janela(&self, ix: usize) -> bool {
+        !self.direita_visivel() && self.ultima_conversa(ix)
+    }
+
+    /// O painel `ix` é a última conversa à vista: os botões da janela moram nele, com a direita
+    /// aberta ou não (protótipo Linear, 25/11/2026).
+    pub(super) fn ultima_conversa(&self, ix: usize) -> bool {
         let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
-        !self.direita_visivel() && paineis_a_mostrar(&ids, self.maximizado).last() == Some(&ix)
+        paineis_a_mostrar(&ids, self.maximizado).last() == Some(&ix)
     }
 
     /// A aba à vista do painel ativo vai para o painel vizinho do `lado` (Alt+PgUp/PgDn) ou, com

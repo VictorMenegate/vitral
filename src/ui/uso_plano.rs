@@ -1442,6 +1442,23 @@ impl Janela {
         pilulas
     }
 
+    /// "Limite até 12:30" quando o agente está no limite do plano (o grupo Revisão do Este chat).
+    pub(super) fn limite_do_agente(&self, agente: crate::modelo::Agente, cx: &App) -> Option<String> {
+        let m = self.motor.as_ref()?.read(cx);
+        let leitura = match agente {
+            crate::modelo::Agente::Claude => {
+                let conta = m.conta_padrao();
+                leitura_claude(&m.uso_da_conta(&conta.id), None, false, m.limite_vence(&conta.id), None)
+            }
+            crate::modelo::Agente::Codex => leitura_codex(m.codex.as_ref(), m.codex_lido),
+            crate::modelo::Agente::Gemini => leitura_gemini(m.gemini.as_ref()),
+        };
+        leitura.bloqueado.then(|| match leitura.curto() {
+            c if c.starts_with("até") => format!("Limite {c}"),
+            _ => "No limite do plano".to_string(),
+        })
+    }
+
     /// O contexto do chat aberto na barra de baixo: o anel e "Contexto 50%".
     pub(super) fn pilula_do_contexto(&self, m: &Motor, window: &Window) -> Option<AnyElement> {
         let chat = self.selecionado.as_deref().and_then(|id| m.chat(id))?;

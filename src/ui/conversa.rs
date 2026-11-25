@@ -1019,7 +1019,7 @@ impl Janela {
         let nivel = ix.map(|ix| self.paineis[ix].medida.nivel).unwrap_or_default();
         // Os botões da janela ficam no canto de cima à direita: no último painel, se o painel da
         // direita estiver fechado ou em gaveta.
-        let mostra_botoes_janela = ix.is_none_or(|ix| self.painel_na_borda_da_janela(ix));
+        let mostra_botoes_janela = ix.is_none_or(|ix| self.ultima_conversa(ix));
         let conversa = chat.zip(ix);
         let primeiro = ix.unwrap_or(0) == 0;
         // O botão direito no cabeçalho (na faixa das abas e no vazio dele) abre o menu do painel.

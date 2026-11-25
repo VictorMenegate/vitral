@@ -41,7 +41,6 @@ pub struct Aba {
     arrastando: bool,
     foco: Option<FocusHandle>,
     fim: Option<AnyElement>,
-    so_simbolo: bool,
     quadrada: bool,
     /// O estado do chat no contorno da aba (e a chave da vista do contorno que respira).
     borda: Option<(Sinal, String)>,
@@ -62,7 +61,6 @@ impl Aba {
             arrastando: false,
             foco: None,
             fim: None,
-            so_simbolo: false,
             quadrada: false,
             borda: None,
         }
@@ -77,11 +75,6 @@ impl Aba {
         self
     }
 
-    /// Só o símbolo, sem o título nem o detalhe (as abas da direita estreita); a dica dá o nome.
-    pub fn so_simbolo(mut self, sim: bool) -> Self {
-        self.so_simbolo = sim;
-        self
-    }
 
     /// Só o símbolo, num quadrado da altura da aba e centrado, sem o lugar do × nem o número: a
     /// aba de fundo que não cabe com o título (o clique do meio ainda fecha; a dica dá o nome).
@@ -229,7 +222,7 @@ impl Aba {
         let reserva = !self.quadrada && (sempre || tem_estado);
         // A aba só com o símbolo não tem o × por cima: ele cobriria o símbolo inteiro, e o clique
         // para trocar de aba fecharia ela. Fecha no clique do meio ou depois de ativa.
-        let so_simbolo = self.so_simbolo || self.quadrada;
+        let so_simbolo = self.quadrada;
         let (fechar_no_lugar, fechar_por_cima) = match fechar {
             Some(f) if !reserva && !so_simbolo => (None, Some(f)),
             outro => (outro, None),

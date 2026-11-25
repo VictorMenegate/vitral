@@ -112,6 +112,8 @@ pub mod linear {
     /// rolagem.
     pub const ENTRE_FALAS: Rems = r(10.);
     pub const NA_FALA: Rems = r(7.);
+    /// Os grupos do painel da direita: 1 entre as linhas (e entre o rótulo e a primeira).
+    pub const GRUPO_LINHAS: Rems = r(1.);
     /// O passo da trilha: 7 entre o ícone de 14 e o texto.
     pub const PASSO_VAO: Rems = r(7.);
     /// O canto do seu balão.

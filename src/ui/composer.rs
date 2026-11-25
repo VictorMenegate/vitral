@@ -589,6 +589,33 @@ pub fn nome_curto_modelo(id: &str) -> String {
     }
 }
 
+/// O agente e o modelo do chat por extenso, para a linha do Este chat ("Claude · Opus 5.5").
+pub(super) fn modelo_por_extenso(motor: &Motor, chat: &Chat) -> String {
+    match chat.agente {
+        crate::modelo::Agente::Codex => match chat.modelo.as_deref() {
+            Some(m) => format!("Codex · {}", crate::agente_codex::nome_do_modelo(m)),
+            None => "Codex".to_string(),
+        },
+        crate::modelo::Agente::Gemini => match chat.modelo.as_deref() {
+            Some(m) => format!("Gemini · {}", crate::agente_gemini::nome_do_modelo(m)),
+            None => "Gemini".to_string(),
+        },
+        crate::modelo::Agente::Claude => {
+            let efetivo = chat.modelo.clone().unwrap_or_else(|| motor.config.modelo_chats.clone());
+            let em_uso = chat.modelo_atual.as_deref().filter(|m| !m.is_empty());
+            format!("Claude · {}", rotulo_modelo(&efetivo, em_uso))
+        }
+    }
+}
+
+/// O nível de esforço do chat (o índice em `ESFORCOS`), o que o automático usa agora e se o
+/// modelo usa esforço.
+pub(super) fn esforco_do_chat(motor: &Motor, chat: &Chat) -> (usize, Option<usize>, bool) {
+    let atual = indice_esforco(chat.esforco.as_deref().unwrap_or(""));
+    let padrao = motor.esforco_automatico(chat).map(|e| indice_esforco(&e)).filter(|i| *i != 0);
+    (atual, padrao, usa_esforco(chat.modelo_atual.as_deref()))
+}
+
 /// "Opus 5.5" vira "Claude Opus 5.5"; "Padrão" e nomes de fora do Claude ficam como estão.
 fn com_claude(rotulo: &str) -> String {
     if MODELOS[1..].iter().any(|(_, familia)| rotulo.starts_with(familia)) {

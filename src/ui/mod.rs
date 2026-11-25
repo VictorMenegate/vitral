@@ -1846,31 +1846,19 @@ impl Janela {
         grupo_botoes_janela(botoes_do_layout(cx.button_layout()), false)
     }
 
-    /// Canto de cima do painel da direita: os botões da janela quando ele está ao lado das
-    /// conversas; na gaveta, o botão de recolhê-la, com o Esc tirado do keymap (os da janela
-    /// ficam na última conversa).
+    /// Canto de cima do painel da direita: o recolher (Ctrl+J; na gaveta, o de recolhê-la). Os
+    /// botões da janela ficam sempre na última conversa (protótipo Linear, 25/11/2026).
     fn botoes_da_direita(&self, separar: bool, window: &Window, cx: &Context<Self>) -> Div {
+        let _ = separar;
         if self.gaveta != Some(Gaveta::Direita) {
-            // O × daqui é o da JANELA, e ao lado do título do painel ele parecia fechar só o
-            // painel. Por isso o painel ganha o botão dele (o ícone de recolher) e um traço o
-            // separa dos botões da janela.
-            let _ = separar;
-            return div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(esp::E4)
-                .child(
-                    sem_arrastar().flex_none().child(
-                        botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Barra, window, cx)
-                            .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
-                            .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
-                    ),
-                )
-                .child(grupo_botoes_janela(botoes_do_layout(cx.button_layout()), true));
+            return sem_arrastar().flex_none().child(
+                botao_icone("recolher-painel", Lucide::PanelRightClose, "Fechar o painel", TamanhoBotao::Linha, window, cx)
+                    .tooltip_with_action("Fechar o painel", &AlternarPainel, None)
+                    .on_click(cx.listener(|this, _, window, cx| this.alternar_painel(window, cx))),
+            );
         }
         sem_arrastar().flex_none().child(
-            botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Barra, window, cx)
+            botao_icone("recolher-gaveta", Lucide::PanelRightClose, "Recolher o painel", TamanhoBotao::Linha, window, cx)
                 .tooltip_with_action("Recolher o painel", &FecharGaveta, Some("Gaveta"))
                 .on_click(cx.listener(|this, _, window, cx| this.fechar_gaveta(window, cx))),
         )
