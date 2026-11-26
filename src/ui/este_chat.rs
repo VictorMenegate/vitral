@@ -187,17 +187,17 @@ impl Janela {
             Execucao::Rodando { desde } => linhas.push(
                 linha_da_direita(id("estado"))
                     .child(simbolo_da_linha(AnelGirando::new(15.).cor(Cores::destaque()).vivo(format!("este-chat-{}", chat.id))))
-                    .child(div().min_w_0().truncate().child(format!("Trabalhando · {}", super::duracao(desde))))
+                    .child(div().min_w_0().truncate().child(tr!("Trabalhando · {tempo}", tempo = super::duracao(desde))))
                     .into_any_element(),
             ),
             _ => {
                 if let Some(sinal) = sinal_do_chat(motor, chat) {
                     let rotulo = match sinal {
-                        super::componentes::Sinal::Erro => "Falhou",
-                        super::componentes::Sinal::Pedido => "Esperando você",
-                        super::componentes::Sinal::Parada => "Parada no meio",
-                        super::componentes::Sinal::Nova => "Resposta nova",
-                        super::componentes::Sinal::Rodando => "Trabalhando",
+                        super::componentes::Sinal::Erro => tr!("Falhou"),
+                        super::componentes::Sinal::Pedido => tr!("Esperando você"),
+                        super::componentes::Sinal::Parada => tr!("Parada no meio"),
+                        super::componentes::Sinal::Nova => tr!("Resposta nova"),
+                        super::componentes::Sinal::Rodando => tr!("Trabalhando"),
                     };
                     linhas.push(
                         linha_da_direita(id("estado"))
@@ -213,7 +213,7 @@ impl Janela {
             clicavel(linha_da_direita(id("modelo")))
                 .child(simbolo_da_linha(Marca::do_agente(chat.agente).glifo(15.)))
                 .child(div().min_w_0().truncate().child(super::composer::modelo_por_extenso(motor, chat)))
-                .dica_no_ponteiro(|window, cx| Tooltip::new("Trocar o modelo").action(&super::composer::AbrirModelo, Some("Vitral")).build(window, cx))
+                .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Trocar o modelo")).action(&super::composer::AbrirModelo, Some("Vitral")).build(window, cx))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(super::composer::AbrirModelo), cx))
                 .into_any_element(),
         );
@@ -223,22 +223,22 @@ impl Janela {
             linha_da_direita(id("modo"))
                 .child(simbolo_da_linha(Simbolo::Icone(icone, Some(cor)).desenhar(15., window)))
                 .child(div().min_w_0().truncate().child(super::composer::nome_do_modo(&modo)))
-                .dica_no_ponteiro(|window, cx| Tooltip::new("Modo de permissão\nShift+Tab na caixa troca").build(window, cx))
+                .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Modo de permissão\nShift+Tab na caixa troca")).build(window, cx))
                 .into_any_element(),
         );
         let (atual, padrao, usa) = super::composer::esforco_do_chat(motor, chat);
         if usa {
             let nivel = if atual == 0 { padrao.unwrap_or(0) } else { atual };
             let rotulo = match (atual, padrao) {
-                (0, Some(p)) => format!("Esforço auto · {}", super::composer::ESFORCOS[p].1.to_lowercase()),
-                (0, None) => "Esforço automático".to_string(),
-                (n, _) => format!("Esforço {}", super::composer::ESFORCOS[n].1.to_lowercase()),
+                (0, Some(p)) => tr!("Esforço auto · {nivel}", nivel = crate::i18n::traduzir(super::composer::ESFORCOS[p].1).to_lowercase()),
+                (0, None) => tr!("Esforço automático"),
+                (n, _) => tr!("Esforço {nivel}", nivel = crate::i18n::traduzir(super::composer::ESFORCOS[n].1).to_lowercase()),
             };
             linhas.push(
                 clicavel(linha_da_direita(id("esforco")))
                     .child(simbolo_da_linha(Simbolo::Sinal { nivel: nivel as u8, total: 5 }.desenhar(15., window)))
                     .child(div().min_w_0().truncate().child(rotulo))
-                    .dica_no_ponteiro(|window, cx| Tooltip::new("Trocar o esforço").action(&super::composer::AbrirEsforco, Some("Vitral")).build(window, cx))
+                    .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Trocar o esforço")).action(&super::composer::AbrirEsforco, Some("Vitral")).build(window, cx))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(super::composer::AbrirEsforco), cx))
                     .into_any_element(),
             );
@@ -257,7 +257,7 @@ impl Janela {
                     .into_any_element(),
             );
         }
-        grupo_da_direita("Agora", None, None, linhas)
+        grupo_da_direita(tr!("Agora"), None, None, linhas)
     }
 
     /// Pasta: onde o chat trabalha (o clique abre a pasta) e o ramo do git. A conversa trazida do
@@ -267,11 +267,11 @@ impl Janela {
         let sumiu = !pasta.exists();
         let mut linhas: Vec<AnyElement> = Vec::new();
         let (curta, dica): (String, SharedString) = if motor.sem_pasta(chat) {
-            ("Sem pasta".to_string(), "Um chat sem pasta, numa pasta vazia só dele: os arquivos que ele criar ficam lá.".into())
+            (tr!("Sem pasta").to_string(), tr!("Um chat sem pasta, numa pasta vazia só dele: os arquivos que ele criar ficam lá."))
         } else if sumiu {
-            (super::dialogos::com_til(&pasta), "A pasta não foi encontrada (disco desmontado ou pasta renomeada)".into())
+            (super::dialogos::com_til(&pasta), tr!("A pasta não foi encontrada (disco desmontado ou pasta renomeada)"))
         } else {
-            (super::dialogos::com_til(&pasta), format!("{}\nO clique abre a pasta", pasta.display()).into())
+            (super::dialogos::com_til(&pasta), tr!("{pasta}\nO clique abre a pasta", pasta = pasta.display()))
         };
         let abrir = pasta.clone();
         linhas.push(
@@ -300,7 +300,7 @@ impl Janela {
                 div().px(esp::E8).pt(esp::E2).text_size(r(12.)).line_height(r(16.)).text_color(Cores::tenue()).child(crate::importar::descricao(i)).into_any_element(),
             );
         }
-        grupo_da_direita("Pasta", None, None, linhas)
+        grupo_da_direita(tr!("Pasta"), None, None, linhas)
     }
 
     /// Revisão: quem confere os turnos que mudam bastante (a revisão automática, ligada na barra de
@@ -313,7 +313,7 @@ impl Janela {
             linha_da_direita(SharedString::from(format!("este-chat-revisao-{}", chat.id)))
                 .when(!ligada, |l| l.text_color(Cores::tenue()))
                 .child(simbolo_da_linha(Marca::do_agente(outro).glifo(15.)).when(!ligada, |s| s.opacity(0.55)))
-                .child(div().min_w_0().truncate().child(if ligada { format!("{} revisa", outro.nome()) } else { "Desligada".to_string() }))
+                .child(div().min_w_0().truncate().child(if ligada { tr!("{agente} revisa", agente = outro.nome()) } else { tr!("Desligada") }))
                 .into_any_element(),
         );
         if ligada && let Some(limite) = self.limite_do_agente(outro, cx) {
@@ -326,7 +326,7 @@ impl Janela {
             );
         }
         let _ = window;
-        grupo_da_direita("Revisão", None, None, linhas)
+        grupo_da_direita(tr!("Revisão"), None, None, linhas)
     }
 }
 
@@ -345,7 +345,7 @@ fn mudancas(chat: &Chat, window: &Window) -> Option<AnyElement> {
         .map(|(i, arquivo)| linha_mudanca(chat, arquivo, format!("mudanca-{i}"), window))
         .collect();
     let n = linhas.len();
-    Some(grupo_da_direita("Mudanças", Some(n.to_string()), None, linhas))
+    Some(grupo_da_direita(tr!("Mudanças"), Some(n.to_string()), None, linhas))
 }
 
 /// Uma linha de Mudanças: o ícone do tipo, o nome em mono, o +N −M e o "novo"; a pasta na dica.
@@ -361,14 +361,14 @@ fn linha_mudanca(chat: &Chat, arquivo: &super::mensagens::ArquivoMudado, id: Str
     let existe = inteiro.is_some();
     // O clique abre o arquivo já na edição que o chat fez nele (dono, 16/11/2026: "ver a edição").
     let alvo = inteiro.map(|_| super::edicao::AbrirEdicao { chat: chat.id.clone(), itens: arquivo.itens.clone(), caminho: None });
-    let dica = SharedString::from(if existe { relativo.clone() } else { format!("{relativo} (não está mais no disco)") });
+    let dica = SharedString::from(if existe { relativo.clone() } else { tr!("{relativo} (não está mais no disco)", relativo = relativo).to_string() });
     linha_da_direita(SharedString::from(id))
         .when(existe, |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
         .when(!existe, |s| s.text_color(Cores::tenue()))
         .child(simbolo_da_linha(super::componentes::icone(icone, 15., window)).text_color(Cores::tenue()))
         .child(mono_da_linha(nome).flex_shrink(1.))
         .child(mais_e_menos(arquivo.entram, arquivo.saem))
-        .when(arquivo.novo, |s| s.child(Selo::cor("novo", Cores::verde())))
+        .when(arquivo.novo, |s| s.child(Selo::cor(tr!("novo"), Cores::verde())))
         .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
         .when_some(alvo, |s, alvo| s.on_click(move |_, window, cx| window.dispatch_action(Box::new(alvo.clone()), cx)))
         .into_any_element()
@@ -439,5 +439,5 @@ fn passos(lista: &[crate::motor::Passo], _: &Window) -> AnyElement {
         .iter()
         .map(|p| div().px(esp::E8).py(esp::E4).child(linha_do_passo(p)).into_any_element())
         .collect();
-    grupo_da_direita("Passos", Some(format!("{feitos} de {}", lista.len())), None, linhas)
+    grupo_da_direita(tr!("Passos"), Some(tr!("{feitos} de {total}", feitos = feitos, total = lista.len()).to_string()), None, linhas)
 }

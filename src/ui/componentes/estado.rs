@@ -231,7 +231,7 @@ impl RenderOnce for PilulaDeEstado {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let cor = self.cor.or(self.estado.cor());
         let cor_texto = self.cor.unwrap_or(self.estado.cor_texto());
-        let rotulo = self.rotulo.unwrap_or_else(|| self.estado.rotulo().into());
+        let rotulo = self.rotulo.unwrap_or_else(|| SharedString::from(crate::i18n::traduzir(self.estado.rotulo())));
         let ponto = div()
             .flex_none()
             .size(r(6.))
@@ -343,7 +343,7 @@ impl Selo {
     }
 
     pub fn novo() -> Self {
-        Self::de(TipoSelo::Novo, Some("novo".into()))
+        Self::de(TipoSelo::Novo, Some(tr!("novo")))
     }
 
     /// Número neutro; `tingida` põe na tinta da cor e `solida`, sobre a cor cheia.
@@ -634,7 +634,7 @@ pub fn sinal_do_chat(motor: &Motor, chat: &Chat) -> Option<Sinal> {
 
 /// O motivo da parada em poucas palavras ("Vitral fechou"), o mesmo na prévia da lista e no sino.
 pub fn motivo_curto(motivo: &str) -> String {
-    if motivo.contains("Vitral") { "Vitral fechou".into() } else { motivo.to_string() }
+    if motivo.contains("Vitral") { tr!("Vitral fechou").to_string() } else { motivo.to_string() }
 }
 
 #[cfg(test)]

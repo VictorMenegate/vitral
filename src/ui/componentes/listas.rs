@@ -1239,8 +1239,8 @@ impl Render for ListaDeEscolha {
             .bordered(false)
             .max_h(teto)
             .empty(|estado, _, cx| {
-                EstadoVazio::new(Lucide::Search, "Nada encontrado")
-                    .texto(format!("Nada encontrado para “{}”", estado.query(cx)))
+                EstadoVazio::new(Lucide::Search, tr!("Nada encontrado"))
+                    .texto(tr!("Nada encontrado para “{termo}”", termo = estado.query(cx)))
             });
         for (g, grupo) in grupos.iter().enumerate() {
             let mut grupo_cmd = CommandGroup::new();

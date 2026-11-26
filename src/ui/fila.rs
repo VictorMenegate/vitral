@@ -36,10 +36,10 @@ const LETRAS_DA_DICA: usize = 600;
 fn dica_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
-        partes.push(format!("De: {de}"));
+        partes.push(tr!("De: {de}", de = de).to_string());
     }
     if !e.anexos.is_empty() {
-        partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
+        partes.push(contagem(e.anexos.len(), &tr!("anexo"), &tr!("anexos")));
     }
     let texto = e.texto.trim();
     let texto = if texto.chars().count() > LETRAS_DA_DICA {
@@ -63,9 +63,9 @@ pub(super) fn previa(texto: &str) -> String {
 /// O que a pílula da faixa diz: com o turno rodando, só a contagem; parado, o que a fila é.
 pub(super) fn rotulo(n: usize, rodando: bool, estreita: bool) -> String {
     match (rodando, estreita) {
-        (true, _) => "na fila".to_string(),
-        (false, true) => contagem(n, "na fila", "na fila"),
-        (false, false) => contagem(n, "mensagem esperando na fila", "mensagens esperando na fila"),
+        (true, _) => tr!("na fila").to_string(),
+        (false, true) => contagem(n, &tr!("na fila"), &tr!("na fila")),
+        (false, false) => contagem(n, &tr!("mensagem esperando na fila"), &tr!("mensagens esperando na fila")),
     }
 }
 
@@ -83,9 +83,9 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let dica: SharedString = if rodando {
-            "Ver a fila: o que você mandou enquanto o turno roda, e tirar o que não quer mais".into()
+            tr!("Ver a fila: o que você mandou enquanto o turno roda, e tirar o que não quer mais")
         } else {
-            "Ver a fila desta conversa e tirar o que não quer mais".into()
+            tr!("Ver a fila desta conversa e tirar o que não quer mais")
         };
         let gatilho = Button::new(("pilula-fila", painel as usize))
             .custom(variante_fantasma(cx))
@@ -132,9 +132,9 @@ impl Janela {
         };
         let juntou = self.devolver_a_caixa(painel, &chat, entrada, window, cx);
         let texto = if juntou {
-            "Tirei da fila e juntei ao que estava na caixa (Ctrl+Z desfaz a junção)."
+            tr!("Tirei da fila e juntei ao que estava na caixa (Ctrl+Z desfaz a junção).")
         } else {
-            "Tirei da fila; a mensagem voltou para a caixa."
+            tr!("Tirei da fila; a mensagem voltou para a caixa.")
         };
         window.push_notification(aviso(Tom::Info, texto), cx);
         cx.notify();
@@ -182,7 +182,7 @@ impl Janela {
             return false;
         };
         self.devolver_a_caixa(painel, chat, entrada, window, cx);
-        window.push_notification(aviso(Tom::Info, "Trouxe da fila a última mensagem; Ctrl+Enter a devolve à fila."), cx);
+        window.push_notification(aviso(Tom::Info, tr!("Trouxe da fila a última mensagem; Ctrl+Enter a devolve à fila.")), cx);
         true
     }
 
@@ -214,7 +214,7 @@ impl Janela {
             if !texto.trim().is_empty() {
                 let trocou = motor.update(cx, |m, cx| m.editar_na_fila(&edicao.chat, edicao.indice, &edicao.antes, &texto, cx));
                 if !trocou {
-                    window.push_notification(aviso(Tom::Atencao, "A fila andou enquanto você editava; nada foi mudado."), cx);
+                    window.push_notification(aviso(Tom::Atencao, tr!("A fila andou enquanto você editava; nada foi mudado.")), cx);
                 }
             }
         }
@@ -268,10 +268,10 @@ struct Linha {
 fn meta_da_linha(e: &Entrada) -> String {
     let mut partes = Vec::new();
     if let Some(de) = &e.de {
-        partes.push(format!("De: {de}"));
+        partes.push(tr!("De: {de}", de = de).to_string());
     }
     if !e.anexos.is_empty() {
-        partes.push(contagem(e.anexos.len(), "anexo", "anexos"));
+        partes.push(contagem(e.anexos.len(), &tr!("anexo"), &tr!("anexos")));
     }
     partes.join(" · ")
 }
@@ -315,13 +315,13 @@ fn corpo_da_fila(
         .collect();
     let fechar = janela.clone();
     let explicacao = if agora {
-        "Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo."
+        tr!("Esperam este turno terminar e entram juntas no próximo. “Mandar agora” põe a mensagem dentro do turno que está rodando, sem pará-lo.")
     } else if rodando {
-        "Entram juntas no próximo turno, quando este terminar."
+        tr!("Entram juntas no próximo turno, quando este terminar.")
     } else {
-        "Entram juntas na próxima mensagem, ou agora, no botão abaixo."
+        tr!("Entram juntas na próxima mensagem, ou agora, no botão abaixo.")
     };
-    let fechar_fila = botao_icone(("fechar-fila", painel as usize), Lucide::X, "Fechar a fila", TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
+    let fechar_fila = botao_icone(("fechar-fila", painel as usize), Lucide::X, tr!("Fechar a fila"), TamanhoBotao::Linha, window, cx).on_click(move |_, _, cx| {
         let _ = fechar.update(cx, |j, cx| {
             if let Some(p) = j.paineis.iter_mut().find(|p| p.id == painel) {
                 p.fila_aberta = false;
@@ -340,7 +340,7 @@ fn corpo_da_fila(
         // Uma por uma, na ordem da fila: cada mandada tira a primeira, e a seguinte vira a primeira.
         let (motor, chat) = (motor.clone(), chat.to_string());
         Some(
-            botao_fantasma("fila-mandar-todas", Some(Lucide::ArrowUp.into()), "Mandar todas agora", TamanhoBotao::Linha, window, cx).on_click(
+            botao_fantasma("fila-mandar-todas", Some(Lucide::ArrowUp.into()), tr!("Mandar todas agora"), TamanhoBotao::Linha, window, cx).on_click(
                 move |_, window, cx| {
                     let resultado = motor.update(cx, |m, cx| {
                         while let Some(indice) = m.fila_do_chat(&chat).first().map(|(i, _)| *i) {
@@ -357,7 +357,7 @@ fn corpo_da_fila(
     } else if !rodando {
         let (motor, chat) = (motor.clone(), chat.to_string());
         Some(
-            botao_fantasma("fila-entregar", Some(Lucide::Play.into()), "Entregar agora", TamanhoBotao::Linha, window, cx)
+            botao_fantasma("fila-entregar", Some(Lucide::Play.into()), tr!("Entregar agora"), TamanhoBotao::Linha, window, cx)
                 .on_click(move |_, _, cx| {
                     // Tudo entra já, as mensagens com hora marcada também.
                     motor.update(cx, |m, cx| m.entregar_fila_agora(&chat, cx));
@@ -381,9 +381,9 @@ fn corpo_da_fila(
                 .flex_1()
                 .min_w_0()
                 .gap(esp::E6)
-                .child(div().text_size(r(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child("Fila"))
+                .child(div().text_size(r(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(tr!("Fila")))
                 .child(div().metadado().text_color(Cores::tenue()).child(total.to_string()))
-                .dica_no_ponteiro(move |window, cx| Tooltip::new(explicacao).build(window, cx)),
+                .dica_no_ponteiro(move |window, cx| Tooltip::new(explicacao.clone()).build(window, cx)),
         )
         .children(entregar)
         .child(fechar_fila);
@@ -436,10 +436,10 @@ fn linha_da_fila(
         // Fora do painel largo, só a seta: com o rótulo a fileira não cabia em ~340 e o × saía
         // cortado na borda.
         if larga {
-            botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), "Mandar agora", TamanhoBotao::Linha, window, cx)
-                .tooltip("Entra no turno que está rodando, sem pará-lo")
+            botao_fantasma(("mandar-da-fila", indice), Some(Lucide::ArrowUp.into()), tr!("Mandar agora"), TamanhoBotao::Linha, window, cx)
+                .tooltip(tr!("Entra no turno que está rodando, sem pará-lo"))
         } else {
-            botao_icone(("mandar-da-fila", indice), Lucide::ArrowUp, "Mandar agora\nEntra no turno que está rodando, sem pará-lo", TamanhoBotao::Linha, window, cx)
+            botao_icone(("mandar-da-fila", indice), Lucide::ArrowUp, tr!("Mandar agora\nEntra no turno que está rodando, sem pará-lo"), TamanhoBotao::Linha, window, cx)
         }
             .on_click(move |_, window, cx| {
                 if let Err(motivo) = motor.update(cx, |m, cx| m.mandar_da_fila_agora(&chat, indice, cx)) {
@@ -452,7 +452,7 @@ fn linha_da_fila(
         botao_icone(
             ("editar-da-fila", indice),
             Lucide::Pencil,
-            if do_usuario { "Editar esta mensagem" } else { "Só as suas mensagens podem ser editadas" },
+            if do_usuario { tr!("Editar esta mensagem") } else { tr!("Só as suas mensagens podem ser editadas") },
             TamanhoBotao::Linha,
             window,
             cx,
@@ -464,10 +464,10 @@ fn linha_da_fila(
     };
     // Com uma mensagem só não há ordem para mudar.
     let ordem = (!(primeira && ultima)).then(|| {
-        let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, "Subir na fila: entra antes da de cima", TamanhoBotao::Linha, window, cx)
+        let subir = botao_icone(("subir-na-fila", indice), Lucide::MoveUp, tr!("Subir na fila: entra antes da de cima"), TamanhoBotao::Linha, window, cx)
             .when(primeira, |b| b.disabled(true).opacity(0.45))
             .on_click(mover(false));
-        let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, "Descer na fila: entra depois da de baixo", TamanhoBotao::Linha, window, cx)
+        let descer = botao_icone(("descer-na-fila", indice), Lucide::MoveDown, tr!("Descer na fila: entra depois da de baixo"), TamanhoBotao::Linha, window, cx)
             .when(ultima, |b| b.disabled(true).opacity(0.45))
             .on_click(mover(true));
         h_flex().child(subir).child(descer)
@@ -477,7 +477,7 @@ fn linha_da_fila(
         botao_icone(
             ("tirar-da-fila", indice),
             Lucide::X,
-            "Tirar da fila (o texto volta para a caixa, se ela estiver vazia)",
+            tr!("Tirar da fila (o texto volta para a caixa, se ela estiver vazia)"),
             TamanhoBotao::Linha,
             window,
             cx,
@@ -526,7 +526,7 @@ fn linha_da_fila(
                         }
                     })
                     .child(Textarea::new(&campo))
-                    .child(div().pt(esp::E4).metadado().text_color(Cores::apagado()).child("Ctrl+Enter salva · Esc desiste")),
+                    .child(div().pt(esp::E4).metadado().text_color(Cores::apagado()).child(tr!("Ctrl+Enter salva · Esc desiste"))),
             )
             .into_any_element();
     }

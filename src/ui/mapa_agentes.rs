@@ -168,7 +168,9 @@ pub(super) fn em_mil(n: u64) -> String {
     if n < 1_000 {
         return n.to_string();
     }
-    format!("{:.1} mil", n as f64 / 1_000.).replace('.', ",")
+    let valor = format!("{:.1}", n as f64 / 1_000.);
+    let valor = if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { valor } else { valor.replace('.', ",") };
+    tr!("{n} mil", n = valor).to_string()
 }
 
 /// A linha de baixo do nó de um agente: o que ele faz agora, ou quanto levou e quanto usou.
@@ -183,20 +185,20 @@ fn meta_na_lista(a: &Agente) -> String {
 }
 
 fn meta_com(a: &Agente, com_tokens: bool) -> String {
-    let ferramentas = a.ferramentas.map(|n| contagem(n as usize, "ferramenta", "ferramentas"));
+    let ferramentas = a.ferramentas.map(|n| contagem(n as usize, &tr!("ferramenta"), &tr!("ferramentas")));
     let tempo = a.segundos.map(|s| duracao_curta(s * 1_000));
     let tokens = (com_tokens && a.tokens > 0).then(|| format!("{} tokens", em_mil(a.tokens)));
     let numeros = [tempo, tokens, ferramentas].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     match a.estado {
-        Estado::Rodando if a.esperando => "Esperando você".to_string(),
+        Estado::Rodando if a.esperando => tr!("Esperando você").to_string(),
         Estado::Rodando if !a.atividade.is_empty() => detalhe_do_passo(&a.atividade),
-        Estado::Rodando => "Começando…".to_string(),
-        Estado::Terminou if numeros.is_empty() => "Terminou".to_string(),
+        Estado::Rodando => tr!("Começando…").to_string(),
+        Estado::Terminou if numeros.is_empty() => tr!("Terminou").to_string(),
         Estado::Terminou => numeros,
-        Estado::Falhou if numeros.is_empty() => "Falhou".to_string(),
-        Estado::Falhou => format!("Falhou · {numeros}"),
-        Estado::Interrompido if numeros.is_empty() => "Interrompido".to_string(),
-        Estado::Interrompido => format!("Interrompido · {numeros}"),
+        Estado::Falhou if numeros.is_empty() => tr!("Falhou").to_string(),
+        Estado::Falhou => tr!("Falhou · {numeros}", numeros = numeros).to_string(),
+        Estado::Interrompido if numeros.is_empty() => tr!("Interrompido").to_string(),
+        Estado::Interrompido => tr!("Interrompido · {numeros}", numeros = numeros).to_string(),
     }
 }
 
@@ -315,7 +317,7 @@ fn balao_do_pedido(ligacoes: &Ligacoes, sub_id: &str, i: usize, texto: &str, abe
         )
         .when(longo, |s| {
             s.cursor_pointer()
-                .child(div().metadado().text_color(Cores::tenue()).child(if aberto { "Mostrar menos" } else { "Mostrar tudo" }))
+                .child(div().metadado().text_color(Cores::tenue()).child(if aberto { tr!("Mostrar menos") } else { tr!("Mostrar tudo") }))
                 .on_click(move |_, window, cx| {
                     estado.update(cx, |e, cx| {
                         if !e.expandidos.remove(&i) {
@@ -344,7 +346,7 @@ fn grupo_de_chamadas(ligacoes: &Ligacoes, sub_id: &str, inicio: usize, grupo: &[
     let mut saida: Vec<AnyElement> = Vec::new();
     if !chamadas.is_empty() {
         let resumo = resumo_das_chamadas(grupo, false);
-        let resumo = if resumo.is_empty() { contagem(chamadas.len(), "chamada", "chamadas") } else { resumo };
+        let resumo = if resumo.is_empty() { contagem(chamadas.len(), &tr!("chamada"), &tr!("chamadas")) } else { resumo };
         let estado = ligacoes.estado.clone();
         let linhas = aberto.then(|| {
             v_flex().pl(esp::E16).gap(esp::E2).children(chamadas.iter().map(|item| {
@@ -417,14 +419,14 @@ fn painel_do_agente(i: usize, a: &Agente, ligacoes: &Ligacoes, expandidos: &Hash
     let sub_id = id_da_subconversa(&ligacoes.chat, &a.id);
     let itens: Option<Vec<Item>> = motor.subconversa(&sub_id).map(|s| s.chat.itens.clone()).filter(|itens| !itens.is_empty());
     let passos: Vec<String> = a.passos.iter().map(|p| detalhe_do_passo(p)).map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
-    let titulo_de_secao = |texto: &'static str| super::componentes::etiqueta_de_secao(texto);
+    let titulo_de_secao = |texto: SharedString| super::componentes::etiqueta_de_secao(texto);
     let corpo: Vec<AnyElement> = match &itens {
         Some(itens) => conversa_do_agente(ligacoes, &sub_id, itens, expandidos, cx),
         None => {
             let lista_de_passos = (!passos.is_empty()).then(|| {
                 v_flex()
                     .gap(esp::E2)
-                    .child(titulo_de_secao(if passos.len() == 1 { "1 passo" } else { "Passos" }))
+                    .child(titulo_de_secao(if passos.len() == 1 { tr!("1 passo") } else { tr!("Passos") }))
                     .children(passos.iter().map(|p| div().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::texto()).child(p.clone())))
                     .into_any_element()
             });
@@ -432,7 +434,7 @@ fn painel_do_agente(i: usize, a: &Agente, ligacoes: &Ligacoes, expandidos: &Hash
                 let curto: String = texto.chars().take(8_000).collect();
                 v_flex()
                     .gap(esp::E4)
-                    .child(titulo_de_secao("Relatório"))
+                    .child(titulo_de_secao(tr!("Relatório")))
                     .child(div().corpo_ui().child(markdown(SharedString::from(format!("relatorio-{sub_id}")), curto, cx)))
                     .into_any_element()
             });
@@ -441,8 +443,8 @@ fn painel_do_agente(i: usize, a: &Agente, ligacoes: &Ligacoes, expandidos: &Hash
                     .corpo_ui()
                     .text_color(Cores::tenue())
                     .child(match a.estado {
-                        Estado::Rodando => "Lendo a conversa do agente…",
-                        _ => "A conversa não guardou os passos deste agente.",
+                        Estado::Rodando => tr!("Lendo a conversa do agente…"),
+                        _ => tr!("A conversa não guardou os passos deste agente."),
                     })
                     .into_any_element()
             });
@@ -453,7 +455,7 @@ fn painel_do_agente(i: usize, a: &Agente, ligacoes: &Ligacoes, expandidos: &Hash
     let abrir_aba = super::componentes::botao_fantasma(
         ("agente-abrir-aba", i),
         Some(Lucide::PanelRight.into()),
-        "Abrir em aba",
+        tr!("Abrir em aba"),
         super::componentes::TamanhoBotao::Controle,
         window,
         cx,
@@ -513,7 +515,7 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], ligacoes: &Ligacoes, win
         _ => "Claude".to_string(),
     };
     let meta_da_raiz = match chat.contexto {
-        Some(tokens) => format!("{modelo} · {} no contexto", em_mil(tokens)),
+        Some(tokens) => tr!("{modelo} · {tokens} no contexto", modelo = modelo, tokens = em_mil(tokens)).to_string(),
         None => modelo,
     };
     let estado_da_raiz = match execucao {
@@ -530,7 +532,7 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], ligacoes: &Ligacoes, win
     ]
     .into_iter()
     .filter(|(n, ..)| *n > 0)
-    .map(|(n, um, varios)| format!("{n} {}", if n == 1 { um } else { varios }))
+    .map(|(n, um, varios)| format!("{n} {}", crate::i18n::traduzir(if n == 1 { um } else { varios })))
     .collect();
     let conversa = h_flex()
         .gap(esp::E8)
@@ -549,9 +551,9 @@ fn mapa(motor: &Motor, chat: &Chat, agentes: &[Agente], ligacoes: &Ligacoes, win
         .when(!resumo.is_empty(), |s| s.child(div().flex_none().metadado().text_color(Cores::tenue()).child(resumo.join(" · "))));
     if agentes.is_empty() {
         let aviso = if rodando {
-            "Este turno ainda não abriu nenhum agente. Quando o Claude dividir o trabalho com subagentes, eles aparecem aqui."
+            tr!("Este turno ainda não abriu nenhum agente. Quando o Claude dividir o trabalho com subagentes, eles aparecem aqui.")
         } else {
-            "Esta conversa não abriu nenhum agente. Quando o Claude divide o trabalho com subagentes, eles aparecem aqui."
+            tr!("Esta conversa não abriu nenhum agente. Quando o Claude divide o trabalho com subagentes, eles aparecem aqui.")
         };
         return v_flex().gap(esp::E12).child(conversa).child(div().px(esp::E4).corpo_ui().text_color(Cores::tenue()).child(aviso)).into_any_element();
     }
@@ -695,19 +697,19 @@ impl Janela {
         window.open_dialog(cx, move |dialogo, window, cx| {
             let m = motor.read(cx);
             let Some(c) = m.chat(&chat) else {
-                return moldura(dialogo, largura::G, window).title(topo(cabecalho("Agentes desta conversa", None)));
+                return moldura(dialogo, largura::G, window).title(topo(cabecalho(tr!("Agentes desta conversa"), None)));
             };
             let rodando = matches!(m.execucao(&c.id), Execucao::Rodando { .. });
             let agentes = agentes_ordenados(c, rodando, m, &ligacoes.estado.read(cx).sinais);
             let vivos = agentes.iter().filter(|a| a.estado == Estado::Rodando).count();
             let subtitulo = match (agentes.len(), vivos) {
-                (0, _) => "Os subagentes que a conversa abre".to_string(),
-                (n, 0) => format!("{} · clique num para ver a conversa dele", contagem(n, "agente", "agentes")),
-                (n, v) => format!("{} · {v} trabalhando · clique num para ver a conversa dele", contagem(n, "agente", "agentes")),
+                (0, _) => tr!("Os subagentes que a conversa abre").to_string(),
+                (n, 0) => tr!("{quantos} · clique num para ver a conversa dele", quantos = contagem(n, &tr!("agente"), &tr!("agentes"))).to_string(),
+                (n, v) => tr!("{quantos} · {v} trabalhando · clique num para ver a conversa dele", quantos = contagem(n, &tr!("agente"), &tr!("agentes")), v = v).to_string(),
             };
             let corpo = mapa(m, c, &agentes, &ligacoes, window, cx);
             moldura(dialogo, LARGURA_DO_DIALOGO, window)
-                .title(topo(cabecalho("Agentes desta conversa", Some(subtitulo))))
+                .title(topo(cabecalho(tr!("Agentes desta conversa"), Some(subtitulo))))
                 .on_close({
                     let (motor_fechou, estado_fechou) = (motor_f.clone(), estado_f.clone());
                     move |_, _, cx| {

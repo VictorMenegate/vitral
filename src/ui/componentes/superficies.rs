@@ -624,7 +624,7 @@ impl RenderOnce for Alerta {
                         .icon(Lucide::X)
                         .xsmall()
                         .rounded(raio::de(20.))
-                        .tooltip("Fechar")
+                        .tooltip(tr!("Fechar"))
                         .on_click(move |_, window, cx| f(window, cx)),
                 )
             })
@@ -811,7 +811,7 @@ pub fn botao_do_aviso(rotulo: &'static str, cx: &App) -> Button {
         .h(r(28.))
         .px(esp::E12)
         .rounded(raio::de(28.))
-        .child(div().text_size(r(13.)).font_semibold().child(rotulo))
+        .child(div().text_size(r(13.)).font_semibold().child(SharedString::from(crate::i18n::traduzir(rotulo))))
 }
 
 /// "Não deu para …": o resumo no título, a primeira linha da causa no texto e "Detalhes", que
@@ -827,13 +827,13 @@ pub fn aviso_erro(resumo: impl Into<SharedString>, erro: &anyhow::Error) -> Noti
             let copiar = completa.clone();
             let rodape = RodapeDialogo::new()
                 .esquerda(
-                    botao_fantasma("detalhes-copiar", Some(Lucide::Copy.into()), "Copiar", TamanhoBotao::Controle, window, cx)
+                    botao_fantasma("detalhes-copiar", Some(Lucide::Copy.into()), tr!("Copiar"), TamanhoBotao::Controle, window, cx)
                         .on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copiar.to_string()))
                         }),
                 )
                 .principal(
-                    botao_primario("detalhes-fechar", None, "Fechar", TamanhoBotao::Controle, window, cx)
+                    botao_primario("detalhes-fechar", None, tr!("Fechar"), TamanhoBotao::Controle, window, cx)
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 );
             alerta

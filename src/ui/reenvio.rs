@@ -48,41 +48,40 @@ pub(super) fn precisa_perguntar(depois: usize, rodando: bool, caixa_com_texto: b
 pub(super) fn pergunta(depois: usize, rodando: bool, tem_sessao: bool, caixa_com_texto: bool) -> Confirmacao {
     let mut detalhes = Vec::new();
     if rodando {
-        detalhes.push((Lucide::Square.into(), "O turno que está rodando para agora".into(), true));
+        detalhes.push((Lucide::Square.into(), tr!("O turno que está rodando para agora"), true));
     }
     if caixa_com_texto {
         detalhes.push((
             Lucide::TextCursorInput.into(),
-            "O que está escrito na caixa sai dela (Ctrl+Z traz de volta)".into(),
+            tr!("O que está escrito na caixa sai dela (Ctrl+Z traz de volta)"),
             true,
         ));
     }
     if depois > 0 {
-        let verbo = if depois == 1 { "sai" } else { "saem" };
-        detalhes.push((
-            Lucide::Eraser.into(),
-            format!("{} {verbo} da conversa", contagem(depois, "bloco da resposta", "blocos da resposta")).into(),
-        false));
+        let texto = if depois == 1 {
+            tr!("1 bloco da resposta sai da conversa")
+        } else {
+            tr!("{n} blocos da resposta saem da conversa", n = depois)
+        };
+        detalhes.push((Lucide::Eraser.into(), texto, false));
     }
     // O aviso de depois não tem como voltar os arquivos: a pergunta não promete isso.
-    detalhes.push((Lucide::FolderOpen.into(), "Os arquivos da pasta não voltam sozinhos".into(), false));
+    detalhes.push((Lucide::FolderOpen.into(), tr!("Os arquivos da pasta não voltam sozinhos"), false));
     if tem_sessao {
         detalhes.push((
             Lucide::RefreshCw.into(),
-            "O Claude Code continua numa sessão nova, com um resumo do que ficou".into(),
+            tr!("O Claude Code continua numa sessão nova, com um resumo do que ficou"),
             false,
         ));
     }
     Confirmacao {
         tom: TomConfirmacao::Atencao,
         icone: Lucide::Pencil.into(),
-        titulo: "Corrigir esta mensagem?".into(),
-        texto: "O texto volta para a caixa, com os anexos e o reforço, e a conversa volta ao ponto antes \
-                dela. Ao enviar, o turno roda de novo."
-            .into(),
+        titulo: tr!("Corrigir esta mensagem?"),
+        texto: tr!("O texto volta para a caixa, com os anexos e o reforço, e a conversa volta ao ponto antes dela. Ao enviar, o turno roda de novo."),
         detalhes,
-        ok: "Corrigir".into(),
-        cancelar: "Deixar como está".into(),
+        ok: tr!("Corrigir"),
+        cancelar: tr!("Deixar como está"),
         ok_perigo: false,
     }
 }
@@ -94,7 +93,7 @@ pub(super) fn botao_editar(chave: &str, painel: u64, ix: usize, window: &Window,
     botao_icone(
         SharedString::from(format!("editar-{chave}")),
         Lucide::Pencil,
-        "Editar: o texto volta para a caixa e a conversa volta a antes dela",
+        tr!("Editar: o texto volta para a caixa e a conversa volta a antes dela"),
         TamanhoBotao::Linha,
         window,
         cx,
@@ -112,7 +111,7 @@ pub(super) fn botao_voltar_arquivos(chave: &str, chat: &str, marca: &str, window
     botao_icone(
         SharedString::from(format!("voltar-arquivos-{chave}")),
         Lucide::RotateCcw,
-        "Voltar os arquivos a como estavam antes desta mensagem (a conversa fica)",
+        tr!("Voltar os arquivos a como estavam antes desta mensagem (a conversa fica)"),
         TamanhoBotao::Linha,
         window,
         cx,
@@ -131,7 +130,7 @@ fn nomes_dos_arquivos(arquivos: &[String]) -> String {
         .collect();
     match nomes.len() {
         0..=3 => nomes.join(", "),
-        n => format!("{} e mais {}", nomes[..3].join(", "), n - 3),
+        n => tr!("{nomes} e mais {n}", nomes = nomes[..3].join(", "), n = n - 3).to_string(),
     }
 }
 
@@ -144,7 +143,7 @@ impl Janela {
             return;
         };
         let Some((pasta, conta, sessao)) = motor.read(cx).onde_voltar_arquivos(&chat) else {
-            window.push_notification(aviso(Tom::Info, "Pare o turno (Esc) antes de voltar os arquivos."), cx);
+            window.push_notification(aviso(Tom::Info, tr!("Pare o turno (Esc) antes de voltar os arquivos.")), cx);
             return;
         };
         cx.spawn_in(window, async move |_, cx| {
@@ -155,36 +154,36 @@ impl Janela {
             let _ = cx.update(|window, cx| {
                 let volta = match seco {
                     Ok(volta) if volta.arquivos.is_empty() => {
-                        window.push_notification(aviso(Tom::Info, "Nada a voltar: os arquivos já estão como antes desta mensagem."), cx);
+                        window.push_notification(aviso(Tom::Info, tr!("Nada a voltar: os arquivos já estão como antes desta mensagem.")), cx);
                         return;
                     }
                     Ok(volta) => volta,
                     Err(erro) => {
-                        window.push_notification(aviso(Tom::Atencao, format!("Não dá para voltar os arquivos: {erro}")), cx);
+                        window.push_notification(aviso(Tom::Atencao, tr!("Não dá para voltar os arquivos: {erro}", erro = erro)), cx);
                         return;
                     }
                 };
                 let linhas = format!("+{} −{}", volta.entram, volta.saem);
                 let detalhes = vec![
-                    (Lucide::FileDiff.into(), format!("{}: {}", contagem(volta.arquivos.len(), "arquivo", "arquivos"), nomes_dos_arquivos(&volta.arquivos)).into(), true),
-                    (Lucide::MessagesSquare.into(), "A conversa fica como está; o agente vê os arquivos de novo no próximo turno".into(), false),
-                    (Lucide::TriangleAlert.into(), "O que você mudou à mão nesses arquivos depois também volta".into(), false),
+                    (Lucide::FileDiff.into(), tr!("{quantos}: {nomes}", quantos = contagem(volta.arquivos.len(), &tr!("arquivo"), &tr!("arquivos")), nomes = nomes_dos_arquivos(&volta.arquivos)), true),
+                    (Lucide::MessagesSquare.into(), tr!("A conversa fica como está; o agente vê os arquivos de novo no próximo turno"), false),
+                    (Lucide::TriangleAlert.into(), tr!("O que você mudou à mão nesses arquivos depois também volta"), false),
                 ];
                 let (motor, chat) = (motor.clone(), chat.clone());
-                let texto_do_aviso = format!(
-                    "Voltei {} a como estavam antes de uma mensagem sua: {}.",
-                    contagem(volta.arquivos.len(), "arquivo", "arquivos"),
-                    nomes_dos_arquivos(&volta.arquivos)
+                let texto_do_aviso = tr!(
+                    "Voltei {arquivos} a como estavam antes de uma mensagem sua: {nomes}.",
+                    arquivos = contagem(volta.arquivos.len(), &tr!("arquivo"), &tr!("arquivos")),
+                    nomes = nomes_dos_arquivos(&volta.arquivos)
                 );
                 confirmar(
                     Confirmacao {
                         tom: TomConfirmacao::Atencao,
                         icone: Lucide::RotateCcw.into(),
-                        titulo: "Voltar os arquivos?".into(),
-                        texto: format!("Os arquivos que o Claude mudou desde esta mensagem voltam a como estavam ({linhas}).").into(),
+                        titulo: tr!("Voltar os arquivos?"),
+                        texto: tr!("Os arquivos que o Claude mudou desde esta mensagem voltam a como estavam ({linhas}).", linhas = linhas),
                         detalhes,
-                        ok: "Voltar os arquivos".into(),
-                        cancelar: "Deixar como está".into(),
+                        ok: tr!("Voltar os arquivos"),
+                        cancelar: tr!("Deixar como está"),
                         ok_perigo: true,
                     },
                     move |window, cx| {
@@ -207,10 +206,10 @@ impl Janela {
                                 let _ = cx.update(|window, cx| match feito {
                                     Ok(_) => {
                                         motor.update(cx, |m, cx| m.avisar_na_conversa(&chat, &texto_do_aviso, cx));
-                                        window.push_notification(aviso(Tom::Pronto, "Arquivos de volta"), cx);
+                                        window.push_notification(aviso(Tom::Pronto, tr!("Arquivos de volta")), cx);
                                     }
                                     Err(erro) => {
-                                        window.push_notification(aviso(Tom::Atencao, format!("Não voltei os arquivos: {erro}")), cx);
+                                        window.push_notification(aviso(Tom::Atencao, tr!("Não voltei os arquivos: {erro}", erro = erro)), cx);
                                     }
                                 });
                             })
@@ -274,7 +273,7 @@ impl Janela {
         let tem_sessao = tem_sessao && !motor.read(cx).correcao_mantem_a_sessao(&chat, ix);
         if rodando && !parar {
             window.push_notification(
-                aviso(Tom::Info, "A conversa está rodando: pare (Esc) para corrigir uma mensagem."),
+                aviso(Tom::Info, tr!("A conversa está rodando: pare (Esc) para corrigir uma mensagem.")),
                 cx,
             );
             return;
@@ -317,7 +316,7 @@ impl Janela {
             return;
         };
         let Some(retirada) = motor.update(cx, |m, cx| m.retirar_mensagem(&chat, ix, cx)) else {
-            window.push_notification(aviso(Tom::Atencao, "Não deu para corrigir esta mensagem agora."), cx);
+            window.push_notification(aviso(Tom::Atencao, tr!("Não deu para corrigir esta mensagem agora.")), cx);
             return;
         };
         if !retirada.anexos.is_empty() {
@@ -340,7 +339,7 @@ impl Janela {
         // 16/11/2026).
         self.gravar_agora(cx);
         // Curto, para caber nas duas linhas do aviso (o mais longo saía cortado no meio).
-        let aviso_final = aviso(Tom::Info, "A conversa voltou a antes da mensagem. Os arquivos não mudaram.");
+        let aviso_final = aviso(Tom::Info, tr!("A conversa voltou a antes da mensagem. Os arquivos não mudaram."));
         window.push_notification(aviso_final, cx);
         cx.notify();
     }
@@ -372,7 +371,7 @@ fn esperar_e_corrigir(
                 cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
             }
             let _ = cx.update(|window, cx| {
-                window.push_notification(aviso(Tom::Atencao, "O turno não parou; tente corrigir de novo."), cx);
+                window.push_notification(aviso(Tom::Atencao, tr!("O turno não parou; tente corrigir de novo.")), cx);
             });
         })
         .detach();

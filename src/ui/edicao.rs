@@ -235,7 +235,7 @@ const TETO_DAS_PALAVRAS: usize = 40_000;
 pub fn diff_da_trilha(detalhe: &str) -> Vec<LinhaDoDiff> {
     let mut saida = diff_dos_trechos(&trechos(detalhe), CONTEXTO_DA_TRILHA);
     if !saida.is_empty() && detalhe.lines().any(|l| l == "… (cortado)") {
-        saida.push(LinhaDoDiff::Nota("… (cortado)".into()));
+        saida.push(LinhaDoDiff::Nota(tr!("… (cortado)").to_string()));
     }
     saida
 }
@@ -286,7 +286,7 @@ pub fn diff_dos_trechos(trechos: &[Trecho], contexto: usize) -> Vec<LinhaDoDiff>
         }
         let a_mais = trecho.entram_a_mais.max(trecho.saem_a_mais);
         if a_mais > 0 {
-            saida.push(LinhaDoDiff::Nota(format!("… mais {a_mais} linhas")));
+            saida.push(LinhaDoDiff::Nota(tr!("… mais {n} linhas", n = a_mais).to_string()));
         }
     }
     marcar_palavras(&mut saida);
@@ -409,7 +409,7 @@ pub fn texto_do_diff(linhas: &[LinhaDoDiff]) -> String {
             LinhaDoDiff::Sai(t, _) => format!("- {t}"),
             LinhaDoDiff::Entra(t, _) => format!("+ {t}"),
             LinhaDoDiff::Pulo(0) => "…".to_string(),
-            LinhaDoDiff::Pulo(n) => format!("… {}", super::componentes::contagem(*n, "linha igual", "linhas iguais")),
+            LinhaDoDiff::Pulo(n) => format!("… {}", super::componentes::contagem(*n, &tr!("linha igual"), &tr!("linhas iguais"))),
             LinhaDoDiff::Nota(t) => t.clone(),
         })
         .collect::<Vec<_>>()
@@ -608,7 +608,7 @@ pub fn vista(trechos: &[Trecho], arquivo: &[impl AsRef<str>]) -> Vista {
                 Marca::Sai => {
                     m.mudou(Fileira::Saiu(texto.clone()), None);
                     if Some(k) == ultima_saida && trecho.saem_a_mais > 0 {
-                        m.mudou(Fileira::Nota(format!("… mais {} saíram", super::componentes::contagem(trecho.saem_a_mais, "linha", "linhas"))), None);
+                        m.mudou(Fileira::Nota(tr!("… mais {quantas} saíram", quantas = super::componentes::contagem(trecho.saem_a_mais, &tr!("linha"), &tr!("linhas"))).to_string()), None);
                     }
                 }
             }
@@ -626,9 +626,9 @@ pub fn vista(trechos: &[Trecho], arquivo: &[impl AsRef<str>]) -> Vista {
     m.fechar(None);
     if !perdidos.is_empty() {
         let nota = if perdidos.len() == trechos.len() {
-            "O arquivo mudou depois desta edição. O que ela trocou:".to_string()
+            tr!("O arquivo mudou depois desta edição. O que ela trocou:").to_string()
         } else {
-            format!("{} não está mais no arquivo:", super::componentes::contagem(perdidos.len(), "trecho", "trechos"))
+            tr!("{quantos} não está mais no arquivo:", quantos = super::componentes::contagem(perdidos.len(), &tr!("trecho"), &tr!("trechos"))).to_string()
         };
         m.igual(Fileira::Nota(nota), None);
         for (i, &t) in perdidos.iter().enumerate() {
@@ -731,7 +731,7 @@ impl super::Janela {
         let inteiro = dunce::canonicalize(&inteiro).unwrap_or(inteiro);
         let de_fora = || Some((inteiro.parent()?.to_path_buf(), inteiro.file_name()?.to_string_lossy().into_owned()));
         let Some((raiz, relativo)) = super::links_arquivo::raiz_do_arquivo(&inteiro, raizes.into_iter()).or_else(de_fora) else {
-            window.push_notification(aviso(Tom::Atencao, format!("Não deu para abrir {caminho}.")), cx);
+            window.push_notification(aviso(Tom::Atencao, tr!("Não deu para abrir {caminho}.", caminho = caminho)), cx);
             return;
         };
         let trechos: Vec<Trecho> = itens.iter().flat_map(trechos_do_item).collect();

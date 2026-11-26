@@ -34,7 +34,7 @@ pub struct BotaoCopiar {
 
 impl BotaoCopiar {
     pub fn new(id: impl Into<ElementId>, valor: impl Into<SharedString>) -> Self {
-        BotaoCopiar { id: id.into(), valor: valor.into(), com_shift: None, dica: "Copiar".into() }
+        BotaoCopiar { id: id.into(), valor: valor.into(), com_shift: None, dica: tr!("Copiar") }
     }
 
     /// Outro texto para o clique com Shift.
@@ -861,6 +861,18 @@ impl From<&'static str> for Segmento {
     }
 }
 
+impl From<SharedString> for Segmento {
+    fn from(rotulo: SharedString) -> Self {
+        Segmento::new(rotulo)
+    }
+}
+
+impl From<String> for Segmento {
+    fn from(rotulo: String) -> Self {
+        Segmento::new(rotulo)
+    }
+}
+
 /// Escolha entre poucas opções, em pílula, com a cor por instância (azul nas abas, ciano no
 /// esforço). Um ponto de Tab; ←/→, Home e End aplicam na hora. A pílula do escolhido desliza até
 /// o novo em 180 ms.
@@ -1204,7 +1216,7 @@ impl Contador {
 impl RenderOnce for Contador {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let (valor, min, max) = (self.valor, *self.faixa.start(), *self.faixa.end());
-        let botao = |sufixo: &'static str, icone: Lucide, dica: &'static str, novo: Option<u32>| {
+        let botao = |sufixo: &'static str, icone: Lucide, dica: SharedString, novo: Option<u32>| {
             let ao_mudar = self.ao_mudar.clone();
             BotaoRedondo::new(
                 SharedString::from(format!("{}-{sufixo}", self.id)),
@@ -1230,7 +1242,7 @@ impl RenderOnce for Contador {
             .rounded(raio::de(26.))
             // No preto, como os outros controles das Configurações (protótipo Linear, 25/11/2026).
             .bg(Cores::preto())
-            .child(botao("menos", Lucide::Minus, "Diminuir", (valor > min).then(|| valor - 1)))
+            .child(botao("menos", Lucide::Minus, tr!("Diminuir"), (valor > min).then(|| valor - 1)))
             .child(
                 div()
                     // Com unidade, a largura do maior número: o − e o + não andam de 90% para 100%.
@@ -1242,7 +1254,7 @@ impl RenderOnce for Contador {
                     .text_color(Cores::texto())
                     .child(format!("{valor}{}", self.sufixo.unwrap_or_default())),
             )
-            .child(botao("mais", Lucide::Plus, "Aumentar", (valor < max).then(|| valor + 1)))
+            .child(botao("mais", Lucide::Plus, tr!("Aumentar"), (valor < max).then(|| valor + 1)))
     }
 }
 
@@ -1303,7 +1315,7 @@ impl RenderOnce for Campo {
                     .text_color(Cores::texto())
                     .child(self.rotulo)
                     .when(self.opcional, |s| {
-                        s.child(div().font_weight(FontWeight::NORMAL).text_color(Cores::tenue()).child("opcional"))
+                        s.child(div().font_weight(FontWeight::NORMAL).text_color(Cores::tenue()).child(tr!("opcional")))
                     }),
             )
             .child(self.entrada)
@@ -1504,7 +1516,7 @@ impl RenderOnce for BotaoDeSegurar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let segurar = movimento::Segurar::de(movimento::chave(&self.id, "segurar"), window, cx);
         let enchido = segurar.progresso(window, cx);
-        let rotulo = if segurar.armado(cx) { "Enter de novo para permitir".into() } else { self.rotulo };
+        let rotulo = if segurar.armado(cx) { tr!("Enter de novo para permitir") } else { self.rotulo };
         let completar = self.ao_completar;
         let (apertar, soltar, soltar_fora, sair, teclar) =
             (segurar.clone(), segurar.clone(), segurar.clone(), segurar.clone(), segurar);
@@ -1566,7 +1578,7 @@ impl RenderOnce for BotaoDeSegurar {
                         sair.soltar(cx);
                     }
                 },
-                |window, cx| Tooltip::new("Segure por 1 segundo (ou Enter duas vezes)").build(window, cx),
+                |window, cx| Tooltip::new(tr!("Segure por 1 segundo (ou Enter duas vezes)")).build(window, cx),
             )
     }
 }
