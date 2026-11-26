@@ -38,12 +38,19 @@ pub(super) struct DadosDoMenu {
 pub(super) fn itens_do_menu(menu: PopupMenu, dados: &DadosDoMenu) -> PopupMenu {
     let (janela, painel) = (dados.janela.clone(), dados.painel);
     let as_horas = janela.clone();
+    // Os nomes do protótipo (26/11/2026), na seção "Mandar": "Quando renovar", com a hora à direita,
+    // e "Agendar…".
     menu.when_some(dados.renova, |menu, quando| {
-        menu.item(PopupMenuItem::new("Mandar quando as 5 h renovarem").icon(Lucide::CalendarClock).on_click(move |_, window, cx| {
-            let _ = janela.update(cx, |this, cx| this.enviar_agendada(painel, quando, window, cx));
-        }))
+        let hora = crate::modelo::hora_local(quando);
+        menu.item(
+            PopupMenuItem::element(move |_, _| super::composer::rotulo_com_gatilho("Quando renovar", hora.clone()))
+                .icon(Lucide::Clock)
+                .on_click(move |_, window, cx| {
+                    let _ = janela.update(cx, |this, cx| this.enviar_agendada(painel, quando, window, cx));
+                }),
+        )
     })
-    .item(PopupMenuItem::new("Mandar às…").icon(Lucide::Clock).on_click(move |_, window, cx| {
+    .item(PopupMenuItem::new("Agendar…").icon(Lucide::Clock).on_click(move |_, window, cx| {
         let _ = as_horas.update(cx, |this, cx| this.dialogo_mandar_as(painel, window, cx));
     }))
 }

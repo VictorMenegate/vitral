@@ -22,6 +22,8 @@ pub enum Simbolo {
     Icone(Icon, Option<Hsla>),
     /// Logo colorido (via `img()`, nunca `svg()`, que pinta numa cor só).
     Marca(Marca),
+    /// O glifo solto da marca, sem o disco (os modelos no seletor, como no protótipo).
+    Glifo(Marca),
     Papel(Papel),
     Sinal { nivel: u8, total: u8 },
     Anel { fracao: f32, cor: Option<Hsla> },
@@ -47,6 +49,7 @@ impl Simbolo {
         Some(match self {
             Simbolo::Icone(i, c) => Simbolo::Icone(i.clone(), *c),
             Simbolo::Marca(m) => Simbolo::Marca(*m),
+            Simbolo::Glifo(m) => Simbolo::Glifo(*m),
             Simbolo::Papel(p) => Simbolo::Papel(*p),
             Simbolo::Sinal { nivel, total } => Simbolo::Sinal { nivel: *nivel, total: *total },
             Simbolo::Anel { fracao, cor } => Simbolo::Anel { fracao: *fracao, cor: *cor },
@@ -65,6 +68,7 @@ impl Simbolo {
                 .when_some(cor, |i, cor| i.text_color(cor))
                 .into_any_element(),
             Simbolo::Marca(marca) => marca.disco(lado).into_any_element(),
+            Simbolo::Glifo(marca) => marca.glifo(lado),
             Simbolo::Papel(papel) => papel.circulo(lado).into_any_element(),
             Simbolo::Sinal { nivel, total } => {
                 BarrinhasDeSinal::new(nivel, total).altura(lado).into_any_element()

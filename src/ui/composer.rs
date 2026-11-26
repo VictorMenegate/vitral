@@ -36,6 +36,7 @@ use crate::{
 mod seletores;
 
 use seletores::Barra;
+pub(super) use seletores::rotulo_com_gatilho;
 pub(super) use seletores::Abertos as AbertosDoModelo;
 
 /// (valor, nome, descrição) dos modos de permissão do Claude Code.
@@ -58,12 +59,7 @@ pub const MODELOS: [(&str, &str); 5] = [
 
 /// Uma linha sobre cada família, na ordem de `MODELOS` (sem o Padrão): no seletor da caixa e nos
 /// menus de modelo das Configurações.
-pub const DESCRICOES_DE_MODELO: [&str; 4] = [
-    "Para os desafios mais difíceis",
-    "Para trabalho complexo e o dia a dia",
-    "O mais eficiente para tarefas simples",
-    "O mais rápido para respostas curtas",
-];
+pub const DESCRICOES_DE_MODELO: [&str; 4] = ["O mais forte", "Dia a dia", "Mais leve", "O mais rápido"];
 
 /// As versões exatas que o seletor oferece embaixo das famílias, na ordem de `MODELOS` e, dentro
 /// de cada família, da mais nova para a mais antiga. A família manda `--model opus` e quem decide

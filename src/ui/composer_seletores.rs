@@ -24,7 +24,7 @@ use crate::ui::{Janela, composer};
 use crate::ui::componentes::{
     BarrinhasDeSinal, CabecalhoPopover, Chip, ControleSegmentado, CorpoPopover, EventoEscolha,
     FaixaCaixa, GatilhoChip, GrupoDeEscolha, ItemDeEscolha, LarguraPopover, LinhaDeOpcao, ListaDeEscolha, Marca,
-    Selo, OndeAtalho, Simbolo, TamanhoBotao, TamanhoChip, botao_icone, cabecalho_escolha,
+    Selo, Simbolo, TamanhoBotao, TamanhoChip, botao_icone,
     desenho_teclas, fio_de_pontos, icone_do_modo, item_descrito, popover, resumo_uso,
 };
 use crate::{
@@ -89,34 +89,16 @@ fn abrir_ou_fechar(janela: &WeakEntity<Janela>, painel: u64, qual: PopCaixa, abr
     });
 }
 
-/// Item de menu com o ícone dentro do conteúdo: num menu de itens descritos, o `.icon()` do kit
-/// reservaria uma coluna vazia antes de todos. O texto cai na coluna dos títulos descritos (40).
-fn item_com_icone(icone: Lucide, rotulo: &'static str) -> PopupMenuItem {
-    PopupMenuItem::element(move |window, _| {
-        div()
-            .flex()
-            .items_center()
-            .gap(esp::E12)
-            .min_w_0()
-            .child(
-                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
-                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
-                // (folha dimensional, 23/11/2026).
-                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
-            )
-            .child(div().flex_1().min_w_0().truncate().child(rotulo))
-    })
-}
-
-/// Rótulo com o gatilho digitado à direita ("@", "/"), em mono tênue: não é atalho do teclado.
-fn rotulo_com_gatilho(rotulo: &'static str, gatilho: &'static str) -> Div {
+/// Rótulo com o que fica à direita em tênue: o gatilho digitado ("@", "/") ou uma hora ("14:20"),
+/// como no protótipo. Não é atalho do teclado.
+pub(in crate::ui) fn rotulo_com_gatilho(rotulo: impl Into<SharedString>, gatilho: impl Into<SharedString>) -> Div {
     div()
         .flex()
         .items_center()
         .gap(esp::E8)
         .min_w_0()
-        .child(div().flex_1().min_w_0().truncate().child(rotulo))
-        .child(div().flex_none().mono_pequeno().text_color(Cores::tenue()).child(gatilho))
+        .child(div().flex_1().min_w_0().truncate().child(rotulo.into()))
+        .child(div().flex_none().metadado().text_color(Cores::tenue()).child(gatilho.into()))
 }
 
 /// Uma tecla (ou um par) e o que ela faz, no desenho das teclas, como no rodapé da paleta.
@@ -171,18 +153,14 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
     };
     let texto: SharedString = descricao_regra(regra).into();
     let (regra, d) = (regra.to_string(), d.clone());
+    // Linear (26/11/2026): como no protótipo, a regra em mono e o × no fim, sem o ícone.
+    let _ = icone;
     PopupMenuItem::element(move |window, _| {
         div()
             .flex()
             .items_center()
-            .gap(esp::E12)
+            .gap(esp::E8)
             .min_w_0()
-            .child(
-                // O ícone no centro de uma caixa de 28, a do azulejo dos itens descritos: o texto cai
-                // na coluna dos títulos deles (28 + 12 = 40). Com o ícone de 16 solto, caía a 28
-                // (folha dimensional, 23/11/2026).
-                div().flex_none().size(r(28.)).flex().items_center().justify_center().text_color(Cores::tenue()).child(Icon::new(icone).with_size(tam(window, 16.))),
-            )
             .child(
                 div()
                     .flex_1()
@@ -190,7 +168,7 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
                     .truncate()
                     .map(|s| {
                         if comando {
-                            s.mono_pequeno().text_color(Cores::codigo())
+                            s.mono_pequeno().text_color(Cores::texto())
                         } else {
                             s.corpo_ui().text_color(Cores::texto())
                         }
@@ -206,12 +184,11 @@ fn item_de_regra(regra: &str, d: &Rc<DadosModo>) -> PopupMenuItem {
 }
 
 fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    // 420: com o azulejo e o visto, a descrição do escolhido ainda cabe inteira.
-    let largura = tam(window, 420.);
-    menu = menu.min_w(largura).max_w(largura).item(cabecalho_escolha(
-        "Modo de permissão",
-        Some((Box::new(AlternarModo), OndeAtalho::Foco(d.foco_caixa.clone()), "troca")),
-    ));
+    // Linear (26/11/2026): o menu de modo do protótipo, sem cabeçalho, uma linha por modo (o
+    // ícone na cor dele, o nome e a descrição lado a lado), o escolhido na cor da seleção. O
+    // Shift+Tab continua trocando o modo, como diz a dica do chip.
+    let largura = tam(window, 300.);
+    menu = menu.min_w(largura).max_w(largura);
     for (valor, nome, descricao) in MODOS {
         let (icone, cor) = icone_do_modo(valor);
         let d2 = d.clone();
@@ -226,7 +203,21 @@ fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx:
         );
     }
     if !d.permitidas.is_empty() {
-        menu = menu.separator().label("Permitido sempre nesta conversa");
+        // "Sempre permitido" e, na mesma linha, o Limpar (volta a perguntar sobre tudo).
+        let d2 = d.clone();
+        menu = menu.separator().item(
+            PopupMenuItem::element(|_, _| {
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .text_size(r(11.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(div().flex_1().text_color(Cores::apagado()).child("Sempre permitido"))
+                    .child(div().font_weight(FontWeight::MEDIUM).text_color(Cores::tenue()).child("Limpar"))
+            })
+            .on_click(move |_, _, cx| mudar(&d2.motor, &d2.chat, cx, |c| c.permitidas.clear())),
+        );
         let n = d.permitidas.len();
         let mostradas = if n > 4 { 3 } else { n };
         for regra in &d.permitidas[..mostradas] {
@@ -243,11 +234,6 @@ fn menu_do_modo(mut menu: PopupMenu, d: &Rc<DadosModo>, window: &mut Window, cx:
                 sub
             });
         }
-        let d2 = d.clone();
-        menu = menu.item(
-            item_com_icone(Lucide::Undo2, "Voltar a perguntar sobre tudo")
-                .on_click(move |_, _, cx| mudar(&d2.motor, &d2.chat, cx, |c| c.permitidas.clear())),
-        );
     }
     menu
 }
@@ -277,25 +263,25 @@ fn itens_de_anexar(menu: PopupMenu, d: &DadosAnexar, com_comandos: bool) -> Popu
     let (c1, c2, c3, painel) = (d.chat.clone(), d.chat.clone(), d.chat.clone(), d.painel);
     let menu = menu
         .item(
-            // Curto, para caber no "…" a 150% ("Arquivo ou imagem do computad…"; dono, 24/11/2026).
-            PopupMenuItem::new("Arquivo ou imagem…")
-                .icon(Lucide::FolderOpen)
+            // Os nomes curtos do protótipo (26/11/2026): a seção "Anexar" já diz o resto.
+            PopupMenuItem::new("Arquivo…")
+                .icon(Lucide::Paperclip)
                 .on_click(move |_, window, cx| {
                     let chat = c1.clone();
                     let _ = j1.update(cx, |this, cx| this.escolher_anexos(chat, window, cx));
                 }),
         )
         .item(
-            PopupMenuItem::element(|_, _| rotulo_com_gatilho("Arquivo da pasta…", "@"))
-                .icon(Lucide::FileText)
+            PopupMenuItem::element(|_, _| rotulo_com_gatilho("Da pasta…", "@"))
+                .icon(Lucide::Folder)
                 .on_click(move |_, window, cx| {
                     let chat = c2.clone();
                     let _ = j2.update(cx, |this, cx| this.dialogo_mencionar_arquivo(chat, window, cx));
                 }),
         )
         .item(
-            PopupMenuItem::new("Conversa anterior como contexto…")
-                .icon(Lucide::MessageSquareQuote)
+            PopupMenuItem::new("Outra conversa…")
+                .icon(Lucide::MessagesSquare)
                 .on_click(move |_, window, cx| {
                     let chat = c3.clone();
                     let _ = j3.update(cx, |this, cx| this.dialogo_conversa_contexto(chat, window, cx));
@@ -305,8 +291,8 @@ fn itens_de_anexar(menu: PopupMenu, d: &DadosAnexar, com_comandos: bool) -> Popu
 }
 
 fn item_de_comandos(janela: WeakEntity<Janela>, painel: u64) -> PopupMenuItem {
-    PopupMenuItem::element(|_, _| rotulo_com_gatilho("Comandos de barra", "/"))
-        .icon(Lucide::SquareSlash)
+    PopupMenuItem::element(|_, _| rotulo_com_gatilho("Comandos", "/"))
+        .icon(Lucide::Slash)
         .on_click(move |_, window, cx| {
             let _ = janela.update(cx, |this, cx| this.por_na_caixa(painel, "/", window, cx));
         })
@@ -419,18 +405,35 @@ fn linhas_de_versao(escolhido: Option<&str>, em_uso: Option<&str>, motivo: Optio
     &motor.config.modelo_chats
 }
 
-fn itens_de_modelo(linhas: Vec<LinhaDeModelo>) -> Vec<ItemDeEscolha> {
+/// No jeito do protótipo (26/11/2026): cada modelo com o glifo da marca e a versão no nome
+/// ("Opus 5.5  Dia a dia"); "Outras versões" com a seta na coluna do símbolo; a conta com a
+/// pessoa. As contas e a linha sem versões vão com o símbolo vazio, para o texto alinhar.
+fn itens_de_modelo(linhas: Vec<LinhaDeModelo>, marca: Marca) -> Vec<ItemDeEscolha> {
     linhas
         .into_iter()
         .map(|l| {
             let termos = format!("{} {}", l.valor, l.descricao);
+            let (simbolo, seta) = match l.valor.as_str() {
+                OUTRAS_VERSOES => {
+                    let aberta = l.seta == Some(true);
+                    (Simbolo::icone(if aberta { Lucide::ChevronDown } else { Lucide::ChevronRight }), None)
+                }
+                A_CONTA => (Simbolo::icone(Lucide::CircleUserRound), l.seta),
+                v if v.starts_with(DA_CONTA) || v == SEM_VERSOES => (Simbolo::Icone(Icon::empty(), None), l.seta),
+                _ => (Simbolo::Glifo(marca), l.seta),
+            };
+            let titulo = match &l.versao {
+                Some(versao) => format!("{} {versao}", l.titulo),
+                None => l.titulo,
+            };
             ItemDeEscolha {
+                simbolo: Some(simbolo),
                 descricao: (!l.descricao.is_empty()).then(|| l.descricao.into()),
-                selos: l.versao.map(Selo::neutro).into_iter().chain(l.em_uso.then(|| Selo::neutro("em uso"))).collect(),
+                selos: l.em_uso.then(|| Selo::neutro("em uso")).into_iter().collect(),
                 termos: Some(termos.into()),
                 desabilitado: l.desabilitada.map(Into::into),
-                seta: l.seta,
-                ..ItemDeEscolha::new(l.valor, l.titulo)
+                seta,
+                ..ItemDeEscolha::new(l.valor, titulo)
             }
         })
         .collect()
@@ -606,8 +609,8 @@ fn grupos_a_vista(partes: &PartesDoSeletor, abertos: Abertos, busca: &str) -> Ve
 }
 
 /// As linhas viram os itens da lista.
-fn em_grupos(grupos: Vec<(Option<String>, Vec<LinhaDeModelo>)>) -> Vec<GrupoDeEscolha> {
-    grupos.into_iter().map(|(titulo, linhas)| GrupoDeEscolha { titulo: titulo.map(Into::into), itens: itens_de_modelo(linhas) }).collect()
+fn em_grupos(grupos: Vec<(Option<String>, Vec<LinhaDeModelo>)>, marca: Marca) -> Vec<GrupoDeEscolha> {
+    grupos.into_iter().map(|(titulo, linhas)| GrupoDeEscolha { titulo: titulo.map(Into::into), itens: itens_de_modelo(linhas, marca) }).collect()
 }
 
 /// As partes da aba `aba` do seletor. Claude: as famílias, que é o que se usa no dia a dia, as
@@ -641,10 +644,11 @@ fn partes_do_seletor(motor: &Motor, chat: &Chat, aba: Agente) -> PartesDoSeletor
 /// O prefixo das chaves do grupo "Conta do Claude" no seletor: `conta:<id>`, ou `conta:auto`.
 const DA_CONTA: &str = "conta:";
 
-/// A linha da conta no pé do seletor: qual o chat usa agora e quanto ela gastou ("Conta:
-/// tecnologia · semana 44%"). Na Automática, a conta que ela escolheu.
+/// A linha da conta no pé do seletor: qual o chat usa agora e quanto ela gastou ("tecnologia ·
+/// semana 44%"). Na Automática, a conta que ela escolheu.
 fn rotulo_da_conta(nome: &str, automatica: bool, uso: &str) -> String {
-    let conta = if automatica { format!("Conta automática: {nome}") } else { format!("Conta: {nome}") };
+    // Como no protótipo ("principal · 18%"): o ícone da pessoa já diz que é a conta.
+    let conta = if automatica { format!("Automática: {nome}") } else { nome.to_string() };
     format!("{conta} · {uso}")
 }
 
@@ -703,20 +707,22 @@ pub(super) fn preparar_modelos(
         let m = motor.read(cx);
         m.chat(chat).map(|c| {
             let abertos = abertos.unwrap_or_else(|| Abertos::de_partida(c));
-            (partes_do_seletor(m, c, aba.unwrap_or(c.agente)), chave_do_modelo(c, padrao_da_pasta(m, c)), abertos)
+            let aba = aba.unwrap_or(c.agente);
+            (partes_do_seletor(m, c, aba), chave_do_modelo(c, padrao_da_pasta(m, c)), abertos, Marca::do_agente(aba))
         })
     };
-    let Some((partes, escolhido, abertos)) = dados else {
+    let Some((partes, escolhido, abertos, marca)) = dados else {
         return;
     };
-    let grupos = em_grupos(grupos_a_vista(&partes, abertos, ""));
+    let grupos = em_grupos(grupos_a_vista(&partes, abertos, ""), marca);
     lista.update(cx, |l, cx| {
-        // O logo fica só no rótulo do grupo; os itens vão sem símbolo.
-        l.simbolo_do_grupo("Claude", Simbolo::Marca(Marca::Claude));
+        // Como no protótipo (26/11/2026): sem a busca (a lista é curta), uma linha por modelo,
+        // com o glifo da marca em cada um.
+        l.sem_busca(true);
+        l.uma_linha(true);
         l.ficha_no_escolhido(true);
         l.cursor_em(cursor);
-        // A busca é nossa: com algo escrito, as versões e as contas recolhidas também aparecem.
-        l.filtro_proprio(move |busca| em_grupos(grupos_a_vista(&partes, abertos, busca)));
+        l.filtro_proprio(move |busca| em_grupos(grupos_a_vista(&partes, abertos, busca), marca));
         l.definir(grupos, Some(escolhido.into()), cx);
         l.abrir(window, cx);
     });
@@ -778,7 +784,6 @@ struct DadosEsforco {
     atual: usize,
     /// O nível que o automático usa neste chat (o índice em `ESFORCOS`), se já se sabe.
     padrao: Option<usize>,
-    armado: bool,
     /// Ultracode ligado para a próxima mensagem.
     ultracode: bool,
     /// Por que o Ultracode não vale nesta conversa.
@@ -823,7 +828,7 @@ impl DadosEsforco {
 
 /// O que a linha do Ultracode diz embaixo do título, numa linha só: o detalhe vai na dica do (i)
 /// (dono, 24/11/2026: "diminui essa parte escrita do Ultracode").
-const ULTRACODE_CURTO: &str = "Agentes em paralelo, só na próxima · gasta bem mais";
+const ULTRACODE_CURTO: &str = "Agentes em paralelo";
 const ULTRACODE_DICA: &str = "Vários agentes trabalham em paralelo, só na próxima mensagem. Gasta bem mais do plano e roda \
                               no esforço Extra.";
 
@@ -873,11 +878,6 @@ fn linha_ultracode(d: &Rc<DadosEsforco>) -> AnyElement {
 
 fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement + use<> {
     let atual = d.atual;
-    let simbolo = if d.armado {
-        barras_arco_iris()
-    } else {
-        Simbolo::Sinal { nivel: atual as u8, total: 5 }
-    };
     let tecla = |f: fn(usize) -> usize| {
         let d = d.clone();
         move |cx: &mut App| d.nivel(f(d.atual), cx)
@@ -903,11 +903,13 @@ fn corpo_do_esforco(d: &Rc<DadosEsforco>, window: &Window) -> impl IntoElement +
         .child(
             CorpoPopover::new(d.largura)
                 // O nível já está na pílula do segmentado, logo abaixo.
+                // Linear (26/11/2026): "Esforço" e o atalho à direita, como no protótipo.
                 .cabecalho(CabecalhoPopover::Escolha {
-                    simbolo: Some(simbolo),
+                    simbolo: None,
                     titulo: "Esforço".into(),
                     valor: None,
-                    dica: None,
+                    dica: gpui_kit::component::kbd::Kbd::binding_for_action(&AbrirEsforco, Some("Vitral"), window)
+                        .map(|k| SharedString::from(k.partes().join(" "))),
                 })
                 .child(
                     div()
@@ -1263,7 +1265,6 @@ impl Janela {
             chat: chat.id.clone(),
             atual,
             padrao,
-            armado,
             ultracode,
             outro_ultracode: motor.ultracode_rodando().is_some_and(|c| c != chat.id),
             fluxos_desligados: motor.fluxos_desligados(chat),
@@ -1315,37 +1316,41 @@ impl Janela {
         let grupos = grupos_do_mais(&agora);
         // Mandar numa hora marcada (`agendar.rs`): quando as 5 h renovarem, ou na hora escrita.
         let agendar = crate::ui::agendar::DadosDoMenu { janela: cx.entity().downgrade(), painel, renova: motor.renovacao_do_chat(&chat.id) };
-        let rotulo_do_outro = format!("Perguntar também ao {}", outro.nome());
+        let rotulo_do_outro = SharedString::from(format!("Também ao {}", outro.nome()));
         botao_icone(b.id("mais-caixa"), Lucide::Ellipsis, "Mais opções", TamanhoBotao::Caixa, window, cx)
             .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
-                let largura = tam(window, 300.);
+                let largura = tam(window, LARGURA_DO_MAIS);
                 let mut menu = menu.min_w(largura).max_w(largura);
-                for (n, grupo) in grupos.iter().enumerate() {
-                    if n > 0 {
-                        menu = menu.separator();
-                    }
+                for grupo in &grupos {
+                    menu = menu.label(titulo_do_grupo(grupo));
                     for item in grupo {
                         let janela = anexar.janela.clone();
                         let (motor_e, chat) = (motor_e.clone(), anexar.chat.clone());
                         menu = match item {
                             ItemDoMais::Anexar => itens_de_anexar(menu, &anexar, false),
-                            ItemDoMais::MandarDepois => menu.item(PopupMenuItem::new("Mandar depois, na fila").icon(Lucide::ListChecks).on_click(
+                            ItemDoMais::MandarDepois => menu.item(PopupMenuItem::new("Na fila").icon(Lucide::TextAlignStart).on_click(
                                 move |_, window, cx| {
                                     let _ = janela.update(cx, |this, cx| this.enviar_depois(painel, window, cx));
                                 },
                             )),
                             ItemDoMais::Agendar => crate::ui::agendar::itens_do_menu(menu, &agendar),
-                            ItemDoMais::PerguntarAoOutro => menu.item(PopupMenuItem::new(rotulo_do_outro.clone()).icon(Lucide::Columns2).on_click(
-                                move |_, window, cx| {
-                                    let _ = janela.update(cx, |this, cx| this.enviar_aos_dois(painel, window, cx));
-                                },
-                            )),
+                            // A marca colorida do outro agente na coluna do ícone, como no protótipo.
+                            ItemDoMais::PerguntarAoOutro => {
+                                let rotulo = rotulo_do_outro.clone();
+                                menu.item(
+                                    PopupMenuItem::element(move |_, _| div().child(rotulo.clone()))
+                                        .icone_proprio(move |_, _| Marca::do_agente(outro).glifo(14.))
+                                        .on_click(move |_, window, cx| {
+                                            let _ = janela.update(cx, |this, cx| this.enviar_aos_dois(painel, window, cx));
+                                        }),
+                                )
+                            }
                             ItemDoMais::Comandos => menu.item(item_de_comandos(janela, painel)),
-                            ItemDoMais::Compactar => menu.item(PopupMenuItem::new("Compactar a conversa").icon(Lucide::Minimize).on_click(move |_, _, cx| {
+                            ItemDoMais::Compactar => menu.item(PopupMenuItem::new("Compactar").icon(Lucide::FoldVertical).on_click(move |_, _, cx| {
                                 let _ = janela.update(cx, |this, cx| this.compactar_conversa(painel, cx));
                             })),
                             // O mapa dos subagentes, quando a conversa abriu algum.
-                            ItemDoMais::Agentes => menu.item(PopupMenuItem::new("Agentes desta conversa").icon(Lucide::Workflow).on_click(
+                            ItemDoMais::Agentes => menu.item(PopupMenuItem::new("Agentes").icon(Lucide::UsersRound).on_click(
                                 move |_, window, cx| {
                                     let _ = janela.update(cx, |this, cx| this.abrir_mapa_de_agentes(chat.clone(), window, cx));
                                 },
@@ -1356,7 +1361,7 @@ impl Janela {
                                 }
                             })),
                             ItemDoMais::Fixar => menu.item(
-                                PopupMenuItem::new(if fixado { "Desafixar conversa" } else { "Fixar conversa" })
+                                PopupMenuItem::new(if fixado { "Desafixar" } else { "Fixar" })
                                     .icon(if fixado { Lucide::PinOff } else { Lucide::Pin })
                                     .on_click(move |_, _, cx| {
                                         if let Some(m) = &motor_e {
@@ -1370,6 +1375,19 @@ impl Janela {
                 menu
             })
             .into_any_element()
+    }
+}
+
+/// A largura do "…", a 100%: a do protótipo (o `menu-justo` dele, de 268).
+const LARGURA_DO_MAIS: f32 = 268.;
+
+/// O rótulo de cada seção do "…", como no protótipo: "Anexar", "Mandar" e "Conversa". O grupo
+/// é reconhecido pelo primeiro item (`grupos_do_mais` nunca mistura os três).
+fn titulo_do_grupo(grupo: &[ItemDoMais]) -> &'static str {
+    match grupo.first() {
+        Some(ItemDoMais::Anexar) => "Anexar",
+        Some(ItemDoMais::MandarDepois | ItemDoMais::Agendar | ItemDoMais::PerguntarAoOutro) => "Mandar",
+        _ => "Conversa",
     }
 }
 
@@ -1501,7 +1519,7 @@ mod testes {
             [("Fable", None), ("Opus", None), ("Sonnet", None), ("Haiku", None), ("Outras versões", Some(false))]
         );
         assert_eq!(grupos[0].1[4].valor, OUTRAS_VERSOES);
-        assert_eq!(linhas_com_seta(&grupos[1].1), [("Conta: tecnologia · semana 44%", Some(false))]);
+        assert_eq!(linhas_com_seta(&grupos[1].1), [("tecnologia · semana 44%", Some(false))]);
         assert_eq!(grupos[1].1[0].valor, A_CONTA);
         assert_eq!(grupos[1].0, None, "a conta não tem mais o rótulo de grupo");
         // As linhas de abrir têm uma altura só (sem descrição).
@@ -1520,10 +1538,10 @@ mod testes {
             ["Fable", "Opus", "Sonnet", "Haiku", "Outras versões", "Fable 5.2", "Fable 5.1", "Fable 5", "Opus 5.5", "Sonnet 5", "Haiku 5"]
         );
         assert_eq!(so_versoes[0].1[4].seta, Some(true));
-        assert_eq!(titulos(&so_versoes[1].1), ["Conta: tecnologia · semana 44%"]);
+        assert_eq!(titulos(&so_versoes[1].1), ["tecnologia · semana 44%"]);
         let so_conta = grupos_a_vista(&partes, Abertos { versoes: false, conta: true }, "");
         assert_eq!(so_conta[0].1.len(), 5);
-        assert_eq!(titulos(&so_conta[1].1), ["Conta: tecnologia · semana 44%", "Principal", "tecnologia", "Automática"]);
+        assert_eq!(titulos(&so_conta[1].1), ["tecnologia · semana 44%", "Principal", "tecnologia", "Automática"]);
         assert_eq!(so_conta[1].1[0].seta, Some(true));
         assert!(so_conta[1].1[2].em_uso);
     }
@@ -1611,8 +1629,8 @@ mod testes {
     #[test]
     fn a_linha_da_conta_no_pe() {
         use super::rotulo_da_conta;
-        assert_eq!(rotulo_da_conta("tecnologia", false, "semana 44%"), "Conta: tecnologia · semana 44%");
-        assert_eq!(rotulo_da_conta("Principal", true, "5 h 12% · semana 68%"), "Conta automática: Principal · 5 h 12% · semana 68%");
+        assert_eq!(rotulo_da_conta("tecnologia", false, "semana 44%"), "tecnologia · semana 44%");
+        assert_eq!(rotulo_da_conta("Principal", true, "5 h 12% · semana 68%"), "Automática: Principal · 5 h 12% · semana 68%");
     }
 
     /// O Ultracode diz o custo numa linha curta embaixo do título; o detalhe vai na dica, e o
@@ -1653,11 +1671,15 @@ mod testes {
     #[test]
     fn seletor_de_modelo_com_a_versao_em_uso() {
         let linhas = linhas_de_modelo(None, Some("claude-opus-5-5"), "");
-        // O título é o nome seco da família; a versão que está rodando vai no selo. Sem a linha
-        // "Padrão" (Linear, 25/11/2026).
+        // O título é o nome seco da família, e a versão que está rodando vem à parte; o item da
+        // lista junta os dois ("Opus 5.5", como no protótipo de 26/11/2026). Sem a linha "Padrão"
+        // (Linear, 25/11/2026).
         assert_eq!(titulos(&linhas), ["Fable", "Opus", "Sonnet", "Haiku"]);
         assert_eq!(linhas[1].versao.as_deref(), Some("5.5"));
-        assert_eq!(linhas[1].descricao, "Para trabalho complexo e o dia a dia");
+        assert_eq!(linhas[1].descricao, "Dia a dia");
+        let itens = super::itens_de_modelo(linhas.clone(), crate::ui::componentes::Marca::Claude);
+        assert_eq!(itens[1].titulo.as_ref(), "Opus 5.5");
+        assert!(itens[1].selos.is_empty());
         // Seguindo o padrão, o visto (a chave do chat) diz qual vale: nenhum selo.
         assert!(linhas.iter().all(|l| !l.em_uso));
         assert_eq!(linhas[1].valor, "opus");

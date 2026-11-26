@@ -397,10 +397,10 @@ fn menu_do_painel(
     let Some(d) = dados else {
         return menu;
     };
-    let mut menu = menu.min_w(tam(window, 300.)).max_w(tam(window, 360.));
-    if let Some(rotulo) = d.rotulo {
-        menu = menu.label(rotulo).separator();
-    }
+    // Linear (26/11/2026): sem o rótulo do custo e do modelo em cima, como o menu da conversa do
+    // protótipo (o custo mora no popover do contexto).
+    let mut menu = menu.min_w(tam(window, 272.)).max_w(tam(window, 320.));
+    let _ = d.rotulo;
     // Linear (25/11/2026): o Modo foco (Ctrl+.) e o painel da direita em todo painel; saíram o
     // Maximizar (é o clique duplo na aba) e o "Nova conversa ao lado". O antigo "modo foco em todos
     // os chats", que esconde as ferramentas, continua na paleta como "Esconder ferramentas".
