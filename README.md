@@ -1,73 +1,80 @@
 # Vitral
 
-Vários chats do **Claude Code e do Codex** abertos ao mesmo tempo, lado a lado, cada um trabalhando
-direto numa pasta do seu computador. Uma lista com todos os
-chats, o que espera você em cima, e as conversas em painéis e abas.
+> Português: [README.pt-BR.md](README.pt-BR.md) · Manual in Portuguese: [LEIA-ME.md](LEIA-ME.md)
 
-Feito em Rust com GPUI, o motor de interface do Zed. Linux, com o Windows em prévia. Licença MIT.
+Several **Claude Code and Codex** chats open at the same time, side by side, each one working
+directly in a folder on your computer. One list with every chat, what is waiting for you at the
+top, and the conversations in panes and tabs.
 
-![A janela do Vitral: a lista de chats à esquerda, com o que espera você em cima, e uma conversa aberta com o plano, um bloco de código e a caixa de mensagem](docs/imagens/conversa.png)
+Built in Rust with GPUI, the UI framework behind Zed. Linux, with Windows in preview. MIT license.
 
-## O que ele faz
+> The app interface is currently in Portuguese only. Menu and button names are quoted as they appear
+> in the app, with the English meaning in parentheses.
 
-- **Uma lista de chats.** Todos os chats numa lista só, uma linha cada: o que precisa de você
-  (permissão, plano, parada, erro, resposta nova) e o que está rodando em cima, depois as fixadas e
-  o resto, do mais recente ao mais antigo. Ctrl+K busca no título, nas mensagens e no nome da pasta.
-- **Cada chat direto numa pasta.** O agente roda na pasta, como no terminal: sem cópia e sem
-  passo de juntar. O "+" e o Ctrl+N abrem um chat novo na hora, na pasta de trabalho escolhida no
-  primeiro uso (ou na pasta do chat aberto, se não houver uma escolhida); **Novo chat
-  em outra pasta…** oferece as pastas que já têm chat, uma pasta qualquer do computador ou **Sem
-  pasta**, só para conversar.
-- **Lado a lado.** Até 4 conversas em painéis, cada painel com abas; arraste uma conversa da lista
-  ou uma aba para o meio de um painel (vira aba) ou para a borda (abre ao lado).
-- **As suas conversas do Claude Code entram.** As da extensão do VS Code e do terminal viram chats,
-  com o histórico, direto na pasta delas. A conversa original fica como está e pode seguir no VS
-  Code: o Vitral continua numa cópia dela.
-- **Claude e Codex no mesmo chat.** Escolha o modelo do outro agente ou comece a mensagem com
-  `@codex` ou `@claude`, e a conversa passa para ele com o que já foi dito. Com **Os dois em toda
-  mensagem**, um responde e o outro revisa. Cada um usa seu próprio login e plano.
-- **Você vê o que o agente faz.** O que ele fez num turno vira uma linha ("Trabalhou 6 min · 13
-  comandos · editou carrinho.py"), que abre a trilha inteira. Os subagentes mostram as ferramentas,
-  os tokens e o tempo de cada um. A lista de passos do agente ("2/5") e os comandos que ele deixou
-  rodando no fundo ficam na linha do turno; um clique ali interrompe o comando.
-- **Revisar e desfazer.** O painel **Este chat** mostra o que o chat editou e, em **Na pasta**, tudo
-  o que o git vê mudado desde o último commit, com o diff no próprio arquivo e um **Desfazer** por
-  arquivo. No balão de uma mensagem sua, **voltar os arquivos** devolve o que o Claude mudou desde
-  ela. Quando dois chats editam o mesmo arquivo, a conversa avisa.
-- **Permissões à vista.** Cada pedido de permissão vira um cartão com o comando inteiro; o que tem
-  um trecho arriscado (`rm -rf`, `sudo`, `| sh`) pede para segurar o botão antes de permitir.
-- **O limite do plano não para o trabalho.** No limite de uma conta, **Continuar na outra** troca a
-  conta do chat e repete o turno; **Às 14:20** repete o turno sozinho quando o limite volta.
-- **A próxima mensagem sugerida.** Depois de cada resposta, a caixa sugere o que mandar em seguida;
-  o Tab aceita.
-- **Nada se perde numa queda.** Se o Vitral fecha ou o PC desliga, o que estava rodando fica parado,
-  com **Retomar**, e as conversas voltam como estavam. Enquanto um chat trabalha, o computador não
-  suspende sozinho.
-- **Memória da equipe.** Conecte um servidor ai-memory com o endereço e sua chave, já no primeiro
-  uso ou depois nas Configurações. Os agentes compartilham aprendizados, e você pode buscar e ler
-  as páginas dentro do Vitral. Não precisa instalar o ai-memory no seu computador.
+![The Vitral window: the chat list on the left, with what is waiting for you at the top, and an open conversation showing a plan, a code block and the message box](docs/imagens/conversa.png)
 
-### Um chat novo em qualquer pasta
+## What it does
 
-![A paleta "Novo chat · Em qual pasta?": as pastas que já têm chat, com o caminho embaixo do nome, Outra pasta… e Sem pasta](docs/imagens/novo-chat-em-outra-pasta.png)
+- **One chat list.** All chats in a single list, one row each: what needs you (permission, plan,
+  stop, error, new reply) and what is running on top, then pinned chats and the rest, newest first.
+  Ctrl+K searches titles, messages and folder names.
+- **Each chat works directly in a folder.** The agent runs in your folder, as in a terminal: no copy
+  and no merge step. "+" and Ctrl+N open a new chat right away in the working folder you picked on
+  first use (or in the folder of the open chat if none was picked). **Novo chat em outra pasta…**
+  (New chat in another folder) offers the folders that already have chats, any folder on your
+  computer, or **Sem pasta** (No folder), just to talk.
+- **Side by side.** Up to 4 conversations in panes, each pane with tabs. Drag a conversation from the
+  list, or a tab, to the middle of a pane (it becomes a tab) or to the edge (it opens beside).
+- **Your Claude Code conversations come in.** Sessions from the VS Code extension and the terminal
+  become chats, with their history, in their own folder. The original conversation stays as it is
+  and can continue in VS Code: Vitral continues on a copy.
+- **Claude and Codex in the same chat.** Pick the other agent's model, or start a message with
+  `@codex` or `@claude`, and the conversation moves to it with what was already said. With **Os dois
+  em toda mensagem** (Both on every message), one answers and the other reviews. Each uses its own
+  login and plan.
+- **You see what the agent does.** A turn collapses into one line ("Trabalhou 6 min · 13 comandos ·
+  editou carrinho.py", meaning worked 6 min, 13 commands, edited carrinho.py) that opens the full
+  trail. Subagents show their tools, tokens and time. The agent's task list ("2/5") and the commands
+  it left running in the background sit on the turn line; a click there stops the command.
+- **Review and undo.** The **Este chat** (This chat) panel shows what the chat edited and, under
+  **Na pasta** (In the folder), everything git sees changed since the last commit, with the diff in
+  the file itself and an **Desfazer** (Undo) per file. On one of your messages, **voltar os arquivos**
+  (restore the files) puts back what Claude changed since then. When two chats edit the same file,
+  the conversation warns you.
+- **Permissions in plain sight.** Each permission request becomes a card with the full command.
+  Anything with a risky part (`rm -rf`, `sudo`, `| sh`) asks you to hold the button before allowing.
+- **Plan limits do not stop the work.** At an account's limit, **Continuar na outra** (Continue on
+  the other one) switches the chat's account and repeats the turn; **Às 14:20** (At 14:20) repeats
+  the turn by itself when the limit resets.
+- **Suggested next message.** After each reply, the box suggests what to send next; Tab accepts it.
+- **Nothing is lost on a crash.** If Vitral closes or the PC shuts down, what was running stays
+  paused with **Retomar** (Resume), and conversations come back as they were. While a chat is
+  working, the computer does not suspend.
+- **Team memory.** Connect an ai-memory server with its address and your key, on first use or later
+  in Configurações (Settings). Agents share what they learn, and you can search and read the pages
+  inside Vitral. You do not need to install ai-memory on your computer.
 
-### Achar o que foi dito na conversa
+### A new chat in any folder
 
-Ctrl+F procura dentro da conversa, com contador, F3 para andar e realce em âmbar, sem ligar para
-acento nem maiúscula.
+![The "Novo chat · Em qual pasta?" palette: folders that already have chats, with the path under the name, Outra pasta… and Sem pasta](docs/imagens/novo-chat-em-outra-pasta.png)
 
-![A busca dentro da conversa: o campo com "cupom", o contador "1 de 40" e as ocorrências realçadas em âmbar ao longo da conversa](docs/imagens/busca-na-conversa.png)
+### Finding what was said
 
-## Instalar
+Ctrl+F searches inside the conversation, with a counter, F3 to move between matches and amber
+highlights, ignoring accents and case.
 
-### O que você precisa ter antes
+![Search inside the conversation: the field with "cupom", the counter "1 de 40" and the matches highlighted in amber along the conversation](docs/imagens/busca-na-conversa.png)
 
-- **Claude Code ou Codex CLI** instalado e com a sessão iniciada. O Vitral usa o login que o
-  próprio agente guarda: **ele não pede chave de API do modelo**.
+## Install
+
+### What you need first
+
+- **Claude Code or Codex CLI** installed and logged in. Vitral uses the login the agent itself
+  keeps: **it does not ask for a model API key**.
 - **Git.**
-- Um **plano do agente escolhido** que aguente vários chats ao mesmo tempo. Para o Claude, o
-  Vitral mostra os anéis de uso de 5 h e da semana.
-- O que faltar aparece como aviso na janela.
+- An **agent plan** that can handle several chats at once. For Claude, Vitral shows the 5-hour and
+  weekly usage rings.
+- Anything missing shows up as a warning in the window.
 
 ### Linux (x86_64)
 
@@ -75,133 +82,141 @@ acento nem maiúscula.
 curl -fsSL https://github.com/VictorMenegate/vitral/releases/latest/download/instalar.sh | sh
 ```
 
-Não precisa de `sudo` e não precisa compilar. O script confere o `SHA256SUMS` (e a assinatura, se o
-`minisign` estiver instalado), baixa o pacote, testa se o binário abre e instala só na sua pasta:
+No `sudo`, no compiling. The script checks `SHA256SUMS` (and the signature, if `minisign` is
+installed), downloads the package, tests that the binary starts, and installs only in your home
+folder:
 
-- o app em `~/.local/share/vitral/app/<versão>/`, com os links `atual` e `anterior`;
-- o atalho no menu do sistema, os ícones e o comando `vitral` em `~/.local/bin` (se essa pasta
-  existir);
-- os dados em `~/.local/share/vitral` e as preferências em `~/.config/vitral`.
+- the app in `~/.local/share/vitral/app/<version>/`, with `atual` (current) and `anterior`
+  (previous) links;
+- the desktop entry, icons and the `vitral` command in `~/.local/bin` (if that folder exists);
+- data in `~/.local/share/vitral` and preferences in `~/.config/vitral`.
 
-Precisa de glibc 2.39 ou mais nova (Ubuntu 24.04, Fedora 40 em diante). Um pré-lançamento, que o
-"latest" não mostra, se instala pelo `instalar.sh` do release dele.
+Needs glibc 2.39 or newer (Ubuntu 24.04, Fedora 40 and later). A prerelease, which "latest" does not
+show, is installed with the `instalar.sh` from its own release.
 
-**A atualização é automática.** Instalado assim, o Vitral procura versão nova no GitHub, confere a
-assinatura, baixa e instala em segundo plano, e avisa uma vez: "Versão X pronta · Reiniciar". Ele
-**nunca reinicia sozinho**, e com conversas trabalhando pergunta antes. Em **Configurações ›
-Atualizações** dá para escolher Automáticas, Só avisar ou Desligadas, procurar na hora e ver as
-novidades. Se a versão nova não abrir duas vezes, a terceira tentativa volta sozinha para a
-anterior e avisa.
+**Updates are automatic.** When installed this way, Vitral looks for a new version on GitHub, checks
+the signature, downloads and installs it in the background, and notifies you once: "Versão X pronta
+· Reiniciar" (Version X ready, Restart). It **never restarts by itself**, and asks first if
+conversations are working. In **Configurações › Atualizações** (Settings, Updates) you can choose
+Automáticas, Só avisar or Desligadas (Automatic, Notify only, Off), check right now and read the
+release notes. If the new version fails to open twice, the third attempt rolls back to the previous
+one and tells you.
 
-### Windows 10 (1809) e 11, x64
+### Windows 10 (1809) and 11, x64
 
-Baixe o `vitral-<versão>-windows-x86_64-instalador.exe` do
-[último release](https://github.com/VictorMenegate/vitral/releases/latest) e rode. A instalação é
-só para o seu usuário, **sem administrador**.
+Download `vitral-<version>-windows-x86_64-instalador.exe` from the
+[latest release](https://github.com/VictorMenegate/vitral/releases/latest) and run it. The install is
+per user, **no administrator needed**.
 
-- **O SmartScreen avisa na primeira vez.** O instalador não tem certificado de assinatura pago, e
-  sem ele o Windows põe a tela do SmartScreen na frente: **Mais informações › Executar assim
-  mesmo**. Quem confere de verdade é o SHA-256 e a assinatura minisign, logo abaixo.
-- O app fica em `%LOCALAPPDATA%\Programs\Vitral`, com o atalho no Menu Iniciar; os dados em
-  `%LOCALAPPDATA%\vitral` e a configuração em `%APPDATA%\vitral`. Desinstalar (em Aplicativos
-  instalados) tira só o programa: os dados e a configuração ficam.
-- Além do Claude Code, precisa do **Git para Windows**: o Claude Code roda os comandos no Git Bash
-  dele. O Claude Code é o nativo
-  (`irm https://claude.ai/install.ps1 | iex`, o `claude.exe` em `%USERPROFILE%\.local\bin`).
-- **A atualização automática vale a partir da 0.3.0.** Quem instalou a 0.3.0-rc.6 passa para a
-  seguinte pelo instalador dela, uma vez; daí em diante é como no Linux.
-- Há também o `.zip` **portátil**: abra o `vitral.exe` direto. Ele só avisa das versões novas, com
-  o **Baixar**, que abre a página do release.
+- **SmartScreen warns the first time.** The installer has no paid code-signing certificate, so
+  Windows shows the SmartScreen screen: **Mais informações › Executar assim mesmo** (More info, Run
+  anyway). The real check is the SHA-256 and the minisign signature, below.
+- The app goes to `%LOCALAPPDATA%\Programs\Vitral` with a Start menu shortcut; data in
+  `%LOCALAPPDATA%\vitral` and configuration in `%APPDATA%\vitral`. Uninstalling (in Installed apps)
+  removes only the program: data and configuration stay.
+- Besides Claude Code, you need **Git for Windows**: Claude Code runs its commands in its Git Bash.
+  Claude Code should be the native one (`irm https://claude.ai/install.ps1 | iex`, with
+  `claude.exe` in `%USERPROFILE%\.local\bin`).
+- **Automatic updates work from 0.3.0.** If you installed 0.3.0-rc.6, move to the next one with its
+  installer, once; from then on it works as on Linux.
+- There is also a **portable** `.zip`: run `vitral.exe` directly. It only notifies about new
+  versions, with **Baixar** (Download), which opens the release page.
 
-## Conferir o que você baixou
+## Verify what you downloaded
 
-Todo arquivo do release entra no `SHA256SUMS`, que é assinado com **minisign** (Ed25519). A chave
-pública é a [`pacote/vitral.pub`](pacote/vitral.pub) deste repositório, a mesma que vai embutida
-no app e confere cada atualização automática.
+Every release file is listed in `SHA256SUMS`, which is signed with **minisign** (Ed25519). The public
+key is [`pacote/vitral.pub`](pacote/vitral.pub) in this repository, the same one embedded in the app
+that checks every automatic update.
 
 ```sh
-# na pasta onde você baixou os arquivos do release
+# in the folder where you downloaded the release files
 minisign -Vm SHA256SUMS -P RWTYL8CpwbDBQDlQSSec/5qzypGrJ8CnO/aKN6XDMIuKEQajo8ZmyHoS
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-Com o repositório clonado, `minisign -Vm SHA256SUMS -p pacote/vitral.pub` usa o arquivo da chave em
-vez de colar o texto dela. O `vitral-versao.json` (o manifesto que o atualizador lê) tem a própria
-assinatura, o `vitral-versao.json.minisig`.
+With the repository cloned, `minisign -Vm SHA256SUMS -p pacote/vitral.pub` uses the key file instead
+of pasting its text. `vitral-versao.json` (the manifest the updater reads) has its own signature,
+`vitral-versao.json.minisig`.
 
-## Como funciona
+## How it works
 
 ```
-você
+you
  │
- ├─ chat "Cupom no carrinho" ─── direto em ~/Projetos/loja
- ├─ chat "Rodapé novo"       ─── direto em ~/Projetos/site
- ├─ chat "Ideias"            ─── Sem pasta (uma pasta vazia só dele)
+ ├─ chat "Cupom no carrinho" ─── directly in ~/Projetos/loja
+ ├─ chat "Rodapé novo"       ─── directly in ~/Projetos/site
+ ├─ chat "Ideias"            ─── Sem pasta (an empty folder just for it)
  └─ ...
 ```
 
-- **Um chat, uma pasta.** Cada chat roda o agente direto na pasta dele, com a sessão daquela
-  pasta: o que ele muda está na sua pasta na hora, como no terminal. O modo de permissão, o modelo,
-  o esforço e a conta são escolhidos por chat, na caixa de mensagem.
-- **Chats que conversam.** Um chat pode abrir outro na mesma pasta ou mandar uma mensagem a outro
-  chat (pelo servidor MCP local do Vitral); depois de 6 mensagens automáticas seguidas entre dois
-  chats sem você no meio, o Vitral segura a próxima e espera você.
-- **Os dados ficam com você.** As conversas e o estado ficam em `~/.local/share/vitral`, gravados de
-  um jeito que aguenta queda de energia; quem chama o modelo é o agente, com o login dele.
-  Com a memória da equipe ligada, os aprendizados registrados vão para o servidor escolhido.
+- **One chat, one folder.** Each chat runs the agent directly in its folder, with that folder's
+  session: what it changes is in your folder right away, as in a terminal. Permission mode, model,
+  effort and account are chosen per chat, in the message box.
+- **Chats that talk to each other.** A chat can open another in the same folder or message another
+  chat (through Vitral's local MCP server). After 6 automatic messages in a row between two chats
+  with you not in between, Vitral holds the next one and waits for you.
+- **Your data stays with you.** Conversations and state live in `~/.local/share/vitral`, written in
+  a way that survives power loss. The agent is the one calling the model, with its own login. With
+  team memory on, the recorded lessons go to the server you chose.
 
-## O que o Vitral não é
+## What Vitral is not
 
-- **Não é para várias pessoas na mesma máquina.** É um Vitral por usuário: abrir de novo entrega o
-  pedido ao que já está aberto, em vez de abrir outra janela.
-- **Foi feito para Linux.** O Windows chegou na 0.3.0, ainda é recente e não tem tudo (contas extras
-  do Claude, por exemplo).
-- **Usa o plano do agente.** O Vitral não tem modelo próprio: ele usa o login do Claude Code ou do
-  Codex e gasta o plano dele. Vários chats ao mesmo tempo gastam mais.
-- **Não roda com o app fechado.** Não há serviço em segundo plano: fechando a janela, o que estava
-  trabalhando fica parado, com Retomar na próxima abertura.
-- **O visual foi feito para o GNOME com Wayland** (o metal, as animações que seguem as do GNOME, as
-  notificações). Fora dali deve funcionar, mas não é onde ele é medido.
-- **Não é um editor.** O Vitral organiza as conversas; quem escreve o código é o agente escolhido.
+- **Not for several people on one machine.** It is one Vitral per user: opening it again hands the
+  request to the one already open instead of opening another window.
+- **Built for Linux.** Windows arrived in 0.3.0, is still new and lacks some things (extra Claude
+  accounts, for example).
+- **It uses the agent's plan.** Vitral has no model of its own: it uses the Claude Code or Codex
+  login and spends that plan. Several chats at once spend more.
+- **It does not run with the app closed.** There is no background service: closing the window leaves
+  whatever was working paused, with Retomar on the next launch.
+- **The look was made for GNOME on Wayland** (the metal, animations that follow GNOME's, the
+  notifications). Elsewhere it should work, but that is not where it is measured.
+- **Not an editor.** Vitral organizes conversations; the chosen agent writes the code.
 
-## Para desenvolver
+## Building from source
 
 ```sh
 git clone https://github.com/VictorMenegate/vitral.git
 cd vitral
-cargo build                     # o rust-toolchain.toml fixa o Rust em 1.99.1
-cargo test                      # motor, processos, dados, migração, importação, atualização,
-                                # interface e o lançador do Windows
-./target/debug/vitral           # abre o app
-./target/debug/vitral --vitrine # os componentes da linguagem visual, sem pasta e sem motor
-./target/debug/vitral --versao  # a versão, o canal e o commit, sem janela
+cargo build                     # rust-toolchain.toml pins Rust to 1.99.1
+cargo test                      # engine, processes, data, migration, import, updates,
+                                # UI and the Windows launcher
+./target/debug/vitral           # opens the app
+./target/debug/vitral --vitrine # the visual language components, no folder and no engine
+./target/debug/vitral --versao  # version, channel and commit, no window
 ```
 
-No Fedora, para compilar: `libxkbcommon-devel libxkbcommon-x11-devel wayland-devel
-vulkan-loader-devel fontconfig-devel freetype-devel libxcb-devel`.
+On Fedora, build dependencies: `libxkbcommon-devel libxkbcommon-x11-devel wayland-devel
+vulkan-loader-devel fontconfig-devel freetype-devel libxcb-devel`. On Ubuntu 24.04 (as in CI):
+`pkg-config libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-xcb-dev libx11-dev
+libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev`.
 
-**Bancada de testes visuais.** Roda o Vitral num GNOME Shell headless (sem tocar na sua sessão, no
-seu dconf nem nos seus dados), segue um roteiro de cliques e teclas e tira prints:
+**Visual test bench.** It runs Vitral in a headless GNOME Shell (without touching your session, your
+dconf or your data), follows a script of clicks and keys, and takes screenshots:
 
 ```sh
 ferramentas/bancada.sh ferramentas/roteiros/4c-antes.txt prints/ ./target/debug/vitral
 ```
 
-`CLAUDE_FALSO=1` troca o `claude` por um de mentira, que não chama a API, e `RAIZ_SINTETICA=1` gera
-uma pasta de demonstração. As imagens deste README saíram daí. O cabeçalho do `ferramentas/bancada.sh` explica o resto.
+`CLAUDE_FALSO=1` swaps `claude` for a fake one that does not call the API, and `RAIZ_SINTETICA=1`
+generates a demo folder. The images in this README came from there. The header of
+`ferramentas/bancada.sh` explains the rest.
 
-O manual completo é o **[LEIA-ME.md](LEIA-ME.md)**: como cada parte funciona, o que já foi decidido
-e as pegadinhas. O que entrou em cada versão fica no **[NOVIDADES.md](NOVIDADES.md)**.
+## More documentation
 
-## Licença e créditos
+- **[Manual](docs/MANUAL.en.md)** (English translation of [LEIA-ME.md](LEIA-ME.md)): how each part
+  works, what has been decided, and the gotchas.
+- **[CHANGELOG.md](CHANGELOG.md)**: the latest versions in English. The full history is in
+  [NOVIDADES.md](NOVIDADES.md) (Portuguese).
 
-O Vitral é MIT: veja o [LICENSE](LICENSE).
+## License and credits
 
-- **[GPUI](https://github.com/zed-industries/zed)**, o motor de interface do Zed (Apache-2.0).
-- **[GPUI Kit](https://github.com/longbridge/gpui-component)**, os componentes de desktop
-  (Apache-2.0). Vai em `vendor/gpui-component`, com poucas mudanças, todas marcadas com "Vitral:"
-  no código.
-- **[Lucide](https://lucide.dev)**, os ícones (ISC).
-- **[Inter](https://github.com/rsms/inter)** e
-  **[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)**, as fontes, embutidas no app sem
-  modificação sob a SIL Open Font License 1.1 ([`assets/fontes/OFL.txt`](assets/fontes/OFL.txt)).
+Vitral is MIT: see [LICENSE](LICENSE).
+
+- **[GPUI](https://github.com/zed-industries/zed)**, Zed's UI framework (Apache-2.0).
+- **[GPUI Kit](https://github.com/longbridge/gpui-component)**, the desktop components
+  (Apache-2.0). Lives in `vendor/gpui-component` with few changes, all marked "Vitral:" in the code.
+- **[Lucide](https://lucide.dev)**, the icons (ISC).
+- **[Inter](https://github.com/rsms/inter)** and
+  **[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)**, the fonts, embedded in the app
+  unmodified under the SIL Open Font License 1.1 ([`assets/fontes/OFL.txt`](assets/fontes/OFL.txt)).

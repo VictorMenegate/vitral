@@ -1,6 +1,8 @@
 # Vitral
 
-> A porta de entrada do projeto é o [README.md](README.md) (o que o Vitral é, como instalar, como
+> English: [docs/MANUAL.en.md](docs/MANUAL.en.md)
+
+> A porta de entrada do projeto é o [README.pt-BR.md](README.pt-BR.md) (o que o Vitral é, como instalar, como
 > conferir o que baixou). Este arquivo é o manual de dentro: como cada parte funciona, o que já foi
 > decidido e as pegadinhas.
 
