@@ -1450,7 +1450,7 @@ impl Janela {
         // O `deferred` desliga o hover de grupo do GPUI: quem diz que o ponteiro está na sua
         // mensagem é a Janela (`falas_sob_ponteiro`).
         let barra = div().absolute().bottom_0().right(r(folga_do_balao(contexto.nivel)));
-        let sob_o_ponteiro = self.falas_sob_ponteiro.contains(&grupo);
+        let sob_o_ponteiro = self.fala_com_a_barra(&grupo);
         let esta = grupo.clone();
         v_flex()
             .id(grupo.clone())
@@ -1735,7 +1735,7 @@ impl Janela {
         let cabe_a_barra = matches!(contexto.chat.itens.get(indice + 1), None | Some(Item::Usuario { .. } | Item::Vez { .. } | Item::Entrega { .. }));
         // Como na sua mensagem: o `deferred` desliga o hover de grupo, e a barra aparece pela
         // mensagem que a Janela sabe estar sob o ponteiro.
-        let sob_o_ponteiro = cabe_a_barra && self.falas_sob_ponteiro.contains(&grupo);
+        let sob_o_ponteiro = cabe_a_barra && self.fala_com_a_barra(&grupo);
         let resposta = v_flex()
             .relative()
             .w_full()
@@ -1782,6 +1782,13 @@ impl Janela {
     /// as mensagens se redesenham com a barra dela por cima de tudo.
     /// O ponteiro pode estar em duas ao mesmo tempo (o alcance de uma desce sobre a de baixo), e as
     /// duas mostram a barra, como no hover de grupo.
+    /// A barra de ações é de uma mensagem só: a última em que o ponteiro entrou e de que ainda não
+    /// saiu. O alcance da barra de uma resposta desce sobre o seu balão logo abaixo, e as duas
+    /// apareciam juntas, uma em cima da outra (dono, 26/11/2026: "aqui fica dois").
+    fn fala_com_a_barra(&self, grupo: &SharedString) -> bool {
+        self.falas_sob_ponteiro.last() == Some(grupo)
+    }
+
     fn marcar_fala_sob_ponteiro(&mut self, grupo: &SharedString, dentro: bool, cx: &mut Context<Self>) {
         let ja = self.falas_sob_ponteiro.contains(grupo);
         if dentro && !ja {
