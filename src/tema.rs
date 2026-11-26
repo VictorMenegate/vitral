@@ -182,6 +182,24 @@ pub mod esp {
     pub const ANTES_DE_SECAO: Rems = E16;
 }
 
+/// As medidas da página do .md (o `.pagina` do protótipo Linear): 52 à esquerda para a alça, 18 à
+/// direita, 10 em cima; 3 de cada lado do texto de um bloco.
+pub mod pagina {
+    use super::r;
+    use gpui_kit::Rems;
+    pub const LARGURA: f32 = 720.;
+    pub const ESQUERDA: Rems = r(52.);
+    pub const DIREITA: Rems = r(18.);
+    pub const TOPO: Rems = r(10.);
+    pub const CAMPO_X: Rems = r(3.);
+    pub const H1_ANTES: Rems = r(14.);
+    pub const H3_ANTES: Rems = r(10.);
+    pub const FIM: Rems = r(90.);
+    pub const COLUNA: Rems = r(14.);
+    pub const CELULA_CABECA: Rems = r(5.);
+    pub const CAIXINHA_DIREITA: Rems = r(1.);
+}
+
 /// Padding de quem tem `border_1()`: o conteúdo fica a `px` da borda de fora contando o traço de
 /// 1 (o cartão com conteúdo a 12 da borda leva `.p(dentro_da_borda(12.))`).
 pub const fn dentro_da_borda(px: f32) -> Rems {
@@ -560,6 +578,7 @@ gpui_kit::assets::icon_assets!(
         CirclePlay,
         CircleUserRound,
         Clock,
+        Code,
         CodeXml,
         Columns2,
         Columns3,
@@ -593,6 +612,7 @@ gpui_kit::assets::icon_assets!(
         GitPullRequest,
         GitPullRequestClosed,
         GitPullRequestDraft,
+        GripVertical,
         Hand,
         Image,
         ImageOff,

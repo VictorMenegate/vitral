@@ -116,6 +116,8 @@ pub struct Input {
     size: Size,
     /// Vitral: o respiro de cima e de baixo do editor de várias linhas, no lugar do do tamanho.
     editor_py: Option<Pixels>,
+    /// Vitral: a margem dos lados do editor de várias linhas (a página do .md a quer em 0).
+    editor_px: Option<Pixels>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
     height: Option<DefiniteLength>,
@@ -232,6 +234,7 @@ impl Input {
             state,
             size: Size::default(),
             editor_py: None,
+            editor_px: None,
             style: StyleRefinement::default(),
             prefix: None,
             suffix: None,
@@ -310,6 +313,12 @@ impl Input {
     /// Vitral: o respiro de cima e de baixo do editor de várias linhas (o padrão é o do tamanho).
     pub fn respiro_vertical(mut self, py: Pixels) -> Self {
         self.editor_py = Some(py);
+        self
+    }
+
+    /// Vitral: a margem dos lados do editor de várias linhas.
+    pub fn respiro_lateral(mut self, px: Pixels) -> Self {
+        self.editor_px = Some(px);
         self
     }
 
@@ -599,13 +608,13 @@ impl RenderOnce for Input {
             if state.presentation(cx).is_multi_line() {
                 Edges {
                     top: self.editor_py.unwrap_or(self.size.input_py()),
-                    right: input_px,
+                    right: self.editor_px.unwrap_or(input_px),
                     bottom: self.editor_py.unwrap_or(self.size.input_py()),
-                    left: if state.presentation(cx).is_code_editor() {
+                    left: self.editor_px.unwrap_or(if state.presentation(cx).is_code_editor() {
                         input_px.min(px(6.))
                     } else {
                         input_px
-                    },
+                    }),
                 }
             } else {
                 Edges::default()

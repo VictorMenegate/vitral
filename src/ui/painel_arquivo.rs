@@ -208,6 +208,28 @@ enum Conteudo {
     Imagem,
 }
 
+/// O segmentado das fileiras de baixo do nome (Mudanças | Arquivo, Página | Fonte): 28 no preto.
+fn segmentado_da_faixa() -> Div {
+    h_flex().flex_none().h(r(28.)).p(esp::E2).gap(esp::E2).rounded(raio::de(28.)).bg(Cores::preto())
+}
+
+/// Um segmento dele: o escolhido no azul do escolhido, os outros no tênue.
+fn segmento_da_faixa(id: &'static str, rotulo: &'static str, escolhido: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(r(24.))
+        .px(esp::E8)
+        .rounded(raio::de(24.))
+        .text_size(r(12.5))
+        .font_weight(FontWeight::MEDIUM)
+        .when(escolhido, |s| s.bg(Cores::selecao()).text_color(Cores::forte()))
+        .when(!escolhido, |s| s.text_color(Cores::tenue()).cursor_pointer().hover(|s| s.text_color(Cores::texto())))
+        .child(rotulo)
+}
+
 /// Por que o arquivo não aparece aqui.
 #[derive(Clone, Debug, PartialEq)]
 enum Aviso {
@@ -828,6 +850,9 @@ impl Janela {
         let edicao = self.arquivo_edicao.clone();
         let com_previa = tem_previa(&completo);
         let rico = edicao.is_none() && !self.busca_arquivo.aberta && !(com_previa && self.arquivo_fonte);
+        // O .md abre como página de blocos, editável no lugar (`pagina.rs`), fora da edição do
+        // agente, da busca e da Fonte.
+        let modo_pagina = self.modo_pagina(&completo);
         // Com o editor aberto a leitura fica parada: o arquivo não é relido nem colorido de novo
         // a cada gravação.
         let editando = self.editando(&completo);
@@ -859,8 +884,10 @@ impl Janela {
         // do agente e da busca (que são pelas linhas). Com o editor aberto ele fica: a Prévia
         // grava o que falta e mostra o resultado.
         let seletor = com_previa && edicao.is_none() && !self.busca_arquivo.aberta && (editando || editavel);
-        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor, editavel, reserva, na_gaveta, window, cx);
+        let eh_md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+        let barra = self.cabecalho_do_arquivo(&completo, &caminho, pasta, linhas, seletor && !eh_md, editavel, reserva, na_gaveta, window, cx);
         let faixa = match (&edicao, &self.edicao_fora) {
+            (None, None) if seletor && eh_md => Some(self.faixa_da_pagina(reserva, cx)),
             (Some(e), _) => Some(self.faixa_da_edicao(e, true, vista.as_ref().map(|(v, _)| v.as_ref()), reserva, window, cx)),
             (None, Some(e)) if !editando => Some(self.faixa_da_edicao(e, false, None, reserva, window, cx)),
             _ => None,
@@ -907,7 +934,14 @@ impl Janela {
                 )
                 .into_any_element()
         });
+        let do_disco = match &conteudo {
+            Conteudo::Markdown(texto, _) => Some(texto.clone()),
+            _ => None,
+        };
         let corpo = match conteudo {
+            _ if modo_pagina && (editando || (editavel && do_disco.is_some())) => {
+                self.corpo_da_pagina(&completo, do_disco.as_deref(), window, cx)
+            }
             _ if editando => corpo_do_editor.take().unwrap_or_else(|| div().into_any_element()),
             Conteudo::Aviso(aviso) => aviso_do_arquivo(aviso, janela.clone(), completo.clone(), window, cx),
             // Sobre o preto, como no visor: imagem com transparência não some no vidro. O clique
@@ -1226,7 +1260,8 @@ impl Janela {
                     .mt(esp::E6)
                     .mb(esp::E12)
                     .rounded(raio::CARTAO)
-                    .bg(Cores::preto())
+                    // A página do .md fica sem o cartão, direto no painel (o `.arq-corpo.previa`).
+                    .when(!modo_pagina, |s| s.bg(Cores::preto()))
                     .overflow_hidden()
                     .flex()
                     .flex_col()
@@ -1423,7 +1458,11 @@ impl Janela {
         });
         let seletor = seletor.then(|| {
             let janela = janela.clone();
-            let opcoes = [Segmento::new("Prévia").icone(Lucide::Eye), Segmento::new("Fonte").icone(Lucide::Braces)];
+            let md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+            let opcoes = [
+                if md { Segmento::new("Página").icone(Lucide::FileText) } else { Segmento::new("Prévia").icone(Lucide::Eye) },
+                Segmento::new("Fonte").icone(Lucide::Braces),
+            ];
             ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, window, cx| {
                 let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, window, cx));
             })
@@ -1432,7 +1471,17 @@ impl Janela {
         });
         // Editar e Pronto (protótipo Linear, 25/11/2026): o lápis entra na edição; editando, o
         // "Pronto" volta à leitura (o que falta gravar é gravado antes).
-        let editar = if editando.is_some() {
+        // Na página do .md o lápis leva à Fonte, já editando (os blocos se editam no lugar).
+        let editar = if self.modo_pagina(completo) {
+            linhas.filter(|_| editavel).map(|_| {
+                botao_icone("editar-arquivo", Lucide::Pencil, "Editar a fonte", TamanhoBotao::Linha, window, cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.escolher_vista_do_arquivo(true, window, cx);
+                        this.entrar_no_editor(0, 0, window, cx);
+                    }))
+                    .into_any_element()
+            })
+        } else if editando.is_some() {
             Some(
                 botao_fantasma("sair-do-editor", None, "Pronto", TamanhoBotao::Linha, window, cx)
                     .tooltip("Voltar à leitura (Esc)")
@@ -1648,8 +1697,19 @@ impl Janela {
     }
 
     /// O seletor Prévia | Fonte do .md e do .svg. A Prévia fecha o editor (gravando o que falta).
+    /// O arquivo aberto é um .md que aparece como página (não a Fonte, nem a edição do agente, nem a
+    /// busca, que são pelas linhas).
+    pub(super) fn modo_pagina(&self, completo: &Path) -> bool {
+        let md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
+        md && self.arquivo_edicao.is_none() && !self.busca_arquivo.aberta && !self.arquivo_fonte
+    }
+
     fn escolher_vista_do_arquivo(&mut self, fonte: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !fonte {
+        // A página lê de novo (a Fonte pode ter mudado o texto).
+        self.esquecer_pagina();
+        // Na Prévia do .svg o editor fecha; na Página do .md ele fica (ela edita pelo mesmo editor).
+        let md = self.arquivo_aberto.as_ref().is_some_and(|(_, caminho)| caminho.ends_with(".md") || caminho.ends_with(".markdown"));
+        if !fonte && !md {
             self.largar_editor(window, cx);
         }
         self.arquivo_fonte = fonte;
@@ -1686,28 +1746,8 @@ impl Janela {
             )
         };
         let (anterior, seguinte) = if ativa { (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1)) } else { (None, None) };
-        let segmento = |id: &'static str, rotulo: &'static str, escolhido: bool| {
-            div()
-                .id(id)
-                .flex()
-                .flex_none()
-                .items_center()
-                .h(r(24.))
-                .px(esp::E8)
-                .rounded(raio::de(24.))
-                .text_size(r(12.5))
-                .font_weight(FontWeight::MEDIUM)
-                .when(escolhido, |s| s.bg(Cores::selecao()).text_color(Cores::forte()))
-                .when(!escolhido, |s| s.text_color(Cores::tenue()).cursor_pointer().hover(|s| s.text_color(Cores::texto())))
-                .child(rotulo)
-        };
-        let segmentado = h_flex()
-            .flex_none()
-            .h(r(28.))
-            .p(esp::E2)
-            .gap(esp::E2)
-            .rounded(raio::de(28.))
-            .bg(Cores::preto())
+        let segmento = segmento_da_faixa;
+        let segmentado = segmentado_da_faixa()
             .child(segmento("ver-mudancas", "Mudanças", ativa).when(!ativa, |s| {
                 s.on_click(cx.listener(|this, _, window, cx| this.voltar_a_edicao(window, cx)))
             }))
@@ -1745,6 +1785,32 @@ impl Janela {
             .child(div().flex_1())
             .children(posicao)
             .child(h_flex().flex_none().gap(esp::E8).children(anterior).children(seguinte))
+            .into_any_element()
+    }
+
+    /// A fileira de baixo do nome no .md (protótipo Linear): "Página" e "Fonte" num segmentado no
+    /// preto, como o "Mudanças | Arquivo".
+    fn faixa_da_pagina(&self, reserva: Option<Pixels>, cx: &Context<Self>) -> AnyElement {
+        let fonte = self.arquivo_fonte;
+        let segmentado = segmentado_da_faixa()
+            .child(segmento_da_faixa("ver-pagina", "Página", !fonte).when(fonte, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(false, window, cx)))
+            }))
+            .child(segmento_da_faixa("ver-fonte", "Fonte", fonte).when(!fonte, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(true, window, cx)))
+            }));
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(r(28.))
+            .mt(esp::E4)
+            .pl(esp::E12)
+            .map(|s| match reserva {
+                Some(folga) => s.pr(folga),
+                None => s.pr(esp::E8),
+            })
+            .child(segmentado)
             .into_any_element()
     }
 

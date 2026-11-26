@@ -42,6 +42,8 @@ pub mod movimento;
 mod painel_contas;
 mod pilulas;
 mod fechar;
+mod pagina;
+mod pagina_md;
 mod painel_arquivo;
 mod paleta;
 mod pergunta;
@@ -520,6 +522,8 @@ pub struct Janela {
     /// entra na árvore. Desligado ao abrir o Vitral.
     mostrar_ignorados: bool,
     arquivo_lido: std::cell::RefCell<Option<painel_arquivo::ArquivoLido>>,
+    /// A página do .md aberta (`pagina.rs`): os blocos e o que está em edição.
+    pagina: std::cell::RefCell<Option<pagina::PaginaAberta>>,
     /// O trecho selecionado por arrasto no código do arquivo aberto.
     selecao_no_codigo: Option<painel_arquivo::SelecaoNoCodigo>,
     /// Os arquivos abertos nas abas da direita, na ordem delas.
@@ -993,6 +997,7 @@ impl Janela {
             cache_arquivos: Default::default(),
             mostrar_ignorados: false,
             arquivo_lido: Default::default(),
+            pagina: Default::default(),
             dobras_abertas: Default::default(),
             abas_de_arquivo: Vec::new(),
             selecao_no_codigo: None,

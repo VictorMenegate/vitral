@@ -452,6 +452,12 @@ impl Janela {
     /// linha (a partir de 0) e na coluna do clique, e a mesma rolagem. O que não dá para editar
     /// aqui (grande, binário, fora do UTF-8) avisa e fica como está.
     pub(super) fn entrar_no_editor(&mut self, linha: usize, coluna: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.abrir_o_editor(linha, coluna, true, window, cx);
+    }
+
+    /// O editor do arquivo aberto, com o foco nele (o clique no texto) ou sem (a página do .md, que
+    /// só passa o texto a ele e guarda o foco no bloco em edição).
+    pub(super) fn abrir_o_editor(&mut self, linha: usize, coluna: usize, focar: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some((raiz, caminho)) = self.arquivo_aberto.clone() else { return };
         let completo = raiz.join(&caminho);
         if self.editando(&completo) {
@@ -485,7 +491,10 @@ impl Janela {
                 .default_value(texto)
         });
         estado.update(cx, |estado, cx| {
-            estado.set_cursor_position(Position::new(linha as u32, letra), window, cx);
+            // O `set_cursor_position` do kit também dá o foco ao campo.
+            if focar {
+                estado.set_cursor_position(Position::new(linha as u32, letra), window, cx);
+            }
             if let Some(rolagem) = rolagem {
                 estado.set_scroll_offset(rolagem, cx);
             }
@@ -617,6 +626,8 @@ impl Janela {
                 editor.por_salvar = false;
                 let estado = editor.estado.clone();
                 por_no_editor(&estado, novo, window, cx);
+                // A página do .md lê de novo o texto do editor.
+                self.esquecer_pagina();
                 cx.notify();
             }
             Disco::Conflito(_) => {
@@ -636,6 +647,7 @@ impl Janela {
                 editor.erro = None;
                 let estado = editor.estado.clone();
                 por_no_editor(&estado, texto, window, cx);
+                self.esquecer_pagina();
             }
             Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Não deu para recarregar: {erro}")).chave("salvar-arquivo"), cx),
         }
@@ -647,6 +659,18 @@ impl Janela {
     pub(super) fn manter_o_meu_no_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editor_arquivo.as_mut() else { return };
         editor.sessao.manter_o_meu();
+        self.editor_mudou(window, cx);
+    }
+
+    /// A página do .md mudou (`pagina.rs`): o texto inteiro dela entra no editor, que grava no prazo
+    /// de sempre e cuida do conflito.
+    pub(super) fn texto_da_pagina_no_editor(&mut self, texto: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor_arquivo.as_ref() else { return };
+        if editor.estado.read(cx).value().as_ref() == texto.as_str() {
+            return;
+        }
+        let estado = editor.estado.clone();
+        por_no_editor(&estado, texto, window, cx);
         self.editor_mudou(window, cx);
     }
 

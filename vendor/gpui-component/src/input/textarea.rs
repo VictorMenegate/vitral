@@ -20,6 +20,8 @@ pub struct Textarea {
     size: Size,
     /// Vitral: o respiro de cima e de baixo do editor (`Input::respiro_vertical`).
     editor_py: Option<Pixels>,
+    /// Vitral: a margem dos lados (ver `Input::respiro_lateral`).
+    editor_px: Option<Pixels>,
     height: Option<DefiniteLength>,
     appearance: bool,
     bordered: bool,
@@ -75,6 +77,7 @@ impl Textarea {
             style: StyleRefinement::default(),
             size: Size::default(),
             editor_py: None,
+            editor_px: None,
             height: None,
             appearance: true,
             bordered: true,
@@ -105,6 +108,12 @@ impl Textarea {
     /// Vitral: o respiro de cima e de baixo do editor (`Input::respiro_vertical`).
     pub fn respiro_vertical(mut self, py: Pixels) -> Self {
         self.editor_py = Some(py);
+        self
+    }
+
+    /// Vitral: a margem dos lados do editor.
+    pub fn respiro_lateral(mut self, px: Pixels) -> Self {
+        self.editor_px = Some(px);
         self
     }
 
@@ -213,6 +222,7 @@ impl Textarea {
             .role(self.role)
             .with_size(self.size)
             .when_some(self.editor_py, |this, py| this.respiro_vertical(py))
+            .when_some(self.editor_px, |this, px| this.respiro_lateral(px))
             .when_some(self.height, |this, height| this.h(height))
             .when_some(self.accessibility_id, |this, id| this.accessibility_id(id))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
