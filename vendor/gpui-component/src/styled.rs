@@ -35,12 +35,10 @@ const POPOVER_RING_INK: f32 = 0.12;
 /// token: a fixed black ring would all but vanish on a dark surface.
 ///
 pub(crate) fn popover_ring(_cx: &App) -> Hsla {
-    // Vitral: o anel é claro e neutro (branco a 14%): o azul do menu é a placa de metal do topo.
-    hsla(0., 0., 1., POPOVER_RING_CLARO)
+    // Vitral (Linear, 26/11/2026): sem anel. O menu do protótipo é chapado, com a borda
+    // transparente; o anel claro de 14% era a "borda clara" que o dono viu nos menus.
+    hsla(0., 0., 1., 0.)
 }
-
-/// Vitral: alfa do anel claro dos popups e menus.
-const POPOVER_RING_CLARO: f32 = 0.14;
 
 /// Vitral: o anel claro de antes, para dicas e avisos, que ficariam azuis demais.
 pub(crate) fn anel_neutro(cx: &App) -> Hsla {
@@ -66,38 +64,11 @@ pub(crate) fn anel_neutro(cx: &App) -> Hsla {
 ///
 /// The ring is taken as a colour rather than read from the theme here so that an
 /// animation can hold it across frames, where no `App` is in hand.
-pub(crate) fn popover_shadow(ring: Hsla, strength: f32) -> Vec<BoxShadow> {
-    let strength = strength.clamp(0., 1.);
-    let preto = |a: f32| hsla(0., 0., 0., a * strength);
-    let branco = |a: f32| hsla(0., 0., 1., a * strength);
-    // Vitral: o contorno de casca, de trás para a frente: a sombra funda e a curta (desfoque em
-    // sigma, metade do CSS), o fio preto de 2 por fora, o anel claro de 1 colado na peça e, por
-    // dentro, a luz no topo, a sombra na base e o brilho de 3% que entra pelo topo.
-    // Vitral: a sombra funda desce mais (0 24, desfoque 16, -10 a 60%): com o flutuante um degrau
-    // mais claro (16/11/2026), o menu precisa dela para sair da peça.
-    vec![
-        BoxShadow::new(px(0.), px(24.), preto(0.60))
-            .blur_radius(px(16.))
-            .spread_radius(px(-10.)),
-        BoxShadow::new(px(0.), px(4.), preto(0.35))
-            .blur_radius(px(2.5))
-            .spread_radius(px(-1.)),
-        BoxShadow::new(px(0.), px(0.), preto(0.60))
-            .blur_radius(px(0.))
-            .spread_radius(px(2.)),
-        // The ring, sitting in the 1px band outside the surface. No blur, so it
-        // takes the shader's crisp path rather than the gaussian one.
-        BoxShadow::new(px(0.), px(0.), ring.alpha(ring.a * strength))
-            .blur_radius(px(0.))
-            .spread_radius(px(1.)),
-        // Vitral: sem a luz de 1 px no topo de dentro (dono, 23/11/2026: "tira esse brilho de cima
-        // das coisas").
-        BoxShadow::new(px(0.), px(-1.), preto(0.40)).inset(),
-        BoxShadow::new(px(0.), px(28.), branco(0.03))
-            .blur_radius(px(12.))
-            .spread_radius(px(-12.))
-            .inset(),
-    ]
+pub(crate) fn popover_shadow(_ring: Hsla, _strength: f32) -> Vec<BoxShadow> {
+    // Vitral (Linear, 26/11/2026): chapado, sem sombra, sem anel e sem brilho de dentro, como o
+    // `.menu-flutua` do protótipo. A entrada dos popovers punha esta sombra de volta (com t³), e o
+    // brilho de 3% que entrava pelo topo fazia o degradê que o dono viu no menu do modelo.
+    Vec::new()
 }
 
 /// The elevation a toast is lifted to, at `strength` of its full ink.
@@ -293,11 +264,8 @@ impl<T: Styled + Sized> ThemeStyled for T {
 
     fn popover_style(self, cx: &App) -> Self {
         let theme = cx.theme();
-        // No border: the edge is the ring inside `popover_shadow`, which is how
-        // shadcn draws it and the only way the shadow can show through it.
         // Vitral (Linear, 25/11/2026): chapado, sem sombra nem anel; o menu é o quase preto da
         // moldura da caixa e se separa da peça pelo tom.
-        let _ = popover_shadow(popover_ring(cx), 1.);
         self.bg(theme.popover)
             .text_color(theme.popover_foreground)
             // Vitral: popups com o raio das peças (o `radius.lg` do tema), como os diálogos.

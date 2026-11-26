@@ -4,7 +4,7 @@ use crate::actions::{SelectLeft, SelectRight};
 use crate::menu::menu_item::MenuItemElement;
 use crate::scroll::ScrollableElement;
 use crate::{ActiveTheme, ElementExt, Icon, IconName, Sizable as _, StyledExt as _, h_flex, v_flex};
-use crate::{Side, Size, fio_de_pontos, kbd::{Kbd, desenho_de_teclas}};
+use crate::{Side, Size, kbd::{Kbd, desenho_de_teclas}};
 use gpui::{
     Action, Anchor, AnyElement, App, AppContext, Bounds, Context, DismissEvent, Edges, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
@@ -1416,27 +1416,30 @@ impl PopupMenu {
             .when_some(item.a11y_label(), |this, label| this.aria_label(label));
 
         match item {
-            // Vitral: sem linha cheia: o fio de pontos claro a 14%, recuado até a coluna dos
-            // ícones, com 6 em cima e embaixo.
+            // Vitral (Linear, 26/11/2026): sem linha nenhuma, como o `.sep` do protótipo: os
+            // grupos se separam só pelo espaço, 4 em cima e 4 embaixo. Era um fio de pontos claro,
+            // que o dono achou ruim debaixo do rótulo do menu do painel.
             PopupMenuItem::Separator => this
                 .p_0()
-                .my(z(6.))
-                .mx(z(10.))
+                .h(px(0.))
+                .min_h(px(0.))
+                .my(z(4.))
                 .rounded(px(0.))
-                .disabled(true)
-                .child(fio_de_pontos(hsla(0., 0., 1., 0.14), window)),
-            // Vitral: rótulo de seção de 28 na segunda voz do app (mono 11 regular, tênue),
-            // alinhado com os rótulos.
+                .disabled(true),
+            // Vitral (Linear, 26/11/2026): o rótulo de seção é o `.rot` do protótipo: a letra da
+            // interface em 11, seminegrito, tênue, com 4 em cima e 1 embaixo (era mono 11 regular
+            // numa faixa de 28).
             PopupMenuItem::Label(label) => this.disabled(true).cursor_default().child(
                 h_flex()
-                    .h(z(28.))
+                    .pt(z(4.))
+                    .pb(z(1.))
                     .w_full()
                     .cursor_default()
                     .items_center()
                     .gap_x(z(10.))
-                    .font_family(cx.theme().mono_font_family.clone())
                     .text_size(z(11.))
-                    .font_weight(FontWeight::NORMAL)
+                    .line_height(z(14.))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(muted)
                     .children(Self::render_icon(
                         has_left_icon,

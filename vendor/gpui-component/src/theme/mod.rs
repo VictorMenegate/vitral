@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::{
     App, Global, Hsla, IsZero as _, Pixels, SharedString, Window, WindowAppearance,
-    prelude::FluentBuilder as _, px,
+    px,
 };
 pub use gpui_base::{
     ColorTokens, RadiusTokens, SemanticThemeTokens, ShadowTokens, SpacingTokens, TextStyleToken,
@@ -89,20 +89,12 @@ const SCROLLBAR_EXIT: Duration = Duration::ZERO;
 /// How long the thumb takes to reach its hovered or resting width.
 const SCROLLBAR_EXPAND: Duration = Duration::ZERO;
 
-/// The resting thumb width on iOS and Android, matching the 3pt indicator
-/// those platforms draw. Hover and drag keep Base's desktop widths, so a
-/// grabbed thumb still grows under the finger.
-const MOBILE_SCROLLBAR_THUMB_WIDTH: Pixels = px(3.);
-/// How far the resting thumb sits from the edge on iOS and Android. Base's
-/// desktop inset leaves a 3px thumb floating too far from the edge.
-const MOBILE_SCROLLBAR_THUMB_INSET: Pixels = px(2.);
-/// Base's resting thumb width, restated so the hovered thumb keeps it when
-/// the mobile resting width would otherwise cascade into it.
-const SCROLLBAR_THUMB_HOVER_WIDTH: Pixels = px(6.);
-/// Base's dragged thumb width, restated for the same reason.
-const SCROLLBAR_THUMB_ACTIVE_WIDTH: Pixels = px(8.);
-/// Base's hovered and dragged thumb inset, restated for the same reason.
-const SCROLLBAR_THUMB_INSET: Pixels = px(4.);
+/// Vitral: o polegar da barra de rolagem parado, aceso (ponteiro em cima ou arrastando) e a
+/// distância dele até a borda.
+const VITRAL_POLEGAR: Pixels = px(3.);
+const VITRAL_POLEGAR_ACESO: Pixels = px(5.);
+const VITRAL_POLEGAR_BORDA: Pixels = px(3.);
+
 
 /// The plot hover motion this design system projects onto Base.
 ///
@@ -415,40 +407,34 @@ impl Theme {
                 .with_mode(self.scrollbar_mode)
                 .with_motion(scrollbar_motion(self.scrollbar_mode))
                 .with_styles(
+                    // Vitral (26/11/2026, "deixa as barras de rolagem mais discretas"): sem trilho
+                    // em estado nenhum (nem o fundo nem o fio do arrasto), e o polegar fino e
+                    // translúcido: 3 px parado, 5 com o ponteiro em cima ou arrastando, a 3 px da
+                    // borda e de pontas redondas.
                     gpui_base::ScrollbarStyles::default()
-                        .track(|style| style.bg(self.scrollbar))
-                        .track_hover(|style| style.bg(self.scrollbar))
-                        .track_active(|style| style.bg(self.scrollbar).border_color(self.border))
+                        .track(|style| style.bg(gpui::transparent_black()))
+                        .track_hover(|style| style.bg(gpui::transparent_black()))
+                        .track_active(|style| style.bg(gpui::transparent_black()).border_color(gpui::transparent_black()))
                         .thumb(|style| {
                             style
                                 .bg(self.tokens.scrollbar_thumb)
-                                .radius(self.radius)
-                                .when(gpui_base::is_mobile(), |style| {
-                                    style
-                                        .width(MOBILE_SCROLLBAR_THUMB_WIDTH)
-                                        .inset(MOBILE_SCROLLBAR_THUMB_INSET)
-                                        .radius(RADIUS_FULL)
-                                })
+                                .width(VITRAL_POLEGAR)
+                                .inset(VITRAL_POLEGAR_BORDA)
+                                .radius(RADIUS_FULL)
                         })
                         .thumb_hover(|style| {
                             style
                                 .bg(self.tokens.scrollbar_thumb_hover)
-                                .radius(self.radius)
-                                .when(gpui_base::is_mobile(), |style| {
-                                    style
-                                        .width(SCROLLBAR_THUMB_HOVER_WIDTH)
-                                        .inset(SCROLLBAR_THUMB_INSET)
-                                })
+                                .width(VITRAL_POLEGAR_ACESO)
+                                .inset(VITRAL_POLEGAR_BORDA)
+                                .radius(RADIUS_FULL)
                         })
                         .thumb_active(|style| {
                             style
                                 .bg(self.tokens.scrollbar_thumb_hover)
-                                .radius(self.radius)
-                                .when(gpui_base::is_mobile(), |style| {
-                                    style
-                                        .width(SCROLLBAR_THUMB_ACTIVE_WIDTH)
-                                        .inset(SCROLLBAR_THUMB_INSET)
-                                })
+                                .width(VITRAL_POLEGAR_ACESO)
+                                .inset(VITRAL_POLEGAR_BORDA)
+                                .radius(RADIUS_FULL)
                         }),
                 ),
             resizable: gpui_base::ResizableTheme {

@@ -1055,7 +1055,7 @@ impl Janela {
                         .group_hover(grupo_das_acoes(painel_id), |s| s.opacity(1.))
                         .children(conversa.map(|(_, ix)| self.acoes_do_painel(motor_entidade, ix, nivel, window, cx))),
                 );
-                let abas = conversa.map(|(chat, ix)| self.abas_do_painel(motor_entidade, motor, chat, ix, nivel, window, cx));
+                let abas = conversa.map(|(chat, ix)| self.abas_do_painel(motor_entidade, motor, chat, ix, window, cx));
                 // Cada aba é uma peça; o vão depois delas continua arrastando a janela. A faixa
                 // corta o que não couber (nunca por cima do "⋯") e guarda a largura dela para o
                 // quadro seguinte decidir quais abas ficam só com o ícone.
@@ -1113,14 +1113,15 @@ impl Janela {
         motor: &Motor,
         chat: &Chat,
         ix: usize,
-        nivel: LarguraPainel,
         window: &Window,
         cx: &Context<Self>,
     ) -> Vec<AnyElement> {
         let painel = &self.paineis[ix];
         let painel_id = painel.id;
-        // Na largura mínima só cabe a aba à vista.
-        if nivel == LarguraPainel::Minimo || painel.abas.len() <= 1 {
+        // Em toda largura as outras abas continuam na faixa, encolhendo até o ícone e depois o
+        // "+N" (protótipo Linear). Antes, no painel abaixo de 320 só ficava a aba à vista, e com
+        // três painéis e zoom 1,3 as outras sumiam (o dono viu, 26/11/2026).
+        if painel.abas.len() <= 1 {
             return vec![self.aba_a_vista(motor_entidade, motor, chat, ix, window, cx)];
         }
         // Quais abas de fundo cabem com o título: a conta é feita com a largura da faixa no

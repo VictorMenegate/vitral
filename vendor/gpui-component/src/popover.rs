@@ -136,7 +136,9 @@ pub(crate) fn entrada_flutuante<E: IntoElement + Styled + 'static>(
     let curva = crate::animation::cubic_bezier(0.16, 1., 0.3, 1.);
     // A conta vai até um quadro antes do fim: a última batida já pousa (um redesenho a menos).
     let quadro = Duration::from_secs_f32(1. / ENTRADA_QPS);
-    let animacao = Animation::new(ENTRADA - quadro).with_easing(curva).with_max_fps(ENTRADA_QPS);
+    // Vitral (26/11/2026): sem `with_max_fps`, que agendava o quadro por timer e perdia o vsync
+    // (a entrada andava a ~30 por segundo numa tela de 60 Hz); o quadro vem no vsync.
+    let animacao = Animation::new(ENTRADA - quadro).with_easing(curva);
     surface.with_animation(id, animacao, move |surface, t| {
         let surface = surface.opacity(t);
         let surface = if dy != 0. {

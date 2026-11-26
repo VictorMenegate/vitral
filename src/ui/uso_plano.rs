@@ -138,7 +138,7 @@ impl Janela {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                            this.arrasto_trilho = Some((ev.position, this.deslocamento_trilho));
+                            this.comecar_arrasto_do_trilho(ev.position, None);
                             cx.notify();
                         }),
                     )
@@ -146,6 +146,21 @@ impl Janela {
             )
                 .into_any_element(),
         )
+    }
+
+    /// O botão apertado no trilho (num agente ou na cápsula): ainda não é arrasto nem clique.
+    pub(super) fn comecar_arrasto_do_trilho(&mut self, ini: Point<Pixels>, agente: Option<Marca>) {
+        self.arrasto_trilho = Some(ArrastoTrilho { ini, base: self.deslocamento_trilho, moveu: false, agente });
+    }
+
+    /// Soltou num agente sem arrastar: abre o detalhe dele, ou fecha se já estava aberto. O clique
+    /// fora do detalhe (no próprio botão) já o fechou no apertar; esse soltar não o reabre.
+    pub(super) fn clique_no_agente(&mut self, marca: Marca) {
+        let acabou_de_fechar = self
+            .uso_fechado
+            .is_some_and(|(m, quando)| m == marca && quando.elapsed() < std::time::Duration::from_millis(400));
+        self.uso_aberto = if self.uso_aberto == Some(marca) || acabou_de_fechar { None } else { Some(marca) };
+        self.uso_fechado = None;
     }
 
     /// Quanto a fileira de cima do painel da direita (o último à direita) deixa livre na ponta para
@@ -202,15 +217,16 @@ impl Janela {
         // Cada anel só com a conta do serviço conectada; o do Codex, também com uso lido. Sem
         // conta, o "Entrar" e o "Instalar o Codex…" ficam no menu do logo.
         let mut botoes = Vec::new();
+        let aberto = self.uso_aberto;
         if com_claude {
-            botoes.push(popover_uso(Marca::Claude, claude, motor.clone(), janela.clone()).into_any_element());
+            botoes.push(popover_uso(Marca::Claude, claude, aberto, motor.clone(), janela.clone()).into_any_element());
         }
         if com_codex {
-            botoes.push(popover_uso(Marca::Codex, codex, motor.clone(), janela.clone()).into_any_element());
+            botoes.push(popover_uso(Marca::Codex, codex, aberto, motor.clone(), janela.clone()).into_any_element());
         }
         // O do Gemini só com o agy entrando e a cota lida (`agente_gemini::ler_uso`).
         if com_gemini {
-            botoes.push(popover_uso(Marca::Gemini, gemini, motor, janela).into_any_element());
+            botoes.push(popover_uso(Marca::Gemini, gemini, aberto, motor, janela).into_any_element());
         }
         botoes
     }
@@ -224,18 +240,52 @@ const USO_DA_BORDA: f32 = 10.;
 /// encosta no topo) e um respiro.
 const USO_DO_TOPO: f32 = 58.;
 
+/// O arrasto do trilho de uso em curso: onde o ponteiro desceu, o deslocamento de então, se já
+/// passou dos 4 px que fazem dele um arrasto e, se desceu num agente, qual (soltar sem arrastar
+/// abre o detalhe dele, como no protótipo).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ArrastoTrilho {
+    pub ini: Point<Pixels>,
+    pub base: Point<Pixels>,
+    pub moveu: bool,
+    pub agente: Option<Marca>,
+}
+
 /// Botão do serviço e o popover com os detalhes, que abre para cima da cápsula do canto, alinhado
-/// à direita do botão.
-fn popover_uso(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
+/// à direita do botão. O popover é controlado pela Janela (`uso_aberto`): o apertar no botão começa
+/// o arrasto do trilho, e só o soltar sem arrastar abre o detalhe (dono, 26/11/2026: "quando tento
+/// arrastar ele abre").
+fn popover_uso(
+    marca: Marca,
+    leitura: Leitura,
+    aberto: Option<Marca>,
+    motor: Entity<Motor>,
+    janela: WeakEntity<Janela>,
+) -> impl IntoElement + use<> {
+    let ao_mudar = janela.clone();
     popover(("uso-popover", marca as usize))
         .anchor(Anchor::TopRight)
         .offset(px(8.))
         .arrow(true)
+        .open(aberto == Some(marca))
+        .on_open_change(move |abriu, _, cx| {
+            let abriu = *abriu;
+            let _ = ao_mudar.update(cx, |this, cx| {
+                if abriu {
+                    this.uso_aberto = Some(marca);
+                } else if this.uso_aberto == Some(marca) {
+                    this.uso_aberto = None;
+                    this.uso_fechado = Some((marca, std::time::Instant::now()));
+                }
+                cx.notify();
+            });
+        })
         .trigger(BotaoUso {
             marca,
             leitura,
             diametro: DIAMETRO_NO_CANTO,
             aberto: false,
+            janela: janela.clone(),
         })
         .content(move |_, window, cx| {
             let popover = cx.entity();
@@ -277,6 +327,7 @@ struct BotaoUso {
     leitura: Leitura,
     diametro: f32,
     aberto: bool,
+    janela: WeakEntity<Janela>,
 }
 
 impl Selectable for BotaoUso {
@@ -295,8 +346,18 @@ impl RenderOnce for BotaoUso {
         let l = self.leitura;
         let dica = SharedString::from(l.dica);
         let id = self.marca as usize;
+        let (marca, janela) = (self.marca, self.janela);
         div()
             .id(("uso-botao", id))
+            // O apertar é do trilho (pode virar arrasto): para aqui, antes do popover, que abriria
+            // no apertar.
+            .on_mouse_down(MouseButton::Left, move |ev: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                let _ = janela.update(cx, |this, cx| {
+                    this.comecar_arrasto_do_trilho(ev.position, Some(marca));
+                    cx.notify();
+                });
+            })
             .relative()
             .flex_none()
             .size(r(self.diametro))

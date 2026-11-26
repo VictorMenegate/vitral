@@ -1669,7 +1669,6 @@ impl Janela {
     ) -> AnyElement {
         let selecionado = self.selecionado.as_deref() == Some(chat.id.as_str());
         let em_painel = self.painel_da_conversa(&chat.id);
-        let ao_lado = !selecionado && self.aberta_em_painel(&chat.id);
         let nao_lido = !selecionado && motor.nao_lido(chat);
         let realce = ctx.teclado && self.realce_lista.as_deref() == Some(chat.id.as_str());
         // Na busca, quando o termo não está no título, a prévia mostra onde ele casou.
@@ -1762,7 +1761,6 @@ impl Janela {
             .acao(self.acao_do_cartao(chat, pendencia, window, cx))
             .acao(self.botao_menu(&chat.id, ctx, window, cx))
             .selecionado(selecionado)
-            .aberto_em_outro(ao_lado)
             .nao_lido(nao_lido)
             .realce(realce)
             .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
