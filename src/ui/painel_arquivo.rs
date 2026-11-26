@@ -137,7 +137,7 @@ const LINHA_MAXIMA: usize = 2_000;
 
 /// O aviso do arquivo que abre só para ler, pelo tamanho dele; `None`, ele abre inteiro.
 fn nota_de_so_leitura(bytes: u64) -> Option<String> {
-    (bytes > LIMITE).then(|| format!("Só leitura: arquivo grande ({})", tamanho(bytes)))
+    (bytes > LIMITE).then(|| tr!("Só leitura: arquivo grande ({tamanho})", tamanho = tamanho(bytes)).to_string())
 }
 
 /// A linha como é desenhada: a tabulação vira 4 espaços (o GPUI não a desenha como recuo) e, no
@@ -214,7 +214,7 @@ fn segmentado_da_faixa() -> Div {
 }
 
 /// Um segmento dele: o escolhido no azul do escolhido, os outros no tênue.
-fn segmento_da_faixa(id: &'static str, rotulo: &'static str, escolhido: bool) -> Stateful<Div> {
+fn segmento_da_faixa(id: &'static str, rotulo: SharedString, escolhido: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -244,7 +244,7 @@ enum Aviso {
 fn erro_de_leitura(erro: std::io::Error) -> Aviso {
     match erro.kind() {
         ErrorKind::NotFound => Aviso::NaoExiste,
-        ErrorKind::PermissionDenied => Aviso::Erro("Sem permissão para ler este arquivo.".into()),
+        ErrorKind::PermissionDenied => Aviso::Erro(tr!("Sem permissão para ler este arquivo.").to_string()),
         _ => Aviso::Erro(erro.to_string()),
     }
 }
@@ -265,7 +265,7 @@ fn ler_arquivo(completo: &Path, rico: bool) -> Conteudo {
     let imagem = crate::claude::tipo_imagem(completo).is_some() || (rico && extensao == "svg");
     // O tamanho antes: um arquivo grande não precisa ser lido para dizer que não abre.
     match std::fs::metadata(completo) {
-        Ok(m) if m.is_dir() => return Conteudo::Aviso(Aviso::Erro("É uma pasta, não um arquivo.".into())),
+        Ok(m) if m.is_dir() => return Conteudo::Aviso(Aviso::Erro(tr!("É uma pasta, não um arquivo.").to_string())),
         // Um .png da pasta aparece como imagem; antes caía no "arquivo binário".
         Ok(m) if imagem => {
             return if m.len() > LIMITE_IMAGEM { Conteudo::Aviso(Aviso::Grande(m.len())) } else { Conteudo::Imagem };
@@ -296,7 +296,10 @@ fn ler_arquivo(completo: &Path, rico: bool) -> Conteudo {
 /// "1,2 MB", "450 KB" (em potências de mil, como o limite).
 fn tamanho(bytes: u64) -> String {
     if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1_000_000.).replace('.', ",")
+        {
+            let mb = format!("{:.1} MB", bytes as f64 / 1_000_000.);
+            if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { mb } else { mb.replace('.', ",") }
+        }
     } else {
         format!("{} KB", (bytes + 500) / 1000)
     }
@@ -510,7 +513,7 @@ fn fileira_de_codigo(
                         .hover(|c| c.text_color(Cores::destaque_texto()))
                         .child(if marcado { "●" } else { sinal })
                         .dica_no_ponteiro(move |window, cx| {
-                            Tooltip::new(if marcado { "Ver ou apagar o comentário desta linha" } else { "Comentar esta linha" }).build(window, cx)
+                            Tooltip::new(if marcado { tr!("Ver ou apagar o comentário desta linha") } else { tr!("Comentar esta linha") }).build(window, cx)
                         })
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
@@ -657,7 +660,7 @@ fn dobra_de_codigo(i: usize, de: usize, ate: usize, largura_numero: Rems, janela
         .child(div().flex_none().w(largura_numero))
         .child(div().flex_none().w(r(8.)))
         .child(div().flex_none().child(super::componentes::icone(Lucide::ChevronsUpDown, 12., window)))
-        .child(super::componentes::contagem(n, "linha igual", "linhas iguais"))
+        .child(if n == 1 { tr!("{n} linha igual", n = n) } else { tr!("{n} linhas iguais", n = n) })
         .on_click(move |_, _, cx| {
             let _ = janela.update(cx, |this, cx| this.abrir_dobra(de, cx));
         })
@@ -699,7 +702,7 @@ fn titulo_do_binario(caminho: &Path) -> &'static str {
         "mp4" | "mov" | "mkv" | "webm" | "avi" => "Vídeo",
         "mp3" | "wav" | "ogg" | "flac" | "m4a" | "opus" => "Áudio",
         "bmp" | "ico" | "avif" | "tiff" | "tif" | "heic" | "psd" => "Imagem",
-        "ttf" | "otf" | "woff" | "woff2" => "Fonte",
+        "ttf" | "otf" | "woff" | "woff2" => "Fonte tipográfica",
         "dwg" | "dxf" => "Desenho do CAD",
         _ => "Arquivo binário",
     }
@@ -745,7 +748,7 @@ fn passo_da_revisao(atual: usize, mudancas: usize, arquivos: Option<(usize, usiz
 /// o da pasta.
 fn nome_da_raiz(motor: &Motor, raiz: &std::path::Path) -> String {
     if raiz.starts_with(motor.dados.pasta_avulso("")) {
-        return "Sem pasta".into();
+        return tr!("Sem pasta").to_string();
     }
     super::dialogos::nome_da_pasta(raiz)
 }
@@ -1161,7 +1164,7 @@ impl Janela {
         let barra_do_trecho = self.selecao_no_codigo.filter(|s| !s.vazia() && !s.arrastando).and_then(|s| s.ponto.map(|p| (s, p))).map(|(sel, ponto)| {
             let (a, b) = sel.linhas();
             let faixa = if b > a { format!("{a}-{b}") } else { a.to_string() };
-            let botao = |id: &'static str, simbolo: Lucide, rotulo: &'static str| {
+            let botao = |id: &'static str, simbolo: Lucide, rotulo: SharedString| {
                 h_flex()
                     .id(id)
                     .flex_none()
@@ -1186,14 +1189,14 @@ impl Janela {
                 .bg(Cores::preto())
                 .occlude()
                 .child(
-                    botao("mencionar-trecho", Lucide::AtSign, "Mencionar")
+                    botao("mencionar-trecho", Lucide::AtSign, tr!("Mencionar"))
                         .child(div().flex_none().text_color(Cores::tenue()).tabular().child(faixa))
                         .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
                             cx.stop_propagation();
                             this.mencionar_a_selecao(window, cx);
                         })),
                 )
-                .child(botao("copiar-trecho-codigo", Lucide::Copy, "Copiar").on_mouse_down(
+                .child(botao("copiar-trecho-codigo", Lucide::Copy, tr!("Copiar")).on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
@@ -1329,8 +1332,8 @@ impl Janela {
         // a linguagem; o lápis e o ponto já dizem que está editando).
         let info = match selecao {
             _ if editando.is_some() => None,
-            Some((a, b)) if b > a => Some(format!("linhas {a} a {b}")),
-            Some((a, _)) => Some(format!("linha {a}")),
+            Some((a, b)) if b > a => Some(tr!("linhas {a} a {b}", a = a, b = b).to_string()),
+            Some((a, _)) => Some(tr!("linha {a}", a = a).to_string()),
             None => None,
         };
         // A largura livre para o nome, a informação e as ações (a 100%, em px): o painel menos o
@@ -1351,18 +1354,18 @@ impl Janela {
         let absoluto = SharedString::from(completo.display().to_string());
         let dica_mencao = SharedString::from(match self.alvo_da_mencao() {
             Some((a, b)) if self.arquivo_selecao.is_none() && self.arquivo_edicao.is_some() => {
-                if b > a { format!("Mencionar esta mudança na conversa (linhas {a} a {b})") } else { format!("Mencionar esta mudança na conversa (linha {a})") }
+                if b > a { tr!("Mencionar esta mudança na conversa (linhas {a} a {b})", a = a, b = b).to_string() } else { tr!("Mencionar esta mudança na conversa (linha {a})", a = a).to_string() }
             }
-            Some((a, b)) if b > a => format!("Mencionar as linhas {a} a {b} na conversa"),
-            Some((a, _)) => format!("Mencionar a linha {a} na conversa"),
-            None => "Mencionar o arquivo na conversa".to_string(),
+            Some((a, b)) if b > a => tr!("Mencionar as linhas {a} a {b} na conversa", a = a, b = b).to_string(),
+            Some((a, _)) => tr!("Mencionar a linha {a} na conversa", a = a).to_string(),
+            None => tr!("Mencionar o arquivo na conversa").to_string(),
         });
         let editor = completo.to_path_buf();
         // Com uma linha em vista (a escolhida, a da mudança ou a do link), o VS Code abre nela.
         let linha_editor = linha_do_editor(self.arquivo_selecao, self.alvo_da_mencao(), self.arquivo_marcada.get());
         let dica_editor = SharedString::from(match linha_editor {
-            Some(linha) => format!("Abrir no VS Code, na linha {linha}"),
-            None => "Abrir no VS Code".to_string(),
+            Some(linha) => tr!("Abrir no VS Code, na linha {linha}", linha = linha).to_string(),
+            None => tr!("Abrir no VS Code").to_string(),
         });
         let menu = {
             let (conteudo, relativo, inteiro, fora) =
@@ -1377,41 +1380,41 @@ impl Janela {
                 Some(super::edicao::Origem::Git { sem_espaco }) => Some(*sem_espaco),
                 _ => None,
             };
-            botao_icone("menu-arquivo", Lucide::Ellipsis, "Mais opções do arquivo", TamanhoBotao::Linha, window, cx)
+            botao_icone("menu-arquivo", Lucide::Ellipsis, tr!("Mais opções do arquivo"), TamanhoBotao::Linha, window, cx)
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                     let (conteudo, relativo, onde, inteiro, janela, fora) =
                         (conteudo.clone(), relativo.clone(), onde.clone(), inteiro.clone(), janela.clone(), fora.clone());
                     menu.when(com_trecho, |menu| {
                         let janela = janela.clone();
-                        menu.item(PopupMenuItem::new("Mencionar o arquivo inteiro").icon(Lucide::AtSign).on_click(
+                        menu.item(PopupMenuItem::new(tr!("Mencionar o arquivo inteiro")).icon(Lucide::AtSign).on_click(
                             move |_, window, cx| {
                                 let _ = janela.update(cx, |this, cx| this.mencionar_arquivo(&inteiro, None, window, cx));
                             },
                         ))
                         .separator()
                     })
-                    .item(PopupMenuItem::new("Copiar o conteúdo").icon(Lucide::Copy).on_click(
+                    .item(PopupMenuItem::new(tr!("Copiar o conteúdo")).icon(Lucide::Copy).on_click(
                         move |_, window, cx| match std::fs::read_to_string(&conteudo) {
                             Ok(texto) => {
                                 cx.write_to_clipboard(ClipboardItem::new_string(texto));
-                                window.push_notification(aviso(Tom::Pronto, "Conteúdo copiado."), cx);
+                                window.push_notification(aviso(Tom::Pronto, tr!("Conteúdo copiado.")), cx);
                             }
-                            Err(_) => window.push_notification(aviso(Tom::Erro, "Não deu para ler o arquivo como texto."), cx),
+                            Err(_) => window.push_notification(aviso(Tom::Erro, tr!("Não deu para ler o arquivo como texto.")), cx),
                         },
                     ))
-                    .item(PopupMenuItem::new("Copiar o caminho").icon(Lucide::Copy).on_click(move |_, window, cx| {
+                    .item(PopupMenuItem::new(tr!("Copiar o caminho")).icon(Lucide::Copy).on_click(move |_, window, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(relativo.clone()));
-                        window.push_notification(aviso(Tom::Pronto, "Caminho copiado."), cx);
+                        window.push_notification(aviso(Tom::Pronto, tr!("Caminho copiado.")), cx);
                     }))
                     .when(com_texto, |menu| {
                         let janela = janela.clone();
-                        menu.separator().item(PopupMenuItem::new("Buscar no arquivo").icon(Lucide::Search).on_click(move |_, window, cx| {
+                        menu.separator().item(PopupMenuItem::new(tr!("Buscar no arquivo")).icon(Lucide::Search).on_click(move |_, window, cx| {
                             let _ = janela.update(cx, |this, cx| this.abrir_busca_no_arquivo(window, cx));
                         }))
                     })
                     .when_some(sem_espaco, |menu, ligado| {
                         let janela = janela.clone();
-                        menu.separator().item(PopupMenuItem::new("Ignorar espaço em branco").checked(ligado).on_click(
+                        menu.separator().item(PopupMenuItem::new(tr!("Ignorar espaço em branco")).checked(ligado).on_click(
                             move |_, window, cx| {
                                 let _ = janela.update(cx, |this, cx| this.alternar_diff_sem_espaco(window, cx));
                             },
@@ -1420,13 +1423,13 @@ impl Janela {
                     .separator()
                     // O aplicativo padrão do sistema: o navegador para o .html, a planilha para o .csv.
                     .item(
-                        PopupMenuItem::new("Abrir fora")
+                        PopupMenuItem::new(tr!("Abrir fora"))
                             .icon(Lucide::ExternalLink)
                             .external()
                             .on_click(move |_, _, cx| crate::sistema::abrir_fora(&fora, cx)),
                     )
                     .item(
-                        PopupMenuItem::new("Mostrar na pasta")
+                        PopupMenuItem::new(tr!("Mostrar na pasta"))
                             .icon(Lucide::FolderOpen)
                             .external()
                             .on_click(move |_, _, cx| crate::sistema::abrir_pasta(&onde, cx)),
@@ -1434,7 +1437,7 @@ impl Janela {
                 })
         };
         let desfazer = selecao.map(|_| {
-            botao_icone("desfazer-escolha", Lucide::X, "Desfazer a escolha das linhas", TamanhoBotao::Linha, window, cx)
+            botao_icone("desfazer-escolha", Lucide::X, tr!("Desfazer a escolha das linhas"), TamanhoBotao::Linha, window, cx)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.arquivo_selecao = None;
                     this.arquivo_ancora = None;
@@ -1444,9 +1447,9 @@ impl Janela {
         // O que falta gravar (âmbar; vermelho quando a gravação falhou), ao lado do nome.
         let ponto_do_editor = editando.map(|e| {
             let (cor, estado) = match (&e.erro, e.por_salvar) {
-                (Some(erro), _) => (Cores::vermelho(), format!("Não deu para salvar: {erro}")),
-                (None, true) => (Cores::ambar(), "Ainda não salvo: grava sozinho quando você para de digitar, ou no Ctrl+S".to_string()),
-                (None, false) => (gpui_kit::transparent_black().into(), "Salvo".to_string()),
+                (Some(erro), _) => (Cores::vermelho(), tr!("Não deu para salvar: {erro}", erro = erro).to_string()),
+                (None, true) => (Cores::ambar(), tr!("Ainda não salvo: grava sozinho quando você para de digitar, ou no Ctrl+S").to_string()),
+                (None, false) => (gpui_kit::transparent_black().into(), tr!("Salvo").to_string()),
             };
             div()
                 .id("ponto-do-editor")
@@ -1460,8 +1463,8 @@ impl Janela {
             let janela = janela.clone();
             let md = matches!(completo.extension().and_then(|e| e.to_str()), Some("md" | "markdown"));
             let opcoes = [
-                if md { Segmento::new("Página").icone(Lucide::FileText) } else { Segmento::new("Prévia").icone(Lucide::Eye) },
-                Segmento::new("Fonte").icone(Lucide::Braces),
+                if md { Segmento::new(tr!("Página")).icone(Lucide::FileText) } else { Segmento::new(tr!("Prévia")).icone(Lucide::Eye) },
+                Segmento::new(tr!("Fonte")).icone(Lucide::Braces),
             ];
             ControleSegmentado::new("previa-ou-fonte", opcoes, usize::from(self.arquivo_fonte), move |novo, window, cx| {
                 let _ = janela.update(cx, |this, cx| this.escolher_vista_do_arquivo(novo == 1, window, cx));
@@ -1474,7 +1477,7 @@ impl Janela {
         // Na página do .md o lápis leva à Fonte, já editando (os blocos se editam no lugar).
         let editar = if self.modo_pagina(completo) {
             linhas.filter(|_| editavel).map(|_| {
-                botao_icone("editar-arquivo", Lucide::Pencil, "Editar a fonte", TamanhoBotao::Linha, window, cx)
+                botao_icone("editar-arquivo", Lucide::Pencil, tr!("Editar a fonte"), TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.escolher_vista_do_arquivo(true, window, cx);
                         this.entrar_no_editor(0, 0, window, cx);
@@ -1483,14 +1486,14 @@ impl Janela {
             })
         } else if editando.is_some() {
             Some(
-                botao_fantasma("sair-do-editor", None, "Pronto", TamanhoBotao::Linha, window, cx)
-                    .tooltip("Voltar à leitura (Esc)")
+                botao_fantasma("sair-do-editor", None, tr!("Pronto"), TamanhoBotao::Linha, window, cx)
+                    .tooltip(tr!("Voltar à leitura (Esc)"))
                     .on_click(cx.listener(|this, _, window, cx| this.sair_do_editor(window, cx)))
                     .into_any_element(),
             )
         } else {
             linhas.filter(|_| editavel).map(|_| {
-                botao_icone("editar-arquivo", Lucide::Pencil, "Editar o arquivo\nOu um clique no texto", TamanhoBotao::Linha, window, cx)
+                botao_icone("editar-arquivo", Lucide::Pencil, tr!("Editar o arquivo\nOu um clique no texto"), TamanhoBotao::Linha, window, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.entrar_no_editor(0, 0, window, cx)))
                     .into_any_element()
             })
@@ -1513,7 +1516,7 @@ impl Janela {
                 .cursor_pointer()
                 .hover(|s| s.bg(Cores::preto().blend(Cores::forte().opacity(0.06))))
                 .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::AtSign, 14., window)))
-                .when(com_rotulos, |s| s.child("Mencionar"))
+                .when(com_rotulos, |s| s.child(tr!("Mencionar")))
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_mencao.clone()).build(window, cx))
                 .on_click(move |_, window, cx| {
                     let _ = j.update(cx, |this, cx| this.mencionar_do_painel(window, cx));
@@ -1614,13 +1617,13 @@ impl Janela {
         cx: &Context<Self>,
     ) -> AnyElement {
         let (frase, dica_manter) = match conflito {
-            Conflito::Mudou => ("O arquivo mudou no disco.", "Fica o que você escreveu: ao salvar, passa por cima do que está no disco"),
-            Conflito::Apagado => ("O arquivo foi apagado. O seu texto continua aqui.", "Fica o que você escreveu: ao salvar, o arquivo é criado de novo"),
+            Conflito::Mudou => (tr!("O arquivo mudou no disco."), tr!("Fica o que você escreveu: ao salvar, passa por cima do que está no disco")),
+            Conflito::Apagado => (tr!("O arquivo foi apagado. O seu texto continua aqui."), tr!("Fica o que você escreveu: ao salvar, o arquivo é criado de novo")),
         };
         let _ = (reserva, na_gaveta);
         // Os botões da faixa do protótipo: os claros só com o texto (o fundo vem no ponteiro) e o
         // azul cheio, de 24.
-        let claro = |id: &'static str, rotulo: &'static str| {
+        let claro = |id: &'static str, rotulo: SharedString| {
             div()
                 .id(id)
                 .flex()
@@ -1637,8 +1640,8 @@ impl Janela {
                 .child(rotulo)
         };
         let dele = (conflito == Conflito::Mudou).then(|| {
-            claro("recarregar-arquivo", "Usar o dele")
-                .dica_no_ponteiro(|window, cx| Tooltip::new("Fica o que está no disco: o que você escreveu se perde").build(window, cx))
+            claro("recarregar-arquivo", tr!("Usar o dele"))
+                .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Fica o que está no disco: o que você escreveu se perde")).build(window, cx))
                 .on_click(cx.listener(|this, _, window, cx| this.recarregar_editor(window, cx)))
         });
         let manter = div()
@@ -1655,8 +1658,8 @@ impl Janela {
             .text_color(Cores::forte())
             .cursor_pointer()
             .hover(|s| s.bg(Cores::destaque_ativo()))
-            .child("Manter o meu")
-            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_manter).build(window, cx))
+            .child(tr!("Manter o meu"))
+            .dica_no_ponteiro(move |window, cx| Tooltip::new(dica_manter.clone()).build(window, cx))
             .on_click(cx.listener(|this, _, window, cx| this.manter_o_meu_no_editor(window, cx)));
         let faixa = div()
             .id("conflito-do-arquivo")
@@ -1735,10 +1738,10 @@ impl Janela {
         let seta = |id: &'static str, icone: Lucide, passo: isize| {
             let destino = passo_da_revisao(atual, mudancas, lugar, passo).filter(|d| *d != Passo::Mudanca(atual))?;
             let dica: SharedString = match (destino, passo > 0) {
-                (Passo::Mudanca(_), true) => "Próxima mudança".into(),
-                (Passo::Mudanca(_), false) => "Mudança anterior".into(),
-                (Passo::Arquivo { .. }, true) => format!("Próximo arquivo das Mudanças ({} de {})", lugar.map_or(0, |l| l.0 + 2), lugar.map_or(0, |l| l.1)).into(),
-                (Passo::Arquivo { .. }, false) => format!("Arquivo anterior das Mudanças ({} de {})", lugar.map_or(0, |l| l.0), lugar.map_or(0, |l| l.1)).into(),
+                (Passo::Mudanca(_), true) => tr!("Próxima mudança"),
+                (Passo::Mudanca(_), false) => tr!("Mudança anterior"),
+                (Passo::Arquivo { .. }, true) => tr!("Próximo arquivo das Mudanças ({n} de {total})", n = lugar.map_or(0, |l| l.0 + 2), total = lugar.map_or(0, |l| l.1)),
+                (Passo::Arquivo { .. }, false) => tr!("Arquivo anterior das Mudanças ({n} de {total})", n = lugar.map_or(0, |l| l.0), total = lugar.map_or(0, |l| l.1)),
             };
             Some(
                 botao_icone(id, icone, dica, TamanhoBotao::Linha, window, cx)
@@ -1748,13 +1751,13 @@ impl Janela {
         let (anterior, seguinte) = if ativa { (seta("mudanca-anterior", Lucide::ChevronUp, -1), seta("mudanca-seguinte", Lucide::ChevronDown, 1)) } else { (None, None) };
         let segmento = segmento_da_faixa;
         let segmentado = segmentado_da_faixa()
-            .child(segmento("ver-mudancas", "Mudanças", ativa).when(!ativa, |s| {
+            .child(segmento("ver-mudancas", tr!("Mudanças"), ativa).when(!ativa, |s| {
                 s.on_click(cx.listener(|this, _, window, cx| this.voltar_a_edicao(window, cx)))
             }))
-            .child(segmento("ver-arquivo", "Arquivo", !ativa).when(ativa, |s| s.on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)))));
+            .child(segmento("ver-arquivo", tr!("Arquivo"), !ativa).when(ativa, |s| s.on_click(cx.listener(|this, _, _, cx| this.sair_da_edicao(cx)))));
         let so_espaco = matches!(edicao.origem, super::edicao::Origem::Git { sem_espaco: true });
         let resumo = if edicao.sem_registro {
-            let texto = if so_espaco { "Só mudou espaço em branco" } else { "Este registro não guardou a edição" };
+            let texto = if so_espaco { tr!("Só mudou espaço em branco") } else { tr!("Este registro não guardou a edição") };
             div().flex_1().min_w_0().truncate().text_size(r(12.)).text_color(Cores::tenue()).child(texto).into_any_element()
         } else {
             h_flex()
@@ -1763,11 +1766,11 @@ impl Janela {
                 .text_size(r(12.))
                 .when(edicao.entram > 0, |s| s.child(div().text_color(Cores::verde()).child(format!("+{}", edicao.entram))))
                 .when(edicao.saem > 0, |s| s.child(div().text_color(Cores::vermelho()).child(format!("−{}", edicao.saem))))
-                .when(so_espaco, |s| s.child(div().text_color(Cores::tenue()).child("sem espaço em branco")))
+                .when(so_espaco, |s| s.child(div().text_color(Cores::tenue()).child(tr!("sem espaço em branco"))))
                 .into_any_element()
         };
         let posicao = (ativa && mudancas > 0 && !edicao.sem_registro)
-            .then(|| div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::tenue()).child(format!("{} de {}", atual + 1, mudancas)));
+            .then(|| div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::tenue()).child(tr!("{n} de {total}", n = atual + 1, total = mudancas)));
         div()
             .flex()
             .flex_none()
@@ -1793,10 +1796,10 @@ impl Janela {
     fn faixa_da_pagina(&self, reserva: Option<Pixels>, cx: &Context<Self>) -> AnyElement {
         let fonte = self.arquivo_fonte;
         let segmentado = segmentado_da_faixa()
-            .child(segmento_da_faixa("ver-pagina", "Página", !fonte).when(fonte, |s| {
+            .child(segmento_da_faixa("ver-pagina", tr!("Página"), !fonte).when(fonte, |s| {
                 s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(false, window, cx)))
             }))
-            .child(segmento_da_faixa("ver-fonte", "Fonte", fonte).when(!fonte, |s| {
+            .child(segmento_da_faixa("ver-fonte", tr!("Fonte"), fonte).when(!fonte, |s| {
                 s.on_click(cx.listener(|this, _, window, cx| this.escolher_vista_do_arquivo(true, window, cx)))
             }));
         div()
@@ -2035,7 +2038,7 @@ impl Janela {
         // A edição dobra as linhas iguais fora da busca e as mostra todas com ela.
         self.esquecer_vista();
         let Some((raiz, caminho)) = self.arquivo_aberto.clone() else {
-            window.push_notification(aviso(Tom::Info, "Abra um arquivo à direita para buscar nele."), cx);
+            window.push_notification(aviso(Tom::Info, tr!("Abra um arquivo à direita para buscar nele.")), cx);
             return;
         };
         if crate::claude::tipo_imagem(&raiz.join(&caminho)).is_some() {
@@ -2122,12 +2125,12 @@ impl Janela {
         let com_termo = !busca.campo.read(cx).value().trim().is_empty();
         let contador = com_termo.then(|| match contagem {
             Some((atual, total)) if total > 0 && estreita => format!("{}/{}", atual + 1, total),
-            Some((atual, total)) if total > 0 => format!("{} de {}", atual + 1, total),
+            Some((atual, total)) if total > 0 => tr!("{n} de {total}", n = atual + 1, total = total).to_string(),
             _ if estreita => "0".to_string(),
-            _ => "nenhum achado".to_string(),
+            _ => tr!("nenhum achado").to_string(),
         });
-        let seta = |id: &'static str, icone: Lucide, dica: &'static str, acao: &dyn Action, passo: i32| {
-            botao_icone(id, icone, dica, TamanhoBotao::Barra, window, cx)
+        let seta = |id: &'static str, icone: Lucide, dica: SharedString, acao: &dyn Action, passo: i32| {
+            botao_icone(id, icone, dica.clone(), TamanhoBotao::Barra, window, cx)
                 .tooltip_with_action(dica, acao, None)
                 .disabled(total == 0)
                 .on_click(cx.listener(move |this, _, _, cx| this.andar_na_busca_do_arquivo(passo, cx)))
@@ -2156,10 +2159,10 @@ impl Janela {
                     .text_color(if total == 0 { Cores::ambar() } else { Cores::tenue() })
                     .child(texto)
             }))
-            .child(seta("achado-anterior-no-arquivo", Lucide::ChevronUp, "Achado anterior", &AchadoAnterior, -1))
-            .child(seta("achado-seguinte-no-arquivo", Lucide::ChevronDown, "Próximo achado", &AchadoSeguinte, 1))
+            .child(seta("achado-anterior-no-arquivo", Lucide::ChevronUp, tr!("Achado anterior"), &AchadoAnterior, -1))
+            .child(seta("achado-seguinte-no-arquivo", Lucide::ChevronDown, tr!("Próximo achado"), &AchadoSeguinte, 1))
             .child(
-                botao_icone("fechar-busca-no-arquivo", Lucide::X, "Fechar a busca (Esc)", TamanhoBotao::Barra, window, cx)
+                botao_icone("fechar-busca-no-arquivo", Lucide::X, tr!("Fechar a busca (Esc)"), TamanhoBotao::Barra, window, cx)
                     .on_click(cx.listener(|this, _, window, cx| this.fechar_busca_no_arquivo(window, cx))),
             );
         Some((barra, nova))
@@ -2218,20 +2221,20 @@ fn aviso_do_arquivo(
         .map(|saida| match saida {
             Saida::Fora => {
                 let alvo = completo.clone();
-                botao_fantasma("aviso-fora", Some(Lucide::ExternalLink.into()), "Abrir fora", TamanhoBotao::Barra, window, cx)
-                    .tooltip("Abrir no aplicativo padrão do sistema")
+                botao_fantasma("aviso-fora", Some(Lucide::ExternalLink.into()), tr!("Abrir fora"), TamanhoBotao::Barra, window, cx)
+                    .tooltip(tr!("Abrir no aplicativo padrão do sistema"))
                     .on_click(move |_, _, cx| crate::sistema::abrir_fora(&alvo, cx))
                     .into_any_element()
             }
             Saida::Editor => {
                 let alvo = completo.clone();
-                botao_fantasma("aviso-editor", Some(Lucide::CodeXml.into()), "Abrir no VS Code", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("aviso-editor", Some(Lucide::CodeXml.into()), tr!("Abrir no VS Code"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, _, _| crate::sistema::abrir_no_editor(&alvo, None))
                     .into_any_element()
             }
             Saida::Fechar => {
                 let janela = janela.clone();
-                botao_fantasma("aviso-fechar", None, "Fechar", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("aviso-fechar", None, tr!("Fechar"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, window, cx| {
                         let _ = janela.update(cx, |this, cx| this.fechar_arquivo(window, cx));
                     })
@@ -2239,7 +2242,7 @@ fn aviso_do_arquivo(
             }
             Saida::Escrever => {
                 let janela = janela.clone();
-                botao_fantasma("aviso-escrever", Some(Lucide::Pencil.into()), "Escrever nele", TamanhoBotao::Barra, window, cx)
+                botao_fantasma("aviso-escrever", Some(Lucide::Pencil.into()), tr!("Escrever nele"), TamanhoBotao::Barra, window, cx)
                     .on_click(move |_, window, cx| {
                         let _ = janela.update(cx, |this, cx| this.entrar_no_editor(0, 0, window, cx));
                     })
@@ -2247,20 +2250,20 @@ fn aviso_do_arquivo(
             }
         })
         .collect();
-    let (icone, titulo, texto): (Lucide, &str, Option<String>) = match aviso {
+    let (icone, titulo, texto): (Lucide, SharedString, Option<String>) = match aviso {
         Aviso::Grande(bytes) => (
             Lucide::File,
-            "Arquivo grande demais",
-            Some(format!("Tem {}; aqui abrem arquivos de até {}.", tamanho(bytes), tamanho(TETO_DE_LEITURA))),
+            tr!("Arquivo grande demais"),
+            Some(tr!("Tem {tamanho}; aqui abrem arquivos de até {teto}.", tamanho = tamanho(bytes), teto = tamanho(TETO_DE_LEITURA)).to_string()),
         ),
         Aviso::Binario => (
             Lucide::Binary,
-            titulo_do_binario(&completo),
-            Some("Não dá para mostrar aqui. Ele abre no aplicativo do sistema.".into()),
+            SharedString::from(crate::i18n::traduzir(titulo_do_binario(&completo))),
+            Some(tr!("Não dá para mostrar aqui. Ele abre no aplicativo do sistema.").to_string()),
         ),
-        Aviso::NaoExiste => (Lucide::FileX, "O arquivo não existe mais", Some("Ele pode ter sido apagado ou renomeado.".into())),
-        Aviso::Erro(erro) => (Lucide::FileX, "Não deu para ler o arquivo", Some(erro)),
-        Aviso::Vazio => (Lucide::File, "Arquivo vazio", None),
+        Aviso::NaoExiste => (Lucide::FileX, tr!("O arquivo não existe mais"), Some(tr!("Ele pode ter sido apagado ou renomeado.").to_string())),
+        Aviso::Erro(erro) => (Lucide::FileX, tr!("Não deu para ler o arquivo"), Some(erro)),
+        Aviso::Vazio => (Lucide::File, tr!("Arquivo vazio"), None),
     };
     let acao = (!botoes.is_empty()).then(|| div().flex().flex_wrap().justify_center().gap(esp::E4).children(botoes));
     div()

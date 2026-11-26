@@ -44,10 +44,10 @@ impl NaoEdita {
     /// O que o aviso diz quando o clique não abre o editor.
     pub(super) fn frase(&self) -> String {
         match self {
-            NaoEdita::Grande => "Arquivo grande: aqui ele abre só para ler.".into(),
-            NaoEdita::Binario => "Este arquivo não é texto.".into(),
-            NaoEdita::OutraCodificacao => "Este arquivo não está em UTF-8: editar aqui trocaria as letras dele.".into(),
-            NaoEdita::Erro(erro) => format!("Não deu para abrir o arquivo para editar: {erro}"),
+            NaoEdita::Grande => tr!("Arquivo grande: aqui ele abre só para ler.").to_string(),
+            NaoEdita::Binario => tr!("Este arquivo não é texto.").to_string(),
+            NaoEdita::OutraCodificacao => tr!("Este arquivo não está em UTF-8: editar aqui trocaria as letras dele.").to_string(),
+            NaoEdita::Erro(erro) => tr!("Não deu para abrir o arquivo para editar: {erro}", erro = erro).to_string(),
         }
     }
 }
@@ -121,7 +121,7 @@ fn ler(caminho: &Path) -> Lido {
                 let (texto, crlf) = com_quebra_simples(texto);
                 Lido::Texto(texto, crlf)
             }
-            Err(_) => Lido::Falhou("O arquivo deixou de ser texto em UTF-8.".into()),
+            Err(_) => Lido::Falhou(tr!("O arquivo deixou de ser texto em UTF-8.").to_string()),
         },
         Err(erro) if erro.kind() == std::io::ErrorKind::NotFound => Lido::Sumiu,
         Err(erro) => Lido::Falhou(erro.to_string()),
@@ -133,7 +133,7 @@ impl Sessao {
     pub(super) fn abrir(caminho: &Path) -> Result<(Sessao, String), NaoEdita> {
         let dados = fs::metadata(caminho).map_err(|erro| NaoEdita::Erro(erro.to_string()))?;
         if dados.is_dir() {
-            return Err(NaoEdita::Erro("É uma pasta, não um arquivo.".into()));
+            return Err(NaoEdita::Erro(tr!("É uma pasta, não um arquivo.").to_string()));
         }
         if dados.len() > LIMITE_DE_EDICAO {
             return Err(NaoEdita::Grande);
@@ -247,7 +247,7 @@ impl Sessao {
                 self.conflito = None;
                 Ok(disco)
             }
-            Lido::Sumiu => Err("O arquivo não existe mais.".into()),
+            Lido::Sumiu => Err(tr!("O arquivo não existe mais.").to_string()),
             Lido::Falhou(erro) => Err(erro),
         }
     }
@@ -593,7 +593,7 @@ impl Janela {
                 // O mesmo erro a cada tecla não vira um aviso a cada tecla.
                 if editor.erro.as_deref() != Some(erro.as_str()) {
                     let nome = nome_do_arquivo(editor.sessao.caminho());
-                    window.push_notification(aviso(Tom::Erro, format!("Não deu para salvar {nome}: {erro}")).chave("salvar-arquivo"), cx);
+                    window.push_notification(aviso(Tom::Erro, tr!("Não deu para salvar {nome}: {erro}", nome = nome, erro = erro)).chave("salvar-arquivo"), cx);
                 }
                 editor.erro = Some(erro);
                 false
@@ -649,7 +649,7 @@ impl Janela {
                 por_no_editor(&estado, texto, window, cx);
                 self.esquecer_pagina();
             }
-            Err(erro) => window.push_notification(aviso(Tom::Erro, format!("Não deu para recarregar: {erro}")).chave("salvar-arquivo"), cx),
+            Err(erro) => window.push_notification(aviso(Tom::Erro, tr!("Não deu para recarregar: {erro}", erro = erro)).chave("salvar-arquivo"), cx),
         }
         cx.notify();
     }
@@ -699,8 +699,8 @@ impl Janela {
             let nome = nome_do_arquivo(editor.sessao.caminho());
             cx.write_to_clipboard(ClipboardItem::new_string(texto.to_string()));
             // O aviso tem duas linhas: o título diz o que houve e o texto, onde o escrito foi parar.
-            let frase = format!("{nome}: {motivo}. O que você escreveu está na área de transferência.");
-            window.push_notification(aviso(Tom::Atencao, frase).title("Texto não salvo").autohide(false).chave("salvar-arquivo"), cx);
+            let frase = tr!("{nome}: {motivo}. O que você escreveu está na área de transferência.", nome = nome, motivo = crate::i18n::traduzir(motivo));
+            window.push_notification(aviso(Tom::Atencao, frase).title(tr!("Texto não salvo")).autohide(false).chave("salvar-arquivo"), cx);
         }
         // A leitura volta com o arquivo de agora, na linha em que o editor estava.
         let primeira = editor.estado.read(cx).visible_row_range().map(|linhas| linhas.start);

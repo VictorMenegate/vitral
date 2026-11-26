@@ -89,7 +89,10 @@ pub fn tamanho_curto(bytes: u64) -> String {
     match bytes {
         0..1024 => format!("{bytes} B"),
         1024..1_048_576 => format!("{} KB", (bytes as f64 / 1024.).round() as u64),
-        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.).replace('.', ","),
+        _ => {
+            let mb = format!("{:.1} MB", bytes as f64 / 1_048_576.);
+            if crate::i18n::lingua() == crate::i18n::Lingua::Ingles { mb } else { mb.replace('.', ",") }
+        },
     }
 }
 

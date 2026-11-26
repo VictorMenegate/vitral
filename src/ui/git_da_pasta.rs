@@ -146,16 +146,16 @@ impl Janela {
             vec![
                 linha_da_direita("git-nada")
                     .text_color(Cores::tenue())
-                    .child("Nada mudado desde o último commit")
+                    .child(tr!("Nada mudado desde o último commit"))
                     .into_any_element(),
             ]
         } else {
             retrato.mudancas.iter().enumerate().map(|(i, m)| linha_git(&raiz, m, i, window, cx)).collect()
         };
         if retrato.cortado {
-            linhas.push(linha_da_direita("git-cortado").text_color(Cores::tenue()).child("Mostrando os primeiros 200").into_any_element());
+            linhas.push(linha_da_direita("git-cortado").text_color(Cores::tenue()).child(tr!("Mostrando os primeiros 200")).into_any_element());
         }
-        Some(grupo_da_direita("Na pasta", None, None, linhas))
+        Some(grupo_da_direita(tr!("Na pasta"), None, None, linhas))
     }
 
     /// Abre o arquivo com o diff do git por cima (o novo, sem diff: só o arquivo). Com o "Ignorar
@@ -189,15 +189,15 @@ impl Janela {
             Confirmacao {
                 tom: TomConfirmacao::Perigo,
                 icone: Lucide::RotateCcw.into(),
-                titulo: format!("Desfazer {nome}?").into(),
-                texto: "O arquivo volta a como está no último commit.".into(),
+                titulo: tr!("Desfazer {nome}?", nome = nome),
+                texto: tr!("O arquivo volta a como está no último commit."),
                 detalhes: vec![(
                     Lucide::TriangleAlert.into(),
-                    "Tudo o que mudou nele desde então sai, de qualquer chat ou seu".into(),
+                    tr!("Tudo o que mudou nele desde então sai, de qualquer chat ou seu"),
                     true,
                 )],
-                ok: "Desfazer".into(),
-                cancelar: "Deixar como está".into(),
+                ok: tr!("Desfazer"),
+                cancelar: tr!("Deixar como está"),
                 ok_perigo: true,
             },
             move |window, cx| {
@@ -207,8 +207,8 @@ impl Janela {
                         let feito = cx.background_spawn(async move { crate::git::desfazer_arquivo(&raiz, &caminho) }).await;
                         let _ = cx.update(|window, cx| {
                             match feito {
-                                Ok(()) => window.push_notification(aviso(Tom::Pronto, "Arquivo de volta ao último commit"), cx),
-                                Err(erro) => window.push_notification(aviso(Tom::Atencao, format!("Não desfiz: {erro:#}")), cx),
+                                Ok(()) => window.push_notification(aviso(Tom::Pronto, tr!("Arquivo de volta ao último commit")), cx),
+                                Err(erro) => window.push_notification(aviso(Tom::Atencao, tr!("Não desfiz: {erro}", erro = format!("{erro:#}"))), cx),
                             }
                             let _ = janela.update(cx, |this, cx| {
                                 this.git_da_pasta.lido_em = None;
@@ -242,7 +242,7 @@ fn linha_git(raiz: &Path, m: &MudancaNaPasta, i: usize, window: &Window, cx: &Co
     let (raiz_d, caminho_d) = (raiz.to_path_buf(), m.caminho.clone());
     let desfazer = (!novo && m.estado != EstadoNoGit::Renomeado).then(|| {
         div().flex_none().invisible().group_hover(grupo.clone(), |s| s.visible()).child(
-            botao_icone(format!("git-desfazer-{i}"), Lucide::RotateCcw, "Desfazer: volta ao último commit", TamanhoBotao::Linha, window, cx)
+            botao_icone(format!("git-desfazer-{i}"), Lucide::RotateCcw, tr!("Desfazer: volta ao último commit"), TamanhoBotao::Linha, window, cx)
                 .size(r(20.))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();

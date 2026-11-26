@@ -6,6 +6,8 @@
 
 use std::ops::Range;
 
+use gpui_kit::SharedString;
+
 /// O tipo de um bloco.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tipo {
@@ -65,16 +67,16 @@ impl Tipo {
     }
 
     /// O que aparece no bloco vazio.
-    pub fn marcador(self) -> &'static str {
+    pub fn marcador(self) -> SharedString {
         match self {
-            Tipo::Titulo1 => "Título 1",
-            Tipo::Titulo2 => "Título 2",
-            Tipo::Titulo3 => "Título 3",
-            Tipo::Citacao => "Citação",
-            Tipo::Codigo => "Código",
-            Tipo::Lista | Tipo::Numerada => "Lista",
-            Tipo::Tarefa => "Tarefa",
-            _ => "'/' para comandos",
+            Tipo::Titulo1 => tr!("Título 1"),
+            Tipo::Titulo2 => tr!("Título 2"),
+            Tipo::Titulo3 => tr!("Título 3"),
+            Tipo::Citacao => tr!("Citação"),
+            Tipo::Codigo => tr!("Código"),
+            Tipo::Lista | Tipo::Numerada => tr!("Lista"),
+            Tipo::Tarefa => tr!("Tarefa"),
+            _ => tr!("'/' para comandos"),
         }
     }
 }

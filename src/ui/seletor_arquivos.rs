@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use gpui_kit::SharedString;
+
 use super::componentes::{GrupoDeEscolha, ItemDeEscolha, Simbolo};
 use crate::tema::Lucide;
 
@@ -60,15 +62,15 @@ pub(super) fn icone_do_arquivo(nome: &str) -> Lucide {
 /// As linhas da lista: `None` enquanto lê; a pasta vazia e a leitura pela metade viram uma linha
 /// desabilitada que explica (o vazio da busca é o da lista de escolha).
 pub(super) fn grupos_de_arquivos(arquivos: Option<&[String]>, busca: &str) -> Vec<GrupoDeEscolha> {
-    let aviso = |texto: &str| {
-        let item = ItemDeEscolha { desabilitado: Some(texto.to_string().into()), ..ItemDeEscolha::new("", texto.to_string()) };
+    let aviso = |texto: SharedString| {
+        let item = ItemDeEscolha { desabilitado: Some(texto.clone()), ..ItemDeEscolha::new("", texto) };
         vec![GrupoDeEscolha { titulo: None, itens: vec![item] }]
     };
     let Some(arquivos) = arquivos else {
-        return aviso("Lendo os arquivos…");
+        return aviso(tr!("Lendo os arquivos…"));
     };
     if arquivos.is_empty() {
-        return aviso("Nenhum arquivo nesta pasta");
+        return aviso(tr!("Nenhum arquivo nesta pasta"));
     }
     let itens: Vec<ItemDeEscolha> = filtrar_arquivos(arquivos, busca, LIMITE)
         .into_iter()
