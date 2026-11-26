@@ -577,10 +577,13 @@ componentes do GPUI Kit.
     ainda refaz as mensagens de todos os painéis: saber qual painel mudou pede uma assinatura do
     que cada um desenha.
 - **Boas-vindas.** Na primeira abertura (sem pasta de trabalho e sem chat nenhum; `VITRAL_BOAS_VINDAS=1`
-  força), `src/ui/boas_vindas.rs` mostra quatro passos: a apresentação, a pasta de trabalho (as
-  pastas em que o Claude Code já tem conversas vêm como sugestão) e o básico (permissões, quem
-  responde quando o Codex está instalado, modelo do Claude e trazer as conversas que já existem)
-  e a conexão opcional à memória da equipe.
+  força), `src/ui/boas_vindas.rs` mostra cinco passos: a apresentação, a pasta de trabalho (as
+  pastas em que o Claude Code já tem conversas vêm como sugestão), as IAs (Claude Code, Codex e
+  Gemini, cada uma com "Pronto" ou o **Instalar**, que abre o instalador oficial no terminal; a
+  linha se relê a cada 2 s enquanto o passo está à vista), o básico (permissões, quem responde,
+  modelo do Claude e, num cartão, trazer as conversas que já existem, a revisão automática, a
+  sugestão da próxima mensagem e o aviso dentro do app; dono, 26/11/2026: "coloca mais
+  configurações importantes na parte de início") e a conexão opcional à memória da equipe.
 - **Memória da equipe.** No primeiro uso, no menu do logo e nas Configurações, cada pessoa informa
   o endereço de um servidor ai-memory e sua chave. **Testar e ligar** confere o servidor antes de
   guardar a conexão; **Consultar memória** busca entre os projetos acessíveis e abre o texto das

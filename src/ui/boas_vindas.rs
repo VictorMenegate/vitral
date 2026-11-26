@@ -19,8 +19,9 @@ use super::{
 };
 use crate::tema::{Cores, FONTE_MONO, Lucide, esp, r, raio};
 
-/// Os passos, na ordem.
-const PASSOS: [&str; 4] = ["Apresentação", "Pasta", "Preferências", "Memória"];
+/// Os passos, na ordem. As IAs entraram em 26/11/2026 (dono: "tem que colocar pra dar pra baixar
+/// todas as IA que vai colocar por aqui, até o Claude Code").
+const PASSOS: [&str; 5] = ["Apresentação", "Pasta", "IAs", "Preferências", "Memória"];
 
 /// Os modos de permissão oferecidos aqui (os outros ficam na caixa de cada chat): o valor que vai
 /// para a configuração, o nome e o que ele quer dizer.
@@ -29,6 +30,9 @@ const MODOS: [(&str, &str, &str); 3] = [
     ("acceptEdits", "Aceitar edições", "Edita sem perguntar; comandos pedem."),
     ("bypassPermissions", "Sem perguntar", "Faz tudo sem pedir."),
 ];
+
+/// O passo das IAs (na ordem de `PASSOS`).
+const PASSO_DAS_IAS: usize = 2;
 
 /// Quantas pastas a tela sugere (as em que o Claude Code já tem mais conversas).
 const SUGESTOES: usize = 5;
@@ -45,6 +49,12 @@ pub(super) struct BoasVindas {
     /// só aparece com outro agente instalado).
     agente: usize,
     importar: bool,
+    /// A revisão automática do turno pelo outro agente (`Config.revisar_edicoes`).
+    revisar: bool,
+    /// A sugestão da próxima mensagem na caixa (`Config.sugerir_resposta`).
+    sugerir: bool,
+    /// O aviso dentro do app quando um chat precisa de você (`Config.avisos_no_app`).
+    avisos: bool,
     /// Para onde foi a última troca de passo (true: adiante). O passo novo entra deslizando
     /// desse lado (dono, 23/11/2026: "slide the next step in from the direction you're going").
     indo: Option<bool>,
@@ -70,7 +80,8 @@ impl Janela {
     /// Abre a tela de boas-vindas e procura, em segundo plano, as pastas em que o Claude Code já
     /// tem conversas (a primeira vira a sugestão marcada).
     pub(super) fn abrir_boas_vindas(&mut self, cx: &mut Context<Self>) {
-        let (modo, modelo) = self.motor.as_ref().map_or((2, 2), |m| {
+        let padrao = crate::modelo::Config::default();
+        let (modo, modelo, revisar, sugerir, avisos) = self.motor.as_ref().map_or((2, 2, padrao.revisar_edicoes, padrao.sugerir_resposta, padrao.avisos_no_app), |m| {
             let config = &m.read(cx).config;
             (
                 MODOS.iter().position(|(valor, ..)| *valor == config.permissao).unwrap_or(2),
@@ -79,9 +90,25 @@ impl Janela {
                     .iter()
                     .position(|(valor, _)| *valor == config.modelo_chats && matches!(*valor, "opus" | "sonnet" | "haiku"))
                     .unwrap_or_else(|| MODELOS.iter().position(|(valor, _)| *valor == "opus").unwrap_or(0)),
+                config.revisar_edicoes,
+                config.sugerir_resposta,
+                config.avisos_no_app,
             )
         });
-        self.boas_vindas = Some(BoasVindas { passo: 0, sugestoes: Vec::new(), pasta: None, modo, modelo, agente: 0, importar: true, indo: None, procurando: true });
+        self.boas_vindas = Some(BoasVindas {
+            passo: 0,
+            sugestoes: Vec::new(),
+            pasta: None,
+            modo,
+            modelo,
+            agente: 0,
+            importar: true,
+            revisar,
+            sugerir,
+            avisos,
+            indo: None,
+            procurando: true,
+        });
         let raizes = crate::importar::raizes(std::iter::empty());
         cx.spawn(async move |this, cx| {
             let achadas = cx
@@ -146,6 +173,9 @@ impl Janela {
                         c.agente_padrao = crate::modelo::Agente::instalados().get(tela.agente).copied().unwrap_or_default();
                         c.pasta_de_trabalho = pasta;
                         c.importar_da_pasta = tela.importar;
+                        c.revisar_edicoes = tela.revisar;
+                        c.sugerir_resposta = tela.sugerir;
+                        c.avisos_no_app = tela.avisos;
                     },
                     cx,
                 )
@@ -216,7 +246,8 @@ impl Janela {
         let corpo = match passo {
             0 => self.passo_da_apresentacao(window).into_any_element(),
             1 => self.passo_da_pasta(tela, window, cx).into_any_element(),
-            2 => self.passo_das_preferencias(tela, cx).into_any_element(),
+            2 => self.passo_das_ias(window, cx).into_any_element(),
+            3 => self.passo_das_preferencias(tela, cx).into_any_element(),
             _ => self.passo_da_memoria(window, cx).into_any_element(),
         };
         // O passo novo desliza do lado para onde se vai (sem crossfade): Continuar traz da direita,
@@ -317,8 +348,104 @@ impl Janela {
         {
             tela.indo = Some(i > tela.passo);
             tela.passo = i;
+            if i == PASSO_DAS_IAS {
+                self.conferir_as_ias(cx);
+            }
             cx.notify();
         }
+    }
+
+    /// No passo das IAs, a cada 2 s, o que está instalado é lido de novo: o instalador roda no
+    /// terminal, e a linha passa a "Instalado" sozinha quando ele termina.
+    fn conferir_as_ias(&mut self, cx: &mut Context<Self>) {
+        if let Some(motor) = &self.motor {
+            motor.update(cx, |m, cx| m.reler_versao_claude(cx));
+        }
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                let seguir = this
+                    .update(cx, |this, cx| {
+                        let no_passo = this.boas_vindas.as_ref().is_some_and(|t| t.passo == PASSO_DAS_IAS);
+                        if no_passo {
+                            if let Some(motor) = &this.motor {
+                                motor.update(cx, |m, cx| m.reler_versao_claude(cx));
+                            }
+                            cx.notify();
+                        }
+                        no_passo
+                    })
+                    .unwrap_or(false);
+                if !seguir {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Passo 3: as IAs. Cada uma com a marca, se já está instalada e, quando falta, o Instalar (o
+    /// instalador oficial no terminal). Nenhuma é obrigatória aqui: sem o Claude Code, o chat avisa
+    /// e oferece o mesmo botão.
+    fn passo_das_ias(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let versao_claude = self.motor.as_ref().and_then(|m| m.read(cx).versao_claude);
+        let linhas = crate::modelo::Agente::TODOS.into_iter().enumerate().map(|(i, agente)| {
+            let (instalada, texto) = match agente {
+                crate::modelo::Agente::Claude => {
+                    let instalada = versao_claude.is_some() || crate::claude::binario_claude().is_file();
+                    let texto = match versao_claude {
+                        Some((a, b, c)) => format!("Instalado · {a}.{b}.{c}"),
+                        None if instalada => "Instalado".to_string(),
+                        None => "O principal: chats, planos e agentes".to_string(),
+                    };
+                    (instalada, texto)
+                }
+                crate::modelo::Agente::Codex => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Da OpenAI, com a conta do ChatGPT".to_string() }),
+                crate::modelo::Agente::Gemini => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Do Google, com a conta Google".to_string() }),
+            };
+            let acao = if instalada {
+                h_flex()
+                    .flex_none()
+                    .gap(crate::tema::linear::CHAT_VAO)
+                    .text_size(r(12.5))
+                    .text_color(Cores::verde())
+                    .child(super::componentes::icone(Lucide::Check, 14., window))
+                    .child("Pronto")
+                    .into_any_element()
+            } else {
+                Self::botao_da_tela(["bv-instalar-claude", "bv-instalar-codex", "bv-instalar-gemini"][i], Lucide::Download, "Instalar", window)
+                    .on_click(move |_, _, _| match agente {
+                        crate::modelo::Agente::Claude => super::uso_plano::instalar_claude(),
+                        crate::modelo::Agente::Codex => super::uso_plano::instalar_codex(),
+                        crate::modelo::Agente::Gemini => super::uso_plano::instalar_gemini(),
+                    })
+                    .into_any_element()
+            };
+            let linha = h_flex()
+                .items_center()
+                .gap(esp::E12)
+                .py(crate::tema::inicio::LINHA_Y)
+                .px(crate::tema::inicio::LINHA_X)
+                .rounded(raio::CARTAO)
+                .bg(Cores::cartao_elevado())
+                .child(div().flex_none().size(r(32.)).flex().items_center().justify_center().child(super::componentes::Marca::do_agente(agente).glifo(20.)))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(match agente {
+                            crate::modelo::Agente::Claude => "Claude Code",
+                            outro => outro.nome(),
+                        }))
+                        .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child(texto)),
+                )
+                .child(acao);
+            super::movimento::entrar_depois(linha, ("bv-ia", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
+        });
+        v_flex()
+            .gap(crate::tema::inicio::PASSO_VAO)
+            .child(Self::cabeca_do_passo(false, "Suas IAs", "Instale as que você quer usar. Dá para mudar depois em Configurações, Agentes."))
+            .child(v_flex().gap(esp::E4).children(linhas))
     }
 
     /// O título do passo, a frase de baixo e o conteúdo.
@@ -573,7 +700,6 @@ impl Janela {
         let modelos: Vec<usize> = MODELOS.iter().enumerate().filter(|(_, (v, _))| matches!(*v, "opus" | "sonnet" | "haiku")).map(|(i, _)| i).collect();
         let modelo = modelos.iter().position(|i| *i == tela.modelo).unwrap_or(0);
         let importar = tela.importar;
-        let j = janela.clone();
         v_flex()
             .gap(esp::E16)
             .child(preferencia(
@@ -617,31 +743,54 @@ impl Janela {
                 .into_any_element(),
                 None,
             ))
+            // As chaves que valem para todos os chats, num cartão só (26/11/2026, dono: "coloca mais
+            // configurações importantes na parte de início").
             .child(
-                h_flex()
-                    .items_center()
-                    .gap(esp::E12)
-                    .py(crate::tema::inicio::LINHA_X)
-                    .px(esp::E12)
+                v_flex()
                     .rounded(raio::CARTAO)
                     .bg(Cores::cartao_elevado())
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child("Trazer as conversas que já existem"))
-                            .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child("Do Claude Code, nesta pasta.")),
-                    )
-                    .child(Switch::new("bv-importar").checked(importar).on_click(move |novo, _, cx| {
-                        let novo = *novo;
-                        let _ = j.update(cx, |this, cx| {
-                            if let Some(tela) = &mut this.boas_vindas {
-                                tela.importar = novo;
-                                cx.notify();
-                            }
-                        });
-                    })),
+                    .child(Self::linha_de_chave(&janela, "bv-importar", "Trazer as conversas que já existem", "Do Claude Code, nesta pasta.", importar, |t, v| t.importar = v))
+                    .child(Self::linha_de_chave(&janela, "bv-revisar", "Revisão automática", "O outro agente confere o que mudou, só lendo.", tela.revisar, |t, v| t.revisar = v))
+                    .child(Self::linha_de_chave(&janela, "bv-sugerir", "Sugerir a próxima mensagem", "Aparece apagada na caixa; o Tab aceita.", tela.sugerir, |t, v| t.sugerir = v))
+                    .child(Self::linha_de_chave(&janela, "bv-avisos", "Avisar quando um chat precisa de você", "Um aviso no canto, dentro do app.", tela.avisos, |t, v| t.avisos = v)),
             )
+    }
+}
+
+
+impl Janela {
+    /// Uma chave do cartão de Preferências: o título, a frase e o interruptor, que muda a tela
+    /// (a escolha só vai para a configuração no "Começar").
+    fn linha_de_chave(
+        janela: &WeakEntity<Janela>,
+        id: &'static str,
+        titulo: &'static str,
+        frase: &'static str,
+        ligado: bool,
+        mudar: fn(&mut BoasVindas, bool),
+    ) -> impl IntoElement + use<> {
+        let janela = janela.clone();
+        h_flex()
+            .items_center()
+            .gap(esp::E12)
+            .py(esp::E8)
+            .px(esp::E12)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(titulo))
+                    .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child(frase)),
+            )
+            .child(Switch::new(id).checked(ligado).on_click(move |novo, _, cx| {
+                let novo = *novo;
+                let _ = janela.update(cx, |this, cx| {
+                    if let Some(tela) = &mut this.boas_vindas {
+                        mudar(tela, novo);
+                        cx.notify();
+                    }
+                });
+            }))
     }
 }
 
