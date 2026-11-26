@@ -182,6 +182,27 @@ pub mod esp {
     pub const ANTES_DE_SECAO: Rems = E16;
 }
 
+/// As medidas da tela inicial (o `.inicio` do protótipo Linear): o cartão de 600, o alto com o
+/// logo e os passos, o palco do passo e o pé com os botões.
+pub mod inicio {
+    use super::r;
+    use gpui_kit::Rems;
+    pub const LARGURA: f32 = 600.;
+    pub const TOPO_Y: Rems = r(22.);
+    pub const TOPO_X: Rems = r(24.);
+    pub const PILULA_ESQUERDA: Rems = r(7.);
+    pub const PILULA_DIREITA: Rems = r(9.);
+    pub const PALCO_Y: Rems = r(26.);
+    pub const PALCO_X: Rems = r(28.);
+    pub const PASSO_VAO: Rems = r(14.);
+    pub const LINHA_Y: Rems = r(8.);
+    pub const LINHA_X: Rems = r(10.);
+    pub const PASTA_VAO: Rems = r(10.);
+    pub const BOTAO_X: Rems = r(11.);
+    pub const PE_Y: Rems = r(14.);
+    pub const PE_X: Rems = r(20.);
+}
+
 /// As medidas da página do .md (o `.pagina` do protótipo Linear): 52 à esquerda para a alça, 18 à
 /// direita, 10 em cima; 3 de cada lado do texto de um bloco.
 pub mod pagina {
@@ -1617,10 +1638,6 @@ impl Cores {
     }
     pub fn destaque() -> Hsla {
         rgba(superficie::atual().destaque).into()
-    }
-    #[allow(dead_code)]
-    pub fn destaque_hover() -> Hsla {
-        rgba(superficie::atual().destaque_hover).into()
     }
     pub fn destaque_ativo() -> Hsla {
         rgba(superficie::atual().destaque_ativo).into()

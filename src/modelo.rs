@@ -919,7 +919,7 @@ impl Default for Config {
             sugerir_resposta: true,
             revisar_edicoes: true,
             revisao_quando: "edicoes".into(),
-            revisao_minimo: 20,
+            revisao_minimo: crate::motor::revisao_do_par::LINHAS_PARA_REVISAR as u32,
             revisao_pula_planejar: true,
             revisao_foco: vec!["Bugs".into(), "Segurança".into(), "Testes".into()],
             revisao_instrucoes: String::new(),

@@ -920,7 +920,8 @@ impl Janela {
                                 .anchor(Anchor::TopCenter)
                                 .position(ponto + point(px(0.), tam(window, 17.)))
                                 .snap_to_window_with_margin(px(8.))
-                                .child(barra),
+                                // Entra como os menus (o `menu-entra` da barra-trecho do protótipo).
+                                .child(movimento::entrar(barra, ("entra-barra-trecho", painel_id as usize), De::Cima)),
                         )
                         .with_priority(1)
                         .into_any_element(),

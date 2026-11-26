@@ -89,7 +89,7 @@ impl Render for BarraDaSelecao {
         };
         let formato = |id: &'static str| botao(id).w(r(26.)).justify_center();
         let faixa = self.linhas.map(|(a, b)| if b > a { format!("{a}-{b}") } else { a.to_string() });
-        h_flex()
+        let barra = h_flex()
             .mb(esp::E6)
             .p(crate::tema::linear::MOLDURA_FOLGA)
             .gap(crate::tema::linear::CONTROLES_VAO)
@@ -123,8 +123,9 @@ impl Render for BarraDaSelecao {
                     .child(div().flex_none().text_color(Cores::tenue()).child(super::componentes::icone(Lucide::Copy, 14., window)))
                     .child("Copiar")
                     .on_mouse_down(MouseButton::Left, acao(|j, _, cx| j.copiar_da_pagina(cx))),
-            )
-            .into_any_element()
+            );
+        // Entra como os menus, a cada seleção nova (a barra-trecho do protótipo).
+        super::movimento::entrar(barra, "entra-barra-da-pagina", super::movimento::De::Cima).into_any_element()
     }
 }
 
@@ -385,7 +386,7 @@ impl Janela {
             (_, Some(foco)) => self.campo_do_bloco(b, foco, p.menu.as_ref(), tamanho, altura, peso, window, cx),
             _ => self.leitura_do_bloco(b, tamanho, altura, peso, janela, cx),
         };
-        div()
+        let bloco = div()
             .id(("bloco", id as usize))
             .group(grupo)
             .relative()
@@ -400,8 +401,13 @@ impl Janela {
             .on_drop(cx.listener(move |this, arrasto: &ArrastoDeBloco, window, cx| this.mover_bloco(arrasto.id, Some(id), window, cx)))
             .child(alca)
             .children(marca)
-            .child(conteudo)
-            .into_any_element()
+            .child(conteudo);
+        // O bloco que acabou de nascer (Enter, "+", o fim da página) entra de cima, uma vez.
+        if p.doc.novo(id) {
+            super::movimento::entrar(bloco, ("entra-bloco", id as usize), super::movimento::De::Cima).into_any_element()
+        } else {
+            bloco.into_any_element()
+        }
     }
 
     /// O bloco pronto para ler: o clique põe o cursor no lugar dele no markdown (o link abre).
@@ -560,7 +566,7 @@ impl Janela {
                 .on_click(cx.listener(move |this, _, window, cx| this.escolher_tipo(tipo, window, cx)))
         });
         deferred(
-            anchored().snap_to_window_with_margin(px(8.)).child(
+            anchored().snap_to_window_with_margin(px(8.)).child(super::movimento::entrar(
                 v_flex()
                     .mt(esp::E6)
                     .w(r(220.))
@@ -572,7 +578,9 @@ impl Janela {
                     .shadow(crate::tema::sombra_flutuante())
                     .child(div().px(esp::E6).py(esp::E4).text_size(r(11.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::tenue()).child("Blocos"))
                     .children(itens),
-            ),
+                "entra-menu-da-barra",
+                super::movimento::De::Cima,
+            )),
         )
         .with_priority(1)
         .into_any_element()

@@ -42,11 +42,6 @@ use crate::{
 
 mod agentes_fora;
 mod instrucoes;
-// Os Perfis saíram das Configurações (protótipo Linear, 25/11/2026); o resto do código deles sai na
-// limpeza da etapa 10 do porte.
-#[allow(dead_code)]
-pub(in crate::ui) mod perfis;
-
 /// "100%": o rótulo de um tamanho em relação ao resto.
 const SUFIXO_DE_PORCENTO: &str = "%";
 

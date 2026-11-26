@@ -435,10 +435,6 @@ struct ArquivosLidos {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AbaLateral {
     Conversas,
-    /// A árvore saiu da lista para a aba Arquivos da direita (protótipo Linear, 25/11/2026); o que
-    /// a lista ainda tem dela sai na limpeza da etapa 10 do porte.
-    #[allow(dead_code)]
-    Arquivos,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -614,6 +610,8 @@ pub struct Janela {
     ilha_fechada: Option<(PathBuf, std::time::Instant)>,
     /// A tela de boas-vindas da primeira abertura, enquanto está aberta.
     boas_vindas: Option<boas_vindas::BoasVindas>,
+    /// A tela de boas-vindas acabou de fechar: ela some num fade por cima do app.
+    saida_boas_vindas: bool,
     /// O trecho de texto selecionado na janela agora (uma parte de uma resposta, por exemplo):
     /// com ele, o painel ativo mostra o "Responder a este trecho", que o cita na caixa.
     trecho: Option<String>,
@@ -1042,6 +1040,7 @@ impl Janela {
             ilha: None,
             ilha_fechada: None,
             boas_vindas: None,
+            saida_boas_vindas: false,
             trecho: None,
             ponto_do_trecho: None,
             segurando_trecho: false,
@@ -2552,6 +2551,10 @@ impl Janela {
             }))
             // Quem espera você, fora de vista: o aviso no canto de baixo (rodada de uso, item 3.1).
             .children(self.avisos_no_canto(window, cx))
+            // A tela de boas-vindas que acabou de fechar some por cima do app.
+            .when(self.saida_boas_vindas, |s| {
+                s.child(movimento::sair(div().absolute().top_0().left_0().size_full().bg(Cores::vidro()), "bv-saida"))
+            })
             .children(fora)
             .into_any_element();
         self.lembrar_ultimo_chat(cx);

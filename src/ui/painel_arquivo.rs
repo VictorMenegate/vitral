@@ -1205,7 +1205,7 @@ impl Janela {
                     .anchor(Anchor::TopCenter)
                     .position(ponto + point(px(0.), crate::tema::tam(window, 14.)))
                     .snap_to_window_with_margin(px(8.))
-                    .child(barra),
+                    .child(movimento::entrar(barra, "entra-barra-do-codigo", De::Cima)),
             )
             .with_priority(1)
         });

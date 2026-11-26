@@ -24,7 +24,6 @@ use super::*;
 
 /// Quantas linhas o turno tem de mudar (as que entram mais as que saem) para a revisão automática,
 /// de fábrica (`Config.revisao_minimo`).
-#[cfg_attr(not(test), allow(dead_code))]
 pub const LINHAS_PARA_REVISAR: usize = 20;
 
 /// O nome de quem entrega a revisão ao agente do chat ("Revisão do Codex"): é por ele que o turno

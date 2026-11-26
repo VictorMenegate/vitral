@@ -8,26 +8,26 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::component::{Sizable as _, Size, h_flex, switch::Switch, v_flex};
+use gpui_kit::component::{h_flex, switch::Switch, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{ControleSegmentado, TamanhoBotao, botao_fantasma, botao_primario, malha_viva, metal::FASE_INICIAL_DO_METAL},
+    componentes::{TamanhoBotao, botao_fantasma, botao_primario, malha_viva, metal::FASE_INICIAL_DO_METAL},
     composer::MODELOS,
 };
-use crate::tema::{Cores, FONTE_MONO, Lucide, Tipo as _, aresta_de_tecla, esp, r, raio};
+use crate::tema::{Cores, FONTE_MONO, Lucide, esp, r, raio};
 
 /// Os passos, na ordem.
-const PASSOS: [&str; 4] = ["Apresentação", "Pasta de trabalho", "Preferências", "Memória da equipe"];
+const PASSOS: [&str; 4] = ["Apresentação", "Pasta", "Preferências", "Memória"];
 
 /// Os modos de permissão oferecidos aqui (os outros ficam na caixa de cada chat): o valor que vai
 /// para a configuração, o nome e o que ele quer dizer.
 const MODOS: [(&str, &str, &str); 3] = [
-    ("manual", "Perguntar sempre", "Cada edição e cada comando pedem a sua aprovação na tela."),
-    ("acceptEdits", "Aceitar edições", "Edita arquivos sem perguntar; os comandos ainda pedem."),
-    ("bypassPermissions", "Sem perguntar", "Faz tudo sem pedir, como o modo livre do Claude Code."),
+    ("manual", "Perguntar sempre", "Cada edição e comando pedem aprovação."),
+    ("acceptEdits", "Aceitar edições", "Edita sem perguntar; comandos pedem."),
+    ("bypassPermissions", "Sem perguntar", "Faz tudo sem pedir."),
 ];
 
 /// Quantas pastas a tela sugere (as em que o Claude Code já tem mais conversas).
@@ -48,6 +48,8 @@ pub(super) struct BoasVindas {
     /// Para onde foi a última troca de passo (true: adiante). O passo novo entra deslizando
     /// desse lado (dono, 23/11/2026: "slide the next step in from the direction you're going").
     indo: Option<bool>,
+    /// A busca das pastas sugeridas ainda não voltou.
+    procurando: bool,
 }
 
 /// A pasta com o `~` no lugar da pasta do usuário, para caber e ler melhor.
@@ -68,14 +70,18 @@ impl Janela {
     /// Abre a tela de boas-vindas e procura, em segundo plano, as pastas em que o Claude Code já
     /// tem conversas (a primeira vira a sugestão marcada).
     pub(super) fn abrir_boas_vindas(&mut self, cx: &mut Context<Self>) {
-        let (modo, modelo) = self.motor.as_ref().map_or((2, 0), |m| {
+        let (modo, modelo) = self.motor.as_ref().map_or((2, 2), |m| {
             let config = &m.read(cx).config;
             (
                 MODOS.iter().position(|(valor, ..)| *valor == config.permissao).unwrap_or(2),
-                MODELOS.iter().position(|(valor, _)| *valor == config.modelo_chats).unwrap_or(0),
+                // Sem um dos três modelos da tela (o Padrão saiu do seletor), começa no Opus.
+                MODELOS
+                    .iter()
+                    .position(|(valor, _)| *valor == config.modelo_chats && matches!(*valor, "opus" | "sonnet" | "haiku"))
+                    .unwrap_or_else(|| MODELOS.iter().position(|(valor, _)| *valor == "opus").unwrap_or(0)),
             )
         });
-        self.boas_vindas = Some(BoasVindas { passo: 0, sugestoes: Vec::new(), pasta: None, modo, modelo, agente: 0, importar: true, indo: None });
+        self.boas_vindas = Some(BoasVindas { passo: 0, sugestoes: Vec::new(), pasta: None, modo, modelo, agente: 0, importar: true, indo: None, procurando: true });
         let raizes = crate::importar::raizes(std::iter::empty());
         cx.spawn(async move |this, cx| {
             let achadas = cx
@@ -90,6 +96,7 @@ impl Janela {
                         tela.pasta = achadas.first().map(|(pasta, _)| pasta.clone());
                     }
                     tela.sugestoes = achadas.into_iter().take(SUGESTOES).collect();
+                    tela.procurando = false;
                     cx.notify();
                 }
             });
@@ -144,12 +151,24 @@ impl Janela {
                 )
             });
         }
+        // A tela some num fade por cima do app que aparece embaixo (o `.inicio.saindo`).
+        self.saida_boas_vindas = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.saida_boas_vindas = false;
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
-    /// A tela inteira: a faixa de arrastar com os botões da janela, e no meio o medalhão do logo,
-    /// os passos e o cartão do passo de agora.
+    /// A tela inteira (protótipo Linear, 26/11/2026): a faixa de arrastar com os botões da janela
+    /// e, no meio, um cartão só no preto, com o logo e os passos no alto, o passo de agora e o pé
+    /// com Voltar e Continuar; atrás, o fundo da lista com um brilho do destaque vindo de baixo.
     pub(super) fn tela_de_boas_vindas(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        use crate::tema::inicio as m;
         let Some(tela) = &self.boas_vindas else {
             return div().into_any_element();
         };
@@ -157,85 +176,51 @@ impl Janela {
         let ultimo = passo + 1 == PASSOS.len();
         // Sem pasta escolhida não se passa do passo dela.
         let pode_seguir = passo != 1 || tela.pasta.is_some();
-        // Duas colunas (dono, 13/11/2026): à esquerda o logo e o que está escrito (o título, a
-        // frase e os passos, em lista); à direita, o cartão do passo de agora.
-        let medalhao = 88.;
-        let passos = v_flex().gap(esp::E12).children((0..PASSOS.len()).map(|i| {
-            let (agora, feito) = (i == passo, i < passo);
+        let sem_pasta = passo == 1 && tela.pasta.is_none();
+        // Os passos no alto: o de agora no cinza do cartão, os feitos com a bolinha verde. Dá para
+        // voltar a qualquer um e ir ao seguinte (o da pasta só com a pasta escolhida).
+        let pilulas = h_flex().ml_auto().gap(esp::E4).children(PASSOS.iter().enumerate().map(|(i, nome)| {
+            let (atual, feito) = (i == passo, i < passo);
+            let pode = i <= passo || (i == passo + 1 && !sem_pasta);
             h_flex()
+                .id(("bv-pilula", i))
+                .flex_none()
                 .items_center()
-                .gap(esp::E12)
-                .child(
-                    div()
-                        .flex_none()
-                        .size(r(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(raio::de(28.))
-                        .border_1()
-                        .map(|s| {
-                            if agora {
-                                s.bg(Cores::destaque()).border_color(Cores::destaque()).shadow(aresta_de_tecla())
-                            } else if feito {
-                                s.bg(Cores::tinta_solida(Cores::destaque(), 0.3)).border_color(Cores::tinta_borda(Cores::destaque()))
-                            } else {
-                                s.bg(gpui_kit::rgba(0x00000033)).border_color(Cores::forte().opacity(0.25))
-                            }
-                        })
-                        .child(if feito {
-                            super::mensagens::icone_de(Lucide::Check, 13.).text_color(Cores::forte()).into_any_element()
-                        } else {
-                            div()
-                                .etiqueta()
-                                .text_color(if agora { Cores::sobre_destaque() } else { Cores::forte().opacity(0.7) })
-                                .child(format!("{}", i + 1))
-                                .into_any_element()
-                        }),
-                )
-                .child(
-                    div()
-                        .corpo_ui()
-                        .font_weight(if agora { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                        .text_color(if agora { Cores::forte() } else { Cores::forte().opacity(0.7) })
-                        .child(PASSOS[i]),
-                )
+                .gap(esp::E6)
+                .h(r(24.))
+                .pl(m::PILULA_ESQUERDA)
+                .pr(m::PILULA_DIREITA)
+                .rounded(raio::de(24.))
+                .text_size(r(11.5))
+                .whitespace_nowrap()
+                .text_color(if atual { Cores::texto() } else if feito { Cores::tenue() } else { Cores::apagado() })
+                .when(atual, |s| s.bg(Cores::cartao_elevado()))
+                .child(div().flex_none().size(r(6.)).rounded_full().bg(if atual {
+                    Cores::destaque_texto()
+                } else if feito {
+                    Cores::verde()
+                } else {
+                    Cores::apagado().opacity(0.6)
+                }))
+                .child(*nome)
+                .when(pode && !atual, |s| {
+                    s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.ir_ao_passo(i, cx)))
+                })
         }));
-        let esquerda = v_flex()
+        let logo = div()
+            .relative()
             .flex_none()
-            .w(r(340.))
-            .items_start()
-            .gap(esp::E24)
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .size(r(medalhao))
-                    .child(div().absolute().top_0().left_0().size_full().child(malha_viva(FASE_INICIAL_DO_METAL, raio::de(medalhao), false)))
-                    .child(img(super::trilho::logo_v()).absolute().top_0().left_0().size_full())
-                    .child(div().absolute().inset_0().rounded(raio::de(medalhao)).shadow(aresta_de_tecla())),
-            )
-            .child(
-                v_flex()
-                    .gap(esp::E8)
-                    .child(div().text_size(r(32.)).line_height(r(38.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::forte()).child("Bem-vindo ao Vitral"))
-                    .child(
-                        div()
-                            .corpo_ui()
-                            // Sobre o metal à vista, o texto vai um degrau mais claro que o tênue.
-                            .text_color(Cores::texto())
-                            .child("Um lugar só para trabalhar com o Claude Code e o Codex: vários chats, cada um mexendo direto na sua pasta."),
-                    ),
-            )
-            .child(passos);
+            .size(r(36.))
+            .child(div().absolute().top_0().left_0().size_full().child(malha_viva(FASE_INICIAL_DO_METAL, raio::de(36.), false)))
+            .child(img(super::trilho::logo_v()).absolute().top_0().left_0().size_full());
         let corpo = match passo {
-            0 => self.passo_da_apresentacao().into_any_element(),
+            0 => self.passo_da_apresentacao(window).into_any_element(),
             1 => self.passo_da_pasta(tela, window, cx).into_any_element(),
             2 => self.passo_das_preferencias(tela, cx).into_any_element(),
             _ => self.passo_da_memoria(window, cx).into_any_element(),
         };
-        // O passo novo desliza do lado para onde se vai: Continuar traz da direita, Voltar da
-        // esquerda. O id leva o passo, para tocar a cada troca.
+        // O passo novo desliza do lado para onde se vai (sem crossfade): Continuar traz da direita,
+        // Voltar da esquerda. O id leva o passo, para tocar a cada troca.
         let corpo = match tela.indo {
             Some(adiante) => {
                 let de = if adiante { super::movimento::De::Direita } else { super::movimento::De::Esquerda };
@@ -243,65 +228,68 @@ impl Janela {
             }
             None => corpo,
         };
-        let rodape = h_flex()
-            .w_full()
-            .justify_between()
-            .child(if passo == 0 {
-                div().into_any_element()
-            } else {
-                botao_fantasma("bv-voltar", Some(Lucide::ArrowLeft.into()), "Voltar", TamanhoBotao::Controle, window, cx)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(tela) = &mut this.boas_vindas {
-                            tela.passo = tela.passo.saturating_sub(1);
-                            tela.indo = Some(false);
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
+        let botao_do_pe = |b: gpui_kit::component::button::Button| b.h(r(32.)).px(esp::E16).rounded(raio::de(32.)).text_size(r(13.));
+        let pe = h_flex()
+            .items_center()
+            .gap(esp::E8)
+            .pt(m::PE_Y)
+            .px(m::PE_X)
+            .pb(m::PE_X)
+            .when(passo > 0, |s| {
+                s.child(botao_do_pe(botao_fantasma("bv-voltar", None, "Voltar", TamanhoBotao::Controle, window, cx)).bg(Cores::cartao_elevado()).on_click(
+                    cx.listener(move |this, _, _, cx| this.ir_ao_passo(passo.saturating_sub(1), cx)),
+                ))
             })
+            .child(div().flex_1())
+            .when(sem_pasta && !tela.sugestoes.is_empty(), |s| s.child(div().text_size(r(12.)).text_color(Cores::apagado()).child("Escolha uma pasta")))
             .child(
-                botao_primario(
-                    "bv-seguir",
-                    Some(if ultimo { Lucide::Check } else { Lucide::ArrowRight }.into()),
-                    if ultimo { "Começar" } else { "Continuar" },
-                    TamanhoBotao::Controle,
-                    window,
-                    cx,
-                )
-                .when(!pode_seguir, |b| b.opacity(0.45).tooltip("Escolha a pasta de trabalho"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if !pode_seguir {
-                        return;
-                    }
-                    if ultimo {
-                        this.concluir_boas_vindas(cx);
-                    } else if let Some(tela) = &mut this.boas_vindas {
-                        tela.passo += 1;
-                        tela.indo = Some(true);
-                        cx.notify();
-                    }
-                })),
+                botao_do_pe(botao_primario("bv-seguir", None, if ultimo { "Começar" } else { "Continuar" }, TamanhoBotao::Controle, window, cx))
+                    .when(!pode_seguir, |b| b.opacity(0.45))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !pode_seguir {
+                            return;
+                        }
+                        if ultimo {
+                            this.concluir_boas_vindas(cx);
+                        } else {
+                            this.ir_ao_passo(passo + 1, cx);
+                        }
+                    })),
             );
         let cartao = v_flex()
-            .w_full()
-            .gap(esp::E24)
-            .p(esp::E24)
-            .rounded(crate::tema::raio_da_peca())
-            .bg(Cores::cartao_opaco())
-            .border_1()
-            .border_color(Cores::borda())
-            .shadow(crate::tema::sombra_flutuante())
-            .child(corpo)
-            .child(rodape);
+            .id("bv-cartao")
+            .w(r(m::LARGURA))
+            .max_w_full()
+            .max_h_full()
+            .rounded(raio::de(44.))
+            .bg(Cores::preto())
+            .overflow_hidden()
+            .child(h_flex().items_center().gap(esp::E12).pt(m::TOPO_Y).px(m::TOPO_X).child(logo).child(pilulas))
+            .child(div().flex_1().min_h(r(340.)).pt(m::PALCO_Y).px(m::PALCO_X).pb(esp::E8).overflow_hidden().child(corpo))
+            .child(pe);
+        // O brilho de baixo (o `radial-gradient` do protótipo): o GPUI não tem degradê redondo, e uma
+        // sombra grande e borrada de uma peça escondida embaixo da tela faz o mesmo efeito.
+        let brilho = div()
+            .absolute()
+            .left(relative(0.15))
+            .w(relative(0.7))
+            .bottom(relative(-0.3))
+            .h(relative(0.4))
+            .rounded_full()
+            .shadow(vec![BoxShadow::new(px(0.), px(0.), Cores::destaque().opacity(0.24)).blur_radius(px(240.)).spread_radius(px(40.))]);
         div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
-            .p(esp::E8)
+            .overflow_hidden()
+            .bg(Cores::vidro())
+            .child(brilho)
             .child(
                 div()
                     .flex()
                     .w_full()
+                    .p(esp::E8)
                     .child(self.arrastavel("arrastar-boas-vindas").flex_1().h(px(36.)))
                     .child(self.botoes_janela(cx)),
             )
@@ -316,74 +304,100 @@ impl Janela {
                     .justify_center()
                     .px(esp::E24)
                     .pb(esp::E32)
-                    .overflow_y_scroll()
-                    // Lado a lado; na janela estreita a coluna da direita desce.
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .max_w(r(1000.))
-                            .flex_wrap()
-                            .items_center()
-                            .justify_center()
-                            .gap_x(esp::E32)
-                            .gap_y(esp::E32)
-                            .child(esquerda)
-                            .child(div().flex_1().min_w(r(420.)).max_w(r(600.)).child(cartao)),
-                    ),
+                    .child(super::movimento::entrar(cartao, "bv-cartao-entra", super::movimento::De::Baixo)),
             )
             .into_any_element()
     }
 
-    /// Passo 1: o que é o Vitral, em três linhas.
-    fn passo_da_apresentacao(&self) -> impl IntoElement + use<> {
-        let linha = |icone: Lucide, titulo: &'static str, texto: &'static str| {
-            h_flex()
-                .items_start()
-                .gap(esp::E12)
-                .child(
-                    div()
-                        .flex_none()
-                        .size(r(36.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(raio::de(36.))
-                        .bg(Cores::tinta_solida(Cores::destaque(), 0.14))
-                        .border_1()
-                        .border_color(Cores::tinta_borda(Cores::destaque()))
-                        .child(super::mensagens::icone_de(icone, 16.).text_color(Cores::destaque_texto())),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(esp::E2)
-                        .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo))
-                        .child(div().corpo_ui().text_color(Cores::tenue()).child(texto)),
-                )
-        };
+    /// Vai ao passo `i`, deslizando do lado para onde se vai.
+    fn ir_ao_passo(&mut self, i: usize, cx: &mut Context<Self>) {
+        if let Some(tela) = &mut self.boas_vindas
+            && i != tela.passo
+            && i < PASSOS.len()
+        {
+            tela.indo = Some(i > tela.passo);
+            tela.passo = i;
+            cx.notify();
+        }
+    }
+
+    /// O título do passo, a frase de baixo e o conteúdo.
+    fn cabeca_do_passo(primeiro: bool, titulo: &'static str, frase: &'static str) -> Div {
         v_flex()
-            .gap(esp::E16)
-            .child(linha(
-                Lucide::MessagesSquare,
-                "Uma lista de chats",
-                "Cada chat é uma conversa trabalhando direto na sua pasta, como no VS Code. Em cada um você escolhe quem responde: o Claude ou o Codex.",
-            ))
-            .child(linha(
-                Lucide::Columns2,
-                "Vários ao mesmo tempo",
-                "Abas e painéis lado a lado: arraste uma aba para abrir outra conversa do lado e acompanhe as duas.",
-            ))
-            .child(linha(
-                Lucide::ShieldCheck,
-                "Você decide o que roda",
-                "Cada pedido de permissão aparece na tela, com o comando inteiro. Os perigosos pedem para segurar o botão.",
-            ))
-            .child(linha(
-                Lucide::Brain,
-                "O que se aprende fica",
-                "Ao fim de uma sessão que mexeu em arquivo, o agente revê o que vale guardar. Com a memória da equipe ligada, isso chega a todos.",
-            ))
+            .gap(esp::E6)
+            .child(
+                div()
+                    .text_size(r(if primeiro { 27. } else { 17. }))
+                    .line_height(r(if primeiro { 34. } else { 22. }))
+                    .font_weight(FontWeight(if primeiro { 650. } else { 620. }))
+                    .text_color(Cores::texto())
+                    .child(titulo),
+            )
+            .child(div().mb(esp::E4).text_size(r(13.5)).text_color(Cores::tenue()).child(frase))
+    }
+
+    /// Uma linha da apresentação e da memória: o ícone no azul e o título com a frase embaixo. Entra
+    /// um pouco depois da de cima.
+    fn linha_de_apresentacao(i: usize, icone: Lucide, titulo: &'static str, frase: &'static str) -> impl IntoElement {
+        let linha = h_flex()
+            .items_center()
+            .gap(esp::E12)
+            .py(crate::tema::inicio::LINHA_Y)
+            .px(crate::tema::inicio::LINHA_X)
+            .rounded(raio::CARTAO)
+            .bg(Cores::cartao_elevado())
+            .child(
+                div()
+                    .flex_none()
+                    .size(r(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(raio::de(28.))
+                    .bg(Cores::destaque().opacity(0.16))
+                    .child(super::mensagens::icone_de(icone, 16.).text_color(Cores::destaque_texto())),
+            )
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(titulo))
+                    .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child(frase)),
+            );
+        super::movimento::entrar_depois(linha, ("bv-linha", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
+    }
+
+    /// Passo 1: o que é o Vitral, em quatro linhas.
+    fn passo_da_apresentacao(&self, _window: &mut Window) -> impl IntoElement + use<> {
+        v_flex()
+            .gap(crate::tema::inicio::PASSO_VAO)
+            .child(Self::cabeca_do_passo(true, "Bem-vindo ao Vitral", "Chats que trabalham direto nas suas pastas."))
+            .child(
+                v_flex()
+                    .gap(esp::E4)
+                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, "Uma lista de chats", "Cada chat numa pasta. Claude, Codex ou Gemini."))
+                    .child(Self::linha_de_apresentacao(1, Lucide::Columns2, "Vários lado a lado", "Abas e conversas lado a lado."))
+                    .child(Self::linha_de_apresentacao(2, Lucide::ShieldCheck, "Você decide o que roda", "Cada permissão aparece na tela."))
+                    .child(Self::linha_de_apresentacao(3, Lucide::Brain, "O que se aprende fica", "O agente guarda o que vale lembrar.")),
+            )
+    }
+
+    /// O botão claro de uma linha só da tela (Outra pasta…, Ligar a memória…).
+    fn botao_da_tela(id: &'static str, icone: Lucide, rotulo: &'static str, window: &Window) -> Stateful<Div> {
+        h_flex()
+            .id(id)
+            .flex_none()
+            .items_center()
+            .gap(crate::tema::linear::CHAT_VAO)
+            .h(r(30.))
+            .px(crate::tema::inicio::BOTAO_X)
+            .rounded(raio::de(30.))
+            .bg(Cores::cartao_elevado())
+            .text_size(r(12.5))
+            .text_color(Cores::texto_da_fala())
+            .cursor_pointer()
+            .hover(|s| s.text_color(Cores::texto()))
+            .child(super::componentes::icone(icone, 15., window))
+            .child(rotulo)
     }
 
     /// Passo 4: a memória da equipe, que é opcional. O botão abre o mesmo diálogo das
@@ -393,52 +407,40 @@ impl Janela {
         let ligada = self.motor.as_ref().is_some_and(|m| {
             !endereco.is_empty() && crate::memoria_equipe::ler_chave(&m.read(cx).dados.config).is_some()
         });
-        let ponto = |titulo: &'static str, texto: &'static str| {
-            v_flex()
-                .gap(esp::E2)
-                .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo))
-                .child(div().corpo_ui().text_color(Cores::tenue()).child(texto))
+        let acao = if ligada {
+            h_flex()
+                .gap(crate::tema::linear::CHAT_VAO)
+                .text_size(r(12.5))
+                .text_color(Cores::verde())
+                .child(super::componentes::icone(Lucide::Check, 14., window))
+                .child(format!("Ligada a {endereco}"))
+                .into_any_element()
+        } else {
+            Self::botao_da_tela("bv-memoria", Lucide::Brain, "Ligar a memória…", window)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some(motor) = this.motor.clone() {
+                        super::memoria_equipe::abrir(motor, window, cx);
+                    }
+                }))
+                .into_any_element()
         };
-        let botao = super::componentes::botao_fantasma(
-            "bv-memoria",
-            Some(Lucide::Brain.into()),
-            if ligada { "Trocar o servidor…" } else { "Ligar a memória da equipe…" },
-            super::componentes::TamanhoBotao::Controle,
-            window,
-            cx,
-        )
-        .on_click(cx.listener(|this, _, window, cx| {
-            if let Some(motor) = this.motor.clone() {
-                super::memoria_equipe::abrir(motor, window, cx);
-            }
-        }));
         v_flex()
-            .gap(esp::E16)
-            .child(ponto(
-                "Todos com o mesmo contexto",
-                "Se a sua empresa tem um servidor de memória (ai-memory), os chats consultam e registram nele o que vale para a equipe: decisões, armadilhas, procedimentos.",
-            ))
-            .child(ponto(
-                "Só o que importa sobe",
-                "A equipe compartilha o que o agente registra como aprendizado. O histórico do chat não é enviado automaticamente à memória.",
-            ))
+            .gap(crate::tema::inicio::PASSO_VAO)
+            .items_start()
+            .child(Self::cabeca_do_passo(false, "Memória da equipe", "Opcional. Dá para ligar depois."))
             .child(
                 v_flex()
-                    .items_start()
-                    .gap(esp::E12)
-                    .child(botao)
-                    .when(ligada, |s| s.child(div().metadado().text_color(Cores::verde()).child(format!("Ligada a {endereco}")))),
+                    .w_full()
+                    .gap(esp::E4)
+                    .child(Self::linha_de_apresentacao(0, Lucide::MessagesSquare, "Todos com o mesmo contexto", "Decisões e armadilhas num lugar só."))
+                    .child(Self::linha_de_apresentacao(1, Lucide::ShieldCheck, "Só o que importa sobe", "O histórico do chat não vai.")),
             )
-            .child(
-                div()
-                    .metadado()
-                    .text_color(Cores::tenue())
-                    .child("Não tem servidor ou não tem a chave agora? Pode seguir: dá para ligar depois em Memória da equipe, no menu do logo."),
-            )
+            .child(acao)
     }
 
     /// Passo 2: a pasta de trabalho. As sugestões são as pastas em que o Claude Code já tem
-    /// conversas; a escolhida fica marcada, e o botão abre o seletor do sistema.
+    /// conversas; a escolhida fica com a borda azul e o certinho, e o botão abre o seletor do
+    /// sistema.
     fn passo_da_pasta(&self, tela: &BoasVindas, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let escolhida = tela.pasta.clone();
         // A escolhida que não está entre as sugestões (veio do seletor) entra no alto da lista.
@@ -448,179 +450,191 @@ impl Janela {
         {
             linhas.insert(0, (pasta.clone(), None));
         }
-        let lista = v_flex().gap(esp::E6).children(linhas.into_iter().enumerate().map(|(i, (pasta, conversas))| {
+        let procurando = tela.procurando && linhas.is_empty();
+        let lista_vazia = linhas.is_empty();
+        let lista = v_flex().gap(esp::E4).children(linhas.into_iter().enumerate().map(|(i, (pasta, conversas))| {
             let marcada = escolhida.as_ref() == Some(&pasta);
-            let nome = pasta.file_name().map_or_else(|| pasta.display().to_string(), |n| n.to_string_lossy().into_owned());
             let alvo = pasta.clone();
-            h_flex()
+            let linha = h_flex()
                 .id(("bv-pasta", i))
-                .h(r(52.))
+                .h(r(46.))
                 .px(esp::E12)
-                .gap(esp::E12)
-                .rounded(raio::CONTROLE)
-                .border_1()
+                .gap(crate::tema::inicio::PASTA_VAO)
+                .rounded(raio::CARTAO)
+                .border(px(1.5))
                 .cursor_pointer()
                 .map(|s| {
                     if marcada {
-                        s.bg(Cores::tinta_solida(Cores::destaque(), 0.14)).border_color(Cores::tinta_borda(Cores::destaque()))
+                        s.border_color(Cores::destaque()).bg(Cores::cartao_elevado().blend(Cores::destaque().opacity(0.12)))
                     } else {
-                        s.border_color(Cores::borda()).hover(|s| s.bg(Cores::hover()))
+                        s.border_color(gpui_kit::transparent_black()).bg(Cores::cartao_elevado()).hover(|s| s.bg(Cores::cartao_elevado().blend(Cores::forte().opacity(0.04))))
                     }
                 })
-                .child(
-                    super::mensagens::icone_de(if marcada { Lucide::FolderOpen } else { Lucide::Folder }, 16.)
-                        .text_color(if marcada { Cores::destaque_texto() } else { Cores::tenue() }),
-                )
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().truncate().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(nome))
-                        .child(div().truncate().metadado().font_family(FONTE_MONO).text_color(Cores::tenue()).child(com_til(&pasta))),
-                )
+                .child(super::componentes::icone(Lucide::Folder, 16., window).text_color(Cores::tenue()))
+                .child(div().min_w_0().truncate().font_family(FONTE_MONO).text_size(r(13.)).font_weight(FontWeight::MEDIUM).text_color(Cores::texto()).child(com_til(&pasta)))
+                .child(div().flex_1())
                 .children(conversas.map(|n| {
-                    div().flex_none().metadado().text_color(Cores::tenue()).child(if n == 1 {
-                        "1 conversa".to_string()
-                    } else {
-                        format!("{n} conversas")
-                    })
+                    div().flex_none().whitespace_nowrap().text_size(r(12.)).text_color(Cores::apagado()).child(if n == 1 { "1 chat".to_string() } else { format!("{n} chats") })
                 }))
-                .when(marcada, |s| s.child(super::mensagens::icone_de(Lucide::Check, 14.).text_color(Cores::destaque_texto())))
+                .when(marcada, |s| {
+                    s.child(
+                        div()
+                            .flex_none()
+                            .size(r(18.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(Cores::destaque())
+                            .text_color(Cores::forte())
+                            .child(super::componentes::icone(Lucide::Check, 11., window)),
+                    )
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(tela) = &mut this.boas_vindas {
                         tela.pasta = Some(alvo.clone());
                         cx.notify();
                     }
-                }))
+                }));
+            super::movimento::entrar_depois(linha, ("bv-pasta-entra", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
         }));
         v_flex()
-            .gap(esp::E16)
-            .child(
-                v_flex()
-                    .gap(esp::E4)
-                    .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child("Em qual pasta você trabalha?"))
-                    .child(
-                        div()
-                            .corpo_ui()
-                            .text_color(Cores::tenue())
-                            .child("É como o Abrir pasta do VS Code: todo chat novo nasce nela, e a lista mostra os chats dela. Dá para trocar depois, no menu do logo."),
-                    ),
-            )
-            .when(tela.sugestoes.is_empty() && escolhida.is_none(), |s| {
-                s.child(div().metadado().text_color(Cores::apagado()).child("Procurando as pastas em que você já usa o Claude Code…"))
+            .gap(crate::tema::inicio::PASSO_VAO)
+            .items_start()
+            .child(Self::cabeca_do_passo(false, "Em qual pasta você trabalha?", "Os chats novos nascem nela."))
+            .when(procurando, |s| {
+                s.child(
+                    h_flex()
+                        .gap(esp::E8)
+                        .text_size(r(12.5))
+                        .text_color(Cores::apagado())
+                        .child(super::componentes::AnelGirando::new(14.).cor(Cores::destaque()))
+                        .child("Procurando suas pastas…"),
+                )
             })
-            .child(lista)
-            .child(
-                h_flex().child(
-                    botao_fantasma("bv-outra-pasta", Some(Lucide::FolderSearch.into()), "Escolher outra pasta…", TamanhoBotao::Controle, window, cx)
-                        .on_click(cx.listener(|this, _, window, cx| this.escolher_pasta_de_trabalho(window, cx))),
-                ),
-            )
+            .when(!lista_vazia, |s| s.child(lista.w_full()))
+            .child(Self::botao_da_tela("bv-outra-pasta", Lucide::FolderSearch, "Outra pasta…", window).on_click(cx.listener(|this, _, window, cx| this.escolher_pasta_de_trabalho(window, cx))))
     }
 
-    /// Passo 3: as três preferências básicas (tudo muda depois, nas Configurações ou na caixa de
-    /// cada chat).
+    /// Passo 3: as preferências básicas (tudo muda depois, nas Configurações ou na caixa de cada
+    /// chat), cada uma num segmentado no cinza do cartão.
     fn passo_das_preferencias(&self, tela: &BoasVindas, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let grupo = |titulo: &'static str, texto: String, controle: AnyElement| {
-            v_flex()
-                .gap(esp::E8)
-                .child(
-                    v_flex()
-                        .gap(esp::E2)
-                        .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo))
-                        .child(div().metadado().text_color(Cores::tenue()).child(texto)),
-                )
-                .child(controle)
-        };
         let janela = cx.entity().downgrade();
-        let (j1, j2, j3, j4) = (janela.clone(), janela.clone(), janela.clone(), janela);
+        let segmentado = |id: &'static str, opcoes: Vec<(SharedString, Option<AnyElement>)>, escolhida: usize, escolher: Box<dyn Fn(usize, &mut App)>| {
+            let escolher = std::rc::Rc::new(escolher);
+            h_flex()
+                .flex_none()
+                .gap(esp::E2)
+                .p(esp::E2)
+                .h(r(32.))
+                .rounded(raio::de(32.))
+                .bg(Cores::cartao_elevado())
+                .children(opcoes.into_iter().enumerate().map(move |(i, (nome, simbolo))| {
+                    let escolher = escolher.clone();
+                    h_flex()
+                        .id((id, i))
+                        .items_center()
+                        .gap(crate::tema::linear::CHAT_VAO)
+                        .h(r(28.))
+                        .px(crate::tema::inicio::BOTAO_X)
+                        .rounded(raio::de(28.))
+                        .whitespace_nowrap()
+                        .text_size(r(12.5))
+                        .map(|s| if i == escolhida { s.bg(Cores::selecao()).text_color(Cores::texto()) } else { s.text_color(Cores::tenue()).cursor_pointer() })
+                        .children(simbolo)
+                        .child(nome)
+                        .on_click(move |_, _, cx| escolher(i, cx))
+                }))
+        };
+        let preferencia = |titulo: &'static str, controle: AnyElement, frase: Option<String>| {
+            v_flex()
+                // O segmentado na largura dele, não na do cartão.
+                .items_start()
+                .gap(esp::E6)
+                .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child(titulo))
+                .child(controle)
+                .children(frase.map(|f| div().min_h(r(17.)).text_size(r(12.5)).text_color(Cores::tenue()).child(f)))
+        };
+        let mudar = |f: fn(&mut BoasVindas, usize)| {
+            let janela = janela.clone();
+            Box::new(move |i: usize, cx: &mut App| {
+                let _ = janela.update(cx, |this, cx| {
+                    if let Some(tela) = &mut this.boas_vindas {
+                        f(tela, i);
+                        cx.notify();
+                    }
+                });
+            }) as Box<dyn Fn(usize, &mut App)>
+        };
+        let modo = tela.modo.min(MODOS.len() - 1);
         let agentes = crate::modelo::Agente::instalados();
         let agente = tela.agente.min(agentes.len().saturating_sub(1));
-        let escolhido = agentes.get(agente).copied().unwrap_or_default();
-        let nomes_dos_agentes: Vec<&'static str> = agentes.iter().map(|a| a.nome()).collect();
-        let modo = tela.modo.min(MODOS.len() - 1);
-        let modelo = tela.modelo.min(MODELOS.len() - 1);
-        let nomes_dos_modos: Vec<&'static str> = MODOS.iter().map(|(_, nome, _)| *nome).collect();
-        let nomes_dos_modelos: Vec<&'static str> = MODELOS.iter().map(|(_, nome)| *nome).collect();
+        // Os modelos do protótipo: Opus, Sonnet e Haiku (o Padrão saiu do seletor em 25/11).
+        let modelos: Vec<usize> = MODELOS.iter().enumerate().filter(|(_, (v, _))| matches!(*v, "opus" | "sonnet" | "haiku")).map(|(i, _)| i).collect();
+        let modelo = modelos.iter().position(|i| *i == tela.modelo).unwrap_or(0);
         let importar = tela.importar;
-        let pasta = tela.pasta.as_deref().map(com_til).unwrap_or_default();
+        let j = janela.clone();
         v_flex()
-            .gap(esp::E24)
-            .child(grupo(
+            .gap(esp::E16)
+            .child(preferencia(
                 "Permissões",
-                MODOS[modo].2.to_string(),
-                ControleSegmentado::new("bv-modo", nomes_dos_modos, modo, move |novo, _, cx| {
-                    let _ = j1.update(cx, |this, cx| {
-                        if let Some(tela) = &mut this.boas_vindas {
-                            tela.modo = novo;
-                            cx.notify();
-                        }
-                    });
-                })
-                .with_size(Size::Medium)
-                .largura_total(true)
-                .into_any_element(),
+                segmentado("bv-modo", MODOS.iter().map(|(_, nome, _)| (SharedString::from(*nome), None)).collect(), modo, mudar(|t, i| t.modo = i)).into_any_element(),
+                Some(MODOS[modo].2.to_string()),
             ))
             .when(agentes.len() > 1, |s| {
-                s.child(grupo(
+                s.child(preferencia(
                     "Quem responde",
-                    if escolhido == crate::modelo::Agente::Claude {
-                        "Os chats novos começam no Claude. Cada chat pode passar para outro agente no seletor de modelo.".to_string()
-                    } else {
-                        format!(
-                            "Os chats novos começam no {}, com o login e o plano dele. Cada chat pode trocar no seletor de modelo.",
-                            escolhido.nome()
-                        )
-                    },
-                    ControleSegmentado::new("bv-agente", nomes_dos_agentes, agente, move |novo, _, cx| {
-                        let _ = j4.update(cx, |this, cx| {
-                            if let Some(tela) = &mut this.boas_vindas {
-                                tela.agente = novo;
-                                cx.notify();
-                            }
-                        });
-                    })
-                    .with_size(Size::Medium)
-                    .largura_total(true)
+                    segmentado(
+                        "bv-agente",
+                        agentes.iter().map(|a| (SharedString::from(a.nome()), Some(super::componentes::Marca::do_agente(*a).glifo(15.)))).collect(),
+                        agente,
+                        mudar(|t, i| t.agente = i),
+                    )
                     .into_any_element(),
+                    Some("Cada chat pode trocar.".to_string()),
                 ))
             })
-            .child(grupo(
+            .child(preferencia(
                 "Modelo do Claude",
-                if modelo == 0 {
-                    "O padrão do seu Claude Code. Cada chat pode trocar o dele na caixa de mensagem.".to_string()
-                } else {
-                    format!("Os chats novos começam no {}. Cada chat pode trocar o dele na caixa de mensagem.", MODELOS[modelo].1)
-                },
-                ControleSegmentado::new("bv-modelo", nomes_dos_modelos, modelo, move |novo, _, cx| {
-                    let _ = j2.update(cx, |this, cx| {
-                        if let Some(tela) = &mut this.boas_vindas {
-                            tela.modelo = novo;
-                            cx.notify();
-                        }
-                    });
-                })
-                .with_size(Size::Medium)
-                .largura_total(true)
+                segmentado(
+                    "bv-modelo",
+                    modelos.iter().map(|i| (SharedString::from(MODELOS[*i].1), None)).collect(),
+                    modelo,
+                    {
+                        let modelos = modelos.clone();
+                        let janela = janela.clone();
+                        Box::new(move |i: usize, cx: &mut App| {
+                            let indice = modelos[i];
+                            let _ = janela.update(cx, |this, cx| {
+                                if let Some(tela) = &mut this.boas_vindas {
+                                    tela.modelo = indice;
+                                    cx.notify();
+                                }
+                            });
+                        })
+                    },
+                )
                 .into_any_element(),
+                None,
             ))
             .child(
                 h_flex()
                     .items_center()
-                    .gap(esp::E16)
+                    .gap(esp::E12)
+                    .py(crate::tema::inicio::LINHA_X)
+                    .px(esp::E12)
+                    .rounded(raio::CARTAO)
+                    .bg(Cores::cartao_elevado())
                     .child(
                         v_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap(esp::E2)
-                            .child(div().corpo_ui().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child("Trazer as conversas que já existem"))
-                            .child(div().metadado().text_color(Cores::tenue()).child(format!(
-                                "As conversas do Claude Code de {pasta} (do terminal e do VS Code) entram na lista. Nada lá é mudado."
-                            ))),
+                            .child(div().text_size(r(13.)).font_weight(FontWeight::SEMIBOLD).text_color(Cores::texto()).child("Trazer as conversas que já existem"))
+                            .child(div().text_size(r(12.5)).text_color(Cores::tenue()).child("Do Claude Code, nesta pasta.")),
                     )
                     .child(Switch::new("bv-importar").checked(importar).on_click(move |novo, _, cx| {
                         let novo = *novo;
-                        let _ = j3.update(cx, |this, cx| {
+                        let _ = j.update(cx, |this, cx| {
                             if let Some(tela) = &mut this.boas_vindas {
                                 tela.importar = novo;
                                 cx.notify();

@@ -75,13 +75,6 @@ impl Aperto {
     }
 }
 
-/// O texto da busca: "Buscar", e o resto na dica do campo (com o Ctrl+K).
-fn dica_da_busca(aba: AbaLateral, apertada: bool) -> &'static str {
-    match (aba, apertada) {
-        (AbaLateral::Arquivos, false) => "Buscar arquivos",
-        _ => "Buscar",
-    }
-}
 
 /// Onde uma conversa aparece na lista.
 #[derive(PartialEq)]
@@ -1001,7 +994,8 @@ impl Janela {
         let largura = window.use_keyed_state("largura-da-lista", cx, move |_, _| inicial);
         let largura_atual = *largura.read(cx);
         let aperto = Aperto::de(largura_atual);
-        let dica = dica_da_busca(self.aba, aperto.apertada);
+        // O texto da busca: "Buscar", e o resto na dica do campo (com o Ctrl+K).
+        let dica = "Buscar";
         if self.dica_busca != dica {
             self.dica_busca = dica;
             self.busca.update(cx, |b, cx| b.set_placeholder(dica, window, cx));
@@ -2291,7 +2285,7 @@ pub(super) fn avisar_arquivadas(motor: Entity<Motor>, ids: Vec<String>, texto: S
 mod testes {
     use super::{
         AbaLateral, Aperto, Causa, Faixa, Motivo, MotivoDaPrevia, No, PendenciaDoMotor, achado_na_conversa,
-        arquivadas_que_casam, dica_da_busca, meia_noite_local, milhar, montar_arvore,
+        arquivadas_que_casam, meia_noite_local, milhar, montar_arvore,
         motivo, partes_da_previa, posicao_do_realce, texto_agentes, trecho,
     };
     use crate::modelo::{Chat, Execucao, Item};
@@ -2568,14 +2562,6 @@ mod testes {
         // px a 150% (a do z01, com a Equipe ao lado) é a de 200, apertada.
         assert_eq!(Aperto::de(468. / 1.5), Aperto::de(312.));
         assert_eq!(Aperto::de(300. / 1.5), Aperto { sem_rotulos: true, estreita: true, apertada: true });
-    }
-
-    #[test]
-    fn a_busca_diz_so_buscar() {
-        assert_eq!(dica_da_busca(AbaLateral::Conversas, false), "Buscar");
-        assert_eq!(dica_da_busca(AbaLateral::Conversas, true), "Buscar");
-        assert_eq!(dica_da_busca(AbaLateral::Arquivos, false), "Buscar arquivos");
-        assert_eq!(dica_da_busca(AbaLateral::Arquivos, true), "Buscar");
     }
 
     #[test]

@@ -507,25 +507,6 @@ fn linhas_do_codex(escolhido: Option<&str>, oferecidos: &[ModeloDoCodex]) -> Vec
     linhas
 }
 
-/// O prefixo das chaves do grupo "Perfis" no seletor: `perfil:<id>`. Escolher uma deixa o chat
-/// como o perfil diz (`Motor::aplicar_perfil`).
-const DO_PERFIL: &str = "perfil:";
-
-/// As linhas do grupo "Perfis": os perfis de quem responde na aba `aba`, na ordem das
-/// Configurações, com a nota de quando usar (ou o resumo) embaixo do nome. O que bate com o chat
-/// leva o "em uso"; `chat` é `None` na aba que não é a do chat.
-#[cfg_attr(not(test), allow(dead_code))]
-fn linhas_de_perfil(perfis: &[crate::perfis::Perfil], aba: Agente, chat: Option<&Chat>, modo_padrao: &str) -> Vec<LinhaDeModelo> {
-    perfis
-        .iter()
-        .filter(|p| p.agente == aba)
-        .map(|p| LinhaDeModelo {
-            em_uso: chat.is_some_and(|c| p.bate_com(c, modo_padrao)),
-            ..LinhaDeModelo::new(format!("{DO_PERFIL}{}", p.id), p.nome.clone(), crate::ui::configuracoes::perfis::segunda_linha(p))
-        })
-        .collect()
-}
-
 /// O seletor tem as abas dos agentes: com o Codex ou o Gemini instalado, ou num chat que já é de
 /// um deles.
 fn com_abas_de_agente(chat: &Chat) -> bool {
@@ -1121,18 +1102,6 @@ impl Janela {
                                     }
                                     return;
                                 }
-                                // Uma linha do grupo dos perfis deixa o chat como o perfil diz.
-                                if let Some(perfil) = valor.strip_prefix(DO_PERFIL) {
-                                    let nome = motor_e.as_ref().and_then(|m| {
-                                        let aplicou = m.update(cx, |m, cx| m.aplicar_perfil(&chat_id, perfil, cx));
-                                        aplicou.then(|| m.read(cx).config.perfis.iter().find(|p| p.id == perfil).map(|p| p.nome.clone())).flatten()
-                                    });
-                                    if let Some(nome) = nome {
-                                        let _ = janela.update(cx, |this, cx| this.avisar_na_estreita(painel, format!("Perfil: {nome}"), window, cx));
-                                    }
-                                    abrir_ou_fechar(&janela, painel, PopCaixa::Modelo, false, cx);
-                                    return;
-                                }
                                 // Uma linha do grupo da conta troca só a conta do chat.
                                 if let Some(conta) = valor.strip_prefix(DA_CONTA) {
                                     let conta = conta.to_string();
@@ -1658,34 +1627,6 @@ mod testes {
         assert_eq!(avisos.len(), 3);
         // O que atrapalha também cabe numa linha; o porquê vai na dica.
         assert!(avisos.iter().all(|(curto, porque)| curto.chars().count() <= 52 && porque.len() > curto.len()), "{avisos:?}");
-    }
-
-    #[test]
-    fn os_perfis_do_agente_da_aba_vao_no_seletor_com_a_nota_e_o_em_uso() {
-        use super::linhas_de_perfil;
-        use crate::{modelo::{Agente, Chat}, perfis::Perfil};
-        let perfis = vec![
-            Perfil { id: "a".into(), nome: "Planejar".into(), modelo: "opus".into(), modo: "plan".into(), nota: "Antes de mudança grande".into(), ..Perfil::default() },
-            Perfil { id: "b".into(), nome: "Revisor".into(), agente: Agente::Codex, ..Perfil::default() },
-            Perfil { id: "c".into(), nome: "Rápido".into(), modelo: "haiku".into(), ..Perfil::default() },
-        ];
-        let mut chat = Chat::novo("c1".into(), "Chat", std::path::PathBuf::from("/p"));
-        (chat.modelo, chat.permissao) = (Some("opus".into()), Some("plan".into()));
-        // Na aba do Claude, só os do Claude, na ordem das Configurações; a chave leva o prefixo.
-        let do_claude = linhas_de_perfil(&perfis, Agente::Claude, Some(&chat), "manual");
-        assert_eq!(titulos(&do_claude), ["Planejar", "Rápido"]);
-        assert_eq!(do_claude[0].valor, "perfil:a");
-        // Com nota, é ela que vai embaixo do nome; sem nota, o resumo do que o perfil escolhe.
-        assert_eq!(do_claude[0].descricao, "Antes de mudança grande");
-        assert_eq!(do_claude[1].descricao, "Claude · Haiku");
-        // O que bate com o chat leva o "em uso".
-        assert!(do_claude[0].em_uso && !do_claude[1].em_uso);
-        // Na aba do outro agente, os dele, e nada em uso.
-        let do_codex = linhas_de_perfil(&perfis, Agente::Codex, None, "manual");
-        assert_eq!(titulos(&do_codex), ["Revisor"]);
-        assert!(!do_codex[0].em_uso);
-        // Sem perfil daquele agente, o grupo não existe.
-        assert!(linhas_de_perfil(&perfis[..1], Agente::Codex, None, "manual").is_empty());
     }
 
     #[test]

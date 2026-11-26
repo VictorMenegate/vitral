@@ -194,6 +194,8 @@ pub struct Pagina {
     /// As linhas em branco depois do último bloco (com a do fim do arquivo).
     fim: Vec<String>,
     proximo_id: u64,
+    /// Quantos blocos vieram do arquivo: os de id maior nasceram na página.
+    lidos: u64,
 }
 
 fn eh_titulo(l: &str) -> Option<(usize, &str)> {
@@ -368,7 +370,7 @@ impl Pagina {
             blocos.push(b);
         }
         let proximo_id = blocos.len() as u64 + 1;
-        Pagina { frente, blocos, fim: brancas, proximo_id }
+        Pagina { frente, blocos, fim: brancas, proximo_id, lidos: proximo_id - 1 }
     }
 
     /// O texto do arquivo: o que não mudou, como veio; o resto, escrito de novo.
@@ -441,6 +443,11 @@ impl Pagina {
         b.id = self.proximo_id;
         self.proximo_id += 1;
         b
+    }
+
+    /// O bloco nasceu na página (não veio do arquivo).
+    pub fn novo(&self, id: u64) -> bool {
+        id > self.lidos
     }
 
     /// Onde está o bloco de `id`.
