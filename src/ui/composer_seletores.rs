@@ -460,8 +460,33 @@ fn chave_do_modelo(chat: &Chat, padrao_pasta: &str) -> String {
         }
         Agente::Claude => modelo,
         Agente::Codex => format!("{DO_CODEX}{modelo}"),
-        Agente::Gemini => format!("{DO_GEMINI}{modelo}"),
+        outro => format!("{}{modelo}", prefixo_acp(outro)),
     }
+}
+
+/// O prefixo das chaves de um agente ACP no seletor: `gemini:` no Gemini (o de antes) e
+/// `<nome>:` nos novos ("copilot:", "kimi:").
+fn prefixo_acp(agente: Agente) -> String {
+    if agente == Agente::Gemini { DO_GEMINI.to_string() } else { format!("{}:", agente.nome().to_lowercase()) }
+}
+
+/// O agente ACP e o modelo de uma chave do seletor ("kimi:k2" é o Kimi com o k2).
+fn agente_acp_da_chave(valor: &str) -> Option<(Agente, String)> {
+    Agente::TODOS.into_iter().filter(|a| a.acp()).find_map(|a| valor.strip_prefix(&prefixo_acp(a)).map(|resto| (a, resto.to_string())))
+}
+
+/// As linhas de um agente ACP novo: os modelos que a última sessão dele ofereceu (vazio antes da
+/// primeira conversa: fica o Padrão, que passa o chat para ele) e o escolhido que saiu da lista.
+fn linhas_acp(agente: Agente, escolhido: Option<&str>, oferecidos: &[agente_gemini::ModeloDoGemini]) -> Vec<LinhaDeModelo> {
+    let prefixo = prefixo_acp(agente);
+    let mut linhas: Vec<LinhaDeModelo> = oferecidos.iter().map(|m| LinhaDeModelo::new(format!("{prefixo}{}", m.valor), m.nome.clone(), "")).collect();
+    if linhas.is_empty() {
+        linhas.push(LinhaDeModelo::new(prefixo.clone(), "Padrão", format!("O modelo que o {} usa", agente.nome())));
+    }
+    if let Some(antigo) = escolhido.filter(|e| !e.is_empty() && !oferecidos.iter().any(|m| m.valor == *e)) {
+        linhas.push(LinhaDeModelo::new(format!("{prefixo}{antigo}"), antigo, "escolhido antes"));
+    }
+    linhas
 }
 
 /// As linhas do Gemini: o padrão dele e os modelos que a conta tem no Antigravity (o Gemini, e
@@ -640,6 +665,7 @@ fn partes_do_seletor(motor: &Motor, chat: &Chat, aba: Agente) -> PartesDoSeletor
             // "por que tem essa conta aqui se agora tem o Codex também?"). Só com mais de uma conta.
             partes.conta = pe_da_conta(motor, chat);
         }
+        outro => partes.grupos.push((titulo_dos_modelos(), linhas_acp(outro, escolhido, &agente_gemini::modelos_de(outro)))),
     }
     partes
 }
@@ -995,6 +1021,9 @@ impl Janela {
             Agente::Codex => agente_codex::dica_da_permissao(&atual),
             Agente::Gemini => agente_gemini::dica_da_permissao(&atual),
             Agente::Claude => descricao_do_modo(&atual),
+            // Os ACP novos: o modo vai pela sessão quando o agente o tem; o Sem perguntar, o
+            // Vitral aprova sozinho.
+            _ => descricao_do_modo(&atual),
         };
         let dica: SharedString = format!("Modo de permissão: {}\n{}", nome_do_modo(&atual), descricao).into();
         let chip = |aberto: bool| {
@@ -1046,6 +1075,14 @@ impl Janela {
             );
             let detalhe = if chat.modelo.is_some() { "pelo Antigravity, escolhido nesta conversa" } else { "o modelo que o Antigravity escolher" };
             (curto.clone(), curto, detalhe.to_string())
+        } else if chat.agente.acp() {
+            let agente = chat.agente;
+            let curto = chat.modelo.as_deref().map_or_else(
+                || em_uso.clone().unwrap_or_else(|| agente.nome().to_string()),
+                |m| agente_gemini::nome_do_modelo_de(agente, m),
+            );
+            let detalhe = if chat.modelo.is_some() { format!("do {}, escolhido nesta conversa", agente.nome()) } else { format!("o modelo que o {} escolher", agente.nome()) };
+            (curto.clone(), curto, detalhe)
         } else {
             let curto = rotulo_modelo(&efetivo, em_uso.as_deref());
             let detalhe = match (&chat.modelo, &em_uso) {
@@ -1145,17 +1182,17 @@ impl Janela {
                                 }
                                 // A linha escolhida diz também quem responde: as do grupo do Codex
                                 // e do Gemini passam o chat para eles, as outras para o Claude.
-                                let (agente, modelo) = match (valor.strip_prefix(DO_CODEX), valor.strip_prefix(DO_GEMINI)) {
+                                let (agente, modelo) = match (valor.strip_prefix(DO_CODEX), agente_acp_da_chave(&valor)) {
                                     (Some(slug), _) => (Agente::Codex, slug.to_string()),
-                                    (_, Some(valor)) => (Agente::Gemini, valor.to_string()),
+                                    (_, Some((agente, valor))) => (agente, valor),
                                     _ => (Agente::Claude, valor),
                                 };
                                 let nome = match agente {
                                     Agente::Codex if modelo.is_empty() => "Codex".to_string(),
                                     Agente::Codex => agente_codex::nome_do_modelo(&modelo),
-                                    Agente::Gemini if modelo.is_empty() => "Gemini".to_string(),
-                                    Agente::Gemini => agente_gemini::nome_do_modelo(&modelo),
                                     Agente::Claude => com_claude(&rotulo_modelo(&modelo, None)),
+                                    outro if modelo.is_empty() => outro.nome().to_string(),
+                                    outro => agente_gemini::nome_do_modelo_de(outro, &modelo),
                                 };
                                 if let Some(m) = &motor_e {
                                     m.update(cx, |m, cx| m.definir_agente(&chat_id, agente, Some(modelo).filter(|v| !v.is_empty()), cx));
@@ -1341,7 +1378,7 @@ impl Janela {
             fila_a_parte: composer::enter_no_turno(motor, &chat.id) != composer::Enter::Fila,
             outro_instalado: outro.instalado(),
             // O `/compact` é do Claude Code e do Codex, e precisa de uma conversa para resumir.
-            compactar: chat.agente != Agente::Gemini && chat.sessao_criada,
+            compactar: !chat.agente.acp() && chat.sessao_criada,
             tem_agentes: crate::ui::mapa_agentes::tem_agentes(chat),
             rodando: b.rodando,
         };

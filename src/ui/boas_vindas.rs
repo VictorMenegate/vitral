@@ -402,6 +402,10 @@ impl Janela {
                 }
                 crate::modelo::Agente::Codex => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Da OpenAI, com a conta do ChatGPT".to_string() }),
                 crate::modelo::Agente::Gemini => (agente.instalado(), if agente.instalado() { "Instalado".into() } else { "Do Google, com a conta Google".to_string() }),
+                outro => (
+                    outro.instalado(),
+                    if outro.instalado() { "Instalado".into() } else { crate::agente_acp::perfil(outro).map_or("", |p| p.descricao).to_string() },
+                ),
             };
             let acao = if instalada {
                 h_flex()
@@ -413,12 +417,8 @@ impl Janela {
                     .child("Pronto")
                     .into_any_element()
             } else {
-                Self::botao_da_tela(["bv-instalar-claude", "bv-instalar-codex", "bv-instalar-gemini"][i], Lucide::Download, "Instalar", window)
-                    .on_click(move |_, _, _| match agente {
-                        crate::modelo::Agente::Claude => super::uso_plano::instalar_claude(),
-                        crate::modelo::Agente::Codex => super::uso_plano::instalar_codex(),
-                        crate::modelo::Agente::Gemini => super::uso_plano::instalar_gemini(),
-                    })
+                Self::botao_da_tela(("bv-instalar", i), Lucide::Download, "Instalar", window)
+                    .on_click(move |_, _, _| super::uso_plano::instalar(agente))
                     .into_any_element()
             };
             let linha = h_flex()
@@ -445,7 +445,8 @@ impl Janela {
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
             .child(Self::cabeca_do_passo(false, "Suas IAs", "Instale as que você quer usar. Dá para mudar depois em Configurações, Agentes."))
-            .child(v_flex().gap(esp::E4).children(linhas))
+            // Nove IAs desde 26/11/2026: a lista rola dentro do cartão.
+            .child(div().id("bv-ias").max_h(r(320.)).overflow_y_scroll().child(v_flex().gap(esp::E4).children(linhas)))
     }
 
     /// O título do passo, a frase de baixo e o conteúdo.
@@ -509,7 +510,7 @@ impl Janela {
     }
 
     /// O botão claro de uma linha só da tela (Outra pasta…, Ligar a memória…).
-    fn botao_da_tela(id: &'static str, icone: Lucide, rotulo: &'static str, window: &Window) -> Stateful<Div> {
+    fn botao_da_tela(id: impl Into<ElementId>, icone: Lucide, rotulo: &'static str, window: &Window) -> Stateful<Div> {
         h_flex()
             .id(id)
             .flex_none()

@@ -1624,6 +1624,27 @@ impl Janela {
             (TipoDeErro::Limite, Agente::Gemini) => continuar(&mut acoes),
             (TipoDeErro::Login, Agente::Gemini) => acoes.push(gemini("Entrar no Gemini", Lucide::KeyRound, "entrar")),
             (TipoDeErro::SemAgente, Agente::Gemini) => acoes.push(gemini("Instalar o Gemini", Lucide::Download, "instalar")),
+            // Os ACP novos: o instalador (que também entra) e o login, pelo perfil de cada um.
+            (TipoDeErro::Limite, outro) if outro.acp() => continuar(&mut acoes),
+            (TipoDeErro::Login | TipoDeErro::SemAgente, outro) if outro.acp() => {
+                let rotulo = if lido.tipo == TipoDeErro::Login { format!("Entrar no {}", outro.nome()) } else { format!("Instalar o {}", outro.nome()) };
+                let login = lido.tipo == TipoDeErro::Login;
+                acoes.push(
+                    fantasma(
+                        id(if login { "entrar" } else { "instalar" }),
+                        Some(if login { Lucide::KeyRound } else { Lucide::Download }),
+                        rotulo,
+                        TamanhoBotao::Linha,
+                        move |_, _, _| match crate::agente_acp::perfil(outro) {
+                            Some(perfil) if login => perfil.entrar(),
+                            _ => super::uso_plano::instalar(outro),
+                        },
+                        window,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+            }
             // As Contas já no login da conta que caiu, e não na lista (rodada de uso, item 8.3).
             (TipoDeErro::Login, Agente::Claude) => {
                 let conta = conta_que_caiu(contexto.motor, chat);

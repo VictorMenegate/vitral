@@ -138,6 +138,26 @@ componentes do GPUI Kit.
   conta, sem comandos de barra nem `/compact`, e sem as ferramentas do Vitral: o agy só aceita
   servidor MCP local. Instalar e entrar (`uso_plano::instalar_gemini`) abre o terminal com o
   instalador oficial e o `agy acp --login`. Conferido no agy 1.5.15 com uma conta pessoal.
+- **Os agentes ACP novos** (26/11/2026; dono: "GitHub Copilot CLI, Cursor Agent, OpenCode, Qwen
+  Code, Kimi e grok"): `Agente::{Copilot, Cursor, OpenCode, Qwen, Kimi, Grok}`, cada um com um
+  perfil de dados em `src/agente_acp.rs` (o binário e onde o instalador o põe, os argumentos do
+  servidor ACP, o instalador oficial do Linux/Mac e do Windows, o login, o atualizar, a cor da
+  marca) e o mesmo protocolo do Gemini (`agente_gemini::Protocolo`, que passou a valer por agente).
+  O que muda dos ACP para o agy: o prompt de sistema vai na frente do primeiro pedido (só o agy
+  aceita o `_meta`), a conversa guardada volta pelo `session/resume` ou o `session/load` que o
+  `initialize` disser, o `authenticate` com o primeiro dos `authMethods` é tentado uma vez quando a
+  sessão pede login (o Cursor exige, mesmo com o `agent login` feito), o esforço vai como veio
+  quando o agente o oferece (o OpenCode tem de low a max, na opção `effort` da categoria
+  `thought_level`), as opções vão pelo id de verdade (achado pela categoria), as ferramentas sem
+  nome viram as do Claude Code pelo `kind` (read, edit, execute, search, fetch) e, no Sem perguntar
+  de quem não tem a opção própria, o Vitral aprova cada pedido sozinho. Os modelos vêm das opções
+  da última sessão de cada agente (antes dela, o seletor mostra o Padrão). A marca é um disco na
+  cor do agente com a inicial (`Marca::Agente`). Aparecem na lateral do seletor de modelo quando
+  instalados (a busca pula atalhos de outros programas, como o `copilot` do VS Code em /usr/bin),
+  em Configurações > Agentes (com Instalar, Atualizar no terminal e Entrar) e no passo IAs do
+  Início. Sem anel de uso, sem `/compact` e sem contas extras ainda. Conferido em 26/11/2026 com o
+  OpenCode 2.2.3 (sessão, modelos, esforço, modo e `session/load` de verdade) e o Cursor Agent (o
+  `initialize` e o pedido de login); Copilot, Qwen, Kimi e Grok seguem a documentação de cada um.
 - **Claude e Codex no mesmo chat (a dupla).** `Chat.parceiro` guarda a sessão, o modelo e o uso do
   outro agente; `Chat::trocar_vez` troca os dois de lugar, então todo o resto do turno (conta,
   modelo, retomar a sessão) continua lendo `chat.agente` e `chat.sessao` como sempre. Em

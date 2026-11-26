@@ -556,6 +556,11 @@ impl Processo {
             let mut comando = processos::comando(crate::agente_gemini::binario(), "gemini");
             comando.current_dir(&opcoes.cwd).args(crate::agente_gemini::argumentos(opcoes));
             comando
+        } else if let Some(perfil) = crate::agente_acp::perfil(agente) {
+            // Os agentes ACP novos (`agente_acp`): o servidor ACP de cada um, pelo perfil.
+            let mut comando = processos::comando(perfil.binario(), perfil.programa);
+            comando.current_dir(&opcoes.cwd).args(perfil.argumentos(opcoes));
+            comando
         } else {
             let mut comando = processos::comando(binario_claude(), "claude");
             comando.current_dir(&opcoes.cwd).args(argumentos(opcoes));
@@ -618,7 +623,7 @@ impl Processo {
                 }
                 None => (None, None),
             },
-            crate::modelo::Agente::Gemini => match entrada.take() {
+            agente_acp if agente_acp.acp() => match entrada.take() {
                 Some(stdin) => {
                     let canal = Arc::new(Mutex::new(crate::agente_gemini::Canal::novo(Box::new(stdin))));
                     let mut protocolo =
@@ -628,7 +633,7 @@ impl Processo {
                 }
                 None => (None, None),
             },
-            crate::modelo::Agente::Claude => (None, None),
+            _ => (None, None),
         };
 
         // O stderr é lido junto: cheio (64 KiB) sem ninguém ler, ele travaria o claude.

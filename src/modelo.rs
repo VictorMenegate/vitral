@@ -287,26 +287,34 @@ impl RevisaoEmCurso {
     }
 }
 
-/// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI) ou o Gemini (o Antigravity CLI
-/// do Google, `agy`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI), o Gemini (o Antigravity CLI do
+/// Google, `agy`) e, desde 26/11/2026, os que falam ACP (`agente_acp`): GitHub Copilot CLI, Cursor
+/// Agent, OpenCode, Qwen Code, Kimi Code e Grok Build.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Agente {
     #[default]
     Claude,
     Codex,
     Gemini,
+    Copilot,
+    Cursor,
+    OpenCode,
+    Qwen,
+    Kimi,
+    Grok,
 }
 
 impl Agente {
-    /// Os três, na ordem das abas e dos menus.
-    pub const TODOS: [Agente; 3] = [Agente::Claude, Agente::Codex, Agente::Gemini];
+    /// Todos, na ordem das abas e dos menus.
+    pub const TODOS: [Agente; 9] =
+        [Agente::Claude, Agente::Codex, Agente::Gemini, Agente::Copilot, Agente::Cursor, Agente::OpenCode, Agente::Qwen, Agente::Kimi, Agente::Grok];
 
-    /// O parceiro padrão de uma dupla: o Codex para o Claude, e o Claude para os outros dois.
+    /// O parceiro padrão de uma dupla: o Codex para o Claude, e o Claude para os outros.
     pub fn outro(self) -> Agente {
         match self {
             Agente::Claude => Agente::Codex,
-            Agente::Codex | Agente::Gemini => Agente::Claude,
+            _ => Agente::Claude,
         }
     }
 
@@ -316,6 +324,12 @@ impl Agente {
             Agente::Claude => "Claude",
             Agente::Codex => "Codex",
             Agente::Gemini => "Gemini",
+            Agente::Copilot => "Copilot",
+            Agente::Cursor => "Cursor",
+            Agente::OpenCode => "OpenCode",
+            Agente::Qwen => "Qwen",
+            Agente::Kimi => "Kimi",
+            Agente::Grok => "Grok",
         }
     }
 
@@ -325,7 +339,18 @@ impl Agente {
             Agente::Claude => "Claude Code",
             Agente::Codex => "Codex",
             Agente::Gemini => "Antigravity CLI",
+            Agente::Copilot => "GitHub Copilot CLI",
+            Agente::Cursor => "Cursor Agent",
+            Agente::OpenCode => "OpenCode",
+            Agente::Qwen => "Qwen Code",
+            Agente::Kimi => "Kimi Code",
+            Agente::Grok => "Grok Build",
         }
+    }
+
+    /// Fala o ACP: o Gemini e os novos, pelo mesmo protocolo (`agente_gemini::Protocolo`).
+    pub fn acp(self) -> bool {
+        !matches!(self, Agente::Claude | Agente::Codex)
     }
 
     /// Os agentes que dá para escolher neste computador: o Claude sempre, e os outros instalados.
@@ -339,6 +364,7 @@ impl Agente {
             Agente::Claude => true,
             Agente::Codex => crate::agente_codex::instalado(),
             Agente::Gemini => crate::agente_gemini::instalado(),
+            outro => crate::agente_acp::perfil(outro).is_some_and(crate::agente_acp::PerfilAcp::instalado),
         }
     }
 }

@@ -178,7 +178,7 @@ impl Direto {
                     MandarDepois if c.caixa_vazia => Some("Escreva a mensagem na caixa antes".into()),
                     PerguntarAoOutro if !c.outro_instalado => Some(format!("O {} não está instalado", c.agente.outro().nome())),
                     PerguntarAoOutro if c.caixa_vazia || c.caixa_com_barra => Some("Escreva a pergunta na caixa antes".into()),
-                    Compactar if c.agente == Agente::Gemini => Some("O Gemini não tem o /compact".into()),
+                    Compactar if c.agente.acp() => Some(format!("O {} não tem o /compact", c.agente.nome()).into()),
                     Compactar if !c.com_sessao => Some("A conversa ainda não tem sessão".into()),
                     Agentes if !c.tem_agentes => Some("Esta conversa não abriu agentes".into()),
                     SessaoNova if c.rodando => Some("Espere o turno terminar".into()),

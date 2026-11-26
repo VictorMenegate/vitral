@@ -312,8 +312,9 @@ impl Motor {
                 let conta = self.conta_padrao();
                 (Agente::Claude, self.versao_claude.is_some() || claude::binario_claude().is_file(), limite(self.uso_da_conta(&conta.id)))
             }
-            // O Gemini revisa quando é o escolhido; o uso do plano dele não diz o limite.
-            Agente::Gemini => (Agente::Gemini, Agente::Gemini.instalado(), false),
+            // O Gemini e os ACP novos revisam quando são os escolhidos; o uso do plano deles não diz
+            // o limite.
+            outro => (outro, outro.instalado(), false),
         }
     }
 

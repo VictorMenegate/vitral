@@ -93,6 +93,20 @@ const INSTALAR_CLAUDE_WINDOWS: &str = "$claude = (Get-Command claude -ErrorActio
 
 const DIAS: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
 
+/// Abre o terminal com o instalador (se faltar) e o login de qualquer agente.
+pub(super) fn instalar(agente: crate::modelo::Agente) {
+    match agente {
+        crate::modelo::Agente::Claude => instalar_claude(),
+        crate::modelo::Agente::Codex => instalar_codex(),
+        crate::modelo::Agente::Gemini => instalar_gemini(),
+        outro => {
+            if let Some(perfil) = crate::agente_acp::perfil(outro) {
+                perfil.instalar();
+            }
+        }
+    }
+}
+
 /// Abre o terminal do usuário com a instalação do Claude Code (se faltar).
 pub(super) fn instalar_claude() {
     if let Some(casa) = dirs::home_dir() {
@@ -293,7 +307,7 @@ fn popover_uso(
     janela: WeakEntity<Janela>,
 ) -> impl IntoElement + use<> {
     let ao_mudar = janela.clone();
-    popover(("uso-popover", marca as usize))
+    popover(("uso-popover", marca.indice()))
         .anchor(Anchor::TopRight)
         .offset(px(8.))
         .arrow(true)
@@ -375,7 +389,7 @@ impl RenderOnce for BotaoUso {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let l = self.leitura;
         let dica = SharedString::from(l.dica);
-        let id = self.marca as usize;
+        let id = self.marca.indice();
         let (marca, janela) = (self.marca, self.janela);
         div()
             .id(("uso-botao", id))
@@ -618,7 +632,7 @@ fn detalhes(
         Marca::Codex => detalhes_codex(&motor, janela, popover, agora, window, cx).into_any_element(),
         Marca::Gemini => detalhes_gemini(&motor, janela, popover, agora, window, cx).into_any_element(),
         // O Linear não tem plano de uso.
-        Marca::Linear => div().into_any_element(),
+        Marca::Linear | Marca::Agente(_) => div().into_any_element(),
     }
 }
 
@@ -1085,13 +1099,13 @@ fn rodape(
                 .when(sem_atualizar, |s| s.child(linha("não deu para atualizar".into()))),
         )
         .child(
-            botao_fantasma(("uso-atualizar", marca as usize), Some(Lucide::RotateCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
+            botao_fantasma(("uso-atualizar", marca.indice()), Some(Lucide::RotateCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
                 .on_click(move |_, _, cx| {
                     motor.update(cx, |m, cx| match marca {
                         Marca::Claude => m.atualizar_uso(cx),
                         Marca::Codex => m.reler_uso(cx),
                         Marca::Gemini => m.reler_uso_gemini(cx),
-                        Marca::Linear => {}
+                        Marca::Linear | Marca::Agente(_) => {}
                     })
                 }),
         )
@@ -1543,6 +1557,8 @@ impl Janela {
             }
             crate::modelo::Agente::Codex => leitura_codex(m.codex.as_ref(), m.codex_lido),
             crate::modelo::Agente::Gemini => leitura_gemini(m.gemini.as_ref()),
+            // Os ACP novos não dizem a cota do plano.
+            _ => return None,
         };
         leitura.bloqueado.then(|| match leitura.curto() {
             c if c.starts_with("até") => format!("Limite {c}"),
@@ -1582,7 +1598,7 @@ impl Janela {
 
 /// A pílula de uso da barra de baixo e o popover com os detalhes, que abre para cima.
 fn popover_pilula(marca: Marca, leitura: Leitura, motor: Entity<Motor>, janela: WeakEntity<Janela>) -> impl IntoElement + use<> {
-    popover(("uso-pilula-popover", marca as usize))
+    popover(("uso-pilula-popover", marca.indice()))
         .anchor(Anchor::BottomLeft)
         .offset(px(8.))
         .trigger(PilulaDeUso { marca, leitura, aberto: false })
@@ -1623,7 +1639,7 @@ impl RenderOnce for PilulaDeUso {
         let l = self.leitura;
         let curto = l.curto();
         let dica = SharedString::from(l.dica.clone());
-        let id = self.marca as usize;
+        let id = self.marca.indice();
         h_flex()
             .id(("uso-pilula", id))
             .flex_none()

@@ -2,6 +2,7 @@
 // que o Vitral escreve no stderr).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod agente_acp;
 mod agente_codex;
 mod agente_gemini;
 mod atualizacao;

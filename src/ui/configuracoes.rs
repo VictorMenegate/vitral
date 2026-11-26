@@ -117,6 +117,8 @@ enum Parte {
     Codex,
     Gemini,
     Atualizacoes,
+    /// Um agente ACP novo (`agente_acp`), aberto pela lista das IAs.
+    OutraIa(Agente),
 }
 
 impl Parte {
@@ -138,7 +140,7 @@ impl Parte {
     /// A parte da coluna que fica acesa: a de cada IA mora dentro de Agentes.
     fn na_coluna(self) -> Parte {
         match self {
-            Parte::ClaudeCode | Parte::Codex | Parte::Gemini => Parte::Agentes,
+            Parte::ClaudeCode | Parte::Codex | Parte::Gemini | Parte::OutraIa(_) => Parte::Agentes,
             outra => outra,
         }
     }
@@ -149,6 +151,7 @@ impl Parte {
             Agente::Claude => Parte::ClaudeCode,
             Agente::Codex => Parte::Codex,
             Agente::Gemini => Parte::Gemini,
+            outro => Parte::OutraIa(outro),
         }
     }
 
@@ -165,6 +168,7 @@ impl Parte {
             Parte::Codex => "Codex",
             Parte::Gemini => "Gemini",
             Parte::Atualizacoes => "Atualizações",
+            Parte::OutraIa(a) => a.programa(),
         }
     }
 
@@ -178,7 +182,7 @@ impl Parte {
             Parte::Aparencia => Lucide::Sun,
             Parte::Atalhos => Lucide::Keyboard,
             // O Claude Code, o Codex e o Gemini levam a marca deles na coluna (`simbolo`).
-            Parte::ClaudeCode | Parte::Codex | Parte::Gemini => Lucide::Bot,
+            Parte::ClaudeCode | Parte::Codex | Parte::Gemini | Parte::OutraIa(_) => Lucide::Bot,
             Parte::Atualizacoes => Lucide::RefreshCw,
         }
     }
@@ -189,6 +193,7 @@ impl Parte {
             Parte::ClaudeCode => Simbolo::Marca(Marca::Claude),
             Parte::Codex => Simbolo::Marca(Marca::Codex),
             Parte::Gemini => Simbolo::Marca(Marca::Gemini),
+            Parte::OutraIa(a) => Simbolo::Marca(Marca::do_agente(a)),
             outra => Simbolo::icone(outra.icone()),
         }
     }
@@ -555,6 +560,56 @@ impl Configuracoes {
         grupos
     }
 
+    /// A parte de um agente ACP novo: onde está o programa (com o Instalar, ou o Atualizar no
+    /// terminal), a conta (o Entrar, que abre o login dele) e o que ele é.
+    fn grupo_da_ia_acp(&self, agente: Agente, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
+        let Some(perfil) = crate::agente_acp::perfil(agente) else {
+            return GrupoDeOpcoes::new(None);
+        };
+        let id = agente.nome().to_lowercase();
+        let instalado = perfil.instalado();
+        let programa = if instalado {
+            let caminho = crate::ui::dialogos::com_til(&perfil.binario());
+            LinhaDeOpcao::new(SharedString::from(format!("cfg-acp-programa-{id}")), "Programa").descricao(caminho).controle(
+                botao_fantasma(SharedString::from(format!("cfg-acp-atualizar-{id}")), Some(Lucide::RefreshCw.into()), "Atualizar", TamanhoBotao::Barra, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(move |_, _, _| {
+                        if let Some(perfil) = crate::agente_acp::perfil(agente) {
+                            perfil.atualizar_no_terminal();
+                        }
+                    }),
+            )
+        } else {
+            LinhaDeOpcao::new(SharedString::from(format!("cfg-acp-programa-{id}")), "Programa").descricao("Não está instalado neste computador").controle(
+                botao_fantasma(SharedString::from(format!("cfg-acp-instalar-{id}")), Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
+                    .bg(Cores::recuo())
+                    .on_click(move |_, _, _| super::uso_plano::instalar(agente)),
+            )
+        };
+        let entrar = format!("Entrar ({})", perfil.login_no_tui.map_or_else(|| perfil.login.to_string(), |dentro| format!("{dentro} no {}", agente.nome())));
+        let conta = LinhaDeOpcao::new(SharedString::from(format!("cfg-acp-conta-{id}")), "Conta")
+            .descricao(entrar)
+            .when(instalado, |l| {
+                l.controle(
+                    botao_fantasma(SharedString::from(format!("cfg-acp-entrar-{id}")), Some(Lucide::LogIn.into()), "Entrar…", TamanhoBotao::Barra, window, cx)
+                        .bg(Cores::recuo())
+                        .on_click(move |_, _, _| {
+                            if let Some(perfil) = crate::agente_acp::perfil(agente) {
+                                perfil.entrar();
+                            }
+                        }),
+                )
+            });
+        GrupoDeOpcoes::new(Some(agente.programa().into()))
+            .linha(programa)
+            .linha(conta)
+            .linha(
+                LinhaDeOpcao::new(SharedString::from(format!("cfg-acp-sobre-{id}")), "Sobre")
+                    .descricao(perfil.descricao)
+                    .info("O Vitral conversa com ele pelo ACP (Agent Client Protocol): o modelo e o esforço vêm da própria sessão dele, e os pedidos de permissão aparecem na conversa. O uso do plano ainda não aparece."),
+            )
+    }
+
     /// A lista das IAs, no alto de Agentes: cada uma com a marca, a versão instalada (ou "Não
     /// instalada"), o Instalar quando falta e a seta que abre a parte dela (a conta, o Atualizar,
     /// os servidores MCP). As próximas IAs entram aqui como mais uma linha.
@@ -572,7 +627,7 @@ impl Configuracoes {
                     };
                     (instalada, texto)
                 }
-                _ => {
+                Agente::Codex | Agente::Gemini => {
                     let instalada = agente.instalado();
                     let texto = match motor.cli(agente).versao {
                         Some(Some((a, b, c))) => format!("Versão {a}.{b}.{c}"),
@@ -581,16 +636,17 @@ impl Configuracoes {
                     };
                     (instalada, texto)
                 }
+                // Os ACP novos: instalado ou não (a versão o Vitral não lê deles).
+                outro => {
+                    let instalada = outro.instalado();
+                    (instalada, if instalada { "Instalado".to_string() } else { "Não instalado".to_string() })
+                }
             };
             let id = agente.nome().to_lowercase();
             let instalar = (!instalada).then(|| {
                 botao_fantasma(SharedString::from(format!("cfg-ia-instalar-{id}")), Some(Lucide::Download.into()), "Instalar…", TamanhoBotao::Barra, window, cx)
                     .bg(Cores::recuo())
-                    .on_click(move |_, _, _| match agente {
-                        Agente::Claude => super::uso_plano::instalar_claude(),
-                        Agente::Codex => super::uso_plano::instalar_codex(),
-                        Agente::Gemini => super::uso_plano::instalar_gemini(),
-                    })
+                    .on_click(move |_, _, _| super::uso_plano::instalar(agente))
             });
             let abrir = botao_icone(
                 SharedString::from(format!("cfg-ia-abrir-{id}")),
@@ -1086,7 +1142,7 @@ impl Configuracoes {
                         MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO).map(|((valor, nome), descricao)| Opcao::new(*valor, *nome).descricao(descricao)),
                     ),
                     Agente::Codex => opcoes.extend(crate::agente_codex::modelos().into_iter().map(|m| Opcao::new(m.slug, m.nome))),
-                    Agente::Gemini => opcoes.extend(crate::agente_gemini::modelos().into_iter().map(|m| Opcao::new(m.valor, m.nome))),
+                    outro => opcoes.extend(crate::agente_gemini::modelos_de(outro).into_iter().map(|m| Opcao::new(m.valor, m.nome))),
                 }
                 let atual = config.revisao_modelos.get(&chave).cloned().unwrap_or_default();
                 // O modelo escolhido antes, que o catálogo de agora não traz, continua na lista.
@@ -1508,27 +1564,27 @@ impl Render for Configuracoes {
                 menu_escolha(
                     "cfg-agente",
                     ancora,
-                    vec![
-                        Opcao::new("claude", "Claude").descricao("Claude Code").simbolo(Simbolo::Marca(Marca::Claude)),
-                        Opcao::new("codex", "Codex")
-                            .descricao(if crate::agente_codex::instalado() { "Codex, da OpenAI" } else { "Não achei o Codex neste computador" })
-                            .simbolo(Simbolo::Marca(Marca::Codex)),
-                        Opcao::new("gemini", "Gemini")
-                            .descricao(if crate::agente_gemini::instalado() { "Gemini, do Google, pelo Antigravity CLI" } else { "Não achei o Antigravity CLI (agy) neste computador" })
-                            .simbolo(Simbolo::Marca(Marca::Gemini)),
-                    ],
-                    match config.agente_padrao {
-                        crate::modelo::Agente::Claude => "claude",
-                        crate::modelo::Agente::Codex => "codex",
-                        crate::modelo::Agente::Gemini => "gemini",
-                    },
+                    // Os três de antes sempre; os ACP novos só instalados (a lista não fica com seis
+                    // linhas de "não achei").
+                    Agente::TODOS
+                        .into_iter()
+                        .filter(|a| !a.acp() || *a == Agente::Gemini || a.instalado())
+                        .map(|a| {
+                            let descricao = match a {
+                                Agente::Claude => "Claude Code".to_string(),
+                                Agente::Codex if crate::agente_codex::instalado() => "Codex, da OpenAI".into(),
+                                Agente::Codex => "Não achei o Codex neste computador".into(),
+                                Agente::Gemini if crate::agente_gemini::instalado() => "Gemini, do Google, pelo Antigravity CLI".into(),
+                                Agente::Gemini => "Não achei o Antigravity CLI (agy) neste computador".into(),
+                                outro => outro.programa().to_string(),
+                            };
+                            Opcao::new(a.nome().to_lowercase(), a.nome()).descricao(descricao).simbolo(Simbolo::Marca(Marca::do_agente(a)))
+                        })
+                        .collect(),
+                    &config.agente_padrao.nome().to_lowercase(),
                     "claude",
                     gravar(m(), |c, v| {
-                        c.agente_padrao = match v.as_str() {
-                            "codex" => crate::modelo::Agente::Codex,
-                            "gemini" => crate::modelo::Agente::Gemini,
-                            _ => crate::modelo::Agente::Claude,
-                        }
+                        c.agente_padrao = Agente::TODOS.into_iter().find(|a| a.nome().eq_ignore_ascii_case(&v)).unwrap_or_default();
                     }),
                     window,
                     cx,
@@ -1855,6 +1911,7 @@ impl Render for Configuracoes {
             Parte::Atualizacoes => {
                 atualizacoes.into_iter().map(IntoElement::into_any_element).chain([ajuda.into_any_element()]).collect()
             }
+            Parte::OutraIa(agente) => vec![self.grupo_da_ia_acp(agente, window, cx).into_any_element()],
         };
         // A coluna das partes (protótipo Linear, 25/11/2026): o título "Configurações" no alto e as
         // partes de 26, com o ícone de 14; a escolhida no azul do escolhido. No diálogo estreito, só

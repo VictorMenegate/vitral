@@ -592,11 +592,11 @@ pub(super) fn modelo_por_extenso(motor: &Motor, chat: &Chat) -> String {
             Some(m) => format!("Codex · {}", crate::agente_codex::nome_do_modelo(m)),
             None => "Codex".to_string(),
         },
-        crate::modelo::Agente::Gemini => match chat.modelo.as_deref() {
-            Some(m) => format!("Gemini · {}", crate::agente_gemini::nome_do_modelo(m)),
-            None => "Gemini".to_string(),
+        outro if outro.acp() => match chat.modelo.as_deref() {
+            Some(m) => format!("{} · {}", outro.nome(), crate::agente_gemini::nome_do_modelo_de(outro, m)),
+            None => outro.nome().to_string(),
         },
-        crate::modelo::Agente::Claude => {
+        _ => {
             let efetivo = chat.modelo.clone().unwrap_or_else(|| motor.config.modelo_chats.clone());
             let em_uso = chat.modelo_atual.as_deref().filter(|m| !m.is_empty());
             format!("Claude · {}", rotulo_modelo(&efetivo, em_uso))
@@ -2124,11 +2124,12 @@ impl Janela {
 fn comandos_fora_do_claude(chat: &Chat) -> Option<Vec<String>> {
     let do_agente: Vec<String> = match chat.agente {
         crate::modelo::Agente::Claude => return None,
-        crate::modelo::Agente::Gemini => Vec::new(),
         crate::modelo::Agente::Codex if chat.comandos.is_empty() => {
             crate::agente_codex::servidor::COMANDOS.iter().map(|c| c.to_string()).collect()
         }
         crate::modelo::Agente::Codex => chat.comandos.clone(),
+        // O Gemini e os ACP novos: só os do Vitral.
+        _ => Vec::new(),
     };
     let mut lista = vec!["clear".to_string()];
     // O `/conta` do Vitral também troca a conta do Codex (26/11/2026).

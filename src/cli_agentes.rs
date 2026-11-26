@@ -186,6 +186,7 @@ pub fn binario(agente: Agente) -> PathBuf {
         Agente::Codex => crate::agente_codex::binario(),
         Agente::Gemini => crate::agente_gemini::binario(),
         Agente::Claude => crate::claude::binario_claude(),
+        outro => crate::agente_acp::perfil(outro).map(crate::agente_acp::PerfilAcp::binario).unwrap_or_default(),
     }
 }
 
@@ -271,7 +272,8 @@ pub fn arquivo_de_configuracao(agente: Agente) -> Option<PathBuf> {
     let caminho = match agente {
         Agente::Codex => crate::codex::raiz()?.join("config.toml"),
         Agente::Gemini => dirs::home_dir()?.join(".gemini").join("antigravity-cli").join("settings.json"),
-        Agente::Claude => return None,
+        // Os ACP novos: a configuração de cada um mora no programa (fora do Vitral).
+        _ => return None,
     };
     caminho.is_file().then_some(caminho)
 }

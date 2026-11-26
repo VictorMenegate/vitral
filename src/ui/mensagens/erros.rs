@@ -118,6 +118,7 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
                 Agente::Codex => "O Codex chegou ao limite de uso".into(),
                 Agente::Gemini => "O Gemini chegou ao limite da cota".into(),
                 Agente::Claude => "O Claude chegou ao limite do plano".into(),
+                outro => format!("O {} chegou ao limite de uso", outro.nome()),
             };
             lido.volta = hora_de_volta(cru);
             lido.frase = Some(match &lido.volta {
@@ -127,12 +128,13 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
             lido.url_de_uso = urls(cru).into_iter().find(|u| caminho_da_url(u).to_ascii_lowercase().contains("usage")).map(str::to_string);
         }
         TipoDeErro::Login => {
-            let (titulo, frase) = match agente {
-                Agente::Codex => ("O Codex pediu para entrar de novo", "Entre no Codex e tente outra vez."),
-                Agente::Gemini => ("O Gemini pediu para entrar com a conta Google", "Entre no Gemini e tente outra vez."),
-                Agente::Claude => ("O Claude Code perdeu o login desta conta", "Entre nela de novo e tente outra vez."),
+            let (titulo, frase): (String, String) = match agente {
+                Agente::Codex => ("O Codex pediu para entrar de novo".into(), "Entre no Codex e tente outra vez.".into()),
+                Agente::Gemini => ("O Gemini pediu para entrar com a conta Google".into(), "Entre no Gemini e tente outra vez.".into()),
+                Agente::Claude => ("O Claude Code perdeu o login desta conta".into(), "Entre nela de novo e tente outra vez.".into()),
+                outro => (format!("O {} pediu para entrar", outro.nome()), format!("Entre no {} e tente outra vez.", outro.nome())),
             };
-            (lido.titulo, lido.frase) = (titulo.into(), Some(frase.into()));
+            (lido.titulo, lido.frase) = (titulo, Some(frase));
         }
         TipoDeErro::Rede => {
             lido.titulo = format!("Sem conexão com o {nome}");
@@ -150,7 +152,7 @@ pub(super) fn ler_erro(texto: &str, agente_do_chat: Agente, antes: Option<&str>)
             lido.titulo = "A conversa passou do tamanho que o modelo aceita".into();
             lido.frase = Some(match agente {
                 Agente::Claude => "Compacte a conversa e mande de novo.".into(),
-                Agente::Codex | Agente::Gemini => "Comece um chat novo ou mande uma mensagem mais curta.".into(),
+                _ => "Comece um chat novo ou mande uma mensagem mais curta.".into(),
             });
         }
         _ if do_processo => {
@@ -553,6 +555,7 @@ pub(super) fn na_faixa(texto_da_execucao: &str, agente_do_chat: Agente) -> (Luci
                 Agente::Codex => "Limite de uso do Codex",
                 Agente::Gemini => "Cota do Gemini",
                 Agente::Claude => "Limite do plano",
+                _ => "Limite de uso",
             };
             let rotulo = match hora_de_volta(texto) {
                 Some(hora) => format!("{base} · volta às {hora}"),
