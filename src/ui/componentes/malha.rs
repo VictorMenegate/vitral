@@ -41,6 +41,26 @@ pub(super) const DESLOCAMENTO: (f32, f32) = (-0.05, 0.0);
 pub(super) const FORCA_DO_PONTEIRO: f32 = 0.50;
 pub(super) const RAIO_DO_PONTEIRO: f32 = 0.80;
 
+/// Quanto o matiz do destaque em uso anda do azul do tema padrão (#3170ff), de 0 a 1: o metal
+/// (a luz da doca, a tecla de metal) e a malha do logo seguem o destaque dos outros temas (Brasa,
+/// Floresta) em vez de ficar azuis. No tema padrão é zero, e as cores são as da receita.
+pub(super) fn giro_do_destaque() -> f32 {
+    let base = Hsla::from(rgb(0x3170ff)).h;
+    let destaque = Hsla::from(crate::tema::Cores::destaque());
+    if destaque.s < 0.05 { 0. } else { destaque.h - base }
+}
+
+/// A cor (sRGB de 0 a 1) com o matiz andado de `giro` (de 0 a 1, a volta inteira).
+pub(super) fn girar_matiz(cor: [f32; 3], giro: f32) -> [f32; 3] {
+    if giro == 0. {
+        return cor;
+    }
+    let mut hsla = Hsla::from(Rgba { r: cor[0], g: cor[1], b: cor[2], a: 1. });
+    hsla.h = (hsla.h + giro).rem_euclid(1.);
+    let c = Rgba::from(hsla);
+    [c.r, c.g, c.b]
+}
+
 fn fracao(x: f32) -> f32 {
     x - x.floor()
 }
@@ -96,8 +116,14 @@ pub fn cor_da_malha(fx: f32, fy: f32, largura: f32, altura: f32, segundos: f64, 
 
 /// A mesma conta, com o quadro já montado (é o que o desenho chama, ponto a ponto): a cor da
 /// receita mais o grão de filme, que é por pixel e parado.
+#[cfg(test)]
 pub fn cor_no_ponto(quadro: &Quadro, fx: f32, fy: f32, largura: f32, altura: f32, ponteiro: Option<(f32, f32)>) -> [f32; 3] {
-    let mut cor = cor_sem_grao(quadro, fx, fy, largura, altura, ponteiro);
+    cor_no_ponto_com(&CORES, quadro, fx, fy, largura, altura, ponteiro)
+}
+
+/// A mesma, com as cores dadas (as da receita giradas para o destaque do tema).
+fn cor_no_ponto_com(cores: &[[f32; 3]; 5], quadro: &Quadro, fx: f32, fy: f32, largura: f32, altura: f32, ponteiro: Option<(f32, f32)>) -> [f32; 3] {
+    let mut cor = cor_sem_grao_com(cores, quadro, fx, fy, largura, altura, ponteiro);
     let ruido = (grao(fx + SEMENTE * 17., fy + SEMENTE * 31.) - 0.5) * GRAO;
     for canal in &mut cor {
         *canal = (*canal + ruido).clamp(0., 1.);
@@ -108,7 +134,12 @@ pub fn cor_no_ponto(quadro: &Quadro, fx: f32, fy: f32, largura: f32, altura: f32
 /// A cor da receita sem o grão e sem o corte em 0 e 1 (o grão entra antes do corte): bolhas,
 /// contraste, saturação, brilho, vinheta e a luz do ponteiro. É o que o campo da janela
 /// (`metal.rs`) calcula em baixa resolução; lá o grão vai por cima, como textura.
+#[cfg(test)]
 pub(super) fn cor_sem_grao(quadro: &Quadro, fx: f32, fy: f32, largura: f32, altura: f32, ponteiro: Option<(f32, f32)>) -> [f32; 3] {
+    cor_sem_grao_com(&CORES, quadro, fx, fy, largura, altura, ponteiro)
+}
+
+fn cor_sem_grao_com(cores: &[[f32; 3]; 5], quadro: &Quadro, fx: f32, fy: f32, largura: f32, altura: f32, ponteiro: Option<(f32, f32)>) -> [f32; 3] {
     let menor = largura.min(altura).max(1.);
     // O ponto, centrado, com o lado menor da caixa valendo 1.
     let (px, py) = ((fx - 0.5 * largura) / menor, (fy - 0.5 * altura) / menor);
@@ -120,9 +151,9 @@ pub(super) fn cor_sem_grao(quadro: &Quadro, fx: f32, fy: f32, largura: f32, altu
     let qx = px * ESCALA + DESLOCAMENTO.0 + quadro.deriva.0;
     let qy = py * ESCALA + DESLOCAMENTO.1 + quadro.deriva.1;
     // O `shade()`: a média das cores, pesada pela distância a cada bolha, com um piso da cor 0.
-    let mut soma = [CORES[0][0] * 0.15, CORES[0][1] * 0.15, CORES[0][2] * 0.15];
+    let mut soma = [cores[0][0] * 0.15, cores[0][1] * 0.15, cores[0][2] * 0.15];
     let mut total = 0.15;
-    for (cor, (bx, by)) in CORES.iter().zip(quadro.bolhas) {
+    for (cor, (bx, by)) in cores.iter().zip(quadro.bolhas) {
         let peso = (-((qx - bx).powi(2) + (qy - by).powi(2)) * 6.).exp();
         for canal in 0..3 {
             soma[canal] += cor[canal] * peso;
@@ -193,13 +224,15 @@ pub fn malha_viva(fase: f64, raio: Pixels, luz: bool) -> impl IntoElement {
             });
             let raio = raio.as_f32();
             let tamanho = (colunas as u32, linhas as u32, (raio * escala).to_bits());
-            let estado = (fase.to_bits(), ponteiro.map(|(x, y)| (x.to_bits(), y.to_bits())));
+            // O giro do destaque entra na chave: trocar de tema refaz a malha no matiz novo.
+            let giro = giro_do_destaque();
+            let estado = (fase.to_bits(), ponteiro.map(|(x, y)| (x.to_bits(), y.to_bits())), giro.to_bits());
             // A malha vira UMA imagem, refeita só quando a fase ou o ponteiro mudam: pintada ponto
             // a ponto, eram uns 3.700 quadrados por quadro (o botão a 160%), e cada quadro da janela
             // redesenhava todos, parado ou não (medido na bancada em 17/11/2026: ~10% do tempo da
             // thread da janela com um chat trabalhando).
             super::metal::pintar_imagem_guardada(limites, tamanho, estado, window, cx, || {
-                pintar_malha(fase, colunas, linhas, largura, altura, raio, ponteiro)
+                pintar_malha(fase, colunas, linhas, largura, altura, raio, ponteiro, giro)
             });
         },
     )
@@ -207,8 +240,11 @@ pub fn malha_viva(fase: f64, raio: Pixels, luz: bool) -> impl IntoElement {
 }
 
 /// A malha em BGRA, `colunas` por `linhas`, com a cobertura do canto arredondado no alfa.
-fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32, raio: f32, ponteiro: Option<(f32, f32)>) -> Vec<u8> {
+#[allow(clippy::too_many_arguments)]
+fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32, raio: f32, ponteiro: Option<(f32, f32)>, giro: f32) -> Vec<u8> {
     let quadro = Quadro::em(fase);
+    // As cores da receita no matiz do destaque do tema (o logo segue as cores, como o metal).
+    let cores = CORES.map(|c| girar_matiz(c, giro));
     let celula = (largura / colunas).max(altura / linhas);
     let (n_col, n_lin) = (colunas as usize, linhas as usize);
     let mut bgra = Vec::with_capacity(n_col * n_lin * 4);
@@ -218,7 +254,7 @@ fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32,
             let x = (coluna as f32 + 0.5) * largura / colunas;
             let cobertura = cobertura_do_canto(x, y, largura, altura, raio, celula);
             let [r, g, b] = if cobertura > 0. {
-                cor_no_ponto(&quadro, coluna as f32 + 0.5, linhas - linha as f32 - 0.5, colunas, linhas, ponteiro)
+                cor_no_ponto_com(&cores, &quadro, coluna as f32 + 0.5, linhas - linha as f32 - 0.5, colunas, linhas, ponteiro)
             } else {
                 [0., 0., 0.]
             };

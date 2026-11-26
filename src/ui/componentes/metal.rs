@@ -36,6 +36,7 @@ use gpui_kit::*;
 use super::fundo_vivo::{self, Receita};
 use super::malha::{
     BRILHO, CONTRASTE, CORES, DESLOCAMENTO, ESCALA, FORCA_DO_PONTEIRO, GRAO, Quadro, RAIO_DO_PONTEIRO, SATURACAO, SEMENTE,
+    giro_do_destaque, girar_matiz,
     VINHETA, degrau_suave, grao,
 };
 use crate::{tema::Cores, ui::movimento};
@@ -85,26 +86,6 @@ fn paleta_acabada() -> [[f32; 3]; 5] {
         }
     }
     paleta
-}
-
-/// Quanto o matiz do destaque em uso anda do azul do tema padrão (#3170ff), de 0 a 1: o metal
-/// (a luz da doca, a tecla de metal) segue o destaque dos outros temas (Brasa, Floresta) em vez de
-/// ficar azul. No tema padrão é zero, e o metal é o da receita.
-fn giro_do_destaque() -> f32 {
-    let base = Hsla::from(rgb(0x3170ff)).h;
-    let destaque = Hsla::from(crate::tema::Cores::destaque());
-    if destaque.s < 0.05 { 0. } else { destaque.h - base }
-}
-
-/// A cor (sRGB de 0 a 1) com o matiz andado de `giro` (de 0 a 1, a volta inteira).
-fn girar_matiz(cor: [f32; 3], giro: f32) -> [f32; 3] {
-    if giro == 0. {
-        return cor;
-    }
-    let mut hsla = Hsla::from(Rgba { r: cor[0], g: cor[1], b: cor[2], a: 1. });
-    hsla.h = (hsla.h + giro).rem_euclid(1.);
-    let c = Rgba::from(hsla);
-    [c.r, c.g, c.b]
 }
 
 /// O centro do texel `i` (coluna ou linha), em px do retângulo da janela: o texel 0 é a folga de
@@ -366,7 +347,7 @@ pub fn custo_do_campo() -> Option<(u32, Duration)> {
 pub fn pintar_imagem_guardada(
     limites: Bounds<Pixels>,
     tamanho: (u32, u32, u32),
-    estado: (u64, Option<(u32, u32)>),
+    estado: (u64, Option<(u32, u32)>, u32),
     window: &mut Window,
     cx: &mut App,
     fazer: impl FnOnce() -> Vec<u8>,
@@ -395,7 +376,7 @@ pub fn pintar_imagem_guardada(
 
 struct ImagemGuardada {
     tamanho: (u32, u32, u32),
-    estado: (u64, Option<(u32, u32)>),
+    estado: (u64, Option<(u32, u32)>, u32),
     imagem: Arc<RenderImage>,
 }
 
