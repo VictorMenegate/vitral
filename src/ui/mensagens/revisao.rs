@@ -7,8 +7,8 @@ use super::*;
 
 /// O rótulo da ação do cartão e o de depois de mandada.
 pub(super) fn rotulo_de_mandar(principal: Agente, mandada: bool) -> String {
-    let (verbo, nome) = (if mandada { "Mandada" } else { "Mandar" }, principal.nome());
-    format!("{verbo} ao {nome}")
+    let nome = principal.nome();
+    if mandada { crate::tr!("Mandada ao {nome}", nome = nome) } else { crate::tr!("Mandar ao {nome}", nome = nome) }.to_string()
 }
 
 /// O turno é o último da conversa: depois da resposta dele não há outra mensagem.
@@ -38,8 +38,8 @@ impl Janela {
             .px(esp::E12)
             .gap(esp::E8)
             .child(marca.disco(16.))
-            .child(div().flex_1().min_w_0().truncate().rotulo().text_color(Cores::forte()).child(format!("Revisão do {}", de.nome())))
-            .child(BotaoCopiar::new(SharedString::from(format!("copiar-revisao-{chave}")), texto.to_string()).dica("Copiar a revisão"));
+            .child(div().flex_1().min_w_0().truncate().rotulo().text_color(Cores::forte()).child(crate::tr!("Revisão do {nome}", nome = de.nome())))
+            .child(BotaoCopiar::new(SharedString::from(format!("copiar-revisao-{chave}")), texto.to_string()).dica(crate::tr!("Copiar a revisão")));
         let rodape = if mandada {
             div().metadado().text_color(Cores::tenue()).child(rotulo_de_mandar(principal, true)).into_any_element()
         } else {
@@ -52,7 +52,7 @@ impl Janela {
                 window,
                 cx,
             )
-            .tooltip(format!("A revisão vai ao {} como uma mensagem deste chat", principal.nome()))
+            .tooltip(crate::tr!("A revisão vai ao {nome} como uma mensagem deste chat", nome = principal.nome()))
             .on_click(move |_, _, cx| {
                 if let Some(m) = &motor {
                     m.update(cx, |m, cx| m.mandar_revisao(&chat, indice, cx));
@@ -91,9 +91,9 @@ impl Janela {
             return None;
         }
         let revisor = contexto.motor.pode_revisar(&contexto.chat.id)?;
-        let rotulo = format!("Revisar com o {}", revisor.nome());
+        let rotulo = crate::tr!("Revisar com o {nome}", nome = revisor.nome());
         let so_icone = matches!(contexto.nivel, LarguraPainel::Minimo | LarguraPainel::Estreito);
-        let dica = SharedString::from(format!("{rotulo}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho"));
+        let dica = crate::tr!("{rotulo}\nEle só lê o que este turno fez e diz o que achou; nada muda sozinho", rotulo = rotulo);
         let (motor, chat) = (self.motor.clone(), contexto.chat.id.clone());
         let _ = cx;
         let dica = dica.clone();

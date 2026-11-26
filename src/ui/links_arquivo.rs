@@ -568,7 +568,7 @@ impl super::Janela {
         let Some((caminho, linha)) = ler_link(url) else { return };
         let faixa = ler_faixa(url);
         let Ok(inteiro) = dunce::canonicalize(&caminho) else {
-            window.push_notification(aviso(Tom::Erro, format!("{caminho} não existe mais")), cx);
+            window.push_notification(aviso(Tom::Erro, crate::tr!("{caminho} não existe mais", caminho = caminho)), cx);
             return;
         };
         // A pílula de uma pasta mencionada abre a pasta no gerenciador do sistema.
@@ -594,7 +594,7 @@ impl super::Janela {
             Some((pasta, inteiro.file_name()?.to_string_lossy().into_owned()))
         };
         let Some((raiz, relativo)) = raiz.or_else(de_fora) else {
-            window.push_notification(aviso(Tom::Atencao, format!("Não deu para abrir {caminho}.")), cx);
+            window.push_notification(aviso(Tom::Atencao, crate::tr!("Não deu para abrir {caminho}.", caminho = caminho)), cx);
             return;
         };
         self.arquivo_linha.set(linha);
