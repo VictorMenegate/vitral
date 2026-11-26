@@ -73,7 +73,8 @@ const PISO: f32 = 0.15;
 /// (multiplicar e somar) e a cor de um ponto é uma média pesada das cinco: aplicar na paleta, uma
 /// vez, dá o mesmo que aplicar em cada ponto, e poupa a conta em 20 mil pontos por quadro.
 fn paleta_acabada() -> [[f32; 3]; 5] {
-    let mut paleta = CORES;
+    let giro = giro_do_destaque();
+    let mut paleta = CORES.map(|cor| girar_matiz(cor, giro));
     for cor in &mut paleta {
         for canal in cor.iter_mut() {
             *canal = (*canal - 0.5) * CONTRASTE + 0.5;
@@ -84,6 +85,26 @@ fn paleta_acabada() -> [[f32; 3]; 5] {
         }
     }
     paleta
+}
+
+/// Quanto o matiz do destaque em uso anda do azul do tema padrão (#3170ff), de 0 a 1: o metal
+/// (a luz da doca, a tecla de metal) segue o destaque dos outros temas (Brasa, Floresta) em vez de
+/// ficar azul. No tema padrão é zero, e o metal é o da receita.
+fn giro_do_destaque() -> f32 {
+    let base = Hsla::from(rgb(0x3170ff)).h;
+    let destaque = Hsla::from(crate::tema::Cores::destaque());
+    if destaque.s < 0.05 { 0. } else { destaque.h - base }
+}
+
+/// A cor (sRGB de 0 a 1) com o matiz andado de `giro` (de 0 a 1, a volta inteira).
+fn girar_matiz(cor: [f32; 3], giro: f32) -> [f32; 3] {
+    if giro == 0. {
+        return cor;
+    }
+    let mut hsla = Hsla::from(Rgba { r: cor[0], g: cor[1], b: cor[2], a: 1. });
+    hsla.h = (hsla.h + giro).rem_euclid(1.);
+    let c = Rgba::from(hsla);
+    [c.r, c.g, c.b]
 }
 
 /// O centro do texel `i` (coluna ou linha), em px do retângulo da janela: o texel 0 é a folga de
@@ -286,7 +307,7 @@ struct Metal {
 impl Global for Metal {}
 
 /// O que decide se o campo precisa ser refeito: o tamanho, o instante e onde está a luz.
-type Chave = (u32, u32, u32, u32, u64, Option<(i32, i32)>);
+type Chave = (u32, u32, u32, u32, u64, Option<(i32, i32)>, u32);
 
 #[derive(Default)]
 struct DaJanela {
@@ -309,7 +330,7 @@ struct DaJanela {
     /// passava e redesenhava um deles (dono, 19/11/2026: "quando fico mexendo o mouse o fundo das
     /// mensagens que mandei fica mudando"). Refeito só quando o tamanho muda.
     parada: Option<Arc<RenderImage>>,
-    parada_de: Option<(u32, u32, u32, u32)>,
+    parada_de: Option<(u32, u32, u32, u32, u32)>,
     onde_parada: Bounds<Pixels>,
     /// O fundo vivo (Smoke ou Mesh drift) pintado por cima da chapa, e o que o fez.
     imagem_viva: Option<Arc<RenderImage>>,
@@ -479,7 +500,9 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
             let (x, y) = ((p.x - limites.origin.x).as_f32(), (p.y - limites.origin.y).as_f32());
             ((x / PX_POR_TEXEL).floor() as i32 + 1, (y / PX_POR_TEXEL).floor() as i32 + 1)
         });
-    let chave: Chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), ponteiro);
+    // O destaque entra na chave: trocar de tema refaz o metal no matiz novo.
+    let destaque = giro_do_destaque().to_bits();
+    let chave: Chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), ponteiro, destaque);
     let janela = window.window_handle().window_id();
     let svg = cx.svg_renderer();
     let metal = cx.default_global::<Metal>();
@@ -505,13 +528,14 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
         estado.vinheta = tabela_da_vinheta(colunas, linhas, largura, altura);
         estado.vinheta_de = tamanho;
     }
-    if estado.parada_de != Some(tamanho) || estado.parada.is_none() {
+    let parada_de = (tamanho.0, tamanho.1, tamanho.2, tamanho.3, destaque);
+    if estado.parada_de != Some(parada_de) || estado.parada.is_none() {
         let bgra = pintar_campo(colunas, linhas, largura, altura, &Quadro::em(FASE_INICIAL_DO_METAL), None, &estado.vinheta);
         if let Some(nova) = imagem_de_bgra(colunas, linhas, &bgra, svg.clone()) {
             if let Some(velha) = estado.parada.replace(nova) {
                 let _ = window.drop_image(velha);
             }
-            estado.parada_de = Some(tamanho);
+            estado.parada_de = Some(parada_de);
             estado.onde_parada = onde;
         }
     }
