@@ -131,7 +131,20 @@ impl NaLetraDaConversa {
 /// mensagem que fica em cima não tá transparente"). `alto` diz, na hora de desenhar, quanto do
 /// topo some: a altura da faixa menos o quanto a mensagem seguinte já a empurrou para cima.
 pub fn recortada_no_alto(filho: impl IntoElement, alto: impl Fn() -> Pixels + 'static) -> AnyElement {
-    RecorteNoAlto { alto: Box::new(alto), filho: filho.into_any_element() }.into_any_element()
+    RecorteNoAlto { alto: Box::new(alto), area: None, filho: filho.into_any_element() }.into_any_element()
+}
+
+/// `filho` recortado na área das mensagens do painel (`Painel::area_das_mensagens`), lida na hora
+/// de desenhar: a barra de ações de uma mensagem é pintada por cima de tudo (`deferred`), e sem o
+/// recorte a da última resposta passava por cima da caixa de mensagem (dono, 26/11/2026: "esse
+/// negócio de baixo da mensagem tá atravessando as coisas"). Sem a área medida, não recorta.
+pub fn recortada_na_area(filho: impl IntoElement, area: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>) -> AnyElement {
+    RecorteNoAlto {
+        alto: Box::new(|| px(0.)),
+        area: Some(area),
+        filho: filho.into_any_element(),
+    }
+    .into_any_element()
 }
 
 /// Quanto do topo da conversa fica de fora: a parte da faixa presa que ainda está à vista.
@@ -141,11 +154,23 @@ pub fn alto_do_recorte(altura_da_faixa: Pixels, empurrao: Pixels) -> Pixels {
 
 struct RecorteNoAlto {
     alto: Box<dyn Fn() -> Pixels>,
+    /// Recorta nesta área, e não nos limites do próprio filho (`recortada_na_area`).
+    area: Option<std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>>,
     filho: AnyElement,
 }
 
 impl RecorteNoAlto {
     fn mascara(&self, limites: Bounds<Pixels>) -> ContentMask<Pixels> {
+        if let Some(area) = &self.area {
+            let area = area.get();
+            // Sem a área medida ainda, a janela inteira.
+            let bounds = if area.size.width > px(0.) && area.size.height > px(0.) {
+                area
+            } else {
+                Bounds { origin: point(px(-1e6), px(-1e6)), size: size(px(2e6), px(2e6)) }
+            };
+            return ContentMask { bounds };
+        }
         let alto = (self.alto)().min(limites.size.height);
         ContentMask {
             bounds: Bounds {

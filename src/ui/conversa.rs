@@ -631,6 +631,11 @@ impl Janela {
                     .min_h(super::mensagens::MINIMO_MENSAGENS)
                     .flex()
                     .flex_col()
+                    // Onde ficou a área das mensagens: as barras de ações são recortadas nela.
+                    .on_prepaint({
+                        let area = self.paineis[ix].area_das_mensagens.clone();
+                        move |limites: Bounds<Pixels>, _: &mut Window, _: &mut App| area.set(limites)
+                    })
                     .child(mensagens)
                     .child(div().absolute().inset_0().child(anel))
                     // O texto deste painel só entra numa seleção começada nele (`aplicar_escopo_do_clique`).

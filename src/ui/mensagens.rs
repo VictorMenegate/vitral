@@ -1457,7 +1457,10 @@ impl Janela {
             .map(com_alcance_da_barra_embaixo)
             .on_hover(cx.listener(move |this, dentro: &bool, _, cx| this.marcar_fala_sob_ponteiro(&esta, *dentro, cx)))
             .child(div().relative().w_full().child(corpo))
-            .when(sob_o_ponteiro, |s| s.child(deferred(barra.child(barra_de_acoes(acoes, cx)))))
+            .when(sob_o_ponteiro, |s| {
+                let area = self.area_das_mensagens(contexto.painel);
+                s.child(deferred(super::vista_mensagens::recortada_na_area(barra.child(barra_de_acoes(acoes, cx)), area)))
+            })
             .into_any_element()
     }
 
@@ -1750,7 +1753,7 @@ impl Janela {
             // Pintada depois de tudo (`deferred`): a linha logo abaixo (a revisão da memória) não
             // passa por cima dela, e a barra não parece transparente (dono, 18/11/2026: "faz ser
             // menos transparente isso").
-            .when(sob_o_ponteiro, |s| s.child(deferred(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
+            .when(sob_o_ponteiro, |s| s.child(deferred(super::vista_mensagens::recortada_na_area(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 hora_na_barra(em)
                     .into_iter()
                     // "Continuar daqui em outro chat", só nas respostas da própria conversa.
@@ -1762,7 +1765,7 @@ impl Janela {
                     .chain([copiar(chave, texto).into_any_element()])
                     .collect(),
                 cx,
-            ))).with_priority(1)));
+            )), self.area_das_mensagens(contexto.painel))).with_priority(1)));
         let esta = grupo.clone();
         div()
             .id(grupo)
@@ -2255,6 +2258,13 @@ pub(super) fn fundo_da_lista(raio: Pixels) -> Div {
 }
 
 /// A barra de ações de uma mensagem (quem chama só a desenha com o ponteiro na mensagem).
+impl Janela {
+    /// A área das mensagens do painel no último desenho (`Painel::area_das_mensagens`).
+    fn area_das_mensagens(&self, painel: u64) -> std::rc::Rc<std::cell::Cell<Bounds<Pixels>>> {
+        self.paineis.iter().find(|p| p.id == painel).map(|p| p.area_das_mensagens.clone()).unwrap_or_default()
+    }
+}
+
 fn barra_de_acoes(acoes: Vec<AnyElement>, _: &App) -> Div {
     h_flex()
         .h(r(28.))

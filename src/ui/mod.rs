@@ -149,12 +149,11 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-/// A lista não fica mais estreita que a do protótipo (250) nem recolhe no arrasto: ela só
-/// alarga (dono, 26/11/2026: "não é pra dar pra minimizar a lista mais"). Quem a esconde é o
-/// modo foco. Antes ela encolhia até 130 no arrasto e recolhia abaixo de 160.
-const FAIXA_LISTA: (f32, f32) = (LATERAL, 400.);
-/// A menor largura que a lista guarda: o mínimo da faixa.
-const LISTA_MINIMA: f32 = FAIXA_LISTA.0;
+const FAIXA_LISTA: (f32, f32) = (200., 400.);
+/// A menor largura da lista: no arrasto ela estreita até aqui e fica onde foi deixada, mas não
+/// recolhe (dono, 26/11/2026: "não é pra dar pra minimizar a lista mais", e depois "faz esse menu
+/// dar pra ficar menor"). Quem a esconde é o modo foco. Antes ela recolhia abaixo de 160.
+const LISTA_MINIMA: f32 = 160.;
 const FAIXA_DIREITA: (f32, f32) = (200., 380.);
 /// A faixa da direita com um arquivo aberto (a do protótipo).
 const FAIXA_ARQUIVO: (f32, f32) = (380., 960.);
@@ -2686,7 +2685,7 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(largura))
-                    .size_range(u(FAIXA_LISTA.0)..px(o.max_lista))
+                    .size_range(u(LISTA_MINIMA)..px(o.max_lista))
                     .fixed()
                     .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
@@ -3114,15 +3113,14 @@ mod testes_orcamento {
     }
 
     #[test]
-    fn a_lista_nao_fica_mais_estreita_que_a_do_prototipo() {
-        // A lista não encolhe abaixo dos 250 do protótipo (dono, 26/11/2026: "não é pra dar pra
-        // minimizar a lista mais"): solta em 180 ou em 120, guarda 250, e a montagem seguinte
-        // devolve os 250.
-        assert_eq!(super::LISTA_MINIMA, super::LATERAL);
+    fn a_lista_estreitada_fica_onde_foi_deixada_sem_recolher() {
+        // Solta em 180 (abaixo dos 200 da faixa): guarda 180, e a montagem seguinte (clique duplo,
+        // Ctrl+B) devolve os mesmos 180.
         let mut l = Larguras::default();
         l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1., false);
-        assert_eq!(l.lista, super::LISTA_MINIMA);
-        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(super::LISTA_MINIMA));
+        assert_eq!(l.lista, 180.);
+        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
+        // Abaixo do mínimo, fica no mínimo (ela não recolhe mais).
         l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, super::LISTA_MINIMA);
     }
