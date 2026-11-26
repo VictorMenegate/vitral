@@ -62,6 +62,10 @@ pub struct Painel {
     /// O escopo da seleção de texto das mensagens deste painel: uma seleção começada aqui não
     /// pega o texto dos outros (`conversa::aplicar_escopo_do_clique`).
     pub escopo_selecao: gpui_kit::base::TextSelectionScopeId,
+    /// Onde a área das mensagens caiu na janela no último desenho: as barras de ações das
+    /// mensagens, pintadas por cima de tudo (`deferred`), são recortadas nela e não passam por cima
+    /// da caixa de mensagem (`vista_mensagens::recortada_na_area`).
+    pub area_das_mensagens: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// O menu "⋯" do painel está aberto (o Shift+F10 na aba abre o mesmo).
     pub menu_aberto: bool,
     /// A largura da faixa das abas no quadro anterior (zero antes de medir): decide quais abas de
@@ -137,6 +141,9 @@ pub struct Painel {
     pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
+    /// O cartão do painel e o cabeçalho dele como vistas em cache (ver `vista_mensagens`).
+    pub cartao: Entity<super::vista_mensagens::VistaDoCartao>,
+    pub cabecalho: Entity<super::vista_mensagens::VistaDoCabecalho>,
     /// A altura que cada bloco da conversa mediu neste painel: o que está longe da vista entra
     /// como um espaço dessa altura, sem ser montado (ver `mensagens::a_vista`).
     pub(in crate::ui) alturas: std::rc::Rc<std::cell::RefCell<super::mensagens::a_vista::Alturas>>,
@@ -534,11 +541,15 @@ impl Janela {
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
         let eu = cx.entity().downgrade();
-        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu, id));
+        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu.clone(), id));
+        let cartao = cx.new(|_| super::vista_mensagens::VistaDoCartao::new(eu.clone(), id));
+        let cabecalho = cx.new(|_| super::vista_mensagens::VistaDoCabecalho::new(eu, id));
         let mut painel = Painel {
             percurso: Default::default(),
             id,
             vista,
+            cartao,
+            cabecalho,
             chat: None,
             abas: Vec::new(),
             composer,
@@ -556,6 +567,7 @@ impl Janela {
             medida: MedidaPainel::default(),
             foco_aba,
             escopo_selecao: gpui_kit::base::TextSelectionScopeId::new(),
+            area_das_mensagens: Default::default(),
             menu_aberto: false,
             largura_abas: px(0.),
             indice_menu: 0,

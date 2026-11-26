@@ -149,12 +149,11 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-/// A lista não fica mais estreita que a do protótipo (250) nem recolhe no arrasto: ela só
-/// alarga (dono, 26/11/2026: "não é pra dar pra minimizar a lista mais"). Quem a esconde é o
-/// modo foco. Antes ela encolhia até 130 no arrasto e recolhia abaixo de 160.
-const FAIXA_LISTA: (f32, f32) = (LATERAL, 400.);
-/// A menor largura que a lista guarda: o mínimo da faixa.
-const LISTA_MINIMA: f32 = FAIXA_LISTA.0;
+const FAIXA_LISTA: (f32, f32) = (200., 400.);
+/// A menor largura da lista: no arrasto ela estreita até aqui e fica onde foi deixada, mas não
+/// recolhe (dono, 26/11/2026: "não é pra dar pra minimizar a lista mais", e depois "faz esse menu
+/// dar pra ficar menor"). Quem a esconde é o modo foco. Antes ela recolhia abaixo de 160.
+const LISTA_MINIMA: f32 = 160.;
 const FAIXA_DIREITA: (f32, f32) = (200., 380.);
 /// A faixa da direita com um arquivo aberto (a do protótipo).
 const FAIXA_ARQUIVO: (f32, f32) = (380., 960.);
@@ -714,6 +713,11 @@ pub struct Janela {
     vista_da_lista: Entity<vista_mensagens::VistaDaLista>,
     /// A casca da janela como vista própria (ver `vista_mensagens::VistaDaCasca`).
     casca: Entity<vista_mensagens::VistaDaCasca>,
+    /// A barra de baixo e o painel da direita como vistas em cache (ver `vista_mensagens`).
+    vista_da_barra: Entity<vista_mensagens::VistaDaBarra>,
+    vista_da_direita: Entity<vista_mensagens::VistaDaDireita>,
+    /// O painel da direita acabou de abrir ou trocar (o fade dele, dentro da vista em cache).
+    direita_nova: bool,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -979,10 +983,15 @@ impl Janela {
 
         let eu = cx.entity().downgrade();
         let casca = cx.new(|_| vista_mensagens::VistaDaCasca::new(eu.clone()));
-        let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu));
+        let vista_da_lista = cx.new(|_| vista_mensagens::VistaDaLista::new(eu.clone()));
+        let vista_da_barra = cx.new(|_| vista_mensagens::VistaDaBarra::new(eu.clone()));
+        let vista_da_direita = cx.new(|_| vista_mensagens::VistaDaDireita::new(eu));
         let mut janela = Self {
             vista_da_lista,
             casca,
+            vista_da_barra,
+            vista_da_direita,
+            direita_nova: false,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -2504,7 +2513,12 @@ impl Janela {
                     )
                     // Linear (25/11/2026): a barra de baixo da janela, com o logo, o uso, o contexto,
                     // a Revisão, as Arquivadas e os Avisos. Some junto com a lista (Ctrl+B).
-                    .when(self.lista, |d| d.child(self.barra_de_baixo(&motor, window, cx))),
+                    .when(self.lista, |d| {
+                        d.child(
+                            AnyView::from(self.vista_da_barra.clone())
+                                .cached(StyleRefinement::default().w_full().h(crate::tema::r(34.)).flex_none()),
+                        )
+                    }),
             )
             .children(self.faixa_de_gravacao(&motor, cx))
             // O uso do plano flutua no canto de cima, à direita, embaixo do × (dono, 16/11/2026), só
@@ -2686,7 +2700,7 @@ impl Janela {
             grupo = grupo.child(
                 resizable_panel()
                     .size(px(largura))
-                    .size_range(u(FAIXA_LISTA.0)..px(o.max_lista))
+                    .size_range(u(LISTA_MINIMA)..px(o.max_lista))
                     .fixed()
                     .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
@@ -2708,7 +2722,8 @@ impl Janela {
         } else {
             for (k, &ix) in visiveis.iter().enumerate() {
                 let id = self.paineis[ix].id;
-                let conteudo = self.conversa(motor, Some(ix), window, cx).into_any_element();
+                // O cartão é uma vista em cache (`vista_mensagens::VistaDoCartao`).
+                let conteudo = AnyView::from(self.paineis[ix].cartao.clone()).cached(StyleRefinement::default().size_full()).into_any_element();
                 // A estreita ao lado da maximizada tem a largura fixa.
                 let faixa = match espremidas {
                     Some(m) if m != k => px(larguras.conversas[k])..px(larguras.conversas[k]),
@@ -2735,8 +2750,12 @@ impl Janela {
             let antes = self.direita_vista.replace(qual);
             let nova = antes != Some(qual) && (antes.is_some() || self.direita_ja_vista);
             self.direita_ja_vista = true;
-            let conteudo = self.conteudo_da_direita(motor, window, cx);
-            let conteudo = movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo));
+            if nova {
+                // Abriu ou trocou: a vista em cache se refaz e toca o fade (`direita_em_vista`).
+                self.direita_nova = true;
+                self.vista_da_direita.update(cx, |_, cx| cx.notify());
+            }
+            let conteudo = AnyView::from(self.vista_da_direita.clone()).cached(StyleRefinement::default().size_full());
             let (minima, maxima) = if com_arquivo { (FAIXA_ARQUIVO.0, o.max_arquivo) } else { (FAIXA_DIREITA.0, o.max_direita) };
             grupo = grupo.child(
                 resizable_panel()
@@ -3114,15 +3133,14 @@ mod testes_orcamento {
     }
 
     #[test]
-    fn a_lista_nao_fica_mais_estreita_que_a_do_prototipo() {
-        // A lista não encolhe abaixo dos 250 do protótipo (dono, 26/11/2026: "não é pra dar pra
-        // minimizar a lista mais"): solta em 180 ou em 120, guarda 250, e a montagem seguinte
-        // devolve os 250.
-        assert_eq!(super::LISTA_MINIMA, super::LATERAL);
+    fn a_lista_estreitada_fica_onde_foi_deixada_sem_recolher() {
+        // Solta em 180 (abaixo dos 200 da faixa): guarda 180, e a montagem seguinte (clique duplo,
+        // Ctrl+B) devolve os mesmos 180.
         let mut l = Larguras::default();
         l.guardar(&[180., 820.], &mexeu_em_tudo(true, false), 1., false);
-        assert_eq!(l.lista, super::LISTA_MINIMA);
-        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(super::LISTA_MINIMA));
+        assert_eq!(l.lista, 180.);
+        assert_eq!(l.em_px(&orcamento(1000., 1., 1, true, false), 1).lista, Some(180.));
+        // Abaixo do mínimo, fica no mínimo (ela não recolhe mais).
         l.guardar(&[120., 880.], &mexeu_em_tudo(true, false), 1., false);
         assert_eq!(l.lista, super::LISTA_MINIMA);
     }
@@ -3187,5 +3205,17 @@ mod testes_orcamento {
         assert_eq!(largura_da_gaveta(380., 280., &o), 440.);
         let o = orcamento(300., 1., 1, true, true);
         assert_eq!(largura_da_gaveta(380., 280., &o), 280.);
+    }
+}
+
+impl Janela {
+    /// O conteúdo do painel da direita, desenhado pela vista em cache dele, com o fade de quando
+    /// abre ou troca (`direita_nova`, que vale uma vez).
+    pub(super) fn direita_em_vista(&mut self, motor: &Entity<Motor>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let qual = self.direita_vista.unwrap_or("chat");
+        let nova = std::mem::take(&mut self.direita_nova);
+        let conteudo = self.conteudo_da_direita(motor, window, cx);
+        movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo))
+            .into_any_element()
     }
 }

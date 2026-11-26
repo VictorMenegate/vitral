@@ -79,8 +79,9 @@ componentes do GPUI Kit.
   de fora da pasta). Permitir é `accept`, Negar é `decline` (o item volta `declined` e o turno
   segue), e o cartão que some sem resposta é `cancel`. O `serverRequest/resolved` fecha o canal do
   cartão (`Evento::PermissaoRetirada`) e ele sai. O "Permitir sempre" e o modo de agora valem para
-  o Codex como para o Gemini, e a revisão pelo outro agente tem tudo negado. O "Negar e explicar"
-  manda só o `decline`: a explicação não chega ao Codex. Medido no 0.169.0 com turnos de verdade:
+  o Codex como para o Gemini, e a revisão pelo outro agente tem tudo negado. No "Negar e explicar",
+  a decisão volta pelo protocolo e a explicação segue como mensagem no turno; se ele já estiver
+  terminando, ela fica na fila. O mesmo vale para escrever na caixa com o pedido aberto. Medido no 0.169.0 com turnos de verdade:
   o id do pedido é um número, o `availableDecisions` do comando não lista o `decline` (que mesmo
   assim vale) e o `resolved` chega logo depois de cada resposta.
   **Comandos de barra** (24/11/2026): os que o app-server atende. O `/compact` vai como
@@ -414,7 +415,9 @@ componentes do GPUI Kit.
   subagente não abre: o Claude Code não grava a conversa dele à parte. Referência: o painel de
   subagente do Paseo (`provider-subagent-panel.tsx`, `sidechain-tracker.ts`), 23/11/2026.
 - **Mensagem no meio do turno.** O Enviar com o turno rodando manda a mensagem para dentro dele
-  (`Motor::dirigir_turno`). Quando o turno termina sem ter absorvido a mensagem, o Claude Code abre
+  (`Motor::dirigir_turno`). O @ para outro agente espera na fila, sem entrar no processo atual
+  nem responder aos pedidos dele; pedidos para agentes diferentes entram em turnos separados.
+  Quando o turno termina sem ter absorvido a mensagem, o Claude Code abre
   outro turno com ela no mesmo processo: nesse caso a entrada do processo fica aberta, para o
   turno seguinte também receber mensagens (o `Inicio` dele desfaz o fim adiado; se em 8 s ele não
   começa, `vigiar_turno_dirigido` fecha a entrada e o processo sai). A entrada só fecha no fim
@@ -437,7 +440,9 @@ componentes do GPUI Kit.
   (`Motor::responder_pedido_escrevendo`, `motor::recusa_explicada`; no pedido de aprovar um
   plano, o texto é o pedido de mudanças; na pergunta com opções o texto não nega nada, é a
   resposta dela). A mensagem entra na conversa como sua, antes do
-  resultado negado da chamada. Com imagem anexada, que a recusa não leva, os pedidos são negados
+  resultado negado da chamada. No Codex e no Gemini, a recusa só leva a decisão: o texto segue
+  como mensagem, com confirmação ou de volta à fila se o turno já terminou.
+  Com imagem anexada, que a recusa não leva, os pedidos são negados
   com "O usuário respondeu com uma mensagem…" e a mensagem entra no turno pela entrada. O que
   vale para o turno inteiro (comando de barra, Ultrathink, Ultracode) continua indo para a fila,
   sem negar nada, e o **Ctrl+Enter** (Mandar depois) também. A dica do Enviar diz o que o Enter

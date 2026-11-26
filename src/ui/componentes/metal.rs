@@ -36,7 +36,7 @@ use gpui_kit::*;
 use super::fundo_vivo::{self, Receita};
 use super::malha::{
     BRILHO, CONTRASTE, CORES, DESLOCAMENTO, ESCALA, FORCA_DO_PONTEIRO, GRAO, Quadro, RAIO_DO_PONTEIRO, SATURACAO, SEMENTE,
-    giro_do_destaque, girar_matiz,
+    tingir, tom_do_destaque,
     VINHETA, degrau_suave, grao,
 };
 use crate::{tema::Cores, ui::movimento};
@@ -76,8 +76,8 @@ const PISO: f32 = 0.15;
 /// (multiplicar e somar) e a cor de um ponto é uma média pesada das cinco: aplicar na paleta, uma
 /// vez, dá o mesmo que aplicar em cada ponto, e poupa a conta em 20 mil pontos por quadro.
 fn paleta_acabada() -> [[f32; 3]; 5] {
-    let giro = giro_do_destaque();
-    let mut paleta = CORES.map(|cor| girar_matiz(cor, giro));
+    let tom = tom_do_destaque();
+    let mut paleta = CORES.map(|cor| tingir(cor, tom));
     for cor in &mut paleta {
         for canal in cor.iter_mut() {
             *canal = (*canal - 0.5) * CONTRASTE + 0.5;
@@ -315,9 +315,27 @@ struct DaJanela {
     parada: Option<Arc<RenderImage>>,
     parada_de: Option<(u32, u32, u32, u32, u32)>,
     onde_parada: Bounds<Pixels>,
-    /// O fundo vivo (Smoke ou Mesh drift) pintado por cima da chapa, e o que o fez.
+    /// O fundo vivo (Smoke ou Mesh drift) pintado por cima da chapa, o que o fez e a grade dele
+    /// (colunas, linhas e o lado do texel, para pôr a imagem no lugar).
     imagem_viva: Option<Arc<RenderImage>>,
-    chave_viva: Option<(u32, u32, u32, u32, u64, u64)>,
+    chave_viva: Option<ChaveViva>,
+    grade_viva: (u32, u32, f32),
+    /// O campo novo do fundo vivo, calculado fora da thread da janela (`pintar_o_vivo`), e a chave
+    /// do que está sendo calculado.
+    vivo_pronto: Arc<std::sync::Mutex<Option<VivoPronto>>>,
+    vivo_calculando: Option<ChaveViva>,
+}
+
+/// O que identifica um campo do fundo vivo: a grade, o tamanho, o instante e a receita com as cores.
+type ChaveViva = (u32, u32, u32, u32, u64, u64);
+
+/// Um campo do fundo vivo pronto, feito em segundo plano.
+struct VivoPronto {
+    chave: ChaveViva,
+    bgra: Vec<u8>,
+    colunas: u32,
+    linhas: u32,
+    passo: f32,
 }
 
 /// O que a Janela pede de fundo vivo: a receita e as quatro cores (`crate::paleta`).
@@ -376,6 +394,57 @@ pub fn pintar_imagem_guardada(
     guardadas.push(ImagemGuardada { tamanho, estado, imagem: nova });
 }
 
+/// Imagens pequenas feitas na CPU que se repetem com estados diferentes ao mesmo tempo (os anéis:
+/// cada fração, cada passo do giro), por janela: cada uma pintada de novo sem refazer enquanto a
+/// `chave` voltar, e as menos usadas saindo do atlas quando passa de `COLECAO_MAXIMA`. `fazer`
+/// devolve o BGRA de `tamanho.0` por `tamanho.1`.
+pub fn pintar_imagem_numa_colecao(
+    limites: Bounds<Pixels>,
+    chave: u64,
+    tamanho: (u32, u32),
+    window: &mut Window,
+    cx: &mut App,
+    fazer: impl FnOnce() -> Vec<u8>,
+) {
+    let janela = window.window_handle().window_id();
+    let svg = cx.svg_renderer();
+    let (guardadas, relogio) = cx.default_global::<Colecao>().0.entry(janela).or_default();
+    *relogio += 1;
+    let agora = *relogio;
+    if let Some((imagem, uso)) = guardadas.get_mut(&chave) {
+        *uso = agora;
+        let imagem = imagem.clone();
+        let _ = window.paint_image(limites, limites, Corners::default(), imagem, 0, false);
+        return;
+    }
+    let Some(nova) = imagem_de_bgra(tamanho.0, tamanho.1, &fazer(), svg) else {
+        return;
+    };
+    // A nova entra no atlas antes de as velhas saírem.
+    let _ = window.paint_image(limites, limites, Corners::default(), nova.clone(), 0, false);
+    guardadas.insert(chave, (nova, agora));
+    if guardadas.len() > COLECAO_MAXIMA {
+        let mut usos: Vec<(u64, u64)> = guardadas.iter().map(|(k, (_, u))| (*k, *u)).collect();
+        usos.sort_by_key(|(_, u)| *u);
+        let velhas: Vec<Arc<RenderImage>> =
+            usos.into_iter().take(COLECAO_MAXIMA / 4).filter_map(|(k, _)| guardadas.remove(&k).map(|(img, _)| img)).collect();
+        for velha in velhas {
+            let _ = window.drop_image(velha);
+        }
+    }
+}
+
+/// Quantas imagens a coleção de uma janela guarda.
+const COLECAO_MAXIMA: usize = 256;
+
+/// As imagens da `pintar_imagem_numa_colecao`, por janela: a chave, a imagem e o último uso, e o
+/// relógio dos usos.
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
+struct Colecao(HashMap<WindowId, (HashMap<u64, (Arc<RenderImage>, u64)>, u64)>);
+
+impl Global for Colecao {}
+
 struct ImagemGuardada {
     tamanho: (u32, u32, u32),
     estado: (u64, Option<(u32, u32)>, u32),
@@ -388,7 +457,7 @@ struct ImagensGuardadas(Vec<ImagemGuardada>);
 impl Global for ImagensGuardadas {}
 
 /// A imagem que a placa recebe, a partir do BGRA: passa pelo BMP e pelo decodificador do GPUI.
-fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
+pub(super) fn imagem_de_bgra(largura: u32, altura: u32, bgra: &[u8], svg: SvgRenderer) -> Option<Arc<RenderImage>> {
     static AVISADO: AtomicBool = AtomicBool::new(false);
     match Image::from_bytes(ImageFormat::Bmp, bmp_de_bgra(largura, altura, bgra)).to_image_data(svg) {
         Ok(imagem) => Some(imagem),
@@ -496,7 +565,7 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
             ((x / PX_POR_TEXEL).floor() as i32 + 1, (y / PX_POR_TEXEL).floor() as i32 + 1)
         });
     // O destaque entra na chave: trocar de tema refaz o metal no matiz novo.
-    let destaque = giro_do_destaque().to_bits();
+    let destaque = tom_do_destaque().chave();
     let chave: Chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), ponteiro, destaque);
     let janela = window.window_handle().window_id();
     let svg = cx.svg_renderer();
@@ -588,34 +657,72 @@ fn pintar_o_vivo(
     let chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), assinatura_do_vivo(&Some((receita, cores))));
     let janela = window.window_handle().window_id();
     let svg = cx.svg_renderer();
+    let executor = cx.background_executor().clone();
     let metal = cx.default_global::<Metal>();
     let grao = metal.grao_do_fosco.clone();
     let estado = metal.janelas.entry(janela).or_default();
+    // O campo que ficou pronto em segundo plano entra agora (a nova imagem antes de a velha sair).
+    let pronto = estado.vivo_pronto.lock().ok().and_then(|mut p| p.take());
+    if let Some(pronto) = pronto {
+        estado.vivo_calculando = None;
+        if let Some(nova) = imagem_de_bgra(pronto.colunas, pronto.linhas, &pronto.bgra, svg.clone()) {
+            let velha = estado.imagem_viva.replace(nova);
+            estado.chave_viva = Some(pronto.chave);
+            estado.grade_viva = (pronto.colunas, pronto.linhas, pronto.passo);
+            if let Some(velha) = velha {
+                pintar_a_viva(limites, raios, estado, window);
+                let _ = window.drop_image(velha);
+                pintar_o_grao(limites, raios, grao.as_ref(), window);
+                return;
+            }
+        }
+    }
+    if estado.chave_viva != Some(chave) {
+        if estado.imagem_viva.is_none() {
+            // A primeira vez, na hora: sem imagem nenhuma, o fundo ficaria vazio um quadro.
+            let inicio = Instant::now();
+            let bgra = fundo_vivo::pintar(&receita, &cores, colunas, linhas, largura, altura, tempo);
+            NANOS_DOS_CAMPOS.fetch_add(inicio.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            CAMPOS.fetch_add(1, Ordering::Relaxed);
+            if let Some(nova) = imagem_de_bgra(colunas, linhas, &bgra, svg) {
+                estado.imagem_viva = Some(nova);
+                estado.chave_viva = Some(chave);
+                estado.grade_viva = (colunas, linhas, passo);
+            }
+        } else if estado.vivo_calculando.is_none() {
+            // Fora da thread da janela (26/11/2026): o campo leva de 6 a 9 ms de processador e
+            // era feito no meio da pintura, em metade dos quadros com um chat trabalhando. Até
+            // ficar pronto, vale a imagem de antes; a nova entra no quadro seguinte (a batida
+            // do compasso já pede quadros enquanto o fundo anda).
+            estado.vivo_calculando = Some(chave);
+            let destino = estado.vivo_pronto.clone();
+            executor
+                .spawn(async move {
+                    let inicio = Instant::now();
+                    let bgra = fundo_vivo::pintar(&receita, &cores, colunas, linhas, largura, altura, tempo);
+                    NANOS_DOS_CAMPOS.fetch_add(inicio.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                    CAMPOS.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(mut lugar) = destino.lock() {
+                        *lugar = Some(VivoPronto { chave, bgra, colunas, linhas, passo });
+                    }
+                })
+                .detach();
+        }
+    }
+    pintar_a_viva(limites, raios, estado, window);
+    pintar_o_grao(limites, raios, grao.as_ref(), window);
+}
+
+/// A imagem do fundo vivo no lugar dela: a grade com um texel de folga para fora de cada lado.
+fn pintar_a_viva(limites: Bounds<Pixels>, raios: Corners<Pixels>, estado: &DaJanela, window: &mut Window) {
+    let Some(imagem) = estado.imagem_viva.clone() else { return };
+    let (colunas, linhas, passo) = estado.grade_viva;
     let folga = px(passo);
     let onde = Bounds::new(
         point(limites.origin.x - folga, limites.origin.y - folga),
         size(px(colunas as f32 * passo), px(linhas as f32 * passo)),
     );
-    if estado.chave_viva != Some(chave) || estado.imagem_viva.is_none() {
-        let inicio = Instant::now();
-        let bgra = fundo_vivo::pintar(&receita, &cores, colunas, linhas, largura, altura, tempo);
-        let nova = imagem_de_bgra(colunas, linhas, &bgra, svg);
-        NANOS_DOS_CAMPOS.fetch_add(inicio.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        CAMPOS.fetch_add(1, Ordering::Relaxed);
-        if let Some(nova) = nova {
-            estado.chave_viva = Some(chave);
-            let _ = window.paint_image(limites, onde, raios, nova.clone(), 0, false);
-            if let Some(velha) = estado.imagem_viva.replace(nova) {
-                let _ = window.drop_image(velha);
-            }
-            pintar_o_grao(limites, raios, grao.as_ref(), window);
-            return;
-        }
-    }
-    if let Some(imagem) = estado.imagem_viva.clone() {
-        let _ = window.paint_image(limites, onde, raios, imagem, 0, false);
-    }
-    pintar_o_grao(limites, raios, grao.as_ref(), window);
+    let _ = window.paint_image(limites, onde, raios, imagem, 0, false);
 }
 
 /// O grão por cima de `limites`: um texel do ladrilho por pixel do aparelho. Uma grade de

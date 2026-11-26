@@ -1390,9 +1390,12 @@ fn zoom_dos_raios() -> f32 {
 /// teste; nos de cima, quem escolhe troca leitura por vidro.
 /// Os três níveis transparentes já foram mais fortes; o dono pediu menos em todos (13/11/2026).
 // O "Leve" ficou menos transparente em 16/11/2026 (dono: "tenta diminuir a transparência só"):
-// o véu da base foi de 0xc8 para 0xdc e o do cartão de 0xe6 para 0xee.
+// o véu da base foi de 0xc8 para 0xdc e o do cartão de 0xe6 para 0xee. Em 26/11/2026, com o fundo
+// animado atrás, o véu da base (o fundo da lista) deixa ver a metade do que deixava em todos os
+// níveis, e o cartão das conversas fica como estava (dono: "tá muito forte na parte do fundo que
+// fica na lista, e no resto o do chat tá até pouco"). O véu era 0xe3, 0xdc, 0xa6 e 0x80.
 pub const NIVEIS_DE_TRANSPARENCIA: [(u32, u32, f32); 4] =
-    [(0xe3, 0xf2, 1.), (0xdc, 0xee, 0.5), (0xa6, 0xcc, 0.35), (0x80, 0xa6, 0.3)];
+    [(0xf1, 0xf2, 1.), (0xee, 0xee, 0.5), (0xd3, 0xcc, 0.35), (0xc0, 0xa6, 0.3)];
 /// Os nomes dos níveis, na ordem.
 pub const NOMES_DA_TRANSPARENCIA: [&str; 4] = ["Opaco", "Leve", "Média", "Forte"];
 /// O nível com que o Vitral abre.

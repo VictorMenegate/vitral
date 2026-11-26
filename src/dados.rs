@@ -479,7 +479,7 @@ struct FilaDeGravacao {
     pendentes: VecDeque<Gravacao>,
     /// As que falharam, com o erro; saem quando o mesmo arquivo grava.
     falhas: Vec<(Gravacao, String)>,
-    gravando: bool,
+    gravando: Option<PathBuf>,
     fechada: bool,
     /// A thread só abre na primeira gravação (os testes criam muitos `Dados`).
     aberta: bool,
@@ -510,7 +510,7 @@ impl Gravador {
 
     fn esperar(&self) {
         let mut f = self.travar();
-        while f.gravando || !f.pendentes.is_empty() {
+        while f.gravando.is_some() || !f.pendentes.is_empty() {
             f = self.fila.1.wait(f).unwrap_or_else(|e| e.into_inner());
         }
     }
@@ -520,10 +520,20 @@ impl Gravador {
     }
 
     fn de_novo(&self) {
-        let falhas = std::mem::take(&mut self.travar().falhas);
-        for (g, _) in falhas {
-            self.gravar(g.caminho, g.bytes, g.anterior);
+        // A escolha e a volta à fila são uma operação só: outra gravação não entra no meio.
+        let mut fila = self.travar();
+        for (gravacao, erro) in std::mem::take(&mut fila.falhas) {
+            if fila.gravando.as_ref() == Some(&gravacao.caminho)
+                || fila.pendentes.iter().any(|g| g.caminho == gravacao.caminho)
+            {
+                // O arquivo já tem uma versão mais nova a caminho. O erro só sai quando ela
+                // gravar; repetir os bytes antigos depois dela desfaria o que o usuário fez.
+                fila.falhas.push((gravacao, erro));
+            } else {
+                fila.pendentes.push_back(gravacao);
+            }
         }
+        self.fila.1.notify_all();
     }
 }
 
@@ -534,7 +544,7 @@ fn trabalhar(fila: &(Mutex<FilaDeGravacao>, Condvar)) {
             let mut f = trava.lock().unwrap_or_else(|e| e.into_inner());
             loop {
                 if let Some(proxima) = f.pendentes.pop_front() {
-                    f.gravando = true;
+                    f.gravando = Some(proxima.caminho.clone());
                     break proxima;
                 }
                 if f.fechada {
@@ -559,7 +569,7 @@ fn trabalhar(fila: &(Mutex<FilaDeGravacao>, Condvar)) {
                 f.falhas.push((gravacao, erro));
             }
         }
-        f.gravando = false;
+        f.gravando = None;
         sinal.notify_all();
     }
 }
@@ -1022,6 +1032,58 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("vitral-dados-{nome}-{}", novo_id()));
         fs::create_dir_all(&pasta).unwrap();
         pasta
+    }
+
+    #[test]
+    fn repetir_falha_preserva_a_gravacao_mais_nova_e_o_apagar() {
+        for bytes in [Some(b"mensagem nova".to_vec()), None] {
+            // Fila parada para escolher a ordem sem depender da thread do disco.
+            let gravador = Gravador::default();
+            gravador.travar().aberta = true;
+            let caminho = PathBuf::from("chat.json");
+            gravador.travar().falhas.push((
+                Gravacao { caminho: caminho.clone(), bytes: Some(b"mensagem antiga".to_vec()), anterior: false },
+                "disco cheio".into(),
+            ));
+            gravador.gravar(caminho, bytes.clone(), false);
+            gravador.de_novo();
+            gravador.de_novo();
+            let fila = gravador.travar();
+            assert_eq!(fila.pendentes.len(), 1);
+            assert_eq!(fila.pendentes[0].bytes, bytes, "o retry não desfaz o texto novo nem recria o chat apagado");
+        }
+    }
+
+    #[test]
+    fn repetir_falha_nao_enfileira_dados_velhos_apos_a_gravacao_em_curso() {
+        let gravador = Gravador::default();
+        gravador.travar().aberta = true;
+        let caminho = PathBuf::from("chat.json");
+        {
+            let mut fila = gravador.travar();
+            fila.gravando = Some(caminho.clone());
+            fila.falhas.push((Gravacao { caminho, bytes: Some(b"antigo".to_vec()), anterior: false }, "disco cheio".into()));
+        }
+        gravador.de_novo();
+        assert!(gravador.travar().pendentes.is_empty(), "a gravação nova já saiu da fila para o disco");
+    }
+
+    #[test]
+    fn repetir_falha_grava_no_disco_quando_ele_volta() {
+        let raiz = pasta_de_teste("retry");
+        let pai = raiz.join("chats");
+        fs::write(&pai, b"impede criar a pasta").unwrap();
+        let caminho = pai.join("chat.json");
+        let gravador = Gravador::default();
+        gravador.gravar(caminho.clone(), Some(b"mensagem preservada".to_vec()), false);
+        gravador.esperar();
+        assert!(gravador.falha().is_some());
+        fs::remove_file(&pai).unwrap();
+        gravador.de_novo();
+        gravador.esperar();
+        assert_eq!(fs::read_to_string(caminho).unwrap(), "mensagem preservada");
+        assert!(gravador.falha().is_none());
+        let _ = fs::remove_dir_all(raiz);
     }
 
     #[test]

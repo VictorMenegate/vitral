@@ -2,7 +2,8 @@
 //!
 //! A mensagem fica na fila do chat (`Motor::filas`, gravada no estado: sobrevive ao reinício) com
 //! a hora em `Entrada::agendada`. Enquanto a hora não chega, ela não entra nos turnos: quem tira
-//! mensagens da fila para um turno passa por `tirar_prontas`, que deixa as futuras onde estão. A
+//! mensagens da fila para um turno passa por `tirar_prontas`, que deixa as futuras onde estão e
+//! separa os pedidos com @ para agentes diferentes. A
 //! rotina de 15 s do motor (`entregar_agendadas`) abre o turno do chat livre quando a hora de uma
 //! chega; com o chat ocupado, ela entra no fim do turno, como qualquer outra da fila. A hora já
 //! passada na abertura do Vitral sai na primeira volta da rotina.
@@ -24,14 +25,34 @@ fn no_futuro(entrada: &Entrada, agora: u64) -> bool {
 /// Tira da fila o que pode entrar num turno agora: as mensagens sem hora e as de hora já passada
 /// (que saem sem a hora: daqui em diante são mensagens comuns). As de hora futura ficam. `None`,
 /// com a fila intacta, quando nada do que está pronto abre um turno (só notas, ou só futuras).
-pub fn separar_prontas(fila: &mut Vec<Entrada>, agora: u64) -> Option<Vec<Entrada>> {
+pub fn separar_prontas_para(fila: &mut Vec<Entrada>, agora: u64, agente: Agente) -> Option<Vec<Entrada>> {
     if !fila.iter().any(|e| !e.nota && !no_futuro(e, agora)) {
         return None;
     }
-    let (futuras, mut prontas): (Vec<Entrada>, Vec<Entrada>) = std::mem::take(fila).into_iter().partition(|e| no_futuro(e, agora));
-    *fila = futuras;
-    for entrada in &mut prontas {
+    let mut prontas = Vec::new();
+    let mut destino = None;
+    let mut adiar = false;
+    for mut entrada in std::mem::take(fila) {
+        if adiar || no_futuro(&entrada, agora) {
+            fila.push(entrada);
+            continue;
+        }
+        let chamado = match (entrada.do_usuario() && !entrada.registrada).then(|| alvo_da_dupla(&entrada.texto)) {
+            Some(AlvoDaDupla::So(chamado)) => chamado,
+            _ => destino.unwrap_or(agente),
+        };
+        if !entrada.nota {
+            if destino.is_some_and(|anterior| anterior != chamado) {
+                // Dois @ para agentes diferentes não cabem no mesmo turno. O segundo e
+                // tudo o que vem depois mantêm a ordem para o turno seguinte.
+                adiar = true;
+                fila.push(entrada);
+                continue;
+            }
+            destino = Some(chamado);
+        }
         entrada.agendada = None;
+        prontas.push(entrada);
     }
     Some(prontas)
 }
@@ -77,10 +98,11 @@ impl Motor {
         cx.notify();
     }
 
-    /// O que a fila do chat tem para um turno agora (ver `separar_prontas`).
+    /// O que a fila do chat tem para um turno agora (ver `separar_prontas_para`).
     pub(super) fn tirar_prontas(&mut self, chat: &str) -> Option<Vec<Entrada>> {
+        let agente = self.chat_gravado(chat)?.agente;
         let fila = self.filas.get_mut(chat)?;
-        let prontas = separar_prontas(fila, agora());
+        let prontas = separar_prontas_para(fila, agora(), agente);
         if fila.is_empty() {
             self.filas.remove(chat);
         }
@@ -134,8 +156,12 @@ impl Motor {
 
 #[cfg(test)]
 mod testes {
-    use super::{separar_prontas, vencidas};
+    use super::{separar_prontas_para, vencidas};
     use crate::modelo::{Entrada, Filas};
+
+    fn separar_prontas(fila: &mut Vec<Entrada>, agora: u64) -> Option<Vec<Entrada>> {
+        separar_prontas_para(fila, agora, crate::modelo::Agente::Claude)
+    }
 
     fn entrada(texto: &str, agendada: Option<u64>) -> Entrada {
         Entrada { texto: texto.into(), agendada, ..Default::default() }
@@ -143,6 +169,22 @@ mod testes {
 
     fn textos(fila: &[Entrada]) -> Vec<&str> {
         fila.iter().map(|e| e.texto.as_str()).collect()
+    }
+
+    #[test]
+    fn a_fila_entrega_cada_pedido_ao_agente_chamado() {
+        let mut fila = vec![
+            entrada("@codex revisa", None),
+            entrada("olha também o teste", None),
+            entrada("@claude corrige", None),
+            entrada("mais tarde", Some(2_000)),
+        ];
+        let prontas = separar_prontas_para(&mut fila, 1_000, crate::modelo::Agente::Claude).unwrap();
+        assert_eq!(textos(&prontas), ["@codex revisa", "olha também o teste"]);
+        assert_eq!(textos(&fila), ["@claude corrige", "mais tarde"]);
+        let prontas = separar_prontas_para(&mut fila, 1_000, crate::modelo::Agente::Codex).unwrap();
+        assert_eq!(textos(&prontas), ["@claude corrige"]);
+        assert_eq!(textos(&fila), ["mais tarde"]);
     }
 
     #[test]

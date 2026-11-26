@@ -355,6 +355,13 @@ pub struct Parceiro {
     pub custo_da_sessao: Option<(String, f64)>,
     #[serde(default)]
     pub comandos: Vec<String>,
+    /// De onde a primeira vez dele continua numa cópia de sessão (`Chat::bifurcado_de`): o ponto de
+    /// um ramo é do agente que estava na vez quando o ramo nasceu, e vai com ele na troca. Sem isso,
+    /// o Claude que entrava num ramo aberto na vez do Codex tentava retomar a conversa do Codex como
+    /// sessão dele, e o Claude Code saía com "No conversation found with session ID" (dono,
+    /// 26/11/2026: "fui abrir um outro ramo pra fazer com o Claude e deu erro").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bifurcado_de: Option<Bifurcacao>,
 }
 
 impl Parceiro {
@@ -370,6 +377,7 @@ impl Parceiro {
             janela: None,
             custo_da_sessao: None,
             comandos: Vec::new(),
+            bifurcado_de: None,
         }
     }
 }
@@ -1082,6 +1090,7 @@ impl Chat {
         std::mem::swap(&mut self.janela, &mut p.janela);
         std::mem::swap(&mut self.custo_da_sessao, &mut p.custo_da_sessao);
         std::mem::swap(&mut self.comandos, &mut p.comandos);
+        std::mem::swap(&mut self.bifurcado_de, &mut p.bifurcado_de);
         true
     }
 
@@ -1103,6 +1112,23 @@ mod testes {
     /// e o teste não depende do fuso de quem o roda.
     const MEIO_DIA: u64 = 1_773_316_800;
     const DIA: u64 = 86_400;
+
+    /// O ponto do ramo é do agente que estava na vez: o Claude que entra num ramo aberto na vez do
+    /// Codex começa sem ele (numa sessão nova, com o que o outro fez), e o Codex o tem de volta na
+    /// vez dele.
+    #[test]
+    fn o_ponto_do_ramo_vai_com_o_agente_na_troca_de_vez() {
+        let mut chat = Chat::novo("c1".into(), "Ramo", "/tmp".into());
+        chat.agente = Agente::Codex;
+        let ponto = Bifurcacao { sessao: "thread-codex".into(), ate: Some("turno-1".into()), correcao: false };
+        chat.bifurcado_de = Some(ponto.clone());
+        chat.parceiro = Some(Parceiro::novo(Agente::Claude));
+        assert!(chat.trocar_vez());
+        assert_eq!((chat.agente, chat.bifurcado_de.as_ref()), (Agente::Claude, None));
+        assert_eq!(chat.parceiro.as_ref().and_then(|p| p.bifurcado_de.as_ref()), Some(&ponto));
+        assert!(chat.trocar_vez());
+        assert_eq!((chat.agente, chat.bifurcado_de.as_ref()), (Agente::Codex, Some(&ponto)));
+    }
 
     #[test]
     fn a_marca_do_codex_nao_se_confunde_com_a_do_claude() {
