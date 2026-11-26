@@ -2141,10 +2141,20 @@ fn interpretar(valor: &Value) -> Vec<Evento> {
             .chain(crate::motor::medida_do_resultado(valor).map(Evento::Medida))
             .chain([Evento::Fim {
             erro: valor["is_error"].as_bool().unwrap_or(false),
-            texto: valor["result"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| texto(&valor["subtype"])),
+            // Sem `result`, o porquê vem em `errors` ("No conversation found with session ID: …"):
+            // com só o `subtype` ("error_during_execution"), o erro não dizia nada, e o conserto da
+            // sessão e do ramo (`Motor::consertar_sessao`), que procura esse texto, não acontecia.
+            texto: valor["result"].as_str().map(str::to_string).unwrap_or_else(|| {
+                let erros: Vec<&str> = valor["errors"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.as_str())
+                    .map(str::trim)
+                    .filter(|e| !e.is_empty())
+                    .collect();
+                if erros.is_empty() { texto(&valor["subtype"]) } else { erros.join("\n") }
+            }),
             custo_usd: valor["total_cost_usd"].as_f64().unwrap_or(0.0),
             janela: valor["modelUsage"]
                 .as_object()
@@ -3533,6 +3543,19 @@ mod testes_dos_modelos {
         assert!(matches!(interpretar(&comecou).as_slice(), [Evento::SubInicio { pai }] if pai == "toolu_pai"));
         let falhou = json!({ "type": "system", "subtype": "task_notification", "tool_use_id": "toolu_pai", "status": "failed" });
         assert!(matches!(interpretar(&falhou).as_slice(), [Evento::SubFim { erro: true, .. }]));
+    }
+
+    /// A retomada de uma sessão que não existe, como o Claude Code 2.1.328 a fecha (26/11/2026):
+    /// sem `result`, com o porquê em `errors`. O texto do fim é ele, e não o `subtype`.
+    #[test]
+    fn o_erro_sem_result_vem_do_errors() {
+        use super::{Evento, interpretar};
+        let sem_sessao = json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 0,
+            "errors": ["No conversation found with session ID: 01a21287-0e82-78b3-8b7c-e71f8625db51"] });
+        assert!(interpretar(&sem_sessao).iter().any(|e| matches!(e,
+            Evento::Fim { erro: true, texto, .. } if texto == "No conversation found with session ID: 01a21287-0e82-78b3-8b7c-e71f8625db51")));
+        let mudo = json!({ "type": "result", "subtype": "error_during_execution", "is_error": true, "num_turns": 0, "errors": [] });
+        assert!(interpretar(&mudo).iter().any(|e| matches!(e, Evento::Fim { texto, .. } if texto == "error_during_execution")));
     }
 
     /// O `result` e os resultados de comando como o Claude Code 2.1.328 os mostrou (23/11/2026).
