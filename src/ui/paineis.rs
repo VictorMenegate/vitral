@@ -141,6 +141,9 @@ pub struct Painel {
     pub altura_da_presa: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// A área de mensagens como vista em cache (ver `vista_mensagens`).
     pub vista: Entity<super::vista_mensagens::VistaDasMensagens>,
+    /// O cartão do painel e o cabeçalho dele como vistas em cache (ver `vista_mensagens`).
+    pub cartao: Entity<super::vista_mensagens::VistaDoCartao>,
+    pub cabecalho: Entity<super::vista_mensagens::VistaDoCabecalho>,
     /// A altura que cada bloco da conversa mediu neste painel: o que está longe da vista entra
     /// como um espaço dessa altura, sem ser montado (ver `mensagens::a_vista`).
     pub(in crate::ui) alturas: std::rc::Rc<std::cell::RefCell<super::mensagens::a_vista::Alturas>>,
@@ -538,11 +541,15 @@ impl Janela {
         let foco_aba = cx.focus_handle();
         self._assinaturas.push(cx.on_focus(&foco_aba, window, move |this, _, cx| this.ativar_painel(id, cx)));
         let eu = cx.entity().downgrade();
-        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu, id));
+        let vista = cx.new(|_| super::vista_mensagens::VistaDasMensagens::new(eu.clone(), id));
+        let cartao = cx.new(|_| super::vista_mensagens::VistaDoCartao::new(eu.clone(), id));
+        let cabecalho = cx.new(|_| super::vista_mensagens::VistaDoCabecalho::new(eu, id));
         let mut painel = Painel {
             percurso: Default::default(),
             id,
             vista,
+            cartao,
+            cabecalho,
             chat: None,
             abas: Vec::new(),
             composer,

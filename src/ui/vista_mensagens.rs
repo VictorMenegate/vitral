@@ -64,6 +64,129 @@ impl Render for VistaDaLista {
     }
 }
 
+/// O cartão de um painel (o cabeçalho com as abas, a caixa de mensagem, a doca e o resto, com as
+/// mensagens dentro, na vista delas) como vista própria, em cache (26/11/2026). Quando uma vista
+/// de dentro se redesenha (a mensagem que cresce, o anel que gira), o GPUI marca também as vistas
+/// em volta dela; antes a vista em volta era a casca, e a janela inteira (os outros painéis, a
+/// barra de baixo, o painel da direita) refazia o layout a cada pedaço de texto e a cada batida
+/// do spinner. Agora se refaz o cartão daquele painel e a casca, que ficou só com o esqueleto.
+/// Quem desenha é a Janela (`Janela::conversa`); a Janela avisada avisa o cartão
+/// (`Janela::avisar_vistas`).
+pub struct VistaDoCartao {
+    janela: WeakEntity<Janela>,
+    painel: u64,
+}
+
+impl VistaDoCartao {
+    pub fn new(janela: WeakEntity<Janela>, painel: u64) -> Self {
+        Self { janela, painel }
+    }
+}
+
+impl Render for VistaDoCartao {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let painel = self.painel;
+        let cartao = self
+            .janela
+            .update(cx, |janela, cx| {
+                let ix = janela.paineis.iter().position(|p| p.id == painel);
+                match (ix, janela.motor.clone()) {
+                    (Some(ix), Some(motor)) => janela.conversa(&motor, Some(ix), window, cx).into_any_element(),
+                    _ => div().into_any_element(),
+                }
+            })
+            .unwrap_or_else(|_| div().into_any_element());
+        div().size_full().flex().flex_col().child(cartao)
+    }
+}
+
+/// O cabeçalho de um painel (as abas e as ações) como vista própria, em cache dentro do cartão: o
+/// texto que chega numa resposta refaz o cartão daquele painel, e as abas, que não mudaram, ficam
+/// como estavam (26/11/2026). A altura é fixa (`altura::CABECALHO`), o que uma vista em cache
+/// precisa. Quem desenha é a Janela (`Janela::cabecalho_painel`).
+pub struct VistaDoCabecalho {
+    janela: WeakEntity<Janela>,
+    painel: u64,
+}
+
+impl VistaDoCabecalho {
+    pub fn new(janela: WeakEntity<Janela>, painel: u64) -> Self {
+        Self { janela, painel }
+    }
+}
+
+impl Render for VistaDoCabecalho {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let painel = self.painel;
+        let cabecalho = self
+            .janela
+            .update(cx, |janela, cx| {
+                let ix = janela.paineis.iter().position(|p| p.id == painel);
+                match (ix, janela.motor.clone()) {
+                    (Some(ix), Some(motor_entidade)) => {
+                        let motor = motor_entidade.read(cx);
+                        let chat = janela.paineis[ix].chat.as_deref().and_then(|id| motor.chat(id));
+                        janela.cabecalho_painel(&motor_entidade, motor, chat, Some(ix), window, cx).into_any_element()
+                    }
+                    _ => div().into_any_element(),
+                }
+            })
+            .unwrap_or_else(|_| div().into_any_element());
+        div().size_full().flex().flex_col().child(cabecalho)
+    }
+}
+
+/// A barra de baixo da janela (o logo, o uso, o contexto, a Revisão, as Arquivadas e os Avisos)
+/// como vista própria, em cache, pelo mesmo motivo do cartão (`Janela::barra_de_baixo`).
+pub struct VistaDaBarra {
+    janela: WeakEntity<Janela>,
+}
+
+impl VistaDaBarra {
+    pub fn new(janela: WeakEntity<Janela>) -> Self {
+        Self { janela }
+    }
+}
+
+impl Render for VistaDaBarra {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let barra = self
+            .janela
+            .update(cx, |janela, cx| match janela.motor.clone() {
+                Some(motor) => janela.barra_de_baixo(&motor, window, cx).into_any_element(),
+                None => div().into_any_element(),
+            })
+            .unwrap_or_else(|_| div().into_any_element());
+        div().size_full().flex().flex_col().child(barra)
+    }
+}
+
+/// O painel da direita (Este chat, Arquivos, o arquivo aberto) como vista própria, em cache, pelo
+/// mesmo motivo do cartão. O fade de quando ele abre ou troca mora aqui dentro: uma vista em cache
+/// é reaproveitada com a opacidade do quadro em que se pintou (`Janela::direita_em_vista`).
+pub struct VistaDaDireita {
+    janela: WeakEntity<Janela>,
+}
+
+impl VistaDaDireita {
+    pub fn new(janela: WeakEntity<Janela>) -> Self {
+        Self { janela }
+    }
+}
+
+impl Render for VistaDaDireita {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let direita = self
+            .janela
+            .update(cx, |janela, cx| match janela.motor.clone() {
+                Some(motor) => janela.direita_em_vista(&motor, window, cx),
+                None => div().into_any_element(),
+            })
+            .unwrap_or_else(|_| div().into_any_element());
+        div().size_full().flex().flex_col().child(direita)
+    }
+}
+
 /// A casca da janela (tudo o que a Janela desenha fora das vistas em cache) como vista própria,
 /// sem cache: é ela, e não a Janela, a vista em que os elementos da casca estão. O GPUI avisa
 /// essa vista a cada hover, dica, quadro de transição e estado guardado que muda; quando ela era

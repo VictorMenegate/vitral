@@ -608,7 +608,13 @@ impl Janela {
         let caixa_estreita = ix.is_some_and(|ix| self.paineis[ix].medida.faixa == super::componentes::FaixaCaixa::Estreita);
         let id_texto = |nome: &str| SharedString::from(format!("{nome}-{painel_id}"));
 
-        let cabecalho = self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx);
+        // Num painel, o cabeçalho é uma vista em cache dentro do cartão (`VistaDoCabecalho`).
+        let cabecalho = match ix {
+            Some(ix) => AnyView::from(self.paineis[ix].cabecalho.clone())
+                .cached(StyleRefinement::default().w_full().h(altura::CABECALHO).flex_none())
+                .into_any_element(),
+            None => self.cabecalho_painel(motor_entidade, motor, chat, ix, window, cx).into_any_element(),
+        };
         // A conversa de um subagente aberta numa aba: só para ler, sem caixa nem fila.
         let subagente = chat.and_then(|c| motor.subconversa(&c.id));
         // As mensagens são uma vista em cache (`vista_mensagens`): a Janela redesenhando por outra
@@ -1014,7 +1020,7 @@ impl Janela {
     /// O cabeçalho numa linha só (44), que arrasta a janela: a aba, as ações e os botões da janela.
     /// Com a lista escondida, o 1º painel começa pelo logo compacto e, no modo recolhido, os anéis
     /// de uso. A borda de baixo só aparece com mensagens roladas por baixo dele.
-    fn cabecalho_painel(
+    pub(super) fn cabecalho_painel(
         &self,
         motor_entidade: &Entity<Motor>,
         motor: &Motor,
@@ -1728,8 +1734,12 @@ impl Janela {
     pub(super) fn avisar_vistas(&mut self, cx: &mut Context<Self>) {
         for painel in &self.paineis {
             painel.vista.update(cx, |_, cx| cx.notify());
+            painel.cartao.update(cx, |_, cx| cx.notify());
+            painel.cabecalho.update(cx, |_, cx| cx.notify());
         }
         self.vista_da_lista.update(cx, |_, cx| cx.notify());
+        self.vista_da_barra.update(cx, |_, cx| cx.notify());
+        self.vista_da_direita.update(cx, |_, cx| cx.notify());
     }
 
     /// Avisa só a vista das mensagens de um painel (a rolagem dele, que não mexe no resto).
