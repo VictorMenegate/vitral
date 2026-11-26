@@ -313,15 +313,16 @@ impl Janela {
             }
             let quando = if linha.em == 0 { String::new() } else { crate::modelo::hora_local(linha.em) };
             let (chat_id, item) = (chat.id.clone(), linha.item);
-            // A linha do protótipo Linear (25/11/2026): a hora em mono e a mensagem em 12,5, em
-            // até duas linhas; a que está à vista na conversa na cor cheia do escolhido.
+            // A mensagem em 12,5, em até duas linhas, com a largura toda; embaixo, o que o turno
+            // fez à esquerda e a hora, em mono, no canto de baixo à direita (dono, 26/11/2026:
+            // "fazer a hora ficar no canto inferior direito pra caber mais o resto"; era uma
+            // coluna de 36 à esquerda). A que está à vista na conversa na cor cheia do escolhido.
             let filho = div()
                 .id(("linha-do-sumario", n))
                 .relative()
                 .flex()
+                .flex_col()
                 .flex_none()
-                .items_start()
-                .gap(linear::PASSO_VAO)
                 .px(esp::E8)
                 .py(linear::CAIXA_BAIXO)
                 .rounded(raio::CONTROLE)
@@ -331,23 +332,22 @@ impl Janela {
                 .font_weight(FontWeight::MEDIUM)
                 .when(lida, |s| s.bg(Cores::selecao()))
                 .when(!lida, |s| s.hover(|s| s.bg(Cores::hover())))
+                .child(div().line_clamp(2).text_color(if lida { Cores::forte() } else { Cores::texto_da_fala() }).child(linha.texto.clone()))
                 .child(
                     div()
-                        .flex_none()
-                        .w(r(36.))
-                        .font_family(FONTE_MONO)
-                        .text_size(r(11.5))
-                        .text_color(if lida { Cores::texto() } else { Cores::tenue() })
-                        .child(quando),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
                         .flex()
-                        .flex_col()
-                        .child(div().line_clamp(2).text_color(if lida { Cores::forte() } else { Cores::texto_da_fala() }).child(linha.texto.clone()))
-                        .when(!linha.fez.is_empty(), |s| s.child(div().text_size(r(11.)).text_color(Cores::tenue()).child(linha.fez.clone()))),
+                        .items_center()
+                        .gap(linear::PASSO_VAO)
+                        .text_size(r(11.))
+                        .text_color(Cores::tenue())
+                        .child(div().flex_1().min_w_0().truncate().child(linha.fez.clone()))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_family(FONTE_MONO)
+                                .text_color(if lida { Cores::texto() } else { Cores::tenue() })
+                                .child(quando),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.ir_a_mensagem_do_sumario(&chat_id, item, cx)));
             filhos.push(filho.into_any_element());

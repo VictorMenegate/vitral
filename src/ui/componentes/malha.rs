@@ -41,22 +41,57 @@ pub(super) const DESLOCAMENTO: (f32, f32) = (-0.05, 0.0);
 pub(super) const FORCA_DO_PONTEIRO: f32 = 0.50;
 pub(super) const RAIO_DO_PONTEIRO: f32 = 0.80;
 
-/// Quanto o matiz do destaque em uso anda do azul do tema padrão (#3170ff), de 0 a 1: o metal
-/// (a luz da doca, a tecla de metal) e a malha do logo seguem o destaque dos outros temas (Brasa,
-/// Floresta) em vez de ficar azuis. No tema padrão é zero, e as cores são as da receita.
-pub(super) fn giro_do_destaque() -> f32 {
-    let base = Hsla::from(rgb(0x3170ff)).h;
-    let destaque = Hsla::from(crate::tema::Cores::destaque());
-    if destaque.s < 0.05 { 0. } else { destaque.h - base }
+/// Como o metal (a luz da doca, o aro do foco, a tecla de metal) e a malha do logo seguem o
+/// destaque do tema, a partir do azul do tema padrão (#3170ff): quanto o matiz anda (de 0 a 1), e
+/// quanto da saturação e da luz das cores da receita fica. A saturação segue a do destaque, e um
+/// destaque cinza deixa o metal cinza; a luz anda metade do caminho até a do destaque, e só para
+/// baixo (mais claro que a receita, o texto em cima do metal perderia contraste). Antes só o matiz
+/// andava, e um destaque cinza deixava o metal azul (dono, 26/11/2026: "pode arrumar"). No tema
+/// padrão tudo fica como está, e as cores são as da receita.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TomDoDestaque {
+    pub giro: f32,
+    pub saturacao: f32,
+    pub luz: f32,
 }
 
-/// A cor (sRGB de 0 a 1) com o matiz andado de `giro` (de 0 a 1, a volta inteira).
-pub(super) fn girar_matiz(cor: [f32; 3], giro: f32) -> [f32; 3] {
-    if giro == 0. {
+impl TomDoDestaque {
+    /// O tom do tema padrão: as cores da receita sem mudança.
+    pub const RECEITA: TomDoDestaque = TomDoDestaque { giro: 0., saturacao: 1., luz: 1. };
+
+    /// O tom a partir de um destaque.
+    pub fn de(destaque: Hsla) -> Self {
+        let base = Hsla::from(rgb(0x3170ff));
+        if (destaque.h - base.h).abs() < 1e-4 && (destaque.s - base.s).abs() < 1e-4 && (destaque.l - base.l).abs() < 1e-4 {
+            return Self::RECEITA;
+        }
+        TomDoDestaque {
+            giro: destaque.h - base.h,
+            saturacao: (destaque.s / base.s.max(1e-4)).clamp(0., 1.),
+            luz: (1. + (destaque.l / base.l.max(1e-4) - 1.) * 0.5).clamp(0.5, 1.),
+        }
+    }
+
+    /// Um número só para o tom, para as chaves das imagens guardadas (trocar de tema as refaz).
+    pub fn chave(&self) -> u32 {
+        self.giro.to_bits() ^ self.saturacao.to_bits().rotate_left(11) ^ self.luz.to_bits().rotate_left(22)
+    }
+}
+
+/// O tom do destaque em uso (`TomDoDestaque`).
+pub(super) fn tom_do_destaque() -> TomDoDestaque {
+    TomDoDestaque::de(Hsla::from(crate::tema::Cores::destaque()))
+}
+
+/// A cor (sRGB de 0 a 1) no tom do destaque: o matiz andado, a saturação e a luz escaladas.
+pub(super) fn tingir(cor: [f32; 3], tom: TomDoDestaque) -> [f32; 3] {
+    if tom == TomDoDestaque::RECEITA {
         return cor;
     }
     let mut hsla = Hsla::from(Rgba { r: cor[0], g: cor[1], b: cor[2], a: 1. });
-    hsla.h = (hsla.h + giro).rem_euclid(1.);
+    hsla.h = (hsla.h + tom.giro).rem_euclid(1.);
+    hsla.s = (hsla.s * tom.saturacao).clamp(0., 1.);
+    hsla.l = (hsla.l * tom.luz).clamp(0., 1.);
     let c = Rgba::from(hsla);
     [c.r, c.g, c.b]
 }
@@ -224,15 +259,15 @@ pub fn malha_viva(fase: f64, raio: Pixels, luz: bool) -> impl IntoElement {
             });
             let raio = raio.as_f32();
             let tamanho = (colunas as u32, linhas as u32, (raio * escala).to_bits());
-            // O giro do destaque entra na chave: trocar de tema refaz a malha no matiz novo.
-            let giro = giro_do_destaque();
-            let estado = (fase.to_bits(), ponteiro.map(|(x, y)| (x.to_bits(), y.to_bits())), giro.to_bits());
+            // O tom do destaque entra na chave: trocar de tema refaz a malha no tom novo.
+            let tom = tom_do_destaque();
+            let estado = (fase.to_bits(), ponteiro.map(|(x, y)| (x.to_bits(), y.to_bits())), tom.chave());
             // A malha vira UMA imagem, refeita só quando a fase ou o ponteiro mudam: pintada ponto
             // a ponto, eram uns 3.700 quadrados por quadro (o botão a 160%), e cada quadro da janela
             // redesenhava todos, parado ou não (medido na bancada em 17/11/2026: ~10% do tempo da
             // thread da janela com um chat trabalhando).
             super::metal::pintar_imagem_guardada(limites, tamanho, estado, window, cx, || {
-                pintar_malha(fase, colunas, linhas, largura, altura, raio, ponteiro, giro)
+                pintar_malha(fase, colunas, linhas, largura, altura, raio, ponteiro, tom)
             });
         },
     )
@@ -241,10 +276,10 @@ pub fn malha_viva(fase: f64, raio: Pixels, luz: bool) -> impl IntoElement {
 
 /// A malha em BGRA, `colunas` por `linhas`, com a cobertura do canto arredondado no alfa.
 #[allow(clippy::too_many_arguments)]
-fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32, raio: f32, ponteiro: Option<(f32, f32)>, giro: f32) -> Vec<u8> {
+fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32, raio: f32, ponteiro: Option<(f32, f32)>, tom: TomDoDestaque) -> Vec<u8> {
     let quadro = Quadro::em(fase);
-    // As cores da receita no matiz do destaque do tema (o logo segue as cores, como o metal).
-    let cores = CORES.map(|c| girar_matiz(c, giro));
+    // As cores da receita no tom do destaque do tema (o logo segue as cores, como o metal).
+    let cores = CORES.map(|c| tingir(c, tom));
     let celula = (largura / colunas).max(altura / linhas);
     let (n_col, n_lin) = (colunas as usize, linhas as usize);
     let mut bgra = Vec::with_capacity(n_col * n_lin * 4);
@@ -267,7 +302,8 @@ fn pintar_malha(fase: f64, colunas: f32, linhas: f32, largura: f32, altura: f32,
 
 #[cfg(test)]
 mod testes {
-    use super::{Quadro, cobertura_do_canto, cor_da_malha, cor_no_ponto};
+    use super::{Quadro, TomDoDestaque, cobertura_do_canto, cor_da_malha, cor_no_ponto, tingir};
+    use gpui_kit::{Hsla, rgb};
 
     fn perto(a: [f32; 3], b: [f32; 3]) -> bool {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.004)
@@ -327,5 +363,27 @@ mod testes {
         assert!(dentro == 1. && fora == 0. && meio > 0. && meio < 1., "{dentro} {meio} {fora}");
         // Raio maior que a metade do lado vira círculo, sem estourar.
         assert_eq!(cobertura_do_canto(17., 17., 34., 34., 99., 1.), 1.);
+    }
+
+    /// O metal segue o destaque: o padrão deixa a receita como está; um destaque cinza deixa o
+    /// metal cinza (antes ficava azul); um mais escuro e menos saturado (o da Floresta) tira
+    /// saturação e luz, sem passar da receita.
+    #[test]
+    fn o_metal_segue_o_tom_do_destaque() {
+        let azul = [0.10, 0.35, 0.95];
+        assert_eq!(TomDoDestaque::de(Hsla::from(rgb(0x3170ff))), TomDoDestaque::RECEITA);
+        assert_eq!(tingir(azul, TomDoDestaque::RECEITA), azul);
+        let cinza = TomDoDestaque::de(Hsla::from(rgb(0x808080)));
+        assert_eq!(cinza.saturacao, 0.);
+        let [r, g, b] = tingir(azul, cinza);
+        assert!((r - g).abs() < 1e-4 && (g - b).abs() < 1e-4, "{r} {g} {b}");
+        let floresta = TomDoDestaque::de(Hsla::from(rgb(0x1f9d55)));
+        assert!(floresta.saturacao > 0.5 && floresta.saturacao < 1., "{floresta:?}");
+        assert!(floresta.luz >= 0.5 && floresta.luz < 1., "{floresta:?}");
+        let verde = tingir(azul, floresta);
+        assert!(verde[1] > verde[0] && verde[1] > verde[2], "{verde:?}");
+        // Mais claro que a receita, nunca.
+        let claro = TomDoDestaque::de(Hsla::from(rgb(0xffe08a)));
+        assert_eq!(claro.luz, 1.);
     }
 }

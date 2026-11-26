@@ -36,7 +36,7 @@ use gpui_kit::*;
 use super::fundo_vivo::{self, Receita};
 use super::malha::{
     BRILHO, CONTRASTE, CORES, DESLOCAMENTO, ESCALA, FORCA_DO_PONTEIRO, GRAO, Quadro, RAIO_DO_PONTEIRO, SATURACAO, SEMENTE,
-    giro_do_destaque, girar_matiz,
+    tingir, tom_do_destaque,
     VINHETA, degrau_suave, grao,
 };
 use crate::{tema::Cores, ui::movimento};
@@ -76,8 +76,8 @@ const PISO: f32 = 0.15;
 /// (multiplicar e somar) e a cor de um ponto é uma média pesada das cinco: aplicar na paleta, uma
 /// vez, dá o mesmo que aplicar em cada ponto, e poupa a conta em 20 mil pontos por quadro.
 fn paleta_acabada() -> [[f32; 3]; 5] {
-    let giro = giro_do_destaque();
-    let mut paleta = CORES.map(|cor| girar_matiz(cor, giro));
+    let tom = tom_do_destaque();
+    let mut paleta = CORES.map(|cor| tingir(cor, tom));
     for cor in &mut paleta {
         for canal in cor.iter_mut() {
             *canal = (*canal - 0.5) * CONTRASTE + 0.5;
@@ -496,7 +496,7 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
             ((x / PX_POR_TEXEL).floor() as i32 + 1, (y / PX_POR_TEXEL).floor() as i32 + 1)
         });
     // O destaque entra na chave: trocar de tema refaz o metal no matiz novo.
-    let destaque = giro_do_destaque().to_bits();
+    let destaque = tom_do_destaque().chave();
     let chave: Chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), ponteiro, destaque);
     let janela = window.window_handle().window_id();
     let svg = cx.svg_renderer();
