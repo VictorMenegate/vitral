@@ -274,6 +274,17 @@ pub struct RevisaoEmCurso {
     pub criou_o_parceiro: bool,
     /// O `atualizado_em` de antes: a revisão sem achado não deixa o chat como não lido.
     pub atualizado_antes: u64,
+    /// Quem revisa (o agente escolhido nas Configurações). Sem ele (uma revisão gravada por uma
+    /// versão de antes), o outro agente do chat.
+    #[serde(default)]
+    pub revisor: Option<Agente>,
+}
+
+impl RevisaoEmCurso {
+    /// Quem está revisando.
+    pub fn revisor(&self) -> Agente {
+        self.revisor.unwrap_or(self.principal.outro())
+    }
 }
 
 /// Quem responde num chat: o Claude Code, o Codex (CLI da OpenAI) ou o Gemini (o Antigravity CLI
@@ -785,6 +796,12 @@ pub struct Config {
     pub revisao_manda_sozinha: bool,
     /// A linha "Codex revisou: nada a acrescentar" aparece na conversa.
     pub revisao_mostra_nada: bool,
+    /// Quem revisa: vazio é o outro agente (o Codex num chat do Claude, o Claude nos outros);
+    /// "claude", "codex" ou "gemini" fixam o revisor. Num chat do próprio revisor, vale o outro
+    /// (dono, 26/11/2026: "faz dar pra escolher que IA uso na revisão e qual modelo").
+    pub revisao_agente: String,
+    /// O modelo de cada revisor, pelo agente ("claude" → "opus"); sem a chave, o padrão dele.
+    pub revisao_modelos: std::collections::BTreeMap<String, String>,
     /// As cores do tema, o fundo animado e as bordas finas (Configurações › Aparência › Cores).
     pub paleta: crate::paleta::Paleta,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
@@ -930,6 +947,8 @@ impl Default for Config {
             revisao_instrucoes: String::new(),
             revisao_manda_sozinha: false,
             revisao_mostra_nada: true,
+            revisao_agente: String::new(),
+            revisao_modelos: std::collections::BTreeMap::new(),
             paleta: crate::paleta::Paleta::default(),
             memoria_da_equipe: String::new(),
             avisos_no_app: true,

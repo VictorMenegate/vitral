@@ -897,8 +897,8 @@ impl Configuracoes {
             .linha(
                 LinhaDeOpcao::new("cfg-revisar-edicoes", "Ligada")
                     .info(
-                        "O outro agente (o Codex num chat do Claude, o Claude nos outros) confere o que mudou, só \
-                         lendo. Sem nada a dizer, fica uma linha discreta; com um achado, um cartão que você manda ao \
+                        "O revisor (de fábrica, o outro agente: o Codex num chat do Claude, o Claude nos outros; \
+                         troque em Revisor) confere o que mudou, só lendo. Sem nada a dizer, fica uma linha discreta; com um achado, um cartão que você manda ao \
                          agente do chat. Desligada, a revisão continua no “Revisar com…” da linha “Trabalhou…”. \
                          Gasta o plano do outro agente a cada turno revisto.",
                     )
@@ -966,7 +966,88 @@ impl Configuracoes {
             botao_cfg("cfg-revisao-instrucoes", if vazio { "Escrever…" } else { "Editar…" }, window, cx)
                 .on_click(move |_, window, cx| instrucoes::abrir_da_revisao(motor.clone(), window, cx))
         };
-        let revisor = GrupoDeOpcoes::new(Some("Revisor".into()))
+        // Quem revisa e com que modelo (dono, 26/11/2026: "faz dar pra escolher que IA uso na
+        // revisão e qual modelo"). Num chat do escolhido, quem revisa é o outro agente.
+        let quem = {
+            let motor = m();
+            let mut opcoes = vec![Opcao::new("", "O outro agente").descricao("O Codex num chat do Claude, o Claude nos outros")];
+            opcoes.extend(Agente::TODOS.into_iter().map(|a| {
+                let descricao = if a.instalado() { format!("Num chat do {}, revisa o {}", a.nome(), a.outro().nome()) } else { "Não instalado".to_string() };
+                Opcao::new(a.nome().to_lowercase(), a.nome()).descricao(descricao)
+            }));
+            menu_escolha(
+                "cfg-revisao-agente",
+                Anchor::TopRight,
+                opcoes,
+                &config.revisao_agente,
+                "",
+                move |valor, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.revisao_agente = valor, cx)),
+                window,
+                cx,
+            )
+        };
+        // Um modelo por revisor que pode entrar: o escolhido e o outro (que revisa os chats dele),
+        // ou, sem escolha, o Claude e o Codex.
+        let fixo = Agente::TODOS.into_iter().find(|a| a.nome().eq_ignore_ascii_case(config.revisao_agente.trim()));
+        let mut revisores: Vec<Agente> = match fixo {
+            Some(a) => vec![a, a.outro()],
+            None => vec![Agente::Claude, Agente::Codex],
+        };
+        revisores.dedup();
+        let linhas_de_modelo: Vec<LinhaDeOpcao> = revisores
+            .into_iter()
+            .map(|agente| {
+                let chave = agente.nome().to_lowercase();
+                let mut opcoes = vec![Opcao::new("", "Padrão").descricao("O modelo padrão do agente")];
+                match agente {
+                    Agente::Claude => opcoes.extend(
+                        MODELOS[1..].iter().zip(DESCRICOES_DE_MODELO).map(|((valor, nome), descricao)| Opcao::new(*valor, *nome).descricao(descricao)),
+                    ),
+                    Agente::Codex => opcoes.extend(crate::agente_codex::modelos().into_iter().map(|m| Opcao::new(m.slug, m.nome))),
+                    Agente::Gemini => opcoes.extend(crate::agente_gemini::modelos().into_iter().map(|m| Opcao::new(m.valor, m.nome))),
+                }
+                let atual = config.revisao_modelos.get(&chave).cloned().unwrap_or_default();
+                // O modelo escolhido antes, que o catálogo de agora não traz, continua na lista.
+                if !atual.is_empty() && !opcoes.iter().any(|o| o.valor == atual) {
+                    opcoes.push(Opcao::new(atual.clone(), atual.clone()));
+                }
+                let motor = m();
+                let chave_salva = chave.clone();
+                LinhaDeOpcao::new(SharedString::from(format!("cfg-revisao-modelo-{chave}")), format!("Modelo do {}", agente.nome())).controle(menu_escolha(
+                    SharedString::from(format!("cfg-revisao-modelo-{chave}")),
+                    Anchor::TopRight,
+                    opcoes,
+                    &atual,
+                    "",
+                    move |valor, _, cx| {
+                        let chave = chave_salva.clone();
+                        motor.update(cx, |m, cx| {
+                            m.mudar_config(
+                                |c| {
+                                    if valor.is_empty() {
+                                        c.revisao_modelos.remove(&chave);
+                                    } else {
+                                        c.revisao_modelos.insert(chave, valor);
+                                    }
+                                },
+                                cx,
+                            )
+                        })
+                    },
+                    window,
+                    cx,
+                ))
+            })
+            .collect();
+        let mut revisor = GrupoDeOpcoes::new(Some("Revisor".into())).linha(
+            LinhaDeOpcao::new("cfg-revisao-agente", "Quem revisa")
+                .info("Num chat que já tem dois agentes, revisa o parceiro dele.")
+                .controle(quem),
+        );
+        for linha in linhas_de_modelo {
+            revisor = revisor.linha(linha);
+        }
+        let revisor = revisor
             .linha(LinhaDeOpcao::new("cfg-revisao-foco", "Foco").controle(h_flex().flex_wrap().justify_end().gap(esp::E4).children(chips)))
             .linha(
                 LinhaDeOpcao::new("cfg-revisao-instrucoes", "Instruções")
