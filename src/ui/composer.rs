@@ -2316,27 +2316,22 @@ fn colar_com_markdown(c: &mut TextareaState, plano: &str, markdown: &str, window
 }
 
 /// Imagens coladas viram arquivos na pasta dos anexos (`anexos/` nos dados); arquivos copiados do
-/// gerenciador entram pelo caminho.
+/// gerenciador entram pelo caminho. Com texto junto, quem cola é o texto: no Windows o GPUI entrega
+/// o texto e a imagem no mesmo item (o Excel põe um desenho das células junto), e no Linux e no
+/// macOS ele já entrega só o texto.
 fn anexos_da_area_de_transferencia(item: &ClipboardItem, pasta: &Path) -> Vec<PathBuf> {
+    let com_texto = item.entries().iter().any(|e| matches!(e, ClipboardEntry::String(s) if !s.text().trim().is_empty()));
     let mut caminhos = Vec::new();
     for entrada in item.entries() {
         match entrada {
             ClipboardEntry::ExternalPaths(lista) => caminhos.extend(lista.paths().iter().cloned()),
+            ClipboardEntry::Image(_) if com_texto => {}
             ClipboardEntry::Image(imagem) => {
-                let extensao = match imagem.format {
-                    ImageFormat::Png => "png",
-                    ImageFormat::Jpeg => "jpg",
-                    ImageFormat::Gif => "gif",
-                    ImageFormat::Webp => "webp",
-                    _ => continue,
+                let Some((extensao, bytes)) = imagem_para_anexo(imagem) else {
+                    continue;
                 };
-                let arquivo = pasta.join(format!(
-                    "colado-{}.{extensao}",
-                    crate::modelo::novo_id()
-                ));
-                if std::fs::create_dir_all(pasta).is_ok()
-                    && std::fs::write(&arquivo, &imagem.bytes).is_ok()
-                {
+                let arquivo = pasta.join(format!("colado-{}.{extensao}", crate::modelo::novo_id()));
+                if std::fs::create_dir_all(pasta).is_ok() && std::fs::write(&arquivo, &*bytes).is_ok() {
                     caminhos.push(arquivo);
                 }
             }
@@ -2344,6 +2339,33 @@ fn anexos_da_area_de_transferencia(item: &ClipboardItem, pasta: &Path) -> Vec<Pa
         }
     }
     caminhos
+}
+
+/// PNG, JPEG, GIF e WebP vão como vieram. BMP e TIFF viram PNG: o print do Windows (Win+Shift+S,
+/// PrintScreen) chega como CF_DIB, que o GPUI entrega como BMP, e o Ctrl+V não fazia nada (dono,
+/// 26/11/2026: "parece que tá bugado no Windows a parte de colar imagem").
+fn imagem_para_anexo(imagem: &Image) -> Option<(&'static str, std::borrow::Cow<'_, [u8]>)> {
+    use std::borrow::Cow;
+    let direto = match imagem.format {
+        ImageFormat::Png => Some("png"),
+        ImageFormat::Jpeg => Some("jpg"),
+        ImageFormat::Gif => Some("gif"),
+        ImageFormat::Webp => Some("webp"),
+        _ => None,
+    };
+    if let Some(extensao) = direto {
+        return Some((extensao, Cow::Borrowed(imagem.bytes.as_slice())));
+    }
+    // `::image`: o `use gpui_kit::*` do arquivo traz outro `image` para o escopo.
+    let formato = match imagem.format {
+        ImageFormat::Bmp => ::image::ImageFormat::Bmp,
+        ImageFormat::Tiff => ::image::ImageFormat::Tiff,
+        _ => return None,
+    };
+    let decodificada = ::image::load_from_memory_with_format(&imagem.bytes, formato).ok()?;
+    let mut png = Vec::new();
+    decodificada.write_to(&mut std::io::Cursor::new(&mut png), ::image::ImageFormat::Png).ok()?;
+    Some(("png", Cow::Owned(png)))
 }
 
 /// O texto depois da barra, enquanto ainda é o nome de um comando.
@@ -2873,5 +2895,36 @@ mod testes_do_cursor_e_do_catalogo {
         assert_eq!(nome_da_familia("Padrão"), "Padrão");
         assert_eq!(nome_da_familia("Codex"), "Codex");
         assert_eq!(nome_da_familia(""), "");
+    }
+}
+
+#[cfg(test)]
+mod testes_do_colar {
+    use gpui_kit::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat};
+
+    use super::anexos_da_area_de_transferencia;
+
+    fn pasta() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("vitral-colar-{}", crate::modelo::novo_id()))
+    }
+
+    /// O print do Windows chega como BMP (CF_DIB) e vira um PNG anexado (26/11/2026: o Ctrl+V não
+    /// fazia nada).
+    #[test]
+    fn print_do_windows_em_bmp_vira_png() {
+        let bmp = crate::ui::componentes::metal::bmp_de_bgra(2, 2, &[0x40; 16]);
+        let item = ClipboardItem::new_image(&Image::from_bytes(ImageFormat::Bmp, bmp));
+        let anexos = anexos_da_area_de_transferencia(&item, &pasta());
+        assert_eq!(anexos.len(), 1);
+        assert_eq!(anexos[0].extension().and_then(|e| e.to_str()), Some("png"));
+        assert!(std::fs::read(&anexos[0]).unwrap().starts_with(b"\x89PNG"));
+    }
+
+    /// Texto e imagem no mesmo item (células do Excel no Windows): cola o texto, sem anexo.
+    #[test]
+    fn texto_com_imagem_junto_cola_o_texto() {
+        let png = Image::from_bytes(ImageFormat::Png, b"\x89PNG\r\n\x1a\n".to_vec());
+        let item = ClipboardItem { entries: vec![ClipboardEntry::String(ClipboardString::new("a\tb".into())), ClipboardEntry::Image(png)] };
+        assert!(anexos_da_area_de_transferencia(&item, &pasta()).is_empty());
     }
 }

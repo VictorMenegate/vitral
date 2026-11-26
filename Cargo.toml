@@ -20,6 +20,9 @@ dirs = "7.0.0"
 dunce = "1.0.5"
 # syntect: cor de sintaxe no chat e no painel de arquivo (o realce leve; o tree-sitter custa dezenas de MB).
 gpui-kit = { version = "0.8.1", features = ["syntect"] }
+# image: o print do Windows chega como BMP (CF_DIB) e vira PNG para ir ao agente. Já vinha pelo
+# GPUI com estes formatos: não compila nada a mais.
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff"] }
 # minisign-verify: confere a assinatura das versões novas (sem dependências, do autor do minisign).
 minisign-verify = "0.3.0"
 # Atualização automática: semver compara as versões, sha2 confere o pacote baixado, tar e flate2
