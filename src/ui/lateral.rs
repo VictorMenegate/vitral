@@ -1127,7 +1127,7 @@ impl Janela {
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .text_color(Cores::texto())
-                .when(escolhido, |d| d.bg(Cores::selecao()))
+                .when(escolhido, |d| d.bg(Cores::selecao_da_lista()))
                 .when(!escolhido, |d| d.hover(|s| s.bg(Cores::hover())))
                 .child(div().flex_none().text_color(if escolhido { Cores::texto() } else { Cores::tenue_da_lista() }).child(icone(simbolo, 16., window)))
                 .child(div().flex_1().min_w_0().truncate().child(nome))
@@ -2212,6 +2212,7 @@ impl Janela {
             .flex_col()
             .when(self.gaveta == Some(super::Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
             .when(self.gaveta != Some(super::Gaveta::Direita), |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .when_some(crate::tema::bordas_finas().filter(|_| self.gaveta != Some(super::Gaveta::Direita)), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             .child(cabecalho)
             .child(

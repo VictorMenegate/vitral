@@ -127,6 +127,7 @@ impl Janela {
             // emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(self.gaveta == Some(Gaveta::Direita), |s| s.rounded(crate::tema::raio_da_peca()))
             .when(self.gaveta != Some(Gaveta::Direita), |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .when_some(crate::tema::bordas_finas().filter(|_| self.gaveta != Some(Gaveta::Direita)), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             .child(cabecalho)
             .child(

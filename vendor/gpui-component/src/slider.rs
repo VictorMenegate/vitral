@@ -90,6 +90,8 @@ pub struct Slider {
     disabled: bool,
     accessibility_label: Option<SharedString>,
     reverse: bool,
+    /// Vitral: a cor do trilho fora do preenchido (a original é a da barra a 20%).
+    trilho: Option<Hsla>,
 }
 
 impl Slider {
@@ -102,7 +104,14 @@ impl Slider {
             disabled: false,
             accessibility_label: None,
             reverse: false,
+            trilho: None,
         }
+    }
+
+    /// Vitral: o trilho fora do preenchido nesta cor (o do range nativo é claro).
+    pub fn trilho(mut self, cor: Hsla) -> Self {
+        self.trilho = Some(cor);
+        self
     }
 
     /// As a horizontal slider.
@@ -298,8 +307,8 @@ impl RenderOnce for Slider {
                             .relative()
                             .when(axis.is_horizontal(), |this| this.w_full().h_1p5())
                             .when(axis.is_vertical(), |this| this.h_full().w_1p5())
-                            .bg(bar_color.opacity(0.2))
-                            .active(|this| this.bg(bar_color.opacity(0.4)))
+                            .bg(self.trilho.map(Background::from).unwrap_or(bar_color.opacity(0.2)))
+                            .when(self.trilho.is_none(), |this| this.active(|this| this.bg(bar_color.opacity(0.4))))
                             .corner_radii(radius)
                             .child(
                                 div()

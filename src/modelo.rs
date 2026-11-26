@@ -779,6 +779,8 @@ pub struct Config {
     pub revisao_manda_sozinha: bool,
     /// A linha "Codex revisou: nada a acrescentar" aparece na conversa.
     pub revisao_mostra_nada: bool,
+    /// As cores do tema, o fundo animado e as bordas finas (Configurações › Aparência › Cores).
+    pub paleta: crate::paleta::Paleta,
     /// O endereço do servidor ai-memory da equipe (`memoria_equipe`); vazio é sem memória da
     /// equipe. A chave da pessoa fica fora daqui, num arquivo só dela.
     pub memoria_da_equipe: String,
@@ -923,6 +925,7 @@ impl Default for Config {
             revisao_instrucoes: String::new(),
             revisao_manda_sozinha: false,
             revisao_mostra_nada: true,
+            paleta: crate::paleta::Paleta::default(),
             memoria_da_equipe: String::new(),
             avisos_no_app: true,
             letra_da_conversa: 100,

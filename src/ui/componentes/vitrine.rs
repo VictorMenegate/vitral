@@ -1718,7 +1718,7 @@ impl Render for Vitrine {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::ui::contar_quadro();
         // Antes de tudo: é aqui que o tempo do metal anda e a próxima batida é marcada.
-        let chapa = metal::fundo(false, Corners::default(), window, cx);
+        let chapa = metal::fundo(false, Corners::default(), None, window, cx);
         let tema = cx.theme();
         let fonte = tema.font_family.clone();
         let cor = tema.foreground;

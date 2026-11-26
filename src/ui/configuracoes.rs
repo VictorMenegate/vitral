@@ -8,7 +8,9 @@
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    Disableable as _, Size, Sizable as _, WindowExt as _, h_flex,
+    color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+    slider::{Slider, SliderEvent, SliderState},
+    Disableable as _, Icon, Size, Sizable as _, WindowExt as _, h_flex,
     menu::{DropdownMenu, PopupMenuItem},
     spinner::Spinner,
     tooltip::{ManagedTooltipExt as _, Tooltip},
@@ -33,6 +35,7 @@ use crate::{
     claude::{self, Atualizacao, Versao},
     modelo::{Agente, Config},
     motor::{self, Motor},
+    paleta::{Cor, CoresDoFundo, FundoVivo, PERSONALIZADO, Paleta, TEMAS},
     tema::{Cores, Lucide, esp, linear, r, raio, tam},
     versoes_agentes::{self, Publicadas},
 };
@@ -221,7 +224,57 @@ pub struct Configuracoes {
     _atualizacoes: Subscription,
     /// Aberta, o download conta o progresso (no máximo 2 vezes por segundo).
     _acompanhando: Option<Acompanhando>,
+    /// Os seletores de cor e as faixas de contraste das Cores, feitos na primeira vez que a
+    /// Aparência abre (o seletor precisa da janela).
+    cores: Option<ControlesDeCor>,
+    /// O que o Copiar ou o Importar do tema acabou de fazer (some em 2,5 s).
+    aviso_do_tema: Option<SharedString>,
+    geracao_do_aviso: u32,
 }
+
+/// Os controles das Cores que têm estado.
+struct ControlesDeCor {
+    destaque: Entity<ColorPickerState>,
+    fundo: Entity<ColorPickerState>,
+    lista_destaque: Entity<ColorPickerState>,
+    lista_fundo: Entity<ColorPickerState>,
+    contraste: Entity<SliderState>,
+    lista_contraste: Entity<SliderState>,
+    _assinaturas: Vec<Subscription>,
+}
+
+/// Qual das quatro cores um seletor muda.
+#[derive(Clone, Copy)]
+enum CampoDeCor {
+    Destaque,
+    Fundo,
+    ListaDestaque,
+    ListaFundo,
+}
+
+impl CampoDeCor {
+    fn em(self, p: &mut Paleta) -> &mut Cor {
+        match self {
+            CampoDeCor::Destaque => &mut p.destaque,
+            CampoDeCor::Fundo => &mut p.fundo,
+            CampoDeCor::ListaDestaque => &mut p.lista.destaque,
+            CampoDeCor::ListaFundo => &mut p.lista.fundo,
+        }
+    }
+}
+
+fn hsla_de(cor: Cor) -> Hsla {
+    rgb(cor.0).into()
+}
+
+fn cor_de(cor: Hsla) -> Cor {
+    let c = Rgba::from(cor);
+    let canal = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+    Cor((canal(c.r) << 16) | (canal(c.g) << 8) | canal(c.b))
+}
+
+/// A gravação do tema que espera o arrasto parar: só a última grava.
+static GRAVACAO_DO_TEMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 impl Configuracoes {
     pub fn new(motor: Entity<Motor>, janela: WeakEntity<super::Janela>, cx: &mut Context<Self>) -> Self {
@@ -242,7 +295,256 @@ impl Configuracoes {
             _observa,
             _atualizacoes,
             _acompanhando,
+            cores: None,
+            aviso_do_tema: None,
+            geracao_do_aviso: 0,
         }
+    }
+
+    /// Os seletores e as faixas das Cores, com a paleta de agora.
+    fn preparar_cores(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cores.is_some() {
+            return;
+        }
+        let p = self.motor.read(cx).config.paleta.clone();
+        let mut assinaturas = Vec::new();
+        let mut seletor = |campo: CampoDeCor, cor: Cor, window: &mut Window, cx: &mut Context<Self>| {
+            let estado = cx.new(|cx| ColorPickerState::new(window, cx).default_value(hsla_de(cor)));
+            assinaturas.push(cx.subscribe(&estado, move |este, _, evento: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(Some(nova)) = evento else { return };
+                let nova = cor_de(*nova);
+                este.mudar_paleta(false, move |p| {
+                    *campo.em(p) = nova;
+                    p.nome = PERSONALIZADO.into();
+                }, cx);
+            }));
+            estado
+        };
+        let destaque = seletor(CampoDeCor::Destaque, p.destaque, window, cx);
+        let fundo = seletor(CampoDeCor::Fundo, p.fundo, window, cx);
+        let lista_destaque = seletor(CampoDeCor::ListaDestaque, p.lista.destaque, window, cx);
+        let lista_fundo = seletor(CampoDeCor::ListaFundo, p.lista.fundo, window, cx);
+        let mut faixa = |da_lista: bool, valor: u8, cx: &mut Context<Self>| {
+            let estado = cx.new(|_| SliderState::new().min(0.).max(100.).step(1.).default_value(f32::from(valor)));
+            assinaturas.push(cx.subscribe(&estado, move |este, _, evento: &SliderEvent, cx| {
+                let (valor, soltou) = match evento {
+                    SliderEvent::Change(v) => (v.end(), false),
+                    SliderEvent::Release(v) => (v.end(), true),
+                };
+                let valor = valor.round().clamp(0., 100.) as u8;
+                este.mudar_paleta(soltou, move |p| {
+                    if da_lista { p.lista.contraste = valor } else { p.contraste = valor }
+                    p.nome = PERSONALIZADO.into();
+                }, cx);
+            }));
+            estado
+        };
+        let contraste = faixa(false, p.contraste, cx);
+        let lista_contraste = faixa(true, p.lista.contraste, cx);
+        self.cores = Some(ControlesDeCor {
+            destaque,
+            fundo,
+            lista_destaque,
+            lista_fundo,
+            contraste,
+            lista_contraste,
+            _assinaturas: assinaturas,
+        });
+    }
+
+    /// Muda a paleta da configuração. Um arrasto (cor, contraste) muda a cada passo e grava quando
+    /// para (`gravar_ja` falso: 400 ms depois do último passo); o resto grava na hora.
+    fn mudar_paleta(&mut self, gravar_ja: bool, f: impl FnOnce(&mut Paleta), cx: &mut Context<Self>) {
+        let geracao = GRAVACAO_DO_TEMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        self.motor.update(cx, |m, cx| {
+            if gravar_ja { m.mudar_config(|c| f(&mut c.paleta), cx) } else { m.mudar_config_sem_gravar(|c| f(&mut c.paleta), cx) }
+        });
+        if !gravar_ja {
+            let motor = self.motor.clone();
+            cx.spawn(async move |_, cx| {
+                cx.background_executor().timer(std::time::Duration::from_millis(400)).await;
+                if GRAVACAO_DO_TEMA.load(std::sync::atomic::Ordering::Relaxed) == geracao {
+                    let _ = motor.read_with(cx, |m, _| m.gravar_a_config());
+                }
+            })
+            .detach();
+        }
+    }
+
+    /// Uma paleta inteira nova (tema pronto, Importar): grava e acerta os seletores e as faixas.
+    fn trocar_paleta(&mut self, nova: Paleta, window: &mut Window, cx: &mut Context<Self>) {
+        let p = nova.clone();
+        self.mudar_paleta(true, move |atual| *atual = nova, cx);
+        let Some(c) = &self.cores else { return };
+        for (estado, cor) in [(&c.destaque, p.destaque), (&c.fundo, p.fundo), (&c.lista_destaque, p.lista.destaque), (&c.lista_fundo, p.lista.fundo)] {
+            estado.update(cx, |e, cx| e.set_value(hsla_de(cor), window, cx));
+        }
+        for (estado, valor) in [(&c.contraste, p.contraste), (&c.lista_contraste, p.lista.contraste)] {
+            estado.update(cx, |e, cx| e.set_value(f32::from(valor), window, cx));
+        }
+    }
+
+    fn escolher_tema(&mut self, nome: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let atual = self.motor.read(cx).config.paleta.clone();
+        match atual.com_tema(nome) {
+            Some(nova) => self.trocar_paleta(nova, window, cx),
+            None => self.mudar_paleta(true, |p| p.nome = PERSONALIZADO.into(), cx),
+        }
+    }
+
+    fn copiar_tema(&mut self, cx: &mut Context<Self>) {
+        let texto = self.motor.read(cx).config.paleta.para_compartilhar();
+        cx.write_to_clipboard(ClipboardItem::new_string(texto));
+        self.avisar_do_tema("Tema copiado.", cx);
+    }
+
+    /// O Importar lê o tema copiado (daqui ou do protótipo) da área de transferência.
+    fn importar_tema(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let texto = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+        let atual = self.motor.read(cx).config.paleta.clone();
+        match atual.importada(&texto) {
+            Some(nova) => {
+                self.trocar_paleta(nova, window, cx);
+                self.avisar_do_tema("Tema importado.", cx);
+            }
+            None => self.avisar_do_tema("Copie um tema do Vitral antes.", cx),
+        }
+    }
+
+    fn avisar_do_tema(&mut self, texto: &'static str, cx: &mut Context<Self>) {
+        self.aviso_do_tema = Some(texto.into());
+        self.geracao_do_aviso += 1;
+        let geracao = self.geracao_do_aviso;
+        cx.notify();
+        cx.spawn(async move |vista, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(2500)).await;
+            let _ = vista.update(cx, |vista, cx| {
+                if vista.geracao_do_aviso == geracao {
+                    vista.aviso_do_tema = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// As Cores da Aparência, como a janela de Aparência do protótipo: o tema e as três cores dele;
+    /// as cores próprias da lista; o fundo animado; as bordas finas; o Importar e o Copiar.
+    fn grupos_das_cores(&self, p: &Paleta, estreito: bool, window: &Window, cx: &Context<Self>) -> Vec<AnyElement> {
+        let Some(c) = &self.cores else { return Vec::new() };
+        let com = |linha: LinhaDeOpcao, controle: AnyElement| {
+            if estreito { linha.campo(controle) } else { linha.controle(controle) }
+        };
+        let ancora = if estreito { Anchor::TopLeft } else { Anchor::TopRight };
+        let vista = cx.entity();
+
+        let mut temas: Vec<Opcao> = TEMAS.iter().map(|(valor, nome)| Opcao::new(*valor, *nome)).collect();
+        temas.push(Opcao::new(PERSONALIZADO, "Personalizado"));
+        let v = vista.clone();
+        let tema = GrupoDeOpcoes::new(Some("Cores".into()))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-tema", "Tema").cabeca(),
+                menu_escolha("cfg-tema", ancora, temas, &p.nome, &p.nome, move |valor, window, cx| {
+                    v.update(cx, |este, cx| este.escolher_tema(&valor, window, cx));
+                }, window, cx),
+            ))
+            .linha(com(LinhaDeOpcao::new("cfg-destaque", "Destaque").secundaria(), pilula_de_cor(&c.destaque, ancora, window)))
+            .linha(com(LinhaDeOpcao::new("cfg-fundo", "Fundo").secundaria(), pilula_de_cor(&c.fundo, ancora, window)))
+            .linha(com(LinhaDeOpcao::new("cfg-contraste", "Contraste").secundaria(), faixa_de_contraste(&c.contraste, p.contraste)));
+
+        let v = vista.clone();
+        let mut lista = GrupoDeOpcoes::new(None).linha(
+            LinhaDeOpcao::new("cfg-cores-lista", "Cores da lista").cabeca().interruptor(p.lista.ligada, move |ligado, _, cx| {
+                v.update(cx, |este, cx| {
+                    este.mudar_paleta(true, move |p| {
+                        p.lista.ligada = ligado;
+                        p.nome = PERSONALIZADO.into();
+                    }, cx)
+                });
+            }),
+        );
+        if p.lista.ligada {
+            lista = lista
+                .linha(com(LinhaDeOpcao::new("cfg-lista-destaque", "Destaque").secundaria(), pilula_de_cor(&c.lista_destaque, ancora, window)))
+                .linha(com(LinhaDeOpcao::new("cfg-lista-fundo", "Fundo").secundaria(), pilula_de_cor(&c.lista_fundo, ancora, window)))
+                .linha(com(
+                    LinhaDeOpcao::new("cfg-lista-contraste", "Contraste").secundaria(),
+                    faixa_de_contraste(&c.lista_contraste, p.lista.contraste),
+                ));
+        }
+
+        let vivo = match p.fundo_vivo {
+            FundoVivo::Smoke => "smoke",
+            FundoVivo::Mesh => "mesh",
+            FundoVivo::Desligado => "desligado",
+        };
+        let cores_do_fundo = if p.cores_do_fundo == CoresDoFundo::Receita { "receita" } else { "tema" };
+        let (v1, v2) = (vista.clone(), vista.clone());
+        let fundo = GrupoDeOpcoes::new(None)
+            .linha(com(
+                LinhaDeOpcao::new("cfg-fundo-vivo", "Fundo animado").cabeca(),
+                menu_escolha(
+                    "cfg-fundo-vivo",
+                    ancora,
+                    vec![Opcao::new("smoke", "Smoke"), Opcao::new("mesh", "Mesh drift"), Opcao::new("desligado", "Desligado")],
+                    vivo,
+                    vivo,
+                    move |valor, _, cx| {
+                        let novo = match valor.as_str() {
+                            "mesh" => FundoVivo::Mesh,
+                            "desligado" => FundoVivo::Desligado,
+                            _ => FundoVivo::Smoke,
+                        };
+                        v1.update(cx, |este, cx| este.mudar_paleta(true, move |p| p.fundo_vivo = novo, cx));
+                    },
+                    window,
+                    cx,
+                ),
+            ))
+            .linha(com(
+                LinhaDeOpcao::new("cfg-cores-do-fundo", "Cores do fundo").cabeca(),
+                menu_escolha(
+                    "cfg-cores-do-fundo",
+                    ancora,
+                    vec![Opcao::new("tema", "Do tema"), Opcao::new("receita", "Da receita")],
+                    cores_do_fundo,
+                    cores_do_fundo,
+                    move |valor, _, cx| {
+                        let novo = if valor == "receita" { CoresDoFundo::Receita } else { CoresDoFundo::Tema };
+                        v2.update(cx, |este, cx| este.mudar_paleta(true, move |p| p.cores_do_fundo = novo, cx));
+                    },
+                    window,
+                    cx,
+                ),
+            ));
+
+        let v = vista.clone();
+        let bordas = GrupoDeOpcoes::new(None).linha(
+            LinhaDeOpcao::new("cfg-bordas", "Bordas finas").cabeca().interruptor(p.bordas, move |ligado, _, cx| {
+                v.update(cx, |este, cx| este.mudar_paleta(true, move |p| p.bordas = ligado, cx));
+            }),
+        );
+
+        let compartilhar = GrupoDeOpcoes::new(None).linha(com(
+            LinhaDeOpcao::new("cfg-compartilhar", "Compartilhar").cabeca(),
+            h_flex()
+                .gap(esp::E4)
+                .child(botao_de_texto("cfg-tema-importar", "Importar", window, cx).on_click(cx.listener(|este, _, window, cx| este.importar_tema(window, cx))))
+                .child(botao_de_texto("cfg-tema-copiar", "Copiar", window, cx).on_click(cx.listener(|este, _, _, cx| este.copiar_tema(cx))))
+                .into_any_element(),
+        ));
+
+        let mut grupos: Vec<AnyElement> = vec![
+            tema.into_any_element(),
+            lista.into_any_element(),
+            fundo.into_any_element(),
+            bordas.into_any_element(),
+            compartilhar.into_any_element(),
+        ];
+        if let Some(aviso) = self.aviso_do_tema.clone() {
+            grupos.push(div().px(linear::AVISO_LADO).text_size(r(12.)).text_color(Cores::destaque_texto()).child(aviso).into_any_element());
+        }
+        grupos
     }
 
     fn ir_para(&mut self, parte: Parte, cx: &mut Context<Self>) {
@@ -501,6 +803,58 @@ fn botao_cfg(id: &'static str, rotulo: &'static str, window: &Window, cx: &App) 
         .rounded(raio::de(26.))
         .bg(Cores::preto())
         .text_size(r(11.5))
+        .text_color(Cores::texto_da_fala())
+}
+
+/// A cor de um seletor, como a pílula do protótipo: a própria cor de fundo, o conta-gotas e o hex
+/// em mono (o texto escuro sobre uma cor clara). O clique abre o seletor do kit.
+fn pilula_de_cor(estado: &Entity<ColorPickerState>, ancora: Anchor, window: &Window) -> AnyElement {
+    let icone = tam(window, 16.);
+    ColorPicker::new(estado)
+        .anchor(ancora)
+        .w(r(220.))
+        .gatilho(move |cor, _| {
+            let cor = cor.unwrap_or_else(Cores::preto);
+            let c = Rgba::from(cor);
+            let luz = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+            let texto: Hsla = if luz > 0.6 { rgb(0x0d0f13).into() } else { Cores::forte() };
+            let hex = cor_de(cor).hex().to_uppercase();
+            h_flex()
+                .h(r(26.))
+                .px(esp::E12)
+                .gap(esp::E8)
+                .rounded(raio::de(26.))
+                .bg(cor)
+                .cursor_pointer()
+                .text_color(texto)
+                .font_family(crate::tema::FONTE_MONO)
+                .text_size(r(12.))
+                .child(Icon::new(Lucide::Pipette).with_size(icone).text_color(texto))
+                .child(div().flex_1().child(hex))
+                .into_any_element()
+        })
+        .into_any_element()
+}
+
+/// O contraste: a faixa no azul, com o trilho claro do range do protótipo, e o número.
+fn faixa_de_contraste(estado: &Entity<SliderState>, valor: u8) -> AnyElement {
+    h_flex()
+        .w(r(220.))
+        .gap(esp::E12)
+        .items_center()
+        .child(Slider::new(estado).flex_1().bg(Cores::destaque()).text_color(Cores::destaque()).trilho(rgb(0xededed).into()))
+        .child(div().flex_none().w(r(26.)).text_right().text_size(r(12.5)).text_color(Cores::texto()).child(valor.to_string()))
+        .into_any_element()
+}
+
+/// O botão só de texto do protótipo (Importar, Copiar): sem fundo, 28 de altura, texto em 13.
+fn botao_de_texto(id: &'static str, rotulo: &'static str, window: &Window, cx: &App) -> gpui_kit::component::button::Button {
+    botao_fantasma(id, None, rotulo, TamanhoBotao::Caixa, window, cx)
+        .h(r(28.))
+        .pl(esp::E8)
+        .pr(linear::BOTAO_TEXTO_DIREITA)
+        .rounded(raio::de(28.))
+        .text_size(r(13.))
         .text_color(Cores::texto_da_fala())
 }
 
@@ -777,6 +1131,9 @@ fn opcoes_de_modelo(padrao: &'static str) -> Vec<Opcao> {
 
 impl Render for Configuracoes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.parte == Parte::Aparencia {
+            self.preparar_cores(window, cx);
+        }
         let estreito = estreito(window, LARGURA_DAS_CONFIGURACOES);
         let ancora = if estreito { Anchor::TopLeft } else { Anchor::TopRight };
         let config = self.motor.read(cx).config.clone();
@@ -1259,7 +1616,10 @@ impl Render for Configuracoes {
             Parte::Contas => contas_grupos,
             Parte::Notificacoes => vec![notificacoes_grupo.into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
-            Parte::Aparencia => vec![tamanho.into_any_element(), interface.into_any_element()],
+            Parte::Aparencia => std::iter::once(tamanho.into_any_element())
+                .chain(self.grupos_das_cores(&config.paleta, estreito, window, cx))
+                .chain([interface.into_any_element()])
+                .collect(),
             Parte::Atalhos => atalhos_grupos,
             Parte::ClaudeCode => vec![claude_grupo.into_any_element()],
             Parte::Codex => vec![self.grupo_do_agente(Agente::Codex, estreito, window, cx).into_any_element()],

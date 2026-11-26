@@ -137,6 +137,10 @@ pub mod linear {
     /// A barra de baixo: 7 entre as partes de uma pílula de uso, 10 na direita dela.
     pub const USO_VAO: Rems = r(7.);
     pub const USO_DIREITA: Rems = r(10.);
+    /// O botão de texto das Cores (Importar, Copiar): 8 antes e 10 depois do texto.
+    pub const BOTAO_TEXTO_DIREITA: Rems = r(10.);
+    /// O aviso do Copiar e do Importar, recuado como as linhas.
+    pub const AVISO_LADO: Rems = r(14.);
 }
 
 pub mod esp {
@@ -619,6 +623,7 @@ gpui_kit::assets::icon_assets!(
         Pencil,
         Pin,
         PinOff,
+        Pipette,
         Reply,
         RotateCcw,
         RotateCcwClock,
@@ -875,12 +880,28 @@ fn tema_json() -> String {
     json
 }
 
+fn config_do_kit() -> Rc<gpui_kit::component::ThemeConfig> {
+    let conjunto: ThemeSet = serde_json::from_str(&tema_json()).expect("tema do Vitral");
+    Rc::new(conjunto.themes.into_iter().next().unwrap())
+}
+
+/// As cores novas no tema do kit (menus, campos, foco), sem mexer no que o zoom ajustou nele.
+pub fn reaplicar_cores(cx: &mut App) {
+    let config = config_do_kit();
+    Theme::update(cx, |tema| {
+        let (letra, mono, raio, raio_lg) = (tema.font_size, tema.mono_font_size, tema.radius, tema.radius_lg);
+        let aviso = (tema.notification.placement, tema.notification.margins.top, tema.notification.width, tema.notification.max_items);
+        tema.apply_config(&config);
+        (tema.font_size, tema.mono_font_size, tema.radius, tema.radius_lg) = (letra, mono, raio, raio_lg);
+        (tema.notification.placement, tema.notification.margins.top, tema.notification.width, tema.notification.max_items) = aviso;
+    });
+}
+
 pub fn aplicar(cx: &mut App) {
     if let Err(erro) = cx.text_system().add_fonts(FONTES.iter().map(|f| Cow::Borrowed(*f)).collect()) {
         eprintln!("vitral: as fontes embutidas não carregaram ({erro:#}); ficam as do sistema");
     }
-    let conjunto: ThemeSet = serde_json::from_str(&tema_json()).expect("tema do Vitral");
-    let config = Rc::new(conjunto.themes.into_iter().next().unwrap());
+    let config = config_do_kit();
     Theme::update(cx, |tema| {
         tema.apply_config(&config);
         // Avisos no topo, no centro: o canto de cima à direita é o dos botões da janela.
@@ -899,6 +920,7 @@ pub fn aplicar(cx: &mut App) {
 /// comparou lado a lado; esta é a "Degraus", a escolhida: cada superfície num nível de claro bem
 /// diferente, com a moldura quase preta.
 pub mod superficie {
+    #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Variante {
         /// Fundo da janela (o `background` do tema). No Grafite é opaco e fica debaixo da chapa de
         /// metal: só aparece se o metal não puder ser pintado.
@@ -972,6 +994,11 @@ pub mod superficie {
         /// pouco abaixo do corpo, para a lista não pesar mais que a conversa.
         pub texto_da_lista: u32,
         pub tenue_da_lista: u32,
+        /// O texto da resposta do agente, um degrau abaixo do corpo (o `--texto-2` do protótipo).
+        pub texto_2: u32,
+        /// O escolhido da lista: o destaque da lista a 22% sobre o fundo dela (no tema padrão, a
+        /// mesma cor da `selecao`).
+        pub selecao_da_lista: u32,
         /// A base (opaca) onde uma cor é misturada para virar tinta sólida (as abas, o perigo).
         pub base_da_tinta: u32,
         /// O destaque (o único da tela): o cheio, o do ponteiro em cima, o apertado, o de texto
@@ -1031,6 +1058,8 @@ pub mod superficie {
         divisoria: 0x0000009e,
         texto_da_lista: 0xdfe6fbff,
         tenue_da_lista: 0x8a97bfff,
+        texto_2: 0xe1e1e3ff,
+        selecao_da_lista: 0x3a7fff3d,
     };
 
     /// "Grafite" (12/11/2026, o dono quis "mais moderno e com menos cara de IA" e apontou o
@@ -1114,6 +1143,8 @@ pub mod superficie {
         divisoria: 0x0000009e,
         texto_da_lista: 0xe2e5ecff,
         tenue_da_lista: 0x8e94a5ff,
+        texto_2: 0xe1e1e3ff,
+        selecao_da_lista: 0xffffff1c,
     };
 
     /// "Linear" (25/11/2026): o acabamento do protótipo no jeito do Linear, que o dono aprovou
@@ -1154,6 +1185,7 @@ pub mod superficie {
         divisoria: 0x03030780,
         texto_da_lista: 0xdcdde1ff,
         tenue_da_lista: 0xa1a3aeff,
+        selecao_da_lista: 0x0d2056ff,
         // Sem margem da janela: a lista começa na beirada, com os 12 dela (protótipo).
         margem: 0.,
         ..GRAFITE
@@ -1174,6 +1206,7 @@ pub mod superficie {
         caixa_preta: 0x1a2440ff,
         hover: 0xffffff12,
         selecao: 0xffffff1a,
+        selecao_da_lista: 0xffffff1a,
         texto: 0xe7ecf8ff,
         tenue: 0xa3aecaff,
         apagado: 0x8994b3ff,
@@ -1216,18 +1249,62 @@ pub mod superficie {
     /// O acabamento em uso.
     pub const ATUAL: Variante = LINEAR;
 
-    /// O acabamento em uso: o `ATUAL` ou, para comparar propostas na bancada, o que o
-    /// `VITRAL_PALETA` (noite, neutro, marinho) pedir.
-    pub fn atual() -> &'static Variante {
-        static ESCOLHIDA: std::sync::OnceLock<&'static Variante> = std::sync::OnceLock::new();
-        ESCOLHIDA.get_or_init(|| match std::env::var("VITRAL_PALETA").as_deref() {
-            Ok("noite") => &NOITE,
-            Ok("neutro") => &NEUTRO,
-            Ok("marinho") => &MARINHO,
-            Ok("grafite") => &GRAFITE,
-            _ => &ATUAL,
+    /// O acabamento que o `VITRAL_PALETA` (noite, neutro, marinho, grafite) pede, para comparar
+    /// propostas na bancada: com ele, as cores escolhidas na Aparência não valem.
+    fn forcada() -> Option<&'static Variante> {
+        static FORCADA: std::sync::OnceLock<Option<&'static Variante>> = std::sync::OnceLock::new();
+        *FORCADA.get_or_init(|| match std::env::var("VITRAL_PALETA").as_deref() {
+            Ok("noite") => Some(&NOITE),
+            Ok("neutro") => Some(&NEUTRO),
+            Ok("marinho") => Some(&MARINHO),
+            Ok("grafite") => Some(&GRAFITE),
+            _ => None,
         })
     }
+
+    /// A paleta das Configurações (`crate::paleta`), depois que o motor a leu.
+    static EM_USO: std::sync::RwLock<Option<Variante>> = std::sync::RwLock::new(None);
+
+    /// O acabamento em uso: o das cores escolhidas na Aparência, o `ATUAL` antes de o motor abrir,
+    /// ou o que o `VITRAL_PALETA` pedir.
+    pub fn atual() -> Variante {
+        if let Some(v) = forcada() {
+            return *v;
+        }
+        EM_USO.read().map(|v| v.unwrap_or(ATUAL)).unwrap_or(ATUAL)
+    }
+
+    /// Troca a paleta em uso; `true` se ela mudou.
+    pub(super) fn definir(nova: Variante) -> bool {
+        let Ok(mut em_uso) = EM_USO.write() else { return false };
+        if *em_uso == Some(nova) {
+            return false;
+        }
+        *em_uso = Some(nova);
+        true
+    }
+}
+
+/// As cores escolhidas em Configurações › Aparência viram a paleta em uso, e as bordas finas
+/// ligam ou desligam. `true` se algo mudou: aí quem chamou reaplica o tema do kit
+/// (`reaplicar_cores`) e redesenha as janelas. Trocar de tema não anima (a geração sobe).
+pub fn definir_paleta(paleta: &crate::paleta::Paleta) -> bool {
+    let bordas = BORDAS_FINAS.swap(paleta.bordas, std::sync::atomic::Ordering::Relaxed) != paleta.bordas;
+    let mudou = superficie::definir(paleta.variante()) | bordas;
+    if mudou {
+        GERACAO_DO_TEMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    mudou
+}
+
+static BORDAS_FINAS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// O fio escuro de meio px em volta do cartão das conversas e do painel da direita (as "Bordas
+/// finas" do protótipo: `box-shadow: 0 0 0 .5px rgba(0, 0, 0, .55)`).
+pub fn bordas_finas() -> Option<BoxShadow> {
+    BORDAS_FINAS
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .then(|| BoxShadow::new(px(0.), px(0.), rgba(0x0000008c).into()).spread_radius(px(0.5)))
 }
 
 /// O raio dos cantos de cada peça (trilho, lista, conversa, painéis), no zoom de agora.
@@ -1586,7 +1663,11 @@ impl Cores {
     }
     /// O texto da resposta do agente, um pouco abaixo do corpo (protótipo Linear, 25/11/2026).
     pub fn texto_da_fala() -> Hsla {
-        rgba(0xe1e1e3ff).into()
+        rgba(superficie::atual().texto_2).into()
+    }
+    /// O escolhido da lista (a linha do chat aberto, o item da navegação): o destaque da lista.
+    pub fn selecao_da_lista() -> Hsla {
+        rgba(superficie::atual().selecao_da_lista).into()
     }
     /// O texto do seu balão, no azul.
     pub fn texto_do_balao() -> Hsla {

@@ -1510,6 +1510,17 @@ impl Motor {
         cx.notify();
     }
 
+    /// Como o `mudar_config`, sem gravar no disco: para o que muda muitas vezes por segundo (o
+    /// arrasto de uma cor ou do contraste na Aparência). Quem chama grava no fim (`gravar_a_config`).
+    pub fn mudar_config_sem_gravar(&mut self, f: impl FnOnce(&mut Config), cx: &mut Context<Self>) {
+        f(&mut self.config);
+        cx.notify();
+    }
+
+    pub fn gravar_a_config(&self) {
+        self.gravar_config();
+    }
+
     /// Com algum chat trabalhando, o computador não suspende sozinho por inatividade: deixar um
     /// turno longo rodando e ir para outro aplicativo (ou sair de perto) não o congela no meio
     /// (dono, 17/11/2026: "se deixar rodando e for mexer em outro aplicativo ele não vai parar").

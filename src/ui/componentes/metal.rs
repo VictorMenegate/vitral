@@ -33,6 +33,7 @@ use std::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::fundo_vivo::{self, Receita};
 use super::malha::{
     BRILHO, CONTRASTE, CORES, DESLOCAMENTO, ESCALA, FORCA_DO_PONTEIRO, GRAO, Quadro, RAIO_DO_PONTEIRO, SATURACAO, SEMENTE,
     VINHETA, degrau_suave, grao,
@@ -310,6 +311,19 @@ struct DaJanela {
     parada: Option<Arc<RenderImage>>,
     parada_de: Option<(u32, u32, u32, u32)>,
     onde_parada: Bounds<Pixels>,
+    /// O fundo vivo (Smoke ou Mesh drift) pintado por cima da chapa, e o que o fez.
+    imagem_viva: Option<Arc<RenderImage>>,
+    chave_viva: Option<(u32, u32, u32, u32, u64, u64)>,
+}
+
+/// O que a Janela pede de fundo vivo: a receita e as quatro cores (`crate::paleta`).
+pub type FundoVivo = Option<(Receita, [[f32; 3]; 4])>;
+
+/// Um número só para a receita e as cores, para a chave do campo e a versão da vista.
+pub fn assinatura_do_vivo(vivo: &FundoVivo) -> u64 {
+    vivo.as_ref().map_or(0, |(receita, cores)| {
+        cores.iter().flatten().fold(1 + receita.desenho as u64, |h, c| h.wrapping_mul(1_000_003).wrapping_add(u64::from(c.to_bits())))
+    })
 }
 
 /// O tempo gasto para fazer os campos (conta, BMP e decodificação) e quantos foram, para o
@@ -406,7 +420,13 @@ pub enum Encaixe {
 /// janela (absoluto, sem clique) e é chamado no `render`: é aqui que o tempo do campo anda e o
 /// próximo quadro é pedido. `trabalhando`: algum chat à vista está rodando (o metal corre).
 /// `raios`: os cantos da janela.
-pub fn fundo(trabalhando: bool, raios: Corners<Pixels>, window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
+pub fn fundo(
+    trabalhando: bool,
+    raios: Corners<Pixels>,
+    fundo_vivo: FundoVivo,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement + use<> {
     let anima = movimento::anima(window, cx);
     let janela = window.window_handle().window_id();
     // O metal só anda com um chat à vista trabalhando. Ele já acordou com qualquer movimento do
@@ -428,7 +448,14 @@ pub fn fundo(trabalhando: bool, raios: Corners<Pixels>, window: &mut Window, cx:
 
     canvas(
         |_, _, _| {},
-        move |limites, _, window, cx| pintar_o_fundo(limites, raios, tempo, vivo, window, cx),
+        move |limites, _, window, cx| {
+            pintar_o_fundo(limites, raios, tempo, vivo, window, cx);
+            // O fundo vivo cobre a chapa; ela continua feita, porque as aberturas (a doca, a tecla
+            // de metal) leem dela.
+            if let Some((receita, cores)) = fundo_vivo {
+                pintar_o_vivo(limites, raios, tempo, receita, cores, window, cx);
+            }
+        },
     )
     .absolute()
     .top_0()
@@ -516,6 +543,58 @@ fn pintar_o_fundo(limites: Bounds<Pixels>, raios: Corners<Pixels>, tempo: f64, v
         }
         // A reserva: sem imagem, um azul liso.
         None => window.paint_quad(fill(limites, Cores::destaque_ativo()).corner_radii(raios)),
+    }
+    pintar_o_grao(limites, raios, grao.as_ref(), window);
+}
+
+/// O fundo vivo por cima da chapa: o campo da receita (`fundo_vivo::pintar`) na grade dela,
+/// refeito só quando o tamanho, o instante ou as cores mudam, com o grão do fosco por cima (é a
+/// força do grão das duas receitas).
+fn pintar_o_vivo(
+    limites: Bounds<Pixels>,
+    raios: Corners<Pixels>,
+    tempo: f64,
+    receita: Receita,
+    cores: [[f32; 3]; 4],
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (largura, altura) = (limites.size.width.as_f32(), limites.size.height.as_f32());
+    if largura < 1. || altura < 1. {
+        return;
+    }
+    let raios = raios.clamp_radii_for_quad_size(limites.size);
+    let passo = receita.px_por_texel;
+    let (colunas, linhas) = (fundo_vivo::texels_para(largura, passo), fundo_vivo::texels_para(altura, passo));
+    let chave = (colunas, linhas, largura.to_bits(), altura.to_bits(), tempo.to_bits(), assinatura_do_vivo(&Some((receita, cores))));
+    let janela = window.window_handle().window_id();
+    let svg = cx.svg_renderer();
+    let metal = cx.default_global::<Metal>();
+    let grao = metal.grao_do_fosco.clone();
+    let estado = metal.janelas.entry(janela).or_default();
+    let folga = px(passo);
+    let onde = Bounds::new(
+        point(limites.origin.x - folga, limites.origin.y - folga),
+        size(px(colunas as f32 * passo), px(linhas as f32 * passo)),
+    );
+    if estado.chave_viva != Some(chave) || estado.imagem_viva.is_none() {
+        let inicio = Instant::now();
+        let bgra = fundo_vivo::pintar(&receita, &cores, colunas, linhas, largura, altura, tempo);
+        let nova = imagem_de_bgra(colunas, linhas, &bgra, svg);
+        NANOS_DOS_CAMPOS.fetch_add(inicio.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        CAMPOS.fetch_add(1, Ordering::Relaxed);
+        if let Some(nova) = nova {
+            estado.chave_viva = Some(chave);
+            let _ = window.paint_image(limites, onde, raios, nova.clone(), 0, false);
+            if let Some(velha) = estado.imagem_viva.replace(nova) {
+                let _ = window.drop_image(velha);
+            }
+            pintar_o_grao(limites, raios, grao.as_ref(), window);
+            return;
+        }
+    }
+    if let Some(imagem) = estado.imagem_viva.clone() {
+        let _ = window.paint_image(limites, onde, raios, imagem, 0, false);
     }
     pintar_o_grao(limites, raios, grao.as_ref(), window);
 }

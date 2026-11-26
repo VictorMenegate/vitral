@@ -8,6 +8,7 @@ mod dialogo;
 mod estado;
 mod graficos;
 mod listas;
+pub mod fundo_vivo;
 mod malha;
 pub mod metal;
 pub mod vista_viva;

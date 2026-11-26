@@ -686,6 +686,8 @@ impl Janela {
             .rounded_l(raio)
             .rounded_r(raio_direito)
             .bg(Cores::cartao())
+            // As bordas finas da Aparência: um fio escuro de meio px em volta do cartão.
+            .when_some(crate::tema::bordas_finas(), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             // O cartão é meio transparente em cima e fecha até ficar opaco no pé, onde mora a
             // caixa de mensagem: 384 de degradê em curva e 200 cheios (por baixo do conteúdo).

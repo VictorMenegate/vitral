@@ -526,6 +526,9 @@ impl RenderOnce for CartaoDeLista {
         // ponta da esquerda saiu: uma barra num lado da caixa redonda é o atalho que a revisão de
         // design pede para trocar pelo fundo (dono, 23/11/2026: "pode fazer todas").
         let (fundo, hover) = match (self.selecionado, self.aberto_em_outro) {
+            // Na lista (a linha de uma linha só), o escolhido é o da lista: as cores dela podem ser
+            // outras (Configurações › Aparência › Cores da lista).
+            (true, _) if folgada => (Cores::selecao_da_lista(), Cores::selecao_da_lista()),
             (true, _) => (Cores::selecao(), Cores::selecao()),
             (false, true) => (Cores::hover(), Cores::hover()),
             (false, false) => (transparent_black(), Cores::hover()),
@@ -658,6 +661,16 @@ pub struct LinhaDeOpcao {
     campo: Option<AnyElement>,
     desabilitada: Option<SharedString>,
     embaixo: bool,
+    /// O peso e a cor do título: o comum, o de cabeça de um grupo de cores (600) ou o de uma linha
+    /// que pertence à de cima (tênue), como nas Cores da Aparência do protótipo.
+    realce: RealceDoTitulo,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum RealceDoTitulo {
+    Comum,
+    Cabeca,
+    Secundario,
 }
 
 impl LinhaDeOpcao {
@@ -675,7 +688,20 @@ impl LinhaDeOpcao {
             campo: None,
             desabilitada: None,
             embaixo: false,
+            realce: RealceDoTitulo::Comum,
         }
+    }
+
+    /// O título em 600: a linha que abre um grupo (Tema, Cores da lista, Fundo animado).
+    pub fn cabeca(mut self) -> Self {
+        self.realce = RealceDoTitulo::Cabeca;
+        self
+    }
+
+    /// O título no tênue: a linha que detalha a de cima (Destaque, Fundo, Contraste).
+    pub fn secundaria(mut self) -> Self {
+        self.realce = RealceDoTitulo::Secundario;
+        self
     }
 
     /// Texto, ou um elemento ("Medindo…" com o spinner), embaixo do título.
@@ -753,8 +779,12 @@ impl RenderOnce for LinhaDeOpcao {
             .gap(r(6.))
             .text_size(r(12.5))
             .line_height(r(16.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(self.simbolo.map_or_else(Cores::texto, |(_, cor)| cor))
+            .font_weight(if self.realce == RealceDoTitulo::Cabeca { FontWeight::SEMIBOLD } else { FontWeight::MEDIUM })
+            .text_color(match (self.simbolo, self.realce) {
+                (Some((_, cor)), _) => cor,
+                (None, RealceDoTitulo::Secundario) => Cores::tenue(),
+                (None, _) => Cores::texto(),
+            })
             .when_some(self.simbolo, |d, (icone, _)| d.child(Icon::new(icone).with_size(tam(window, 14.))))
             .when_some(self.marca, |d, marca| d.child(marca.desenhar(15., window)))
             .map(|d| {

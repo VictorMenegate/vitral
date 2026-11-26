@@ -2048,6 +2048,14 @@ impl Janela {
         if let Some(motor) = &self.motor {
             crate::tema::definir_transparencia(motor.read(cx).config.transparencia);
             crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
+            // As cores da Aparência: este desenho já sai com elas; o tema do kit (menus, campos) e
+            // as vistas guardadas (a lista, as mensagens) acompanham no seguinte.
+            if crate::tema::definir_paleta(&motor.read(cx).config.paleta) {
+                cx.defer(|cx| {
+                    crate::tema::reaplicar_cores(cx);
+                    cx.refresh_windows();
+                });
+            }
         }
         // O desfoque do sistema acompanha o nível (sem desfoque no Opaco).
         crate::acompanhar_o_fundo(window, crate::tema::transparencia());
@@ -2064,12 +2072,29 @@ impl Janela {
         // só ela, e não avisa a Janela (que avisaria as mensagens; ver `vista_mensagens`).
         componentes::vista_viva::novo_quadro(cx);
         let vivo = trabalhando || boas_vindas;
+        // O fundo animado da Aparência (Smoke ou Mesh drift) cobre a chapa, nas cores do tema ou
+        // nas da receita. Anda junto com ela: só com um chat à vista trabalhando (a política do
+        // metal; o protótipo anda sempre).
+        let fundo_vivo = self.motor.as_ref().and_then(|motor| {
+            use crate::paleta::{CoresDoFundo, FundoVivo};
+            use componentes::fundo_vivo::{CORES_DO_SMOKE, MESH, SMOKE};
+            let paleta = &motor.read(cx).config.paleta;
+            let receita = match paleta.fundo_vivo {
+                FundoVivo::Smoke => SMOKE,
+                FundoVivo::Mesh => MESH,
+                FundoVivo::Desligado => return None,
+            };
+            // Só o Smoke tem cores próprias na receita; o Mesh do protótipo segue sempre o tema.
+            let da_receita = paleta.cores_do_fundo == CoresDoFundo::Receita && paleta.fundo_vivo == FundoVivo::Smoke;
+            Some((receita, if da_receita { CORES_DO_SMOKE } else { paleta.cores_do_tema_no_fundo() }))
+        });
+        let com_fundo_vivo = fundo_vivo.is_some();
         let chapa = componentes::vista_viva::em_vista_propria(
             "chapa-da-janela".into(),
             StyleRefinement::default().size_full(),
-            u64::from(vivo),
+            u64::from(vivo) ^ metal::assinatura_do_vivo(&fundo_vivo).wrapping_shl(1),
             cx,
-            move |window, cx| metal::fundo(vivo, Corners::default(), window, cx).into_any_element(),
+            move |window, cx| metal::fundo(vivo, Corners::default(), fundo_vivo, window, cx).into_any_element(),
         );
         let tema = cx.theme();
         let mut base = div()
@@ -2090,11 +2115,17 @@ impl Janela {
             )
             // O véu da base: a janela inteira é uma camada só (a lista mora direto nela, junto
             // com a borda), e os cartões flutuam por cima.
-            .child(div().absolute().top_0().left_0().size_full().bg(if boas_vindas {
-                Cores::vidro_leitura().opacity(0.52)
-            } else {
-                Cores::vidro_leitura()
-            }))
+            // Com o fundo animado, a lista fica sem véu: o fundo é ele (no protótipo, a lista e a
+            // janela ficam transparentes por cima dele). Sem, no Opaco, a cor da lista é chapada.
+            .when(!com_fundo_vivo, |base| {
+                base.child(div().absolute().top_0().left_0().size_full().bg(if boas_vindas {
+                    Cores::vidro_leitura().opacity(0.52)
+                } else if crate::tema::transparencia() == 0 {
+                    Cores::vidro()
+                } else {
+                    Cores::vidro_leitura()
+                }))
+            })
             // O grão que faz o transparente ler como fosco; no opaco não há o que foscar.
             .when(crate::tema::transparencia() > 0, |base| base.child(metal::fosco(Corners::default())))
             .child(zoom::captura_roda())

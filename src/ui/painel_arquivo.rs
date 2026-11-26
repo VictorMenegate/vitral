@@ -1209,6 +1209,7 @@ impl Janela {
             // emenda na conversa da esquerda pela divisória (ver `aresta_encostada`).
             .when(na_gaveta, |s| s.rounded(crate::tema::raio_da_peca()))
             .when(!na_gaveta, |s| s.bg(Cores::cartao()).rounded_r(crate::tema::raio_da_peca()))
+            .when_some(crate::tema::bordas_finas().filter(|_| !na_gaveta), |s, anel| s.shadow(vec![anel]))
             .overflow_hidden()
             .child(cabecalho)
             .child(barra)
