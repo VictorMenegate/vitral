@@ -99,15 +99,15 @@ impl Janela {
         if let Some(chat) = chat {
             let ativa = visivel == AbaDireita::Chat;
             let dica = self.dica_do_chat(motor, chat);
-            let aba = aba_da_direita("aba-este-chat", Lucide::MessageCircle, "Este chat".into(), ativa, window)
+            let aba = aba_da_direita("aba-este-chat", Lucide::MessageCircle, tr!("Este chat"), ativa, window)
                 .dica_no_ponteiro(move |window, cx| Tooltip::new(dica.clone()).build(window, cx))
                 .when(!ativa, |a| a.on_click(cx.listener(|this, _, _, cx| this.escolher_aba(AbaDireita::Chat, cx))));
             abas.push(super::sem_arrastar().flex().flex_none().child(aba).into_any_element());
         }
         {
             let ativa = visivel == AbaDireita::Arquivos;
-            let aba = aba_da_direita("aba-arquivos", Lucide::Folder, "Arquivos".into(), ativa, window)
-                .dica_no_ponteiro(|window, cx| Tooltip::new("Arquivos da pasta de trabalho").build(window, cx))
+            let aba = aba_da_direita("aba-arquivos", Lucide::Folder, tr!("Arquivos"), ativa, window)
+                .dica_no_ponteiro(|window, cx| Tooltip::new(tr!("Arquivos da pasta de trabalho")).build(window, cx))
                 .when(!ativa, |a| a.on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))));
             abas.push(super::sem_arrastar().flex().flex_none().child(aba).into_any_element());
         }
@@ -116,7 +116,7 @@ impl Janela {
             let ativa = atual && matches!(visivel, AbaDireita::Arquivo(_));
             let nome = aba.caminho.rsplit_once('/').map_or(aba.caminho.clone(), |(_, n)| n.to_string());
             let dica = SharedString::from(aba.raiz.join(&aba.caminho).display().to_string());
-            let fechar = botao_icone(("fechar-arquivo", i), Lucide::X, "Fechar o arquivo", TamanhoBotao::Linha, window, cx)
+            let fechar = botao_icone(("fechar-arquivo", i), Lucide::X, tr!("Fechar o arquivo"), TamanhoBotao::Linha, window, cx)
                 .size(r(16.))
                 .rounded(raio::de(16.))
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -244,10 +244,10 @@ impl Janela {
 
     /// A dica da aba "Este chat": a pasta e o painel do chat selecionado.
     fn dica_do_chat(&self, motor: &Motor, chat: &Chat) -> SharedString {
-        let pasta = if motor.sem_pasta(chat) { "sem pasta".to_string() } else { super::dialogos::com_til(&chat.cwd) };
-        let mut dica = format!("Este chat · {pasta}");
+        let pasta = if motor.sem_pasta(chat) { tr!("sem pasta").to_string() } else { super::dialogos::com_til(&chat.cwd) };
+        let mut dica = tr!("Este chat · {pasta}", pasta = pasta).to_string();
         if let Some((n, _)) = self.painel_da_conversa(&chat.id) {
-            dica.push_str(&format!(" · painel {n}"));
+            dica.push_str(&tr!(" · painel {n}", n = n));
         }
         dica.into()
     }

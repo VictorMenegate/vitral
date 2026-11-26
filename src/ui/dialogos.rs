@@ -15,7 +15,7 @@ use super::{
     Janela,
     componentes::{
         CabecalhoDialogo, EventoEscolha, GrupoDeEscolha, ItemDeEscolha, ListaDeEscolha, RodapeDialogo, Selo, Simbolo,
-        Sinal, TamanhoBotao, Tom, aviso, aviso_erro, botao_fantasma, botao_primario, contagem, desenho_teclas,
+        Sinal, TamanhoBotao, Tom, aviso, aviso_erro, botao_fantasma, botao_primario, desenho_teclas,
         fio_de_pontos, largura, sinal_do_chat,
     },
     configuracoes::Configuracoes,
@@ -76,7 +76,7 @@ pub(super) fn nome_da_pasta(pasta: &Path) -> String {
 }
 
 /// "↑ ↓ escolher": teclas fixas da lista e o que fazem, no rodapé.
-fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement {
+fn dica_teclas(teclas: &[&'static str], texto: impl Into<SharedString>) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -84,11 +84,11 @@ fn dica_teclas(teclas: &[&'static str], texto: &'static str) -> impl IntoElement
         .metadado()
         .text_color(Cores::tenue())
         .child(desenho_teclas(teclas.iter().map(|t| SharedString::from(*t)).collect()))
-        .child(texto)
+        .child(texto.into())
 }
 
 fn contas_conectadas(n: usize) -> String {
-    contagem(n, "conta conectada", "contas conectadas")
+    if n == 1 { tr!("{n} conta conectada", n = n) } else { tr!("{n} contas conectadas", n = n) }.to_string()
 }
 
 /// Chaves da paleta que não são pastas (nenhum caminho tem o "\0").
@@ -117,13 +117,13 @@ fn grupos_da_paleta(pastas: &[PastaNaPaleta], copias: &[crate::git::Copia], busc
     let termo = busca.trim().to_lowercase();
     let sem_pasta = "sem pasta avulso só conversar".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::MessageCircle)),
-        descricao: Some("Só conversar: o chat ganha uma pasta vazia só dele".into()),
-        ..ItemDeEscolha::new(SEM_PASTA, "Sem pasta")
+        descricao: Some(tr!("Só conversar: o chat ganha uma pasta vazia só dele")),
+        ..ItemDeEscolha::new(SEM_PASTA, tr!("Sem pasta"))
     });
     let outra = "outra pasta abrir escolher".contains(&termo).then(|| ItemDeEscolha {
         simbolo: Some(Simbolo::icone(Lucide::FolderOpen)),
-        descricao: Some("Escolher uma pasta do computador".into()),
-        ..ItemDeEscolha::new(OUTRA_PASTA, "Outra pasta…")
+        descricao: Some(tr!("Escolher uma pasta do computador")),
+        ..ItemDeEscolha::new(OUTRA_PASTA, tr!("Outra pasta…"))
     });
     let itens: Vec<ItemDeEscolha> = pastas
         .iter()
@@ -131,13 +131,13 @@ fn grupos_da_paleta(pastas: &[PastaNaPaleta], copias: &[crate::git::Copia], busc
         .map(|p| ItemDeEscolha {
             simbolo: Some(Simbolo::icone(Lucide::Folder)),
             descricao: Some(p.descricao.clone().into()),
-            selos: p.atual.then(|| Selo::neutro("atual")).into_iter().collect(),
+            selos: p.atual.then(|| Selo::neutro(tr!("atual"))).into_iter().collect(),
             ..ItemDeEscolha::new(p.caminho.display().to_string(), p.nome.clone())
         })
         .collect();
     let mut grupos = Vec::new();
     if !itens.is_empty() {
-        grupos.push(GrupoDeEscolha { titulo: Some("Pastas".into()), itens });
+        grupos.push(GrupoDeEscolha { titulo: Some(tr!("Pastas")), itens });
     }
     let listadas: Vec<PathBuf> = pastas.iter().map(|p| p.caminho.clone()).collect();
     grupos.extend(super::copias::grupo_das_copias(copias, &listadas, busca));
@@ -216,7 +216,7 @@ impl Janela {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Usar esta pasta".into()),
+            prompt: Some(tr!("Usar esta pasta")),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(caminhos))) = escolha.await else {
@@ -258,7 +258,7 @@ impl Janela {
         let copias: Rc<RefCell<Vec<crate::git::Copia>>> = Rc::default();
         let janela = cx.entity().downgrade();
         let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar pasta ou ramo…", window, cx);
+            let mut lista = ListaDeEscolha::new(&tr!("Buscar pasta ou ramo…"), window, cx);
             lista.em_dialogo();
             lista.definir(grupos_da_paleta(&pastas, &[], ""), realce.clone(), cx);
             let (filtro, lidas) = (pastas.clone(), copias.clone());
@@ -278,7 +278,7 @@ impl Janela {
                             .w_full()
                             .child(div().flex_1())
                             .when(largo, |s| {
-                                s.child(dica_teclas(&["↑", "↓"], "escolhe")).child(dica_teclas(&["Enter"], "abre"))
+                                s.child(dica_teclas(&["↑", "↓"], tr!("escolhe"))).child(dica_teclas(&["Enter"], tr!("abre")))
                             }),
                     )
                     .into_any_element()
@@ -323,7 +323,7 @@ impl Janela {
         window.open_dialog(cx, move |dialogo, window, _| {
             let fechou = janela.clone();
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Novo chat", Some("Em qual pasta?".into()))))
+                .title(topo(cabecalho(tr!("Novo chat"), Some(tr!("Em qual pasta?").to_string()))))
                 .child(vista.clone())
                 .on_ok(|_, _, _| false)
                 // Fechado sem escolher (Esc, clique fora), "Nova conversa ao lado" não vale mais.
@@ -340,7 +340,7 @@ impl Janela {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Abrir o chat nesta pasta".into()),
+            prompt: Some(tr!("Abrir o chat nesta pasta")),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(caminhos))) = escolha.await else {
@@ -368,7 +368,7 @@ impl Janela {
             return;
         };
         // O caminho só na dica: no cabeçalho, ele não diz nada a quem usa.
-        let dica: SharedString = format!("Gravadas em {}", com_til(&motor.read(cx).dados.arquivo_config())).into();
+        let dica: SharedString = tr!("Gravadas em {caminho}", caminho = com_til(&motor.read(cx).dados.arquivo_config()));
         let janela = cx.entity().downgrade();
         let vista = cx.new(|cx| Configuracoes::new(motor, janela, cx));
         self.foco_antes_do_dialogo(window, cx);
@@ -414,17 +414,17 @@ impl Janela {
             let vazio = campo.read(cx).value().trim().is_empty();
             let (no_botao, no_enter) = (salvar.clone(), salvar.clone());
             moldura(dialogo, largura::P, window)
-                .title(topo(cabecalho("Renomear conversa", None)))
+                .title(topo(cabecalho(tr!("Renomear conversa"), None)))
                 .child(Input::new(&campo))
                 .footer(
                     RodapeDialogo::new()
                         .cancelar(
-                            botao_fantasma("renomear-cancelar", None, "Cancelar", TamanhoBotao::Controle, window, cx)
+                            botao_fantasma("renomear-cancelar", None, tr!("Cancelar"), TamanhoBotao::Controle, window, cx)
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .principal(
-                            botao_primario("renomear-salvar", None, "Salvar", TamanhoBotao::Controle, window, cx)
-                                .when(vazio, |b| b.disabled(true).opacity(0.45).tooltip("Escreva um título"))
+                            botao_primario("renomear-salvar", None, tr!("Salvar"), TamanhoBotao::Controle, window, cx)
+                                .when(vazio, |b| b.disabled(true).opacity(0.45).tooltip(tr!("Escreva um título")))
                                 .on_click(move |_, window, cx| {
                                     if no_botao(cx) {
                                         window.close_dialog(cx);
@@ -495,11 +495,11 @@ impl Janela {
                 if fora == 0 {
                     contas_conectadas(total)
                 } else {
-                    format!("{} · {}", contagem(total, "conta", "contas"), contagem(fora, "desconectada", "desconectadas"))
+                    tr!("{total} · {fora}", total = if total == 1 { tr!("{n} conta", n = total) } else { tr!("{n} contas", n = total) }, fora = if fora == 1 { tr!("{n} desconectada", n = fora) } else { tr!("{n} desconectadas", n = fora) }).to_string()
                 }
             };
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Contas do Claude", Some(conectadas))))
+                .title(topo(cabecalho(tr!("Contas do Claude"), Some(conectadas))))
                 .child(painel.clone())
                 .children(onde.clone())
                 // O Enter do código entra pelo próprio campo; o diálogo não fecha com ele.
@@ -515,7 +515,7 @@ impl Janela {
         };
         let arquivos: Rc<RefCell<Option<Rc<Vec<String>>>>> = Rc::default();
         let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar arquivo…", window, cx);
+            let mut lista = ListaDeEscolha::new(&tr!("Buscar arquivo…"), window, cx);
             lista.em_dialogo();
             lista.definir(seletor_arquivos::grupos_de_arquivos(None, ""), None, cx);
             let lidos = arquivos.clone();
@@ -542,7 +542,7 @@ impl Janela {
         let vista = lista.clone();
         window.open_dialog(cx, move |dialogo, window, _| {
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Mencionar arquivo", None)))
+                .title(topo(cabecalho(tr!("Mencionar arquivo"), None)))
                 .child(vista.clone())
                 .on_ok(|_, _, _| false)
         });
@@ -634,12 +634,12 @@ fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
                 .filter(|i| matches!(i, Item::Usuario { .. } | Item::Assistente { .. } | Item::Entrega { .. }))
                 .count();
             let quando = tempo_relativo(c.atualizado_em);
-            let quando = if quando == "agora" { quando } else { format!("há {quando}") };
-            let pasta = if motor.sem_pasta(c) { "sem pasta".to_string() } else { nome_da_pasta(&c.cwd) };
+            let quando = if quando == "agora" { quando } else { tr!("há {quando}", quando = quando).to_string() };
+            let pasta = if motor.sem_pasta(c) { tr!("sem pasta").to_string() } else { nome_da_pasta(&c.cwd) };
             let rodando = sinal_do_chat(motor, c).filter(|s| *s == Sinal::Rodando);
             ItemDeEscolha {
                 simbolo: Some(Simbolo::icone(Lucide::MessagesSquare)),
-                descricao: Some(format!("{quando} · {} · {pasta}", contagem(mensagens, "mensagem", "mensagens")).into()),
+                descricao: Some(tr!("{quando} · {mensagens} · {pasta}", quando = quando, mensagens = if mensagens == 1 { tr!("{n} mensagem", n = mensagens) } else { tr!("{n} mensagens", n = mensagens) }, pasta = pasta)),
                 selos: rodando.map(|s| Selo::ponto(s.cor()).vazado()).into_iter().collect(),
                 termos: Some(com_til(&c.cwd).into()),
                 ..ItemDeEscolha::new(c.id.clone(), c.titulo.clone())
@@ -647,10 +647,10 @@ fn grupos_de_conversas(motor: &Motor, chat: &str) -> Vec<GrupoDeEscolha> {
         })
         .collect();
     if itens.is_empty() {
-        let vazio = "Nenhuma outra conversa com mensagens";
+        let vazio = tr!("Nenhuma outra conversa com mensagens");
         return vec![GrupoDeEscolha {
             titulo: None,
-            itens: vec![ItemDeEscolha { desabilitado: Some(vazio.into()), ..ItemDeEscolha::new("", vazio) }],
+            itens: vec![ItemDeEscolha { desabilitado: Some(vazio.clone()), ..ItemDeEscolha::new("", vazio) }],
         }];
     }
     vec![GrupoDeEscolha { titulo: None, itens }]
@@ -664,7 +664,7 @@ impl Janela {
         };
         let grupos = grupos_de_conversas(motor.read(cx), &chat);
         let lista = cx.new(|cx| {
-            let mut lista = ListaDeEscolha::new("Buscar conversa…", window, cx);
+            let mut lista = ListaDeEscolha::new(&tr!("Buscar conversa…"), window, cx);
             lista.em_dialogo();
             lista.definir(grupos, None, cx);
             lista
@@ -679,13 +679,13 @@ impl Janela {
                     this.anexos.entry(chat.clone()).or_default().push(arquivo);
                     cx.notify();
                 }
-                Err(erro) => window.push_notification(aviso_erro("Não deu para anexar a conversa", &erro), cx),
+                Err(erro) => window.push_notification(aviso_erro(tr!("Não deu para anexar a conversa"), &erro), cx),
             }
         }));
         let vista = lista.clone();
         window.open_dialog(cx, move |dialogo, window, _| {
             moldura(dialogo, largura::M, window)
-                .title(topo(cabecalho("Conversa como contexto", Some("A escolhida vai anexada à próxima mensagem.".into()))))
+                .title(topo(cabecalho(tr!("Conversa como contexto"), Some(tr!("A escolhida vai anexada à próxima mensagem.").to_string()))))
                 .child(vista.clone())
                 .on_ok(|_, _, _| false)
         });
@@ -828,10 +828,10 @@ impl Janela {
         };
         if motor.update(cx, |m, cx| m.arquivar_chat(&chat, cx)) {
             self.largar_chats(std::slice::from_ref(&chat), true, window, cx);
-            window.push_notification(aviso(Tom::Info, "Chat vazio apagado"), cx);
+            window.push_notification(aviso(Tom::Info, tr!("Chat vazio apagado")), cx);
             return;
         }
-        super::lateral::avisar_arquivadas(motor, vec![chat], "Conversa arquivada".into(), window, cx);
+        super::lateral::avisar_arquivadas(motor, vec![chat], tr!("Conversa arquivada").to_string(), window, cx);
     }
 
     /// Ctrl+Alt+A: arquiva o chat do painel ativo, como o "Arquivar" do menu do chat (com o aviso e

@@ -18,7 +18,7 @@ use super::{
     Janela,
     componentes::{Flutuante as _, TamanhoBotao, botao_fantasma, botao_icone},
 };
-use crate::tema::{Cores, Lucide, Tipo as _, esp, r, raio};
+use crate::tema::{Cores, Lucide, Tipo as _, esp, raio};
 
 /// Um comentário numa linha do diff. A linha é a do arquivo de agora (1 é a primeira); numa linha
 /// que saiu (`removida`) não há número, e o `trecho` (o texto dela) diz qual é.
@@ -129,7 +129,7 @@ impl Estado {
 
 /// O campo do comentário: o Enter guarda (Shift+Enter quebra a linha), o Esc fecha.
 pub(super) fn campo_novo(window: &mut Window, cx: &mut Context<Janela>) -> (Entity<InputState>, Subscription) {
-    let campo = cx.new(|cx| InputState::new(window, cx).placeholder("Comentário sobre esta linha"));
+    let campo = cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Comentário sobre esta linha")));
     let assinatura = cx.subscribe_in(&campo, window, |this, _, evento, window, cx| {
         if let InputEvent::PressEnter { shift: false, .. } = evento {
             this.guardar_comentario(window, cx);
@@ -229,7 +229,7 @@ impl Janela {
         });
         let campo_aberto = aberto.map(|alvo| {
             let onde = match (alvo.removida, alvo.linha) {
-                (true, _) => format!("{}, linha que saiu", alvo.caminho),
+                (true, _) => tr!("{caminho}, linha que saiu", caminho = alvo.caminho).to_string(),
                 (false, Some(l)) => format!("{}:{l}", alvo.caminho),
                 (false, None) => alvo.caminho.clone(),
             };
@@ -243,17 +243,17 @@ impl Janela {
                         .items_end()
                         .child(div().flex_1().min_w_0().child(Input::new(&self.comentarios_diff.campo)))
                         .child(
-                            botao_fantasma("comentario-guardar", None, "Guardar", TamanhoBotao::Barra, window, cx)
+                            botao_fantasma("comentario-guardar", None, tr!("Guardar"), TamanhoBotao::Barra, window, cx)
                                 .on_click(cx.listener(|this, _, window, cx| this.guardar_comentario(window, cx))),
                         )
                         .when(editando, |s| {
                             s.child(
-                                botao_icone("comentario-apagar", Lucide::Trash, "Apagar este comentário", TamanhoBotao::Barra, window, cx)
+                                botao_icone("comentario-apagar", Lucide::Trash, tr!("Apagar este comentário"), TamanhoBotao::Barra, window, cx)
                                     .on_click(cx.listener(|this, _, window, cx| this.apagar_comentario(window, cx))),
                             )
                         })
                         .child(
-                            botao_icone("comentario-fechar", Lucide::X, "Fechar (Esc)", TamanhoBotao::Barra, window, cx)
+                            botao_icone("comentario-fechar", Lucide::X, tr!("Fechar (Esc)"), TamanhoBotao::Barra, window, cx)
                                 .on_click(cx.listener(|this, _, _, cx| this.fechar_comentario(cx))),
                         ),
                 )
@@ -263,7 +263,7 @@ impl Janela {
                 botao_fantasma(
                     "comentarios-enviar",
                     Some(Lucide::Send.into()),
-                    format!("Enviar comentários ({pendentes})"),
+                    tr!("Enviar comentários ({pendentes})", pendentes = pendentes),
                     TamanhoBotao::Barra,
                     window,
                     cx,
