@@ -10,7 +10,7 @@ use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FAIXA_DIREITA, FAIXA_LISTA, Janela, LISTA_MINIMA, Larguras,
+    FAIXA_ARQUIVO, FAIXA_DIREITA, FAIXA_LISTA, Janela, LISTA_MINIMA, Larguras,
     paineis::{MAX_ABAS, MAX_PAINEIS},
 };
 
@@ -133,7 +133,7 @@ impl Arranjo {
         let mut larguras = Larguras {
             lista: na_faixa(self.largura_lista, (LISTA_MINIMA, FAIXA_LISTA.1), padrao.lista),
             direita: na_faixa(self.largura_direita, FAIXA_DIREITA, padrao.direita),
-            arquivo: na_faixa(self.largura_arquivo, FAIXA_DIREITA, padrao.arquivo),
+            arquivo: na_faixa(self.largura_arquivo, FAIXA_ARQUIVO, padrao.arquivo),
             divisoes: Vec::new(),
         };
         for d in self.divisoes.iter().chain(std::iter::once(&self.conversas)).filter(|d| fecha(d)) {

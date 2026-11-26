@@ -135,9 +135,11 @@ const ESC_ARMADO: Duration = Duration::from_secs(3);
 const RECOLHIDAS_DE_INICIO: [&str; 1] = ["Mais antigas"];
 
 /// Larguras normais da lista e do painel da direita, e o mínimo de cada conversa. Todas as
-/// medidas das partes são a 100% e crescem com o zoom (a 150%, a lista normal tem 468 px).
-const LATERAL: f32 = 312.;
-const DIREITA: f32 = 380.;
+/// medidas das partes são a 100% e crescem com o zoom (a 150%, a lista normal tem 375 px). As do
+/// protótipo Linear (`PADRAO` de lá: lista 250, Este chat 232, arquivo 560; dono, 26/11/2026:
+/// "faz os tamanhos padrão das telas ser igual tá no protótipo").
+const LATERAL: f32 = 250.;
+const DIREITA: f32 = 232.;
 /// A largura da direita com um arquivo aberto, guardada à parte (protótipo Linear, 25/11/2026):
 /// o código pede mais lugar que o Este chat.
 const ARQUIVO: f32 = 560.;
@@ -147,7 +149,7 @@ const MIN_APERTADO: f32 = 200.;
 /// Largura que um painel novo precisa ter para valer a pena abrir.
 const MIN_NOVO_PAINEL: f32 = 240.;
 /// Até onde a lista e o painel da direita vão no arrasto.
-const FAIXA_LISTA: (f32, f32) = (200., 560.);
+const FAIXA_LISTA: (f32, f32) = (200., 400.);
 /// Arrastando a divisória da lista para a esquerda, ela ainda encolhe um pouco além do mínimo;
 /// passando deste ponto, recolhe de vez, como a barra lateral do VS Code (dono, 13/11/2026:
 /// "quando arrastar bastante pra diminuir a parte da esquerda, ela minimizar").
@@ -158,7 +160,9 @@ const RECOLHER_ABAIXO_DE: f32 = 160.;
 /// divisória das conversas ou na volta do Ctrl+B, crescia sozinha (dono, 17/11/2026: "deixei o
 /// painel lateral menor e quando clico pra deixar o tamanho dos chats igual ela cresce").
 const LISTA_MINIMA: f32 = RECOLHER_ABAIXO_DE;
-const FAIXA_DIREITA: (f32, f32) = (280., 900.);
+const FAIXA_DIREITA: (f32, f32) = (200., 380.);
+/// A faixa da direita com um arquivo aberto (a do protótipo).
+const FAIXA_ARQUIVO: (f32, f32) = (380., 960.);
 /// O que a gaveta deixa da conversa à mostra, para o clique fora fechá-la.
 const FRESTA_GAVETA: f32 = 40.;
 
@@ -218,6 +222,8 @@ pub struct Orcamento {
     /// Até onde a lista e o painel da direita podem ser alargados sem empurrar as conversas.
     max_lista: f32,
     max_direita: f32,
+    /// O mesmo, com um arquivo aberto à direita.
+    max_arquivo: f32,
     /// Quantas conversas cabem lado a lado nesta largura.
     cabem: usize,
 }
@@ -271,6 +277,7 @@ fn orcamento(util: f32, escala: f32, n: usize, lista: bool, direita: bool) -> Or
         min_conversa,
         max_lista: maximo(LATERAL, FAIXA_LISTA),
         max_direita: maximo(DIREITA, FAIXA_DIREITA),
+        max_arquivo: maximo(ARQUIVO, FAIXA_ARQUIVO),
         cabem: ((util / u(MIN_NOVO_PAINEL)).floor() as usize).clamp(1, paineis::MAX_PAINEIS),
     }
 }
@@ -338,8 +345,11 @@ impl Larguras {
             && let Some((d, antes)) = resto.split_last()
         {
             if mexeu(*d, direita) {
-                let nova = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
-                if com_arquivo { self.arquivo = nova } else { self.direita = nova }
+                if com_arquivo {
+                    self.arquivo = (d / escala).clamp(FAIXA_ARQUIVO.0, FAIXA_ARQUIVO.1);
+                } else {
+                    self.direita = (d / escala).clamp(FAIXA_DIREITA.0, FAIXA_DIREITA.1);
+                }
             }
             resto = antes;
         }
@@ -352,11 +362,17 @@ impl Larguras {
     /// As larguras guardadas neste orçamento, com `n` conversas: a lista e a direita dentro da
     /// faixa que cabe, e as conversas dividindo o resto.
     fn em_px(&self, o: &Orcamento, n: usize) -> LargurasPx {
+        self.em_px_com(o, n, false)
+    }
+
+    /// O mesmo, com a direita na largura e na faixa do arquivo quando `com_arquivo`.
+    fn em_px_com(&self, o: &Orcamento, n: usize, com_arquivo: bool) -> LargurasPx {
         let n = n.max(1);
         let u = |medida: f32| medida * o.escala;
         let lista = o.lista.then(|| u(self.lista).min(o.max_lista).max(u(LISTA_MINIMA)).floor());
-        let direita = (o.direita == Direita::Ancorada)
-            .then(|| u(self.direita).min(o.max_direita).max(u(FAIXA_DIREITA.0)).floor());
+        let (largura, minima, maxima) =
+            if com_arquivo { (self.arquivo, FAIXA_ARQUIVO.0, o.max_arquivo) } else { (self.direita, FAIXA_DIREITA.0, o.max_direita) };
+        let direita = (o.direita == Direita::Ancorada).then(|| u(largura).min(maxima).max(u(minima)).floor());
         let livre = o.util - lista.unwrap_or(0.) - direita.unwrap_or(0.);
         let conversas = if let Some(divisao) = self.divisao(n) {
             divisao.iter().map(|f| (livre * f).floor().max(o.min_conversa)).collect()
@@ -1935,8 +1951,9 @@ impl Janela {
             // A aba da direita escolhe o conteúdo (o arquivo, o PR ou "Este chat"), na gaveta também.
             Gaveta::Direita => {
                 let com_arquivo = matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
-                let largura = if com_arquivo { self.larguras.arquivo } else { self.larguras.direita };
-                (largura, FAIXA_DIREITA.0, self.conteudo_da_direita(motor, window, cx))
+                let (largura, minima) =
+                    if com_arquivo { (self.larguras.arquivo, FAIXA_ARQUIVO.0) } else { (self.larguras.direita, FAIXA_DIREITA.0) };
+                (largura, minima, self.conteudo_da_direita(motor, window, cx))
             }
         };
         let largura = px(largura_da_gaveta(largura, minima, &self.orcamento));
@@ -2612,11 +2629,7 @@ impl Janela {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
         }
-        let mut larguras = if com_arquivo {
-            Larguras { direita: self.larguras.arquivo, ..self.larguras.clone() }.em_px(&o, n)
-        } else {
-            self.larguras.em_px(&o, n)
-        };
+        let mut larguras = self.larguras.em_px_com(&o, n, com_arquivo);
         // Maximizada no jeito do VS Code: as outras estreitas, a escolhida com o resto. Isso não
         // vira arranjo guardado (o `on_resize` não grava com uma maximizada).
         let espremidas = maximizado.and_then(|m| visiveis.iter().position(|&ix| self.paineis[ix].id == m));
@@ -2706,10 +2719,11 @@ impl Janela {
             self.direita_ja_vista = true;
             let conteudo = self.conteudo_da_direita(motor, window, cx);
             let conteudo = movimento::entrada(SharedString::from(format!("direita-entra-{qual}")), nova, movimento::De::Parado, div().size_full().child(conteudo));
+            let (minima, maxima) = if com_arquivo { (FAIXA_ARQUIVO.0, o.max_arquivo) } else { (FAIXA_DIREITA.0, o.max_direita) };
             grupo = grupo.child(
                 resizable_panel()
-                    .size(px(larguras.direita.unwrap_or(o.max_direita)))
-                    .size_range(u(FAIXA_DIREITA.0)..px(o.max_direita))
+                    .size(px(larguras.direita.unwrap_or(maxima)))
+                    .size_range(u(minima)..px(maxima))
                     .fixed()
                     .child(div().size_full().map(|d| margem_do_cartao(d, false, true, lista)).child(conteudo)),
             );
@@ -2925,7 +2939,7 @@ mod testes_botoes_janela {
 
 #[cfg(test)]
 mod testes_orcamento {
-    use super::{Direita, Gaveta, Larguras, LargurasPx, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
+    use super::{DIREITA, Direita, FAIXA_LISTA, Gaveta, LATERAL, Larguras, LargurasPx, gaveta_fecha_sozinha, largura_da_gaveta, orcamento};
 
     // Área das partes na janela mínima (960), no tamanho inicial (1440) e em meia tela de
     // 2560 a 100% (1280) e a 125% (1024), com a sombra de 20 px dos dois lados.
@@ -2944,17 +2958,17 @@ mod testes_orcamento {
 
     #[test]
     fn a_direita_vira_gaveta_antes_da_lista() {
-        // Na janela mínima, 312 + 380 + 280 não cabem: a direita sai, a lista fica.
-        let o = orcamento(MINIMA, 1., 1, true, true);
+        // Em 700, 250 + 232 + 280 não cabem: a direita sai, a lista fica.
+        let o = orcamento(700., 1., 1, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         assert!(!o.cabe_direita);
-        // Com 3 conversas no tamanho inicial, idem.
-        let o = orcamento(INICIAL, 1., 3, true, true);
+        // Com 3 conversas em 1200, idem.
+        let o = orcamento(1200., 1., 3, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         // Com a lista recolhida, a direita volta para o lado.
-        let o = orcamento(MINIMA, 1., 1, false, true);
+        let o = orcamento(700., 1., 1, false, true);
         assert_eq!(o.direita, Direita::Ancorada);
         assert!(o.cabe_lista);
     }
@@ -2988,14 +3002,14 @@ mod testes_orcamento {
         // Sem a lista pedida, a gaveta ficaria por cima mesmo com espaço ao lado.
         assert!(!gaveta_fecha_sozinha(Gaveta::Lista, &orcamento(INICIAL, 1., 3, false, true)));
         // A da direita fecha quando cabe ao lado ou não há mais o que mostrar.
-        assert!(!gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, true, true)));
+        assert!(!gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(700., 1., 1, true, true)));
         assert!(gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, false, true)));
         assert!(gaveta_fecha_sozinha(Gaveta::Direita, &orcamento(MINIMA, 1., 1, true, false)));
     }
 
     #[test]
     fn direita_fechada_nao_vira_gaveta() {
-        let o = orcamento(MINIMA, 1., 1, true, false);
+        let o = orcamento(700., 1., 1, true, false);
         assert_eq!(o.direita, Direita::Fechada);
         assert!(!o.cabe_direita);
     }
@@ -3015,11 +3029,11 @@ mod testes_orcamento {
             let o = orcamento(util, 1., n, true, true);
             let mut ocupado = n as f32 * o.min_conversa;
             if o.lista {
-                assert!(o.max_lista >= 312.);
+                assert!(o.max_lista >= LATERAL);
                 ocupado += o.max_lista;
             }
             if o.direita == Direita::Ancorada {
-                assert!(o.max_direita >= 380.);
+                assert!(o.max_direita >= DIREITA);
                 ocupado += o.max_direita;
             }
             assert!(ocupado <= util, "{util} com {n}: {ocupado}");
@@ -3034,10 +3048,10 @@ mod testes_orcamento {
         assert_eq!(o.direita, Direita::Ancorada);
         assert_eq!(o.min_conversa, 420.);
         let px = Larguras::default().em_px(&o, 2);
-        assert_eq!(px.lista, Some(468.));
-        assert_eq!(px.direita, Some(570.));
-        // Na janela inicial de 1440, a 150%, a direita vira gaveta (468 + 570 + 420 > 1286).
-        let o = orcamento(1286., 1.5, 1, true, true);
+        assert_eq!(px.lista, Some(375.));
+        assert_eq!(px.direita, Some(348.));
+        // Numa janela de 1100 de área a 150%, a direita vira gaveta (375 + 348 + 420 > 1100).
+        let o = orcamento(1100., 1.5, 1, true, true);
         assert!(o.lista);
         assert_eq!(o.direita, Direita::Gaveta);
         // O mesmo orçamento a 100% numa janela 1,5× menor dá as mesmas decisões.
@@ -3130,12 +3144,12 @@ mod testes_orcamento {
         let mut l = Larguras::default();
         // Sem a direita e sem a lista ancoradas, só as conversas contam.
         l.guardar(&[500., 500.], &mexeu_em_tudo(false, false), 1., false);
-        assert_eq!((l.lista, l.direita), (312., 380.));
+        assert_eq!((l.lista, l.direita), (LATERAL, DIREITA));
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         // Arrastada além da faixa, fica no limite; na janela pequena, no máximo que cabe. Uma
         // conversa só não mexe na divisão das duas.
         l.guardar(&[900., 600.], &mexeu_em_tudo(true, false), 1., false);
-        assert_eq!(l.lista, 560.);
+        assert_eq!(l.lista, FAIXA_LISTA.1);
         assert_eq!(l.divisao(2), Some(&[0.5, 0.5][..]));
         let o = orcamento(MINIMA, 1., 1, true, false);
         let px = l.em_px(&o, 1);
