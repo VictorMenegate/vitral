@@ -1101,9 +1101,10 @@ impl Janela {
             // a lista e a borda, e os cartões por cima). Na gaveta, a superfície é a da gaveta.
     }
 
-    /// Conversas, Arquivos e Quadro de ideias, um embaixo do outro, no jeito do Linear (25/11/2026),
-    /// no lugar do segmentado Conversas · Arquivos: o escolhido na cor cheia, o Quadro abre o quadro
-    /// (Ctrl+I). O ponto âmbar na de Conversas quando algo espera você e você está nos arquivos.
+    /// Conversas, Arquivos e Tarefas, um embaixo do outro, no jeito do Linear (25/11/2026), no lugar
+    /// do segmentado Conversas · Arquivos: o escolhido na cor cheia. Tarefas (Ctrl+I) abre o quadro
+    /// no lugar das conversas, e Conversas volta a elas. O ponto âmbar na de Conversas quando algo
+    /// espera você e você está nos arquivos ou nas Tarefas.
     fn abas_da_lista(&self, motor: &Motor, ctx: &Contexto, conversas: bool, window: &Window, cx: &Context<Self>) -> Div {
         let pendentes = motor.precisa_de_voce().numero();
         // 32 de altura, 9 dos lados e entre o ícone e o nome, texto de 13,5 (protótipo Linear).
@@ -1136,7 +1137,8 @@ impl Janela {
                 });
             }
         };
-        let ponto = (!conversas && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
+        let no_quadro = self.quadro.is_some();
+        let ponto = ((!conversas || no_quadro) && pendentes > 0).then(|| div().flex_none().size(r(7.)).rounded_full().bg(Cores::espera()));
         let atalho = (!ctx.aperto.estreita).then(|| div().flex_none().text_size(r(11.)).text_color(Cores::tenue_da_lista()).child("Ctrl I"));
         let _ = cx;
         v_flex()
@@ -1144,12 +1146,19 @@ impl Janela {
             .mt(linear::ANTES_DA_SECAO)
             .gap(esp::E2)
             .mb(esp::E4)
-            .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas).children(ponto).on_click(trocar(AbaLateral::Conversas)))
+            .child(linha("lista-conversas", Lucide::MessagesSquare, "Conversas", conversas && !no_quadro).children(ponto).on_click({
+                let trocar = trocar(AbaLateral::Conversas);
+                let janela = ctx.janela.clone();
+                move |ev: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = janela.update(cx, |this, cx| this.fechar_quadro(window, cx));
+                    trocar(ev, window, cx);
+                }
+            }))
             // Os arquivos moram na direita (protótipo Linear, 25/11/2026): o item abre a aba deles,
             // com o cursor na busca; a lista continua nas conversas.
             .child(linha("lista-arquivos", Lucide::Folder, "Arquivos", false).on_click(cx.listener(|this, _, window, cx| this.abrir_aba_arquivos(window, cx))))
             .child(
-                linha("lista-quadro", Lucide::Kanban, "Quadro de ideias", false)
+                linha("lista-quadro", Lucide::Kanban, "Tarefas", no_quadro)
                     .children(atalho)
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(super::AbrirQuadroDeIdeias), cx)),
             )

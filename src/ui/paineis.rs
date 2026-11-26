@@ -789,6 +789,10 @@ impl Janela {
 
     /// Abre a conversa no painel ativo (ou num novo, se não houver nenhum).
     pub fn selecionar(&mut self, chat: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        // Abrir uma conversa (da lista, de um aviso, de um cartão) tira as Tarefas da frente.
+        if chat.is_some() && self.quadro.take().is_some() {
+            self.vista_da_lista.update(cx, |_, cx| cx.notify());
+        }
         // Escolher o chat que já estava à vista (o clique na lista, no mesmo chat) não é visita.
         let ja_a_vista = chat.is_some() && chat == self.selecionado;
         // "Nova conversa ao lado": a conversa que o diálogo acabou de criar vai para um painel novo.

@@ -708,7 +708,7 @@ mod testes {
             assert_eq!(entrada.teclas, Some(linha.partes()), "{}", linha.rotulo);
         }
         // Os que entraram por último também: o quadro de ideias e a busca das enviadas.
-        assert!(acha(&todas, "Quadro de ideias").motivo.is_none());
+        assert!(acha(&todas, "Tarefas").motivo.is_none());
         assert!(todas.iter().any(|e| e.titulo.starts_with("Buscar nas suas mensagens")));
         // Cada chave uma vez só, e toda linha numa seção que a paleta desenha.
         let mut chaves: Vec<&str> = todas.iter().map(|e| e.chave.as_str()).collect();

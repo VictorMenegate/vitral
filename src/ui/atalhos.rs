@@ -156,7 +156,7 @@ tabela! {
     "ctrl-b", super::AlternarLista, Some("Vitral && !PaginaMd"), Grupo::Lista, "Mostrar a lista", "";
     "ctrl-g", super::ProximaPendencia, None, Grupo::Lista, "Ir à próxima pendência (dá a volta)", "";
     "ctrl-shift-g", super::PendenciaAnterior, None, Grupo::Lista, "Ir à pendência anterior", "";
-    "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Quadro de ideias", "";
+    "ctrl-i", super::AbrirQuadroDeIdeias, Some("Vitral && !PaginaMd"), Grupo::Lista, "Tarefas", "";
 
     // ---------- painéis ----------
     "ctrl-j", super::AlternarPainel, None, Grupo::Paineis, "Mostrar ou fechar o painel da direita", "";

@@ -718,6 +718,8 @@ pub struct Janela {
     vista_da_direita: Entity<vista_mensagens::VistaDaDireita>,
     /// O painel da direita acabou de abrir ou trocar (o fade dele, dentro da vista em cache).
     direita_nova: bool,
+    /// As Tarefas abertas no lugar das conversas (`quadro_ideias`).
+    quadro: Option<Entity<quadro_ideias::QuadroDeIdeias>>,
     /// Os anexos e as citações de todas as conversas, contados no último quadro: quando mudam (um
     /// print colado, uma pílula tirada), o rascunho vai para o disco (item 1.4).
     assinatura_dos_anexos: (usize, usize, usize, usize),
@@ -992,6 +994,7 @@ impl Janela {
             vista_da_barra,
             vista_da_direita,
             direita_nova: false,
+            quadro: None,
             motor: None,
             selecionado: None,
             filtro: Filtro::Todos,
@@ -2327,7 +2330,9 @@ impl Janela {
         if !perguntas.is_empty() || !self.perguntas.is_empty() {
             self.acertar_perguntas(perguntas, window, cx);
         }
-        self.orcamento = orcamento_da_janela(window, self.paineis.len(), self.lista, self.direita_pedida());
+        // Com as Tarefas no lugar das conversas, a fileira é uma peça só, sem a direita.
+        let (pecas, direita) = if self.quadro.is_some() { (1, false) } else { (self.paineis.len(), self.direita_pedida()) };
+        self.orcamento = orcamento_da_janela(window, pecas, self.lista, direita);
         // A lista saiu de vista (um painel novo a empurrou, Ctrl+B, a janela estreitou) com o foco
         // nela: o foco vai para a caixa do painel ativo. Sem isso o foco ficava num elemento fora
         // da árvore e nenhuma tecla chegava às ações da janela até um clique (teste de
@@ -2653,7 +2658,8 @@ impl Janela {
         self.normalizar_maximizado();
         let ids: Vec<u64> = self.paineis.iter().map(|p| p.id).collect();
         let visiveis = paineis::paineis_a_mostrar(&ids, self.maximizado);
-        let n = visiveis.len().max(1);
+        let quadro = self.quadro.clone();
+        let n = if quadro.is_some() { 1 } else { visiveis.len().max(1) };
         let lista = o.lista;
         let painel = o.direita == Direita::Ancorada;
         // Com outra composição, outro zoom ou outra largura de janela, as divisórias recomeçam
@@ -2665,7 +2671,9 @@ impl Janela {
         let maximizado = self.maximizado.filter(|_| self.paineis.len() > 1);
         // Com um arquivo aberto à direita, a largura dela é a do arquivo (guardada à parte).
         let com_arquivo = painel && matches!(self.aba_visivel(motor.read(cx)), abas_direita::AbaDireita::Arquivo(_));
-        let chave = (n, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
+        // As Tarefas mudam quantas peças há: a chave muda com elas, e as larguras recomeçam.
+        let pecas = if quadro.is_some() { usize::MAX } else { n };
+        let chave = (pecas, painel, lista, (o.escala * 100.).round() as u32, o.util.round() as u32, maximizado, com_arquivo);
         if self.chave_partes != Some(chave) {
             self.chave_partes = Some(chave);
             self.estado_partes.update(cx, |estado, _| estado.clear());
@@ -2686,9 +2694,15 @@ impl Janela {
         // margem em cima e à direita, e na esquerda e embaixo sem a lista e a barra de baixo. Entre
         // as peças não há vão, só a divisória de 1 px da própria peça (`aresta_encostada`).
         // O id muda com a composição, para o estado de dentro de cada parte não passar a outra.
-        let mut grupo = h_resizable(SharedString::from(format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))))
-            .with_state(&self.estado_partes)
-            .on_resize(move |estado, _, cx| {
+        let id_do_grupo = if quadro.is_some() {
+            format!("partes-quadro-{lista}")
+        } else {
+            format!("partes-{n}-{painel}-{lista}-{}", espremidas.map_or(-1, |k| k as i64))
+        };
+        let mut grupo = h_resizable(SharedString::from(id_do_grupo)).with_state(&self.estado_partes);
+        // Com as Tarefas, as larguras das conversas não estão à vista: nada se grava.
+        if quadro.is_none() {
+            grupo = grupo.on_resize(move |estado, _, cx| {
                 let tamanhos: Vec<f32> = estado.read(cx).sizes().iter().map(|t| t.as_f32()).collect();
                 let _ = janela.update(cx, |this, _| {
                     if espremidas.is_none() {
@@ -2696,6 +2710,7 @@ impl Janela {
                     }
                 });
             });
+        }
         if let Some(largura) = larguras.lista {
             grupo = grupo.child(
                 resizable_panel()
@@ -2704,6 +2719,23 @@ impl Janela {
                     .fixed()
                     .child(div().size_full().child(AnyView::from(self.vista_da_lista.clone()).cached(StyleRefinement::default().size_full()))),
             );
+        }
+        if let Some(quadro) = quadro {
+            // As Tarefas no lugar das conversas e da direita, num cartão só, como a fileira.
+            let cartao = div()
+                .size_full()
+                .rounded(crate::tema::raio_da_peca())
+                .bg(Cores::cartao())
+                .when_some(crate::tema::bordas_finas(), |s, anel| s.shadow(vec![anel]))
+                .overflow_hidden()
+                .child(quadro);
+            grupo = grupo.child(
+                resizable_panel()
+                    .size(px(larguras.conversas.iter().sum::<f32>()))
+                    .child(div().size_full().relative().map(|d| margem_do_cartao(d, true, true, lista)).child(cartao)),
+            );
+            self.direita_vista = None;
+            return grupo;
         }
         if self.paineis.is_empty() {
             // A tela de começar também aceita uma conversa arrastada da lista.

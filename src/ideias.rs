@@ -35,15 +35,6 @@ impl Coluna {
         }
     }
 
-    /// O que a coluna vazia diz.
-    pub fn vazia(self) -> &'static str {
-        match self {
-            Coluna::Ideias => "Escreva aqui em cima o que você não quer esquecer.",
-            Coluna::Proximas => "Arraste para cá o que vem a seguir.",
-            Coluna::Fazendo => "Ao abrir o chat de uma ideia, ela vem para cá.",
-            Coluna::Feitas => "Arraste para cá o que ficou pronto.",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

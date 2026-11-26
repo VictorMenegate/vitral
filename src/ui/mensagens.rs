@@ -2253,12 +2253,6 @@ pub(super) fn texto_da_presa(texto: &str) -> String {
     texto.lines().filter(|l| !l.trim().is_empty()).take(3).collect::<Vec<_>>().join(" ")
 }
 
-/// O fundo da lista (a base da janela) enchendo a caixa onde está: o recorte da chapa de metal
-/// que fica atrás dela, o véu azul da base e o fosco por cima. O pai precisa ser `relative`.
-pub(super) fn fundo_da_lista(raio: Pixels) -> Div {
-    super::componentes::metal::fundo_da_lista(raio)
-}
-
 /// A barra de ações de uma mensagem (quem chama só a desenha com o ponteiro na mensagem).
 impl Janela {
     /// A área das mensagens do painel no último desenho (`Painel::area_das_mensagens`).
