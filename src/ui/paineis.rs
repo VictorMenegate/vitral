@@ -383,8 +383,6 @@ impl RenderOnce for FormaSoltura {
             .flex_col()
             .items_center()
             .flutuante(cx)
-            .border_1()
-            .border_color(Cores::borda_forte())
             .map(|s| {
                 if duas {
                     s.rounded(raio::CARTAO).py(r(8.)).px(r(12.)).gap(r(2.))

@@ -17,17 +17,6 @@ const FOCUS_LINE_GAP: f32 = 0.125;
 /// shadcn/ui spends at each elevation.
 const SURFACE_SHADOW_INK: f32 = 0.1;
 
-/// Ink of the hairline ring standing in for a popover's border.
-///
-/// shadcn/ui draws no border on a popup surface at all: its edge is a 1px
-/// `rgb(0 0 0 / 0.1)` ring spent as a shadow layer. Because the ring is
-/// translucent the shadow shows *through* it, which is what makes the edge read
-/// as part of one grounded surface rather than as an outline with a separate
-/// shadow below it. An opaque border cannot reproduce that — a border composites
-/// over the element's own background, not over the shadow.
-// Vitral: o anel vale o `borda_forte` do Vitral (#ffffff1f).
-const POPOVER_RING_INK: f32 = 0.12;
-
 /// The colour of a popup surface's hairline ring in this theme.
 ///
 /// shadcn spends black on it in light mode and white in dark
@@ -40,10 +29,6 @@ pub(crate) fn popover_ring(_cx: &App) -> Hsla {
     hsla(0., 0., 1., 0.)
 }
 
-/// Vitral: o anel claro de antes, para dicas e avisos, que ficariam azuis demais.
-pub(crate) fn anel_neutro(cx: &App) -> Hsla {
-    cx.theme().foreground.alpha(POPOVER_RING_INK)
-}
 
 /// shadcn/ui's popup surface shadow — a hairline `ring` plus `shadow-md` — at
 /// `strength` of its full ink.

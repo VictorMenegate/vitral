@@ -1529,8 +1529,6 @@ impl Vitrine {
             .p(r(24.))
             .rounded(raio::PECA)
             .bg(Cores::dialogo())
-            .border_1()
-            .border_color(Cores::borda_forte())
             .shadow(sombra_elevado())
             .child(CabecalhoDialogo::new("Novo chat").subtitulo("Em qual pasta?").voltar(|_, _| {}))
             .child(

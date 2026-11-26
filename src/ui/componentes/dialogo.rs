@@ -260,7 +260,6 @@ pub fn confirmar(
             .width(largura_alerta)
             .p(r(24.))
             .rounded(raio::PECA)
-            .border_color(Cores::borda_forte())
             .icon(
                 div()
                     .size(r(40.))

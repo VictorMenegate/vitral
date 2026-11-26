@@ -237,8 +237,6 @@ fn moldura(chave: &str, cx: &App) -> Stateful<Div> {
         .p(esp::E12)
         .flutuante(cx)
         .rounded(raio::CARTAO)
-        .border_1()
-        .border_color(Cores::borda_forte())
         .occlude()
 }
 

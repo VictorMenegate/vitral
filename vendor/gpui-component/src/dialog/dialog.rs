@@ -784,8 +784,8 @@ impl RenderOnce for Dialog {
                                         .test_support()
                                         .debug_selector(move || format!("dialog-{layer_ix}"))
                                         .bg(cx.theme().tokens.background)
-                                        .border_1()
-                                        .border_color(cx.theme().border)
+                                        // Vitral (26/11/2026): sem a borda clara, como os menus;
+                                        // a sombra e o fundo separam o diálogo do resto.
                                         .rounded(cx.theme().radius_lg)
                                         .min_h_24()
                                         .pt(paddings.top)

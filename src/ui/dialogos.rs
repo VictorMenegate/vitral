@@ -38,7 +38,6 @@ pub(super) fn moldura(dialogo: Dialog, largura: f32, window: &Window) -> Dialog 
         // 16 de margem, como o quadro de ideias: o espaço é do conteúdo.
         .p(r(16.))
         .rounded(raio::PECA)
-        .border_color(Cores::borda_forte())
         .close_button(false)
 }
 
