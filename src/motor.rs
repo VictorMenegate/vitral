@@ -2721,7 +2721,14 @@ impl Motor {
         };
         let mcp_da_equipe = crate::memoria_equipe::arquivo_do_mcp(&self.dados.cache, &self.dados.config, &self.config.memoria_da_equipe);
         // As instruções de quem usa (Configurações > Agentes) somam ao que o Vitral manda.
-        let prompt_sistema = prompts::com_instrucoes(prompts::do_chat(&chat.cwd, onde, mcp_da_equipe.is_some()), &self.config.instrucoes);
+        let mut prompt_sistema = prompts::com_instrucoes(prompts::do_chat(&chat.cwd, onde, mcp_da_equipe.is_some()), &self.config.instrucoes);
+        // Com a interface em outra língua, o agente responde nela (os pedidos do Vitral seguem em
+        // português).
+        let pedido_da_lingua = crate::i18n::lingua().pedido_ao_agente();
+        if !pedido_da_lingua.is_empty() {
+            prompt_sistema.push_str("\n\n");
+            prompt_sistema.push_str(pedido_da_lingua);
+        }
         // Por arquivo, o prompt novo vale já no turno de uma sessão retomada; num Claude Code mais
         // velho (ou antes de saber a versão), vai na linha de comando.
         let prompt_arquivo = self.versao_claude.filter(|v| *v >= claude::VERSAO_PROMPT_POR_ARQUIVO).and_then(|_| {

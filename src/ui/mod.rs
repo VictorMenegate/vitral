@@ -2103,6 +2103,10 @@ impl Janela {
             crate::tema::definir_letra_da_conversa(motor.read(cx).config.letra_da_conversa);
             // As cores da Aparência: este desenho já sai com elas; o tema do kit (menus, campos) e
             // as vistas guardadas (a lista, as mensagens) acompanham no seguinte.
+            // A língua da interface: trocada, todas as vistas se refazem (as em cache também).
+            if crate::i18n::definir(crate::i18n::da_configuracao(&motor.read(cx).config.lingua)) {
+                cx.defer(|cx| cx.refresh_windows());
+            }
             if crate::tema::definir_paleta(&motor.read(cx).config.paleta) {
                 cx.defer(|cx| {
                     crate::tema::reaplicar_cores(cx);

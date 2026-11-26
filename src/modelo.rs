@@ -794,6 +794,8 @@ pub struct Config {
     pub trocar_conta_no_limite: bool,
     /// A conta do Codex dos chats novos (id em `contas_codex`; vazio é a principal).
     pub conta_codex: String,
+    /// A língua da interface (`crate::i18n`): vazio segue o sistema; "pt", "en" ou "es".
+    pub lingua: String,
     /// Modo foco: as conversas mostram só as mensagens, sem as chamadas de ferramenta. Vale para
     /// todos os chats (era por painel; dono, 18/11/2026: "ser pra todos os chats").
     pub modo_foco: bool,
@@ -968,6 +970,7 @@ impl Default for Config {
             mcp_trabalhadores: false,
             arquivar_apos_dias: 0,
             uso_no_canto: true,
+            lingua: String::new(),
             conta_codex: String::new(),
             trocar_conta_no_limite: true,
             modo_foco: false,

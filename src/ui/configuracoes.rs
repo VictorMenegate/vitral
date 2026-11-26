@@ -560,6 +560,29 @@ impl Configuracoes {
         grupos
     }
 
+    /// A língua da interface: a do sistema (o padrão) ou uma das três, que vale na hora.
+    fn grupo_da_lingua(&self, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
+        let atual = self.motor.read(cx).config.lingua.clone();
+        let do_sistema = crate::i18n::do_sistema();
+        let mut opcoes = vec![Opcao::new("", tr!("Do sistema")).descricao(do_sistema.nome())];
+        opcoes.extend(crate::i18n::Lingua::TODAS.into_iter().map(|l| Opcao::new(l.codigo(), l.nome())));
+        let motor = self.motor.clone();
+        GrupoDeOpcoes::new(Some(tr!("Idioma"))).linha(
+            LinhaDeOpcao::new("cfg-lingua", tr!("Idioma da interface"))
+                .info(tr!("Os textos do Vitral nesta língua. O agente também passa a responder nela; os pedidos que o Vitral manda a ele seguem em português."))
+                .controle(menu_escolha(
+                    "cfg-lingua",
+                    Anchor::TopRight,
+                    opcoes,
+                    &atual,
+                    "",
+                    move |valor, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.lingua = valor, cx)),
+                    window,
+                    cx,
+                )),
+        )
+    }
+
     /// A parte de um agente ACP novo: onde está o programa (com o Instalar, ou o Atualizar no
     /// terminal), a conta (o Entrar, que abre o login dele) e o que ele é.
     fn grupo_da_ia_acp(&self, agente: Agente, window: &Window, cx: &Context<Self>) -> GrupoDeOpcoes {
@@ -1897,7 +1920,8 @@ impl Render for Configuracoes {
             Parte::Revisao => revisao_grupos,
             Parte::Notificacoes => vec![notificacoes_grupo.into_any_element()],
             Parte::Memoria => vec![memoria_grupo.into_any_element()],
-            Parte::Aparencia => std::iter::once(tamanho.into_any_element())
+            Parte::Aparencia => std::iter::once(self.grupo_da_lingua(window, cx).into_any_element())
+                .chain(std::iter::once(tamanho.into_any_element()))
                 .chain(self.grupos_das_cores(&config.paleta, estreito, window, cx))
                 .chain([interface.into_any_element()])
                 .collect(),

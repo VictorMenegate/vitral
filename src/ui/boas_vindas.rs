@@ -244,7 +244,7 @@ impl Janela {
             .child(div().absolute().top_0().left_0().size_full().child(malha_viva(FASE_INICIAL_DO_METAL, raio::de(36.), false)))
             .child(img(super::trilho::logo_v()).absolute().top_0().left_0().size_full());
         let corpo = match passo {
-            0 => self.passo_da_apresentacao(window).into_any_element(),
+            0 => self.passo_da_apresentacao(window, cx).into_any_element(),
             1 => self.passo_da_pasta(tela, window, cx).into_any_element(),
             2 => self.passo_das_ias(window, cx).into_any_element(),
             3 => self.passo_das_preferencias(tela, cx).into_any_element(),
@@ -494,10 +494,34 @@ impl Janela {
         super::movimento::entrar_depois(linha, ("bv-linha", i), super::movimento::De::Baixo, std::time::Duration::from_millis(80 + 45 * i as u64))
     }
 
-    /// Passo 1: o que é o Vitral, em quatro linhas.
-    fn passo_da_apresentacao(&self, _window: &mut Window) -> impl IntoElement + use<> {
+    /// Passo 1: o que é o Vitral, em quatro linhas, e a língua da interface (que vale na hora).
+    fn passo_da_apresentacao(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let atual = crate::i18n::lingua();
+        let motor = self.motor.clone();
+        let linguas = h_flex().gap(esp::E4).children(crate::i18n::Lingua::TODAS.into_iter().map(move |lingua| {
+            let motor = motor.clone();
+            let escolhida = lingua == atual;
+            div()
+                .id(("bv-lingua", lingua as usize))
+                .h(r(26.))
+                .px(crate::tema::inicio::BOTAO_X)
+                .flex()
+                .items_center()
+                .rounded(raio::de(26.))
+                .text_size(r(12.5))
+                .when(escolhida, |d| d.bg(Cores::selecao()).text_color(Cores::texto()))
+                .when(!escolhida, |d| d.bg(Cores::cartao_elevado()).text_color(Cores::tenue()).cursor_pointer())
+                .child(lingua.nome())
+                .on_click(move |_, _, cx| {
+                    if let Some(motor) = &motor {
+                        motor.update(cx, |m, cx| m.mudar_config(|c| c.lingua = lingua.codigo().to_string(), cx));
+                    }
+                })
+        }));
+        let _ = cx;
         v_flex()
             .gap(crate::tema::inicio::PASSO_VAO)
+            .child(linguas)
             .child(Self::cabeca_do_passo(true, "Bem-vindo ao Vitral", "Chats que trabalham direto nas suas pastas."))
             .child(
                 v_flex()
