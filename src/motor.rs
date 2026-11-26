@@ -1148,6 +1148,10 @@ impl Motor {
             self.nova_sessao(chat, cx);
             return;
         }
+        if let Some(argumento) = texto.strip_prefix("/conta").filter(|resto| resto.is_empty() || resto.starts_with(' ')) {
+            self.comando_conta(chat, argumento.trim(), cx);
+            return;
+        }
         // O título sai da primeira mensagem.
         if let Some(c) = self.chat_mut(chat)
             && c.itens.is_empty()
@@ -3158,6 +3162,69 @@ impl Motor {
             .cloned()
     }
 
+    /// `/conta` na caixa (como o `/account` do Zerosub): sem nome, diz as contas e qual este chat
+    /// usa; com um nome (ou o começo dele), "automática" ou "padrão", troca a conta deste chat.
+    fn comando_conta(&mut self, chat_id: &str, argumento: &str, cx: &mut Context<Self>) {
+        let Some(chat) = self.chat_mut(chat_id).map(Chat::copia_sem_itens) else {
+            return;
+        };
+        if chat.agente != Agente::Claude {
+            self.avisar(chat_id, "As contas são do Claude: este chat é de outro agente.", false);
+            cx.notify();
+            return;
+        }
+        let alvo = crate::ui::acentos_normalizados(argumento);
+        if alvo.is_empty() {
+            let escolha = self.escolha_de_conta(&chat);
+            let usada = self.conta_para(&chat);
+            let linhas: Vec<String> = self
+                .contas
+                .iter()
+                .map(|c| {
+                    let marca = if c.id == usada.id { " (em uso)" } else { "" };
+                    let estado = if self.sem_login.contains(&c.id) {
+                        "sem login".to_string()
+                    } else if self.uso_da_conta(&c.id).bloqueado {
+                        "no limite".to_string()
+                    } else {
+                        match self.uso_da_conta(&c.id).cinco_horas {
+                            Some(f) => format!("5 h em {}%", (f * 100.).round() as u32),
+                            None => "livre".to_string(),
+                        }
+                    };
+                    format!("{}{marca}: {estado}", c.nome)
+                })
+                .collect();
+            let modo = if escolha == contas::AUTOMATICA { " A escolha deste chat é a Automática." } else { "" };
+            self.avisar(chat_id, &format!("Contas do Claude: {}.{modo} Troque com /conta <nome>, /conta automática ou /conta padrão.", linhas.join("; ")), false);
+            cx.notify();
+            return;
+        }
+        let (nova, nome): (Option<String>, String) = if ["automatica", "auto"].contains(&alvo.as_str()) {
+            (Some(contas::AUTOMATICA.to_string()), "Automática (a com mais folga)".to_string())
+        } else if ["padrao", "default"].contains(&alvo.as_str()) {
+            (None, "a padrão".to_string())
+        } else {
+            match self.contas.iter().find(|c| crate::ui::acentos_normalizados(&c.nome) == alvo).or_else(|| {
+                self.contas.iter().find(|c| crate::ui::acentos_normalizados(&c.nome).starts_with(&alvo))
+            }) {
+                Some(c) => (Some(c.id.clone()), c.nome.clone()),
+                None => {
+                    let nomes: Vec<&str> = self.contas.iter().map(|c| c.nome.as_str()).collect();
+                    self.avisar(chat_id, &format!("Não há conta \u{201c}{argumento}\u{201d}. As contas: {}.", nomes.join(", ")), true);
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        if let Some(c) = self.chat_mut(chat_id) {
+            c.conta = nova;
+        }
+        self.avisar(chat_id, &format!("Este chat passa a usar a conta {nome}; vale no próximo turno."), false);
+        self.salvar();
+        cx.notify();
+    }
+
     /// "Continuar na <outra>" da faixa: a conta do chat passa a ser `conta` (o seletor de modelo
     /// mostra, e é por lá que se volta) e o mesmo turno roda de novo nela, sem o Ultracode, como a
     /// troca automática (rodada de uso, item 3.2).
@@ -3241,8 +3308,9 @@ impl Motor {
         true
     }
 
-    /// Depois de um erro de limite na conta do turno, repete o turno em outra conta se a escolha
-    /// do chat for automática e houver conta com folga.
+    /// Depois de um erro de limite na conta do turno, repete o turno em outra conta se houver uma
+    /// com folga: na escolha Automática, sempre; numa conta escolhida à mão, com a opção
+    /// `trocar_conta_no_limite` (ligada de fábrica), e o chat passa a usar a nova.
     fn trocar_de_conta(&mut self, chat: &str, erro: &str, cx: &mut Context<Self>) -> bool {
         let Some(c) = self.chat_mut(chat).map(Chat::copia_sem_itens) else {
             return false;
@@ -3254,7 +3322,8 @@ impl Motor {
             return false;
         };
         let limite = self.uso_da_conta(&atual).bloqueado || erro.to_lowercase().contains("limit");
-        if !limite || self.escolha_de_conta(&c) != contas::AUTOMATICA {
+        let automatica = self.escolha_de_conta(&c) == contas::AUTOMATICA;
+        if !limite || (!automatica && !self.config.trocar_conta_no_limite) || self.contas.len() < 2 {
             return false;
         }
         let mut uso = self.uso_da_conta(&atual);
@@ -3262,7 +3331,8 @@ impl Motor {
         self.uso_por_conta.insert(atual.clone(), uso);
         let fim = fim_do_limite(None, self.limite_ate.get(&atual).copied(), agora());
         self.limite_ate.insert(atual.clone(), fim);
-        let proxima = self.conta_para(&c);
+        // A de mais folga, como a Automática escolheria.
+        let proxima = self.conta_da_escolha(contas::AUTOMATICA);
         if proxima.id == atual || self.uso_da_conta(&proxima.id).bloqueado {
             if self.contas.len() > 1
                 && let Some(volta) = self.contas.iter().filter_map(|x| self.limite_ate.get(&x.id)).min()
@@ -3282,6 +3352,11 @@ impl Motor {
             .find(|x| x.id == atual)
             .map(|x| x.nome.clone())
             .unwrap_or(atual);
+        // Numa conta escolhida à mão, o chat fica na nova (o seletor de modelo mostra, e é por lá
+        // que se volta); na Automática, a escolha continua automática.
+        if !automatica && let Some(c) = self.chat_mut(chat) {
+            c.conta = Some(proxima.id.clone());
+        }
         self.avisar(
             chat,
             &format!(
@@ -3292,6 +3367,9 @@ impl Motor {
         );
         if let Some(mensagens) = self.entrada_para_repetir(chat) {
             self.comecar_turno_com(chat, mensagens, false, cx);
+        }
+        if !automatica {
+            self.salvar();
         }
         true
     }

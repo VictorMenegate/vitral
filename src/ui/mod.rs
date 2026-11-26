@@ -4,6 +4,10 @@
 pub mod componentes;
 mod abas_direita;
 mod acentos;
+/// O texto sem acento e em minúscula, para comparar nomes (`/conta automática` e "Automatica").
+pub fn acentos_normalizados(texto: &str) -> String {
+    acentos::normalizar(texto)
+}
 mod agendar;
 pub mod arranjo;
 mod boas_vindas;

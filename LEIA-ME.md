@@ -1812,6 +1812,15 @@ onde ele muda. A lista tem altura de uns 230 px e rola por dentro.
 
 ## Contas e uso dos planos
 
+Trocar a conta de um chat (26/11/2026, no jeito do Zerosub do Paseo): o seletor de modelo, como
+antes, ou **`/conta`** na caixa, que o Vitral resolve sem mandar ao Claude Code. Sozinho, diz as
+contas, a em uso e como está cada uma (livre, 5 h em N%, no limite, sem login); com um nome (ou o
+começo dele), **`/conta automática`** ou **`/conta padrão`** (volta a seguir a padrão), troca a
+deste chat, e vale no próximo turno. **Trocar sozinho no limite** (Configurações > Agentes >
+Claude Code, ligada de fábrica): um chat com a conta escolhida à mão que bate no limite passa para
+a conta com mais folga, repete o turno nela e fica nela, com o aviso na conversa; desligada, só a
+Automática troca, e as outras mostram o **Continuar na…**.
+
 No canto de cima, à direita, da janela, logo abaixo do ×, flutua um anel de 30 por serviço, um em cima do
 outro, cada um num disco opaco da peça (`uso_no_canto`, em `src/ui/uso_plano.rs`): cada um só com a conta daquele serviço conectada (o do Codex,
 também com uso lido). Cada um é o disco da marca com **um** anel em volta (com a fenda
@@ -1820,8 +1829,8 @@ embaixo), que mostra a janela mais apertada das duas (5 h ou semana), na cor do 
 porcentagens ficam na dica e no popover. Com mais de uma conta, o do Claude leva a inicial da
 conta em uso. **Uso do plano no canto da janela**, em Configurações > Aparência
 (`Config.uso_no_canto`, ligada por padrão), esconde os anéis; o uso continua em **Contas do
-Claude**. Sem o Codex instalado, o anel dele não aparece: **Instalar o Codex…**, no menu do logo,
-abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
+Claude**. Sem o Codex instalado, o anel dele não aparece: o **Instalar…** dele, em Configurações >
+Agentes, abre o terminal com o instalador oficial e o login. O clique num anel abre o popover de detalhes,
 para cima, alinhado à direita: o plano, as duas janelas, cada uma com um anel de 44 que enche ao
 abrir, a porcentagem no meio (em âmbar ou vermelho a partir de 70%) e, ao lado, o rótulo e a hora
 em que renova ("renova em 2 h 13 min · 15:59"; uma janela sem leitura fica só com o rótulo e "sem

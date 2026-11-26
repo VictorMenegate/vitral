@@ -758,6 +758,10 @@ pub struct Config {
     /// Os anéis de uso do plano flutuando no canto de baixo, à direita, da janela. Desligado,
     /// somem da tela (o uso continua em Contas do Claude).
     pub uso_no_canto: bool,
+    /// Um chat com conta escolhida à mão que bate no limite do plano passa sozinho para a conta
+    /// com mais folga, e fica nela (como o Zerosub do Paseo; dono, 26/11/2026: "melhora a troca de
+    /// conta"). Desligado, só a Automática troca, e as outras mostram o "Continuar na…".
+    pub trocar_conta_no_limite: bool,
     /// Modo foco: as conversas mostram só as mensagens, sem as chamadas de ferramenta. Vale para
     /// todos os chats (era por painel; dono, 18/11/2026: "ser pra todos os chats").
     pub modo_foco: bool,
@@ -932,6 +936,7 @@ impl Default for Config {
             mcp_trabalhadores: false,
             arquivar_apos_dias: 0,
             uso_no_canto: true,
+            trocar_conta_no_limite: true,
             modo_foco: false,
             transparencia: crate::tema::TRANSPARENCIA_PADRAO,
             pasta_de_trabalho: None,

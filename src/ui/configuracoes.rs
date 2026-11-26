@@ -1190,6 +1190,17 @@ impl Configuracoes {
                 let _ = janela.update(cx, |this, cx| this.abrir_contas(true, window, cx));
             }),
         ));
+        // A troca sozinha no limite, também na conta escolhida à mão (26/11/2026).
+        let (ligada, motor) = (self.motor.read(cx).config.trocar_conta_no_limite, self.motor.clone());
+        let outra = outra.linha(
+            LinhaDeOpcao::new("cfg-trocar-no-limite", "Trocar sozinho no limite")
+                .info(
+                    "Um chat com uma conta escolhida à mão que bate no limite do plano passa para a conta com mais \
+                     folga, repete o turno nela e fica nela. Desligado, só a Automática troca; nas outras aparece o \
+                     “Continuar na…”.",
+                )
+                .interruptor(ligada, move |v, _, cx| motor.update(cx, |m, cx| m.mudar_config(|c| c.trocar_conta_no_limite = v, cx))),
+        );
         vec![padrao.into_any_element(), outra.into_any_element()]
     }
 }

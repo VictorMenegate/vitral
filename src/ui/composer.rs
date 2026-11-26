@@ -2029,6 +2029,10 @@ impl Janela {
         if !lista.iter().any(|c| c.nome == "clear") {
             lista.insert(0, so_nome("clear"));
         }
+        // O `/conta` é do Vitral: troca a conta do Claude deste chat (26/11/2026).
+        if !lista.iter().any(|c| c.nome == "conta") {
+            lista.insert(1.min(lista.len()), ComandoOferecido { descricao: "Troca a conta do Claude deste chat (/conta nome, automática ou padrão)".into(), ..so_nome("conta") });
+        }
         lista
     }
 
