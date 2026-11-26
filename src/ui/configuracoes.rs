@@ -1171,14 +1171,6 @@ impl Render for Configuracoes {
         let conversas = GrupoDeOpcoes::new(Some("Chats".into()))
             .linha(pasta_de_trabalho)
             .linha(com(
-                LinhaDeOpcao::new("cfg-resumo", "Resumo ao voltar")
-                    .info("O cartão “Enquanto você esteve fora” junta o que terminou, o que precisa de você e o que falhou desde que a janela saiu de foco. Ele some no × e volta na próxima saída."),
-                contador("cfg-resumo", &[5, 10, 15, 30, 60, 120], config.minutos_para_resumo as u32, m(), |c, v| {
-                    c.minutos_para_resumo = v as u64
-                })
-                .into_any_element(),
-            ))
-            .linha(com(
                 LinhaDeOpcao::new("cfg-arquivar", "Arquivar parados")
                     .info(
                         "Vale para os chats sem novidade há esse tempo, já lidos, sem fila e sem pedido aberto. Os \

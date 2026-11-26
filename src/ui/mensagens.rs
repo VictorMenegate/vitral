@@ -1442,13 +1442,22 @@ impl Janela {
         // 23/11/2026). Sobe 22, e não 14: com 8 de respiro no balão, ela entrava 6 px na primeira
         // linha do texto (revisão de design, 23/11/2026).
         // Linear (25/11/2026): embaixo do balão, à direita, por cima do que vem depois; o alcance
-        // do ponteiro desce junto, para a barra não sumir no caminho até ela.
-        let barra = div().absolute().bottom(r(-32.)).right(r(folga_do_balao(contexto.nivel)));
+        // do ponteiro desce junto, para a barra não sumir no caminho até ela. Pintada depois de
+        // tudo (`deferred`), como a da resposta: a mensagem de baixo passava por cima dela e a barra
+        // parecia transparente (dono, 26/11/2026).
+        // O `deferred` desliga o hover de grupo do GPUI: quem diz que o ponteiro está na sua
+        // mensagem é a Janela (`falas_sob_ponteiro`).
+        let barra = div().absolute().bottom_0().right(r(folga_do_balao(contexto.nivel)));
+        let sob_o_ponteiro = self.falas_sob_ponteiro.contains(&grupo);
+        let esta = grupo.clone();
         v_flex()
+            .id(grupo.clone())
+            .relative()
             .w_full()
             .map(com_alcance_da_barra_embaixo)
-            .group(grupo.clone())
-            .child(div().relative().w_full().child(corpo).child(barra.child(barra_de_acoes(grupo, acoes, cx))))
+            .on_hover(cx.listener(move |this, dentro: &bool, _, cx| this.marcar_fala_sob_ponteiro(&esta, *dentro, cx)))
+            .child(div().relative().w_full().child(corpo))
+            .when(sob_o_ponteiro, |s| s.child(deferred(barra.child(barra_de_acoes(acoes, cx)))))
             .into_any_element()
     }
 
@@ -1719,6 +1728,9 @@ impl Janela {
         };
         // O texto fecha o turno quando depois dele vem o seu balão (ou nada): só aí há o vão de 32.
         let cabe_a_barra = matches!(contexto.chat.itens.get(indice + 1), None | Some(Item::Usuario { .. } | Item::Vez { .. } | Item::Entrega { .. }));
+        // Como na sua mensagem: o `deferred` desliga o hover de grupo, e a barra aparece pela
+        // mensagem que a Janela sabe estar sob o ponteiro.
+        let sob_o_ponteiro = cabe_a_barra && self.falas_sob_ponteiro.contains(&grupo);
         let resposta = v_flex()
             .relative()
             .w_full()
@@ -1738,8 +1750,7 @@ impl Janela {
             // Pintada depois de tudo (`deferred`): a linha logo abaixo (a revisão da memória) não
             // passa por cima dela, e a barra não parece transparente (dono, 18/11/2026: "faz ser
             // menos transparente isso").
-            .when(cabe_a_barra, |s| s.child(deferred(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
-                grupo.clone(),
+            .when(sob_o_ponteiro, |s| s.child(deferred(div().absolute().bottom(r(-30.)).right_0().child(barra_de_acoes(
                 hora_na_barra(em)
                     .into_iter()
                     // "Continuar daqui em outro chat", só nas respostas da própria conversa.
@@ -1752,7 +1763,29 @@ impl Janela {
                     .collect(),
                 cx,
             ))).with_priority(1)));
-        div().w_full().map(com_alcance_da_barra_embaixo).group(grupo).child(resposta).into_any_element()
+        let esta = grupo.clone();
+        div()
+            .id(grupo)
+            .w_full()
+            .map(com_alcance_da_barra_embaixo)
+            .when(cabe_a_barra, |s| s.on_hover(cx.listener(move |this, dentro: &bool, _, cx| this.marcar_fala_sob_ponteiro(&esta, *dentro, cx))))
+            .child(resposta)
+            .into_any_element()
+    }
+
+    /// O ponteiro entrou (ou saiu) de uma mensagem com barra de ações: a Janela guarda qual, e
+    /// as mensagens se redesenham com a barra dela por cima de tudo.
+    /// O ponteiro pode estar em duas ao mesmo tempo (o alcance de uma desce sobre a de baixo), e as
+    /// duas mostram a barra, como no hover de grupo.
+    fn marcar_fala_sob_ponteiro(&mut self, grupo: &SharedString, dentro: bool, cx: &mut Context<Self>) {
+        let ja = self.falas_sob_ponteiro.contains(grupo);
+        if dentro && !ja {
+            self.falas_sob_ponteiro.push(grupo.clone());
+            cx.notify();
+        } else if !dentro && ja {
+            self.falas_sob_ponteiro.retain(|g| g != grupo);
+            cx.notify();
+        }
     }
 
     /// Mensagem que outro chat (ou o Vitral) entregou: quem mandou e uma prévia; a linha do nome
@@ -2221,7 +2254,8 @@ pub(super) fn fundo_da_lista(raio: Pixels) -> Div {
     super::componentes::metal::fundo_da_lista(raio)
 }
 
-fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
+/// A barra de ações de uma mensagem (quem chama só a desenha com o ponteiro na mensagem).
+fn barra_de_acoes(acoes: Vec<AnyElement>, _: &App) -> Div {
     h_flex()
         .h(r(28.))
         .p(esp::E2)
@@ -2229,8 +2263,6 @@ fn barra_de_acoes(grupo: SharedString, acoes: Vec<AnyElement>, _: &App) -> Div {
         // Chapada (Linear, 25/11/2026): o quase preto dos menus, sem fio nem sombra.
         .bg(Cores::flutuante())
         .rounded(raio::de(28.))
-        .invisible()
-        .group_hover(grupo, |s| s.visible())
         .children(acoes)
 }
 

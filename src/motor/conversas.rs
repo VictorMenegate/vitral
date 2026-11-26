@@ -1,7 +1,6 @@
 //! O que liga as conversas umas às outras e ao usuário: as ferramentas `listar_chats`,
 //! `mensagem_para_chat` e `abrir_chat`, o freio de ciclo das mensagens automáticas entre dois chats
-//! e o resumo do que aconteceu enquanto o usuário esteve fora. A lógica fica em funções puras,
-//! testadas no fim.
+//! e a hora em que o usuário saiu da janela. A lógica fica em funções puras, testadas no fim.
 
 use super::*;
 
@@ -24,22 +23,6 @@ pub enum MotivoPassagem {
     /// O chat nasceu de outro ("Continuar daqui em outro chat") e a sessão de lá não pôde ser
     /// copiada (Codex, conversa sem sessão ou sem o ponto no arquivo dela).
     Bifurcou,
-}
-
-/// "Enquanto você esteve fora": só na memória, montado das ocorrências; nunca vai para o disco.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResumoVolta {
-    pub desde: u64,
-    pub ate: u64,
-    pub linhas: Vec<LinhaResumo>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LinhaResumo {
-    /// "terminou", "precisa" ou "falhou".
-    pub grupo: &'static str,
-    pub chat: String,
-    pub texto: String,
 }
 
 /// As mensagens automáticas entre pares de chats sem o usuário no meio (só na memória).
@@ -124,31 +107,6 @@ pub fn turno_so_do_usuario(entradas: &[Entrada]) -> bool {
     !entradas.is_empty() && entradas.iter().all(|e| e.de.is_none())
 }
 
-/// O que o usuário perdeu fora da janela, das ocorrências do período (sem o que ele mesmo fez).
-pub fn resumo_desde(desde: u64, ate: u64, ocorrencias: &[Ocorrencia]) -> Option<ResumoVolta> {
-    let mut linhas: Vec<LinhaResumo> = Vec::new();
-    for o in ocorrencias.iter().filter(|o| o.quando > desde && o.quando <= ate && o.autor != "usuario") {
-        let grupo = match o.tipo.as_str() {
-            // "entrega" e "juntou" vêm das versões com ajudantes e cópias.
-            "terminou" | "entrega" | "juntou" => "terminou",
-            "permissao" | "ciclo" | "pergunta" => "precisa",
-            "falhou" | "parou" | "conflito" => "falhou",
-            _ => continue,
-        };
-        // Uma linha por chat em cada grupo: a mais nova (a junção vem depois da entrega).
-        if !o.chat.is_empty() {
-            linhas.retain(|l| !(l.grupo == grupo && l.chat == o.chat));
-        }
-        linhas.push(LinhaResumo { grupo, chat: o.chat.clone(), texto: o.texto.clone() });
-    }
-    if linhas.is_empty() {
-        return None;
-    }
-    let ordem = |g: &str| ["terminou", "precisa", "falhou"].iter().position(|x| *x == g).unwrap_or(3);
-    linhas.sort_by_key(|l| ordem(l.grupo));
-    Some(ResumoVolta { desde, ate, linhas })
-}
-
 // ---------- no motor ----------
 
 impl Motor {
@@ -161,25 +119,6 @@ impl Motor {
     pub fn usuario_saiu(&mut self) {
         self.visto_em = agora();
         self.salvar();
-    }
-
-    /// A janela voltou depois de `minutos_para_resumo` fora (ou abriu, com uma saída gravada): monta o
-    /// resumo do que aconteceu, só na memória.
-    pub fn usuario_voltou(&mut self, cx: &mut Context<Self>) {
-        let desde = self.visto_em;
-        let ate = agora();
-        if desde == 0 || ate.saturating_sub(desde) < self.config.minutos_para_resumo * 60 {
-            return;
-        }
-        if let Some(resumo) = resumo_desde(desde, ate, &self.ocorrencias) {
-            self.resumo_volta = Some(resumo);
-            cx.notify();
-        }
-    }
-
-    pub fn fechar_resumo(&mut self, cx: &mut Context<Self>) {
-        self.resumo_volta = None;
-        cx.notify();
     }
 
     /// As ferramentas que ligam um chat aos outros (`listar_chats`, `mensagem_para_chat`,
@@ -339,30 +278,6 @@ mod testes {
         let longo = titulo_do_chat_aberto(&"a".repeat(80), "");
         assert_eq!(longo.chars().count(), 60);
         assert!(longo.ends_with('…'));
-    }
-
-    fn ocorrencia(quando: u64, tipo: &str, autor: &str, chat: &str) -> Ocorrencia {
-        Ocorrencia { quando, tipo: tipo.into(), autor: autor.into(), chat: chat.into(), texto: format!("{tipo} {chat}"), ..Default::default() }
-    }
-
-    #[test]
-    fn resumo_ao_voltar_por_grupo_sem_o_que_o_usuario_fez() {
-        let ocorrencias = vec![
-            ocorrencia(5, "juntou", "vitral", "c1"),
-            ocorrencia(11, "entrega", "c12", "c12"),
-            ocorrencia(12, "juntou", "vitral", "c12"),
-            ocorrencia(13, "juntou", "usuario", "c3"),
-            ocorrencia(14, "permissao", "c7", "c7"),
-            ocorrencia(15, "conflito", "vitral", "c9"),
-            ocorrencia(16, "pedido", "c3", "c9"),
-            ocorrencia(30, "falhou", "vitral", "c2"),
-        ];
-        let r = resumo_desde(10, 20, &ocorrencias).unwrap();
-        let linhas: Vec<(&str, &str)> = r.linhas.iter().map(|l| (l.grupo, l.texto.as_str())).collect();
-        assert_eq!(linhas, [("terminou", "juntou c12"), ("precisa", "permissao c7"), ("falhou", "conflito c9")]);
-        assert_eq!((r.desde, r.ate), (10, 20));
-        assert_eq!(resumo_desde(20, 25, &ocorrencias), None);
-        assert_eq!(resumo_desde(12, 13, &ocorrencias), None, "só o que o usuário fez");
     }
 
     #[test]

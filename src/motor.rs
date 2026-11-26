@@ -33,7 +33,6 @@ mod ajustes;
 mod cli_fora;
 pub use ideias::SituacaoDoLinear;
 
-pub use conversas::ResumoVolta;
 use conversas::{Ciclos, MotivoPassagem};
 
 use crate::{
@@ -390,8 +389,6 @@ pub struct Motor {
     passagens: HashMap<String, MotivoPassagem>,
     /// Mensagens automáticas seguidas entre pares de chats (o freio de ciclo).
     ciclos: Ciclos,
-    /// "Enquanto você esteve fora": só na memória.
-    pub resumo_volta: Option<ResumoVolta>,
     pub permissoes: Vec<PedidoPermissao>,
     /// Versão do Claude Code que os turnos abrem (lida ao abrir e a cada início de turno).
     pub versao_claude: Option<Versao>,
@@ -744,7 +741,6 @@ impl Motor {
             repetidos_sessao: HashSet::new(),
             passagens: HashMap::new(),
             ciclos: Ciclos::default(),
-            resumo_volta: None,
             permissoes: Vec::new(),
             versao_claude: None,
             atualizando_claude: false,
@@ -4491,7 +4487,7 @@ impl Motor {
             self.fechar_revisao_do_par(chat_id, erro, &texto, cx);
             return;
         }
-        // Antes de tudo: o aviso e a linha do "Enquanto você esteve fora" já saem com o título novo.
+        // Antes de tudo: o aviso e a linha do registro de ocorrências já saem com o título novo.
         self.trocar_pelo_titulo_gerado(chat_id);
         if !erro {
             self.repetidos_sessao.remove(chat_id);
@@ -4527,7 +4523,7 @@ impl Motor {
         let Some(chat) = self.chat_mut(chat_id).map(Chat::copia_sem_itens) else {
             return;
         };
-        // Para o resumo de quando o usuário volta ("Enquanto você esteve fora").
+        // O registro de ocorrências.
         let tipo = if erro { "falhou" } else { "terminou" };
         self.registrar(tipo, &chat.id, &chat.id, &linha_do_fim(&chat.titulo, &texto, erro));
         // Mensagens que chegaram durante o turno viram o próximo (as notas esperam uma de verdade).
@@ -4743,7 +4739,7 @@ impl Motor {
         if std::mem::take(&mut self.quadro_sujo) {
             self.salvar_quadro();
         }
-        // A hora da saída, para o "Enquanto você esteve fora" da próxima abertura (grava o estado).
+        // A hora da saída (grava o estado).
         self.visto_em = agora();
         self.salvar();
         self.dados.esperar_gravacoes();
@@ -6329,7 +6325,7 @@ fn texto_do_fim(resposta: &str) -> String {
     if previa.is_empty() { "Terminou".into() } else { format!("Terminou: {previa}") }
 }
 
-/// A linha de um turno que acabou no "Enquanto você esteve fora": o título do chat e a mesma
+/// A linha de um turno que acabou no registro de ocorrências: o título do chat e a mesma
 /// prévia do aviso (a tela mostra a primeira frase dela).
 fn linha_do_fim(titulo: &str, texto: &str, erro: bool) -> String {
     let previa = previa_da_resposta(texto, MAX_DA_PREVIA);

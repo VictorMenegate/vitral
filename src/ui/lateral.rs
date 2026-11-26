@@ -1425,12 +1425,6 @@ impl Janela {
             m.a_vista = linhas_a_vista(rolado, visivel, px_de(r(ALTURA_DA_LINHA_DE_CHAT)), 0.);
         }
 
-        // "Enquanto você esteve fora", no topo da lista.
-        if geral && busca.is_empty()
-            && let Some(faixa) = self.faixa_do_resumo(motor, "lista", window, cx)
-        {
-            m.itens.push(div().pt(esp::E4).px(esp::E2).child(faixa).into_any_element());
-        }
         // Linear (25/11/2026): cada seção com o título à vista (nome, contagem e a seta de recolher
         // à direita do nome), na ordem do protótipo: Rodando, Esperando você, Fixadas e as faixas
         // de data (Hoje, Esta semana, Mais antigas). Na busca, nada recolhe.
@@ -2284,7 +2278,7 @@ pub(super) fn avisar_arquivadas(motor: Entity<Motor>, ids: Vec<String>, texto: S
 #[cfg(test)]
 mod testes {
     use super::{
-        AbaLateral, Aperto, Causa, Faixa, Motivo, MotivoDaPrevia, No, PendenciaDoMotor, achado_na_conversa,
+        Aperto, Causa, Faixa, Motivo, MotivoDaPrevia, No, PendenciaDoMotor, achado_na_conversa,
         arquivadas_que_casam, meia_noite_local, milhar, montar_arvore,
         motivo, partes_da_previa, posicao_do_realce, texto_agentes, trecho,
     };

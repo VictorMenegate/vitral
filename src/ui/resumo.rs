@@ -1,19 +1,17 @@
-//! O que espera você além das conversas e o que aconteceu enquanto você esteve fora: os pares de
-//! chats parados no freio de ciclo (em "Esperando você" e no sino) e a faixa "Enquanto você esteve
-//! fora".
+//! O que espera você além das conversas: os pares de chats parados no freio de ciclo (em
+//! "Esperando você" e no sino). O cartão "Enquanto você esteve fora" saiu (dono, 26/11/2026).
 
-use gpui_kit::component::{Icon, h_flex, tooltip::{ManagedTooltipExt as _, Tooltip}, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::h_flex;
 use gpui_kit::*;
 
 use super::{
     Janela,
-    componentes::{CartaoDeLista, Sinal, Simbolo, TamanhoBotao, botao_fantasma, botao_icone, simbolo_do_chat},
+    componentes::{CartaoDeLista, Sinal, Simbolo, TamanhoBotao, botao_fantasma, simbolo_do_chat},
 };
 use crate::{
     modelo::Chat,
     motor::{Motor, PrecisaDeVoce},
-    tema::{Cores, Lucide, Tipo as _, dentro_da_borda, esp, r, raio},
+    tema::esp,
 };
 
 /// Um par de chats parado no freio de ciclo, em "Esperando você".
@@ -28,11 +26,6 @@ pub(super) struct EsperaDeCiclo {
 /// "chat a1b2c3 “Checkout”".
 pub(super) fn nome_do_chat(c: &Chat) -> String {
     format!("chat {} “{}”", c.id, c.titulo)
-}
-
-fn uma_linha(texto: &str) -> String {
-    let linha = texto.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
-    if linha.chars().count() > 120 { format!("{}…", linha.chars().take(120).collect::<String>()) } else { linha.to_string() }
 }
 
 /// Os pares travados no freio de ciclo.
@@ -58,33 +51,6 @@ pub(super) fn precisa_em_tudo(motor: &Motor) -> PrecisaDeVoce {
         conta.somar(crate::motor::Espera::Pedido, false);
     }
     conta
-}
-
-/// Uma linha do "Enquanto você esteve fora": o título do chat vira rótulo, curto, e a frase fica
-/// ao lado. Na lista estreita, o título comia o espaço ("WMS: (claude falso…"; rodada de uso,
-/// item 3.3). Sem o chat (ou um texto que não começa pelo título), a linha como veio.
-fn rotulo_e_frase(motor: &Motor, chat: &str, texto: &str) -> Vec<AnyElement> {
-    let titulo = motor.chat(chat).map(|c| c.titulo.as_str());
-    let frase = titulo.and_then(|t| texto.strip_prefix(t)).and_then(|r| r.strip_prefix(": "));
-    // O nome do chat vai sempre na frente: "Precisa da sua permissão: Bash…" sozinho, três vezes,
-    // não dizia de qual chat era cada uma (revisão de design, 23/11/2026).
-    // O rótulo do grupo já diz "Precisa de você": a linha fica com o que é pedido ("Bash, $ ls").
-    let sem_pedido = |t: &str| {
-        ["Precisa da sua permissão: ", "Precisa da sua aprovação: "].iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t).to_string()
-    };
-    let frase = match (titulo, frase) {
-        (_, Some(frase)) => sem_pedido(&super::falas::primeira_frase(frase)),
-        (Some(_), None) => sem_pedido(&uma_linha(texto)),
-        (None, None) => {
-            return vec![div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(uma_linha(texto)).into_any_element()];
-        }
-    };
-    let titulo = titulo.unwrap_or_default();
-    vec![
-        // O nome com largura fixa: a frase começa no mesmo lugar em todas as linhas.
-        div().flex_none().w(relative(0.4)).truncate().metadado().font_weight(FontWeight::MEDIUM).text_color(Cores::forte()).child(titulo.to_string()).into_any_element(),
-        div().flex_1().min_w_0().truncate().metadado().text_color(Cores::texto()).child(frase).into_any_element(),
-    ]
 }
 
 impl Janela {
@@ -113,106 +79,5 @@ impl Janela {
                 div().mt(esp::E2).child(cartao_lista).into_any_element()
             })
             .collect()
-    }
-
-    /// "Enquanto você esteve fora": o que terminou, o que precisa de você e o que falhou ou parou
-    /// desde que você saiu, com as linhas que abrem o chat e o ×. Só na memória: some no × e é
-    /// trocada na volta seguinte.
-    pub(super) fn faixa_do_resumo(&self, motor: &Motor, onde: &'static str, window: &Window, cx: &Context<Self>) -> Option<AnyElement> {
-        let resumo = motor.resumo_volta.as_ref()?;
-        let desde = crate::modelo::quando_local(resumo.desde);
-        // O que pede você vem primeiro, como na lista, no azul-claro dos pedidos (o `Sinal::Pedido`).
-        let grupos = [
-            ("precisa", "Precisa de você", Sinal::Pedido.cor()),
-            ("falhou", "Falhou ou parou", Sinal::Erro.cor()),
-            ("terminou", "Terminou", Sinal::Nova.cor()),
-        ];
-        let mut corpo = v_flex().gap(esp::E2);
-        for (grupo, titulo, cor) in grupos {
-            let linhas: Vec<_> = resumo.linhas.iter().filter(|l| l.grupo == grupo).collect();
-            if linhas.is_empty() {
-                continue;
-            }
-            corpo = corpo.child(
-                h_flex()
-                    .gap(esp::E6)
-                    .pt(esp::E4)
-                    .child(div().flex_none().size(r(6.)).rounded_full().bg(cor))
-                    .child(div().rotulo().text_color(Cores::tenue()).child(titulo))
-                    .child(div().metadado().text_color(Cores::apagado()).child(linhas.len().to_string())),
-            );
-            // Até 3 por grupo: com 9 linhas o cartão deixava a lista com uma linha e meia.
-            let mostradas = linhas.len().min(3);
-            for (i, l) in linhas.iter().take(mostradas).enumerate() {
-                let chat = (!l.chat.is_empty() && motor.chat(&l.chat).is_some()).then(|| l.chat.clone());
-                corpo = corpo.child(
-                    h_flex()
-                        .id(SharedString::from(format!("resumo-{onde}-{grupo}-{i}")))
-                        .min_h(r(28.))
-                        // O nome na coluna do texto do rótulo do grupo (o ponto de 6 e o vão de 6),
-                        // sem o balão de cada linha, que não dizia nada (revisão de design, 23/11/2026).
-                        .pl(esp::E12)
-                        .pr(esp::E4)
-                        .gap(esp::E8)
-                        .rounded(raio::CONTROLE)
-                        .when(chat.is_some(), |s| s.cursor_pointer().hover(|s| s.bg(Cores::hover())))
-                        .children(rotulo_e_frase(motor, &l.chat, &l.texto))
-                        .when_some(chat, |s, chat| {
-                            s.on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                                if ev.modifiers().control {
-                                    this.abrir_ao_lado(chat.clone(), None, window, cx)
-                                } else {
-                                    this.selecionar(Some(chat.clone()), window, cx)
-                                }
-                            }))
-                        }),
-                );
-            }
-            if linhas.len() > mostradas {
-                corpo = corpo.child(div().pl(esp::E12).metadado().text_color(Cores::tenue()).child(format!("e mais {}", linhas.len() - mostradas)));
-            }
-        }
-        let motor_e = self.motor.clone();
-        let fechar = botao_icone(SharedString::from(format!("fechar-resumo-{onde}")), Lucide::X, "Fechar o resumo", TamanhoBotao::Linha, window, cx)
-            .on_click(move |_, _, cx| {
-                if let Some(m) = &motor_e {
-                    m.update(cx, |m, cx| m.fechar_resumo(cx));
-                }
-            });
-        Some(
-            v_flex()
-                .w_full()
-                .p(dentro_da_borda(12.))
-                .gap(esp::E4)
-                .rounded(raio::CARTAO)
-                .bg(Cores::cartao_elevado())
-                .border_1()
-                .border_color(Cores::tinta_borda(Cores::destaque()))
-                // Relógio e × presos à primeira linha do título, que pode quebrar em duas: no
-                // centro, eles ficavam no vão entre as linhas (relatório de aparência,
-                // 16/11/2026, V17).
-                .child(
-                    h_flex()
-                        .items_start()
-                        .gap(esp::E8)
-                        .child(Icon::new(Lucide::Clock).size(r(14.)).flex_none().mt(esp::E2).text_color(Cores::destaque_texto()))
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("titulo-resumo-{onde}")))
-                                .flex_1()
-                                .min_w_0()
-                                // Em duas linhas, e não cortado: na lista estreita saía
-                                // "Enquanto voc…" ao lado do × (relatório de design, 16/11/2026).
-                                .line_clamp(2)
-                                .rotulo()
-                                .text_color(Cores::forte())
-                                .child("Enquanto você esteve fora")
-                                .dica_no_ponteiro(move |window, cx| Tooltip::new(format!("Desde {desde}")).build(window, cx)),
-                        )
-                        .child(div().flex_none().relative().top(r(-3.)).child(fechar)),
-                )
-                .child(corpo)
-                .into_any_element(),
-        )
     }
 }

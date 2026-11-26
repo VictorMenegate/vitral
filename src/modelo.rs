@@ -736,8 +736,6 @@ pub struct Config {
     pub mcp_trabalhadores: bool,
     /// Arquiva sozinho as conversas paradas há tantos dias (0 = nunca).
     pub arquivar_apos_dias: u32,
-    /// Fora da janela por mais que isso, a volta mostra o resumo.
-    pub minutos_para_resumo: u64,
     /// Os anéis de uso do plano flutuando no canto de baixo, à direita, da janela. Desligado,
     /// somem da tela (o uso continua em Contas do Claude).
     pub uso_no_canto: bool,
@@ -908,7 +906,6 @@ impl Default for Config {
             conta: String::new(),
             mcp_trabalhadores: false,
             arquivar_apos_dias: 0,
-            minutos_para_resumo: 15,
             uso_no_canto: true,
             modo_foco: false,
             transparencia: crate::tema::TRANSPARENCIA_PADRAO,

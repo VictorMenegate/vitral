@@ -653,6 +653,9 @@ pub struct Janela {
     sempre_marcado: HashSet<String>,
     /// "Nova conversa ao lado": a próxima conversa criada abre num painel novo.
     nova_ao_lado: bool,
+    /// As mensagens com o ponteiro em cima (o grupo de cada uma): elas desenham a barra de ações,
+    /// por cima da mensagem de baixo.
+    falas_sob_ponteiro: Vec<SharedString>,
     /// Painel cuja aba está sendo arrastada.
     arrastando_aba: Option<u64>,
     /// Árvore de arquivos de cada pasta (aba Arquivos).
@@ -867,13 +870,11 @@ impl Janela {
             if ativa {
                 this.atualizacao_mudou(window, cx);
             }
-            // Sair grava a hora; voltar depois de um tempo fora monta o "Enquanto você esteve fora".
+            // Sair grava a hora.
             if let Some(motor) = &this.motor {
-                motor.update(cx, |m, cx| {
+                motor.update(cx, |m, _| {
                     m.janela_ativa = ativa;
-                    if ativa {
-                        m.usuario_voltou(cx);
-                    } else {
+                    if !ativa {
                         m.usuario_saiu();
                     }
                 });
@@ -1062,6 +1063,7 @@ impl Janela {
             pedido_aberto: None,
             sempre_marcado: HashSet::new(),
             nova_ao_lado: false,
+            falas_sob_ponteiro: Vec::new(),
             arrastando_aba: None,
             arvores: HashMap::new(),
             foco_lista: cx.focus_handle(),
@@ -1645,8 +1647,6 @@ impl Janela {
         self.ultimo_destino = lido("ultimo_destino").map(PathBuf::from).filter(|p| p.is_absolute());
         let avisos = motor.update(cx, |m, _| std::mem::take(&mut m.avisos_ao_abrir));
         let aberturas = motor.update(cx, |m, _| std::mem::take(&mut m.aberturas));
-        // Uma vez na abertura: com uma saída gravada, o resumo do que aconteceu com o Vitral fechado.
-        motor.update(cx, |m, cx| m.usuario_voltou(cx));
         self.motor = Some(motor);
         // A janela volta como estava (as conversas lado a lado, as abas, as larguras); sem nada
         // guardado, abre no último chat.
